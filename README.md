@@ -10,8 +10,11 @@
 
 <p align="center">
   <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"></a>
-  <a href="https://nextjs.org/"><img src="https://img.shields.io/badge/Platform-Web-blue?logo=googlechrome" alt="Web Support"></a>
-  <a href="https://nextjs.org/"><img src="https://img.shields.io/badge/Platform-Mobile-green?logo=smartphone" alt="Mobile Optimized"></a>
+  <a href="https://sonarcloud.io/project/overview?id=libredb_libredb-studio"><img src="https://sonarcloud.io/api/project_badges/measure?project=libredb_libredb-studio&metric=alert_status" alt="Quality Gate"></a>
+  <a href="https://deepwiki.com/libredb/libredb-studio"><img src="https://img.shields.io/badge/Docs-DeepWiki-blue?logo=gitbook" alt="DeepWiki Docs"></a>
+</p>
+
+<p align="center">
   <a href="https://nextjs.org/"><img src="https://img.shields.io/badge/Next.js-15-black?logo=next.js" alt="Next.js 15"></a>
   <a href="https://react.dev/"><img src="https://img.shields.io/badge/React-19-61DAFB?logo=react" alt="React 19"></a>
   <a href="https://www.docker.com/"><img src="https://img.shields.io/badge/Docker-Ready-2496ED?logo=docker" alt="Docker Support"></a>
@@ -188,6 +191,16 @@ LibreDB Studio is optimized for K8s with:
 - [ ] **Phase 5**: Interactive ER Diagrams (Visual Schema Graph).
 - [ ] **Phase 6**: Advanced Mobile SQL Keyboard Extension.
 - [ ] **Phase 7**: SSO Integration (OIDC/SAML).
+
+---
+
+## Community & Quality
+
+| Resource | Description |
+|----------|-------------|
+| [DeepWiki](https://deepwiki.com/libredb/libredb-studio) | AI-powered documentation — always up-to-date with the codebase |
+| [SonarCloud](https://sonarcloud.io/project/overview?id=libredb_libredb-studio) | Code quality, security analysis, and technical debt tracking |
+| [API Docs](docs/API_DOCS.md) | Complete REST API reference |
 
 ---
 

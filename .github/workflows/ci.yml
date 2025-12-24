@@ -1,15 +1,17 @@
-name: CI - Lint and Build
+name: CI
 
 on:
   push:
     branches:
-      - linter
+      - main
+  pull_request:
+    types: [opened, synchronize, reopened]
 
 jobs:
   lint-and-build:
     name: Lint and Build
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -32,4 +34,18 @@ jobs:
           JWT_SECRET: test-secret-for-ci-build-only-32ch
           ADMIN_PASSWORD: test-admin
           USER_PASSWORD: test-user
+
+  sonarcloud:
+    name: SonarCloud Analysis
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: SonarCloud Scan
+        uses: SonarSource/sonarqube-scan-action@v5
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
