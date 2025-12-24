@@ -250,6 +250,16 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
   };
 
   const handleBeforeMount = (monaco: any) => {
+    // Suppress Monaco's "Canceled" errors in console
+    const originalConsoleError = console.error;
+    console.error = (...args: any[]) => {
+      const message = args[0]?.toString?.() || '';
+      if (message.includes('Canceled') || message.includes('ERR Canceled')) {
+        return; // Suppress Monaco cancellation errors
+      }
+      originalConsoleError.apply(console, args);
+    };
+
     monaco.editor.defineTheme('db-dark', {
       base: 'vs-dark',
       inherit: true,

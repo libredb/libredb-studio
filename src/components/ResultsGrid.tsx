@@ -523,67 +523,64 @@ export function ResultsGrid({ result }: ResultsGridProps) {
       {/* Desktop Table View (always visible on desktop) */}
       <div
         ref={tableContainerRef}
-        className="hidden md:block flex-1 overflow-auto editor-scrollbar relative"
-        style={{ contain: 'strict' }}
+        className="hidden md:block flex-1 overflow-auto editor-scrollbar"
       >
-        <div style={{ height: `${rowVirtualizer.getTotalSize()}px`, width: '100%', position: 'relative' }}>
-          <table className="w-full border-separate border-spacing-0 table-fixed">
-            <thead className="sticky top-0 z-20 bg-[#0d0d0d]">
-              {table.getHeaderGroups().map(headerGroup => (
-                <tr key={headerGroup.id}>
-                  {headerGroup.headers.map(header => (
-                    <th
-                      key={header.id}
-                      colSpan={header.colSpan}
-                      style={{ width: header.getSize() }}
-                      className="h-10 px-4 text-left border-r border-b border-white/5 text-[10px] uppercase font-mono tracking-wider text-zinc-500 bg-[#0d0d0d] relative group"
-                    >
-                      {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
+        <div className="min-w-max">
+          {/* Header */}
+          <div className="sticky top-0 z-20 bg-[#0d0d0d] flex">
+            {table.getHeaderGroups().map(headerGroup => (
+              headerGroup.headers.map(header => (
+                <div
+                  key={header.id}
+                  style={{ width: header.getSize(), minWidth: header.getSize() }}
+                  className="h-10 px-4 flex items-center border-r border-b border-white/5 text-[10px] uppercase font-mono tracking-wider text-zinc-500 bg-[#0d0d0d] relative group shrink-0"
+                >
+                  {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
 
-                      {/* Column Resizer */}
-                      <div
-                        onMouseDown={header.getResizeHandler()}
-                        onTouchStart={header.getResizeHandler()}
-                        className={cn(
-                          "absolute right-0 top-0 h-full w-1 cursor-col-resize hover:bg-blue-500/50 transition-colors",
-                          header.column.getIsResizing() ? "bg-blue-500 w-1" : "bg-transparent"
-                        )}
-                      />
-                    </th>
+                  {/* Column Resizer */}
+                  <div
+                    onMouseDown={header.getResizeHandler()}
+                    onTouchStart={header.getResizeHandler()}
+                    className={cn(
+                      "absolute right-0 top-0 h-full w-1 cursor-col-resize hover:bg-blue-500/50 transition-colors",
+                      header.column.getIsResizing() ? "bg-blue-500 w-1" : "bg-transparent"
+                    )}
+                  />
+                </div>
+              ))
+            ))}
+          </div>
+
+          {/* Body */}
+          <div style={{ height: `${rowVirtualizer.getTotalSize()}px`, position: 'relative' }}>
+            {rowVirtualizer.getVirtualItems().map(virtualRow => {
+              const row = rows[virtualRow.index];
+              return (
+                <div
+                  key={row.id}
+                  data-index={virtualRow.index}
+                  style={{
+                    height: `${virtualRow.size}px`,
+                    transform: `translateY(${virtualRow.start}px)`,
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                  }}
+                  className="flex group hover:bg-blue-500/[0.03] transition-colors border-b border-white/5"
+                >
+                  {row.getVisibleCells().map(cell => (
+                    <div
+                      key={cell.id}
+                      style={{ width: cell.column.getSize(), minWidth: cell.column.getSize() }}
+                      className="h-full px-4 py-2 border-r border-white/5 text-[12px] font-mono whitespace-nowrap overflow-hidden group-hover:border-white/10 flex items-center shrink-0"
+                    >
+                      {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                    </div>
                   ))}
-                </tr>
-              ))}
-            </thead>
-            <tbody>
-              {rowVirtualizer.getVirtualItems().map(virtualRow => {
-                const row = rows[virtualRow.index];
-                return (
-                  <tr
-                    key={row.id}
-                    data-index={virtualRow.index}
-                    style={{
-                      height: `${virtualRow.size}px`,
-                      transform: `translateY(${virtualRow.start}px)`,
-                      position: 'absolute',
-                      left: 0,
-                      width: '100%',
-                    }}
-                    className="flex w-full group hover:bg-blue-500/[0.03] transition-colors border-b border-white/5"
-                  >
-                    {row.getVisibleCells().map(cell => (
-                      <td
-                        key={cell.id}
-                        style={{ width: cell.column.getSize() }}
-                        className="px-4 py-2 border-r border-white/5 text-[12px] font-mono whitespace-nowrap overflow-hidden group-hover:border-white/10"
-                      >
-                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                      </td>
-                    ))}
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                </div>
+              );
+            })}
+          </div>
         </div>
       </div>
 
