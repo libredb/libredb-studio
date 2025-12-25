@@ -31,7 +31,9 @@ export async function middleware(request: NextRequest) {
     pathname.startsWith('/_next') ||
     pathname === '/favicon.ico' ||
     // Health check endpoint for load balancers (Render, K8s, etc.)
-    pathname === '/api/db/health'
+    pathname === '/api/db/health' ||
+    // Demo connection endpoint (public for initial load)
+    pathname === '/api/demo-connection'
   ) {
     return NextResponse.next();
   }
@@ -63,10 +65,11 @@ export const config = {
      * Match all request paths except for the ones starting with:
      * - api/auth (auth endpoints)
      * - api/db/health (health check for load balancers)
+     * - api/demo-connection (demo database connection - public)
      * - _next/static (static files)
      * - _next/image (image optimization files)
      * - favicon.ico (favicon file)
      */
-    '/((?!api/auth|api/db/health|_next/static|_next/image|favicon.ico).*)',
+    '/((?!api/auth|api/db/health|api/demo-connection|_next/static|_next/image|favicon.ico).*)',
   ],
 };
