@@ -85,7 +85,8 @@ The demo runs in **Demo Mode** with simulated data. No real database required!
 | Component | Technology | Target |
 | :--- | :--- | :--- |
 | **Framework** | Next.js 15 (App Router), React 19 | Web, Mobile |
-| **UI Engine** | Tailwind CSS 4, Radix UI, Shadcn UI | Web, Mobile |
+| **UI Engine** | Tailwind CSS 4, Radix UI, [shadcn/ui](https://ui.shadcn.com/) | Web, Mobile |
+| **Theming** | CSS Variables + `@theme inline` ([Guide](docs/THEMING.md)) | Web, Mobile |
 | **Editor** | Monaco Editor (VS Code Engine) | Web |
 | **AI** | Multi-Model (Gemini, OpenAI, Ollama, Custom) | Web, Mobile |
 | **Database** | PostgreSQL, MySQL, SQLite, MongoDB | Web, Mobile |
@@ -201,6 +202,8 @@ LibreDB Studio is optimized for K8s with:
 | [DeepWiki](https://deepwiki.com/libredb/libredb-studio) | AI-powered documentation — always up-to-date with the codebase |
 | [SonarCloud](https://sonarcloud.io/project/overview?id=libredb_libredb-studio) | Code quality, security analysis, and technical debt tracking |
 | [API Docs](docs/API_DOCS.md) | Complete REST API reference |
+| [Theming Guide](docs/THEMING.md) | CSS theming, dark mode, and styling customization |
+| [Architecture](docs/ARCHITECTURE.md) | System architecture and design patterns |
 
 ---
 

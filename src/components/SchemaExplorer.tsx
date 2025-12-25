@@ -109,7 +109,7 @@ export function SchemaExplorer({
   }
 
   return (
-    <div className="flex flex-col h-full overflow-hidden">
+    <div className="flex flex-col h-full">
       <div className="px-3 mb-4 space-y-3">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -170,80 +170,83 @@ export function SchemaExplorer({
             <div key={table.name} className="group flex flex-col">
               <div
                 className={cn(
-                  "flex items-center gap-2 px-2 py-1.5 rounded-md cursor-pointer transition-all relative overflow-hidden",
+                  "flex items-center gap-1.5 px-2 py-1.5 rounded-md cursor-pointer transition-all",
                   expandedTables.has(table.name) ? "bg-accent/50" : "hover:bg-accent/30"
                 )}
-                onClick={() => toggleTable(table.name)}
               >
                 <motion.div
                   animate={{ rotate: expandedTables.has(table.name) ? 90 : 0 }}
                   transition={{ duration: 0.2 }}
+                  className="shrink-0"
+                  onClick={() => toggleTable(table.name)}
                 >
                   <ChevronRight className="w-3 h-3 text-muted-foreground" />
                 </motion.div>
 
-                <TableIcon className={cn(
-                  "w-3.5 h-3.5 transition-colors",
-                  expandedTables.has(table.name) ? "text-blue-400" : "text-muted-foreground group-hover:text-foreground"
-                )} />
+                <TableIcon
+                  className={cn(
+                    "w-3.5 h-3.5 shrink-0 transition-colors",
+                    expandedTables.has(table.name) ? "text-blue-400" : "text-muted-foreground group-hover:text-foreground"
+                  )}
+                  onClick={() => toggleTable(table.name)}
+                />
 
-                <span className={cn(
-                  "truncate flex-1 text-[13px] font-medium transition-colors",
-                  expandedTables.has(table.name) ? "text-foreground" : "text-muted-foreground group-hover:text-foreground"
-                )}>
+                <span
+                  className={cn(
+                    "truncate min-w-0 flex-1 text-[13px] font-medium transition-colors",
+                    expandedTables.has(table.name) ? "text-foreground" : "text-muted-foreground group-hover:text-foreground"
+                  )}
+                  onClick={() => toggleTable(table.name)}
+                >
                   {table.name}
                 </span>
 
-                <div className="flex items-center gap-2 mr-2">
-                  {table.rowCount !== undefined && (
-                    <span className="text-[9px] font-mono text-muted-foreground/70 group-hover:text-muted-foreground whitespace-nowrap">
-                      {table.rowCount >= 1000 ? `${(table.rowCount / 1000).toFixed(1)}k` : table.rowCount} rows
-                    </span>
-                  )}
-                  {table.size && (
-                    <span className="text-[9px] font-mono px-1 py-0.5 rounded bg-muted text-muted-foreground/70 group-hover:text-muted-foreground hidden sm:inline-block">
-                      {table.size}
-                    </span>
-                  )}
-                </div>
+                {table.rowCount !== undefined && (
+                  <span
+                    className="shrink-0 text-[9px] font-mono text-muted-foreground/70 whitespace-nowrap"
+                    onClick={() => toggleTable(table.name)}
+                  >
+                    {table.rowCount >= 1000 ? `${(table.rowCount / 1000).toFixed(1)}k` : table.rowCount}
+                  </span>
+                )}
 
-                <div className="flex items-center gap-0.5 opacity-50 group-hover:opacity-100 transition-opacity">
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button variant="ghost" size="icon" className="w-6 h-6 hover:bg-accent" onClick={e => e.stopPropagation()}>
-                        <MoreVertical className="w-3 h-3 text-muted-foreground" />
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end" className="w-48">
-                      <DropdownMenuItem onClick={() => onTableClick?.(table.name)}>
-                        <Play className="w-3.5 h-3.5 mr-2 text-green-500" />
-                        Select Top 100
-                      </DropdownMenuItem>
-                      <DropdownMenuItem onClick={() => onGenerateSelect?.(table.name)}>
-                        <Filter className="w-3.5 h-3.5 mr-2 text-blue-500" />
-                        Generate Query
-                      </DropdownMenuItem>
-                      <DropdownMenuItem onClick={() => copyToClipboard(table.name, 'Table name')}>
-                        <Copy className="w-3.5 h-3.5 mr-2 text-muted-foreground" />
-                        Copy Name
-                      </DropdownMenuItem>
-                      
-                      {isAdmin && (
-                        <>
-                          <DropdownMenuSeparator />
-                          <DropdownMenuItem onClick={() => onOpenMaintenance?.('tables', table.name)}>
-                            <Search className="w-3.5 h-3.5 mr-2 text-amber-500" />
-                            Analyze Table
-                          </DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => onOpenMaintenance?.('tables', table.name)}>
-                            <Trash2 className="w-3.5 h-3.5 mr-2 text-blue-400" />
-                            Vacuum Table
-                          </DropdownMenuItem>
-                        </>
-                      )}
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                </div>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <div
+                      className="shrink-0 p-1 rounded hover:bg-white/20 cursor-pointer"
+                      onClick={e => e.stopPropagation()}
+                    >
+                      <MoreVertical className="w-4 h-4 text-white" />
+                    </div>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-48">
+                    <DropdownMenuItem onClick={() => onTableClick?.(table.name)}>
+                      <Play className="w-3.5 h-3.5 mr-2 text-green-500" />
+                      Select Top 100
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => onGenerateSelect?.(table.name)}>
+                      <Filter className="w-3.5 h-3.5 mr-2 text-blue-500" />
+                      Generate Query
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => copyToClipboard(table.name, 'Table name')}>
+                      <Copy className="w-3.5 h-3.5 mr-2 text-muted-foreground" />
+                      Copy Name
+                    </DropdownMenuItem>
+                    {isAdmin && (
+                      <>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem onClick={() => onOpenMaintenance?.('tables', table.name)}>
+                          <Search className="w-3.5 h-3.5 mr-2 text-amber-500" />
+                          Analyze Table
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => onOpenMaintenance?.('tables', table.name)}>
+                          <Trash2 className="w-3.5 h-3.5 mr-2 text-blue-400" />
+                          Vacuum Table
+                        </DropdownMenuItem>
+                      </>
+                    )}
+                  </DropdownMenuContent>
+                </DropdownMenu>
               </div>
 
               <AnimatePresence>

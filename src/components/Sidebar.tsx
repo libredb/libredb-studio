@@ -128,7 +128,7 @@ export function Sidebar({
   onOpenMaintenance
 }: SidebarProps) {
   return (
-    <div className="hidden md:flex w-64 border-r border-border flex-col bg-background select-none">
+    <div className="flex w-full h-full border-r border-border flex-col bg-background select-none">
       <div className="h-14 px-4 flex items-center justify-between border-b border-border">
         <div className="flex items-center gap-2">
           <div className="w-6 h-6 bg-blue-600 rounded-md flex items-center justify-center">

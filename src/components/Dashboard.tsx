@@ -367,28 +367,32 @@ export default function Dashboard() {
 
   return (
     <div className="flex h-screen w-full bg-[#050505] text-zinc-100 overflow-hidden font-sans select-none">
-      <Sidebar 
-        connections={connections}
-        activeConnection={activeConnection}
-        schema={schema}
-        isLoadingSchema={isLoadingSchema}
-        onSelectConnection={setActiveConnection}
-        onDeleteConnection={(id) => {
-          storage.deleteConnection(id);
-          const updated = storage.getConnections();
-          setConnections(updated);
-          if (activeConnection?.id === id) setActiveConnection(updated[0] || null);
-        }}
-        onAddConnection={() => setIsConnectionModalOpen(true)}
-        onTableClick={handleTableClick}
-        onGenerateSelect={handleGenerateSelect}
-        onCreateTableClick={() => setIsCreateTableModalOpen(true)}
-        onShowDiagram={() => setShowDiagram(true)}
-        isAdmin={isAdmin}
-        onOpenMaintenance={openMaintenance}
-      />
-
-      <div className="flex-1 flex flex-col min-w-0 bg-[#0a0a0a] pb-16 md:pb-0">
+      <ResizablePanelGroup direction="horizontal" className="h-full">
+        <ResizablePanel defaultSize={22} minSize={15} maxSize={35} className="hidden md:block">
+          <Sidebar
+            connections={connections}
+            activeConnection={activeConnection}
+            schema={schema}
+            isLoadingSchema={isLoadingSchema}
+            onSelectConnection={setActiveConnection}
+            onDeleteConnection={(id) => {
+              storage.deleteConnection(id);
+              const updated = storage.getConnections();
+              setConnections(updated);
+              if (activeConnection?.id === id) setActiveConnection(updated[0] || null);
+            }}
+            onAddConnection={() => setIsConnectionModalOpen(true)}
+            onTableClick={handleTableClick}
+            onGenerateSelect={handleGenerateSelect}
+            onCreateTableClick={() => setIsCreateTableModalOpen(true)}
+            onShowDiagram={() => setShowDiagram(true)}
+            isAdmin={isAdmin}
+            onOpenMaintenance={openMaintenance}
+          />
+        </ResizablePanel>
+        <ResizableHandle className="hidden md:flex w-1 bg-transparent hover:bg-blue-500/30 transition-colors" />
+        <ResizablePanel defaultSize={78}>
+          <div className="flex-1 flex flex-col min-w-0 h-full bg-[#0a0a0a] pb-16 md:pb-0">
         {/* Mobile Header - Two Row Compact Design */}
         <header className="md:hidden border-b border-white/5 bg-[#0a0a0a]/95 backdrop-blur-xl sticky top-0 z-30">
           {/* Row 1: DB Selector + Connection Info + User */}
@@ -883,6 +887,8 @@ export default function Dashboard() {
           </div>
           </main>
         </div>
+        </ResizablePanel>
+      </ResizablePanelGroup>
 
       <ConnectionModal 
         isOpen={isConnectionModalOpen}
