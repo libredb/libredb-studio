@@ -14,20 +14,55 @@ import {
 interface HealthData {
   activeConnections: number;
   databaseSize: string;
-  cacheHitRatio: number;
+  cacheHitRatio: number | string;
   slowQueries: Array<{
     query: string;
     calls: number;
-    total_seconds: number;
-    mean_ms: number;
+    avgTime: string;
   }>;
   activeSessions: Array<{
-    pid: number;
+    pid: number | string;
+    user?: string;
+    database?: string;
     state: string;
     query: string;
-    wait_event_type: string | null;
-    xact_start: string;
+    duration?: string;
+    wait_event_type?: string | null;
+    xact_start?: string;
   }>;
+}
+
+/**
+ * Convert cache hit ratio to percentage string
+ * Handles both string (e.g., "98.5%") and number (0-1 range) formats
+ */
+function formatCacheHitRatio(ratio: number | string | undefined): string {
+  if (!ratio) return '0%';
+  
+  if (typeof ratio === 'string') {
+    // If it's already a formatted string (e.g., "98.5%"), use it directly
+    return ratio.includes('%') ? ratio : `${ratio}%`;
+  }
+  
+  // If it's a number (0-1 range), convert to percentage
+  return (ratio * 100).toFixed(2) + '%';
+}
+
+/**
+ * Convert cache hit ratio to percentage number (0-100) for progress bar
+ * Handles both string (e.g., "98.5%") and number (0-1 range) formats
+ */
+function getCacheHitRatioPercent(ratio: number | string | undefined): number {
+  if (!ratio) return 0;
+  
+  if (typeof ratio === 'string') {
+    // Parse string like "98.5%" to number
+    const numValue = parseFloat(ratio.replace('%', '')) || 0;
+    return Math.min(100, Math.max(0, numValue));
+  }
+  
+  // If it's a number (0-1 range), convert to percentage
+  return Math.min(100, Math.max(0, ratio * 100));
 }
 
 export function HealthDashboard({ connection }: { connection: DatabaseConnection | null }) {
@@ -133,11 +168,15 @@ export function HealthDashboard({ connection }: { connection: DatabaseConnection
             <Activity className="w-5 h-5 text-green-500" />
             <span className="text-sm font-medium text-muted-foreground">Cache Hit Ratio</span>
           </div>
-          <div className="text-3xl font-bold">{(data?.cacheHitRatio || 0 * 100).toFixed(2)}%</div>
+          <div className="text-3xl font-bold">
+            {formatCacheHitRatio(data?.cacheHitRatio)}
+          </div>
           <div className="w-full bg-secondary h-2 rounded-full mt-2 overflow-hidden">
             <div 
               className="bg-green-500 h-full transition-all duration-1000" 
-              style={{ width: `${(data?.cacheHitRatio || 0) * 100}%` }}
+              style={{ 
+                width: `${getCacheHitRatioPercent(data?.cacheHitRatio)}%` 
+              }}
             />
           </div>
         </div>
@@ -165,7 +204,7 @@ export function HealthDashboard({ connection }: { connection: DatabaseConnection
                     <td className="p-3 font-mono text-xs truncate max-w-[200px]" title={q.query}>
                       {q.query}
                     </td>
-                    <td className="p-3 text-right">{q.mean_ms.toFixed(1)}</td>
+                    <td className="p-3 text-right">{q.avgTime || 'N/A'}</td>
                     <td className="p-3 text-right">{q.calls}</td>
                   </tr>
                 ))}
@@ -203,7 +242,7 @@ export function HealthDashboard({ connection }: { connection: DatabaseConnection
                     </td>
                     <td className="p-3 text-xs text-muted-foreground">{s.wait_event_type || 'None'}</td>
                     <td className="p-3 text-right text-xs">
-                      {new Date(s.xact_start).toLocaleTimeString()}
+                      {s.xact_start ? new Date(s.xact_start).toLocaleTimeString() : (s.duration || 'N/A')}
                     </td>
                   </tr>
                 ))}
