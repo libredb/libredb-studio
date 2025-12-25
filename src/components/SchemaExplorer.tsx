@@ -84,7 +84,7 @@ export function SchemaExplorer({
 
   if (isLoadingSchema) {
     return (
-      <div className="flex flex-col items-center justify-center py-12 text-zinc-600">
+      <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
         <div className="relative mb-4">
           <Loader2 className="w-8 h-8 animate-spin text-blue-500/20" />
           <Database className="w-4 h-4 absolute inset-0 m-auto text-blue-500 animate-pulse" />
@@ -97,11 +97,11 @@ export function SchemaExplorer({
   if (schema.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-12 px-6 text-center">
-        <div className="w-12 h-12 rounded-full bg-zinc-900 flex items-center justify-center mb-4 border border-white/5">
-          <AlertCircle className="w-6 h-6 text-zinc-700" />
+        <div className="w-12 h-12 rounded-full bg-muted flex items-center justify-center mb-4 border border-border">
+          <AlertCircle className="w-6 h-6 text-muted-foreground" />
         </div>
-        <h3 className="text-zinc-200 text-sm font-medium mb-1">No structures found</h3>
-        <p className="text-[11px] text-zinc-500 leading-relaxed">
+        <h3 className="text-foreground text-sm font-medium mb-1">No structures found</h3>
+        <p className="text-[11px] text-muted-foreground leading-relaxed">
           We couldn't find any tables or views in this connection.
         </p>
       </div>
@@ -114,26 +114,26 @@ export function SchemaExplorer({
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Database className="w-3.5 h-3.5 text-blue-500/50" />
-            <span className="text-[10px] font-bold uppercase tracking-[0.15em] text-zinc-500">
+            <span className="text-[10px] font-bold uppercase tracking-[0.15em] text-muted-foreground">
               Explorer
             </span>
           </div>
           <div className="flex items-center gap-1.5">
             {isAdmin && (
-              <Button 
-                variant="ghost" 
-                size="icon" 
-                className="w-6 h-6 hover:bg-white/10 text-zinc-500 hover:text-amber-400 transition-colors"
+              <Button
+                variant="ghost"
+                size="icon"
+                className="w-6 h-6 hover:bg-accent text-muted-foreground hover:text-amber-400 transition-colors"
                 onClick={() => onOpenMaintenance?.('global')}
                 title="Database Maintenance"
               >
                 <Settings className="w-3.5 h-3.5" />
               </Button>
             )}
-            <Button 
-              variant="ghost" 
-              size="icon" 
-              className="w-6 h-6 hover:bg-white/10 text-zinc-500 hover:text-blue-400 transition-colors"
+            <Button
+              variant="ghost"
+              size="icon"
+              className="w-6 h-6 hover:bg-accent text-muted-foreground hover:text-blue-400 transition-colors"
               onClick={onCreateTableClick}
               title="Create Table"
             >
@@ -146,17 +146,17 @@ export function SchemaExplorer({
         </div>
 
         <div className="relative group">
-          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-zinc-600 group-focus-within:text-blue-500 transition-colors" />
-          <Input 
-            placeholder="Search tables or columns..." 
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground group-focus-within:text-blue-500 transition-colors" />
+          <Input
+            placeholder="Search tables or columns..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="h-8 pl-8 pr-8 text-[12px] bg-zinc-900/50 border-white/5 focus-visible:ring-1 focus-visible:ring-blue-500/50 placeholder:text-zinc-700"
+            className="h-8 pl-8 pr-8 text-[12px] bg-muted/50 border-border focus-visible:ring-1 focus-visible:ring-blue-500/50 placeholder:text-muted-foreground/50"
           />
           {searchQuery && (
-            <button 
+            <button
               onClick={() => setSearchQuery('')}
-              className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-600 hover:text-zinc-400"
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
             >
               <Hash className="w-3 h-3 rotate-45" />
             </button>
@@ -168,10 +168,10 @@ export function SchemaExplorer({
         <AnimatePresence mode="popLayout">
           {filteredSchema.map((table) => (
             <div key={table.name} className="group flex flex-col">
-              <div 
+              <div
                 className={cn(
                   "flex items-center gap-2 px-2 py-1.5 rounded-md cursor-pointer transition-all relative overflow-hidden",
-                  expandedTables.has(table.name) ? "bg-white/5" : "hover:bg-white/[0.03]"
+                  expandedTables.has(table.name) ? "bg-accent/50" : "hover:bg-accent/30"
                 )}
                 onClick={() => toggleTable(table.name)}
               >
@@ -179,42 +179,42 @@ export function SchemaExplorer({
                   animate={{ rotate: expandedTables.has(table.name) ? 90 : 0 }}
                   transition={{ duration: 0.2 }}
                 >
-                  <ChevronRight className="w-3 h-3 text-zinc-600" />
+                  <ChevronRight className="w-3 h-3 text-muted-foreground" />
                 </motion.div>
-                
+
                 <TableIcon className={cn(
                   "w-3.5 h-3.5 transition-colors",
-                  expandedTables.has(table.name) ? "text-blue-400" : "text-zinc-500 group-hover:text-zinc-300"
+                  expandedTables.has(table.name) ? "text-blue-400" : "text-muted-foreground group-hover:text-foreground"
                 )} />
-                
-                  <span className={cn(
-                    "truncate flex-1 text-[13px] font-medium transition-colors",
-                    expandedTables.has(table.name) ? "text-zinc-100" : "text-zinc-400 group-hover:text-zinc-200"
-                  )}>
-                    {table.name}
-                  </span>
 
-                  <div className="flex items-center gap-2 mr-2">
-                    {table.rowCount !== undefined && (
-                      <span className="text-[9px] font-mono text-zinc-600 group-hover:text-zinc-500 whitespace-nowrap">
-                        {table.rowCount >= 1000 ? `${(table.rowCount / 1000).toFixed(1)}k` : table.rowCount} rows
-                      </span>
-                    )}
-                    {table.size && (
-                      <span className="text-[9px] font-mono px-1 py-0.5 rounded bg-white/5 text-zinc-600 group-hover:text-zinc-500 hidden sm:inline-block">
-                        {table.size}
-                      </span>
-                    )}
-                  </div>
+                <span className={cn(
+                  "truncate flex-1 text-[13px] font-medium transition-colors",
+                  expandedTables.has(table.name) ? "text-foreground" : "text-muted-foreground group-hover:text-foreground"
+                )}>
+                  {table.name}
+                </span>
 
-                <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                <div className="flex items-center gap-2 mr-2">
+                  {table.rowCount !== undefined && (
+                    <span className="text-[9px] font-mono text-muted-foreground/70 group-hover:text-muted-foreground whitespace-nowrap">
+                      {table.rowCount >= 1000 ? `${(table.rowCount / 1000).toFixed(1)}k` : table.rowCount} rows
+                    </span>
+                  )}
+                  {table.size && (
+                    <span className="text-[9px] font-mono px-1 py-0.5 rounded bg-muted text-muted-foreground/70 group-hover:text-muted-foreground hidden sm:inline-block">
+                      {table.size}
+                    </span>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-0.5 opacity-50 group-hover:opacity-100 transition-opacity">
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
-                      <Button variant="ghost" size="icon" className="w-6 h-6 hover:bg-white/10" onClick={e => e.stopPropagation()}>
-                        <MoreVertical className="w-3 h-3 text-zinc-500" />
+                      <Button variant="ghost" size="icon" className="w-6 h-6 hover:bg-accent" onClick={e => e.stopPropagation()}>
+                        <MoreVertical className="w-3 h-3 text-muted-foreground" />
                       </Button>
                     </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end" className="w-48 bg-zinc-950 border-white/10 text-zinc-300">
+                    <DropdownMenuContent align="end" className="w-48">
                       <DropdownMenuItem onClick={() => onTableClick?.(table.name)}>
                         <Play className="w-3.5 h-3.5 mr-2 text-green-500" />
                         Select Top 100
@@ -224,13 +224,13 @@ export function SchemaExplorer({
                         Generate Query
                       </DropdownMenuItem>
                       <DropdownMenuItem onClick={() => copyToClipboard(table.name, 'Table name')}>
-                        <Copy className="w-3.5 h-3.5 mr-2 text-zinc-500" />
+                        <Copy className="w-3.5 h-3.5 mr-2 text-muted-foreground" />
                         Copy Name
                       </DropdownMenuItem>
                       
                       {isAdmin && (
                         <>
-                          <DropdownMenuSeparator className="bg-white/5" />
+                          <DropdownMenuSeparator />
                           <DropdownMenuItem onClick={() => onOpenMaintenance?.('tables', table.name)}>
                             <Search className="w-3.5 h-3.5 mr-2 text-amber-500" />
                             Analyze Table
@@ -255,25 +255,25 @@ export function SchemaExplorer({
                     transition={{ duration: 0.2 }}
                     className="overflow-hidden"
                   >
-                    <div className="pl-6 pr-2 py-1 space-y-0.5 border-l border-white/5 ml-3.5 mt-0.5 mb-1">
+                    <div className="pl-6 pr-2 py-1 space-y-0.5 border-l border-border/30 ml-3.5 mt-0.5 mb-1">
                       {table.columns.map((column) => (
-                        <div 
+                        <div
                           key={column.name}
-                          className="flex items-center gap-2 py-1 px-2 rounded-sm group/col hover:bg-white/[0.02] cursor-default"
+                          className="flex items-center gap-2 py-1 px-2 rounded-sm group/col hover:bg-accent/20 cursor-default"
                         >
                           {column.isPrimary ? (
                             <Key className="w-2.5 h-2.5 text-yellow-500/70" />
                           ) : (
                             <div className="w-2.5 h-2.5 flex items-center justify-center">
-                              <div className="w-1 h-1 rounded-full bg-zinc-700" />
+                              <div className="w-1 h-1 rounded-full bg-muted-foreground/50" />
                             </div>
                           )}
-                          
-                          <span className="text-[12px] text-zinc-500 flex-1 truncate group-hover/col:text-zinc-300">
+
+                          <span className="text-[12px] text-muted-foreground flex-1 truncate group-hover/col:text-foreground">
                             {column.name}
                           </span>
-                          
-                          <span className="text-[10px] font-mono text-zinc-700 uppercase group-hover/col:text-zinc-600">
+
+                          <span className="text-[10px] font-mono text-muted-foreground/60 uppercase group-hover/col:text-muted-foreground">
                             {column.type.split('(')[0]}
                           </span>
                         </div>
@@ -282,12 +282,12 @@ export function SchemaExplorer({
                         <div className="pt-2 pb-1">
                           <div className="flex items-center gap-1.5 px-2 mb-1">
                             <Hash className="w-2.5 h-2.5 text-purple-500/40" />
-                            <span className="text-[9px] uppercase tracking-wider font-bold text-zinc-600">Indexes</span>
+                            <span className="text-[9px] uppercase tracking-wider font-bold text-muted-foreground">Indexes</span>
                           </div>
                           {table.indexes.map(idx => (
                             <div key={idx.name} className="flex items-center gap-2 py-0.5 px-2">
                               <div className="w-2.5 h-2.5" />
-                              <span className="text-[10px] text-zinc-600 italic truncate" title={Array.isArray(idx.columns) ? idx.columns.join(', ') : ''}>
+                              <span className="text-[10px] text-muted-foreground italic truncate" title={Array.isArray(idx.columns) ? idx.columns.join(', ') : ''}>
                                 {idx.name}
                               </span>
                             </div>
