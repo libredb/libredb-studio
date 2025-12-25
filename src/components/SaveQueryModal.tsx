@@ -81,8 +81,8 @@ export function SaveQueryModal({ isOpen, onClose, onSave, defaultQuery }: SaveQu
           </div>
           <div className="mt-2">
             <Label className="text-xs font-bold uppercase tracking-widest text-zinc-500 mb-2 block">Preview</Label>
-            <div className="bg-[#050505] p-3 rounded-md border border-white/5 max-h-[100px] overflow-hidden">
-              <pre className="text-[10px] font-mono text-zinc-500 italic truncate">
+            <div className="bg-[#050505] p-3 rounded-md border border-white/5 max-h-[100px] overflow-y-auto">
+              <pre className="text-[10px] font-mono text-zinc-500 italic whitespace-pre-wrap break-words">
                 {defaultQuery}
               </pre>
             </div>
