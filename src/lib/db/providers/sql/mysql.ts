@@ -15,6 +15,13 @@ import {
   type ProviderOptions,
   type SlowQuery,
   type ActiveSession,
+  type DatabaseOverview,
+  type PerformanceMetrics,
+  type SlowQueryStats,
+  type ActiveSessionDetails,
+  type TableStats,
+  type IndexStats,
+  type StorageStats,
 } from '../../types';
 import {
   DatabaseConfigError,
@@ -391,5 +398,410 @@ export class MySQLProvider extends SQLBaseProvider {
     `, [this.config.database]);
 
     return rows.map((r) => this.escapeIdentifier(r.TABLE_NAME)).join(', ');
+  }
+
+  // ============================================================================
+  // Monitoring Operations
+  // ============================================================================
+
+  public async getOverview(): Promise<DatabaseOverview> {
+    this.ensureConnected();
+
+    const conn = await this.pool!.getConnection();
+    try {
+      // Get version
+      const [versionRows] = await conn.execute<RowDataPacket[]>('SELECT VERSION() as version');
+      const version = versionRows[0]?.version || 'Unknown';
+
+      // Get uptime
+      const [uptimeRows] = await conn.execute<RowDataPacket[]>(
+        "SHOW STATUS LIKE 'Uptime'"
+      );
+      const uptimeSeconds = parseInt(uptimeRows[0]?.Value || '0');
+      const uptime = this.formatUptimeString(uptimeSeconds);
+
+      // Get active connections
+      const [connRows] = await conn.execute<RowDataPacket[]>(
+        "SHOW STATUS LIKE 'Threads_connected'"
+      );
+      const activeConnections = parseInt(connRows[0]?.Value || '0');
+
+      // Get max connections
+      const [maxConnRows] = await conn.execute<RowDataPacket[]>(
+        "SHOW VARIABLES LIKE 'max_connections'"
+      );
+      const maxConnections = parseInt(maxConnRows[0]?.Value || '151');
+
+      // Get database size
+      const [sizeRows] = await conn.execute<RowDataPacket[]>(`
+        SELECT SUM(DATA_LENGTH + INDEX_LENGTH) as size_bytes
+        FROM information_schema.TABLES
+        WHERE TABLE_SCHEMA = ?;
+      `, [this.config.database]);
+      const databaseSizeBytes = parseInt(sizeRows[0]?.size_bytes || '0');
+
+      // Get table and index count
+      const [countRows] = await conn.execute<RowDataPacket[]>(`
+        SELECT
+          COUNT(DISTINCT TABLE_NAME) as table_count,
+          COUNT(DISTINCT INDEX_NAME) as index_count
+        FROM information_schema.STATISTICS
+        WHERE TABLE_SCHEMA = ?;
+      `, [this.config.database]);
+
+      const [tableCountRows] = await conn.execute<RowDataPacket[]>(`
+        SELECT COUNT(*) as cnt FROM information_schema.TABLES
+        WHERE TABLE_SCHEMA = ? AND TABLE_TYPE = 'BASE TABLE';
+      `, [this.config.database]);
+
+      return {
+        version: `MySQL ${version}`,
+        uptime,
+        startTime: new Date(Date.now() - uptimeSeconds * 1000),
+        activeConnections,
+        maxConnections,
+        databaseSize: formatBytes(databaseSizeBytes),
+        databaseSizeBytes,
+        tableCount: parseInt(tableCountRows[0]?.cnt || '0'),
+        indexCount: parseInt(countRows[0]?.index_count || '0'),
+      };
+    } finally {
+      conn.release();
+    }
+  }
+
+  public async getPerformanceMetrics(): Promise<PerformanceMetrics> {
+    this.ensureConnected();
+
+    const conn = await this.pool!.getConnection();
+    try {
+      // Calculate cache hit ratio from InnoDB buffer pool
+      const [hitRows] = await conn.execute<RowDataPacket[]>(`
+        SELECT
+          (1 - (
+            (SELECT VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME = 'Innodb_buffer_pool_reads') /
+            NULLIF((SELECT VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME = 'Innodb_buffer_pool_read_requests'), 0)
+          )) * 100 as hit_ratio;
+      `);
+      const cacheHitRatio = parseFloat(hitRows[0]?.hit_ratio || '99');
+
+      // Get buffer pool usage
+      const [poolRows] = await conn.execute<RowDataPacket[]>(`
+        SELECT
+          (SELECT VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME = 'Innodb_buffer_pool_pages_data') as data_pages,
+          (SELECT VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME = 'Innodb_buffer_pool_pages_total') as total_pages;
+      `);
+      const dataPages = parseInt(poolRows[0]?.data_pages || '0');
+      const totalPages = parseInt(poolRows[0]?.total_pages || '1');
+      const bufferPoolUsage = (dataPages / totalPages) * 100;
+
+      // Get queries per second
+      const [qpsRows] = await conn.execute<RowDataPacket[]>(`
+        SELECT
+          (SELECT VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME = 'Queries') as queries,
+          (SELECT VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME = 'Uptime') as uptime;
+      `);
+      const queries = parseInt(qpsRows[0]?.queries || '0');
+      const uptime = parseInt(qpsRows[0]?.uptime || '1');
+      const queriesPerSecond = queries / uptime;
+
+      // Get deadlocks
+      const [deadlockRows] = await conn.execute<RowDataPacket[]>(
+        "SHOW STATUS LIKE 'Innodb_deadlocks'"
+      );
+      const deadlocks = parseInt(deadlockRows[0]?.Value || '0');
+
+      return {
+        cacheHitRatio: Math.min(100, Math.max(0, cacheHitRatio)),
+        queriesPerSecond: Math.round(queriesPerSecond * 100) / 100,
+        bufferPoolUsage: Math.round(bufferPoolUsage * 100) / 100,
+        deadlocks,
+      };
+    } catch {
+      // Fallback if performance_schema is not available
+      return {
+        cacheHitRatio: 99,
+        queriesPerSecond: 0,
+        bufferPoolUsage: 0,
+        deadlocks: 0,
+      };
+    } finally {
+      conn.release();
+    }
+  }
+
+  public async getSlowQueries(options?: { limit?: number }): Promise<SlowQueryStats[]> {
+    this.ensureConnected();
+    const limit = options?.limit ?? 10;
+
+    const conn = await this.pool!.getConnection();
+    try {
+      const [rows] = await conn.execute<RowDataPacket[]>(`
+        SELECT
+          DIGEST as query_id,
+          LEFT(DIGEST_TEXT, 500) as query,
+          COUNT_STAR as calls,
+          SUM_TIMER_WAIT / 1000000000 as total_time_ms,
+          AVG_TIMER_WAIT / 1000000000 as avg_time_ms,
+          MIN_TIMER_WAIT / 1000000000 as min_time_ms,
+          MAX_TIMER_WAIT / 1000000000 as max_time_ms,
+          SUM_ROWS_EXAMINED as rows_examined
+        FROM performance_schema.events_statements_summary_by_digest
+        WHERE SCHEMA_NAME = ?
+        ORDER BY SUM_TIMER_WAIT DESC
+        LIMIT ?;
+      `, [this.config.database, limit]);
+
+      return rows.map((r) => ({
+        queryId: r.query_id || undefined,
+        query: r.query || '',
+        calls: parseInt(r.calls || '0'),
+        totalTime: parseFloat(r.total_time_ms || '0'),
+        avgTime: parseFloat(r.avg_time_ms || '0'),
+        minTime: parseFloat(r.min_time_ms || '0'),
+        maxTime: parseFloat(r.max_time_ms || '0'),
+        rows: parseInt(r.rows_examined || '0'),
+      }));
+    } catch {
+      // Performance schema not available
+      return [];
+    } finally {
+      conn.release();
+    }
+  }
+
+  public async getActiveSessions(options?: { limit?: number }): Promise<ActiveSessionDetails[]> {
+    this.ensureConnected();
+    const limit = options?.limit ?? 50;
+
+    const conn = await this.pool!.getConnection();
+    try {
+      const [rows] = await conn.execute<RowDataPacket[]>(`
+        SELECT
+          ID as pid,
+          USER as user,
+          DB as database_name,
+          HOST as client_addr,
+          COMMAND as state,
+          LEFT(COALESCE(INFO, ''), 500) as query,
+          TIME as duration_seconds
+        FROM information_schema.PROCESSLIST
+        WHERE DB = ? OR DB IS NULL
+        ORDER BY TIME DESC
+        LIMIT ?;
+      `, [this.config.database, limit]);
+
+      return rows.map((r) => {
+        const durationSeconds = parseInt(r.duration_seconds || '0');
+        return {
+          pid: r.pid,
+          user: r.user || 'unknown',
+          database: r.database_name || '',
+          clientAddr: r.client_addr?.split(':')[0] || undefined,
+          state: r.state || 'unknown',
+          query: r.query || '',
+          duration: this.formatDurationString(durationSeconds * 1000),
+          durationMs: durationSeconds * 1000,
+        };
+      });
+    } finally {
+      conn.release();
+    }
+  }
+
+  public async getTableStats(options?: { schema?: string }): Promise<TableStats[]> {
+    this.ensureConnected();
+    const schema = options?.schema ?? this.config.database;
+
+    const conn = await this.pool!.getConnection();
+    try {
+      const [rows] = await conn.execute<RowDataPacket[]>(`
+        SELECT
+          TABLE_SCHEMA as schema_name,
+          TABLE_NAME as table_name,
+          TABLE_ROWS as row_count,
+          DATA_LENGTH as table_size_bytes,
+          INDEX_LENGTH as index_size_bytes,
+          DATA_LENGTH + INDEX_LENGTH as total_size_bytes,
+          DATA_FREE as free_space_bytes
+        FROM information_schema.TABLES
+        WHERE TABLE_SCHEMA = ?
+        AND TABLE_TYPE = 'BASE TABLE'
+        ORDER BY DATA_LENGTH + INDEX_LENGTH DESC
+        LIMIT 100;
+      `, [schema]);
+
+      return rows.map((r) => {
+        const tableSizeBytes = parseInt(r.table_size_bytes || '0');
+        const indexSizeBytes = parseInt(r.index_size_bytes || '0');
+        const totalSizeBytes = parseInt(r.total_size_bytes || '0');
+        const freeSpaceBytes = parseInt(r.free_space_bytes || '0');
+
+        // Estimate bloat ratio from free space
+        const bloatRatio = totalSizeBytes > 0 ? (freeSpaceBytes / totalSizeBytes) * 100 : 0;
+
+        return {
+          schemaName: r.schema_name || schema || '',
+          tableName: r.table_name || '',
+          rowCount: parseInt(r.row_count || '0'),
+          tableSize: formatBytes(tableSizeBytes),
+          tableSizeBytes,
+          indexSize: formatBytes(indexSizeBytes),
+          totalSize: formatBytes(totalSizeBytes),
+          totalSizeBytes,
+          bloatRatio: Math.round(bloatRatio * 10) / 10,
+        };
+      });
+    } finally {
+      conn.release();
+    }
+  }
+
+  public async getIndexStats(options?: { schema?: string }): Promise<IndexStats[]> {
+    this.ensureConnected();
+    const schema = options?.schema ?? this.config.database;
+
+    const conn = await this.pool!.getConnection();
+    try {
+      const [rows] = await conn.execute<RowDataPacket[]>(`
+        SELECT
+          TABLE_SCHEMA as schema_name,
+          TABLE_NAME as table_name,
+          INDEX_NAME as index_name,
+          INDEX_TYPE as index_type,
+          GROUP_CONCAT(COLUMN_NAME ORDER BY SEQ_IN_INDEX) as columns,
+          NOT NON_UNIQUE as is_unique,
+          INDEX_NAME = 'PRIMARY' as is_primary,
+          CARDINALITY as cardinality
+        FROM information_schema.STATISTICS
+        WHERE TABLE_SCHEMA = ?
+        GROUP BY TABLE_SCHEMA, TABLE_NAME, INDEX_NAME, INDEX_TYPE, NON_UNIQUE
+        ORDER BY TABLE_NAME, INDEX_NAME
+        LIMIT 200;
+      `, [schema]);
+
+      // Get index sizes from INNODB_SYS_INDEXES if available
+      const indexSizes: Record<string, number> = {};
+      try {
+        const [sizeRows] = await conn.execute<RowDataPacket[]>(`
+          SELECT
+            CONCAT(t.NAME) as full_name,
+            SUM(s.INDEX_SIZE * @@innodb_page_size) as size_bytes
+          FROM information_schema.INNODB_INDEXES i
+          JOIN information_schema.INNODB_TABLES t ON i.TABLE_ID = t.TABLE_ID
+          JOIN information_schema.INNODB_TABLESPACES s ON t.SPACE = s.SPACE
+          WHERE t.NAME LIKE ?
+          GROUP BY t.NAME, i.NAME;
+        `, [`${schema}/%`]);
+
+        for (const row of sizeRows) {
+          indexSizes[row.full_name] = parseInt(row.size_bytes || '0');
+        }
+      } catch {
+        // INNODB_SYS tables not available
+      }
+
+      return rows.map((r) => {
+        const indexKey = `${r.schema_name}/${r.table_name}`;
+        const indexSizeBytes = indexSizes[indexKey] || 0;
+
+        return {
+          schemaName: r.schema_name || schema || '',
+          tableName: r.table_name || '',
+          indexName: r.index_name || '',
+          indexType: r.index_type || 'BTREE',
+          columns: r.columns?.split(',') || [],
+          isUnique: Boolean(r.is_unique),
+          isPrimary: Boolean(r.is_primary),
+          indexSize: formatBytes(indexSizeBytes),
+          indexSizeBytes,
+          scans: parseInt(r.cardinality || '0'),
+        };
+      });
+    } finally {
+      conn.release();
+    }
+  }
+
+  public async getStorageStats(): Promise<StorageStats[]> {
+    this.ensureConnected();
+
+    const conn = await this.pool!.getConnection();
+    try {
+      const stats: StorageStats[] = [];
+
+      // Get database size
+      const [dbRows] = await conn.execute<RowDataPacket[]>(`
+        SELECT
+          TABLE_SCHEMA as name,
+          SUM(DATA_LENGTH + INDEX_LENGTH) as size_bytes
+        FROM information_schema.TABLES
+        WHERE TABLE_SCHEMA = ?
+        GROUP BY TABLE_SCHEMA;
+      `, [this.config.database]);
+
+      if (dbRows.length > 0) {
+        const sizeBytes = parseInt(dbRows[0].size_bytes || '0');
+        stats.push({
+          name: 'Data',
+          location: this.config.database || 'default',
+          size: formatBytes(sizeBytes),
+          sizeBytes,
+        });
+      }
+
+      // Get binary log size if available
+      try {
+        const [binlogRows] = await conn.execute<RowDataPacket[]>('SHOW BINARY LOGS');
+        const binlogSize = binlogRows.reduce((sum, r) => sum + parseInt(r.File_size || '0'), 0);
+        if (binlogSize > 0) {
+          stats.push({
+            name: 'Binary Logs',
+            size: formatBytes(binlogSize),
+            sizeBytes: binlogSize,
+          });
+        }
+      } catch {
+        // Binary logging not enabled
+      }
+
+      // Get InnoDB data file size
+      try {
+        const [innodbRows] = await conn.execute<RowDataPacket[]>(
+          "SHOW VARIABLES LIKE 'innodb_data_file_path'"
+        );
+        if (innodbRows.length > 0) {
+          stats.push({
+            name: 'InnoDB',
+            location: innodbRows[0].Value || 'ibdata1',
+            size: 'N/A',
+            sizeBytes: 0,
+          });
+        }
+      } catch {
+        // Could not get InnoDB info
+      }
+
+      return stats;
+    } finally {
+      conn.release();
+    }
+  }
+
+  private formatUptimeString(seconds: number): string {
+    const days = Math.floor(seconds / 86400);
+    const hours = Math.floor((seconds % 86400) / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+
+    if (days > 0) return `${days}d ${hours}h`;
+    if (hours > 0) return `${hours}h ${minutes}m`;
+    return `${minutes}m`;
+  }
+
+  private formatDurationString(ms: number): string {
+    if (ms < 1000) return `${ms}ms`;
+    if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
+    if (ms < 3600000) return `${Math.floor(ms / 60000)}m ${Math.floor((ms % 60000) / 1000)}s`;
+    return `${Math.floor(ms / 3600000)}h ${Math.floor((ms % 3600000) / 60000)}m`;
   }
 }

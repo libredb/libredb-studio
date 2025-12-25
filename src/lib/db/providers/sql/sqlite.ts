@@ -15,6 +15,13 @@ import {
   type MaintenanceType,
   type MaintenanceResult,
   type ProviderOptions,
+  type DatabaseOverview,
+  type PerformanceMetrics,
+  type SlowQueryStats,
+  type ActiveSessionDetails,
+  type TableStats,
+  type IndexStats,
+  type StorageStats,
 } from '../../types';
 import {
   DatabaseConfigError,
@@ -417,5 +424,272 @@ export class SQLiteProvider extends SQLBaseProvider {
       executionTime,
       message: result.message,
     };
+  }
+
+  // ============================================================================
+  // Monitoring Operations
+  // ============================================================================
+
+  public async getOverview(): Promise<DatabaseOverview> {
+    this.ensureConnected();
+
+    // Get SQLite version
+    const versionStmt = this.db!.prepare('SELECT sqlite_version() as version');
+    const versionResult = versionStmt.get() as { version: string };
+    const version = `SQLite ${versionResult?.version || 'Unknown'}`;
+
+    // Get database size
+    const dbPath = this.getDatabasePath();
+    let databaseSizeBytes = 0;
+
+    if (dbPath !== ':memory:') {
+      try {
+        const stats = fs.statSync(dbPath);
+        databaseSizeBytes = stats.size;
+      } catch {
+        // File might not exist yet
+      }
+    } else {
+      try {
+        const sizeStmt = this.db!.prepare(`
+          SELECT (page_count * page_size) as size
+          FROM pragma_page_count(), pragma_page_size()
+        `);
+        const result = sizeStmt.get() as { size: number };
+        databaseSizeBytes = result?.size || 0;
+      } catch {
+        // Ignore
+      }
+    }
+
+    // Get table count
+    const tableCountStmt = this.db!.prepare(`
+      SELECT COUNT(*) as count FROM sqlite_master
+      WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
+    `);
+    const tableCountResult = tableCountStmt.get() as { count: number };
+    const tableCount = tableCountResult?.count || 0;
+
+    // Get index count
+    const indexCountStmt = this.db!.prepare(`
+      SELECT COUNT(*) as count FROM sqlite_master
+      WHERE type = 'index' AND name NOT LIKE 'sqlite_%'
+    `);
+    const indexCountResult = indexCountStmt.get() as { count: number };
+    const indexCount = indexCountResult?.count || 0;
+
+    return {
+      version,
+      uptime: 'N/A',
+      activeConnections: 1,
+      maxConnections: 1,
+      databaseSize: formatBytes(databaseSizeBytes),
+      databaseSizeBytes,
+      tableCount,
+      indexCount,
+    };
+  }
+
+  public async getPerformanceMetrics(): Promise<PerformanceMetrics> {
+    this.ensureConnected();
+
+    let cacheHitRatio = 99;
+
+    try {
+      // Get cache stats
+      const cacheStmt = this.db!.prepare('PRAGMA cache_size');
+      const cacheResult = cacheStmt.get() as { cache_size: number };
+
+      // SQLite doesn't provide detailed cache hit stats, estimate high ratio
+      if (cacheResult?.cache_size) {
+        cacheHitRatio = 95; // Reasonable estimate for in-memory cache
+      }
+    } catch {
+      // Ignore
+    }
+
+    return {
+      cacheHitRatio,
+      // SQLite doesn't provide these metrics
+      queriesPerSecond: undefined,
+      bufferPoolUsage: undefined,
+      deadlocks: 0,
+    };
+  }
+
+  public async getSlowQueries(): Promise<SlowQueryStats[]> {
+    // SQLite doesn't have built-in query statistics
+    return [];
+  }
+
+  public async getActiveSessions(): Promise<ActiveSessionDetails[]> {
+    this.ensureConnected();
+
+    const dbPath = this.getDatabasePath();
+
+    // SQLite is single-connection, return current session
+    return [{
+      pid: process.pid,
+      user: 'sqlite',
+      database: path.basename(dbPath),
+      state: 'active',
+      query: '',
+      duration: 'N/A',
+      durationMs: 0,
+    }];
+  }
+
+  public async getTableStats(): Promise<TableStats[]> {
+    this.ensureConnected();
+
+    const tablesStmt = this.db!.prepare(`
+      SELECT name FROM sqlite_master
+      WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
+      ORDER BY name
+    `);
+    const tables = tablesStmt.all() as { name: string }[];
+
+    const stats: TableStats[] = [];
+
+    for (const { name: tableName } of tables) {
+      // Get row count
+      const countStmt = this.db!.prepare(`SELECT COUNT(*) as count FROM "${tableName}"`);
+      const countResult = countStmt.get() as { count: number };
+      const rowCount = countResult?.count || 0;
+
+      // Estimate table size (SQLite doesn't provide per-table sizes)
+      // Use page count approximation
+      let tableSizeBytes = 0;
+      try {
+        const pageStmt = this.db!.prepare('PRAGMA page_size');
+        const pageResult = pageStmt.get() as { page_size: number };
+        const pageSize = pageResult?.page_size || 4096;
+
+        // Rough estimate: rows * average row size
+        tableSizeBytes = rowCount * 100; // Assume 100 bytes average per row
+      } catch {
+        // Ignore
+      }
+
+      stats.push({
+        schemaName: 'main',
+        tableName,
+        rowCount,
+        tableSize: formatBytes(tableSizeBytes),
+        tableSizeBytes,
+        totalSize: formatBytes(tableSizeBytes),
+        totalSizeBytes: tableSizeBytes,
+      });
+    }
+
+    return stats;
+  }
+
+  public async getIndexStats(): Promise<IndexStats[]> {
+    this.ensureConnected();
+
+    const indexesStmt = this.db!.prepare(`
+      SELECT name, tbl_name FROM sqlite_master
+      WHERE type = 'index' AND name NOT LIKE 'sqlite_%'
+      ORDER BY tbl_name, name
+    `);
+    const indexes = indexesStmt.all() as { name: string; tbl_name: string }[];
+
+    const stats: IndexStats[] = [];
+
+    for (const { name: indexName, tbl_name: tableName } of indexes) {
+      // Get index info
+      const indexInfoStmt = this.db!.prepare(`PRAGMA index_info("${indexName}")`);
+      const indexCols = indexInfoStmt.all() as { seqno: number; cid: number; name: string }[];
+
+      // Get index uniqueness
+      const indexListStmt = this.db!.prepare(`PRAGMA index_list("${tableName}")`);
+      const indexList = indexListStmt.all() as { name: string; unique: number }[];
+      const indexMeta = indexList.find((i) => i.name === indexName);
+
+      stats.push({
+        schemaName: 'main',
+        tableName,
+        indexName,
+        columns: indexCols.map((c) => c.name),
+        isUnique: indexMeta?.unique === 1,
+        isPrimary: false, // SQLite auto-creates rowid, explicit PKs are shown differently
+        indexSize: 'N/A',
+        indexSizeBytes: 0,
+        scans: 0, // SQLite doesn't track index usage
+      });
+    }
+
+    return stats;
+  }
+
+  public async getStorageStats(): Promise<StorageStats[]> {
+    this.ensureConnected();
+
+    const stats: StorageStats[] = [];
+    const dbPath = this.getDatabasePath();
+
+    // Main database file
+    let mainSizeBytes = 0;
+    if (dbPath !== ':memory:') {
+      try {
+        const fileStats = fs.statSync(dbPath);
+        mainSizeBytes = fileStats.size;
+      } catch {
+        // File might not exist
+      }
+    } else {
+      try {
+        const sizeStmt = this.db!.prepare(`
+          SELECT (page_count * page_size) as size
+          FROM pragma_page_count(), pragma_page_size()
+        `);
+        const result = sizeStmt.get() as { size: number };
+        mainSizeBytes = result?.size || 0;
+      } catch {
+        // Ignore
+      }
+    }
+
+    stats.push({
+      name: 'Main Database',
+      location: dbPath === ':memory:' ? ':memory:' : path.basename(dbPath),
+      size: formatBytes(mainSizeBytes),
+      sizeBytes: mainSizeBytes,
+    });
+
+    // WAL file (if exists)
+    if (dbPath !== ':memory:') {
+      const walPath = `${dbPath}-wal`;
+      try {
+        const walStats = fs.statSync(walPath);
+        stats.push({
+          name: 'WAL',
+          location: path.basename(walPath),
+          size: formatBytes(walStats.size),
+          sizeBytes: walStats.size,
+          walSize: formatBytes(walStats.size),
+          walSizeBytes: walStats.size,
+        });
+      } catch {
+        // WAL might not exist
+      }
+
+      // SHM file (if exists)
+      const shmPath = `${dbPath}-shm`;
+      try {
+        const shmStats = fs.statSync(shmPath);
+        stats.push({
+          name: 'Shared Memory',
+          location: path.basename(shmPath),
+          size: formatBytes(shmStats.size),
+          sizeBytes: shmStats.size,
+        });
+      } catch {
+        // SHM might not exist
+      }
+    }
+
+    return stats;
   }
 }

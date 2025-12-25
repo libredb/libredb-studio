@@ -15,6 +15,15 @@ import {
   type ProviderOptions,
   type PoolConfig,
   type ConnectionState,
+  type MonitoringData,
+  type MonitoringOptions,
+  type DatabaseOverview,
+  type PerformanceMetrics,
+  type SlowQueryStats,
+  type ActiveSessionDetails,
+  type TableStats,
+  type IndexStats,
+  type StorageStats,
   DEFAULT_POOL_CONFIG,
   DEFAULT_QUERY_TIMEOUT,
 } from './types';
@@ -60,6 +69,15 @@ export abstract class BaseDatabaseProvider implements DatabaseProvider {
   public abstract getHealth(): Promise<HealthInfo>;
   public abstract runMaintenance(type: MaintenanceType, target?: string): Promise<MaintenanceResult>;
 
+  // Monitoring methods (must be implemented by subclasses)
+  public abstract getOverview(): Promise<DatabaseOverview>;
+  public abstract getPerformanceMetrics(): Promise<PerformanceMetrics>;
+  public abstract getSlowQueries(options?: { limit?: number }): Promise<SlowQueryStats[]>;
+  public abstract getActiveSessions(options?: { limit?: number }): Promise<ActiveSessionDetails[]>;
+  public abstract getTableStats(options?: { schema?: string }): Promise<TableStats[]>;
+  public abstract getIndexStats(options?: { schema?: string }): Promise<IndexStats[]>;
+  public abstract getStorageStats(): Promise<StorageStats[]>;
+
   // ============================================================================
   // Common Implementations
   // ============================================================================
@@ -71,6 +89,69 @@ export abstract class BaseDatabaseProvider implements DatabaseProvider {
   public async getTables(): Promise<string[]> {
     const schema = await this.getSchema();
     return schema.map((table) => table.name);
+  }
+
+  /**
+   * Get comprehensive monitoring data
+   * This default implementation calls all monitoring methods in parallel
+   * Subclasses can override for optimized implementations
+   */
+  public async getMonitoringData(options: MonitoringOptions = {}): Promise<MonitoringData> {
+    const {
+      includeTables = true,
+      includeIndexes = true,
+      includeStorage = true,
+      slowQueryLimit = 10,
+      sessionLimit = 50,
+      schemaFilter, // undefined = all user schemas
+    } = options;
+
+    // Fetch core data in parallel
+    const [overview, performance, slowQueries, activeSessions] = await Promise.all([
+      this.getOverview(),
+      this.getPerformanceMetrics(),
+      this.getSlowQueries({ limit: slowQueryLimit }),
+      this.getActiveSessions({ limit: sessionLimit }),
+    ]);
+
+    const result: MonitoringData = {
+      timestamp: new Date(),
+      overview,
+      performance,
+      slowQueries,
+      activeSessions,
+    };
+
+    // Fetch optional data in parallel
+    const optionalPromises: Promise<void>[] = [];
+
+    if (includeTables) {
+      optionalPromises.push(
+        this.getTableStats({ schema: schemaFilter }).then((tables) => {
+          result.tables = tables;
+        })
+      );
+    }
+
+    if (includeIndexes) {
+      optionalPromises.push(
+        this.getIndexStats({ schema: schemaFilter }).then((indexes) => {
+          result.indexes = indexes;
+        })
+      );
+    }
+
+    if (includeStorage) {
+      optionalPromises.push(
+        this.getStorageStats().then((storage) => {
+          result.storage = storage;
+        })
+      );
+    }
+
+    await Promise.all(optionalPromises);
+
+    return result;
   }
 
   public validate(): void {

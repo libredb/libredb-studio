@@ -1,0 +1,68 @@
+# PostgreSQL Docker Compose for LibreDB Studio Development/Testing
+#
+# Usage:
+#   docker compose -f docker/postgres.yml up -d
+#   docker compose -f docker/postgres.yml down
+#   docker compose -f docker/postgres.yml down -v  # Remove volumes too
+#
+# Connection:
+#   Host: localhost
+#   Port: 5432
+#   Database: postgres (or libredb_dev)
+#   User: postgres
+#   Password: postgres
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: libredb-postgres
+    restart: unless-stopped
+
+    # Enable pg_stat_statements and other monitoring extensions
+    command: >
+      postgres
+      -c shared_preload_libraries=pg_stat_statements
+      -c pg_stat_statements.track=all
+      -c pg_stat_statements.max=10000
+      -c track_activities=on
+      -c track_counts=on
+      -c track_io_timing=on
+      -c track_functions=all
+      -c log_statement=none
+      -c log_duration=off
+      -c log_min_duration_statement=1000
+
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+      # Create additional database for development
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+
+    ports:
+      - "5432:5432"
+
+    volumes:
+      # Persistent data volume
+      - libredb_postgres_data:/var/lib/postgresql/data
+      # Init scripts (executed in alphabetical order on first run)
+      - ./postgres-init:/docker-entrypoint-initdb.d:ro
+
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+    # Resource limits (adjust as needed)
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 256M
+
+volumes:
+  libredb_postgres_data:
+    name: libredb_postgres_data

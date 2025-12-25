@@ -16,6 +16,13 @@ import {
   type ProviderOptions,
   type SlowQuery,
   type ActiveSession,
+  type DatabaseOverview,
+  type PerformanceMetrics,
+  type SlowQueryStats,
+  type ActiveSessionDetails,
+  type TableStats,
+  type IndexStats,
+  type StorageStats,
 } from '../../types';
 import {
   DatabaseConfigError,
@@ -619,5 +626,306 @@ export class MongoDBProvider extends BaseDatabaseProvider {
       executionTime,
       message: result.message,
     };
+  }
+
+  // ============================================================================
+  // Monitoring Operations
+  // ============================================================================
+
+  public async getOverview(): Promise<DatabaseOverview> {
+    this.ensureConnected();
+
+    try {
+      const serverStatus = await this.db!.admin().serverStatus();
+      const dbStats = await this.db!.stats();
+      const serverInfo = await this.db!.admin().command({ buildInfo: 1 });
+
+      // Calculate uptime
+      const uptimeSeconds = serverStatus.uptime || 0;
+      const uptime = this.formatUptimeString(uptimeSeconds);
+
+      // Get collection count
+      const collections = await this.db!.listCollections().toArray();
+
+      // Get index count
+      let indexCount = 0;
+      for (const coll of collections) {
+        try {
+          const indexes = await this.db!.collection(coll.name).indexes();
+          indexCount += indexes.length;
+        } catch {
+          // Skip if can't get indexes
+        }
+      }
+
+      return {
+        version: `MongoDB ${serverInfo.version || 'Unknown'}`,
+        uptime,
+        startTime: new Date(Date.now() - uptimeSeconds * 1000),
+        activeConnections: serverStatus.connections?.current || 0,
+        maxConnections: serverStatus.connections?.available
+          ? serverStatus.connections.current + serverStatus.connections.available
+          : 100,
+        databaseSize: formatBytes(dbStats.dataSize || 0),
+        databaseSizeBytes: dbStats.dataSize || 0,
+        tableCount: collections.length,
+        indexCount,
+      };
+    } catch (error) {
+      this.logError('getOverview', error);
+      return {
+        version: 'MongoDB Unknown',
+        uptime: 'N/A',
+        activeConnections: 0,
+        maxConnections: 100,
+        databaseSize: 'N/A',
+        databaseSizeBytes: 0,
+        tableCount: 0,
+        indexCount: 0,
+      };
+    }
+  }
+
+  public async getPerformanceMetrics(): Promise<PerformanceMetrics> {
+    this.ensureConnected();
+
+    try {
+      const serverStatus = await this.db!.admin().serverStatus();
+
+      // Calculate cache hit ratio from WiredTiger
+      let cacheHitRatio = 99;
+      if (serverStatus.wiredTiger?.cache) {
+        const pagesRead = serverStatus.wiredTiger.cache['pages read into cache'] || 0;
+        const pagesRequested = serverStatus.wiredTiger.cache['pages requested from the cache'] || 1;
+        cacheHitRatio = Math.max(0, Math.min(100, (1 - pagesRead / Math.max(1, pagesRequested)) * 100));
+      }
+
+      // Calculate queries per second from opcounters
+      const opcounters = serverStatus.opcounters || {};
+      const uptimeSeconds = serverStatus.uptime || 1;
+      const totalOps = (opcounters.query || 0) + (opcounters.insert || 0) +
+                       (opcounters.update || 0) + (opcounters.delete || 0);
+      const queriesPerSecond = totalOps / uptimeSeconds;
+
+      // Get buffer pool usage (WiredTiger cache usage)
+      let bufferPoolUsage = 0;
+      if (serverStatus.wiredTiger?.cache) {
+        const bytesInCache = serverStatus.wiredTiger.cache['bytes currently in the cache'] || 0;
+        const maxCacheBytes = serverStatus.wiredTiger.cache['maximum bytes configured'] || 1;
+        bufferPoolUsage = (bytesInCache / maxCacheBytes) * 100;
+      }
+
+      return {
+        cacheHitRatio: Math.round(cacheHitRatio * 100) / 100,
+        queriesPerSecond: Math.round(queriesPerSecond * 100) / 100,
+        bufferPoolUsage: Math.round(bufferPoolUsage * 100) / 100,
+        deadlocks: 0, // MongoDB doesn't have traditional deadlocks
+      };
+    } catch (error) {
+      this.logError('getPerformanceMetrics', error);
+      return {
+        cacheHitRatio: 99,
+        queriesPerSecond: 0,
+        bufferPoolUsage: 0,
+        deadlocks: 0,
+      };
+    }
+  }
+
+  public async getSlowQueries(options?: { limit?: number }): Promise<SlowQueryStats[]> {
+    this.ensureConnected();
+    const limit = options?.limit ?? 10;
+
+    try {
+      // Try to get slow queries from system.profile
+      const profilerDocs = await this.db!.collection('system.profile')
+        .find({})
+        .sort({ millis: -1 })
+        .limit(limit)
+        .toArray();
+
+      return profilerDocs.map((doc) => ({
+        query: JSON.stringify(doc.command || doc.query || {}).substring(0, 500),
+        calls: 1,
+        totalTime: doc.millis || 0,
+        avgTime: doc.millis || 0,
+        rows: doc.nreturned || 0,
+      }));
+    } catch {
+      // Profiler not enabled or system.profile doesn't exist
+      return [];
+    }
+  }
+
+  public async getActiveSessions(options?: { limit?: number }): Promise<ActiveSessionDetails[]> {
+    this.ensureConnected();
+    const limit = options?.limit ?? 50;
+
+    try {
+      const currentOps = await this.db!.admin().command({ currentOp: 1, $all: true });
+
+      return (currentOps.inprog || [])
+        .slice(0, limit)
+        .map((op: Document) => {
+          const microseconds = op.microsecs_running || 0;
+          const durationMs = microseconds / 1000;
+
+          return {
+            pid: op.opid || 'N/A',
+            user: op.client || 'N/A',
+            database: op.ns?.split('.')[0] || this.getDatabaseName(),
+            applicationName: op.appName || undefined,
+            clientAddr: op.client?.split(':')[0] || undefined,
+            state: op.active ? 'active' : 'idle',
+            query: JSON.stringify(op.command || {}).substring(0, 500),
+            duration: this.formatDurationString(durationMs),
+            durationMs,
+            waitEventType: op.waitingForLock ? 'Lock' : undefined,
+            waitEvent: op.lockStats ? 'Acquiring lock' : undefined,
+          };
+        });
+    } catch (error) {
+      this.logError('getActiveSessions', error);
+      return [];
+    }
+  }
+
+  public async getTableStats(): Promise<TableStats[]> {
+    this.ensureConnected();
+
+    const collections = await this.db!.listCollections().toArray();
+    const stats: TableStats[] = [];
+
+    for (const collInfo of collections) {
+      const collName = collInfo.name;
+
+      try {
+        const collStats = await this.db!.command({ collStats: collName });
+
+        stats.push({
+          schemaName: this.getDatabaseName(),
+          tableName: collName,
+          rowCount: collStats.count || 0,
+          tableSize: formatBytes(collStats.size || 0),
+          tableSizeBytes: collStats.size || 0,
+          indexSize: formatBytes(collStats.totalIndexSize || 0),
+          totalSize: formatBytes((collStats.size || 0) + (collStats.totalIndexSize || 0)),
+          totalSizeBytes: (collStats.size || 0) + (collStats.totalIndexSize || 0),
+        });
+      } catch {
+        // Skip if can't get stats for this collection
+      }
+    }
+
+    // Sort by total size descending
+    return stats.sort((a, b) => b.totalSizeBytes - a.totalSizeBytes);
+  }
+
+  public async getIndexStats(): Promise<IndexStats[]> {
+    this.ensureConnected();
+
+    const collections = await this.db!.listCollections().toArray();
+    const stats: IndexStats[] = [];
+
+    for (const collInfo of collections) {
+      const collName = collInfo.name;
+      const collection = this.db!.collection(collName);
+
+      try {
+        // Get index stats using aggregation
+        const indexStatsDocs = await collection.aggregate([{ $indexStats: {} }]).toArray();
+
+        // Get index definitions
+        const indexes = await collection.indexes();
+
+        for (const idx of indexes) {
+          const indexStats = indexStatsDocs.find((s) => s.name === idx.name);
+
+          stats.push({
+            schemaName: this.getDatabaseName(),
+            tableName: collName,
+            indexName: idx.name || 'unknown',
+            indexType: idx.key ? Object.values(idx.key).includes('text') ? 'text' : 'btree' : 'btree',
+            columns: Object.keys(idx.key || {}),
+            isUnique: idx.unique || false,
+            isPrimary: idx.name === '_id_',
+            indexSize: 'N/A',
+            indexSizeBytes: 0,
+            scans: indexStats?.accesses?.ops || 0,
+          });
+        }
+      } catch {
+        // Skip if can't get index stats for this collection
+      }
+    }
+
+    return stats;
+  }
+
+  public async getStorageStats(): Promise<StorageStats[]> {
+    this.ensureConnected();
+
+    const stats: StorageStats[] = [];
+
+    try {
+      const dbStats = await this.db!.stats();
+      const serverStatus = await this.db!.admin().serverStatus();
+
+      // Database data size
+      stats.push({
+        name: 'Data',
+        location: this.getDatabaseName(),
+        size: formatBytes(dbStats.dataSize || 0),
+        sizeBytes: dbStats.dataSize || 0,
+      });
+
+      // Index size
+      stats.push({
+        name: 'Indexes',
+        size: formatBytes(dbStats.indexSize || 0),
+        sizeBytes: dbStats.indexSize || 0,
+      });
+
+      // Storage size (includes pre-allocated space)
+      stats.push({
+        name: 'Storage',
+        size: formatBytes(dbStats.storageSize || 0),
+        sizeBytes: dbStats.storageSize || 0,
+      });
+
+      // WiredTiger cache if available
+      if (serverStatus.wiredTiger?.cache) {
+        const bytesInCache = serverStatus.wiredTiger.cache['bytes currently in the cache'] || 0;
+        const maxCache = serverStatus.wiredTiger.cache['maximum bytes configured'] || 0;
+
+        stats.push({
+          name: 'WiredTiger Cache',
+          size: formatBytes(bytesInCache),
+          sizeBytes: bytesInCache,
+          usagePercent: maxCache > 0 ? (bytesInCache / maxCache) * 100 : 0,
+        });
+      }
+    } catch (error) {
+      this.logError('getStorageStats', error);
+    }
+
+    return stats;
+  }
+
+  private formatUptimeString(seconds: number): string {
+    const days = Math.floor(seconds / 86400);
+    const hours = Math.floor((seconds % 86400) / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+
+    if (days > 0) return `${days}d ${hours}h`;
+    if (hours > 0) return `${hours}h ${minutes}m`;
+    return `${minutes}m`;
+  }
+
+  private formatDurationString(ms: number): string {
+    if (ms < 1000) return `${Math.round(ms)}ms`;
+    if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
+    if (ms < 3600000) return `${Math.floor(ms / 60000)}m ${Math.floor((ms % 60000) / 1000)}s`;
+    return `${Math.floor(ms / 3600000)}h ${Math.floor((ms % 3600000) / 60000)}m`;
   }
 }

@@ -30,6 +30,7 @@ import {
   Database,
   Download,
   FileJson,
+  Gauge,
   Hash,
   LayoutGrid,
   LogOut,
@@ -456,6 +457,14 @@ export default function Dashboard() {
               <Button
                 variant="ghost"
                 size="sm"
+                className="h-8 w-8 p-0 text-zinc-500 hover:text-purple-400"
+                onClick={() => router.push('/monitoring')}
+              >
+                <Gauge className="w-4 h-4" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
                 className={cn(
                   "h-8 w-8 p-0",
                   activeView === 'health' && "bg-emerald-600/20 text-emerald-400"
@@ -596,6 +605,15 @@ export default function Dashboard() {
                 <Activity className="w-3 h-3" /> Health
               </Button>
             </div>
+
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 px-3 text-[10px] font-bold uppercase tracking-widest gap-2 text-zinc-500 hover:text-purple-400 hover:bg-purple-500/10"
+              onClick={() => router.push('/monitoring')}
+            >
+              <Gauge className="w-3 h-3" /> Monitoring
+            </Button>
 
             {user && (
               <DropdownMenu>
