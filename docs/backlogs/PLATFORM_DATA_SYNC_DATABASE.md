@@ -1,14 +1,14 @@
-# LibreDB Studio - Platform Mimarisi
+# LibreDB Studio - Platform Architecture
 
-> **Durum:** Backlog  
-> **Tarih:** 2025-12-25  
-> **Öncelik:** Yüksek
+> **Status:** Backlog  
+> **Date:** 2025-12-25  
+> **Priority:** High
 
 ---
 
-## 1. Çalışma Modları
+## 1. Operating Modes
 
-Sistem **iki modda** çalışabilir. Her iki durumda da hatasız çalışır:
+The system can operate in **two modes**. It works flawlessly in both scenarios:
 
 ### 1.1 Browser-Only Mode (Default)
 
@@ -17,108 +17,108 @@ Sistem **iki modda** çalışabilir. Her iki durumda da hatasız çalışır:
 │  PGlite (WASM PostgreSQL)               │
 │         │                               │
 │         ▼                               │
-│  IndexedDB (tarayıcı)                   │
+│  IndexedDB (browser)                    │
 │                                         │
-│  ✅ External DB gerekmez                │
-│  ✅ Zero-config, hemen çalışır          │
-│  ✅ Tek tarayıcıda kullanım             │
+│  ✅ No external DB required             │
+│  ✅ Zero-config, works immediately      │
+│  ✅ Single browser usage                │
 └─────────────────────────────────────────┘
 ```
 
-- Platform verileri **sadece tarayıcıda** kalır
-- External database **gerekmez**
-- Kurulum veya konfigürasyon **gerekmez**
-- Tarayıcı temizlenirse veriler **kaybolur**
+- Platform data stays **only in the browser**
+- No external database **required**
+- No installation or configuration **needed**
+- Data is **lost** if browser is cleared
 
-### 1.2 Database Sync Mode (Opsiyonel)
+### 1.2 Database Sync Mode (Optional)
 
 ```
 ┌─────────────────────────────────────────┐
 │  PGlite (WASM PostgreSQL)               │
 │         │                               │
 │         ▼                               │
-│  IndexedDB (tarayıcı)                   │
+│  IndexedDB (browser)                    │
 │         │                               │
 │         ▼ (sync enabled)                │
 │  ElectricSQL ──▶ External PostgreSQL    │
 │                                         │
-│  ✅ Veriler hem tarayıcıda hem DB'de    │
-│  ✅ Birden fazla cihazda erişim         │
-│  ✅ Tarayıcı temizlense bile geri gelir │
+│  ✅ Data in both browser and DB         │
+│  ✅ Access from multiple devices        │
+│  ✅ Recoverable even if browser cleared │
 └─────────────────────────────────────────┘
 ```
 
-- Platform verileri **önce tarayıcıda**, sonra **external DB'ye sync**
-- Kullanıcı isterse açar, **zorunlu değil**
-- Offline çalışmaya **devam eder**
-- Veriler **kalıcı** ve **paylaşılabilir**
+- Platform data is stored **first in browser**, then **synced to external DB**
+- User enables it if desired, **not mandatory**
+- **Continues to work** offline
+- Data is **persistent** and **shareable**
 
-### 1.3 Mod Seçimi
+### 1.3 Mode Selection
 
-| Parametre | Değer | Davranış |
+| Parameter | Value | Behavior |
 |-----------|-------|----------|
-| `SYNC_MODE` veya UI ayarı | `browser` (default) | Sadece tarayıcı |
-| `SYNC_MODE` veya UI ayarı | `database` | Tarayıcı + sync |
+| `SYNC_MODE` or UI setting | `browser` (default) | Browser only |
+| `SYNC_MODE` or UI setting | `database` | Browser + sync |
 
 ```typescript
-// Örnek kullanım
+// Example usage
 if (syncConfig.enabled && syncConfig.databaseUrl) {
-  await startSync(); // External DB'ye sync başlat
+  await startSync(); // Start sync to external DB
 }
-// else: Sadece PGlite, hata yok
+// else: PGlite only, no errors
 ```
 
 ---
 
-## 2. İhtiyaç Analizi
+## 2. Requirements Analysis
 
-### 2.1 Temel İhtiyaçlar
+### 2.1 Core Requirements
 
-| # | İhtiyaç | Açıklama |
-|---|---------|----------|
-| 1 | **User/Role Management** | Kullanıcı oluşturma, rol atama (admin, user, viewer) |
-| 2 | **Query Logging** | Kullanıcı bazlı sorgu geçmişi (query, row count, execution time, status) |
-| 3 | **Saved Queries** | Kullanıcıların sorgularını kaydetmesi, düzenlemesi |
-| 4 | **Account Management** | Profil, tercihler, hesap ayarları |
-| 5 | **Platform Yapısı** | İleride ortak çalışma alanı, paylaşım özellikleri |
+| # | Requirement | Description |
+|---|-------------|-------------|
+| 1 | **User/Role Management** | Create users, assign roles (admin, user, viewer) |
+| 2 | **Query Logging** | User-based query history (query, row count, execution time, status) |
+| 3 | **Saved Queries** | Allow users to save and edit their queries |
+| 4 | **Account Management** | Profile, preferences, account settings |
+| 5 | **Platform Structure** | Future collaborative workspace and sharing features |
 
-### 2.2 Teknik Gereksinimler
+### 2.2 Technical Requirements
 
-| Gereksinim | Açıklama |
-|------------|----------|
-| Zero-config başlangıç | Kurulum gerektirmeden çalışmalı |
-| Veritabanı ihtiyacı | User, query logs, saved queries için kalıcı depolama |
-| Opsiyonel kalıcılık | İsteyen kullanıcı verilerini external DB'ye sync edebilmeli |
-| Minimal karmaşıklık | Mevcut mimariyi fazla değiştirmemeli |
+| Requirement | Description |
+|-------------|-------------|
+| Zero-config startup | Must work without any installation |
+| Database necessity | Persistent storage needed for users, query logs, saved queries |
+| Optional persistence | Users who want can sync their data to external DB |
+| Minimal complexity | Should not significantly change existing architecture |
 
-### 2.3 Mevcut Sorunlar
+### 2.3 Current Problems
 
-- LocalStorage 5-10MB limiti
-- Kullanıcı bazlı ayrım yok
-- Cihazlar arası veri paylaşımı yok
-- Tarayıcı temizlenince veri kaybı
+- LocalStorage 5-10MB limit
+- No user-based separation
+- No cross-device data sharing
+- Data loss when browser is cleared
 
 ---
 
-## 3. Çözüm: PGlite + ElectricSQL
+## 3. Solution: PGlite + ElectricSQL
 
-### 3.1 Vizyon
+### 3.1 Vision
 
 ```
-Default:   Tarayıcıda PGlite (WASM PostgreSQL) → IndexedDB'de kalıcı
-Optional:  Kullanıcı isterse → External PostgreSQL'e sync (ElectricSQL)
+Default:   PGlite in browser (WASM PostgreSQL) → Persistent in IndexedDB
+Optional:  If user wants → Sync to external PostgreSQL (ElectricSQL)
 ```
 
-### 3.2 Neden Bu Çözüm?
+### 3.2 Why This Solution?
 
-| Alternatif | Sorun |
-|------------|-------|
-| LocalStorage | 5-10MB limit, SQL yok |
-| IndexedDB (raw) | NoSQL, karmaşık query'ler zor |
-| External DB zorunlu | Zero-config olmaz, kurulum gerekir |
-| **PGlite** | ✅ Gerçek PostgreSQL, 100GB+ limit, zero-config |
+| Alternative | Problem |
+|-------------|---------|
+| LocalStorage | 5-10MB limit, no SQL |
+| IndexedDB (raw) | NoSQL, complex queries are difficult |
+| Mandatory External DB | No zero-config, requires installation |
+| **PGlite** | ✅ Real PostgreSQL, 100GB+ limit, zero-config |
 
-### 3.3 Mimari
+### 3.3 Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -127,7 +127,7 @@ Optional:  Kullanıcı isterse → External PostgreSQL'e sync (ElectricSQL)
 │   React Components                                           │
 │         │                                                    │
 │         ▼                                                    │
-│   storage.ts (API değişmez)                                  │
+│   storage.ts (API unchanged)                                 │
 │         │                                                    │
 │         ▼                                                    │
 │   PGlite (WASM PostgreSQL)                                   │
@@ -135,19 +135,19 @@ Optional:  Kullanıcı isterse → External PostgreSQL'e sync (ElectricSQL)
 │         ▼                                                    │
 │   IndexedDB (100GB+ limit)                                   │
 │         │                                                    │
-│         ▼ (opsiyonel)                                        │
+│         ▼ (optional)                                         │
 │   ElectricSQL Sync ──────────▶ External PostgreSQL           │
 │                                                              │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-**Önemli:** Mevcut `storage.ts` API'si korunur, sadece backend değişir.
+**Important:** The existing `storage.ts` API is preserved, only the backend changes.
 
 ---
 
-## 4. Veritabanı Şeması
+## 4. Database Schema
 
-### 4.1 Tablolar
+### 4.1 Tables
 
 ```sql
 -- Users
@@ -161,7 +161,7 @@ CREATE TABLE users (
     updated_at TEXT DEFAULT (datetime('now'))
 );
 
--- Connections (şifreler hariç - localStorage'da kalır)
+-- Connections (passwords excluded - stay in localStorage)
 CREATE TABLE connections (
     id TEXT PRIMARY KEY,
     user_id TEXT REFERENCES users(id),
@@ -202,7 +202,7 @@ CREATE TABLE saved_queries (
     updated_at TEXT DEFAULT (datetime('now'))
 );
 
--- Sync Config (opsiyonel)
+-- Sync Config (optional)
 CREATE TABLE sync_config (
     id TEXT PRIMARY KEY,
     sync_enabled INTEGER DEFAULT 0,
@@ -213,36 +213,36 @@ CREATE TABLE sync_config (
 
 ---
 
-## 5. Uygulama Planı
+## 5. Implementation Plan
 
-### 5.1 Dosya Yapısı (Minimal)
+### 5.1 File Structure (Minimal)
 
 ```
 src/lib/
-├── storage.ts           # Mevcut API korunur, PGlite backend
+├── storage.ts           # Existing API preserved, PGlite backend
 ├── pglite/
 │   ├── client.ts        # PGlite singleton
 │   ├── migrations.ts    # Schema migrations
-│   └── sync.ts          # ElectricSQL entegrasyonu (Phase 2)
+│   └── sync.ts          # ElectricSQL integration (Phase 2)
 └── crypto/
-    └── vault.ts         # Şifre encryption (localStorage)
+    └── vault.ts         # Password encryption (localStorage)
 ```
 
-### 5.2 Phase 1: PGlite Entegrasyonu (1 hafta)
+### 5.2 Phase 1: PGlite Integration (1 week)
 
-**Hedef:** LocalStorage → PGlite geçişi
+**Goal:** LocalStorage → PGlite migration
 
-| Task | Açıklama |
-|------|----------|
+| Task | Description |
+|------|-------------|
 | PGlite client | Singleton instance, lazy loading |
 | Migrations | Initial schema, version tracking |
-| storage.ts refactor | Aynı API, PGlite backend |
-| Data migration | Mevcut localStorage verilerini PGlite'a taşı |
+| storage.ts refactor | Same API, PGlite backend |
+| Data migration | Migrate existing localStorage data to PGlite |
 
-**storage.ts değişimi:**
+**storage.ts change:**
 
 ```typescript
-// ÖNCE
+// BEFORE
 export const storage = {
   getHistory: () => {
     const stored = localStorage.getItem(HISTORY_KEY);
@@ -250,7 +250,7 @@ export const storage = {
   }
 };
 
-// SONRA
+// AFTER
 export const storage = {
   getHistory: async () => {
     const db = await getPGlite();
@@ -260,61 +260,61 @@ export const storage = {
 };
 ```
 
-### 5.3 Phase 2: User Management (1 hafta)
+### 5.3 Phase 2: User Management (1 week)
 
-**Hedef:** Gerçek kullanıcı sistemi
+**Goal:** Real user system
 
-| Task | Açıklama |
-|------|----------|
+| Task | Description |
+|------|-------------|
 | User CRUD | Create, read, update users |
-| Auth integration | Mevcut JWT sistemi ile bağlantı |
-| Role-based queries | Kullanıcı bazlı veri filtreleme |
-| Settings UI | Kullanıcı tercihleri sayfası |
+| Auth integration | Connect with existing JWT system |
+| Role-based queries | User-based data filtering |
+| Settings UI | User preferences page |
 
-### 5.4 Phase 3: ElectricSQL Sync (1 hafta)
+### 5.4 Phase 3: ElectricSQL Sync (1 week)
 
-**Hedef:** Opsiyonel external sync
+**Goal:** Optional external sync
 
-| Task | Açıklama |
-|------|----------|
+| Task | Description |
+|------|-------------|
 | Electric client | Sync client setup |
-| Sync UI | Bağlantı formu, status indicator |
+| Sync UI | Connection form, status indicator |
 | Conflict handling | Last-write-wins |
 
 ---
 
-## 6. API Uyumluluğu
+## 6. API Compatibility
 
-**Mevcut API korunur, sadece async olur:**
+**Existing API is preserved, only becomes async:**
 
 ```typescript
-// Mevcut kullanım (Dashboard.tsx)
+// Current usage (Dashboard.tsx)
 storage.addToHistory(item);
 const history = storage.getHistory();
 
-// Yeni kullanım (minimal değişiklik)
+// New usage (minimal change)
 await storage.addToHistory(item);
 const history = await storage.getHistory();
 ```
 
-**Dashboard.tsx değişimi minimal:**
+**Dashboard.tsx changes are minimal:**
 - `storage.xxx()` → `await storage.xxx()`
-- useEffect içinde async wrapper
+- Async wrapper inside useEffect
 
 ---
 
-## 7. Güvenlik
+## 7. Security
 
-| Veri | Depolama | Sync |
-|------|----------|------|
-| Şifreler | localStorage (encrypted) | ❌ Asla |
-| Kullanıcı bilgileri | PGlite | ✅ Opsiyonel |
-| Query history | PGlite | ✅ Opsiyonel |
-| Saved queries | PGlite | ✅ Opsiyonel |
+| Data | Storage | Sync |
+|------|---------|------|
+| Passwords | localStorage (encrypted) | ❌ Never |
+| User information | PGlite | ✅ Optional |
+| Query history | PGlite | ✅ Optional |
+| Saved queries | PGlite | ✅ Optional |
 
 ---
 
-## 8. Bağımlılıklar
+## 8. Dependencies
 
 ```json
 {
@@ -322,39 +322,39 @@ const history = await storage.getHistory();
 }
 ```
 
-**Not:** ElectricSQL sync client Phase 3'te eklenecek.
+**Note:** ElectricSQL sync client will be added in Phase 3.
 
 ---
 
-## 9. Zaman Çizelgesi
+## 9. Timeline
 
-| Phase | Süre | Çıktı |
-|-------|------|-------|
-| Phase 1: PGlite | 5-7 gün | LocalStorage → PGlite geçişi |
-| Phase 2: Users | 5-7 gün | Kullanıcı yönetimi |
-| Phase 3: Sync | 5-7 gün | Opsiyonel external sync |
+| Phase | Duration | Output |
+|-------|----------|--------|
+| Phase 1: PGlite | 5-7 days | LocalStorage → PGlite migration |
+| Phase 2: Users | 5-7 days | User management |
+| Phase 3: Sync | 5-7 days | Optional external sync |
 
-**Toplam:** ~3 hafta
+**Total:** ~3 weeks
 
 ---
 
-## 10. Özet
+## 10. Summary
 
 ```
-İhtiyaç                    →  Çözüm
+Requirement                →  Solution
 ─────────────────────────────────────────────────
-User/Role Management       →  users tablosu + role column
-Query Logging             →  query_logs tablosu
-Saved Queries             →  saved_queries tablosu
-Account Management        →  users.preferences JSONB
-Platform (gelecek)        →  ElectricSQL sync ile
-Zero-config               →  PGlite (tarayıcı içi)
-Opsiyonel kalıcılık       →  ElectricSQL → External PostgreSQL
+User/Role Management       →  users table + role column
+Query Logging              →  query_logs table
+Saved Queries              →  saved_queries table
+Account Management         →  users.preferences JSONB
+Platform (future)          →  ElectricSQL sync
+Zero-config                →  PGlite (in-browser)
+Optional persistence       →  ElectricSQL → External PostgreSQL
 ```
 
 ---
 
-## 11. Referanslar
+## 11. References
 
-- [PGlite](https://pglite.dev/) - Browser-içi PostgreSQL
+- [PGlite](https://pglite.dev/) - In-browser PostgreSQL
 - [ElectricSQL](https://electric-sql.com/) - Postgres sync
