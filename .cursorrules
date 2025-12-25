@@ -1,0 +1,426 @@
+# LibreDB Studio - Cursor Rules
+
+This file provides comprehensive guidance for AI assistants and developers working on LibreDB Studio. Follow these rules to maintain code quality, consistency, and architectural integrity.
+
+## Project Overview
+
+LibreDB Studio is a modern, AI-powered, open-source SQL IDE for cloud-native teams. It provides a web-based interface for managing PostgreSQL, MySQL, SQLite, and MongoDB databases with features like AI-assisted query generation, visual schema exploration, and real-time monitoring.
+
+**Key Characteristics:**
+- Mobile-first, professional-always design philosophy
+- Zero-install browser-based solution
+- Multi-database support via Strategy Pattern
+- AI-native with multi-model LLM support (Gemini, OpenAI, Ollama, Custom)
+- Enterprise-grade with RBAC, query auditing, and health monitoring
+
+## Tech Stack
+
+### Core Framework
+- **Next.js 15** (App Router) with React 19
+- **TypeScript** (strict mode enabled)
+- **Bun** (preferred runtime) or Node.js 20+
+- **Tailwind CSS 4** with `@theme inline` theming
+- **shadcn/ui** components (Radix UI primitives)
+
+### Key Libraries
+- **Monaco Editor** - SQL editor (VS Code engine)
+- **TanStack Table & Virtual** - Virtualized data grids
+- **Framer Motion** - Animations
+- **Jose** - JWT authentication
+- **Zod** - Runtime type validation
+- **React Hook Form** - Form management
+
+### Database Drivers
+- PostgreSQL: `pg`
+- MySQL: `mysql2`
+- SQLite: `better-sqlite3` (via dynamic import)
+- MongoDB: `mongodb`
+
+## Code Style & Conventions
+
+### TypeScript
+
+- **Always use TypeScript** - No JavaScript files unless absolutely necessary
+- **Strict mode** - TypeScript strict mode is enabled, respect it
+- **Avoid `any`** - Use `unknown` or proper types instead. If `any` is unavoidable, add a comment explaining why
+- **Explicit types** - Prefer explicit return types for functions, especially public APIs
+- **Type imports** - Use `import type` for type-only imports
+- **Interfaces over types** - Prefer `interface` for object shapes, use `type` for unions, intersections, and aliases
+
+```typescript
+// ✅ Good
+interface DatabaseConnection {
+  id: string;
+  name: string;
+  type: DatabaseType;
+}
+
+type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'mongodb' | 'demo';
+
+// ❌ Bad
+type DatabaseConnection = {
+  id: string;
+  name: string;
+}
+```
+
+### Naming Conventions
+
+- **Files**: kebab-case for components (`query-editor.tsx`), PascalCase for components (`QueryEditor.tsx`)
+- **Components**: PascalCase (`QueryEditor`, `Dashboard`)
+- **Functions/Variables**: camelCase (`fetchUser`, `activeConnection`)
+- **Constants**: UPPER_SNAKE_CASE (`DEFAULT_TIMEOUT`, `MAX_POOL_SIZE`)
+- **Types/Interfaces**: PascalCase (`DatabaseConnection`, `QueryResult`)
+- **Hooks**: camelCase starting with `use` (`useToast`, `useMonitoringData`)
+- **API Routes**: kebab-case (`/api/db/query`, `/api/auth/login`)
+
+### React Patterns
+
+- **Functional components only** - No class components
+- **Hooks over HOCs** - Prefer custom hooks for shared logic
+- **Server Components by default** - Use `"use client"` only when necessary (interactivity, hooks, browser APIs)
+- **Component organization**:
+  ```typescript
+  // 1. Imports (external, then internal)
+  // 2. Types/Interfaces
+  // 3. Component
+  // 4. Exports
+  ```
+- **Props destructuring** - Destructure props in function signature
+- **Memoization** - Use `useMemo`/`useCallback` sparingly, only for expensive computations or stable references
+
+```typescript
+// ✅ Good
+export default function QueryEditor({ query, onChange }: QueryEditorProps) {
+  const handleChange = useCallback((value: string) => {
+    onChange(value);
+  }, [onChange]);
+  
+  return <MonacoEditor value={query} onChange={handleChange} />;
+}
+
+// ❌ Bad
+export default function QueryEditor(props: QueryEditorProps) {
+  return <MonacoEditor value={props.query} onChange={props.onChange} />;
+}
+```
+
+### File Organization
+
+```
+src/
+├── app/                    # Next.js App Router
+│   ├── api/               # API routes (REST endpoints)
+│   ├── (pages)/           # Page components
+│   └── layout.tsx         # Root layout
+├── components/            # React components
+│   ├── ui/               # shadcn/ui primitives
+│   └── [Feature].tsx     # Feature components
+├── hooks/                 # Custom React hooks
+├── lib/                   # Utilities and business logic
+│   ├── db/               # Database providers (Strategy Pattern)
+│   ├── llm/              # LLM providers (Strategy Pattern)
+│   └── utils.ts          # General utilities
+└── types.ts              # Shared TypeScript types
+```
+
+### Import Order
+
+1. External dependencies (React, Next.js, third-party)
+2. Internal absolute imports (`@/components`, `@/lib`)
+3. Relative imports (`./types`, `../utils`)
+4. Type-only imports last (if separate)
+
+```typescript
+// ✅ Good
+import { useState } from 'react';
+import { NextRequest, NextResponse } from 'next/server';
+import { Button } from '@/components/ui/button';
+import { cn } from '@/lib/utils';
+import type { DatabaseConnection } from '@/lib/types';
+```
+
+## Architecture Patterns
+
+### Strategy Pattern for Providers
+
+Both database and LLM providers use the Strategy Pattern:
+
+```typescript
+// Base interface
+interface DatabaseProvider {
+  connect(): Promise<void>;
+  query(sql: string): Promise<QueryResult>;
+  disconnect(): Promise<void>;
+}
+
+// Implementation
+class PostgresProvider extends SQLBaseProvider implements DatabaseProvider {
+  // Implementation
+}
+
+// Factory
+export async function createDatabaseProvider(
+  connection: DatabaseConnection
+): Promise<DatabaseProvider> {
+  switch (connection.type) {
+    case 'postgres':
+      const { PostgresProvider } = await import('./providers/sql/postgres');
+      return new PostgresProvider(connection);
+    // ...
+  }
+}
+```
+
+**Key Points:**
+- Use dynamic imports for providers to reduce initial bundle size
+- All providers implement the same interface
+- Factory function handles provider creation
+- Cache providers for connection reuse
+
+### API Routes
+
+- **Error handling** - Always use try-catch, return appropriate HTTP status codes
+- **Type safety** - Validate request bodies with Zod when needed
+- **Authentication** - Check JWT via middleware or `getUserFromRequest()`
+- **Response format** - Consistent JSON structure: `{ data?, error?, code? }`
+
+```typescript
+// ✅ Good
+export async function POST(req: NextRequest) {
+  try {
+    const { connection, sql } = await req.json();
+    
+    if (!connection || !sql) {
+      return NextResponse.json(
+        { error: 'Connection and SQL query are required' },
+        { status: 400 }
+      );
+    }
+
+    const provider = await getOrCreateProvider(connection);
+    const result = await provider.query(sql);
+    
+    return NextResponse.json(result);
+  } catch (error) {
+    if (error instanceof QueryError) {
+      return NextResponse.json(
+        { error: error.message, code: error.code },
+        { status: 400 }
+      );
+    }
+    return NextResponse.json(
+      { error: 'Internal server error' },
+      { status: 500 }
+    );
+  }
+}
+```
+
+### Error Handling
+
+- **Custom error classes** - Use project-specific error types (`DatabaseError`, `QueryError`, `TimeoutError`)
+- **Error boundaries** - Use React error boundaries for component-level errors
+- **User-friendly messages** - Never expose internal errors to users
+- **Logging** - Log errors with context: `console.error('[API:query] Error:', error)`
+
+```typescript
+// ✅ Good
+try {
+  await provider.query(sql);
+} catch (error) {
+  if (error instanceof QueryError) {
+    // Handle query-specific error
+  } else if (isDatabaseError(error)) {
+    // Handle database error
+  } else {
+    // Handle unknown error
+  }
+}
+```
+
+## Component Guidelines
+
+### shadcn/ui Components
+
+- **Use existing components** - Check `src/components/ui/` before creating new ones
+- **Composition over configuration** - Prefer component composition
+- **Accessibility** - All components should be keyboard navigable and screen-reader friendly
+- **Theming** - Use CSS variables for theming, defined in `globals.css`
+
+### Custom Components
+
+- **Single responsibility** - One component, one purpose
+- **Props interface** - Always define explicit props interface
+- **Default exports** - Use default export for main component, named exports for sub-components
+- **Documentation** - Add JSDoc comments for complex components
+
+```typescript
+/**
+ * QueryEditor component - Monaco-based SQL editor
+ * 
+ * @param query - Current SQL query text
+ * @param onChange - Callback when query changes
+ * @param onExecute - Callback when execute is triggered
+ */
+export interface QueryEditorProps {
+  query: string;
+  onChange: (query: string) => void;
+  onExecute?: () => void;
+}
+
+export default function QueryEditor({ query, onChange, onExecute }: QueryEditorProps) {
+  // Implementation
+}
+```
+
+## Database Provider Development
+
+### Adding a New Database Provider
+
+1. **Create provider class** in `src/lib/db/providers/[category]/[name].ts`
+2. **Extend base class** - `SQLBaseProvider` for SQL databases, `BaseDatabaseProvider` for others
+3. **Implement required methods** - `connect()`, `query()`, `disconnect()`, `getSchema()`
+4. **Add to factory** - Update `src/lib/db/factory.ts` with new case
+5. **Add types** - Update `DatabaseType` union in `src/lib/types.ts`
+6. **Handle errors** - Use appropriate error classes from `src/lib/db/errors.ts`
+
+### Connection Pooling
+
+- **Use connection pools** - For SQL databases, always use connection pooling
+- **Pool configuration** - Use `DEFAULT_POOL_CONFIG` or provide custom config
+- **Cleanup** - Always disconnect and clear pools on errors or shutdown
+
+## LLM Provider Development
+
+### Adding a New LLM Provider
+
+1. **Create provider class** in `src/lib/llm/providers/[name].ts`
+2. **Extend `BaseLLMProvider`** - Implement `generate()` and `stream()` methods
+3. **Add to factory** - Update `src/lib/llm/factory.ts`
+4. **Add environment variables** - Document required env vars in README
+5. **Handle rate limits** - Implement retry logic with exponential backoff
+
+## Styling Guidelines
+
+### Tailwind CSS 4
+
+- **Use utility classes** - Prefer Tailwind utilities over custom CSS
+- **Theme variables** - Use CSS variables for colors: `bg-background`, `text-foreground`
+- **Responsive design** - Mobile-first approach: `md:`, `lg:`, `xl:` breakpoints
+- **Dark mode** - All components must support dark mode via theme variables
+- **Custom utilities** - Use `@apply` sparingly, prefer component composition
+
+### Component Styling
+
+```typescript
+// ✅ Good - Tailwind utilities
+<Button className="bg-primary text-primary-foreground hover:bg-primary/90">
+  Submit
+</Button>
+
+// ✅ Good - Conditional classes with cn()
+<div className={cn(
+  "base-classes",
+  isActive && "active-classes",
+  variant === "primary" && "primary-classes"
+)}>
+```
+
+## Testing & Quality
+
+### Code Quality
+
+- **ESLint** - Follow ESLint rules, run `bun lint` before committing
+- **Type checking** - Ensure `tsc --noEmit` passes
+- **No console.log in production** - Use `console.error` for errors, remove debug logs
+
+### Performance
+
+- **Code splitting** - Use dynamic imports for heavy dependencies
+- **Virtualization** - Use TanStack Virtual for large lists
+- **Memoization** - Memoize expensive computations
+- **Image optimization** - Use Next.js Image component for images
+
+## Git & Commit Messages
+
+### Commit Message Format
+
+Follow conventional commits:
+
+```
+type(scope): subject
+
+body (optional)
+
+footer (optional)
+```
+
+**Types:**
+- `feat`: New feature
+- `fix`: Bug fix
+- `docs`: Documentation changes
+- `style`: Code style changes (formatting, no logic change)
+- `refactor`: Code refactoring
+- `perf`: Performance improvements
+- `test`: Adding or updating tests
+- `chore`: Maintenance tasks
+
+**Examples:**
+```
+feat(db): add SQLite provider support
+fix(api): handle connection timeout errors
+docs(readme): update installation instructions
+refactor(components): extract query editor logic to hook
+```
+
+## Environment Variables
+
+### Required
+- `ADMIN_PASSWORD` - Admin user password
+- `USER_PASSWORD` - Regular user password
+- `JWT_SECRET` - JWT signing secret (min 32 characters)
+
+### Optional
+- `LLM_PROVIDER` - AI provider: `gemini`, `openai`, `ollama`, `custom`
+- `LLM_API_KEY` - API key for LLM provider
+- `LLM_MODEL` - Model name (e.g., `gemini-2.5-flash`)
+- `LLM_API_URL` - Custom API URL (for local LLMs)
+
+## Common Pitfalls to Avoid
+
+1. **Don't use `any`** - Always type your code properly
+2. **Don't ignore errors** - Always handle errors appropriately
+3. **Don't commit secrets** - Never commit `.env.local` or API keys
+4. **Don't break the Strategy Pattern** - Keep provider interfaces consistent
+5. **Don't mix server and client code** - Be explicit about `"use client"`
+6. **Don't forget accessibility** - All interactive elements must be keyboard accessible
+7. **Don't skip error boundaries** - Protect the app from component errors
+8. **Don't use inline styles** - Use Tailwind classes or CSS variables
+
+## AI Assistant Guidelines
+
+When working on this codebase:
+
+1. **Understand the architecture** - Read `docs/ARCHITECTURE.md` before making changes
+2. **Follow patterns** - Match existing code patterns and conventions
+3. **Ask for clarification** - If unsure about approach, ask before implementing
+4. **Test thoroughly** - Ensure changes work across different database types
+5. **Update documentation** - Keep README and docs up to date
+6. **Consider mobile** - All features must work on mobile browsers
+7. **Respect RBAC** - Admin-only features must check user role
+8. **Performance first** - Optimize for large datasets and slow connections
+
+## Resources
+
+- **Architecture**: `docs/ARCHITECTURE.md`
+- **API Documentation**: `docs/API_DOCS.md`
+- **Theming Guide**: `docs/THEMING.md`
+- **Contributing**: `CONTRIBUTING.md`
+- **Claude Guide**: `CLAUDE.md`
+
+---
+
+**Last Updated**: 2025-01-XX
+**Project Version**: 0.6.1
+
