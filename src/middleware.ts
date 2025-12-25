@@ -24,9 +24,27 @@ const JWT_SECRET = getJwtSecret();
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
+  const token = request.cookies.get('auth-token')?.value;
+
+  // If accessing /login with a valid token, redirect authenticated users
+  if (pathname.startsWith('/login')) {
+    if (token) {
+      try {
+        const { payload } = await jwtVerify(token, JWT_SECRET);
+        const role = payload.role as string;
+        // Redirect authenticated users based on their role
+        return NextResponse.redirect(new URL(role === 'admin' ? '/admin' : '/', request.url));
+      } catch (error) {
+        // Invalid token, allow access to login page
+        return NextResponse.next();
+      }
+    }
+    // No token, allow access to login page
+    return NextResponse.next();
+  }
+
   // Allow public routes
   if (
-    pathname.startsWith('/login') ||
     pathname.startsWith('/api/auth') ||
     pathname.startsWith('/_next') ||
     pathname === '/favicon.ico' ||
@@ -37,8 +55,6 @@ export async function middleware(request: NextRequest) {
   ) {
     return NextResponse.next();
   }
-
-  const token = request.cookies.get('auth-token')?.value;
 
   if (!token) {
     return NextResponse.redirect(new URL('/login', request.url));
