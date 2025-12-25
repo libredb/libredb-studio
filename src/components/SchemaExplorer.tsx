@@ -173,12 +173,12 @@ export function SchemaExplorer({
                   "flex items-center gap-1.5 px-2 py-1.5 rounded-md cursor-pointer transition-all",
                   expandedTables.has(table.name) ? "bg-accent/50" : "hover:bg-accent/30"
                 )}
+                onClick={() => toggleTable(table.name)}
               >
                 <motion.div
                   animate={{ rotate: expandedTables.has(table.name) ? 90 : 0 }}
                   transition={{ duration: 0.2 }}
                   className="shrink-0"
-                  onClick={() => toggleTable(table.name)}
                 >
                   <ChevronRight className="w-3 h-3 text-muted-foreground" />
                 </motion.div>
@@ -188,7 +188,6 @@ export function SchemaExplorer({
                     "w-3.5 h-3.5 shrink-0 transition-colors",
                     expandedTables.has(table.name) ? "text-blue-400" : "text-muted-foreground group-hover:text-foreground"
                   )}
-                  onClick={() => toggleTable(table.name)}
                 />
 
                 <span
@@ -196,28 +195,26 @@ export function SchemaExplorer({
                     "truncate min-w-0 flex-1 text-[13px] font-medium transition-colors",
                     expandedTables.has(table.name) ? "text-foreground" : "text-muted-foreground group-hover:text-foreground"
                   )}
-                  onClick={() => toggleTable(table.name)}
                 >
                   {table.name}
                 </span>
 
                 {table.rowCount !== undefined && (
-                  <span
-                    className="shrink-0 text-[9px] font-mono text-muted-foreground/70 whitespace-nowrap"
-                    onClick={() => toggleTable(table.name)}
-                  >
+                  <span className="shrink-0 text-[9px] font-mono text-muted-foreground/70 whitespace-nowrap">
                     {table.rowCount >= 1000 ? `${(table.rowCount / 1000).toFixed(1)}k` : table.rowCount}
                   </span>
                 )}
 
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
-                    <div
-                      className="shrink-0 p-1 rounded hover:bg-white/20 cursor-pointer"
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="shrink-0 w-6 h-6 hover:bg-accent"
                       onClick={e => e.stopPropagation()}
                     >
-                      <MoreVertical className="w-4 h-4 text-white" />
-                    </div>
+                      <MoreVertical className="w-4 h-4 text-muted-foreground group-hover:text-foreground" />
+                    </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end" className="w-48">
                     <DropdownMenuItem onClick={() => onTableClick?.(table.name)}>
