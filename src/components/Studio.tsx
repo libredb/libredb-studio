@@ -18,6 +18,7 @@ import { MaintenanceModal } from '@/components/MaintenanceModal';
 import { DatabaseConnection, TableSchema, QueryTab, SavedQuery } from '@/lib/types';
 import { useToast } from '@/hooks/use-toast';
 import { storage } from '@/lib/storage';
+import { getDefaultQuery, getRandomShowcaseQuery } from '@/lib/showcase-queries';
 import { useRouter } from 'next/navigation';
 import { cn } from '@/lib/utils';
 import {
@@ -108,7 +109,7 @@ export default function Studio() {
     {
       id: 'default',
       name: 'Query 1',
-      query: '-- Start typing your SQL query here\nSELECT * FROM users LIMIT 10;',
+      query: '-- Start typing your SQL query here\n',
       result: null,
       isExecuting: false,
       type: 'sql'
@@ -141,10 +142,11 @@ export default function Studio() {
 
   const addTab = () => {
     const newId = Math.random().toString(36).substring(7);
+    const isDemo = activeConnection?.isDemo || activeConnection?.type === 'demo';
     const newTab: QueryTab = {
       id: newId,
       name: `Query ${tabs.length + 1}`,
-      query: activeConnection?.type === 'mongodb' ? 'db.collection("users").find({})' : '-- New Query\n',
+      query: getDefaultQuery(isDemo, activeConnection?.type),
       result: null,
       isExecuting: false,
       type: activeConnection?.type === 'mongodb' ? 'mongodb' : 'sql'
@@ -559,11 +561,20 @@ export default function Studio() {
   useEffect(() => {
     if (activeConnection) {
       fetchSchema(activeConnection);
-      setTabs(prev => prev.map(t => ({
-        ...t,
-        type: activeConnection.type === 'mongodb' ? 'mongodb' : 
-              activeConnection.type === 'redis' ? 'redis' : 'sql'
-      })));
+      const isDemo = activeConnection.isDemo || activeConnection.type === 'demo';
+      setTabs(prev => prev.map((t, index) => {
+        // For demo connection: update first tab with showcase query if it has default content
+        const hasDefaultQuery = t.query === '-- Start typing your SQL query here\n' ||
+                                t.query.startsWith('-- Start typing');
+        const shouldUpdateWithShowcase = isDemo && index === 0 && hasDefaultQuery;
+
+        return {
+          ...t,
+          type: activeConnection.type === 'mongodb' ? 'mongodb' :
+                activeConnection.type === 'redis' ? 'redis' : 'sql',
+          ...(shouldUpdateWithShowcase ? { query: getRandomShowcaseQuery() } : {})
+        };
+      }));
     } else {
       setSchema([]);
     }
