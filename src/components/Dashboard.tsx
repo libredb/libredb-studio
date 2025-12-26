@@ -16,6 +16,7 @@ import { SavedQueries } from '@/components/SavedQueries';
 import { SaveQueryModal } from '@/components/SaveQueryModal';
 import { MaintenanceModal } from '@/components/MaintenanceModal';
 import { DatabaseConnection, TableSchema, QueryTab, SavedQuery } from '@/lib/types';
+import { UserPayload } from '@/lib/auth';
 import { useToast } from '@/hooks/use-toast';
 import { storage } from '@/lib/storage';
 import { useRouter } from 'next/navigation';
@@ -60,7 +61,7 @@ export default function Dashboard() {
   const [connections, setConnections] = useState<DatabaseConnection[]>([]);
   const [activeConnection, setActiveConnection] = useState<DatabaseConnection | null>(null);
   const [schema, setSchema] = useState<TableSchema[]>([]);
-  const [user, setUser] = useState<any>(null);
+  const [user, setUser] = useState<UserPayload | null>(null);
   const [isMaintenanceModalOpen, setIsMaintenanceModalOpen] = useState(false);
   const [maintenanceInitialTab, setMaintenanceInitialTab] = useState<'global' | 'tables' | 'sessions'>('global');
   const [maintenanceTargetTable, setMaintenanceTargetTable] = useState<string | undefined>(undefined);
@@ -153,7 +154,7 @@ export default function Dashboard() {
       toast({ title: "Logged out", description: "You have been successfully logged out." });
       router.push('/login');
       router.refresh();
-    } catch (error) {
+    } catch {
       toast({ title: "Error", description: "Failed to logout.", variant: "destructive" });
     }
   };
@@ -183,7 +184,7 @@ export default function Dashboard() {
     const data = currentTab.result.rows;
     let content = '';
     let mimeType = '';
-    let fileName = `query_result_${format === 'csv' ? 'export' : 'data'}.${format}`;
+    const fileName = `query_result_${format === 'csv' ? 'export' : 'data'}.${format}`;
 
     if (format === 'csv') {
       const headers = Object.keys(data[0] || {}).join(',');
@@ -204,7 +205,51 @@ export default function Dashboard() {
     URL.revokeObjectURL(url);
   };
 
-  const executeQuery = async (overrideQuery?: string, tabId?: string, isExplain: boolean = false) => {
+  const fetchSchema = useCallback(async (conn: DatabaseConnection) => {
+    setIsLoadingSchema(true);
+
+    if (conn.isDemo) {
+      console.log('[DemoDB] Fetching schema for demo connection:', conn.name);
+    }
+
+    try {
+      const response = await fetch('/api/db/schema', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(conn),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        const errorMessage = errorData.error || 'Failed to fetch schema';
+
+        if (conn.isDemo) {
+          console.error('[DemoDB] Schema fetch failed:', errorMessage);
+          throw new Error(`Demo database unavailable: ${errorMessage}. You can add your own database connection.`);
+        }
+        throw new Error(errorMessage);
+      }
+
+      const data = await response.json();
+
+      if (conn.isDemo) {
+        console.log('[DemoDB] Schema loaded successfully:', {
+          tables: data.length,
+          tableNames: data.slice(0, 5).map((t: TableSchema) => t.name),
+        });
+      }
+
+      setSchema(data);
+    } catch (error) {
+      const title = conn.isDemo ? "Demo Database Error" : "Schema Error";
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+      toast({ title, description: errorMessage, variant: "destructive" });
+    } finally {
+      setIsLoadingSchema(false);
+    }
+  }, [toast]);
+
+  const executeQuery = useCallback(async (overrideQuery?: string, tabId?: string, isExplain: boolean = false) => {
     const targetTabId = tabId || activeTabId;
     const tabToExec = tabs.find(t => t.id === targetTabId) || currentTab;
     
@@ -303,18 +348,24 @@ export default function Dashboard() {
       if (!isExplain && /(CREATE|DROP|ALTER|TRUNCATE)\b/i.test(queryToExecute)) {
         fetchSchema(activeConnection);
       }
-    } catch (error: any) {
+    } catch (error) {
       setTabs(prev => prev.map(t => t.id === targetTabId ? { ...t, isExecuting: false } : t));
       const title = activeConnection?.isDemo ? "Demo Database Error" : "Query Error";
-      toast({ title, description: error.message, variant: "destructive" });
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+      toast({ title, description: errorMessage, variant: "destructive" });
     }
-  };
+  }, [activeTabId, tabs, currentTab, activeConnection, toast, fetchSchema]);
 
   useEffect(() => {
-    const handleExecuteQuery = (e: any) => executeQuery(e.detail.query);
+    const handleExecuteQuery = (e: Event) => {
+      const customEvent = e as CustomEvent<{ query: string }>;
+      if (customEvent.detail?.query) {
+        executeQuery(customEvent.detail.query);
+      }
+    };
     window.addEventListener('execute-query', handleExecuteQuery);
     return () => window.removeEventListener('execute-query', handleExecuteQuery);
-  }, [activeTabId, activeConnection, executeQuery]);
+  }, [executeQuery]);
 
   useEffect(() => {
     const initializeConnections = async () => {
@@ -403,53 +454,10 @@ export default function Dashboard() {
     } else {
       setSchema([]);
     }
-  }, [activeConnection]);
-
-  const fetchSchema = async (conn: DatabaseConnection) => {
-    setIsLoadingSchema(true);
-
-    if (conn.isDemo) {
-      console.log('[DemoDB] Fetching schema for demo connection:', conn.name);
-    }
-
-    try {
-      const response = await fetch('/api/db/schema', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(conn),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        const errorMessage = errorData.error || 'Failed to fetch schema';
-
-        if (conn.isDemo) {
-          console.error('[DemoDB] Schema fetch failed:', errorMessage);
-          throw new Error(`Demo database unavailable: ${errorMessage}. You can add your own database connection.`);
-        }
-        throw new Error(errorMessage);
-      }
-
-      const data = await response.json();
-
-      if (conn.isDemo) {
-        console.log('[DemoDB] Schema loaded successfully:', {
-          tables: data.length,
-          tableNames: data.slice(0, 5).map((t: any) => t.name),
-        });
-      }
-
-      setSchema(data);
-    } catch (error: any) {
-      const title = conn.isDemo ? "Demo Database Error" : "Schema Error";
-      toast({ title, description: error.message, variant: "destructive" });
-    } finally {
-      setIsLoadingSchema(false);
-    }
-  };
+  }, [activeConnection, fetchSchema]);
 
   const handleTableClick = (tableName: string) => {
-    let newQuery = activeConnection?.type === 'mongodb' 
+    const newQuery = activeConnection?.type === 'mongodb' 
       ? `db.collection("${tableName}").find({}).limit(50)` 
       : `SELECT * FROM ${tableName} LIMIT 50;`;
     

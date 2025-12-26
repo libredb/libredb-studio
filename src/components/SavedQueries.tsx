@@ -5,11 +5,10 @@ import { storage } from '@/lib/storage';
 import { SavedQuery } from '@/lib/types';
 import { 
   Bookmark, Search, Trash2, Edit3, 
-  ExternalLink, Tag, Calendar
+  Tag, Calendar
 } from 'lucide-react';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
-import { cn } from '@/lib/utils';
 import { format } from 'date-fns';
 
 interface SavedQueriesProps {

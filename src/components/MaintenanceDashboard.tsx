@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import {
@@ -17,12 +17,28 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { DatabaseConnection, TableSchema } from '@/lib/types';
+
+interface HealthData {
+  activeConnections?: number;
+  databaseSize?: string;
+  cacheHitRatio?: number | string;
+  slowQueries?: Array<{
+    query: string;
+    calls: number;
+    avgTime: string;
+  }>;
+  activeSessions?: Array<{
+    pid: number | string;
+    state: string;
+    duration?: string;
+  }>;
+}
 import { storage } from '@/lib/storage';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
 export default function MaintenanceDashboard() {
   const [tables, setTables] = useState<TableSchema[]>([]);
-  const [healthData, setHealthData] = useState<any>(null);
+  const [healthData, setHealthData] = useState<HealthData | null>(null);
   const [loading, setLoading] = useState(false);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [connections, setConnections] = useState<DatabaseConnection[]>([]);
@@ -36,13 +52,7 @@ export default function MaintenanceDashboard() {
     }
   }, []);
 
-  useEffect(() => {
-    if (selectedConnection) {
-      fetchData();
-    }
-  }, [selectedConnection]);
-
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     if (!selectedConnection) return;
     setLoading(true);
     try {
@@ -64,12 +74,19 @@ export default function MaintenanceDashboard() {
       });
       const healthResult = await healthRes.json();
       setHealthData(healthResult);
-    } catch (error: any) {
-      toast.error('Failed to load maintenance data: ' + error.message);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+      toast.error('Failed to load maintenance data: ' + errorMessage);
     } finally {
       setLoading(false);
     }
-  };
+  }, [selectedConnection]);
+
+  useEffect(() => {
+    if (selectedConnection) {
+      fetchData();
+    }
+  }, [selectedConnection, fetchData]);
 
   const runMaintenance = async (type: string, target?: string | number) => {
     if (!selectedConnection) {
@@ -90,8 +107,9 @@ export default function MaintenanceDashboard() {
 
       toast.success(`${type.toUpperCase()} completed in ${result.executionTime}ms`);
       if (type === 'kill') fetchData(); // Refresh connections
-    } catch (error: any) {
-      toast.error('Operation failed: ' + error.message);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+      toast.error('Operation failed: ' + errorMessage);
     } finally {
       setActionLoading(null);
     }
@@ -285,7 +303,7 @@ export default function MaintenanceDashboard() {
                   </tr>
                 </thead>
                 <tbody className="divide-y">
-                  {healthData?.activeSessions?.map((session: any) => (
+                  {healthData?.activeSessions?.map((session: { pid: number | string; state: string }) => (
                     <tr key={session.pid} className="hover:bg-muted/50">
                       <td className="p-2 font-mono text-xs">{session.pid}</td>
                       <td className="p-2">

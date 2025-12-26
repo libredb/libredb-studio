@@ -13,8 +13,23 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
+interface ExplainPlanNode {
+  'Node Type'?: string;
+  'Total Cost'?: number;
+  'Actual Rows'?: number;
+  'Actual Total Time'?: number;
+  'Plan Rows'?: number;
+  'Plan Width'?: number;
+  'Relation Name'?: string;
+  'Alias'?: string;
+  'Filter'?: string;
+  'Index Name'?: string;
+  Plans?: ExplainPlanNode[];
+  [key: string]: unknown;
+}
+
 interface VisualExplainProps {
-  plan: any;
+  plan: Array<{ Plan: ExplainPlanNode }> | ExplainPlanNode | null | undefined;
 }
 
 const NodeIcon = ({ type }: { type: string }) => {
@@ -26,7 +41,7 @@ const NodeIcon = ({ type }: { type: string }) => {
   return <Database className="w-4 h-4 text-zinc-400" />;
 };
 
-const ExplainNode = ({ node, depth = 0 }: { node: any, depth?: number }) => {
+const ExplainNode = ({ node, depth = 0 }: { node: ExplainPlanNode, depth?: number }) => {
   const nodeType = node['Node Type'] || 'Unknown';
   const totalCost = node['Total Cost'];
   const actualRows = node['Actual Rows'];
@@ -99,7 +114,7 @@ const ExplainNode = ({ node, depth = 0 }: { node: any, depth?: number }) => {
       {children.length > 0 && (
         <div className="flex flex-col gap-6 ml-6 relative">
           <div className="absolute left-[-1.5rem] top-0 bottom-4 w-px bg-gradient-to-b from-white/10 to-transparent" />
-          {children.map((child: any, idx: number) => (
+          {children.map((child, idx: number) => (
             <div key={idx} className="relative">
               <div className="absolute left-[-1.5rem] top-8 w-6 h-px bg-white/10" />
               <ExplainNode node={child} depth={depth + 1} />
@@ -120,13 +135,21 @@ export function VisualExplain({ plan }: VisualExplainProps) {
         </div>
         <h3 className="text-sm font-bold text-zinc-200 mb-2">No Plan Available</h3>
         <p className="text-xs max-w-xs leading-relaxed opacity-40">
-          This connection type or query doesn't support visual explanation, or the plan data is missing.
+          This connection type or query doesn&apos;t support visual explanation, or the plan data is missing.
         </p>
       </div>
     );
   }
 
-  const rootPlan = plan[0].Plan;
+  let rootPlan: ExplainPlanNode;
+  if (Array.isArray(plan) && plan[0] && 'Plan' in plan[0]) {
+    rootPlan = (plan[0] as { Plan: ExplainPlanNode }).Plan;
+  } else if (Array.isArray(plan)) {
+    // Fallback: if plan is array but doesn't have Plan property, use first element
+    rootPlan = plan[0] as unknown as ExplainPlanNode;
+  } else {
+    rootPlan = plan as unknown as ExplainPlanNode;
+  }
 
   return (
     <div className="h-full w-full bg-[#080808] overflow-auto custom-scrollbar p-8">
@@ -139,7 +162,11 @@ export function VisualExplain({ plan }: VisualExplainProps) {
            <div className="flex items-center gap-4">
               <div className="text-right">
                  <span className="block text-[9px] text-zinc-600 uppercase font-black tracking-widest mb-0.5">Total Time</span>
-                 <span className="text-lg font-mono font-bold text-blue-400">{plan[0]['Execution Time'] || rootPlan['Actual Total Time'] || 0} ms</span>
+                 <span className="text-lg font-mono font-bold text-blue-400">
+                   {Array.isArray(plan) && plan[0] && 'Execution Time' in plan[0] 
+                     ? (plan[0] as { 'Execution Time': number })['Execution Time'] 
+                     : rootPlan['Actual Total Time'] || 0} ms
+                 </span>
               </div>
            </div>
         </div>

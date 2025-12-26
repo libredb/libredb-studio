@@ -1,6 +1,5 @@
 import { SignJWT, jwtVerify } from 'jose';
 import { cookies } from 'next/headers';
-import { NextRequest, NextResponse } from 'next/server';
 
 function getJwtSecret(): Uint8Array {
   const secret = process.env.JWT_SECRET;
@@ -42,7 +41,7 @@ export async function verifyJWT(token: string) {
   try {
     const { payload } = await jwtVerify(token, JWT_SECRET);
     return payload as unknown as UserPayload;
-  } catch (error) {
+  } catch {
     return null;
   }
 }

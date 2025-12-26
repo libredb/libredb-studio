@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { DatabaseConnection } from '@/lib/types';
 import { 
   Activity, 
@@ -70,7 +70,7 @@ export function HealthDashboard({ connection }: { connection: DatabaseConnection
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const fetchHealth = async () => {
+  const fetchHealth = useCallback(async () => {
     if (!connection) return;
     setLoading(true);
     setError(null);
@@ -83,18 +83,18 @@ export function HealthDashboard({ connection }: { connection: DatabaseConnection
       const result = await res.json();
       if (result.error) throw new Error(result.error);
       setData(result);
-    } catch (err: any) {
-      setError(err.message);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unknown error occurred');
     } finally {
       setLoading(false);
     }
-  };
+  }, [connection]);
 
   useEffect(() => {
     fetchHealth();
     const interval = setInterval(fetchHealth, 30000); // Auto refresh every 30s
     return () => clearInterval(interval);
-  }, [connection]);
+  }, [connection, fetchHealth]);
 
   if (!connection) {
     return (

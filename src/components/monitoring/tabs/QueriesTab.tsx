@@ -20,7 +20,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip';
 import { Button } from '@/components/ui/button';
-import type { MonitoringData, SlowQueryStats } from '@/lib/db/types';
+import type { MonitoringData } from '@/lib/db/types';
 
 interface QueriesTabProps {
   data: MonitoringData | null;

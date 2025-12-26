@@ -23,10 +23,8 @@ import {
   Plus, 
   Trash2, 
   Table as TableIcon, 
-  Key, 
   Type, 
   Settings2,
-  AlertCircle,
   Loader2
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -60,12 +58,12 @@ const DATA_TYPES = [
   'DECIMAL(10,2)',
 ];
 
-export function CreateTableModal({ isOpen, onClose, onTableCreated, dbType = 'postgres' }: CreateTableModalProps) {
+export function CreateTableModal({ isOpen, onClose, onTableCreated }: CreateTableModalProps) {
   const [tableName, setTableName] = useState('');
   const [columns, setColumns] = useState<ColumnDefinition[]>([
     { name: 'id', type: 'SERIAL', isPrimary: true, isNullable: false, isUnique: true, defaultValue: '' }
   ]);
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isSubmitting] = useState(false);
 
   const addColumn = () => {
     setColumns([...columns, { 

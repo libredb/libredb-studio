@@ -44,11 +44,11 @@ export interface IndexSchema {
 }
 
 export interface QueryResult {
-  rows: any[];
+  rows: Record<string, unknown>[];
   fields: string[];
   rowCount: number;
   executionTime: number;
-  explainPlan?: any;
+  explainPlan?: Record<string, unknown>;
 }
 
 export interface QueryTab {
@@ -59,7 +59,7 @@ export interface QueryTab {
   isExecuting: boolean;
   type: 'sql' | 'mongodb' | 'redis';
   viewMode?: 'results' | 'explain' | 'history' | 'saved';
-  explainPlan?: any;
+  explainPlan?: Record<string, unknown>;
 }
 
 export interface QueryHistoryItem {

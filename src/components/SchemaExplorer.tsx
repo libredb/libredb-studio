@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useMemo } from 'react';
-import { TableSchema, ColumnSchema } from '@/lib/types';
+import { TableSchema } from '@/lib/types';
 import { 
   Search, 
   Table as TableIcon, 
@@ -15,11 +15,9 @@ import {
   Database,
   Filter,
   MoreVertical,
-  Type,
   Plus,
   Settings,
-  Trash2,
-  Zap
+  Trash2
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -102,7 +100,7 @@ export function SchemaExplorer({
         </div>
         <h3 className="text-foreground text-sm font-medium mb-1">No structures found</h3>
         <p className="text-[11px] text-muted-foreground leading-relaxed">
-          We couldn't find any tables or views in this connection.
+          We couldn&apos;t find any tables or views in this connection.
         </p>
       </div>
     );

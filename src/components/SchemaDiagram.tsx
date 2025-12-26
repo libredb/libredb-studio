@@ -10,7 +10,8 @@ import {
   NodeProps,
   Edge,
   Node,
-  Panel
+  Panel,
+  type NodeTypes
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { TableSchema } from '@/lib/types';
@@ -19,15 +20,20 @@ import { Button } from '@/components/ui/button';
 import { motion } from 'framer-motion';
 
 // Custom Node for Database Tables
-const TableNode = ({ data }: NodeProps<{ table: TableSchema }>) => {
+interface TableNodeData extends Record<string, unknown> {
+  table: TableSchema;
+}
+
+const TableNode = ({ data }: NodeProps<Node<TableNodeData>>) => {
+  const table = (data.data as TableNodeData).table;
   return (
     <div className="bg-[#0d0d0d] border border-white/10 rounded-lg overflow-hidden min-w-[200px] shadow-2xl">
       <div className="bg-blue-600/10 px-3 py-2 border-b border-white/5 flex items-center gap-2">
         <Database className="w-3.5 h-3.5 text-blue-400" />
-        <span className="text-xs font-bold text-zinc-100 uppercase tracking-wider">{data.table.name}</span>
+        <span className="text-xs font-bold text-zinc-100 uppercase tracking-wider">{table.name}</span>
       </div>
       <div className="p-1">
-        {data.table.columns.map((col, idx) => (
+        {table.columns.map((col: { name: string; type: string; isPrimary: boolean }, idx: number) => (
           <div key={idx} className="flex items-center justify-between px-2 py-1 text-[10px] hover:bg-white/5 rounded transition-colors group relative">
             <Handle 
               type="source" 
@@ -62,9 +68,9 @@ const TableNode = ({ data }: NodeProps<{ table: TableSchema }>) => {
   );
 };
 
-const nodeTypes = {
+const nodeTypes: NodeTypes = {
   table: TableNode,
-};
+} as NodeTypes;
 
 interface SchemaDiagramProps {
   schema: TableSchema[];
@@ -73,11 +79,11 @@ interface SchemaDiagramProps {
 
 export function SchemaDiagram({ schema, onClose }: SchemaDiagramProps) {
   const { nodes, edges } = useMemo(() => {
-    const nodes: Node[] = schema.map((table, index) => ({
+    const nodes: Node<TableNodeData>[] = schema.map((table, index) => ({
       id: table.name,
-      type: 'table',
+      type: 'table' as const,
       position: { x: (index % 3) * 300, y: Math.floor(index / 3) * 400 },
-      data: { table },
+      data: { table } as TableNodeData,
     }));
 
     // Simple edge detection based on naming conventions (e.g., user_id -> users.id)

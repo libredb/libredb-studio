@@ -69,7 +69,7 @@ export function MonitoringDashboard() {
     if (loadedConnections.length > 0 && !selectedConnection) {
       setSelectedConnection(loadedConnections[0]);
     }
-  }, []);
+  }, [selectedConnection]);
 
   const handleConnectionChange = (connectionId: string) => {
     const connection = connections.find((c) => c.id === connectionId);

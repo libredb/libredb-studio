@@ -4,8 +4,9 @@ on:
   push:
     branches:
       - ci
+      - main
   pull_request:
-    types: [opened, synchronize, reopened]
+    types: [opened, synchronize, reopened, ready_for_review]
 
 jobs:
   lint-and-build:
@@ -27,6 +28,9 @@ jobs:
       - name: Run ESLint
         run: bun run lint
 
+      - name: Run TypeScript type check
+        run: bun run typecheck
+
       - name: Build project
         run: bun run build
         env:
@@ -38,6 +42,7 @@ jobs:
   sonarcloud:
     name: SonarCloud Analysis
     runs-on: ubuntu-latest
+    # Job always runs, but step is conditional
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -45,7 +50,16 @@ jobs:
           fetch-depth: 0
 
       - name: SonarCloud Scan
+        if: ${{ secrets.SONAR_TOKEN != '' }}
         uses: SonarSource/sonarqube-scan-action@v6
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        continue-on-error: true
+
+      - name: SonarCloud skipped
+        if: ${{ secrets.SONAR_TOKEN == '' }}
+        run: |
+          echo "⚠️ SonarCloud scan skipped: SONAR_TOKEN secret is not configured"
+          echo "To enable SonarCloud analysis, add SONAR_TOKEN to repository secrets"
+          exit 0
 

@@ -6,7 +6,7 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
-import { Database, Lock, User, ShieldCheck, UserCheck } from 'lucide-react';
+import { Database, Lock, ShieldCheck, UserCheck } from 'lucide-react';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 
@@ -41,7 +41,7 @@ export default function LoginPage() {
       } else {
         toast.error(data.message || 'Invalid password');
       }
-    } catch (error) {
+    } catch {
       toast.error('An error occurred. Please try again.');
     } finally {
       setIsLoading(false);

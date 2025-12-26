@@ -24,7 +24,6 @@ import {
   type TableStats,
   type IndexStats,
   type StorageStats,
-  DEFAULT_POOL_CONFIG,
   DEFAULT_QUERY_TIMEOUT,
 } from './types';
 import { DatabaseConfigError, mapDatabaseError } from './errors';

@@ -35,7 +35,8 @@ export interface SSEChunk {
  * Handles chunked responses and extracts content from delta objects
  */
 export function createSSEParser(
-  provider: LLMProviderType
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  _provider: LLMProviderType
 ): TransformStream<Uint8Array, Uint8Array> {
   let buffer = '';
 
@@ -66,7 +67,7 @@ export function createSSEParser(
 
           try {
             const parsed = JSON.parse(data);
-            const content = extractContent(parsed, provider);
+            const content = extractContent(parsed);
 
             if (content) {
               controller.enqueue(encodeText(content));
@@ -85,7 +86,7 @@ export function createSSEParser(
         if (trimmed.startsWith('data: ') && trimmed.slice(6) !== '[DONE]') {
           try {
             const parsed = JSON.parse(trimmed.slice(6));
-            const content = extractContent(parsed, provider);
+            const content = extractContent(parsed);
             if (content) {
               controller.enqueue(encodeText(content));
             }
@@ -101,7 +102,7 @@ export function createSSEParser(
 /**
  * Extract content from parsed SSE data based on provider format
  */
-function extractContent(data: unknown, provider: LLMProviderType): string | null {
+function extractContent(data: unknown): string | null {
   if (!data || typeof data !== 'object') {
     return null;
   }

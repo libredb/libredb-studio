@@ -6,6 +6,7 @@ import { Zap, Sparkles, Send, X, Loader2, AlignLeft, Trash2, Copy, Play } from '
 import { cn } from '@/lib/utils';
 import { motion, AnimatePresence } from 'framer-motion';
 import { format } from 'sql-formatter';
+import type { TableSchema } from '@/lib/types';
 
 export interface QueryEditorRef {
   getSelectedText: () => string;
@@ -61,6 +62,7 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
   schemaContext 
 }, ref) => {
   const monaco = useMonaco();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const editorRef = useRef<any>(null);
   const [hasSelection, setHasSelection] = useState(false);
   
@@ -70,10 +72,10 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
   const [isAiLoading, setIsAiLoading] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
 
-  const parsedSchema = useMemo(() => {
+  const parsedSchema = useMemo((): TableSchema[] => {
     if (!schemaContext) return [];
     try {
-      return JSON.parse(schemaContext);
+      return JSON.parse(schemaContext) as TableSchema[];
     } catch (e) {
       console.error('Failed to parse schema context for editor:', e);
       return [];
@@ -92,7 +94,6 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
           expressionWidth: 100,
           tabWidth: 2,
           linesBetweenQueries: 2,
-          dense: false,
         });
         onChange(formatted);
       } catch (e) {
@@ -146,6 +147,7 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
     return { query: value, range: null };
   };
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const flashHighlight = (range: any) => {
     if (!editorRef.current || !monaco || !range) return;
     
@@ -197,10 +199,10 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
             .slice(0, 100);
           
           filteredSchemaContext = topTables.map(table => {
-            const cols = table.columns.slice(0, 10).map((c: any) => `${c.name} (${c.type}${c.isPrimary ? ', PK' : ''})`).join(', ');
+            const cols = table.columns.slice(0, 10).map((c) => `${c.name} (${c.type}${c.isPrimary ? ', PK' : ''})`).join(', ');
             return `Table: ${table.name} (${table.rowCount || 0} rows)\nColumns: ${cols}${table.columns.length > 10 ? '...' : ''}`;
           }).join('\n\n');
-        } catch (err) {
+        } catch {
           filteredSchemaContext = schemaContext.substring(0, 2000);
         }
       }
@@ -241,17 +243,20 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
       
       setAiPrompt('');
       setShowAi(false);
-    } catch (error: any) {
+    } catch (error) {
       console.error('AI Error:', error);
-      setAiError(error.message || 'An unexpected error occurred while communicating with the AI.');
+      const errorMessage = error instanceof Error ? error.message : 'An unexpected error occurred while communicating with the AI.';
+      setAiError(errorMessage);
     } finally {
       setIsAiLoading(false);
     }
   };
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const handleBeforeMount = (monaco: any) => {
     // Suppress Monaco's "Canceled" errors in console
     const originalConsoleError = console.error;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     console.error = (...args: any[]) => {
       const message = args[0]?.toString?.() || '';
       if (message.includes('Canceled') || message.includes('ERR Canceled')) {
@@ -291,6 +296,7 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
     if (monaco && language === 'sql') {
       const completionProvider = monaco.languages.registerCompletionItemProvider('sql', {
         triggerCharacters: ['.', ' '],
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         provideCompletionItems: (model: any, position: any) => {
           const word = model.getWordUntilPosition(position);
           const range = {
@@ -303,15 +309,16 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
           const line = model.getLineContent(position.lineNumber);
           const lastChar = line[position.column - 2];
           
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
           let suggestions: any[] = [];
 
           if (lastChar === '.') {
             const matches = line.substring(0, position.column - 1).match(/(\w+)\.$/);
             if (matches) {
               const tableName = matches[1];
-              const table = parsedSchema.find((t: any) => t.name === tableName);
+              const table = parsedSchema.find((t) => t.name === tableName);
               if (table) {
-                suggestions = table.columns.map((col: any) => ({
+                suggestions = table.columns.map((col) => ({
                   label: col.name,
                   kind: monaco.languages.CompletionItemKind.Field,
                   insertText: col.name,
@@ -339,17 +346,17 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
               detail: 'SQL Function'
             })));
 
-            suggestions.push(...parsedSchema.map((table: any) => ({
+            suggestions.push(...parsedSchema.map((table) => ({
               label: table.name,
               kind: monaco.languages.CompletionItemKind.Class,
               insertText: table.name,
               range: range,
               detail: `Table (${table.rowCount || 0} rows)`,
-              documentation: table.columns.map((c: any) => c.name).join(', ')
+              documentation: table.columns.map((c) => c.name).join(', ')
             })));
 
             const allColumns = new Set<string>();
-            parsedSchema.forEach((t: any) => t.columns.forEach((c: any) => allColumns.add(c.name)));
+            parsedSchema.forEach((t) => t.columns.forEach((c) => allColumns.add(c.name)));
             suggestions.push(...Array.from(allColumns).map(colName => ({
               label: colName,
               kind: monaco.languages.CompletionItemKind.Field,
@@ -573,7 +580,7 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
             
             editor.onDidChangeCursorSelection(() => {
               const selection = editor.getSelection();
-              setHasSelection(!selection.isEmpty());
+              setHasSelection(selection ? !selection.isEmpty() : false);
             });
 
             // Add custom keyboard shortcut
