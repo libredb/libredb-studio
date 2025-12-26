@@ -41,8 +41,7 @@ jobs:
   sonarcloud:
     name: SonarCloud Analysis
     runs-on: ubuntu-latest
-    # Only run if SONAR_TOKEN secret is configured
-    if: ${{ secrets.SONAR_TOKEN }}
+    # Job always runs, but step is conditional
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -50,7 +49,14 @@ jobs:
           fetch-depth: 0
 
       - name: SonarCloud Scan
+        if: ${{ secrets.SONAR_TOKEN != '' }}
         uses: SonarSource/sonarqube-scan-action@v6
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+      - name: SonarCloud skipped
+        if: ${{ secrets.SONAR_TOKEN == '' }}
+        run: |
+          echo "⚠️ SonarCloud scan skipped: SONAR_TOKEN secret is not configured"
+          echo "To enable SonarCloud analysis, add SONAR_TOKEN to repository secrets"
 
