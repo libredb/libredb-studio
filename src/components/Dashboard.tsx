@@ -405,6 +405,7 @@ export default function Dashboard() {
     }
   }, [activeConnection]);
 
+
   const fetchSchema = async (conn: DatabaseConnection) => {
     setIsLoadingSchema(true);
 
