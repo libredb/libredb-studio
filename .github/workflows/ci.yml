@@ -39,27 +39,3 @@ jobs:
           ADMIN_PASSWORD: test-admin
           USER_PASSWORD: test-user
 
-  sonarcloud:
-    name: SonarCloud Analysis
-    runs-on: ubuntu-latest
-    # Job always runs, but step is conditional
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: SonarCloud Scan
-        if: ${{ secrets.SONAR_TOKEN != '' }}
-        uses: SonarSource/sonarqube-scan-action@v6
-        env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-        continue-on-error: true
-
-      - name: SonarCloud skipped
-        if: ${{ secrets.SONAR_TOKEN == '' }}
-        run: |
-          echo "⚠️ SonarCloud scan skipped: SONAR_TOKEN secret is not configured"
-          echo "To enable SonarCloud analysis, add SONAR_TOKEN to repository secrets"
-          exit 0
-
