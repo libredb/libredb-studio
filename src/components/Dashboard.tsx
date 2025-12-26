@@ -62,8 +62,6 @@ import {
   AlertDialogCancel,
   AlertDialogContent,
   AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 
@@ -124,14 +122,6 @@ export default function Dashboard() {
   const [isSaveQueryModalOpen, setIsSaveQueryModalOpen] = useState(false);
   const [historyKey, setHistoryKey] = useState(0);
   const [savedKey, setSavedKey] = useState(0);
-
-  // Large result warning state
-  const [largeResultWarningOpen, setLargeResultWarningOpen] = useState(false);
-  const [pendingLargeQuery, setPendingLargeQuery] = useState<{
-    query: string;
-    tabId: string;
-    estimatedRows: number;
-  } | null>(null);
 
   // Unlimited query warning state (for Load All)
   const [unlimitedWarningOpen, setUnlimitedWarningOpen] = useState(false);
@@ -234,35 +224,7 @@ export default function Dashboard() {
     limit?: number;
     offset?: number;
     unlimited?: boolean;
-    skipEstimate?: boolean; // Skip estimate check (for confirmed queries)
   }
-
-  // Get row estimate before executing query
-  const getRowEstimate = async (query: string): Promise<{ estimatedRows: number; isLargeResult: boolean } | null> => {
-    if (!activeConnection) return null;
-
-    try {
-      const response = await fetch('/api/db/estimate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ connection: activeConnection, sql: query }),
-      });
-
-      if (response.ok) {
-        return await response.json();
-      }
-    } catch (error) {
-      console.error('[Estimate] Failed:', error);
-    }
-    return null;
-  };
-
-  // Format large numbers for display
-  const formatEstimate = (num: number): string => {
-    if (num >= 1000000) return `~${(num / 1000000).toFixed(1)}M`;
-    if (num >= 1000) return `~${(num / 1000).toFixed(1)}K`;
-    return `~${num}`;
-  };
 
   const executeQuery = async (
     overrideQuery?: string,
@@ -292,26 +254,10 @@ export default function Dashboard() {
       limit = 500,
       offset = 0,
       unlimited = false,
-      skipEstimate = false,
     } = executionOptions || {};
 
     // isLoadingMore flag
     const isLoadMore = offset > 0;
-
-    // Check estimate for large results (only for new queries, not load more, not explain)
-    if (!isLoadMore && !isExplain && !skipEstimate && !unlimited) {
-      const estimate = await getRowEstimate(queryToExecute);
-      if (estimate?.isLargeResult && estimate.estimatedRows > 0) {
-        // Show warning for large result sets
-        setPendingLargeQuery({
-          query: queryToExecute,
-          tabId: targetTabId,
-          estimatedRows: estimate.estimatedRows,
-        });
-        setLargeResultWarningOpen(true);
-        return; // Don't execute yet, wait for user confirmation
-      }
-    }
 
     setTabs(prev => prev.map(t => t.id === targetTabId ? {
       ...t,
@@ -326,21 +272,59 @@ export default function Dashboard() {
       });
     }
 
+    // Build EXPLAIN query for PostgreSQL/MySQL
+    const buildExplainQuery = (sql: string, dbType: string): string | null => {
+      // Only for SELECT queries
+      if (!/^\s*SELECT\b/i.test(sql.trim())) return null;
+
+      if (dbType === 'postgres') {
+        return `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ${sql}`;
+      } else if (dbType === 'mysql') {
+        return `EXPLAIN FORMAT=JSON ${sql}`;
+      }
+      return null;
+    };
+
     const startTime = Date.now();
     try {
-      const response = await fetch('/api/db/query', {
+      // If isExplain mode, run EXPLAIN query instead
+      let queryToRun = queryToExecute;
+      if (isExplain && activeConnection.type) {
+        const explainSql = buildExplainQuery(queryToExecute, activeConnection.type);
+        if (explainSql) {
+          queryToRun = explainSql;
+        }
+      }
+
+      // Start both queries in parallel (main query + background explain)
+      const mainQueryPromise = fetch('/api/db/query', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           connection: activeConnection,
-          sql: queryToExecute,
-          options: {
-            limit,
-            offset,
-            unlimited,
-          },
+          sql: isExplain ? queryToRun : queryToExecute,
+          options: isExplain ? {} : { limit, offset, unlimited },
         }),
       });
+
+      // Run EXPLAIN in background for non-explain queries (SELECT only)
+      let explainPromise: Promise<Response> | null = null;
+      if (!isExplain && !isLoadMore && activeConnection.type) {
+        const explainSql = buildExplainQuery(queryToExecute, activeConnection.type);
+        if (explainSql) {
+          explainPromise = fetch('/api/db/query', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              connection: activeConnection,
+              sql: explainSql,
+              options: {},
+            }),
+          });
+        }
+      }
+
+      const response = await mainQueryPromise;
 
       const endTime = Date.now();
       const executionTime = endTime - startTime;
@@ -397,6 +381,24 @@ export default function Dashboard() {
         setHistoryKey(prev => prev + 1);
       }
 
+      // Process EXPLAIN results (from background or direct)
+      let explainPlanData = null;
+      if (isExplain) {
+        // Direct EXPLAIN query - parse result
+        explainPlanData = resultData.rows?.[0]?.['QUERY PLAN'] || resultData.rows;
+      } else if (explainPromise) {
+        // Background EXPLAIN - don't block, update async
+        explainPromise.then(async (explainRes) => {
+          if (explainRes.ok) {
+            const explainData = await explainRes.json();
+            const plan = explainData.rows?.[0]?.['QUERY PLAN'] || explainData.rows;
+            setTabs(prev => prev.map(t =>
+              t.id === targetTabId ? { ...t, explainPlan: plan } : t
+            ));
+          }
+        }).catch(err => console.error('[EXPLAIN] Background fetch failed:', err));
+      }
+
       // Update tab state: Load More (append) vs new query (replace)
       setTabs(prev => prev.map(t => {
         if (t.id !== targetTabId) return t;
@@ -417,19 +419,18 @@ export default function Dashboard() {
             currentOffset: offset + resultData.rows.length,
             isExecuting: false,
             isLoadingMore: false,
-            explainPlan: isExplain ? resultData.rows[0]?.['QUERY PLAN'] || resultData.rows[0] : null,
           };
         }
 
         // New query mode: replace
         return {
           ...t,
-          result: resultData,
-          allRows: resultData.rows,
-          currentOffset: resultData.rows.length,
+          result: isExplain ? null : resultData, // Don't show EXPLAIN as results
+          allRows: isExplain ? t.allRows : resultData.rows,
+          currentOffset: isExplain ? t.currentOffset : resultData.rows.length,
           isExecuting: false,
           isLoadingMore: false,
-          explainPlan: isExplain ? resultData.rows[0]?.['QUERY PLAN'] || resultData.rows[0] : null,
+          explainPlan: explainPlanData || t.explainPlan,
         };
       }));
 
@@ -455,23 +456,7 @@ export default function Dashboard() {
     executeQuery(currentTab.query, currentTab.id, false, {
       limit: 500,
       offset: currentOffset,
-      skipEstimate: true,
     });
-  };
-
-  // Large result query handler (after user confirms)
-  const handleLargeQueryConfirm = () => {
-    if (!pendingLargeQuery) return;
-
-    executeQuery(
-      pendingLargeQuery.query,
-      pendingLargeQuery.tabId,
-      false,
-      { skipEstimate: true } // Skip estimate since user already confirmed
-    );
-
-    setLargeResultWarningOpen(false);
-    setPendingLargeQuery(null);
   };
 
   // Unlimited query handler
@@ -482,7 +467,7 @@ export default function Dashboard() {
       pendingUnlimitedQuery.query,
       pendingUnlimitedQuery.tabId,
       false,
-      { unlimited: true, skipEstimate: true }
+      { unlimited: true }
     );
 
     setUnlimitedWarningOpen(false);
@@ -1227,42 +1212,6 @@ export default function Dashboard() {
         initialTab={maintenanceInitialTab}
         targetTable={maintenanceTargetTable}
       />
-
-      {/* Large Result Warning Modal (based on EXPLAIN estimate) */}
-      <AlertDialog open={largeResultWarningOpen} onOpenChange={setLargeResultWarningOpen}>
-        <AlertDialogContent className="bg-[#111] border-white/5 max-w-sm p-0 gap-0 overflow-hidden">
-          {/* Header with gradient accent */}
-          <div className="px-6 pt-6 pb-4">
-            <div className="flex items-start gap-3">
-              <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-amber-500/20 to-orange-500/10 flex items-center justify-center shrink-0">
-                <Database className="w-5 h-5 text-amber-400" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <AlertDialogTitle className="text-[15px] font-semibold text-zinc-100 mb-1">
-                  Large dataset
-                </AlertDialogTitle>
-                <AlertDialogDescription className="text-[13px] text-zinc-500 leading-relaxed">
-                  Estimated <span className="text-amber-400 font-medium">{formatEstimate(pendingLargeQuery?.estimatedRows || 0)}</span> rows.
-                  We&apos;ll load 500 at a time for performance.
-                </AlertDialogDescription>
-              </div>
-            </div>
-          </div>
-
-          {/* Actions */}
-          <div className="px-6 pb-6 flex gap-2">
-            <AlertDialogCancel className="flex-1 h-9 bg-white/5 border-0 text-zinc-400 text-[13px] font-medium hover:bg-white/10 hover:text-zinc-200">
-              Cancel
-            </AlertDialogCancel>
-            <AlertDialogAction
-              onClick={handleLargeQueryConfirm}
-              className="flex-1 h-9 bg-blue-600 border-0 text-white text-[13px] font-medium hover:bg-blue-500"
-            >
-              Run Query
-            </AlertDialogAction>
-          </div>
-        </AlertDialogContent>
-      </AlertDialog>
 
       {/* Unlimited Query Warning Modal (for Load All button) */}
       <AlertDialog open={unlimitedWarningOpen} onOpenChange={setUnlimitedWarningOpen}>
