@@ -288,7 +288,7 @@ export const storage = {
 **Existing API is preserved, only becomes async:**
 
 ```typescript
-// Current usage (Dashboard.tsx)
+// Current usage (Studio.tsx)
 storage.addToHistory(item);
 const history = storage.getHistory();
 
@@ -297,7 +297,7 @@ await storage.addToHistory(item);
 const history = await storage.getHistory();
 ```
 
-**Dashboard.tsx changes are minimal:**
+**Studio.tsx changes are minimal:**
 - `storage.xxx()` → `await storage.xxx()`
 - Async wrapper inside useEffect
 

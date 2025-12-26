@@ -65,7 +65,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 
-export default function Dashboard() {
+export default function Studio() {
   const [connections, setConnections] = useState<DatabaseConnection[]>([]);
   const [activeConnection, setActiveConnection] = useState<DatabaseConnection | null>(null);
   const [schema, setSchema] = useState<TableSchema[]>([]);

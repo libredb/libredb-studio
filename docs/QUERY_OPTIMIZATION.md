@@ -266,7 +266,7 @@ src/
 ├── app/api/db/
 │   └── query/route.ts        # Query API with pagination
 ├── components/
-│   ├── Dashboard.tsx         # Query execution orchestration
+│   ├── Studio.tsx            # Query execution orchestration
 │   ├── ResultsGrid.tsx       # Results display with Load More
 │   └── VisualExplain.tsx     # EXPLAIN visualization
 └── lib/types.ts              # QueryPagination interface
