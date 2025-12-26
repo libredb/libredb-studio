@@ -111,7 +111,7 @@ Consolidated toolbar actions into a single dropdown menu:
 - `RowDetailSheet` - Bottom sheet for row details
 
 ### Modified Components
-- `Dashboard.tsx` - Mobile header, DB selector, tab routing
+- `Studio.tsx` - Mobile header, DB selector, tab routing
 - `ResultsGrid.tsx` - Hybrid card/table view with toggle
 - `QueryEditor.tsx` - Hidden toolbar on mobile
 

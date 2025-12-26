@@ -424,7 +424,7 @@ useEffect(() => {
 18. `src/lib/db/providers/demo.ts` - Demo mock data
 
 ### Step 9: Navigation Link
-19. `src/components/Dashboard.tsx` - Monitoring sayfasına link ekle
+19. `src/components/Studio.tsx` - Monitoring sayfasına link ekle
 
 ---
 
@@ -443,7 +443,7 @@ useEffect(() => {
 | `src/app/monitoring/page.tsx` | Yeni route |
 | `src/components/monitoring/*.tsx` | Yeni UI components |
 | `src/hooks/useMonitoringData.ts` | Yeni hook |
-| `src/components/Dashboard.tsx` | Navigation link |
+| `src/components/Studio.tsx` | Navigation link |
 
 ---
 

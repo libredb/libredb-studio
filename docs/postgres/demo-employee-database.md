@@ -347,7 +347,7 @@ export async function GET() {
 
 ### Dashboard Integration
 
-**Location:** `src/components/Dashboard.tsx`
+**Location:** `src/components/Studio.tsx`
 
 On component mount:
 

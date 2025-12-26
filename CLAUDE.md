@@ -53,7 +53,7 @@ src/
 │   ├── admin/              # Admin dashboard (RBAC protected)
 │   └── login/              # Login page
 ├── components/             # React components
-│   ├── Dashboard.tsx       # Main application shell
+│   ├── Studio.tsx          # Main application shell
 │   ├── QueryEditor.tsx     # Monaco SQL editor wrapper
 │   ├── ResultsGrid.tsx     # Virtualized data grid
 │   ├── Sidebar.tsx         # Schema explorer sidebar
