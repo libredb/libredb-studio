@@ -936,4 +936,15 @@ export class PostgresProvider extends SQLBaseProvider {
       client.release();
     }
   }
+
+  public async getPgStatActivity(): Promise<any> {
+    this.ensureConnected();
+    const client = await this.pool!.connect();
+    try {
+      const res = await client.query('SELECT * FROM pg_stat_activity');
+      return res.rows;
+    } finally {
+      client.release();
+    }
+  }
 }
