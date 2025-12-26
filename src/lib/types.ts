@@ -43,12 +43,21 @@ export interface IndexSchema {
   unique: boolean;
 }
 
+export interface QueryPagination {
+  limit: number;
+  offset: number;
+  hasMore: boolean;
+  totalReturned: number;
+  wasLimited: boolean;
+}
+
 export interface QueryResult {
   rows: any[];
   fields: string[];
   rowCount: number;
   executionTime: number;
   explainPlan?: any;
+  pagination?: QueryPagination;
 }
 
 export interface QueryTab {
@@ -60,6 +69,10 @@ export interface QueryTab {
   type: 'sql' | 'mongodb' | 'redis';
   viewMode?: 'results' | 'explain' | 'history' | 'saved';
   explainPlan?: any;
+  // Pagination state
+  currentOffset?: number;
+  isLoadingMore?: boolean;
+  allRows?: any[];
 }
 
 export interface QueryHistoryItem {

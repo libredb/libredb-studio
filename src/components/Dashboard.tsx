@@ -22,6 +22,7 @@ import { useRouter } from 'next/navigation';
 import { cn } from '@/lib/utils';
 import {
   Activity,
+  AlertTriangle,
   AlignLeft,
   Bookmark,
   ChevronDown,
@@ -55,6 +56,16 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Button } from '@/components/ui/button';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 export default function Dashboard() {
   const [connections, setConnections] = useState<DatabaseConnection[]>([]);
@@ -111,8 +122,15 @@ export default function Dashboard() {
   const [activeMobileTab, setActiveMobileTab] = useState<'database' | 'schema' | 'editor'>('editor');
 
   const [isSaveQueryModalOpen, setIsSaveQueryModalOpen] = useState(false);
-  const [historyKey, setHistoryKey] = useState(0); 
+  const [historyKey, setHistoryKey] = useState(0);
   const [savedKey, setSavedKey] = useState(0);
+
+  // Unlimited query warning state
+  const [unlimitedWarningOpen, setUnlimitedWarningOpen] = useState(false);
+  const [pendingUnlimitedQuery, setPendingUnlimitedQuery] = useState<{
+    query: string;
+    tabId: string;
+  } | null>(null);
 
   const { toast } = useToast();
   const router = useRouter();
@@ -204,10 +222,21 @@ export default function Dashboard() {
     URL.revokeObjectURL(url);
   };
 
-  const executeQuery = async (overrideQuery?: string, tabId?: string, isExplain: boolean = false) => {
+  interface QueryExecutionOptions {
+    limit?: number;
+    offset?: number;
+    unlimited?: boolean;
+  }
+
+  const executeQuery = async (
+    overrideQuery?: string,
+    tabId?: string,
+    isExplain: boolean = false,
+    executionOptions?: QueryExecutionOptions
+  ) => {
     const targetTabId = tabId || activeTabId;
     const tabToExec = tabs.find(t => t.id === targetTabId) || currentTab;
-    
+
     // Modern Execution Logic: Prioritize selection from ref, then override, then tab state
     let queryToExecute = overrideQuery;
     if (!queryToExecute && targetTabId === activeTabId && queryEditorRef.current) {
@@ -222,12 +251,23 @@ export default function Dashboard() {
       return;
     }
 
-    setTabs(prev => prev.map(t => t.id === targetTabId ? { 
-      ...t, 
-      isExecuting: true
+    // Options extraction
+    const {
+      limit = 500,
+      offset = 0,
+      unlimited = false,
+    } = executionOptions || {};
+
+    // isLoadingMore flag
+    const isLoadMore = offset > 0;
+
+    setTabs(prev => prev.map(t => t.id === targetTabId ? {
+      ...t,
+      isExecuting: !isLoadMore,
+      isLoadingMore: isLoadMore,
     } : t));
     setBottomPanelMode(isExplain ? 'explain' : 'results');
-    
+
     if (activeConnection.isDemo && process.env.NODE_ENV === 'development') {
       console.log('[DemoDB] Executing query on demo connection:', {
         queryPreview: queryToExecute.substring(0, 100) + (queryToExecute.length > 100 ? '...' : ''),
@@ -239,7 +279,15 @@ export default function Dashboard() {
       const response = await fetch('/api/db/query', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ connection: activeConnection, sql: queryToExecute }),
+        body: JSON.stringify({
+          connection: activeConnection,
+          sql: queryToExecute,
+          options: {
+            limit,
+            offset,
+            unlimited,
+          },
+        }),
       });
 
       const endTime = Date.now();
@@ -281,33 +329,96 @@ export default function Dashboard() {
         });
       }
 
-      storage.addToHistory({
-        id: Math.random().toString(36).substring(7),
-        connectionId: activeConnection.id,
-        connectionName: activeConnection.name,
-        tabName: tabToExec.name,
-        query: queryToExecute,
-        executionTime: resultData.executionTime || executionTime,
-        status: 'success',
-        executedAt: new Date(),
-        rowCount: resultData.rowCount
-      });
-      setHistoryKey(prev => prev + 1);
-      setTabs(prev => prev.map(t => t.id === targetTabId ? { 
-        ...t, 
-        result: resultData, 
-        isExecuting: false,
-        explainPlan: isExplain ? resultData.rows[0]?.['QUERY PLAN'] || resultData.rows[0] : null
-      } : t));
-      
+      // Only add to history for new queries (not load more)
+      if (!isLoadMore) {
+        storage.addToHistory({
+          id: Math.random().toString(36).substring(7),
+          connectionId: activeConnection.id,
+          connectionName: activeConnection.name,
+          tabName: tabToExec.name,
+          query: queryToExecute,
+          executionTime: resultData.executionTime || executionTime,
+          status: 'success',
+          executedAt: new Date(),
+          rowCount: resultData.rowCount
+        });
+        setHistoryKey(prev => prev + 1);
+      }
+
+      // Update tab state: Load More (append) vs new query (replace)
+      setTabs(prev => prev.map(t => {
+        if (t.id !== targetTabId) return t;
+
+        // Load More mode: append rows
+        if (isLoadMore && t.result) {
+          const existingRows = t.allRows || t.result.rows;
+          const newAllRows = [...existingRows, ...resultData.rows];
+
+          return {
+            ...t,
+            result: {
+              ...resultData,
+              rows: newAllRows,
+              rowCount: newAllRows.length,
+            },
+            allRows: newAllRows,
+            currentOffset: offset + resultData.rows.length,
+            isExecuting: false,
+            isLoadingMore: false,
+            explainPlan: isExplain ? resultData.rows[0]?.['QUERY PLAN'] || resultData.rows[0] : null,
+          };
+        }
+
+        // New query mode: replace
+        return {
+          ...t,
+          result: resultData,
+          allRows: resultData.rows,
+          currentOffset: resultData.rows.length,
+          isExecuting: false,
+          isLoadingMore: false,
+          explainPlan: isExplain ? resultData.rows[0]?.['QUERY PLAN'] || resultData.rows[0] : null,
+        };
+      }));
+
       if (!isExplain && /(CREATE|DROP|ALTER|TRUNCATE)\b/i.test(queryToExecute)) {
         fetchSchema(activeConnection);
       }
     } catch (error: any) {
-      setTabs(prev => prev.map(t => t.id === targetTabId ? { ...t, isExecuting: false } : t));
+      setTabs(prev => prev.map(t => t.id === targetTabId ? {
+        ...t,
+        isExecuting: false,
+        isLoadingMore: false,
+      } : t));
       const title = activeConnection?.isDemo ? "Demo Database Error" : "Query Error";
       toast({ title, description: error.message, variant: "destructive" });
     }
+  };
+
+  // Load More handler
+  const handleLoadMore = () => {
+    if (!currentTab.result?.pagination?.hasMore) return;
+
+    const currentOffset = currentTab.currentOffset || currentTab.result.rows.length;
+    executeQuery(currentTab.query, currentTab.id, false, {
+      limit: 500,
+      offset: currentOffset,
+    });
+  };
+
+  // Unlimited query handler
+  const handleUnlimitedQuery = () => {
+    if (!pendingUnlimitedQuery) return;
+
+    executeQuery(
+      pendingUnlimitedQuery.query,
+      pendingUnlimitedQuery.tabId,
+      false,
+      { unlimited: true }
+    );
+
+    setUnlimitedWarningOpen(false);
+    setPendingUnlimitedQuery(null);
   };
 
   useEffect(() => {
@@ -989,7 +1100,15 @@ export default function Dashboard() {
                             bottomPanelMode === 'explain' ? (
                               <VisualExplain plan={currentTab.explainPlan} />
                             ) : (
-                              <ResultsGrid result={currentTab.result} />
+                              <ResultsGrid
+                                result={currentTab.result}
+                                onLoadMore={
+                                  currentTab.result.pagination?.hasMore
+                                    ? handleLoadMore
+                                    : undefined
+                                }
+                                isLoadingMore={currentTab.isLoadingMore}
+                              />
                             )
                           ) : (
                           <div className="h-full flex flex-col items-center justify-center opacity-20 bg-[#0a0a0a]">
@@ -1040,6 +1159,43 @@ export default function Dashboard() {
         initialTab={maintenanceInitialTab}
         targetTable={maintenanceTargetTable}
       />
+
+      {/* Unlimited Query Warning Modal */}
+      <AlertDialog open={unlimitedWarningOpen} onOpenChange={setUnlimitedWarningOpen}>
+        <AlertDialogContent className="bg-[#0d0d0d] border-white/10">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="text-amber-400 flex items-center gap-2">
+              <AlertTriangle className="w-5 h-5" />
+              Large Result Set Warning
+            </AlertDialogTitle>
+            <AlertDialogDescription className="text-zinc-400 space-y-3">
+              <p>
+                This query may return a large number of rows. Loading all results
+                at once could cause performance issues or browser slowdown.
+              </p>
+              <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg p-3 text-amber-300 text-xs">
+                <p className="font-semibold mb-1">Recommendation:</p>
+                <ul className="list-disc list-inside space-y-1">
+                  <li>Use pagination with &quot;Load More&quot; for large datasets</li>
+                  <li>Add WHERE clauses to filter results</li>
+                  <li>Maximum unlimited rows: 100,000</li>
+                </ul>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel className="bg-zinc-800 border-white/10 hover:bg-zinc-700">
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleUnlimitedQuery}
+              className="bg-amber-600 hover:bg-amber-500 text-white"
+            >
+              Load All Results
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <MobileNav
         activeTab={activeMobileTab}
