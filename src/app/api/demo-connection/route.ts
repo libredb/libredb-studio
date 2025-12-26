@@ -25,13 +25,26 @@ export async function GET() {
 
   // Validate required fields
   if (!host || !database || !user || !password) {
-    console.warn(`${LOG_PREFIX} Enabled but missing required env vars:`, {
+    console.warn(`${LOG_PREFIX} Enabled but missing required env vars, falling back to mock demo:`, {
       hasHost: !!host,
       hasDatabase: !!database,
       hasUser: !!user,
       hasPassword: !!password,
     });
-    return NextResponse.json({ enabled: false, connection: null });
+    
+    // Fallback to mock demo provider when env vars are missing
+    const mockDemoConnection: DatabaseConnection = {
+      id: 'demo-mock',
+      name: 'Demo Database (Mock)',
+      type: 'demo',
+      createdAt: new Date(),
+      isDemo: true,
+    };
+    
+    return NextResponse.json({
+      enabled: true,
+      connection: mockDemoConnection,
+    });
   }
 
   const demoConnection: DatabaseConnection = {
