@@ -506,11 +506,16 @@ const SHOWCASE_INTROS = [
 ];
 
 /**
- * Returns a random intro message
+ * Minimal divider line to separate intro from query
+ */
+const DIVIDER = '-- ─────────────────────────────────────────────────\n\n';
+
+/**
+ * Returns a random intro message with divider
  */
 function getRandomIntro(): string {
   const index = Math.floor(Math.random() * SHOWCASE_INTROS.length);
-  return SHOWCASE_INTROS[index];
+  return SHOWCASE_INTROS[index] + DIVIDER;
 }
 
 /**
