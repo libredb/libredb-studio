@@ -569,6 +569,7 @@ export default function Studio() {
     }
   }, [activeConnection]);
 
+
   const fetchSchema = async (conn: DatabaseConnection) => {
     setIsLoadingSchema(true);
 
