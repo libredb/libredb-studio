@@ -10,7 +10,7 @@ This plan outlines the steps to enhance the PostgreSQL provider with advanced mo
 
 ### Tasks
 
--   [ ] **Task:** Write tests for `pg_stat_activity` data retrieval.
+-   [~] **Task:** Write tests for `pg_stat_activity` data retrieval.
 -   [ ] **Task:** Implement `pg_stat_activity` data retrieval in the PostgreSQL provider.
 -   [ ] **Task:** Write tests for `pg_stat_statements` data retrieval.
 -   [ ] **Task:** Implement `pg_stat_statements` data retrieval in the PostgreSQL provider.
