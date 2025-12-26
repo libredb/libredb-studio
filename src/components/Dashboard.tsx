@@ -125,7 +125,15 @@ export default function Dashboard() {
   const [historyKey, setHistoryKey] = useState(0);
   const [savedKey, setSavedKey] = useState(0);
 
-  // Unlimited query warning state
+  // Large result warning state
+  const [largeResultWarningOpen, setLargeResultWarningOpen] = useState(false);
+  const [pendingLargeQuery, setPendingLargeQuery] = useState<{
+    query: string;
+    tabId: string;
+    estimatedRows: number;
+  } | null>(null);
+
+  // Unlimited query warning state (for Load All)
   const [unlimitedWarningOpen, setUnlimitedWarningOpen] = useState(false);
   const [pendingUnlimitedQuery, setPendingUnlimitedQuery] = useState<{
     query: string;
@@ -226,7 +234,35 @@ export default function Dashboard() {
     limit?: number;
     offset?: number;
     unlimited?: boolean;
+    skipEstimate?: boolean; // Skip estimate check (for confirmed queries)
   }
+
+  // Get row estimate before executing query
+  const getRowEstimate = async (query: string): Promise<{ estimatedRows: number; isLargeResult: boolean } | null> => {
+    if (!activeConnection) return null;
+
+    try {
+      const response = await fetch('/api/db/estimate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ connection: activeConnection, sql: query }),
+      });
+
+      if (response.ok) {
+        return await response.json();
+      }
+    } catch (error) {
+      console.error('[Estimate] Failed:', error);
+    }
+    return null;
+  };
+
+  // Format large numbers for display
+  const formatEstimate = (num: number): string => {
+    if (num >= 1000000) return `~${(num / 1000000).toFixed(1)}M`;
+    if (num >= 1000) return `~${(num / 1000).toFixed(1)}K`;
+    return `~${num}`;
+  };
 
   const executeQuery = async (
     overrideQuery?: string,
@@ -256,10 +292,26 @@ export default function Dashboard() {
       limit = 500,
       offset = 0,
       unlimited = false,
+      skipEstimate = false,
     } = executionOptions || {};
 
     // isLoadingMore flag
     const isLoadMore = offset > 0;
+
+    // Check estimate for large results (only for new queries, not load more, not explain)
+    if (!isLoadMore && !isExplain && !skipEstimate && !unlimited) {
+      const estimate = await getRowEstimate(queryToExecute);
+      if (estimate?.isLargeResult && estimate.estimatedRows > 0) {
+        // Show warning for large result sets
+        setPendingLargeQuery({
+          query: queryToExecute,
+          tabId: targetTabId,
+          estimatedRows: estimate.estimatedRows,
+        });
+        setLargeResultWarningOpen(true);
+        return; // Don't execute yet, wait for user confirmation
+      }
+    }
 
     setTabs(prev => prev.map(t => t.id === targetTabId ? {
       ...t,
@@ -403,7 +455,23 @@ export default function Dashboard() {
     executeQuery(currentTab.query, currentTab.id, false, {
       limit: 500,
       offset: currentOffset,
+      skipEstimate: true,
     });
+  };
+
+  // Large result query handler (after user confirms)
+  const handleLargeQueryConfirm = () => {
+    if (!pendingLargeQuery) return;
+
+    executeQuery(
+      pendingLargeQuery.query,
+      pendingLargeQuery.tabId,
+      false,
+      { skipEstimate: true } // Skip estimate since user already confirmed
+    );
+
+    setLargeResultWarningOpen(false);
+    setPendingLargeQuery(null);
   };
 
   // Unlimited query handler
@@ -414,7 +482,7 @@ export default function Dashboard() {
       pendingUnlimitedQuery.query,
       pendingUnlimitedQuery.tabId,
       false,
-      { unlimited: true }
+      { unlimited: true, skipEstimate: true }
     );
 
     setUnlimitedWarningOpen(false);
@@ -1160,40 +1228,72 @@ export default function Dashboard() {
         targetTable={maintenanceTargetTable}
       />
 
-      {/* Unlimited Query Warning Modal */}
-      <AlertDialog open={unlimitedWarningOpen} onOpenChange={setUnlimitedWarningOpen}>
-        <AlertDialogContent className="bg-[#0d0d0d] border-white/10">
-          <AlertDialogHeader>
-            <AlertDialogTitle className="text-amber-400 flex items-center gap-2">
-              <AlertTriangle className="w-5 h-5" />
-              Large Result Set Warning
-            </AlertDialogTitle>
-            <AlertDialogDescription className="text-zinc-400 space-y-3">
-              <p>
-                This query may return a large number of rows. Loading all results
-                at once could cause performance issues or browser slowdown.
-              </p>
-              <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg p-3 text-amber-300 text-xs">
-                <p className="font-semibold mb-1">Recommendation:</p>
-                <ul className="list-disc list-inside space-y-1">
-                  <li>Use pagination with &quot;Load More&quot; for large datasets</li>
-                  <li>Add WHERE clauses to filter results</li>
-                  <li>Maximum unlimited rows: 100,000</li>
-                </ul>
+      {/* Large Result Warning Modal (based on EXPLAIN estimate) */}
+      <AlertDialog open={largeResultWarningOpen} onOpenChange={setLargeResultWarningOpen}>
+        <AlertDialogContent className="bg-[#111] border-white/5 max-w-sm p-0 gap-0 overflow-hidden">
+          {/* Header with gradient accent */}
+          <div className="px-6 pt-6 pb-4">
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-amber-500/20 to-orange-500/10 flex items-center justify-center shrink-0">
+                <Database className="w-5 h-5 text-amber-400" />
               </div>
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel className="bg-zinc-800 border-white/10 hover:bg-zinc-700">
+              <div className="flex-1 min-w-0">
+                <AlertDialogTitle className="text-[15px] font-semibold text-zinc-100 mb-1">
+                  Large dataset
+                </AlertDialogTitle>
+                <AlertDialogDescription className="text-[13px] text-zinc-500 leading-relaxed">
+                  Estimated <span className="text-amber-400 font-medium">{formatEstimate(pendingLargeQuery?.estimatedRows || 0)}</span> rows.
+                  We&apos;ll load 500 at a time for performance.
+                </AlertDialogDescription>
+              </div>
+            </div>
+          </div>
+
+          {/* Actions */}
+          <div className="px-6 pb-6 flex gap-2">
+            <AlertDialogCancel className="flex-1 h-9 bg-white/5 border-0 text-zinc-400 text-[13px] font-medium hover:bg-white/10 hover:text-zinc-200">
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleLargeQueryConfirm}
+              className="flex-1 h-9 bg-blue-600 border-0 text-white text-[13px] font-medium hover:bg-blue-500"
+            >
+              Run Query
+            </AlertDialogAction>
+          </div>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Unlimited Query Warning Modal (for Load All button) */}
+      <AlertDialog open={unlimitedWarningOpen} onOpenChange={setUnlimitedWarningOpen}>
+        <AlertDialogContent className="bg-[#111] border-white/5 max-w-sm p-0 gap-0 overflow-hidden">
+          <div className="px-6 pt-6 pb-4">
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-amber-500/20 to-red-500/10 flex items-center justify-center shrink-0">
+                <AlertTriangle className="w-5 h-5 text-amber-400" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <AlertDialogTitle className="text-[15px] font-semibold text-zinc-100 mb-1">
+                  Load all results?
+                </AlertDialogTitle>
+                <AlertDialogDescription className="text-[13px] text-zinc-500 leading-relaxed">
+                  This may slow down your browser. Max <span className="text-zinc-400">100K</span> rows will be loaded.
+                </AlertDialogDescription>
+              </div>
+            </div>
+          </div>
+
+          <div className="px-6 pb-6 flex gap-2">
+            <AlertDialogCancel className="flex-1 h-9 bg-white/5 border-0 text-zinc-400 text-[13px] font-medium hover:bg-white/10 hover:text-zinc-200">
               Cancel
             </AlertDialogCancel>
             <AlertDialogAction
               onClick={handleUnlimitedQuery}
-              className="bg-amber-600 hover:bg-amber-500 text-white"
+              className="flex-1 h-9 bg-amber-600 border-0 text-white text-[13px] font-medium hover:bg-amber-500"
             >
-              Load All Results
+              Load All
             </AlertDialogAction>
-          </AlertDialogFooter>
+          </div>
         </AlertDialogContent>
       </AlertDialog>
 
