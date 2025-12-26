@@ -34,10 +34,7 @@ export interface SSEChunk {
  * Parse SSE formatted response for OpenAI-compatible APIs
  * Handles chunked responses and extracts content from delta objects
  */
-export function createSSEParser(
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  _provider: LLMProviderType
-): TransformStream<Uint8Array, Uint8Array> {
+export function createSSEParser(): TransformStream<Uint8Array, Uint8Array> {
   let buffer = '';
 
   return new TransformStream<Uint8Array, Uint8Array>({
@@ -163,7 +160,7 @@ export function createStreamFromSSEResponse(
     throw new LLMStreamError('Response body is empty', provider);
   }
 
-  return body.pipeThrough(createSSEParser(provider));
+  return body.pipeThrough(createSSEParser());
 }
 
 /**

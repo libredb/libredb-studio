@@ -2,6 +2,7 @@
 
 import React, { useRef, useEffect, useState, useMemo, forwardRef, useImperativeHandle } from 'react';
 import Editor, { useMonaco } from '@monaco-editor/react';
+import type * as Monaco from 'monaco-editor';
 import { Zap, Sparkles, Send, X, Loader2, AlignLeft, Trash2, Copy, Play } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -62,8 +63,7 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
   schemaContext 
 }, ref) => {
   const monaco = useMonaco();
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const editorRef = useRef<any>(null);
+  const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
   const [hasSelection, setHasSelection] = useState(false);
   
   // AI States
@@ -104,51 +104,59 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
   const getSelectedText = () => {
     if (!editorRef.current) return '';
     const selection = editorRef.current.getSelection();
-    return editorRef.current.getModel().getValueInRange(selection);
+    if (!selection) return '';
+    const model = editorRef.current.getModel();
+    if (!model) return '';
+    return model.getValueInRange(selection);
   };
 
   const getEffectiveQuery = () => {
     if (!editorRef.current) return { query: value, range: null };
     
     const model = editorRef.current.getModel();
+    if (!model) return { query: value, range: null };
 
     // 1. Check for explicit selection
     const selection = editorRef.current.getSelection();
-    const selectedText = model.getValueInRange(selection);
-    
-    if (selectedText && selectedText.trim().length > 0) {
-      return { query: selectedText, range: selection };
+    if (selection) {
+      const selectedText = model.getValueInRange(selection);
+      if (selectedText && selectedText.trim().length > 0) {
+        return { query: selectedText, range: selection };
+      }
     }
 
     // 2. If no selection, try to find the current statement (between semicolons)
     if (language === 'sql') {
       const position = editorRef.current.getPosition();
-      const fullText = model.getValue();
-      const cursorOffset = model.getOffsetAt(position);
+      if (position) {
+        const fullText = model.getValue();
+        const cursorOffset = model.getOffsetAt(position);
 
-      // Find boundaries of the current statement
-      let startOffset = fullText.lastIndexOf(';', cursorOffset - 1);
-      let endOffset = fullText.indexOf(';', cursorOffset);
+        // Find boundaries of the current statement
+        let startOffset = fullText.lastIndexOf(';', cursorOffset - 1);
+        let endOffset = fullText.indexOf(';', cursorOffset);
 
-      if (startOffset === -1) startOffset = 0;
-      else startOffset += 1; // skip the semicolon
+        if (startOffset === -1) startOffset = 0;
+        else startOffset += 1; // skip the semicolon
 
-      if (endOffset === -1) endOffset = fullText.length;
+        if (endOffset === -1) endOffset = fullText.length;
 
-      const statement = fullText.substring(startOffset, endOffset).trim();
-      if (statement.length > 0) {
-        const startPos = model.getPositionAt(startOffset);
-        const endPos = model.getPositionAt(endOffset);
-        const range = new monaco!.Range(startPos.lineNumber, startPos.column, endPos.lineNumber, endPos.column);
-        return { query: statement, range };
+        const statement = fullText.substring(startOffset, endOffset).trim();
+        if (statement.length > 0 && monaco) {
+          const startPos = model.getPositionAt(startOffset);
+          const endPos = model.getPositionAt(endOffset);
+          if (startPos && endPos) {
+            const range = new monaco.Range(startPos.lineNumber, startPos.column, endPos.lineNumber, endPos.column);
+            return { query: statement, range };
+          }
+        }
       }
     }
 
     return { query: value, range: null };
   };
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const flashHighlight = (range: any) => {
+  const flashHighlight = (range: Monaco.IRange) => {
     if (!editorRef.current || !monaco || !range) return;
     
     const decorations = editorRef.current.deltaDecorations([], [
@@ -163,7 +171,9 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
     ]);
 
     setTimeout(() => {
-      editorRef.current.deltaDecorations(decorations, []);
+      if (editorRef.current) {
+        editorRef.current.deltaDecorations(decorations, []);
+      }
     }, 1000);
   };
 
@@ -252,12 +262,10 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
     }
   };
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const handleBeforeMount = (monaco: any) => {
+  const handleBeforeMount = (_monacoInstance: typeof Monaco) => {
     // Suppress Monaco's "Canceled" errors in console
     const originalConsoleError = console.error;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    console.error = (...args: any[]) => {
+    console.error = (...args: unknown[]) => {
       const message = args[0]?.toString?.() || '';
       if (message.includes('Canceled') || message.includes('ERR Canceled')) {
         return; // Suppress Monaco cancellation errors
@@ -265,7 +273,8 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
       originalConsoleError.apply(console, args);
     };
 
-    monaco.editor.defineTheme('db-dark', {
+    if (!_monacoInstance) return;
+    _monacoInstance.editor.defineTheme('db-dark', {
       base: 'vs-dark',
       inherit: true,
       rules: [
@@ -296,8 +305,7 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
     if (monaco && language === 'sql') {
       const completionProvider = monaco.languages.registerCompletionItemProvider('sql', {
         triggerCharacters: ['.', ' '],
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        provideCompletionItems: (model: any, position: any) => {
+        provideCompletionItems: (model: Monaco.editor.ITextModel, position: Monaco.Position) => {
           const word = model.getWordUntilPosition(position);
           const range = {
             startLineNumber: position.lineNumber,
@@ -309,8 +317,7 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
           const line = model.getLineContent(position.lineNumber);
           const lastChar = line[position.column - 2];
           
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          let suggestions: any[] = [];
+          let suggestions: Monaco.languages.CompletionItem[] = [];
 
           if (lastChar === '.') {
             const matches = line.substring(0, position.column - 1).match(/(\w+)\.$/);
@@ -389,7 +396,9 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
 
   const handleExecute = () => {
     const { query, range } = getEffectiveQuery();
-    flashHighlight(range);
+    if (range) {
+      flashHighlight(range);
+    }
     const event = new CustomEvent('execute-query', { detail: { query } });
     window.dispatchEvent(event);
   };
