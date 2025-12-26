@@ -205,6 +205,50 @@ export default function Dashboard() {
     URL.revokeObjectURL(url);
   };
 
+  const fetchSchema = useCallback(async (conn: DatabaseConnection) => {
+    setIsLoadingSchema(true);
+
+    if (conn.isDemo) {
+      console.log('[DemoDB] Fetching schema for demo connection:', conn.name);
+    }
+
+    try {
+      const response = await fetch('/api/db/schema', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(conn),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        const errorMessage = errorData.error || 'Failed to fetch schema';
+
+        if (conn.isDemo) {
+          console.error('[DemoDB] Schema fetch failed:', errorMessage);
+          throw new Error(`Demo database unavailable: ${errorMessage}. You can add your own database connection.`);
+        }
+        throw new Error(errorMessage);
+      }
+
+      const data = await response.json();
+
+      if (conn.isDemo) {
+        console.log('[DemoDB] Schema loaded successfully:', {
+          tables: data.length,
+          tableNames: data.slice(0, 5).map((t: TableSchema) => t.name),
+        });
+      }
+
+      setSchema(data);
+    } catch (error) {
+      const title = conn.isDemo ? "Demo Database Error" : "Schema Error";
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+      toast({ title, description: errorMessage, variant: "destructive" });
+    } finally {
+      setIsLoadingSchema(false);
+    }
+  }, [toast]);
+
   const executeQuery = useCallback(async (overrideQuery?: string, tabId?: string, isExplain: boolean = false) => {
     const targetTabId = tabId || activeTabId;
     const tabToExec = tabs.find(t => t.id === targetTabId) || currentTab;
@@ -313,9 +357,14 @@ export default function Dashboard() {
   }, [activeTabId, tabs, currentTab, activeConnection, toast, fetchSchema]);
 
   useEffect(() => {
-    const handleExecuteQuery = (e: CustomEvent<{ query: string }>) => executeQuery(e.detail.query);
-    window.addEventListener('execute-query', handleExecuteQuery as EventListener);
-    return () => window.removeEventListener('execute-query', handleExecuteQuery as EventListener);
+    const handleExecuteQuery = (e: Event) => {
+      const customEvent = e as CustomEvent<{ query: string }>;
+      if (customEvent.detail?.query) {
+        executeQuery(customEvent.detail.query);
+      }
+    };
+    window.addEventListener('execute-query', handleExecuteQuery);
+    return () => window.removeEventListener('execute-query', handleExecuteQuery);
   }, [executeQuery]);
 
   useEffect(() => {
@@ -393,50 +442,6 @@ export default function Dashboard() {
 
     initializeConnections();
   }, []);
-
-  const fetchSchema = useCallback(async (conn: DatabaseConnection) => {
-    setIsLoadingSchema(true);
-
-    if (conn.isDemo) {
-      console.log('[DemoDB] Fetching schema for demo connection:', conn.name);
-    }
-
-    try {
-      const response = await fetch('/api/db/schema', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(conn),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        const errorMessage = errorData.error || 'Failed to fetch schema';
-
-        if (conn.isDemo) {
-          console.error('[DemoDB] Schema fetch failed:', errorMessage);
-          throw new Error(`Demo database unavailable: ${errorMessage}. You can add your own database connection.`);
-        }
-        throw new Error(errorMessage);
-      }
-
-      const data = await response.json();
-
-      if (conn.isDemo) {
-        console.log('[DemoDB] Schema loaded successfully:', {
-          tables: data.length,
-          tableNames: data.slice(0, 5).map((t: TableSchema) => t.name),
-        });
-      }
-
-      setSchema(data);
-    } catch (error) {
-      const title = conn.isDemo ? "Demo Database Error" : "Schema Error";
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
-      toast({ title, description: errorMessage, variant: "destructive" });
-    } finally {
-      setIsLoadingSchema(false);
-    }
-  }, [toast]);
 
   useEffect(() => {
     if (activeConnection) {

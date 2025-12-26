@@ -141,7 +141,15 @@ export function VisualExplain({ plan }: VisualExplainProps) {
     );
   }
 
-  const rootPlan = Array.isArray(plan) && plan[0] && 'Plan' in plan[0] ? plan[0].Plan : plan as ExplainPlanNode;
+  let rootPlan: ExplainPlanNode;
+  if (Array.isArray(plan) && plan[0] && 'Plan' in plan[0]) {
+    rootPlan = (plan[0] as { Plan: ExplainPlanNode }).Plan;
+  } else if (Array.isArray(plan)) {
+    // Fallback: if plan is array but doesn't have Plan property, use first element
+    rootPlan = plan[0] as unknown as ExplainPlanNode;
+  } else {
+    rootPlan = plan as unknown as ExplainPlanNode;
+  }
 
   return (
     <div className="h-full w-full bg-[#080808] overflow-auto custom-scrollbar p-8">
@@ -154,7 +162,11 @@ export function VisualExplain({ plan }: VisualExplainProps) {
            <div className="flex items-center gap-4">
               <div className="text-right">
                  <span className="block text-[9px] text-zinc-600 uppercase font-black tracking-widest mb-0.5">Total Time</span>
-                 <span className="text-lg font-mono font-bold text-blue-400">{plan[0]['Execution Time'] || rootPlan['Actual Total Time'] || 0} ms</span>
+                 <span className="text-lg font-mono font-bold text-blue-400">
+                   {Array.isArray(plan) && plan[0] && 'Execution Time' in plan[0] 
+                     ? (plan[0] as { 'Execution Time': number })['Execution Time'] 
+                     : rootPlan['Actual Total Time'] || 0} ms
+                 </span>
               </div>
            </div>
         </div>

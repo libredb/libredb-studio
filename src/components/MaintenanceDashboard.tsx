@@ -17,12 +17,28 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { DatabaseConnection, TableSchema } from '@/lib/types';
+
+interface HealthData {
+  activeConnections?: number;
+  databaseSize?: string;
+  cacheHitRatio?: number | string;
+  slowQueries?: Array<{
+    query: string;
+    calls: number;
+    avgTime: string;
+  }>;
+  activeSessions?: Array<{
+    pid: number | string;
+    state: string;
+    duration?: string;
+  }>;
+}
 import { storage } from '@/lib/storage';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
 export default function MaintenanceDashboard() {
   const [tables, setTables] = useState<TableSchema[]>([]);
-  const [healthData, setHealthData] = useState<Record<string, unknown> | null>(null);
+  const [healthData, setHealthData] = useState<HealthData | null>(null);
   const [loading, setLoading] = useState(false);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [connections, setConnections] = useState<DatabaseConnection[]>([]);
@@ -35,12 +51,6 @@ export default function MaintenanceDashboard() {
       setSelectedConnection(savedConnections[0]);
     }
   }, []);
-
-  useEffect(() => {
-    if (selectedConnection) {
-      fetchData();
-    }
-  }, [selectedConnection, fetchData]);
 
   const fetchData = useCallback(async () => {
     if (!selectedConnection) return;
@@ -71,6 +81,12 @@ export default function MaintenanceDashboard() {
       setLoading(false);
     }
   }, [selectedConnection]);
+
+  useEffect(() => {
+    if (selectedConnection) {
+      fetchData();
+    }
+  }, [selectedConnection, fetchData]);
 
   const runMaintenance = async (type: string, target?: string | number) => {
     if (!selectedConnection) {

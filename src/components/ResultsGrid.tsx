@@ -105,8 +105,8 @@ function ResultCard({
   index: number;
   onSelect: () => void;
 }) {
-  const primaryValue = row[primaryColumn];
-  const idValue = idColumn ? row[idColumn] : null;
+  const primaryValue: unknown = row[primaryColumn];
+  const idValue: unknown = idColumn ? row[idColumn] : null;
 
   // Show first 4 fields (excluding primary and id)
   const previewFields = fields
@@ -126,10 +126,10 @@ function ResultCard({
           </div>
           <div className="min-w-0 flex-1">
             <p className="text-sm font-semibold text-zinc-100 truncate">
-              {primaryValue ?? `Row ${index + 1}`}
+              {primaryValue != null ? String(primaryValue) : `Row ${index + 1}`}
             </p>
-            {idValue !== null && (
-              <p className="text-[10px] text-zinc-500 font-mono">#{idValue}</p>
+            {idValue != null && (
+              <p className="text-[10px] text-zinc-500 font-mono">#{String(idValue)}</p>
             )}
           </div>
         </div>

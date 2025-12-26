@@ -488,7 +488,7 @@ export class MongoDBProvider extends BaseDatabaseProvider {
           database: op.ns || this.getDatabaseName(),
           state: op.active ? 'active' : 'idle',
           query: JSON.stringify(op.command || {}).substring(0, 100),
-          duration: op.microsecs_running
+          duration: (typeof op.microsecs_running === 'number' && op.microsecs_running > 0)
             ? `${(op.microsecs_running / 1000000).toFixed(2)}s`
             : 'N/A',
         }));

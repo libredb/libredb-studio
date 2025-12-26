@@ -141,7 +141,7 @@ export class MySQLProvider extends SQLBaseProvider {
       });
 
       return {
-        rows: result.rows as unknown[],
+        rows: (result.rows as unknown[]).map(row => row as Record<string, unknown>) as Record<string, unknown>[],
         fields: result.fields?.map((f: FieldPacket) => f.name) ?? [],
         rowCount: Array.isArray(result.rows) ? result.rows.length : 0,
         executionTime,

@@ -3,8 +3,8 @@
  * Abstract pool management utilities for database providers
  */
 
-import { type PoolConfig } from '../types';
-import { TimeoutError, type DatabaseType } from '../errors';
+import { type PoolConfig, DEFAULT_POOL_CONFIG, type DatabaseType } from '../types';
+import { TimeoutError } from '../errors';
 
 // ============================================================================
 // Pool Statistics

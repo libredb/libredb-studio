@@ -180,7 +180,7 @@ export class SQLiteProvider extends SQLBaseProvider {
             const rows = params ? stmt.all(...params) : stmt.all();
             const fields = rows.length > 0 ? Object.keys(rows[0] as object) : [];
             return {
-              rows: rows as unknown[],
+              rows: (rows as unknown[]).map(row => row as Record<string, unknown>) as Record<string, unknown>[],
               fields,
               changes: 0,
             };

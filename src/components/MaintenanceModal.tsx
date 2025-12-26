@@ -26,6 +26,22 @@ import { DatabaseConnection, TableSchema } from '@/lib/types';
 import { cn } from '@/lib/utils';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
+interface HealthData {
+  activeConnections?: number;
+  databaseSize?: string;
+  cacheHitRatio?: number | string;
+  slowQueries?: Array<{
+    query: string;
+    calls: number;
+    avgTime: string;
+  }>;
+  activeSessions?: Array<{
+    pid: number | string;
+    state: string;
+    duration?: string;
+  }>;
+}
+
 interface MaintenanceModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -44,17 +60,9 @@ export function MaintenanceModal({
   targetTable
 }: MaintenanceModalProps) {
   const [activeTab, setActiveTab] = useState(initialTab);
-  const [healthData, setHealthData] = useState<Record<string, unknown> | null>(null);
+  const [healthData, setHealthData] = useState<HealthData | null>(null);
   const [loading, setLoading] = useState(false);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (isOpen) {
-      fetchHealth();
-      if (targetTable) setActiveTab('tables');
-      else setActiveTab(initialTab);
-    }
-  }, [isOpen, initialTab, targetTable, fetchHealth]);
 
   const fetchHealth = useCallback(async () => {
     if (!connection) return;
@@ -73,6 +81,14 @@ export function MaintenanceModal({
       setLoading(false);
     }
   }, [connection]);
+
+  useEffect(() => {
+    if (isOpen) {
+      fetchHealth();
+      if (targetTable) setActiveTab('tables');
+      else setActiveTab(initialTab);
+    }
+  }, [isOpen, initialTab, targetTable, fetchHealth]);
 
   const runMaintenance = async (type: string, target?: string | number) => {
     const actionId = `${type}-${target || 'global'}`;

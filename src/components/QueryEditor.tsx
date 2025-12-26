@@ -6,6 +6,7 @@ import { Zap, Sparkles, Send, X, Loader2, AlignLeft, Trash2, Copy, Play } from '
 import { cn } from '@/lib/utils';
 import { motion, AnimatePresence } from 'framer-motion';
 import { format } from 'sql-formatter';
+import type { TableSchema } from '@/lib/types';
 
 export interface QueryEditorRef {
   getSelectedText: () => string;
@@ -71,10 +72,10 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
   const [isAiLoading, setIsAiLoading] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
 
-  const parsedSchema = useMemo(() => {
+  const parsedSchema = useMemo((): TableSchema[] => {
     if (!schemaContext) return [];
     try {
-      return JSON.parse(schemaContext);
+      return JSON.parse(schemaContext) as TableSchema[];
     } catch (e) {
       console.error('Failed to parse schema context for editor:', e);
       return [];
@@ -93,7 +94,6 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
           expressionWidth: 100,
           tabWidth: 2,
           linesBetweenQueries: 2,
-          dense: false,
         });
         onChange(formatted);
       } catch (e) {
@@ -580,7 +580,7 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
             
             editor.onDidChangeCursorSelection(() => {
               const selection = editor.getSelection();
-              setHasSelection(!selection.isEmpty());
+              setHasSelection(selection ? !selection.isEmpty() : false);
             });
 
             // Add custom keyboard shortcut
