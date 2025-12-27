@@ -81,7 +81,35 @@ const tableNames = useMemo(() => schema.map(s => s.name), [schema]);
 const schemaContext = useMemo(() => JSON.stringify(schema), [schema]);
 ```
 
-### 4. Completion Provider Excessive Array Generation (HIGH)
+### 4. Monaco Editor Options Inline Object (HIGH)
+
+**Problem:** Editor options object was created inline on every render.
+
+```typescript
+// OLD - New object on every render
+<Editor
+  options={{
+    minimap: { enabled: false },
+    fontSize: 13,
+    // ... 20+ properties
+  }}
+/>
+```
+
+**Solution:** Static options defined outside component:
+
+```typescript
+// NEW - Single reference, never recreated
+const EDITOR_OPTIONS = {
+  minimap: { enabled: false },
+  fontSize: 13,
+  // ... all options
+} as const;
+
+<Editor options={EDITOR_OPTIONS} />
+```
+
+### 5. Completion Provider Excessive Array Generation (HIGH)
 
 **Problem:** All items were recreated on every completion trigger.
 
@@ -123,7 +151,7 @@ KEYWORD_ITEMS.forEach(item => {
 });
 ```
 
-### 5. Backend N+1 Query Pattern (HIGH)
+### 6. Backend N+1 Query Pattern (HIGH)
 
 **Problem:** PostgreSQL schema fetch executed 4 separate queries per table.
 
@@ -147,7 +175,7 @@ LEFT JOIN fk_info ...
 LEFT JOIN index_info ...
 ```
 
-### 6. Key-Based Force Re-render (MEDIUM)
+### 7. Key-Based Force Re-render (MEDIUM)
 
 **Problem:** QueryHistory and SavedQueries used key prop causing component destroy/recreate.
 
@@ -168,7 +196,7 @@ useEffect(() => {
 }, [refreshTrigger]);
 ```
 
-### 7. console.error Hook Cleanup (MEDIUM)
+### 8. console.error Hook Cleanup (MEDIUM)
 
 **Problem:** console.error override was not being cleaned up.
 
@@ -186,7 +214,7 @@ useEffect(() => {
 }, []);
 ```
 
-### 8. flashHighlight Race Condition (MEDIUM)
+### 9. flashHighlight Race Condition (MEDIUM)
 
 **Problem:** Rapid consecutive executions could cause decoration conflicts.
 

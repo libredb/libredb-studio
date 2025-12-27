@@ -6,6 +6,7 @@ import { Zap, Sparkles, Send, X, Loader2, AlignLeft, Trash2, Copy, Play } from '
 import { cn } from '@/lib/utils';
 import { motion, AnimatePresence } from 'framer-motion';
 import { format } from 'sql-formatter';
+import { extractAliases, resolveAlias } from '@/lib/sql';
 
 export interface QueryEditorRef {
   getSelectedText: () => string;
@@ -92,6 +93,42 @@ const SNIPPET_ITEMS: PrecomputedItem[] = SQL_SNIPPETS.map(s => ({
   insertTextRules: 4, // InsertAsSnippet
   detail: 'SQL Snippet'
 }));
+
+// Static editor options - defined outside component to prevent re-creation on every render
+const EDITOR_OPTIONS = {
+  minimap: { enabled: false },
+  fontSize: 13,
+  fontFamily: '"JetBrains Mono", "Fira Code", Menlo, Monaco, Consolas, monospace',
+  lineNumbers: 'on' as const,
+  roundedSelection: true,
+  scrollBeyondLastLine: false,
+  readOnly: false,
+  automaticLayout: true,
+  padding: { top: 12 },
+  cursorSmoothCaretAnimation: 'on' as const,
+  cursorBlinking: 'smooth' as const,
+  smoothScrolling: true,
+  contextmenu: true,
+  renderLineHighlight: 'all' as const,
+  bracketPairColorization: { enabled: true },
+  guides: { indentation: true },
+  scrollbar: {
+    vertical: 'visible' as const,
+    horizontal: 'visible' as const,
+    verticalScrollbarSize: 8,
+    horizontalScrollbarSize: 8,
+  },
+  fontLigatures: true,
+  suggestOnTriggerCharacters: true,
+  quickSuggestions: {
+    other: true,
+    comments: false,
+    strings: true
+  },
+  parameterHints: {
+    enabled: true
+  }
+} as const;
 
 export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
   value,
@@ -503,14 +540,53 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
 
           const suggestions: any[] = [];
 
-          // Dot-triggered: Show columns for specific table
+          // Dot-triggered: Show columns for specific table or alias
           if (lastChar === '.') {
             const matches = line.substring(0, position.column - 1).match(/(\w+)\.$/);
             if (matches) {
-              const tableName = matches[1].toLowerCase();
-              const columns = schemaCompletionCache.columnMap.get(tableName);
+              const identifier = matches[1].toLowerCase();
+
+              // Helper to find columns by table name (handles schema.table format)
+              const findColumns = (tableName: string) => {
+                const tableNameLower = tableName.toLowerCase();
+                // 1. Try exact match first
+                let cols = schemaCompletionCache.columnMap.get(tableNameLower);
+                if (cols) return cols;
+
+                // 2. Try matching table name with any schema prefix (e.g., "employee" matches "employees.employee")
+                for (const [key, value] of schemaCompletionCache.columnMap.entries()) {
+                  const parts = key.split('.');
+                  const justTableName = parts[parts.length - 1];
+                  if (justTableName === tableNameLower) {
+                    return value;
+                  }
+                }
+                return null;
+              };
+
+              // 1. First, try direct table lookup (backward compatible)
+              let columns = findColumns(identifier);
+
+              // 2. If not found, try alias resolution
+              if (!columns) {
+                // Get query text from start to cursor position
+                const textToCursor = model.getValueInRange({
+                  startLineNumber: 1,
+                  startColumn: 1,
+                  endLineNumber: position.lineNumber,
+                  endColumn: position.column - 1
+                });
+
+                // Extract aliases from query
+                const { aliases } = extractAliases(textToCursor);
+
+                // Resolve alias to table name
+                const resolvedTableName = resolveAlias(identifier, aliases);
+                columns = findColumns(resolvedTableName);
+              }
+
+              // 3. Provide column suggestions
               if (columns) {
-                // Only create suggestion objects for matching columns
                 columns.forEach(col => {
                   suggestions.push({
                     label: col.label,
@@ -869,40 +945,7 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
               run: () => handleFormat()
             });
           }}
-          options={{
-            minimap: { enabled: false },
-            fontSize: 13,
-            fontFamily: '"JetBrains Mono", "Fira Code", Menlo, Monaco, Consolas, monospace',
-            lineNumbers: 'on',
-            roundedSelection: true,
-            scrollBeyondLastLine: false,
-            readOnly: false,
-            automaticLayout: true,
-            padding: { top: 12 },
-            cursorSmoothCaretAnimation: 'on',
-            cursorBlinking: 'smooth',
-            smoothScrolling: true,
-            contextmenu: true,
-            renderLineHighlight: 'all',
-            bracketPairColorization: { enabled: true },
-            guides: { indentation: true },
-            scrollbar: {
-              vertical: 'visible',
-              horizontal: 'visible',
-              verticalScrollbarSize: 8,
-              horizontalScrollbarSize: 8,
-            },
-            fontLigatures: true,
-            suggestOnTriggerCharacters: true,
-            quickSuggestions: {
-              other: true,
-              comments: false,
-              strings: true
-            },
-            parameterHints: {
-              enabled: true
-            }
-          }}
+          options={EDITOR_OPTIONS}
         />
         
         {/* Connection Type Badge */}
