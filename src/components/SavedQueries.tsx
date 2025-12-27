@@ -15,15 +15,18 @@ import { format } from 'date-fns';
 interface SavedQueriesProps {
   onSelectQuery: (query: string) => void;
   connectionType?: string;
+  /** Increment this value to trigger a refresh of the saved queries data */
+  refreshTrigger?: number;
 }
 
-export function SavedQueries({ onSelectQuery, connectionType }: SavedQueriesProps) {
+export function SavedQueries({ onSelectQuery, connectionType, refreshTrigger = 0 }: SavedQueriesProps) {
   const [queries, setQueries] = useState<SavedQuery[]>([]);
   const [search, setSearch] = useState('');
 
+  // Refresh queries when refreshTrigger changes (replaces key-based re-mount)
   useEffect(() => {
     setQueries(storage.getSavedQueries());
-  }, []);
+  }, [refreshTrigger]);
 
   const filteredQueries = queries.filter(q => {
     const matchesSearch = q.name.toLowerCase().includes(search.toLowerCase()) || 

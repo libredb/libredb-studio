@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { Sidebar, ConnectionsList } from '@/components/Sidebar';
 import { MobileNav } from '@/components/MobileNav';
 import { SchemaExplorer } from '@/components/SchemaExplorer';
@@ -135,6 +135,29 @@ export default function Studio() {
   const router = useRouter();
 
   const currentTab = tabs.find(t => t.id === activeTabId) || tabs[0];
+
+  // Memoize props passed to QueryEditor to prevent unnecessary re-renders
+  const tableNames = useMemo(() => schema.map(s => s.name), [schema]);
+  const schemaContext = useMemo(() => JSON.stringify(schema), [schema]);
+
+  // Track previous tab to sync editor content on tab switch
+  const prevTabIdRef = useRef<string>(activeTabId);
+
+  // Sync editor content when switching tabs
+  useEffect(() => {
+    if (prevTabIdRef.current !== activeTabId && queryEditorRef.current) {
+      // Save current editor content to the previous tab before switching
+      const currentEditorValue = queryEditorRef.current.getValue();
+      const prevTabId = prevTabIdRef.current;
+
+      setTabs(prev => prev.map(t =>
+        t.id === prevTabId ? { ...t, query: currentEditorValue } : t
+      ));
+
+      // Update ref to current tab
+      prevTabIdRef.current = activeTabId;
+    }
+  }, [activeTabId]);
 
   const updateCurrentTab = useCallback((updates: Partial<QueryTab>) => {
     setTabs(prev => prev.map(t => t.id === activeTabId ? { ...t, ...updates } : t));
@@ -1062,15 +1085,15 @@ export default function Studio() {
                       </div>
 
                     <div className="flex-1 relative">
-                      <QueryEditor 
+                      <QueryEditor
                         ref={queryEditorRef}
-                        value={currentTab.query} 
-                        onChange={(val) => updateCurrentTab({ query: val })} 
+                        value={currentTab.query}
+                        onChange={(val) => updateCurrentTab({ query: val })}
                         onExplain={() => executeQuery(undefined, undefined, true)}
-                        language={currentTab.type === 'mongodb' ? 'json' : 'sql'} 
-                        tables={schema.map(s => s.name)}
+                        language={currentTab.type === 'mongodb' ? 'json' : 'sql'}
+                        tables={tableNames}
                         databaseType={activeConnection?.type}
-                        schemaContext={JSON.stringify(schema)}
+                        schemaContext={schemaContext}
                       />
                     </div>
                   </div>
@@ -1144,8 +1167,8 @@ export default function Studio() {
 
                         <div className="flex-1 overflow-hidden relative">
                           {bottomPanelMode === 'history' ? (
-                            <QueryHistory 
-                              key={historyKey}
+                            <QueryHistory
+                              refreshTrigger={historyKey}
                               activeConnectionId={activeConnection?.id}
                               onSelectQuery={(q) => {
                                 updateCurrentTab({ query: q });
@@ -1153,8 +1176,8 @@ export default function Studio() {
                               }}
                             />
                           ) : bottomPanelMode === 'saved' ? (
-                            <SavedQueries 
-                              key={savedKey}
+                            <SavedQueries
+                              refreshTrigger={savedKey}
                               connectionType={activeConnection?.type}
                               onSelectQuery={(q) => {
                                 updateCurrentTab({ query: q });
