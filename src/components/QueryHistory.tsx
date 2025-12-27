@@ -25,12 +25,14 @@ import {
 interface QueryHistoryProps {
   onSelectQuery: (query: string) => void;
   activeConnectionId?: string;
+  /** Increment this value to trigger a refresh of the history data */
+  refreshTrigger?: number;
 }
 
 type SortField = 'executedAt' | 'executionTime' | 'rowCount';
 type SortOrder = 'asc' | 'desc';
 
-export function QueryHistory({ onSelectQuery, activeConnectionId }: QueryHistoryProps) {
+export function QueryHistory({ onSelectQuery, activeConnectionId, refreshTrigger = 0 }: QueryHistoryProps) {
   const [history, setHistory] = useState<QueryHistoryItem[]>([]);
   const [search, setSearch] = useState('');
   const [filterStatus, setFilterStatus] = useState<'all' | 'success' | 'error'>('all');
@@ -38,9 +40,10 @@ export function QueryHistory({ onSelectQuery, activeConnectionId }: QueryHistory
   const [sortField, setSortField] = useState<SortField>('executedAt');
   const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
 
+  // Refresh history when refreshTrigger changes (replaces key-based re-mount)
   useEffect(() => {
     setHistory(storage.getHistory());
-  }, []);
+  }, [refreshTrigger]);
 
   const filteredHistory = useMemo(() => {
     return history.filter(item => {
