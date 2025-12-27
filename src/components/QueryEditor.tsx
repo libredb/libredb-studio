@@ -602,11 +602,16 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
             return { suggestions };
           }
 
-          // General completion with lazy filtering
+          // General completion with lazy filtering and context awareness
           // Only add items that match the current prefix (or all if prefix is empty/very short)
           const shouldFilter = prefix.length >= 2;
 
-          // Keywords - filter by prefix
+          // Detect context: Are we in a position where columns make sense?
+          // Columns are relevant after: SELECT, WHERE, AND, OR, ON, SET, HAVING, ORDER BY, GROUP BY
+          const textBeforeCursor = line.substring(0, position.column - 1).toUpperCase();
+          const isColumnContext = /\b(SELECT|WHERE|AND|OR|ON|SET|HAVING|ORDER\s+BY|GROUP\s+BY|,)\s*\w*$/i.test(textBeforeCursor);
+
+          // Keywords - filter by prefix (highest priority: sortText "0")
           KEYWORD_ITEMS.forEach(item => {
             if (!shouldFilter || item.labelLower.startsWith(prefix)) {
               suggestions.push({
@@ -614,12 +619,13 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
                 kind: monaco.languages.CompletionItemKind.Keyword,
                 insertText: item.insertText,
                 range,
-                detail: item.detail
+                detail: item.detail,
+                sortText: '0' + item.label // Keywords first
               });
             }
           });
 
-          // Functions - filter by prefix
+          // Functions - filter by prefix (sortText "1")
           FUNCTION_ITEMS.forEach(item => {
             if (!shouldFilter || item.labelLower.startsWith(prefix)) {
               suggestions.push({
@@ -628,12 +634,13 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
                 insertText: item.insertText,
                 insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
                 range,
-                detail: item.detail
+                detail: item.detail,
+                sortText: '1' + item.label // Functions second
               });
             }
           });
 
-          // Tables - filter by prefix
+          // Tables - filter by prefix (sortText "2")
           schemaCompletionCache.tableItems.forEach(table => {
             if (!shouldFilter || table.labelLower.startsWith(prefix)) {
               suggestions.push({
@@ -642,25 +649,30 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
                 insertText: table.label,
                 range,
                 detail: `Table (${table.rowCount} rows)`,
-                documentation: table.columnNames
+                documentation: table.columnNames,
+                sortText: '2' + table.label // Tables third
               });
             }
           });
 
-          // All unique columns - filter by prefix
-          schemaCompletionCache.allColumns.forEach((col, colName) => {
-            if (!shouldFilter || col.labelLower.startsWith(prefix)) {
-              suggestions.push({
-                label: colName,
-                kind: monaco.languages.CompletionItemKind.Field,
-                insertText: colName,
-                range,
-                detail: `Column (${col.type})`
-              });
-            }
-          });
+          // Columns - only show in appropriate context (sortText "4")
+          // This prevents columns like "from_date" appearing when typing "FROM"
+          if (isColumnContext) {
+            schemaCompletionCache.allColumns.forEach((col, colName) => {
+              if (!shouldFilter || col.labelLower.startsWith(prefix)) {
+                suggestions.push({
+                  label: colName,
+                  kind: monaco.languages.CompletionItemKind.Field,
+                  insertText: colName,
+                  range,
+                  detail: `Column (${col.type})`,
+                  sortText: '4' + colName // Columns lower priority
+                });
+              }
+            });
+          }
 
-          // Snippets - filter by prefix
+          // Snippets - filter by prefix (sortText "3")
           SNIPPET_ITEMS.forEach(item => {
             if (!shouldFilter || item.labelLower.startsWith(prefix)) {
               suggestions.push({
@@ -669,7 +681,8 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
                 insertText: item.insertText,
                 insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
                 range,
-                detail: item.detail
+                detail: item.detail,
+                sortText: '3' + item.label // Snippets fourth
               });
             }
           });
