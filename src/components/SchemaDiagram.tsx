@@ -25,7 +25,19 @@ interface TableNodeData extends Record<string, unknown> {
 }
 
 const TableNode = ({ data }: NodeProps<Node<TableNodeData>>) => {
-  const table = (data.data as TableNodeData).table;
+  // Add null checks
+  if (!data) {
+    return null;
+  }
+  
+  // Use data directly as TableNodeData
+  const table = (data as TableNodeData).table;
+  
+  // Add table null check
+  if (!table) {
+    return null;
+  }
+  
   return (
     <div className="bg-[#0d0d0d] border border-white/10 rounded-lg overflow-hidden min-w-[200px] shadow-2xl">
       <div className="bg-blue-600/10 px-3 py-2 border-b border-white/5 flex items-center gap-2">
@@ -33,7 +45,7 @@ const TableNode = ({ data }: NodeProps<Node<TableNodeData>>) => {
         <span className="text-xs font-bold text-zinc-100 uppercase tracking-wider">{table.name}</span>
       </div>
       <div className="p-1">
-        {table.columns.map((col: { name: string; type: string; isPrimary: boolean }, idx: number) => (
+        {table.columns?.map((col: { name: string; type: string; isPrimary: boolean }, idx: number) => (
           <div key={idx} className="flex items-center justify-between px-2 py-1 text-[10px] hover:bg-white/5 rounded transition-colors group relative">
             <Handle 
               type="source" 
