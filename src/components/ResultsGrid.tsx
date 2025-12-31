@@ -42,7 +42,7 @@ interface ResultsGridProps {
 }
 
 // Detect primary column (first text-like column that's not an ID)
-function detectPrimaryColumn(fields: string[], rows: any[]): string {
+function detectPrimaryColumn(fields: string[], rows: Record<string, unknown>[]): string {
   const preferredNames = ['name', 'title', 'label', 'username', 'email', 'description'];
 
   for (const name of preferredNames) {
@@ -70,7 +70,7 @@ function detectIdColumn(fields: string[]): string | null {
 }
 
 // Format cell value for display
-function formatCellValue(value: any): { display: string; className: string } {
+function formatCellValue(value: unknown): { display: string; className: string } {
   if (value === null || value === undefined) {
     return { display: 'NULL', className: 'text-zinc-600 italic' };
   }
@@ -102,15 +102,15 @@ function ResultCard({
   index,
   onSelect,
 }: {
-  row: any;
+  row: Record<string, unknown>;
   fields: string[];
   primaryColumn: string;
   idColumn: string | null;
   index: number;
   onSelect: () => void;
 }) {
-  const primaryValue = row[primaryColumn];
-  const idValue = idColumn ? row[idColumn] : null;
+  const primaryValue: unknown = row[primaryColumn];
+  const idValue: unknown = idColumn ? row[idColumn] : null;
 
   // Show first 4 fields (excluding primary and id)
   const previewFields = fields
@@ -130,10 +130,10 @@ function ResultCard({
           </div>
           <div className="min-w-0 flex-1">
             <p className="text-sm font-semibold text-zinc-100 truncate">
-              {primaryValue ?? `Row ${index + 1}`}
+              {primaryValue != null ? String(primaryValue) : `Row ${index + 1}`}
             </p>
-            {idValue !== null && (
-              <p className="text-[10px] text-zinc-500 font-mono">#{idValue}</p>
+            {idValue != null && (
+              <p className="text-[10px] text-zinc-500 font-mono">#{String(idValue)}</p>
             )}
           </div>
         </div>
@@ -171,7 +171,7 @@ function RowDetailSheet({
   onClose,
   rowIndex,
 }: {
-  row: any;
+  row: Record<string, unknown>;
   fields: string[];
   isOpen: boolean;
   onClose: () => void;
@@ -179,7 +179,7 @@ function RowDetailSheet({
 }) {
   const [copiedField, setCopiedField] = useState<string | null>(null);
 
-  const copyValue = (field: string, value: any) => {
+  const copyValue = (field: string, value: unknown) => {
     const textValue = typeof value === 'object' ? JSON.stringify(value) : String(value ?? '');
     navigator.clipboard.writeText(textValue);
     setCopiedField(field);
@@ -270,7 +270,7 @@ export function ResultsGrid({ result, onLoadMore, isLoadingMore }: ResultsGridPr
   const [editingCell, setEditingCell] = useState<{ rowIndex: number, columnId: string } | null>(null);
   const [editValue, setEditValue] = useState<string>("");
   const [viewMode, setViewMode] = useState<'card' | 'table'>('card');
-  const [selectedRow, setSelectedRow] = useState<{ row: any; index: number } | null>(null);
+  const [selectedRow, setSelectedRow] = useState<{ row: Record<string, unknown>; index: number } | null>(null);
 
   const primaryColumn = useMemo(
     () => detectPrimaryColumn(result.fields, result.rows),
@@ -282,7 +282,7 @@ export function ResultsGrid({ result, onLoadMore, isLoadingMore }: ResultsGridPr
     [result.fields]
   );
 
-  const columns = useMemo<ColumnDef<any>[]>(() => {
+  const columns = useMemo<ColumnDef<Record<string, unknown>>[]>(() => {
     return result.fields.map(field => ({
       accessorKey: field,
       header: ({ column }) => {

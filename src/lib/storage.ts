@@ -12,7 +12,7 @@ export const storage = {
     const stored = localStorage.getItem(CONNECTIONS_KEY);
     if (!stored) return [];
     try {
-      return JSON.parse(stored).map((conn: any) => ({
+      return JSON.parse(stored).map((conn: DatabaseConnection) => ({
         ...conn,
         createdAt: new Date(conn.createdAt)
       }));
@@ -47,7 +47,7 @@ export const storage = {
     const stored = localStorage.getItem(HISTORY_KEY);
     if (!stored) return [];
     try {
-      return JSON.parse(stored).map((item: any) => ({
+      return JSON.parse(stored).map((item: QueryHistoryItem) => ({
         ...item,
         executedAt: new Date(item.executedAt)
       }));
@@ -73,7 +73,7 @@ export const storage = {
     const stored = localStorage.getItem(SAVED_QUERIES_KEY);
     if (!stored) return [];
     try {
-      return JSON.parse(stored).map((q: any) => ({
+      return JSON.parse(stored).map((q: SavedQuery) => ({
         ...q,
         createdAt: new Date(q.createdAt),
         updatedAt: new Date(q.updatedAt)

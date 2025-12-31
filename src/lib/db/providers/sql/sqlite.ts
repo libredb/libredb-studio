@@ -62,7 +62,7 @@ async function loadSQLite(): Promise<SQLiteConstructor> {
     const sqlite = await import('bun:sqlite');
     Database = sqlite.Database as unknown as SQLiteConstructor;
     return Database;
-  } catch (error) {
+  } catch {
     sqliteLoadError = new DatabaseConfigError(
       'SQLite is not available in this environment. SQLite requires Bun runtime. For cloud deployments, use PostgreSQL or MySQL instead.',
       'sqlite'
@@ -180,7 +180,7 @@ export class SQLiteProvider extends SQLBaseProvider {
             const rows = params ? stmt.all(...params) : stmt.all();
             const fields = rows.length > 0 ? Object.keys(rows[0] as object) : [];
             return {
-              rows: rows as unknown[],
+              rows: (rows as unknown[]).map(row => row as Record<string, unknown>) as Record<string, unknown>[],
               fields,
               changes: 0,
             };
@@ -561,10 +561,6 @@ export class SQLiteProvider extends SQLBaseProvider {
       // Use page count approximation
       let tableSizeBytes = 0;
       try {
-        const pageStmt = this.db!.prepare('PRAGMA page_size');
-        const pageResult = pageStmt.get() as { page_size: number };
-        const pageSize = pageResult?.page_size || 4096;
-
         // Rough estimate: rows * average row size
         tableSizeBytes = rowCount * 100; // Assume 100 bytes average per row
       } catch {

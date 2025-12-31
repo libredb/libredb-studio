@@ -5,13 +5,6 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { 
-  Select, 
-  SelectContent, 
-  SelectItem, 
-  SelectTrigger, 
-  SelectValue 
-} from '@/components/ui/select';
 import { DatabaseConnection, DatabaseType } from '@/lib/types';
 import { Cloud, HardDrive, Database, Cpu, ShieldCheck, Zap, Globe, Key } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -60,7 +53,7 @@ export function ConnectionModal({ isOpen, onClose, onConnect }: ConnectionModalP
     setDatabase('');
   };
 
-    const dbTypes: { value: DatabaseType, label: string, icon: any, color: string }[] = [
+    const dbTypes: { value: DatabaseType, label: string, icon: React.ComponentType<{ className?: string }>, color: string }[] = [
       { value: 'postgres', label: 'PostgreSQL', icon: Cloud, color: 'text-blue-400' },
       { value: 'mysql', label: 'MySQL', icon: HardDrive, color: 'text-amber-400' },
       { value: 'mongodb', label: 'MongoDB', icon: Database, color: 'text-emerald-400' },

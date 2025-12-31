@@ -22,7 +22,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import type { MonitoringData, TableStats } from '@/lib/db/types';
+import type { MonitoringData } from '@/lib/db/types';
 
 interface TablesTabProps {
   data: MonitoringData | null;

@@ -141,7 +141,7 @@ export function useMonitoringData(
         abortControllerRef.current.abort();
       }
     };
-  }, [connection?.id]); // Only re-run when connection ID changes
+  }, [connection, fetchData]); // Only re-run when connection ID changes
 
   // Auto-refresh setup (separate effect)
   useEffect(() => {
@@ -162,7 +162,7 @@ export function useMonitoringData(
         intervalRef.current = null;
       }
     };
-  }, [autoRefresh, refreshInterval, connection?.id, fetchData]);
+  }, [autoRefresh, refreshInterval, connection, fetchData]);
 
   const refresh = useCallback(async () => {
     await fetchData();

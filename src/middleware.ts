@@ -34,7 +34,7 @@ export async function middleware(request: NextRequest) {
         const role = payload.role as string;
         // Redirect authenticated users based on their role
         return NextResponse.redirect(new URL(role === 'admin' ? '/admin' : '/', request.url));
-      } catch (error) {
+      } catch {
         // Invalid token, allow access to login page
         return NextResponse.next();
       }
@@ -70,7 +70,7 @@ export async function middleware(request: NextRequest) {
     }
 
     return NextResponse.next();
-  } catch (error) {
+  } catch {
     return NextResponse.redirect(new URL('/login', request.url));
   }
 }

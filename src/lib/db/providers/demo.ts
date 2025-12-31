@@ -118,7 +118,7 @@ export class DemoProvider extends BaseDatabaseProvider {
     });
 
     return {
-      rows: result.rows,
+      rows: result.rows as Record<string, unknown>[],
       fields: result.fields,
       rowCount: result.rows.length,
       executionTime,

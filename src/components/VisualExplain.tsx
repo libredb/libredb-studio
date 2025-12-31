@@ -21,8 +21,30 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
+type ExplainPlanNode = {
+  Plan?: ExplainPlanNode;
+  'Node Type'?: string;
+  'Actual Rows'?: number;
+  'Plan Rows'?: number;
+  'Actual Total Time'?: number;
+  'Total Cost'?: number;
+  'Shared Hit Blocks'?: number;
+  'Shared Read Blocks'?: number;
+  'Relation Name'?: string;
+  'Actual Loops'?: number;
+  Filter?: string;
+  'Index Name'?: string;
+  Plans?: ExplainPlanNode[];
+};
+
+export type ExplainPlanResult = {
+  Plan?: ExplainPlanNode;
+  'Execution Time'?: number;
+  'Planning Time'?: number;
+};
+
 interface VisualExplainProps {
-  plan: any;
+  plan: ExplainPlanResult[] | null | undefined;
 }
 
 // ============================================================================
@@ -34,6 +56,7 @@ function formatNumber(num: number): string {
   if (num >= 1000) return `${(num / 1000).toFixed(1)}K`;
   return num.toFixed(0);
 }
+
 
 function formatTime(ms: number): string {
   if (ms >= 1000) return `${(ms / 1000).toFixed(2)}s`;
@@ -71,7 +94,7 @@ interface Insight {
   status: 'good' | 'warning' | 'critical';
 }
 
-function analyzePlan(plan: any): PlanAnalysis {
+function analyzePlan(plan: ExplainPlanResult[]): PlanAnalysis {
   const warnings: Warning[] = [];
   const insights: Insight[] = [];
   let totalRows = 0;
@@ -85,7 +108,7 @@ function analyzePlan(plan: any): PlanAnalysis {
   const totalCost = rootPlan?.['Total Cost'] || 0;
 
   // Recursive node analysis
-  function analyzeNode(node: any, depth: number = 0) {
+  function analyzeNode(node: ExplainPlanNode, depth: number = 0) {
     if (!node) return;
     nodeCount++;
 
@@ -93,7 +116,6 @@ function analyzePlan(plan: any): PlanAnalysis {
     const actualRows = node['Actual Rows'] || 0;
     const planRows = node['Plan Rows'] || 0;
     const actualTime = node['Actual Total Time'] || 0;
-    const cost = node['Total Cost'] || 0;
 
     totalRows += actualRows;
     bufferHits += node['Shared Hit Blocks'] || 0;
@@ -133,17 +155,18 @@ function analyzePlan(plan: any): PlanAnalysis {
     }
 
     // Check for nested loops with high iterations
-    if (nodeType.includes('Nested Loop') && (node['Actual Loops'] || 1) > 1000) {
+    const actualLoops = node['Actual Loops'] ?? 1;
+    if (nodeType.includes('Nested Loop') && actualLoops > 1000) {
       warnings.push({
         type: 'critical',
         title: 'High Loop Count',
-        description: `Nested loop executed ${formatNumber(node['Actual Loops'])} times. This could indicate an N+1 problem.`,
+        description: `Nested loop executed ${formatNumber(actualLoops)} times. This could indicate an N+1 problem.`,
         node: nodeType,
       });
     }
 
     // Recurse into children
-    (node['Plans'] || []).forEach((child: any) => analyzeNode(child, depth + 1));
+    (node['Plans'] || []).forEach((child) => analyzeNode(child, depth + 1));
   }
 
   if (rootPlan) {
@@ -202,21 +225,15 @@ const NodeIcon = ({ type }: { type: string }) => {
 };
 
 const StatusBadge = ({ status }: { status: 'good' | 'warning' | 'critical' }) => {
-  const colors = {
-    good: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20',
-    warning: 'bg-amber-500/10 text-amber-400 border-amber-500/20',
-    critical: 'bg-red-500/10 text-red-400 border-red-500/20',
-  };
   return <div className={cn('w-2 h-2 rounded-full', status === 'good' ? 'bg-emerald-500' : status === 'warning' ? 'bg-amber-500' : 'bg-red-500')} />;
 };
 
 // Compact Plan Node
-const PlanNode = ({ node, depth = 0, maxTime }: { node: any; depth?: number; maxTime: number }) => {
+const PlanNode = ({ node, depth = 0, maxTime }: { node: ExplainPlanNode; depth?: number; maxTime: number }) => {
   const [expanded, setExpanded] = useState(depth < 2);
   const nodeType = node['Node Type'] || 'Unknown';
   const actualTime = node['Actual Total Time'] || 0;
   const actualRows = node['Actual Rows'] || 0;
-  const cost = node['Total Cost'] || 0;
   const children = node['Plans'] || [];
   const isIndexScan = nodeType.includes('Index');
   const isSeqScan = nodeType.includes('Seq Scan');
@@ -298,15 +315,15 @@ const PlanNode = ({ node, depth = 0, maxTime }: { node: any; depth?: number; max
             </div>
           )}
           {/* Buffer stats */}
-          {(node['Shared Hit Blocks'] || node['Shared Read Blocks']) && (
+          {((node['Shared Hit Blocks'] ?? 0) > 0 || (node['Shared Read Blocks'] ?? 0) > 0) && (
             <div className="flex items-center gap-4 py-1 text-[10px] text-zinc-600">
-              {node['Shared Hit Blocks'] > 0 && <span>Cache hits: {node['Shared Hit Blocks']}</span>}
-              {node['Shared Read Blocks'] > 0 && <span>Disk reads: {node['Shared Read Blocks']}</span>}
+              {(node['Shared Hit Blocks'] ?? 0) > 0 && <span>Cache hits: {node['Shared Hit Blocks']}</span>}
+              {(node['Shared Read Blocks'] ?? 0) > 0 && <span>Disk reads: {node['Shared Read Blocks']}</span>}
             </div>
           )}
 
           {/* Children */}
-          {children.map((child: any, idx: number) => (
+          {children.map((child, idx) => (
             <PlanNode key={idx} node={child} depth={depth + 1} maxTime={maxTime} />
           ))}
         </div>
@@ -489,8 +506,8 @@ export function VisualExplain({ plan }: VisualExplainProps) {
                 Execution Plan
               </h3>
               <div className="rounded-lg border border-white/5 bg-white/[0.01] p-2">
-                {rootPlan && (
-                  <PlanNode node={rootPlan} maxTime={analysis?.executionTime || 1} />
+                {rootPlan && analysis && (
+                  <PlanNode node={rootPlan} maxTime={analysis.executionTime || 1} />
                 )}
               </div>
             </div>
@@ -500,8 +517,8 @@ export function VisualExplain({ plan }: VisualExplainProps) {
         {activeTab === 'tree' && (
           <div className="p-4">
             <div className="rounded-lg border border-white/5 bg-white/[0.01] p-2">
-              {rootPlan && (
-                <PlanNode node={rootPlan} maxTime={analysis?.executionTime || 1} />
+              {rootPlan && analysis && (
+                <PlanNode node={rootPlan} maxTime={analysis.executionTime || 1} />
               )}
             </div>
           </div>

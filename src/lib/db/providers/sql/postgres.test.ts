@@ -39,12 +39,14 @@ mock.module('pg', () => {
 test("PostgresProvider.getPgStatActivity should return data from pg_stat_activity", async () => {
   const provider = new PostgresProvider({
     id: 'test-connection',
+    name: 'Test Connection',
     type: 'postgres',
     host: 'localhost',
     port: 5432,
     user: 'test',
     password: 'test',
     database: 'test',
+    createdAt: new Date(),
   });
 
   await provider.connect();

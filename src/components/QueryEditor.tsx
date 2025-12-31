@@ -2,6 +2,7 @@
 
 import React, { useRef, useEffect, useState, useMemo, forwardRef, useImperativeHandle } from 'react';
 import Editor, { useMonaco } from '@monaco-editor/react';
+import type * as Monaco from 'monaco-editor';
 import { Zap, Sparkles, Send, X, Loader2, AlignLeft, Trash2, Copy, Play } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -141,7 +142,7 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
   schemaContext
 }, ref) => {
   const monaco = useMonaco();
-  const editorRef = useRef<any>(null);
+  const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
   const [hasSelection, setHasSelection] = useState(false);
 
   // Track last synced value to detect external changes
@@ -169,7 +170,17 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
     }
   }, [value]);
 
-  const parsedSchema = useMemo(() => {
+  interface ParsedTable {
+    name: string;
+    rowCount?: number;
+    columns?: Array<{
+      name: string;
+      type: string;
+      isPrimary?: boolean;
+    }>;
+  }
+
+  const parsedSchema = useMemo((): ParsedTable[] => {
     if (!schemaContext) return [];
     try {
       return JSON.parse(schemaContext);
@@ -199,17 +210,17 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
     const columnMap = new Map<string, ColumnItem[]>(); // tableName -> columns
     const allColumns = new Map<string, ColumnItem>(); // columnName -> first occurrence
 
-    parsedSchema.forEach((table: any) => {
+    parsedSchema.forEach((table) => {
       const tableLower = table.name.toLowerCase();
       tableItems.push({
         label: table.name,
         labelLower: tableLower,
         rowCount: table.rowCount || 0,
-        columnNames: table.columns?.map((c: any) => c.name).join(', ') || ''
+        columnNames: table.columns?.map((c) => c.name).join(', ') || ''
       });
 
       const tableColumns: ColumnItem[] = [];
-      table.columns?.forEach((col: any) => {
+      table.columns?.forEach((col) => {
         const colItem: ColumnItem = {
           label: col.name,
           labelLower: col.name.toLowerCase(),
@@ -257,44 +268,50 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
   const getSelectedText = () => {
     if (!editorRef.current) return '';
     const selection = editorRef.current.getSelection();
-    return editorRef.current.getModel().getValueInRange(selection);
+    const model = editorRef.current.getModel();
+    if (!selection || !model) return '';
+    return model.getValueInRange(selection);
   };
 
   const getEffectiveQuery = () => {
     const editorValue = editorRef.current?.getValue() || '';
-    if (!editorRef.current) return { query: editorValue, range: null };
+    if (!editorRef.current || !monaco) return { query: editorValue, range: null };
 
     const model = editorRef.current.getModel();
+    if (!model) return { query: editorValue, range: null };
 
     // 1. Check for explicit selection
     const selection = editorRef.current.getSelection();
-    const selectedText = model.getValueInRange(selection);
-    
-    if (selectedText && selectedText.trim().length > 0) {
-      return { query: selectedText, range: selection };
+    if (selection) {
+      const selectedText = model.getValueInRange(selection);
+      if (selectedText && selectedText.trim().length > 0) {
+        return { query: selectedText, range: selection };
+      }
     }
 
     // 2. If no selection, try to find the current statement (between semicolons)
     if (language === 'sql') {
       const position = editorRef.current.getPosition();
-      const fullText = model.getValue();
-      const cursorOffset = model.getOffsetAt(position);
+      if (position) {
+        const fullText = model.getValue();
+        const cursorOffset = model.getOffsetAt(position);
 
-      // Find boundaries of the current statement
-      let startOffset = fullText.lastIndexOf(';', cursorOffset - 1);
-      let endOffset = fullText.indexOf(';', cursorOffset);
+        // Find boundaries of the current statement
+        let startOffset = fullText.lastIndexOf(';', cursorOffset - 1);
+        let endOffset = fullText.indexOf(';', cursorOffset);
 
-      if (startOffset === -1) startOffset = 0;
-      else startOffset += 1; // skip the semicolon
+        if (startOffset === -1) startOffset = 0;
+        else startOffset += 1; // skip the semicolon
 
-      if (endOffset === -1) endOffset = fullText.length;
+        if (endOffset === -1) endOffset = fullText.length;
 
-      const statement = fullText.substring(startOffset, endOffset).trim();
-      if (statement.length > 0) {
-        const startPos = model.getPositionAt(startOffset);
-        const endPos = model.getPositionAt(endOffset);
-        const range = new monaco!.Range(startPos.lineNumber, startPos.column, endPos.lineNumber, endPos.column);
-        return { query: statement, range };
+        const statement = fullText.substring(startOffset, endOffset).trim();
+        if (statement.length > 0) {
+          const startPos = model.getPositionAt(startOffset);
+          const endPos = model.getPositionAt(endOffset);
+          const range = new monaco.Range(startPos.lineNumber, startPos.column, endPos.lineNumber, endPos.column);
+          return { query: statement, range };
+        }
       }
     }
 
@@ -305,7 +322,7 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
   const highlightTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const activeDecorationsRef = useRef<string[]>([]);
 
-  const flashHighlight = (range: any) => {
+  const flashHighlight = (range: Monaco.Range | null) => {
     if (!editorRef.current || !monaco || !range) return;
 
     // Clear any existing highlight first
@@ -392,10 +409,13 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
             .slice(0, 100);
           
           filteredSchemaContext = topTables.map(table => {
-            const cols = table.columns.slice(0, 10).map((c: any) => `${c.name} (${c.type}${c.isPrimary ? ', PK' : ''})`).join(', ');
+            if (!table.columns || table.columns.length === 0) {
+              return `Table: ${table.name} (${table.rowCount || 0} rows)\nColumns: (none)`;
+            }
+            const cols = table.columns.slice(0, 10).map((c) => `${c.name} (${c.type}${c.isPrimary ? ', PK' : ''})`).join(', ');
             return `Table: ${table.name} (${table.rowCount || 0} rows)\nColumns: ${cols}${table.columns.length > 10 ? '...' : ''}`;
           }).join('\n\n');
-        } catch (err) {
+        } catch {
           filteredSchemaContext = schemaContext.substring(0, 2000);
         }
       }
@@ -459,9 +479,10 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
 
       setAiPrompt('');
       setShowAi(false);
-    } catch (error: any) {
+    } catch (error) {
       console.error('AI Error:', error);
-      setAiError(error.message || 'An unexpected error occurred while communicating with the AI.');
+      const errorMessage = error instanceof Error ? error.message : 'An unexpected error occurred while communicating with the AI.';
+      setAiError(errorMessage);
     } finally {
       setIsAiLoading(false);
     }
@@ -480,21 +501,21 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
     };
   }, []);
 
-  const handleBeforeMount = (monaco: any) => {
+  const handleBeforeMount = (monacoInstance: typeof Monaco) => {
     // Suppress Monaco's "Canceled" errors in console (with cleanup tracking)
     if (!originalConsoleErrorRef.current) {
       originalConsoleErrorRef.current = console.error;
       const originalConsoleError = console.error;
-      console.error = (...args: any[]) => {
+      console.error = (...args: unknown[]) => {
         const message = args[0]?.toString?.() || '';
         if (message.includes('Canceled') || message.includes('ERR Canceled')) {
           return; // Suppress Monaco cancellation errors
         }
-        originalConsoleError.apply(console, args);
+        originalConsoleError.apply(console, args as Parameters<typeof console.error>);
       };
     }
 
-    monaco.editor.defineTheme('db-dark', {
+    monacoInstance.editor.defineTheme('db-dark', {
       base: 'vs-dark',
       inherit: true,
       rules: [
@@ -525,7 +546,7 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
     if (monaco && language === 'sql') {
       const completionProvider = monaco.languages.registerCompletionItemProvider('sql', {
         triggerCharacters: ['.', ' '],
-        provideCompletionItems: (model: any, position: any) => {
+        provideCompletionItems: (model: Monaco.editor.ITextModel, position: Monaco.Position) => {
           const word = model.getWordUntilPosition(position);
           const range = {
             startLineNumber: position.lineNumber,
@@ -538,7 +559,7 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
           const lastChar = line[position.column - 2];
           const prefix = word.word.toLowerCase();
 
-          const suggestions: any[] = [];
+          const suggestions: Monaco.languages.CompletionItem[] = [];
 
           // Dot-triggered: Show columns for specific table or alias
           if (lastChar === '.') {
@@ -550,7 +571,7 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
               const findColumns = (tableName: string) => {
                 const tableNameLower = tableName.toLowerCase();
                 // 1. Try exact match first
-                let cols = schemaCompletionCache.columnMap.get(tableNameLower);
+                const cols = schemaCompletionCache.columnMap.get(tableNameLower);
                 if (cols) return cols;
 
                 // 2. Try matching table name with any schema prefix (e.g., "employee" matches "employees.employee")

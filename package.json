@@ -6,7 +6,8 @@
     "dev": "next dev --turbopack",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
@@ -57,9 +58,9 @@
     "next": "^15.5.7",
     "next-themes": "^0.4.6",
     "pg": "^8.16.3",
-    "react": "^19.2.1",
+    "react": "19.2.1",
     "react-day-picker": "^9.11.2",
-    "react-dom": "^19.2.1",
+    "react-dom": "19.2.1",
     "react-hook-form": "^7.66.1",
     "react-resizable-panels": "^3.0.6",
     "recharts": "^2.15.4",
