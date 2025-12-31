@@ -23,12 +23,13 @@ import {
 interface QueryHistoryProps {
   onSelectQuery: (query: string) => void;
   activeConnectionId?: string;
+  refreshTrigger?: number;
 }
 
 type SortField = 'executedAt' | 'executionTime' | 'rowCount';
 type SortOrder = 'asc' | 'desc';
 
-export function QueryHistory({ onSelectQuery, activeConnectionId }: QueryHistoryProps) {
+export function QueryHistory({ onSelectQuery, activeConnectionId, refreshTrigger }: QueryHistoryProps) {
   const [history, setHistory] = useState<QueryHistoryItem[]>([]);
   const [search, setSearch] = useState('');
   const [filterStatus, setFilterStatus] = useState<'all' | 'success' | 'error'>('all');
@@ -38,7 +39,7 @@ export function QueryHistory({ onSelectQuery, activeConnectionId }: QueryHistory
 
   useEffect(() => {
     setHistory(storage.getHistory());
-  }, []);
+  }, [refreshTrigger]);
 
   const filteredHistory = useMemo(() => {
     return history.filter(item => {

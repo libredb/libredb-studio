@@ -1,5 +1,5 @@
-import Dashboard from '@/components/Dashboard';
+import Studio from '@/components/Studio';
 
 export default function Page() {
-  return <Dashboard />;
+  return <Studio />;
 }

@@ -5,10 +5,16 @@ import {
   TimeoutError,
   isDatabaseError,
 } from '@/lib/db';
+import {
+  analyzeQuery,
+  applyQueryLimit,
+  DEFAULT_QUERY_LIMIT,
+  MAX_UNLIMITED_ROWS,
+} from '@/lib/db/utils/query-limiter';
 
 export async function POST(req: NextRequest) {
   try {
-    const { connection, sql } = await req.json();
+    const { connection, sql, options = {} } = await req.json();
 
     if (!connection || !sql) {
       return NextResponse.json(
@@ -17,10 +23,45 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const provider = await getOrCreateProvider(connection);
-    const result = await provider.query(sql);
+    // Options extraction with defaults
+    const {
+      limit = DEFAULT_QUERY_LIMIT,
+      offset = 0,
+      unlimited = false,
+    } = options;
 
-    return NextResponse.json(result);
+    // Unlimited mode için güvenlik limiti
+    const effectiveLimit = unlimited ? MAX_UNLIMITED_ROWS : limit;
+
+    // Query analizi ve limit uygulama
+    const queryInfo = analyzeQuery(sql);
+    let finalSql = sql;
+    let wasLimited = false;
+
+    // Sadece SELECT sorgularına limit uygula
+    if (queryInfo.type === 'SELECT') {
+      const limitResult = applyQueryLimit(sql, effectiveLimit, offset);
+      finalSql = limitResult.sql;
+      wasLimited = limitResult.wasLimited;
+    }
+
+    // Query execution
+    const provider = await getOrCreateProvider(connection);
+    const result = await provider.query(finalSql);
+
+    // hasMore hesaplama: döndürülen satır sayısı === limit ise daha fazla olabilir
+    const hasMore = result.rows.length === effectiveLimit;
+
+    return NextResponse.json({
+      ...result,
+      pagination: {
+        limit: effectiveLimit,
+        offset,
+        hasMore,
+        totalReturned: result.rows.length,
+        wasLimited,
+      },
+    });
   } catch (error) {
     console.error('[API:query] Error:', error);
 

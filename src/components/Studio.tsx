@@ -1,13 +1,13 @@
 "use client";
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { Sidebar, ConnectionsList } from '@/components/Sidebar';
 import { MobileNav } from '@/components/MobileNav';
 import { SchemaExplorer } from '@/components/SchemaExplorer';
 import { ConnectionModal } from '@/components/ConnectionModal';
 import { QueryEditor, QueryEditorRef } from '@/components/QueryEditor';
 import { ResultsGrid } from '@/components/ResultsGrid';
-import { VisualExplain } from '@/components/VisualExplain';
+import { VisualExplain, type ExplainPlanResult } from '@/components/VisualExplain';
 import { HealthDashboard } from '@/components/HealthDashboard';
 import { CreateTableModal } from '@/components/CreateTableModal';
 import { SchemaDiagram } from '@/components/SchemaDiagram';
@@ -16,13 +16,14 @@ import { SavedQueries } from '@/components/SavedQueries';
 import { SaveQueryModal } from '@/components/SaveQueryModal';
 import { MaintenanceModal } from '@/components/MaintenanceModal';
 import { DatabaseConnection, TableSchema, QueryTab, SavedQuery } from '@/lib/types';
-import { UserPayload } from '@/lib/auth';
 import { useToast } from '@/hooks/use-toast';
 import { storage } from '@/lib/storage';
+import { getDefaultQuery, getRandomShowcaseQuery } from '@/lib/showcase-queries';
 import { useRouter } from 'next/navigation';
 import { cn } from '@/lib/utils';
 import {
   Activity,
+  AlertTriangle,
   AlignLeft,
   Bookmark,
   ChevronDown,
@@ -56,12 +57,20 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Button } from '@/components/ui/button';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
-export default function Dashboard() {
+export default function Studio() {
   const [connections, setConnections] = useState<DatabaseConnection[]>([]);
   const [activeConnection, setActiveConnection] = useState<DatabaseConnection | null>(null);
   const [schema, setSchema] = useState<TableSchema[]>([]);
-  const [user, setUser] = useState<UserPayload | null>(null);
+  const [user, setUser] = useState<{ role?: string } | null>(null);
   const [isMaintenanceModalOpen, setIsMaintenanceModalOpen] = useState(false);
   const [maintenanceInitialTab, setMaintenanceInitialTab] = useState<'global' | 'tables' | 'sessions'>('global');
   const [maintenanceTargetTable, setMaintenanceTargetTable] = useState<string | undefined>(undefined);
@@ -100,7 +109,7 @@ export default function Dashboard() {
     {
       id: 'default',
       name: 'Query 1',
-      query: '-- Start typing your SQL query here\nSELECT * FROM users LIMIT 10;',
+      query: '-- Start typing your SQL query here\n',
       result: null,
       isExecuting: false,
       type: 'sql'
@@ -112,13 +121,43 @@ export default function Dashboard() {
   const [activeMobileTab, setActiveMobileTab] = useState<'database' | 'schema' | 'editor'>('editor');
 
   const [isSaveQueryModalOpen, setIsSaveQueryModalOpen] = useState(false);
-  const [historyKey, setHistoryKey] = useState(0); 
+  const [historyKey, setHistoryKey] = useState(0);
   const [savedKey, setSavedKey] = useState(0);
+
+  // Unlimited query warning state (for Load All)
+  const [unlimitedWarningOpen, setUnlimitedWarningOpen] = useState(false);
+  const [pendingUnlimitedQuery, setPendingUnlimitedQuery] = useState<{
+    query: string;
+    tabId: string;
+  } | null>(null);
 
   const { toast } = useToast();
   const router = useRouter();
 
   const currentTab = tabs.find(t => t.id === activeTabId) || tabs[0];
+
+  // Memoize props passed to QueryEditor to prevent unnecessary re-renders
+  const tableNames = useMemo(() => schema.map(s => s.name), [schema]);
+  const schemaContext = useMemo(() => JSON.stringify(schema), [schema]);
+
+  // Track previous tab to sync editor content on tab switch
+  const prevTabIdRef = useRef<string>(activeTabId);
+
+  // Sync editor content when switching tabs
+  useEffect(() => {
+    if (prevTabIdRef.current !== activeTabId && queryEditorRef.current) {
+      // Save current editor content to the previous tab before switching
+      const currentEditorValue = queryEditorRef.current.getValue();
+      const prevTabId = prevTabIdRef.current;
+
+      setTabs(prev => prev.map(t =>
+        t.id === prevTabId ? { ...t, query: currentEditorValue } : t
+      ));
+
+      // Update ref to current tab
+      prevTabIdRef.current = activeTabId;
+    }
+  }, [activeTabId]);
 
   const updateCurrentTab = useCallback((updates: Partial<QueryTab>) => {
     setTabs(prev => prev.map(t => t.id === activeTabId ? { ...t, ...updates } : t));
@@ -126,10 +165,11 @@ export default function Dashboard() {
 
   const addTab = () => {
     const newId = Math.random().toString(36).substring(7);
+    const isDemo = activeConnection?.isDemo || activeConnection?.type === 'demo';
     const newTab: QueryTab = {
       id: newId,
       name: `Query ${tabs.length + 1}`,
-      query: activeConnection?.type === 'mongodb' ? 'db.collection("users").find({})' : '-- New Query\n',
+      query: getDefaultQuery(isDemo, activeConnection?.type),
       result: null,
       isExecuting: false,
       type: activeConnection?.type === 'mongodb' ? 'mongodb' : 'sql'
@@ -205,6 +245,12 @@ export default function Dashboard() {
     URL.revokeObjectURL(url);
   };
 
+  interface QueryExecutionOptions {
+    limit?: number;
+    offset?: number;
+    unlimited?: boolean;
+  }
+
   const fetchSchema = useCallback(async (conn: DatabaseConnection) => {
     setIsLoadingSchema(true);
 
@@ -242,17 +288,22 @@ export default function Dashboard() {
       setSchema(data);
     } catch (error) {
       const title = conn.isDemo ? "Demo Database Error" : "Schema Error";
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       toast({ title, description: errorMessage, variant: "destructive" });
     } finally {
       setIsLoadingSchema(false);
     }
   }, [toast]);
 
-  const executeQuery = useCallback(async (overrideQuery?: string, tabId?: string, isExplain: boolean = false) => {
+  const executeQuery = useCallback(async (
+    overrideQuery?: string,
+    tabId?: string,
+    isExplain: boolean = false,
+    executionOptions?: QueryExecutionOptions
+  ) => {
     const targetTabId = tabId || activeTabId;
     const tabToExec = tabs.find(t => t.id === targetTabId) || currentTab;
-    
+
     // Modern Execution Logic: Prioritize selection from ref, then override, then tab state
     let queryToExecute = overrideQuery;
     if (!queryToExecute && targetTabId === activeTabId && queryEditorRef.current) {
@@ -267,25 +318,82 @@ export default function Dashboard() {
       return;
     }
 
-    setTabs(prev => prev.map(t => t.id === targetTabId ? { 
-      ...t, 
-      isExecuting: true
+    // Options extraction
+    const {
+      limit = 500,
+      offset = 0,
+      unlimited = false,
+    } = executionOptions || {};
+
+    // isLoadingMore flag
+    const isLoadMore = offset > 0;
+
+    setTabs(prev => prev.map(t => t.id === targetTabId ? {
+      ...t,
+      isExecuting: !isLoadMore,
+      isLoadingMore: isLoadMore,
     } : t));
     setBottomPanelMode(isExplain ? 'explain' : 'results');
-    
+
     if (activeConnection.isDemo && process.env.NODE_ENV === 'development') {
       console.log('[DemoDB] Executing query on demo connection:', {
         queryPreview: queryToExecute.substring(0, 100) + (queryToExecute.length > 100 ? '...' : ''),
       });
     }
 
+    // Build EXPLAIN query for PostgreSQL/MySQL
+    const buildExplainQuery = (sql: string, dbType: string): string | null => {
+      // Only for SELECT queries
+      if (!/^\s*SELECT\b/i.test(sql.trim())) return null;
+
+      if (dbType === 'postgres') {
+        return `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ${sql}`;
+      } else if (dbType === 'mysql') {
+        return `EXPLAIN FORMAT=JSON ${sql}`;
+      }
+      return null;
+    };
+
     const startTime = Date.now();
     try {
-      const response = await fetch('/api/db/query', {
+      // If isExplain mode, run EXPLAIN query instead
+      let queryToRun = queryToExecute;
+      if (isExplain && activeConnection.type) {
+        const explainSql = buildExplainQuery(queryToExecute, activeConnection.type);
+        if (explainSql) {
+          queryToRun = explainSql;
+        }
+      }
+
+      // Start both queries in parallel (main query + background explain)
+      const mainQueryPromise = fetch('/api/db/query', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ connection: activeConnection, sql: queryToExecute }),
+        body: JSON.stringify({
+          connection: activeConnection,
+          sql: isExplain ? queryToRun : queryToExecute,
+          options: isExplain ? {} : { limit, offset, unlimited },
+        }),
       });
+
+      // Run EXPLAIN in background for non-explain queries (SELECT only)
+      let explainPromise: Promise<Response> | null = null;
+      if (!isExplain && !isLoadMore && activeConnection.type) {
+        const explainSql = buildExplainQuery(queryToExecute, activeConnection.type);
+        if (explainSql) {
+          explainPromise = fetch('/api/db/query', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              connection: activeConnection,
+              sql: explainSql,
+              options: {},
+            }),
+          });
+        }
+      }
+
+      const response = await mainQueryPromise;
 
       const endTime = Date.now();
       const executionTime = endTime - startTime;
@@ -326,35 +434,115 @@ export default function Dashboard() {
         });
       }
 
-      storage.addToHistory({
-        id: Math.random().toString(36).substring(7),
-        connectionId: activeConnection.id,
-        connectionName: activeConnection.name,
-        tabName: tabToExec.name,
-        query: queryToExecute,
-        executionTime: resultData.executionTime || executionTime,
-        status: 'success',
-        executedAt: new Date(),
-        rowCount: resultData.rowCount
-      });
-      setHistoryKey(prev => prev + 1);
-      setTabs(prev => prev.map(t => t.id === targetTabId ? { 
-        ...t, 
-        result: resultData, 
-        isExecuting: false,
-        explainPlan: isExplain ? resultData.rows[0]?.['QUERY PLAN'] || resultData.rows[0] : null
-      } : t));
-      
+      // Only add to history for new queries (not load more)
+      if (!isLoadMore) {
+        storage.addToHistory({
+          id: Math.random().toString(36).substring(7),
+          connectionId: activeConnection.id,
+          connectionName: activeConnection.name,
+          tabName: tabToExec.name,
+          query: queryToExecute,
+          executionTime: resultData.executionTime || executionTime,
+          status: 'success',
+          executedAt: new Date(),
+          rowCount: resultData.rowCount
+        });
+        setHistoryKey(prev => prev + 1);
+      }
+
+      // Process EXPLAIN results (from background or direct)
+      let explainPlanData = null;
+      if (isExplain) {
+        // Direct EXPLAIN query - parse result
+        explainPlanData = resultData.rows?.[0]?.['QUERY PLAN'] || resultData.rows;
+      } else if (explainPromise) {
+        // Background EXPLAIN - don't block, update async
+        explainPromise.then(async (explainRes) => {
+          if (explainRes.ok) {
+            const explainData = await explainRes.json();
+            const plan = explainData.rows?.[0]?.['QUERY PLAN'] || explainData.rows;
+            setTabs(prev => prev.map(t =>
+              t.id === targetTabId ? { ...t, explainPlan: plan } : t
+            ));
+          }
+        }).catch(err => console.error('[EXPLAIN] Background fetch failed:', err));
+      }
+
+      // Update tab state: Load More (append) vs new query (replace)
+      setTabs(prev => prev.map(t => {
+        if (t.id !== targetTabId) return t;
+
+        // Load More mode: append rows
+        if (isLoadMore && t.result) {
+          const existingRows = t.allRows || t.result.rows;
+          const newAllRows = [...existingRows, ...resultData.rows];
+
+          return {
+            ...t,
+            result: {
+              ...resultData,
+              rows: newAllRows,
+              rowCount: newAllRows.length,
+            },
+            allRows: newAllRows,
+            currentOffset: offset + resultData.rows.length,
+            isExecuting: false,
+            isLoadingMore: false,
+          };
+        }
+
+        // New query mode: replace
+        return {
+          ...t,
+          result: isExplain ? null : resultData, // Don't show EXPLAIN as results
+          allRows: isExplain ? t.allRows : resultData.rows,
+          currentOffset: isExplain ? t.currentOffset : resultData.rows.length,
+          isExecuting: false,
+          isLoadingMore: false,
+          explainPlan: explainPlanData || t.explainPlan,
+        };
+      }));
+
       if (!isExplain && /(CREATE|DROP|ALTER|TRUNCATE)\b/i.test(queryToExecute)) {
         fetchSchema(activeConnection);
       }
     } catch (error) {
-      setTabs(prev => prev.map(t => t.id === targetTabId ? { ...t, isExecuting: false } : t));
+      setTabs(prev => prev.map(t => t.id === targetTabId ? {
+        ...t,
+        isExecuting: false,
+        isLoadingMore: false,
+      } : t));
       const title = activeConnection?.isDemo ? "Demo Database Error" : "Query Error";
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       toast({ title, description: errorMessage, variant: "destructive" });
     }
-  }, [activeTabId, tabs, currentTab, activeConnection, toast, fetchSchema]);
+  }, [activeConnection, tabs, currentTab, activeTabId, toast, fetchSchema]);
+
+  // Load More handler
+  const handleLoadMore = () => {
+    if (!currentTab.result?.pagination?.hasMore) return;
+
+    const currentOffset = currentTab.currentOffset || currentTab.result.rows.length;
+    executeQuery(currentTab.query, currentTab.id, false, {
+      limit: 500,
+      offset: currentOffset,
+    });
+  };
+
+  // Unlimited query handler
+  const handleUnlimitedQuery = () => {
+    if (!pendingUnlimitedQuery) return;
+
+    executeQuery(
+      pendingUnlimitedQuery.query,
+      pendingUnlimitedQuery.tabId,
+      false,
+      { unlimited: true }
+    );
+
+    setUnlimitedWarningOpen(false);
+    setPendingUnlimitedQuery(null);
+  };
 
   useEffect(() => {
     const handleExecuteQuery = (e: Event) => {
@@ -446,11 +634,20 @@ export default function Dashboard() {
   useEffect(() => {
     if (activeConnection) {
       fetchSchema(activeConnection);
-      setTabs(prev => prev.map(t => ({
-        ...t,
-        type: activeConnection.type === 'mongodb' ? 'mongodb' : 
-              activeConnection.type === 'redis' ? 'redis' : 'sql'
-      })));
+      const isDemo = activeConnection.isDemo || activeConnection.type === 'demo';
+      setTabs(prev => prev.map((t, index) => {
+        // For demo connection: update first tab with showcase query if it has default content
+        const hasDefaultQuery = t.query === '-- Start typing your SQL query here\n' ||
+                                t.query.startsWith('-- Start typing');
+        const shouldUpdateWithShowcase = isDemo && index === 0 && hasDefaultQuery;
+
+        return {
+          ...t,
+          type: activeConnection.type === 'mongodb' ? 'mongodb' :
+                activeConnection.type === 'redis' ? 'redis' : 'sql',
+          ...(shouldUpdateWithShowcase ? { query: getRandomShowcaseQuery() } : {})
+        };
+      }));
     } else {
       setSchema([]);
     }
@@ -894,15 +1091,15 @@ export default function Dashboard() {
                       </div>
 
                     <div className="flex-1 relative">
-                      <QueryEditor 
+                      <QueryEditor
                         ref={queryEditorRef}
-                        value={currentTab.query} 
-                        onChange={(val) => updateCurrentTab({ query: val })} 
+                        value={currentTab.query}
+                        onChange={(val) => updateCurrentTab({ query: val })}
                         onExplain={() => executeQuery(undefined, undefined, true)}
-                        language={currentTab.type === 'mongodb' ? 'json' : 'sql'} 
-                        tables={schema.map(s => s.name)}
+                        language={currentTab.type === 'mongodb' ? 'json' : 'sql'}
+                        tables={tableNames}
                         databaseType={activeConnection?.type}
-                        schemaContext={JSON.stringify(schema)}
+                        schemaContext={schemaContext}
                       />
                     </div>
                   </div>
@@ -939,10 +1136,10 @@ export default function Dashboard() {
                             >
                               <Clock className="w-3 h-3" /> History
                             </button>
-                            <button 
-                              onClick={() => setBottomPanelMode('saved')} 
+                            <button
+                              onClick={() => setBottomPanelMode('saved')}
                               className={cn(
-                                "h-full px-3 text-[10px] font-bold uppercase transition-all border-b-2 flex items-center gap-2", 
+                                "h-full px-3 text-[10px] font-bold uppercase transition-all border-b-2 flex items-center gap-2",
                                 bottomPanelMode === 'saved' ? "text-purple-400 border-purple-500 bg-white/5" : "text-zinc-500 border-transparent hover:text-zinc-300"
                               )}
                             >
@@ -976,8 +1173,8 @@ export default function Dashboard() {
 
                         <div className="flex-1 overflow-hidden relative">
                           {bottomPanelMode === 'history' ? (
-                            <QueryHistory 
-                              key={historyKey}
+                            <QueryHistory
+                              refreshTrigger={historyKey}
                               activeConnectionId={activeConnection?.id}
                               onSelectQuery={(q) => {
                                 updateCurrentTab({ query: q });
@@ -985,8 +1182,8 @@ export default function Dashboard() {
                               }}
                             />
                           ) : bottomPanelMode === 'saved' ? (
-                            <SavedQueries 
-                              key={savedKey}
+                            <SavedQueries
+                              refreshTrigger={savedKey}
                               connectionType={activeConnection?.type}
                               onSelectQuery={(q) => {
                                 updateCurrentTab({ query: q });
@@ -995,9 +1192,17 @@ export default function Dashboard() {
                             />
                           ) : currentTab.result ? (
                             bottomPanelMode === 'explain' ? (
-                              <VisualExplain plan={currentTab.explainPlan} />
+                              <VisualExplain plan={currentTab.explainPlan as ExplainPlanResult[] | null | undefined} />
                             ) : (
-                              <ResultsGrid result={currentTab.result} />
+                              <ResultsGrid
+                                result={currentTab.result}
+                                onLoadMore={
+                                  currentTab.result.pagination?.hasMore
+                                    ? handleLoadMore
+                                    : undefined
+                                }
+                                isLoadingMore={currentTab.isLoadingMore}
+                              />
                             )
                           ) : (
                           <div className="h-full flex flex-col items-center justify-center opacity-20 bg-[#0a0a0a]">
@@ -1048,6 +1253,39 @@ export default function Dashboard() {
         initialTab={maintenanceInitialTab}
         targetTable={maintenanceTargetTable}
       />
+
+      {/* Unlimited Query Warning Modal (for Load All button) */}
+      <AlertDialog open={unlimitedWarningOpen} onOpenChange={setUnlimitedWarningOpen}>
+        <AlertDialogContent className="bg-[#111] border-white/5 max-w-sm p-0 gap-0 overflow-hidden">
+          <div className="px-6 pt-6 pb-4">
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-amber-500/20 to-red-500/10 flex items-center justify-center shrink-0">
+                <AlertTriangle className="w-5 h-5 text-amber-400" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <AlertDialogTitle className="text-[15px] font-semibold text-zinc-100 mb-1">
+                  Load all results?
+                </AlertDialogTitle>
+                <AlertDialogDescription className="text-[13px] text-zinc-500 leading-relaxed">
+                  This may slow down your browser. Max <span className="text-zinc-400">100K</span> rows will be loaded.
+                </AlertDialogDescription>
+              </div>
+            </div>
+          </div>
+
+          <div className="px-6 pb-6 flex gap-2">
+            <AlertDialogCancel className="flex-1 h-9 bg-white/5 border-0 text-zinc-400 text-[13px] font-medium hover:bg-white/10 hover:text-zinc-200">
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleUnlimitedQuery}
+              className="flex-1 h-9 bg-amber-600 border-0 text-white text-[13px] font-medium hover:bg-amber-500"
+            >
+              Load All
+            </AlertDialogAction>
+          </div>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <MobileNav
         activeTab={activeMobileTab}

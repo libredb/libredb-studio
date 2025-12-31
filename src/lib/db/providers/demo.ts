@@ -77,18 +77,25 @@ export class DemoProvider extends BaseDatabaseProvider {
 
   public async query(sql: string): Promise<QueryResult> {
     const { result, executionTime } = await this.measureExecution(async () => {
-      const lowerSql = sql.toLowerCase().trim();
+      // Remove comments and normalize whitespace
+      const cleanedSql = sql
+        .replace(/--.*$/gm, '') // Remove single-line comments
+        .replace(/\/\*[\s\S]*?\*\//g, '') // Remove multi-line comments
+        .replace(/\s+/g, ' ') // Normalize whitespace
+        .trim();
+      
+      const lowerSql = cleanedSql.toLowerCase();
 
       // Parse query to determine response
-      if (lowerSql.includes('from users')) {
+      if (lowerSql.includes('from users') || lowerSql.includes('from "users"')) {
         return this.handleUsersQuery(lowerSql);
       }
 
-      if (lowerSql.includes('from products')) {
+      if (lowerSql.includes('from products') || lowerSql.includes('from "products"')) {
         return this.handleProductsQuery(lowerSql);
       }
 
-      if (lowerSql.includes('from orders')) {
+      if (lowerSql.includes('from orders') || lowerSql.includes('from "orders"')) {
         return this.handleOrdersQuery(lowerSql);
       }
 

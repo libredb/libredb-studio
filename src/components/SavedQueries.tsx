@@ -14,15 +14,16 @@ import { format } from 'date-fns';
 interface SavedQueriesProps {
   onSelectQuery: (query: string) => void;
   connectionType?: string;
+  refreshTrigger?: number;
 }
 
-export function SavedQueries({ onSelectQuery, connectionType }: SavedQueriesProps) {
+export function SavedQueries({ onSelectQuery, connectionType, refreshTrigger }: SavedQueriesProps) {
   const [queries, setQueries] = useState<SavedQuery[]>([]);
   const [search, setSearch] = useState('');
 
   useEffect(() => {
     setQueries(storage.getSavedQueries());
-  }, []);
+  }, [refreshTrigger]);
 
   const filteredQueries = queries.filter(q => {
     const matchesSearch = q.name.toLowerCase().includes(search.toLowerCase()) || 

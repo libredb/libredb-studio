@@ -18,11 +18,13 @@ import {
   ArrowDown,
   Copy,
   ChevronRight,
+  ChevronDown,
   LayoutGrid,
   Table2,
   Hash,
   FileJson,
   Check,
+  Loader2,
 } from 'lucide-react';
 import {
   Sheet,
@@ -35,6 +37,8 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 
 interface ResultsGridProps {
   result: QueryResult;
+  onLoadMore?: () => void;
+  isLoadingMore?: boolean;
 }
 
 // Detect primary column (first text-like column that's not an ID)
@@ -261,7 +265,7 @@ function RowDetailSheet({
   );
 }
 
-export function ResultsGrid({ result }: ResultsGridProps) {
+export function ResultsGrid({ result, onLoadMore, isLoadingMore }: ResultsGridProps) {
   const [sorting, setSorting] = useState<SortingState>([]);
   const [editingCell, setEditingCell] = useState<{ rowIndex: number, columnId: string } | null>(null);
   const [editValue, setEditValue] = useState<string>("");
@@ -356,6 +360,7 @@ export function ResultsGrid({ result }: ResultsGridProps) {
 
   const tableContainerRef = useRef<HTMLDivElement>(null);
   const cardContainerRef = useRef<HTMLDivElement>(null);
+  const mobileTableContainerRef = useRef<HTMLDivElement>(null);
 
   const { rows } = table.getRowModel();
 
@@ -370,6 +375,13 @@ export function ResultsGrid({ result }: ResultsGridProps) {
     count: result.rows.length,
     getScrollElement: () => cardContainerRef.current,
     estimateSize: () => 160,
+    overscan: 5,
+  });
+
+  const mobileTableVirtualizer = useVirtualizer({
+    count: result.rows.length,
+    getScrollElement: () => mobileTableContainerRef.current,
+    estimateSize: () => 48,
     overscan: 5,
   });
 
@@ -395,8 +407,16 @@ export function ResultsGrid({ result }: ResultsGridProps) {
           <span className="flex items-center gap-1.5">
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-500/50" />
             {result.rows.length} rows
+            {result.pagination?.hasMore && (
+              <span className="text-amber-400 ml-1">(more available)</span>
+            )}
           </span>
           <span className="hidden sm:inline">{result.fields.length} columns</span>
+          {result.pagination?.wasLimited && (
+            <span className="text-blue-400 text-[10px] bg-blue-500/10 px-2 py-0.5 rounded">
+              AUTO-LIMITED
+            </span>
+          )}
         </div>
 
         <div className="flex items-center gap-2">
@@ -466,57 +486,73 @@ export function ResultsGrid({ result }: ResultsGridProps) {
         </div>
       </div>
 
-      {/* Mobile Table View (when toggled) - Horizontal scroll with sticky first column */}
+      {/* Mobile Table View (when toggled) - Virtualized with horizontal scroll */}
       <div
+        ref={mobileTableContainerRef}
         className={cn(
           "flex-1 overflow-auto md:hidden",
           viewMode !== 'table' && "hidden"
         )}
       >
         <div className="min-w-max">
-          <table className="border-separate border-spacing-0">
-            <thead className="sticky top-0 z-20 bg-[#0d0d0d]">
-              <tr>
-                {result.fields.map((field, idx) => (
-                  <th
-                    key={field}
-                    className={cn(
-                      "h-10 px-4 text-left border-r border-b border-white/5 text-[10px] uppercase font-mono tracking-wider text-zinc-500 bg-[#0d0d0d] whitespace-nowrap",
-                      idx === 0 && "sticky left-0 z-30 bg-[#0d0d0d] shadow-[2px_0_8px_rgba(0,0,0,0.3)]",
-                      "min-w-[120px]"
-                    )}
-                  >
-                    {field}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {result.rows.map((row, rowIdx) => (
-                <tr
-                  key={rowIdx}
-                  className="hover:bg-blue-500/[0.03] transition-colors border-b border-white/5 cursor-pointer"
-                  onClick={() => setSelectedRow({ row, index: rowIdx })}
+          {/* Header - Sticky */}
+          <div className="sticky top-0 z-20 bg-[#0d0d0d] flex">
+            {result.fields.map((field, idx) => (
+              <div
+                key={field}
+                className={cn(
+                  "h-10 px-4 flex items-center border-r border-b border-white/5 text-[10px] uppercase font-mono tracking-wider text-zinc-500 bg-[#0d0d0d] whitespace-nowrap",
+                  idx === 0 && "sticky left-0 z-30 bg-[#0d0d0d] shadow-[2px_0_8px_rgba(0,0,0,0.3)]",
+                  "min-w-[120px]"
+                )}
+              >
+                {field}
+              </div>
+            ))}
+          </div>
+
+          {/* Virtualized Body */}
+          <div
+            style={{
+              height: `${mobileTableVirtualizer.getTotalSize()}px`,
+              position: 'relative',
+            }}
+          >
+            {mobileTableVirtualizer.getVirtualItems().map(virtualRow => {
+              const row = result.rows[virtualRow.index];
+              return (
+                <div
+                  key={virtualRow.index}
+                  style={{
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    height: `${virtualRow.size}px`,
+                    transform: `translateY(${virtualRow.start}px)`,
+                  }}
+                  className="flex hover:bg-blue-500/[0.03] transition-colors border-b border-white/5 cursor-pointer"
+                  onClick={() => setSelectedRow({ row, index: virtualRow.index })}
                 >
                   {result.fields.map((field, idx) => {
                     const { display, className } = formatCellValue(row[field]);
                     return (
-                      <td
+                      <div
                         key={field}
                         className={cn(
-                          "px-4 py-3 border-r border-white/5 text-[12px] font-mono whitespace-nowrap",
+                          "h-full px-4 py-3 border-r border-white/5 text-[12px] font-mono whitespace-nowrap overflow-hidden flex items-center",
                           idx === 0 && "sticky left-0 z-10 bg-[#080808] shadow-[2px_0_8px_rgba(0,0,0,0.3)]",
                           "min-w-[120px]"
                         )}
                       >
                         <span className={className}>{display}</span>
-                      </td>
+                      </div>
                     );
                   })}
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                </div>
+              );
+            })}
+          </div>
         </div>
       </div>
 
@@ -583,6 +619,31 @@ export function ResultsGrid({ result }: ResultsGridProps) {
           </div>
         </div>
       </div>
+
+      {/* Load More Footer */}
+      {result.pagination?.hasMore && onLoadMore && (
+        <div className="flex items-center justify-center py-3 border-t border-white/5 bg-[#0a0a0a]">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onLoadMore}
+            disabled={isLoadingMore}
+            className="h-8 px-4 text-xs border-white/10 hover:bg-white/5"
+          >
+            {isLoadingMore ? (
+              <>
+                <Loader2 className="w-3 h-3 mr-2 animate-spin" />
+                Loading...
+              </>
+            ) : (
+              <>
+                <ChevronDown className="w-3 h-3 mr-2" />
+                Load More (500 rows)
+              </>
+            )}
+          </Button>
+        </div>
+      )}
 
       {/* Row Detail Sheet */}
       {selectedRow && (
