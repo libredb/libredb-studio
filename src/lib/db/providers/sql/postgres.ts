@@ -32,6 +32,22 @@ import {
 import { formatBytes } from '../../utils/pool-manager';
 
 // ============================================================================
+// Type Definitions
+// ============================================================================
+
+interface PgStatActivityRow {
+  datname?: string;
+  pid?: number;
+  usename?: string;
+  application_name?: string;
+  client_addr?: string;
+  backend_start?: string | Date;
+  state?: string;
+  query?: string;
+  [key: string]: unknown;
+}
+
+// ============================================================================
 // PostgreSQL Provider
 // ============================================================================
 
@@ -171,124 +187,176 @@ export class PostgresProvider extends SQLBaseProvider {
 
     const client = await this.pool!.connect();
     try {
-      // Get all user schemas (exclude system schemas)
-      const tablesRes = await client.query(`
-        SELECT
-          t.table_schema,
-          t.table_name,
-          COALESCE(c.reltuples::bigint, 0) as row_count,
-          COALESCE(pg_total_relation_size(c.oid), 0) as total_size
-        FROM information_schema.tables t
-        LEFT JOIN pg_class c ON c.oid = (quote_ident(t.table_schema) || '.' || quote_ident(t.table_name))::regclass
-        WHERE t.table_schema NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
-        AND t.table_type = 'BASE TABLE'
-        ORDER BY t.table_schema, t.table_name ASC;
-      `);
-
-      const schemas: TableSchema[] = [];
-
-      for (const row of tablesRes.rows) {
-        const schemaName = row.table_schema;
-        const tableName = row.table_name;
-        // Display as schema.table for non-public schemas
-        const displayName = schemaName === 'public' ? tableName : `${schemaName}.${tableName}`;
-        const rowCount = Math.max(0, parseInt(row.row_count || '0'));
-        const sizeBytes = parseInt(row.total_size || '0');
-
-        const columnsRes = await client.query(
-          `
-          SELECT column_name, data_type, is_nullable, column_default
-          FROM information_schema.columns
-          WHERE table_name = $1
-          AND table_schema = $2
-          ORDER BY ordinal_position
-          LIMIT 100;
-        `,
-          [tableName, schemaName]
-        );
-
-        const pkRes = await client.query(
-          `
-          SELECT kcu.column_name
+      // Optimized single query to fetch all schema information
+      // This replaces the N+1 pattern (1 + N*4 queries) with a single query
+      const result = await client.query(`
+        WITH tables_info AS (
+          SELECT
+            t.table_schema,
+            t.table_name,
+            COALESCE(c.reltuples::bigint, 0) as row_count,
+            COALESCE(pg_total_relation_size(c.oid), 0) as total_size
+          FROM information_schema.tables t
+          LEFT JOIN pg_class c ON c.oid = (quote_ident(t.table_schema) || '.' || quote_ident(t.table_name))::regclass
+          WHERE t.table_schema NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
+          AND t.table_type = 'BASE TABLE'
+        ),
+        columns_info AS (
+          SELECT
+            c.table_schema,
+            c.table_name,
+            json_agg(
+              json_build_object(
+                'name', c.column_name,
+                'type', c.data_type,
+                'nullable', c.is_nullable = 'YES',
+                'defaultValue', c.column_default
+              ) ORDER BY c.ordinal_position
+            ) FILTER (WHERE c.ordinal_position <= 100) as columns
+          FROM information_schema.columns c
+          WHERE c.table_schema NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
+          GROUP BY c.table_schema, c.table_name
+        ),
+        pk_info AS (
+          SELECT
+            tc.table_schema,
+            tc.table_name,
+            array_agg(kcu.column_name) as pk_columns
           FROM information_schema.table_constraints tc
           JOIN information_schema.key_column_usage kcu
             ON tc.constraint_name = kcu.constraint_name
             AND tc.table_schema = kcu.table_schema
           WHERE tc.constraint_type = 'PRIMARY KEY'
-            AND tc.table_name = $1
-            AND tc.table_schema = $2;
-        `,
-          [tableName, schemaName]
-        );
-
-        const pkColumns = pkRes.rows.map((r) => r.column_name);
-
-        const fkRes = await client.query(
-          `
+          GROUP BY tc.table_schema, tc.table_name
+        ),
+        fk_info AS (
           SELECT
-            kcu.column_name,
-            ccu.table_schema AS referenced_schema,
-            ccu.table_name AS referenced_table,
-            ccu.column_name AS referenced_column
-          FROM
-            information_schema.table_constraints AS tc
-            JOIN information_schema.key_column_usage AS kcu
-              ON tc.constraint_name = kcu.constraint_name
-              AND tc.table_schema = kcu.table_schema
-            JOIN information_schema.constraint_column_usage AS ccu
-              ON ccu.constraint_name = tc.constraint_name
-              AND ccu.table_schema = tc.table_schema
+            tc.table_schema,
+            tc.table_name,
+            json_agg(
+              json_build_object(
+                'columnName', kcu.column_name,
+                'referencedSchema', ccu.table_schema,
+                'referencedTable', ccu.table_name,
+                'referencedColumn', ccu.column_name
+              )
+            ) as foreign_keys
+          FROM information_schema.table_constraints tc
+          JOIN information_schema.key_column_usage kcu
+            ON tc.constraint_name = kcu.constraint_name
+            AND tc.table_schema = kcu.table_schema
+          JOIN information_schema.constraint_column_usage ccu
+            ON ccu.constraint_name = tc.constraint_name
+            AND ccu.table_schema = tc.table_schema
           WHERE tc.constraint_type = 'FOREIGN KEY'
-            AND tc.table_name = $1
-            AND tc.table_schema = $2;
-        `,
-          [tableName, schemaName]
-        );
-
-        const indexRes = await client.query(
-          `
+          GROUP BY tc.table_schema, tc.table_name
+        ),
+        index_info AS (
           SELECT
-            i.relname as index_name,
-            array_agg(a.attname ORDER BY array_position(ix.indkey, a.attnum)) as columns,
-            ix.indisunique as is_unique
+            n.nspname as table_schema,
+            t.relname as table_name,
+            json_agg(
+              json_build_object(
+                'name', i.relname,
+                'columns', (
+                  SELECT array_agg(a.attname ORDER BY array_position(ix.indkey, a.attnum))
+                  FROM pg_attribute a
+                  WHERE a.attrelid = t.oid AND a.attnum = ANY(ix.indkey)
+                ),
+                'unique', ix.indisunique
+              )
+            ) as indexes
           FROM pg_index ix
           JOIN pg_class t ON t.oid = ix.indrelid
           JOIN pg_class i ON i.oid = ix.indexrelid
-          JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY(ix.indkey)
-          WHERE t.relname = $1
-          AND t.relnamespace = (SELECT oid FROM pg_namespace WHERE nspname = $2)
-          GROUP BY i.relname, ix.indisunique;
-        `,
-          [tableName, schemaName]
-        );
+          JOIN pg_namespace n ON n.oid = t.relnamespace
+          WHERE n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
+          GROUP BY n.nspname, t.relname
+        )
+        SELECT
+          ti.table_schema,
+          ti.table_name,
+          ti.row_count,
+          ti.total_size,
+          COALESCE(ci.columns, '[]'::json) as columns,
+          COALESCE(pk.pk_columns, ARRAY[]::text[]) as pk_columns,
+          COALESCE(fk.foreign_keys, '[]'::json) as foreign_keys,
+          COALESCE(ii.indexes, '[]'::json) as indexes
+        FROM tables_info ti
+        LEFT JOIN columns_info ci ON ci.table_schema = ti.table_schema AND ci.table_name = ti.table_name
+        LEFT JOIN pk_info pk ON pk.table_schema = ti.table_schema AND pk.table_name = ti.table_name
+        LEFT JOIN fk_info fk ON fk.table_schema = ti.table_schema AND fk.table_name = ti.table_name
+        LEFT JOIN index_info ii ON ii.table_schema = ti.table_schema AND ii.table_name = ti.table_name
+        ORDER BY ti.table_schema, ti.table_name ASC;
+      `);
 
-        schemas.push({
+      interface SchemaRow {
+        table_schema: string;
+        table_name: string;
+        row_count: string;
+        total_size: string;
+        pk_columns: string[];
+        columns?: Array<{
+          name: string;
+          type: string;
+          nullable: boolean;
+          defaultValue?: string | null;
+        }>;
+        indexes?: Array<{
+          name: string;
+          columns: string[];
+          unique: boolean;
+        }>;
+        foreign_keys?: Array<{
+          columnName: string;
+          referencedSchema: string;
+          referencedTable: string;
+          referencedColumn: string;
+        }>;
+      }
+
+      return result.rows.map((row: SchemaRow) => {
+        const schemaName = row.table_schema;
+        const tableName = row.table_name;
+        const displayName = schemaName === 'public' ? tableName : `${schemaName}.${tableName}`;
+        const rowCount = Math.max(0, parseInt(row.row_count || '0'));
+        const sizeBytes = parseInt(row.total_size || '0');
+        const pkColumns: string[] = row.pk_columns || [];
+
+        // Parse columns and add isPrimary flag
+        const columns = (row.columns || []).map((col) => ({
+          name: col.name,
+          type: col.type,
+          nullable: col.nullable,
+          isPrimary: pkColumns.includes(col.name),
+          defaultValue: col.defaultValue ?? undefined,
+        }));
+
+        // Parse indexes
+        const indexes = (row.indexes || []).map((idx) => ({
+          name: idx.name,
+          columns: Array.isArray(idx.columns) ? idx.columns : [],
+          unique: idx.unique,
+        }));
+
+        // Parse foreign keys
+        const foreignKeys = (row.foreign_keys || []).map((fk) => ({
+          columnName: fk.columnName,
+          referencedTable: fk.referencedSchema === 'public'
+            ? fk.referencedTable
+            : `${fk.referencedSchema}.${fk.referencedTable}`,
+          referencedColumn: fk.referencedColumn,
+        }));
+
+        return {
           name: displayName,
           rowCount,
           size: formatBytes(sizeBytes),
-          columns: columnsRes.rows.map((col) => ({
-            name: col.column_name,
-            type: col.data_type,
-            nullable: col.is_nullable === 'YES',
-            isPrimary: pkColumns.includes(col.column_name),
-            defaultValue: col.column_default ?? undefined,
-          })),
-          indexes: indexRes.rows.map((idx) => ({
-            name: idx.index_name,
-            columns: Array.isArray(idx.columns) ? idx.columns : [],
-            unique: idx.is_unique,
-          })),
-          foreignKeys: fkRes.rows.map((fk) => ({
-            columnName: fk.column_name,
-            referencedTable: fk.referenced_schema === 'public'
-              ? fk.referenced_table
-              : `${fk.referenced_schema}.${fk.referenced_table}`,
-            referencedColumn: fk.referenced_column,
-          })),
-        });
-      }
-
-      return schemas;
+          columns,
+          indexes,
+          foreignKeys,
+        };
+      });
     } finally {
       client.release();
     }
@@ -932,6 +1000,17 @@ export class PostgresProvider extends SQLBaseProvider {
       }
 
       return results;
+    } finally {
+      client.release();
+    }
+  }
+
+  public async getPgStatActivity(): Promise<PgStatActivityRow[]> {
+    this.ensureConnected();
+    const client = await this.pool!.connect();
+    try {
+      const res = await client.query('SELECT * FROM pg_stat_activity');
+      return res.rows as PgStatActivityRow[];
     } finally {
       client.release();
     }

@@ -37,6 +37,7 @@ export function QueryHistory({ onSelectQuery, activeConnectionId, refreshTrigger
   const [sortField, setSortField] = useState<SortField>('executedAt');
   const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
 
+  // Refresh history when refreshTrigger changes (replaces key-based re-mount)
   useEffect(() => {
     setHistory(storage.getHistory());
   }, [refreshTrigger]);

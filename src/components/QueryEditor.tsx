@@ -7,19 +7,24 @@ import { Zap, Sparkles, Send, X, Loader2, AlignLeft, Trash2, Copy, Play } from '
 import { cn } from '@/lib/utils';
 import { motion, AnimatePresence } from 'framer-motion';
 import { format } from 'sql-formatter';
-import type { TableSchema } from '@/lib/types';
+import { extractAliases, resolveAlias } from '@/lib/sql';
 
 export interface QueryEditorRef {
   getSelectedText: () => string;
   getEffectiveQuery: () => string;
   getValue: () => string;
+  setValue: (value: string) => void;
   focus: () => void;
   format: () => void;
 }
 
 interface QueryEditorProps {
+  /** Initial value for the editor. Changes to this prop will update the editor content. */
   value: string;
-  onChange: (val: string) => void;
+  /** Optional callback for value changes. Only called on blur, execute, or explicit sync - NOT on every keystroke. */
+  onChange?: (val: string) => void;
+  /** Called when content changes in real-time. Use sparingly as it triggers on every keystroke. */
+  onContentChange?: (val: string) => void;
   onExplain?: () => void;
   language?: 'sql' | 'json';
   tables?: string[];
@@ -53,68 +58,227 @@ const SQL_SNIPPETS = [
   { label: 'WITH', value: 'WITH ${1:cte_name} AS (\n  SELECT ${2:*}\n  FROM ${3:table_name}\n)\nSELECT * FROM ${1:cte_name};' },
 ];
 
-export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({ 
-  value, 
-  onChange, 
-  onExplain, 
-  language = 'sql', 
-  tables = [], 
-  databaseType, 
-  schemaContext 
+// Pre-computed completion items for static data (keywords, functions, snippets)
+// These are created once and reused across all completion requests
+interface PrecomputedItem {
+  label: string;
+  labelLower: string; // Pre-computed lowercase for faster matching
+  kind: number; // Will be set when monaco is available
+  insertText: string;
+  insertTextRules?: number;
+  detail: string;
+}
+
+const KEYWORD_ITEMS: PrecomputedItem[] = SQL_KEYWORDS.map(kw => ({
+  label: kw,
+  labelLower: kw.toLowerCase(),
+  kind: 17, // CompletionItemKind.Keyword
+  insertText: kw,
+  detail: 'SQL Keyword'
+}));
+
+const FUNCTION_ITEMS: PrecomputedItem[] = SQL_FUNCTIONS.map(f => ({
+  label: f,
+  labelLower: f.toLowerCase(),
+  kind: 1, // CompletionItemKind.Function
+  insertText: f + '($1)',
+  insertTextRules: 4, // InsertAsSnippet
+  detail: 'SQL Function'
+}));
+
+const SNIPPET_ITEMS: PrecomputedItem[] = SQL_SNIPPETS.map(s => ({
+  label: s.label,
+  labelLower: s.label.toLowerCase(),
+  kind: 27, // CompletionItemKind.Snippet
+  insertText: s.value,
+  insertTextRules: 4, // InsertAsSnippet
+  detail: 'SQL Snippet'
+}));
+
+// Static editor options - defined outside component to prevent re-creation on every render
+const EDITOR_OPTIONS = {
+  minimap: { enabled: false },
+  fontSize: 13,
+  fontFamily: '"JetBrains Mono", "Fira Code", Menlo, Monaco, Consolas, monospace',
+  lineNumbers: 'on' as const,
+  roundedSelection: true,
+  scrollBeyondLastLine: false,
+  readOnly: false,
+  automaticLayout: true,
+  padding: { top: 12 },
+  cursorSmoothCaretAnimation: 'on' as const,
+  cursorBlinking: 'smooth' as const,
+  smoothScrolling: true,
+  contextmenu: true,
+  renderLineHighlight: 'all' as const,
+  bracketPairColorization: { enabled: true },
+  guides: { indentation: true },
+  scrollbar: {
+    vertical: 'visible' as const,
+    horizontal: 'visible' as const,
+    verticalScrollbarSize: 8,
+    horizontalScrollbarSize: 8,
+  },
+  fontLigatures: true,
+  suggestOnTriggerCharacters: true,
+  quickSuggestions: {
+    other: true,
+    comments: false,
+    strings: true
+  },
+  parameterHints: {
+    enabled: true
+  }
+} as const;
+
+export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
+  value,
+  onChange,
+  onContentChange,
+  onExplain,
+  language = 'sql',
+  tables = [],
+  databaseType,
+  schemaContext
 }, ref) => {
   const monaco = useMonaco();
   const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
   const [hasSelection, setHasSelection] = useState(false);
-  
+
+  // Track last synced value to detect external changes
+  const lastSyncedValueRef = useRef<string>(value);
+  const isInternalChangeRef = useRef<boolean>(false);
+
   // AI States
   const [showAi, setShowAi] = useState(false);
   const [aiPrompt, setAiPrompt] = useState('');
   const [isAiLoading, setIsAiLoading] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
 
-  const parsedSchema = useMemo((): TableSchema[] => {
+  // Sync editor content when value prop changes externally (e.g., tab switch)
+  useEffect(() => {
+    if (editorRef.current && value !== lastSyncedValueRef.current) {
+      const currentEditorValue = editorRef.current.getValue();
+      // Only update if the new value is different from current editor content
+      // This prevents unnecessary updates when we're the source of the change
+      if (value !== currentEditorValue) {
+        isInternalChangeRef.current = true;
+        editorRef.current.setValue(value);
+        lastSyncedValueRef.current = value;
+        isInternalChangeRef.current = false;
+      }
+    }
+  }, [value]);
+
+  interface ParsedTable {
+    name: string;
+    rowCount?: number;
+    columns?: Array<{
+      name: string;
+      type: string;
+      isPrimary?: boolean;
+    }>;
+  }
+
+  const parsedSchema = useMemo((): ParsedTable[] => {
     if (!schemaContext) return [];
     try {
-      return JSON.parse(schemaContext) as TableSchema[];
+      return JSON.parse(schemaContext);
     } catch (e) {
       console.error('Failed to parse schema context for editor:', e);
       return [];
     }
   }, [schemaContext]);
 
-    const handleFormat = () => {
-      if (language !== 'sql' || !value) return;
-      try {
-        const formatted = format(value, {
-          language: 'postgresql',
-          keywordCase: 'upper',
-          dataTypeCase: 'upper',
-          indentStyle: 'tabularLeft', 
-          logicalOperatorNewline: 'before',
-          expressionWidth: 100,
-          tabWidth: 2,
-          linesBetweenQueries: 2,
-        });
-        onChange(formatted);
-      } catch (e) {
-        console.error('Formatting failed:', e);
-      }
-    };
+  // Pre-compute schema-based completion items for faster lookups
+  const schemaCompletionCache = useMemo(() => {
+    interface TableItem {
+      label: string;
+      labelLower: string;
+      rowCount: number;
+      columnNames: string;
+    }
+    interface ColumnItem {
+      label: string;
+      labelLower: string;
+      type: string;
+      isPrimary: boolean;
+      tableName: string;
+    }
+
+    const tableItems: TableItem[] = [];
+    const columnMap = new Map<string, ColumnItem[]>(); // tableName -> columns
+    const allColumns = new Map<string, ColumnItem>(); // columnName -> first occurrence
+
+    parsedSchema.forEach((table) => {
+      const tableLower = table.name.toLowerCase();
+      tableItems.push({
+        label: table.name,
+        labelLower: tableLower,
+        rowCount: table.rowCount || 0,
+        columnNames: table.columns?.map((c) => c.name).join(', ') || ''
+      });
+
+      const tableColumns: ColumnItem[] = [];
+      table.columns?.forEach((col) => {
+        const colItem: ColumnItem = {
+          label: col.name,
+          labelLower: col.name.toLowerCase(),
+          type: col.type,
+          isPrimary: col.isPrimary || false,
+          tableName: table.name
+        };
+        tableColumns.push(colItem);
+
+        // Only store first occurrence for global column suggestions
+        if (!allColumns.has(col.name)) {
+          allColumns.set(col.name, colItem);
+        }
+      });
+      columnMap.set(tableLower, tableColumns);
+    });
+
+    return { tableItems, columnMap, allColumns };
+  }, [parsedSchema]);
+
+  const handleFormat = () => {
+    if (language !== 'sql' || !editorRef.current) return;
+    const currentValue = editorRef.current.getValue();
+    if (!currentValue) return;
+
+    try {
+      const formatted = format(currentValue, {
+        language: 'postgresql',
+        keywordCase: 'upper',
+        dataTypeCase: 'upper',
+        indentStyle: 'tabularLeft',
+        logicalOperatorNewline: 'before',
+        expressionWidth: 100,
+        tabWidth: 2,
+        linesBetweenQueries: 2,
+      });
+      editorRef.current.setValue(formatted);
+      lastSyncedValueRef.current = formatted;
+      onChange?.(formatted);
+    } catch (e) {
+      console.error('Formatting failed:', e);
+    }
+  };
 
   const getSelectedText = () => {
     if (!editorRef.current) return '';
     const selection = editorRef.current.getSelection();
-    if (!selection) return '';
     const model = editorRef.current.getModel();
-    if (!model) return '';
+    if (!selection || !model) return '';
     return model.getValueInRange(selection);
   };
 
   const getEffectiveQuery = () => {
-    if (!editorRef.current) return { query: value, range: null };
-    
+    const editorValue = editorRef.current?.getValue() || '';
+    if (!editorRef.current || !monaco) return { query: editorValue, range: null };
+
     const model = editorRef.current.getModel();
-    if (!model) return { query: value, range: null };
+    if (!model) return { query: editorValue, range: null };
 
     // 1. Check for explicit selection
     const selection = editorRef.current.getSelection();
@@ -142,23 +306,36 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
         if (endOffset === -1) endOffset = fullText.length;
 
         const statement = fullText.substring(startOffset, endOffset).trim();
-        if (statement.length > 0 && monaco) {
+        if (statement.length > 0) {
           const startPos = model.getPositionAt(startOffset);
           const endPos = model.getPositionAt(endOffset);
-          if (startPos && endPos) {
-            const range = new monaco.Range(startPos.lineNumber, startPos.column, endPos.lineNumber, endPos.column);
-            return { query: statement, range };
-          }
+          const range = new monaco.Range(startPos.lineNumber, startPos.column, endPos.lineNumber, endPos.column);
+          return { query: statement, range };
         }
       }
     }
 
-    return { query: value, range: null };
+    return { query: editorValue, range: null };
   };
 
-  const flashHighlight = (range: Monaco.IRange) => {
+  // Track active highlight timeout to prevent race conditions
+  const highlightTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const activeDecorationsRef = useRef<string[]>([]);
+
+  const flashHighlight = (range: Monaco.Range | null) => {
     if (!editorRef.current || !monaco || !range) return;
-    
+
+    // Clear any existing highlight first
+    if (highlightTimeoutRef.current) {
+      clearTimeout(highlightTimeoutRef.current);
+      highlightTimeoutRef.current = null;
+    }
+    if (activeDecorationsRef.current.length > 0 && editorRef.current) {
+      editorRef.current.deltaDecorations(activeDecorationsRef.current, []);
+      activeDecorationsRef.current = [];
+    }
+
+    // Create new decoration
     const decorations = editorRef.current.deltaDecorations([], [
       {
         range: range,
@@ -169,29 +346,52 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
         }
       }
     ]);
+    activeDecorationsRef.current = decorations;
 
-    setTimeout(() => {
-      if (editorRef.current) {
-        editorRef.current.deltaDecorations(decorations, []);
+    // Schedule removal with ref tracking for safe cleanup
+    highlightTimeoutRef.current = setTimeout(() => {
+      if (editorRef.current && activeDecorationsRef.current.length > 0) {
+        editorRef.current.deltaDecorations(activeDecorationsRef.current, []);
+        activeDecorationsRef.current = [];
       }
+      highlightTimeoutRef.current = null;
     }, 1000);
   };
+
+  // Cleanup highlight timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (highlightTimeoutRef.current) {
+        clearTimeout(highlightTimeoutRef.current);
+      }
+    };
+  }, []);
 
   useImperativeHandle(ref, () => ({
     getSelectedText,
     getEffectiveQuery: () => getEffectiveQuery().query,
     getValue: () => editorRef.current?.getValue() || '',
+    setValue: (newValue: string) => {
+      if (editorRef.current) {
+        editorRef.current.setValue(newValue);
+        lastSyncedValueRef.current = newValue;
+      }
+    },
     focus: () => editorRef.current?.focus(),
     format: handleFormat
   }));
 
   const handleCopy = () => {
-    const textToCopy = getSelectedText() || value;
+    const textToCopy = getSelectedText() || editorRef.current?.getValue() || '';
     navigator.clipboard.writeText(textToCopy);
   };
 
   const handleClear = () => {
-    onChange('');
+    if (editorRef.current) {
+      editorRef.current.setValue('');
+      lastSyncedValueRef.current = '';
+      onChange?.('');
+    }
   };
   
   const handleAiSubmit = async (e?: React.FormEvent) => {
@@ -209,6 +409,9 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
             .slice(0, 100);
           
           filteredSchemaContext = topTables.map(table => {
+            if (!table.columns || table.columns.length === 0) {
+              return `Table: ${table.name} (${table.rowCount || 0} rows)\nColumns: (none)`;
+            }
             const cols = table.columns.slice(0, 10).map((c) => `${c.name} (${c.type}${c.isPrimary ? ', PK' : ''})`).join(', ');
             return `Table: ${table.name} (${table.rowCount || 0} rows)\nColumns: ${cols}${table.columns.length > 10 ? '...' : ''}`;
           }).join('\n\n');
@@ -237,20 +440,43 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
 
       const currentVal = editorRef.current?.getValue() || '';
       const shouldReplace = !currentVal || currentVal.startsWith('--');
-      
+
       let fullAiResponse = '';
       if (!shouldReplace) {
         fullAiResponse = currentVal + '\n\n';
       }
-      
+
+      // Buffered update using requestAnimationFrame to avoid excessive re-renders
+      let rafId: number | null = null;
+      const updateEditor = () => {
+        if (editorRef.current) {
+          editorRef.current.setValue(fullAiResponse);
+        }
+        rafId = null;
+      };
+
       while (true) {
         const { done, value: chunkValue } = await reader.read();
         if (done) break;
         const chunk = new TextDecoder().decode(chunkValue);
         fullAiResponse += chunk;
-        onChange(fullAiResponse);
+
+        // Schedule update on next animation frame if not already scheduled
+        if (!rafId) {
+          rafId = requestAnimationFrame(updateEditor);
+        }
       }
-      
+
+      // Ensure final content is set and cancel any pending RAF
+      if (rafId) {
+        cancelAnimationFrame(rafId);
+      }
+      if (editorRef.current) {
+        editorRef.current.setValue(fullAiResponse);
+        lastSyncedValueRef.current = fullAiResponse;
+        onChange?.(fullAiResponse);
+      }
+
       setAiPrompt('');
       setShowAi(false);
     } catch (error) {
@@ -262,19 +488,34 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
     }
   };
 
-  const handleBeforeMount = (_monacoInstance: typeof Monaco) => {
-    // Suppress Monaco's "Canceled" errors in console
-    const originalConsoleError = console.error;
-    console.error = (...args: unknown[]) => {
-      const message = args[0]?.toString?.() || '';
-      if (message.includes('Canceled') || message.includes('ERR Canceled')) {
-        return; // Suppress Monaco cancellation errors
-      }
-      originalConsoleError.apply(console, args);
-    };
+  // Store original console.error for cleanup
+  const originalConsoleErrorRef = useRef<typeof console.error | null>(null);
 
-    if (!_monacoInstance) return;
-    _monacoInstance.editor.defineTheme('db-dark', {
+  // Cleanup console.error override on unmount
+  useEffect(() => {
+    return () => {
+      if (originalConsoleErrorRef.current) {
+        console.error = originalConsoleErrorRef.current;
+        originalConsoleErrorRef.current = null;
+      }
+    };
+  }, []);
+
+  const handleBeforeMount = (monacoInstance: typeof Monaco) => {
+    // Suppress Monaco's "Canceled" errors in console (with cleanup tracking)
+    if (!originalConsoleErrorRef.current) {
+      originalConsoleErrorRef.current = console.error;
+      const originalConsoleError = console.error;
+      console.error = (...args: unknown[]) => {
+        const message = args[0]?.toString?.() || '';
+        if (message.includes('Canceled') || message.includes('ERR Canceled')) {
+          return; // Suppress Monaco cancellation errors
+        }
+        originalConsoleError.apply(console, args as Parameters<typeof console.error>);
+      };
+    }
+
+    monacoInstance.editor.defineTheme('db-dark', {
       base: 'vs-dark',
       inherit: true,
       rules: [
@@ -316,71 +557,156 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
 
           const line = model.getLineContent(position.lineNumber);
           const lastChar = line[position.column - 2];
-          
-          let suggestions: Monaco.languages.CompletionItem[] = [];
+          const prefix = word.word.toLowerCase();
 
+          const suggestions: Monaco.languages.CompletionItem[] = [];
+
+          // Dot-triggered: Show columns for specific table or alias
           if (lastChar === '.') {
             const matches = line.substring(0, position.column - 1).match(/(\w+)\.$/);
             if (matches) {
-              const tableName = matches[1];
-              const table = parsedSchema.find((t) => t.name === tableName);
-              if (table) {
-                suggestions = table.columns.map((col) => ({
-                  label: col.name,
-                  kind: monaco.languages.CompletionItemKind.Field,
-                  insertText: col.name,
-                  range: range,
-                  detail: `${col.type}${col.isPrimary ? ' (PK)' : ''}`,
-                  documentation: `Column of ${tableName}`
-                }));
+              const identifier = matches[1].toLowerCase();
+
+              // Helper to find columns by table name (handles schema.table format)
+              const findColumns = (tableName: string) => {
+                const tableNameLower = tableName.toLowerCase();
+                // 1. Try exact match first
+                const cols = schemaCompletionCache.columnMap.get(tableNameLower);
+                if (cols) return cols;
+
+                // 2. Try matching table name with any schema prefix (e.g., "employee" matches "employees.employee")
+                for (const [key, value] of schemaCompletionCache.columnMap.entries()) {
+                  const parts = key.split('.');
+                  const justTableName = parts[parts.length - 1];
+                  if (justTableName === tableNameLower) {
+                    return value;
+                  }
+                }
+                return null;
+              };
+
+              // 1. First, try direct table lookup (backward compatible)
+              let columns = findColumns(identifier);
+
+              // 2. If not found, try alias resolution
+              if (!columns) {
+                // Get query text from start to cursor position
+                const textToCursor = model.getValueInRange({
+                  startLineNumber: 1,
+                  startColumn: 1,
+                  endLineNumber: position.lineNumber,
+                  endColumn: position.column - 1
+                });
+
+                // Extract aliases from query
+                const { aliases } = extractAliases(textToCursor);
+
+                // Resolve alias to table name
+                const resolvedTableName = resolveAlias(identifier, aliases);
+                columns = findColumns(resolvedTableName);
+              }
+
+              // 3. Provide column suggestions
+              if (columns) {
+                columns.forEach(col => {
+                  suggestions.push({
+                    label: col.label,
+                    kind: monaco.languages.CompletionItemKind.Field,
+                    insertText: col.label,
+                    range,
+                    detail: `${col.type}${col.isPrimary ? ' (PK)' : ''}`,
+                    documentation: `Column of ${col.tableName}`
+                  });
+                });
               }
             }
-          } else {
-            suggestions.push(...SQL_KEYWORDS.map(kw => ({
-              label: kw,
-              kind: monaco.languages.CompletionItemKind.Keyword,
-              insertText: kw,
-              range: range,
-              detail: 'SQL Keyword'
-            })));
-
-            suggestions.push(...SQL_FUNCTIONS.map(f => ({
-              label: f,
-              kind: monaco.languages.CompletionItemKind.Function,
-              insertText: f + '($1)',
-              insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
-              range: range,
-              detail: 'SQL Function'
-            })));
-
-            suggestions.push(...parsedSchema.map((table) => ({
-              label: table.name,
-              kind: monaco.languages.CompletionItemKind.Class,
-              insertText: table.name,
-              range: range,
-              detail: `Table (${table.rowCount || 0} rows)`,
-              documentation: table.columns.map((c) => c.name).join(', ')
-            })));
-
-            const allColumns = new Set<string>();
-            parsedSchema.forEach((t) => t.columns.forEach((c) => allColumns.add(c.name)));
-            suggestions.push(...Array.from(allColumns).map(colName => ({
-              label: colName,
-              kind: monaco.languages.CompletionItemKind.Field,
-              insertText: colName,
-              range: range,
-              detail: 'Column'
-            })));
-
-            suggestions.push(...SQL_SNIPPETS.map(s => ({
-              label: s.label,
-              kind: monaco.languages.CompletionItemKind.Snippet,
-              insertText: s.value,
-              insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
-              range: range,
-              detail: 'SQL Snippet'
-            })));
+            return { suggestions };
           }
+
+          // General completion with lazy filtering and context awareness
+          // Only add items that match the current prefix (or all if prefix is empty/very short)
+          const shouldFilter = prefix.length >= 2;
+
+          // Detect context: Are we in a position where columns make sense?
+          // Columns are relevant after: SELECT, WHERE, AND, OR, ON, SET, HAVING, ORDER BY, GROUP BY
+          const textBeforeCursor = line.substring(0, position.column - 1).toUpperCase();
+          const isColumnContext = /\b(SELECT|WHERE|AND|OR|ON|SET|HAVING|ORDER\s+BY|GROUP\s+BY|,)\s*\w*$/i.test(textBeforeCursor);
+
+          // Keywords - filter by prefix (highest priority: sortText "0")
+          KEYWORD_ITEMS.forEach(item => {
+            if (!shouldFilter || item.labelLower.startsWith(prefix)) {
+              suggestions.push({
+                label: item.label,
+                kind: monaco.languages.CompletionItemKind.Keyword,
+                insertText: item.insertText,
+                range,
+                detail: item.detail,
+                sortText: '0' + item.label // Keywords first
+              });
+            }
+          });
+
+          // Functions - filter by prefix (sortText "1")
+          FUNCTION_ITEMS.forEach(item => {
+            if (!shouldFilter || item.labelLower.startsWith(prefix)) {
+              suggestions.push({
+                label: item.label,
+                kind: monaco.languages.CompletionItemKind.Function,
+                insertText: item.insertText,
+                insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+                range,
+                detail: item.detail,
+                sortText: '1' + item.label // Functions second
+              });
+            }
+          });
+
+          // Tables - filter by prefix (sortText "2")
+          schemaCompletionCache.tableItems.forEach(table => {
+            if (!shouldFilter || table.labelLower.startsWith(prefix)) {
+              suggestions.push({
+                label: table.label,
+                kind: monaco.languages.CompletionItemKind.Class,
+                insertText: table.label,
+                range,
+                detail: `Table (${table.rowCount} rows)`,
+                documentation: table.columnNames,
+                sortText: '2' + table.label // Tables third
+              });
+            }
+          });
+
+          // Columns - only show in appropriate context (sortText "4")
+          // This prevents columns like "from_date" appearing when typing "FROM"
+          if (isColumnContext) {
+            schemaCompletionCache.allColumns.forEach((col, colName) => {
+              if (!shouldFilter || col.labelLower.startsWith(prefix)) {
+                suggestions.push({
+                  label: colName,
+                  kind: monaco.languages.CompletionItemKind.Field,
+                  insertText: colName,
+                  range,
+                  detail: `Column (${col.type})`,
+                  sortText: '4' + colName // Columns lower priority
+                });
+              }
+            });
+          }
+
+          // Snippets - filter by prefix (sortText "3")
+          SNIPPET_ITEMS.forEach(item => {
+            if (!shouldFilter || item.labelLower.startsWith(prefix)) {
+              suggestions.push({
+                label: item.label,
+                kind: monaco.languages.CompletionItemKind.Snippet,
+                insertText: item.insertText,
+                insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+                range,
+                detail: item.detail,
+                sortText: '3' + item.label // Snippets fourth
+              });
+            }
+          });
 
           return { suggestions };
         },
@@ -388,17 +714,34 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
 
       return () => completionProvider.dispose();
     }
-  }, [monaco, language, parsedSchema]);
+  }, [monaco, language, schemaCompletionCache]);
 
   const handleEditorChange = (val: string | undefined) => {
-    onChange(val || '');
+    const newValue = val || '';
+    // Only call onContentChange if provided (for real-time sync scenarios)
+    // This avoids the performance hit of updating parent state on every keystroke
+    onContentChange?.(newValue);
+  };
+
+  // Sync to parent on blur (when user leaves the editor)
+  const handleEditorBlur = () => {
+    if (editorRef.current) {
+      const currentValue = editorRef.current.getValue();
+      lastSyncedValueRef.current = currentValue;
+      onChange?.(currentValue);
+    }
   };
 
   const handleExecute = () => {
-    const { query, range } = getEffectiveQuery();
-    if (range) {
-      flashHighlight(range);
+    // Sync current content to parent before executing
+    if (editorRef.current) {
+      const currentValue = editorRef.current.getValue();
+      lastSyncedValueRef.current = currentValue;
+      onChange?.(currentValue);
     }
+
+    const { query, range } = getEffectiveQuery();
+    flashHighlight(range);
     const event = new CustomEvent('execute-query', { detail: { query } });
     window.dispatchEvent(event);
   };
@@ -586,7 +929,12 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
           loading={<div className="h-full w-full bg-[#050505] flex items-center justify-center"><Loader2 className="w-6 h-6 animate-spin text-zinc-800" /></div>}
           onMount={(editor, monaco) => {
             editorRef.current = editor;
-            
+
+            // Sync to parent when editor loses focus
+            editor.onDidBlurEditorText(() => {
+              handleEditorBlur();
+            });
+
             editor.onDidChangeCursorSelection(() => {
               const selection = editor.getSelection();
               setHasSelection(selection ? !selection.isEmpty() : false);
@@ -631,40 +979,7 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
               run: () => handleFormat()
             });
           }}
-          options={{
-            minimap: { enabled: false },
-            fontSize: 13,
-            fontFamily: '"JetBrains Mono", "Fira Code", Menlo, Monaco, Consolas, monospace',
-            lineNumbers: 'on',
-            roundedSelection: true,
-            scrollBeyondLastLine: false,
-            readOnly: false,
-            automaticLayout: true,
-            padding: { top: 12 },
-            cursorSmoothCaretAnimation: 'on',
-            cursorBlinking: 'smooth',
-            smoothScrolling: true,
-            contextmenu: true,
-            renderLineHighlight: 'all',
-            bracketPairColorization: { enabled: true },
-            guides: { indentation: true },
-            scrollbar: {
-              vertical: 'visible',
-              horizontal: 'visible',
-              verticalScrollbarSize: 8,
-              horizontalScrollbarSize: 8,
-            },
-            fontLigatures: true,
-            suggestOnTriggerCharacters: true,
-            quickSuggestions: {
-              other: true,
-              comments: false,
-              strings: true
-            },
-            parameterHints: {
-              enabled: true
-            }
-          }}
+          options={EDITOR_OPTIONS}
         />
         
         {/* Connection Type Badge */}

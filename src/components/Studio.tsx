@@ -13,6 +13,7 @@ import { CreateTableModal } from '@/components/CreateTableModal';
 import { SchemaDiagram } from '@/components/SchemaDiagram';
 import { QueryHistory } from '@/components/QueryHistory';
 import { SavedQueries } from '@/components/SavedQueries';
+import { DataCharts } from '@/components/DataCharts';
 import { SaveQueryModal } from '@/components/SaveQueryModal';
 import { MaintenanceModal } from '@/components/MaintenanceModal';
 import { DatabaseConnection, TableSchema, QueryTab, SavedQuery } from '@/lib/types';
@@ -25,6 +26,7 @@ import {
   Activity,
   AlertTriangle,
   AlignLeft,
+  BarChart3,
   Bookmark,
   ChevronDown,
   Clock,
@@ -117,7 +119,7 @@ export default function Studio() {
   ]);
   const [activeTabId, setActiveTabId] = useState<string>('default');
   const [activeView, setActiveView] = useState<'editor' | 'health'>('editor');
-  const [bottomPanelMode, setBottomPanelMode] = useState<'results' | 'explain' | 'history' | 'saved'>('results');
+  const [bottomPanelMode, setBottomPanelMode] = useState<'results' | 'explain' | 'history' | 'saved' | 'charts'>('results');
   const [activeMobileTab, setActiveMobileTab] = useState<'database' | 'schema' | 'editor'>('editor');
 
   const [isSaveQueryModalOpen, setIsSaveQueryModalOpen] = useState(false);
@@ -1145,6 +1147,15 @@ export default function Studio() {
                             >
                               <Bookmark className="w-3 h-3" /> Saved
                             </button>
+                            <button
+                              onClick={() => setBottomPanelMode('charts')}
+                              className={cn(
+                                "h-full px-3 text-[10px] font-bold uppercase transition-all border-b-2 flex items-center gap-2",
+                                bottomPanelMode === 'charts' ? "text-cyan-400 border-cyan-500 bg-white/5" : "text-zinc-500 border-transparent hover:text-zinc-300"
+                              )}
+                            >
+                              <BarChart3 className="w-3 h-3" /> Charts
+                            </button>
                           </div>
 
                           {currentTab.result && bottomPanelMode === 'results' && (
@@ -1190,6 +1201,8 @@ export default function Studio() {
                                 setBottomPanelMode('results');
                               }}
                             />
+                          ) : bottomPanelMode === 'charts' ? (
+                            <DataCharts result={currentTab.result} />
                           ) : currentTab.result ? (
                             bottomPanelMode === 'explain' ? (
                               <VisualExplain plan={currentTab.explainPlan as ExplainPlanResult[] | null | undefined} />

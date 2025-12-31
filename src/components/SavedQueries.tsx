@@ -21,6 +21,7 @@ export function SavedQueries({ onSelectQuery, connectionType, refreshTrigger }: 
   const [queries, setQueries] = useState<SavedQuery[]>([]);
   const [search, setSearch] = useState('');
 
+  // Refresh queries when refreshTrigger changes (replaces key-based re-mount)
   useEffect(() => {
     setQueries(storage.getSavedQueries());
   }, [refreshTrigger]);
