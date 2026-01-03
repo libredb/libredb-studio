@@ -8,11 +8,11 @@ import {
   type DatabaseProvider,
   type DatabaseConnection,
   type ProviderOptions,
-} from './types';
-import { DatabaseConfigError } from './errors';
+} from "./types";
+import { DatabaseConfigError } from "./errors";
 
 // Only Demo Provider is imported statically (no native dependencies)
-import { DemoProvider } from './providers/demo';
+import { DemoProvider } from "./providers/demo";
 
 // ============================================================================
 // Provider Factory
@@ -58,45 +58,46 @@ export async function createDatabaseProvider(
   connection: DatabaseConnection,
   options: ProviderOptions = {}
 ): Promise<DatabaseProvider> {
-  console.log(`[DB] Creating ${connection.type} provider for "${connection.name}"`);
+  console.log(
+    `[DB] Creating ${connection.type} provider for "${connection.name}"`
+  );
 
   switch (connection.type) {
     // SQL Databases - dynamically imported to reduce memory
-    case 'postgres': {
-      const { PostgresProvider } = await import('./providers/sql/postgres');
+    case "postgres": {
+      const { PostgresProvider } = await import("./providers/sql/postgres");
       return new PostgresProvider(connection, options);
     }
 
-    case 'mysql': {
-      const { MySQLProvider } = await import('./providers/sql/mysql');
+    case "mysql": {
+      const { MySQLProvider } = await import("./providers/sql/mysql");
       return new MySQLProvider(connection, options);
     }
 
-    case 'sqlite': {
-      const { SQLiteProvider } = await import('./providers/sql/sqlite');
+    case "sqlite": {
+      const { SQLiteProvider } = await import("./providers/sql/sqlite");
       return new SQLiteProvider(connection, options);
     }
 
     // Document Databases - dynamically imported
-    case 'mongodb': {
-      const { MongoDBProvider } = await import('./providers/document/mongodb');
+    case "mongodb": {
+      const { MongoDBProvider } = await import("./providers/document/mongodb");
       return new MongoDBProvider(connection, options);
     }
 
-    // Demo Mode - no native dependencies, statically imported
-    case 'demo':
-      return new DemoProvider(connection, options);
+    // Key-Value Databases - dynamically imported
+    case "redis": {
+      const { RedisProvider } = await import("./providers/keyvalue/redis");
+      return new RedisProvider(connection, options);
+    }
 
-    // Not Yet Implemented
-    case 'redis':
-      throw new DatabaseConfigError(
-        `${connection.type} provider is not yet implemented. Coming soon!`,
-        connection.type
-      );
+    // Demo Mode - no native dependencies, statically imported
+    case "demo":
+      return new DemoProvider(connection, options);
 
     default:
       throw new DatabaseConfigError(
-        `Unknown database type: ${connection.type}. Supported types: postgres, mysql, sqlite, mongodb, demo`,
+        `Unknown database type: ${connection.type}. Supported types: postgres, mysql, sqlite, mongodb, redis, demo`,
         connection.type
       );
   }
@@ -149,7 +150,10 @@ export async function removeProvider(connectionId: string): Promise<void> {
     try {
       await provider.disconnect();
     } catch (error) {
-      console.error(`[DB] Error disconnecting provider ${connectionId}:`, error);
+      console.error(
+        `[DB] Error disconnecting provider ${connectionId}:`,
+        error
+      );
     }
     providerCache.delete(connectionId);
   }
@@ -176,7 +180,10 @@ export async function clearProviderCache(): Promise<void> {
 /**
  * Get cache statistics
  */
-export function getProviderCacheStats(): { size: number; connections: string[] } {
+export function getProviderCacheStats(): {
+  size: number;
+  connections: string[];
+} {
   return {
     size: providerCache.size,
     connections: Array.from(providerCache.keys()),
