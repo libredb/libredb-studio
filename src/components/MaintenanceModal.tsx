@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   Dialog,
   DialogContent,
@@ -26,6 +26,22 @@ import { DatabaseConnection, TableSchema } from '@/lib/types';
 import { cn } from '@/lib/utils';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
+interface HealthData {
+  activeConnections?: number;
+  databaseSize?: string;
+  cacheHitRatio?: number | string;
+  slowQueries?: Array<{
+    query: string;
+    calls: number;
+    avgTime: string;
+  }>;
+  activeSessions?: Array<{
+    pid: number | string;
+    state: string;
+    duration?: string;
+  }>;
+}
+
 interface MaintenanceModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -44,19 +60,11 @@ export function MaintenanceModal({
   targetTable
 }: MaintenanceModalProps) {
   const [activeTab, setActiveTab] = useState(initialTab);
-  const [healthData, setHealthData] = useState<any>(null);
+  const [healthData, setHealthData] = useState<HealthData | null>(null);
   const [loading, setLoading] = useState(false);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (isOpen) {
-      fetchHealth();
-      if (targetTable) setActiveTab('tables');
-      else setActiveTab(initialTab);
-    }
-  }, [isOpen, initialTab, targetTable]);
-
-  const fetchHealth = async () => {
+  const fetchHealth = useCallback(async () => {
     if (!connection) return;
     setLoading(true);
     try {
@@ -72,7 +80,15 @@ export function MaintenanceModal({
     } finally {
       setLoading(false);
     }
-  };
+  }, [connection]);
+
+  useEffect(() => {
+    if (isOpen) {
+      fetchHealth();
+      if (targetTable) setActiveTab('tables');
+      else setActiveTab(initialTab);
+    }
+  }, [isOpen, initialTab, targetTable, fetchHealth]);
 
   const runMaintenance = async (type: string, target?: string | number) => {
     const actionId = `${type}-${target || 'global'}`;
@@ -89,8 +105,9 @@ export function MaintenanceModal({
       
       toast.success(`${type.toUpperCase()} completed in ${result.executionTime}ms`);
       if (type === 'kill') fetchHealth();
-    } catch (error: any) {
-      toast.error('Operation failed: ' + error.message);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+      toast.error('Operation failed: ' + errorMessage);
     } finally {
       setActionLoading(null);
     }
@@ -117,7 +134,7 @@ export function MaintenanceModal({
           </DialogHeader>
         </div>
 
-        <Tabs value={activeTab} onValueChange={(v: any) => setActiveTab(v)} className="p-0">
+        <Tabs value={activeTab} onValueChange={(v: string) => setActiveTab(v as 'global' | 'tables' | 'sessions')} className="p-0">
           <div className="px-6 border-b border-white/5 bg-zinc-900/30">
             <TabsList className="bg-transparent border-0 gap-6 h-12">
               <TabsTrigger 
@@ -162,7 +179,7 @@ export function MaintenanceModal({
                   </div>
                   <h4 className="text-sm font-bold text-zinc-200 mb-1">Update Statistics</h4>
                   <p className="text-[11px] text-zinc-500 leading-relaxed">
-                    Updates the planner's statistics for all tables in the database to improve query optimization.
+                    Updates the planner&apos;s statistics for all tables in the database to improve query optimization.
                   </p>
                 </div>
 
@@ -184,7 +201,7 @@ export function MaintenanceModal({
                   </div>
                   <h4 className="text-sm font-bold text-zinc-200 mb-1">Reclaim Space</h4>
                   <p className="text-[11px] text-zinc-500 leading-relaxed">
-                    Removes "dead" rows from tables and returns space to the operating system. Includes Analyze.
+                    Removes &quot;dead&quot; rows from tables and returns space to the operating system. Includes Analyze.
                   </p>
                 </div>
 
@@ -303,7 +320,7 @@ export function MaintenanceModal({
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-white/5">
-                    {healthData?.activeSessions?.map((session: any) => (
+                    {healthData?.activeSessions?.map((session: { pid: number | string; state: string; duration?: string }) => (
                       <tr key={session.pid} className="group hover:bg-white/[0.03] transition-colors">
                         <td className="px-4 py-3 font-mono text-zinc-400">{session.pid}</td>
                         <td className="px-4 py-3">

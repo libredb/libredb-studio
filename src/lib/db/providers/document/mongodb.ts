@@ -482,13 +482,13 @@ export class MongoDBProvider extends BaseDatabaseProvider {
 
       const activeSessions: ActiveSession[] = (currentOps.inprog || [])
         .slice(0, 10)
-        .map((op: any) => ({
+        .map((op: Record<string, unknown>) => ({
           pid: op.opid || 'N/A',
           user: op.client || 'N/A',
           database: op.ns || this.getDatabaseName(),
           state: op.active ? 'active' : 'idle',
           query: JSON.stringify(op.command || {}).substring(0, 100),
-          duration: op.microsecs_running
+          duration: (typeof op.microsecs_running === 'number' && op.microsecs_running > 0)
             ? `${(op.microsecs_running / 1000000).toFixed(2)}s`
             : 'N/A',
         }));

@@ -5,21 +5,19 @@ import { storage } from '@/lib/storage';
 import { SavedQuery } from '@/lib/types';
 import { 
   Bookmark, Search, Trash2, Edit3, 
-  ExternalLink, Tag, Calendar
+  Tag, Calendar
 } from 'lucide-react';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
-import { cn } from '@/lib/utils';
 import { format } from 'date-fns';
 
 interface SavedQueriesProps {
   onSelectQuery: (query: string) => void;
   connectionType?: string;
-  /** Increment this value to trigger a refresh of the saved queries data */
   refreshTrigger?: number;
 }
 
-export function SavedQueries({ onSelectQuery, connectionType, refreshTrigger = 0 }: SavedQueriesProps) {
+export function SavedQueries({ onSelectQuery, connectionType, refreshTrigger }: SavedQueriesProps) {
   const [queries, setQueries] = useState<SavedQuery[]>([]);
   const [search, setSearch] = useState('');
 

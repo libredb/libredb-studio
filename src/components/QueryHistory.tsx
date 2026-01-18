@@ -4,10 +4,10 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { storage } from '@/lib/storage';
 import { QueryHistoryItem } from '@/lib/types';
 import { 
-  Clock, Calendar, CheckCircle2, AlertCircle, 
-  RotateCcw, Trash2, Search, Filter, Download,
-  ArrowUpDown, ChevronDown, ExternalLink, Hash,
-  Database, Tag, History as HistoryIcon, X
+  CheckCircle2, AlertCircle, 
+  RotateCcw, Trash2, Search, Download,
+  ArrowUpDown, Hash,
+  Database, History as HistoryIcon, X
 } from 'lucide-react';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -17,22 +17,19 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 
 interface QueryHistoryProps {
   onSelectQuery: (query: string) => void;
   activeConnectionId?: string;
-  /** Increment this value to trigger a refresh of the history data */
   refreshTrigger?: number;
 }
 
 type SortField = 'executedAt' | 'executionTime' | 'rowCount';
 type SortOrder = 'asc' | 'desc';
 
-export function QueryHistory({ onSelectQuery, activeConnectionId, refreshTrigger = 0 }: QueryHistoryProps) {
+export function QueryHistory({ onSelectQuery, activeConnectionId, refreshTrigger }: QueryHistoryProps) {
   const [history, setHistory] = useState<QueryHistoryItem[]>([]);
   const [search, setSearch] = useState('');
   const [filterStatus, setFilterStatus] = useState<'all' | 'success' | 'error'>('all');
@@ -89,7 +86,7 @@ export function QueryHistory({ onSelectQuery, activeConnectionId, refreshTrigger
   const exportHistory = (format: 'csv' | 'json') => {
     let content = '';
     let mimeType = '';
-    let fileName = `query_history_${new Date().getTime()}.${format}`;
+    const fileName = `query_history_${new Date().getTime()}.${format}`;
 
     if (format === 'csv') {
       const headers = ['Executed At', 'Status', 'Connection', 'Tab', 'Execution Time (ms)', 'Rows', 'Query', 'Error'];

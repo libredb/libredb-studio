@@ -47,7 +47,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import html2canvas from 'html2canvas';
 
 // Chart colors matching CSS variables
 const CHART_COLORS = [
@@ -68,7 +67,7 @@ interface FieldAnalysis {
   type: 'numeric' | 'categorical' | 'date' | 'unknown';
   uniqueValues: number;
   hasNulls: boolean;
-  sample: any;
+  sample: unknown;
 }
 
 interface DataAnalysis {
@@ -85,13 +84,13 @@ interface DataChartsProps {
   result: QueryResult | null;
 }
 
-function analyzeField(name: string, values: any[]): FieldAnalysis {
+function analyzeField(name: string, values: unknown[]): FieldAnalysis {
   const nonNullValues = values.filter(v => v !== null && v !== undefined);
   const uniqueValues = new Set(nonNullValues).size;
   const sample = nonNullValues[0];
 
   // Check if numeric
-  const numericCount = nonNullValues.filter(v => typeof v === 'number' || !isNaN(Number(v))).length;
+  const numericCount = nonNullValues.filter(v => typeof v === 'number' || (typeof v === 'string' && !isNaN(Number(v)))).length;
   const isNumeric = numericCount > nonNullValues.length * 0.8;
 
   // Check if date
@@ -101,7 +100,7 @@ function analyzeField(name: string, values: any[]): FieldAnalysis {
     /^\d{2}\.\d{2}\.\d{4}/, // EU date
   ];
   const isDate = nonNullValues.some(v =>
-    typeof v === 'string' && datePatterns.some(p => p.test(v)) ||
+    (typeof v === 'string' && datePatterns.some(p => p.test(v))) ||
     v instanceof Date
   );
 
@@ -196,13 +195,23 @@ function formatNumber(value: number): string {
   return value.toLocaleString();
 }
 
-const CustomTooltip = ({ active, payload, label }: any) => {
+interface TooltipProps {
+  active?: boolean;
+  payload?: Array<{
+    name: string;
+    value: number;
+    color: string;
+  }>;
+  label?: string;
+}
+
+const CustomTooltip = ({ active, payload, label }: TooltipProps) => {
   if (!active || !payload || !payload.length) return null;
 
   return (
     <div className="bg-[#111] border border-white/10 rounded-lg px-3 py-2 shadow-xl">
       <p className="text-zinc-400 text-xs mb-1">{label}</p>
-      {payload.map((entry: any, index: number) => (
+      {payload.map((entry, index) => (
         <p key={index} className="text-sm" style={{ color: entry.color }}>
           {entry.name}: <span className="font-mono font-medium">{formatNumber(entry.value)}</span>
         </p>
@@ -239,9 +248,10 @@ export function DataCharts({ result }: DataChartsProps) {
     if (!result?.rows || !xAxis) return [];
 
     return result.rows.map(row => {
-      const dataPoint: any = { [xAxis]: row[xAxis] };
+      const dataPoint: Record<string, unknown> = { [xAxis]: row[xAxis] };
       yAxis.forEach(field => {
-        dataPoint[field] = Number(row[field]) || 0;
+        const value = row[field];
+        dataPoint[field] = typeof value === 'number' ? value : Number(value) || 0;
       });
       return dataPoint;
     });
@@ -252,6 +262,9 @@ export function DataCharts({ result }: DataChartsProps) {
 
     if (format === 'png') {
       try {
+        // Dynamic import for html2canvas
+        const html2canvasModule = await import('html2canvas');
+        const html2canvas = html2canvasModule.default as (element: HTMLElement, options?: { backgroundColor?: string; scale?: number }) => Promise<HTMLCanvasElement>;
         const canvas = await html2canvas(chartRef.current, {
           backgroundColor: '#080808',
           scale: 2,

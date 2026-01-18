@@ -9,7 +9,7 @@ on:
 
 jobs:
   lint-and-build:
-    name: Lint and Build
+    name: Lint, Typecheck and Build
     runs-on: ubuntu-latest
 
     steps:
@@ -26,6 +26,9 @@ jobs:
 
       - name: Run ESLint
         run: bun run lint
+
+      - name: Run TypeScript type check
+        run: bun run typecheck
 
       - name: Build project
         run: bun run build

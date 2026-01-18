@@ -10,7 +10,6 @@ import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { Textarea } from './ui/textarea';
 import { Bookmark, Tag } from 'lucide-react';
-import { DatabaseType } from '@/lib/types';
 
 interface SaveQueryModalProps {
   isOpen: boolean;
