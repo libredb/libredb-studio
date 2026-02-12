@@ -2,7 +2,9 @@
 
 import React from 'react';
 import { DatabaseConnection, TableSchema } from '@/lib/types';
-import { Plus, Database, HardDrive, Cpu, Cloud, Trash2, Zap, Layers, Sparkles } from 'lucide-react';
+import type { ProviderMetadata } from '@/hooks/use-provider-metadata';
+import { Plus, Trash2, Zap, Sparkles, Layers } from 'lucide-react';
+import { getDBIcon } from '@/lib/db-ui-config';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
@@ -74,14 +76,7 @@ export function ConnectionsList({
                 {conn.isDemo ? (
                   <Sparkles className="w-3 h-3 text-emerald-400" />
                 ) : (
-                  <>
-                    {conn.type === 'postgres' && <Cloud className="w-3 h-3" />}
-                    {conn.type === 'mysql' && <HardDrive className="w-3 h-3" />}
-                    {conn.type === 'mongodb' && <Layers className="w-3 h-3" />}
-                    {conn.type === 'redis' && <Cpu className="w-3 h-3" />}
-                    {conn.type === 'sqlite' && <Database className="w-3 h-3" />}
-                    {conn.type === 'demo' && <Zap className="w-3 h-3 text-yellow-500" />}
-                  </>
+                  (() => { const Icon = getDBIcon(conn.type); return <Icon className="w-3 h-3" />; })()
                 )}
               </div>
               <div className="flex-1 min-w-0">
@@ -127,14 +122,16 @@ interface SidebarProps {
   onShowDiagram?: () => void;
   isAdmin?: boolean;
   onOpenMaintenance?: (tab?: 'global' | 'tables' | 'sessions', table?: string) => void;
+  databaseType?: string;
+  metadata?: ProviderMetadata | null;
 }
 
-export function Sidebar({ 
-  connections, 
-  activeConnection, 
-  schema, 
+export function Sidebar({
+  connections,
+  activeConnection,
+  schema,
   isLoadingSchema,
-  onSelectConnection, 
+  onSelectConnection,
   onDeleteConnection,
   onAddConnection,
   onTableClick,
@@ -142,7 +139,9 @@ export function Sidebar({
   onCreateTableClick,
   onShowDiagram,
   isAdmin = false,
-  onOpenMaintenance
+  onOpenMaintenance,
+  databaseType,
+  metadata
 }: SidebarProps) {
   return (
     <div className="flex w-full h-full border-r border-border flex-col bg-background select-none">
@@ -197,6 +196,8 @@ export function Sidebar({
               onCreateTableClick={onCreateTableClick}
               isAdmin={isAdmin}
               onOpenMaintenance={onOpenMaintenance}
+              databaseType={databaseType}
+              metadata={metadata}
             />
           )}
         </div>

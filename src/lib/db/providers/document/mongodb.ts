@@ -3,7 +3,7 @@
  * Document database support using official MongoDB driver
  */
 
-import { MongoClient, type Db, type Document, type MongoClientOptions } from 'mongodb';
+import { MongoClient, ObjectId, Binary, Decimal128, type Db, type Document, type MongoClientOptions } from 'mongodb';
 import { BaseDatabaseProvider } from '../../base-provider';
 import {
   type DatabaseConnection,
@@ -14,6 +14,10 @@ import {
   type MaintenanceType,
   type MaintenanceResult,
   type ProviderOptions,
+  type ProviderCapabilities,
+  type ProviderLabels,
+  type PreparedQuery,
+  type QueryPrepareOptions,
   type SlowQuery,
   type ActiveSession,
   type DatabaseOverview,
@@ -62,6 +66,48 @@ export class MongoDBProvider extends BaseDatabaseProvider {
   constructor(config: DatabaseConnection, options: ProviderOptions = {}) {
     super(config, options);
     this.validate();
+  }
+
+  // ============================================================================
+  // Provider Metadata
+  // ============================================================================
+
+  public override getCapabilities(): ProviderCapabilities {
+    return {
+      queryLanguage: 'json',
+      supportsExplain: false,
+      supportsExternalQueryLimiting: false,
+      supportsCreateTable: false,
+      supportsMaintenance: true,
+      maintenanceOperations: ['vacuum', 'analyze', 'check'],
+      supportsConnectionString: true,
+      defaultPort: 27017,
+      schemaRefreshPattern: '"operation"\\s*:\\s*"(insert|delete|update)',
+    };
+  }
+
+  public override getLabels(): ProviderLabels {
+    return {
+      entityName: 'Collection',
+      entityNamePlural: 'Collections',
+      rowName: 'document',
+      rowNamePlural: 'documents',
+      selectAction: 'Find Documents',
+      generateAction: 'Generate Find',
+      analyzeAction: 'Validate Collection',
+      vacuumAction: 'Compact Collection',
+      searchPlaceholder: 'Search collections or fields...',
+      analyzeGlobalLabel: 'Run Validate',
+      analyzeGlobalTitle: 'Validate Collections',
+      analyzeGlobalDesc: 'Checks collection structure and indexes integrity for all collections.',
+      vacuumGlobalLabel: 'Run Compact',
+      vacuumGlobalTitle: 'Compact Storage',
+      vacuumGlobalDesc: 'Defragments and compacts collection storage to reclaim disk space.',
+    };
+  }
+
+  public override prepareQuery(query: string, options: QueryPrepareOptions = {}): PreparedQuery {
+    return { query, wasLimited: false, limit: options.limit || 100, offset: 0 };
   }
 
   // ============================================================================
@@ -194,22 +240,28 @@ export class MongoDBProvider extends BaseDatabaseProvider {
           let affectedCount = 0;
 
           switch (query.operation) {
-            case 'find':
+            case 'find': {
               const cursor = collection.find(query.filter || {});
               if (query.options?.projection) cursor.project(query.options.projection);
               if (query.options?.sort) cursor.sort(query.options.sort);
               if (query.options?.skip) cursor.skip(query.options.skip);
               if (query.options?.limit) cursor.limit(query.options.limit);
               else cursor.limit(100); // Default limit
-              rows = await cursor.toArray();
+              try {
+                rows = await cursor.toArray();
+              } finally {
+                await cursor.close();
+              }
               break;
+            }
 
-            case 'findOne':
+            case 'findOne': {
               const doc = await collection.findOne(query.filter || {}, {
                 projection: query.options?.projection,
               });
               rows = doc ? [doc] : [];
               break;
+            }
 
             case 'aggregate':
               rows = await collection.aggregate(query.pipeline || []).toArray();
@@ -327,8 +379,14 @@ export class MongoDBProvider extends BaseDatabaseProvider {
     const serialized: Record<string, unknown> = {};
 
     for (const [key, value] of Object.entries(doc)) {
-      if (value && typeof value === 'object') {
-        if (value.constructor?.name === 'ObjectId') {
+      if (value === null || value === undefined) {
+        serialized[key] = value;
+      } else if (typeof value === 'object') {
+        if (value instanceof ObjectId) {
+          serialized[key] = value.toString();
+        } else if (value instanceof Binary) {
+          serialized[key] = `<Binary: ${value.length()} bytes>`;
+        } else if (value instanceof Decimal128) {
           serialized[key] = value.toString();
         } else if (value instanceof Date) {
           serialized[key] = value.toISOString();
@@ -357,7 +415,11 @@ export class MongoDBProvider extends BaseDatabaseProvider {
   public async getSchema(): Promise<TableSchema[]> {
     this.ensureConnected();
 
-    const collections = await this.db!.listCollections().toArray();
+    const allCollections = await this.db!.listCollections().toArray();
+    // Skip system collections and limit to 200 collections for performance
+    const collections = allCollections
+      .filter(c => !c.name.startsWith('system.'))
+      .slice(0, 200);
     const schemas: TableSchema[] = [];
 
     for (const collInfo of collections) {
@@ -457,12 +519,10 @@ export class MongoDBProvider extends BaseDatabaseProvider {
     if (value === undefined) return 'undefined';
     if (Array.isArray(value)) return 'array';
     if (value instanceof Date) return 'date';
-    if (typeof value === 'object') {
-      if (value.constructor?.name === 'ObjectId') return 'objectId';
-      if (value.constructor?.name === 'Binary') return 'binary';
-      if (value.constructor?.name === 'Decimal128') return 'decimal';
-      return 'object';
-    }
+    if (value instanceof ObjectId) return 'objectId';
+    if (value instanceof Binary) return 'binary';
+    if (value instanceof Decimal128) return 'decimal';
+    if (typeof value === 'object') return 'object';
     return typeof value;
   }
 
@@ -482,13 +542,13 @@ export class MongoDBProvider extends BaseDatabaseProvider {
 
       const activeSessions: ActiveSession[] = (currentOps.inprog || [])
         .slice(0, 10)
-        .map((op: any) => ({
+        .map((op: Record<string, unknown>) => ({
           pid: op.opid || 'N/A',
           user: op.client || 'N/A',
           database: op.ns || this.getDatabaseName(),
           state: op.active ? 'active' : 'idle',
           query: JSON.stringify(op.command || {}).substring(0, 100),
-          duration: op.microsecs_running
+          duration: (typeof op.microsecs_running === 'number' && op.microsecs_running > 0)
             ? `${(op.microsecs_running / 1000000).toFixed(2)}s`
             : 'N/A',
         }));
@@ -567,17 +627,11 @@ export class MongoDBProvider extends BaseDatabaseProvider {
             }
 
           case 'reindex':
-            // Reindex collection
-            if (target) {
-              await this.db!.command({ reIndex: target });
-              return { success: true, message: `Reindexed collection: ${target}` };
-            } else {
-              const collections = await this.db!.listCollections().toArray();
-              for (const coll of collections) {
-                await this.db!.command({ reIndex: coll.name });
-              }
-              return { success: true, message: `Reindexed ${collections.length} collections` };
-            }
+            // reIndex was removed in MongoDB 6.0+
+            return {
+              success: false,
+              message: 'Reindex is not supported in MongoDB 6.0+. Use compact instead to defragment collections.',
+            };
 
           case 'vacuum':
           case 'optimize':
@@ -597,13 +651,17 @@ export class MongoDBProvider extends BaseDatabaseProvider {
               return { success: true, message: `Compacted collections` };
             }
 
-          case 'check':
-            // Run dbCheck
-            const result = await this.db!.command({ dbCheck: this.getDatabaseName() });
+          case 'check': {
+            // Run dbCheck — requires a collection name as target
+            if (!target) {
+              throw new QueryError('Collection name is required for dbCheck operation', 'mongodb');
+            }
+            const checkResult = await this.db!.command({ dbCheck: target });
             return {
               success: true,
-              message: `Database check completed: ${JSON.stringify(result)}`
+              message: `Database check completed for ${target}: ${JSON.stringify(checkResult)}`,
             };
+          }
 
           case 'kill':
             if (!target) {

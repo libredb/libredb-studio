@@ -52,11 +52,11 @@ export interface QueryPagination {
 }
 
 export interface QueryResult {
-  rows: any[];
+  rows: Record<string, unknown>[];
   fields: string[];
   rowCount: number;
   executionTime: number;
-  explainPlan?: any;
+  explainPlan?: unknown;
   pagination?: QueryPagination;
 }
 
@@ -68,11 +68,11 @@ export interface QueryTab {
   isExecuting: boolean;
   type: 'sql' | 'mongodb' | 'redis';
   viewMode?: 'results' | 'explain' | 'history' | 'saved';
-  explainPlan?: any;
+  explainPlan?: unknown;
   // Pagination state
   currentOffset?: number;
   isLoadingMore?: boolean;
-  allRows?: any[];
+  allRows?: Record<string, unknown>[];
 }
 
 export interface QueryHistoryItem {

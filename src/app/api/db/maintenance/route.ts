@@ -21,15 +21,6 @@ export async function POST(request: Request) {
   try {
     const { type, target, connection } = await request.json();
 
-    // Validate maintenance type
-    const validTypes: MaintenanceType[] = ['vacuum', 'analyze', 'reindex', 'kill', 'optimize', 'check'];
-    if (!type || !validTypes.includes(type)) {
-      return NextResponse.json(
-        { error: `Invalid maintenance type. Valid types: ${validTypes.join(', ')}` },
-        { status: 400 }
-      );
-    }
-
     // Validate connection
     if (!connection) {
       return NextResponse.json(
@@ -38,16 +29,30 @@ export async function POST(request: Request) {
       );
     }
 
-    // Check if maintenance is supported for this database type
-    const maintenanceSupportedTypes = ['postgres', 'mysql', 'sqlite', 'demo'];
-    if (!maintenanceSupportedTypes.includes(connection.type)) {
+    if (!type) {
       return NextResponse.json(
-        { error: `Maintenance operations not supported for ${connection.type}` },
+        { error: 'Maintenance type is required' },
         { status: 400 }
       );
     }
 
     const provider = await getOrCreateProvider(connection);
+    const capabilities = provider.getCapabilities();
+
+    if (!capabilities.supportsMaintenance) {
+      return NextResponse.json(
+        { error: `Maintenance operations not supported for this database` },
+        { status: 400 }
+      );
+    }
+
+    if (!capabilities.maintenanceOperations.includes(type as MaintenanceType)) {
+      return NextResponse.json(
+        { error: `Operation '${type}' not supported for this database. Supported: ${capabilities.maintenanceOperations.join(', ')}` },
+        { status: 400 }
+      );
+    }
+
     const result = await provider.runMaintenance(type, target);
 
     return NextResponse.json(result);

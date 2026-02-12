@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   Dialog,
   DialogContent,
@@ -23,8 +23,25 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { DatabaseConnection, TableSchema } from '@/lib/types';
+import type { ProviderMetadata } from '@/hooks/use-provider-metadata';
 import { cn } from '@/lib/utils';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+
+interface HealthData {
+  activeConnections?: number;
+  databaseSize?: string;
+  cacheHitRatio?: number | string;
+  slowQueries?: Array<{
+    query: string;
+    calls: number;
+    avgTime: string;
+  }>;
+  activeSessions?: Array<{
+    pid: number | string;
+    state: string;
+    duration?: string;
+  }>;
+}
 
 interface MaintenanceModalProps {
   isOpen: boolean;
@@ -33,6 +50,7 @@ interface MaintenanceModalProps {
   tables: TableSchema[];
   initialTab?: 'global' | 'tables' | 'sessions';
   targetTable?: string;
+  metadata?: ProviderMetadata | null;
 }
 
 export function MaintenanceModal({ 
@@ -41,22 +59,15 @@ export function MaintenanceModal({
   connection, 
   tables,
   initialTab = 'global',
-  targetTable
+  targetTable,
+  metadata
 }: MaintenanceModalProps) {
   const [activeTab, setActiveTab] = useState(initialTab);
-  const [healthData, setHealthData] = useState<any>(null);
+  const [healthData, setHealthData] = useState<HealthData | null>(null);
   const [loading, setLoading] = useState(false);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (isOpen) {
-      fetchHealth();
-      if (targetTable) setActiveTab('tables');
-      else setActiveTab(initialTab);
-    }
-  }, [isOpen, initialTab, targetTable]);
-
-  const fetchHealth = async () => {
+  const fetchHealth = useCallback(async () => {
     if (!connection) return;
     setLoading(true);
     try {
@@ -72,7 +83,15 @@ export function MaintenanceModal({
     } finally {
       setLoading(false);
     }
-  };
+  }, [connection]);
+
+  useEffect(() => {
+    if (isOpen) {
+      fetchHealth();
+      if (targetTable) setActiveTab('tables');
+      else setActiveTab(initialTab);
+    }
+  }, [isOpen, initialTab, targetTable, fetchHealth]);
 
   const runMaintenance = async (type: string, target?: string | number) => {
     const actionId = `${type}-${target || 'global'}`;
@@ -89,14 +108,18 @@ export function MaintenanceModal({
       
       toast.success(`${type.toUpperCase()} completed in ${result.executionTime}ms`);
       if (type === 'kill') fetchHealth();
-    } catch (error: any) {
-      toast.error('Operation failed: ' + error.message);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+      toast.error('Operation failed: ' + errorMessage);
     } finally {
       setActionLoading(null);
     }
   };
 
   if (!connection) return null;
+
+  const labels = metadata?.labels;
+  const capabilities = metadata?.capabilities;
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
@@ -110,14 +133,14 @@ export function MaintenanceModal({
               <div>
                 <DialogTitle className="text-xl">Database Maintenance</DialogTitle>
                 <DialogDescription className="text-zinc-500 text-xs">
-                  Connected to: <span className="text-blue-400 font-mono">{connection.database}</span> ({connection.host})
+                  Connected to: <span className="text-blue-400 font-mono">{connection.database || connection.connectionString}</span> ({connection.host || 'MongoDB'})
                 </DialogDescription>
               </div>
             </div>
           </DialogHeader>
         </div>
 
-        <Tabs value={activeTab} onValueChange={(v: any) => setActiveTab(v)} className="p-0">
+        <Tabs value={activeTab} onValueChange={(v: string) => setActiveTab(v as 'global' | 'tables' | 'sessions')} className="p-0">
           <div className="px-6 border-b border-white/5 bg-zinc-900/30">
             <TabsList className="bg-transparent border-0 gap-6 h-12">
               <TabsTrigger 
@@ -149,20 +172,22 @@ export function MaintenanceModal({
                     <div className="w-8 h-8 rounded-lg bg-yellow-500/10 border border-yellow-500/20 flex items-center justify-center">
                       <Zap className="w-4 h-4 text-yellow-500" />
                     </div>
-                    <Button 
-                      size="sm" 
-                      variant="outline" 
+                    <Button
+                      size="sm"
+                      variant="outline"
                       className="h-8 border-white/10 hover:bg-yellow-500/10 hover:text-yellow-500"
                       onClick={() => runMaintenance('analyze')}
                       disabled={!!actionLoading}
                     >
                       {actionLoading === 'analyze-global' ? <RefreshCw className="w-3 h-3 animate-spin mr-2" /> : null}
-                      Run Analyze
+                      {labels?.analyzeGlobalLabel || 'Run Analyze'}
                     </Button>
                   </div>
-                  <h4 className="text-sm font-bold text-zinc-200 mb-1">Update Statistics</h4>
+                  <h4 className="text-sm font-bold text-zinc-200 mb-1">
+                    {labels?.analyzeGlobalTitle || 'Update Statistics'}
+                  </h4>
                   <p className="text-[11px] text-zinc-500 leading-relaxed">
-                    Updates the planner's statistics for all tables in the database to improve query optimization.
+                    {labels?.analyzeGlobalDesc || <>Updates the planner&apos;s statistics for all tables in the database to improve query optimization.</>}
                   </p>
                 </div>
 
@@ -171,44 +196,48 @@ export function MaintenanceModal({
                     <div className="w-8 h-8 rounded-lg bg-blue-500/10 border border-blue-500/20 flex items-center justify-center">
                       <HardDrive className="w-4 h-4 text-blue-500" />
                     </div>
-                    <Button 
-                      size="sm" 
-                      variant="outline" 
+                    <Button
+                      size="sm"
+                      variant="outline"
                       className="h-8 border-white/10 hover:bg-blue-500/10 hover:text-blue-500"
                       onClick={() => runMaintenance('vacuum')}
                       disabled={!!actionLoading}
                     >
                       {actionLoading === 'vacuum-global' ? <RefreshCw className="w-3 h-3 animate-spin mr-2" /> : null}
-                      Run Vacuum
+                      {labels?.vacuumGlobalLabel || 'Run Vacuum'}
                     </Button>
                   </div>
-                  <h4 className="text-sm font-bold text-zinc-200 mb-1">Reclaim Space</h4>
+                  <h4 className="text-sm font-bold text-zinc-200 mb-1">
+                    {labels?.vacuumGlobalTitle || 'Reclaim Space'}
+                  </h4>
                   <p className="text-[11px] text-zinc-500 leading-relaxed">
-                    Removes "dead" rows from tables and returns space to the operating system. Includes Analyze.
+                    {labels?.vacuumGlobalDesc || <>Removes &quot;dead&quot; rows from tables and returns space to the operating system. Includes Analyze.</>}
                   </p>
                 </div>
 
-                <div className="p-4 rounded-xl border border-white/5 bg-white/[0.02] hover:bg-white/[0.04] transition-colors group">
-                  <div className="flex items-start justify-between mb-4">
-                    <div className="w-8 h-8 rounded-lg bg-purple-500/10 border border-purple-500/20 flex items-center justify-center">
-                      <RefreshCw className="w-4 h-4 text-purple-500" />
+                {capabilities?.maintenanceOperations?.includes('reindex') && (
+                  <div className="p-4 rounded-xl border border-white/5 bg-white/[0.02] hover:bg-white/[0.04] transition-colors group">
+                    <div className="flex items-start justify-between mb-4">
+                      <div className="w-8 h-8 rounded-lg bg-purple-500/10 border border-purple-500/20 flex items-center justify-center">
+                        <RefreshCw className="w-4 h-4 text-purple-500" />
+                      </div>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-8 border-white/10 hover:bg-purple-500/10 hover:text-purple-500"
+                        onClick={() => runMaintenance('reindex')}
+                        disabled={!!actionLoading}
+                      >
+                        {actionLoading === 'reindex-global' ? <RefreshCw className="w-3 h-3 animate-spin mr-2" /> : null}
+                        Run Reindex
+                      </Button>
                     </div>
-                    <Button 
-                      size="sm" 
-                      variant="outline" 
-                      className="h-8 border-white/10 hover:bg-purple-500/10 hover:text-purple-500"
-                      onClick={() => runMaintenance('reindex')}
-                      disabled={!!actionLoading}
-                    >
-                      {actionLoading === 'reindex-global' ? <RefreshCw className="w-3 h-3 animate-spin mr-2" /> : null}
-                      Run Reindex
-                    </Button>
+                    <h4 className="text-sm font-bold text-zinc-200 mb-1">Rebuild Indexes</h4>
+                    <p className="text-[11px] text-zinc-500 leading-relaxed">
+                      Reconstructs all indexes in the database. Useful for fixing bloat or corruption.
+                    </p>
                   </div>
-                  <h4 className="text-sm font-bold text-zinc-200 mb-1">Rebuild Indexes</h4>
-                  <p className="text-[11px] text-zinc-500 leading-relaxed">
-                    Reconstructs all indexes in the database. Useful for fixing bloat or corruption.
-                  </p>
-                </div>
+                )}
 
                 <div className="p-4 rounded-xl border border-red-500/10 bg-red-500/5 flex flex-col justify-center">
                   <div className="flex items-center gap-2 text-red-400 mb-2">
@@ -226,15 +255,19 @@ export function MaintenanceModal({
               <div className="flex items-center justify-between mb-4 bg-white/5 p-3 rounded-lg border border-white/5">
                 <div className="flex items-center gap-2">
                   <TableIcon className="w-4 h-4 text-blue-400" />
-                  <span className="text-xs font-bold text-zinc-300">Table Optimizer</span>
+                  <span className="text-xs font-bold text-zinc-300">
+                    {labels?.entityName || 'Table'} Optimizer
+                  </span>
                 </div>
-                <span className="text-[10px] text-zinc-500">{tables.length} tables found</span>
+                <span className="text-[10px] text-zinc-500">
+                  {tables.length} {(labels?.entityNamePlural || 'tables').toLowerCase()} found
+                </span>
               </div>
-              
+
               <div className="space-y-1">
                 {tables.map(table => (
-                  <div 
-                    key={table.name} 
+                  <div
+                    key={table.name}
                     className={cn(
                       "flex items-center justify-between p-2 rounded-md transition-colors",
                       targetTable === table.name ? "bg-blue-500/10 border border-blue-500/20" : "hover:bg-white/5 border border-transparent"
@@ -243,27 +276,27 @@ export function MaintenanceModal({
                     <div className="flex flex-col">
                       <span className="text-sm font-medium text-zinc-200">{table.name}</span>
                       <div className="flex items-center gap-2 text-[10px] text-zinc-500">
-                        <span className="font-mono">{table.rowCount} rows</span>
+                        <span className="font-mono">{table.rowCount} {labels?.rowNamePlural || 'rows'}</span>
                         <span>•</span>
                         <span className="font-mono">{table.size}</span>
                       </div>
                     </div>
                     <div className="flex items-center gap-1">
-                      <Button 
-                        size="icon" 
-                        variant="ghost" 
+                      <Button
+                        size="icon"
+                        variant="ghost"
                         className="w-8 h-8 text-zinc-500 hover:text-yellow-500"
-                        title="Analyze Table"
+                        title={labels?.analyzeAction || 'Analyze Table'}
                         onClick={() => runMaintenance('analyze', table.name)}
                         disabled={!!actionLoading}
                       >
                         {actionLoading === `analyze-${table.name}` ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Search className="w-3.5 h-3.5" />}
                       </Button>
-                      <Button 
-                        size="icon" 
-                        variant="ghost" 
+                      <Button
+                        size="icon"
+                        variant="ghost"
                         className="w-8 h-8 text-zinc-500 hover:text-blue-500"
-                        title="Vacuum Table"
+                        title={labels?.vacuumAction || 'Vacuum Table'}
                         onClick={() => runMaintenance('vacuum', table.name)}
                         disabled={!!actionLoading}
                       >
@@ -303,7 +336,7 @@ export function MaintenanceModal({
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-white/5">
-                    {healthData?.activeSessions?.map((session: any) => (
+                    {healthData?.activeSessions?.map((session: { pid: number | string; state: string; duration?: string }) => (
                       <tr key={session.pid} className="group hover:bg-white/[0.03] transition-colors">
                         <td className="px-4 py-3 font-mono text-zinc-400">{session.pid}</td>
                         <td className="px-4 py-3">

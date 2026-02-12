@@ -5,16 +5,10 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { 
-  Select, 
-  SelectContent, 
-  SelectItem, 
-  SelectTrigger, 
-  SelectValue 
-} from '@/components/ui/select';
 import { DatabaseConnection, DatabaseType } from '@/lib/types';
-import { Cloud, HardDrive, Database, Cpu, ShieldCheck, Zap, Globe, Key } from 'lucide-react';
+import { Database, ShieldCheck, Zap, Globe, Key, Link } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { getDBConfig } from '@/lib/db-ui-config';
 import { motion, AnimatePresence } from 'framer-motion';
 
 interface ConnectionModalProps {
@@ -32,12 +26,14 @@ export function ConnectionModal({ isOpen, onClose, onConnect }: ConnectionModalP
   const [password, setPassword] = useState('');
   const [database, setDatabase] = useState('');
   const [isTesting, setIsTesting] = useState(false);
+  const [connectionString, setConnectionString] = useState('');
+  const [mongoConnectionMode, setMongoConnectionMode] = useState<'host' | 'connectionString'>('host');
 
   const handleConnect = async () => {
     setIsTesting(true);
     // Simulate connection test
     await new Promise(resolve => setTimeout(resolve, 1500));
-    
+
     const newConn: DatabaseConnection = {
       id: Math.random().toString(36).substr(2, 9),
       name: name || `${type}-connection`,
@@ -48,25 +44,32 @@ export function ConnectionModal({ isOpen, onClose, onConnect }: ConnectionModalP
       password,
       database,
       createdAt: new Date(),
+      ...(getDBConfig(type).showConnectionStringToggle && mongoConnectionMode === 'connectionString' ? {
+        connectionString,
+        host: undefined,
+        port: undefined,
+        user: undefined,
+        password: undefined,
+      } : {}),
     };
-    
+
     onConnect(newConn);
     setIsTesting(false);
-    
+
     // Reset form
     setName('');
     setUser('');
     setPassword('');
     setDatabase('');
+    setConnectionString('');
+    setMongoConnectionMode('host');
   };
 
-    const dbTypes: { value: DatabaseType, label: string, icon: any, color: string }[] = [
-      { value: 'postgres', label: 'PostgreSQL', icon: Cloud, color: 'text-blue-400' },
-      { value: 'mysql', label: 'MySQL', icon: HardDrive, color: 'text-amber-400' },
-      { value: 'mongodb', label: 'MongoDB', icon: Database, color: 'text-emerald-400' },
-      { value: 'redis', label: 'Redis', icon: Cpu, color: 'text-rose-400' },
-      { value: 'demo', label: 'Demo Data', icon: Zap, color: 'text-yellow-400' },
-    ];
+    const selectableTypes: DatabaseType[] = ['postgres', 'mysql', 'mongodb', 'redis', 'demo'];
+    const dbTypes = selectableTypes.map(t => {
+      const cfg = getDBConfig(t);
+      return { value: t, label: cfg.label, icon: cfg.icon, color: cfg.color };
+    });
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
@@ -97,10 +100,8 @@ export function ConnectionModal({ isOpen, onClose, onConnect }: ConnectionModalP
                   key={db.value}
                   onClick={() => {
                     setType(db.value);
-                    if (db.value === 'postgres') setPort('5432');
-                    if (db.value === 'mysql') setPort('3306');
-                    if (db.value === 'mongodb') setPort('27017');
-                    if (db.value === 'redis') setPort('6379');
+                    const cfg = getDBConfig(db.value);
+                    if (cfg.defaultPort) setPort(cfg.defaultPort);
                   }}
                   className={cn(
                     "flex flex-col items-center justify-center p-4 rounded-xl border transition-all duration-200 gap-2 group",
@@ -120,71 +121,134 @@ export function ConnectionModal({ isOpen, onClose, onConnect }: ConnectionModalP
               <div className="space-y-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
                 {type !== 'demo' ? (
                   <>
-                    <div className="space-y-2">
-                      <div className="flex items-center gap-2 mb-1">
-                        <Globe className="w-3 h-3 text-zinc-500" />
-                        <Label htmlFor="host" className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Host & Instance</Label>
+                    {/* Connection string mode toggle */}
+                    {getDBConfig(type).showConnectionStringToggle && (
+                      <div className="flex items-center gap-2 p-1 rounded-lg bg-zinc-900/50 border border-white/5">
+                        <button
+                          onClick={() => setMongoConnectionMode('host')}
+                          className={cn(
+                            "flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-md text-xs font-bold transition-all",
+                            mongoConnectionMode === 'host'
+                              ? "bg-blue-600/20 text-blue-400 border border-blue-500/30"
+                              : "text-zinc-500 hover:text-zinc-300"
+                          )}
+                        >
+                          <Globe className="w-3 h-3" />
+                          Host / Port
+                        </button>
+                        <button
+                          onClick={() => setMongoConnectionMode('connectionString')}
+                          className={cn(
+                            "flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-md text-xs font-bold transition-all",
+                            mongoConnectionMode === 'connectionString'
+                              ? "bg-blue-600/20 text-blue-400 border border-blue-500/30"
+                              : "text-zinc-500 hover:text-zinc-300"
+                          )}
+                        >
+                          <Link className="w-3 h-3" />
+                          Connection String
+                        </button>
                       </div>
-                      <div className="grid grid-cols-4 gap-3">
-                        <Input 
-                          id="host" 
-                          value={host} 
-                          onChange={(e) => setHost(e.target.value)} 
-                          placeholder="localhost"
-                          className="col-span-3 h-10 bg-zinc-900/50 border-white/5 focus:border-blue-500/50 transition-all text-sm"
-                        />
-                        <Input 
-                          id="port" 
-                          value={port} 
-                          onChange={(e) => setPort(e.target.value)} 
-                          className="h-10 bg-zinc-900/50 border-white/5 focus:border-blue-500/50 transition-all text-sm font-mono"
-                        />
-                      </div>
-                    </div>
+                    )}
 
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-2">
-                        <div className="flex items-center gap-2 mb-1">
-                          <Key className="w-3 h-3 text-zinc-500" />
-                          <Label htmlFor="user" className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Username</Label>
+                    {getDBConfig(type).showConnectionStringToggle && mongoConnectionMode === 'connectionString' ? (
+                      <>
+                        <div className="space-y-2">
+                          <div className="flex items-center gap-2 mb-1">
+                            <Link className="w-3 h-3 text-zinc-500" />
+                            <Label htmlFor="connectionString" className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Connection URI</Label>
+                          </div>
+                          <Input
+                            id="connectionString"
+                            value={connectionString}
+                            onChange={(e) => setConnectionString(e.target.value)}
+                            placeholder="mongodb://localhost:27017/mydb  or  mongodb+srv://..."
+                            className="h-10 bg-zinc-900/50 border-white/5 focus:border-blue-500/50 transition-all text-sm font-mono"
+                          />
                         </div>
-                        <Input 
-                          id="user" 
-                          value={user} 
-                          onChange={(e) => setUser(e.target.value)} 
-                          placeholder="postgres"
-                          className="h-10 bg-zinc-900/50 border-white/5 focus:border-blue-500/50 transition-all text-sm"
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <div className="flex items-center gap-2 mb-1">
-                          <ShieldCheck className="w-3 h-3 text-zinc-500" />
-                          <Label htmlFor="password" className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Password</Label>
+                        <div className="space-y-2">
+                          <div className="flex items-center gap-2 mb-1">
+                            <Database className="w-3 h-3 text-zinc-500" />
+                            <Label htmlFor="database" className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Database Name (optional override)</Label>
+                          </div>
+                          <Input
+                            id="database"
+                            value={database}
+                            onChange={(e) => setDatabase(e.target.value)}
+                            placeholder="Extracted from URI if not provided"
+                            className="h-10 bg-zinc-900/50 border-white/5 focus:border-blue-500/50 transition-all text-sm font-mono"
+                          />
                         </div>
-                        <Input 
-                          id="password" 
-                          type="password" 
-                          value={password} 
-                          onChange={(e) => setPassword(e.target.value)} 
-                          placeholder="••••••••"
-                          className="h-10 bg-zinc-900/50 border-white/5 focus:border-blue-500/50 transition-all text-sm"
-                        />
-                      </div>
-                    </div>
+                      </>
+                    ) : (
+                      <>
+                        <div className="space-y-2">
+                          <div className="flex items-center gap-2 mb-1">
+                            <Globe className="w-3 h-3 text-zinc-500" />
+                            <Label htmlFor="host" className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Host & Instance</Label>
+                          </div>
+                          <div className="grid grid-cols-4 gap-3">
+                            <Input
+                              id="host"
+                              value={host}
+                              onChange={(e) => setHost(e.target.value)}
+                              placeholder="localhost"
+                              className="col-span-3 h-10 bg-zinc-900/50 border-white/5 focus:border-blue-500/50 transition-all text-sm"
+                            />
+                            <Input
+                              id="port"
+                              value={port}
+                              onChange={(e) => setPort(e.target.value)}
+                              className="h-10 bg-zinc-900/50 border-white/5 focus:border-blue-500/50 transition-all text-sm font-mono"
+                            />
+                          </div>
+                        </div>
 
-                    <div className="space-y-2">
-                      <div className="flex items-center gap-2 mb-1">
-                        <Database className="w-3 h-3 text-zinc-500" />
-                        <Label htmlFor="database" className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Database Name</Label>
-                      </div>
-                      <Input 
-                        id="database" 
-                        value={database} 
-                        onChange={(e) => setDatabase(e.target.value)} 
-                        placeholder="production_db"
-                        className="h-10 bg-zinc-900/50 border-white/5 focus:border-blue-500/50 transition-all text-sm font-mono"
-                      />
-                    </div>
+                        <div className="grid grid-cols-2 gap-4">
+                          <div className="space-y-2">
+                            <div className="flex items-center gap-2 mb-1">
+                              <Key className="w-3 h-3 text-zinc-500" />
+                              <Label htmlFor="user" className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Username</Label>
+                            </div>
+                            <Input
+                              id="user"
+                              value={user}
+                              onChange={(e) => setUser(e.target.value)}
+                              placeholder="postgres"
+                              className="h-10 bg-zinc-900/50 border-white/5 focus:border-blue-500/50 transition-all text-sm"
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <div className="flex items-center gap-2 mb-1">
+                              <ShieldCheck className="w-3 h-3 text-zinc-500" />
+                              <Label htmlFor="password" className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Password</Label>
+                            </div>
+                            <Input
+                              id="password"
+                              type="password"
+                              value={password}
+                              onChange={(e) => setPassword(e.target.value)}
+                              placeholder="••••••••"
+                              className="h-10 bg-zinc-900/50 border-white/5 focus:border-blue-500/50 transition-all text-sm"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="space-y-2">
+                          <div className="flex items-center gap-2 mb-1">
+                            <Database className="w-3 h-3 text-zinc-500" />
+                            <Label htmlFor="database" className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Database Name</Label>
+                          </div>
+                          <Input
+                            id="database"
+                            value={database}
+                            onChange={(e) => setDatabase(e.target.value)}
+                            placeholder="production_db"
+                            className="h-10 bg-zinc-900/50 border-white/5 focus:border-blue-500/50 transition-all text-sm font-mono"
+                          />
+                        </div>
+                      </>
+                    )}
                   </>
                 ) : (
                   <div className="p-8 border border-white/5 rounded-xl bg-zinc-900/30 text-center space-y-3">
@@ -219,9 +283,9 @@ export function ConnectionModal({ isOpen, onClose, onConnect }: ConnectionModalP
           >
             Cancel
           </Button>
-          <Button 
-            onClick={handleConnect} 
-            disabled={isTesting}
+          <Button
+            onClick={handleConnect}
+            disabled={isTesting || (getDBConfig(type).showConnectionStringToggle && mongoConnectionMode === 'connectionString' && !connectionString.trim())}
             className="bg-blue-600 hover:bg-blue-500 text-white min-w-[140px] font-bold text-xs h-10 shadow-lg shadow-blue-900/20 group relative overflow-hidden"
           >
             <AnimatePresence mode="wait">

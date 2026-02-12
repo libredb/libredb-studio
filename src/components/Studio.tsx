@@ -7,7 +7,7 @@ import { SchemaExplorer } from '@/components/SchemaExplorer';
 import { ConnectionModal } from '@/components/ConnectionModal';
 import { QueryEditor, QueryEditorRef } from '@/components/QueryEditor';
 import { ResultsGrid } from '@/components/ResultsGrid';
-import { VisualExplain } from '@/components/VisualExplain';
+import { VisualExplain, type ExplainPlanResult } from '@/components/VisualExplain';
 import { HealthDashboard } from '@/components/HealthDashboard';
 import { CreateTableModal } from '@/components/CreateTableModal';
 import { SchemaDiagram } from '@/components/SchemaDiagram';
@@ -18,8 +18,10 @@ import { SaveQueryModal } from '@/components/SaveQueryModal';
 import { MaintenanceModal } from '@/components/MaintenanceModal';
 import { DatabaseConnection, TableSchema, QueryTab, SavedQuery } from '@/lib/types';
 import { useToast } from '@/hooks/use-toast';
+import { useProviderMetadata } from '@/hooks/use-provider-metadata';
 import { storage } from '@/lib/storage';
 import { getDefaultQuery, getRandomShowcaseQuery } from '@/lib/showcase-queries';
+import { generateTableQuery, generateSelectQuery, shouldRefreshSchema } from '@/lib/query-generators';
 import { useRouter } from 'next/navigation';
 import { cn } from '@/lib/utils';
 import {
@@ -72,12 +74,14 @@ export default function Studio() {
   const [connections, setConnections] = useState<DatabaseConnection[]>([]);
   const [activeConnection, setActiveConnection] = useState<DatabaseConnection | null>(null);
   const [schema, setSchema] = useState<TableSchema[]>([]);
-  const [user, setUser] = useState<any>(null);
+  const [user, setUser] = useState<{ role?: string } | null>(null);
   const [isMaintenanceModalOpen, setIsMaintenanceModalOpen] = useState(false);
   const [maintenanceInitialTab, setMaintenanceInitialTab] = useState<'global' | 'tables' | 'sessions'>('global');
   const [maintenanceTargetTable, setMaintenanceTargetTable] = useState<string | undefined>(undefined);
   
   const queryEditorRef = useRef<QueryEditorRef>(null);
+
+  const { metadata } = useProviderMetadata(activeConnection);
 
   useEffect(() => {
     const fetchUser = async () => {
@@ -168,13 +172,14 @@ export default function Studio() {
   const addTab = () => {
     const newId = Math.random().toString(36).substring(7);
     const isDemo = activeConnection?.isDemo || activeConnection?.type === 'demo';
+    const queryLanguage = metadata?.capabilities.queryLanguage;
     const newTab: QueryTab = {
       id: newId,
       name: `Query ${tabs.length + 1}`,
-      query: getDefaultQuery(isDemo, activeConnection?.type),
+      query: getDefaultQuery(isDemo, queryLanguage),
       result: null,
       isExecuting: false,
-      type: activeConnection?.type === 'mongodb' ? 'mongodb' : 'sql'
+      type: queryLanguage === 'json' ? 'mongodb' : 'sql'
     };
     setTabs(prev => [...prev, newTab]);
     setActiveTabId(newId);
@@ -196,7 +201,7 @@ export default function Studio() {
       toast({ title: "Logged out", description: "You have been successfully logged out." });
       router.push('/login');
       router.refresh();
-    } catch (error) {
+    } catch {
       toast({ title: "Error", description: "Failed to logout.", variant: "destructive" });
     }
   };
@@ -226,7 +231,7 @@ export default function Studio() {
     const data = currentTab.result.rows;
     let content = '';
     let mimeType = '';
-    let fileName = `query_result_${format === 'csv' ? 'export' : 'data'}.${format}`;
+    const fileName = `query_result_${format === 'csv' ? 'export' : 'data'}.${format}`;
 
     if (format === 'csv') {
       const headers = Object.keys(data[0] || {}).join(',');
@@ -253,7 +258,51 @@ export default function Studio() {
     unlimited?: boolean;
   }
 
-  const executeQuery = async (
+  const fetchSchema = useCallback(async (conn: DatabaseConnection) => {
+    setIsLoadingSchema(true);
+
+    if (conn.isDemo) {
+      console.log('[DemoDB] Fetching schema for demo connection:', conn.name);
+    }
+
+    try {
+      const response = await fetch('/api/db/schema', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(conn),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        const errorMessage = errorData.error || 'Failed to fetch schema';
+
+        if (conn.isDemo) {
+          console.error('[DemoDB] Schema fetch failed:', errorMessage);
+          throw new Error(`Demo database unavailable: ${errorMessage}. You can add your own database connection.`);
+        }
+        throw new Error(errorMessage);
+      }
+
+      const data = await response.json();
+
+      if (conn.isDemo) {
+        console.log('[DemoDB] Schema loaded successfully:', {
+          tables: data.length,
+          tableNames: data.slice(0, 5).map((t: TableSchema) => t.name),
+        });
+      }
+
+      setSchema(data);
+    } catch (error) {
+      const title = conn.isDemo ? "Demo Database Error" : "Schema Error";
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      toast({ title, description: errorMessage, variant: "destructive" });
+    } finally {
+      setIsLoadingSchema(false);
+    }
+  }, [toast]);
+
+  const executeQuery = useCallback(async (
     overrideQuery?: string,
     tabId?: string,
     isExplain: boolean = false,
@@ -297,6 +346,13 @@ export default function Studio() {
       console.log('[DemoDB] Executing query on demo connection:', {
         queryPreview: queryToExecute.substring(0, 100) + (queryToExecute.length > 100 ? '...' : ''),
       });
+    }
+
+    // Check EXPLAIN support via capabilities
+    if (isExplain && metadata && !metadata.capabilities.supportsExplain) {
+      toast({ title: "Not Supported", description: "EXPLAIN is not available for this database type.", variant: "destructive" });
+      setTabs(prev => prev.map(t => t.id === targetTabId ? { ...t, isExecuting: false, isLoadingMore: false } : t));
+      return;
     }
 
     // Build EXPLAIN query for PostgreSQL/MySQL
@@ -461,19 +517,23 @@ export default function Studio() {
         };
       }));
 
-      if (!isExplain && /(CREATE|DROP|ALTER|TRUNCATE)\b/i.test(queryToExecute)) {
-        fetchSchema(activeConnection);
+      // Refresh schema after DDL/write operations (pattern from provider capabilities)
+      if (!isExplain && metadata) {
+        if (shouldRefreshSchema(queryToExecute, metadata.capabilities.schemaRefreshPattern)) {
+          fetchSchema(activeConnection);
+        }
       }
-    } catch (error: any) {
+    } catch (error) {
       setTabs(prev => prev.map(t => t.id === targetTabId ? {
         ...t,
         isExecuting: false,
         isLoadingMore: false,
       } : t));
       const title = activeConnection?.isDemo ? "Demo Database Error" : "Query Error";
-      toast({ title, description: error.message, variant: "destructive" });
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      toast({ title, description: errorMessage, variant: "destructive" });
     }
-  };
+  }, [activeConnection, tabs, currentTab, activeTabId, toast, fetchSchema, metadata]);
 
   // Load More handler
   const handleLoadMore = () => {
@@ -502,10 +562,15 @@ export default function Studio() {
   };
 
   useEffect(() => {
-    const handleExecuteQuery = (e: any) => executeQuery(e.detail.query);
+    const handleExecuteQuery = (e: Event) => {
+      const customEvent = e as CustomEvent<{ query: string }>;
+      if (customEvent.detail?.query) {
+        executeQuery(customEvent.detail.query);
+      }
+    };
     window.addEventListener('execute-query', handleExecuteQuery);
     return () => window.removeEventListener('execute-query', handleExecuteQuery);
-  }, [activeTabId, activeConnection, executeQuery]);
+  }, [executeQuery]);
 
   useEffect(() => {
     const initializeConnections = async () => {
@@ -587,6 +652,8 @@ export default function Studio() {
     if (activeConnection) {
       fetchSchema(activeConnection);
       const isDemo = activeConnection.isDemo || activeConnection.type === 'demo';
+      const tabType = metadata?.capabilities.queryLanguage === 'json' ? 'mongodb' :
+                      activeConnection.type === 'redis' ? 'redis' : 'sql';
       setTabs(prev => prev.map((t, index) => {
         // For demo connection: update first tab with showcase query if it has default content
         const hasDefaultQuery = t.query === '-- Start typing your SQL query here\n' ||
@@ -595,65 +662,21 @@ export default function Studio() {
 
         return {
           ...t,
-          type: activeConnection.type === 'mongodb' ? 'mongodb' :
-                activeConnection.type === 'redis' ? 'redis' : 'sql',
+          type: tabType,
           ...(shouldUpdateWithShowcase ? { query: getRandomShowcaseQuery() } : {})
         };
       }));
     } else {
       setSchema([]);
     }
-  }, [activeConnection]);
-
-
-  const fetchSchema = async (conn: DatabaseConnection) => {
-    setIsLoadingSchema(true);
-
-    if (conn.isDemo) {
-      console.log('[DemoDB] Fetching schema for demo connection:', conn.name);
-    }
-
-    try {
-      const response = await fetch('/api/db/schema', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(conn),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        const errorMessage = errorData.error || 'Failed to fetch schema';
-
-        if (conn.isDemo) {
-          console.error('[DemoDB] Schema fetch failed:', errorMessage);
-          throw new Error(`Demo database unavailable: ${errorMessage}. You can add your own database connection.`);
-        }
-        throw new Error(errorMessage);
-      }
-
-      const data = await response.json();
-
-      if (conn.isDemo) {
-        console.log('[DemoDB] Schema loaded successfully:', {
-          tables: data.length,
-          tableNames: data.slice(0, 5).map((t: any) => t.name),
-        });
-      }
-
-      setSchema(data);
-    } catch (error: any) {
-      const title = conn.isDemo ? "Demo Database Error" : "Schema Error";
-      toast({ title, description: error.message, variant: "destructive" });
-    } finally {
-      setIsLoadingSchema(false);
-    }
-  };
+  }, [activeConnection, fetchSchema, metadata]);
 
   const handleTableClick = (tableName: string) => {
-    let newQuery = activeConnection?.type === 'mongodb' 
-      ? `db.collection("${tableName}").find({}).limit(50)` 
+    const capabilities = metadata?.capabilities;
+    const newQuery = capabilities
+      ? generateTableQuery(tableName, capabilities)
       : `SELECT * FROM ${tableName} LIMIT 50;`;
-    
+
     const newId = Math.random().toString(36).substring(7);
     const newTab: QueryTab = {
       id: newId,
@@ -661,7 +684,7 @@ export default function Studio() {
       query: newQuery,
       result: null,
       isExecuting: false,
-      type: currentTab.type
+      type: capabilities?.queryLanguage === 'json' ? 'mongodb' : 'sql'
     };
     setTabs(prev => [...prev, newTab]);
     setActiveTabId(newId);
@@ -669,10 +692,16 @@ export default function Studio() {
   };
 
   const handleGenerateSelect = (tableName: string) => {
+    const capabilities = metadata?.capabilities;
     const table = schema.find(t => t.name === tableName);
-    const cols = table?.columns.map(c => `  ${c.name}`).join(',\n') || '  *';
-    const newQuery = `SELECT\n${cols}\nFROM ${tableName}\nWHERE 1=1\nLIMIT 100;`;
-    
+    const columns = table?.columns || [];
+
+    const newQuery = capabilities
+      ? generateSelectQuery(tableName, columns, capabilities)
+      : `SELECT\n${columns.map(c => `  ${c.name}`).join(',\n') || '  *'}\nFROM ${tableName}\nWHERE 1=1\nLIMIT 100;`;
+
+    const tabType: 'sql' | 'mongodb' | 'redis' = capabilities?.queryLanguage === 'json' ? 'mongodb' : 'sql';
+
     const newId = Math.random().toString(36).substring(7);
     setTabs(prev => [...prev, {
       id: newId,
@@ -680,7 +709,7 @@ export default function Studio() {
       query: newQuery,
       result: null,
       isExecuting: false,
-      type: 'sql'
+      type: tabType
     }]);
     setActiveTabId(newId);
     setActiveView('editor');
@@ -709,6 +738,8 @@ export default function Studio() {
             onShowDiagram={() => setShowDiagram(true)}
             isAdmin={isAdmin}
             onOpenMaintenance={openMaintenance}
+            databaseType={activeConnection?.type}
+            metadata={metadata}
           />
         </ResizablePanel>
         <ResizableHandle className="hidden md:flex w-1 bg-transparent hover:bg-blue-500/30 transition-colors" />
@@ -1036,6 +1067,8 @@ export default function Studio() {
                   onCreateTableClick={() => setIsCreateTableModalOpen(true)}
                   isAdmin={isAdmin}
                   onOpenMaintenance={openMaintenance}
+                  databaseType={activeConnection?.type}
+                  metadata={metadata}
                 />
               ) : (
                 <div className="flex flex-col items-center justify-center h-full text-zinc-500">
@@ -1091,11 +1124,12 @@ export default function Studio() {
                         ref={queryEditorRef}
                         value={currentTab.query}
                         onChange={(val) => updateCurrentTab({ query: val })}
-                        onExplain={() => executeQuery(undefined, undefined, true)}
+                        onExplain={metadata?.capabilities.supportsExplain ? () => executeQuery(undefined, undefined, true) : undefined}
                         language={currentTab.type === 'mongodb' ? 'json' : 'sql'}
                         tables={tableNames}
                         databaseType={activeConnection?.type}
                         schemaContext={schemaContext}
+                        capabilities={metadata?.capabilities}
                       />
                     </div>
                   </div>
@@ -1199,7 +1233,7 @@ export default function Studio() {
                             <DataCharts result={currentTab.result} />
                           ) : currentTab.result ? (
                             bottomPanelMode === 'explain' ? (
-                              <VisualExplain plan={currentTab.explainPlan} />
+                              <VisualExplain plan={currentTab.explainPlan as ExplainPlanResult[] | null | undefined} />
                             ) : (
                               <ResultsGrid
                                 result={currentTab.result}
@@ -1259,6 +1293,7 @@ export default function Studio() {
         tables={schema}
         initialTab={maintenanceInitialTab}
         targetTable={maintenanceTargetTable}
+        metadata={metadata}
       />
 
       {/* Unlimited Query Warning Modal (for Load All button) */}

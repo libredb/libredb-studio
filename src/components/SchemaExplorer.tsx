@@ -1,7 +1,8 @@
 "use client";
 
 import React, { useState, useMemo } from 'react';
-import { TableSchema, ColumnSchema } from '@/lib/types';
+import { TableSchema } from '@/lib/types';
+import type { ProviderMetadata } from '@/hooks/use-provider-metadata';
 import { 
   Search, 
   Table as TableIcon, 
@@ -15,11 +16,9 @@ import {
   Database,
   Filter,
   MoreVertical,
-  Type,
   Plus,
   Settings,
-  Trash2,
-  Zap
+  Trash2
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -42,17 +41,22 @@ interface SchemaExplorerProps {
   onCreateTableClick?: () => void;
   isAdmin?: boolean;
   onOpenMaintenance?: (tab?: 'global' | 'tables' | 'sessions', table?: string) => void;
+  databaseType?: string;
+  metadata?: ProviderMetadata | null;
 }
 
-export function SchemaExplorer({ 
-  schema, 
-  isLoadingSchema, 
+export function SchemaExplorer({
+  schema,
+  isLoadingSchema,
   onTableClick,
   onGenerateSelect,
   onCreateTableClick,
   isAdmin = false,
-  onOpenMaintenance
+  onOpenMaintenance,
+  metadata
 }: SchemaExplorerProps) {
+  const labels = metadata?.labels;
+  const capabilities = metadata?.capabilities;
   const [searchQuery, setSearchQuery] = useState('');
   const [expandedTables, setExpandedTables] = useState<Set<string>>(new Set());
 
@@ -102,7 +106,7 @@ export function SchemaExplorer({
         </div>
         <h3 className="text-foreground text-sm font-medium mb-1">No structures found</h3>
         <p className="text-[11px] text-muted-foreground leading-relaxed">
-          We couldn't find any tables or views in this connection.
+          We couldn&apos;t find any tables or views in this connection.
         </p>
       </div>
     );
@@ -130,15 +134,17 @@ export function SchemaExplorer({
                 <Settings className="w-3.5 h-3.5" />
               </Button>
             )}
-            <Button
-              variant="ghost"
-              size="icon"
-              className="w-6 h-6 hover:bg-accent text-muted-foreground hover:text-blue-400 transition-colors"
-              onClick={onCreateTableClick}
-              title="Create Table"
-            >
-              <Plus className="w-3.5 h-3.5" />
-            </Button>
+            {(capabilities?.supportsCreateTable !== false) && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="w-6 h-6 hover:bg-accent text-muted-foreground hover:text-blue-400 transition-colors"
+                onClick={onCreateTableClick}
+                title={`Create ${labels?.entityName || 'Table'}`}
+              >
+                <Plus className="w-3.5 h-3.5" />
+              </Button>
+            )}
             <span className="text-[9px] bg-blue-500/10 text-blue-400 px-1.5 py-0.5 rounded-full font-mono border border-blue-500/10">
               {schema.length}
             </span>
@@ -148,7 +154,7 @@ export function SchemaExplorer({
         <div className="relative group">
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground group-focus-within:text-blue-500 transition-colors" />
           <Input
-            placeholder="Search tables or columns..."
+            placeholder={labels?.searchPlaceholder || "Search tables or columns..."}
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="h-8 pl-8 pr-8 text-[12px] bg-muted/50 border-border focus-visible:ring-1 focus-visible:ring-blue-500/50 placeholder:text-muted-foreground/50"
@@ -219,13 +225,13 @@ export function SchemaExplorer({
                   <DropdownMenuContent align="end" className="w-48">
                     <DropdownMenuItem onClick={() => onTableClick?.(table.name)}>
                       <Play className="w-3.5 h-3.5 mr-2 text-green-500" />
-                      Select Top 100
+                      {labels?.selectAction || 'Select Top 100'}
                     </DropdownMenuItem>
                     <DropdownMenuItem onClick={() => onGenerateSelect?.(table.name)}>
                       <Filter className="w-3.5 h-3.5 mr-2 text-blue-500" />
-                      Generate Query
+                      {labels?.generateAction || 'Generate Query'}
                     </DropdownMenuItem>
-                    <DropdownMenuItem onClick={() => copyToClipboard(table.name, 'Table name')}>
+                    <DropdownMenuItem onClick={() => copyToClipboard(table.name, `${labels?.entityName || 'Table'} name`)}>
                       <Copy className="w-3.5 h-3.5 mr-2 text-muted-foreground" />
                       Copy Name
                     </DropdownMenuItem>
@@ -234,11 +240,11 @@ export function SchemaExplorer({
                         <DropdownMenuSeparator />
                         <DropdownMenuItem onClick={() => onOpenMaintenance?.('tables', table.name)}>
                           <Search className="w-3.5 h-3.5 mr-2 text-amber-500" />
-                          Analyze Table
+                          {labels?.analyzeAction || 'Analyze Table'}
                         </DropdownMenuItem>
                         <DropdownMenuItem onClick={() => onOpenMaintenance?.('tables', table.name)}>
                           <Trash2 className="w-3.5 h-3.5 mr-2 text-blue-400" />
-                          Vacuum Table
+                          {labels?.vacuumAction || 'Vacuum Table'}
                         </DropdownMenuItem>
                       </>
                     )}

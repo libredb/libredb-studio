@@ -2,6 +2,7 @@
 
 import React, { useRef, useEffect, useState, useMemo, forwardRef, useImperativeHandle } from 'react';
 import Editor, { useMonaco } from '@monaco-editor/react';
+import type * as Monaco from 'monaco-editor';
 import { Zap, Sparkles, Send, X, Loader2, AlignLeft, Trash2, Copy, Play } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -29,6 +30,7 @@ interface QueryEditorProps {
   tables?: string[];
   databaseType?: string;
   schemaContext?: string;
+  capabilities?: import('@/lib/db/types').ProviderCapabilities;
 }
 
 const SQL_KEYWORDS = [
@@ -138,10 +140,11 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
   language = 'sql',
   tables = [],
   databaseType,
-  schemaContext
+  schemaContext,
+  capabilities
 }, ref) => {
   const monaco = useMonaco();
-  const editorRef = useRef<any>(null);
+  const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
   const [hasSelection, setHasSelection] = useState(false);
 
   // Track last synced value to detect external changes
@@ -169,7 +172,17 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
     }
   }, [value]);
 
-  const parsedSchema = useMemo(() => {
+  interface ParsedTable {
+    name: string;
+    rowCount?: number;
+    columns?: Array<{
+      name: string;
+      type: string;
+      isPrimary?: boolean;
+    }>;
+  }
+
+  const parsedSchema = useMemo((): ParsedTable[] => {
     if (!schemaContext) return [];
     try {
       return JSON.parse(schemaContext);
@@ -199,17 +212,17 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
     const columnMap = new Map<string, ColumnItem[]>(); // tableName -> columns
     const allColumns = new Map<string, ColumnItem>(); // columnName -> first occurrence
 
-    parsedSchema.forEach((table: any) => {
+    parsedSchema.forEach((table) => {
       const tableLower = table.name.toLowerCase();
       tableItems.push({
         label: table.name,
         labelLower: tableLower,
         rowCount: table.rowCount || 0,
-        columnNames: table.columns?.map((c: any) => c.name).join(', ') || ''
+        columnNames: table.columns?.map((c) => c.name).join(', ') || ''
       });
 
       const tableColumns: ColumnItem[] = [];
-      table.columns?.forEach((col: any) => {
+      table.columns?.forEach((col) => {
         const colItem: ColumnItem = {
           label: col.name,
           labelLower: col.name.toLowerCase(),
@@ -231,21 +244,30 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
   }, [parsedSchema]);
 
   const handleFormat = () => {
-    if (language !== 'sql' || !editorRef.current) return;
+    if (!editorRef.current) return;
     const currentValue = editorRef.current.getValue();
     if (!currentValue) return;
 
     try {
-      const formatted = format(currentValue, {
-        language: 'postgresql',
-        keywordCase: 'upper',
-        dataTypeCase: 'upper',
-        indentStyle: 'tabularLeft',
-        logicalOperatorNewline: 'before',
-        expressionWidth: 100,
-        tabWidth: 2,
-        linesBetweenQueries: 2,
-      });
+      let formatted: string;
+      if (language === 'json') {
+        // JSON formatting for MongoDB queries
+        const parsed = JSON.parse(currentValue);
+        formatted = JSON.stringify(parsed, null, 2);
+      } else if (language === 'sql') {
+        formatted = format(currentValue, {
+          language: 'postgresql',
+          keywordCase: 'upper',
+          dataTypeCase: 'upper',
+          indentStyle: 'tabularLeft',
+          logicalOperatorNewline: 'before',
+          expressionWidth: 100,
+          tabWidth: 2,
+          linesBetweenQueries: 2,
+        });
+      } else {
+        return;
+      }
       editorRef.current.setValue(formatted);
       lastSyncedValueRef.current = formatted;
       onChange?.(formatted);
@@ -257,44 +279,50 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
   const getSelectedText = () => {
     if (!editorRef.current) return '';
     const selection = editorRef.current.getSelection();
-    return editorRef.current.getModel().getValueInRange(selection);
+    const model = editorRef.current.getModel();
+    if (!selection || !model) return '';
+    return model.getValueInRange(selection);
   };
 
   const getEffectiveQuery = () => {
     const editorValue = editorRef.current?.getValue() || '';
-    if (!editorRef.current) return { query: editorValue, range: null };
+    if (!editorRef.current || !monaco) return { query: editorValue, range: null };
 
     const model = editorRef.current.getModel();
+    if (!model) return { query: editorValue, range: null };
 
     // 1. Check for explicit selection
     const selection = editorRef.current.getSelection();
-    const selectedText = model.getValueInRange(selection);
-    
-    if (selectedText && selectedText.trim().length > 0) {
-      return { query: selectedText, range: selection };
+    if (selection) {
+      const selectedText = model.getValueInRange(selection);
+      if (selectedText && selectedText.trim().length > 0) {
+        return { query: selectedText, range: selection };
+      }
     }
 
     // 2. If no selection, try to find the current statement (between semicolons)
     if (language === 'sql') {
       const position = editorRef.current.getPosition();
-      const fullText = model.getValue();
-      const cursorOffset = model.getOffsetAt(position);
+      if (position) {
+        const fullText = model.getValue();
+        const cursorOffset = model.getOffsetAt(position);
 
-      // Find boundaries of the current statement
-      let startOffset = fullText.lastIndexOf(';', cursorOffset - 1);
-      let endOffset = fullText.indexOf(';', cursorOffset);
+        // Find boundaries of the current statement
+        let startOffset = fullText.lastIndexOf(';', cursorOffset - 1);
+        let endOffset = fullText.indexOf(';', cursorOffset);
 
-      if (startOffset === -1) startOffset = 0;
-      else startOffset += 1; // skip the semicolon
+        if (startOffset === -1) startOffset = 0;
+        else startOffset += 1; // skip the semicolon
 
-      if (endOffset === -1) endOffset = fullText.length;
+        if (endOffset === -1) endOffset = fullText.length;
 
-      const statement = fullText.substring(startOffset, endOffset).trim();
-      if (statement.length > 0) {
-        const startPos = model.getPositionAt(startOffset);
-        const endPos = model.getPositionAt(endOffset);
-        const range = new monaco!.Range(startPos.lineNumber, startPos.column, endPos.lineNumber, endPos.column);
-        return { query: statement, range };
+        const statement = fullText.substring(startOffset, endOffset).trim();
+        if (statement.length > 0) {
+          const startPos = model.getPositionAt(startOffset);
+          const endPos = model.getPositionAt(endOffset);
+          const range = new monaco.Range(startPos.lineNumber, startPos.column, endPos.lineNumber, endPos.column);
+          return { query: statement, range };
+        }
       }
     }
 
@@ -305,7 +333,7 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
   const highlightTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const activeDecorationsRef = useRef<string[]>([]);
 
-  const flashHighlight = (range: any) => {
+  const flashHighlight = (range: Monaco.Range | null) => {
     if (!editorRef.current || !monaco || !range) return;
 
     // Clear any existing highlight first
@@ -392,10 +420,13 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
             .slice(0, 100);
           
           filteredSchemaContext = topTables.map(table => {
-            const cols = table.columns.slice(0, 10).map((c: any) => `${c.name} (${c.type}${c.isPrimary ? ', PK' : ''})`).join(', ');
+            if (!table.columns || table.columns.length === 0) {
+              return `Table: ${table.name} (${table.rowCount || 0} rows)\nColumns: (none)`;
+            }
+            const cols = table.columns.slice(0, 10).map((c) => `${c.name} (${c.type}${c.isPrimary ? ', PK' : ''})`).join(', ');
             return `Table: ${table.name} (${table.rowCount || 0} rows)\nColumns: ${cols}${table.columns.length > 10 ? '...' : ''}`;
           }).join('\n\n');
-        } catch (err) {
+        } catch {
           filteredSchemaContext = schemaContext.substring(0, 2000);
         }
       }
@@ -459,9 +490,10 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
 
       setAiPrompt('');
       setShowAi(false);
-    } catch (error: any) {
+    } catch (error) {
       console.error('AI Error:', error);
-      setAiError(error.message || 'An unexpected error occurred while communicating with the AI.');
+      const errorMessage = error instanceof Error ? error.message : 'An unexpected error occurred while communicating with the AI.';
+      setAiError(errorMessage);
     } finally {
       setIsAiLoading(false);
     }
@@ -480,21 +512,21 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
     };
   }, []);
 
-  const handleBeforeMount = (monaco: any) => {
+  const handleBeforeMount = (monacoInstance: typeof Monaco) => {
     // Suppress Monaco's "Canceled" errors in console (with cleanup tracking)
     if (!originalConsoleErrorRef.current) {
       originalConsoleErrorRef.current = console.error;
       const originalConsoleError = console.error;
-      console.error = (...args: any[]) => {
+      console.error = (...args: unknown[]) => {
         const message = args[0]?.toString?.() || '';
         if (message.includes('Canceled') || message.includes('ERR Canceled')) {
           return; // Suppress Monaco cancellation errors
         }
-        originalConsoleError.apply(console, args);
+        originalConsoleError.apply(console, args as Parameters<typeof console.error>);
       };
     }
 
-    monaco.editor.defineTheme('db-dark', {
+    monacoInstance.editor.defineTheme('db-dark', {
       base: 'vs-dark',
       inherit: true,
       rules: [
@@ -525,7 +557,7 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
     if (monaco && language === 'sql') {
       const completionProvider = monaco.languages.registerCompletionItemProvider('sql', {
         triggerCharacters: ['.', ' '],
-        provideCompletionItems: (model: any, position: any) => {
+        provideCompletionItems: (model: Monaco.editor.ITextModel, position: Monaco.Position) => {
           const word = model.getWordUntilPosition(position);
           const range = {
             startLineNumber: position.lineNumber,
@@ -538,7 +570,7 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
           const lastChar = line[position.column - 2];
           const prefix = word.word.toLowerCase();
 
-          const suggestions: any[] = [];
+          const suggestions: Monaco.languages.CompletionItem[] = [];
 
           // Dot-triggered: Show columns for specific table or alias
           if (lastChar === '.') {
@@ -550,7 +582,7 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
               const findColumns = (tableName: string) => {
                 const tableNameLower = tableName.toLowerCase();
                 // 1. Try exact match first
-                let cols = schemaCompletionCache.columnMap.get(tableNameLower);
+                const cols = schemaCompletionCache.columnMap.get(tableNameLower);
                 if (cols) return cols;
 
                 // 2. Try matching table name with any schema prefix (e.g., "employee" matches "employees.employee")
@@ -695,6 +727,156 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
     }
   }, [monaco, language, schemaCompletionCache]);
 
+  // MongoDB JSON completion provider
+  useEffect(() => {
+    if (monaco && language === 'json') {
+      const MQL_OPERATORS = [
+        '$match', '$group', '$sort', '$project', '$lookup', '$unwind', '$limit', '$skip',
+        '$addFields', '$count', '$facet', '$bucket', '$merge', '$out', '$replaceRoot',
+        '$eq', '$ne', '$gt', '$gte', '$lt', '$lte', '$in', '$nin', '$and', '$or', '$not', '$nor',
+        '$exists', '$type', '$regex', '$text', '$where', '$all', '$elemMatch', '$size',
+        '$set', '$unset', '$inc', '$push', '$pull', '$addToSet', '$pop', '$rename',
+        '$sum', '$avg', '$min', '$max', '$first', '$last',
+      ];
+
+      const MONGO_OPERATIONS = [
+        'find', 'findOne', 'aggregate', 'count', 'distinct',
+        'insertOne', 'insertMany', 'updateOne', 'updateMany', 'deleteOne', 'deleteMany',
+      ];
+
+      const MONGO_SNIPPETS: { label: string; template: string; detail: string }[] = [
+        {
+          label: 'find',
+          template: JSON.stringify({ collection: '${1:collection}', operation: 'find', filter: {}, options: { limit: 50 } }, null, 2),
+          detail: 'Find documents',
+        },
+        {
+          label: 'findOne',
+          template: JSON.stringify({ collection: '${1:collection}', operation: 'findOne', filter: { _id: '${2:id}' } }, null, 2),
+          detail: 'Find single document',
+        },
+        {
+          label: 'aggregate',
+          template: JSON.stringify({ collection: '${1:collection}', operation: 'aggregate', pipeline: [{ '$match': {} }, { '$group': { _id: '${2:field}', count: { '$sum': 1 } } }] }, null, 2),
+          detail: 'Aggregation pipeline',
+        },
+        {
+          label: 'count',
+          template: JSON.stringify({ collection: '${1:collection}', operation: 'count', filter: {} }, null, 2),
+          detail: 'Count documents',
+        },
+        {
+          label: 'insertOne',
+          template: JSON.stringify({ collection: '${1:collection}', operation: 'insertOne', documents: [{ '${2:field}': '${3:value}' }] }, null, 2),
+          detail: 'Insert one document',
+        },
+        {
+          label: 'updateOne',
+          template: JSON.stringify({ collection: '${1:collection}', operation: 'updateOne', filter: { _id: '${2:id}' }, update: { '$set': { '${3:field}': '${4:value}' } } }, null, 2),
+          detail: 'Update one document',
+        },
+        {
+          label: 'deleteMany',
+          template: JSON.stringify({ collection: '${1:collection}', operation: 'deleteMany', filter: { '${2:field}': '${3:value}' } }, null, 2),
+          detail: 'Delete matching documents',
+        },
+      ];
+
+      const completionProvider = monaco.languages.registerCompletionItemProvider('json', {
+        triggerCharacters: ['"', '$', ':'],
+        provideCompletionItems: (model: Monaco.editor.ITextModel, position: Monaco.Position) => {
+          const word = model.getWordUntilPosition(position);
+          const range = {
+            startLineNumber: position.lineNumber,
+            endLineNumber: position.lineNumber,
+            startColumn: word.startColumn,
+            endColumn: word.endColumn,
+          };
+
+          const line = model.getLineContent(position.lineNumber);
+          const textBefore = line.substring(0, position.column - 1);
+          const suggestions: Monaco.languages.CompletionItem[] = [];
+
+          // After "$" — MQL operators
+          if (textBefore.includes('$') || word.word.startsWith('$')) {
+            MQL_OPERATORS.forEach(op => {
+              suggestions.push({
+                label: op,
+                kind: monaco.languages.CompletionItemKind.Keyword,
+                insertText: op,
+                range,
+                detail: 'MQL Operator',
+                sortText: '0' + op,
+              });
+            });
+          }
+
+          // After "operation": " — operation names
+          if (/"operation"\s*:\s*"[^"]*$/.test(textBefore)) {
+            MONGO_OPERATIONS.forEach(op => {
+              suggestions.push({
+                label: op,
+                kind: monaco.languages.CompletionItemKind.Enum,
+                insertText: op,
+                range,
+                detail: 'MongoDB Operation',
+                sortText: '0' + op,
+              });
+            });
+          }
+
+          // After "collection": " — collection names from schema
+          if (/"collection"\s*:\s*"[^"]*$/.test(textBefore)) {
+            schemaCompletionCache.tableItems.forEach(table => {
+              suggestions.push({
+                label: table.label,
+                kind: monaco.languages.CompletionItemKind.Class,
+                insertText: table.label,
+                range,
+                detail: `Collection (${table.rowCount} docs)`,
+                sortText: '0' + table.label,
+              });
+            });
+          }
+
+          // Field names inside filter/sort/projection
+          if (/"[^"]*$/.test(textBefore) && !/"(collection|operation)"\s*:\s*"/.test(textBefore)) {
+            schemaCompletionCache.allColumns.forEach((col, colName) => {
+              suggestions.push({
+                label: colName,
+                kind: monaco.languages.CompletionItemKind.Field,
+                insertText: colName,
+                range,
+                detail: `Field (${col.type})`,
+                sortText: '2' + colName,
+              });
+            });
+          }
+
+          // Full template snippets — when editor is mostly empty or at line start
+          const fullText = model.getValue().trim();
+          if (fullText.length < 5 || /^\s*$/.test(textBefore)) {
+            MONGO_SNIPPETS.forEach(snippet => {
+              suggestions.push({
+                label: snippet.label,
+                kind: monaco.languages.CompletionItemKind.Snippet,
+                insertText: snippet.template,
+                insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+                range,
+                detail: snippet.detail,
+                sortText: '1' + snippet.label,
+              });
+            });
+          }
+
+          return { suggestions };
+        },
+      });
+
+      return () => completionProvider.dispose();
+    }
+  }, [monaco, language, schemaCompletionCache]);
+
   const handleEditorChange = (val: string | undefined) => {
     const newValue = val || '';
     // Only call onContentChange if provided (for real-time sync scenarios)
@@ -746,7 +928,7 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
 
         <button
           onClick={handleFormat}
-          title="Format SQL (Shift+Alt+F)"
+          title={language === 'json' ? "Format JSON (Shift+Alt+F)" : "Format SQL (Shift+Alt+F)"}
           className="px-2.5 py-1.5 rounded bg-[#111] hover:bg-zinc-800 text-zinc-500 hover:text-zinc-200 text-[10px] font-mono transition-all border border-white/5 active:scale-95 flex items-center gap-1.5"
         >
           <AlignLeft className="w-3 h-3" />
@@ -787,7 +969,7 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
         <div className="flex-1" />
         
           <div className="flex items-center gap-1.5 opacity-50 hover:opacity-100 transition-opacity">
-            {language === 'sql' && onExplain && (
+            {onExplain && capabilities?.supportsExplain && (
               <button
                 onClick={onExplain}
                 className="px-2.5 py-1.5 rounded bg-zinc-900 hover:bg-zinc-800 text-amber-500 hover:text-amber-400 text-[10px] font-bold transition-all border border-amber-500/10 active:scale-95 flex items-center gap-1.5 mr-2"

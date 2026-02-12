@@ -49,6 +49,10 @@ export type {
   PoolConfig,
   ProviderOptions,
   ConnectionState,
+  ProviderCapabilities,
+  ProviderLabels,
+  PreparedQuery,
+  QueryPrepareOptions,
 } from './types';
 
 export {

@@ -86,6 +86,53 @@ export interface MaintenanceResult {
 }
 
 // ============================================================================
+// Provider Capabilities & Labels
+// ============================================================================
+
+export interface ProviderCapabilities {
+  queryLanguage: 'sql' | 'json';
+  supportsExplain: boolean;
+  supportsExternalQueryLimiting: boolean;
+  supportsCreateTable: boolean;
+  supportsMaintenance: boolean;
+  maintenanceOperations: MaintenanceType[];
+  supportsConnectionString: boolean;
+  defaultPort: number | null;
+  schemaRefreshPattern: string;
+}
+
+export interface ProviderLabels {
+  entityName: string;
+  entityNamePlural: string;
+  rowName: string;
+  rowNamePlural: string;
+  selectAction: string;
+  generateAction: string;
+  analyzeAction: string;
+  vacuumAction: string;
+  searchPlaceholder: string;
+  analyzeGlobalLabel: string;
+  analyzeGlobalTitle: string;
+  analyzeGlobalDesc: string;
+  vacuumGlobalLabel: string;
+  vacuumGlobalTitle: string;
+  vacuumGlobalDesc: string;
+}
+
+export interface PreparedQuery {
+  query: string;
+  wasLimited: boolean;
+  limit: number;
+  offset: number;
+}
+
+export interface QueryPrepareOptions {
+  limit?: number;
+  offset?: number;
+  unlimited?: boolean;
+}
+
+// ============================================================================
 // Provider Interface (Strategy Pattern)
 // ============================================================================
 
@@ -192,6 +239,21 @@ export interface DatabaseProvider {
    * @throws DatabaseConfigError if configuration is invalid
    */
   validate(): void;
+
+  /**
+   * Get provider capabilities (query language, supported features, etc.)
+   */
+  getCapabilities(): ProviderCapabilities;
+
+  /**
+   * Get UI labels for this provider (entity names, action labels, etc.)
+   */
+  getLabels(): ProviderLabels;
+
+  /**
+   * Prepare a query for execution (apply limits, analyze query type, etc.)
+   */
+  prepareQuery(query: string, options?: QueryPrepareOptions): PreparedQuery;
 }
 
 // ============================================================================

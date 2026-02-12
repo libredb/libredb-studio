@@ -1,16 +1,16 @@
 "use client";
 
 import React from 'react';
-import { Database, Layout, Terminal, Table as TableIcon } from 'lucide-react';
+import { Database, Terminal, Table as TableIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 interface MobileNavProps {
   activeTab: 'database' | 'schema' | 'editor';
   onTabChange: (tab: 'database' | 'schema' | 'editor') => void;
-  hasResult: boolean;
+  hasResult?: boolean;
 }
 
-export function MobileNav({ activeTab, onTabChange, hasResult }: MobileNavProps) {
+export function MobileNav({ activeTab, onTabChange }: MobileNavProps) {
   const tabs = [
     { id: 'database', label: 'DB', icon: Database },
     { id: 'schema', label: 'Schema', icon: TableIcon },
@@ -22,16 +22,14 @@ export function MobileNav({ activeTab, onTabChange, hasResult }: MobileNavProps)
       {tabs.map((tab) => {
         const Icon = tab.icon;
         const isActive = activeTab === tab.id;
-        const isDisabled = tab.disabled;
 
         return (
           <button
             key={tab.id}
-            onClick={() => !isDisabled && onTabChange(tab.id)}
+            onClick={() => onTabChange(tab.id)}
             className={cn(
               "flex flex-col items-center gap-1 transition-all duration-200 relative",
-              isActive ? "text-blue-400" : "text-zinc-500",
-              isDisabled && "opacity-20 cursor-not-allowed"
+              isActive ? "text-blue-400" : "text-zinc-500"
             )}
           >
             <div className={cn(

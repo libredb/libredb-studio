@@ -24,7 +24,10 @@ import {
   type TableStats,
   type IndexStats,
   type StorageStats,
-  DEFAULT_POOL_CONFIG,
+  type ProviderCapabilities,
+  type ProviderLabels,
+  type PreparedQuery,
+  type QueryPrepareOptions,
   DEFAULT_QUERY_TIMEOUT,
 } from './types';
 import { DatabaseConfigError, mapDatabaseError } from './errors';
@@ -164,6 +167,48 @@ export abstract class BaseDatabaseProvider implements DatabaseProvider {
     }
 
     // Subclasses should override for provider-specific validation
+  }
+
+  // ============================================================================
+  // Provider Metadata (defaults — subclasses override)
+  // ============================================================================
+
+  public getCapabilities(): ProviderCapabilities {
+    return {
+      queryLanguage: 'sql',
+      supportsExplain: true,
+      supportsExternalQueryLimiting: true,
+      supportsCreateTable: true,
+      supportsMaintenance: true,
+      maintenanceOperations: ['vacuum', 'analyze', 'reindex', 'kill', 'optimize', 'check'],
+      supportsConnectionString: false,
+      defaultPort: null,
+      schemaRefreshPattern: '(CREATE|DROP|ALTER|TRUNCATE)\\b',
+    };
+  }
+
+  public getLabels(): ProviderLabels {
+    return {
+      entityName: 'Table',
+      entityNamePlural: 'Tables',
+      rowName: 'row',
+      rowNamePlural: 'rows',
+      selectAction: 'Select Top 100',
+      generateAction: 'Generate Query',
+      analyzeAction: 'Analyze Table',
+      vacuumAction: 'Vacuum Table',
+      searchPlaceholder: 'Search tables or columns...',
+      analyzeGlobalLabel: 'Run Analyze',
+      analyzeGlobalTitle: 'Update Statistics',
+      analyzeGlobalDesc: "Updates the planner's statistics for all tables in the database to improve query optimization.",
+      vacuumGlobalLabel: 'Run Vacuum',
+      vacuumGlobalTitle: 'Reclaim Space',
+      vacuumGlobalDesc: 'Removes dead rows from tables and returns space to the operating system.',
+    };
+  }
+
+  public prepareQuery(query: string, options: QueryPrepareOptions = {}): PreparedQuery {
+    return { query, wasLimited: false, limit: options.limit || 500, offset: options.offset || 0 };
   }
 
   // ============================================================================

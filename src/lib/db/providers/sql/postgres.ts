@@ -13,6 +13,7 @@ import {
   type MaintenanceType,
   type MaintenanceResult,
   type ProviderOptions,
+  type ProviderCapabilities,
   type SlowQuery,
   type ActiveSession,
   type DatabaseOverview,
@@ -32,6 +33,22 @@ import {
 import { formatBytes } from '../../utils/pool-manager';
 
 // ============================================================================
+// Type Definitions
+// ============================================================================
+
+interface PgStatActivityRow {
+  datname?: string;
+  pid?: number;
+  usename?: string;
+  application_name?: string;
+  client_addr?: string;
+  backend_start?: string | Date;
+  state?: string;
+  query?: string;
+  [key: string]: unknown;
+}
+
+// ============================================================================
 // PostgreSQL Provider
 // ============================================================================
 
@@ -41,6 +58,20 @@ export class PostgresProvider extends SQLBaseProvider {
   constructor(config: DatabaseConnection, options: ProviderOptions = {}) {
     super(config, options);
     this.validate();
+  }
+
+  // ============================================================================
+  // Provider Metadata
+  // ============================================================================
+
+  public override getCapabilities(): ProviderCapabilities {
+    return {
+      ...super.getCapabilities(),
+      defaultPort: 5432,
+      supportsExplain: true,
+      supportsConnectionString: true,
+      maintenanceOperations: ['vacuum', 'analyze', 'reindex', 'kill'],
+    };
   }
 
   // ============================================================================
@@ -274,7 +305,32 @@ export class PostgresProvider extends SQLBaseProvider {
         ORDER BY ti.table_schema, ti.table_name ASC;
       `);
 
-      return result.rows.map((row) => {
+      interface SchemaRow {
+        table_schema: string;
+        table_name: string;
+        row_count: string;
+        total_size: string;
+        pk_columns: string[];
+        columns?: Array<{
+          name: string;
+          type: string;
+          nullable: boolean;
+          defaultValue?: string | null;
+        }>;
+        indexes?: Array<{
+          name: string;
+          columns: string[];
+          unique: boolean;
+        }>;
+        foreign_keys?: Array<{
+          columnName: string;
+          referencedSchema: string;
+          referencedTable: string;
+          referencedColumn: string;
+        }>;
+      }
+
+      return result.rows.map((row: SchemaRow) => {
         const schemaName = row.table_schema;
         const tableName = row.table_name;
         const displayName = schemaName === 'public' ? tableName : `${schemaName}.${tableName}`;
@@ -283,7 +339,7 @@ export class PostgresProvider extends SQLBaseProvider {
         const pkColumns: string[] = row.pk_columns || [];
 
         // Parse columns and add isPrimary flag
-        const columns = (row.columns || []).map((col: any) => ({
+        const columns = (row.columns || []).map((col) => ({
           name: col.name,
           type: col.type,
           nullable: col.nullable,
@@ -292,14 +348,14 @@ export class PostgresProvider extends SQLBaseProvider {
         }));
 
         // Parse indexes
-        const indexes = (row.indexes || []).map((idx: any) => ({
+        const indexes = (row.indexes || []).map((idx) => ({
           name: idx.name,
           columns: Array.isArray(idx.columns) ? idx.columns : [],
           unique: idx.unique,
         }));
 
         // Parse foreign keys
-        const foreignKeys = (row.foreign_keys || []).map((fk: any) => ({
+        const foreignKeys = (row.foreign_keys || []).map((fk) => ({
           columnName: fk.columnName,
           referencedTable: fk.referencedSchema === 'public'
             ? fk.referencedTable
@@ -964,12 +1020,12 @@ export class PostgresProvider extends SQLBaseProvider {
     }
   }
 
-  public async getPgStatActivity(): Promise<any> {
+  public async getPgStatActivity(): Promise<PgStatActivityRow[]> {
     this.ensureConnected();
     const client = await this.pool!.connect();
     try {
       const res = await client.query('SELECT * FROM pg_stat_activity');
-      return res.rows;
+      return res.rows as PgStatActivityRow[];
     } finally {
       client.release();
     }
