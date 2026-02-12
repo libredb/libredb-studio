@@ -78,7 +78,7 @@ export async function POST(req: NextRequest) {
         `;
       });
 
-      const columnProfiles = [];
+      const columnProfiles: { name: string; totalRows: number; nullCount: number; nullPercent: number; distinctCount: number; minValue?: unknown; maxValue?: unknown; error?: string; sampleValues?: string[] }[] = [];
 
       for (const sql of profileParts) {
         try {
@@ -89,7 +89,7 @@ export async function POST(req: NextRequest) {
             const total = Number(row.total_count || 0);
 
             columnProfiles.push({
-              name: row.column_name,
+              name: String(row.column_name),
               totalRows: total,
               nullCount,
               nullPercent: total > 0 ? Math.round((nullCount / total) * 100) : 0,

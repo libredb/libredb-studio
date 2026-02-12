@@ -7,13 +7,17 @@ import { Progress } from '@/components/ui/progress';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
 import type { MonitoringData } from '@/lib/db/types';
+import type { TimeSeriesPoint } from '@/lib/time-series-buffer';
+import { evaluateThreshold, getThresholdColor, DEFAULT_THRESHOLDS } from '@/lib/monitoring-thresholds';
+import { MetricChart } from './MetricChart';
 
 interface PerformanceTabProps {
   data: MonitoringData | null;
   loading: boolean;
+  history?: TimeSeriesPoint<MonitoringData>[];
 }
 
-export function PerformanceTab({ data, loading }: PerformanceTabProps) {
+export function PerformanceTab({ data, loading, history = [] }: PerformanceTabProps) {
   if (loading && !data) {
     return <PerformanceSkeleton />;
   }
@@ -30,12 +34,22 @@ export function PerformanceTab({ data, loading }: PerformanceTabProps) {
   const cacheStatus = getHealthStatus(performance?.cacheHitRatio ?? 0);
   const bufferStatus = getHealthStatus(performance?.bufferPoolUsage ?? 0);
 
+  // Threshold evaluations
+  const cacheThreshold = evaluateThreshold(performance?.cacheHitRatio ?? 100, DEFAULT_THRESHOLDS.find(t => t.metric === 'cacheHitRatio')!);
+  const bufferThreshold = evaluateThreshold(performance?.bufferPoolUsage ?? 0, DEFAULT_THRESHOLDS.find(t => t.metric === 'bufferPoolUsage')!);
+  const deadlockThreshold = evaluateThreshold(performance?.deadlocks ?? 0, DEFAULT_THRESHOLDS.find(t => t.metric === 'deadlocks')!);
+
+  // Build trend data from history
+  const cacheHistory = history.map(h => ({ timestamp: h.timestamp, value: h.data.performance?.cacheHitRatio ?? 0 }));
+  const bufferHistory = history.map(h => ({ timestamp: h.timestamp, value: h.data.performance?.bufferPoolUsage ?? 0 }));
+  const deadlockHistory = history.map(h => ({ timestamp: h.timestamp, value: h.data.performance?.deadlocks ?? 0 }));
+
   return (
     <div className="p-3 sm:p-6 space-y-4 sm:space-y-6">
       {/* Key Metrics */}
       <div className="grid grid-cols-3 gap-2 sm:gap-4">
         {/* Cache Hit Ratio */}
-        <Card className="p-0">
+        <Card className={`p-0 border-2 transition-colors ${getThresholdColor(cacheThreshold)}`}>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 p-2 sm:p-4 pb-1 sm:pb-2">
             <CardTitle className="text-[10px] sm:text-sm font-medium text-muted-foreground">
               Cache Hit
@@ -63,7 +77,7 @@ export function PerformanceTab({ data, loading }: PerformanceTabProps) {
         </Card>
 
         {/* Buffer Pool Usage */}
-        <Card className="p-0">
+        <Card className={`p-0 border-2 transition-colors ${getThresholdColor(bufferThreshold)}`}>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 p-2 sm:p-4 pb-1 sm:pb-2">
             <CardTitle className="text-[10px] sm:text-sm font-medium text-muted-foreground">
               Buffer
@@ -91,7 +105,7 @@ export function PerformanceTab({ data, loading }: PerformanceTabProps) {
         </Card>
 
         {/* Deadlocks */}
-        <Card className="p-0">
+        <Card className={`p-0 border-2 transition-colors ${getThresholdColor(deadlockThreshold)}`}>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 p-2 sm:p-4 pb-1 sm:pb-2">
             <CardTitle className="text-[10px] sm:text-sm font-medium text-muted-foreground">
               Deadlocks
@@ -120,6 +134,36 @@ export function PerformanceTab({ data, loading }: PerformanceTabProps) {
           </CardContent>
         </Card>
       </div>
+
+      {/* Trend Charts */}
+      {history.length >= 2 && (
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 sm:gap-4">
+          <Card className="p-0">
+            <CardHeader className="p-2 sm:p-3 pb-0">
+              <CardTitle className="text-[10px] sm:text-xs font-medium text-muted-foreground">Cache Hit Trend</CardTitle>
+            </CardHeader>
+            <CardContent className="p-2 sm:p-3 pt-0">
+              <MetricChart data={cacheHistory} color="#22c55e" title="Cache Hit" unit="%" />
+            </CardContent>
+          </Card>
+          <Card className="p-0">
+            <CardHeader className="p-2 sm:p-3 pb-0">
+              <CardTitle className="text-[10px] sm:text-xs font-medium text-muted-foreground">Buffer Pool Trend</CardTitle>
+            </CardHeader>
+            <CardContent className="p-2 sm:p-3 pt-0">
+              <MetricChart data={bufferHistory} color="#3b82f6" title="Buffer Pool" unit="%" />
+            </CardContent>
+          </Card>
+          <Card className="p-0">
+            <CardHeader className="p-2 sm:p-3 pb-0">
+              <CardTitle className="text-[10px] sm:text-xs font-medium text-muted-foreground">Deadlock Trend</CardTitle>
+            </CardHeader>
+            <CardContent className="p-2 sm:p-3 pt-0">
+              <MetricChart data={deadlockHistory} color="#ef4444" title="Deadlocks" />
+            </CardContent>
+          </Card>
+        </div>
+      )}
 
       {/* Additional Metrics */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-4">

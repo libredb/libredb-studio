@@ -202,7 +202,7 @@ export function DataProfiler({
                           <span className="text-[10px] text-zinc-500 font-mono">{col.type}</span>
                         )}
                         {sensitiveColumnNames.has(col.name) && (
-                          <Lock className="w-3 h-3 text-purple-400" title="Sensitive column - values masked" />
+                          <span title="Sensitive column - values masked"><Lock className="w-3 h-3 text-purple-400" /></span>
                         )}
                       </div>
                       <span className="text-[10px] text-zinc-500">

@@ -10,6 +10,9 @@ import {
   Pie,
   AreaChart,
   Area,
+  ScatterChart,
+  Scatter,
+  ZAxis,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -32,6 +35,11 @@ import {
   Calendar,
   Type,
   AlertCircle,
+  Circle,
+  BarChart2,
+  Save,
+  FolderOpen,
+  X,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -60,7 +68,10 @@ const CHART_COLORS = [
   'hsl(162, 63%, 41%)',  // Teal
 ];
 
-type ChartType = 'bar' | 'line' | 'pie' | 'area';
+type ChartType = 'bar' | 'line' | 'pie' | 'area' | 'scatter' | 'histogram' | 'stacked-bar' | 'stacked-area';
+
+type AggregationType = 'none' | 'sum' | 'avg' | 'count' | 'min' | 'max';
+type DateGrouping = 'hour' | 'day' | 'week' | 'month' | 'year';
 
 interface FieldAnalysis {
   name: string;
@@ -169,6 +180,8 @@ function analyzeData(result: QueryResult | null): DataAnalysis {
 
   if (dateFields.length > 0) {
     suggestedChartType = 'line'; // Time series → line chart
+  } else if (numericFields.length >= 2 && categoricalFields.length === 0) {
+    suggestedChartType = 'scatter'; // 2+ numeric, no categorical → scatter
   } else if (categoricalFields.length > 0 && result.rows.length <= 10) {
     suggestedChartType = 'pie'; // Few categories → pie chart
   } else if (categoricalFields.length > 0) {
@@ -220,6 +233,76 @@ const CustomTooltip = ({ active, payload, label }: TooltipProps) => {
   );
 };
 
+// Histogram bin calculation
+function computeHistogramBins(values: number[], buckets: number): { range: string; count: number; min: number; max: number }[] {
+  if (values.length === 0) return [];
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  if (min === max) return [{ range: `${min}`, count: values.length, min, max }];
+  const binWidth = (max - min) / buckets;
+  const bins = Array.from({ length: buckets }, (_, i) => ({
+    range: `${(min + i * binWidth).toFixed(1)}-${(min + (i + 1) * binWidth).toFixed(1)}`,
+    count: 0,
+    min: min + i * binWidth,
+    max: min + (i + 1) * binWidth,
+  }));
+  values.forEach(v => {
+    let idx = Math.floor((v - min) / binWidth);
+    if (idx >= buckets) idx = buckets - 1;
+    bins[idx].count++;
+  });
+  return bins;
+}
+
+// Data aggregation helper
+function aggregateData(
+  rows: Record<string, unknown>[],
+  groupByField: string,
+  metrics: { field: string; aggregation: AggregationType }[],
+  dateGrouping?: DateGrouping
+): Record<string, unknown>[] {
+  if (metrics.every(m => m.aggregation === 'none')) return rows;
+
+  const groups = new Map<string, Record<string, unknown>[]>();
+  rows.forEach(row => {
+    let key = String(row[groupByField] ?? '');
+    if (dateGrouping && key) {
+      key = groupByDate(key, dateGrouping);
+    }
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key)!.push(row);
+  });
+
+  return Array.from(groups.entries()).map(([key, groupRows]) => {
+    const result: Record<string, unknown> = { [groupByField]: key };
+    metrics.forEach(({ field, aggregation }) => {
+      const values = groupRows.map(r => Number(r[field]) || 0);
+      switch (aggregation) {
+        case 'sum': result[field] = values.reduce((a, b) => a + b, 0); break;
+        case 'avg': result[field] = values.length ? values.reduce((a, b) => a + b, 0) / values.length : 0; break;
+        case 'count': result[field] = values.length; break;
+        case 'min': result[field] = Math.min(...values); break;
+        case 'max': result[field] = Math.max(...values); break;
+        default: result[field] = values[0];
+      }
+    });
+    return result;
+  });
+}
+
+function groupByDate(dateStr: string, grouping: DateGrouping): string {
+  const date = new Date(dateStr);
+  if (isNaN(date.getTime())) return dateStr;
+  switch (grouping) {
+    case 'hour': return `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')} ${String(date.getHours()).padStart(2,'0')}:00`;
+    case 'day': return `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`;
+    case 'week': { const d = new Date(date); d.setDate(d.getDate() - d.getDay()); return `W${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; }
+    case 'month': return `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}`;
+    case 'year': return `${date.getFullYear()}`;
+    default: return dateStr;
+  }
+}
+
 export function DataCharts({ result }: DataChartsProps) {
   const chartRef = useRef<HTMLDivElement>(null);
   const analysis = useMemo(() => analyzeData(result), [result]);
@@ -227,27 +310,62 @@ export function DataCharts({ result }: DataChartsProps) {
   const [chartType, setChartType] = useState<ChartType>(analysis.suggestedChartType);
   const [xAxis, setXAxis] = useState<string>('');
   const [yAxis, setYAxis] = useState<string[]>([]);
+  const [scatterY, setScatterY] = useState<string>('');
+  const [histogramBuckets, setHistogramBuckets] = useState(10);
+  const [aggregation, setAggregation] = useState<AggregationType>('none');
+  const [dateGrouping, setDateGrouping] = useState<DateGrouping | ''>('');
+
+  // Saved charts state
+  const [savedCharts, setSavedCharts] = useState<{ id: string; name: string; chartType: ChartType; xAxis: string; yAxis: string[]; aggregation: AggregationType; dateGrouping: string }[]>([]);
+  const [showSaveDialog, setShowSaveDialog] = useState(false);
+  const [saveName, setSaveName] = useState('');
+
+  // Load saved charts from localStorage
+  React.useEffect(() => {
+    try {
+      const stored = localStorage.getItem('libredb_saved_charts');
+      if (stored) setSavedCharts(JSON.parse(stored));
+    } catch { /* ignore */ }
+  }, []);
 
   // Initialize axis selections when analysis changes
   React.useEffect(() => {
     if (analysis.isVisualizable) {
       setChartType(analysis.suggestedChartType);
 
-      // Set default X-axis
       const defaultX = analysis.categoricalFields[0] || analysis.dateFields[0] || analysis.fields[0]?.name || '';
       setXAxis(defaultX);
 
-      // Set default Y-axis (first numeric field)
       if (analysis.numericFields.length > 0) {
         setYAxis([analysis.numericFields[0]]);
+      }
+      if (analysis.numericFields.length >= 2) {
+        setScatterY(analysis.numericFields[1]);
       }
     }
   }, [analysis]);
 
   const chartData = useMemo(() => {
-    if (!result?.rows || !xAxis) return [];
+    if (!result?.rows) return [];
 
-    return result.rows.map(row => {
+    // Histogram: special data preparation
+    if (chartType === 'histogram' && yAxis.length > 0) {
+      const values = result.rows.map(r => Number(r[yAxis[0]]) || 0).filter(v => !isNaN(v));
+      return computeHistogramBins(values, histogramBuckets);
+    }
+
+    // Scatter: needs both axes as numeric
+    if (chartType === 'scatter') {
+      if (!xAxis || !scatterY) return [];
+      return result.rows.map(row => ({
+        [xAxis]: typeof row[xAxis] === 'number' ? row[xAxis] : Number(row[xAxis]) || 0,
+        [scatterY]: typeof row[scatterY] === 'number' ? row[scatterY] : Number(row[scatterY]) || 0,
+      }));
+    }
+
+    if (!xAxis) return [];
+
+    const baseData = result.rows.map(row => {
       const dataPoint: Record<string, unknown> = { [xAxis]: row[xAxis] };
       yAxis.forEach(field => {
         const value = row[field];
@@ -255,7 +373,64 @@ export function DataCharts({ result }: DataChartsProps) {
       });
       return dataPoint;
     });
-  }, [result, xAxis, yAxis]);
+
+    // Apply aggregation if set
+    if (aggregation !== 'none' && yAxis.length > 0) {
+      return aggregateData(
+        baseData,
+        xAxis,
+        yAxis.map(f => ({ field: f, aggregation })),
+        dateGrouping || undefined
+      );
+    }
+
+    // Apply date grouping even without aggregation
+    if (dateGrouping) {
+      return aggregateData(
+        baseData,
+        xAxis,
+        yAxis.map(f => ({ field: f, aggregation: 'sum' })),
+        dateGrouping
+      );
+    }
+
+    return baseData;
+  }, [result, xAxis, yAxis, chartType, scatterY, histogramBuckets, aggregation, dateGrouping]);
+
+  // Save chart config
+  const handleSaveChart = useCallback(() => {
+    if (!saveName.trim()) return;
+    const newChart = {
+      id: Date.now().toString(),
+      name: saveName.trim(),
+      chartType,
+      xAxis,
+      yAxis: [...yAxis],
+      aggregation,
+      dateGrouping: dateGrouping || '',
+    };
+    const updated = [...savedCharts, newChart];
+    setSavedCharts(updated);
+    localStorage.setItem('libredb_saved_charts', JSON.stringify(updated));
+    setShowSaveDialog(false);
+    setSaveName('');
+  }, [saveName, chartType, xAxis, yAxis, aggregation, dateGrouping, savedCharts]);
+
+  // Load saved chart config
+  const loadSavedChart = useCallback((chart: typeof savedCharts[0]) => {
+    setChartType(chart.chartType);
+    setXAxis(chart.xAxis);
+    setYAxis(chart.yAxis);
+    setAggregation(chart.aggregation);
+    setDateGrouping((chart.dateGrouping || '') as DateGrouping | '');
+  }, []);
+
+  // Delete saved chart
+  const deleteSavedChart = useCallback((id: string) => {
+    const updated = savedCharts.filter(c => c.id !== id);
+    setSavedCharts(updated);
+    localStorage.setItem('libredb_saved_charts', JSON.stringify(updated));
+  }, [savedCharts]);
 
   const exportChart = useCallback(async (format: 'png' | 'svg') => {
     if (!chartRef.current) return;
@@ -317,6 +492,10 @@ export function DataCharts({ result }: DataChartsProps) {
     { type: 'line', icon: <LineChartIcon className="w-4 h-4" />, label: 'Line' },
     { type: 'pie', icon: <PieChartIcon className="w-4 h-4" />, label: 'Pie' },
     { type: 'area', icon: <AreaChartIcon className="w-4 h-4" />, label: 'Area' },
+    { type: 'scatter', icon: <Circle className="w-4 h-4" />, label: 'Scatter' },
+    { type: 'histogram', icon: <BarChart2 className="w-4 h-4" />, label: 'Histogram' },
+    { type: 'stacked-bar', icon: <BarChart3 className="w-4 h-4" />, label: 'Stacked' },
+    { type: 'stacked-area', icon: <AreaChartIcon className="w-4 h-4" />, label: 'Stack Area' },
   ];
 
   const getFieldIcon = (type: FieldAnalysis['type']) => {
@@ -407,8 +586,119 @@ export function DataCharts({ result }: DataChartsProps) {
           </DropdownMenu>
         </div>
 
+        {/* Scatter Y-axis */}
+        {chartType === 'scatter' && (
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] text-zinc-600 uppercase tracking-wider">Y</span>
+            <Select value={scatterY} onValueChange={setScatterY}>
+              <SelectTrigger className="h-7 w-[120px] text-xs bg-white/5 border-white/10">
+                <SelectValue placeholder="Y field" />
+              </SelectTrigger>
+              <SelectContent className="bg-[#111] border-white/10">
+                {analysis.numericFields.filter(f => f !== xAxis).map(field => (
+                  <SelectItem key={field} value={field} className="text-xs">{field}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
+
+        {/* Histogram buckets */}
+        {chartType === 'histogram' && (
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] text-zinc-600 uppercase tracking-wider">Buckets</span>
+            <Select value={String(histogramBuckets)} onValueChange={(v) => setHistogramBuckets(Number(v))}>
+              <SelectTrigger className="h-7 w-[70px] text-xs bg-white/5 border-white/10">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent className="bg-[#111] border-white/10">
+                {[5, 10, 20, 50].map(n => (
+                  <SelectItem key={n} value={String(n)} className="text-xs">{n}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
+
+        {/* Aggregation */}
+        {chartType !== 'scatter' && chartType !== 'histogram' && chartType !== 'pie' && (
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] text-zinc-600 uppercase tracking-wider">Agg</span>
+            <Select value={aggregation} onValueChange={(v) => setAggregation(v as AggregationType)}>
+              <SelectTrigger className="h-7 w-[80px] text-xs bg-white/5 border-white/10">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent className="bg-[#111] border-white/10">
+                {(['none', 'sum', 'avg', 'count', 'min', 'max'] as const).map(a => (
+                  <SelectItem key={a} value={a} className="text-xs uppercase">{a}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
+
+        {/* Date Grouping */}
+        {analysis.dateFields.length > 0 && chartType !== 'scatter' && chartType !== 'histogram' && (
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] text-zinc-600 uppercase tracking-wider">Group</span>
+            <Select value={dateGrouping || 'none'} onValueChange={(v) => setDateGrouping(v === 'none' ? '' : v as DateGrouping)}>
+              <SelectTrigger className="h-7 w-[80px] text-xs bg-white/5 border-white/10">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent className="bg-[#111] border-white/10">
+                <SelectItem value="none" className="text-xs">None</SelectItem>
+                {(['hour', 'day', 'week', 'month', 'year'] as const).map(g => (
+                  <SelectItem key={g} value={g} className="text-xs capitalize">{g}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
+
         {/* Spacer */}
         <div className="flex-1" />
+
+        {/* Save Chart */}
+        {showSaveDialog ? (
+          <div className="flex items-center gap-1">
+            <input
+              type="text"
+              placeholder="Chart name..."
+              value={saveName}
+              onChange={(e) => setSaveName(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleSaveChart()}
+              className="h-7 px-2 text-xs bg-white/5 border border-white/10 rounded text-zinc-300 focus:outline-none focus:border-blue-500"
+              autoFocus
+            />
+            <Button variant="ghost" size="sm" className="h-7 text-xs text-blue-400" onClick={handleSaveChart}>Save</Button>
+            <Button variant="ghost" size="sm" className="h-7 text-xs text-zinc-500" onClick={() => setShowSaveDialog(false)}>Cancel</Button>
+          </div>
+        ) : (
+          <div className="flex items-center gap-1">
+            <Button variant="ghost" size="sm" className="h-7 text-[10px] text-zinc-500 hover:text-white gap-1" onClick={() => setShowSaveDialog(true)}>
+              <Save className="w-3 h-3" /> Save
+            </Button>
+            {savedCharts.length > 0 && (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" size="sm" className="h-7 text-[10px] text-zinc-500 hover:text-white gap-1">
+                    <FolderOpen className="w-3 h-3" /> Saved ({savedCharts.length})
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="bg-[#111] border-white/10 max-h-48 overflow-auto">
+                  {savedCharts.map(chart => (
+                    <DropdownMenuItem key={chart.id} className="text-xs cursor-pointer flex items-center justify-between gap-4">
+                      <span onClick={() => loadSavedChart(chart)}>{chart.name} <span className="text-zinc-600">({chart.chartType})</span></span>
+                      <button onClick={(e) => { e.stopPropagation(); deleteSavedChart(chart.id); }} className="text-zinc-600 hover:text-red-400">
+                        <X className="w-3 h-3" />
+                      </button>
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
+          </div>
+        )}
 
         {/* Export Button */}
         <DropdownMenu>
@@ -517,10 +807,106 @@ export function DataCharts({ result }: DataChartsProps) {
                   />
                 ))}
               </AreaChart>
+            ) : chartType === 'scatter' ? (
+              <ScatterChart margin={{ top: 20, right: 30, left: 20, bottom: 60 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#222" />
+                <XAxis
+                  dataKey={xAxis}
+                  type="number"
+                  tick={{ fill: '#666', fontSize: 11 }}
+                  name={xAxis}
+                  label={{ value: xAxis, position: 'bottom', fill: '#666', fontSize: 11 }}
+                />
+                <YAxis
+                  dataKey={scatterY}
+                  type="number"
+                  tick={{ fill: '#666', fontSize: 11 }}
+                  name={scatterY}
+                  label={{ value: scatterY, angle: -90, position: 'insideLeft', fill: '#666', fontSize: 11 }}
+                />
+                <ZAxis range={[40, 200]} />
+                <Tooltip content={<CustomTooltip />} cursor={{ strokeDasharray: '3 3' }} />
+                <Scatter
+                  name={`${xAxis} vs ${scatterY}`}
+                  data={chartData}
+                  fill={CHART_COLORS[0]}
+                  shape="circle"
+                />
+              </ScatterChart>
+            ) : chartType === 'histogram' ? (
+              <BarChart data={chartData} margin={{ top: 20, right: 30, left: 20, bottom: 60 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#222" />
+                <XAxis
+                  dataKey="range"
+                  tick={{ fill: '#666', fontSize: 10 }}
+                  angle={-45}
+                  textAnchor="end"
+                  height={60}
+                />
+                <YAxis
+                  tick={{ fill: '#666', fontSize: 11 }}
+                  label={{ value: 'Count', angle: -90, position: 'insideLeft', fill: '#666', fontSize: 11 }}
+                />
+                <Tooltip content={<CustomTooltip />} />
+                <Bar dataKey="count" fill={CHART_COLORS[0]} radius={[4, 4, 0, 0]} />
+              </BarChart>
+            ) : chartType === 'stacked-bar' ? (
+              <BarChart data={chartData} margin={{ top: 20, right: 30, left: 20, bottom: 60 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#222" />
+                <XAxis
+                  dataKey={xAxis}
+                  tick={{ fill: '#666', fontSize: 11 }}
+                  angle={-45}
+                  textAnchor="end"
+                  height={60}
+                />
+                <YAxis
+                  tick={{ fill: '#666', fontSize: 11 }}
+                  tickFormatter={formatNumber}
+                />
+                <Tooltip content={<CustomTooltip />} />
+                <Legend wrapperStyle={{ paddingTop: 20 }} />
+                {yAxis.map((field, index) => (
+                  <Bar
+                    key={field}
+                    dataKey={field}
+                    stackId="stack"
+                    fill={CHART_COLORS[index % CHART_COLORS.length]}
+                  />
+                ))}
+              </BarChart>
+            ) : chartType === 'stacked-area' ? (
+              <AreaChart data={chartData} margin={{ top: 20, right: 30, left: 20, bottom: 60 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#222" />
+                <XAxis
+                  dataKey={xAxis}
+                  tick={{ fill: '#666', fontSize: 11 }}
+                  angle={-45}
+                  textAnchor="end"
+                  height={60}
+                />
+                <YAxis
+                  tick={{ fill: '#666', fontSize: 11 }}
+                  tickFormatter={formatNumber}
+                />
+                <Tooltip content={<CustomTooltip />} />
+                <Legend wrapperStyle={{ paddingTop: 20 }} />
+                {yAxis.map((field, index) => (
+                  <Area
+                    key={field}
+                    type="monotone"
+                    dataKey={field}
+                    stackId="stack"
+                    stroke={CHART_COLORS[index % CHART_COLORS.length]}
+                    fill={CHART_COLORS[index % CHART_COLORS.length]}
+                    fillOpacity={0.5}
+                  />
+                ))}
+              </AreaChart>
             ) : (
               <PieChart margin={{ top: 20, right: 30, left: 20, bottom: 20 }}>
                 <Pie
-                  data={chartData.slice(0, 10)} // Limit to 10 slices
+                  data={chartData.slice(0, 10)}
                   dataKey={yAxis[0]}
                   nameKey={xAxis}
                   cx="50%"
@@ -529,7 +915,7 @@ export function DataCharts({ result }: DataChartsProps) {
                   label={({ name, percent }) => `${name} (${(percent * 100).toFixed(0)}%)`}
                   labelLine={{ stroke: '#444' }}
                 >
-                  {chartData.slice(0, 10).map((entry, index) => (
+                  {chartData.slice(0, 10).map((_entry, index) => (
                     <Cell
                       key={`cell-${index}`}
                       fill={CHART_COLORS[index % CHART_COLORS.length]}

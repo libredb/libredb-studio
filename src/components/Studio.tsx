@@ -24,6 +24,7 @@ import { SchemaDiagram } from '@/components/SchemaDiagram';
 import { QueryHistory } from '@/components/QueryHistory';
 import { SavedQueries } from '@/components/SavedQueries';
 import { DataCharts } from '@/components/DataCharts';
+import { SchemaDiff } from '@/components/SchemaDiff';
 import { SaveQueryModal } from '@/components/SaveQueryModal';
 import { MaintenanceModal } from '@/components/MaintenanceModal';
 import { DatabaseConnection, TableSchema, QueryTab, SavedQuery } from '@/lib/types';
@@ -77,6 +78,8 @@ import {
   Zap,
   Columns3,
   FileText,
+  GitCompare,
+  LayoutDashboard,
 } from 'lucide-react';
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from '@/components/ui/resizable';
 import { AnimatePresence } from 'framer-motion';
@@ -95,6 +98,55 @@ import {
   AlertDialogDescription,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+
+// Lazy-loaded chart dashboard - will render saved charts in a grid
+function ChartDashboardLazy({ result }: { result: import('@/lib/types').QueryResult | null }) {
+  const [savedCharts, setSavedCharts] = React.useState<{ id: string; name: string; chartType: string; xAxis: string; yAxis: string[] }[]>([]);
+  React.useEffect(() => {
+    try {
+      const stored = localStorage.getItem('libredb_saved_charts');
+      if (stored) setSavedCharts(JSON.parse(stored));
+    } catch { /* ignore */ }
+  }, []);
+
+  if (savedCharts.length === 0) {
+    return (
+      <div className="h-full flex flex-col items-center justify-center bg-[#080808] text-zinc-500 gap-2">
+        <LayoutDashboard className="w-10 h-10 opacity-30" />
+        <p className="text-sm">No saved charts yet</p>
+        <p className="text-xs text-zinc-600">Save charts from the Charts tab to display them here</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="h-full overflow-auto bg-[#080808] p-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        {savedCharts.map(chart => (
+          <div key={chart.id} className="bg-[#0d0d0d] border border-white/10 rounded-lg p-3">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs font-bold text-zinc-300">{chart.name}</span>
+              <span className="text-[10px] text-zinc-600 uppercase">{chart.chartType}</span>
+            </div>
+            <div className="text-[10px] text-zinc-500">
+              {chart.xAxis && <span>X: {chart.xAxis}</span>}
+              {chart.yAxis?.length > 0 && <span className="ml-2">Y: {chart.yAxis.join(', ')}</span>}
+            </div>
+            {result ? (
+              <div className="mt-2 h-[160px]">
+                <DataCharts result={result} />
+              </div>
+            ) : (
+              <div className="mt-2 h-[100px] flex items-center justify-center text-zinc-600 text-[10px]">
+                Execute a query to see chart
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 export default function Studio() {
   const [connections, setConnections] = useState<DatabaseConnection[]>([]);
@@ -154,7 +206,7 @@ export default function Studio() {
   ]);
   const [activeTabId, setActiveTabId] = useState<string>('default');
   const [activeView, setActiveView] = useState<'editor' | 'health'>('editor');
-  const [bottomPanelMode, setBottomPanelMode] = useState<'results' | 'explain' | 'history' | 'saved' | 'charts' | 'nl2sql' | 'autopilot' | 'pivot' | 'docs'>('results');
+  const [bottomPanelMode, setBottomPanelMode] = useState<'results' | 'explain' | 'history' | 'saved' | 'charts' | 'nl2sql' | 'autopilot' | 'pivot' | 'docs' | 'schemadiff' | 'dashboard'>('results');
   const [activeMobileTab, setActiveMobileTab] = useState<'database' | 'schema' | 'editor'>('editor');
 
   const [isSaveQueryModalOpen, setIsSaveQueryModalOpen] = useState(false);
@@ -300,7 +352,7 @@ export default function Studio() {
       : rawData;
     let content = '';
     let mimeType = 'text/plain';
-    let ext = format;
+    let ext: string = format;
 
     if (format === 'csv') {
       const headers = Object.keys(data[0] || {}).join(',');
@@ -487,9 +539,10 @@ export default function Studio() {
     const queryId = `q-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     activeQueryIdRef.current = queryId;
 
+    // Playground mode: begin a transaction before executing (will rollback after)
+    const isPlaygroundRun = playgroundMode && !transactionActive && !isExplain && !isLoadMore;
+
     try {
-      // Playground mode: begin a transaction before executing (will rollback after)
-      const isPlaygroundRun = playgroundMode && !transactionActive && !isExplain && !isLoadMore;
       if (isPlaygroundRun) {
         await fetch('/api/db/transaction', {
           method: 'POST',
@@ -1801,6 +1854,24 @@ export default function Studio() {
                             >
                               <FileText className="w-3 h-3" /> Docs
                             </button>
+                            <button
+                              onClick={() => setBottomPanelMode('schemadiff')}
+                              className={cn(
+                                "h-full px-3 text-[10px] font-bold uppercase transition-all border-b-2 flex items-center gap-2",
+                                bottomPanelMode === 'schemadiff' ? "text-rose-400 border-rose-500 bg-white/5" : "text-zinc-500 border-transparent hover:text-zinc-300"
+                              )}
+                            >
+                              <GitCompare className="w-3 h-3" /> Diff
+                            </button>
+                            <button
+                              onClick={() => setBottomPanelMode('dashboard')}
+                              className={cn(
+                                "h-full px-3 text-[10px] font-bold uppercase transition-all border-b-2 flex items-center gap-2",
+                                bottomPanelMode === 'dashboard' ? "text-indigo-400 border-indigo-500 bg-white/5" : "text-zinc-500 border-transparent hover:text-zinc-300"
+                              )}
+                            >
+                              <LayoutDashboard className="w-3 h-3" /> Dashboard
+                            </button>
                           </div>
 
                           {currentTab.result && bottomPanelMode === 'results' && (
@@ -1881,6 +1952,10 @@ export default function Studio() {
                             />
                           ) : bottomPanelMode === 'charts' ? (
                             <DataCharts result={currentTab.result} />
+                          ) : bottomPanelMode === 'schemadiff' ? (
+                            <SchemaDiff schema={schema} connection={activeConnection} />
+                          ) : bottomPanelMode === 'dashboard' ? (
+                            <ChartDashboardLazy result={currentTab.result} />
                           ) : currentTab.result ? (
                             bottomPanelMode === 'explain' ? (
                               <VisualExplain

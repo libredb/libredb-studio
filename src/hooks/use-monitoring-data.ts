@@ -7,6 +7,7 @@ import type {
   MonitoringOptions,
 } from '@/lib/db/types';
 import { toast } from 'sonner';
+import { TimeSeriesBuffer, type TimeSeriesPoint } from '@/lib/time-series-buffer';
 
 interface UseMonitoringDataReturn {
   data: MonitoringData | null;
@@ -15,6 +16,7 @@ interface UseMonitoringDataReturn {
   lastUpdated: Date | null;
   autoRefresh: boolean;
   refreshInterval: number;
+  history: TimeSeriesPoint<MonitoringData>[];
   setAutoRefresh: (enabled: boolean) => void;
   setRefreshInterval: (ms: number) => void;
   refresh: () => Promise<void>;
@@ -34,6 +36,10 @@ export function useMonitoringData(
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [autoRefresh, setAutoRefresh] = useState(false);
   const [refreshInterval, setRefreshInterval] = useState(DEFAULT_REFRESH_INTERVAL);
+  const [history, setHistory] = useState<TimeSeriesPoint<MonitoringData>[]>([]);
+
+  // Time series buffer for historical data
+  const historyRef = useRef(new TimeSeriesBuffer<MonitoringData>(120));
 
   // Use refs to store latest values without causing re-renders
   const connectionRef = useRef(connection);
@@ -108,6 +114,10 @@ export function useMonitoringData(
       setData(result);
       setLastUpdated(new Date());
       setError(null);
+
+      // Push to history buffer
+      historyRef.current.push(result);
+      setHistory(historyRef.current.getAll());
     } catch (err) {
       if (err instanceof Error && err.name === 'AbortError') {
         return; // Request was cancelled, ignore
@@ -129,8 +139,14 @@ export function useMonitoringData(
     if (!connection) {
       setData(null);
       setError(null);
+      historyRef.current.clear();
+      setHistory([]);
       return;
     }
+
+    // Clear history on connection change
+    historyRef.current.clear();
+    setHistory([]);
 
     // Initial fetch
     fetchData();
@@ -243,6 +259,7 @@ export function useMonitoringData(
     lastUpdated,
     autoRefresh,
     refreshInterval,
+    history,
     setAutoRefresh,
     setRefreshInterval,
     refresh,

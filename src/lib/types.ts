@@ -142,3 +142,29 @@ export interface SavedQuery {
   updatedAt: Date;
   tags?: string[];
 }
+
+export interface SchemaSnapshot {
+  id: string;
+  connectionId: string;
+  connectionName: string;
+  databaseType: DatabaseType;
+  schema: TableSchema[];
+  createdAt: Date;
+  label?: string;
+}
+
+export type AggregationType = 'none' | 'sum' | 'avg' | 'count' | 'min' | 'max';
+export type DateGrouping = 'hour' | 'day' | 'week' | 'month' | 'year';
+
+export interface SavedChartConfig {
+  id: string;
+  name: string;
+  chartType: string;
+  xAxis: string;
+  yAxis: string[];
+  query?: string;
+  connectionId?: string;
+  createdAt: Date;
+  aggregation?: AggregationType;
+  dateGrouping?: DateGrouping;
+}

@@ -66,8 +66,8 @@ export async function POST(req: NextRequest) {
     const systemPrompt = buildNL2SQLPrompt(databaseType, schemaContext, queryLanguage);
 
     // Build messages with optional conversation history for multi-turn
-    const messages = [
-      { role: 'system' as const, content: systemPrompt },
+    const messages: { role: 'system' | 'user' | 'assistant'; content: string }[] = [
+      { role: 'system', content: systemPrompt },
     ];
 
     // Add conversation history if provided
@@ -77,7 +77,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    messages.push({ role: 'user' as const, content: question });
+    messages.push({ role: 'user', content: question });
 
     const stream = await provider.stream({ messages });
 
