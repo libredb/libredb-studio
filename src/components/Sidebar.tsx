@@ -1,9 +1,9 @@
 "use client";
 
 import React from 'react';
-import { DatabaseConnection, TableSchema } from '@/lib/types';
+import { DatabaseConnection, TableSchema, ENVIRONMENT_LABELS } from '@/lib/types';
 import type { ProviderMetadata } from '@/hooks/use-provider-metadata';
-import { Plus, Trash2, Zap, Sparkles, Layers } from 'lucide-react';
+import { Plus, Trash2, Pencil, Zap, Sparkles, Layers } from 'lucide-react';
 import { getDBIcon } from '@/lib/db-ui-config';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -16,15 +16,17 @@ interface ConnectionsListProps {
   activeConnection: DatabaseConnection | null;
   onSelectConnection: (conn: DatabaseConnection) => void;
   onDeleteConnection: (id: string) => void;
+  onEditConnection?: (conn: DatabaseConnection) => void;
   onAddConnection: () => void;
 }
 
-export function ConnectionsList({ 
-  connections, 
-  activeConnection, 
-  onSelectConnection, 
-  onDeleteConnection, 
-  onAddConnection 
+export function ConnectionsList({
+  connections,
+  activeConnection,
+  onSelectConnection,
+  onDeleteConnection,
+  onEditConnection,
+  onAddConnection
 }: ConnectionsListProps) {
   return (
     <section>
@@ -65,7 +67,8 @@ export function ConnectionsList({
               {activeConnection?.id === conn.id && (
                 <motion.div
                   layoutId="active-indicator"
-                  className="absolute left-0 w-1 h-4 bg-blue-500 rounded-r-full"
+                  className="absolute left-0 w-1 h-4 rounded-r-full"
+                  style={{ backgroundColor: conn.color || '#3b82f6' }}
                 />
               )}
               <div className={cn(
@@ -80,7 +83,20 @@ export function ConnectionsList({
                 )}
               </div>
               <div className="flex-1 min-w-0">
-                <span className="truncate block font-medium text-[13px]">{conn.name}</span>
+                <div className="flex items-center gap-1.5">
+                  <span className="truncate block font-medium text-[13px]">{conn.name}</span>
+                  {conn.environment && conn.environment !== 'other' && (
+                    <span
+                      className="text-[8px] uppercase tracking-wider font-bold px-1.5 py-0.5 rounded-sm shrink-0"
+                      style={{
+                        color: conn.color || '#6b7280',
+                        backgroundColor: `${conn.color || '#6b7280'}15`,
+                      }}
+                    >
+                      {ENVIRONMENT_LABELS[conn.environment]}
+                    </span>
+                  )}
+                </div>
                 {conn.isDemo && (
                   <span className="text-[9px] uppercase tracking-wider text-emerald-400/80 font-semibold">
                     Demo Database
@@ -88,17 +104,32 @@ export function ConnectionsList({
                 )}
               </div>
               {!conn.isDemo && (
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="w-6 h-6 opacity-50 group-hover:opacity-100 transition-opacity hover:bg-red-500/20 hover:text-red-400"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onDeleteConnection(conn.id);
-                  }}
-                >
-                  <Trash2 className="w-3 h-3" />
-                </Button>
+                <div className="flex items-center gap-0.5">
+                  {onEditConnection && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="w-6 h-6 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-blue-500/20 hover:text-blue-400"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onEditConnection(conn);
+                      }}
+                    >
+                      <Pencil className="w-3 h-3" />
+                    </Button>
+                  )}
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="w-6 h-6 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-500/20 hover:text-red-400"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onDeleteConnection(conn.id);
+                    }}
+                  >
+                    <Trash2 className="w-3 h-3" />
+                  </Button>
+                </div>
               )}
             </motion.div>
           ))
@@ -115,6 +146,7 @@ interface SidebarProps {
   isLoadingSchema: boolean;
   onSelectConnection: (connection: DatabaseConnection) => void;
   onDeleteConnection: (id: string) => void;
+  onEditConnection?: (conn: DatabaseConnection) => void;
   onAddConnection: () => void;
   onTableClick?: (tableName: string) => void;
   onGenerateSelect?: (tableName: string) => void;
@@ -133,6 +165,7 @@ export function Sidebar({
   isLoadingSchema,
   onSelectConnection,
   onDeleteConnection,
+  onEditConnection,
   onAddConnection,
   onTableClick,
   onGenerateSelect,
@@ -184,6 +217,7 @@ export function Sidebar({
             activeConnection={activeConnection}
             onSelectConnection={onSelectConnection}
             onDeleteConnection={onDeleteConnection}
+            onEditConnection={onEditConnection}
             onAddConnection={onAddConnection}
           />
 

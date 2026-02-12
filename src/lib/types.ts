@@ -1,5 +1,23 @@
 export type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'mongodb' | 'redis' | 'demo';
 
+export type ConnectionEnvironment = 'production' | 'staging' | 'development' | 'local' | 'other';
+
+export const ENVIRONMENT_COLORS: Record<ConnectionEnvironment, string> = {
+  production: '#ef4444',
+  staging: '#eab308',
+  development: '#22c55e',
+  local: '#3b82f6',
+  other: '#6b7280',
+};
+
+export const ENVIRONMENT_LABELS: Record<ConnectionEnvironment, string> = {
+  production: 'PROD',
+  staging: 'STAGING',
+  development: 'DEV',
+  local: 'LOCAL',
+  other: '',
+};
+
 export interface DatabaseConnection {
   id: string;
   name: string;
@@ -12,6 +30,9 @@ export interface DatabaseConnection {
   connectionString?: string;
   createdAt: Date;
   isDemo?: boolean;
+  color?: string;
+  environment?: ConnectionEnvironment;
+  group?: string;
 }
 
 export interface TableSchema {

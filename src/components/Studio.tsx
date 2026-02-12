@@ -5,6 +5,7 @@ import { Sidebar, ConnectionsList } from '@/components/Sidebar';
 import { MobileNav } from '@/components/MobileNav';
 import { SchemaExplorer } from '@/components/SchemaExplorer';
 import { ConnectionModal } from '@/components/ConnectionModal';
+import { CommandPalette } from '@/components/CommandPalette';
 import { QueryEditor, QueryEditorRef } from '@/components/QueryEditor';
 import { ResultsGrid } from '@/components/ResultsGrid';
 import { VisualExplain, type ExplainPlanResult } from '@/components/VisualExplain';
@@ -107,7 +108,10 @@ export default function Studio() {
   };
 
   const [isConnectionModalOpen, setIsConnectionModalOpen] = useState(false);
+  const [editingConnection, setEditingConnection] = useState<DatabaseConnection | null>(null);
   const [isCreateTableModalOpen, setIsCreateTableModalOpen] = useState(false);
+  const [editingTabId, setEditingTabId] = useState<string | null>(null);
+  const [editingTabName, setEditingTabName] = useState('');
   const [showDiagram, setShowDiagram] = useState(false);
   const [isLoadingSchema, setIsLoadingSchema] = useState(false);
   
@@ -225,24 +229,61 @@ export default function Studio() {
     toast({ title: "Query Saved", description: `"${name}" has been added to your saved queries.` });
   };
 
-  const exportResults = (format: 'csv' | 'json') => {
+  const exportResults = (format: 'csv' | 'json' | 'sql-insert' | 'sql-ddl') => {
     if (!currentTab.result) return;
-    
+
     const data = currentTab.result.rows;
     let content = '';
-    let mimeType = '';
-    const fileName = `query_result_${format === 'csv' ? 'export' : 'data'}.${format}`;
+    let mimeType = 'text/plain';
+    let ext = format;
 
     if (format === 'csv') {
       const headers = Object.keys(data[0] || {}).join(',');
       const rows = data.map(row => Object.values(row).map(val => `"${val}"`).join(',')).join('\n');
       content = `${headers}\n${rows}`;
       mimeType = 'text/csv';
-    } else {
+      ext = 'csv';
+    } else if (format === 'json') {
       content = JSON.stringify(data, null, 2);
       mimeType = 'application/json';
+      ext = 'json';
+    } else if (format === 'sql-insert') {
+      const tableName = currentTab.name.replace(/^Query[:  ]*/, '') || 'table_name';
+      const columns = Object.keys(data[0] || {});
+      const lines = data.map(row => {
+        const values = columns.map(col => {
+          const val = row[col];
+          if (val === null || val === undefined) return 'NULL';
+          if (typeof val === 'number' || typeof val === 'boolean') return String(val);
+          return `'${String(val).replace(/'/g, "''")}'`;
+        });
+        return `INSERT INTO ${tableName} (${columns.join(', ')}) VALUES (${values.join(', ')});`;
+      });
+      content = lines.join('\n');
+      mimeType = 'text/sql';
+      ext = 'sql';
+    } else if (format === 'sql-ddl') {
+      const tableName = currentTab.name.replace(/^Query[:  ]*/, '') || 'table_name';
+      const columns = Object.keys(data[0] || {});
+      // Infer types from first row
+      const colDefs = columns.map(col => {
+        const sampleVal = data[0]?.[col];
+        let sqlType = 'TEXT';
+        if (typeof sampleVal === 'number') {
+          sqlType = Number.isInteger(sampleVal) ? 'INTEGER' : 'NUMERIC';
+        } else if (typeof sampleVal === 'boolean') {
+          sqlType = 'BOOLEAN';
+        } else if (sampleVal instanceof Date) {
+          sqlType = 'TIMESTAMP';
+        }
+        return `  ${col} ${sqlType}`;
+      });
+      content = `CREATE TABLE ${tableName} (\n${colDefs.join(',\n')}\n);`;
+      mimeType = 'text/sql';
+      ext = 'sql';
     }
 
+    const fileName = `query_result_export.${ext}`;
     const blob = new Blob([content], { type: mimeType });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
@@ -731,6 +772,10 @@ export default function Studio() {
               setConnections(updated);
               if (activeConnection?.id === id) setActiveConnection(updated[0] || null);
             }}
+            onEditConnection={(conn) => {
+              setEditingConnection(conn);
+              setIsConnectionModalOpen(true);
+            }}
             onAddConnection={() => setIsConnectionModalOpen(true)}
             onTableClick={handleTableClick}
             onGenerateSelect={handleGenerateSelect}
@@ -936,7 +981,18 @@ export default function Studio() {
               </h1>
               {activeConnection && (
                 <p className="text-[10px] text-zinc-500 font-mono uppercase tracking-widest leading-none mt-0.5">
-                  {activeConnection.type} • <span className="text-emerald-500/80">Online</span>
+                  {activeConnection.type}
+                  {activeConnection.environment && activeConnection.environment !== 'other' && (
+                    <span
+                      className="ml-1 font-bold"
+                      style={{ color: activeConnection.color || '#22c55e' }}
+                    >
+                      • {activeConnection.environment}
+                    </span>
+                  )}
+                  {!activeConnection.environment && (
+                    <span> • <span className="text-emerald-500/80">Online</span></span>
+                  )}
                 </p>
               )}
             </div>
@@ -997,14 +1053,44 @@ export default function Studio() {
             <div
               key={tab.id}
               onClick={() => setActiveTabId(tab.id)}
+              onDoubleClick={() => {
+                setEditingTabId(tab.id);
+                setEditingTabName(tab.name);
+              }}
               className={cn(
                 "h-8 flex items-center px-3 gap-2 rounded-t-md transition-all cursor-pointer min-w-[120px] max-w-[200px] group relative border-t-2",
                 activeTabId === tab.id ? "bg-[#141414] text-zinc-100 border-blue-500" : "text-zinc-500 hover:bg-white/5 border-transparent"
               )}
             >
               {tab.type === 'sql' ? <Hash className="w-3 h-3" /> : <FileJson className="w-3 h-3" />}
-              <span className="text-xs truncate font-medium">{tab.name}</span>
-              {tabs.length > 1 && <X className="w-3 h-3 ml-auto opacity-0 group-hover:opacity-100 hover:text-white" onClick={(e) => closeTab(tab.id, e)} />}
+              {editingTabId === tab.id ? (
+                <input
+                  autoFocus
+                  value={editingTabName}
+                  onChange={(e) => setEditingTabName(e.target.value)}
+                  onBlur={() => {
+                    if (editingTabName.trim()) {
+                      setTabs(prev => prev.map(t => t.id === tab.id ? { ...t, name: editingTabName.trim() } : t));
+                    }
+                    setEditingTabId(null);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      if (editingTabName.trim()) {
+                        setTabs(prev => prev.map(t => t.id === tab.id ? { ...t, name: editingTabName.trim() } : t));
+                      }
+                      setEditingTabId(null);
+                    } else if (e.key === 'Escape') {
+                      setEditingTabId(null);
+                    }
+                  }}
+                  onClick={(e) => e.stopPropagation()}
+                  className="text-xs font-medium bg-transparent border-b border-blue-500 outline-none w-full text-zinc-100"
+                />
+              ) : (
+                <span className="text-xs truncate font-medium">{tab.name}</span>
+              )}
+              {tabs.length > 1 && <X className="w-3 h-3 ml-auto opacity-0 group-hover:opacity-100 hover:text-white shrink-0" onClick={(e) => closeTab(tab.id, e)} />}
             </div>
           ))}
           <Plus className="w-4 h-4 text-zinc-500 cursor-pointer hover:text-white mx-2" onClick={addTab} />
@@ -1204,6 +1290,12 @@ export default function Studio() {
                                   <DropdownMenuItem onClick={() => exportResults('json')} className="text-xs cursor-pointer">
                                     Export as JSON
                                   </DropdownMenuItem>
+                                  <DropdownMenuItem onClick={() => exportResults('sql-insert')} className="text-xs cursor-pointer">
+                                    Export as SQL INSERT
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem onClick={() => exportResults('sql-ddl')} className="text-xs cursor-pointer">
+                                    Export as DDL (CREATE TABLE)
+                                  </DropdownMenuItem>
                                 </DropdownMenuContent>
                               </DropdownMenu>
                             </div>
@@ -1233,7 +1325,16 @@ export default function Studio() {
                             <DataCharts result={currentTab.result} />
                           ) : currentTab.result ? (
                             bottomPanelMode === 'explain' ? (
-                              <VisualExplain plan={currentTab.explainPlan as ExplainPlanResult[] | null | undefined} />
+                              <VisualExplain
+                                plan={currentTab.explainPlan as ExplainPlanResult[] | null | undefined}
+                                query={currentTab.query}
+                                schemaContext={schemaContext}
+                                databaseType={activeConnection?.type}
+                                onLoadQuery={(q) => {
+                                  updateCurrentTab({ query: q });
+                                  setBottomPanelMode('results');
+                                }}
+                              />
                             ) : (
                               <ResultsGrid
                                 result={currentTab.result}
@@ -1264,15 +1365,20 @@ export default function Studio() {
         </ResizablePanel>
       </ResizablePanelGroup>
 
-      <ConnectionModal 
+      <ConnectionModal
         isOpen={isConnectionModalOpen}
-        onClose={() => setIsConnectionModalOpen(false)}
-        onConnect={(newConn) => {
-          storage.saveConnection(newConn);
-          setConnections(storage.getConnections());
-          setActiveConnection(newConn);
+        onClose={() => {
           setIsConnectionModalOpen(false);
+          setEditingConnection(null);
         }}
+        onConnect={(conn) => {
+          storage.saveConnection(conn);
+          setConnections(storage.getConnections());
+          setActiveConnection(conn);
+          setIsConnectionModalOpen(false);
+          setEditingConnection(null);
+        }}
+        editConnection={editingConnection}
       />
       <CreateTableModal
         isOpen={isCreateTableModalOpen}
@@ -1328,6 +1434,31 @@ export default function Studio() {
           </div>
         </AlertDialogContent>
       </AlertDialog>
+
+      <CommandPalette
+        connections={connections}
+        activeConnection={activeConnection}
+        schema={schema}
+        onSelectConnection={setActiveConnection}
+        onTableClick={handleTableClick}
+        onAddConnection={() => setIsConnectionModalOpen(true)}
+        onExecuteQuery={() => executeQuery()}
+        onLoadSavedQuery={(q) => {
+          updateCurrentTab({ query: q });
+          setBottomPanelMode('results');
+        }}
+        onLoadHistoryQuery={(q) => {
+          updateCurrentTab({ query: q });
+          setBottomPanelMode('results');
+        }}
+        onNavigateHealth={() => setActiveView('health')}
+        onNavigateMonitoring={() => router.push('/monitoring')}
+        onShowDiagram={() => setShowDiagram(true)}
+        onFormatQuery={() => queryEditorRef.current?.format()}
+        onSaveQuery={() => setIsSaveQueryModalOpen(true)}
+        onToggleAI={() => window.dispatchEvent(new CustomEvent('toggle-ai-assistant'))}
+        onLogout={handleLogout}
+      />
 
       <MobileNav
         activeTab={activeMobileTab}

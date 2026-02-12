@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useCallback, useRef } from 'react';
 import {
   Zap,
   Search,
@@ -18,6 +18,9 @@ import {
   Info,
   FileJson,
   Activity,
+  Sparkles,
+  Play,
+  Loader2,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -45,6 +48,10 @@ export type ExplainPlanResult = {
 
 interface VisualExplainProps {
   plan: ExplainPlanResult[] | null | undefined;
+  query?: string;
+  schemaContext?: string;
+  databaseType?: string;
+  onLoadQuery?: (query: string) => void;
 }
 
 // ============================================================================
@@ -333,11 +340,276 @@ const PlanNode = ({ node, depth = 0, maxTime }: { node: ExplainPlanNode; depth?:
 };
 
 // ============================================================================
+// AI Explain Tab Component
+// ============================================================================
+
+function AIExplainTab({
+  plan,
+  query,
+  schemaContext,
+  databaseType,
+  onLoadQuery,
+}: {
+  plan: ExplainPlanResult[];
+  query?: string;
+  schemaContext?: string;
+  databaseType?: string;
+  onLoadQuery?: (query: string) => void;
+}) {
+  const [aiResponse, setAiResponse] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [hasRun, setHasRun] = useState(false);
+  const abortControllerRef = useRef<AbortController | null>(null);
+
+  const analyzeWithAI = useCallback(async () => {
+    if (!query && !plan) return;
+
+    setIsLoading(true);
+    setAiResponse('');
+    setError(null);
+    setHasRun(true);
+
+    // Abort previous request if any
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    const abortController = new AbortController();
+    abortControllerRef.current = abortController;
+
+    try {
+      const response = await fetch('/api/ai/explain', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          query: query || 'Unknown query',
+          explainPlan: plan,
+          schemaContext: schemaContext || '',
+          databaseType: databaseType || 'postgres',
+        }),
+        signal: abortController.signal,
+      });
+
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({}));
+        throw new Error(errData.error || 'AI analysis failed');
+      }
+
+      const reader = response.body?.getReader();
+      if (!reader) throw new Error('No response body');
+
+      const decoder = new TextDecoder();
+      let accumulated = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        const chunk = decoder.decode(value, { stream: true });
+        accumulated += chunk;
+        setAiResponse(accumulated);
+      }
+    } catch (err) {
+      if (err instanceof Error && err.name === 'AbortError') return;
+      setError(err instanceof Error ? err.message : 'AI analysis failed');
+    } finally {
+      setIsLoading(false);
+    }
+  }, [query, plan, schemaContext, databaseType]);
+
+
+  // Simple markdown renderer for the AI response
+  const renderMarkdown = (text: string) => {
+    const lines = text.split('\n');
+    const elements: React.ReactNode[] = [];
+    let inCodeBlock = false;
+    let codeBlockLang = '';
+    let codeBlockContent = '';
+
+    lines.forEach((line, idx) => {
+      if (line.startsWith('```')) {
+        if (inCodeBlock) {
+          // End code block
+          const content = codeBlockContent;
+          const isSql = codeBlockLang === 'sql';
+          elements.push(
+            <div key={`code-${idx}`} className="my-3 relative group/code">
+              <pre className={cn(
+                "text-[11px] font-mono p-3 rounded-lg overflow-x-auto border",
+                isSql ? "bg-blue-500/5 border-blue-500/10 text-blue-300" : "bg-white/[0.02] border-white/5 text-zinc-400"
+              )}>
+                {content}
+              </pre>
+              {isSql && onLoadQuery && (
+                <button
+                  onClick={() => onLoadQuery(content)}
+                  className="absolute top-2 right-2 opacity-0 group-hover/code:opacity-100 transition-opacity px-2 py-1 rounded bg-blue-600 hover:bg-blue-500 text-white text-[10px] font-bold flex items-center gap-1"
+                >
+                  <Play className="w-3 h-3" /> Try This
+                </button>
+              )}
+            </div>
+          );
+          codeBlockContent = '';
+          inCodeBlock = false;
+        } else {
+          // Start code block
+          inCodeBlock = true;
+          codeBlockLang = line.slice(3).trim();
+          codeBlockContent = '';
+        }
+        return;
+      }
+
+      if (inCodeBlock) {
+        codeBlockContent += (codeBlockContent ? '\n' : '') + line;
+        return;
+      }
+
+      // Headers
+      if (line.startsWith('## ')) {
+        elements.push(
+          <h2 key={idx} className="text-[13px] font-bold text-zinc-200 mt-4 mb-2 flex items-center gap-2">
+            {line.slice(3)}
+          </h2>
+        );
+      } else if (line.startsWith('### ')) {
+        elements.push(
+          <h3 key={idx} className="text-[12px] font-semibold text-zinc-300 mt-3 mb-1">
+            {line.slice(4)}
+          </h3>
+        );
+      } else if (line.startsWith('- ')) {
+        elements.push(
+          <div key={idx} className="flex items-start gap-2 text-[11px] text-zinc-400 leading-relaxed ml-2 my-0.5">
+            <span className="text-zinc-600 mt-1 shrink-0">•</span>
+            <span>{renderInlineFormatting(line.slice(2))}</span>
+          </div>
+        );
+      } else if (/^\d+\.\s/.test(line)) {
+        const num = line.match(/^(\d+)\./)?.[1];
+        elements.push(
+          <div key={idx} className="flex items-start gap-2 text-[11px] text-zinc-400 leading-relaxed ml-2 my-0.5">
+            <span className="text-blue-400 font-bold mt-0 shrink-0 w-4">{num}.</span>
+            <span>{renderInlineFormatting(line.replace(/^\d+\.\s*/, ''))}</span>
+          </div>
+        );
+      } else if (line.trim() === '') {
+        elements.push(<div key={idx} className="h-1" />);
+      } else {
+        elements.push(
+          <p key={idx} className="text-[11px] text-zinc-400 leading-relaxed my-0.5">
+            {renderInlineFormatting(line)}
+          </p>
+        );
+      }
+    });
+
+    return elements;
+  };
+
+  const renderInlineFormatting = (text: string): React.ReactNode => {
+    // Bold **text**
+    const parts = text.split(/(\*\*[^*]+\*\*|`[^`]+`)/g);
+    return parts.map((part, i) => {
+      if (part.startsWith('**') && part.endsWith('**')) {
+        return <strong key={i} className="text-zinc-200 font-medium">{part.slice(2, -2)}</strong>;
+      }
+      if (part.startsWith('`') && part.endsWith('`')) {
+        return <code key={i} className="text-blue-400 bg-blue-500/10 px-1 rounded text-[10px] font-mono">{part.slice(1, -1)}</code>;
+      }
+      return part;
+    });
+  };
+
+  // Not run yet state
+  if (!hasRun) {
+    return (
+      <div className="h-full flex flex-col items-center justify-center p-8 text-center">
+        <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-purple-500/20 to-blue-500/10 flex items-center justify-center mb-4">
+          <Sparkles className="w-7 h-7 text-purple-400" />
+        </div>
+        <h3 className="text-sm font-semibold text-zinc-200 mb-1">AI Query Analysis</h3>
+        <p className="text-[11px] text-zinc-500 max-w-[280px] leading-relaxed mb-4">
+          Get a plain-language explanation of your query&apos;s execution plan with concrete optimization suggestions.
+        </p>
+        <button
+          onClick={analyzeWithAI}
+          disabled={!query}
+          className={cn(
+            "flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition-all",
+            query
+              ? "bg-purple-600 hover:bg-purple-500 text-white shadow-lg shadow-purple-900/20"
+              : "bg-white/5 text-zinc-600 cursor-not-allowed"
+          )}
+        >
+          <Sparkles className="w-3.5 h-3.5" />
+          Analyze with AI
+        </button>
+        {!query && (
+          <p className="text-[10px] text-zinc-600 mt-2">Run a query first to enable AI analysis.</p>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="h-full flex flex-col">
+      {/* Re-analyze button */}
+      <div className="flex items-center justify-between px-4 py-2 border-b border-white/5 bg-[#0a0a0a]">
+        <div className="flex items-center gap-2">
+          <Sparkles className="w-3.5 h-3.5 text-purple-400" />
+          <span className="text-[10px] font-bold text-purple-400 uppercase tracking-wider">AI Analysis</span>
+        </div>
+        <button
+          onClick={analyzeWithAI}
+          disabled={isLoading}
+          className="flex items-center gap-1.5 px-2 py-1 rounded-md text-[10px] font-bold text-zinc-400 hover:text-white hover:bg-white/5 transition-all"
+        >
+          {isLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
+          {isLoading ? 'Analyzing...' : 'Re-analyze'}
+        </button>
+      </div>
+
+      {/* Content */}
+      <div className="flex-1 overflow-auto p-4">
+        {error && (
+          <div className="flex items-center gap-2 p-3 rounded-lg bg-red-500/5 border border-red-500/10 text-red-400 text-xs mb-4">
+            <AlertTriangle className="w-4 h-4 shrink-0" />
+            {error}
+          </div>
+        )}
+
+        {aiResponse && (
+          <div className="space-y-0">
+            {renderMarkdown(aiResponse)}
+          </div>
+        )}
+
+        {isLoading && !aiResponse && (
+          <div className="flex items-center gap-3 text-zinc-500 text-sm">
+            <Loader2 className="w-4 h-4 animate-spin text-purple-400" />
+            <span>Analyzing execution plan...</span>
+          </div>
+        )}
+
+        {isLoading && aiResponse && (
+          <div className="flex items-center gap-2 mt-2 text-zinc-600 text-[10px]">
+            <Loader2 className="w-3 h-3 animate-spin" />
+            <span>Still generating...</span>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ============================================================================
 // Main Component
 // ============================================================================
 
-export function VisualExplain({ plan }: VisualExplainProps) {
-  const [activeTab, setActiveTab] = useState<'insights' | 'tree' | 'raw'>('insights');
+export function VisualExplain({ plan, query, schemaContext, databaseType, onLoadQuery }: VisualExplainProps) {
+  const [activeTab, setActiveTab] = useState<'insights' | 'tree' | 'raw' | 'ai'>('insights');
 
   const analysis = useMemo(() => {
     if (!plan || !Array.isArray(plan) || plan.length === 0) return null;
@@ -393,21 +665,22 @@ export function VisualExplain({ plan }: VisualExplainProps) {
 
           {/* Tabs */}
           <div className="flex items-center gap-1 bg-white/5 rounded-lg p-0.5">
-            {(['insights', 'tree', 'raw'] as const).map((tab) => (
+            {(['insights', 'ai', 'tree', 'raw'] as const).map((tab) => (
               <button
                 key={tab}
                 onClick={() => setActiveTab(tab)}
                 className={cn(
                   "px-3 py-1 text-[10px] font-medium rounded-md transition-all uppercase tracking-wide",
                   activeTab === tab
-                    ? "bg-white/10 text-zinc-200"
+                    ? tab === 'ai' ? "bg-purple-500/20 text-purple-300" : "bg-white/10 text-zinc-200"
                     : "text-zinc-500 hover:text-zinc-300"
                 )}
               >
                 {tab === 'insights' && <Zap className="w-3 h-3 inline mr-1" />}
+                {tab === 'ai' && <Sparkles className="w-3 h-3 inline mr-1" />}
                 {tab === 'tree' && <Layers className="w-3 h-3 inline mr-1" />}
                 {tab === 'raw' && <FileJson className="w-3 h-3 inline mr-1" />}
-                {tab}
+                {tab === 'ai' ? 'AI Explain' : tab}
               </button>
             ))}
           </div>
@@ -416,6 +689,16 @@ export function VisualExplain({ plan }: VisualExplainProps) {
 
       {/* Content */}
       <div className="flex-1 overflow-auto">
+        {activeTab === 'ai' && (
+          <AIExplainTab
+            plan={plan}
+            query={query}
+            schemaContext={schemaContext}
+            databaseType={databaseType}
+            onLoadQuery={onLoadQuery}
+          />
+        )}
+
         {activeTab === 'insights' && (
           <div className="p-4 space-y-4">
             {/* Warnings */}
