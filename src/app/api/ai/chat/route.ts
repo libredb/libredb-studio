@@ -98,7 +98,7 @@ GUIDELINES:
 
 export async function POST(req: NextRequest) {
   try {
-    const { prompt, schemaContext, databaseType, queryLanguage } = await req.json();
+    const { prompt, schemaContext, databaseType, queryLanguage, conversationHistory } = await req.json();
 
     // Create provider from environment configuration (async - dynamically loads provider)
     const provider = await createLLMProvider();
@@ -106,13 +106,25 @@ export async function POST(req: NextRequest) {
     // Build messages
     const systemInstruction = buildSystemInstruction(databaseType, schemaContext, queryLanguage);
 
+    // Build message array with optional conversation history for multi-turn
+    const messages: { role: 'system' | 'user' | 'assistant'; content: string }[] = [
+      { role: 'system', content: systemInstruction },
+    ];
+
+    // Add conversation history if provided (multi-turn support)
+    if (conversationHistory?.length) {
+      for (const msg of conversationHistory) {
+        if (msg.role === 'user' || msg.role === 'assistant') {
+          messages.push({ role: msg.role, content: msg.content });
+        }
+      }
+    }
+
+    // Add the current prompt
+    messages.push({ role: 'user', content: prompt });
+
     // Stream completion
-    const stream = await provider.stream({
-      messages: [
-        { role: 'system', content: systemInstruction },
-        { role: 'user', content: prompt },
-      ],
-    });
+    const stream = await provider.stream({ messages });
 
     return new Response(stream, {
       headers: {

@@ -4,9 +4,10 @@ import { useEffect, useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { useRouter } from 'next/navigation';
-import { ShieldCheck, Users, Database, LogOut, ArrowLeft } from 'lucide-react';
+import { ShieldCheck, Users, Database, LogOut, ArrowLeft, EyeOff } from 'lucide-react';
 import { toast } from 'sonner';
 import MaintenanceDashboard from '@/components/MaintenanceDashboard';
+import { MaskingSettings } from '@/components/MaskingSettings';
 
 interface User {
   username: string;
@@ -15,7 +16,7 @@ interface User {
 
 export default function AdminDashboard() {
   const [user, setUser] = useState<User | null>(null);
-  const [activeTab, setActiveTab] = useState<'info' | 'maintenance'>('info');
+  const [activeTab, setActiveTab] = useState<'info' | 'maintenance' | 'masking'>('info');
   const router = useRouter();
 
   useEffect(() => {
@@ -68,13 +69,22 @@ export default function AdminDashboard() {
           >
             System Info
           </button>
-          <button 
+          <button
             onClick={() => setActiveTab('maintenance')}
             className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
               activeTab === 'maintenance' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'
             }`}
           >
             Maintenance
+          </button>
+          <button
+            onClick={() => setActiveTab('masking')}
+            className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors flex items-center gap-1.5 ${
+              activeTab === 'masking' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            <EyeOff className="h-3.5 w-3.5" />
+            Data Masking
           </button>
         </div>
 
@@ -145,8 +155,10 @@ export default function AdminDashboard() {
               </CardContent>
             </Card>
           </>
-        ) : (
+        ) : activeTab === 'maintenance' ? (
           <MaintenanceDashboard />
+        ) : (
+          <MaskingSettings />
         )}
       </div>
     </div>

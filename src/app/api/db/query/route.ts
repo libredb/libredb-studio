@@ -8,7 +8,7 @@ import {
 
 export async function POST(req: NextRequest) {
   try {
-    const { connection, sql, options = {} } = await req.json();
+    const { connection, sql, options = {}, queryId } = await req.json();
 
     if (!connection || !sql) {
       return NextResponse.json(
@@ -19,7 +19,12 @@ export async function POST(req: NextRequest) {
 
     const provider = await getOrCreateProvider(connection);
     const prepared = provider.prepareQuery(sql, options);
-    const result = await provider.query(prepared.query);
+
+    // Pass queryId to provider for cancellation tracking
+    const supportsCancel = 'cancelQuery' in provider;
+    const result = supportsCancel && queryId
+      ? await (provider as { query(sql: string, params?: unknown[], queryId?: string): Promise<typeof result> }).query(prepared.query, undefined, queryId)
+      : await provider.query(prepared.query);
 
     const hasMore = result.rows.length === prepared.limit;
 
@@ -57,7 +62,15 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Check if query was cancelled
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    if (errorMessage.includes('canceling statement') || errorMessage.includes('Query execution was interrupted')) {
+      return NextResponse.json(
+        { error: 'Query was cancelled', cancelled: true },
+        { status: 499 }
+      );
+    }
+
     return NextResponse.json({ error: errorMessage }, { status: 500 });
   }
 }

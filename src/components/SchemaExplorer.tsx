@@ -3,22 +3,25 @@
 import React, { useState, useMemo } from 'react';
 import { TableSchema } from '@/lib/types';
 import type { ProviderMetadata } from '@/hooks/use-provider-metadata';
-import { 
-  Search, 
-  Table as TableIcon, 
-  Hash, 
-  Key, 
-  Copy, 
-  Play, 
-  ChevronRight, 
-  Loader2, 
+import {
+  Search,
+  Table as TableIcon,
+  Hash,
+  Key,
+  Copy,
+  Play,
+  ChevronRight,
+  Loader2,
   AlertCircle,
   Database,
   Filter,
   MoreVertical,
   Plus,
   Settings,
-  Trash2
+  Trash2,
+  Code,
+  BarChart3,
+  Wand2,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -43,6 +46,9 @@ interface SchemaExplorerProps {
   onOpenMaintenance?: (tab?: 'global' | 'tables' | 'sessions', table?: string) => void;
   databaseType?: string;
   metadata?: ProviderMetadata | null;
+  onProfileTable?: (tableName: string) => void;
+  onGenerateCode?: (tableName: string) => void;
+  onGenerateTestData?: (tableName: string) => void;
 }
 
 export function SchemaExplorer({
@@ -53,7 +59,10 @@ export function SchemaExplorer({
   onCreateTableClick,
   isAdmin = false,
   onOpenMaintenance,
-  metadata
+  metadata,
+  onProfileTable,
+  onGenerateCode,
+  onGenerateTestData,
 }: SchemaExplorerProps) {
   const labels = metadata?.labels;
   const capabilities = metadata?.capabilities;
@@ -234,6 +243,19 @@ export function SchemaExplorer({
                     <DropdownMenuItem onClick={() => copyToClipboard(table.name, `${labels?.entityName || 'Table'} name`)}>
                       <Copy className="w-3.5 h-3.5 mr-2 text-muted-foreground" />
                       Copy Name
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem onClick={() => onProfileTable?.(table.name)}>
+                      <BarChart3 className="w-3.5 h-3.5 mr-2 text-cyan-500" />
+                      Profile Table
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => onGenerateCode?.(table.name)}>
+                      <Code className="w-3.5 h-3.5 mr-2 text-purple-500" />
+                      Generate Code
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => onGenerateTestData?.(table.name)}>
+                      <Wand2 className="w-3.5 h-3.5 mr-2 text-amber-500" />
+                      Generate Test Data
                     </DropdownMenuItem>
                     {isAdmin && (
                       <>

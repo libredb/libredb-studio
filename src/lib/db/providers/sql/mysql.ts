@@ -39,6 +39,10 @@ import { formatBytes } from '../../utils/pool-manager';
 export class MySQLProvider extends SQLBaseProvider {
   private pool: Pool | null = null;
 
+  // Transaction support: dedicated connection held outside pool
+  private txConn: PoolConnection | null = null;
+  private txActive = false;
+
   constructor(config: DatabaseConnection, options: ProviderOptions = {}) {
     super(config, options);
     this.validate();
@@ -133,22 +137,130 @@ export class MySQLProvider extends SQLBaseProvider {
       user: this.config.user,
       password: this.config.password,
       database: this.config.database,
-      ssl: this.shouldEnableSSL() ? { rejectUnauthorized: false } : undefined,
+      ssl: this.buildSSLConfig(),
       timezone: this.options.timezone ?? 'Z',
     };
+  }
+
+  private buildSSLConfig(): mysql.SslOptions | undefined {
+    const connSSL = this.config.ssl;
+
+    if (connSSL) {
+      if (connSSL.mode === 'disable') return undefined;
+
+      const ssl: mysql.SslOptions = {
+        rejectUnauthorized: connSSL.mode === 'verify-ca' || connSSL.mode === 'verify-full',
+      };
+
+      if (connSSL.caCert) ssl.ca = connSSL.caCert;
+      if (connSSL.clientCert) ssl.cert = connSSL.clientCert;
+      if (connSSL.clientKey) ssl.key = connSSL.clientKey;
+
+      return ssl;
+    }
+
+    if (this.shouldEnableSSL()) {
+      return { rejectUnauthorized: false };
+    }
+
+    return undefined;
   }
 
   // ============================================================================
   // Query Execution
   // ============================================================================
 
-  public async query(sql: string, params?: unknown[]): Promise<QueryResult> {
+  // Track running query thread IDs for cancellation
+  private runningQueryThreadIds = new Map<string, number>();
+
+  public async query(sql: string, params?: unknown[], queryId?: string): Promise<QueryResult> {
     this.ensureConnected();
 
     return this.trackQuery(async () => {
       const { result, executionTime } = await this.measureExecution(async () => {
+        const conn = await this.pool!.getConnection();
         try {
-          const [rows, fields] = await this.pool!.execute<RowDataPacket[]>(sql, params);
+          // Track thread ID for cancellation support
+          if (queryId) {
+            this.runningQueryThreadIds.set(queryId, conn.threadId);
+          }
+          const [rows, fields] = await conn.execute<RowDataPacket[]>(sql, params);
+          return { rows, fields };
+        } catch (error) {
+          throw mapDatabaseError(error, 'mysql', sql);
+        } finally {
+          if (queryId) this.runningQueryThreadIds.delete(queryId);
+          conn.release();
+        }
+      });
+
+      return {
+        rows: (result.rows as unknown[]).map(row => row as Record<string, unknown>) as Record<string, unknown>[],
+        fields: result.fields?.map((f: FieldPacket) => f.name) ?? [],
+        rowCount: Array.isArray(result.rows) ? result.rows.length : 0,
+        executionTime,
+      };
+    });
+  }
+
+  public async cancelQuery(queryId: string): Promise<boolean> {
+    const threadId = this.runningQueryThreadIds.get(queryId);
+    if (!threadId) return false;
+
+    try {
+      await this.pool!.execute(`KILL QUERY ${threadId}`);
+      return true;
+    } catch (error) {
+      console.error('[MySQL] Failed to cancel query:', error);
+      return false;
+    }
+  }
+
+  // ============================================================================
+  // Transaction Support
+  // ============================================================================
+
+  public async beginTransaction(): Promise<void> {
+    this.ensureConnected();
+    if (this.txActive) throw new QueryError('Transaction already active', 'mysql');
+    this.txConn = await this.pool!.getConnection();
+    await this.txConn.beginTransaction();
+    this.txActive = true;
+  }
+
+  public async commitTransaction(): Promise<void> {
+    if (!this.txConn || !this.txActive) throw new QueryError('No active transaction', 'mysql');
+    try {
+      await this.txConn.commit();
+    } finally {
+      this.txConn.release();
+      this.txConn = null;
+      this.txActive = false;
+    }
+  }
+
+  public async rollbackTransaction(): Promise<void> {
+    if (!this.txConn || !this.txActive) throw new QueryError('No active transaction', 'mysql');
+    try {
+      await this.txConn.rollback();
+    } finally {
+      this.txConn.release();
+      this.txConn = null;
+      this.txActive = false;
+    }
+  }
+
+  public isInTransaction(): boolean {
+    return this.txActive;
+  }
+
+  public async queryInTransaction(sql: string, params?: unknown[]): Promise<QueryResult> {
+    if (!this.txConn || !this.txActive) throw new QueryError('No active transaction', 'mysql');
+
+    return this.trackQuery(async () => {
+      const { result, executionTime } = await this.measureExecution(async () => {
+        try {
+          const [rows, fields] = await this.txConn!.execute<RowDataPacket[]>(sql, params);
           return { rows, fields };
         } catch (error) {
           throw mapDatabaseError(error, 'mysql', sql);

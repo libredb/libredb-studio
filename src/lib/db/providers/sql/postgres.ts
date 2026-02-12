@@ -3,7 +3,7 @@
  * Full PostgreSQL support with connection pooling
  */
 
-import { Pool, type PoolConfig as PgPoolConfig } from 'pg';
+import { Pool, type PoolClient, type PoolConfig as PgPoolConfig } from 'pg';
 import { SQLBaseProvider } from './sql-base';
 import {
   type DatabaseConnection,
@@ -54,6 +54,10 @@ interface PgStatActivityRow {
 
 export class PostgresProvider extends SQLBaseProvider {
   private pool: Pool | null = null;
+
+  // Transaction support: dedicated client held outside pool
+  private txClient: PoolClient | null = null;
+  private txActive = false;
 
   constructor(config: DatabaseConnection, options: ProviderOptions = {}) {
     super(config, options);
@@ -128,13 +132,7 @@ export class PostgresProvider extends SQLBaseProvider {
   }
 
   private buildPoolConfig(): PgPoolConfig {
-    const needsSSL = this.shouldEnableSSL();
-
-    const sslConfig = needsSSL
-      ? { rejectUnauthorized: false }
-      : this.options.ssl === false
-        ? false
-        : undefined;
+    const sslConfig = this.buildSSLConfig();
 
     const baseConfig: PgPoolConfig = {
       min: this.poolConfig.min,
@@ -162,11 +160,43 @@ export class PostgresProvider extends SQLBaseProvider {
     };
   }
 
+  private buildSSLConfig(): PgPoolConfig['ssl'] {
+    const connSSL = this.config.ssl;
+
+    // Explicit SSL config from connection takes priority
+    if (connSSL) {
+      if (connSSL.mode === 'disable') return false;
+
+      const ssl: Record<string, unknown> = {
+        rejectUnauthorized: connSSL.mode === 'verify-ca' || connSSL.mode === 'verify-full',
+      };
+
+      if (connSSL.caCert) ssl.ca = connSSL.caCert;
+      if (connSSL.clientCert) ssl.cert = connSSL.clientCert;
+      if (connSSL.clientKey) ssl.key = connSSL.clientKey;
+
+      return ssl as PgPoolConfig['ssl'];
+    }
+
+    // Auto-detect for cloud providers
+    if (this.shouldEnableSSL()) {
+      return { rejectUnauthorized: false };
+    }
+
+    // Provider options fallback
+    if (this.options.ssl === false) return false;
+
+    return undefined;
+  }
+
   // ============================================================================
   // Query Execution
   // ============================================================================
 
-  public async query(sql: string, params?: unknown[]): Promise<QueryResult> {
+  // Track running query PIDs for cancellation
+  private runningQueryPids = new Map<string, number>();
+
+  public async query(sql: string, params?: unknown[], queryId?: string): Promise<QueryResult> {
     this.ensureConnected();
 
     return this.trackQuery(async () => {
@@ -174,11 +204,95 @@ export class PostgresProvider extends SQLBaseProvider {
         try {
           const client = await this.pool!.connect();
           try {
+            // Track PID for cancellation support
+            if (queryId) {
+              const pidRes = await client.query('SELECT pg_backend_pid() as pid');
+              this.runningQueryPids.set(queryId, pidRes.rows[0].pid);
+            }
             const res = await client.query(sql, params);
             return res;
           } finally {
+            if (queryId) this.runningQueryPids.delete(queryId);
             client.release();
           }
+        } catch (error) {
+          if (queryId) this.runningQueryPids.delete(queryId);
+          throw mapDatabaseError(error, 'postgres', sql);
+        }
+      });
+
+      return {
+        rows: result.rows,
+        fields: result.fields?.map((f) => f.name) ?? [],
+        rowCount: result.rowCount ?? 0,
+        executionTime,
+      };
+    });
+  }
+
+  public async cancelQuery(queryId: string): Promise<boolean> {
+    const pid = this.runningQueryPids.get(queryId);
+    if (!pid) return false;
+
+    try {
+      const client = await this.pool!.connect();
+      try {
+        const res = await client.query('SELECT pg_cancel_backend($1) as cancelled', [pid]);
+        return res.rows[0]?.cancelled === true;
+      } finally {
+        client.release();
+      }
+    } catch (error) {
+      console.error('[Postgres] Failed to cancel query:', error);
+      return false;
+    }
+  }
+
+  // ============================================================================
+  // Transaction Support
+  // ============================================================================
+
+  public async beginTransaction(): Promise<void> {
+    this.ensureConnected();
+    if (this.txActive) throw new QueryError('Transaction already active', 'postgres');
+    this.txClient = await this.pool!.connect();
+    await this.txClient.query('BEGIN');
+    this.txActive = true;
+  }
+
+  public async commitTransaction(): Promise<void> {
+    if (!this.txClient || !this.txActive) throw new QueryError('No active transaction', 'postgres');
+    try {
+      await this.txClient.query('COMMIT');
+    } finally {
+      this.txClient.release();
+      this.txClient = null;
+      this.txActive = false;
+    }
+  }
+
+  public async rollbackTransaction(): Promise<void> {
+    if (!this.txClient || !this.txActive) throw new QueryError('No active transaction', 'postgres');
+    try {
+      await this.txClient.query('ROLLBACK');
+    } finally {
+      this.txClient.release();
+      this.txClient = null;
+      this.txActive = false;
+    }
+  }
+
+  public isInTransaction(): boolean {
+    return this.txActive;
+  }
+
+  public async queryInTransaction(sql: string, params?: unknown[]): Promise<QueryResult> {
+    if (!this.txClient || !this.txActive) throw new QueryError('No active transaction', 'postgres');
+
+    return this.trackQuery(async () => {
+      const { result, executionTime } = await this.measureExecution(async () => {
+        try {
+          return await this.txClient!.query(sql, params);
         } catch (error) {
           throw mapDatabaseError(error, 'postgres', sql);
         }

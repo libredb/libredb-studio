@@ -5,8 +5,18 @@ import { Sidebar, ConnectionsList } from '@/components/Sidebar';
 import { MobileNav } from '@/components/MobileNav';
 import { SchemaExplorer } from '@/components/SchemaExplorer';
 import { ConnectionModal } from '@/components/ConnectionModal';
+import { CommandPalette } from '@/components/CommandPalette';
 import { QueryEditor, QueryEditorRef } from '@/components/QueryEditor';
-import { ResultsGrid } from '@/components/ResultsGrid';
+import { ResultsGrid, type CellChange } from '@/components/ResultsGrid';
+import { DataImportModal } from '@/components/DataImportModal';
+import { NL2SQLPanel } from '@/components/NL2SQLPanel';
+import { QuerySafetyDialog, isDangerousQuery } from '@/components/QuerySafetyDialog';
+import { AIAutopilotPanel } from '@/components/AIAutopilotPanel';
+import { DataProfiler } from '@/components/DataProfiler';
+import { CodeGenerator } from '@/components/CodeGenerator';
+import { TestDataGenerator } from '@/components/TestDataGenerator';
+import { PivotTable } from '@/components/PivotTable';
+import { DatabaseDocs } from '@/components/DatabaseDocs';
 import { VisualExplain, type ExplainPlanResult } from '@/components/VisualExplain';
 import { HealthDashboard } from '@/components/HealthDashboard';
 import { CreateTableModal } from '@/components/CreateTableModal';
@@ -22,6 +32,16 @@ import { useProviderMetadata } from '@/hooks/use-provider-metadata';
 import { storage } from '@/lib/storage';
 import { getDefaultQuery, getRandomShowcaseQuery } from '@/lib/showcase-queries';
 import { generateTableQuery, generateSelectQuery, shouldRefreshSchema } from '@/lib/query-generators';
+import { isMultiStatement } from '@/lib/sql/statement-splitter';
+import {
+  type MaskingConfig,
+  loadMaskingConfig,
+  saveMaskingConfig,
+  shouldMask,
+  canToggleMasking,
+  detectSensitiveColumnsFromConfig,
+  applyMaskingToRows,
+} from '@/lib/data-masking';
 import { useRouter } from 'next/navigation';
 import { cn } from '@/lib/utils';
 import {
@@ -36,21 +56,27 @@ import {
   Database,
   Download,
   FileJson,
+  FlaskConical,
   Gauge,
   Hash,
   LayoutGrid,
   LogOut,
   MoreVertical,
+  Pencil,
   Play,
   Plus,
   Save,
   Settings,
   Sparkles,
+  Square,
   Terminal,
   Trash2,
+  Upload,
   User,
   X,
-  Zap
+  Zap,
+  Columns3,
+  FileText,
 } from 'lucide-react';
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from '@/components/ui/resizable';
 import { AnimatePresence } from 'framer-motion';
@@ -80,6 +106,8 @@ export default function Studio() {
   const [maintenanceTargetTable, setMaintenanceTargetTable] = useState<string | undefined>(undefined);
   
   const queryEditorRef = useRef<QueryEditorRef>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const activeQueryIdRef = useRef<string | null>(null);
 
   const { metadata } = useProviderMetadata(activeConnection);
 
@@ -107,7 +135,10 @@ export default function Studio() {
   };
 
   const [isConnectionModalOpen, setIsConnectionModalOpen] = useState(false);
+  const [editingConnection, setEditingConnection] = useState<DatabaseConnection | null>(null);
   const [isCreateTableModalOpen, setIsCreateTableModalOpen] = useState(false);
+  const [editingTabId, setEditingTabId] = useState<string | null>(null);
+  const [editingTabName, setEditingTabName] = useState('');
   const [showDiagram, setShowDiagram] = useState(false);
   const [isLoadingSchema, setIsLoadingSchema] = useState(false);
   
@@ -123,12 +154,45 @@ export default function Studio() {
   ]);
   const [activeTabId, setActiveTabId] = useState<string>('default');
   const [activeView, setActiveView] = useState<'editor' | 'health'>('editor');
-  const [bottomPanelMode, setBottomPanelMode] = useState<'results' | 'explain' | 'history' | 'saved' | 'charts'>('results');
+  const [bottomPanelMode, setBottomPanelMode] = useState<'results' | 'explain' | 'history' | 'saved' | 'charts' | 'nl2sql' | 'autopilot' | 'pivot' | 'docs'>('results');
   const [activeMobileTab, setActiveMobileTab] = useState<'database' | 'schema' | 'editor'>('editor');
 
   const [isSaveQueryModalOpen, setIsSaveQueryModalOpen] = useState(false);
   const [historyKey, setHistoryKey] = useState(0);
   const [savedKey, setSavedKey] = useState(0);
+
+  // Transaction state
+  const [transactionActive, setTransactionActive] = useState(false);
+
+  // Playground (Sandbox) mode
+  const [playgroundMode, setPlaygroundMode] = useState(false);
+
+  // Data Masking (config-aware, persisted)
+  const [maskingConfig, setMaskingConfig] = useState<MaskingConfig>(() => loadMaskingConfig());
+  const effectiveMasking = shouldMask(user?.role, maskingConfig);
+  const userCanToggle = canToggleMasking(user?.role, maskingConfig);
+
+  // Inline Editing
+  const [editingEnabled, setEditingEnabled] = useState(false);
+  const [pendingChanges, setPendingChanges] = useState<CellChange[]>([]);
+
+  // Data Import
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+
+  // NL2SQL Panel
+  const [isNL2SQLOpen, setIsNL2SQLOpen] = useState(false);
+
+  // Query Safety Analysis
+  const [safetyCheckQuery, setSafetyCheckQuery] = useState<string | null>(null);
+
+  // Data Profiler
+  const [profilerTable, setProfilerTable] = useState<string | null>(null);
+
+  // Code Generator
+  const [codeGenTable, setCodeGenTable] = useState<string | null>(null);
+
+  // Test Data Generator
+  const [testDataTable, setTestDataTable] = useState<string | null>(null);
 
   // Unlimited query warning state (for Load All)
   const [unlimitedWarningOpen, setUnlimitedWarningOpen] = useState(false);
@@ -225,24 +289,66 @@ export default function Studio() {
     toast({ title: "Query Saved", description: `"${name}" has been added to your saved queries.` });
   };
 
-  const exportResults = (format: 'csv' | 'json') => {
+  const exportResults = (format: 'csv' | 'json' | 'sql-insert' | 'sql-ddl') => {
     if (!currentTab.result) return;
-    
-    const data = currentTab.result.rows;
+
+    // Apply masking to exported data if masking is active
+    const rawData = currentTab.result.rows;
+    const sensitiveColumns = detectSensitiveColumnsFromConfig(currentTab.result.fields, maskingConfig);
+    const data = effectiveMasking
+      ? applyMaskingToRows(rawData, currentTab.result.fields, sensitiveColumns)
+      : rawData;
     let content = '';
-    let mimeType = '';
-    const fileName = `query_result_${format === 'csv' ? 'export' : 'data'}.${format}`;
+    let mimeType = 'text/plain';
+    let ext = format;
 
     if (format === 'csv') {
       const headers = Object.keys(data[0] || {}).join(',');
       const rows = data.map(row => Object.values(row).map(val => `"${val}"`).join(',')).join('\n');
       content = `${headers}\n${rows}`;
       mimeType = 'text/csv';
-    } else {
+      ext = 'csv';
+    } else if (format === 'json') {
       content = JSON.stringify(data, null, 2);
       mimeType = 'application/json';
+      ext = 'json';
+    } else if (format === 'sql-insert') {
+      const tableName = currentTab.name.replace(/^Query[:  ]*/, '') || 'table_name';
+      const columns = Object.keys(data[0] || {});
+      const lines = data.map(row => {
+        const values = columns.map(col => {
+          const val = row[col];
+          if (val === null || val === undefined) return 'NULL';
+          if (typeof val === 'number' || typeof val === 'boolean') return String(val);
+          return `'${String(val).replace(/'/g, "''")}'`;
+        });
+        return `INSERT INTO ${tableName} (${columns.join(', ')}) VALUES (${values.join(', ')});`;
+      });
+      content = lines.join('\n');
+      mimeType = 'text/sql';
+      ext = 'sql';
+    } else if (format === 'sql-ddl') {
+      const tableName = currentTab.name.replace(/^Query[:  ]*/, '') || 'table_name';
+      const columns = Object.keys(data[0] || {});
+      // Infer types from first row
+      const colDefs = columns.map(col => {
+        const sampleVal = data[0]?.[col];
+        let sqlType = 'TEXT';
+        if (typeof sampleVal === 'number') {
+          sqlType = Number.isInteger(sampleVal) ? 'INTEGER' : 'NUMERIC';
+        } else if (typeof sampleVal === 'boolean') {
+          sqlType = 'BOOLEAN';
+        } else if (sampleVal instanceof Date) {
+          sqlType = 'TIMESTAMP';
+        }
+        return `  ${col} ${sqlType}`;
+      });
+      content = `CREATE TABLE ${tableName} (\n${colDefs.join(',\n')}\n);`;
+      mimeType = 'text/sql';
+      ext = 'sql';
     }
 
+    const fileName = `query_result_export.${ext}`;
     const blob = new Blob([content], { type: mimeType });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
@@ -325,6 +431,12 @@ export default function Studio() {
       return;
     }
 
+    // Safety check for dangerous queries (skip for explain, load-more, and playground)
+    if (!isExplain && !executionOptions?.offset && !playgroundMode && isDangerousQuery(queryToExecute)) {
+      setSafetyCheckQuery(queryToExecute);
+      return;
+    }
+
     // Options extraction
     const {
       limit = 500,
@@ -369,7 +481,23 @@ export default function Studio() {
     };
 
     const startTime = Date.now();
+    // Set up abort controller for query cancellation
+    const abortController = new AbortController();
+    abortControllerRef.current = abortController;
+    const queryId = `q-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    activeQueryIdRef.current = queryId;
+
     try {
+      // Playground mode: begin a transaction before executing (will rollback after)
+      const isPlaygroundRun = playgroundMode && !transactionActive && !isExplain && !isLoadMore;
+      if (isPlaygroundRun) {
+        await fetch('/api/db/transaction', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ connection: activeConnection, action: 'begin' }),
+        });
+      }
+
       // If isExplain mode, run EXPLAIN query instead
       let queryToRun = queryToExecute;
       if (isExplain && activeConnection.type) {
@@ -379,15 +507,31 @@ export default function Studio() {
         }
       }
 
+      // Detect multi-statement queries (not for EXPLAIN or load-more or transaction)
+      const useMultiQuery = !isExplain && !isLoadMore && !transactionActive && !isPlaygroundRun && isMultiStatement(queryToExecute);
+
+      // Use transaction endpoint if a transaction is active or in playground mode
+      const useTransaction = (transactionActive || isPlaygroundRun) && !isExplain;
+
       // Start both queries in parallel (main query + background explain)
-      const mainQueryPromise = fetch('/api/db/query', {
+      const queryEndpoint = useTransaction
+        ? '/api/db/transaction'
+        : useMultiQuery ? '/api/db/multi-query' : '/api/db/query';
+      const mainQueryPromise = fetch(queryEndpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           connection: activeConnection,
-          sql: isExplain ? queryToRun : queryToExecute,
-          options: isExplain ? {} : { limit, offset, unlimited },
+          ...(useTransaction
+            ? { action: 'query', sql: queryToExecute, options: { limit, offset, unlimited } }
+            : {
+                sql: isExplain ? queryToRun : queryToExecute,
+                options: isExplain ? {} : { limit, offset, unlimited },
+                ...(!useMultiQuery && { queryId }),
+              }
+          ),
         }),
+        signal: abortController.signal,
       });
 
       // Run EXPLAIN in background for non-explain queries (SELECT only)
@@ -457,11 +601,30 @@ export default function Studio() {
           tabName: tabToExec.name,
           query: queryToExecute,
           executionTime: resultData.executionTime || executionTime,
-          status: 'success',
+          status: resultData.hasError ? 'error' : 'success',
           executedAt: new Date(),
-          rowCount: resultData.rowCount
+          rowCount: resultData.rowCount,
+          errorMessage: resultData.hasError ? resultData.statements?.find((s: { status: string }) => s.status === 'error')?.error : undefined,
         });
         setHistoryKey(prev => prev + 1);
+      }
+
+      // Show multi-statement summary
+      if (resultData.multiStatement) {
+        const { executedCount, statementCount, hasError } = resultData;
+        if (hasError) {
+          const errorStmt = resultData.statements?.find((s: { status: string }) => s.status === 'error');
+          toast({
+            title: `Executed ${executedCount - 1}/${statementCount} statements`,
+            description: `Error in statement ${errorStmt?.index + 1}: ${errorStmt?.error}`,
+            variant: "destructive",
+          });
+        } else {
+          toast({
+            title: `${executedCount} statements executed`,
+            description: `All ${statementCount} statements completed in ${resultData.executionTime}ms`,
+          });
+        }
       }
 
       // Process EXPLAIN results (from background or direct)
@@ -517,23 +680,269 @@ export default function Studio() {
         };
       }));
 
+      // Playground mode: auto-rollback after getting results
+      if (isPlaygroundRun) {
+        await fetch('/api/db/transaction', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ connection: activeConnection, action: 'rollback' }),
+        });
+        toast({
+          title: "Playground",
+          description: "Changes auto-rolled back. No data was modified.",
+        });
+      }
+
       // Refresh schema after DDL/write operations (pattern from provider capabilities)
-      if (!isExplain && metadata) {
+      // Skip schema refresh in playground mode since changes are rolled back
+      if (!isExplain && !isPlaygroundRun && metadata) {
         if (shouldRefreshSchema(queryToExecute, metadata.capabilities.schemaRefreshPattern)) {
           fetchSchema(activeConnection);
         }
       }
     } catch (error) {
+      // Playground mode: rollback on error too
+      if (isPlaygroundRun) {
+        try {
+          await fetch('/api/db/transaction', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ connection: activeConnection, action: 'rollback' }),
+          });
+        } catch { /* best effort */ }
+      }
       setTabs(prev => prev.map(t => t.id === targetTabId ? {
         ...t,
         isExecuting: false,
         isLoadingMore: false,
       } : t));
+
+      // Don't show error toast for user-initiated cancellation
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        toast({ title: "Query Cancelled", description: "Query execution was cancelled." });
+        return;
+      }
+
       const title = activeConnection?.isDemo ? "Demo Database Error" : "Query Error";
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      if (errorMessage.includes('Query was cancelled')) {
+        toast({ title: "Query Cancelled", description: "Query execution was cancelled." });
+        return;
+      }
       toast({ title, description: errorMessage, variant: "destructive" });
+    } finally {
+      abortControllerRef.current = null;
+      activeQueryIdRef.current = null;
     }
-  }, [activeConnection, tabs, currentTab, activeTabId, toast, fetchSchema, metadata]);
+  }, [activeConnection, tabs, currentTab, activeTabId, toast, fetchSchema, metadata, transactionActive, playgroundMode]);
+
+  // Cancel running query
+  const cancelQuery = useCallback(async () => {
+    // Abort the fetch request
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+
+    // Also cancel on the server side
+    if (activeQueryIdRef.current && activeConnection) {
+      try {
+        await fetch('/api/db/cancel', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            connection: activeConnection,
+            queryId: activeQueryIdRef.current,
+          }),
+        });
+      } catch {
+        // Best effort - the abort already handles the client side
+      }
+    }
+  }, [activeConnection]);
+
+  // Transaction control
+  const handleTransaction = useCallback(async (action: 'begin' | 'commit' | 'rollback') => {
+    if (!activeConnection) return;
+
+    try {
+      const res = await fetch('/api/db/transaction', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ connection: activeConnection, action }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        toast({ title: "Transaction Error", description: data.error, variant: "destructive" });
+        return;
+      }
+
+      if (action === 'begin') {
+        setTransactionActive(true);
+        toast({ title: "Transaction Started", description: "BEGIN — all queries will run in this transaction until you COMMIT or ROLLBACK." });
+      } else if (action === 'commit') {
+        setTransactionActive(false);
+        toast({ title: "Transaction Committed", description: "All changes have been saved." });
+      } else if (action === 'rollback') {
+        setTransactionActive(false);
+        toast({ title: "Transaction Rolled Back", description: "All changes have been discarded." });
+      }
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : 'Unknown error';
+      toast({ title: "Transaction Error", description: msg, variant: "destructive" });
+    }
+  }, [activeConnection, toast]);
+
+  // Inline Editing: handle cell change
+  const handleCellChange = useCallback((change: CellChange) => {
+    setPendingChanges(prev => {
+      // Replace existing change for same cell, or add new
+      const existing = prev.findIndex(c => c.rowIndex === change.rowIndex && c.columnId === change.columnId);
+      if (existing >= 0) {
+        // If reverting to original value, remove the change
+        if (String(change.originalValue ?? '') === change.newValue) {
+          return prev.filter((_, i) => i !== existing);
+        }
+        const updated = [...prev];
+        updated[existing] = change;
+        return updated;
+      }
+      // Don't add if no actual change
+      if (String(change.originalValue ?? '') === change.newValue) return prev;
+      return [...prev, change];
+    });
+  }, []);
+
+  // Inline Editing: apply pending changes by generating UPDATE SQL
+  const handleApplyChanges = useCallback(async () => {
+    if (!activeConnection || !currentTab.result || pendingChanges.length === 0) return;
+
+    // Detect primary key column
+    const pkColumn = currentTab.result.fields.find(f =>
+      f.toLowerCase() === 'id' || f.toLowerCase().endsWith('_id')
+    );
+
+    if (!pkColumn) {
+      toast({
+        title: "Cannot Apply Changes",
+        description: "No primary key column detected (id or *_id). Edit the SQL manually.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    // Group changes by row
+    const changesByRow = new Map<number, CellChange[]>();
+    for (const change of pendingChanges) {
+      const existing = changesByRow.get(change.rowIndex) || [];
+      existing.push(change);
+      changesByRow.set(change.rowIndex, existing);
+    }
+
+    // Detect table name from current tab or query
+    const tableName = currentTab.name.replace(/^Query[:  ]*/, '') ||
+      currentTab.query.match(/FROM\s+(\S+)/i)?.[1] || 'table_name';
+
+    // Generate UPDATE statements
+    const statements: string[] = [];
+    for (const [rowIndex, changes] of changesByRow) {
+      const row = currentTab.result.rows[rowIndex];
+      const pkValue = row[pkColumn];
+      const setClauses = changes.map(c => {
+        const val = c.newValue === '' || c.newValue.toUpperCase() === 'NULL'
+          ? 'NULL'
+          : `'${c.newValue.replace(/'/g, "''")}'`;
+        return `${c.columnId} = ${val}`;
+      });
+      const pkVal = typeof pkValue === 'number' ? pkValue : `'${pkValue}'`;
+      statements.push(`UPDATE ${tableName} SET ${setClauses.join(', ')} WHERE ${pkColumn} = ${pkVal};`);
+    }
+
+    const sql = statements.join('\n');
+    // Execute the UPDATE(s)
+    executeQuery(sql);
+    setPendingChanges([]);
+    setEditingEnabled(false);
+    toast({
+      title: "Changes Applied",
+      description: `${statements.length} UPDATE statement(s) executed.`,
+    });
+  }, [activeConnection, currentTab, pendingChanges, executeQuery, toast]);
+
+  // Inline Editing: discard changes
+  const handleDiscardChanges = useCallback(() => {
+    setPendingChanges([]);
+  }, []);
+
+  // Force execute (bypass safety check)
+  const forceExecuteQuery = useCallback(async (query: string) => {
+    setSafetyCheckQuery(null);
+    // Temporarily disable safety check by calling internal flow
+    // We re-implement the core execution path here
+    if (!activeConnection) return;
+
+    const targetTabId = activeTabId;
+    setTabs(prev => prev.map(t => t.id === targetTabId ? { ...t, isExecuting: true } : t));
+    setBottomPanelMode('results');
+
+    const startTime = Date.now();
+    const abortController = new AbortController();
+    abortControllerRef.current = abortController;
+
+    try {
+      const response = await fetch('/api/db/query', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          connection: activeConnection,
+          sql: query,
+          options: { limit: 500, offset: 0 },
+        }),
+        signal: abortController.signal,
+      });
+
+      const endTime = Date.now();
+      const executionTime = endTime - startTime;
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || 'Query failed');
+      }
+
+      const resultData = await response.json();
+
+      storage.addToHistory({
+        id: Math.random().toString(36).substring(7),
+        connectionId: activeConnection.id,
+        connectionName: activeConnection.name,
+        tabName: tabs.find(t => t.id === targetTabId)?.name || 'Query',
+        query,
+        executionTime: resultData.executionTime || executionTime,
+        status: 'success',
+        executedAt: new Date(),
+        rowCount: resultData.rowCount,
+      });
+      setHistoryKey(prev => prev + 1);
+
+      setTabs(prev => prev.map(t => t.id === targetTabId ? {
+        ...t, result: resultData, allRows: resultData.rows, currentOffset: resultData.rows.length, isExecuting: false
+      } : t));
+
+      // Refresh schema after DDL
+      if (metadata && shouldRefreshSchema(query, metadata.capabilities.schemaRefreshPattern)) {
+        fetchSchema(activeConnection);
+      }
+    } catch (error) {
+      setTabs(prev => prev.map(t => t.id === targetTabId ? { ...t, isExecuting: false } : t));
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        toast({ title: "Query Cancelled" });
+        return;
+      }
+      toast({ title: "Query Error", description: error instanceof Error ? error.message : 'Unknown error', variant: "destructive" });
+    } finally {
+      abortControllerRef.current = null;
+    }
+  }, [activeConnection, activeTabId, tabs, toast, fetchSchema, metadata]);
 
   // Load More handler
   const handleLoadMore = () => {
@@ -650,6 +1059,10 @@ export default function Studio() {
 
   useEffect(() => {
     if (activeConnection) {
+      setTransactionActive(false); // Reset transaction state on connection change
+      setPlaygroundMode(false);
+      setEditingEnabled(false);
+      setPendingChanges([]);
       fetchSchema(activeConnection);
       const isDemo = activeConnection.isDemo || activeConnection.type === 'demo';
       const tabType = metadata?.capabilities.queryLanguage === 'json' ? 'mongodb' :
@@ -731,6 +1144,10 @@ export default function Studio() {
               setConnections(updated);
               if (activeConnection?.id === id) setActiveConnection(updated[0] || null);
             }}
+            onEditConnection={(conn) => {
+              setEditingConnection(conn);
+              setIsConnectionModalOpen(true);
+            }}
             onAddConnection={() => setIsConnectionModalOpen(true)}
             onTableClick={handleTableClick}
             onGenerateSelect={handleGenerateSelect}
@@ -740,6 +1157,9 @@ export default function Studio() {
             onOpenMaintenance={openMaintenance}
             databaseType={activeConnection?.type}
             metadata={metadata}
+            onProfileTable={(name) => setProfilerTable(name)}
+            onGenerateCode={(name) => setCodeGenTable(name)}
+            onGenerateTestData={(name) => setTestDataTable(name)}
           />
         </ResizablePanel>
         <ResizableHandle className="hidden md:flex w-1 bg-transparent hover:bg-blue-500/30 transition-colors" />
@@ -907,19 +1327,26 @@ export default function Studio() {
                 </DropdownMenu>
               </div>
 
-              <Button
-                size="sm"
-                className="bg-blue-600 hover:bg-blue-500 text-white font-bold text-[11px] h-7 px-4 gap-1.5"
-                onClick={() => executeQuery()}
-                disabled={currentTab.isExecuting || !activeConnection}
-              >
-                {currentTab.isExecuting ? (
-                  <div className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                ) : (
+              {currentTab.isExecuting ? (
+                <Button
+                  size="sm"
+                  className="bg-red-600 hover:bg-red-500 text-white font-bold text-[11px] h-7 px-4 gap-1.5"
+                  onClick={cancelQuery}
+                >
+                  <Square className="w-3 h-3 fill-current" />
+                  CANCEL
+                </Button>
+              ) : (
+                <Button
+                  size="sm"
+                  className="bg-blue-600 hover:bg-blue-500 text-white font-bold text-[11px] h-7 px-4 gap-1.5"
+                  onClick={() => executeQuery()}
+                  disabled={!activeConnection}
+                >
                   <Play className="w-3 h-3 fill-current" />
-                )}
-                RUN
-              </Button>
+                  RUN
+                </Button>
+              )}
             </div>
           )}
         </header>
@@ -936,7 +1363,18 @@ export default function Studio() {
               </h1>
               {activeConnection && (
                 <p className="text-[10px] text-zinc-500 font-mono uppercase tracking-widest leading-none mt-0.5">
-                  {activeConnection.type} • <span className="text-emerald-500/80">Online</span>
+                  {activeConnection.type}
+                  {activeConnection.environment && activeConnection.environment !== 'other' && (
+                    <span
+                      className="ml-1 font-bold"
+                      style={{ color: activeConnection.color || '#22c55e' }}
+                    >
+                      • {activeConnection.environment}
+                    </span>
+                  )}
+                  {!activeConnection.environment && (
+                    <span> • <span className="text-emerald-500/80">Online</span></span>
+                  )}
                 </p>
               )}
             </div>
@@ -997,14 +1435,44 @@ export default function Studio() {
             <div
               key={tab.id}
               onClick={() => setActiveTabId(tab.id)}
+              onDoubleClick={() => {
+                setEditingTabId(tab.id);
+                setEditingTabName(tab.name);
+              }}
               className={cn(
                 "h-8 flex items-center px-3 gap-2 rounded-t-md transition-all cursor-pointer min-w-[120px] max-w-[200px] group relative border-t-2",
                 activeTabId === tab.id ? "bg-[#141414] text-zinc-100 border-blue-500" : "text-zinc-500 hover:bg-white/5 border-transparent"
               )}
             >
               {tab.type === 'sql' ? <Hash className="w-3 h-3" /> : <FileJson className="w-3 h-3" />}
-              <span className="text-xs truncate font-medium">{tab.name}</span>
-              {tabs.length > 1 && <X className="w-3 h-3 ml-auto opacity-0 group-hover:opacity-100 hover:text-white" onClick={(e) => closeTab(tab.id, e)} />}
+              {editingTabId === tab.id ? (
+                <input
+                  autoFocus
+                  value={editingTabName}
+                  onChange={(e) => setEditingTabName(e.target.value)}
+                  onBlur={() => {
+                    if (editingTabName.trim()) {
+                      setTabs(prev => prev.map(t => t.id === tab.id ? { ...t, name: editingTabName.trim() } : t));
+                    }
+                    setEditingTabId(null);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      if (editingTabName.trim()) {
+                        setTabs(prev => prev.map(t => t.id === tab.id ? { ...t, name: editingTabName.trim() } : t));
+                      }
+                      setEditingTabId(null);
+                    } else if (e.key === 'Escape') {
+                      setEditingTabId(null);
+                    }
+                  }}
+                  onClick={(e) => e.stopPropagation()}
+                  className="text-xs font-medium bg-transparent border-b border-blue-500 outline-none w-full text-zinc-100"
+                />
+              ) : (
+                <span className="text-xs truncate font-medium">{tab.name}</span>
+              )}
+              {tabs.length > 1 && <X className="w-3 h-3 ml-auto opacity-0 group-hover:opacity-100 hover:text-white shrink-0" onClick={(e) => closeTab(tab.id, e)} />}
             </div>
           ))}
           <Plus className="w-4 h-4 text-zinc-500 cursor-pointer hover:text-white mx-2" onClick={addTab} />
@@ -1069,6 +1537,9 @@ export default function Studio() {
                   onOpenMaintenance={openMaintenance}
                   databaseType={activeConnection?.type}
                   metadata={metadata}
+                  onProfileTable={(name) => setProfilerTable(name)}
+                  onGenerateCode={(name) => setCodeGenTable(name)}
+                  onGenerateTestData={(name) => setTestDataTable(name)}
                 />
               ) : (
                 <div className="flex flex-col items-center justify-center h-full text-zinc-500">
@@ -1091,6 +1562,16 @@ export default function Studio() {
               <ResizablePanelGroup direction="vertical">
                 <ResizablePanel defaultSize={40} minSize={20}>
                   <div className="h-full flex flex-col">
+                      {/* Playground Mode Banner */}
+                      {playgroundMode && (
+                        <div className="hidden md:flex items-center justify-center gap-2 px-4 py-1 bg-emerald-500/10 border-b border-emerald-500/20 text-emerald-400">
+                          <FlaskConical className="w-3 h-3" />
+                          <span className="text-[10px] font-bold uppercase tracking-widest">
+                            Sandbox Mode — All changes will be auto-rolled back
+                          </span>
+                        </div>
+                      )}
+
                       {/* Desktop Query Toolbar - Hidden on mobile (actions in mobile header) */}
                       <div className="hidden md:flex items-center justify-between px-4 py-1.5 bg-[#0a0a0a] border-b border-white/5">
                         <div className="flex items-center gap-4">
@@ -1108,15 +1589,115 @@ export default function Studio() {
                             <Save className="w-3 h-3" /> Save
                           </Button>
                         </div>
-                        <Button
-                          size="sm"
-                          className="bg-blue-600 hover:bg-blue-500 text-white font-bold text-[11px] h-7 px-4 gap-2"
-                          onClick={() => executeQuery()}
-                          disabled={currentTab.isExecuting || !activeConnection}
-                        >
-                          {currentTab.isExecuting ? <div className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : <Play className="w-3 h-3 fill-current" />}
-                          RUN
-                        </Button>
+                        {currentTab.isExecuting ? (
+                          <Button
+                            size="sm"
+                            className="bg-red-600 hover:bg-red-500 text-white font-bold text-[11px] h-7 px-4 gap-2"
+                            onClick={cancelQuery}
+                          >
+                            <Square className="w-3 h-3 fill-current" />
+                            CANCEL
+                          </Button>
+                        ) : (
+                          <Button
+                            size="sm"
+                            className="bg-blue-600 hover:bg-blue-500 text-white font-bold text-[11px] h-7 px-4 gap-2"
+                            onClick={() => executeQuery()}
+                            disabled={!activeConnection}
+                          >
+                            <Play className="w-3 h-3 fill-current" />
+                            RUN
+                          </Button>
+                        )}
+
+                        {/* Transaction Controls + Playground + Import + Edit */}
+                        {activeConnection && metadata?.capabilities.queryLanguage === 'sql' && (
+                          <div className="flex items-center gap-1 ml-2 pl-2 border-l border-white/10">
+                            {transactionActive ? (
+                              <>
+                                <span className="text-[9px] font-bold text-amber-400 uppercase tracking-wider px-1.5 py-0.5 bg-amber-500/10 rounded border border-amber-500/20 mr-1">
+                                  TXN
+                                </span>
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  className="h-7 text-[10px] font-bold text-emerald-400 hover:text-emerald-300 hover:bg-emerald-500/10 gap-1"
+                                  onClick={() => handleTransaction('commit')}
+                                >
+                                  COMMIT
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  className="h-7 text-[10px] font-bold text-red-400 hover:text-red-300 hover:bg-red-500/10 gap-1"
+                                  onClick={() => handleTransaction('rollback')}
+                                >
+                                  ROLLBACK
+                                </Button>
+                              </>
+                            ) : (
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="h-7 text-[10px] font-bold uppercase tracking-widest text-zinc-500 hover:text-white gap-1"
+                                onClick={() => handleTransaction('begin')}
+                                disabled={playgroundMode}
+                              >
+                                BEGIN
+                              </Button>
+                            )}
+
+                            {/* Playground (Sandbox) Toggle */}
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className={cn(
+                                "h-7 text-[10px] font-bold uppercase tracking-widest gap-1",
+                                playgroundMode
+                                  ? "text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20"
+                                  : "text-zinc-500 hover:text-white"
+                              )}
+                              onClick={() => setPlaygroundMode(!playgroundMode)}
+                              disabled={transactionActive}
+                              title="Playground mode: queries are auto-rolled back"
+                            >
+                              <FlaskConical className="w-3 h-3" />
+                              {playgroundMode ? 'SANDBOX' : 'SANDBOX'}
+                            </Button>
+
+                            {/* Inline Edit Toggle */}
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className={cn(
+                                "h-7 text-[10px] font-bold uppercase tracking-widest gap-1",
+                                editingEnabled
+                                  ? "text-amber-400 bg-amber-500/10 hover:bg-amber-500/20"
+                                  : "text-zinc-500 hover:text-white"
+                              )}
+                              onClick={() => {
+                                setEditingEnabled(!editingEnabled);
+                                if (editingEnabled) setPendingChanges([]);
+                              }}
+                              title="Enable inline data editing"
+                            >
+                              <Pencil className="w-3 h-3" />
+                              EDIT
+                            </Button>
+
+                            {/* Data Import */}
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="h-7 text-[10px] font-bold uppercase tracking-widest text-zinc-500 hover:text-white gap-1"
+                              onClick={() => setIsImportModalOpen(true)}
+                              title="Import data from CSV/JSON"
+                            >
+                              <Upload className="w-3 h-3" />
+                              IMPORT
+                            </Button>
+                          </div>
+                        )}
                       </div>
 
                     <div className="flex-1 relative">
@@ -1184,6 +1765,42 @@ export default function Studio() {
                             >
                               <BarChart3 className="w-3 h-3" /> Charts
                             </button>
+                            <button
+                              onClick={() => { setBottomPanelMode('nl2sql'); setIsNL2SQLOpen(true); }}
+                              className={cn(
+                                "h-full px-3 text-[10px] font-bold uppercase transition-all border-b-2 flex items-center gap-2",
+                                bottomPanelMode === 'nl2sql' ? "text-violet-400 border-violet-500 bg-white/5" : "text-zinc-500 border-transparent hover:text-zinc-300"
+                              )}
+                            >
+                              <Sparkles className="w-3 h-3" /> NL2SQL
+                            </button>
+                            <button
+                              onClick={() => setBottomPanelMode('autopilot')}
+                              className={cn(
+                                "h-full px-3 text-[10px] font-bold uppercase transition-all border-b-2 flex items-center gap-2",
+                                bottomPanelMode === 'autopilot' ? "text-cyan-400 border-cyan-500 bg-white/5" : "text-zinc-500 border-transparent hover:text-zinc-300"
+                              )}
+                            >
+                              <Zap className="w-3 h-3" /> Autopilot
+                            </button>
+                            <button
+                              onClick={() => setBottomPanelMode('pivot')}
+                              className={cn(
+                                "h-full px-3 text-[10px] font-bold uppercase transition-all border-b-2 flex items-center gap-2",
+                                bottomPanelMode === 'pivot' ? "text-orange-400 border-orange-500 bg-white/5" : "text-zinc-500 border-transparent hover:text-zinc-300"
+                              )}
+                            >
+                              <Columns3 className="w-3 h-3" /> Pivot
+                            </button>
+                            <button
+                              onClick={() => setBottomPanelMode('docs')}
+                              className={cn(
+                                "h-full px-3 text-[10px] font-bold uppercase transition-all border-b-2 flex items-center gap-2",
+                                bottomPanelMode === 'docs' ? "text-teal-400 border-teal-500 bg-white/5" : "text-zinc-500 border-transparent hover:text-zinc-300"
+                              )}
+                            >
+                              <FileText className="w-3 h-3" /> Docs
+                            </button>
                           </div>
 
                           {currentTab.result && bottomPanelMode === 'results' && (
@@ -1204,6 +1821,12 @@ export default function Studio() {
                                   <DropdownMenuItem onClick={() => exportResults('json')} className="text-xs cursor-pointer">
                                     Export as JSON
                                   </DropdownMenuItem>
+                                  <DropdownMenuItem onClick={() => exportResults('sql-insert')} className="text-xs cursor-pointer">
+                                    Export as SQL INSERT
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem onClick={() => exportResults('sql-ddl')} className="text-xs cursor-pointer">
+                                    Export as DDL (CREATE TABLE)
+                                  </DropdownMenuItem>
                                 </DropdownMenuContent>
                               </DropdownMenu>
                             </div>
@@ -1211,7 +1834,34 @@ export default function Studio() {
                         </div>
 
                         <div className="flex-1 overflow-hidden relative">
-                          {bottomPanelMode === 'history' ? (
+                          {bottomPanelMode === 'nl2sql' ? (
+                            <NL2SQLPanel
+                              isOpen={isNL2SQLOpen}
+                              onClose={() => { setIsNL2SQLOpen(false); setBottomPanelMode('results'); }}
+                              onExecuteQuery={(q) => executeQuery(q)}
+                              onLoadQuery={(q) => { updateCurrentTab({ query: q }); setBottomPanelMode('results'); }}
+                              schemaContext={schemaContext}
+                              databaseType={activeConnection?.type}
+                              queryLanguage={metadata?.capabilities.queryLanguage}
+                            />
+                          ) : bottomPanelMode === 'autopilot' ? (
+                            <AIAutopilotPanel
+                              connection={activeConnection}
+                              schemaContext={schemaContext}
+                              onExecuteQuery={(q) => executeQuery(q)}
+                            />
+                          ) : bottomPanelMode === 'pivot' ? (
+                            <PivotTable
+                              result={currentTab.result}
+                              onLoadQuery={(q) => { updateCurrentTab({ query: q }); setBottomPanelMode('results'); }}
+                            />
+                          ) : bottomPanelMode === 'docs' ? (
+                            <DatabaseDocs
+                              schema={schema}
+                              schemaContext={schemaContext}
+                              databaseType={activeConnection?.type}
+                            />
+                          ) : bottomPanelMode === 'history' ? (
                             <QueryHistory
                               refreshTrigger={historyKey}
                               activeConnectionId={activeConnection?.id}
@@ -1233,7 +1883,16 @@ export default function Studio() {
                             <DataCharts result={currentTab.result} />
                           ) : currentTab.result ? (
                             bottomPanelMode === 'explain' ? (
-                              <VisualExplain plan={currentTab.explainPlan as ExplainPlanResult[] | null | undefined} />
+                              <VisualExplain
+                                plan={currentTab.explainPlan as ExplainPlanResult[] | null | undefined}
+                                query={currentTab.query}
+                                schemaContext={schemaContext}
+                                databaseType={activeConnection?.type}
+                                onLoadQuery={(q) => {
+                                  updateCurrentTab({ query: q });
+                                  setBottomPanelMode('results');
+                                }}
+                              />
                             ) : (
                               <ResultsGrid
                                 result={currentTab.result}
@@ -1243,6 +1902,21 @@ export default function Studio() {
                                     : undefined
                                 }
                                 isLoadingMore={currentTab.isLoadingMore}
+                                maskingEnabled={effectiveMasking}
+                                onToggleMasking={userCanToggle ? () => {
+                                  setMaskingConfig(prev => {
+                                    const updated = { ...prev, enabled: !prev.enabled };
+                                    saveMaskingConfig(updated);
+                                    return updated;
+                                  });
+                                } : undefined}
+                                userRole={user?.role}
+                                maskingConfig={maskingConfig}
+                                editingEnabled={editingEnabled}
+                                pendingChanges={pendingChanges}
+                                onCellChange={handleCellChange}
+                                onApplyChanges={handleApplyChanges}
+                                onDiscardChanges={handleDiscardChanges}
                               />
                             )
                           ) : (
@@ -1264,15 +1938,20 @@ export default function Studio() {
         </ResizablePanel>
       </ResizablePanelGroup>
 
-      <ConnectionModal 
+      <ConnectionModal
         isOpen={isConnectionModalOpen}
-        onClose={() => setIsConnectionModalOpen(false)}
-        onConnect={(newConn) => {
-          storage.saveConnection(newConn);
-          setConnections(storage.getConnections());
-          setActiveConnection(newConn);
+        onClose={() => {
           setIsConnectionModalOpen(false);
+          setEditingConnection(null);
         }}
+        onConnect={(conn) => {
+          storage.saveConnection(conn);
+          setConnections(storage.getConnections());
+          setActiveConnection(conn);
+          setIsConnectionModalOpen(false);
+          setEditingConnection(null);
+        }}
+        editConnection={editingConnection}
       />
       <CreateTableModal
         isOpen={isCreateTableModalOpen}
@@ -1294,6 +1973,48 @@ export default function Studio() {
         initialTab={maintenanceInitialTab}
         targetTable={maintenanceTargetTable}
         metadata={metadata}
+      />
+      <DataImportModal
+        isOpen={isImportModalOpen}
+        onClose={() => setIsImportModalOpen(false)}
+        onImport={(sql) => executeQuery(sql)}
+        tables={schema}
+        databaseType={activeConnection?.type}
+      />
+      <QuerySafetyDialog
+        isOpen={!!safetyCheckQuery}
+        query={safetyCheckQuery || ''}
+        schemaContext={schemaContext}
+        databaseType={activeConnection?.type}
+        onClose={() => setSafetyCheckQuery(null)}
+        onProceed={() => {
+          if (safetyCheckQuery) forceExecuteQuery(safetyCheckQuery);
+        }}
+      />
+      <DataProfiler
+        isOpen={!!profilerTable}
+        onClose={() => setProfilerTable(null)}
+        tableName={profilerTable || ''}
+        tableSchema={schema.find(t => t.name === profilerTable) || null}
+        connection={activeConnection}
+        schemaContext={schemaContext}
+        databaseType={activeConnection?.type}
+      />
+      <CodeGenerator
+        isOpen={!!codeGenTable}
+        onClose={() => setCodeGenTable(null)}
+        tableName={codeGenTable || ''}
+        tableSchema={schema.find(t => t.name === codeGenTable) || null}
+        databaseType={activeConnection?.type}
+      />
+      <TestDataGenerator
+        isOpen={!!testDataTable}
+        onClose={() => setTestDataTable(null)}
+        tableName={testDataTable || ''}
+        tableSchema={schema.find(t => t.name === testDataTable) || null}
+        databaseType={activeConnection?.type}
+        queryLanguage={metadata?.capabilities.queryLanguage}
+        onExecuteQuery={(q) => executeQuery(q)}
       />
 
       {/* Unlimited Query Warning Modal (for Load All button) */}
@@ -1328,6 +2049,31 @@ export default function Studio() {
           </div>
         </AlertDialogContent>
       </AlertDialog>
+
+      <CommandPalette
+        connections={connections}
+        activeConnection={activeConnection}
+        schema={schema}
+        onSelectConnection={setActiveConnection}
+        onTableClick={handleTableClick}
+        onAddConnection={() => setIsConnectionModalOpen(true)}
+        onExecuteQuery={() => executeQuery()}
+        onLoadSavedQuery={(q) => {
+          updateCurrentTab({ query: q });
+          setBottomPanelMode('results');
+        }}
+        onLoadHistoryQuery={(q) => {
+          updateCurrentTab({ query: q });
+          setBottomPanelMode('results');
+        }}
+        onNavigateHealth={() => setActiveView('health')}
+        onNavigateMonitoring={() => router.push('/monitoring')}
+        onShowDiagram={() => setShowDiagram(true)}
+        onFormatQuery={() => queryEditorRef.current?.format()}
+        onSaveQuery={() => setIsSaveQueryModalOpen(true)}
+        onToggleAI={() => window.dispatchEvent(new CustomEvent('toggle-ai-assistant'))}
+        onLogout={handleLogout}
+      />
 
       <MobileNav
         activeTab={activeMobileTab}
