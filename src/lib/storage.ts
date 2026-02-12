@@ -5,6 +5,7 @@ const HISTORY_KEY = 'orchids_db_history';
 const SAVED_QUERIES_KEY = 'orchids_db_saved';
 const SCHEMA_SNAPSHOTS_KEY = 'libredb_schema_snapshots';
 const SAVED_CHARTS_KEY = 'libredb_saved_charts';
+const ACTIVE_CONNECTION_KEY = 'libredb_active_connection_id';
 const MAX_HISTORY_ITEMS = 500;
 const MAX_SNAPSHOTS = 50;
 
@@ -171,5 +172,20 @@ export const storage = {
     const charts = storage.getSavedCharts();
     const filtered = charts.filter(c => c.id !== id);
     localStorage.setItem(SAVED_CHARTS_KEY, JSON.stringify(filtered));
+  },
+
+  // Active Connection ID
+  getActiveConnectionId: (): string | null => {
+    if (typeof window === 'undefined') return null;
+    return localStorage.getItem(ACTIVE_CONNECTION_KEY);
+  },
+
+  setActiveConnectionId: (id: string | null) => {
+    if (typeof window === 'undefined') return;
+    if (id) {
+      localStorage.setItem(ACTIVE_CONNECTION_KEY, id);
+    } else {
+      localStorage.removeItem(ACTIVE_CONNECTION_KEY);
+    }
   },
 };

@@ -1069,9 +1069,11 @@ export default function Studio() {
               const updatedConnections = storage.getConnections();
               setConnections(updatedConnections);
 
-              // If demo was active, update reference
-              if (loadedConnections.length > 0) {
-                setActiveConnection(updatedConnections[0]);
+              // Restore persisted active connection, fallback to first
+              if (updatedConnections.length > 0) {
+                const savedId = storage.getActiveConnectionId();
+                const saved = savedId ? updatedConnections.find(c => c.id === savedId) : null;
+                setActiveConnection(saved ?? updatedConnections[0]);
               }
             } else {
               // Add new demo connection
@@ -1084,12 +1086,14 @@ export default function Studio() {
               const updatedConnections = storage.getConnections();
               setConnections(updatedConnections);
 
-              // Set demo as active if no other connections
+              // Restore persisted active connection, fallback to demo if no others
+              const savedId = storage.getActiveConnectionId();
+              const saved = savedId ? updatedConnections.find(c => c.id === savedId) : null;
               if (loadedConnections.length === 0) {
                 console.log(`${LOG_PREFIX} Auto-selecting demo as active connection (no other connections)`);
-                setActiveConnection(demoConn);
+                setActiveConnection(saved ?? demoConn);
               } else {
-                setActiveConnection(updatedConnections[0]);
+                setActiveConnection(saved ?? updatedConnections[0]);
               }
             }
             return;
@@ -1104,11 +1108,21 @@ export default function Studio() {
       }
 
       setConnections(loadedConnections);
-      if (loadedConnections.length > 0) setActiveConnection(loadedConnections[0]);
+      if (loadedConnections.length > 0) {
+        const savedId = storage.getActiveConnectionId();
+        const saved = savedId ? loadedConnections.find(c => c.id === savedId) : null;
+        setActiveConnection(saved ?? loadedConnections[0]);
+      }
     };
 
     initializeConnections();
   }, []);
+
+  useEffect(() => {
+    if (activeConnection) {
+      storage.setActiveConnectionId(activeConnection.id);
+    }
+  }, [activeConnection]);
 
   useEffect(() => {
     if (activeConnection) {

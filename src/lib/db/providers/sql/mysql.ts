@@ -170,6 +170,18 @@ export class MySQLProvider extends SQLBaseProvider {
   // Query Execution
   // ============================================================================
 
+  private sanitizeRow(row: Record<string, unknown>): Record<string, unknown> {
+    const sanitized: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(row)) {
+      if (Buffer.isBuffer(value)) {
+        sanitized[key] = value.length === 0 ? '' : `0x${value.toString('hex')}`;
+      } else {
+        sanitized[key] = value;
+      }
+    }
+    return sanitized;
+  }
+
   // Track running query thread IDs for cancellation
   private runningQueryThreadIds = new Map<string, number>();
 
@@ -195,7 +207,7 @@ export class MySQLProvider extends SQLBaseProvider {
       });
 
       return {
-        rows: (result.rows as unknown[]).map(row => row as Record<string, unknown>) as Record<string, unknown>[],
+        rows: (result.rows as unknown[]).map(row => this.sanitizeRow(row as Record<string, unknown>)),
         fields: result.fields?.map((f: FieldPacket) => f.name) ?? [],
         rowCount: Array.isArray(result.rows) ? result.rows.length : 0,
         executionTime,
@@ -268,7 +280,7 @@ export class MySQLProvider extends SQLBaseProvider {
       });
 
       return {
-        rows: (result.rows as unknown[]).map(row => row as Record<string, unknown>) as Record<string, unknown>[],
+        rows: (result.rows as unknown[]).map(row => this.sanitizeRow(row as Record<string, unknown>)),
         fields: result.fields?.map((f: FieldPacket) => f.name) ?? [],
         rowCount: Array.isArray(result.rows) ? result.rows.length : 0,
         executionTime,
@@ -676,8 +688,8 @@ export class MySQLProvider extends SQLBaseProvider {
         FROM performance_schema.events_statements_summary_by_digest
         WHERE SCHEMA_NAME = ?
         ORDER BY SUM_TIMER_WAIT DESC
-        LIMIT ?;
-      `, [this.config.database, limit]);
+        LIMIT ${Number(limit)};
+      `, [this.config.database]);
 
       return rows.map((r) => ({
         queryId: r.query_id || undefined,
@@ -715,8 +727,8 @@ export class MySQLProvider extends SQLBaseProvider {
         FROM information_schema.PROCESSLIST
         WHERE DB = ? OR DB IS NULL
         ORDER BY TIME DESC
-        LIMIT ?;
-      `, [this.config.database, limit]);
+        LIMIT ${Number(limit)};
+      `, [this.config.database]);
 
       return rows.map((r) => {
         const durationSeconds = parseInt(r.duration_seconds || '0');
@@ -799,7 +811,7 @@ export class MySQLProvider extends SQLBaseProvider {
           GROUP_CONCAT(COLUMN_NAME ORDER BY SEQ_IN_INDEX) as columns,
           NOT NON_UNIQUE as is_unique,
           INDEX_NAME = 'PRIMARY' as is_primary,
-          CARDINALITY as cardinality
+          MAX(CARDINALITY) as cardinality
         FROM information_schema.STATISTICS
         WHERE TABLE_SCHEMA = ?
         GROUP BY TABLE_SCHEMA, TABLE_NAME, INDEX_NAME, INDEX_TYPE, NON_UNIQUE
