@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo, useState, useRef, useCallback } from 'react';
+import React, { useMemo, useState, useRef, useCallback, useEffect } from 'react';
 import { QueryResult } from '@/lib/types';
 import {
   flexRender,
@@ -30,6 +30,7 @@ import {
   Save,
   X,
   Filter,
+  Lock,
 } from 'lucide-react';
 import {
   Sheet,
@@ -39,7 +40,16 @@ import {
 } from "@/components/ui/sheet";
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { detectSensitiveColumns, maskValue } from '@/lib/data-masking';
+import {
+  type MaskingConfig,
+  type MaskingPattern,
+  detectSensitiveColumnsFromConfig,
+  maskValueByPattern,
+  shouldMask,
+  canToggleMasking,
+  canReveal,
+  loadMaskingConfig,
+} from '@/lib/data-masking';
 
 export interface CellChange {
   rowIndex: number;
@@ -54,6 +64,8 @@ interface ResultsGridProps {
   isLoadingMore?: boolean;
   maskingEnabled?: boolean;
   onToggleMasking?: () => void;
+  userRole?: string;
+  maskingConfig?: MaskingConfig;
   // Inline editing props
   editingEnabled?: boolean;
   pendingChanges?: CellChange[];
@@ -122,6 +134,8 @@ function ResultCard({
   idColumn,
   index,
   onSelect,
+  maskingActive,
+  sensitiveColumns,
 }: {
   row: Record<string, unknown>;
   fields: string[];
@@ -129,9 +143,19 @@ function ResultCard({
   idColumn: string | null;
   index: number;
   onSelect: () => void;
+  maskingActive?: boolean;
+  sensitiveColumns?: Map<string, MaskingPattern>;
 }) {
   const primaryValue: unknown = row[primaryColumn];
   const idValue: unknown = idColumn ? row[idColumn] : null;
+
+  // Mask primary value if sensitive
+  const displayPrimary = useMemo(() => {
+    if (maskingActive && sensitiveColumns?.has(primaryColumn) && primaryValue != null) {
+      return maskValueByPattern(primaryValue, sensitiveColumns.get(primaryColumn)!);
+    }
+    return primaryValue != null ? String(primaryValue) : `Row ${index + 1}`;
+  }, [maskingActive, sensitiveColumns, primaryColumn, primaryValue, index]);
 
   // Show first 4 fields (excluding primary and id)
   const previewFields = fields
@@ -150,8 +174,11 @@ function ResultCard({
             <Hash className="w-4 h-4 text-blue-400" />
           </div>
           <div className="min-w-0 flex-1">
-            <p className="text-sm font-semibold text-zinc-100 truncate">
-              {primaryValue != null ? String(primaryValue) : `Row ${index + 1}`}
+            <p className={cn(
+              "text-sm font-semibold truncate",
+              maskingActive && sensitiveColumns?.has(primaryColumn) ? "text-zinc-500 italic" : "text-zinc-100"
+            )}>
+              {displayPrimary}
             </p>
             {idValue != null && (
               <p className="text-[10px] text-zinc-500 font-mono">#{String(idValue)}</p>
@@ -164,12 +191,23 @@ function ResultCard({
       {/* Preview Fields */}
       <div className="space-y-2">
         {previewFields.map(field => {
-          const { display, className } = formatCellValue(row[field]);
+          const pattern = sensitiveColumns?.get(field);
+          const isMasked = maskingActive && pattern && row[field] != null && row[field] !== undefined;
+          const displayValue = isMasked
+            ? maskValueByPattern(row[field], pattern)
+            : formatCellValue(row[field]).display;
+          const className = isMasked
+            ? 'text-zinc-500 italic'
+            : formatCellValue(row[field]).className;
+
           return (
             <div key={field} className="flex items-center justify-between text-xs">
-              <span className="text-zinc-500 truncate mr-2">{field}</span>
+              <span className="text-zinc-500 truncate mr-2">
+                {field}
+                {isMasked && <Lock className="w-2.5 h-2.5 inline ml-1 text-purple-400" />}
+              </span>
               <span className={cn("truncate max-w-[60%] text-right font-mono", className)}>
-                {display}
+                {displayValue}
               </span>
             </div>
           );
@@ -191,24 +229,61 @@ function RowDetailSheet({
   isOpen,
   onClose,
   rowIndex,
+  maskingActive,
+  sensitiveColumns,
+  allowReveal,
 }: {
   row: Record<string, unknown>;
   fields: string[];
   isOpen: boolean;
   onClose: () => void;
   rowIndex: number;
+  maskingActive?: boolean;
+  sensitiveColumns?: Map<string, MaskingPattern>;
+  allowReveal?: boolean;
 }) {
   const [copiedField, setCopiedField] = useState<string | null>(null);
+  const [revealedFields, setRevealedFields] = useState<Set<string>>(new Set());
+
+  // Auto-hide revealed fields after 10s
+  const revealField = useCallback((field: string) => {
+    setRevealedFields(prev => new Set(prev).add(field));
+    setTimeout(() => {
+      setRevealedFields(prev => {
+        const next = new Set(prev);
+        next.delete(field);
+        return next;
+      });
+    }, 10000);
+  }, []);
+
+  const getDisplayValue = useCallback((field: string, value: unknown): { text: string; isMasked: boolean } => {
+    const pattern = sensitiveColumns?.get(field);
+    if (maskingActive && pattern && value != null && value !== undefined && !revealedFields.has(field)) {
+      return { text: maskValueByPattern(value, pattern), isMasked: true };
+    }
+    return { text: typeof value === 'object' ? JSON.stringify(value) : String(value ?? 'NULL'), isMasked: false };
+  }, [maskingActive, sensitiveColumns, revealedFields]);
 
   const copyValue = (field: string, value: unknown) => {
-    const textValue = typeof value === 'object' ? JSON.stringify(value) : String(value ?? '');
-    navigator.clipboard.writeText(textValue);
+    const { text } = getDisplayValue(field, value);
+    navigator.clipboard.writeText(text);
     setCopiedField(field);
     setTimeout(() => setCopiedField(null), 1500);
   };
 
   const copyAllAsJson = () => {
-    navigator.clipboard.writeText(JSON.stringify(row, null, 2));
+    // If masking is active, copy masked version
+    if (maskingActive && sensitiveColumns && sensitiveColumns.size > 0) {
+      const maskedRow: Record<string, unknown> = {};
+      for (const field of fields) {
+        const { text } = getDisplayValue(field, row[field]);
+        maskedRow[field] = text;
+      }
+      navigator.clipboard.writeText(JSON.stringify(maskedRow, null, 2));
+    } else {
+      navigator.clipboard.writeText(JSON.stringify(row, null, 2));
+    }
     setCopiedField('__all__');
     setTimeout(() => setCopiedField(null), 1500);
   };
@@ -242,8 +317,8 @@ function RowDetailSheet({
         <ScrollArea className="h-[calc(85vh-100px)] mt-4">
           <div className="space-y-1 pr-4">
             {fields.map(field => {
-              const { display, className } = formatCellValue(row[field]);
-              const isLongValue = display.length > 50;
+              const { text, isMasked } = getDisplayValue(field, row[field]);
+              const isLongValue = text.length > 50;
 
               return (
                 <div
@@ -252,29 +327,43 @@ function RowDetailSheet({
                 >
                   <div className="flex items-start justify-between gap-4">
                     <div className="flex-1 min-w-0">
-                      <p className="text-[10px] uppercase tracking-widest text-zinc-500 mb-1 font-mono">
+                      <p className="text-[10px] uppercase tracking-widest text-zinc-500 mb-1 font-mono flex items-center gap-1">
                         {field}
+                        {isMasked && <Lock className="w-2.5 h-2.5 text-purple-400" />}
                       </p>
                       <p className={cn(
                         "font-mono text-sm break-all",
-                        className,
+                        isMasked ? "text-zinc-500 italic" : formatCellValue(row[field]).className,
                         isLongValue && "text-xs"
                       )}>
-                        {display}
+                        {text}
                       </p>
                     </div>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-7 w-7 p-0 opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
-                      onClick={() => copyValue(field, row[field])}
-                    >
-                      {copiedField === field ? (
-                        <Check className="w-3.5 h-3.5 text-emerald-400" />
-                      ) : (
-                        <Copy className="w-3.5 h-3.5 text-zinc-500" />
+                    <div className="flex items-center gap-1 shrink-0">
+                      {isMasked && allowReveal && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 w-7 p-0 opacity-0 group-hover:opacity-100 transition-opacity"
+                          onClick={() => revealField(field)}
+                          title="Reveal value (10s)"
+                        >
+                          <Eye className="w-3.5 h-3.5 text-purple-400" />
+                        </Button>
                       )}
-                    </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 w-7 p-0 opacity-0 group-hover:opacity-100 transition-opacity"
+                        onClick={() => copyValue(field, row[field])}
+                      >
+                        {copiedField === field ? (
+                          <Check className="w-3.5 h-3.5 text-emerald-400" />
+                        ) : (
+                          <Copy className="w-3.5 h-3.5 text-zinc-500" />
+                        )}
+                      </Button>
+                    </div>
                   </div>
                 </div>
               );
@@ -292,6 +381,8 @@ export function ResultsGrid({
   isLoadingMore,
   maskingEnabled,
   onToggleMasking,
+  userRole,
+  maskingConfig,
   editingEnabled,
   pendingChanges,
   onCellChange,
@@ -305,13 +396,43 @@ export function ResultsGrid({
   const [selectedRow, setSelectedRow] = useState<{ row: Record<string, unknown>; index: number } | null>(null);
   const [columnFilters, setColumnFilters] = useState<Map<string, string>>(new Map());
   const [activeFilterCol, setActiveFilterCol] = useState<string | null>(null);
+  const [revealedCells, setRevealedCells] = useState<Set<string>>(new Set());
 
+  // Resolve config
+  const resolvedConfig = useMemo(() => maskingConfig ?? loadMaskingConfig(), [maskingConfig]);
+
+  // Effective masking state (RBAC-aware)
+  const effectiveMaskingEnabled = useMemo(() => {
+    return shouldMask(userRole, resolvedConfig) && (maskingEnabled ?? resolvedConfig.enabled);
+  }, [userRole, resolvedConfig, maskingEnabled]);
+
+  const userCanToggle = useMemo(() => canToggleMasking(userRole, resolvedConfig), [userRole, resolvedConfig]);
+  const userCanReveal = useMemo(() => canReveal(userRole, resolvedConfig), [userRole, resolvedConfig]);
+
+  // Config-based sensitive column detection
   const sensitiveColumns = useMemo(
-    () => detectSensitiveColumns(result.fields),
-    [result.fields]
+    () => detectSensitiveColumnsFromConfig(result.fields, resolvedConfig),
+    [result.fields, resolvedConfig]
   );
 
   const hasSensitive = sensitiveColumns.size > 0;
+
+  // Clear revealed cells when result changes
+  useEffect(() => {
+    setRevealedCells(new Set());
+  }, [result]);
+
+  // Per-cell reveal with auto-hide
+  const revealCell = useCallback((key: string) => {
+    setRevealedCells(prev => new Set(prev).add(key));
+    setTimeout(() => {
+      setRevealedCells(prev => {
+        const next = new Set(prev);
+        next.delete(key);
+        return next;
+      });
+    }, 10000);
+  }, []);
 
   const primaryColumn = useMemo(
     () => detectPrimaryColumn(result.fields, result.rows),
@@ -354,6 +475,7 @@ export function ResultsGrid({
       accessorKey: field,
       header: ({ column }) => {
         const hasFilter = columnFilters.has(field) && !!columnFilters.get(field);
+        const isSensitive = effectiveMaskingEnabled && sensitiveColumns.has(field);
         return (
           <div className="flex items-center gap-1 select-none group/header w-full">
             <div
@@ -361,6 +483,9 @@ export function ResultsGrid({
               onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
             >
               <span className="truncate">{field}</span>
+              {isSensitive && (
+                <Lock className="w-3 h-3 text-purple-400 shrink-0" title="Masked column" />
+              )}
               <div className="flex-shrink-0 opacity-0 group-hover/header:opacity-100 transition-opacity">
                 {column.getIsSorted() === "asc" ? (
                   <ArrowUp className="w-3 h-3" />
@@ -432,7 +557,6 @@ export function ResultsGrid({
                 onChange={(e) => setEditValue(e.target.value)}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') {
-                    // Save edit if value changed
                     if (editValue !== String(val ?? '') && onCellChange && editingEnabled) {
                       onCellChange({
                         rowIndex: row.index,
@@ -462,12 +586,35 @@ export function ResultsGrid({
         }
 
         // Apply masking if enabled
-        const sensitiveRule = sensitiveColumns.get(column.id);
-        if (maskingEnabled && sensitiveRule && val !== null && val !== undefined) {
-          const masked = maskValue(val, sensitiveRule);
+        const sensitivePattern = sensitiveColumns.get(column.id);
+        const cellKey = `${row.index}:${column.id}`;
+        const isRevealed = revealedCells.has(cellKey);
+
+        if (effectiveMaskingEnabled && sensitivePattern && val !== null && val !== undefined && !isRevealed) {
+          const masked = maskValueByPattern(val, sensitivePattern);
           return (
-            <div className="truncate w-full h-full">
+            <div className="truncate w-full h-full flex items-center gap-1 group/cell">
               <span className="text-zinc-500 italic">{masked}</span>
+              {userCanReveal && (
+                <button
+                  className="opacity-0 group-hover/cell:opacity-100 transition-opacity p-0.5 rounded hover:bg-purple-500/10"
+                  onClick={(e) => { e.stopPropagation(); revealCell(cellKey); }}
+                  title="Reveal value (10s)"
+                >
+                  <Eye className="w-3 h-3 text-purple-400" />
+                </button>
+              )}
+            </div>
+          );
+        }
+
+        // Show revealed cell with lock indicator
+        if (effectiveMaskingEnabled && sensitivePattern && isRevealed) {
+          const { display, className } = formatCellValue(val);
+          return (
+            <div className="truncate w-full h-full flex items-center gap-1">
+              <span className={className}>{display}</span>
+              <Lock className="w-2.5 h-2.5 text-purple-400/50 shrink-0" />
             </div>
           );
         }
@@ -495,7 +642,7 @@ export function ResultsGrid({
       minSize: 80,
       maxSize: 500,
     }));
-  }, [result.fields, editingCell, editValue, maskingEnabled, sensitiveColumns, editingEnabled, onCellChange, getCellChange, columnFilters, activeFilterCol]);
+  }, [result.fields, editingCell, editValue, effectiveMaskingEnabled, sensitiveColumns, editingEnabled, onCellChange, getCellChange, columnFilters, activeFilterCol, revealedCells, userCanReveal, revealCell]);
 
   const table = useReactTable({
     data: filteredRows,
@@ -540,7 +687,7 @@ export function ResultsGrid({
     return (
       <div className="h-full flex flex-col items-center justify-center p-8 text-center text-zinc-600 animate-in fade-in zoom-in-95 duration-500">
         <div className="w-16 h-16 rounded-2xl bg-zinc-900/50 flex items-center justify-center mb-6 border border-white/5 shadow-2xl">
-          <span className="text-2xl text-zinc-500">∅</span>
+          <span className="text-2xl text-zinc-500">&#x2205;</span>
         </div>
         <p className="text-sm font-semibold text-zinc-400">Query returned no data</p>
         <p className="text-xs text-zinc-600 mt-2 max-w-[280px] leading-relaxed">
@@ -570,7 +717,7 @@ export function ResultsGrid({
               title="Clear all filters"
             >
               <Filter className="w-3 h-3" />
-              {activeFilterCount} filter{activeFilterCount > 1 ? 's' : ''} • {filteredRows.length} shown
+              {activeFilterCount} filter{activeFilterCount > 1 ? 's' : ''} &bull; {filteredRows.length} shown
               <X className="w-3 h-3" />
             </button>
           )}
@@ -583,20 +730,27 @@ export function ResultsGrid({
 
         <div className="flex items-center gap-2">
           {/* Data Masking Toggle */}
-          {hasSensitive && onToggleMasking && (
-            <Button
-              variant="ghost"
-              size="sm"
-              className={cn(
-                "h-6 px-2 text-[10px] font-bold gap-1",
-                maskingEnabled ? "text-purple-400 bg-purple-500/10" : "text-zinc-500"
-              )}
-              onClick={onToggleMasking}
-              title={maskingEnabled ? 'Show sensitive data' : 'Mask sensitive data'}
-            >
-              {maskingEnabled ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
-              {maskingEnabled ? 'MASKED' : 'MASK'}
-            </Button>
+          {hasSensitive && (
+            userCanToggle && onToggleMasking ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                className={cn(
+                  "h-6 px-2 text-[10px] font-bold gap-1",
+                  effectiveMaskingEnabled ? "text-purple-400 bg-purple-500/10" : "text-zinc-500"
+                )}
+                onClick={onToggleMasking}
+                title={effectiveMaskingEnabled ? 'Show sensitive data' : 'Mask sensitive data'}
+              >
+                {effectiveMaskingEnabled ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                {effectiveMaskingEnabled ? 'MASKED' : 'MASK'}
+              </Button>
+            ) : effectiveMaskingEnabled ? (
+              <span className="h-6 px-2 text-[10px] font-bold text-purple-400 bg-purple-500/10 rounded flex items-center gap-1">
+                <Lock className="w-3 h-3" />
+                MASKED
+              </span>
+            ) : null
           )}
 
           {/* Pending Changes Indicator */}
@@ -684,6 +838,8 @@ export function ResultsGrid({
                 idColumn={idColumn}
                 index={virtualRow.index}
                 onSelect={() => setSelectedRow({ row: result.rows[virtualRow.index], index: virtualRow.index })}
+                maskingActive={effectiveMaskingEnabled}
+                sensitiveColumns={sensitiveColumns}
               />
             </div>
           ))}
@@ -701,18 +857,22 @@ export function ResultsGrid({
         <div className="min-w-max">
           {/* Header - Sticky */}
           <div className="sticky top-0 z-20 bg-[#0d0d0d] flex">
-            {result.fields.map((field, idx) => (
-              <div
-                key={field}
-                className={cn(
-                  "h-10 px-4 flex items-center border-r border-b border-white/5 text-[10px] uppercase font-mono tracking-wider text-zinc-500 bg-[#0d0d0d] whitespace-nowrap",
-                  idx === 0 && "sticky left-0 z-30 bg-[#0d0d0d] shadow-[2px_0_8px_rgba(0,0,0,0.3)]",
-                  "min-w-[120px]"
-                )}
-              >
-                {field}
-              </div>
-            ))}
+            {result.fields.map((field, idx) => {
+              const isSensitive = effectiveMaskingEnabled && sensitiveColumns.has(field);
+              return (
+                <div
+                  key={field}
+                  className={cn(
+                    "h-10 px-4 flex items-center gap-1 border-r border-b border-white/5 text-[10px] uppercase font-mono tracking-wider text-zinc-500 bg-[#0d0d0d] whitespace-nowrap",
+                    idx === 0 && "sticky left-0 z-30 bg-[#0d0d0d] shadow-[2px_0_8px_rgba(0,0,0,0.3)]",
+                    "min-w-[120px]"
+                  )}
+                >
+                  {field}
+                  {isSensitive && <Lock className="w-2.5 h-2.5 text-purple-400" />}
+                </div>
+              );
+            })}
           </div>
 
           {/* Virtualized Body */}
@@ -739,7 +899,15 @@ export function ResultsGrid({
                   onClick={() => setSelectedRow({ row, index: virtualRow.index })}
                 >
                   {result.fields.map((field, idx) => {
-                    const { display, className } = formatCellValue(row[field]);
+                    const pattern = sensitiveColumns.get(field);
+                    const isMasked = effectiveMaskingEnabled && pattern && row[field] != null && row[field] !== undefined;
+                    const displayValue = isMasked
+                      ? maskValueByPattern(row[field], pattern)
+                      : formatCellValue(row[field]).display;
+                    const className = isMasked
+                      ? 'text-zinc-500 italic'
+                      : formatCellValue(row[field]).className;
+
                     return (
                       <div
                         key={field}
@@ -749,7 +917,7 @@ export function ResultsGrid({
                           "min-w-[120px]"
                         )}
                       >
-                        <span className={className}>{display}</span>
+                        <span className={className}>{displayValue}</span>
                       </div>
                     );
                   })}
@@ -857,6 +1025,9 @@ export function ResultsGrid({
           isOpen={!!selectedRow}
           onClose={() => setSelectedRow(null)}
           rowIndex={selectedRow.index}
+          maskingActive={effectiveMaskingEnabled}
+          sensitiveColumns={sensitiveColumns}
+          allowReveal={userCanReveal}
         />
       )}
     </div>

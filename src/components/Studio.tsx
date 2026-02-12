@@ -33,6 +33,15 @@ import { storage } from '@/lib/storage';
 import { getDefaultQuery, getRandomShowcaseQuery } from '@/lib/showcase-queries';
 import { generateTableQuery, generateSelectQuery, shouldRefreshSchema } from '@/lib/query-generators';
 import { isMultiStatement } from '@/lib/sql/statement-splitter';
+import {
+  type MaskingConfig,
+  loadMaskingConfig,
+  saveMaskingConfig,
+  shouldMask,
+  canToggleMasking,
+  detectSensitiveColumnsFromConfig,
+  applyMaskingToRows,
+} from '@/lib/data-masking';
 import { useRouter } from 'next/navigation';
 import { cn } from '@/lib/utils';
 import {
@@ -158,8 +167,10 @@ export default function Studio() {
   // Playground (Sandbox) mode
   const [playgroundMode, setPlaygroundMode] = useState(false);
 
-  // Data Masking
-  const [maskingEnabled, setMaskingEnabled] = useState(false);
+  // Data Masking (config-aware, persisted)
+  const [maskingConfig, setMaskingConfig] = useState<MaskingConfig>(() => loadMaskingConfig());
+  const effectiveMasking = shouldMask(user?.role, maskingConfig);
+  const userCanToggle = canToggleMasking(user?.role, maskingConfig);
 
   // Inline Editing
   const [editingEnabled, setEditingEnabled] = useState(false);
@@ -281,7 +292,12 @@ export default function Studio() {
   const exportResults = (format: 'csv' | 'json' | 'sql-insert' | 'sql-ddl') => {
     if (!currentTab.result) return;
 
-    const data = currentTab.result.rows;
+    // Apply masking to exported data if masking is active
+    const rawData = currentTab.result.rows;
+    const sensitiveColumns = detectSensitiveColumnsFromConfig(currentTab.result.fields, maskingConfig);
+    const data = effectiveMasking
+      ? applyMaskingToRows(rawData, currentTab.result.fields, sensitiveColumns)
+      : rawData;
     let content = '';
     let mimeType = 'text/plain';
     let ext = format;
@@ -1886,8 +1902,16 @@ export default function Studio() {
                                     : undefined
                                 }
                                 isLoadingMore={currentTab.isLoadingMore}
-                                maskingEnabled={maskingEnabled}
-                                onToggleMasking={() => setMaskingEnabled(!maskingEnabled)}
+                                maskingEnabled={effectiveMasking}
+                                onToggleMasking={userCanToggle ? () => {
+                                  setMaskingConfig(prev => {
+                                    const updated = { ...prev, enabled: !prev.enabled };
+                                    saveMaskingConfig(updated);
+                                    return updated;
+                                  });
+                                } : undefined}
+                                userRole={user?.role}
+                                maskingConfig={maskingConfig}
                                 editingEnabled={editingEnabled}
                                 pendingChanges={pendingChanges}
                                 onCellChange={handleCellChange}

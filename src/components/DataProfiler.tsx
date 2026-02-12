@@ -1,9 +1,10 @@
 "use client";
 
-import React, { useState, useEffect } from 'react';
-import { Loader2, BarChart3, X, Hash, AlertCircle, Sparkles } from 'lucide-react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { Loader2, BarChart3, X, Hash, AlertCircle, Sparkles, Lock } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { TableSchema, DatabaseConnection } from '@/lib/types';
+import { detectSensitiveColumns, maskValue } from '@/lib/data-masking';
 
 interface ColumnProfile {
   name: string;
@@ -48,6 +49,12 @@ export function DataProfiler({
   const [aiSummary, setAiSummary] = useState('');
   const [isAiLoading, setIsAiLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Detect sensitive columns for masking sample values in profiler
+  const sensitiveColumnNames = useMemo(() => {
+    if (!tableSchema?.columns) return new Map();
+    return detectSensitiveColumns(tableSchema.columns.map(c => c.name));
+  }, [tableSchema]);
 
   useEffect(() => {
     if (isOpen && tableName && connection) {
@@ -194,6 +201,9 @@ export function DataProfiler({
                         {col.type && (
                           <span className="text-[10px] text-zinc-500 font-mono">{col.type}</span>
                         )}
+                        {sensitiveColumnNames.has(col.name) && (
+                          <Lock className="w-3 h-3 text-purple-400" title="Sensitive column - values masked" />
+                        )}
                       </div>
                       <span className="text-[10px] text-zinc-500">
                         {col.distinctCount.toLocaleString()} distinct
@@ -229,26 +239,44 @@ export function DataProfiler({
 
                         {/* Min/Max */}
                         <div className="flex gap-4 text-[10px]">
-                          {col.minValue && (
-                            <span className="text-zinc-500">
-                              min: <span className="text-zinc-400 font-mono">{col.minValue.substring(0, 30)}</span>
-                            </span>
-                          )}
-                          {col.maxValue && (
-                            <span className="text-zinc-500">
-                              max: <span className="text-zinc-400 font-mono">{col.maxValue.substring(0, 30)}</span>
-                            </span>
-                          )}
+                          {col.minValue && (() => {
+                            const rule = sensitiveColumnNames.get(col.name);
+                            const display = rule
+                              ? maskValue(col.minValue, rule)
+                              : col.minValue.substring(0, 30);
+                            return (
+                              <span className="text-zinc-500">
+                                min: <span className={cn("font-mono", rule ? "text-zinc-500 italic" : "text-zinc-400")}>{display}</span>
+                              </span>
+                            );
+                          })()}
+                          {col.maxValue && (() => {
+                            const rule = sensitiveColumnNames.get(col.name);
+                            const display = rule
+                              ? maskValue(col.maxValue, rule)
+                              : col.maxValue.substring(0, 30);
+                            return (
+                              <span className="text-zinc-500">
+                                max: <span className={cn("font-mono", rule ? "text-zinc-500 italic" : "text-zinc-400")}>{display}</span>
+                              </span>
+                            );
+                          })()}
                         </div>
 
                         {/* Sample Values */}
                         {col.sampleValues && col.sampleValues.length > 0 && (
                           <div className="flex flex-wrap gap-1 mt-1.5">
-                            {col.sampleValues.map((val, i) => (
-                              <span key={i} className="text-[10px] px-1.5 py-0.5 bg-zinc-800 rounded text-zinc-400 font-mono">
-                                {val.substring(0, 20)}
-                              </span>
-                            ))}
+                            {col.sampleValues.map((val, i) => {
+                              const rule = sensitiveColumnNames.get(col.name);
+                              const display = rule
+                                ? maskValue(val, rule)
+                                : val.substring(0, 20);
+                              return (
+                                <span key={i} className={cn("text-[10px] px-1.5 py-0.5 bg-zinc-800 rounded font-mono", rule ? "text-zinc-500 italic" : "text-zinc-400")}>
+                                  {display}
+                                </span>
+                              );
+                            })}
                           </div>
                         )}
                       </>
