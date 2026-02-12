@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo, useState, useRef } from 'react';
+import React, { useMemo, useState, useRef, useCallback } from 'react';
 import { QueryResult } from '@/lib/types';
 import {
   flexRender,
@@ -25,6 +25,11 @@ import {
   FileJson,
   Check,
   Loader2,
+  EyeOff,
+  Eye,
+  Save,
+  X,
+  Filter,
 } from 'lucide-react';
 import {
   Sheet,
@@ -34,11 +39,27 @@ import {
 } from "@/components/ui/sheet";
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { detectSensitiveColumns, maskValue } from '@/lib/data-masking';
+
+export interface CellChange {
+  rowIndex: number;
+  columnId: string;
+  originalValue: unknown;
+  newValue: string;
+}
 
 interface ResultsGridProps {
   result: QueryResult;
   onLoadMore?: () => void;
   isLoadingMore?: boolean;
+  maskingEnabled?: boolean;
+  onToggleMasking?: () => void;
+  // Inline editing props
+  editingEnabled?: boolean;
+  pendingChanges?: CellChange[];
+  onCellChange?: (change: CellChange) => void;
+  onDiscardChanges?: () => void;
+  onApplyChanges?: () => void;
 }
 
 // Detect primary column (first text-like column that's not an ID)
@@ -265,12 +286,32 @@ function RowDetailSheet({
   );
 }
 
-export function ResultsGrid({ result, onLoadMore, isLoadingMore }: ResultsGridProps) {
+export function ResultsGrid({
+  result,
+  onLoadMore,
+  isLoadingMore,
+  maskingEnabled,
+  onToggleMasking,
+  editingEnabled,
+  pendingChanges,
+  onCellChange,
+  onDiscardChanges,
+  onApplyChanges,
+}: ResultsGridProps) {
   const [sorting, setSorting] = useState<SortingState>([]);
   const [editingCell, setEditingCell] = useState<{ rowIndex: number, columnId: string } | null>(null);
   const [editValue, setEditValue] = useState<string>("");
   const [viewMode, setViewMode] = useState<'card' | 'table'>('card');
   const [selectedRow, setSelectedRow] = useState<{ row: Record<string, unknown>; index: number } | null>(null);
+  const [columnFilters, setColumnFilters] = useState<Map<string, string>>(new Map());
+  const [activeFilterCol, setActiveFilterCol] = useState<string | null>(null);
+
+  const sensitiveColumns = useMemo(
+    () => detectSensitiveColumns(result.fields),
+    [result.fields]
+  );
+
+  const hasSensitive = sensitiveColumns.size > 0;
 
   const primaryColumn = useMemo(
     () => detectPrimaryColumn(result.fields, result.rows),
@@ -282,31 +323,104 @@ export function ResultsGrid({ result, onLoadMore, isLoadingMore }: ResultsGridPr
     [result.fields]
   );
 
+  // Filter rows based on column filters
+  const filteredRows = useMemo(() => {
+    if (columnFilters.size === 0) return result.rows;
+    return result.rows.filter(row => {
+      for (const [col, filterVal] of columnFilters) {
+        if (!filterVal) continue;
+        const cellVal = String(row[col] ?? '').toLowerCase();
+        if (!cellVal.includes(filterVal.toLowerCase())) return false;
+      }
+      return true;
+    });
+  }, [result.rows, columnFilters]);
+
+  const activeFilterCount = useMemo(() => {
+    let count = 0;
+    for (const [, v] of columnFilters) {
+      if (v) count++;
+    }
+    return count;
+  }, [columnFilters]);
+
+  // Check if a cell has a pending change
+  const getCellChange = useCallback((rowIndex: number, columnId: string): CellChange | undefined => {
+    return pendingChanges?.find(c => c.rowIndex === rowIndex && c.columnId === columnId);
+  }, [pendingChanges]);
+
   const columns = useMemo<ColumnDef<Record<string, unknown>>[]>(() => {
     return result.fields.map(field => ({
       accessorKey: field,
       header: ({ column }) => {
+        const hasFilter = columnFilters.has(field) && !!columnFilters.get(field);
         return (
-          <div
-            className="flex items-center gap-2 cursor-pointer select-none group/header"
-            onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
-          >
-            <span className="truncate">{field}</span>
-            <div className="flex-shrink-0 opacity-0 group-hover/header:opacity-100 transition-opacity">
-              {column.getIsSorted() === "asc" ? (
-                <ArrowUp className="w-3 h-3" />
-              ) : column.getIsSorted() === "desc" ? (
-                <ArrowDown className="w-3 h-3" />
-              ) : (
-                <ArrowUpDown className="w-3 h-3" />
-              )}
+          <div className="flex items-center gap-1 select-none group/header w-full">
+            <div
+              className="flex items-center gap-1 cursor-pointer flex-1 min-w-0"
+              onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+            >
+              <span className="truncate">{field}</span>
+              <div className="flex-shrink-0 opacity-0 group-hover/header:opacity-100 transition-opacity">
+                {column.getIsSorted() === "asc" ? (
+                  <ArrowUp className="w-3 h-3" />
+                ) : column.getIsSorted() === "desc" ? (
+                  <ArrowDown className="w-3 h-3" />
+                ) : (
+                  <ArrowUpDown className="w-3 h-3" />
+                )}
+              </div>
             </div>
+            <button
+              className={cn(
+                "shrink-0 p-0.5 rounded transition-colors",
+                hasFilter ? "text-blue-400" : "opacity-0 group-hover/header:opacity-100 text-zinc-500 hover:text-zinc-300"
+              )}
+              onClick={(e) => { e.stopPropagation(); setActiveFilterCol(activeFilterCol === field ? null : field); }}
+              title="Filter column"
+            >
+              <Filter className="w-3 h-3" />
+            </button>
+            {activeFilterCol === field && (
+              <div
+                className="absolute top-full left-0 mt-1 z-30 bg-[#111] border border-white/10 rounded-lg shadow-xl p-2 w-48"
+                onClick={e => e.stopPropagation()}
+              >
+                <input
+                  autoFocus
+                  placeholder={`Filter ${field}...`}
+                  value={columnFilters.get(field) || ''}
+                  onChange={e => {
+                    const next = new Map(columnFilters);
+                    if (e.target.value) next.set(field, e.target.value);
+                    else next.delete(field);
+                    setColumnFilters(next);
+                  }}
+                  onKeyDown={e => { if (e.key === 'Escape' || e.key === 'Enter') setActiveFilterCol(null); }}
+                  className="w-full bg-[#050505] border border-white/10 rounded px-2 py-1 text-[11px] text-zinc-200 outline-none focus:border-blue-500/30"
+                />
+                {hasFilter && (
+                  <button
+                    className="mt-1 text-[10px] text-red-400 hover:text-red-300"
+                    onClick={() => {
+                      const next = new Map(columnFilters);
+                      next.delete(field);
+                      setColumnFilters(next);
+                      setActiveFilterCol(null);
+                    }}
+                  >
+                    Clear filter
+                  </button>
+                )}
+              </div>
+            )}
           </div>
         );
       },
       cell: ({ row, column, getValue }) => {
         const val = getValue();
         const isEditing = editingCell?.rowIndex === row.index && editingCell?.columnId === column.id;
+        const pendingChange = getCellChange(row.index, column.id);
 
         if (isEditing) {
           return (
@@ -317,26 +431,63 @@ export function ResultsGrid({ result, onLoadMore, isLoadingMore }: ResultsGridPr
                 value={editValue}
                 onChange={(e) => setEditValue(e.target.value)}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter') setEditingCell(null);
+                  if (e.key === 'Enter') {
+                    // Save edit if value changed
+                    if (editValue !== String(val ?? '') && onCellChange && editingEnabled) {
+                      onCellChange({
+                        rowIndex: row.index,
+                        columnId: column.id,
+                        originalValue: val,
+                        newValue: editValue,
+                      });
+                    }
+                    setEditingCell(null);
+                  }
                   if (e.key === 'Escape') setEditingCell(null);
                 }}
-                onBlur={() => setEditingCell(null)}
+                onBlur={() => {
+                  if (editValue !== String(val ?? '') && onCellChange && editingEnabled) {
+                    onCellChange({
+                      rowIndex: row.index,
+                      columnId: column.id,
+                      originalValue: val,
+                      newValue: editValue,
+                    });
+                  }
+                  setEditingCell(null);
+                }}
               />
             </div>
           );
         }
 
-        const { display, className } = formatCellValue(val);
+        // Apply masking if enabled
+        const sensitiveRule = sensitiveColumns.get(column.id);
+        if (maskingEnabled && sensitiveRule && val !== null && val !== undefined) {
+          const masked = maskValue(val, sensitiveRule);
+          return (
+            <div className="truncate w-full h-full">
+              <span className="text-zinc-500 italic">{masked}</span>
+            </div>
+          );
+        }
+
+        // Show pending change value
+        const displayVal = pendingChange !== undefined ? pendingChange.newValue : val;
+        const { display, className } = formatCellValue(displayVal);
 
         return (
           <div
-            className="truncate w-full h-full cursor-text"
+            className={cn(
+              "truncate w-full h-full cursor-text",
+              pendingChange && "bg-amber-500/10 rounded px-0.5"
+            )}
             onDoubleClick={() => {
               setEditingCell({ rowIndex: row.index, columnId: column.id });
-              setEditValue(String(val ?? ""));
+              setEditValue(pendingChange ? pendingChange.newValue : String(val ?? ""));
             }}
           >
-            <span className={className}>{display}</span>
+            <span className={cn(className, pendingChange && "text-amber-400")}>{display}</span>
           </div>
         );
       },
@@ -344,10 +495,10 @@ export function ResultsGrid({ result, onLoadMore, isLoadingMore }: ResultsGridPr
       minSize: 80,
       maxSize: 500,
     }));
-  }, [result.fields, editingCell, editValue]);
+  }, [result.fields, editingCell, editValue, maskingEnabled, sensitiveColumns, editingEnabled, onCellChange, getCellChange, columnFilters, activeFilterCol]);
 
   const table = useReactTable({
-    data: result.rows,
+    data: filteredRows,
     columns,
     state: {
       sorting,
@@ -412,6 +563,17 @@ export function ResultsGrid({ result, onLoadMore, isLoadingMore }: ResultsGridPr
             )}
           </span>
           <span className="hidden sm:inline">{result.fields.length} columns</span>
+          {activeFilterCount > 0 && (
+            <button
+              className="flex items-center gap-1 text-blue-400 text-[10px] bg-blue-500/10 px-2 py-0.5 rounded hover:bg-blue-500/20 transition-colors"
+              onClick={() => { setColumnFilters(new Map()); setActiveFilterCol(null); }}
+              title="Clear all filters"
+            >
+              <Filter className="w-3 h-3" />
+              {activeFilterCount} filter{activeFilterCount > 1 ? 's' : ''} • {filteredRows.length} shown
+              <X className="w-3 h-3" />
+            </button>
+          )}
           {result.pagination?.wasLimited && (
             <span className="text-blue-400 text-[10px] bg-blue-500/10 px-2 py-0.5 rounded">
               AUTO-LIMITED
@@ -420,6 +582,48 @@ export function ResultsGrid({ result, onLoadMore, isLoadingMore }: ResultsGridPr
         </div>
 
         <div className="flex items-center gap-2">
+          {/* Data Masking Toggle */}
+          {hasSensitive && onToggleMasking && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className={cn(
+                "h-6 px-2 text-[10px] font-bold gap-1",
+                maskingEnabled ? "text-purple-400 bg-purple-500/10" : "text-zinc-500"
+              )}
+              onClick={onToggleMasking}
+              title={maskingEnabled ? 'Show sensitive data' : 'Mask sensitive data'}
+            >
+              {maskingEnabled ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+              {maskingEnabled ? 'MASKED' : 'MASK'}
+            </Button>
+          )}
+
+          {/* Pending Changes Indicator */}
+          {editingEnabled && pendingChanges && pendingChanges.length > 0 && (
+            <div className="flex items-center gap-1">
+              <span className="text-[10px] text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded">
+                {pendingChanges.length} change{pendingChanges.length > 1 ? 's' : ''}
+              </span>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-6 px-1.5 text-[10px] text-emerald-400 hover:bg-emerald-500/10"
+                onClick={onApplyChanges}
+              >
+                <Save className="w-3 h-3" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-6 px-1.5 text-[10px] text-red-400 hover:bg-red-500/10"
+                onClick={onDiscardChanges}
+              >
+                <X className="w-3 h-3" />
+              </Button>
+            </div>
+          )}
+
           {/* Execution Time - Hidden on mobile */}
           <span className="hidden sm:flex px-2 py-0.5 rounded bg-white/5 border border-white/5">
             EXEC TIME: {result.executionTime || '0ms'}

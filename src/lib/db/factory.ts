@@ -10,6 +10,7 @@ import {
   type ProviderOptions,
 } from './types';
 import { DatabaseConfigError } from './errors';
+import { createSSHTunnel, closeSSHTunnel } from '@/lib/ssh/tunnel';
 
 // Only Demo Provider is imported statically (no native dependencies)
 import { DemoProvider } from './providers/demo';
@@ -87,12 +88,11 @@ export async function createDatabaseProvider(
     case 'demo':
       return new DemoProvider(connection, options);
 
-    // Not Yet Implemented
-    case 'redis':
-      throw new DatabaseConfigError(
-        `${connection.type} provider is not yet implemented. Coming soon!`,
-        connection.type
-      );
+    // Key-Value Stores - dynamically imported
+    case 'redis': {
+      const { RedisProvider } = await import('./providers/keyvalue/redis');
+      return new RedisProvider(connection, options);
+    }
 
     default:
       throw new DatabaseConfigError(
@@ -129,8 +129,25 @@ export async function getOrCreateProvider(
     return provider;
   }
 
+  // If SSH tunnel is configured, create tunnel first and rewrite connection
+  let effectiveConnection = connection;
+  if (connection.sshTunnel?.enabled && connection.host && connection.port) {
+    const tunnel = await createSSHTunnel(
+      connection.id,
+      connection.sshTunnel,
+      connection.host,
+      connection.port
+    );
+    // Rewrite connection to point to local tunnel endpoint
+    effectiveConnection = {
+      ...connection,
+      host: tunnel.localHost,
+      port: tunnel.localPort,
+    };
+  }
+
   // Create new provider (async - dynamically loads the provider module)
-  provider = await createDatabaseProvider(connection, options);
+  provider = await createDatabaseProvider(effectiveConnection, options);
   await provider.connect();
 
   // Cache it
@@ -153,6 +170,9 @@ export async function removeProvider(connectionId: string): Promise<void> {
     }
     providerCache.delete(connectionId);
   }
+
+  // Close SSH tunnel if exists
+  await closeSSHTunnel(connectionId);
 }
 
 /**

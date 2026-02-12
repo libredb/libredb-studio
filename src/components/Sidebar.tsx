@@ -156,6 +156,9 @@ interface SidebarProps {
   onOpenMaintenance?: (tab?: 'global' | 'tables' | 'sessions', table?: string) => void;
   databaseType?: string;
   metadata?: ProviderMetadata | null;
+  onProfileTable?: (tableName: string) => void;
+  onGenerateCode?: (tableName: string) => void;
+  onGenerateTestData?: (tableName: string) => void;
 }
 
 export function Sidebar({
@@ -174,7 +177,10 @@ export function Sidebar({
   isAdmin = false,
   onOpenMaintenance,
   databaseType,
-  metadata
+  metadata,
+  onProfileTable,
+  onGenerateCode,
+  onGenerateTestData,
 }: SidebarProps) {
   return (
     <div className="flex w-full h-full border-r border-border flex-col bg-background select-none">
@@ -232,6 +238,9 @@ export function Sidebar({
               onOpenMaintenance={onOpenMaintenance}
               databaseType={databaseType}
               metadata={metadata}
+              onProfileTable={onProfileTable}
+              onGenerateCode={onGenerateCode}
+              onGenerateTestData={onGenerateTestData}
             />
           )}
         </div>

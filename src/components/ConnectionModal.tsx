@@ -5,8 +5,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { DatabaseConnection, DatabaseType, ConnectionEnvironment, ENVIRONMENT_COLORS, ENVIRONMENT_LABELS } from '@/lib/types';
-import { Database, ShieldCheck, Zap, Globe, Key, Link, CheckCircle2, XCircle, ClipboardPaste } from 'lucide-react';
+import { DatabaseConnection, DatabaseType, ConnectionEnvironment, ENVIRONMENT_COLORS, ENVIRONMENT_LABELS, SSLMode, SSLConfig, SSHTunnelConfig } from '@/lib/types';
+import { Database, ShieldCheck, Zap, Globe, Key, Link, CheckCircle2, XCircle, ClipboardPaste, Lock, ChevronDown, Terminal } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { getDBConfig } from '@/lib/db-ui-config';
 import { parseConnectionString } from '@/lib/connection-string-parser';
@@ -35,6 +35,24 @@ export function ConnectionModal({ isOpen, onClose, onConnect, editConnection }: 
   const [pasteInput, setPasteInput] = useState('');
   const [showPasteInput, setShowPasteInput] = useState(false);
 
+  // SSL/TLS
+  const [showSSL, setShowSSL] = useState(false);
+  const [sslMode, setSSLMode] = useState<SSLMode>('disable');
+  const [caCert, setCaCert] = useState('');
+  const [clientCert, setClientCert] = useState('');
+  const [clientKey, setClientKey] = useState('');
+
+  // SSH Tunnel
+  const [showSSH, setShowSSH] = useState(false);
+  const [sshEnabled, setSSHEnabled] = useState(false);
+  const [sshHost, setSSHHost] = useState('');
+  const [sshPort, setSSHPort] = useState('22');
+  const [sshUsername, setSSHUsername] = useState('');
+  const [sshAuthMethod, setSSHAuthMethod] = useState<'password' | 'privateKey'>('password');
+  const [sshPassword, setSSHPassword] = useState('');
+  const [sshPrivateKey, setSSHPrivateKey] = useState('');
+  const [sshPassphrase, setSSHPassphrase] = useState('');
+
   const isEditMode = !!editConnection;
 
   // Populate form when editing
@@ -51,6 +69,26 @@ export function ConnectionModal({ isOpen, onClose, onConnect, editConnection }: 
       setEnvironment(editConnection.environment || 'local');
       if (editConnection.connectionString) {
         setMongoConnectionMode('connectionString');
+      }
+      // SSL
+      if (editConnection.ssl) {
+        setSSLMode(editConnection.ssl.mode);
+        setCaCert(editConnection.ssl.caCert || '');
+        setClientCert(editConnection.ssl.clientCert || '');
+        setClientKey(editConnection.ssl.clientKey || '');
+        if (editConnection.ssl.mode !== 'disable') setShowSSL(true);
+      }
+      // SSH
+      if (editConnection.sshTunnel?.enabled) {
+        setSSHEnabled(true);
+        setShowSSH(true);
+        setSSHHost(editConnection.sshTunnel.host);
+        setSSHPort(editConnection.sshTunnel.port.toString());
+        setSSHUsername(editConnection.sshTunnel.username);
+        setSSHAuthMethod(editConnection.sshTunnel.authMethod);
+        setSSHPassword(editConnection.sshTunnel.password || '');
+        setSSHPrivateKey(editConnection.sshTunnel.privateKey || '');
+        setSSHPassphrase(editConnection.sshTunnel.passphrase || '');
       }
     }
   }, [editConnection]);
@@ -76,6 +114,24 @@ export function ConnectionModal({ isOpen, onClose, onConnect, editConnection }: 
   }, [isOpen, editConnection]);
 
   const buildConnection = (): DatabaseConnection => {
+    const sslConfig: SSLConfig | undefined = sslMode !== 'disable' ? {
+      mode: sslMode,
+      ...(caCert ? { caCert } : {}),
+      ...(clientCert ? { clientCert } : {}),
+      ...(clientKey ? { clientKey } : {}),
+    } : undefined;
+
+    const sshConfig: SSHTunnelConfig | undefined = sshEnabled ? {
+      enabled: true,
+      host: sshHost,
+      port: parseInt(sshPort) || 22,
+      username: sshUsername,
+      authMethod: sshAuthMethod,
+      ...(sshAuthMethod === 'password' ? { password: sshPassword } : {}),
+      ...(sshAuthMethod === 'privateKey' ? { privateKey: sshPrivateKey } : {}),
+      ...(sshPassphrase ? { passphrase: sshPassphrase } : {}),
+    } : undefined;
+
     return {
       id: editConnection?.id || Math.random().toString(36).substr(2, 9),
       name: name || `${type}-connection`,
@@ -88,6 +144,8 @@ export function ConnectionModal({ isOpen, onClose, onConnect, editConnection }: 
       createdAt: editConnection?.createdAt || new Date(),
       environment,
       color: ENVIRONMENT_COLORS[environment],
+      ...(sslConfig ? { ssl: sslConfig } : {}),
+      ...(sshConfig ? { sshTunnel: sshConfig } : {}),
       ...(getDBConfig(type).showConnectionStringToggle && mongoConnectionMode === 'connectionString' ? {
         connectionString,
         host: undefined,
@@ -510,6 +568,232 @@ export function ConnectionModal({ isOpen, onClose, onConnect, editConnection }: 
                   </div>
                 )}
               </div>
+
+            {/* SSL/TLS & SSH Panels - only for non-demo, non-sqlite */}
+            {type !== 'demo' && type !== 'sqlite' && (
+              <div className="space-y-2">
+                {/* SSL/TLS Toggle */}
+                <button
+                  type="button"
+                  onClick={() => setShowSSL(!showSSL)}
+                  className="flex items-center gap-2 w-full px-3 py-2 rounded-lg border border-white/5 hover:border-white/10 bg-zinc-900/30 text-xs font-bold text-zinc-400 hover:text-zinc-200 transition-all"
+                >
+                  <Lock className="w-3.5 h-3.5 text-emerald-500" />
+                  <span>SSL / TLS</span>
+                  {sslMode !== 'disable' && (
+                    <span className="ml-1 px-1.5 py-0.5 rounded text-[9px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                      {sslMode.toUpperCase()}
+                    </span>
+                  )}
+                  <ChevronDown className={cn("w-3 h-3 ml-auto transition-transform", showSSL && "rotate-180")} />
+                </button>
+                <AnimatePresence>
+                  {showSSL && (
+                    <motion.div
+                      initial={{ height: 0, opacity: 0 }}
+                      animate={{ height: 'auto', opacity: 1 }}
+                      exit={{ height: 0, opacity: 0 }}
+                      className="overflow-hidden"
+                    >
+                      <div className="p-3 rounded-lg border border-emerald-500/10 bg-emerald-500/5 space-y-3">
+                        <div className="space-y-2">
+                          <Label className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">SSL Mode</Label>
+                          <div className="flex flex-wrap gap-1.5">
+                            {(['disable', 'require', 'verify-ca', 'verify-full'] as SSLMode[]).map((mode) => (
+                              <button
+                                key={mode}
+                                type="button"
+                                onClick={() => setSSLMode(mode)}
+                                className={cn(
+                                  "px-2.5 py-1.5 rounded-md text-[10px] font-bold uppercase tracking-wider transition-all border",
+                                  sslMode === mode
+                                    ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-400"
+                                    : "border-transparent text-zinc-500 hover:text-zinc-300 hover:bg-white/5"
+                                )}
+                              >
+                                {mode}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                        {sslMode !== 'disable' && (
+                          <div className="space-y-3">
+                            <div className="space-y-1.5">
+                              <Label className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">CA Certificate (PEM)</Label>
+                              <textarea
+                                value={caCert}
+                                onChange={(e) => setCaCert(e.target.value)}
+                                placeholder="-----BEGIN CERTIFICATE-----&#10;Paste CA cert content here...&#10;-----END CERTIFICATE-----"
+                                rows={3}
+                                className="w-full rounded-md bg-zinc-900/50 border border-white/5 focus:border-emerald-500/50 text-xs font-mono text-zinc-300 p-2 resize-none placeholder:text-zinc-600"
+                              />
+                            </div>
+                            {(sslMode === 'verify-ca' || sslMode === 'verify-full') && (
+                              <>
+                                <div className="space-y-1.5">
+                                  <Label className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Client Certificate (PEM)</Label>
+                                  <textarea
+                                    value={clientCert}
+                                    onChange={(e) => setClientCert(e.target.value)}
+                                    placeholder="-----BEGIN CERTIFICATE-----&#10;Optional client cert...&#10;-----END CERTIFICATE-----"
+                                    rows={3}
+                                    className="w-full rounded-md bg-zinc-900/50 border border-white/5 focus:border-emerald-500/50 text-xs font-mono text-zinc-300 p-2 resize-none placeholder:text-zinc-600"
+                                  />
+                                </div>
+                                <div className="space-y-1.5">
+                                  <Label className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Client Private Key (PEM)</Label>
+                                  <textarea
+                                    value={clientKey}
+                                    onChange={(e) => setClientKey(e.target.value)}
+                                    placeholder="-----BEGIN PRIVATE KEY-----&#10;Optional client key...&#10;-----END PRIVATE KEY-----"
+                                    rows={3}
+                                    className="w-full rounded-md bg-zinc-900/50 border border-white/5 focus:border-emerald-500/50 text-xs font-mono text-zinc-300 p-2 resize-none placeholder:text-zinc-600"
+                                  />
+                                </div>
+                              </>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+
+                {/* SSH Tunnel Toggle */}
+                <button
+                  type="button"
+                  onClick={() => setShowSSH(!showSSH)}
+                  className="flex items-center gap-2 w-full px-3 py-2 rounded-lg border border-white/5 hover:border-white/10 bg-zinc-900/30 text-xs font-bold text-zinc-400 hover:text-zinc-200 transition-all"
+                >
+                  <Terminal className="w-3.5 h-3.5 text-purple-500" />
+                  <span>SSH Tunnel</span>
+                  {sshEnabled && (
+                    <span className="ml-1 px-1.5 py-0.5 rounded text-[9px] bg-purple-500/10 text-purple-400 border border-purple-500/20">
+                      ON
+                    </span>
+                  )}
+                  <ChevronDown className={cn("w-3 h-3 ml-auto transition-transform", showSSH && "rotate-180")} />
+                </button>
+                <AnimatePresence>
+                  {showSSH && (
+                    <motion.div
+                      initial={{ height: 0, opacity: 0 }}
+                      animate={{ height: 'auto', opacity: 1 }}
+                      exit={{ height: 0, opacity: 0 }}
+                      className="overflow-hidden"
+                    >
+                      <div className="p-3 rounded-lg border border-purple-500/10 bg-purple-500/5 space-y-3">
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={sshEnabled}
+                            onChange={(e) => setSSHEnabled(e.target.checked)}
+                            className="rounded border-white/20 bg-zinc-900/50"
+                          />
+                          <span className="text-xs font-semibold text-zinc-300">Enable SSH Tunnel</span>
+                        </label>
+                        {sshEnabled && (
+                          <div className="space-y-3">
+                            <div className="grid grid-cols-4 gap-3">
+                              <div className="col-span-3 space-y-1.5">
+                                <Label className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">SSH Host</Label>
+                                <Input
+                                  value={sshHost}
+                                  onChange={(e) => setSSHHost(e.target.value)}
+                                  placeholder="bastion.example.com"
+                                  className="h-9 bg-zinc-900/50 border-white/5 focus:border-purple-500/50 text-sm"
+                                />
+                              </div>
+                              <div className="space-y-1.5">
+                                <Label className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Port</Label>
+                                <Input
+                                  value={sshPort}
+                                  onChange={(e) => setSSHPort(e.target.value)}
+                                  className="h-9 bg-zinc-900/50 border-white/5 focus:border-purple-500/50 text-sm font-mono"
+                                />
+                              </div>
+                            </div>
+                            <div className="space-y-1.5">
+                              <Label className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Username</Label>
+                              <Input
+                                value={sshUsername}
+                                onChange={(e) => setSSHUsername(e.target.value)}
+                                placeholder="ubuntu"
+                                className="h-9 bg-zinc-900/50 border-white/5 focus:border-purple-500/50 text-sm"
+                              />
+                            </div>
+                            <div className="space-y-2">
+                              <Label className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Auth Method</Label>
+                              <div className="flex gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => setSSHAuthMethod('password')}
+                                  className={cn(
+                                    "flex-1 px-3 py-1.5 rounded-md text-[10px] font-bold uppercase tracking-wider transition-all border",
+                                    sshAuthMethod === 'password'
+                                      ? "border-purple-500/30 bg-purple-500/10 text-purple-400"
+                                      : "border-transparent text-zinc-500 hover:text-zinc-300 hover:bg-white/5"
+                                  )}
+                                >
+                                  Password
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setSSHAuthMethod('privateKey')}
+                                  className={cn(
+                                    "flex-1 px-3 py-1.5 rounded-md text-[10px] font-bold uppercase tracking-wider transition-all border",
+                                    sshAuthMethod === 'privateKey'
+                                      ? "border-purple-500/30 bg-purple-500/10 text-purple-400"
+                                      : "border-transparent text-zinc-500 hover:text-zinc-300 hover:bg-white/5"
+                                  )}
+                                >
+                                  Private Key
+                                </button>
+                              </div>
+                            </div>
+                            {sshAuthMethod === 'password' ? (
+                              <div className="space-y-1.5">
+                                <Label className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">SSH Password</Label>
+                                <Input
+                                  type="password"
+                                  value={sshPassword}
+                                  onChange={(e) => setSSHPassword(e.target.value)}
+                                  placeholder="••••••••"
+                                  className="h-9 bg-zinc-900/50 border-white/5 focus:border-purple-500/50 text-sm"
+                                />
+                              </div>
+                            ) : (
+                              <div className="space-y-3">
+                                <div className="space-y-1.5">
+                                  <Label className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Private Key (PEM)</Label>
+                                  <textarea
+                                    value={sshPrivateKey}
+                                    onChange={(e) => setSSHPrivateKey(e.target.value)}
+                                    placeholder="-----BEGIN OPENSSH PRIVATE KEY-----&#10;Paste private key here...&#10;-----END OPENSSH PRIVATE KEY-----"
+                                    rows={4}
+                                    className="w-full rounded-md bg-zinc-900/50 border border-white/5 focus:border-purple-500/50 text-xs font-mono text-zinc-300 p-2 resize-none placeholder:text-zinc-600"
+                                  />
+                                </div>
+                                <div className="space-y-1.5">
+                                  <Label className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Passphrase (optional)</Label>
+                                  <Input
+                                    type="password"
+                                    value={sshPassphrase}
+                                    onChange={(e) => setSSHPassphrase(e.target.value)}
+                                    placeholder="Key passphrase (if encrypted)"
+                                    className="h-9 bg-zinc-900/50 border-white/5 focus:border-purple-500/50 text-sm"
+                                  />
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+            )}
 
             {/* Test Result */}
             <AnimatePresence>

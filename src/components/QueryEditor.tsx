@@ -156,6 +156,7 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
   const [aiPrompt, setAiPrompt] = useState('');
   const [isAiLoading, setIsAiLoading] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
+  const [aiConversationHistory, setAiConversationHistory] = useState<{ role: 'user' | 'assistant'; content: string }[]>([]);
 
   // Sync editor content when value prop changes externally (e.g., tab switch)
   useEffect(() => {
@@ -434,10 +435,11 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
       const response = await fetch('/api/ai/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          prompt: aiPrompt, 
-          databaseType, 
-          schemaContext: filteredSchemaContext 
+        body: JSON.stringify({
+          prompt: aiPrompt,
+          databaseType,
+          schemaContext: filteredSchemaContext,
+          conversationHistory: aiConversationHistory.length > 0 ? aiConversationHistory : undefined,
         }),
       });
 
@@ -487,6 +489,13 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
         lastSyncedValueRef.current = fullAiResponse;
         onChange?.(fullAiResponse);
       }
+
+      // Save conversation history for multi-turn
+      setAiConversationHistory(prev => [
+        ...prev,
+        { role: 'user' as const, content: aiPrompt },
+        { role: 'assistant' as const, content: fullAiResponse },
+      ]);
 
       setAiPrompt('');
       setShowAi(false);
@@ -1004,8 +1013,18 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
                     </div>
                     <span className="text-[10px] font-black text-blue-400 uppercase tracking-[0.2em]">Expert DBA Mode</span>
                   </div>
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-[9px] text-zinc-500 font-medium">Context: {tables.length} tables active</span>
+                  <div className="flex items-center gap-2">
+                    {aiConversationHistory.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setAiConversationHistory([])}
+                        className="text-[9px] text-zinc-500 hover:text-zinc-300 font-medium px-1.5 py-0.5 rounded bg-white/5 hover:bg-white/10 transition-colors"
+                        title="Clear conversation history"
+                      >
+                        {aiConversationHistory.length / 2} turns - Clear
+                      </button>
+                    )}
+                    <span className="text-[9px] text-zinc-500 font-medium">Context: {tables.length} tables</span>
                     <div className="w-1 h-1 rounded-full bg-emerald-500 animate-pulse" />
                   </div>
                   </div>

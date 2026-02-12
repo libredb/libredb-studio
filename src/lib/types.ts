@@ -18,6 +18,27 @@ export const ENVIRONMENT_LABELS: Record<ConnectionEnvironment, string> = {
   other: '',
 };
 
+export type SSLMode = 'disable' | 'require' | 'verify-ca' | 'verify-full';
+
+export interface SSLConfig {
+  mode: SSLMode;
+  caCert?: string;
+  clientCert?: string;
+  clientKey?: string;
+  rejectUnauthorized?: boolean;
+}
+
+export interface SSHTunnelConfig {
+  enabled: boolean;
+  host: string;
+  port: number;
+  username: string;
+  authMethod: 'password' | 'privateKey';
+  password?: string;
+  privateKey?: string;
+  passphrase?: string;
+}
+
 export interface DatabaseConnection {
   id: string;
   name: string;
@@ -33,6 +54,8 @@ export interface DatabaseConnection {
   color?: string;
   environment?: ConnectionEnvironment;
   group?: string;
+  ssl?: SSLConfig;
+  sshTunnel?: SSHTunnelConfig;
 }
 
 export interface TableSchema {
