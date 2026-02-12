@@ -18,11 +18,31 @@ export async function POST(req: NextRequest) {
 
     if (!connection || !sql) {
       return NextResponse.json(
-        { error: 'Connection and SQL query are required' },
+        { error: 'Connection and query are required' },
         { status: 400 }
       );
     }
 
+    const isMongoDB = connection.type === 'mongodb';
+
+    // MongoDB: skip SQL analysis/limiting — provider handles its own defaults
+    if (isMongoDB) {
+      const provider = await getOrCreateProvider(connection);
+      const result = await provider.query(sql);
+
+      return NextResponse.json({
+        ...result,
+        pagination: {
+          limit: 100,
+          offset: 0,
+          hasMore: false,
+          totalReturned: result.rows.length,
+          wasLimited: false,
+        },
+      });
+    }
+
+    // SQL path (PostgreSQL, MySQL, SQLite)
     // Options extraction with defaults
     const {
       limit = DEFAULT_QUERY_LIMIT,

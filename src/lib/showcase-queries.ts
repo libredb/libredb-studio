@@ -564,7 +564,12 @@ export function getDefaultQuery(isDemo: boolean, dbType?: string): string {
   }
 
   if (dbType === 'mongodb') {
-    return '// Start typing your MongoDB query here\n';
+    return `{
+  "collection": "your_collection",
+  "operation": "find",
+  "filter": {},
+  "options": { "limit": 50 }
+}`;
   }
 
   return '-- Start typing your SQL query here\n';

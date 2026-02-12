@@ -127,14 +127,15 @@ interface SidebarProps {
   onShowDiagram?: () => void;
   isAdmin?: boolean;
   onOpenMaintenance?: (tab?: 'global' | 'tables' | 'sessions', table?: string) => void;
+  databaseType?: string;
 }
 
-export function Sidebar({ 
-  connections, 
-  activeConnection, 
-  schema, 
+export function Sidebar({
+  connections,
+  activeConnection,
+  schema,
   isLoadingSchema,
-  onSelectConnection, 
+  onSelectConnection,
   onDeleteConnection,
   onAddConnection,
   onTableClick,
@@ -142,7 +143,8 @@ export function Sidebar({
   onCreateTableClick,
   onShowDiagram,
   isAdmin = false,
-  onOpenMaintenance
+  onOpenMaintenance,
+  databaseType
 }: SidebarProps) {
   return (
     <div className="flex w-full h-full border-r border-border flex-col bg-background select-none">
@@ -197,6 +199,7 @@ export function Sidebar({
               onCreateTableClick={onCreateTableClick}
               isAdmin={isAdmin}
               onOpenMaintenance={onOpenMaintenance}
+              databaseType={databaseType}
             />
           )}
         </div>

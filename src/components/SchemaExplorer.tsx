@@ -40,17 +40,20 @@ interface SchemaExplorerProps {
   onCreateTableClick?: () => void;
   isAdmin?: boolean;
   onOpenMaintenance?: (tab?: 'global' | 'tables' | 'sessions', table?: string) => void;
+  databaseType?: string;
 }
 
-export function SchemaExplorer({ 
-  schema, 
-  isLoadingSchema, 
+export function SchemaExplorer({
+  schema,
+  isLoadingSchema,
   onTableClick,
   onGenerateSelect,
   onCreateTableClick,
   isAdmin = false,
-  onOpenMaintenance
+  onOpenMaintenance,
+  databaseType
 }: SchemaExplorerProps) {
+  const isMongoDB = databaseType === 'mongodb';
   const [searchQuery, setSearchQuery] = useState('');
   const [expandedTables, setExpandedTables] = useState<Set<string>>(new Set());
 
@@ -128,15 +131,17 @@ export function SchemaExplorer({
                 <Settings className="w-3.5 h-3.5" />
               </Button>
             )}
-            <Button
-              variant="ghost"
-              size="icon"
-              className="w-6 h-6 hover:bg-accent text-muted-foreground hover:text-blue-400 transition-colors"
-              onClick={onCreateTableClick}
-              title="Create Table"
-            >
-              <Plus className="w-3.5 h-3.5" />
-            </Button>
+            {!isMongoDB && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="w-6 h-6 hover:bg-accent text-muted-foreground hover:text-blue-400 transition-colors"
+                onClick={onCreateTableClick}
+                title="Create Table"
+              >
+                <Plus className="w-3.5 h-3.5" />
+              </Button>
+            )}
             <span className="text-[9px] bg-blue-500/10 text-blue-400 px-1.5 py-0.5 rounded-full font-mono border border-blue-500/10">
               {schema.length}
             </span>
@@ -146,7 +151,7 @@ export function SchemaExplorer({
         <div className="relative group">
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground group-focus-within:text-blue-500 transition-colors" />
           <Input
-            placeholder="Search tables or columns..."
+            placeholder={isMongoDB ? "Search collections or fields..." : "Search tables or columns..."}
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="h-8 pl-8 pr-8 text-[12px] bg-muted/50 border-border focus-visible:ring-1 focus-visible:ring-blue-500/50 placeholder:text-muted-foreground/50"
@@ -217,13 +222,13 @@ export function SchemaExplorer({
                   <DropdownMenuContent align="end" className="w-48">
                     <DropdownMenuItem onClick={() => onTableClick?.(table.name)}>
                       <Play className="w-3.5 h-3.5 mr-2 text-green-500" />
-                      Select Top 100
+                      {isMongoDB ? 'Find Documents' : 'Select Top 100'}
                     </DropdownMenuItem>
                     <DropdownMenuItem onClick={() => onGenerateSelect?.(table.name)}>
                       <Filter className="w-3.5 h-3.5 mr-2 text-blue-500" />
-                      Generate Query
+                      {isMongoDB ? 'Generate Find' : 'Generate Query'}
                     </DropdownMenuItem>
-                    <DropdownMenuItem onClick={() => copyToClipboard(table.name, 'Table name')}>
+                    <DropdownMenuItem onClick={() => copyToClipboard(table.name, isMongoDB ? 'Collection name' : 'Table name')}>
                       <Copy className="w-3.5 h-3.5 mr-2 text-muted-foreground" />
                       Copy Name
                     </DropdownMenuItem>
@@ -232,11 +237,11 @@ export function SchemaExplorer({
                         <DropdownMenuSeparator />
                         <DropdownMenuItem onClick={() => onOpenMaintenance?.('tables', table.name)}>
                           <Search className="w-3.5 h-3.5 mr-2 text-amber-500" />
-                          Analyze Table
+                          {isMongoDB ? 'Validate Collection' : 'Analyze Table'}
                         </DropdownMenuItem>
                         <DropdownMenuItem onClick={() => onOpenMaintenance?.('tables', table.name)}>
                           <Trash2 className="w-3.5 h-3.5 mr-2 text-blue-400" />
-                          Vacuum Table
+                          {isMongoDB ? 'Compact Collection' : 'Vacuum Table'}
                         </DropdownMenuItem>
                       </>
                     )}

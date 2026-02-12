@@ -343,6 +343,13 @@ export default function Studio() {
       });
     }
 
+    // MongoDB does not support EXPLAIN — early return with toast
+    if (isExplain && activeConnection.type === 'mongodb') {
+      toast({ title: "Not Supported", description: "EXPLAIN is not available for MongoDB connections.", variant: "destructive" });
+      setTabs(prev => prev.map(t => t.id === targetTabId ? { ...t, isExecuting: false, isLoadingMore: false } : t));
+      return;
+    }
+
     // Build EXPLAIN query for PostgreSQL/MySQL
     const buildExplainQuery = (sql: string, dbType: string): string | null => {
       // Only for SELECT queries
@@ -505,8 +512,15 @@ export default function Studio() {
         };
       }));
 
-      if (!isExplain && /(CREATE|DROP|ALTER|TRUNCATE)\b/i.test(queryToExecute)) {
-        fetchSchema(activeConnection);
+      // Refresh schema after DDL (SQL) or write operations (MongoDB)
+      if (!isExplain) {
+        const isMongoDB = activeConnection.type === 'mongodb';
+        const shouldRefresh = isMongoDB
+          ? /"operation"\s*:\s*"(insert|delete|update)/i.test(queryToExecute)
+          : /(CREATE|DROP|ALTER|TRUNCATE)\b/i.test(queryToExecute);
+        if (shouldRefresh) {
+          fetchSchema(activeConnection);
+        }
       }
     } catch (error) {
       setTabs(prev => prev.map(t => t.id === targetTabId ? {
@@ -656,10 +670,11 @@ export default function Studio() {
   }, [activeConnection, fetchSchema]);
 
   const handleTableClick = (tableName: string) => {
-    const newQuery = activeConnection?.type === 'mongodb' 
-      ? `db.collection("${tableName}").find({}).limit(50)` 
+    const isMongoDB = activeConnection?.type === 'mongodb';
+    const newQuery = isMongoDB
+      ? JSON.stringify({ collection: tableName, operation: 'find', filter: {}, options: { limit: 50 } }, null, 2)
       : `SELECT * FROM ${tableName} LIMIT 50;`;
-    
+
     const newId = Math.random().toString(36).substring(7);
     const newTab: QueryTab = {
       id: newId,
@@ -667,7 +682,7 @@ export default function Studio() {
       query: newQuery,
       result: null,
       isExecuting: false,
-      type: currentTab.type
+      type: isMongoDB ? 'mongodb' : 'sql'
     };
     setTabs(prev => [...prev, newTab]);
     setActiveTabId(newId);
@@ -675,10 +690,30 @@ export default function Studio() {
   };
 
   const handleGenerateSelect = (tableName: string) => {
+    const isMongoDB = activeConnection?.type === 'mongodb';
     const table = schema.find(t => t.name === tableName);
-    const cols = table?.columns.map(c => `  ${c.name}`).join(',\n') || '  *';
-    const newQuery = `SELECT\n${cols}\nFROM ${tableName}\nWHERE 1=1\nLIMIT 100;`;
-    
+
+    let newQuery: string;
+    let tabType: 'sql' | 'mongodb' | 'redis' = 'sql';
+
+    if (isMongoDB) {
+      const projection: Record<string, number> = {};
+      table?.columns.forEach(c => { projection[c.name] = 1; });
+      newQuery = JSON.stringify({
+        collection: tableName,
+        operation: 'find',
+        filter: {},
+        options: {
+          projection: Object.keys(projection).length > 0 ? projection : undefined,
+          limit: 100
+        }
+      }, null, 2);
+      tabType = 'mongodb';
+    } else {
+      const cols = table?.columns.map(c => `  ${c.name}`).join(',\n') || '  *';
+      newQuery = `SELECT\n${cols}\nFROM ${tableName}\nWHERE 1=1\nLIMIT 100;`;
+    }
+
     const newId = Math.random().toString(36).substring(7);
     setTabs(prev => [...prev, {
       id: newId,
@@ -686,7 +721,7 @@ export default function Studio() {
       query: newQuery,
       result: null,
       isExecuting: false,
-      type: 'sql'
+      type: tabType
     }]);
     setActiveTabId(newId);
     setActiveView('editor');
@@ -715,6 +750,7 @@ export default function Studio() {
             onShowDiagram={() => setShowDiagram(true)}
             isAdmin={isAdmin}
             onOpenMaintenance={openMaintenance}
+            databaseType={activeConnection?.type}
           />
         </ResizablePanel>
         <ResizableHandle className="hidden md:flex w-1 bg-transparent hover:bg-blue-500/30 transition-colors" />
@@ -1042,6 +1078,7 @@ export default function Studio() {
                   onCreateTableClick={() => setIsCreateTableModalOpen(true)}
                   isAdmin={isAdmin}
                   onOpenMaintenance={openMaintenance}
+                  databaseType={activeConnection?.type}
                 />
               ) : (
                 <div className="flex flex-col items-center justify-center h-full text-zinc-500">
