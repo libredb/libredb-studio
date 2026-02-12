@@ -18,3 +18,12 @@ services:
       MONGO_INITDB_ROOT_PASSWORD: admin
     ports:
       - "27017:27017"
+  mysql:
+    image: mysql:latest
+    container_name: libredb-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: mysql
+    ports:
+      - "3306:3306"

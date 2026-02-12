@@ -69,9 +69,11 @@ export function MonitoringDashboard() {
     const loadedConnections = storage.getConnections();
     setConnections(loadedConnections);
 
-    // Auto-select first connection if available
+    // Restore persisted active connection, fallback to first
     if (loadedConnections.length > 0 && !selectedConnection) {
-      setSelectedConnection(loadedConnections[0]);
+      const savedId = storage.getActiveConnectionId();
+      const saved = savedId ? loadedConnections.find(c => c.id === savedId) : null;
+      setSelectedConnection(saved ?? loadedConnections[0]);
     }
   }, []);
 
