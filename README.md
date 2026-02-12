@@ -64,14 +64,25 @@ The demo runs in **Demo Mode** with simulated data. No real database required!
 
 ### Multi-Model AI Copilot
 - **Universal LLM Support**: Defaults to Gemini 2.5 Flash, but ready for OpenAI, Claude, or **Local LLMs** (Ollama/LM Studio).
-- **Prompt-to-SQL**: Generate complex queries from natural language.
+- **NL2SQL**: Generate complex queries from natural language with schema-aware context.
+- **Query Safety Analysis**: AI-powered pre-execution risk assessment for destructive queries (DELETE, DROP, TRUNCATE).
+- **AI Query Explainer**: EXPLAIN plans translated into plain language with optimization suggestions.
+- **AI Query Autopilot**: Automated slow query analysis with actionable index and rewrite recommendations.
 - **Schema Awareness**: AI understands your specific database structure for pinpoint accuracy.
 - **Plug & Play**: Works out of the box with zero complex configuration.
 
 ### Pro Data Management
 - **Universal Data Grid**: Virtualized rendering (TanStack) for millions of rows.
 - **Inline Editing**: Double-click to update values directly in the grid.
+- **Column Filtering**: Per-column text filters on query results for instant data exploration.
+- **Interactive Pivot Table**: Client-side pivoting with 5 aggregation functions (COUNT, SUM, AVG, MIN, MAX) and SQL generation.
 - **Expert Exporter**: Instant CSV and JSON exports for reporting.
+
+### Analyst & Developer Tools
+- **AI Data Profiler**: One-click table profiling with column statistics (null %, cardinality, min/max, sample values) and AI-powered narrative summaries.
+- **ORM Code Generator**: Generate TypeScript interfaces, Zod schemas, Prisma models, Go structs, Python dataclasses, and Java POJOs from live table schemas.
+- **Test Data Generator**: Schema-aware fake data generation with 30+ semantic column inferences (email, phone, name, address, etc.). Produces INSERT statements or MongoDB insertMany JSON.
+- **Database Documentation**: Auto-generated searchable data dictionary from live schema with AI-powered documentation and Markdown export.
 
 ### DBA Maintenance Toolkit (Admin Only)
 - **Live Monitoring**: Track active connections, long-running queries, and session PIDs.
@@ -238,9 +249,13 @@ LibreDB Studio is optimized for K8s with:
 - [x] **Phase 2**: Multi-Model AI (Gemini, OpenAI, Ollama, Custom) Integration.
 - [x] **Phase 3**: Pro Data Grid & Virtualization.
 - [x] **Phase 4**: Multi-Database Support (PostgreSQL, MySQL, SQLite, MongoDB).
-- [ ] **Phase 5**: Interactive ER Diagrams (Visual Schema Graph).
-- [ ] **Phase 6**: Advanced Mobile SQL Keyboard Extension.
-- [ ] **Phase 7**: SSO Integration (OIDC/SAML).
+- [x] **Phase 5**: Interactive ER Diagrams (Visual Schema Graph).
+- [x] **Phase 6**: Enterprise Foundation (Connection Testing, SSL/TLS, SSH Tunnel, Transaction Control, Query Cancellation).
+- [x] **Phase 7**: AI Intelligence (NL2SQL, Query Safety Analysis, AI Index Advisor, Multi-Turn Chat, Query Autopilot).
+- [x] **Phase 8**: Analyst & Developer Tools (Data Profiler, Code Generator, Test Data Generator, Pivot Table, Column Filtering, Database Docs).
+- [ ] **Phase 9**: DBA & Monitoring (Lock Dependency Graph, Vacuum Scheduler, Alerting, Prometheus Export).
+- [ ] **Phase 10**: Enterprise Collaboration (User Identity, RBAC, Audit Log, Shared Workspaces).
+- [ ] **Phase 11**: SSO Integration (OIDC/SAML).
 
 ---
 
