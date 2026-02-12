@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { DatabaseConnection, TableSchema } from '@/lib/types';
+import type { ProviderMetadata } from '@/hooks/use-provider-metadata';
 import { cn } from '@/lib/utils';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
@@ -49,6 +50,7 @@ interface MaintenanceModalProps {
   tables: TableSchema[];
   initialTab?: 'global' | 'tables' | 'sessions';
   targetTable?: string;
+  metadata?: ProviderMetadata | null;
 }
 
 export function MaintenanceModal({ 
@@ -57,7 +59,8 @@ export function MaintenanceModal({
   connection, 
   tables,
   initialTab = 'global',
-  targetTable
+  targetTable,
+  metadata
 }: MaintenanceModalProps) {
   const [activeTab, setActiveTab] = useState(initialTab);
   const [healthData, setHealthData] = useState<HealthData | null>(null);
@@ -115,7 +118,8 @@ export function MaintenanceModal({
 
   if (!connection) return null;
 
-  const isMongoDB = connection.type === 'mongodb';
+  const labels = metadata?.labels;
+  const capabilities = metadata?.capabilities;
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
@@ -176,16 +180,14 @@ export function MaintenanceModal({
                       disabled={!!actionLoading}
                     >
                       {actionLoading === 'analyze-global' ? <RefreshCw className="w-3 h-3 animate-spin mr-2" /> : null}
-                      {isMongoDB ? 'Run Validate' : 'Run Analyze'}
+                      {labels?.analyzeGlobalLabel || 'Run Analyze'}
                     </Button>
                   </div>
                   <h4 className="text-sm font-bold text-zinc-200 mb-1">
-                    {isMongoDB ? 'Validate Collections' : 'Update Statistics'}
+                    {labels?.analyzeGlobalTitle || 'Update Statistics'}
                   </h4>
                   <p className="text-[11px] text-zinc-500 leading-relaxed">
-                    {isMongoDB
-                      ? 'Checks collection structure and indexes integrity for all collections in the database.'
-                      : <>Updates the planner&apos;s statistics for all tables in the database to improve query optimization.</>}
+                    {labels?.analyzeGlobalDesc || <>Updates the planner&apos;s statistics for all tables in the database to improve query optimization.</>}
                   </p>
                 </div>
 
@@ -202,20 +204,18 @@ export function MaintenanceModal({
                       disabled={!!actionLoading}
                     >
                       {actionLoading === 'vacuum-global' ? <RefreshCw className="w-3 h-3 animate-spin mr-2" /> : null}
-                      {isMongoDB ? 'Run Compact' : 'Run Vacuum'}
+                      {labels?.vacuumGlobalLabel || 'Run Vacuum'}
                     </Button>
                   </div>
                   <h4 className="text-sm font-bold text-zinc-200 mb-1">
-                    {isMongoDB ? 'Compact Storage' : 'Reclaim Space'}
+                    {labels?.vacuumGlobalTitle || 'Reclaim Space'}
                   </h4>
                   <p className="text-[11px] text-zinc-500 leading-relaxed">
-                    {isMongoDB
-                      ? 'Defragments and compacts collection storage to reclaim disk space.'
-                      : <>Removes &quot;dead&quot; rows from tables and returns space to the operating system. Includes Analyze.</>}
+                    {labels?.vacuumGlobalDesc || <>Removes &quot;dead&quot; rows from tables and returns space to the operating system. Includes Analyze.</>}
                   </p>
                 </div>
 
-                {!isMongoDB && (
+                {capabilities?.maintenanceOperations?.includes('reindex') && (
                   <div className="p-4 rounded-xl border border-white/5 bg-white/[0.02] hover:bg-white/[0.04] transition-colors group">
                     <div className="flex items-start justify-between mb-4">
                       <div className="w-8 h-8 rounded-lg bg-purple-500/10 border border-purple-500/20 flex items-center justify-center">
@@ -256,11 +256,11 @@ export function MaintenanceModal({
                 <div className="flex items-center gap-2">
                   <TableIcon className="w-4 h-4 text-blue-400" />
                   <span className="text-xs font-bold text-zinc-300">
-                    {isMongoDB ? 'Collection Optimizer' : 'Table Optimizer'}
+                    {labels?.entityName || 'Table'} Optimizer
                   </span>
                 </div>
                 <span className="text-[10px] text-zinc-500">
-                  {tables.length} {isMongoDB ? 'collections' : 'tables'} found
+                  {tables.length} {(labels?.entityNamePlural || 'tables').toLowerCase()} found
                 </span>
               </div>
 
@@ -276,7 +276,7 @@ export function MaintenanceModal({
                     <div className="flex flex-col">
                       <span className="text-sm font-medium text-zinc-200">{table.name}</span>
                       <div className="flex items-center gap-2 text-[10px] text-zinc-500">
-                        <span className="font-mono">{table.rowCount} {isMongoDB ? 'documents' : 'rows'}</span>
+                        <span className="font-mono">{table.rowCount} {labels?.rowNamePlural || 'rows'}</span>
                         <span>•</span>
                         <span className="font-mono">{table.size}</span>
                       </div>
@@ -286,7 +286,7 @@ export function MaintenanceModal({
                         size="icon"
                         variant="ghost"
                         className="w-8 h-8 text-zinc-500 hover:text-yellow-500"
-                        title={isMongoDB ? 'Validate Collection' : 'Analyze Table'}
+                        title={labels?.analyzeAction || 'Analyze Table'}
                         onClick={() => runMaintenance('analyze', table.name)}
                         disabled={!!actionLoading}
                       >
@@ -296,7 +296,7 @@ export function MaintenanceModal({
                         size="icon"
                         variant="ghost"
                         className="w-8 h-8 text-zinc-500 hover:text-blue-500"
-                        title={isMongoDB ? 'Compact Collection' : 'Vacuum Table'}
+                        title={labels?.vacuumAction || 'Vacuum Table'}
                         onClick={() => runMaintenance('vacuum', table.name)}
                         disabled={!!actionLoading}
                       >

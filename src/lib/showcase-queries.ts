@@ -558,12 +558,12 @@ export function getRandomQueryByDifficulty(difficulty: 'simple' | 'intermediate'
 /**
  * Returns the default query based on connection type
  */
-export function getDefaultQuery(isDemo: boolean, dbType?: string): string {
+export function getDefaultQuery(isDemo: boolean, queryLanguage?: 'sql' | 'json'): string {
   if (isDemo) {
     return getRandomShowcaseQuery();
   }
 
-  if (dbType === 'mongodb') {
+  if (queryLanguage === 'json') {
     return `{
   "collection": "your_collection",
   "operation": "find",

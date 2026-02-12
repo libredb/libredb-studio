@@ -30,6 +30,7 @@ interface QueryEditorProps {
   tables?: string[];
   databaseType?: string;
   schemaContext?: string;
+  capabilities?: import('@/lib/db/types').ProviderCapabilities;
 }
 
 const SQL_KEYWORDS = [
@@ -139,7 +140,8 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
   language = 'sql',
   tables = [],
   databaseType,
-  schemaContext
+  schemaContext,
+  capabilities
 }, ref) => {
   const monaco = useMonaco();
   const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
@@ -967,7 +969,7 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
         <div className="flex-1" />
         
           <div className="flex items-center gap-1.5 opacity-50 hover:opacity-100 transition-opacity">
-            {language === 'sql' && onExplain && databaseType !== 'mongodb' && (
+            {onExplain && capabilities?.supportsExplain && (
               <button
                 onClick={onExplain}
                 className="px-2.5 py-1.5 rounded bg-zinc-900 hover:bg-zinc-800 text-amber-500 hover:text-amber-400 text-[10px] font-bold transition-all border border-amber-500/10 active:scale-95 flex items-center gap-1.5 mr-2"

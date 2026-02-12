@@ -7,7 +7,15 @@ import { BaseDatabaseProvider } from '../../base-provider';
 import {
   type DatabaseConnection,
   type ProviderOptions,
+  type PreparedQuery,
+  type QueryPrepareOptions,
 } from '../../types';
+import {
+  analyzeQuery,
+  applyQueryLimit,
+  DEFAULT_QUERY_LIMIT,
+  MAX_UNLIMITED_ROWS,
+} from '../../utils/query-limiter';
 
 // ============================================================================
 // SQL Base Provider
@@ -129,5 +137,27 @@ export abstract class SQLBaseProvider extends BaseDatabaseProvider {
       trimmed.startsWith('alter') ||
       trimmed.startsWith('truncate')
     );
+  }
+
+  // ============================================================================
+  // Query Preparation (applies LIMIT for SELECT queries)
+  // ============================================================================
+
+  public override prepareQuery(query: string, options: QueryPrepareOptions = {}): PreparedQuery {
+    const { limit = DEFAULT_QUERY_LIMIT, offset = 0, unlimited = false } = options;
+    const effectiveLimit = unlimited ? MAX_UNLIMITED_ROWS : limit;
+    const queryInfo = analyzeQuery(query);
+
+    if (queryInfo.type === 'SELECT') {
+      const limitResult = applyQueryLimit(query, effectiveLimit, offset);
+      return {
+        query: limitResult.sql,
+        wasLimited: limitResult.wasLimited,
+        limit: effectiveLimit,
+        offset,
+      };
+    }
+
+    return { query, wasLimited: false, limit: effectiveLimit, offset };
   }
 }

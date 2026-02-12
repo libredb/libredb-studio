@@ -15,6 +15,7 @@ import {
   type MaintenanceType,
   type MaintenanceResult,
   type ProviderOptions,
+  type ProviderCapabilities,
   type DatabaseOverview,
   type PerformanceMetrics,
   type SlowQueryStats,
@@ -81,6 +82,20 @@ export class SQLiteProvider extends SQLBaseProvider {
   constructor(config: DatabaseConnection, options: ProviderOptions = {}) {
     super(config, options);
     this.validate();
+  }
+
+  // ============================================================================
+  // Provider Metadata
+  // ============================================================================
+
+  public override getCapabilities(): ProviderCapabilities {
+    return {
+      ...super.getCapabilities(),
+      defaultPort: null,
+      supportsExplain: false,
+      supportsConnectionString: false,
+      maintenanceOperations: ['vacuum', 'analyze', 'reindex', 'check'],
+    };
   }
 
   // ============================================================================

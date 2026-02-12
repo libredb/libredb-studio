@@ -14,6 +14,10 @@ import {
   type MaintenanceType,
   type MaintenanceResult,
   type ProviderOptions,
+  type ProviderCapabilities,
+  type ProviderLabels,
+  type PreparedQuery,
+  type QueryPrepareOptions,
   type SlowQuery,
   type ActiveSession,
   type DatabaseOverview,
@@ -62,6 +66,48 @@ export class MongoDBProvider extends BaseDatabaseProvider {
   constructor(config: DatabaseConnection, options: ProviderOptions = {}) {
     super(config, options);
     this.validate();
+  }
+
+  // ============================================================================
+  // Provider Metadata
+  // ============================================================================
+
+  public override getCapabilities(): ProviderCapabilities {
+    return {
+      queryLanguage: 'json',
+      supportsExplain: false,
+      supportsExternalQueryLimiting: false,
+      supportsCreateTable: false,
+      supportsMaintenance: true,
+      maintenanceOperations: ['vacuum', 'analyze', 'check'],
+      supportsConnectionString: true,
+      defaultPort: 27017,
+      schemaRefreshPattern: '"operation"\\s*:\\s*"(insert|delete|update)',
+    };
+  }
+
+  public override getLabels(): ProviderLabels {
+    return {
+      entityName: 'Collection',
+      entityNamePlural: 'Collections',
+      rowName: 'document',
+      rowNamePlural: 'documents',
+      selectAction: 'Find Documents',
+      generateAction: 'Generate Find',
+      analyzeAction: 'Validate Collection',
+      vacuumAction: 'Compact Collection',
+      searchPlaceholder: 'Search collections or fields...',
+      analyzeGlobalLabel: 'Run Validate',
+      analyzeGlobalTitle: 'Validate Collections',
+      analyzeGlobalDesc: 'Checks collection structure and indexes integrity for all collections.',
+      vacuumGlobalLabel: 'Run Compact',
+      vacuumGlobalTitle: 'Compact Storage',
+      vacuumGlobalDesc: 'Defragments and compacts collection storage to reclaim disk space.',
+    };
+  }
+
+  public override prepareQuery(query: string, options: QueryPrepareOptions = {}): PreparedQuery {
+    return { query, wasLimited: false, limit: options.limit || 100, offset: 0 };
   }
 
   // ============================================================================

@@ -13,6 +13,7 @@ import {
   type MaintenanceType,
   type MaintenanceResult,
   type ProviderOptions,
+  type ProviderCapabilities,
   type SlowQuery,
   type ActiveSession,
   type DatabaseOverview,
@@ -41,6 +42,20 @@ export class MySQLProvider extends SQLBaseProvider {
   constructor(config: DatabaseConnection, options: ProviderOptions = {}) {
     super(config, options);
     this.validate();
+  }
+
+  // ============================================================================
+  // Provider Metadata
+  // ============================================================================
+
+  public override getCapabilities(): ProviderCapabilities {
+    return {
+      ...super.getCapabilities(),
+      defaultPort: 3306,
+      supportsExplain: true,
+      supportsConnectionString: true,
+      maintenanceOperations: ['analyze', 'optimize', 'check', 'kill'],
+    };
   }
 
   // ============================================================================

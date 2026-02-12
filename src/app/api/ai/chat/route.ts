@@ -12,8 +12,8 @@ import {
 // System Prompt Builder
 // ============================================================================
 
-function buildSystemInstruction(databaseType: string, schemaContext: string): string {
-  if (databaseType === 'mongodb') {
+function buildSystemInstruction(databaseType: string, schemaContext: string, queryLanguage?: string): string {
+  if (queryLanguage === 'json') {
     return `You are an Expert Generative AI Engineer and Senior MongoDB Database Administrator specializing in MQL queries, aggregation pipelines, and document database design.
 
 ROLE:
@@ -98,13 +98,13 @@ GUIDELINES:
 
 export async function POST(req: NextRequest) {
   try {
-    const { prompt, schemaContext, databaseType } = await req.json();
+    const { prompt, schemaContext, databaseType, queryLanguage } = await req.json();
 
     // Create provider from environment configuration (async - dynamically loads provider)
     const provider = await createLLMProvider();
 
     // Build messages
-    const systemInstruction = buildSystemInstruction(databaseType, schemaContext);
+    const systemInstruction = buildSystemInstruction(databaseType, schemaContext, queryLanguage);
 
     // Stream completion
     const stream = await provider.stream({

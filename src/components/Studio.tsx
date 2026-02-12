@@ -18,8 +18,10 @@ import { SaveQueryModal } from '@/components/SaveQueryModal';
 import { MaintenanceModal } from '@/components/MaintenanceModal';
 import { DatabaseConnection, TableSchema, QueryTab, SavedQuery } from '@/lib/types';
 import { useToast } from '@/hooks/use-toast';
+import { useProviderMetadata } from '@/hooks/use-provider-metadata';
 import { storage } from '@/lib/storage';
 import { getDefaultQuery, getRandomShowcaseQuery } from '@/lib/showcase-queries';
+import { generateTableQuery, generateSelectQuery, shouldRefreshSchema } from '@/lib/query-generators';
 import { useRouter } from 'next/navigation';
 import { cn } from '@/lib/utils';
 import {
@@ -78,6 +80,8 @@ export default function Studio() {
   const [maintenanceTargetTable, setMaintenanceTargetTable] = useState<string | undefined>(undefined);
   
   const queryEditorRef = useRef<QueryEditorRef>(null);
+
+  const { metadata } = useProviderMetadata(activeConnection);
 
   useEffect(() => {
     const fetchUser = async () => {
@@ -168,13 +172,14 @@ export default function Studio() {
   const addTab = () => {
     const newId = Math.random().toString(36).substring(7);
     const isDemo = activeConnection?.isDemo || activeConnection?.type === 'demo';
+    const queryLanguage = metadata?.capabilities.queryLanguage;
     const newTab: QueryTab = {
       id: newId,
       name: `Query ${tabs.length + 1}`,
-      query: getDefaultQuery(isDemo, activeConnection?.type),
+      query: getDefaultQuery(isDemo, queryLanguage),
       result: null,
       isExecuting: false,
-      type: activeConnection?.type === 'mongodb' ? 'mongodb' : 'sql'
+      type: queryLanguage === 'json' ? 'mongodb' : 'sql'
     };
     setTabs(prev => [...prev, newTab]);
     setActiveTabId(newId);
@@ -343,9 +348,9 @@ export default function Studio() {
       });
     }
 
-    // MongoDB does not support EXPLAIN — early return with toast
-    if (isExplain && activeConnection.type === 'mongodb') {
-      toast({ title: "Not Supported", description: "EXPLAIN is not available for MongoDB connections.", variant: "destructive" });
+    // Check EXPLAIN support via capabilities
+    if (isExplain && metadata && !metadata.capabilities.supportsExplain) {
+      toast({ title: "Not Supported", description: "EXPLAIN is not available for this database type.", variant: "destructive" });
       setTabs(prev => prev.map(t => t.id === targetTabId ? { ...t, isExecuting: false, isLoadingMore: false } : t));
       return;
     }
@@ -512,13 +517,9 @@ export default function Studio() {
         };
       }));
 
-      // Refresh schema after DDL (SQL) or write operations (MongoDB)
-      if (!isExplain) {
-        const isMongoDB = activeConnection.type === 'mongodb';
-        const shouldRefresh = isMongoDB
-          ? /"operation"\s*:\s*"(insert|delete|update)/i.test(queryToExecute)
-          : /(CREATE|DROP|ALTER|TRUNCATE)\b/i.test(queryToExecute);
-        if (shouldRefresh) {
+      // Refresh schema after DDL/write operations (pattern from provider capabilities)
+      if (!isExplain && metadata) {
+        if (shouldRefreshSchema(queryToExecute, metadata.capabilities.schemaRefreshPattern)) {
           fetchSchema(activeConnection);
         }
       }
@@ -532,7 +533,7 @@ export default function Studio() {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       toast({ title, description: errorMessage, variant: "destructive" });
     }
-  }, [activeConnection, tabs, currentTab, activeTabId, toast, fetchSchema]);
+  }, [activeConnection, tabs, currentTab, activeTabId, toast, fetchSchema, metadata]);
 
   // Load More handler
   const handleLoadMore = () => {
@@ -651,6 +652,8 @@ export default function Studio() {
     if (activeConnection) {
       fetchSchema(activeConnection);
       const isDemo = activeConnection.isDemo || activeConnection.type === 'demo';
+      const tabType = metadata?.capabilities.queryLanguage === 'json' ? 'mongodb' :
+                      activeConnection.type === 'redis' ? 'redis' : 'sql';
       setTabs(prev => prev.map((t, index) => {
         // For demo connection: update first tab with showcase query if it has default content
         const hasDefaultQuery = t.query === '-- Start typing your SQL query here\n' ||
@@ -659,20 +662,19 @@ export default function Studio() {
 
         return {
           ...t,
-          type: activeConnection.type === 'mongodb' ? 'mongodb' :
-                activeConnection.type === 'redis' ? 'redis' : 'sql',
+          type: tabType,
           ...(shouldUpdateWithShowcase ? { query: getRandomShowcaseQuery() } : {})
         };
       }));
     } else {
       setSchema([]);
     }
-  }, [activeConnection, fetchSchema]);
+  }, [activeConnection, fetchSchema, metadata]);
 
   const handleTableClick = (tableName: string) => {
-    const isMongoDB = activeConnection?.type === 'mongodb';
-    const newQuery = isMongoDB
-      ? JSON.stringify({ collection: tableName, operation: 'find', filter: {}, options: { limit: 50 } }, null, 2)
+    const capabilities = metadata?.capabilities;
+    const newQuery = capabilities
+      ? generateTableQuery(tableName, capabilities)
       : `SELECT * FROM ${tableName} LIMIT 50;`;
 
     const newId = Math.random().toString(36).substring(7);
@@ -682,7 +684,7 @@ export default function Studio() {
       query: newQuery,
       result: null,
       isExecuting: false,
-      type: isMongoDB ? 'mongodb' : 'sql'
+      type: capabilities?.queryLanguage === 'json' ? 'mongodb' : 'sql'
     };
     setTabs(prev => [...prev, newTab]);
     setActiveTabId(newId);
@@ -690,29 +692,15 @@ export default function Studio() {
   };
 
   const handleGenerateSelect = (tableName: string) => {
-    const isMongoDB = activeConnection?.type === 'mongodb';
+    const capabilities = metadata?.capabilities;
     const table = schema.find(t => t.name === tableName);
+    const columns = table?.columns || [];
 
-    let newQuery: string;
-    let tabType: 'sql' | 'mongodb' | 'redis' = 'sql';
+    const newQuery = capabilities
+      ? generateSelectQuery(tableName, columns, capabilities)
+      : `SELECT\n${columns.map(c => `  ${c.name}`).join(',\n') || '  *'}\nFROM ${tableName}\nWHERE 1=1\nLIMIT 100;`;
 
-    if (isMongoDB) {
-      const projection: Record<string, number> = {};
-      table?.columns.forEach(c => { projection[c.name] = 1; });
-      newQuery = JSON.stringify({
-        collection: tableName,
-        operation: 'find',
-        filter: {},
-        options: {
-          projection: Object.keys(projection).length > 0 ? projection : undefined,
-          limit: 100
-        }
-      }, null, 2);
-      tabType = 'mongodb';
-    } else {
-      const cols = table?.columns.map(c => `  ${c.name}`).join(',\n') || '  *';
-      newQuery = `SELECT\n${cols}\nFROM ${tableName}\nWHERE 1=1\nLIMIT 100;`;
-    }
+    const tabType: 'sql' | 'mongodb' | 'redis' = capabilities?.queryLanguage === 'json' ? 'mongodb' : 'sql';
 
     const newId = Math.random().toString(36).substring(7);
     setTabs(prev => [...prev, {
@@ -751,6 +739,7 @@ export default function Studio() {
             isAdmin={isAdmin}
             onOpenMaintenance={openMaintenance}
             databaseType={activeConnection?.type}
+            metadata={metadata}
           />
         </ResizablePanel>
         <ResizableHandle className="hidden md:flex w-1 bg-transparent hover:bg-blue-500/30 transition-colors" />
@@ -1079,6 +1068,7 @@ export default function Studio() {
                   isAdmin={isAdmin}
                   onOpenMaintenance={openMaintenance}
                   databaseType={activeConnection?.type}
+                  metadata={metadata}
                 />
               ) : (
                 <div className="flex flex-col items-center justify-center h-full text-zinc-500">
@@ -1134,11 +1124,12 @@ export default function Studio() {
                         ref={queryEditorRef}
                         value={currentTab.query}
                         onChange={(val) => updateCurrentTab({ query: val })}
-                        onExplain={() => executeQuery(undefined, undefined, true)}
+                        onExplain={metadata?.capabilities.supportsExplain ? () => executeQuery(undefined, undefined, true) : undefined}
                         language={currentTab.type === 'mongodb' ? 'json' : 'sql'}
                         tables={tableNames}
                         databaseType={activeConnection?.type}
                         schemaContext={schemaContext}
+                        capabilities={metadata?.capabilities}
                       />
                     </div>
                   </div>
@@ -1302,6 +1293,7 @@ export default function Studio() {
         tables={schema}
         initialTab={maintenanceInitialTab}
         targetTable={maintenanceTargetTable}
+        metadata={metadata}
       />
 
       {/* Unlimited Query Warning Modal (for Load All button) */}

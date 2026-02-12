@@ -12,6 +12,7 @@ import {
   type MaintenanceType,
   type MaintenanceResult,
   type ProviderOptions,
+  type ProviderCapabilities,
   type DatabaseOverview,
   type PerformanceMetrics,
   type SlowQueryStats,
@@ -56,6 +57,18 @@ const MOCK_ORDERS = [
 export class DemoProvider extends BaseDatabaseProvider {
   constructor(config: DatabaseConnection, options: ProviderOptions = {}) {
     super(config, options);
+  }
+
+  // ============================================================================
+  // Provider Metadata
+  // ============================================================================
+
+  public override getCapabilities(): ProviderCapabilities {
+    return {
+      ...super.getCapabilities(),
+      defaultPort: null,
+      supportsConnectionString: false,
+    };
   }
 
   // ============================================================================

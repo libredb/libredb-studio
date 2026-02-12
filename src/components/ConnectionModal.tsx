@@ -6,8 +6,9 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { DatabaseConnection, DatabaseType } from '@/lib/types';
-import { Cloud, HardDrive, Database, Cpu, ShieldCheck, Zap, Globe, Key, Link } from 'lucide-react';
+import { Database, ShieldCheck, Zap, Globe, Key, Link } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { getDBConfig } from '@/lib/db-ui-config';
 import { motion, AnimatePresence } from 'framer-motion';
 
 interface ConnectionModalProps {
@@ -43,7 +44,7 @@ export function ConnectionModal({ isOpen, onClose, onConnect }: ConnectionModalP
       password,
       database,
       createdAt: new Date(),
-      ...(type === 'mongodb' && mongoConnectionMode === 'connectionString' ? {
+      ...(getDBConfig(type).showConnectionStringToggle && mongoConnectionMode === 'connectionString' ? {
         connectionString,
         host: undefined,
         port: undefined,
@@ -64,13 +65,11 @@ export function ConnectionModal({ isOpen, onClose, onConnect }: ConnectionModalP
     setMongoConnectionMode('host');
   };
 
-    const dbTypes: { value: DatabaseType, label: string, icon: React.ComponentType<{ className?: string }>, color: string }[] = [
-      { value: 'postgres', label: 'PostgreSQL', icon: Cloud, color: 'text-blue-400' },
-      { value: 'mysql', label: 'MySQL', icon: HardDrive, color: 'text-amber-400' },
-      { value: 'mongodb', label: 'MongoDB', icon: Database, color: 'text-emerald-400' },
-      { value: 'redis', label: 'Redis', icon: Cpu, color: 'text-rose-400' },
-      { value: 'demo', label: 'Demo Data', icon: Zap, color: 'text-yellow-400' },
-    ];
+    const selectableTypes: DatabaseType[] = ['postgres', 'mysql', 'mongodb', 'redis', 'demo'];
+    const dbTypes = selectableTypes.map(t => {
+      const cfg = getDBConfig(t);
+      return { value: t, label: cfg.label, icon: cfg.icon, color: cfg.color };
+    });
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
@@ -101,10 +100,8 @@ export function ConnectionModal({ isOpen, onClose, onConnect }: ConnectionModalP
                   key={db.value}
                   onClick={() => {
                     setType(db.value);
-                    if (db.value === 'postgres') setPort('5432');
-                    if (db.value === 'mysql') setPort('3306');
-                    if (db.value === 'mongodb') setPort('27017');
-                    if (db.value === 'redis') setPort('6379');
+                    const cfg = getDBConfig(db.value);
+                    if (cfg.defaultPort) setPort(cfg.defaultPort);
                   }}
                   className={cn(
                     "flex flex-col items-center justify-center p-4 rounded-xl border transition-all duration-200 gap-2 group",
@@ -124,8 +121,8 @@ export function ConnectionModal({ isOpen, onClose, onConnect }: ConnectionModalP
               <div className="space-y-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
                 {type !== 'demo' ? (
                   <>
-                    {/* MongoDB connection mode toggle */}
-                    {type === 'mongodb' && (
+                    {/* Connection string mode toggle */}
+                    {getDBConfig(type).showConnectionStringToggle && (
                       <div className="flex items-center gap-2 p-1 rounded-lg bg-zinc-900/50 border border-white/5">
                         <button
                           onClick={() => setMongoConnectionMode('host')}
@@ -154,7 +151,7 @@ export function ConnectionModal({ isOpen, onClose, onConnect }: ConnectionModalP
                       </div>
                     )}
 
-                    {type === 'mongodb' && mongoConnectionMode === 'connectionString' ? (
+                    {getDBConfig(type).showConnectionStringToggle && mongoConnectionMode === 'connectionString' ? (
                       <>
                         <div className="space-y-2">
                           <div className="flex items-center gap-2 mb-1">
@@ -288,7 +285,7 @@ export function ConnectionModal({ isOpen, onClose, onConnect }: ConnectionModalP
           </Button>
           <Button
             onClick={handleConnect}
-            disabled={isTesting || (type === 'mongodb' && mongoConnectionMode === 'connectionString' && !connectionString.trim())}
+            disabled={isTesting || (getDBConfig(type).showConnectionStringToggle && mongoConnectionMode === 'connectionString' && !connectionString.trim())}
             className="bg-blue-600 hover:bg-blue-500 text-white min-w-[140px] font-bold text-xs h-10 shadow-lg shadow-blue-900/20 group relative overflow-hidden"
           >
             <AnimatePresence mode="wait">
