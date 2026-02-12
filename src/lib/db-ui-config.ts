@@ -1,8 +1,12 @@
-import { Cloud, HardDrive, Database, Cpu, Layers, Zap, type LucideIcon } from 'lucide-react';
+import { type LucideIcon } from 'lucide-react';
+import { PostgreSQLIcon, MySQLIcon, SQLiteIcon, MongoDBIcon, RedisIcon, DemoIcon } from '@/components/icons/db-icons';
 import type { DatabaseType } from '@/lib/types';
 
+// DB brand icons share the same interface as LucideIcon (className + SVG props)
+type DBIcon = LucideIcon | React.FC<React.SVGAttributes<SVGSVGElement> & { className?: string }>;
+
 export interface DatabaseUIConfig {
-  icon: LucideIcon;
+  icon: DBIcon;
   color: string;
   label: string;
   defaultPort: string;
@@ -12,7 +16,7 @@ export interface DatabaseUIConfig {
 
 const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
   postgres: {
-    icon: Cloud,
+    icon: PostgreSQLIcon,
     color: 'text-blue-400',
     label: 'PostgreSQL',
     defaultPort: '5432',
@@ -20,7 +24,7 @@ const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
     connectionFields: ['host', 'port', 'user', 'password', 'database'],
   },
   mysql: {
-    icon: HardDrive,
+    icon: MySQLIcon,
     color: 'text-amber-400',
     label: 'MySQL',
     defaultPort: '3306',
@@ -28,7 +32,7 @@ const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
     connectionFields: ['host', 'port', 'user', 'password', 'database'],
   },
   sqlite: {
-    icon: Database,
+    icon: SQLiteIcon,
     color: 'text-cyan-400',
     label: 'SQLite',
     defaultPort: '',
@@ -36,7 +40,7 @@ const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
     connectionFields: ['database'],
   },
   mongodb: {
-    icon: Layers,
+    icon: MongoDBIcon,
     color: 'text-emerald-400',
     label: 'MongoDB',
     defaultPort: '27017',
@@ -44,7 +48,7 @@ const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
     connectionFields: ['host', 'port', 'user', 'password', 'database', 'connectionString'],
   },
   redis: {
-    icon: Cpu,
+    icon: RedisIcon,
     color: 'text-rose-400',
     label: 'Redis',
     defaultPort: '6379',
@@ -52,7 +56,7 @@ const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
     connectionFields: ['host', 'port', 'password', 'database'],
   },
   demo: {
-    icon: Zap,
+    icon: DemoIcon,
     color: 'text-yellow-400',
     label: 'Demo Data',
     defaultPort: '',
@@ -65,7 +69,7 @@ export function getDBConfig(type: DatabaseType): DatabaseUIConfig {
   return DB_UI_CONFIG[type];
 }
 
-export function getDBIcon(type: DatabaseType): LucideIcon {
+export function getDBIcon(type: DatabaseType): DBIcon {
   return DB_UI_CONFIG[type].icon;
 }
 
