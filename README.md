@@ -70,7 +70,9 @@ The demo runs in **Demo Mode** with simulated data. No real database required!
 - **Smart Autocomplete**: Schema-aware suggestions for tables, columns, and SQL keywords.
 - **Multi-Tab Workspace**: Handle parallel tasks with independent execution states.
 - **Visual EXPLAIN**: Graphical execution plans to identify performance bottlenecks.
-- **Interactive ER Diagrams**: Visual schema graph with table relationships and column details.
+- **Interactive ER Diagrams**: Visual schema graph with real foreign key edges, cardinality labels, MiniMap navigation, table search/filter, compact mode, and PNG/SVG export. Automatic hierarchical layout powered by ELK.js.
+- **Schema Diff & Migration**: Compare schema snapshots or cross-connection schemas side-by-side. Color-coded diff view (added/removed/modified) with automatic migration SQL generation for PostgreSQL, MySQL, and SQLite.
+- **Snapshot Timeline**: Visual horizontal timeline of schema snapshots. Click any two points to instantly compare and track schema evolution over time.
 
 <p align="center">
   <img src="public/screenshots/erd-diagram.png" alt="Interactive ER Diagram" width="100%" />
@@ -98,6 +100,12 @@ The demo runs in **Demo Mode** with simulated data. No real database required!
 - **Interactive Pivot Table**: Client-side pivoting with 5 aggregation functions (COUNT, SUM, AVG, MIN, MAX) and SQL generation.
 - **Expert Exporter**: Instant CSV and JSON exports for reporting.
 
+### Advanced Data Visualization
+- **8 Chart Types**: Bar, Line, Pie, Area, Scatter, Histogram, Stacked Bar, and Stacked Area charts powered by Recharts.
+- **Data Aggregation**: Group-by with SUM, AVG, COUNT, MIN, MAX aggregation functions. Date grouping by hour, day, week, month, or year.
+- **Chart Persistence**: Save chart configurations and reload them instantly. Manage a library of saved charts.
+- **Chart Dashboard**: Grid view of all saved charts for at-a-glance data overview directly in the bottom panel.
+
 ### Data Privacy & Masking
 - **Automatic Sensitive Column Detection**: 10 built-in patterns (email, phone, credit card, SSN, password, IP, date, financial, and more) with regex-based column name matching.
 - **Configurable Masking Rules**: Admin panel to add, edit, enable/disable masking patterns. Custom patterns with regex support.
@@ -123,7 +131,11 @@ The demo runs in **Demo Mode** with simulated data. No real database required!
 </p>
 
 ### DBA Maintenance Toolkit (Admin Only)
-- **Live Monitoring**: Track active connections, long-running queries, and session PIDs.
+- **Live Monitoring Dashboard**: 7-tab monitoring with Overview, Performance, Queries, Sessions, Tables, Storage, and Connection Pool views.
+- **Time-Series Trend Charts**: Real-time metric trends (connections, cache hit ratio, buffer pool, deadlocks) with auto-refreshing ring buffer history.
+- **Configurable Auto-Refresh**: Polling intervals from 5s to 60s with play/pause control.
+- **Threshold Alerting**: Color-coded health indicators (healthy/warning/critical) for cache hit ratio, connection usage, deadlocks, and buffer pool utilization.
+- **Connection Pool Stats**: Live total/active/idle/waiting pool metrics with utilization progress bars.
 - **One-Click Maintenance**: Trigger `VACUUM`, `ANALYZE`, and `REINDEX` globally.
 - **Audit Trail**: Full history of every query executed across the organization.
 
@@ -138,7 +150,9 @@ The demo runs in **Demo Mode** with simulated data. No real database required!
 | **Theming** | CSS Variables + `@theme inline` ([Guide](docs/THEMING.md)) | Web, Mobile |
 | **Editor** | Monaco Editor (VS Code Engine) | Web |
 | **AI** | Multi-Model (Gemini, OpenAI, Ollama, Custom) | Web, Mobile |
-| **Database** | PostgreSQL, MySQL, SQLite, MongoDB | Web, Mobile |
+| **Database** | PostgreSQL, MySQL, SQLite, MongoDB, Redis | Web, Mobile |
+| **Charts** | Recharts (Bar, Line, Pie, Area, Scatter, Histogram, Stacked) | Web, Mobile |
+| **ERD** | React Flow, ELK.js (auto-layout) | Web |
 | **State/Grid** | TanStack Table & Virtual | Web, Mobile |
 | **Deployment** | Docker, Kubernetes | Web |
 
@@ -292,9 +306,13 @@ LibreDB Studio is optimized for K8s with:
 - [x] **Phase 7**: AI Intelligence (NL2SQL, Query Safety Analysis, AI Index Advisor, Multi-Turn Chat, Query Autopilot).
 - [x] **Phase 8**: Analyst & Developer Tools (Data Profiler, Code Generator, Test Data Generator, Pivot Table, Column Filtering, Database Docs).
 - [x] **Phase 9**: Data Privacy (Automatic Sensitive Column Detection, Configurable Masking Patterns, RBAC-Enforced Masking, Export Protection).
-- [ ] **Phase 10**: DBA & Monitoring (Lock Dependency Graph, Vacuum Scheduler, Alerting, Prometheus Export).
-- [ ] **Phase 11**: Enterprise Collaboration (User Identity, RBAC, Audit Log, Shared Workspaces).
-- [ ] **Phase 12**: SSO Integration (OIDC/SAML).
+- [x] **Phase 10**: Advanced ERD (Real FK Edges, ELK.js Auto-Layout, MiniMap, PNG/SVG Export, Compact Mode, Table Search).
+- [x] **Phase 11**: Schema Diff & Migration (Snapshot Timeline, Cross-Connection Diff, Migration SQL Generation for PG/MySQL/SQLite).
+- [x] **Phase 12**: Advanced Charting (Scatter, Histogram, Stacked Charts, Aggregation, Date Grouping, Chart Save/Load, Chart Dashboard).
+- [x] **Phase 13**: Monitoring Enhancement (Time-Series Trends, Threshold Alerting, Connection Pool Stats, Configurable Polling).
+- [ ] **Phase 14**: DBA & Monitoring (Lock Dependency Graph, Vacuum Scheduler, Prometheus Export).
+- [ ] **Phase 15**: Enterprise Collaboration (User Identity, RBAC, Audit Log, Shared Workspaces).
+- [ ] **Phase 16**: SSO Integration (OIDC/SAML).
 
 ---
 

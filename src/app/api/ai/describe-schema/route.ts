@@ -15,7 +15,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Schema context required' }, { status: 400 });
     }
 
-    const provider = createLLMProvider();
+    const provider = await createLLMProvider();
 
     const systemPrompt = mode === 'table'
       ? `You are a database documentation expert. Given a table schema, generate clear, concise documentation.

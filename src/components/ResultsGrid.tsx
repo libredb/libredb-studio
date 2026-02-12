@@ -484,7 +484,7 @@ export function ResultsGrid({
             >
               <span className="truncate">{field}</span>
               {isSensitive && (
-                <Lock className="w-3 h-3 text-purple-400 shrink-0" title="Masked column" />
+                <span title="Masked column"><Lock className="w-3 h-3 text-purple-400 shrink-0" /></span>
               )}
               <div className="flex-shrink-0 opacity-0 group-hover/header:opacity-100 transition-opacity">
                 {column.getIsSorted() === "asc" ? (

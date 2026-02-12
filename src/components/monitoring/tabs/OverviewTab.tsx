@@ -15,13 +15,17 @@ import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { Skeleton } from '@/components/ui/skeleton';
 import type { MonitoringData } from '@/lib/db/types';
+import type { TimeSeriesPoint } from '@/lib/time-series-buffer';
+import { evaluateThreshold, getThresholdColor, DEFAULT_THRESHOLDS } from '@/lib/monitoring-thresholds';
+import { MetricChart } from './MetricChart';
 
 interface OverviewTabProps {
   data: MonitoringData | null;
   loading: boolean;
+  history?: TimeSeriesPoint<MonitoringData>[];
 }
 
-export function OverviewTab({ data, loading }: OverviewTabProps) {
+export function OverviewTab({ data, loading, history = [] }: OverviewTabProps) {
   if (loading && !data) {
     return <OverviewSkeleton />;
   }
@@ -32,6 +36,16 @@ export function OverviewTab({ data, loading }: OverviewTabProps) {
   const connectionPercent = overview
     ? Math.round((overview.activeConnections / overview.maxConnections) * 100)
     : 0;
+
+  // Evaluate thresholds
+  const connThreshold = evaluateThreshold(connectionPercent, DEFAULT_THRESHOLDS.find(t => t.metric === 'connectionPercent')!);
+  const cacheThreshold = evaluateThreshold(performance?.cacheHitRatio ?? 100, DEFAULT_THRESHOLDS.find(t => t.metric === 'cacheHitRatio')!);
+
+  // Build chart data from history
+  const connectionHistory = history.map(h => ({
+    timestamp: h.timestamp,
+    value: h.data.overview?.activeConnections ?? 0,
+  }));
 
   return (
     <div className="p-3 sm:p-6 space-y-4 sm:space-y-6">
@@ -55,7 +69,7 @@ export function OverviewTab({ data, loading }: OverviewTabProps) {
       {/* Main Stats Grid */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-4">
         {/* Active Connections */}
-        <Card className="p-0">
+        <Card className={`p-0 border-2 transition-colors ${getThresholdColor(connThreshold)}`}>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 p-3 sm:p-4 pb-1 sm:pb-2">
             <CardTitle className="text-xs sm:text-sm font-medium text-muted-foreground">
               Connections
@@ -93,7 +107,7 @@ export function OverviewTab({ data, loading }: OverviewTabProps) {
         </Card>
 
         {/* Cache Hit Ratio */}
-        <Card className="p-0">
+        <Card className={`p-0 border-2 transition-colors ${getThresholdColor(cacheThreshold)}`}>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 p-3 sm:p-4 pb-1 sm:pb-2">
             <CardTitle className="text-xs sm:text-sm font-medium text-muted-foreground">
               Cache Hit
@@ -136,6 +150,21 @@ export function OverviewTab({ data, loading }: OverviewTabProps) {
           </CardContent>
         </Card>
       </div>
+
+      {/* Connection Trend Chart */}
+      {connectionHistory.length >= 2 && (
+        <Card className="p-0">
+          <CardHeader className="p-3 sm:p-4 pb-1">
+            <CardTitle className="text-xs sm:text-sm font-medium flex items-center gap-2">
+              <Activity className="h-3 w-3 sm:h-4 sm:w-4" />
+              Connection Trend
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="p-3 sm:p-4 pt-0">
+            <MetricChart data={connectionHistory} color="#eab308" title="Connections" />
+          </CardContent>
+        </Card>
+      )}
 
       {/* Secondary Stats */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-4">

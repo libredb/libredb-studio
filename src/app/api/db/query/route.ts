@@ -23,7 +23,7 @@ export async function POST(req: NextRequest) {
     // Pass queryId to provider for cancellation tracking
     const supportsCancel = 'cancelQuery' in provider;
     const result = supportsCancel && queryId
-      ? await (provider as { query(sql: string, params?: unknown[], queryId?: string): Promise<typeof result> }).query(prepared.query, undefined, queryId)
+      ? await (provider as unknown as { query(sql: string, params?: unknown[], queryId?: string): ReturnType<typeof provider.query> }).query(prepared.query, undefined, queryId)
       : await provider.query(prepared.query);
 
     const hasMore = result.rows.length === prepared.limit;

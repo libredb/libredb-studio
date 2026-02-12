@@ -93,7 +93,7 @@ export function DatabaseDocs({ schema, schemaContext, databaseType }: DatabaseDo
       if (table.columns && table.columns.length > 0) {
         md += `| Column | Type | Primary | Nullable |\n|--------|------|---------|----------|\n`;
         for (const col of table.columns) {
-          md += `| ${col.name} | ${col.type} | ${col.isPrimary ? 'Yes' : ''} | ${col.isNullable !== false ? 'Yes' : 'No'} |\n`;
+          md += `| ${col.name} | ${col.type} | ${col.isPrimary ? 'Yes' : ''} | ${col.nullable !== false ? 'Yes' : 'No'} |\n`;
         }
         md += '\n';
       }
@@ -236,7 +236,7 @@ export function DatabaseDocs({ schema, schemaContext, databaseType }: DatabaseDo
                         <td className="px-3 py-1">
                           {col.isPrimary && <span className="text-amber-400 text-[9px] font-bold">PK</span>}
                         </td>
-                        <td className="px-3 py-1 text-zinc-600">{col.isNullable !== false ? 'Yes' : 'No'}</td>
+                        <td className="px-3 py-1 text-zinc-600">{col.nullable !== false ? 'Yes' : 'No'}</td>
                       </tr>
                     ))}
                   </tbody>

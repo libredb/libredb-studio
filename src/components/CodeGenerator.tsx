@@ -113,7 +113,7 @@ function generateCode(lang: Language, table: TableSchema): string {
     case 'typescript': {
       const fields = columns.map(c => {
         const tsType = mapSqlTypeToTS(c.type);
-        const nullable = c.isNullable ? ' | null' : '';
+        const nullable = c.nullable ? ' | null' : '';
         return `  ${toCamelCase(c.name)}: ${tsType}${nullable};`;
       });
       return `export interface ${name} {\n${fields.join('\n')}\n}`;
@@ -121,7 +121,7 @@ function generateCode(lang: Language, table: TableSchema): string {
     case 'zod': {
       const fields = columns.map(c => {
         let zodType = mapSqlTypeToZod(c.type);
-        if (c.isNullable) zodType += '.nullable()';
+        if (c.nullable) zodType += '.nullable()';
         return `  ${toCamelCase(c.name)}: ${zodType},`;
       });
       return `import { z } from 'zod';\n\nexport const ${name}Schema = z.object({\n${fields.join('\n')}\n});\n\nexport type ${name} = z.infer<typeof ${name}Schema>;`;
@@ -129,7 +129,7 @@ function generateCode(lang: Language, table: TableSchema): string {
     case 'prisma': {
       const fields = columns.map(c => {
         const prismaType = mapSqlTypeToPrisma(c.type);
-        const nullable = c.isNullable ? '?' : '';
+        const nullable = c.nullable ? '?' : '';
         const pk = c.isPrimary ? ' @id' : '';
         const auto = c.type.toLowerCase().includes('serial') ? ' @default(autoincrement())' : '';
         return `  ${c.name}  ${prismaType}${nullable}${pk}${auto}`;
@@ -139,7 +139,7 @@ function generateCode(lang: Language, table: TableSchema): string {
     case 'go': {
       const fields = columns.map(c => {
         const goType = mapSqlTypeToGo(c.type);
-        const nullable = c.isNullable ? '*' : '';
+        const nullable = c.nullable ? '*' : '';
         const fieldName = toPascalCase(c.name);
         return `\t${fieldName} ${nullable}${goType} \`json:"${c.name}" db:"${c.name}"\``;
       });
@@ -150,10 +150,10 @@ function generateCode(lang: Language, table: TableSchema): string {
     case 'python': {
       const fields = columns.map(c => {
         const pyType = mapSqlTypeToPython(c.type);
-        const optional = c.isNullable ? `Optional[${pyType}]` : pyType;
+        const optional = c.nullable ? `Optional[${pyType}]` : pyType;
         return `    ${toSnakeCase(c.name)}: ${optional}`;
       });
-      const needsOptional = columns.some(c => c.isNullable);
+      const needsOptional = columns.some(c => c.nullable);
       const needsDatetime = columns.some(c => c.type.toLowerCase().includes('date') || c.type.toLowerCase().includes('time'));
       const imports: string[] = ['from dataclasses import dataclass'];
       if (needsOptional) imports.push('from typing import Optional');

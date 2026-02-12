@@ -34,6 +34,7 @@ import { QueriesTab } from './tabs/QueriesTab';
 import { SessionsTab } from './tabs/SessionsTab';
 import { TablesTab } from './tabs/TablesTab';
 import { StorageTab } from './tabs/StorageTab';
+import { PoolTab } from './tabs/PoolTab';
 
 export function MonitoringDashboard() {
   const router = useRouter();
@@ -54,7 +55,10 @@ export function MonitoringDashboard() {
     error,
     lastUpdated,
     autoRefresh,
+    refreshInterval,
+    history,
     setAutoRefresh,
+    setRefreshInterval,
     refresh,
     killSession,
     runMaintenance,
@@ -118,6 +122,23 @@ export function MonitoringDashboard() {
                 Last: {formatLastUpdated(lastUpdated)}
               </span>
             </div>
+
+            {/* Interval selector */}
+            <Select
+              value={String(refreshInterval)}
+              onValueChange={(v) => setRefreshInterval(Number(v))}
+            >
+              <SelectTrigger className="h-8 w-[80px] text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="5000">5s</SelectItem>
+                <SelectItem value="10000">10s</SelectItem>
+                <SelectItem value="15000">15s</SelectItem>
+                <SelectItem value="30000">30s</SelectItem>
+                <SelectItem value="60000">60s</SelectItem>
+              </SelectContent>
+            </Select>
 
             <Button
               variant="ghost"
@@ -264,15 +285,23 @@ export function MonitoringDashboard() {
                   <HardDrive className="h-4 w-4 sm:h-4 sm:w-4" />
                   <span className="hidden sm:inline">Storage</span>
                 </TabsTrigger>
+                <TabsTrigger
+                  value="pool"
+                  className="flex-1 sm:flex-initial gap-2 px-2 sm:px-4 rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent text-xs sm:text-sm"
+                  title="Pool"
+                >
+                  <Database className="h-4 w-4 sm:h-4 sm:w-4" />
+                  <span className="hidden sm:inline">Pool</span>
+                </TabsTrigger>
               </TabsList>
             </div>
 
             <div className="flex-1 overflow-auto">
               <TabsContent value="overview" className="h-full m-0 p-0">
-                <OverviewTab data={data} loading={loading} />
+                <OverviewTab data={data} loading={loading} history={history} />
               </TabsContent>
               <TabsContent value="performance" className="h-full m-0 p-0">
-                <PerformanceTab data={data} loading={loading} />
+                <PerformanceTab data={data} loading={loading} history={history} />
               </TabsContent>
               <TabsContent value="queries" className="h-full m-0 p-0">
                 <QueriesTab data={data} loading={loading} />
@@ -293,6 +322,9 @@ export function MonitoringDashboard() {
               </TabsContent>
               <TabsContent value="storage" className="h-full m-0 p-0">
                 <StorageTab data={data} loading={loading} />
+              </TabsContent>
+              <TabsContent value="pool" className="h-full m-0 p-0">
+                <PoolTab connection={selectedConnection} />
               </TabsContent>
             </div>
           </Tabs>

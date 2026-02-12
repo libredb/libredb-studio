@@ -1,9 +1,12 @@
-import { DatabaseConnection, QueryHistoryItem, SavedQuery } from './types';
+import { DatabaseConnection, QueryHistoryItem, SavedQuery, SchemaSnapshot, SavedChartConfig } from './types';
 
 const CONNECTIONS_KEY = 'orchids_db_connections';
 const HISTORY_KEY = 'orchids_db_history';
 const SAVED_QUERIES_KEY = 'orchids_db_saved';
+const SCHEMA_SNAPSHOTS_KEY = 'libredb_schema_snapshots';
+const SAVED_CHARTS_KEY = 'libredb_saved_charts';
 const MAX_HISTORY_ITEMS = 500;
+const MAX_SNAPSHOTS = 50;
 
 export const storage = {
   // Connections
@@ -101,5 +104,72 @@ export const storage = {
     const queries = storage.getSavedQueries();
     const filtered = queries.filter(q => q.id !== id);
     localStorage.setItem(SAVED_QUERIES_KEY, JSON.stringify(filtered));
-  }
+  },
+
+  // Schema Snapshots
+  getSchemaSnapshots: (connectionId?: string): SchemaSnapshot[] => {
+    if (typeof window === 'undefined') return [];
+    const stored = localStorage.getItem(SCHEMA_SNAPSHOTS_KEY);
+    if (!stored) return [];
+    try {
+      const snapshots: SchemaSnapshot[] = JSON.parse(stored).map((s: SchemaSnapshot) => ({
+        ...s,
+        createdAt: new Date(s.createdAt),
+      }));
+      if (connectionId) {
+        return snapshots.filter(s => s.connectionId === connectionId);
+      }
+      return snapshots;
+    } catch (e) {
+      console.error('Failed to parse schema snapshots', e);
+      return [];
+    }
+  },
+
+  saveSchemaSnapshot: (snapshot: SchemaSnapshot) => {
+    const snapshots = storage.getSchemaSnapshots();
+    snapshots.push({ ...snapshot, createdAt: new Date() });
+    // Keep only the latest MAX_SNAPSHOTS
+    const trimmed = snapshots.slice(-MAX_SNAPSHOTS);
+    localStorage.setItem(SCHEMA_SNAPSHOTS_KEY, JSON.stringify(trimmed));
+  },
+
+  deleteSchemaSnapshot: (id: string) => {
+    const snapshots = storage.getSchemaSnapshots();
+    const filtered = snapshots.filter(s => s.id !== id);
+    localStorage.setItem(SCHEMA_SNAPSHOTS_KEY, JSON.stringify(filtered));
+  },
+
+  // Saved Charts
+  getSavedCharts: (): SavedChartConfig[] => {
+    if (typeof window === 'undefined') return [];
+    const stored = localStorage.getItem(SAVED_CHARTS_KEY);
+    if (!stored) return [];
+    try {
+      return JSON.parse(stored).map((c: SavedChartConfig) => ({
+        ...c,
+        createdAt: new Date(c.createdAt),
+      }));
+    } catch (e) {
+      console.error('Failed to parse saved charts', e);
+      return [];
+    }
+  },
+
+  saveChart: (chart: SavedChartConfig) => {
+    const charts = storage.getSavedCharts();
+    const existingIndex = charts.findIndex(c => c.id === chart.id);
+    if (existingIndex > -1) {
+      charts[existingIndex] = chart;
+    } else {
+      charts.push({ ...chart, createdAt: new Date() });
+    }
+    localStorage.setItem(SAVED_CHARTS_KEY, JSON.stringify(charts));
+  },
+
+  deleteChart: (id: string) => {
+    const charts = storage.getSavedCharts();
+    const filtered = charts.filter(c => c.id !== id);
+    localStorage.setItem(SAVED_CHARTS_KEY, JSON.stringify(filtered));
+  },
 };
