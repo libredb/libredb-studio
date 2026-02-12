@@ -98,6 +98,14 @@ The demo runs in **Demo Mode** with simulated data. No real database required!
 - **Interactive Pivot Table**: Client-side pivoting with 5 aggregation functions (COUNT, SUM, AVG, MIN, MAX) and SQL generation.
 - **Expert Exporter**: Instant CSV and JSON exports for reporting.
 
+### Data Privacy & Masking
+- **Automatic Sensitive Column Detection**: 10 built-in patterns (email, phone, credit card, SSN, password, IP, date, financial, and more) with regex-based column name matching.
+- **Configurable Masking Rules**: Admin panel to add, edit, enable/disable masking patterns. Custom patterns with regex support.
+- **RBAC-Enforced Masking**: User role cannot toggle or reveal masked data. Admin role has full control with per-cell temporary reveal (10s auto-hide).
+- **Export Protection**: CSV, JSON, and SQL INSERT exports contain masked values when masking is active — no raw data leakage.
+- **Full Coverage**: Masking applied across desktop grid, mobile card view, mobile table view, row detail sheet, and clipboard operations.
+- **Persistent Configuration**: Masking settings stored in localStorage and survive page reloads.
+
 ### Analyst & Developer Tools
 - **AI Data Profiler**: One-click table profiling with column statistics (null %, cardinality, min/max, sample values) and AI-powered narrative summaries.
 - **ORM Code Generator**: Generate TypeScript interfaces, Zod schemas, Prisma models, Go structs, Python dataclasses, and Java POJOs from live table schemas.
@@ -283,9 +291,10 @@ LibreDB Studio is optimized for K8s with:
 - [x] **Phase 6**: Enterprise Foundation (Connection Testing, SSL/TLS, SSH Tunnel, Transaction Control, Query Cancellation).
 - [x] **Phase 7**: AI Intelligence (NL2SQL, Query Safety Analysis, AI Index Advisor, Multi-Turn Chat, Query Autopilot).
 - [x] **Phase 8**: Analyst & Developer Tools (Data Profiler, Code Generator, Test Data Generator, Pivot Table, Column Filtering, Database Docs).
-- [ ] **Phase 9**: DBA & Monitoring (Lock Dependency Graph, Vacuum Scheduler, Alerting, Prometheus Export).
-- [ ] **Phase 10**: Enterprise Collaboration (User Identity, RBAC, Audit Log, Shared Workspaces).
-- [ ] **Phase 11**: SSO Integration (OIDC/SAML).
+- [x] **Phase 9**: Data Privacy (Automatic Sensitive Column Detection, Configurable Masking Patterns, RBAC-Enforced Masking, Export Protection).
+- [ ] **Phase 10**: DBA & Monitoring (Lock Dependency Graph, Vacuum Scheduler, Alerting, Prometheus Export).
+- [ ] **Phase 11**: Enterprise Collaboration (User Identity, RBAC, Audit Log, Shared Workspaces).
+- [ ] **Phase 12**: SSO Integration (OIDC/SAML).
 
 ---
 
