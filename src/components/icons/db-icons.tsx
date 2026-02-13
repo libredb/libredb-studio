@@ -62,6 +62,27 @@ export const RedisIcon: React.FC<IconProps> = ({ className, ...props }) => (
   </svg>
 );
 
+/** Oracle arch/pillar logo (simplified) */
+export const OracleIcon: React.FC<IconProps> = ({ className, ...props }) => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className={className} {...props}>
+    <ellipse cx="12" cy="12" rx="9" ry="5" />
+    <path d="M12 7v10" />
+    <path d="M7.5 9v6" />
+    <path d="M16.5 9v6" />
+  </svg>
+);
+
+/** MSSQL stacked cylinder/database logo (simplified) */
+export const MSSQLIcon: React.FC<IconProps> = ({ className, ...props }) => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className={className} {...props}>
+    <ellipse cx="12" cy="5" rx="8" ry="3" />
+    <path d="M4 5v14c0 1.66 3.58 3 8 3s8-1.34 8-3V5" />
+    <path d="M4 12c0 1.66 3.58 3 8 3s8-1.34 8-3" />
+    <path d="M4 8.5c0 1.66 3.58 3 8 3s8-1.34 8-3" />
+    <path d="M4 15.5c0 1.66 3.58 3 8 3s8-1.34 8-3" />
+  </svg>
+);
+
 /** Demo/Playground lightning icon */
 export const DemoIcon: React.FC<IconProps> = ({ className, ...props }) => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className={className} {...props}>

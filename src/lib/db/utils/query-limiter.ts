@@ -86,6 +86,29 @@ export function analyzeQuery(sql: string): ParsedQueryInfo {
     }
   }
 
+  // Oracle/MSSQL: FETCH FIRST N ROWS ONLY / FETCH NEXT N ROWS ONLY
+  if (!hasLimit) {
+    const fetchMatch = trimmed.match(/\bFETCH\s+(?:FIRST|NEXT)\s+(\d+)\s+ROWS?\s+ONLY\s*;?\s*$/i);
+    if (fetchMatch) {
+      hasLimit = true;
+      existingLimit = parseInt(fetchMatch[1]);
+    }
+  }
+
+  // MSSQL: SELECT TOP N
+  if (!hasLimit) {
+    const topMatch = trimmed.match(/^\s*SELECT\s+TOP\s+(\d+)\b/i);
+    if (topMatch) {
+      hasLimit = true;
+      existingLimit = parseInt(topMatch[1]);
+    }
+  }
+
+  // Oracle legacy: ROWNUM in WHERE clause
+  if (!hasLimit && /\bROWNUM\s*<=?\s*\d+/i.test(normalized)) {
+    hasLimit = true;
+  }
+
   // OFFSET without LIMIT (rare but possible in PostgreSQL)
   const offsetOnlyMatch = !hasLimit && trimmed.match(/\bOFFSET\s+(\d+)\s*;?\s*$/i);
   const hasOffset = hasLimit ? existingOffset !== undefined : !!offsetOnlyMatch;

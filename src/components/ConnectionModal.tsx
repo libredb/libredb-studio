@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { DatabaseConnection, DatabaseType, ConnectionEnvironment, ENVIRONMENT_COLORS, ENVIRONMENT_LABELS, SSLMode, SSLConfig, SSHTunnelConfig } from '@/lib/types';
-import { Database, ShieldCheck, Zap, Globe, Key, Link, CheckCircle2, XCircle, ClipboardPaste, Lock, ChevronDown, Terminal } from 'lucide-react';
+import { Database, ShieldCheck, Zap, Globe, Key, Link, CheckCircle2, XCircle, ClipboardPaste, Lock, ChevronDown, Terminal, Settings2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { getDBConfig } from '@/lib/db-ui-config';
 import { parseConnectionString } from '@/lib/connection-string-parser';
@@ -42,6 +42,11 @@ export function ConnectionModal({ isOpen, onClose, onConnect, editConnection }: 
   const [clientCert, setClientCert] = useState('');
   const [clientKey, setClientKey] = useState('');
 
+  // Advanced (Oracle/MSSQL)
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [serviceName, setServiceName] = useState('');
+  const [instanceName, setInstanceName] = useState('');
+
   // SSH Tunnel
   const [showSSH, setShowSSH] = useState(false);
   const [sshEnabled, setSSHEnabled] = useState(false);
@@ -69,6 +74,15 @@ export function ConnectionModal({ isOpen, onClose, onConnect, editConnection }: 
       setEnvironment(editConnection.environment || 'local');
       if (editConnection.connectionString) {
         setMongoConnectionMode('connectionString');
+      }
+      // Advanced fields
+      if (editConnection.serviceName) {
+        setServiceName(editConnection.serviceName);
+        setShowAdvanced(true);
+      }
+      if (editConnection.instanceName) {
+        setInstanceName(editConnection.instanceName);
+        setShowAdvanced(true);
       }
       // SSL
       if (editConnection.ssl) {
@@ -153,6 +167,8 @@ export function ConnectionModal({ isOpen, onClose, onConnect, editConnection }: 
         user: undefined,
         password: undefined,
       } : {}),
+      ...(type === 'oracle' && serviceName ? { serviceName } : {}),
+      ...(type === 'mssql' && instanceName ? { instanceName } : {}),
     };
   };
 
@@ -232,7 +248,7 @@ export function ConnectionModal({ isOpen, onClose, onConnect, editConnection }: 
 
     const parsed = parseConnectionString(trimmed);
     if (!parsed) {
-      setTestResult({ success: false, message: 'Could not parse connection string. Supported formats: postgres://, mysql://, mongodb://, redis://' });
+      setTestResult({ success: false, message: 'Could not parse connection string. Supported formats: postgres://, mysql://, mongodb://, redis://, oracle://, mssql://' });
       return;
     }
 
@@ -261,7 +277,7 @@ export function ConnectionModal({ isOpen, onClose, onConnect, editConnection }: 
     setTestResult({ success: true, message: 'Connection string parsed successfully. Review the fields and connect.' });
   };
 
-  const selectableTypes: DatabaseType[] = ['postgres', 'mysql', 'mongodb', 'redis', 'demo'];
+  const selectableTypes: DatabaseType[] = ['postgres', 'mysql', 'oracle', 'mssql', 'mongodb', 'redis', 'demo'];
   const dbTypes = selectableTypes.map(t => {
     const cfg = getDBConfig(t);
     return { value: t, label: cfg.label, icon: cfg.icon, color: cfg.color };
@@ -334,7 +350,7 @@ export function ConnectionModal({ isOpen, onClose, onConnect, editConnection }: 
                     </Button>
                   </div>
                   <p className="text-[10px] text-zinc-500">
-                    Supports: postgres://, mysql://, mongodb://, redis://
+                    Supports: postgres://, mysql://, mongodb://, redis://, oracle://, mssql://
                   </p>
                 </div>
               </motion.div>
@@ -568,6 +584,67 @@ export function ConnectionModal({ isOpen, onClose, onConnect, editConnection }: 
                   </div>
                 )}
               </div>
+
+            {/* Advanced Settings (Oracle/MSSQL) */}
+            {(type === 'oracle' || type === 'mssql') && (
+              <div className="space-y-2">
+                <button
+                  type="button"
+                  onClick={() => setShowAdvanced(!showAdvanced)}
+                  className="flex items-center gap-2 w-full px-3 py-2 rounded-lg border border-white/5 hover:border-white/10 bg-zinc-900/30 text-xs font-bold text-zinc-400 hover:text-zinc-200 transition-all"
+                >
+                  <Settings2 className="w-3.5 h-3.5 text-orange-500" />
+                  <span>Advanced</span>
+                  {(serviceName || instanceName) && (
+                    <span className="ml-1 px-1.5 py-0.5 rounded text-[9px] bg-orange-500/10 text-orange-400 border border-orange-500/20">
+                      SET
+                    </span>
+                  )}
+                  <ChevronDown className={cn("w-3 h-3 ml-auto transition-transform", showAdvanced && "rotate-180")} />
+                </button>
+                <AnimatePresence>
+                  {showAdvanced && (
+                    <motion.div
+                      initial={{ height: 0, opacity: 0 }}
+                      animate={{ height: 'auto', opacity: 1 }}
+                      exit={{ height: 0, opacity: 0 }}
+                      className="overflow-hidden"
+                    >
+                      <div className="p-3 rounded-lg border border-orange-500/10 bg-orange-500/5 space-y-3">
+                        {type === 'oracle' && (
+                          <div className="space-y-1.5">
+                            <Label className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Service Name</Label>
+                            <Input
+                              value={serviceName}
+                              onChange={(e) => setServiceName(e.target.value)}
+                              placeholder="ORCL or XEPDB1"
+                              className="h-9 bg-zinc-900/50 border-white/5 focus:border-orange-500/50 text-sm"
+                            />
+                            <p className="text-[10px] text-zinc-500">
+                              If empty, the Database Name field is used as the service name.
+                            </p>
+                          </div>
+                        )}
+                        {type === 'mssql' && (
+                          <div className="space-y-1.5">
+                            <Label className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Instance Name</Label>
+                            <Input
+                              value={instanceName}
+                              onChange={(e) => setInstanceName(e.target.value)}
+                              placeholder="SQLEXPRESS"
+                              className="h-9 bg-zinc-900/50 border-white/5 focus:border-orange-500/50 text-sm"
+                            />
+                            <p className="text-[10px] text-zinc-500">
+                              For named instances (e.g. SQLEXPRESS). Leave empty for default instance.
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+            )}
 
             {/* SSL/TLS & SSH Panels - only for non-demo, non-sqlite */}
             {type !== 'demo' && type !== 'sqlite' && (

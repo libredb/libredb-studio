@@ -78,6 +78,16 @@ export async function createDatabaseProvider(
       return new SQLiteProvider(connection, options);
     }
 
+    case 'oracle': {
+      const { OracleProvider } = await import('./providers/sql/oracle');
+      return new OracleProvider(connection, options);
+    }
+
+    case 'mssql': {
+      const { MSSQLProvider } = await import('./providers/sql/mssql');
+      return new MSSQLProvider(connection, options);
+    }
+
     // Document Databases - dynamically imported
     case 'mongodb': {
       const { MongoDBProvider } = await import('./providers/document/mongodb');
@@ -96,7 +106,7 @@ export async function createDatabaseProvider(
 
     default:
       throw new DatabaseConfigError(
-        `Unknown database type: ${connection.type}. Supported types: postgres, mysql, sqlite, mongodb, demo`,
+        `Unknown database type: ${connection.type}. Supported types: postgres, mysql, sqlite, oracle, mssql, mongodb, redis, demo`,
         connection.type
       );
   }

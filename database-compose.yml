@@ -27,3 +27,29 @@ services:
       MYSQL_DATABASE: mysql
     ports:
       - "3306:3306"
+  mssql:
+    # Use 2022-latest to avoid SQL Server 2025 NUMA/processor topology assert in containers.
+    # Limit CPUs to avoid: ASSERT (result * DrtlGetProcessorCoreCount() == DrtlGetProcessorCount())
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: libredb-mssql
+    restart: unless-stopped
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: Password123!
+      MSSQL_DATABASE: mssql
+    ports:
+      - "1433:1433"
+    deploy:
+      resources:
+        limits:
+          cpus: "4"
+          memory: 4G
+  oracle:
+    image: gvenzl/oracle-xe
+    container_name: libredb-oracle
+    restart: unless-stopped
+    environment:
+      ORACLE_PDB: ORCLPDB1
+      ORACLE_PASSWORD: Password123!
+    ports:
+      - "1521:1521"
