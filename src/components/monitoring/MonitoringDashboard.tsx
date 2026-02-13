@@ -74,11 +74,13 @@ export function MonitoringDashboard({ isEmbedded = false }: MonitoringDashboardP
     setConnections(loadedConnections);
 
     // Restore persisted active connection, fallback to first
-    if (loadedConnections.length > 0 && !selectedConnection) {
+    setSelectedConnection((prev) => {
+      if (prev) return prev;
+      if (loadedConnections.length === 0) return null;
       const savedId = storage.getActiveConnectionId();
       const saved = savedId ? loadedConnections.find(c => c.id === savedId) : null;
-      setSelectedConnection(saved ?? loadedConnections[0]);
-    }
+      return saved ?? loadedConnections[0];
+    });
   }, []);
 
   const handleConnectionChange = (connectionId: string) => {
