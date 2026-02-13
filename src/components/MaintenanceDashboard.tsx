@@ -62,6 +62,14 @@ export default function MaintenanceDashboard() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(selectedConnection),
       });
+      if (!schemaRes.ok) {
+        const contentType = schemaRes.headers.get('content-type') || '';
+        if (contentType.includes('application/json')) {
+          const errData = await schemaRes.json();
+          throw new Error(errData.error || `Schema request failed (${schemaRes.status})`);
+        }
+        throw new Error(`Schema request failed (${schemaRes.status})`);
+      }
       const schemaData = await schemaRes.json();
       if (schemaData.error) throw new Error(schemaData.error);
       setTables(schemaData);
@@ -72,6 +80,15 @@ export default function MaintenanceDashboard() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ connection: selectedConnection }),
       });
+      if (!healthRes.ok) {
+        const contentType = healthRes.headers.get('content-type') || '';
+        if (contentType.includes('application/json')) {
+          const errData = await healthRes.json();
+          setHealthData(errData);
+          return;
+        }
+        throw new Error(`Health request failed (${healthRes.status})`);
+      }
       const healthResult = await healthRes.json();
       setHealthData(healthResult);
     } catch (error) {
@@ -101,6 +118,14 @@ export default function MaintenanceDashboard() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ type, target, connection: selectedConnection }),
       });
+      if (!res.ok) {
+        const contentType = res.headers.get('content-type') || '';
+        if (contentType.includes('application/json')) {
+          const errData = await res.json();
+          throw new Error(errData.error || `Maintenance request failed (${res.status})`);
+        }
+        throw new Error(`Maintenance request failed (${res.status})`);
+      }
       const result = await res.json();
 
       if (result.error) throw new Error(result.error);
