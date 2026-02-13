@@ -1,13 +1,13 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { useRouter } from 'next/navigation';
-import { ShieldCheck, Users, Database, LogOut, ArrowLeft, EyeOff } from 'lucide-react';
+import { LogOut, ArrowLeft, EyeOff } from 'lucide-react';
 import { toast } from 'sonner';
 import MaintenanceDashboard from '@/components/MaintenanceDashboard';
 import { MaskingSettings } from '@/components/MaskingSettings';
+import { SystemInfo } from '@/components/SystemInfo';
 
 interface User {
   username: string;
@@ -89,72 +89,7 @@ export default function AdminDashboard() {
         </div>
 
         {activeTab === 'info' ? (
-          <>
-            {user ? (
-              <div className="grid gap-4 md:grid-cols-3">
-                <Card>
-                  <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                    <CardTitle className="text-sm font-medium">Role</CardTitle>
-                    <ShieldCheck className="h-4 w-4 text-primary" />
-                  </CardHeader>
-                  <CardContent>
-                    <div className="text-2xl font-bold capitalize">{user.role}</div>
-                  </CardContent>
-                </Card>
-                <Card>
-                  <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                    <CardTitle className="text-sm font-medium">Username</CardTitle>
-                    <Users className="h-4 w-4 text-muted-foreground" />
-                  </CardHeader>
-                  <CardContent>
-                    <div className="text-2xl font-bold">{user.username}</div>
-                  </CardContent>
-                </Card>
-                <Card>
-                  <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                    <CardTitle className="text-sm font-medium">Active Session</CardTitle>
-                    <Database className="h-4 w-4 text-muted-foreground" />
-                  </CardHeader>
-                  <CardContent>
-                    <div className="text-2xl font-bold">24 Hours</div>
-                  </CardContent>
-                </Card>
-              </div>
-            ) : (
-              <div className="flex items-center justify-center py-8">
-                <div className="text-muted-foreground">Loading user information...</div>
-              </div>
-            )}
-
-            <Card className="col-span-3">
-              <CardHeader>
-                <CardTitle>System Information</CardTitle>
-                <CardDescription>
-                  Environment and configuration details.
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-4">
-                  <div className="grid grid-cols-2 border-b pb-2">
-                    <span className="font-medium">Authentication Mode</span>
-                    <span className="text-muted-foreground text-right">Environment Variable (RBAC)</span>
-                  </div>
-                  <div className="grid grid-cols-2 border-b pb-2">
-                    <span className="font-medium">Admin Access</span>
-                    <span className="text-primary text-right font-bold">ENABLED</span>
-                  </div>
-                  <div className="grid grid-cols-2 border-b pb-2">
-                    <span className="font-medium">User Access</span>
-                    <span className="text-primary text-right font-bold">ENABLED</span>
-                  </div>
-                  <div className="grid grid-cols-2">
-                    <span className="font-medium">API Security</span>
-                    <span className="text-muted-foreground text-right">JWT Cookie / Middleware Protected</span>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          </>
+          <SystemInfo user={user} />
         ) : activeTab === 'maintenance' ? (
           <MaintenanceDashboard />
         ) : (
