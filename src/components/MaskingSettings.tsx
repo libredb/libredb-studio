@@ -6,7 +6,6 @@ import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import {
   Dialog,
   DialogContent,
@@ -253,8 +252,8 @@ export function MaskingSettings() {
                 Add Pattern
               </Button>
             </div>
-            <ScrollArea className="max-h-[400px]">
-              <div className="space-y-2">
+            <div className="max-h-[400px] overflow-y-auto rounded-lg border border-white/5 editor-scrollbar">
+              <div className="space-y-2 p-1">
                 {config.patterns.map(pattern => (
                   <div
                     key={pattern.id}
@@ -301,7 +300,7 @@ export function MaskingSettings() {
                   </div>
                 ))}
               </div>
-            </ScrollArea>
+            </div>
           </div>
 
           {/* Preview */}
