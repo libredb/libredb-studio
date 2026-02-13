@@ -18,7 +18,7 @@ import { TestDataGenerator } from '@/components/TestDataGenerator';
 import { PivotTable } from '@/components/PivotTable';
 import { DatabaseDocs } from '@/components/DatabaseDocs';
 import { VisualExplain, type ExplainPlanResult } from '@/components/VisualExplain';
-import { HealthDashboard } from '@/components/HealthDashboard';
+// HealthDashboard removed — replaced by Connection Pulse indicator
 import { CreateTableModal } from '@/components/CreateTableModal';
 import { SchemaDiagram } from '@/components/SchemaDiagram';
 import { QueryHistory } from '@/components/QueryHistory';
@@ -26,7 +26,7 @@ import { SavedQueries } from '@/components/SavedQueries';
 import { DataCharts } from '@/components/DataCharts';
 import { SchemaDiff } from '@/components/SchemaDiff';
 import { SaveQueryModal } from '@/components/SaveQueryModal';
-import { MaintenanceModal } from '@/components/MaintenanceModal';
+// MaintenanceModal removed — consolidated into Admin > Operations
 import { DatabaseConnection, TableSchema, QueryTab, SavedQuery } from '@/lib/types';
 import { useToast } from '@/hooks/use-toast';
 import { useProviderMetadata } from '@/hooks/use-provider-metadata';
@@ -46,7 +46,6 @@ import {
 import { useRouter } from 'next/navigation';
 import { cn } from '@/lib/utils';
 import {
-  Activity,
   AlertTriangle,
   AlignLeft,
   BarChart3,
@@ -153,9 +152,8 @@ export default function Studio() {
   const [activeConnection, setActiveConnection] = useState<DatabaseConnection | null>(null);
   const [schema, setSchema] = useState<TableSchema[]>([]);
   const [user, setUser] = useState<{ role?: string } | null>(null);
-  const [isMaintenanceModalOpen, setIsMaintenanceModalOpen] = useState(false);
-  const [maintenanceInitialTab, setMaintenanceInitialTab] = useState<'global' | 'tables' | 'sessions'>('global');
-  const [maintenanceTargetTable, setMaintenanceTargetTable] = useState<string | undefined>(undefined);
+  // Connection pulse state for health indicator
+  const [connectionPulse, setConnectionPulse] = useState<'healthy' | 'degraded' | 'error' | null>(null);
   
   const queryEditorRef = useRef<QueryEditorRef>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -180,10 +178,35 @@ export default function Studio() {
 
   const isAdmin = user?.role === 'admin';
 
-  const openMaintenance = (tab: 'global' | 'tables' | 'sessions' = 'global', table?: string) => {
-    setMaintenanceInitialTab(tab);
-    setMaintenanceTargetTable(table);
-    setIsMaintenanceModalOpen(true);
+  // Connection pulse — quick health check every 60s
+  useEffect(() => {
+    if (!activeConnection || activeConnection.isDemo) {
+      setConnectionPulse(null);
+      return;
+    }
+    const checkHealth = async () => {
+      try {
+        const res = await fetch('/api/db/health', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ connection: activeConnection }),
+        });
+        setConnectionPulse(res.ok ? 'healthy' : 'degraded');
+      } catch {
+        setConnectionPulse('error');
+      }
+    };
+    checkHealth();
+    const interval = setInterval(checkHealth, 60000);
+    return () => clearInterval(interval);
+  }, [activeConnection]);
+
+  const openMaintenance = () => {
+    if (isAdmin) {
+      router.push('/admin?tab=operations');
+    } else {
+      router.push('/monitoring');
+    }
   };
 
   const [isConnectionModalOpen, setIsConnectionModalOpen] = useState(false);
@@ -205,7 +228,7 @@ export default function Studio() {
     }
   ]);
   const [activeTabId, setActiveTabId] = useState<string>('default');
-  const [activeView, setActiveView] = useState<'editor' | 'health'>('editor');
+  const activeView = 'editor' as const;
   const [bottomPanelMode, setBottomPanelMode] = useState<'results' | 'explain' | 'history' | 'saved' | 'charts' | 'nl2sql' | 'autopilot' | 'pivot' | 'docs' | 'schemadiff' | 'dashboard'>('results');
   const [activeMobileTab, setActiveMobileTab] = useState<'database' | 'schema' | 'editor'>('editor');
 
@@ -1192,7 +1215,6 @@ export default function Studio() {
       type: tabType
     }]);
     setActiveTabId(newId);
-    setActiveView('editor');
   };
 
   return (
@@ -1305,17 +1327,16 @@ export default function Studio() {
               >
                 <Gauge className="w-4 h-4" />
               </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                className={cn(
-                  "h-8 w-8 p-0",
-                  activeView === 'health' && "bg-emerald-600/20 text-emerald-400"
-                )}
-                onClick={() => setActiveView(activeView === 'health' ? 'editor' : 'health')}
-              >
-                <Activity className="w-4 h-4" />
-              </Button>
+              {connectionPulse && (
+                <div className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-white/5" title={`Connection: ${connectionPulse}`}>
+                  <div className={cn(
+                    "w-1.5 h-1.5 rounded-full",
+                    connectionPulse === 'healthy' && "bg-emerald-500 animate-pulse",
+                    connectionPulse === 'degraded' && "bg-amber-500",
+                    connectionPulse === 'error' && "bg-red-500",
+                  )} />
+                </div>
+              )}
               {user && (
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
@@ -1324,6 +1345,15 @@ export default function Studio() {
                     </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end" className="bg-[#0d0d0d] border-white/10">
+                    {isAdmin && (
+                      <DropdownMenuItem onClick={() => router.push('/admin')} className="cursor-pointer">
+                        <Settings className="w-4 h-4 mr-2" /> Admin Dashboard
+                      </DropdownMenuItem>
+                    )}
+                    <DropdownMenuItem onClick={() => router.push('/monitoring')} className="cursor-pointer">
+                      <Gauge className="w-4 h-4 mr-2" /> Monitoring
+                    </DropdownMenuItem>
+                    <div className="border-t border-white/5 my-1" />
                     <DropdownMenuItem onClick={handleLogout} className="text-red-400 cursor-pointer">
                       <LogOut className="w-4 h-4 mr-2" /> Logout
                     </DropdownMenuItem>
@@ -1448,24 +1478,19 @@ export default function Studio() {
           </div>
 
           <div className="flex items-center gap-2">
-            <div className="flex items-center bg-white/5 rounded-lg p-1 mr-2">
-              <Button
-                variant="ghost"
-                size="sm"
-                className={cn("h-7 px-3 text-[10px] font-bold uppercase tracking-widest gap-2", activeView === 'editor' ? "bg-blue-600 text-white" : "text-zinc-500")}
-                onClick={() => setActiveView('editor')}
-              >
-                <Terminal className="w-3 h-3" /> Editor
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                className={cn("h-7 px-3 text-[10px] font-bold uppercase tracking-widest gap-2", activeView === 'health' ? "bg-emerald-600 text-white" : "text-zinc-500")}
-                onClick={() => setActiveView('health')}
-              >
-                <Activity className="w-3 h-3" /> Health
-              </Button>
-            </div>
+            {connectionPulse && (
+              <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-white/5 mr-2" title={`Connection: ${connectionPulse}`}>
+                <div className={cn(
+                  "w-2 h-2 rounded-full",
+                  connectionPulse === 'healthy' && "bg-emerald-500 animate-pulse",
+                  connectionPulse === 'degraded' && "bg-amber-500",
+                  connectionPulse === 'error' && "bg-red-500",
+                )} />
+                <span className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">
+                  {connectionPulse === 'healthy' ? 'Online' : connectionPulse === 'degraded' ? 'Slow' : 'Error'}
+                </span>
+              </div>
+            )}
 
             <Button
               variant="ghost"
@@ -1484,6 +1509,15 @@ export default function Studio() {
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="w-56 bg-[#0d0d0d] border-white/10 text-zinc-300">
+                  {isAdmin && (
+                    <DropdownMenuItem onClick={() => router.push('/admin')} className="cursor-pointer">
+                      <Settings className="w-4 h-4 mr-2" /> Admin Dashboard
+                    </DropdownMenuItem>
+                  )}
+                  <DropdownMenuItem onClick={() => router.push('/monitoring')} className="cursor-pointer">
+                    <Gauge className="w-4 h-4 mr-2" /> Monitoring
+                  </DropdownMenuItem>
+                  <div className="border-t border-white/5 my-1" />
                   <DropdownMenuItem onClick={handleLogout} className="text-red-400 cursor-pointer">
                     <LogOut className="w-4 h-4 mr-2" /> Logout
                   </DropdownMenuItem>
@@ -1622,9 +1656,7 @@ export default function Studio() {
             "h-full",
             activeMobileTab !== 'editor' && "hidden md:block"
           )}>
-          {activeView === 'health' ? (
-            <HealthDashboard connection={activeConnection} />
-          ) : (
+          {activeView === 'editor' && (
             <div className="h-full">
               <ResizablePanelGroup direction="vertical">
                 <ResizablePanel defaultSize={40} minSize={20}>
@@ -2054,15 +2086,7 @@ export default function Studio() {
         onSave={handleSaveQuery}
         defaultQuery={currentTab.query}
       />
-      <MaintenanceModal
-        isOpen={isMaintenanceModalOpen}
-        onClose={() => setIsMaintenanceModalOpen(false)}
-        connection={activeConnection}
-        tables={schema}
-        initialTab={maintenanceInitialTab}
-        targetTable={maintenanceTargetTable}
-        metadata={metadata}
-      />
+      {/* MaintenanceModal removed — consolidated into Admin > Operations */}
       <DataImportModal
         isOpen={isImportModalOpen}
         onClose={() => setIsImportModalOpen(false)}
@@ -2155,7 +2179,7 @@ export default function Studio() {
           updateCurrentTab({ query: q });
           setBottomPanelMode('results');
         }}
-        onNavigateHealth={() => setActiveView('health')}
+        onNavigateHealth={() => router.push('/monitoring')}
         onNavigateMonitoring={() => router.push('/monitoring')}
         onShowDiagram={() => setShowDiagram(true)}
         onFormatQuery={() => queryEditorRef.current?.format()}

@@ -1,5 +1,10 @@
-import AdminDashboard from '@/components/AdminDashboard';
+import { Suspense } from 'react';
+import AdminDashboard from '@/components/admin/AdminDashboard';
 
 export default function AdminPage() {
-  return <AdminDashboard />;
+  return (
+    <Suspense>
+      <AdminDashboard />
+    </Suspense>
+  );
 }

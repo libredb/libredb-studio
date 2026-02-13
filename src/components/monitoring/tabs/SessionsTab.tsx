@@ -36,9 +36,10 @@ interface SessionsTabProps {
   data: MonitoringData | null;
   loading: boolean;
   onKillSession: (pid: number | string) => Promise<boolean>;
+  isAdmin?: boolean;
 }
 
-export function SessionsTab({ data, loading, onKillSession }: SessionsTabProps) {
+export function SessionsTab({ data, loading, onKillSession, isAdmin = true }: SessionsTabProps) {
   const [killingPid, setKillingPid] = useState<number | string | null>(null);
   const [confirmKill, setConfirmKill] = useState<ActiveSessionDetails | null>(null);
 
@@ -222,19 +223,23 @@ export function SessionsTab({ data, loading, onKillSession }: SessionsTabProps) 
                           : '-'}
                       </TableCell>
                       <TableCell className="text-right py-2">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-6 w-6 sm:h-8 sm:w-8 text-destructive hover:text-destructive hover:bg-destructive/10"
-                          onClick={() => handleKillClick(session)}
-                          disabled={killingPid === session.pid}
-                        >
-                          {killingPid === session.pid ? (
-                            <Loader2 className="h-3 w-3 sm:h-4 sm:w-4 animate-spin" />
-                          ) : (
-                            <Skull className="h-3 w-3 sm:h-4 sm:w-4" />
-                          )}
-                        </Button>
+                        {isAdmin ? (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-6 w-6 sm:h-8 sm:w-8 text-destructive hover:text-destructive hover:bg-destructive/10"
+                            onClick={() => handleKillClick(session)}
+                            disabled={killingPid === session.pid}
+                          >
+                            {killingPid === session.pid ? (
+                              <Loader2 className="h-3 w-3 sm:h-4 sm:w-4 animate-spin" />
+                            ) : (
+                              <Skull className="h-3 w-3 sm:h-4 sm:w-4" />
+                            )}
+                          </Button>
+                        ) : (
+                          <span className="text-[10px] text-muted-foreground">-</span>
+                        )}
                       </TableCell>
                     </TableRow>
                   ))}

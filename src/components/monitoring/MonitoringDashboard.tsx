@@ -36,7 +36,11 @@ import { TablesTab } from './tabs/TablesTab';
 import { StorageTab } from './tabs/StorageTab';
 import { PoolTab } from './tabs/PoolTab';
 
-export function MonitoringDashboard() {
+interface MonitoringDashboardProps {
+  isEmbedded?: boolean;
+}
+
+export function MonitoringDashboard({ isEmbedded = false }: MonitoringDashboardProps) {
   const router = useRouter();
   const [connections, setConnections] = useState<DatabaseConnection[]>([]);
   const [selectedConnection, setSelectedConnection] = useState<DatabaseConnection | null>(null);
@@ -94,15 +98,17 @@ export function MonitoringDashboard() {
         {/* Top row: Back button, title, refresh controls */}
         <div className="flex items-center justify-between px-3 py-2 sm:px-4 sm:py-3">
           <div className="flex items-center gap-2 sm:gap-4">
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => router.push('/')}
-              className="h-8 w-8 sm:h-9 sm:w-auto sm:px-3"
-            >
-              <ArrowLeft className="h-4 w-4" />
-              <span className="hidden sm:inline ml-2">Back</span>
-            </Button>
+            {!isEmbedded && (
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => router.push('/')}
+                className="h-8 w-8 sm:h-9 sm:w-auto sm:px-3"
+              >
+                <ArrowLeft className="h-4 w-4" />
+                <span className="hidden sm:inline ml-2">Back</span>
+              </Button>
+            )}
             <div className="flex items-center gap-2">
               <Activity className="h-4 w-4 sm:h-5 sm:w-5 text-primary" />
               <h1 className="text-sm sm:text-lg font-semibold hidden xs:block">
