@@ -261,6 +261,53 @@ Sample tables: `app.customers`, `app.products`, `app.orders`, `app.order_items`,
 
 ---
 
+## Testing
+
+LibreDB Studio has a comprehensive test suite with **1,269+ unit/integration tests** and **35 E2E tests** across 6 layers.
+
+### Quick Commands
+
+```bash
+# Run all tests (unit + API + integration + hooks + components)
+bun run test
+
+# Run by layer
+bun run test:unit          # Pure function tests (409 cases)
+bun run test:api           # API route handler tests (207 cases)
+bun run test:integration   # Database provider tests (164 cases)
+bun run test:hooks         # React hook tests (126 cases)
+bun run test:components    # Component tests with mock isolation (194 cases)
+
+# E2E tests (requires build)
+bun run test:e2e           # Playwright browser tests (35 cases)
+
+# Coverage report (lcov)
+bun run test:coverage
+```
+
+### Test Architecture
+
+| Layer | Directory | Runner | Tests | What it covers |
+|-------|-----------|--------|-------|----------------|
+| **Unit** | `tests/unit/` | `bun:test` | ~409 | Pure functions: SQL parser, connection strings, data masking, query limiter, schema diff, error classes |
+| **API** | `tests/api/` | `bun:test` | ~207 | Route handlers: auth, query, transaction, maintenance, AI endpoints, middleware |
+| **Integration** | `tests/integration/` | `bun:test` | ~164 | Database providers: PG, MySQL, SQLite, MongoDB, Redis, Oracle, MSSQL, Demo (mocked drivers) |
+| **Hooks** | `tests/hooks/` | `bun:test` | ~126 | React hooks: auth, connections, tabs, query execution, transactions, inline editing, AI chat |
+| **Components** | `tests/components/` | `bun:test` + happy-dom | ~194 | UI components: Studio, Sidebar, QueryEditor, ResultsGrid, Admin Dashboard, Charts, ERD |
+| **E2E** | `e2e/` | Playwright | ~35 | Full browser flows: login, demo mode, connections, query execution, tabs, export, admin |
+
+### Key Details
+
+- **Test runner**: `bun:test` (built-in, Jest-compatible API) with `happy-dom` for DOM environment
+- **Component isolation**: Component tests run in 6 isolated groups via `tests/run-components.sh` to prevent `mock.module()` cross-contamination
+- **E2E**: Playwright with Chromium, runs against a production build (`bun run build && bun start`)
+- **CI**: GitHub Actions runs lint + typecheck + build, unit/integration tests with coverage, E2E tests, and SonarCloud analysis
+- **Coverage**: `bun test --coverage` generates lcov reports for SonarCloud integration
+
+> **Important**: Always use `bun run test` instead of bare `bun test`. The test script handles proper isolation between test groups.
+
+---
+
 ## ⚡ One-Click Deploy
 
 Deploy your own instance of LibreDB Studio with a single click:
