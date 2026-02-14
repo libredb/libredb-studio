@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { Sidebar, ConnectionsList } from '@/components/Sidebar';
 import { MobileNav } from '@/components/MobileNav';
-import { SchemaExplorer } from '@/components/SchemaExplorer';
+import { SchemaExplorer } from '@/components/schema-explorer';
 import { ConnectionModal } from '@/components/ConnectionModal';
 import { CommandPalette } from '@/components/CommandPalette';
 import { QueryEditor, QueryEditorRef } from '@/components/QueryEditor';

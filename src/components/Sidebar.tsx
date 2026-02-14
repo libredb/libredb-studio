@@ -9,7 +9,7 @@ import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
 import { motion } from 'framer-motion';
-import { SchemaExplorer } from './SchemaExplorer';
+import { SchemaExplorer } from './schema-explorer';
 
 interface ConnectionsListProps {
   connections: DatabaseConnection[];
@@ -216,7 +216,7 @@ export function Sidebar({
         </div>
       </div>
 
-      <ScrollArea className="flex-1 px-2 py-4">
+      <ScrollArea className="flex-1 min-h-0 px-2 py-4">
         <div className="space-y-6">
           <ConnectionsList
             connections={connections}
