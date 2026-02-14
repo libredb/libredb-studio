@@ -43,7 +43,7 @@ import {
   Radio,
   Gauge,
 } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence, type Variants } from 'framer-motion';
 import Link from 'next/link';
 import type { FleetHealthItem } from '@/app/api/admin/fleet-health/route';
 import type { AuditEvent } from '@/lib/audit';
@@ -56,7 +56,7 @@ const containerVariants = {
     opacity: 1,
     transition: { staggerChildren: 0.08, delayChildren: 0.1 },
   },
-};
+} as const;
 
 const itemVariants = {
   hidden: { opacity: 0, y: 20, scale: 0.95 },
@@ -64,7 +64,7 @@ const itemVariants = {
     opacity: 1,
     y: 0,
     scale: 1,
-    transition: { type: 'spring', stiffness: 300, damping: 24 },
+    transition: { type: 'spring' as const, stiffness: 300, damping: 24 },
   },
 };
 
@@ -73,16 +73,16 @@ const heroVariants = {
   visible: {
     opacity: 1,
     y: 0,
-    transition: { type: 'spring', stiffness: 200, damping: 20 },
+    transition: { type: 'spring' as const, stiffness: 200, damping: 20 },
   },
 };
 
-const feedItemVariants = {
+const feedItemVariants: Variants = {
   hidden: { opacity: 0, x: -10 },
   visible: (i: number) => ({
     opacity: 1,
     x: 0,
-    transition: { delay: i * 0.05, type: 'spring', stiffness: 300, damping: 24 },
+    transition: { delay: i * 0.05, type: 'spring' as const, stiffness: 300, damping: 24 },
   }),
 };
 
@@ -137,6 +137,17 @@ function formatNumber(n: number) {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
   return n.toString();
+}
+
+// ─── Types ───────────────────────────────────────────────────────────────────
+
+interface ActivityFeedItem {
+  id: string;
+  type: 'audit' | 'query';
+  text: string;
+  status: 'success' | 'failure';
+  time: string | Date;
+  connectionName?: string;
 }
 
 // ─── useAnimatedCounter Hook ─────────────────────────────────────────────────
@@ -313,14 +324,7 @@ export function OverviewTab({ user }: OverviewTabProps) {
 
   // Activity feed: merge audit events + recent history
   const activityFeed = useMemo(() => {
-    const items: {
-      id: string;
-      type: 'audit' | 'query';
-      text: string;
-      status: 'success' | 'failure';
-      time: string;
-      connectionName?: string;
-    }[] = [];
+    const items: ActivityFeedItem[] = [];
 
     for (const e of auditEvents) {
       items.push({
@@ -1019,14 +1023,7 @@ function AnalyticsSection({
   activityFeed,
 }: {
   queryStats: { total: number; byDay: { day: string; success: number; fail: number }[] };
-  activityFeed: {
-    id: string;
-    type: 'audit' | 'query';
-    text: string;
-    status: 'success' | 'failure';
-    time: string;
-    connectionName?: string;
-  }[];
+  activityFeed: ActivityFeedItem[];
 }) {
   return (
     <motion.div variants={itemVariants}>
