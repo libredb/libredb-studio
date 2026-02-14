@@ -21,7 +21,7 @@ import {
   StudioTabBar,
   QueryToolbar,
   BottomPanel,
-} from '@/components/studio';
+} from '@/components/studio/index';
 import { DatabaseConnection, SavedQuery } from '@/lib/types';
 import { useToast } from '@/hooks/use-toast';
 import { useProviderMetadata } from '@/hooks/use-provider-metadata';
