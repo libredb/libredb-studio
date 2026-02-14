@@ -1,5 +1,5 @@
 import { test, expect, mock } from "bun:test";
-import { PostgresProvider } from "./postgres";
+import { PostgresProvider } from "@/lib/db/providers/sql/postgres";
 
 // Mock the 'pg' module
 mock.module('pg', () => {
