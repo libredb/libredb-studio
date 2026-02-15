@@ -24,15 +24,41 @@ set -e
 
 PASS=0
 FAIL=0
-TOTAL_GROUPS=7
+TOTAL_GROUPS=8
 EXTRA_BUN_ARGS=("$@")
+GROUP_INDEX=0
+COVERAGE_MODE=0
+COVERAGE_BASE_DIR=""
+
+for arg in "${EXTRA_BUN_ARGS[@]}"; do
+  if [ "$arg" = "--coverage" ]; then
+    COVERAGE_MODE=1
+  fi
+  if [[ "$arg" == --coverage-dir=* ]]; then
+    COVERAGE_BASE_DIR="${arg#--coverage-dir=}"
+  fi
+done
 
 run_group() {
   local label="$1"
   shift
+  GROUP_INDEX=$((GROUP_INDEX + 1))
   echo ""
   echo "=== $label ==="
-  if bun test "${EXTRA_BUN_ARGS[@]}" "$@"; then
+
+  local RUN_ARGS=()
+  for arg in "${EXTRA_BUN_ARGS[@]}"; do
+    if [[ "$arg" == --coverage-dir=* ]]; then
+      continue
+    fi
+    RUN_ARGS+=("$arg")
+  done
+
+  if [ "$COVERAGE_MODE" -eq 1 ] && [ -n "$COVERAGE_BASE_DIR" ]; then
+    RUN_ARGS+=("--coverage-dir=${COVERAGE_BASE_DIR}/group-${GROUP_INDEX}")
+  fi
+
+  if bun test "${RUN_ARGS[@]}" "$@"; then
     PASS=$((PASS + 1))
   else
     FAIL=$((FAIL + 1))
@@ -64,8 +90,14 @@ run_group "Group 5/6: SecurityTab" \
 run_group "Group 6/7: MonitoringDashboard" \
   tests/components/monitoring/MonitoringDashboard.test.tsx
 
-# Group 7: All remaining files (safe together)
-run_group "Group 7/7: Remaining components" \
+# Group 7: Results-grid subcomponents (isolated from ResultsGrid.test.tsx mocks)
+run_group "Group 7/8: Results-grid subcomponents" \
+  tests/components/results-grid/StatsBar.test.tsx \
+  tests/components/results-grid/ResultCard.test.tsx \
+  tests/components/results-grid/RowDetailSheet.test.tsx
+
+# Group 8: All remaining files (safe together)
+run_group "Group 8/8: Remaining components" \
   tests/components/DataCharts.test.tsx \
   tests/components/QueryEditor.test.tsx \
   tests/components/QuerySafetyDialog.test.tsx \
@@ -87,13 +119,19 @@ run_group "Group 7/7: Remaining components" \
   tests/components/admin/AuditTab.test.tsx \
   tests/components/monitoring/StorageTab.test.tsx \
   tests/components/monitoring/SessionsTab.test.tsx \
-  tests/components/monitoring/TablesTab.test.tsx
+  tests/components/monitoring/TablesTab.test.tsx \
+  tests/components/monitoring/QueriesTab.test.tsx \
+  tests/components/monitoring/PerformanceTab.test.tsx \
+  tests/components/monitoring/OverviewTab.test.tsx
 
 # Summary
 echo ""
 echo "========================================"
 if [ $FAIL -eq 0 ]; then
   echo "All $TOTAL_GROUPS groups passed!"
+  if [ "$COVERAGE_MODE" -eq 1 ] && [ -n "$COVERAGE_BASE_DIR" ]; then
+    node scripts/merge-lcov.mjs "${COVERAGE_BASE_DIR}"/group-*/lcov.info "${COVERAGE_BASE_DIR}/lcov.info"
+  fi
 else
   echo "$FAIL/$TOTAL_GROUPS groups FAILED"
   exit 1
