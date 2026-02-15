@@ -14,8 +14,10 @@
     "test:hooks": "bun test tests/hooks",
     "test:api": "bun test tests/api",
     "test:components": "bash tests/run-components.sh",
+    "test:components:coverage": "bash tests/run-components.sh --coverage --coverage-reporter=lcov --coverage-dir=coverage/components",
     "test:e2e": "bunx playwright test",
-    "test:coverage": "bun test --coverage --coverage-reporter=lcov --coverage-reporter=text --coverage-dir=coverage tests/unit tests/api tests/integration tests/hooks && bun run test:components",
+    "test:coverage:core": "bun test --coverage --coverage-reporter=lcov --coverage-reporter=text --coverage-dir=coverage/core tests/unit tests/api tests/integration tests/hooks",
+    "test:coverage": "rm -rf coverage && bun run test:coverage:core && bun run test:components:coverage && node scripts/merge-lcov.cjs coverage/core/lcov.info coverage/components/lcov.info coverage/lcov.info",
     "test:coverage-html": "bun run test:coverage && genhtml coverage/lcov.info --output-directory coverage/html && echo '\n✅ Open coverage/html/index.html in your browser'"
   },
   "dependencies": {

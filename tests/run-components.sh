@@ -25,13 +25,14 @@ set -e
 PASS=0
 FAIL=0
 TOTAL_GROUPS=6
+EXTRA_BUN_ARGS=("$@")
 
 run_group() {
   local label="$1"
   shift
   echo ""
   echo "=== $label ==="
-  if bun test "$@"; then
+  if bun test "${EXTRA_BUN_ARGS[@]}" "$@"; then
     PASS=$((PASS + 1))
   else
     FAIL=$((FAIL + 1))
