@@ -213,7 +213,22 @@ function main() {
   }
 
   const merged = mergeRecords(allRecords);
-  const serialized = serializeRecords(merged);
+
+  // Filter out non-source files that SonarCloud can't resolve:
+  // - tests/ and e2e/ directories (test infrastructure, not source)
+  // - src/components/ui/ (excluded in sonar.exclusions)
+  const filtered = merged.filter((r) => {
+    if (!r.sf.startsWith("src/")) return false;
+    if (r.sf.startsWith("src/components/ui/")) return false;
+    return true;
+  });
+
+  const skipped = merged.length - filtered.length;
+  if (skipped > 0) {
+    console.log(`Filtered ${skipped} non-source record(s) (tests/, src/components/ui/)`);
+  }
+
+  const serialized = serializeRecords(filtered);
 
   ensureParentDir(outputPath);
   fs.writeFileSync(outputPath, serialized ? `${serialized}\n` : "", "utf8");
