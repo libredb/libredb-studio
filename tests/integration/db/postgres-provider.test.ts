@@ -885,8 +885,8 @@ describe('PostgresProvider', () => {
       expect(eventsTable!.name).toBe('analytics.events');
 
       // Foreign key from analytics.events.user_id -> public.users.id should have no prefix
-      expect(eventsTable!.foreignKeys.length).toBe(1);
-      expect(eventsTable!.foreignKeys[0].referencedTable).toBe('users');
+      expect(eventsTable!.foreignKeys!.length).toBe(1);
+      expect(eventsTable!.foreignKeys![0].referencedTable).toBe('users');
     });
   });
 
