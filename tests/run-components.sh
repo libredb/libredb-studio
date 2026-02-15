@@ -24,7 +24,7 @@ set -e
 
 PASS=0
 FAIL=0
-TOTAL_GROUPS=8
+TOTAL_GROUPS=10
 EXTRA_BUN_ARGS=("$@")
 GROUP_INDEX=0
 COVERAGE_MODE=0
@@ -91,13 +91,32 @@ run_group "Group 6/7: MonitoringDashboard" \
   tests/components/monitoring/MonitoringDashboard.test.tsx
 
 # Group 7: Results-grid subcomponents (isolated from ResultsGrid.test.tsx mocks)
-run_group "Group 7/8: Results-grid subcomponents" \
+run_group "Group 7/10: Results-grid subcomponents" \
   tests/components/results-grid/StatsBar.test.tsx \
   tests/components/results-grid/ResultCard.test.tsx \
   tests/components/results-grid/RowDetailSheet.test.tsx
 
-# Group 8: All remaining files (safe together)
-run_group "Group 8/8: Remaining components" \
+# Group 8: SavedQueries (isolated - mocks @/lib/storage)
+run_group "Group 8/10: SavedQueries" \
+  tests/components/SavedQueries.test.tsx
+
+# Group 9: New smoke tests (isolated - mock globalThis.fetch)
+run_group "Group 9/10: Smoke tests" \
+  tests/components/VisualExplain.test.tsx \
+  tests/components/AIAutopilotPanel.test.tsx \
+  tests/components/DatabaseDocs.test.tsx \
+  tests/components/SnapshotTimeline.test.tsx \
+  tests/components/PivotTable.test.tsx \
+  tests/components/NL2SQLPanel.test.tsx \
+  tests/components/CodeGenerator.test.tsx \
+  tests/components/TestDataGenerator.test.tsx \
+  tests/components/CreateTableModal.test.tsx \
+  tests/components/SaveQueryModal.test.tsx \
+  tests/components/MobileNav.test.tsx \
+  tests/components/DataImportModal.test.tsx
+
+# Group 10: All remaining files (safe together)
+run_group "Group 10/10: Remaining components" \
   tests/components/DataCharts.test.tsx \
   tests/components/QueryEditor.test.tsx \
   tests/components/QuerySafetyDialog.test.tsx \
