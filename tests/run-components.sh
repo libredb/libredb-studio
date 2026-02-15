@@ -24,7 +24,7 @@ set -e
 
 PASS=0
 FAIL=0
-TOTAL_GROUPS=6
+TOTAL_GROUPS=7
 EXTRA_BUN_ARGS=("$@")
 
 run_group() {
@@ -60,8 +60,12 @@ run_group "Group 4/6: AdminDashboard" \
 run_group "Group 5/6: SecurityTab" \
   tests/components/admin/SecurityTab.test.tsx
 
-# Group 6: All remaining files (safe together)
-run_group "Group 6/6: Remaining components" \
+# Group 6: MonitoringDashboard (isolated - mocks all monitoring tabs)
+run_group "Group 6/7: MonitoringDashboard" \
+  tests/components/monitoring/MonitoringDashboard.test.tsx
+
+# Group 7: All remaining files (safe together)
+run_group "Group 7/7: Remaining components" \
   tests/components/DataCharts.test.tsx \
   tests/components/QueryEditor.test.tsx \
   tests/components/QuerySafetyDialog.test.tsx \
@@ -81,7 +85,9 @@ run_group "Group 6/6: Remaining components" \
   tests/components/admin/OverviewTab.test.tsx \
   tests/components/admin/OperationsTab.test.tsx \
   tests/components/admin/AuditTab.test.tsx \
-  tests/components/monitoring/MonitoringDashboard.test.tsx
+  tests/components/monitoring/StorageTab.test.tsx \
+  tests/components/monitoring/SessionsTab.test.tsx \
+  tests/components/monitoring/TablesTab.test.tsx
 
 # Summary
 echo ""
