@@ -24,7 +24,7 @@ set -e
 
 PASS=0
 FAIL=0
-TOTAL_GROUPS=10
+TOTAL_GROUPS=12
 EXTRA_BUN_ARGS=("$@")
 GROUP_INDEX=0
 COVERAGE_MODE=0
@@ -100,8 +100,18 @@ run_group "Group 7/10: Results-grid subcomponents" \
 run_group "Group 8/10: SavedQueries" \
   tests/components/SavedQueries.test.tsx
 
-# Group 9: New smoke tests (isolated - mock globalThis.fetch)
-run_group "Group 9/10: Smoke tests" \
+# Group 9: StudioHeaders + TableItem (isolated - mock dropdown-menu)
+run_group "Group 9/12: StudioHeaders & TableItem" \
+  tests/components/studio/StudioMobileHeader.test.tsx \
+  tests/components/studio/StudioDesktopHeader.test.tsx \
+  tests/components/schema-explorer/TableItem.test.tsx
+
+# Group 10: PoolTab (isolated - mock globalThis.fetch)
+run_group "Group 10/12: PoolTab" \
+  tests/components/monitoring/PoolTab.test.tsx
+
+# Group 11: Smoke tests (isolated - mock globalThis.fetch)
+run_group "Group 11/12: Smoke tests" \
   tests/components/VisualExplain.test.tsx \
   tests/components/AIAutopilotPanel.test.tsx \
   tests/components/DatabaseDocs.test.tsx \
@@ -115,8 +125,8 @@ run_group "Group 9/10: Smoke tests" \
   tests/components/MobileNav.test.tsx \
   tests/components/DataImportModal.test.tsx
 
-# Group 10: All remaining files (safe together)
-run_group "Group 10/10: Remaining components" \
+# Group 12: All remaining files (safe together)
+run_group "Group 12/12: Remaining components" \
   tests/components/DataCharts.test.tsx \
   tests/components/QueryEditor.test.tsx \
   tests/components/QuerySafetyDialog.test.tsx \
