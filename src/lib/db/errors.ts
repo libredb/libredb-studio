@@ -246,6 +246,25 @@ export function mapDatabaseError(
     );
   }
 
+  // Oracle errors
+  if (message.includes('ora-01017') || message.includes('invalid username/password')) {
+    return new AuthenticationError(`Authentication failed: ${error.message}`, provider);
+  }
+  if (message.includes('ora-12541') || message.includes('ora-12154') || message.includes('tns:')) {
+    return new ConnectionError(`Failed to connect to Oracle: ${error.message}`, provider);
+  }
+  if (message.includes('ora-00942')) {
+    return new QueryError(`Table or view does not exist: ${error.message}`, provider, query);
+  }
+
+  // MSSQL errors
+  if (message.includes('login failed')) {
+    return new AuthenticationError(`Authentication failed: ${error.message}`, provider);
+  }
+  if (message.includes('cannot open database')) {
+    return new ConnectionError(`Database not found: ${error.message}`, provider);
+  }
+
   // Query errors (PostgreSQL specific)
   if (message.includes('syntax error') || message.includes('column') || message.includes('relation')) {
     return new QueryError(

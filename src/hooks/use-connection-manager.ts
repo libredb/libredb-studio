@@ -1,0 +1,194 @@
+'use client';
+
+import { useState, useEffect, useCallback, useMemo } from 'react';
+import type { DatabaseConnection, TableSchema } from '@/lib/types';
+import { useToast } from '@/hooks/use-toast';
+import { storage } from '@/lib/storage';
+
+export function useConnectionManager() {
+  const [connections, setConnections] = useState<DatabaseConnection[]>([]);
+  const [activeConnection, setActiveConnection] = useState<DatabaseConnection | null>(null);
+  const [schema, setSchema] = useState<TableSchema[]>([]);
+  const [isLoadingSchema, setIsLoadingSchema] = useState(false);
+  const [connectionPulse, setConnectionPulse] = useState<'healthy' | 'degraded' | 'error' | null>(null);
+
+  const { toast } = useToast();
+
+  // Fetch schema for a connection
+  const fetchSchema = useCallback(async (conn: DatabaseConnection) => {
+    setIsLoadingSchema(true);
+
+    if (conn.isDemo) {
+      console.log('[DemoDB] Fetching schema for demo connection:', conn.name);
+    }
+
+    try {
+      const response = await fetch('/api/db/schema', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(conn),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        const errorMessage = errorData.error || 'Failed to fetch schema';
+
+        if (conn.isDemo) {
+          console.error('[DemoDB] Schema fetch failed:', errorMessage);
+          throw new Error(`Demo database unavailable: ${errorMessage}. You can add your own database connection.`);
+        }
+        throw new Error(errorMessage);
+      }
+
+      const data = await response.json();
+
+      if (conn.isDemo) {
+        console.log('[DemoDB] Schema loaded successfully:', {
+          tables: data.length,
+          tableNames: data.slice(0, 5).map((t: TableSchema) => t.name),
+        });
+      }
+
+      setSchema(data);
+    } catch (error) {
+      const title = conn.isDemo ? "Demo Database Error" : "Schema Error";
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      toast({ title, description: errorMessage, variant: "destructive" });
+    } finally {
+      setIsLoadingSchema(false);
+    }
+  }, [toast]);
+
+  // Memoized derived values
+  const tableNames = useMemo(() => schema.map(s => s.name), [schema]);
+  const schemaContext = useMemo(() => JSON.stringify(schema), [schema]);
+
+  // Initialize connections on mount
+  useEffect(() => {
+    const initializeConnections = async () => {
+      const LOG_PREFIX = '[DemoDB]';
+      const loadedConnections = storage.getConnections();
+
+      // Fetch demo connection from server
+      try {
+        console.log(`${LOG_PREFIX} Checking for demo connection...`);
+        const res = await fetch('/api/demo-connection');
+
+        if (res.ok) {
+          const data = await res.json();
+
+          if (data.enabled && data.connection) {
+            const demoConn = {
+              ...data.connection,
+              createdAt: new Date(data.connection.createdAt),
+            };
+
+            // Check if demo connection already exists (by id or isDemo flag)
+            const existingDemo = loadedConnections.find(
+              (c: DatabaseConnection) => c.id === demoConn.id || (c.isDemo && c.type === 'postgres')
+            );
+
+            if (existingDemo) {
+              // Update existing demo connection (credentials may have changed)
+              console.log(`${LOG_PREFIX} Updating existing demo connection:`, {
+                id: existingDemo.id,
+                name: demoConn.name,
+              });
+              const updatedDemo = { ...demoConn, id: existingDemo.id };
+              storage.saveConnection(updatedDemo);
+              const updatedConnections = storage.getConnections();
+              setConnections(updatedConnections);
+
+              // Restore persisted active connection, fallback to first
+              if (updatedConnections.length > 0) {
+                const savedId = storage.getActiveConnectionId();
+                const saved = savedId ? updatedConnections.find((c: DatabaseConnection) => c.id === savedId) : null;
+                setActiveConnection(saved ?? updatedConnections[0]);
+              }
+            } else {
+              // Add new demo connection
+              console.log(`${LOG_PREFIX} Adding new demo connection:`, {
+                id: demoConn.id,
+                name: demoConn.name,
+                database: demoConn.database,
+              });
+              storage.saveConnection(demoConn);
+              const updatedConnections = storage.getConnections();
+              setConnections(updatedConnections);
+
+              // Restore persisted active connection, fallback to demo if no others
+              const savedId = storage.getActiveConnectionId();
+              const saved = savedId ? updatedConnections.find((c: DatabaseConnection) => c.id === savedId) : null;
+              if (loadedConnections.length === 0) {
+                console.log(`${LOG_PREFIX} Auto-selecting demo as active connection (no other connections)`);
+                setActiveConnection(saved ?? demoConn);
+              } else {
+                setActiveConnection(saved ?? updatedConnections[0]);
+              }
+            }
+            return;
+          } else {
+            console.log(`${LOG_PREFIX} Demo connection not enabled or not configured`);
+          }
+        } else {
+          console.warn(`${LOG_PREFIX} API returned non-ok status:`, res.status);
+        }
+      } catch (error) {
+        console.error(`${LOG_PREFIX} Failed to fetch demo connection:`, error);
+      }
+
+      setConnections(loadedConnections);
+      if (loadedConnections.length > 0) {
+        const savedId = storage.getActiveConnectionId();
+        const saved = savedId ? loadedConnections.find((c: DatabaseConnection) => c.id === savedId) : null;
+        setActiveConnection(saved ?? loadedConnections[0]);
+      }
+    };
+
+    initializeConnections();
+  }, []);
+
+  // Persist active connection ID
+  useEffect(() => {
+    if (activeConnection) {
+      storage.setActiveConnectionId(activeConnection.id);
+    }
+  }, [activeConnection]);
+
+  // Connection pulse — quick health check every 60s
+  useEffect(() => {
+    if (!activeConnection || activeConnection.isDemo) {
+      setConnectionPulse(null);
+      return;
+    }
+    const checkHealth = async () => {
+      try {
+        const res = await fetch('/api/db/health', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ connection: activeConnection }),
+        });
+        setConnectionPulse(res.ok ? 'healthy' : 'degraded');
+      } catch {
+        setConnectionPulse('error');
+      }
+    };
+    checkHealth();
+    const interval = setInterval(checkHealth, 60000);
+    return () => clearInterval(interval);
+  }, [activeConnection]);
+
+  return {
+    connections,
+    setConnections,
+    activeConnection,
+    setActiveConnection,
+    schema,
+    setSchema,
+    isLoadingSchema,
+    connectionPulse,
+    fetchSchema,
+    tableNames,
+    schemaContext,
+  };
+}

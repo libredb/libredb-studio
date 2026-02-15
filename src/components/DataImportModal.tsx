@@ -32,7 +32,7 @@ interface DataImportModalProps {
   databaseType?: string;
 }
 
-interface ParsedData {
+export interface ParsedData {
   headers: string[];
   rows: string[][];
   totalRows: number;
@@ -40,7 +40,7 @@ interface ParsedData {
 
 type ImportStep = 'upload' | 'preview' | 'configure' | 'ready';
 
-function parseCSV(text: string): ParsedData {
+export function parseCSV(text: string): ParsedData {
   const lines = text.split(/\r?\n/).filter(line => line.trim());
   if (lines.length === 0) return { headers: [], rows: [], totalRows: 0 };
 
@@ -77,7 +77,7 @@ function parseCSV(text: string): ParsedData {
   return { headers, rows, totalRows: rows.length };
 }
 
-function parseJSON(text: string): ParsedData {
+export function parseJSON(text: string): ParsedData {
   const data = JSON.parse(text);
   const arr = Array.isArray(data) ? data : [data];
   if (arr.length === 0) return { headers: [], rows: [], totalRows: 0 };
@@ -93,7 +93,7 @@ function parseJSON(text: string): ParsedData {
   return { headers, rows, totalRows: rows.length };
 }
 
-function inferSqlType(values: string[]): string {
+export function inferSqlType(values: string[]): string {
   const nonEmpty = values.filter(v => v !== '' && v !== null);
   if (nonEmpty.length === 0) return 'TEXT';
 
@@ -109,9 +109,61 @@ function inferSqlType(values: string[]): string {
   return 'TEXT';
 }
 
-function escapeSQL(value: string): string {
+export function escapeSQL(value: string): string {
   if (value === '' || value === 'null' || value === 'NULL') return 'NULL';
   return `'${value.replace(/'/g, "''")}'`;
+}
+
+export function generateImportSQL(
+  parsedData: ParsedData | null,
+  targetTable: string,
+  createNewTable: boolean,
+  newTableName: string,
+  columnMapping: Record<string, string>,
+): string {
+  if (!parsedData) return '';
+
+  const tableName = createNewTable ? (newTableName || 'imported_data') : targetTable;
+  if (!tableName) return '';
+
+  const statements: string[] = [];
+
+  // CREATE TABLE if new
+  if (createNewTable) {
+    const colDefs = parsedData.headers.map(h => {
+      const colValues = parsedData.rows.slice(0, 100).map(r => r[parsedData.headers.indexOf(h)]);
+      const sqlType = inferSqlType(colValues);
+      const colName = columnMapping[h] || h;
+      return `  ${colName} ${sqlType}`;
+    });
+    statements.push(`CREATE TABLE ${tableName} (\n${colDefs.join(',\n')}\n);`);
+  }
+
+  // INSERT statements (batch in groups of 100)
+  const mappedHeaders = parsedData.headers.map(h => columnMapping[h] || h);
+  const batchSize = 100;
+
+  for (let i = 0; i < parsedData.rows.length; i += batchSize) {
+    const batch = parsedData.rows.slice(i, i + batchSize);
+    const valueRows = batch.map(row => {
+      const values = row.map((val, idx) => {
+        const sqlType = inferSqlType(parsedData.rows.slice(0, 100).map(r => r[idx]));
+        if (val === '' || val === 'NULL' || val === 'null') return 'NULL';
+        if (sqlType === 'INTEGER' || sqlType === 'NUMERIC' || sqlType === 'BOOLEAN') {
+          if (sqlType === 'BOOLEAN') return val.toLowerCase() === 'true' || val === '1' ? 'TRUE' : 'FALSE';
+          return val;
+        }
+        return escapeSQL(val);
+      });
+      return `  (${values.join(', ')})`;
+    });
+
+    statements.push(
+      `INSERT INTO ${tableName} (${mappedHeaders.join(', ')})\nVALUES\n${valueRows.join(',\n')};`
+    );
+  }
+
+  return statements.join('\n\n');
 }
 
 export function DataImportModal({ isOpen, onClose, onImport, tables, databaseType }: DataImportModalProps) {
@@ -186,51 +238,10 @@ export function DataImportModal({ isOpen, onClose, onImport, tables, databaseTyp
     e.preventDefault();
   }, []);
 
-  const generatedSQL = useMemo(() => {
-    if (!parsedData) return '';
-
-    const tableName = createNewTable ? (newTableName || 'imported_data') : targetTable;
-    if (!tableName) return '';
-
-    const statements: string[] = [];
-
-    // CREATE TABLE if new
-    if (createNewTable) {
-      const colDefs = parsedData.headers.map(h => {
-        const colValues = parsedData.rows.slice(0, 100).map(r => r[parsedData.headers.indexOf(h)]);
-        const sqlType = inferSqlType(colValues);
-        const colName = columnMapping[h] || h;
-        return `  ${colName} ${sqlType}`;
-      });
-      statements.push(`CREATE TABLE ${tableName} (\n${colDefs.join(',\n')}\n);`);
-    }
-
-    // INSERT statements (batch in groups of 100)
-    const mappedHeaders = parsedData.headers.map(h => columnMapping[h] || h);
-    const batchSize = 100;
-
-    for (let i = 0; i < parsedData.rows.length; i += batchSize) {
-      const batch = parsedData.rows.slice(i, i + batchSize);
-      const valueRows = batch.map(row => {
-        const values = row.map((val, idx) => {
-          const sqlType = inferSqlType(parsedData.rows.slice(0, 100).map(r => r[idx]));
-          if (val === '' || val === 'NULL' || val === 'null') return 'NULL';
-          if (sqlType === 'INTEGER' || sqlType === 'NUMERIC' || sqlType === 'BOOLEAN') {
-            if (sqlType === 'BOOLEAN') return val.toLowerCase() === 'true' || val === '1' ? 'TRUE' : 'FALSE';
-            return val;
-          }
-          return escapeSQL(val);
-        });
-        return `  (${values.join(', ')})`;
-      });
-
-      statements.push(
-        `INSERT INTO ${tableName} (${mappedHeaders.join(', ')})\nVALUES\n${valueRows.join(',\n')};`
-      );
-    }
-
-    return statements.join('\n\n');
-  }, [parsedData, targetTable, createNewTable, newTableName, columnMapping]);
+  const generatedSQL = useMemo(
+    () => generateImportSQL(parsedData, targetTable, createNewTable, newTableName, columnMapping),
+    [parsedData, targetTable, createNewTable, newTableName, columnMapping],
+  );
 
   const handleImport = () => {
     if (!generatedSQL) return;

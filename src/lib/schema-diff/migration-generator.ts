@@ -4,6 +4,8 @@ import type { SchemaDiff, TableDiff, ColumnDiff } from './types';
 function escapeIdentifier(name: string, dialect: DatabaseType): string {
   switch (dialect) {
     case 'mysql': return `\`${name}\``;
+    case 'mssql': return `[${name.replace(/\]/g, ']]')}]`;
+    case 'oracle':
     case 'postgres':
     case 'sqlite':
     default: return `"${name}"`;
@@ -83,6 +85,18 @@ function generateAlterTable(table: TableDiff, dialect: DatabaseType): string {
       const nullable = col.targetNullable === false ? ' NOT NULL' : ' NULL';
       const defaultVal = col.targetDefault ? ` DEFAULT ${col.targetDefault}` : '';
       lines.push(`ALTER TABLE ${id} MODIFY COLUMN ${escapeIdentifier(col.columnName, dialect)} ${type}${nullable}${defaultVal};`);
+    } else if (dialect === 'oracle') {
+      const type = col.targetType || col.sourceType || 'VARCHAR2(255)';
+      const nullable = col.targetNullable === false ? ' NOT NULL' : ' NULL';
+      const defaultVal = col.targetDefault ? ` DEFAULT ${col.targetDefault}` : '';
+      lines.push(`ALTER TABLE ${id} MODIFY (${escapeIdentifier(col.columnName, dialect)} ${type}${defaultVal}${nullable});`);
+    } else if (dialect === 'mssql') {
+      const type = col.targetType || col.sourceType || 'NVARCHAR(MAX)';
+      const nullable = col.targetNullable === false ? ' NOT NULL' : ' NULL';
+      lines.push(`ALTER TABLE ${id} ALTER COLUMN ${escapeIdentifier(col.columnName, dialect)} ${type}${nullable};`);
+      if (col.sourceDefault !== col.targetDefault && col.targetDefault) {
+        lines.push(`ALTER TABLE ${id} ADD DEFAULT ${col.targetDefault} FOR ${escapeIdentifier(col.columnName, dialect)};`);
+      }
     } else {
       // PostgreSQL
       if (col.sourceType !== col.targetType) {

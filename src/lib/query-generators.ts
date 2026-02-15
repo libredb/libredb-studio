@@ -9,6 +9,14 @@ export function generateTableQuery(tableName: string, capabilities: ProviderCapa
       2
     );
   }
+  // Oracle
+  if (capabilities.defaultPort === 1521) {
+    return `SELECT * FROM ${tableName} FETCH FIRST 50 ROWS ONLY;`;
+  }
+  // MSSQL
+  if (capabilities.defaultPort === 1433) {
+    return `SELECT TOP 50 * FROM ${tableName};`;
+  }
   return `SELECT * FROM ${tableName} LIMIT 50;`;
 }
 
@@ -37,6 +45,14 @@ export function generateSelectQuery(
     );
   }
   const cols = columns.map((c) => `  ${c.name}`).join(',\n') || '  *';
+  // Oracle
+  if (capabilities.defaultPort === 1521) {
+    return `SELECT\n${cols}\nFROM ${tableName}\nWHERE 1=1\nFETCH FIRST 100 ROWS ONLY;`;
+  }
+  // MSSQL
+  if (capabilities.defaultPort === 1433) {
+    return `SELECT TOP 100\n${cols}\nFROM ${tableName}\nWHERE 1=1;`;
+  }
   return `SELECT\n${cols}\nFROM ${tableName}\nWHERE 1=1\nLIMIT 100;`;
 }
 

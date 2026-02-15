@@ -1,4 +1,4 @@
-export type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'mongodb' | 'redis' | 'demo';
+export type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'mongodb' | 'redis' | 'oracle' | 'mssql' | 'demo';
 
 export type ConnectionEnvironment = 'production' | 'staging' | 'development' | 'local' | 'other';
 
@@ -56,6 +56,8 @@ export interface DatabaseConnection {
   group?: string;
   ssl?: SSLConfig;
   sshTunnel?: SSHTunnelConfig;
+  serviceName?: string;   // Oracle: service name (e.g. ORCL, XEPDB1)
+  instanceName?: string;  // MSSQL: named instance (e.g. SQLEXPRESS)
 }
 
 export interface TableSchema {

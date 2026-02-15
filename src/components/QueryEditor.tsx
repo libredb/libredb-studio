@@ -1,13 +1,16 @@
 "use client";
 
-import React, { useRef, useEffect, useState, useMemo, forwardRef, useImperativeHandle } from 'react';
+import React, { useRef, useEffect, useState, useMemo, forwardRef, useImperativeHandle, useCallback } from 'react';
 import Editor, { useMonaco } from '@monaco-editor/react';
 import type * as Monaco from 'monaco-editor';
 import { Zap, Sparkles, Send, X, Loader2, AlignLeft, Trash2, Copy, Play } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { motion, AnimatePresence } from 'framer-motion';
 import { format } from 'sql-formatter';
-import { extractAliases, resolveAlias } from '@/lib/sql';
+import { registerSQLCompletionProvider } from '@/lib/editor/sql-completions';
+import type { SchemaCompletionCache, SchemaColumnItem } from '@/lib/editor/sql-completions';
+import { registerMongoDBCompletionProvider } from '@/lib/editor/mongodb-completions';
+import { useAiChat } from '@/hooks/use-ai-chat';
 
 export interface QueryEditorRef {
   getSelectedText: () => string;
@@ -33,68 +36,15 @@ interface QueryEditorProps {
   capabilities?: import('@/lib/db/types').ProviderCapabilities;
 }
 
-const SQL_KEYWORDS = [
-  'SELECT', 'FROM', 'WHERE', 'AND', 'OR', 'NOT', 'IN', 'BETWEEN', 'LIKE', 'IS NULL', 'IS NOT NULL',
-  'GROUP BY', 'HAVING', 'ORDER BY', 'LIMIT', 'OFFSET', 'UNION', 'ALL', 'EXISTS', 'DISTINCT',
-  'INNER JOIN', 'LEFT JOIN', 'RIGHT JOIN', 'FULL JOIN', 'CROSS JOIN', 'NATURAL JOIN', 'ON', 'USING',
-  'INSERT INTO', 'VALUES', 'UPDATE', 'SET', 'DELETE', 'TRUNCATE', 'CREATE', 'ALTER', 'DROP',
-  'TABLE', 'VIEW', 'INDEX', 'SCHEMA', 'DATABASE', 'FUNCTION', 'TRIGGER', 'PROCEDURE',
-  'AS', 'WITH', 'CASE', 'WHEN', 'THEN', 'ELSE', 'END', 'CAST', 'COALESCE', 'NULLIF',
-  'WINDOW', 'OVER', 'PARTITION BY', 'ROWS', 'RANGE', 'PRECEDING', 'FOLLOWING', 'UNBOUNDED'
-];
-
-const SQL_FUNCTIONS = [
-  'COUNT', 'SUM', 'AVG', 'MIN', 'MAX', 'FIRST_VALUE', 'LAST_VALUE', 'LEAD', 'LAG',
-  'ROW_NUMBER', 'RANK', 'DENSE_RANK', 'NTILE', 'CONCAT', 'SUBSTR', 'LENGTH', 'LOWER', 'UPPER',
-  'TRIM', 'LTRIM', 'RTRIM', 'REPLACE', 'ROUND', 'TRUNC', 'ABS', 'NOW', 'CURRENT_TIMESTAMP',
-  'DATE_PART', 'DATE_TRUNC', 'EXTRACT', 'AGE', 'TO_CHAR', 'TO_DATE', 'TO_NUMBER', 'JSON_AGG', 'JSON_BUILD_OBJECT'
-];
-
-const SQL_SNIPPETS = [
-  { label: 'SELECT', value: 'SELECT * FROM ${1:table_name} LIMIT 10;' },
-  { label: 'INSERT', value: 'INSERT INTO ${1:table_name} (${2:columns})\nVALUES (${3:values});' },
-  { label: 'UPDATE', value: 'UPDATE ${1:table_name}\nSET ${2:column} = ${3:value}\nWHERE ${4:condition};' },
-  { label: 'DELETE', value: 'DELETE FROM ${1:table_name}\nWHERE ${2:condition};' },
-  { label: 'JOIN', value: 'SELECT ${1:*}\nFROM ${2:table1} t1\nJOIN ${3:table2} t2 ON t1.${4:id} = t2.${5:t1_id};' },
-  { label: 'WITH', value: 'WITH ${1:cte_name} AS (\n  SELECT ${2:*}\n  FROM ${3:table_name}\n)\nSELECT * FROM ${1:cte_name};' },
-];
-
-// Pre-computed completion items for static data (keywords, functions, snippets)
-// These are created once and reused across all completion requests
-interface PrecomputedItem {
-  label: string;
-  labelLower: string; // Pre-computed lowercase for faster matching
-  kind: number; // Will be set when monaco is available
-  insertText: string;
-  insertTextRules?: number;
-  detail: string;
+interface ParsedTable {
+  name: string;
+  rowCount?: number;
+  columns?: Array<{
+    name: string;
+    type: string;
+    isPrimary?: boolean;
+  }>;
 }
-
-const KEYWORD_ITEMS: PrecomputedItem[] = SQL_KEYWORDS.map(kw => ({
-  label: kw,
-  labelLower: kw.toLowerCase(),
-  kind: 17, // CompletionItemKind.Keyword
-  insertText: kw,
-  detail: 'SQL Keyword'
-}));
-
-const FUNCTION_ITEMS: PrecomputedItem[] = SQL_FUNCTIONS.map(f => ({
-  label: f,
-  labelLower: f.toLowerCase(),
-  kind: 1, // CompletionItemKind.Function
-  insertText: f + '($1)',
-  insertTextRules: 4, // InsertAsSnippet
-  detail: 'SQL Function'
-}));
-
-const SNIPPET_ITEMS: PrecomputedItem[] = SQL_SNIPPETS.map(s => ({
-  label: s.label,
-  labelLower: s.label.toLowerCase(),
-  kind: 27, // CompletionItemKind.Snippet
-  insertText: s.value,
-  insertTextRules: 4, // InsertAsSnippet
-  detail: 'SQL Snippet'
-}));
 
 // Static editor options - defined outside component to prevent re-creation on every render
 const EDITOR_OPTIONS = {
@@ -151,13 +101,6 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
   const lastSyncedValueRef = useRef<string>(value);
   const isInternalChangeRef = useRef<boolean>(false);
 
-  // AI States
-  const [showAi, setShowAi] = useState(false);
-  const [aiPrompt, setAiPrompt] = useState('');
-  const [isAiLoading, setIsAiLoading] = useState(false);
-  const [aiError, setAiError] = useState<string | null>(null);
-  const [aiConversationHistory, setAiConversationHistory] = useState<{ role: 'user' | 'assistant'; content: string }[]>([]);
-
   // Sync editor content when value prop changes externally (e.g., tab switch)
   useEffect(() => {
     if (editorRef.current && value !== lastSyncedValueRef.current) {
@@ -173,16 +116,6 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
     }
   }, [value]);
 
-  interface ParsedTable {
-    name: string;
-    rowCount?: number;
-    columns?: Array<{
-      name: string;
-      type: string;
-      isPrimary?: boolean;
-    }>;
-  }
-
   const parsedSchema = useMemo((): ParsedTable[] => {
     if (!schemaContext) return [];
     try {
@@ -194,24 +127,10 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
   }, [schemaContext]);
 
   // Pre-compute schema-based completion items for faster lookups
-  const schemaCompletionCache = useMemo(() => {
-    interface TableItem {
-      label: string;
-      labelLower: string;
-      rowCount: number;
-      columnNames: string;
-    }
-    interface ColumnItem {
-      label: string;
-      labelLower: string;
-      type: string;
-      isPrimary: boolean;
-      tableName: string;
-    }
-
-    const tableItems: TableItem[] = [];
-    const columnMap = new Map<string, ColumnItem[]>(); // tableName -> columns
-    const allColumns = new Map<string, ColumnItem>(); // columnName -> first occurrence
+  const schemaCompletionCache = useMemo((): SchemaCompletionCache => {
+    const tableItems: SchemaCompletionCache['tableItems'] = [];
+    const columnMap = new Map<string, SchemaColumnItem[]>();
+    const allColumns = new Map<string, SchemaColumnItem>();
 
     parsedSchema.forEach((table) => {
       const tableLower = table.name.toLowerCase();
@@ -222,9 +141,9 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
         columnNames: table.columns?.map((c) => c.name).join(', ') || ''
       });
 
-      const tableColumns: ColumnItem[] = [];
+      const tableColumns: SchemaColumnItem[] = [];
       table.columns?.forEach((col) => {
-        const colItem: ColumnItem = {
+        const colItem: SchemaColumnItem = {
           label: col.name,
           labelLower: col.name.toLowerCase(),
           type: col.type,
@@ -405,108 +324,35 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
       onChange?.('');
     }
   };
-  
-  const handleAiSubmit = async (e?: React.FormEvent) => {
-    if (e) e.preventDefault();
-    if (!aiPrompt.trim() || isAiLoading) return;
 
-    setIsAiLoading(true);
-    setAiError(null);
-    try {
-      let filteredSchemaContext = '';
-      if (schemaContext) {
-        try {
-          const topTables = [...parsedSchema]
-            .sort((a, b) => (b.rowCount || 0) - (a.rowCount || 0))
-            .slice(0, 100);
-          
-          filteredSchemaContext = topTables.map(table => {
-            if (!table.columns || table.columns.length === 0) {
-              return `Table: ${table.name} (${table.rowCount || 0} rows)\nColumns: (none)`;
-            }
-            const cols = table.columns.slice(0, 10).map((c) => `${c.name} (${c.type}${c.isPrimary ? ', PK' : ''})`).join(', ');
-            return `Table: ${table.name} (${table.rowCount || 0} rows)\nColumns: ${cols}${table.columns.length > 10 ? '...' : ''}`;
-          }).join('\n\n');
-        } catch {
-          filteredSchemaContext = schemaContext.substring(0, 2000);
-        }
-      }
-
-      const response = await fetch('/api/ai/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          prompt: aiPrompt,
-          databaseType,
-          schemaContext: filteredSchemaContext,
-          conversationHistory: aiConversationHistory.length > 0 ? aiConversationHistory : undefined,
-        }),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'AI request failed');
-      }
-
-      const reader = response.body?.getReader();
-      if (!reader) throw new Error('No reader available');
-
-      const currentVal = editorRef.current?.getValue() || '';
-      const shouldReplace = !currentVal || currentVal.startsWith('--');
-
-      let fullAiResponse = '';
-      if (!shouldReplace) {
-        fullAiResponse = currentVal + '\n\n';
-      }
-
-      // Buffered update using requestAnimationFrame to avoid excessive re-renders
-      let rafId: number | null = null;
-      const updateEditor = () => {
-        if (editorRef.current) {
-          editorRef.current.setValue(fullAiResponse);
-        }
-        rafId = null;
-      };
-
-      while (true) {
-        const { done, value: chunkValue } = await reader.read();
-        if (done) break;
-        const chunk = new TextDecoder().decode(chunkValue);
-        fullAiResponse += chunk;
-
-        // Schedule update on next animation frame if not already scheduled
-        if (!rafId) {
-          rafId = requestAnimationFrame(updateEditor);
-        }
-      }
-
-      // Ensure final content is set and cancel any pending RAF
-      if (rafId) {
-        cancelAnimationFrame(rafId);
-      }
-      if (editorRef.current) {
-        editorRef.current.setValue(fullAiResponse);
-        lastSyncedValueRef.current = fullAiResponse;
-        onChange?.(fullAiResponse);
-      }
-
-      // Save conversation history for multi-turn
-      setAiConversationHistory(prev => [
-        ...prev,
-        { role: 'user' as const, content: aiPrompt },
-        { role: 'assistant' as const, content: fullAiResponse },
-      ]);
-
-      setAiPrompt('');
-      setShowAi(false);
-    } catch (error) {
-      console.error('AI Error:', error);
-      const errorMessage = error instanceof Error ? error.message : 'An unexpected error occurred while communicating with the AI.';
-      setAiError(errorMessage);
-    } finally {
-      setIsAiLoading(false);
+  // AI Chat hook
+  const getEditorValue = useCallback(() => editorRef.current?.getValue() || '', []);
+  const setEditorValueForAi = useCallback((val: string) => {
+    if (editorRef.current) {
+      editorRef.current.setValue(val);
+      lastSyncedValueRef.current = val;
     }
-  };
+  }, []);
+
+  const {
+    showAi,
+    setShowAi,
+    aiPrompt,
+    setAiPrompt,
+    isAiLoading,
+    aiError,
+    setAiError,
+    aiConversationHistory,
+    setAiConversationHistory,
+    handleAiSubmit,
+  } = useAiChat({
+    parsedSchema,
+    schemaContext,
+    databaseType,
+    getEditorValue,
+    setEditorValue: setEditorValueForAi,
+    onChange,
+  });
 
   // Store original console.error for cleanup
   const originalConsoleErrorRef = useRef<typeof console.error | null>(null);
@@ -562,327 +408,19 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
     });
   };
 
+  // SQL completion provider
   useEffect(() => {
     if (monaco && language === 'sql') {
-      const completionProvider = monaco.languages.registerCompletionItemProvider('sql', {
-        triggerCharacters: ['.', ' '],
-        provideCompletionItems: (model: Monaco.editor.ITextModel, position: Monaco.Position) => {
-          const word = model.getWordUntilPosition(position);
-          const range = {
-            startLineNumber: position.lineNumber,
-            endLineNumber: position.lineNumber,
-            startColumn: word.startColumn,
-            endColumn: word.endColumn,
-          };
-
-          const line = model.getLineContent(position.lineNumber);
-          const lastChar = line[position.column - 2];
-          const prefix = word.word.toLowerCase();
-
-          const suggestions: Monaco.languages.CompletionItem[] = [];
-
-          // Dot-triggered: Show columns for specific table or alias
-          if (lastChar === '.') {
-            const matches = line.substring(0, position.column - 1).match(/(\w+)\.$/);
-            if (matches) {
-              const identifier = matches[1].toLowerCase();
-
-              // Helper to find columns by table name (handles schema.table format)
-              const findColumns = (tableName: string) => {
-                const tableNameLower = tableName.toLowerCase();
-                // 1. Try exact match first
-                const cols = schemaCompletionCache.columnMap.get(tableNameLower);
-                if (cols) return cols;
-
-                // 2. Try matching table name with any schema prefix (e.g., "employee" matches "employees.employee")
-                for (const [key, value] of schemaCompletionCache.columnMap.entries()) {
-                  const parts = key.split('.');
-                  const justTableName = parts[parts.length - 1];
-                  if (justTableName === tableNameLower) {
-                    return value;
-                  }
-                }
-                return null;
-              };
-
-              // 1. First, try direct table lookup (backward compatible)
-              let columns = findColumns(identifier);
-
-              // 2. If not found, try alias resolution
-              if (!columns) {
-                // Get query text from start to cursor position
-                const textToCursor = model.getValueInRange({
-                  startLineNumber: 1,
-                  startColumn: 1,
-                  endLineNumber: position.lineNumber,
-                  endColumn: position.column - 1
-                });
-
-                // Extract aliases from query
-                const { aliases } = extractAliases(textToCursor);
-
-                // Resolve alias to table name
-                const resolvedTableName = resolveAlias(identifier, aliases);
-                columns = findColumns(resolvedTableName);
-              }
-
-              // 3. Provide column suggestions
-              if (columns) {
-                columns.forEach(col => {
-                  suggestions.push({
-                    label: col.label,
-                    kind: monaco.languages.CompletionItemKind.Field,
-                    insertText: col.label,
-                    range,
-                    detail: `${col.type}${col.isPrimary ? ' (PK)' : ''}`,
-                    documentation: `Column of ${col.tableName}`
-                  });
-                });
-              }
-            }
-            return { suggestions };
-          }
-
-          // General completion with lazy filtering and context awareness
-          // Only add items that match the current prefix (or all if prefix is empty/very short)
-          const shouldFilter = prefix.length >= 2;
-
-          // Detect context: Are we in a position where columns make sense?
-          // Columns are relevant after: SELECT, WHERE, AND, OR, ON, SET, HAVING, ORDER BY, GROUP BY
-          const textBeforeCursor = line.substring(0, position.column - 1).toUpperCase();
-          const isColumnContext = /\b(SELECT|WHERE|AND|OR|ON|SET|HAVING|ORDER\s+BY|GROUP\s+BY|,)\s*\w*$/i.test(textBeforeCursor);
-
-          // Keywords - filter by prefix (highest priority: sortText "0")
-          KEYWORD_ITEMS.forEach(item => {
-            if (!shouldFilter || item.labelLower.startsWith(prefix)) {
-              suggestions.push({
-                label: item.label,
-                kind: monaco.languages.CompletionItemKind.Keyword,
-                insertText: item.insertText,
-                range,
-                detail: item.detail,
-                sortText: '0' + item.label // Keywords first
-              });
-            }
-          });
-
-          // Functions - filter by prefix (sortText "1")
-          FUNCTION_ITEMS.forEach(item => {
-            if (!shouldFilter || item.labelLower.startsWith(prefix)) {
-              suggestions.push({
-                label: item.label,
-                kind: monaco.languages.CompletionItemKind.Function,
-                insertText: item.insertText,
-                insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
-                range,
-                detail: item.detail,
-                sortText: '1' + item.label // Functions second
-              });
-            }
-          });
-
-          // Tables - filter by prefix (sortText "2")
-          schemaCompletionCache.tableItems.forEach(table => {
-            if (!shouldFilter || table.labelLower.startsWith(prefix)) {
-              suggestions.push({
-                label: table.label,
-                kind: monaco.languages.CompletionItemKind.Class,
-                insertText: table.label,
-                range,
-                detail: `Table (${table.rowCount} rows)`,
-                documentation: table.columnNames,
-                sortText: '2' + table.label // Tables third
-              });
-            }
-          });
-
-          // Columns - only show in appropriate context (sortText "4")
-          // This prevents columns like "from_date" appearing when typing "FROM"
-          if (isColumnContext) {
-            schemaCompletionCache.allColumns.forEach((col, colName) => {
-              if (!shouldFilter || col.labelLower.startsWith(prefix)) {
-                suggestions.push({
-                  label: colName,
-                  kind: monaco.languages.CompletionItemKind.Field,
-                  insertText: colName,
-                  range,
-                  detail: `Column (${col.type})`,
-                  sortText: '4' + colName // Columns lower priority
-                });
-              }
-            });
-          }
-
-          // Snippets - filter by prefix (sortText "3")
-          SNIPPET_ITEMS.forEach(item => {
-            if (!shouldFilter || item.labelLower.startsWith(prefix)) {
-              suggestions.push({
-                label: item.label,
-                kind: monaco.languages.CompletionItemKind.Snippet,
-                insertText: item.insertText,
-                insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
-                range,
-                detail: item.detail,
-                sortText: '3' + item.label // Snippets fourth
-              });
-            }
-          });
-
-          return { suggestions };
-        },
-      });
-
-      return () => completionProvider.dispose();
+      const disposable = registerSQLCompletionProvider(monaco, schemaCompletionCache);
+      return () => disposable.dispose();
     }
   }, [monaco, language, schemaCompletionCache]);
 
   // MongoDB JSON completion provider
   useEffect(() => {
     if (monaco && language === 'json') {
-      const MQL_OPERATORS = [
-        '$match', '$group', '$sort', '$project', '$lookup', '$unwind', '$limit', '$skip',
-        '$addFields', '$count', '$facet', '$bucket', '$merge', '$out', '$replaceRoot',
-        '$eq', '$ne', '$gt', '$gte', '$lt', '$lte', '$in', '$nin', '$and', '$or', '$not', '$nor',
-        '$exists', '$type', '$regex', '$text', '$where', '$all', '$elemMatch', '$size',
-        '$set', '$unset', '$inc', '$push', '$pull', '$addToSet', '$pop', '$rename',
-        '$sum', '$avg', '$min', '$max', '$first', '$last',
-      ];
-
-      const MONGO_OPERATIONS = [
-        'find', 'findOne', 'aggregate', 'count', 'distinct',
-        'insertOne', 'insertMany', 'updateOne', 'updateMany', 'deleteOne', 'deleteMany',
-      ];
-
-      const MONGO_SNIPPETS: { label: string; template: string; detail: string }[] = [
-        {
-          label: 'find',
-          template: JSON.stringify({ collection: '${1:collection}', operation: 'find', filter: {}, options: { limit: 50 } }, null, 2),
-          detail: 'Find documents',
-        },
-        {
-          label: 'findOne',
-          template: JSON.stringify({ collection: '${1:collection}', operation: 'findOne', filter: { _id: '${2:id}' } }, null, 2),
-          detail: 'Find single document',
-        },
-        {
-          label: 'aggregate',
-          template: JSON.stringify({ collection: '${1:collection}', operation: 'aggregate', pipeline: [{ '$match': {} }, { '$group': { _id: '${2:field}', count: { '$sum': 1 } } }] }, null, 2),
-          detail: 'Aggregation pipeline',
-        },
-        {
-          label: 'count',
-          template: JSON.stringify({ collection: '${1:collection}', operation: 'count', filter: {} }, null, 2),
-          detail: 'Count documents',
-        },
-        {
-          label: 'insertOne',
-          template: JSON.stringify({ collection: '${1:collection}', operation: 'insertOne', documents: [{ '${2:field}': '${3:value}' }] }, null, 2),
-          detail: 'Insert one document',
-        },
-        {
-          label: 'updateOne',
-          template: JSON.stringify({ collection: '${1:collection}', operation: 'updateOne', filter: { _id: '${2:id}' }, update: { '$set': { '${3:field}': '${4:value}' } } }, null, 2),
-          detail: 'Update one document',
-        },
-        {
-          label: 'deleteMany',
-          template: JSON.stringify({ collection: '${1:collection}', operation: 'deleteMany', filter: { '${2:field}': '${3:value}' } }, null, 2),
-          detail: 'Delete matching documents',
-        },
-      ];
-
-      const completionProvider = monaco.languages.registerCompletionItemProvider('json', {
-        triggerCharacters: ['"', '$', ':'],
-        provideCompletionItems: (model: Monaco.editor.ITextModel, position: Monaco.Position) => {
-          const word = model.getWordUntilPosition(position);
-          const range = {
-            startLineNumber: position.lineNumber,
-            endLineNumber: position.lineNumber,
-            startColumn: word.startColumn,
-            endColumn: word.endColumn,
-          };
-
-          const line = model.getLineContent(position.lineNumber);
-          const textBefore = line.substring(0, position.column - 1);
-          const suggestions: Monaco.languages.CompletionItem[] = [];
-
-          // After "$" — MQL operators
-          if (textBefore.includes('$') || word.word.startsWith('$')) {
-            MQL_OPERATORS.forEach(op => {
-              suggestions.push({
-                label: op,
-                kind: monaco.languages.CompletionItemKind.Keyword,
-                insertText: op,
-                range,
-                detail: 'MQL Operator',
-                sortText: '0' + op,
-              });
-            });
-          }
-
-          // After "operation": " — operation names
-          if (/"operation"\s*:\s*"[^"]*$/.test(textBefore)) {
-            MONGO_OPERATIONS.forEach(op => {
-              suggestions.push({
-                label: op,
-                kind: monaco.languages.CompletionItemKind.Enum,
-                insertText: op,
-                range,
-                detail: 'MongoDB Operation',
-                sortText: '0' + op,
-              });
-            });
-          }
-
-          // After "collection": " — collection names from schema
-          if (/"collection"\s*:\s*"[^"]*$/.test(textBefore)) {
-            schemaCompletionCache.tableItems.forEach(table => {
-              suggestions.push({
-                label: table.label,
-                kind: monaco.languages.CompletionItemKind.Class,
-                insertText: table.label,
-                range,
-                detail: `Collection (${table.rowCount} docs)`,
-                sortText: '0' + table.label,
-              });
-            });
-          }
-
-          // Field names inside filter/sort/projection
-          if (/"[^"]*$/.test(textBefore) && !/"(collection|operation)"\s*:\s*"/.test(textBefore)) {
-            schemaCompletionCache.allColumns.forEach((col, colName) => {
-              suggestions.push({
-                label: colName,
-                kind: monaco.languages.CompletionItemKind.Field,
-                insertText: colName,
-                range,
-                detail: `Field (${col.type})`,
-                sortText: '2' + colName,
-              });
-            });
-          }
-
-          // Full template snippets — when editor is mostly empty or at line start
-          const fullText = model.getValue().trim();
-          if (fullText.length < 5 || /^\s*$/.test(textBefore)) {
-            MONGO_SNIPPETS.forEach(snippet => {
-              suggestions.push({
-                label: snippet.label,
-                kind: monaco.languages.CompletionItemKind.Snippet,
-                insertText: snippet.template,
-                insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
-                range,
-                detail: snippet.detail,
-                sortText: '1' + snippet.label,
-              });
-            });
-          }
-
-          return { suggestions };
-        },
-      });
-
-      return () => completionProvider.dispose();
+      const disposable = registerMongoDBCompletionProvider(monaco, schemaCompletionCache);
+      return () => disposable.dispose();
     }
   }, [monaco, language, schemaCompletionCache]);
 
@@ -924,7 +462,7 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
         <div className="flex items-center gap-1 mr-2 px-1.5 py-1 rounded bg-white/5 border border-white/5">
           <span className="text-[9px] font-black text-zinc-500 uppercase tracking-[0.2em]">Quick Actions</span>
         </div>
-        
+
         {hasSelection && (
           <button
             onClick={handleExecute}
@@ -966,17 +504,17 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
           onClick={() => setShowAi(!showAi)}
           className={cn(
             "px-2.5 py-1.5 rounded text-[10px] font-bold transition-all border active:scale-95 flex items-center gap-1.5",
-            showAi 
-              ? "bg-blue-600 border-blue-500 text-white shadow-[0_0_10px_rgba(37,99,235,0.4)]" 
+            showAi
+              ? "bg-blue-600 border-blue-500 text-white shadow-[0_0_10px_rgba(37,99,235,0.4)]"
               : "bg-zinc-900 border-white/5 text-zinc-400 hover:text-blue-400 hover:border-blue-500/30"
           )}
         >
           <Sparkles className={cn("w-3.5 h-3.5", showAi && "animate-pulse")} />
           AI ASSISTANT
         </button>
-        
+
         <div className="flex-1" />
-        
+
           <div className="flex items-center gap-1.5 opacity-50 hover:opacity-100 transition-opacity">
             {onExplain && capabilities?.supportsExplain && (
               <button
@@ -1002,7 +540,7 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
               exit={{ opacity: 0, y: -10, scale: 0.95 }}
               className="absolute top-12 left-1/2 -translate-x-1/2 w-full max-w-2xl z-50 px-4"
             >
-              <form 
+              <form
                 onSubmit={handleAiSubmit}
                 className="bg-[#0f0f0f]/95 backdrop-blur-xl border border-blue-500/40 rounded-2xl shadow-[0_0_50px_rgba(37,99,235,0.25)] overflow-hidden flex flex-col p-1.5"
               >
@@ -1028,7 +566,7 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
                     <div className="w-1 h-1 rounded-full bg-emerald-500 animate-pulse" />
                   </div>
                   </div>
-  
+
                   <AnimatePresence>
                     {aiError && (
                       <motion.div
@@ -1045,7 +583,7 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
                             <p className="text-[11px] font-bold text-red-400 uppercase tracking-tight mb-0.5">AI Error</p>
                             <p className="text-[12px] text-red-300/90 leading-relaxed">{aiError}</p>
                           </div>
-                          <button 
+                          <button
                             type="button"
                             onClick={() => setAiError(null)}
                             className="text-red-400/50 hover:text-red-400 transition-colors"
@@ -1056,7 +594,7 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
                       </motion.div>
                     )}
                   </AnimatePresence>
-  
+
                   <div className="flex items-center gap-2 px-3 pb-1.5">
 
                   <input
@@ -1161,7 +699,7 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
           }}
           options={EDITOR_OPTIONS}
         />
-        
+
         {/* Connection Type Badge */}
         <div className="absolute top-3 right-6 pointer-events-none select-none z-10">
           <div className="flex items-center gap-2 px-3 py-1 rounded-md bg-zinc-900/90 border border-white/10 backdrop-blur-md shadow-2xl">

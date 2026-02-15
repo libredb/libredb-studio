@@ -6,6 +6,7 @@ import {
   DatabaseConfigError,
   type MaintenanceType,
 } from '@/lib/db';
+import { getServerAuditBuffer } from '@/lib/audit';
 
 export async function POST(request: Request) {
   // Check admin authorization
@@ -53,7 +54,21 @@ export async function POST(request: Request) {
       );
     }
 
+    const startTime = Date.now();
     const result = await provider.runMaintenance(type, target);
+    const duration = Date.now() - startTime;
+
+    // Emit audit event
+    const audit = getServerAuditBuffer();
+    audit.push({
+      type: type === 'kill' ? 'kill_session' : 'maintenance',
+      action: type.toUpperCase(),
+      target: target || 'all',
+      connectionName: connection.name || connection.database || 'unknown',
+      user: session.username || 'admin',
+      result: 'success',
+      duration,
+    });
 
     return NextResponse.json(result);
   } catch (error) {

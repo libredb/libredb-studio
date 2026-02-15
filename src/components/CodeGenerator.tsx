@@ -24,23 +24,23 @@ const LANGUAGES: { id: Language; label: string; ext: string }[] = [
   { id: 'java', label: 'Java POJO', ext: 'java' },
 ];
 
-function toPascalCase(str: string): string {
+export function toPascalCase(str: string): string {
   return str
     .replace(/[_-](\w)/g, (_, c) => c.toUpperCase())
     .replace(/^\w/, c => c.toUpperCase())
     .replace(/s$/, ''); // Remove trailing 's' (pluralized table name)
 }
 
-function toCamelCase(str: string): string {
+export function toCamelCase(str: string): string {
   const pascal = toPascalCase(str);
   return pascal.charAt(0).toLowerCase() + pascal.slice(1);
 }
 
-function toSnakeCase(str: string): string {
+export function toSnakeCase(str: string): string {
   return str.replace(/([A-Z])/g, '_$1').toLowerCase().replace(/^_/, '');
 }
 
-function mapSqlTypeToTS(sqlType: string): string {
+export function mapSqlTypeToTS(sqlType: string): string {
   const t = sqlType.toLowerCase();
   if (t.includes('int') || t.includes('float') || t.includes('double') || t.includes('decimal') || t.includes('numeric') || t.includes('real') || t.includes('serial')) return 'number';
   if (t.includes('bool')) return 'boolean';
@@ -51,7 +51,7 @@ function mapSqlTypeToTS(sqlType: string): string {
   return 'string';
 }
 
-function mapSqlTypeToZod(sqlType: string): string {
+export function mapSqlTypeToZod(sqlType: string): string {
   const t = sqlType.toLowerCase();
   if (t.includes('int') || t.includes('float') || t.includes('double') || t.includes('decimal') || t.includes('numeric') || t.includes('real') || t.includes('serial')) return 'z.number()';
   if (t.includes('bool')) return 'z.boolean()';
@@ -61,7 +61,7 @@ function mapSqlTypeToZod(sqlType: string): string {
   return 'z.string()';
 }
 
-function mapSqlTypeToPrisma(sqlType: string): string {
+export function mapSqlTypeToPrisma(sqlType: string): string {
   const t = sqlType.toLowerCase();
   if (t.includes('serial') || t === 'integer' || t === 'int' || t === 'int4') return 'Int';
   if (t.includes('bigint') || t.includes('int8')) return 'BigInt';
@@ -73,7 +73,7 @@ function mapSqlTypeToPrisma(sqlType: string): string {
   return 'String';
 }
 
-function mapSqlTypeToGo(sqlType: string): string {
+export function mapSqlTypeToGo(sqlType: string): string {
   const t = sqlType.toLowerCase();
   if (t.includes('serial') || t === 'integer' || t === 'int' || t === 'int4') return 'int';
   if (t.includes('bigint') || t.includes('int8')) return 'int64';
@@ -84,7 +84,7 @@ function mapSqlTypeToGo(sqlType: string): string {
   return 'string';
 }
 
-function mapSqlTypeToPython(sqlType: string): string {
+export function mapSqlTypeToPython(sqlType: string): string {
   const t = sqlType.toLowerCase();
   if (t.includes('int') || t.includes('serial')) return 'int';
   if (t.includes('float') || t.includes('double') || t.includes('decimal') || t.includes('numeric') || t.includes('real')) return 'float';
@@ -94,7 +94,7 @@ function mapSqlTypeToPython(sqlType: string): string {
   return 'str';
 }
 
-function mapSqlTypeToJava(sqlType: string): string {
+export function mapSqlTypeToJava(sqlType: string): string {
   const t = sqlType.toLowerCase();
   if (t.includes('serial') || t === 'integer' || t === 'int' || t === 'int4') return 'Integer';
   if (t.includes('bigint') || t.includes('int8')) return 'Long';
@@ -105,7 +105,7 @@ function mapSqlTypeToJava(sqlType: string): string {
   return 'String';
 }
 
-function generateCode(lang: Language, table: TableSchema): string {
+export function generateCode(lang: Language, table: TableSchema): string {
   const name = toPascalCase(table.name);
   const columns = table.columns || [];
 

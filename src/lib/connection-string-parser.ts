@@ -38,6 +38,21 @@ export function parseConnectionString(input: string): ParsedConnection | null {
     return parseGenericURL(trimmed, 'redis', '6379');
   }
 
+  // Oracle
+  if (trimmed.startsWith('oracle://')) {
+    return parseGenericURL(trimmed, 'oracle', '1521');
+  }
+
+  // MSSQL / SQL Server
+  if (trimmed.startsWith('mssql://') || trimmed.startsWith('sqlserver://')) {
+    return parseGenericURL(trimmed, 'mssql', '1433');
+  }
+
+  // ADO.NET format: Server=host;Database=db;User Id=user;Password=pass;
+  if (/^Server\s*=/i.test(trimmed)) {
+    return parseADONetString(trimmed);
+  }
+
   return null;
 }
 
@@ -92,6 +107,34 @@ function parseMongoDBString(uri: string): ParsedConnection {
   return result;
 }
 
+function parseADONetString(input: string): ParsedConnection | null {
+  try {
+    const params: Record<string, string> = {};
+    input.split(';').forEach((part) => {
+      const eq = part.indexOf('=');
+      if (eq > 0) {
+        const key = part.slice(0, eq).trim().toLowerCase();
+        const val = part.slice(eq + 1).trim();
+        params[key] = val;
+      }
+    });
+
+    const host = params['server'] || params['data source'] || 'localhost';
+    const [hostPart, portPart] = host.split(',');
+
+    return {
+      type: 'mssql',
+      host: hostPart || 'localhost',
+      port: portPart || '1433',
+      user: params['user id'] || params['uid'] || undefined,
+      password: params['password'] || params['pwd'] || undefined,
+      database: params['database'] || params['initial catalog'] || undefined,
+    };
+  } catch {
+    return null;
+  }
+}
+
 function parseGenericURL(
   uri: string,
   type: DatabaseType,
@@ -122,5 +165,8 @@ export function detectConnectionStringType(input: string): DatabaseType | null {
   if (trimmed.startsWith('mysql://')) return 'mysql';
   if (trimmed.startsWith('mongodb://') || trimmed.startsWith('mongodb+srv://')) return 'mongodb';
   if (trimmed.startsWith('redis://') || trimmed.startsWith('rediss://')) return 'redis';
+  if (trimmed.startsWith('oracle://')) return 'oracle';
+  if (trimmed.startsWith('mssql://') || trimmed.startsWith('sqlserver://')) return 'mssql';
+  if (/^server\s*=/i.test(trimmed)) return 'mssql';
   return null;
 }

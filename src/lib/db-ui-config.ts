@@ -1,5 +1,5 @@
 import { type LucideIcon } from 'lucide-react';
-import { PostgreSQLIcon, MySQLIcon, SQLiteIcon, MongoDBIcon, RedisIcon, DemoIcon } from '@/components/icons/db-icons';
+import { PostgreSQLIcon, MySQLIcon, SQLiteIcon, MongoDBIcon, RedisIcon, OracleIcon, MSSQLIcon, DemoIcon } from '@/components/icons/db-icons';
 import type { DatabaseType } from '@/lib/types';
 
 // DB brand icons share the same interface as LucideIcon (className + SVG props)
@@ -11,7 +11,7 @@ export interface DatabaseUIConfig {
   label: string;
   defaultPort: string;
   showConnectionStringToggle: boolean;
-  connectionFields: ('host' | 'port' | 'user' | 'password' | 'database' | 'connectionString')[];
+  connectionFields: ('host' | 'port' | 'user' | 'password' | 'database' | 'connectionString' | 'serviceName' | 'instanceName')[];
 }
 
 const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
@@ -54,6 +54,22 @@ const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
     defaultPort: '6379',
     showConnectionStringToggle: false,
     connectionFields: ['host', 'port', 'password', 'database'],
+  },
+  oracle: {
+    icon: OracleIcon,
+    color: 'text-red-400',
+    label: 'Oracle',
+    defaultPort: '1521',
+    showConnectionStringToggle: false,
+    connectionFields: ['host', 'port', 'user', 'password', 'database', 'serviceName'],
+  },
+  mssql: {
+    icon: MSSQLIcon,
+    color: 'text-sky-400',
+    label: 'SQL Server',
+    defaultPort: '1433',
+    showConnectionStringToggle: false,
+    connectionFields: ['host', 'port', 'user', 'password', 'database', 'instanceName'],
   },
   demo: {
     icon: DemoIcon,

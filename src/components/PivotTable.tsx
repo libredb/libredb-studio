@@ -20,7 +20,7 @@ const AGG_LABELS: Record<AggFunction, string> = {
   max: 'MAX',
 };
 
-function aggregate(values: unknown[], fn: AggFunction): string {
+export function aggregate(values: unknown[], fn: AggFunction): string {
   const nums = values.map(v => Number(v)).filter(n => !isNaN(n));
 
   switch (fn) {

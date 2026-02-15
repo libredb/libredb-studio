@@ -28,9 +28,10 @@ interface TablesTabProps {
   data: MonitoringData | null;
   loading: boolean;
   onRunMaintenance: (type: string, target?: string) => Promise<boolean>;
+  isAdmin?: boolean;
 }
 
-export function TablesTab({ data, loading, onRunMaintenance }: TablesTabProps) {
+export function TablesTab({ data, loading, onRunMaintenance, isAdmin = true }: TablesTabProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [actionLoading, setActionLoading] = useState<string | null>(null);
 
@@ -206,50 +207,54 @@ export function TablesTab({ data, loading, onRunMaintenance }: TablesTabProps) {
                         {formatDate(table.lastVacuum)}
                       </TableCell>
                       <TableCell className="text-right py-2">
-                        <div className="flex justify-end gap-0.5">
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-6 w-6 sm:h-8 sm:w-8"
-                            onClick={() => handleMaintenance('analyze', table.tableName)}
-                            disabled={!!actionLoading}
-                            title="Analyze"
-                          >
-                            {actionLoading === `analyze-${table.tableName}` ? (
-                              <Loader2 className="h-3 w-3 animate-spin" />
-                            ) : (
-                              <Search className="h-3 w-3" />
-                            )}
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-6 w-6 sm:h-8 sm:w-8"
-                            onClick={() => handleMaintenance('vacuum', table.tableName)}
-                            disabled={!!actionLoading}
-                            title="Vacuum"
-                          >
-                            {actionLoading === `vacuum-${table.tableName}` ? (
-                              <Loader2 className="h-3 w-3 animate-spin" />
-                            ) : (
-                              <RefreshCw className="h-3 w-3" />
-                            )}
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-6 w-6 sm:h-8 sm:w-8 hidden sm:inline-flex"
-                            onClick={() => handleMaintenance('reindex', table.tableName)}
-                            disabled={!!actionLoading}
-                            title="Reindex"
-                          >
-                            {actionLoading === `reindex-${table.tableName}` ? (
-                              <Loader2 className="h-3 w-3 animate-spin" />
-                            ) : (
-                              <Zap className="h-3 w-3" />
-                            )}
-                          </Button>
-                        </div>
+                        {isAdmin ? (
+                          <div className="flex justify-end gap-0.5">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-6 w-6 sm:h-8 sm:w-8"
+                              onClick={() => handleMaintenance('analyze', table.tableName)}
+                              disabled={!!actionLoading}
+                              title="Analyze"
+                            >
+                              {actionLoading === `analyze-${table.tableName}` ? (
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                              ) : (
+                                <Search className="h-3 w-3" />
+                              )}
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-6 w-6 sm:h-8 sm:w-8"
+                              onClick={() => handleMaintenance('vacuum', table.tableName)}
+                              disabled={!!actionLoading}
+                              title="Vacuum"
+                            >
+                              {actionLoading === `vacuum-${table.tableName}` ? (
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                              ) : (
+                                <RefreshCw className="h-3 w-3" />
+                              )}
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-6 w-6 sm:h-8 sm:w-8 hidden sm:inline-flex"
+                              onClick={() => handleMaintenance('reindex', table.tableName)}
+                              disabled={!!actionLoading}
+                              title="Reindex"
+                            >
+                              {actionLoading === `reindex-${table.tableName}` ? (
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                              ) : (
+                                <Zap className="h-3 w-3" />
+                              )}
+                            </Button>
+                          </div>
+                        ) : (
+                          <span className="text-[10px] text-muted-foreground">-</span>
+                        )}
                       </TableCell>
                     </TableRow>
                   ))}

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-LibreDB Studio is a web-based SQL IDE for cloud-native teams. It supports PostgreSQL, MySQL, SQLite, MongoDB, and a demo mode with AI-powered query assistance.
+LibreDB Studio is a web-based SQL IDE for cloud-native teams. It supports PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, Redis, and a demo mode with AI-powered query assistance.
 
 ## Development Commands
 
@@ -24,11 +24,29 @@ bun start
 # Lint code
 bun run lint
 
+# Run all tests (unit + API + integration + hooks + components)
+bun run test
+
+# Run individual test layers
+bun run test:unit
+bun run test:api
+bun run test:integration
+bun run test:hooks
+bun run test:components
+
+# E2E tests (Playwright, requires build)
+bun run test:e2e
+
+# Coverage report
+bun run test:coverage
+
 # Docker development
 docker-compose up -d
 ```
 
-There is no test suite configured. The project uses ESLint 9 for linting.
+The project uses ESLint 9 for linting and `bun:test` for testing with `@testing-library/react` + `happy-dom` for component tests and Playwright for E2E tests.
+
+> **Important**: Always use `bun run test` instead of bare `bun test`. Component tests require isolated execution groups (handled by `tests/run-components.sh`) to prevent `mock.module()` cross-contamination between test files.
 
 ## Architecture
 
@@ -38,7 +56,7 @@ There is no test suite configured. The project uses ESLint 9 for linting.
 - **SQL Editor:** Monaco Editor
 - **Data Grid:** TanStack React Table with react-virtual for virtualization
 - **AI:** Multi-model support (Gemini, OpenAI, Ollama, Custom)
-- **Databases:** PostgreSQL (`pg`), MySQL (`mysql2`), SQLite (`better-sqlite3`), MongoDB (`mongodb`)
+- **Databases:** PostgreSQL (`pg`), MySQL (`mysql2`), SQLite (`better-sqlite3`), Oracle (`oracledb`), SQL Server (`mssql`), MongoDB (`mongodb`), Redis (`ioredis`)
 - **Auth:** JWT-based with `jose` library
 
 ### Directory Structure
@@ -48,37 +66,59 @@ src/
 ├── app/                    # Next.js App Router
 │   ├── api/
 │   │   ├── auth/           # Login/logout/me endpoints
-│   │   ├── ai/chat/        # AI chat endpoint (streaming)
-│   │   └── db/             # Query, schema, health, maintenance
+│   │   ├── ai/             # AI endpoints (chat, nl2sql, explain, safety)
+│   │   ├── db/             # Query, schema, health, maintenance, transactions
+│   │   └── admin/          # Fleet health, audit endpoints
 │   ├── admin/              # Admin dashboard (RBAC protected)
 │   └── login/              # Login page
 ├── components/             # React components
 │   ├── Studio.tsx          # Main application shell
 │   ├── QueryEditor.tsx     # Monaco SQL editor wrapper
 │   ├── ResultsGrid.tsx     # Virtualized data grid
-│   ├── Sidebar.tsx         # Schema explorer sidebar
+│   ├── sidebar/            # Sidebar, ConnectionsList, ConnectionItem
+│   ├── studio/             # StudioTabBar, QueryToolbar, BottomPanel
+│   ├── admin/              # AdminDashboard, tabs (Overview, Operations, etc.)
+│   ├── schema-explorer/    # SchemaExplorer component
 │   └── ui/                 # Shadcn/UI primitives
 ├── hooks/                  # Custom React hooks
 └── lib/
     ├── db/                 # Database provider module (Strategy Pattern)
     │   ├── providers/
-    │   │   ├── sql/        # SQL providers (postgres, mysql, sqlite)
+    │   │   ├── sql/        # SQL providers (postgres, mysql, sqlite, oracle, mssql)
     │   │   ├── document/   # Document providers (mongodb)
+    │   │   ├── keyvalue/   # Key-value providers (redis)
     │   │   └── demo.ts     # Demo mock provider
     │   ├── factory.ts      # Provider factory
     │   ├── types.ts        # Database types
     │   └── errors.ts       # Custom error classes
     ├── llm/                # LLM provider module (Strategy Pattern)
+    ├── schema-diff/        # Schema diff engine + migration SQL generator
+    ├── sql/                # SQL statement splitter, alias extractor
     ├── types.ts            # TypeScript type definitions
     ├── auth.ts             # JWT auth utilities
     └── storage.ts          # LocalStorage management
+
+tests/
+├── setup.ts               # Global test setup (env vars, localStorage mock)
+├── setup-dom.ts            # DOM environment setup (happy-dom)
+├── run-components.sh       # Component test isolation runner
+├── fixtures/               # Mock data (connections, schemas, query results)
+├── helpers/                # Test utilities (mock providers, mock Monaco, etc.)
+├── unit/                   # Pure function tests
+├── api/                    # API route handler tests
+├── integration/            # Database provider tests (mocked drivers)
+├── hooks/                  # React hook tests
+└── components/             # Component tests (happy-dom)
+
+e2e/                        # Playwright E2E tests (browser)
 ```
 
 ### Key Patterns
 
 1. **Database Abstraction:** `src/lib/db/` module provides Strategy Pattern implementation for multiple database types:
-   - **SQL:** PostgreSQL, MySQL, SQLite (extend `SQLBaseProvider`)
+   - **SQL:** PostgreSQL, MySQL, SQLite, Oracle, SQL Server (extend `SQLBaseProvider`)
    - **Document:** MongoDB (extends `BaseDatabaseProvider`)
+   - **Key-Value:** Redis (extends `BaseDatabaseProvider`)
    - **Demo:** Mock data provider for testing
 
 2. **LLM Abstraction:** `src/lib/llm/` module provides Strategy Pattern for AI providers (Gemini, OpenAI, Ollama, Custom)

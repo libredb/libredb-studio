@@ -58,7 +58,7 @@ The demo runs in **Demo Mode** with simulated data. No real database required!
 
 <p align="center">
   <img src="public/screenshots/connection-modal.png" alt="Multi-Database Connection Manager" width="100%" />
-  <br/><em>Connect to PostgreSQL, MySQL, MongoDB, Redis, or SQLite with SSL/TLS and SSH Tunnel support.</em>
+  <br/><em>Connect to PostgreSQL, MySQL, Oracle, SQL Server, MongoDB, Redis, or SQLite with SSL/TLS and SSH Tunnel support.</em>
 </p>
 
 ---
@@ -71,7 +71,7 @@ The demo runs in **Demo Mode** with simulated data. No real database required!
 - **Multi-Tab Workspace**: Handle parallel tasks with independent execution states.
 - **Visual EXPLAIN**: Graphical execution plans to identify performance bottlenecks.
 - **Interactive ER Diagrams**: Visual schema graph with real foreign key edges, cardinality labels, MiniMap navigation, table search/filter, compact mode, and PNG/SVG export. Automatic hierarchical layout powered by ELK.js.
-- **Schema Diff & Migration**: Compare schema snapshots or cross-connection schemas side-by-side. Color-coded diff view (added/removed/modified) with automatic migration SQL generation for PostgreSQL, MySQL, and SQLite.
+- **Schema Diff & Migration**: Compare schema snapshots or cross-connection schemas side-by-side. Color-coded diff view (added/removed/modified) with automatic migration SQL generation for PostgreSQL, MySQL, SQLite, Oracle, and SQL Server.
 - **Snapshot Timeline**: Visual horizontal timeline of schema snapshots. Click any two points to instantly compare and track schema evolution over time.
 
 <p align="center">
@@ -136,8 +136,24 @@ The demo runs in **Demo Mode** with simulated data. No real database required!
 - **Configurable Auto-Refresh**: Polling intervals from 5s to 60s with play/pause control.
 - **Threshold Alerting**: Color-coded health indicators (healthy/warning/critical) for cache hit ratio, connection usage, deadlocks, and buffer pool utilization.
 - **Connection Pool Stats**: Live total/active/idle/waiting pool metrics with utilization progress bars.
-- **One-Click Maintenance**: Trigger `VACUUM`, `ANALYZE`, and `REINDEX` globally.
+- **One-Click Maintenance**: Trigger `VACUUM`, `ANALYZE`, `REINDEX`, `UPDATE STATISTICS`, `DBCC CHECKDB`, and `ALTER INDEX REBUILD` per database engine.
 - **Audit Trail**: Full history of every query executed across the organization.
+
+---
+
+## Supported Databases
+
+| Database | Driver | Features |
+| :--- | :--- | :--- |
+| **PostgreSQL** | `pg` | Full SQL IDE, EXPLAIN plans, transactions, query cancellation (`pg_cancel_backend`), SSL/TLS, SSH tunnel |
+| **MySQL** | `mysql2` | Full SQL IDE, EXPLAIN plans, transactions, query cancellation (`KILL QUERY`), SSL/TLS, SSH tunnel |
+| **Oracle** | `oracledb` (Thin mode) | Full SQL IDE, `FETCH FIRST N ROWS` pagination, `V$` monitoring views, `ANALYZE TABLE`, `ALTER INDEX REBUILD`, transactions |
+| **SQL Server** | `mssql` (tedious) | Full SQL IDE, `TOP N` / `OFFSET FETCH` pagination, `sys.dm_*` DMVs, `UPDATE STATISTICS`, `DBCC CHECKDB`, transactions, Azure SQL auto-detect |
+| **SQLite** | `better-sqlite3` | Full SQL IDE, file-based or in-memory databases |
+| **MongoDB** | `mongodb` | JSON query editor, collection operations (find, aggregate, insert, update, delete) |
+| **Redis** | `ioredis` | Command editor, key browser, INFO-based monitoring |
+
+> All SQL databases share: schema explorer, ER diagrams, schema diff & migration, data masking, monitoring dashboard, and connection string import.
 
 ---
 
@@ -150,7 +166,7 @@ The demo runs in **Demo Mode** with simulated data. No real database required!
 | **Theming** | CSS Variables + `@theme inline` ([Guide](docs/THEMING.md)) | Web, Mobile |
 | **Editor** | Monaco Editor (VS Code Engine) | Web |
 | **AI** | Multi-Model (Gemini, OpenAI, Ollama, Custom) | Web, Mobile |
-| **Database** | PostgreSQL, MySQL, SQLite, MongoDB, Redis | Web, Mobile |
+| **Database** | PostgreSQL, MySQL, Oracle, SQL Server, SQLite, MongoDB, Redis | Web, Mobile |
 | **Charts** | Recharts (Bar, Line, Pie, Area, Scatter, Histogram, Stacked) | Web, Mobile |
 | **ERD** | React Flow, ELK.js (auto-layout) | Web |
 | **State/Grid** | TanStack Table & Virtual | Web, Mobile |
@@ -162,7 +178,7 @@ The demo runs in **Demo Mode** with simulated data. No real database required!
 
   ### Prerequisites
   - [Bun](https://bun.sh/) (Recommended) or Node.js 20+
-  - A target database to query (PostgreSQL, MySQL, SQLite, or MongoDB)
+  - A target database to query (PostgreSQL, MySQL, Oracle, SQL Server, SQLite, MongoDB, or Redis)
 
   ### Quick Start (Local)
   1. **Clone & Install**
@@ -194,22 +210,42 @@ The demo runs in **Demo Mode** with simulated data. No real database required!
 
 ---
 
-## 🗄️ Development Database
+## 🗄️ Development Databases
 
-Need a database to test with? We provide a ready-to-use PostgreSQL setup with sample data:
+Need databases to test with? We provide ready-to-use containers for all supported engines:
 
 ```bash
+# Start all development databases (PostgreSQL, MySQL, MongoDB, SQL Server, Oracle)
+docker compose -f database-compose.yml up -d
+
+# Or start a specific database
+docker compose -f database-compose.yml up -d postgres
+docker compose -f database-compose.yml up -d mssql
+docker compose -f database-compose.yml up -d oracle
+
 # Start PostgreSQL with sample e-commerce data
 docker compose -f docker/postgres.yml up -d
 
 # Stop (keeps data)
-docker compose -f docker/postgres.yml down
+docker compose -f database-compose.yml down
 
 # Stop and remove all data
-docker compose -f docker/postgres.yml down -v
+docker compose -f database-compose.yml down -v
 ```
 
-### What's Included
+### Connection Details
+
+| Database | Host | Port | User | Password | Database/Service |
+|----------|------|------|------|----------|-----------------|
+| **PostgreSQL** | localhost | 5432 | postgres | postgres | postgres |
+| **MySQL** | localhost | 3306 | root | root | mysql |
+| **SQL Server** | localhost | 1433 | sa | Password123! | master |
+| **Oracle** | localhost | 1521 | system | Password123! | freepdb1 |
+| **MongoDB** | localhost | 27017 | admin | admin | — |
+
+### PostgreSQL Sample Data
+
+The `docker/postgres.yml` setup includes a pre-loaded e-commerce schema:
 
 | Feature | Description |
 |---------|-------------|
@@ -219,27 +255,56 @@ docker compose -f docker/postgres.yml down -v
 | **Sample Data** | 25 customers, 30 products, 100 orders |
 | **Views** | Order summary, product sales, customer LTV |
 
-### Connection Details
+Sample tables: `app.customers`, `app.products`, `app.orders`, `app.order_items`, `app.product_reviews`, `app.categories`, `app.coupons`, `app.audit_log`
 
+> This setup is ideal for testing the **Monitoring Dashboard** features with real `pg_stat_statements` data.
+
+---
+
+## Testing
+
+LibreDB Studio has a comprehensive test suite with **1,671+ unit/integration tests** and **35 E2E tests** across 6 layers, achieving **96%+ line coverage**.
+
+### Quick Commands
+
+```bash
+# Run all tests (unit + API + integration + hooks + components)
+bun run test
+
+# Run by layer
+bun run test:unit          # Pure function tests (800 cases)
+bun run test:api           # API route handler tests (205 cases)
+bun run test:integration   # Database provider tests (294 cases)
+bun run test:hooks         # React hook tests (178 cases)
+bun run test:components    # Component tests with mock isolation (194 cases)
+
+# E2E tests (requires build)
+bun run test:e2e           # Playwright browser tests (35 cases)
+
+# Coverage report (lcov)
+bun run test:coverage
 ```
-Host: localhost
-Port: 5432
-Database: libredb_dev (or postgres)
-User: postgres
-Password: postgres
-```
 
-### Sample Tables
+### Test Architecture
 
-- `app.customers` - Customer profiles with loyalty tiers
-- `app.products` - Product catalog with pricing
-- `app.orders` / `app.order_items` - Order history
-- `app.product_reviews` - Customer reviews
-- `app.categories` - Product categories (hierarchical)
-- `app.coupons` - Discount codes
-- `app.audit_log` - Change tracking
+| Layer | Directory | Runner | Tests | What it covers |
+|-------|-----------|--------|-------|----------------|
+| **Unit** | `tests/unit/` | `bun:test` | ~800 | Pure functions: SQL parser, connection strings, data masking, query limiter, schema diff, error classes, DB icons, showcase queries |
+| **API** | `tests/api/` | `bun:test` | ~205 | Route handlers: auth, query, transaction, maintenance, AI endpoints, middleware |
+| **Integration** | `tests/integration/` | `bun:test` | ~294 | Database providers: PG, MySQL, SQLite, MongoDB, Redis, Oracle, MSSQL, Demo (mocked drivers) |
+| **Hooks** | `tests/hooks/` | `bun:test` | ~178 | React hooks: auth, connections, tabs, query execution, transactions, inline editing, AI chat, monitoring |
+| **Components** | `tests/components/` | `bun:test` + happy-dom | ~194 | UI components: Studio, Sidebar, QueryEditor, ResultsGrid, Admin Dashboard, Charts, ERD |
+| **E2E** | `e2e/` | Playwright | ~35 | Full browser flows: login, demo mode, connections, query execution, tabs, export, admin |
 
-> 💡 This setup is ideal for testing the **Monitoring Dashboard** features with real `pg_stat_statements` data.
+### Key Details
+
+- **Test runner**: `bun:test` (built-in, Jest-compatible API) with `happy-dom` for DOM environment
+- **Component isolation**: Component tests run in 6 isolated groups via `tests/run-components.sh` to prevent `mock.module()` cross-contamination
+- **E2E**: Playwright with Chromium, runs against a production build (`bun run build && bun start`)
+- **CI**: GitHub Actions runs lint + typecheck + build, unit/integration tests with coverage, E2E tests, and SonarCloud analysis
+- **Coverage**: `bun test --coverage` generates lcov reports for SonarCloud integration
+
+> **Important**: Always use `bun run test` instead of bare `bun test`. The test script handles proper isolation between test groups.
 
 ---
 
@@ -300,7 +365,7 @@ LibreDB Studio is optimized for K8s with:
 - [x] **Phase 1**: Monaco SQL IDE & Multi-Tab Support.
 - [x] **Phase 2**: Multi-Model AI (Gemini, OpenAI, Ollama, Custom) Integration.
 - [x] **Phase 3**: Pro Data Grid & Virtualization.
-- [x] **Phase 4**: Multi-Database Support (PostgreSQL, MySQL, SQLite, MongoDB).
+- [x] **Phase 4**: Multi-Database Support (PostgreSQL, MySQL, SQLite, MongoDB, Redis).
 - [x] **Phase 5**: Interactive ER Diagrams (Visual Schema Graph).
 - [x] **Phase 6**: Enterprise Foundation (Connection Testing, SSL/TLS, SSH Tunnel, Transaction Control, Query Cancellation).
 - [x] **Phase 7**: AI Intelligence (NL2SQL, Query Safety Analysis, AI Index Advisor, Multi-Turn Chat, Query Autopilot).
@@ -310,9 +375,10 @@ LibreDB Studio is optimized for K8s with:
 - [x] **Phase 11**: Schema Diff & Migration (Snapshot Timeline, Cross-Connection Diff, Migration SQL Generation for PG/MySQL/SQLite).
 - [x] **Phase 12**: Advanced Charting (Scatter, Histogram, Stacked Charts, Aggregation, Date Grouping, Chart Save/Load, Chart Dashboard).
 - [x] **Phase 13**: Monitoring Enhancement (Time-Series Trends, Threshold Alerting, Connection Pool Stats, Configurable Polling).
-- [ ] **Phase 14**: DBA & Monitoring (Lock Dependency Graph, Vacuum Scheduler, Prometheus Export).
-- [ ] **Phase 15**: Enterprise Collaboration (User Identity, RBAC, Audit Log, Shared Workspaces).
-- [ ] **Phase 16**: SSO Integration (OIDC/SAML).
+- [x] **Phase 14**: Enterprise Database Support (Oracle Database via oracledb Thin mode, Microsoft SQL Server via mssql/tedious).
+- [ ] **Phase 15**: DBA & Monitoring (Lock Dependency Graph, Vacuum Scheduler, Prometheus Export).
+- [ ] **Phase 16**: Enterprise Collaboration (User Identity, RBAC, Audit Log, Shared Workspaces).
+- [ ] **Phase 17**: SSO Integration (OIDC/SAML).
 
 ---
 

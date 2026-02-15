@@ -36,6 +36,10 @@ export abstract class SQLBaseProvider extends BaseDatabaseProvider {
    * MySQL: `identifier`
    */
   protected escapeIdentifier(identifier: string): string {
+    if (this.type === 'mssql') {
+      const escaped = identifier.replace(/\]/g, ']]');
+      return `[${escaped}]`;
+    }
     const quoteChar = this.type === 'mysql' ? '`' : '"';
     const escaped = identifier.replace(
       new RegExp(quoteChar, 'g'),
@@ -67,7 +71,10 @@ export abstract class SQLBaseProvider extends BaseDatabaseProvider {
    * MySQL/SQLite: ?, ?, ?
    */
   protected getPlaceholder(index: number): string {
-    return this.type === 'postgres' ? `$${index}` : '?';
+    if (this.type === 'postgres') return `$${index}`;
+    if (this.type === 'oracle') return `:${index}`;
+    if (this.type === 'mssql') return `@p${index}`;
+    return '?';
   }
 
   /**
@@ -107,6 +114,10 @@ export abstract class SQLBaseProvider extends BaseDatabaseProvider {
         return 'public';
       case 'mysql':
         return this.config.database || '';
+      case 'oracle':
+        return this.config.user?.toUpperCase() || '';
+      case 'mssql':
+        return 'dbo';
       default:
         return '';
     }
