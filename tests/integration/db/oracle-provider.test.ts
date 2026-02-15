@@ -35,7 +35,7 @@ mock.module('oracledb', () => {
 
 // Now import the provider (after mock is in place)
 import { OracleProvider } from '@/lib/db/providers/sql/oracle';
-import { DatabaseConfigError, QueryError, AuthenticationError, ConnectionError } from '@/lib/db/errors';
+import { DatabaseConfigError, QueryError } from '@/lib/db/errors';
 import type { DatabaseConnection } from '@/lib/types';
 
 // ---------------------------------------------------------------------------

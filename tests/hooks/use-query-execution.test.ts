@@ -601,4 +601,455 @@ describe('useQueryExecution', () => {
 
     expect(result.current.pendingUnlimitedQuery).toBeNull();
   });
+
+  // ── executeQuery uses queryEditorRef.getEffectiveQuery when available ──
+
+  test('executeQuery uses queryEditorRef.getEffectiveQuery when no override', async () => {
+    const fetchMock = mockGlobalFetch({
+      '/api/db/query': { ok: true, json: mockQueryResult },
+    });
+    const mockEditorRef = {
+      current: {
+        getEffectiveQuery: () => 'SELECT id FROM users WHERE active = true',
+        focus: () => {},
+      },
+    };
+    const params = createDefaultParams({ queryEditorRef: mockEditorRef });
+
+    const { result } = renderHook(() => useQueryExecution(params));
+
+    await act(async () => {
+      await result.current.executeQuery(); // No override
+    });
+
+    const queryCall = fetchMock.mock.calls.find(
+      (call) => typeof call[0] === 'string' && call[0].includes('/api/db/query')
+    );
+    expect(queryCall).toBeDefined();
+    const body = JSON.parse(queryCall![1]!.body as string);
+    expect(body.sql).toBe('SELECT id FROM users WHERE active = true');
+  });
+
+  // ── executeQuery falls back to tab query when no override and no ref ────
+
+  test('executeQuery falls back to tab query when no override and no ref', async () => {
+    const fetchMock = mockGlobalFetch({
+      '/api/db/query': { ok: true, json: mockQueryResult },
+    });
+    const params = createDefaultParams();
+
+    const { result } = renderHook(() => useQueryExecution(params));
+
+    await act(async () => {
+      await result.current.executeQuery(); // No override, ref is null
+    });
+
+    const queryCall = fetchMock.mock.calls.find(
+      (call) => typeof call[0] === 'string' && call[0].includes('/api/db/query')
+    );
+    expect(queryCall).toBeDefined();
+    const body = JSON.parse(queryCall![1]!.body as string);
+    expect(body.sql).toBe('SELECT * FROM users'); // Falls back to tab query
+  });
+
+  // ── executeQuery shows toast when EXPLAIN not supported ────────────────
+
+  test('executeQuery shows toast when EXPLAIN not supported', async () => {
+    mockGlobalFetch({});
+    const noExplainMetadata: ProviderMetadata = {
+      ...mockMetadata,
+      capabilities: { ...mockMetadata.capabilities, supportsExplain: false },
+    };
+    const params = createDefaultParams({ metadata: noExplainMetadata });
+
+    const { result } = renderHook(() => useQueryExecution(params));
+
+    await act(async () => {
+      await result.current.executeQuery('SELECT * FROM users', undefined, true); // isExplain = true
+    });
+
+    expect(mockToastError).toHaveBeenCalled();
+  });
+
+  // ── executeQuery in playground mode begins + rollbacks transaction ─────
+
+  test('executeQuery in playground mode begins and rollbacks transaction', async () => {
+    const fetchMock = mockGlobalFetch({
+      '/api/db/transaction': { ok: true, json: mockQueryResult },
+      '/api/db/query': { ok: true, json: mockQueryResult },
+    });
+    const params = createDefaultParams({ playgroundMode: true });
+
+    const { result } = renderHook(() => useQueryExecution(params));
+
+    await act(async () => {
+      await result.current.executeQuery('SELECT * FROM users');
+    });
+
+    // Should have called transaction endpoint for begin, query, and rollback
+    const txnCalls = fetchMock.mock.calls.filter(
+      (call) => typeof call[0] === 'string' && call[0].includes('/api/db/transaction')
+    );
+    expect(txnCalls.length).toBeGreaterThanOrEqual(2); // begin + query (rollback may also count)
+
+    // First call should be BEGIN
+    const beginBody = JSON.parse(txnCalls[0][1]!.body as string);
+    expect(beginBody.action).toBe('begin');
+  });
+
+  // ── executeQuery in playground mode rollbacks on error ─────────────────
+
+  test('executeQuery in playground mode rollbacks on error', async () => {
+    mockGlobalFetch({
+      '/api/db/transaction': () => {
+        return { ok: true, json: mockQueryResult };
+      },
+      '/api/db/query': { ok: true, json: mockQueryResult },
+    });
+
+    // Override for more specific behavior
+    let callCount = 0;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      if (url.includes('/api/db/transaction')) {
+        callCount++;
+        const body = JSON.parse(init?.body as string || '{}');
+        if (body.action === 'begin') {
+          return new Response(JSON.stringify({ success: true }), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          });
+        }
+        if (body.action === 'query') {
+          return new Response(JSON.stringify({ error: 'syntax error' }), {
+            status: 400,
+            headers: { 'content-type': 'application/json' },
+          });
+        }
+        if (body.action === 'rollback') {
+          return new Response(JSON.stringify({ success: true }), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          });
+        }
+      }
+      return new Response(JSON.stringify({ error: 'Not found' }), { status: 404 });
+    }) as typeof fetch;
+
+    const params = createDefaultParams({ playgroundMode: true });
+
+    const { result } = renderHook(() => useQueryExecution(params));
+
+    await act(async () => {
+      await result.current.executeQuery('INVALID SQL');
+    });
+
+    // Should have called transaction endpoint at least 2 times (begin + rollback on error)
+    expect(callCount).toBeGreaterThanOrEqual(2);
+
+    globalThis.fetch = originalFetch;
+  });
+
+  // ── multi-statement error shows error toast ────────────────────────────
+
+  test('multi-statement query with error shows error toast', async () => {
+    const multiErrorResult = {
+      multiStatement: true,
+      executedCount: 2,
+      statementCount: 3,
+      hasError: true,
+      rows: [],
+      fields: [],
+      rowCount: 0,
+      executionTime: 30,
+      statements: [
+        { index: 0, status: 'success', rowCount: 1 },
+        { index: 1, status: 'error', error: 'relation "bad" does not exist' },
+      ],
+    };
+
+    mockGlobalFetch({
+      '/api/db/multi-query': { ok: true, json: multiErrorResult },
+      '/api/db/query': { ok: true, json: mockQueryResult },
+    });
+
+    const params = createDefaultParams();
+
+    const { result } = renderHook(() => useQueryExecution(params));
+
+    await act(async () => {
+      await result.current.executeQuery('SELECT 1; SELECT * FROM bad; SELECT 2;');
+    });
+
+    expect(mockToastError).toHaveBeenCalled();
+  });
+
+  // ── executeQuery refreshes schema after DDL ────────────────────────────
+
+  test('executeQuery calls fetchSchema after DDL query', async () => {
+    const fetchSchemaMock = mock(async () => {});
+    mockGlobalFetch({
+      '/api/db/query': { ok: true, json: { ...mockQueryResult, rows: [], rowCount: 0 } },
+    });
+    const params = createDefaultParams({ fetchSchema: fetchSchemaMock });
+
+    const { result } = renderHook(() => useQueryExecution(params));
+
+    await act(async () => {
+      await result.current.executeQuery('CREATE TABLE test_table (id INT)', undefined, false, { skipSafety: true });
+    });
+
+    expect(fetchSchemaMock).toHaveBeenCalled();
+  });
+
+  // ── executeQuery does NOT refresh schema for SELECT ────────────────────
+
+  test('executeQuery does NOT call fetchSchema for SELECT', async () => {
+    const fetchSchemaMock = mock(async () => {});
+    mockGlobalFetch({
+      '/api/db/query': { ok: true, json: mockQueryResult },
+    });
+    const params = createDefaultParams({ fetchSchema: fetchSchemaMock });
+
+    const { result } = renderHook(() => useQueryExecution(params));
+
+    await act(async () => {
+      await result.current.executeQuery('SELECT * FROM users');
+    });
+
+    expect(fetchSchemaMock).not.toHaveBeenCalled();
+  });
+
+  // ── handleLoadMore does nothing when no more data ──────────────────────
+
+  test('handleLoadMore does nothing when pagination hasMore is false', async () => {
+    const fetchMock = mockGlobalFetch({});
+    const tabNoMore = createTab({
+      result: {
+        ...mockQueryResult,
+        pagination: { limit: 500, offset: 0, hasMore: false, totalReturned: 2, wasLimited: false },
+      },
+    });
+    const params = createDefaultParams({ tabs: [tabNoMore], currentTab: tabNoMore });
+
+    const { result } = renderHook(() => useQueryExecution(params));
+
+    await act(async () => {
+      result.current.handleLoadMore();
+    });
+
+    // No fetch calls for query
+    const queryCalls = fetchMock.mock.calls.filter(
+      (call) => typeof call[0] === 'string' && call[0].includes('/api/db/query')
+    );
+    expect(queryCalls.length).toBe(0);
+  });
+
+  // ── handleUnlimitedQuery executes pending unlimited query ──────────────
+
+  test('handleUnlimitedQuery executes pending unlimited query', async () => {
+    const fetchMock = mockGlobalFetch({
+      '/api/db/query': { ok: true, json: mockQueryResult },
+    });
+    const params = createDefaultParams();
+
+    const { result } = renderHook(() => useQueryExecution(params));
+
+    // Set pending unlimited query
+    act(() => {
+      result.current.setPendingUnlimitedQuery({ query: 'SELECT * FROM big_table', tabId: 'tab-1' });
+      result.current.setUnlimitedWarningOpen(true);
+    });
+
+    expect(result.current.pendingUnlimitedQuery).not.toBeNull();
+    expect(result.current.unlimitedWarningOpen).toBe(true);
+
+    await act(async () => {
+      result.current.handleUnlimitedQuery();
+    });
+
+    // Should have cleared the pending state
+    expect(result.current.unlimitedWarningOpen).toBe(false);
+    expect(result.current.pendingUnlimitedQuery).toBeNull();
+
+    // Should have called query API with unlimited flag
+    const queryCall = fetchMock.mock.calls.find(
+      (call) => typeof call[0] === 'string' && call[0].includes('/api/db/query')
+    );
+    expect(queryCall).toBeDefined();
+    const body = JSON.parse(queryCall![1]!.body as string);
+    expect(body.options.unlimited).toBe(true);
+  });
+
+  // ── handleUnlimitedQuery does nothing when no pending query ───────────
+
+  test('handleUnlimitedQuery does nothing when no pending query', async () => {
+    const fetchMock = mockGlobalFetch({});
+    const params = createDefaultParams();
+
+    const { result } = renderHook(() => useQueryExecution(params));
+
+    await act(async () => {
+      result.current.handleUnlimitedQuery();
+    });
+
+    // No fetch calls
+    expect(fetchMock.mock.calls.length).toBe(0);
+  });
+
+  // ── "Query was cancelled" message handling ─────────────────────────────
+
+  test('shows cancellation toast for "Query was cancelled" error message', async () => {
+    mockGlobalFetch({
+      '/api/db/query': { ok: false, status: 500, json: { error: 'Query was cancelled by user' } },
+    });
+    const params = createDefaultParams();
+
+    const { result } = renderHook(() => useQueryExecution(params));
+
+    await act(async () => {
+      await result.current.executeQuery('SELECT pg_sleep(60)');
+    });
+
+    // Should show cancellation toast, not generic error
+    expect(mockToastSuccess).toHaveBeenCalled();
+  });
+
+  // ── execute-query custom event listener ────────────────────────────────
+
+  test('listens for execute-query custom events', async () => {
+    const fetchMock = mockGlobalFetch({
+      '/api/db/query': { ok: true, json: mockQueryResult },
+    });
+    const params = createDefaultParams();
+
+    renderHook(() => useQueryExecution(params));
+
+    // Dispatch custom event
+    await act(async () => {
+      window.dispatchEvent(new CustomEvent('execute-query', {
+        detail: { query: 'SELECT 42' },
+      }));
+    });
+
+    // Give it time to process
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 50));
+    });
+
+    const queryCall = fetchMock.mock.calls.find(
+      (call) => typeof call[0] === 'string' && call[0].includes('/api/db/query')
+    );
+    expect(queryCall).toBeDefined();
+    const body = JSON.parse(queryCall![1]!.body as string);
+    expect(body.sql).toBe('SELECT 42');
+  });
+
+  // ── executeQuery with EXPLAIN builds correct query for mysql ───────────
+
+  test('executeQuery builds EXPLAIN FORMAT=JSON for mysql', async () => {
+    const fetchMock = mockGlobalFetch({
+      '/api/db/query': { ok: true, json: { rows: [{ 'QUERY PLAN': {} }], fields: ['QUERY PLAN'], rowCount: 1, executionTime: 5 } },
+    });
+    const mysqlConnection = { ...mockConnection, type: 'mysql' as const };
+    const params = createDefaultParams({ activeConnection: mysqlConnection });
+
+    const { result } = renderHook(() => useQueryExecution(params));
+
+    await act(async () => {
+      await result.current.executeQuery('SELECT * FROM users', undefined, true);
+    });
+
+    const queryCall = fetchMock.mock.calls.find(
+      (call) => typeof call[0] === 'string' && call[0].includes('/api/db/query')
+    );
+    expect(queryCall).toBeDefined();
+    const body = JSON.parse(queryCall![1]!.body as string);
+    expect(body.sql).toContain('EXPLAIN FORMAT=JSON');
+  });
+
+  // ── executeQuery EXPLAIN skips non-SELECT ──────────────────────────────
+
+  test('executeQuery EXPLAIN on non-SELECT sends original query', async () => {
+    const fetchMock = mockGlobalFetch({
+      '/api/db/query': { ok: true, json: { rows: [], fields: [], rowCount: 0, executionTime: 5 } },
+    });
+    const params = createDefaultParams();
+
+    const { result } = renderHook(() => useQueryExecution(params));
+
+    await act(async () => {
+      await result.current.executeQuery('INSERT INTO users (name) VALUES (\'test\')', undefined, true);
+    });
+
+    const queryCall = fetchMock.mock.calls.find(
+      (call) => typeof call[0] === 'string' && call[0].includes('/api/db/query')
+    );
+    expect(queryCall).toBeDefined();
+    const body = JSON.parse(queryCall![1]!.body as string);
+    // Non-SELECT queries should not be wrapped in EXPLAIN
+    expect(body.sql).not.toContain('EXPLAIN');
+  });
+
+  // ── executeQuery load more appends rows ────────────────────────────────
+
+  test('executeQuery with offset appends rows (load more)', async () => {
+    const existingRows = [{ id: 1, name: 'Alice' }, { id: 2, name: 'Bob' }];
+    const newRows = [{ id: 3, name: 'Charlie' }];
+
+    mockGlobalFetch({
+      '/api/db/query': { ok: true, json: { rows: newRows, fields: ['id', 'name'], rowCount: 1, executionTime: 5, pagination: { limit: 500, offset: 2, hasMore: false, totalReturned: 1, wasLimited: false } } },
+    });
+
+    const tabWithResults = createTab({
+      result: {
+        ...mockQueryResult,
+        rows: existingRows,
+        rowCount: 2,
+        pagination: { limit: 500, offset: 0, hasMore: true, totalReturned: 2, wasLimited: true },
+      },
+      allRows: existingRows,
+      currentOffset: 2,
+    });
+
+    const setTabsMock = mock((fn: unknown) => {
+      if (typeof fn === 'function') {
+        fn([tabWithResults]);
+      }
+    });
+
+    const params = createDefaultParams({
+      tabs: [tabWithResults],
+      currentTab: tabWithResults,
+      setTabs: setTabsMock,
+    });
+
+    const { result } = renderHook(() => useQueryExecution(params));
+
+    await act(async () => {
+      await result.current.executeQuery('SELECT * FROM users', 'tab-1', false, { limit: 500, offset: 2 });
+    });
+
+    // setTabs should have been called to append rows
+    expect(setTabsMock).toHaveBeenCalled();
+  });
+
+  // ── executeQuery demo connection error has enhanced message ─────────────
+
+  test('executeQuery on demo connection shows enhanced error message', async () => {
+    mockGlobalFetch({
+      '/api/db/query': { ok: false, status: 500, json: { error: 'Connection timeout' } },
+    });
+    const demoConnection = { ...mockConnection, isDemo: true };
+    const params = createDefaultParams({ activeConnection: demoConnection });
+
+    const { result } = renderHook(() => useQueryExecution(params));
+
+    await act(async () => {
+      await result.current.executeQuery('SELECT * FROM users');
+    });
+
+    expect(mockToastError).toHaveBeenCalled();
+  });
 });

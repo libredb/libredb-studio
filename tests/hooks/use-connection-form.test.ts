@@ -379,4 +379,392 @@ describe('useConnectionForm', () => {
     expect(result.current.testResult!.success).toBe(false);
     expect(result.current.testResult!.message).toContain('Network error');
   });
+
+  // ── Edit mode with Oracle serviceName ──────────────────────────────────
+
+  test('populates Oracle serviceName and showAdvanced in edit mode', () => {
+    const editConn: DatabaseConnection = {
+      id: 'edit-oracle',
+      name: 'Oracle DB',
+      type: 'oracle',
+      host: 'oracle.example.com',
+      port: 1521,
+      user: 'sys',
+      password: 'oraclepass',
+      database: 'ORCL',
+      serviceName: 'myservice',
+      createdAt: new Date(),
+    };
+
+    const { result } = renderHook(() =>
+      useConnectionForm({ ...defaultProps, editConnection: editConn })
+    );
+
+    expect(result.current.type).toBe('oracle');
+    expect(result.current.serviceName).toBe('myservice');
+    expect(result.current.showAdvanced).toBe(true);
+  });
+
+  // ── Edit mode with MSSQL instanceName ──────────────────────────────────
+
+  test('populates MSSQL instanceName and showAdvanced in edit mode', () => {
+    const editConn: DatabaseConnection = {
+      id: 'edit-mssql',
+      name: 'MSSQL DB',
+      type: 'mssql',
+      host: 'mssql.example.com',
+      port: 1433,
+      user: 'sa',
+      password: 'mssqlpass',
+      database: 'master',
+      instanceName: 'SQLEXPRESS',
+      createdAt: new Date(),
+    };
+
+    const { result } = renderHook(() =>
+      useConnectionForm({ ...defaultProps, editConnection: editConn })
+    );
+
+    expect(result.current.type).toBe('mssql');
+    expect(result.current.instanceName).toBe('SQLEXPRESS');
+    expect(result.current.showAdvanced).toBe(true);
+  });
+
+  // ── Edit mode with SSL config ──────────────────────────────────────────
+
+  test('populates SSL config in edit mode', () => {
+    const editConn: DatabaseConnection = {
+      id: 'edit-ssl',
+      name: 'SSL PG',
+      type: 'postgres',
+      host: 'ssl.example.com',
+      port: 5432,
+      createdAt: new Date(),
+      ssl: {
+        mode: 'verify-full',
+        caCert: '-----BEGIN CERTIFICATE-----\nCA\n-----END CERTIFICATE-----',
+        clientCert: '-----BEGIN CERTIFICATE-----\nCLIENT\n-----END CERTIFICATE-----',
+        clientKey: '-----BEGIN KEY-----\nKEY\n-----END KEY-----',
+      },
+    };
+
+    const { result } = renderHook(() =>
+      useConnectionForm({ ...defaultProps, editConnection: editConn })
+    );
+
+    expect(result.current.sslMode).toBe('verify-full');
+    expect(result.current.caCert).toContain('CA');
+    expect(result.current.clientCert).toContain('CLIENT');
+    expect(result.current.clientKey).toContain('KEY');
+    expect(result.current.showSSL).toBe(true);
+  });
+
+  // ── Edit mode with SSH tunnel ──────────────────────────────────────────
+
+  test('populates SSH tunnel config in edit mode', () => {
+    const editConn: DatabaseConnection = {
+      id: 'edit-ssh',
+      name: 'SSH PG',
+      type: 'postgres',
+      host: 'internal.example.com',
+      port: 5432,
+      createdAt: new Date(),
+      sshTunnel: {
+        enabled: true,
+        host: 'bastion.example.com',
+        port: 22,
+        username: 'tunneluser',
+        authMethod: 'privateKey',
+        privateKey: '-----BEGIN RSA PRIVATE KEY-----\nKEY\n-----END RSA PRIVATE KEY-----',
+        passphrase: 'keypass',
+      },
+    };
+
+    const { result } = renderHook(() =>
+      useConnectionForm({ ...defaultProps, editConnection: editConn })
+    );
+
+    expect(result.current.sshEnabled).toBe(true);
+    expect(result.current.showSSH).toBe(true);
+    expect(result.current.sshHost).toBe('bastion.example.com');
+    expect(result.current.sshPort).toBe('22');
+    expect(result.current.sshUsername).toBe('tunneluser');
+    expect(result.current.sshAuthMethod).toBe('privateKey');
+    expect(result.current.sshPrivateKey).toContain('RSA PRIVATE KEY');
+    expect(result.current.sshPassphrase).toBe('keypass');
+  });
+
+  // ── Edit mode with SSH password auth ───────────────────────────────────
+
+  test('populates SSH password auth in edit mode', () => {
+    const editConn: DatabaseConnection = {
+      id: 'edit-ssh-pw',
+      name: 'SSH PG',
+      type: 'postgres',
+      host: 'internal.example.com',
+      port: 5432,
+      createdAt: new Date(),
+      sshTunnel: {
+        enabled: true,
+        host: 'bastion.example.com',
+        port: 2222,
+        username: 'sshuser',
+        authMethod: 'password',
+        password: 'sshpass',
+      },
+    };
+
+    const { result } = renderHook(() =>
+      useConnectionForm({ ...defaultProps, editConnection: editConn })
+    );
+
+    expect(result.current.sshAuthMethod).toBe('password');
+    expect(result.current.sshPassword).toBe('sshpass');
+  });
+
+  // ── Edit mode with MongoDB connectionString ───────────────────────────
+
+  test('populates MongoDB connection string mode in edit mode', () => {
+    const editConn: DatabaseConnection = {
+      id: 'edit-mongo',
+      name: 'Mongo Atlas',
+      type: 'mongodb',
+      host: 'localhost',
+      port: 27017,
+      createdAt: new Date(),
+      connectionString: 'mongodb+srv://user:pass@cluster.mongodb.net/mydb',
+    };
+
+    const { result } = renderHook(() =>
+      useConnectionForm({ ...defaultProps, editConnection: editConn })
+    );
+
+    expect(result.current.type).toBe('mongodb');
+    expect(result.current.connectionString).toBe('mongodb+srv://user:pass@cluster.mongodb.net/mydb');
+    expect(result.current.mongoConnectionMode).toBe('connectionString');
+  });
+
+  // ── buildConnection includes SSL config when mode is not disable ───────
+
+  test('handleTestConnection includes SSL config when sslMode is not disable', async () => {
+    const fetchMock = mockGlobalFetch({
+      '/api/db/test-connection': { ok: true, json: { success: true, latency: 30 } },
+    });
+
+    const { result } = renderHook(() => useConnectionForm(defaultProps));
+
+    act(() => {
+      result.current.setSSLMode('require');
+      result.current.setCaCert('test-ca-cert');
+    });
+
+    await act(async () => {
+      await result.current.handleTestConnection();
+    });
+
+    const testCall = fetchMock.mock.calls.find(
+      (call) => typeof call[0] === 'string' && call[0].includes('/api/db/test-connection')
+    );
+    expect(testCall).toBeDefined();
+    const body = JSON.parse(testCall![1]!.body as string);
+    expect(body.ssl).toBeDefined();
+    expect(body.ssl.mode).toBe('require');
+    expect(body.ssl.caCert).toBe('test-ca-cert');
+  });
+
+  // ── buildConnection includes SSH tunnel config ─────────────────────────
+
+  test('handleTestConnection includes SSH tunnel config when enabled', async () => {
+    const fetchMock = mockGlobalFetch({
+      '/api/db/test-connection': { ok: true, json: { success: true, latency: 30 } },
+    });
+
+    const { result } = renderHook(() => useConnectionForm(defaultProps));
+
+    act(() => {
+      result.current.setSSHEnabled(true);
+      result.current.setSSHHost('bastion.test.com');
+      result.current.setSSHPort('2222');
+      result.current.setSSHUsername('tunnel');
+      result.current.setSSHAuthMethod('password');
+      result.current.setSSHPassword('tunnelpass');
+    });
+
+    await act(async () => {
+      await result.current.handleTestConnection();
+    });
+
+    const testCall = fetchMock.mock.calls.find(
+      (call) => typeof call[0] === 'string' && call[0].includes('/api/db/test-connection')
+    );
+    const body = JSON.parse(testCall![1]!.body as string);
+    expect(body.sshTunnel).toBeDefined();
+    expect(body.sshTunnel.enabled).toBe(true);
+    expect(body.sshTunnel.host).toBe('bastion.test.com');
+    expect(body.sshTunnel.port).toBe(2222);
+    expect(body.sshTunnel.username).toBe('tunnel');
+    expect(body.sshTunnel.password).toBe('tunnelpass');
+  });
+
+  // ── buildConnection with privateKey SSH auth ───────────────────────────
+
+  test('handleTestConnection includes SSH privateKey config', async () => {
+    const fetchMock = mockGlobalFetch({
+      '/api/db/test-connection': { ok: true, json: { success: true, latency: 30 } },
+    });
+
+    const { result } = renderHook(() => useConnectionForm(defaultProps));
+
+    act(() => {
+      result.current.setSSHEnabled(true);
+      result.current.setSSHHost('bastion.test.com');
+      result.current.setSSHUsername('tunnel');
+      result.current.setSSHAuthMethod('privateKey');
+      result.current.setSSHPrivateKey('my-private-key');
+      result.current.setSSHPassphrase('mypassphrase');
+    });
+
+    await act(async () => {
+      await result.current.handleTestConnection();
+    });
+
+    const testCall = fetchMock.mock.calls.find(
+      (call) => typeof call[0] === 'string' && call[0].includes('/api/db/test-connection')
+    );
+    const body = JSON.parse(testCall![1]!.body as string);
+    expect(body.sshTunnel.authMethod).toBe('privateKey');
+    expect(body.sshTunnel.privateKey).toBe('my-private-key');
+    expect(body.sshTunnel.passphrase).toBe('mypassphrase');
+  });
+
+  // ── buildConnection with MongoDB connectionString mode ─────────────────
+
+  test('buildConnection with MongoDB connectionString mode clears host/port', async () => {
+    const fetchMock = mockGlobalFetch({
+      '/api/db/test-connection': { ok: true, json: { success: true, latency: 20 } },
+    });
+
+    const { result } = renderHook(() => useConnectionForm(defaultProps));
+
+    act(() => {
+      result.current.setType('mongodb');
+      result.current.setMongoConnectionMode('connectionString');
+      result.current.setConnectionString('mongodb://localhost:27017/testdb');
+    });
+
+    await act(async () => {
+      await result.current.handleTestConnection();
+    });
+
+    const testCall = fetchMock.mock.calls.find(
+      (call) => typeof call[0] === 'string' && call[0].includes('/api/db/test-connection')
+    );
+    const body = JSON.parse(testCall![1]!.body as string);
+    expect(body.connectionString).toBe('mongodb://localhost:27017/testdb');
+    expect(body.host).toBeUndefined();
+    expect(body.port).toBeUndefined();
+  });
+
+  // ── buildConnection with Oracle serviceName ────────────────────────────
+
+  test('buildConnection includes Oracle serviceName', async () => {
+    const fetchMock = mockGlobalFetch({
+      '/api/db/test-connection': { ok: true, json: { success: true, latency: 20 } },
+    });
+
+    const { result } = renderHook(() => useConnectionForm(defaultProps));
+
+    act(() => {
+      result.current.setType('oracle');
+      result.current.setServiceName('MYSERVICE');
+    });
+
+    await act(async () => {
+      await result.current.handleTestConnection();
+    });
+
+    const testCall = fetchMock.mock.calls.find(
+      (call) => typeof call[0] === 'string' && call[0].includes('/api/db/test-connection')
+    );
+    const body = JSON.parse(testCall![1]!.body as string);
+    expect(body.serviceName).toBe('MYSERVICE');
+  });
+
+  // ── buildConnection with MSSQL instanceName ────────────────────────────
+
+  test('buildConnection includes MSSQL instanceName', async () => {
+    const fetchMock = mockGlobalFetch({
+      '/api/db/test-connection': { ok: true, json: { success: true, latency: 20 } },
+    });
+
+    const { result } = renderHook(() => useConnectionForm(defaultProps));
+
+    act(() => {
+      result.current.setType('mssql');
+      result.current.setInstanceName('SQLEXPRESS');
+    });
+
+    await act(async () => {
+      await result.current.handleTestConnection();
+    });
+
+    const testCall = fetchMock.mock.calls.find(
+      (call) => typeof call[0] === 'string' && call[0].includes('/api/db/test-connection')
+    );
+    const body = JSON.parse(testCall![1]!.body as string);
+    expect(body.instanceName).toBe('SQLEXPRESS');
+  });
+
+  // ── handleConnect sets network error on fetch failure ──────────────────
+
+  test('handleConnect sets network error on fetch failure', async () => {
+    globalThis.fetch = (async () => {
+      throw new Error('Network error');
+    }) as unknown as typeof fetch;
+
+    const { result } = renderHook(() => useConnectionForm(defaultProps));
+
+    await act(async () => {
+      await result.current.handleConnect();
+    });
+
+    expect(result.current.testResult).not.toBeNull();
+    expect(result.current.testResult!.success).toBe(false);
+    expect(result.current.testResult!.message).toContain('Network error');
+  });
+
+  // ── handlePasteConnectionString for MongoDB ────────────────────────────
+
+  test('handlePasteConnectionString sets MongoDB connectionString mode', () => {
+    const { result } = renderHook(() => useConnectionForm(defaultProps));
+
+    act(() => {
+      result.current.setPasteInput('mongodb://admin:pass@mongo.example.com:27017/mydb');
+    });
+
+    act(() => {
+      result.current.handlePasteConnectionString();
+    });
+
+    expect(result.current.type).toBe('mongodb');
+    expect(result.current.connectionString).toBe('mongodb://admin:pass@mongo.example.com:27017/mydb');
+    expect(result.current.mongoConnectionMode).toBe('connectionString');
+  });
+
+  // ── handlePasteConnectionString does nothing for empty input ───────────
+
+  test('handlePasteConnectionString does nothing for empty input', () => {
+    const { result } = renderHook(() => useConnectionForm(defaultProps));
+
+    act(() => {
+      result.current.setPasteInput('   ');
+    });
+
+    act(() => {
+      result.current.handlePasteConnectionString();
+    });
+
+    // testResult should remain null — no action taken
+    expect(result.current.testResult).toBeNull();
+  });
 });

@@ -337,4 +337,223 @@ describe('useMonitoringData', () => {
     expect(result.current.history[0]).toHaveProperty('timestamp');
     expect(result.current.history[0]).toHaveProperty('data');
   });
+
+  // ── runMaintenance returns false on failure ────────────────────────────
+
+  test('runMaintenance returns false on failure', async () => {
+    mockGlobalFetch({
+      '/api/db/monitoring': { ok: true, json: mockMonitoringResponse },
+      '/api/db/maintenance': { ok: false, status: 500, json: { error: 'Permission denied' } },
+    });
+
+    const { result } = renderHook(() => useMonitoringData(mockConnection));
+
+    await waitFor(() => {
+      expect(result.current.data).not.toBeNull();
+    });
+
+    let maintenanceResult = true;
+    await act(async () => {
+      maintenanceResult = await result.current.runMaintenance('vacuum', 'public.users');
+    });
+
+    expect(maintenanceResult).toBe(false);
+    expect(mockToastError).toHaveBeenCalled();
+  });
+
+  // ── killSession returns false when connection is null ──────────────────
+
+  test('killSession returns false when connection is null', async () => {
+    mockGlobalFetch({});
+
+    const { result } = renderHook(() => useMonitoringData(null));
+
+    let killResult = true;
+    await act(async () => {
+      killResult = await result.current.killSession(12345);
+    });
+
+    expect(killResult).toBe(false);
+  });
+
+  // ── runMaintenance returns false when connection is null ────────────────
+
+  test('runMaintenance returns false when connection is null', async () => {
+    mockGlobalFetch({});
+
+    const { result } = renderHook(() => useMonitoringData(null));
+
+    let maintenanceResult = true;
+    await act(async () => {
+      maintenanceResult = await result.current.runMaintenance('vacuum');
+    });
+
+    expect(maintenanceResult).toBe(false);
+  });
+
+  // ── setAutoRefresh enables/disables auto-refresh ───────────────────────
+
+  test('setAutoRefresh enables auto-refresh', async () => {
+    mockGlobalFetch({
+      '/api/db/monitoring': { ok: true, json: mockMonitoringResponse },
+    });
+
+    const { result } = renderHook(() => useMonitoringData(mockConnection));
+
+    await waitFor(() => {
+      expect(result.current.data).not.toBeNull();
+    });
+
+    expect(result.current.autoRefresh).toBe(false);
+
+    act(() => {
+      result.current.setAutoRefresh(true);
+    });
+
+    expect(result.current.autoRefresh).toBe(true);
+
+    act(() => {
+      result.current.setAutoRefresh(false);
+    });
+
+    expect(result.current.autoRefresh).toBe(false);
+  });
+
+  // ── setRefreshInterval changes interval ────────────────────────────────
+
+  test('setRefreshInterval changes the refresh interval', async () => {
+    mockGlobalFetch({
+      '/api/db/monitoring': { ok: true, json: mockMonitoringResponse },
+    });
+
+    const { result } = renderHook(() => useMonitoringData(mockConnection));
+
+    await waitFor(() => {
+      expect(result.current.data).not.toBeNull();
+    });
+
+    expect(result.current.refreshInterval).toBe(30000); // default
+
+    act(() => {
+      result.current.setRefreshInterval(5000);
+    });
+
+    expect(result.current.refreshInterval).toBe(5000);
+  });
+
+  // ── clears history on connection change ────────────────────────────────
+
+  test('clears history when connection changes to null', async () => {
+    mockGlobalFetch({
+      '/api/db/monitoring': { ok: true, json: mockMonitoringResponse },
+    });
+
+    const { result, rerender } = renderHook(
+      ({ conn }) => useMonitoringData(conn),
+      { initialProps: { conn: mockConnection as DatabaseConnection | null } }
+    );
+
+    await waitFor(() => {
+      expect(result.current.data).not.toBeNull();
+    });
+
+    expect(result.current.history.length).toBeGreaterThan(0);
+
+    // Change connection to null
+    rerender({ conn: null });
+
+    await waitFor(() => {
+      expect(result.current.data).toBeNull();
+    });
+
+    expect(result.current.history).toEqual([]);
+  });
+
+  // ── handles fetch exception (non-Error) ────────────────────────────────
+
+  test('handles fetch rejection with non-Error', async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => {
+      throw 'string error';
+    }) as unknown as typeof fetch;
+
+    const { result } = renderHook(() => useMonitoringData(mockConnection));
+
+    await waitFor(() => {
+      expect(result.current.error).not.toBeNull();
+    });
+
+    expect(result.current.error).toBe('Unknown error');
+
+    globalThis.fetch = originalFetch;
+  });
+
+  // ── killSession handles fetch exception ────────────────────────────────
+
+  test('killSession handles fetch exception', async () => {
+    mockGlobalFetch({
+      '/api/db/monitoring': { ok: true, json: mockMonitoringResponse },
+    });
+
+    const { result } = renderHook(() => useMonitoringData(mockConnection));
+
+    await waitFor(() => {
+      expect(result.current.data).not.toBeNull();
+    });
+
+    // Now make maintenance endpoint throw
+    restoreGlobalFetch();
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      if (url.includes('/api/db/maintenance')) {
+        throw new Error('Network failure');
+      }
+      return new Response(JSON.stringify(mockMonitoringResponse), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }) as typeof fetch;
+
+    let killResult = true;
+    await act(async () => {
+      killResult = await result.current.killSession(99);
+    });
+
+    expect(killResult).toBe(false);
+    expect(mockToastError).toHaveBeenCalled();
+  });
+
+  // ── runMaintenance handles fetch exception ─────────────────────────────
+
+  test('runMaintenance handles fetch exception', async () => {
+    mockGlobalFetch({
+      '/api/db/monitoring': { ok: true, json: mockMonitoringResponse },
+    });
+
+    const { result } = renderHook(() => useMonitoringData(mockConnection));
+
+    await waitFor(() => {
+      expect(result.current.data).not.toBeNull();
+    });
+
+    restoreGlobalFetch();
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      if (url.includes('/api/db/maintenance')) {
+        throw new Error('Connection refused');
+      }
+      return new Response(JSON.stringify(mockMonitoringResponse), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }) as typeof fetch;
+
+    let maintenanceResult = true;
+    await act(async () => {
+      maintenanceResult = await result.current.runMaintenance('analyze');
+    });
+
+    expect(maintenanceResult).toBe(false);
+    expect(mockToastError).toHaveBeenCalled();
+  });
 });

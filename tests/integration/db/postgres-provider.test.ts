@@ -5,7 +5,7 @@
 
 import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
 import type { DatabaseConnection } from '@/lib/types';
-import { DatabaseConfigError, QueryError } from '@/lib/db/errors';
+import { DatabaseConfigError } from '@/lib/db/errors';
 
 // ============================================================================
 // Mock pg BEFORE importing the provider
@@ -17,21 +17,14 @@ let mockQueryFn: (sql: string, params?: unknown[]) => Promise<{
   rowCount?: number;
 }>;
 
-let mockPoolEndCalled = false;
-let mockClientReleaseCalled = false;
-
 const mockClient = {
   query: (sql: string, params?: unknown[]) => mockQueryFn(sql, params),
-  release: () => {
-    mockClientReleaseCalled = true;
-  },
+  release: () => {},
 };
 
 const mockPool = {
   connect: async () => mockClient,
-  end: async () => {
-    mockPoolEndCalled = true;
-  },
+  end: async () => {},
   totalCount: 10,
   idleCount: 7,
   waitingCount: 0,
@@ -69,8 +62,7 @@ function makePgConfig(overrides: Partial<DatabaseConnection> = {}): DatabaseConn
  * Default mock query that matches SQL patterns and returns appropriate mock data.
  */
 function defaultMockQuery(
-  sql: string,
-  _params?: unknown[]
+  sql: string
 ): Promise<{ rows: unknown[]; fields?: { name: string }[]; rowCount?: number }> {
   const normalized = sql.trim().toLowerCase();
 
@@ -540,8 +532,6 @@ describe('PostgresProvider', () => {
 
   beforeEach(() => {
     mockQueryFn = defaultMockQuery;
-    mockPoolEndCalled = false;
-    mockClientReleaseCalled = false;
   });
 
   afterEach(async () => {

@@ -70,7 +70,7 @@ mock.module('mssql', () => {
 
 // Now import the provider (after mock is in place)
 import { MSSQLProvider } from '@/lib/db/providers/sql/mssql';
-import { DatabaseConfigError, QueryError, AuthenticationError, ConnectionError } from '@/lib/db/errors';
+import { DatabaseConfigError, QueryError } from '@/lib/db/errors';
 import type { DatabaseConnection } from '@/lib/types';
 
 // ---------------------------------------------------------------------------

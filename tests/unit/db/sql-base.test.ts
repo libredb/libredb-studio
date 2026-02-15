@@ -36,7 +36,11 @@ class TestSQLProvider extends SQLBaseProvider {
   async query(): Promise<QueryResult> { return { rows: [], fields: [], rowCount: 0, executionTime: 0 }; }
   async getSchema(): Promise<TableSchema[]> { return []; }
   async getHealth(): Promise<HealthInfo> { return { activeConnections: 0, databaseSize: '0', cacheHitRatio: '0%', slowQueries: [], activeSessions: [] }; }
-  async runMaintenance(_type: MaintenanceType, _target?: string): Promise<MaintenanceResult> { return { success: true, executionTime: 0, message: 'ok' }; }
+  async runMaintenance(type: MaintenanceType, target?: string): Promise<MaintenanceResult> {
+    void type;
+    void target;
+    return { success: true, executionTime: 0, message: 'ok' };
+  }
   async getOverview(): Promise<DatabaseOverview> { return { version: '', uptime: '', activeConnections: 0, maxConnections: 0, databaseSize: '', databaseSizeBytes: 0, tableCount: 0, indexCount: 0 }; }
   async getPerformanceMetrics(): Promise<PerformanceMetrics> { return { cacheHitRatio: 0 }; }
   async getSlowQueries(): Promise<SlowQueryStats[]> { return []; }

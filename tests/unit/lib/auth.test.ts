@@ -17,7 +17,7 @@ let mockDeleteCalls: string[] = [];
 // ============================================================================
 
 mock.module('jose', () => ({
-  SignJWT: function (payload: Record<string, unknown>) {
+  SignJWT: function () {
     return {
       setProtectedHeader: function () {
         return this;

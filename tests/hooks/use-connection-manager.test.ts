@@ -411,4 +411,165 @@ describe('useConnectionManager', () => {
       { description: expect.stringContaining('Demo database unavailable') }
     );
   });
+
+  // ── Demo connection updates existing demo ──────────────────────────────
+
+  test('updates existing demo connection when demo already exists in storage', async () => {
+    // Pre-populate storage with an existing demo connection
+    const existingDemo = makeConnection({ id: 'demo-old', name: 'Old Demo', isDemo: true });
+    storage.saveConnection(existingDemo);
+
+    const newDemoConn = makeConnection({
+      id: 'demo-new',
+      name: 'Updated Demo',
+      isDemo: true,
+      host: 'new-demo-host',
+    });
+
+    mockGlobalFetch({
+      '/api/demo-connection': {
+        ok: true,
+        json: { enabled: true, connection: { ...newDemoConn, createdAt: newDemoConn.createdAt.toISOString() } },
+      },
+    });
+
+    const { result } = renderHook(() => useConnectionManager());
+
+    await waitFor(() => {
+      expect(result.current.connections.length).toBeGreaterThan(0);
+    });
+
+    // Should have updated the existing demo connection
+    const demoConn = result.current.connections.find(c => c.isDemo);
+    expect(demoConn).toBeDefined();
+    expect(demoConn!.name).toBe('Updated Demo');
+  });
+
+  // ── Demo not enabled ───────────────────────────────────────────────────
+
+  test('handles demo connection not enabled', async () => {
+    mockGlobalFetch({
+      '/api/demo-connection': { ok: true, json: { enabled: false } },
+    });
+
+    const { result } = renderHook(() => useConnectionManager());
+
+    // Should still initialize but without demo connection
+    await waitFor(() => {
+      expect(result.current.connections).toBeDefined();
+    });
+
+    // Wait a bit for initialization
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 50));
+    });
+
+    expect(result.current.connections.length).toBe(0);
+  });
+
+  // ── Connection pulse degraded ──────────────────────────────────────────
+
+  test('connectionPulse is degraded when health check returns non-ok', async () => {
+    const conn = makeConnection();
+    storage.saveConnection(conn);
+
+    mockGlobalFetch({
+      '/api/demo-connection': { ok: false, status: 404, json: {} },
+      '/api/db/health': { ok: false, status: 503, json: { error: 'Service Unavailable' } },
+    });
+
+    const { result } = renderHook(() => useConnectionManager());
+
+    await waitFor(() => {
+      expect(result.current.connectionPulse).toBe('degraded');
+    });
+  });
+
+  // ── Connection pulse error on fetch failure ────────────────────────────
+
+  test('connectionPulse is error when health check throws', async () => {
+    const conn = makeConnection();
+    storage.saveConnection(conn);
+
+    // First set up demo-connection to fail, then health check to throw
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      if (url.includes('/api/demo-connection')) {
+        return new Response(JSON.stringify({}), { status: 404 });
+      }
+      if (url.includes('/api/db/health')) {
+        throw new Error('Network error');
+      }
+      return new Response(JSON.stringify({ error: 'Not found' }), { status: 404 });
+    }) as typeof fetch;
+
+    const { result } = renderHook(() => useConnectionManager());
+
+    await waitFor(() => {
+      expect(result.current.connectionPulse).toBe('error');
+    });
+
+    globalThis.fetch = originalFetch;
+  });
+
+  // ── Demo connection with existing connections restores persisted ────────
+
+  test('demo connection with existing connections restores persisted active', async () => {
+    // Pre-populate with non-demo connection
+    const existingConn = makeConnection({ id: 'existing-1', name: 'Existing DB' });
+    storage.saveConnection(existingConn);
+    storage.setActiveConnectionId('existing-1');
+
+    const demoConn = makeConnection({
+      id: 'demo-new',
+      name: 'Demo',
+      isDemo: true,
+    });
+
+    mockGlobalFetch({
+      '/api/demo-connection': {
+        ok: true,
+        json: { enabled: true, connection: { ...demoConn, createdAt: demoConn.createdAt.toISOString() } },
+      },
+      '/api/db/health': { ok: true, json: { status: 'healthy' } },
+    });
+
+    const { result } = renderHook(() => useConnectionManager());
+
+    await waitFor(() => {
+      expect(result.current.activeConnection).not.toBeNull();
+    });
+
+    // Should restore persisted connection (existing-1), not auto-select demo
+    expect(result.current.activeConnection!.id).toBe('existing-1');
+  });
+
+  // ── fetchSchema error with non-JSON response ──────────────────────────
+
+  test('fetchSchema handles non-JSON error response', async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      if (url.includes('/api/demo-connection')) {
+        return new Response(JSON.stringify({}), { status: 404 });
+      }
+      if (url.includes('/api/db/schema')) {
+        return new Response('Internal Server Error', { status: 500 });
+      }
+      return new Response(JSON.stringify({ error: 'Not found' }), { status: 404 });
+    }) as typeof fetch;
+
+    const { result } = renderHook(() => useConnectionManager());
+
+    const conn = makeConnection();
+    await act(async () => {
+      await result.current.fetchSchema(conn);
+    });
+
+    expect(result.current.isLoadingSchema).toBe(false);
+    expect(mockToastError).toHaveBeenCalled();
+
+    globalThis.fetch = originalFetch;
+  });
 });

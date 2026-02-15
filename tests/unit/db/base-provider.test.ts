@@ -499,7 +499,7 @@ describe('BaseDatabaseProvider', () => {
       // Or test indirectly — just make sure it doesn't crash
       // Actually logError is protected and not exposed, so let's skip direct testing
       // But we can test that mapError works which calls through logError
-      const mapped = provider.callSetError(new Error('test error'));
+      provider.callSetError(new Error('test error'));
       expect(provider.getState().lastError?.message).toBe('test error');
     });
   });
