@@ -1,5 +1,7 @@
 import { test, expect } from '@playwright/test';
 
+const demoEnabled = process.env.DEMO_DB_ENABLED === 'true';
+
 test.describe('Demo Mode', () => {
   test.beforeEach(async ({ page }) => {
     // Login as user
@@ -15,13 +17,14 @@ test.describe('Demo Mode', () => {
   });
 
   test('demo connection is available in sidebar', async ({ page }) => {
-    // The demo connection shows as "Employee Demo" with "Demo Database" subtitle
-    await expect(page.locator('text=Employee Demo').first()).toBeVisible({ timeout: 10000 });
+    test.skip(!demoEnabled, 'DEMO_DB_ENABLED not set');
+    // Matches both real demo ("Employee Demo") and mock demo ("Demo Database (Mock)")
+    await expect(page.locator('text=/Demo/i').first()).toBeVisible({ timeout: 10000 });
   });
 
   test('can select demo connection', async ({ page }) => {
-    // Click on demo connection
-    const demoConn = page.locator('text=Employee Demo').first();
+    test.skip(!demoEnabled, 'DEMO_DB_ENABLED not set');
+    const demoConn = page.locator('text=/Demo/i').first();
     await demoConn.click();
 
     // After selecting, schema explorer or query editor should become active

@@ -101,6 +101,7 @@ jobs:
           JWT_SECRET: test-secret-for-ci-build-only-32ch
           ADMIN_PASSWORD: test-admin
           USER_PASSWORD: test-user
+          DEMO_DB_ENABLED: true
 
       - name: Upload Playwright report
         uses: actions/upload-artifact@v4

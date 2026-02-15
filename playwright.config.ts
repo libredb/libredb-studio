@@ -27,6 +27,13 @@ export default defineConfig({
       JWT_SECRET: 'test-jwt-secret-for-e2e-tests-32ch',
       ADMIN_PASSWORD: 'test-admin',
       USER_PASSWORD: 'test-user',
+      DEMO_DB_ENABLED: process.env.DEMO_DB_ENABLED || '',
+      DEMO_DB_NAME: process.env.DEMO_DB_NAME || '',
+      DEMO_DB_HOST: process.env.DEMO_DB_HOST || '',
+      DEMO_DB_PORT: process.env.DEMO_DB_PORT || '',
+      DEMO_DB_DATABASE: process.env.DEMO_DB_DATABASE || '',
+      DEMO_DB_USER: process.env.DEMO_DB_USER || '',
+      DEMO_DB_PASSWORD: process.env.DEMO_DB_PASSWORD || '',
     },
   },
 });
