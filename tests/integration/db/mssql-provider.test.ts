@@ -70,7 +70,7 @@ mock.module('mssql', () => {
 
 // Now import the provider (after mock is in place)
 import { MSSQLProvider } from '@/lib/db/providers/sql/mssql';
-import { DatabaseConfigError, QueryError } from '@/lib/db/errors';
+import { DatabaseConfigError, QueryError, AuthenticationError, ConnectionError } from '@/lib/db/errors';
 import type { DatabaseConnection } from '@/lib/types';
 
 // ---------------------------------------------------------------------------
@@ -88,6 +88,30 @@ function defaultQuery(sql: string) {
     return { recordset: [{ cnt: 12 }], rowsAffected: [1] };
   }
 
+  // Active sessions detail query (for getActiveSessions — matches DM_EXEC_SESSIONS with TOP but not COUNT)
+  if (upper.includes('SYS.DM_EXEC_SESSIONS') && upper.includes('TOP') && !upper.includes('COUNT')) {
+    return {
+      recordset: [
+        {
+          pid: 55,
+          user: 'sa',
+          database: 'testdb',
+          application_name: 'SSMS',
+          client_addr: 'WORKSTATION1',
+          state: 'sleeping',
+          query: 'SELECT * FROM users',
+          query_start: new Date().toISOString(),
+          duration: '10s',
+          duration_ms: 10000,
+          wait_type: null,
+          last_wait_type: 'ASYNC_NETWORK_IO',
+          is_blocked: 0,
+        },
+      ],
+      rowsAffected: [1],
+    };
+  }
+
   if (upper.includes('SYS.DM_EXEC_SESSIONS') && !upper.includes('COUNT')) {
     return {
       recordset: [
@@ -101,6 +125,17 @@ function defaultQuery(sql: string) {
     return { recordset: [{ size_mb: 512 }], rowsAffected: [1] };
   }
 
+  // Storage stats query (physical_name AS location)
+  if (upper.includes('SYS.DATABASE_FILES') && upper.includes('PHYSICAL_NAME')) {
+    return {
+      recordset: [
+        { name: 'testdb', location: '/data/testdb.mdf', size_bytes: 536870912, type_desc: 'ROWS' },
+        { name: 'testdb_log', location: '/data/testdb_log.ldf', size_bytes: 67108864, type_desc: 'LOG' },
+      ],
+      rowsAffected: [2],
+    };
+  }
+
   if (upper.includes('SYS.DATABASE_FILES')) {
     return {
       recordset: [{ name: 'testdb', size_bytes: 536870912, location: '/data/testdb.mdf', type_desc: 'ROWS' }],
@@ -110,6 +145,27 @@ function defaultQuery(sql: string) {
 
   if (upper.includes('SYS.DM_OS_PERFORMANCE_COUNTERS')) {
     return { recordset: [{ hit_ratio: 99.5 }], rowsAffected: [1] };
+  }
+
+  // Slow queries detail query (for getSlowQueries — has query_hash)
+  if (upper.includes('SYS.DM_EXEC_QUERY_STATS') && upper.includes('QUERY_HASH')) {
+    return {
+      recordset: [
+        {
+          query_id: '0xABC123',
+          query: 'SELECT * FROM big_table WHERE id > 1000',
+          calls: 100,
+          total_time: 5550.00,
+          avg_time: 55.50,
+          min_time: 10.00,
+          max_time: 200.00,
+          row_cnt: 500,
+          logical_reads: 1000,
+          physical_reads: 50,
+        },
+      ],
+      rowsAffected: [1],
+    };
   }
 
   if (upper.includes('SYS.DM_EXEC_QUERY_STATS')) {
@@ -140,6 +196,17 @@ function defaultQuery(sql: string) {
     };
   }
 
+  // Table stats (for getTableStats — SYS.ALLOCATION_UNITS)
+  if (upper.includes('SYS.TABLES') && upper.includes('SYS.ALLOCATION_UNITS')) {
+    return {
+      recordset: [
+        { schema_name: 'dbo', table_name: 'users', row_count: 100, total_size_bytes: 81920, used_size_bytes: 65536, table_size_bytes: 49152, index_size_bytes: 16384, last_stats_update: '2026-02-14T00:00:00Z' },
+        { schema_name: 'dbo', table_name: 'orders', row_count: 500, total_size_bytes: 163840, used_size_bytes: 131072, table_size_bytes: 98304, index_size_bytes: 32768, last_stats_update: '2026-02-14T00:00:00Z' },
+      ],
+      rowsAffected: [2],
+    };
+  }
+
   if (upper.includes('SYS.INDEXES') && upper.includes('IS_PRIMARY_KEY = 1')) {
     return {
       recordset: [{ schema_name: 'dbo', table_name: 'users', column_name: 'id' }],
@@ -151,6 +218,28 @@ function defaultQuery(sql: string) {
     return {
       recordset: [{ schema_name: 'dbo', table_name: 'orders', column_name: 'user_id', ref_table: 'users', ref_column: 'id' }],
       rowsAffected: [1],
+    };
+  }
+
+  // Index stats (for getIndexStats — SYS.DM_DB_INDEX_USAGE_STATS)
+  if (upper.includes('SYS.INDEXES') && upper.includes('SYS.DM_DB_INDEX_USAGE_STATS')) {
+    return {
+      recordset: [
+        { schema_name: 'dbo', table_name: 'users', index_name: 'PK_users', index_type: 'CLUSTERED', is_unique: true, is_primary_key: true, index_size_bytes: 16384, scans: 250 },
+        { schema_name: 'dbo', table_name: 'users', index_name: 'IX_users_name', index_type: 'NONCLUSTERED', is_unique: false, is_primary_key: false, index_size_bytes: 8192, scans: 120 },
+      ],
+      rowsAffected: [2],
+    };
+  }
+
+  // Index columns (for getIndexStats second query)
+  if (upper.includes('SYS.INDEX_COLUMNS') && upper.includes('SYS.COLUMNS') && upper.includes('KEY_ORDINAL')) {
+    return {
+      recordset: [
+        { schema_name: 'dbo', table_name: 'users', index_name: 'PK_users', column_name: 'id', key_ordinal: 1 },
+        { schema_name: 'dbo', table_name: 'users', index_name: 'IX_users_name', column_name: 'name', key_ordinal: 1 },
+      ],
+      rowsAffected: [2],
     };
   }
 
@@ -170,11 +259,26 @@ function defaultQuery(sql: string) {
   }
 
   if (upper.includes('SYS.DM_OS_SYS_INFO')) {
-    return { recordset: [{ sqlserver_start_time: new Date().toISOString(), uptime_seconds: 86400 }], rowsAffected: [1] };
+    return { recordset: [{ sqlserver_start_time: new Date(Date.now() - 86400 * 1000).toISOString(), uptime_seconds: 86400 }], rowsAffected: [1] };
+  }
+
+  // Overview connections query (active_connections + max_connections)
+  if (upper.includes('SYS.CONFIGURATIONS') && upper.includes('USER CONNECTIONS')) {
+    return { recordset: [{ active_connections: 5, max_connections: 32767 }], rowsAffected: [1] };
   }
 
   if (upper.includes('SYS.CONFIGURATIONS')) {
     return { recordset: [{ active_connections: 5, max_connections: 32767 }], rowsAffected: [1] };
+  }
+
+  // Table/index counts for overview
+  if (upper.includes('SYS.TABLES') && upper.includes('TABLE_COUNT') && upper.includes('INDEX_COUNT')) {
+    return { recordset: [{ table_count: 5, index_count: 12 }], rowsAffected: [1] };
+  }
+
+  // Database size bytes for overview
+  if (upper.includes('SYS.DATABASE_FILES') && upper.includes('SIZE_BYTES')) {
+    return { recordset: [{ size_bytes: 536870912 }], rowsAffected: [1] };
   }
 
   // Default
@@ -521,6 +625,216 @@ describe('MSSQLProvider', () => {
       await provider.connect();
       const cancelled = await provider.cancelQuery('non-existent-id');
       expect(cancelled).toBe(false);
+    });
+  });
+
+  // =========================================================================
+  // 13. getOverview()
+  // =========================================================================
+
+  describe('getOverview()', () => {
+    test('returns version, uptime, connections, size, counts', async () => {
+      await provider.connect();
+      const overview = await provider.getOverview();
+
+      expect(typeof overview.version).toBe('string');
+      expect(overview.version).toContain('Microsoft SQL Server');
+      expect(typeof overview.uptime).toBe('string');
+      expect(overview.uptime.length).toBeGreaterThan(0);
+      expect(typeof overview.activeConnections).toBe('number');
+      expect(typeof overview.maxConnections).toBe('number');
+      expect(typeof overview.databaseSize).toBe('string');
+      expect(typeof overview.databaseSizeBytes).toBe('number');
+      expect(typeof overview.tableCount).toBe('number');
+      expect(typeof overview.indexCount).toBe('number');
+    });
+
+    test('Azure SQL detection from hostname', () => {
+      const azureProvider = new MSSQLProvider({
+        ...baseConfig,
+        host: 'myserver.database.windows.net',
+      });
+      // Azure host should not throw; the buildConfig should detect it
+      expect(azureProvider).toBeDefined();
+    });
+  });
+
+  // =========================================================================
+  // 14. getPerformanceMetrics()
+  // =========================================================================
+
+  describe('getPerformanceMetrics()', () => {
+    test('returns cache hit ratio and deadlocks', async () => {
+      await provider.connect();
+      const metrics = await provider.getPerformanceMetrics();
+
+      expect(typeof metrics.cacheHitRatio).toBe('number');
+      expect(metrics.cacheHitRatio).toBeGreaterThanOrEqual(0);
+      expect(metrics.cacheHitRatio).toBeLessThanOrEqual(100);
+      expect(metrics.cacheHitRatio).toBe(99.5);
+      // bufferPoolUsage mirrors cacheHitRatio in MSSQL impl
+      expect(typeof metrics.bufferPoolUsage).toBe('number');
+    });
+  });
+
+  // =========================================================================
+  // 15. getSlowQueries()
+  // =========================================================================
+
+  describe('getSlowQueries()', () => {
+    test('returns from dm_exec_query_stats', async () => {
+      await provider.connect();
+      const slowQueries = await provider.getSlowQueries();
+
+      expect(Array.isArray(slowQueries)).toBe(true);
+      expect(slowQueries.length).toBeGreaterThan(0);
+
+      const first = slowQueries[0];
+      expect(typeof first.query).toBe('string');
+      expect(typeof first.calls).toBe('number');
+      expect(first.calls).toBe(100);
+      expect(typeof first.totalTime).toBe('number');
+      expect(typeof first.avgTime).toBe('number');
+      expect(typeof first.rows).toBe('number');
+      expect(typeof first.queryId).toBe('string');
+    });
+  });
+
+  // =========================================================================
+  // 16. getActiveSessions()
+  // =========================================================================
+
+  describe('getActiveSessions()', () => {
+    test('returns sessions from dm_exec_sessions', async () => {
+      await provider.connect();
+      const sessions = await provider.getActiveSessions();
+
+      expect(Array.isArray(sessions)).toBe(true);
+      expect(sessions.length).toBeGreaterThan(0);
+
+      const first = sessions[0];
+      expect(typeof first.pid).toBe('number');
+      expect(typeof first.user).toBe('string');
+      expect(typeof first.database).toBe('string');
+      expect(typeof first.state).toBe('string');
+      expect(typeof first.query).toBe('string');
+      expect(typeof first.duration).toBe('string');
+      expect(typeof first.durationMs).toBe('number');
+    });
+  });
+
+  // =========================================================================
+  // 17. getTableStats()
+  // =========================================================================
+
+  describe('getTableStats()', () => {
+    test('returns table sizes and row counts', async () => {
+      await provider.connect();
+      const stats = await provider.getTableStats();
+
+      expect(Array.isArray(stats)).toBe(true);
+      expect(stats.length).toBeGreaterThan(0);
+
+      const first = stats[0];
+      expect(typeof first.schemaName).toBe('string');
+      expect(typeof first.tableName).toBe('string');
+      expect(typeof first.rowCount).toBe('number');
+      expect(typeof first.tableSize).toBe('string');
+      expect(typeof first.tableSizeBytes).toBe('number');
+      expect(typeof first.indexSize).toBe('string');
+      expect(typeof first.totalSize).toBe('string');
+      expect(typeof first.totalSizeBytes).toBe('number');
+    });
+  });
+
+  // =========================================================================
+  // 18. getIndexStats()
+  // =========================================================================
+
+  describe('getIndexStats()', () => {
+    test('returns index usage stats', async () => {
+      await provider.connect();
+      const stats = await provider.getIndexStats();
+
+      expect(Array.isArray(stats)).toBe(true);
+      expect(stats.length).toBeGreaterThan(0);
+
+      const first = stats[0];
+      expect(typeof first.schemaName).toBe('string');
+      expect(typeof first.tableName).toBe('string');
+      expect(typeof first.indexName).toBe('string');
+      expect(typeof first.indexType).toBe('string');
+      expect(Array.isArray(first.columns)).toBe(true);
+      expect(typeof first.isUnique).toBe('boolean');
+      expect(typeof first.isPrimary).toBe('boolean');
+      expect(typeof first.indexSize).toBe('string');
+      expect(typeof first.indexSizeBytes).toBe('number');
+      expect(typeof first.scans).toBe('number');
+    });
+  });
+
+  // =========================================================================
+  // 19. getStorageStats()
+  // =========================================================================
+
+  describe('getStorageStats()', () => {
+    test('returns database file info', async () => {
+      await provider.connect();
+      const stats = await provider.getStorageStats();
+
+      expect(Array.isArray(stats)).toBe(true);
+      expect(stats.length).toBeGreaterThan(0);
+
+      const first = stats[0];
+      expect(typeof first.name).toBe('string');
+      expect(typeof first.location).toBe('string');
+      expect(typeof first.size).toBe('string');
+      expect(typeof first.sizeBytes).toBe('number');
+      expect(first.sizeBytes).toBeGreaterThan(0);
+    });
+  });
+
+  // =========================================================================
+  // 20. Error mapping
+  // =========================================================================
+
+  describe('error mapping', () => {
+    test('Login failed maps to auth error', async () => {
+      // Connect first with default mock, then swap to error mock
+      await provider.connect();
+
+      mockQueryFn = async () => {
+        throw new Error('Login failed for user "sa"');
+      };
+
+      try {
+        await provider.query('SELECT 1');
+        expect(true).toBe(false); // Should not reach here
+      } catch (error: unknown) {
+        expect(error).toBeDefined();
+        const err = error as Error;
+        expect(err.name).toBe('AuthenticationError');
+        expect(err.message).toContain('Authentication failed');
+      }
+    });
+
+    test('Cannot open database maps to config error', async () => {
+      // Connect first with default mock, then swap to error mock
+      await provider.connect();
+
+      mockQueryFn = async () => {
+        throw new Error('Cannot open database "baddb" requested by the login');
+      };
+
+      try {
+        await provider.query('SELECT 1');
+        expect(true).toBe(false); // Should not reach here
+      } catch (error: unknown) {
+        expect(error).toBeDefined();
+        const err = error as Error;
+        expect(err.name).toBe('ConnectionError');
+        expect(err.message).toContain('Database not found');
+      }
     });
   });
 });

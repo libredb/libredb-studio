@@ -161,3 +161,195 @@ describe('createErrorStream', () => {
     expect(second.done).toBe(true);
   });
 });
+
+// ============================================================================
+// streamFromAsyncIterable
+// ============================================================================
+
+import {
+  streamFromAsyncIterable,
+  createStreamFromSSEResponse,
+  mergeStreams,
+} from '@/lib/llm/utils/streaming';
+
+describe('streamFromAsyncIterable', () => {
+  test('transforms async iterable items into stream chunks', async () => {
+    async function* generate() {
+      yield 'hello';
+      yield ' world';
+    }
+
+    const stream = streamFromAsyncIterable(generate(), (item) => encodeText(item));
+    const output = await readAllChunks(stream);
+    expect(output).toBe('hello world');
+  });
+
+  test('skips null transform results', async () => {
+    async function* generate() {
+      yield 'keep';
+      yield 'skip';
+      yield 'also-keep';
+    }
+
+    const stream = streamFromAsyncIterable(generate(), (item) =>
+      item === 'skip' ? null : encodeText(item)
+    );
+    const output = await readAllChunks(stream);
+    expect(output).toBe('keepalso-keep');
+  });
+
+  test('handles empty iterable', async () => {
+    async function* generate(): AsyncGenerator<string> {
+      // empty
+    }
+
+    const stream = streamFromAsyncIterable(generate(), (item) => encodeText(item));
+    const output = await readAllChunks(stream);
+    expect(output).toBe('');
+  });
+
+  test('handles error in iterable', async () => {
+    async function* generate() {
+      yield 'ok';
+      throw new Error('iteration error');
+    }
+
+    const stream = streamFromAsyncIterable(generate(), (item) => encodeText(item));
+    const reader = stream.getReader();
+
+    // First chunk should be 'ok'
+    const first = await reader.read();
+    expect(first.done).toBe(false);
+    expect(decodeText(first.value!)).toBe('ok');
+
+    // Next read should error
+    try {
+      await reader.read();
+      expect(true).toBe(false);
+    } catch (error) {
+      expect((error as Error).message).toBe('iteration error');
+    }
+  });
+});
+
+// ============================================================================
+// createStreamFromSSEResponse
+// ============================================================================
+
+describe('createStreamFromSSEResponse', () => {
+  test('parses SSE response body and extracts content', async () => {
+    const sseData = [
+      'data: {"choices":[{"delta":{"content":"Hello"}}]}\n\n',
+      'data: {"choices":[{"delta":{"content":" World"}}]}\n\n',
+      'data: [DONE]\n\n',
+    ].join('');
+
+    const body = new ReadableStream({
+      start(controller) {
+        controller.enqueue(encodeText(sseData));
+        controller.close();
+      },
+    });
+
+    const response = new Response(body);
+    const stream = createStreamFromSSEResponse(response, 'openai');
+    const output = await readAllChunks(stream);
+    expect(output).toBe('Hello World');
+  });
+
+  test('throws LLMStreamError when body is null', () => {
+    const response = new Response(null);
+    // Force body to be null
+    Object.defineProperty(response, 'body', { value: null });
+
+    expect(() => createStreamFromSSEResponse(response, 'openai')).toThrow(
+      'Response body is empty'
+    );
+  });
+});
+
+// ============================================================================
+// mergeStreams
+// ============================================================================
+
+describe('mergeStreams', () => {
+  test('merges multiple streams into one', async () => {
+    const stream1 = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encodeText('Hello'));
+        controller.close();
+      },
+    });
+
+    const stream2 = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encodeText(' World'));
+        controller.close();
+      },
+    });
+
+    const merged = mergeStreams([stream1, stream2]);
+    const output = await readAllChunks(merged);
+    expect(output).toBe('Hello World');
+  });
+
+  test('handles empty streams array', async () => {
+    const merged = mergeStreams([]);
+    const output = await readAllChunks(merged);
+    expect(output).toBe('');
+  });
+
+  test('handles single stream', async () => {
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encodeText('only'));
+        controller.close();
+      },
+    });
+
+    const merged = mergeStreams([stream]);
+    const output = await readAllChunks(merged);
+    expect(output).toBe('only');
+  });
+
+  test('preserves order of streams', async () => {
+    const streams = ['first', 'second', 'third'].map(
+      (text) =>
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(encodeText(text));
+            controller.close();
+          },
+        })
+    );
+
+    const merged = mergeStreams(streams);
+    const output = await readAllChunks(merged);
+    expect(output).toBe('firstsecondthird');
+  });
+});
+
+// ============================================================================
+// SSE Parser flush behavior
+// ============================================================================
+
+describe('createSSEParser flush', () => {
+  test('flushes remaining buffered data', async () => {
+    // Send data without trailing newline — should be flushed
+    const input = 'data: {"choices":[{"delta":{"content":"flushed"}}]}';
+    const output = await pipeSSE(input);
+    expect(output).toBe('flushed');
+  });
+
+  test('flush ignores [DONE] in buffer', async () => {
+    const input = 'data: [DONE]';
+    const output = await pipeSSE(input);
+    expect(output).toBe('');
+  });
+
+  test('flush ignores malformed JSON in buffer', async () => {
+    const input = 'data: {invalid-json}';
+    const output = await pipeSSE(input);
+    expect(output).toBe('');
+  });
+});

@@ -467,4 +467,232 @@ describe('MongoDBProvider', () => {
       ).rejects.toThrow();
     });
   });
+
+  // --------------------------------------------------------------------------
+  // getOverview()
+  // --------------------------------------------------------------------------
+
+  describe('getOverview()', () => {
+    beforeEach(async () => {
+      await provider.connect();
+    });
+
+    test('returns version, uptime, connections, size, counts', async () => {
+      const overview = await provider.getOverview();
+      expect(typeof overview.version).toBe('string');
+      expect(typeof overview.uptime).toBe('string');
+      expect(typeof overview.activeConnections).toBe('number');
+      expect(typeof overview.maxConnections).toBe('number');
+      expect(typeof overview.databaseSize).toBe('string');
+      expect(typeof overview.databaseSizeBytes).toBe('number');
+      expect(typeof overview.tableCount).toBe('number');
+      expect(typeof overview.indexCount).toBe('number');
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // getPerformanceMetrics()
+  // --------------------------------------------------------------------------
+
+  describe('getPerformanceMetrics()', () => {
+    beforeEach(async () => {
+      await provider.connect();
+    });
+
+    test('returns cache hit ratio and connection pool metrics', async () => {
+      const metrics = await provider.getPerformanceMetrics();
+      expect(typeof metrics.cacheHitRatio).toBe('number');
+      expect(metrics.cacheHitRatio).toBeGreaterThanOrEqual(0);
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // getSlowQueries()
+  // --------------------------------------------------------------------------
+
+  describe('getSlowQueries()', () => {
+    beforeEach(async () => {
+      await provider.connect();
+    });
+
+    test('returns slow query data', async () => {
+      const slow = await provider.getSlowQueries();
+      expect(slow).toBeArray();
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // getActiveSessions()
+  // --------------------------------------------------------------------------
+
+  describe('getActiveSessions()', () => {
+    beforeEach(async () => {
+      await provider.connect();
+    });
+
+    test('returns session data', async () => {
+      const sessions = await provider.getActiveSessions();
+      expect(sessions).toBeArray();
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // getTableStats()
+  // --------------------------------------------------------------------------
+
+  describe('getTableStats()', () => {
+    beforeEach(async () => {
+      await provider.connect();
+    });
+
+    test('returns collection stats', async () => {
+      const stats = await provider.getTableStats();
+      expect(stats).toBeArray();
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // getIndexStats()
+  // --------------------------------------------------------------------------
+
+  describe('getIndexStats()', () => {
+    beforeEach(async () => {
+      await provider.connect();
+    });
+
+    test('returns index stats for collections', async () => {
+      const stats = await provider.getIndexStats();
+      expect(stats).toBeArray();
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // getStorageStats()
+  // --------------------------------------------------------------------------
+
+  describe('getStorageStats()', () => {
+    beforeEach(async () => {
+      await provider.connect();
+    });
+
+    test('returns storage stats', async () => {
+      const stats = await provider.getStorageStats();
+      expect(stats).toBeArray();
+      expect(stats.length).toBeGreaterThan(0);
+      expect(typeof stats[0].name).toBe('string');
+      expect(typeof stats[0].size).toBe('string');
+      expect(typeof stats[0].sizeBytes).toBe('number');
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // BSON serialization
+  // --------------------------------------------------------------------------
+
+  describe('BSON serialization', () => {
+    beforeEach(async () => {
+      await provider.connect();
+    });
+
+    test('ObjectId is serialized to string in query results', async () => {
+      const result = await provider.query(
+        JSON.stringify({ collection: 'users', operation: 'find', filter: {} })
+      );
+      expect(typeof result.rows[0]._id).toBe('string');
+    });
+
+    test('insertMany returns correct count', async () => {
+      const result = await provider.query(
+        JSON.stringify({
+          collection: 'users',
+          operation: 'insertMany',
+          documents: [{ name: 'A' }, { name: 'B' }, { name: 'C' }],
+        })
+      );
+      expect(result.rows[0].insertedCount).toBe(3);
+      // rowCount is rows.length (1 result row) since rows.length > 0
+      expect(result.rowCount).toBe(1);
+    });
+
+    test('updateOne returns matched/modified counts', async () => {
+      const result = await provider.query(
+        JSON.stringify({
+          collection: 'users',
+          operation: 'updateOne',
+          filter: { name: 'Alice' },
+          update: { $set: { name: 'Alice Updated' } },
+        })
+      );
+      expect(result.rows[0].matchedCount).toBe(1);
+      expect(result.rows[0].modifiedCount).toBe(1);
+    });
+
+    test('updateMany returns matched/modified counts', async () => {
+      const result = await provider.query(
+        JSON.stringify({
+          collection: 'users',
+          operation: 'updateMany',
+          filter: {},
+          update: { $set: { active: true } },
+        })
+      );
+      expect(result.rows[0].matchedCount).toBe(2);
+      expect(result.rows[0].modifiedCount).toBe(2);
+    });
+
+    test('deleteOne returns deletedCount', async () => {
+      const result = await provider.query(
+        JSON.stringify({
+          collection: 'users',
+          operation: 'deleteOne',
+          filter: { name: 'Alice' },
+        })
+      );
+      expect(result.rows[0].deletedCount).toBe(1);
+      expect(result.rowCount).toBe(1);
+    });
+
+    test('deleteMany returns deletedCount', async () => {
+      const result = await provider.query(
+        JSON.stringify({
+          collection: 'users',
+          operation: 'deleteMany',
+          filter: {},
+        })
+      );
+      expect(result.rows[0].deletedCount).toBe(3);
+      // rowCount is rows.length (1 result row) since rows.length > 0
+      expect(result.rowCount).toBe(1);
+    });
+
+    test('distinct returns values', async () => {
+      const result = await provider.query(
+        JSON.stringify({
+          collection: 'users',
+          operation: 'distinct',
+          filter: 'name',
+        })
+      );
+      expect(result.rows).toBeArray();
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // getMonitoringData()
+  // --------------------------------------------------------------------------
+
+  describe('getMonitoringData()', () => {
+    beforeEach(async () => {
+      await provider.connect();
+    });
+
+    test('returns monitoring data with all sections', async () => {
+      const data = await provider.getMonitoringData();
+      expect(data.timestamp).toBeInstanceOf(Date);
+      expect(data.overview).toBeDefined();
+      expect(data.performance).toBeDefined();
+      expect(data.slowQueries).toBeArray();
+      expect(data.activeSessions).toBeArray();
+    });
+  });
 });

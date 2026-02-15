@@ -351,4 +351,130 @@ describe('SQLiteProvider', () => {
       expect(session.state).toBe('active');
     });
   });
+
+  // --------------------------------------------------------------------------
+  // Slow queries
+  // --------------------------------------------------------------------------
+
+  describe('getSlowQueries()', () => {
+    test('returns empty array (SQLite has no slow query stats)', async () => {
+      provider = new SQLiteProvider(makeSQLiteConfig());
+      await provider.connect();
+
+      const slow = await provider.getSlowQueries();
+      expect(slow).toBeArray();
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // Table stats
+  // --------------------------------------------------------------------------
+
+  describe('getTableStats()', () => {
+    test('returns table stats for created tables', async () => {
+      provider = new SQLiteProvider(makeSQLiteConfig());
+      await provider.connect();
+
+      await provider.query('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)');
+      await provider.query("INSERT INTO users VALUES (1, 'Alice')");
+      await provider.query("INSERT INTO users VALUES (2, 'Bob')");
+
+      const stats = await provider.getTableStats();
+      expect(stats).toBeArray();
+
+      const usersStats = stats.find((s) => s.tableName === 'users');
+      expect(usersStats).toBeDefined();
+      expect(typeof usersStats!.tableName).toBe('string');
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // Index stats
+  // --------------------------------------------------------------------------
+
+  describe('getIndexStats()', () => {
+    test('returns index info for created indexes', async () => {
+      provider = new SQLiteProvider(makeSQLiteConfig());
+      await provider.connect();
+
+      await provider.query('CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT, code TEXT)');
+      await provider.query('CREATE INDEX idx_name ON items(name)');
+      await provider.query('CREATE UNIQUE INDEX idx_code ON items(code)');
+
+      const stats = await provider.getIndexStats();
+      expect(stats).toBeArray();
+      expect(stats.length).toBeGreaterThanOrEqual(2);
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // Storage stats
+  // --------------------------------------------------------------------------
+
+  describe('getStorageStats()', () => {
+    test('returns storage info', async () => {
+      provider = new SQLiteProvider(makeSQLiteConfig());
+      await provider.connect();
+
+      const stats = await provider.getStorageStats();
+      expect(stats).toBeArray();
+      expect(stats.length).toBeGreaterThan(0);
+      expect(typeof stats[0].name).toBe('string');
+      expect(typeof stats[0].size).toBe('string');
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // Monitoring data (via base getMonitoringData)
+  // --------------------------------------------------------------------------
+
+  describe('getMonitoringData()', () => {
+    test('returns monitoring data with all sections', async () => {
+      provider = new SQLiteProvider(makeSQLiteConfig());
+      await provider.connect();
+
+      await provider.query('CREATE TABLE md_test (id INTEGER PRIMARY KEY)');
+
+      const data = await provider.getMonitoringData();
+      expect(data.timestamp).toBeInstanceOf(Date);
+      expect(data.overview).toBeDefined();
+      expect(data.performance).toBeDefined();
+      expect(data.slowQueries).toBeArray();
+      expect(data.activeSessions).toBeArray();
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // prepareQuery
+  // --------------------------------------------------------------------------
+
+  describe('prepareQuery()', () => {
+    test('SELECT gets LIMIT appended', () => {
+      provider = new SQLiteProvider(makeSQLiteConfig());
+      const result = provider.prepareQuery('SELECT * FROM users');
+      expect(result.wasLimited).toBe(true);
+      expect(result.query).toContain('LIMIT');
+    });
+
+    test('non-SELECT passes through unchanged', () => {
+      provider = new SQLiteProvider(makeSQLiteConfig());
+      const sql = "INSERT INTO users VALUES (1, 'test')";
+      const result = provider.prepareQuery(sql);
+      expect(result.query).toBe(sql);
+      expect(result.wasLimited).toBe(false);
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // Labels
+  // --------------------------------------------------------------------------
+
+  describe('getLabels()', () => {
+    test('returns correct SQLite labels', () => {
+      provider = new SQLiteProvider(makeSQLiteConfig());
+      const labels = provider.getLabels();
+      expect(labels.entityName).toBe('Table');
+      expect(typeof labels.selectAction).toBe('string');
+    });
+  });
 });

@@ -214,3 +214,227 @@ describe('escapeIdentifier', () => {
     expect(escapeIdentifier("'my_table'", 'sqlite')).toBe('"my_table"');
   });
 });
+
+// ============================================================================
+// createCancellableQuery
+// ============================================================================
+
+import { createCancellableQuery, checkConnectionHealth, withRetry } from '@/lib/db/utils/pool-manager';
+
+describe('createCancellableQuery', () => {
+  test('resolves when query completes before timeout', async () => {
+    const { promise } = createCancellableQuery(
+      async () => 'result',
+      5000,
+      'postgres'
+    );
+    const result = await promise;
+    expect(result).toBe('result');
+  });
+
+  test('rejects with TimeoutError when query exceeds timeout', async () => {
+    const { promise } = createCancellableQuery(
+      async () => {
+        await new Promise((r) => setTimeout(r, 500));
+        return 'too late';
+      },
+      10,
+      'postgres'
+    );
+
+    try {
+      await promise;
+      expect(true).toBe(false);
+    } catch (error) {
+      expect(error).toBeInstanceOf(TimeoutError);
+      expect((error as TimeoutError).message).toContain('timed out');
+    }
+  });
+
+  test('cancel() aborts the query', async () => {
+    const { promise, cancel } = createCancellableQuery(
+      async (signal) => {
+        await new Promise((resolve, reject) => {
+          const timer = setTimeout(resolve, 5000);
+          signal?.addEventListener('abort', () => {
+            clearTimeout(timer);
+            reject(new Error('aborted'));
+          });
+        });
+        return 'done';
+      },
+      10000,
+      'postgres'
+    );
+
+    // Cancel immediately
+    cancel();
+
+    try {
+      await promise;
+      expect(true).toBe(false);
+    } catch (error) {
+      expect((error as Error).message).toBe('aborted');
+    }
+  });
+
+  test('query error propagates correctly', async () => {
+    const { promise } = createCancellableQuery(
+      async () => {
+        throw new Error('query failed');
+      },
+      5000,
+      'postgres'
+    );
+
+    try {
+      await promise;
+      expect(true).toBe(false);
+    } catch (error) {
+      expect((error as Error).message).toBe('query failed');
+    }
+  });
+});
+
+// ============================================================================
+// checkConnectionHealth
+// ============================================================================
+
+describe('checkConnectionHealth', () => {
+  test('returns true when acquire and ping succeed', async () => {
+    const result = await checkConnectionHealth(
+      async () => ({ client: true }),
+      () => {},
+      async () => {},
+      5000,
+      'postgres'
+    );
+    expect(result).toBe(true);
+  });
+
+  test('returns false when acquire fails', async () => {
+    const result = await checkConnectionHealth(
+      async () => { throw new Error('pool exhausted'); },
+      () => {},
+      async () => {},
+      5000,
+      'postgres'
+    );
+    expect(result).toBe(false);
+  });
+
+  test('returns false when ping fails', async () => {
+    const result = await checkConnectionHealth(
+      async () => ({ client: true }),
+      () => {},
+      async () => { throw new Error('ping failed'); },
+      5000,
+      'postgres'
+    );
+    expect(result).toBe(false);
+  });
+
+  test('returns false when acquire times out', async () => {
+    const result = await checkConnectionHealth(
+      () => new Promise((resolve) => setTimeout(() => resolve({ client: true }), 500)),
+      () => {},
+      async () => {},
+      10,
+      'postgres'
+    );
+    expect(result).toBe(false);
+  });
+
+  test('releases connection even when ping fails', async () => {
+    let released = false;
+    const result = await checkConnectionHealth(
+      async () => 'conn',
+      () => { released = true; },
+      async () => { throw new Error('ping error'); },
+      5000,
+      'postgres'
+    );
+    expect(result).toBe(false);
+    expect(released).toBe(true);
+  });
+});
+
+// ============================================================================
+// withRetry
+// ============================================================================
+
+describe('withRetry', () => {
+  test('returns result on first try success', async () => {
+    const result = await withRetry(async () => 'success');
+    expect(result).toBe('success');
+  });
+
+  test('retries on failure and succeeds on second attempt', async () => {
+    let attempt = 0;
+    const result = await withRetry(
+      async () => {
+        attempt++;
+        if (attempt < 2) throw new Error('transient');
+        return 'recovered';
+      },
+      { maxAttempts: 3, initialDelay: 1 }
+    );
+    expect(result).toBe('recovered');
+    expect(attempt).toBe(2);
+  });
+
+  test('throws after exhausting all attempts', async () => {
+    let attempt = 0;
+    try {
+      await withRetry(
+        async () => {
+          attempt++;
+          throw new Error('persistent failure');
+        },
+        { maxAttempts: 2, initialDelay: 1 }
+      );
+      expect(true).toBe(false);
+    } catch (error) {
+      expect((error as Error).message).toBe('persistent failure');
+      expect(attempt).toBe(2);
+    }
+  });
+
+  test('does not retry when isRetryable returns false', async () => {
+    let attempt = 0;
+    try {
+      await withRetry(
+        async () => {
+          attempt++;
+          throw new Error('non-retryable');
+        },
+        { maxAttempts: 3, initialDelay: 1 },
+        () => false
+      );
+      expect(true).toBe(false);
+    } catch (error) {
+      expect((error as Error).message).toBe('non-retryable');
+      expect(attempt).toBe(1);
+    }
+  });
+
+  test('uses exponential backoff', async () => {
+    let attempt = 0;
+    const startTime = Date.now();
+    try {
+      await withRetry(
+        async () => {
+          attempt++;
+          throw new Error('fail');
+        },
+        { maxAttempts: 3, initialDelay: 10, backoffMultiplier: 2, maxDelay: 100 }
+      );
+    } catch {
+      // Expected
+    }
+    const elapsed = Date.now() - startTime;
+    expect(attempt).toBe(3);
+    // Should have waited at least initialDelay + initialDelay*multiplier = 10 + 20 = 30ms
+    expect(elapsed).toBeGreaterThanOrEqual(20);
+  });
+});

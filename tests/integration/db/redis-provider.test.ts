@@ -342,4 +342,185 @@ describe('RedisProvider', () => {
       ).rejects.toThrow();
     });
   });
+
+  // --------------------------------------------------------------------------
+  // getOverview()
+  // --------------------------------------------------------------------------
+
+  describe('getOverview()', () => {
+    beforeEach(async () => {
+      await provider.connect();
+    });
+
+    test('returns version, uptime, connections, size', async () => {
+      const overview = await provider.getOverview();
+      expect(typeof overview.version).toBe('string');
+      expect(overview.version).toContain('7.2.4');
+      expect(typeof overview.uptime).toBe('string');
+      expect(typeof overview.activeConnections).toBe('number');
+      expect(overview.activeConnections).toBe(12);
+      expect(typeof overview.databaseSize).toBe('string');
+      expect(typeof overview.databaseSizeBytes).toBe('number');
+      expect(typeof overview.tableCount).toBe('number');
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // getPerformanceMetrics()
+  // --------------------------------------------------------------------------
+
+  describe('getPerformanceMetrics()', () => {
+    beforeEach(async () => {
+      await provider.connect();
+    });
+
+    test('returns cache hit ratio and ops per sec', async () => {
+      const metrics = await provider.getPerformanceMetrics();
+      expect(typeof metrics.cacheHitRatio).toBe('number');
+      // hitRatio: 900/(900+100)*100 = 90.0
+      expect(metrics.cacheHitRatio).toBe(90);
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // getSlowQueries()
+  // --------------------------------------------------------------------------
+
+  describe('getSlowQueries()', () => {
+    beforeEach(async () => {
+      await provider.connect();
+    });
+
+    test('returns slow query data', async () => {
+      const slow = await provider.getSlowQueries();
+      expect(slow).toBeArray();
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // getActiveSessions()
+  // --------------------------------------------------------------------------
+
+  describe('getActiveSessions()', () => {
+    beforeEach(async () => {
+      await provider.connect();
+    });
+
+    test('returns client list as sessions', async () => {
+      const sessions = await provider.getActiveSessions();
+      expect(sessions).toBeArray();
+      expect(sessions.length).toBe(2);
+      expect(sessions[0].user).toBeDefined();
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // getTableStats()
+  // --------------------------------------------------------------------------
+
+  describe('getTableStats()', () => {
+    beforeEach(async () => {
+      await provider.connect();
+    });
+
+    test('returns key pattern stats', async () => {
+      const stats = await provider.getTableStats();
+      expect(stats).toBeArray();
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // getIndexStats()
+  // --------------------------------------------------------------------------
+
+  describe('getIndexStats()', () => {
+    beforeEach(async () => {
+      await provider.connect();
+    });
+
+    test('returns empty array (Redis has no indexes)', async () => {
+      const stats = await provider.getIndexStats();
+      expect(stats).toBeArray();
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // getStorageStats()
+  // --------------------------------------------------------------------------
+
+  describe('getStorageStats()', () => {
+    beforeEach(async () => {
+      await provider.connect();
+    });
+
+    test('returns memory usage info', async () => {
+      const stats = await provider.getStorageStats();
+      expect(stats).toBeArray();
+      expect(stats.length).toBeGreaterThan(0);
+      expect(typeof stats[0].name).toBe('string');
+      expect(typeof stats[0].sizeBytes).toBe('number');
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // getMonitoringData()
+  // --------------------------------------------------------------------------
+
+  describe('getMonitoringData()', () => {
+    beforeEach(async () => {
+      await provider.connect();
+    });
+
+    test('returns monitoring data', async () => {
+      const data = await provider.getMonitoringData();
+      expect(data.timestamp).toBeInstanceOf(Date);
+      expect(data.overview).toBeDefined();
+      expect(data.performance).toBeDefined();
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // Additional query scenarios
+  // --------------------------------------------------------------------------
+
+  describe('additional query scenarios', () => {
+    beforeEach(async () => {
+      await provider.connect();
+    });
+
+    test('KEYS command returns key list', async () => {
+      const result = await provider.query(
+        JSON.stringify({ command: 'KEYS', args: ['*'] })
+      );
+      expect(result.rows).toBeArray();
+    });
+
+    test('SET command returns OK', async () => {
+      const result = await provider.query(
+        JSON.stringify({ command: 'SET', args: ['mykey', 'myvalue'] })
+      );
+      expect(result.rows[0].result).toBe('OK');
+    });
+
+    test('DEL command returns integer count', async () => {
+      const result = await provider.query(
+        JSON.stringify({ command: 'DEL', args: ['mykey'] })
+      );
+      expect(result.rows[0].result).toBe('(integer) 1');
+    });
+
+    test('PING returns PONG', async () => {
+      const result = await provider.query(
+        JSON.stringify({ command: 'PING', args: [] })
+      );
+      expect(result.rows[0].result).toBe('PONG');
+    });
+
+    test('DBSIZE returns integer key count', async () => {
+      const result = await provider.query(
+        JSON.stringify({ command: 'DBSIZE', args: [] })
+      );
+      expect(result.rows[0].result).toBe('(integer) 42');
+    });
+  });
 });
