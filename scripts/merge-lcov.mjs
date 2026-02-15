@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
-const fs = require("fs");
-const path = require("path");
+import fs from "node:fs";
+import path from "node:path";
 
 function ensureParentDir(filePath) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -199,7 +199,7 @@ function serializeRecords(records) {
 function main() {
   const [, , ...args] = process.argv;
   if (args.length < 3) {
-    console.error("Usage: node scripts/merge-lcov.cjs <input1> <input2> [moreInputs...] <output>");
+    console.error("Usage: node scripts/merge-lcov.mjs <input1> <input2> [moreInputs...] <output>");
     process.exit(1);
   }
 
