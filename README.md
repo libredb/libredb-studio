@@ -263,7 +263,7 @@ Sample tables: `app.customers`, `app.products`, `app.orders`, `app.order_items`,
 
 ## Testing
 
-LibreDB Studio has a comprehensive test suite with **1,269+ unit/integration tests** and **35 E2E tests** across 6 layers.
+LibreDB Studio has a comprehensive test suite with **1,671+ unit/integration tests** and **35 E2E tests** across 6 layers, achieving **96%+ line coverage**.
 
 ### Quick Commands
 
@@ -272,10 +272,10 @@ LibreDB Studio has a comprehensive test suite with **1,269+ unit/integration tes
 bun run test
 
 # Run by layer
-bun run test:unit          # Pure function tests (409 cases)
-bun run test:api           # API route handler tests (207 cases)
-bun run test:integration   # Database provider tests (164 cases)
-bun run test:hooks         # React hook tests (126 cases)
+bun run test:unit          # Pure function tests (800 cases)
+bun run test:api           # API route handler tests (205 cases)
+bun run test:integration   # Database provider tests (294 cases)
+bun run test:hooks         # React hook tests (178 cases)
 bun run test:components    # Component tests with mock isolation (194 cases)
 
 # E2E tests (requires build)
@@ -289,10 +289,10 @@ bun run test:coverage
 
 | Layer | Directory | Runner | Tests | What it covers |
 |-------|-----------|--------|-------|----------------|
-| **Unit** | `tests/unit/` | `bun:test` | ~409 | Pure functions: SQL parser, connection strings, data masking, query limiter, schema diff, error classes |
-| **API** | `tests/api/` | `bun:test` | ~207 | Route handlers: auth, query, transaction, maintenance, AI endpoints, middleware |
-| **Integration** | `tests/integration/` | `bun:test` | ~164 | Database providers: PG, MySQL, SQLite, MongoDB, Redis, Oracle, MSSQL, Demo (mocked drivers) |
-| **Hooks** | `tests/hooks/` | `bun:test` | ~126 | React hooks: auth, connections, tabs, query execution, transactions, inline editing, AI chat |
+| **Unit** | `tests/unit/` | `bun:test` | ~800 | Pure functions: SQL parser, connection strings, data masking, query limiter, schema diff, error classes, DB icons, showcase queries |
+| **API** | `tests/api/` | `bun:test` | ~205 | Route handlers: auth, query, transaction, maintenance, AI endpoints, middleware |
+| **Integration** | `tests/integration/` | `bun:test` | ~294 | Database providers: PG, MySQL, SQLite, MongoDB, Redis, Oracle, MSSQL, Demo (mocked drivers) |
+| **Hooks** | `tests/hooks/` | `bun:test` | ~178 | React hooks: auth, connections, tabs, query execution, transactions, inline editing, AI chat, monitoring |
 | **Components** | `tests/components/` | `bun:test` + happy-dom | ~194 | UI components: Studio, Sidebar, QueryEditor, ResultsGrid, Admin Dashboard, Charts, ERD |
 | **E2E** | `e2e/` | Playwright | ~35 | Full browser flows: login, demo mode, connections, query execution, tabs, export, admin |
 

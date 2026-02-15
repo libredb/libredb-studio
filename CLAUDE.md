@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-LibreDB Studio is a web-based SQL IDE for cloud-native teams. It supports PostgreSQL, MySQL, SQLite, MongoDB, and a demo mode with AI-powered query assistance.
+LibreDB Studio is a web-based SQL IDE for cloud-native teams. It supports PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, Redis, and a demo mode with AI-powered query assistance.
 
 ## Development Commands
 
@@ -56,7 +56,7 @@ The project uses ESLint 9 for linting and `bun:test` for testing with `@testing-
 - **SQL Editor:** Monaco Editor
 - **Data Grid:** TanStack React Table with react-virtual for virtualization
 - **AI:** Multi-model support (Gemini, OpenAI, Ollama, Custom)
-- **Databases:** PostgreSQL (`pg`), MySQL (`mysql2`), SQLite (`better-sqlite3`), MongoDB (`mongodb`)
+- **Databases:** PostgreSQL (`pg`), MySQL (`mysql2`), SQLite (`better-sqlite3`), Oracle (`oracledb`), SQL Server (`mssql`), MongoDB (`mongodb`), Redis (`ioredis`)
 - **Auth:** JWT-based with `jose` library
 
 ### Directory Structure
@@ -116,8 +116,9 @@ e2e/                        # Playwright E2E tests (browser)
 ### Key Patterns
 
 1. **Database Abstraction:** `src/lib/db/` module provides Strategy Pattern implementation for multiple database types:
-   - **SQL:** PostgreSQL, MySQL, SQLite (extend `SQLBaseProvider`)
+   - **SQL:** PostgreSQL, MySQL, SQLite, Oracle, SQL Server (extend `SQLBaseProvider`)
    - **Document:** MongoDB (extends `BaseDatabaseProvider`)
+   - **Key-Value:** Redis (extends `BaseDatabaseProvider`)
    - **Demo:** Mock data provider for testing
 
 2. **LLM Abstraction:** `src/lib/llm/` module provides Strategy Pattern for AI providers (Gemini, OpenAI, Ollama, Custom)
