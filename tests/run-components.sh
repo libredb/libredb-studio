@@ -64,6 +64,7 @@ run_group "Group 5/6: SecurityTab" \
 run_group "Group 6/6: Remaining components" \
   tests/components/DataCharts.test.tsx \
   tests/components/QueryEditor.test.tsx \
+  tests/components/QuerySafetyDialog.test.tsx \
   tests/components/QueryHistory.test.tsx \
   tests/components/ConnectionModal.test.tsx \
   tests/components/CommandPalette.test.tsx \

@@ -86,7 +86,7 @@ mock.module('@/components/ui/select', () => ({
 
 // ── Imports AFTER mocks ─────────────────────────────────────────────────────
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { render, cleanup } from '@testing-library/react';
+import { render, cleanup, fireEvent, waitFor } from '@testing-library/react';
 import { DataCharts } from '@/components/DataCharts';
 import type { QueryResult } from '@/lib/types';
 
@@ -256,5 +256,42 @@ describe('DataCharts', () => {
     const footerText = container.textContent || '';
     expect(footerText).toContain('5');
     expect(footerText).toContain('4');
+  });
+
+  test('switches chart types to scatter and histogram', async () => {
+    const { queryByText, queryByTestId } = render(React.createElement(DataCharts, { result: mockNumericResult }));
+
+    const scatterButton = queryByText('Scatter');
+    expect(scatterButton).not.toBeNull();
+    fireEvent.click(scatterButton!);
+
+    await waitFor(() => {
+      expect(queryByTestId('mock-scatter-chart')).not.toBeNull();
+    });
+
+    const histogramButton = queryByText('Histogram');
+    expect(histogramButton).not.toBeNull();
+    fireEvent.click(histogramButton!);
+
+    await waitFor(() => {
+      expect(queryByTestId('mock-bar-chart')).not.toBeNull();
+    });
+  });
+
+  test('exports chart as PNG without throwing', async () => {
+    const linkClick = mock(() => {});
+    const originalClick = HTMLAnchorElement.prototype.click;
+    HTMLAnchorElement.prototype.click = linkClick as unknown as typeof HTMLAnchorElement.prototype.click;
+
+    const { queryByText } = render(React.createElement(DataCharts, { result: mockNumericResult }));
+    const exportPngItem = queryByText('Export as PNG');
+    expect(exportPngItem).not.toBeNull();
+    fireEvent.click(exportPngItem!);
+
+    await waitFor(() => {
+      expect(linkClick).toHaveBeenCalled();
+    });
+
+    HTMLAnchorElement.prototype.click = originalClick;
   });
 });
