@@ -119,6 +119,17 @@ jobs:
           name: coverage
           path: coverage
 
+      - name: Verify coverage file
+        run: |
+          echo "=== Coverage file check ==="
+          ls -la coverage/
+          echo "=== First 5 SF lines ==="
+          grep "^SF:" coverage/lcov.info | head -5
+          echo "=== Record count ==="
+          grep -c "^SF:" coverage/lcov.info
+          echo "=== Sample record ==="
+          head -20 coverage/lcov.info
+
       - name: SonarCloud Scan
         uses: SonarSource/sonarqube-scan-action@v6
         env:
