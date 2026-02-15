@@ -1,6 +1,10 @@
 import { describe, test, expect, mock, beforeEach } from 'bun:test';
 import { createMockRequest, parseResponseJSON } from '../../helpers/mock-next';
 import { createMockProvider } from '../../helpers/mock-provider';
+import {
+  AuthenticationError,
+  PoolExhaustedError,
+} from '@/lib/db/errors';
 
 // ─── Mock error classes (must match instanceof checks in route) ─────────────
 class MockQueryError extends Error {
@@ -61,6 +65,8 @@ mock.module('@/lib/db', () => ({
   isDatabaseError: mock((e: unknown) => e instanceof MockDatabaseError),
   ConnectionError: MockConnectionError,
   DatabaseConfigError: MockDatabaseConfigError,
+  AuthenticationError,
+  PoolExhaustedError,
   isConnectionError: mock((e: unknown) => e instanceof MockConnectionError),
   isQueryError: mock((e: unknown) => e instanceof MockQueryError),
   isTimeoutError: mock((e: unknown) => e instanceof MockTimeoutError),

@@ -1,6 +1,22 @@
 import { describe, test, expect, mock, beforeEach } from 'bun:test';
 import { createMockRequest, parseResponseJSON } from '../../helpers/mock-next';
 import { createMockProvider } from '../../helpers/mock-provider';
+import {
+  QueryError,
+  TimeoutError,
+  DatabaseError,
+  DatabaseConfigError,
+  ConnectionError,
+  AuthenticationError,
+  PoolExhaustedError,
+  isDatabaseError,
+  isConnectionError,
+  isQueryError,
+  isTimeoutError,
+  isAuthenticationError,
+  isRetryableError,
+  mapDatabaseError,
+} from '@/lib/db/errors';
 
 // ─── Create mock objects ────────────────────────────────────────────────────
 const baseMockProvider = createMockProvider();
@@ -23,6 +39,22 @@ mock.module('@/lib/db', () => ({
   removeProvider: mock(async () => {}),
   clearProviderCache: mock(async () => {}),
   getProviderCacheStats: mock(() => ({ size: 0, connections: [] })),
+  QueryError,
+  TimeoutError,
+  DatabaseError,
+  DatabaseConfigError,
+  ConnectionError,
+  AuthenticationError,
+  PoolExhaustedError,
+  isDatabaseError,
+  isConnectionError,
+  isQueryError,
+  isTimeoutError,
+  isAuthenticationError,
+  isRetryableError,
+  mapDatabaseError,
+  BaseDatabaseProvider: class {},
+  DemoProvider: class {},
 }));
 
 // ─── Import route handler AFTER mocking ─────────────────────────────────────

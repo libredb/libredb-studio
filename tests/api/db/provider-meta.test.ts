@@ -1,25 +1,22 @@
 import { describe, test, expect, mock, beforeEach } from 'bun:test';
 import { createMockRequest, parseResponseJSON } from '../../helpers/mock-next';
 import { createMockProvider } from '../../helpers/mock-provider';
-
-// ─── Mock error classes (must match instanceof checks in route) ─────────────
-class MockConnectionError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'ConnectionError';
-  }
-}
-
-class MockDatabaseError extends Error {
-  provider?: string;
-  code?: string;
-  constructor(message: string, provider?: string, code?: string) {
-    super(message);
-    this.name = 'DatabaseError';
-    this.provider = provider;
-    this.code = code;
-  }
-}
+import {
+  QueryError,
+  TimeoutError,
+  DatabaseError,
+  DatabaseConfigError,
+  ConnectionError,
+  AuthenticationError,
+  PoolExhaustedError,
+  isDatabaseError,
+  isConnectionError,
+  isQueryError,
+  isTimeoutError,
+  isAuthenticationError,
+  isRetryableError,
+  mapDatabaseError,
+} from '@/lib/db/errors';
 
 // ─── Mock provider ──────────────────────────────────────────────────────────
 const mockProvider = createMockProvider();
@@ -32,15 +29,20 @@ mock.module('@/lib/db', () => ({
   removeProvider: mock(),
   clearProviderCache: mock(),
   getProviderCacheStats: mock(),
-  ConnectionError: MockConnectionError,
-  DatabaseError: MockDatabaseError,
-  isDatabaseError: mock((e: unknown) => e instanceof MockDatabaseError),
-  isConnectionError: mock((e: unknown) => e instanceof MockConnectionError),
-  isQueryError: mock(() => false),
-  isTimeoutError: mock(() => false),
-  isAuthenticationError: mock(() => false),
-  isRetryableError: mock(() => false),
-  mapDatabaseError: mock(),
+  QueryError,
+  TimeoutError,
+  DatabaseError,
+  DatabaseConfigError,
+  ConnectionError,
+  AuthenticationError,
+  PoolExhaustedError,
+  isDatabaseError,
+  isConnectionError,
+  isQueryError,
+  isTimeoutError,
+  isAuthenticationError,
+  isRetryableError,
+  mapDatabaseError,
   BaseDatabaseProvider: class {},
   DemoProvider: class {},
 }));
@@ -113,7 +115,7 @@ describe('POST /api/db/provider-meta', () => {
 
   test('returns 503 for ConnectionError', async () => {
     mockGetOrCreateProvider.mockRejectedValueOnce(
-      new MockConnectionError('Connection refused')
+      new ConnectionError('Connection refused')
     );
 
     const req = createMockRequest('/api/db/provider-meta', {
@@ -130,7 +132,7 @@ describe('POST /api/db/provider-meta', () => {
 
   test('returns 500 for DatabaseError', async () => {
     mockGetOrCreateProvider.mockRejectedValueOnce(
-      new MockDatabaseError('Internal failure', 'postgres', 'INTERNAL')
+      new DatabaseError('Internal failure', 'postgres', 'INTERNAL')
     );
 
     const req = createMockRequest('/api/db/provider-meta', {

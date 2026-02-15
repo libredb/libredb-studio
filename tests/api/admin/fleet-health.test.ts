@@ -1,6 +1,22 @@
 import { describe, test, expect, mock, beforeEach } from 'bun:test';
 import { createMockRequest, parseResponseJSON } from '../../helpers/mock-next';
 import { createMockProvider } from '../../helpers/mock-provider';
+import {
+  QueryError,
+  TimeoutError,
+  DatabaseError,
+  DatabaseConfigError,
+  ConnectionError,
+  AuthenticationError,
+  PoolExhaustedError,
+  isDatabaseError,
+  isConnectionError,
+  isQueryError,
+  isTimeoutError,
+  isAuthenticationError,
+  isRetryableError,
+  mapDatabaseError,
+} from '@/lib/db/errors';
 
 // ─── Mock provider ──────────────────────────────────────────────────────────
 const mockProvider = createMockProvider();
@@ -23,15 +39,20 @@ mock.module('@/lib/db', () => ({
   removeProvider: mock(),
   clearProviderCache: mock(),
   getProviderCacheStats: mock(),
-  ConnectionError: class extends Error { constructor(m: string) { super(m); this.name = 'ConnectionError'; } },
-  DatabaseError: class extends Error { constructor(m: string) { super(m); this.name = 'DatabaseError'; } },
-  isDatabaseError: mock(() => false),
-  isConnectionError: mock(() => false),
-  isQueryError: mock(() => false),
-  isTimeoutError: mock(() => false),
-  isAuthenticationError: mock(() => false),
-  isRetryableError: mock(() => false),
-  mapDatabaseError: mock(),
+  QueryError,
+  TimeoutError,
+  DatabaseError,
+  DatabaseConfigError,
+  ConnectionError,
+  AuthenticationError,
+  PoolExhaustedError,
+  isDatabaseError,
+  isConnectionError,
+  isQueryError,
+  isTimeoutError,
+  isAuthenticationError,
+  isRetryableError,
+  mapDatabaseError,
   BaseDatabaseProvider: class {},
   DemoProvider: class {},
 }));
