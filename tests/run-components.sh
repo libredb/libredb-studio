@@ -127,7 +127,8 @@ run_group "Group 11/12: Smoke tests" \
   tests/components/DataImportModal.test.tsx \
   tests/components/RootLayout.test.tsx \
   tests/components/Page.test.tsx \
-  tests/components/LoginPage.test.tsx
+  tests/components/LoginPage.test.tsx \
+  tests/components/AdminPage.test.tsx
 
 # Group 12: All remaining files (safe together)
 run_group "Group 12/12: Remaining components" \
