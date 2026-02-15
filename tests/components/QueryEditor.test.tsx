@@ -127,6 +127,10 @@ const mockHandleAiSubmit = mock(async () => {});
 let mockShowAi = false;
 let mockAiError: string | null = null;
 let mockAiConversationHistory: Array<Record<string, string>> = [];
+let mockClipboardWriteText = mock((data: string) => {
+  void data;
+  return Promise.resolve();
+});
 
 mock.module('@/hooks/use-ai-chat', () => ({
   useAiChat: mock(() => ({
@@ -204,14 +208,20 @@ describe('QueryEditor', () => {
     mockHandleAiSubmit.mockClear();
     mockAiError = null;
     mockAiConversationHistory = [];
-    const nav = globalThis.navigator as Navigator & { clipboard?: { writeText?: (...args: unknown[]) => unknown } };
+    mockClipboardWriteText = mock((data: string) => {
+      void data;
+      return Promise.resolve();
+    });
+    const nav = globalThis.navigator as Navigator & { clipboard?: Clipboard };
+    const clipboardWriteText: Clipboard['writeText'] = (data: string) =>
+      mockClipboardWriteText(data) as Promise<void>;
     if (!nav.clipboard) {
       Object.defineProperty(nav, 'clipboard', {
-        value: { writeText: mock(() => Promise.resolve()) },
+        value: { writeText: clipboardWriteText } as Clipboard,
         configurable: true,
       });
     } else {
-      nav.clipboard.writeText = mock(() => Promise.resolve());
+      nav.clipboard.writeText = clipboardWriteText;
     }
   });
 
@@ -349,9 +359,7 @@ describe('QueryEditor', () => {
     const copyButton = queryByText('COPY');
     expect(copyButton).not.toBeNull();
     fireEvent.click(copyButton!);
-
-    const clipboard = globalThis.navigator?.clipboard as { writeText: ReturnType<typeof mock> };
-    expect(clipboard.writeText).toHaveBeenCalledWith('SELECT copied_value');
+    expect(mockClipboardWriteText).toHaveBeenCalledWith('SELECT copied_value');
   });
 
   test('renders AI error panel when aiError exists', () => {
