@@ -182,4 +182,153 @@ describe('useAuth', () => {
       { description: 'Failed to logout.' }
     );
   });
+
+  // ── /api/auth/me non-ok response ───────────────────────────────────────────
+
+  test('/api/auth/me returns non-ok → user stays null', async () => {
+    mockGlobalFetch({
+      '/api/auth/me': { ok: false, status: 401, json: { error: 'Unauthorized' } },
+    });
+
+    const { result } = renderHook(() => useAuth());
+
+    // Wait for fetch to complete
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 50));
+    });
+
+    expect(result.current.user).toBeNull();
+    expect(result.current.isAdmin).toBe(false);
+  });
+
+  // ── /api/auth/me throws network error ──────────────────────────────────────
+
+  test('/api/auth/me throws network error → user stays null, no crash', async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      if (url.includes('/api/auth/me')) {
+        throw new Error('Network error');
+      }
+      return new Response(JSON.stringify({}), { status: 404 });
+    }) as typeof fetch;
+
+    const { result } = renderHook(() => useAuth());
+
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 50));
+    });
+
+    expect(result.current.user).toBeNull();
+    expect(result.current.isAdmin).toBe(false);
+
+    globalThis.fetch = originalFetch;
+  });
+
+  // ── User with no role property → isAdmin=false ─────────────────────────────
+
+  test('user with no role property → isAdmin=false', async () => {
+    mockGlobalFetch({
+      '/api/auth/me': { ok: true, json: { user: { name: 'john' } } },
+    });
+
+    const { result } = renderHook(() => useAuth());
+
+    await waitFor(() => {
+      expect(result.current.user).not.toBeNull();
+    });
+
+    expect(result.current.isAdmin).toBe(false);
+  });
+
+  // ── User with role='' → isAdmin=false ──────────────────────────────────────
+
+  test('user with role="" → isAdmin=false', async () => {
+    mockGlobalFetch({
+      '/api/auth/me': { ok: true, json: { user: { role: '' } } },
+    });
+
+    const { result } = renderHook(() => useAuth());
+
+    await waitFor(() => {
+      expect(result.current.user).not.toBeNull();
+    });
+
+    expect(result.current.isAdmin).toBe(false);
+  });
+
+  // ── User with role='viewer' → isAdmin=false ────────────────────────────────
+
+  test('user with role="viewer" → isAdmin=false', async () => {
+    mockGlobalFetch({
+      '/api/auth/me': { ok: true, json: { user: { role: 'viewer' } } },
+    });
+
+    const { result } = renderHook(() => useAuth());
+
+    await waitFor(() => {
+      expect(result.current.user).not.toBeNull();
+    });
+
+    expect(result.current.isAdmin).toBe(false);
+  });
+
+  // ── handleLogout function is stable ────────────────────────────────────────
+
+  test('handleLogout can be called before user fetch completes', async () => {
+    // Slow fetch for /me, fast for logout
+    let resolveMe: ((value: Response) => void) | undefined;
+    const mePromise = new Promise<Response>((resolve) => { resolveMe = resolve; });
+
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      if (url.includes('/api/auth/me')) return mePromise;
+      if (url.includes('/api/auth/logout')) {
+        return new Response(JSON.stringify({ success: true }), {
+          status: 200, headers: { 'content-type': 'application/json' },
+        });
+      }
+      return new Response('{}', { status: 404 });
+    }) as typeof fetch;
+
+    const { result } = renderHook(() => useAuth());
+
+    // Logout before me resolves
+    await act(async () => {
+      await result.current.handleLogout();
+    });
+
+    expect(mockRouterPush).toHaveBeenCalledWith('/login');
+
+    // Now resolve me
+    resolveMe!(new Response(JSON.stringify({ user: { role: 'user' } }), {
+      status: 200, headers: { 'content-type': 'application/json' },
+    }));
+
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 50));
+    });
+  });
+
+  // ── Logout with non-ok response still navigates ───────────────────────────
+
+  test('handleLogout navigates even if logout API returns non-ok', async () => {
+    mockGlobalFetch({
+      '/api/auth/me': { ok: true, json: { user: { role: 'user' } } },
+      '/api/auth/logout': { ok: false, status: 500, json: { error: 'Server error' } },
+    });
+
+    const { result } = renderHook(() => useAuth());
+
+    await waitFor(() => {
+      expect(result.current.user).not.toBeNull();
+    });
+
+    await act(async () => {
+      await result.current.handleLogout();
+    });
+
+    // The fetch didn't throw, so logout path should succeed
+    expect(mockRouterPush).toHaveBeenCalledWith('/login');
+  });
 });

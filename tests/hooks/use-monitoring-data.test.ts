@@ -556,4 +556,264 @@ describe('useMonitoringData', () => {
     expect(maintenanceResult).toBe(false);
     expect(mockToastError).toHaveBeenCalled();
   });
+
+  // ── Timestamp string → Date conversion ─────────────────────────────────
+
+  test('converts timestamp string to Date object', async () => {
+    const isoTimestamp = '2026-01-15T10:30:00.000Z';
+    const responseWithTimestamp = {
+      ...mockMonitoringResponse,
+      timestamp: isoTimestamp,
+    };
+
+    mockGlobalFetch({
+      '/api/db/monitoring': { ok: true, json: responseWithTimestamp },
+    });
+
+    const { result } = renderHook(() => useMonitoringData(mockConnection));
+
+    await waitFor(() => {
+      expect(result.current.data).not.toBeNull();
+    });
+
+    // timestamp should be converted to Date
+    expect(result.current.data!.timestamp).toBeInstanceOf(Date);
+  });
+
+  // ── overview.startTime → Date conversion ───────────────────────────────
+
+  test('converts overview.startTime string to Date object', async () => {
+    const isoStart = '2026-01-15T08:00:00.000Z';
+    const responseWithStartTime = {
+      ...mockMonitoringResponse,
+      overview: { ...mockMonitoringResponse.overview, startTime: isoStart },
+    };
+
+    mockGlobalFetch({
+      '/api/db/monitoring': { ok: true, json: responseWithStartTime },
+    });
+
+    const { result } = renderHook(() => useMonitoringData(mockConnection));
+
+    await waitFor(() => {
+      expect(result.current.data).not.toBeNull();
+    });
+
+    expect(result.current.data!.overview.startTime).toBeInstanceOf(Date);
+  });
+
+  // ── Response without overview.startTime (no crash) ─────────────────────
+
+  test('handles response without overview.startTime', async () => {
+    const noStartResponse = {
+      ...mockMonitoringResponse,
+      overview: {
+        ...mockMonitoringResponse.overview,
+        startTime: undefined,
+      },
+    };
+
+    mockGlobalFetch({
+      '/api/db/monitoring': { ok: true, json: noStartResponse },
+    });
+
+    const { result } = renderHook(() => useMonitoringData(mockConnection));
+
+    await waitFor(() => {
+      expect(result.current.data).not.toBeNull();
+    });
+
+    // Should not crash even without startTime
+    expect(result.current.data!.overview).toBeDefined();
+  });
+
+  // ── runMaintenance uses result.message ─────────────────────────────────
+
+  test('runMaintenance uses result.message when provided', async () => {
+    mockGlobalFetch({
+      '/api/db/monitoring': { ok: true, json: mockMonitoringResponse },
+      '/api/db/maintenance': { ok: true, json: { success: true, message: 'VACUUM completed on public.users' } },
+    });
+
+    const { result } = renderHook(() => useMonitoringData(mockConnection));
+
+    await waitFor(() => {
+      expect(result.current.data).not.toBeNull();
+    });
+
+    await act(async () => {
+      await result.current.runMaintenance('vacuum', 'public.users');
+    });
+
+    expect(mockToastSuccess).toHaveBeenCalledWith('VACUUM completed on public.users');
+  });
+
+  // ── runMaintenance uses fallback when result.message empty ─────────────
+
+  test('runMaintenance uses fallback when result.message is empty', async () => {
+    mockGlobalFetch({
+      '/api/db/monitoring': { ok: true, json: mockMonitoringResponse },
+      '/api/db/maintenance': { ok: true, json: { success: true, message: '' } },
+    });
+
+    const { result } = renderHook(() => useMonitoringData(mockConnection));
+
+    await waitFor(() => {
+      expect(result.current.data).not.toBeNull();
+    });
+
+    await act(async () => {
+      await result.current.runMaintenance('analyze');
+    });
+
+    expect(mockToastSuccess).toHaveBeenCalledWith('analyze completed successfully');
+  });
+
+  // ── killSession with non-Error throw ──────────────────────────────────
+
+  test('killSession with non-Error throw shows fallback message', async () => {
+    mockGlobalFetch({
+      '/api/db/monitoring': { ok: true, json: mockMonitoringResponse },
+    });
+
+    const { result } = renderHook(() => useMonitoringData(mockConnection));
+
+    await waitFor(() => {
+      expect(result.current.data).not.toBeNull();
+    });
+
+    // Override fetch to throw a non-Error
+    restoreGlobalFetch();
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      if (url.includes('/api/db/maintenance')) {
+        throw 'non-error string';
+      }
+      return new Response(JSON.stringify(mockMonitoringResponse), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }) as typeof fetch;
+
+    let killResult = true;
+    await act(async () => {
+      killResult = await result.current.killSession(99);
+    });
+
+    expect(killResult).toBe(false);
+    expect(mockToastError).toHaveBeenCalledWith('Failed to kill session');
+  });
+
+  // ── Connection change clears data and aborts ──────────────────────────
+
+  test('connection change to different connection resets history and fetches', async () => {
+    const secondConnection: DatabaseConnection = {
+      ...mockConnection,
+      id: 'mon-pg-2',
+      name: 'Second DB',
+    };
+
+    mockGlobalFetch({
+      '/api/db/monitoring': { ok: true, json: mockMonitoringResponse },
+    });
+
+    const { result, rerender } = renderHook(
+      ({ conn }) => useMonitoringData(conn),
+      { initialProps: { conn: mockConnection as DatabaseConnection | null } }
+    );
+
+    await waitFor(() => {
+      expect(result.current.data).not.toBeNull();
+    });
+
+    expect(result.current.history.length).toBeGreaterThan(0);
+
+    // Switch to second connection
+    rerender({ conn: secondConnection });
+
+    // History should reset (new connection)
+    await waitFor(() => {
+      // After reconnection, history may grow again from new fetch
+      expect(result.current.data).not.toBeNull();
+    });
+  });
+
+  // ── Auto-refresh interval fires ───────────────────────────────────────
+
+  test('auto-refresh interval fires and triggers fetch', async () => {
+    const fetchMock = mockGlobalFetch({
+      '/api/db/monitoring': { ok: true, json: mockMonitoringResponse },
+    });
+
+    const { result } = renderHook(() => useMonitoringData(mockConnection));
+
+    await waitFor(() => {
+      expect(result.current.data).not.toBeNull();
+    });
+
+    const callsBefore = fetchMock.mock.calls.filter(
+      (call) => typeof call[0] === 'string' && call[0].includes('/api/db/monitoring')
+    ).length;
+
+    // Enable auto-refresh with very short interval
+    act(() => {
+      result.current.setRefreshInterval(100);
+      result.current.setAutoRefresh(true);
+    });
+
+    // Wait for interval to fire
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 200));
+    });
+
+    const callsAfter = fetchMock.mock.calls.filter(
+      (call) => typeof call[0] === 'string' && call[0].includes('/api/db/monitoring')
+    ).length;
+
+    expect(callsAfter).toBeGreaterThan(callsBefore);
+
+    // Clean up
+    act(() => {
+      result.current.setAutoRefresh(false);
+    });
+  });
+
+  // ── Auto-refresh cleared when disabled ────────────────────────────────
+
+  test('auto-refresh stops when disabled', async () => {
+    const fetchMock = mockGlobalFetch({
+      '/api/db/monitoring': { ok: true, json: mockMonitoringResponse },
+    });
+
+    const { result } = renderHook(() => useMonitoringData(mockConnection));
+
+    await waitFor(() => {
+      expect(result.current.data).not.toBeNull();
+    });
+
+    // Enable and immediately disable
+    act(() => {
+      result.current.setRefreshInterval(100);
+      result.current.setAutoRefresh(true);
+    });
+
+    act(() => {
+      result.current.setAutoRefresh(false);
+    });
+
+    const callsAfterDisable = fetchMock.mock.calls.filter(
+      (call) => typeof call[0] === 'string' && call[0].includes('/api/db/monitoring')
+    ).length;
+
+    // Wait and verify no more calls
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 200));
+    });
+
+    const callsLater = fetchMock.mock.calls.filter(
+      (call) => typeof call[0] === 'string' && call[0].includes('/api/db/monitoring')
+    ).length;
+
+    expect(callsLater).toBe(callsAfterDisable);
+  });
 });

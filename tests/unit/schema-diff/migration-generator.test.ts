@@ -238,3 +238,276 @@ describe('generateMigrationSQL: foreign keys in ALTER', () => {
     expect(sql).toContain('-- SQLite: Cannot drop foreign key directly');
   });
 });
+
+// ============================================================================
+// Column def edge cases
+// ============================================================================
+
+describe('generateMigrationSQL: column def edge cases', () => {
+  test('column def uses sourceType fallback when targetType undefined', () => {
+    const diff: SchemaDiff = {
+      tables: [{
+        action: 'added',
+        tableName: 'test_table',
+        columns: [
+          { action: 'added', columnName: 'col1', sourceType: 'integer', targetType: undefined as unknown as string, targetNullable: true, changes: ['Added'] },
+        ],
+        indexes: [],
+        foreignKeys: [],
+      }],
+      summary: { added: 1, removed: 0, modified: 0 },
+      hasChanges: true,
+    };
+    const sql = generateMigrationSQL(diff, 'postgres');
+    expect(sql).toContain('"col1" integer');
+  });
+
+  test('column def uses TEXT fallback when both types undefined', () => {
+    const diff: SchemaDiff = {
+      tables: [{
+        action: 'added',
+        tableName: 'test_table',
+        columns: [
+          { action: 'added', columnName: 'col1', targetNullable: true, changes: ['Added'] },
+        ],
+        indexes: [],
+        foreignKeys: [],
+      }],
+      summary: { added: 1, removed: 0, modified: 0 },
+      hasChanges: true,
+    };
+    const sql = generateMigrationSQL(diff, 'postgres');
+    expect(sql).toContain('"col1" TEXT');
+  });
+
+  test('column def includes DEFAULT clause', () => {
+    const diff: SchemaDiff = {
+      tables: [{
+        action: 'added',
+        tableName: 'test_table',
+        columns: [
+          { action: 'added', columnName: 'status', targetType: 'varchar(20)', targetNullable: true, targetDefault: "'active'", changes: ['Added'] },
+        ],
+        indexes: [],
+        foreignKeys: [],
+      }],
+      summary: { added: 1, removed: 0, modified: 0 },
+      hasChanges: true,
+    };
+    const sql = generateMigrationSQL(diff, 'postgres');
+    expect(sql).toContain("\"status\" varchar(20) DEFAULT 'active'");
+  });
+
+  test('CREATE TABLE without PRIMARY KEY', () => {
+    const diff: SchemaDiff = {
+      tables: [{
+        action: 'added',
+        tableName: 'logs',
+        columns: [
+          { action: 'added', columnName: 'message', targetType: 'text', targetNullable: true, targetIsPrimary: false, changes: ['Added'] },
+          { action: 'added', columnName: 'level', targetType: 'varchar(10)', targetNullable: true, targetIsPrimary: false, changes: ['Added'] },
+        ],
+        indexes: [],
+        foreignKeys: [],
+      }],
+      summary: { added: 1, removed: 0, modified: 0 },
+      hasChanges: true,
+    };
+    const sql = generateMigrationSQL(diff, 'postgres');
+    expect(sql).toContain('CREATE TABLE "logs"');
+    expect(sql).not.toContain('PRIMARY KEY');
+  });
+});
+
+// ============================================================================
+// PostgreSQL-specific ALTER edge cases
+// ============================================================================
+
+describe('generateMigrationSQL: PostgreSQL ALTER edge cases', () => {
+  test('nullable-only change (no type change) generates SET NOT NULL', () => {
+    const diff: SchemaDiff = {
+      tables: [{
+        action: 'modified',
+        tableName: 'users',
+        columns: [{
+          action: 'modified', columnName: 'email',
+          sourceType: 'varchar(255)', targetType: 'varchar(255)',
+          sourceNullable: true, targetNullable: false,
+          changes: ['Nullable changed'],
+        }],
+        indexes: [],
+        foreignKeys: [],
+      }],
+      summary: { added: 0, removed: 0, modified: 1 },
+      hasChanges: true,
+    };
+    const sql = generateMigrationSQL(diff, 'postgres');
+    expect(sql).not.toContain('TYPE');
+    expect(sql).toContain('SET NOT NULL');
+  });
+
+  test('DROP NOT NULL (targetNullable=true)', () => {
+    const diff: SchemaDiff = {
+      tables: [{
+        action: 'modified',
+        tableName: 'users',
+        columns: [{
+          action: 'modified', columnName: 'email',
+          sourceType: 'varchar(255)', targetType: 'varchar(255)',
+          sourceNullable: false, targetNullable: true,
+          changes: ['Nullable changed'],
+        }],
+        indexes: [],
+        foreignKeys: [],
+      }],
+      summary: { added: 0, removed: 0, modified: 1 },
+      hasChanges: true,
+    };
+    const sql = generateMigrationSQL(diff, 'postgres');
+    expect(sql).toContain('DROP NOT NULL');
+  });
+
+  test('DROP DEFAULT (targetDefault falsy)', () => {
+    const diff: SchemaDiff = {
+      tables: [{
+        action: 'modified',
+        tableName: 'users',
+        columns: [{
+          action: 'modified', columnName: 'status',
+          sourceType: 'varchar(20)', targetType: 'varchar(20)',
+          sourceDefault: "'active'", targetDefault: undefined,
+          changes: ['Default changed'],
+        }],
+        indexes: [],
+        foreignKeys: [],
+      }],
+      summary: { added: 0, removed: 0, modified: 1 },
+      hasChanges: true,
+    };
+    const sql = generateMigrationSQL(diff, 'postgres');
+    expect(sql).toContain('DROP DEFAULT');
+  });
+
+  test('type-only change (no nullable/default changes)', () => {
+    const diff: SchemaDiff = {
+      tables: [{
+        action: 'modified',
+        tableName: 'users',
+        columns: [{
+          action: 'modified', columnName: 'age',
+          sourceType: 'smallint', targetType: 'integer',
+          sourceNullable: true, targetNullable: true,
+          changes: ['Type changed'],
+        }],
+        indexes: [],
+        foreignKeys: [],
+      }],
+      summary: { added: 0, removed: 0, modified: 1 },
+      hasChanges: true,
+    };
+    const sql = generateMigrationSQL(diff, 'postgres');
+    expect(sql).toContain('TYPE integer');
+    expect(sql).not.toContain('NOT NULL');
+    expect(sql).not.toContain('DEFAULT');
+  });
+});
+
+// ============================================================================
+// MSSQL + Oracle ALTER edge cases
+// ============================================================================
+
+describe('generateMigrationSQL: MSSQL/Oracle ALTER edge cases', () => {
+  test('MSSQL modified column without default change (no ADD DEFAULT)', () => {
+    const diff: SchemaDiff = {
+      tables: [{
+        action: 'modified',
+        tableName: 'users',
+        columns: [{
+          action: 'modified', columnName: 'name',
+          sourceType: 'varchar(100)', targetType: 'varchar(255)',
+          sourceDefault: undefined, targetDefault: undefined,
+          changes: ['Type changed'],
+        }],
+        indexes: [],
+        foreignKeys: [],
+      }],
+      summary: { added: 0, removed: 0, modified: 1 },
+      hasChanges: true,
+    };
+    const sql = generateMigrationSQL(diff, 'mssql');
+    expect(sql).toContain('ALTER COLUMN [name] varchar(255)');
+    expect(sql).not.toContain('ADD DEFAULT');
+  });
+
+  test('MSSQL bracket escaping with ] in table name', () => {
+    const diff: SchemaDiff = {
+      tables: [{
+        action: 'removed',
+        tableName: 'table]name',
+        columns: [],
+        indexes: [],
+        foreignKeys: [],
+      }],
+      summary: { added: 0, removed: 1, modified: 0 },
+      hasChanges: true,
+    };
+    const sql = generateMigrationSQL(diff, 'mssql');
+    expect(sql).toContain('[table]]name]');
+  });
+
+  test('Oracle MODIFY with default value', () => {
+    const diff: SchemaDiff = {
+      tables: [{
+        action: 'modified',
+        tableName: 'users',
+        columns: [{
+          action: 'modified', columnName: 'status',
+          sourceType: 'VARCHAR2(10)', targetType: 'VARCHAR2(50)',
+          targetDefault: "'active'",
+          changes: ['Type changed', 'Default changed'],
+        }],
+        indexes: [],
+        foreignKeys: [],
+      }],
+      summary: { added: 0, removed: 0, modified: 1 },
+      hasChanges: true,
+    };
+    const sql = generateMigrationSQL(diff, 'oracle');
+    expect(sql).toContain('MODIFY');
+    expect(sql).toContain("DEFAULT 'active'");
+  });
+});
+
+// ============================================================================
+// Multi-table diff
+// ============================================================================
+
+describe('generateMigrationSQL: multi-table batch', () => {
+  test('handles added + removed + modified in one batch', () => {
+    const diff: SchemaDiff = {
+      tables: [
+        {
+          action: 'removed', tableName: 'legacy',
+          columns: [{ action: 'removed', columnName: 'id', sourceType: 'int', changes: [] }],
+          indexes: [], foreignKeys: [],
+        },
+        {
+          action: 'added', tableName: 'new_table',
+          columns: [{ action: 'added', columnName: 'id', targetType: 'integer', targetNullable: false, targetIsPrimary: true, changes: [] }],
+          indexes: [], foreignKeys: [],
+        },
+        {
+          action: 'modified', tableName: 'users',
+          columns: [{ action: 'added', columnName: 'phone', targetType: 'varchar(20)', targetNullable: true, changes: [] }],
+          indexes: [], foreignKeys: [],
+        },
+      ],
+      summary: { added: 1, removed: 1, modified: 1 },
+      hasChanges: true,
+    };
+    const sql = generateMigrationSQL(diff, 'postgres');
+    expect(sql).toContain('DROP TABLE IF EXISTS "legacy"');
+    expect(sql).toContain('CREATE TABLE "new_table"');
+    expect(sql).toContain('ALTER TABLE "users" ADD COLUMN "phone"');
+  });
+});

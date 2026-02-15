@@ -24,7 +24,7 @@ set -e
 
 PASS=0
 FAIL=0
-TOTAL_GROUPS=13
+TOTAL_GROUPS=14
 EXTRA_BUN_ARGS=("$@")
 GROUP_INDEX=0
 COVERAGE_MODE=0
@@ -136,8 +136,12 @@ run_group "Group 11/12: Smoke tests" \
 run_group "Group 12/13: MaskingSettings" \
   tests/components/MaskingSettings.test.tsx
 
-# Group 13: All remaining files (safe together)
-run_group "Group 13/13: Remaining components" \
+# Group 13: SchemaDiff (isolated — mocks @/components/ui/badge, @/components/ui/select)
+run_group "Group 13/14: SchemaDiff" \
+  tests/components/SchemaDiff.test.tsx
+
+# Group 14: All remaining files (safe together)
+run_group "Group 14/14: Remaining components" \
   tests/components/DataCharts.test.tsx \
   tests/components/QueryEditor.test.tsx \
   tests/components/QuerySafetyDialog.test.tsx \
@@ -146,7 +150,6 @@ run_group "Group 13/13: Remaining components" \
   tests/components/CommandPalette.test.tsx \
   tests/components/ResultsGrid.test.tsx \
   tests/components/SchemaDiagram.test.tsx \
-  tests/components/SchemaDiff.test.tsx \
   tests/components/DataProfiler.test.tsx \
   tests/components/schema-explorer/SchemaExplorer.test.tsx \
   tests/components/sidebar/ConnectionItem.test.tsx \

@@ -332,4 +332,269 @@ describe('useAiChat', () => {
     expect(result.current.aiError).toBe('Rate limit exceeded');
     expect(result.current.isAiLoading).toBe(false);
   });
+
+  // ── Schema filtering: >100 tables truncated ────────────────────────────
+
+  test('schema filtering truncates to top 100 tables by rowCount', async () => {
+    // Create 120 tables
+    const manyTables: ParsedTable[] = Array.from({ length: 120 }, (_, i) => ({
+      name: `table_${i}`,
+      rowCount: i * 10,
+      columns: [{ name: 'id', type: 'integer', isPrimary: true }],
+    }));
+
+    const stream = makeTextStream('SELECT 1');
+    const fetchMock = mock(async () => new Response(stream, { status: 200 }));
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const deps = makeDeps({ parsedSchema: manyTables });
+    const { result } = renderHook(() => useAiChat(deps));
+
+    act(() => {
+      result.current.setAiPrompt('query all');
+    });
+
+    await act(async () => {
+      await result.current.handleAiSubmit();
+    });
+
+    const body = JSON.parse(((fetchMock.mock.calls as unknown[][])[0][1] as RequestInit).body as string);
+    // Count the number of "Table: " occurrences in schemaContext
+    const tableCount = (body.schemaContext.match(/Table: /g) || []).length;
+    expect(tableCount).toBeLessThanOrEqual(100);
+  });
+
+  // ── Table with no columns → "(none)" ──────────────────────────────────
+
+  test('table with no columns outputs "(none)"', async () => {
+    const tablesNoColumns: ParsedTable[] = [
+      { name: 'empty_table', rowCount: 0, columns: [] },
+    ];
+
+    const stream = makeTextStream('SELECT 1');
+    const fetchMock = mock(async () => new Response(stream, { status: 200 }));
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const deps = makeDeps({ parsedSchema: tablesNoColumns });
+    const { result } = renderHook(() => useAiChat(deps));
+
+    act(() => {
+      result.current.setAiPrompt('query it');
+    });
+
+    await act(async () => {
+      await result.current.handleAiSubmit();
+    });
+
+    const body = JSON.parse(((fetchMock.mock.calls as unknown[][])[0][1] as RequestInit).body as string);
+    expect(body.schemaContext).toContain('(none)');
+  });
+
+  // ── Table with >10 columns → ellipsis ─────────────────────────────────
+
+  test('table with >10 columns appends ellipsis', async () => {
+    const manyColumns = Array.from({ length: 15 }, (_, i) => ({
+      name: `col_${i}`, type: 'text',
+    }));
+    const tablesMany: ParsedTable[] = [
+      { name: 'wide_table', rowCount: 50, columns: manyColumns },
+    ];
+
+    const stream = makeTextStream('SELECT 1');
+    const fetchMock = mock(async () => new Response(stream, { status: 200 }));
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const deps = makeDeps({ parsedSchema: tablesMany });
+    const { result } = renderHook(() => useAiChat(deps));
+
+    act(() => {
+      result.current.setAiPrompt('query');
+    });
+
+    await act(async () => {
+      await result.current.handleAiSubmit();
+    });
+
+    const body = JSON.parse(((fetchMock.mock.calls as unknown[][])[0][1] as RequestInit).body as string);
+    expect(body.schemaContext).toContain('...');
+  });
+
+  // ── Editor content NOT starting with -- → appends \n\n prefix ──────────
+
+  test('editor content not starting with -- appends \\n\\n prefix', async () => {
+    const stream = makeTextStream('NEW SQL');
+    globalThis.fetch = mock(async () => new Response(stream, { status: 200 })) as unknown as typeof fetch;
+
+    const mockSetEditorValue = mock(() => {});
+    const deps = makeDeps({
+      getEditorValue: mock(() => 'SELECT * FROM old') as () => string,
+      setEditorValue: mockSetEditorValue as (v: string) => void,
+    });
+
+    const { result } = renderHook(() => useAiChat(deps));
+
+    act(() => {
+      result.current.setAiPrompt('add query');
+    });
+
+    await act(async () => {
+      await result.current.handleAiSubmit();
+    });
+
+    const calls = mockSetEditorValue.mock.calls as unknown[][];
+    const lastCall = calls[calls.length - 1][0] as string;
+    expect(lastCall).toContain('SELECT * FROM old\n\n');
+    expect(lastCall).toContain('NEW SQL');
+  });
+
+  // ── Editor content starting with -- → replaces entirely ────────────────
+
+  test('editor content starting with -- replaces entirely', async () => {
+    const stream = makeTextStream('NEW SQL');
+    globalThis.fetch = mock(async () => new Response(stream, { status: 200 })) as unknown as typeof fetch;
+
+    const mockSetEditorValue = mock(() => {});
+    const deps = makeDeps({
+      getEditorValue: mock(() => '-- old comment\nSELECT 1') as () => string,
+      setEditorValue: mockSetEditorValue as (v: string) => void,
+    });
+
+    const { result } = renderHook(() => useAiChat(deps));
+
+    act(() => {
+      result.current.setAiPrompt('replace');
+    });
+
+    await act(async () => {
+      await result.current.handleAiSubmit();
+    });
+
+    const calls = mockSetEditorValue.mock.calls as unknown[][];
+    const lastCall = calls[calls.length - 1][0] as string;
+    // Should NOT contain old content
+    expect(lastCall).not.toContain('-- old comment');
+    expect(lastCall).toBe('NEW SQL');
+  });
+
+  // ── Empty editor content → replaces ────────────────────────────────────
+
+  test('empty editor content replaces', async () => {
+    const stream = makeTextStream('NEW SQL');
+    globalThis.fetch = mock(async () => new Response(stream, { status: 200 })) as unknown as typeof fetch;
+
+    const mockSetEditorValue = mock(() => {});
+    const deps = makeDeps({
+      getEditorValue: mock(() => '') as () => string,
+      setEditorValue: mockSetEditorValue as (v: string) => void,
+    });
+
+    const { result } = renderHook(() => useAiChat(deps));
+
+    act(() => {
+      result.current.setAiPrompt('generate');
+    });
+
+    await act(async () => {
+      await result.current.handleAiSubmit();
+    });
+
+    const calls = mockSetEditorValue.mock.calls as unknown[][];
+    const lastCall = calls[calls.length - 1][0] as string;
+    expect(lastCall).toBe('NEW SQL');
+  });
+
+  // ── Second submit sends conversationHistory ────────────────────────────
+
+  test('second submit sends conversationHistory', async () => {
+    const stream1 = makeTextStream('SELECT 1');
+    const stream2 = makeTextStream('SELECT 2');
+    let callCount = 0;
+    const fetchMock = mock(async () => {
+      callCount++;
+      return new Response(callCount === 1 ? stream1 : stream2, { status: 200 });
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const { result } = renderHook(() => useAiChat(makeDeps()));
+
+    // First submit
+    act(() => { result.current.setAiPrompt('first query'); });
+    await act(async () => { await result.current.handleAiSubmit(); });
+
+    // Second submit
+    act(() => { result.current.setAiPrompt('second query'); });
+    await act(async () => { await result.current.handleAiSubmit(); });
+
+    const secondBody = JSON.parse(((fetchMock.mock.calls as unknown[][])[1][1] as RequestInit).body as string);
+    expect(secondBody.conversationHistory).toBeDefined();
+    expect(secondBody.conversationHistory.length).toBe(2);
+    expect(secondBody.conversationHistory[0].role).toBe('user');
+  });
+
+  // ── First submit has no conversationHistory ────────────────────────────
+
+  test('first submit has no conversationHistory', async () => {
+    const stream = makeTextStream('SELECT 1');
+    const fetchMock = mock(async () => new Response(stream, { status: 200 }));
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const { result } = renderHook(() => useAiChat(makeDeps()));
+
+    act(() => { result.current.setAiPrompt('first'); });
+    await act(async () => { await result.current.handleAiSubmit(); });
+
+    const body = JSON.parse(((fetchMock.mock.calls as unknown[][])[0][1] as RequestInit).body as string);
+    expect(body.conversationHistory).toBeUndefined();
+  });
+
+  // ── response.body is null → 'No reader available' error ────────────────
+
+  test('response.body is null sets error', async () => {
+    globalThis.fetch = mock(async () => {
+      const res = new Response(null, { status: 200 });
+      // Override body to null
+      Object.defineProperty(res, 'body', { value: null });
+      return res;
+    }) as unknown as typeof fetch;
+
+    const { result } = renderHook(() => useAiChat(makeDeps()));
+
+    act(() => { result.current.setAiPrompt('generate'); });
+    await act(async () => { await result.current.handleAiSubmit(); });
+
+    expect(result.current.aiError).toBe('No reader available');
+  });
+
+  // ── Non-Error thrown → generic error message ──────────────────────────
+
+  test('non-Error thrown sets generic error message', async () => {
+    globalThis.fetch = mock(async () => {
+      throw 42; // non-Error
+    }) as unknown as typeof fetch;
+
+    const { result } = renderHook(() => useAiChat(makeDeps()));
+
+    act(() => { result.current.setAiPrompt('go'); });
+    await act(async () => { await result.current.handleAiSubmit(); });
+
+    expect(result.current.aiError).toBe('An unexpected error occurred while communicating with the AI.');
+  });
+
+  // ── onChange callback invoked with final response ──────────────────────
+
+  test('onChange callback invoked with final response', async () => {
+    const stream = makeTextStream('SELECT 42');
+    globalThis.fetch = mock(async () => new Response(stream, { status: 200 })) as unknown as typeof fetch;
+
+    const mockOnChange = mock(() => {});
+    const deps = makeDeps({ onChange: mockOnChange as (val: string) => void });
+    const { result } = renderHook(() => useAiChat(deps));
+
+    act(() => { result.current.setAiPrompt('answer'); });
+    await act(async () => { await result.current.handleAiSubmit(); });
+
+    expect(mockOnChange).toHaveBeenCalled();
+    const lastCallArg = (mockOnChange.mock.calls as unknown[][])[0][0] as string;
+    expect(lastCallArg).toContain('SELECT 42');
+  });
 });

@@ -769,4 +769,207 @@ describe('OperationsTab', () => {
     const queryCell = Array.from(cells).find(td => td.textContent?.trim() === '-');
     expect(queryCell).not.toBeNull();
   });
+
+  // =========================================================================
+  // Loading skeletons — tables panel
+  // =========================================================================
+
+  test('shows loading skeletons in tables panel when loading=true and tables empty', async () => {
+    monitoringOverride = {
+      data: { activeSessions: defaultSessions, tables: [] },
+      loading: true,
+    };
+    let renderResult: ReturnType<typeof render>;
+    await act(async () => {
+      renderResult = render(<OperationsTab />);
+    });
+    const { container } = renderResult!;
+
+    // The tables panel shows 5 Skeleton divs when loading && tables.length === 0
+    const allSkeletons = container.querySelectorAll('[data-slot="skeleton"]');
+    // Tables panel renders 5 skeletons; sessions panel has data so no skeletons there
+    expect(allSkeletons.length).toBe(5);
+    // Tables count header still shows 0
+    expect(container.textContent).toContain('Tables (0)');
+    // Sessions should render normally (not skeletons) since sessions have data
+    expect(container.textContent).toContain('Sessions (1)');
+  });
+
+  // =========================================================================
+  // Loading skeletons — sessions panel
+  // =========================================================================
+
+  test('shows loading skeletons in sessions panel when loading=true and sessions empty', async () => {
+    monitoringOverride = {
+      data: { activeSessions: [], tables: defaultTables },
+      loading: true,
+    };
+    let renderResult: ReturnType<typeof render>;
+    await act(async () => {
+      renderResult = render(<OperationsTab />);
+    });
+    const { container } = renderResult!;
+
+    // The sessions panel shows 4 Skeleton divs when loading && sessions.length === 0
+    const allSkeletons = container.querySelectorAll('[data-slot="skeleton"]');
+    expect(allSkeletons.length).toBe(4);
+    // Sessions count header still shows 0
+    expect(container.textContent).toContain('Sessions (0)');
+    // Tables should render normally since tables have data
+    expect(container.textContent).toContain('Tables (1)');
+    expect(container.textContent).toContain('users');
+  });
+
+  // =========================================================================
+  // handleConnectionChange with non-existent connection id (guard)
+  // =========================================================================
+
+  test('handleConnectionChange with non-existent id does not change selection', async () => {
+    // Use a non-existent savedId to test the guard in handleConnectionChange
+    // When savedId doesn't match any connection, it falls back to first connection
+    mockConnectionsList = [
+      { id: 'c1', name: 'PG Dev', type: 'postgres', host: 'localhost', port: 5432, database: 'dev', createdAt: new Date() },
+      { id: 'c2', name: 'MySQL Prod', type: 'mysql', host: 'localhost', port: 3306, database: 'prod', createdAt: new Date() },
+    ];
+    // Set savedId to a non-existent id
+    mockActiveConnectionId = 'nonexistent-id';
+    let renderResult: ReturnType<typeof render>;
+    await act(async () => {
+      renderResult = render(<OperationsTab />);
+    });
+    const { container } = renderResult!;
+
+    // Since savedId doesn't match any connection, the guard falls back to first connection (PG Dev)
+    expect(container.textContent).toContain('PG Dev');
+    expect(container.textContent).toContain('(postgres)');
+
+    // The component should not crash and should still render the monitoring data
+    expect(container.textContent).toContain('Global Operations');
+    expect(container.textContent).toContain('Sessions');
+    expect(container.textContent).toContain('Tables');
+  });
+
+  // =========================================================================
+  // Session duration badge outline variant (10s-60s range)
+  // =========================================================================
+
+  test('session with 10s-60s duration shows outline variant badge', async () => {
+    monitoringOverride = {
+      data: {
+        activeSessions: [
+          { pid: 400, user: 'u1', state: 'active', query: 'SELECT slow()', duration: '00:00:30', durationMs: 30000, database: 'dev' },
+          { pid: 401, user: 'u2', state: 'idle', query: '', duration: '00:00:05', durationMs: 5000, database: 'dev' },
+          { pid: 402, user: 'u3', state: 'active', query: 'SELECT very_slow()', duration: '00:02:00', durationMs: 120000, database: 'dev' },
+        ],
+        tables: defaultTables,
+      },
+    };
+    let renderResult: ReturnType<typeof render>;
+    await act(async () => {
+      renderResult = render(<OperationsTab />);
+    });
+    const { container } = renderResult!;
+
+    // Duration badge variant logic:
+    // PID 400: durationMs=30000 (>10000, <=60000) -> variant="outline"
+    // PID 401: durationMs=5000 (<=10000) -> variant="secondary"
+    // PID 402: durationMs=120000 (>60000) -> variant="destructive"
+
+    // Badge component renders as <span data-slot="badge">
+    const allBadges = Array.from(container.querySelectorAll('span[data-slot="badge"]'));
+
+    // Find the badge containing '00:00:30' (outline variant for 10s-60s range)
+    const durationBadge400 = allBadges.find(
+      badge => badge.textContent?.includes('00:00:30')
+    );
+    expect(durationBadge400).toBeDefined();
+    // Outline variant: has text-foreground, does NOT have bg-destructive or bg-secondary
+    expect(durationBadge400!.className).toContain('text-foreground');
+    expect(durationBadge400!.className).not.toContain('bg-destructive');
+    expect(durationBadge400!.className).not.toContain('bg-secondary');
+    expect(durationBadge400!.className).not.toContain('border-transparent');
+
+    // Find the badge containing '00:02:00' (destructive variant for >60s)
+    const durationBadge402 = allBadges.find(
+      badge => badge.textContent?.includes('00:02:00')
+    );
+    expect(durationBadge402).toBeDefined();
+    expect(durationBadge402!.className).toContain('bg-destructive');
+
+    // Find the badge containing '00:00:05' (secondary variant for <=10s)
+    const durationBadge401 = allBadges.find(
+      badge => badge.textContent?.includes('00:00:05')
+    );
+    expect(durationBadge401).toBeDefined();
+    expect(durationBadge401!.className).toContain('bg-secondary');
+  });
+
+  // =========================================================================
+  // Kill dialog shows user and state in description
+  // =========================================================================
+
+  test('kill dialog shows user and state in description', async () => {
+    monitoringOverride = {
+      data: {
+        activeSessions: [
+          { pid: 500, user: 'db_admin', state: 'idle in transaction', query: 'UPDATE t SET x=1', duration: '00:05:00', durationMs: 300000, database: 'dev' },
+        ],
+        tables: defaultTables,
+      },
+    };
+    let renderResult: ReturnType<typeof render>;
+    await act(async () => {
+      renderResult = render(<OperationsTab />);
+    });
+    const { container, baseElement } = renderResult!;
+
+    // Find and click the kill button for PID 500
+    const cells = container.querySelectorAll('td');
+    const pidCell = Array.from(cells).find(td => td.textContent?.includes('500'));
+    expect(pidCell).not.toBeNull();
+    const row = pidCell!.closest('tr');
+    const killBtn = row!.querySelector('td:last-child button');
+    expect(killBtn).not.toBeNull();
+
+    await act(async () => {
+      fireEvent.click(killBtn!);
+    });
+
+    // Dialog should be open and show user and state info
+    const dialogText = baseElement.textContent || '';
+    expect(dialogText).toContain('Terminate Session?');
+    expect(dialogText).toContain('500');
+    // User is shown in the description
+    expect(dialogText).toContain('db_admin');
+    // State is shown in the description
+    expect(dialogText).toContain('idle in transaction');
+    // Also verify the warning about uncommitted transactions
+    expect(dialogText).toContain('uncommitted transactions');
+  });
+
+  // =========================================================================
+  // Error hidden when both error AND data present
+  // =========================================================================
+
+  test('error message is hidden when both error and data are present', async () => {
+    monitoringOverride = {
+      data: { activeSessions: defaultSessions, tables: defaultTables },
+      error: 'Intermittent connection error',
+    };
+    let renderResult: ReturnType<typeof render>;
+    await act(async () => {
+      renderResult = render(<OperationsTab />);
+    });
+    const { queryByText, container } = renderResult!;
+
+    // The error message should NOT be displayed because data is present
+    // (source code: `error && !data` — data is truthy, so error div is skipped)
+    expect(queryByText('Intermittent connection error')).toBeNull();
+
+    // But data should still render normally
+    expect(queryByText('Sessions (1)')).not.toBeNull();
+    expect(queryByText('Tables (1)')).not.toBeNull();
+    expect(container.textContent).toContain('users');
+    expect(container.textContent).toContain('1234');
+  });
 });

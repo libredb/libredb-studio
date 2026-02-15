@@ -435,4 +435,187 @@ describe('NL2SQLPanel', () => {
       expect(input!.disabled).toBe(true);
     });
   });
+
+  // -----------------------------------------------------------------------
+  // conversationHistory sent in second API request
+  // -----------------------------------------------------------------------
+
+  test('sends conversationHistory with prior messages on second request', async () => {
+    const responseText1 = '```sql\nSELECT 1;\n```';
+    const responseText2 = '```sql\nSELECT 2;\n```';
+    let callCount = 0;
+    globalThis.fetch = mock(() => {
+      callCount++;
+      const text = callCount === 1 ? responseText1 : responseText2;
+      const encoder = new TextEncoder();
+      const stream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(encoder.encode(text));
+          controller.close();
+        },
+      });
+      return Promise.resolve({ ok: true, body: stream });
+    }) as unknown as typeof fetch;
+
+    const { input, form, user } = renderPanel();
+
+    // First question
+    await user.type(input!, 'first question');
+    fireEvent.submit(form!);
+    await waitFor(() => {
+      expect(callCount).toBe(1);
+    });
+
+    // Second question
+    await user.type(input!, 'second question');
+    fireEvent.submit(form!);
+    await waitFor(() => {
+      expect(callCount).toBe(2);
+    });
+
+    const secondCall = (globalThis.fetch as unknown as ReturnType<typeof mock>).mock.calls[1] as unknown as [string, RequestInit];
+    const body = JSON.parse(secondCall[1].body as string);
+    expect(body.conversationHistory).toBeDefined();
+    expect(body.conversationHistory.length).toBe(2);
+    expect(body.conversationHistory[0]).toEqual({ role: 'user', content: 'first question' });
+    expect(body.conversationHistory[1].role).toBe('assistant');
+  });
+
+  // -----------------------------------------------------------------------
+  // Question count display after multiple messages
+  // -----------------------------------------------------------------------
+
+  test('displays correct question count after multiple exchanges', async () => {
+    let callCount = 0;
+    globalThis.fetch = mock(() => {
+      callCount++;
+      const text = `answer ${callCount}`;
+      const encoder = new TextEncoder();
+      const stream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(encoder.encode(text));
+          controller.close();
+        },
+      });
+      return Promise.resolve({ ok: true, body: stream });
+    }) as unknown as typeof fetch;
+
+    const { input, form, user, queryByText } = renderPanel();
+
+    // First question
+    await user.type(input!, 'q1');
+    fireEvent.submit(form!);
+    await waitFor(() => {
+      expect(queryByText('1 questions')).not.toBeNull();
+    });
+
+    // Second question
+    await user.type(input!, 'q2');
+    fireEvent.submit(form!);
+    await waitFor(() => {
+      expect(queryByText('2 questions')).not.toBeNull();
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Clear conversation button visibility
+  // -----------------------------------------------------------------------
+
+  test('clear conversation button is visible when messages exist', async () => {
+    const responseText = 'some response';
+    globalThis.fetch = mockFetchStream(responseText) as unknown as typeof fetch;
+
+    const { input, form, user, container } = renderPanel();
+    await user.type(input!, 'hello');
+    fireEvent.submit(form!);
+
+    await waitFor(() => {
+      const clearBtn = container.querySelector('button[title="Clear conversation"]');
+      expect(clearBtn).not.toBeNull();
+    });
+  });
+
+  test('clear conversation button is hidden when no messages exist', () => {
+    const { container } = renderPanel();
+    const clearBtn = container.querySelector('button[title="Clear conversation"]');
+    expect(clearBtn).toBeNull();
+  });
+
+  // -----------------------------------------------------------------------
+  // Input focus on panel open
+  // -----------------------------------------------------------------------
+
+  test('input receives focus when panel opens', () => {
+    const { input } = renderPanel({ isOpen: true });
+    expect(input).not.toBeNull();
+    expect(document.activeElement).toBe(input);
+  });
+
+  // -----------------------------------------------------------------------
+  // Explanation text alongside code block
+  // -----------------------------------------------------------------------
+
+  test('renders both code block and explanation text in assistant message', async () => {
+    const responseText = 'Here is the query:\n```sql\nSELECT id FROM products;\n```\nThis returns all product IDs from the table.';
+    globalThis.fetch = mockFetchStream(responseText) as unknown as typeof fetch;
+
+    const { input, form, user, container, queryByText } = renderPanel();
+    await user.type(input!, 'get product ids');
+    fireEvent.submit(form!);
+
+    await waitFor(() => {
+      // Code block is rendered
+      const pre = container.querySelector('pre');
+      expect(pre).not.toBeNull();
+      expect(pre!.textContent).toBe('SELECT id FROM products;');
+      // Explanation text is also rendered
+      expect(queryByText(/This returns all product IDs/)).not.toBeNull();
+      // Code block markup is stripped from explanation
+      expect(queryByText(/```/)).toBeNull();
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Schema context parse failure fallback — truncation
+  // -----------------------------------------------------------------------
+
+  test('truncates invalid schema context to 3000 characters', async () => {
+    const longInvalidSchema = 'x'.repeat(5000);
+    globalThis.fetch = mockFetchStream('response') as unknown as typeof fetch;
+
+    const { input, form, user } = renderPanel({ schemaContext: longInvalidSchema });
+    await user.type(input!, 'test');
+    fireEvent.submit(form!);
+
+    await waitFor(() => {
+      expect(globalThis.fetch).toHaveBeenCalled();
+    });
+
+    const fetchCall = (globalThis.fetch as unknown as ReturnType<typeof mock>).mock.calls[0] as unknown as [string, RequestInit];
+    const body = JSON.parse(fetchCall[1].body as string);
+    expect(body.schemaContext.length).toBe(3000);
+    expect(body.schemaContext).toBe('x'.repeat(3000));
+  });
+
+  // -----------------------------------------------------------------------
+  // Non-ok response with fallback error message
+  // -----------------------------------------------------------------------
+
+  test('displays fallback error message when API error has no error field', async () => {
+    globalThis.fetch = mock(() =>
+      Promise.resolve({
+        ok: false,
+        body: null,
+        json: () => Promise.resolve({}),
+      })
+    ) as unknown as typeof fetch;
+
+    const { input, form, user, queryByText } = renderPanel();
+    await user.type(input!, 'test query');
+    fireEvent.submit(form!);
+
+    await waitFor(() => {
+      expect(queryByText('Request failed')).not.toBeNull();
+    });
+  });
 });

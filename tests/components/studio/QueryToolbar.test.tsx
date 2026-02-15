@@ -189,4 +189,133 @@ describe('QueryToolbar', () => {
     fireEvent.click(result2.getByText('CANCEL').closest('button')!);
     expect(onCancelQuery).toHaveBeenCalledTimes(1);
   });
+
+  // ===========================================================================
+  // Additional coverage tests
+  // ===========================================================================
+
+  test('Playground mode banner text when playgroundMode=true', () => {
+    const props = createDefaultProps({ playgroundMode: true });
+    const { queryByText } = render(<QueryToolbar {...props} />);
+
+    expect(queryByText(/Sandbox Mode/)).not.toBeNull();
+    expect(queryByText(/All changes will be auto-rolled back/)).not.toBeNull();
+  });
+
+  test('Banner hidden when playgroundMode=false', () => {
+    const props = createDefaultProps({ playgroundMode: false });
+    const { queryByText } = render(<QueryToolbar {...props} />);
+
+    expect(queryByText(/Sandbox Mode/)).toBeNull();
+    expect(queryByText(/All changes will be auto-rolled back/)).toBeNull();
+  });
+
+  test('BEGIN button disabled when playgroundMode=true', () => {
+    const props = createDefaultProps({ playgroundMode: true, transactionActive: false });
+    const { queryByText } = render(<QueryToolbar {...props} />);
+
+    const beginText = queryByText('BEGIN');
+    expect(beginText).not.toBeNull();
+    const beginButton = beginText!.closest('button');
+    expect(beginButton).not.toBeNull();
+    expect(beginButton?.disabled).toBe(true);
+  });
+
+  test('SANDBOX button disabled when transactionActive=true', () => {
+    const props = createDefaultProps({ transactionActive: true });
+    const { queryByText } = render(<QueryToolbar {...props} />);
+
+    const sandboxText = queryByText('SANDBOX');
+    expect(sandboxText).not.toBeNull();
+    const sandboxButton = sandboxText!.closest('button');
+    expect(sandboxButton).not.toBeNull();
+    expect(sandboxButton?.disabled).toBe(true);
+  });
+
+  test('COMMIT callback fires', () => {
+    const onCommitTransaction = mock(() => {});
+    const props = createDefaultProps({ transactionActive: true, onCommitTransaction });
+    const { getByText } = render(<QueryToolbar {...props} />);
+
+    fireEvent.click(getByText('COMMIT').closest('button')!);
+    expect(onCommitTransaction).toHaveBeenCalledTimes(1);
+  });
+
+  test('ROLLBACK callback fires', () => {
+    const onRollbackTransaction = mock(() => {});
+    const props = createDefaultProps({ transactionActive: true, onRollbackTransaction });
+    const { getByText } = render(<QueryToolbar {...props} />);
+
+    fireEvent.click(getByText('ROLLBACK').closest('button')!);
+    expect(onRollbackTransaction).toHaveBeenCalledTimes(1);
+  });
+
+  test('IMPORT button callback fires', () => {
+    const onImport = mock(() => {});
+    const props = createDefaultProps({ onImport });
+    const { getByText } = render(<QueryToolbar {...props} />);
+
+    fireEvent.click(getByText('IMPORT').closest('button')!);
+    expect(onImport).toHaveBeenCalledTimes(1);
+  });
+
+  test('No transaction controls when activeConnection=null', () => {
+    const props = createDefaultProps({ activeConnection: null });
+    const { queryByText } = render(<QueryToolbar {...props} />);
+
+    expect(queryByText('BEGIN')).toBeNull();
+    expect(queryByText('SANDBOX')).toBeNull();
+    expect(queryByText('EDIT')).toBeNull();
+    expect(queryByText('IMPORT')).toBeNull();
+  });
+
+  test('No transaction controls when metadata=null', () => {
+    const props = createDefaultProps({ metadata: null });
+    const { queryByText } = render(<QueryToolbar {...props} />);
+
+    expect(queryByText('BEGIN')).toBeNull();
+    expect(queryByText('SANDBOX')).toBeNull();
+    expect(queryByText('EDIT')).toBeNull();
+    expect(queryByText('IMPORT')).toBeNull();
+  });
+
+  test('No transaction controls for non-SQL queryLanguage', () => {
+    const mongoMetadata: ProviderMetadata = {
+      capabilities: {
+        ...sqlMetadata.capabilities,
+        queryLanguage: 'json',
+      },
+      labels: {
+        ...sqlMetadata.labels,
+        entityName: 'collection',
+        entityNamePlural: 'collections',
+      },
+    };
+    const props = createDefaultProps({ metadata: mongoMetadata });
+    const { queryByText } = render(<QueryToolbar {...props} />);
+
+    expect(queryByText('BEGIN')).toBeNull();
+    expect(queryByText('SANDBOX')).toBeNull();
+    expect(queryByText('EDIT')).toBeNull();
+    expect(queryByText('IMPORT')).toBeNull();
+  });
+
+  test('Query label always shown', () => {
+    // With connection
+    const props1 = createDefaultProps();
+    const { queryByText: q1 } = render(<QueryToolbar {...props1} />);
+    expect(q1('Query')).not.toBeNull();
+    cleanup();
+
+    // Without connection
+    const props2 = createDefaultProps({ activeConnection: null });
+    const { queryByText: q2 } = render(<QueryToolbar {...props2} />);
+    expect(q2('Query')).not.toBeNull();
+    cleanup();
+
+    // Without metadata
+    const props3 = createDefaultProps({ metadata: null });
+    const { queryByText: q3 } = render(<QueryToolbar {...props3} />);
+    expect(q3('Query')).not.toBeNull();
+  });
 });

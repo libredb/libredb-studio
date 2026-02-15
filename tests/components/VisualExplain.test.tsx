@@ -408,4 +408,297 @@ describe('VisualExplain', () => {
     const { queryByText } = render(<VisualExplain plan={healthyPlan} />);
     expect(queryByText('N/A')).not.toBeNull();
   });
+
+  // -----------------------------------------------------------------------
+  // PlanNode collapse / expand behaviour
+  // -----------------------------------------------------------------------
+
+  test('PlanNode at depth 0 starts expanded and collapses on click', () => {
+    // samplePlan root has a child "Index Scan" — it should be visible initially
+    const { queryByText } = render(<VisualExplain plan={samplePlan} />);
+    // Switch to tree tab for a clean view of the plan
+    fireEvent.click(queryByText('tree')!);
+
+    // Child should be visible because root (depth 0) starts expanded
+    expect(queryByText('Index Scan')).not.toBeNull();
+
+    // Click on the root node to collapse it
+    fireEvent.click(queryByText('Seq Scan')!);
+
+    // After collapsing, the child should disappear
+    expect(queryByText('Index Scan')).toBeNull();
+  });
+
+  test('PlanNode at depth >= 2 starts collapsed', () => {
+    // Build a 3-level deep plan: root (depth 0) → child (depth 1) → grandchild (depth 2)
+    const deepPlan: ExplainPlanResult[] = [
+      {
+        Plan: {
+          'Node Type': 'Nested Loop',
+          'Actual Rows': 100,
+          'Plan Rows': 100,
+          'Actual Total Time': 10,
+          'Total Cost': 50,
+          Plans: [
+            {
+              'Node Type': 'Hash Join',
+              'Actual Rows': 50,
+              'Plan Rows': 50,
+              'Actual Total Time': 5,
+              'Total Cost': 25,
+              Plans: [
+                {
+                  'Node Type': 'Seq Scan',
+                  'Relation Name': 'deep_table',
+                  'Actual Rows': 10,
+                  'Plan Rows': 10,
+                  'Actual Total Time': 1,
+                  'Total Cost': 5,
+                },
+              ],
+            },
+          ],
+        },
+        'Execution Time': 10,
+        'Planning Time': 0.1,
+      },
+    ];
+    const { queryByText } = render(<VisualExplain plan={deepPlan} />);
+    fireEvent.click(queryByText('tree')!);
+
+    // depth 0 (Nested Loop) is expanded → depth 1 (Hash Join) is visible
+    expect(queryByText('Hash Join')).not.toBeNull();
+
+    // depth 1 (Hash Join) is also expanded (depth < 2) → depth 2 node visible
+    // But depth 2 (Seq Scan on deep_table) starts collapsed, so its details are irrelevant —
+    // the node itself IS rendered by its parent (depth 1 expanded).
+    // The key point: depth 2 node is rendered but its OWN children would be collapsed.
+    // Since the Seq Scan has no children, we verify the grandchild is visible
+    // because its parent (depth 1) is expanded.
+    expect(queryByText('deep_table')).not.toBeNull();
+
+    // Now build a 4-level plan to truly test depth 2 collapse:
+    const deeperPlan: ExplainPlanResult[] = [
+      {
+        Plan: {
+          'Node Type': 'Nested Loop',
+          'Actual Rows': 100,
+          'Plan Rows': 100,
+          'Actual Total Time': 10,
+          'Total Cost': 50,
+          Plans: [
+            {
+              'Node Type': 'Hash Join',
+              'Actual Rows': 50,
+              'Plan Rows': 50,
+              'Actual Total Time': 5,
+              'Total Cost': 25,
+              Plans: [
+                {
+                  'Node Type': 'Merge Join',
+                  'Actual Rows': 20,
+                  'Plan Rows': 20,
+                  'Actual Total Time': 2,
+                  'Total Cost': 10,
+                  Plans: [
+                    {
+                      'Node Type': 'Index Scan',
+                      'Relation Name': 'hidden_table',
+                      'Actual Rows': 5,
+                      'Plan Rows': 5,
+                      'Actual Total Time': 0.5,
+                      'Total Cost': 2,
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+        'Execution Time': 10,
+        'Planning Time': 0.1,
+      },
+    ];
+    cleanup();
+    const { queryByText: q2 } = render(<VisualExplain plan={deeperPlan} />);
+    fireEvent.click(q2('tree')!);
+
+    // depth 0 = Nested Loop (expanded), depth 1 = Hash Join (expanded)
+    // depth 2 = Merge Join (collapsed!) → depth 3 child should NOT be visible
+    expect(q2('Merge Join')).not.toBeNull();
+    expect(q2('hidden_table')).toBeNull();
+  });
+
+  // -----------------------------------------------------------------------
+  // NodeIcon variants
+  // -----------------------------------------------------------------------
+
+  test('NodeIcon renders Layers icon for Join type', () => {
+    const joinPlan: ExplainPlanResult[] = [
+      {
+        Plan: {
+          'Node Type': 'Hash Join',
+          'Actual Rows': 10,
+          'Plan Rows': 10,
+          'Actual Total Time': 1,
+          'Total Cost': 5,
+        },
+        'Execution Time': 1,
+        'Planning Time': 0.1,
+      },
+    ];
+    const { container } = render(<VisualExplain plan={joinPlan} />);
+    // Layers icon for Join has text-purple-400 class
+    const purpleIcon = container.querySelector('.text-purple-400');
+    expect(purpleIcon).not.toBeNull();
+  });
+
+  test('NodeIcon renders ArrowDown icon for Sort type', () => {
+    // sortPlan already has Node Type = 'Sort'
+    const { container } = render(<VisualExplain plan={sortPlan} />);
+    // Sort nodes use ArrowDown icon with text-amber-400
+    // Seq Scan also uses amber-400, but sortPlan has 'Sort' not 'Seq Scan'
+    const amberIcon = container.querySelector('.text-amber-400');
+    expect(amberIcon).not.toBeNull();
+  });
+
+  test('NodeIcon renders Zap icon for Aggregate type', () => {
+    const aggPlan: ExplainPlanResult[] = [
+      {
+        Plan: {
+          'Node Type': 'Aggregate',
+          'Actual Rows': 1,
+          'Plan Rows': 1,
+          'Actual Total Time': 2,
+          'Total Cost': 10,
+        },
+        'Execution Time': 2,
+        'Planning Time': 0.1,
+      },
+    ];
+    const { container } = render(<VisualExplain plan={aggPlan} />);
+    // Aggregate uses Zap icon with text-pink-400
+    const pinkIcon = container.querySelector('.text-pink-400');
+    expect(pinkIcon).not.toBeNull();
+  });
+
+  test('NodeIcon renders HardDrive icon for Hash type', () => {
+    const hashPlan: ExplainPlanResult[] = [
+      {
+        Plan: {
+          'Node Type': 'Hash',
+          'Actual Rows': 100,
+          'Plan Rows': 100,
+          'Actual Total Time': 3,
+          'Total Cost': 15,
+        },
+        'Execution Time': 3,
+        'Planning Time': 0.1,
+      },
+    ];
+    const { container } = render(<VisualExplain plan={hashPlan} />);
+    // Hash uses HardDrive icon with text-cyan-400
+    const cyanIcon = container.querySelector('.text-cyan-400');
+    expect(cyanIcon).not.toBeNull();
+  });
+
+  test('NodeIcon renders Database icon for unknown type', () => {
+    const unknownPlan: ExplainPlanResult[] = [
+      {
+        Plan: {
+          'Node Type': 'Materialize',
+          'Actual Rows': 10,
+          'Plan Rows': 10,
+          'Actual Total Time': 1,
+          'Total Cost': 5,
+        },
+        'Execution Time': 1,
+        'Planning Time': 0.1,
+      },
+    ];
+    const { container } = render(<VisualExplain plan={unknownPlan} />);
+    // Unknown type uses Database icon with text-zinc-500
+    // Need to find the icon inside the node icon wrapper (p-1 rounded div)
+    const iconWrappers = container.querySelectorAll('.bg-white\\/5');
+    // The node icon container has bg-white/5 for non-scan types
+    let foundZincIcon = false;
+    iconWrappers.forEach((wrapper) => {
+      const icon = wrapper.querySelector('.text-zinc-500');
+      if (icon) foundZincIcon = true;
+    });
+    expect(foundZincIcon).toBe(true);
+  });
+
+  // -----------------------------------------------------------------------
+  // AI tab: onLoadQuery via "Try This" button
+  // -----------------------------------------------------------------------
+
+  test('clicking "Try This" calls onLoadQuery with the SQL code', async () => {
+    const user = userEvent.setup();
+    const onLoadQuery = mock(() => {});
+    globalThis.fetch = mockFetchStream('Suggestion:\n```sql\nCREATE INDEX idx_active ON users(active);\n```\nDone.') as unknown as typeof fetch;
+
+    const { queryByText } = render(
+      <VisualExplain plan={samplePlan} query="SELECT * FROM users" onLoadQuery={onLoadQuery} />
+    );
+    fireEvent.click(queryByText('AI Explain')!);
+    await user.click(queryByText('Analyze with AI')!);
+
+    await waitFor(() => {
+      expect(queryByText('Try This')).not.toBeNull();
+    });
+
+    await user.click(queryByText('Try This')!);
+    expect(onLoadQuery).toHaveBeenCalledTimes(1);
+    expect(onLoadQuery).toHaveBeenCalledWith('CREATE INDEX idx_active ON users(active);');
+  });
+
+  // -----------------------------------------------------------------------
+  // formatTime: microsecond branch (ms < 1)
+  // -----------------------------------------------------------------------
+
+  test('formatTime shows microseconds for sub-millisecond execution', () => {
+    const microPlan: ExplainPlanResult[] = [
+      {
+        Plan: {
+          'Node Type': 'Result',
+          'Actual Rows': 1,
+          'Plan Rows': 1,
+          'Actual Total Time': 0.002,
+          'Total Cost': 0.01,
+        },
+        'Execution Time': 0.002,
+        'Planning Time': 0,
+      },
+    ];
+    const { queryAllByText } = render(<VisualExplain plan={microPlan} />);
+    // 0.002ms * 1000 = 2μs
+    expect(queryAllByText('2μs').length).toBeGreaterThan(0);
+  });
+
+  // -----------------------------------------------------------------------
+  // Leaf nodes show spacer instead of chevron
+  // -----------------------------------------------------------------------
+
+  test('leaf nodes show spacer div instead of chevron icon', () => {
+    // healthyPlan has a single Index Scan with no children → leaf node
+    const { container, queryByText } = render(<VisualExplain plan={healthyPlan} />);
+    fireEvent.click(queryByText('tree')!);
+
+    // The leaf node should have a <div class="w-3"> spacer instead of a ChevronRight svg
+    // PlanNode renders: children.length === 0 → <div className="w-3" />
+    // ChevronRight has the class rotate-90 or is a ChevronRight svg
+    const planNodeContainer = container.querySelector('.rounded-lg.border');
+    expect(planNodeContainer).not.toBeNull();
+
+    // Within the plan node, find the spacer div (w-3 without svg child)
+    const spacers = planNodeContainer!.querySelectorAll('div.w-3');
+    expect(spacers.length).toBeGreaterThan(0);
+
+    // Verify there's no chevron (which would have the rotate-90 or transition-transform classes on an svg)
+    // For a leaf node, there should be no ChevronRight rendered
+    const chevrons = planNodeContainer!.querySelectorAll('svg.transition-transform');
+    // healthyPlan has a single node with no children, so no chevrons at all
+    expect(chevrons.length).toBe(0);
+  });
 });

@@ -339,4 +339,86 @@ describe('detectConnectionStringType', () => {
     expect(detectConnectionStringType('MySQL://host')).toBe('mysql');
     expect(detectConnectionStringType('SERVER=host;')).toBe('mssql');
   });
+
+  test('trims whitespace before detecting', () => {
+    expect(detectConnectionStringType('  postgres://host  ')).toBe('postgres');
+  });
+
+  test('returns null for whitespace-only input', () => {
+    expect(detectConnectionStringType('   ')).toBeNull();
+  });
+});
+
+// ─── Additional MongoDB edge cases ──────────────────────────────────────────
+
+describe('parseConnectionString: MongoDB edge cases', () => {
+  test('MongoDB URL with username only (no password)', () => {
+    const result = parseConnectionString('mongodb://admin@localhost:27017/mydb');
+    expect(result).not.toBeNull();
+    expect(result!.user).toBe('admin');
+    expect(result!.password).toBeUndefined();
+    expect(result!.database).toBe('mydb');
+  });
+
+  test('MongoDB+SRV without database path', () => {
+    const result = parseConnectionString('mongodb+srv://user:pass@cluster.example.com');
+    expect(result).not.toBeNull();
+    expect(result!.type).toBe('mongodb');
+    expect(result!.user).toBe('user');
+    expect(result!.database).toBeUndefined();
+  });
+
+  test('MongoDB replica set URL (multiple hosts — takes first)', () => {
+    const uri = 'mongodb://user:pass@host1:27017,host2:27018,host3:27019/mydb?replicaSet=rs0';
+    const result = parseConnectionString(uri);
+    expect(result!.host).toBe('host1');
+    expect(result!.port).toBe('27017');
+    expect(result!.database).toBe('mydb');
+  });
+
+  test('MongoDB encoded database name', () => {
+    const result = parseConnectionString('mongodb://user:pass@host:27017/my%20db');
+    expect(result!.database).toBe('my db');
+  });
+
+  test('MongoDB with no slash after host (no database path)', () => {
+    const result = parseConnectionString('mongodb://localhost:27017');
+    expect(result!.type).toBe('mongodb');
+    expect(result!.database).toBeUndefined();
+    expect(result!.host).toBeUndefined();
+  });
+});
+
+// ─── Additional generic URL edge cases ──────────────────────────────────────
+
+describe('parseConnectionString: generic URL edge cases', () => {
+  test('malformed generic URL triggers catch block and returns null', () => {
+    // Invalid URL that will throw in new URL()
+    const result = parseConnectionString('postgres://:::invalid');
+    expect(result).toBeNull();
+  });
+
+  test('malformed MSSQL URL triggers catch block and returns null', () => {
+    const result = parseConnectionString('mssql://:::bad');
+    expect(result).toBeNull();
+  });
+});
+
+// ─── Additional ADO.NET edge cases ──────────────────────────────────────────
+
+describe('parseConnectionString: ADO.NET edge cases', () => {
+  test('ADO.NET with trailing semicolons and empty parts', () => {
+    const result = parseConnectionString('Server=host;Database=db;;;');
+    expect(result).not.toBeNull();
+    expect(result!.host).toBe('host');
+    expect(result!.database).toBe('db');
+  });
+
+  test('ADO.NET with no user/password', () => {
+    const result = parseConnectionString('Server=myhost;Database=testdb;');
+    expect(result).not.toBeNull();
+    expect(result!.user).toBeUndefined();
+    expect(result!.password).toBeUndefined();
+    expect(result!.database).toBe('testdb');
+  });
 });

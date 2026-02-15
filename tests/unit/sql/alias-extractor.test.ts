@@ -356,4 +356,89 @@ describe('getAliasSchema', () => {
     const { aliases } = extractAliases('SELECT * FROM users u');
     expect(getAliasSchema('unknown', aliases)).toBeUndefined();
   });
+
+  test('returns schema for JOIN alias with schema prefix', () => {
+    const { aliases } = extractAliases('SELECT * FROM users u JOIN sales.orders o ON u.id = o.user_id');
+    expect(getAliasSchema('o', aliases)).toBe('sales');
+  });
+});
+
+// ============================================================================
+// caseInsensitive=false — preserves original case keys
+// ============================================================================
+
+describe('extractAliases: caseInsensitive=false', () => {
+  test('FROM alias preserves case', () => {
+    const { aliases } = extractAliases('SELECT * FROM Users U', { caseInsensitive: false });
+    expect(aliases.has('U')).toBe(true);
+    expect(aliases.has('u')).toBe(false);
+  });
+
+  test('JOIN alias preserves case', () => {
+    const { aliases } = extractAliases('SELECT * FROM Users U JOIN Orders O ON U.id = O.user_id', { caseInsensitive: false });
+    expect(aliases.has('O')).toBe(true);
+    expect(aliases.has('o')).toBe(false);
+  });
+
+  test('CTE alias preserves case', () => {
+    const { aliases } = extractAliases('WITH MyData AS (SELECT 1) SELECT * FROM MyData md', { caseInsensitive: false });
+    expect(aliases.has('MyData')).toBe(true);
+    expect(aliases.has('mydata')).toBe(false);
+  });
+});
+
+// ============================================================================
+// Additional edge cases for coverage
+// ============================================================================
+
+describe('extractAliases: additional edge cases', () => {
+  test('schema-qualified table with explicit AS keyword', () => {
+    const { aliases } = extractAliases('SELECT * FROM public.users AS u');
+    const alias = aliases.get('u');
+    expect(alias).toBeDefined();
+    expect(alias!.tableName).toBe('users');
+    expect(alias!.schema).toBe('public');
+    expect(alias!.source).toBe('from');
+  });
+
+  test('SQL keyword as JOIN alias gets filtered out', () => {
+    const { aliases } = extractAliases('SELECT * FROM users u JOIN orders on ON u.id = on.user_id');
+    expect(aliases.has('on')).toBe(false);
+    expect(aliases.has('u')).toBe(true);
+  });
+
+  test('CTE name that IS a SQL keyword is skipped', () => {
+    const sql = 'WITH select AS (SELECT 1) SELECT * FROM select s';
+    const { aliases } = extractAliases(sql);
+    // 'select' is a keyword — should not be added as CTE
+    expect(aliases.get('select')?.source).not.toBe('cte');
+  });
+
+  test('escaped quotes inside string literals are handled by preprocessing', () => {
+    const sql = "SELECT * FROM users u WHERE name = 'it\\'s FROM orders o'";
+    const { aliases } = extractAliases(sql);
+    expect(aliases.has('u')).toBe(true);
+    // The escaped string should be removed, no false 'o' alias
+    expect(aliases.has('o')).toBe(false);
+  });
+
+  test('query with only WITH keyword (no FROM/JOIN)', () => {
+    const sql = 'WITH cte AS (SELECT 1) SELECT * FROM cte';
+    const { aliases } = extractAliases(sql);
+    expect(aliases.has('cte')).toBe(true);
+    expect(aliases.get('cte')?.source).toBe('cte');
+  });
+
+  test('resolveAlias with case-insensitive lookup (uppercase input)', () => {
+    const { aliases } = extractAliases('SELECT * FROM users u');
+    // resolveAlias uses .toLowerCase() internally
+    expect(resolveAlias('U', aliases)).toBe('users');
+  });
+
+  test('duplicate alias key in JOIN — first wins', () => {
+    const sql = 'SELECT * FROM users u JOIN orders o1 ON u.id = o1.uid JOIN products o1 ON o1.pid = o1.id';
+    const { aliases } = extractAliases(sql);
+    // First 'o1' is orders
+    expect(aliases.get('o1')?.tableName).toBe('orders');
+  });
 });
