@@ -11,12 +11,17 @@
  *   beforeEach(() => { mockToastSuccess.mockClear(); mockToastError.mockClear(); });
  */
 import { mock } from 'bun:test';
+import React from 'react';
 
 export const mockToastSuccess = mock(() => {});
 export const mockToastError = mock(() => {});
 export const mockToastDefault = mock(() => {});
+export const mockToaster = mock((props: Record<string, unknown>) =>
+  React.createElement('div', { 'data-testid': 'toaster', className: props.className })
+);
 
 mock.module('sonner', () => ({
+  Toaster: mockToaster,
   toast: Object.assign(mockToastDefault, {
     success: mockToastSuccess,
     error: mockToastError,
