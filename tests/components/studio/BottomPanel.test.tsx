@@ -232,4 +232,152 @@ describe('BottomPanel', () => {
     expect(history).not.toBeNull();
     expect(history!.textContent).toBe('QueryHistory');
   });
+
+  test('Saved tab renders SavedQueries when mode="saved"', () => {
+    const props = createDefaultProps({ mode: 'saved' });
+    const { queryByTestId } = render(<BottomPanel {...props as React.ComponentProps<typeof BottomPanel>} />);
+    expect(queryByTestId('savedqueries')).not.toBeNull();
+  });
+
+  test('Charts tab renders DataCharts when mode="charts"', () => {
+    const props = createDefaultProps({ mode: 'charts' });
+    const { queryByTestId } = render(<BottomPanel {...props as React.ComponentProps<typeof BottomPanel>} />);
+    expect(queryByTestId('datacharts')).not.toBeNull();
+  });
+
+  test('NL2SQL tab renders NL2SQLPanel when mode="nl2sql"', () => {
+    const props = createDefaultProps({ mode: 'nl2sql' });
+    const { queryByTestId } = render(<BottomPanel {...props as React.ComponentProps<typeof BottomPanel>} />);
+    expect(queryByTestId('nl2sqlpanel')).not.toBeNull();
+  });
+
+  test('Autopilot tab renders AIAutopilotPanel when mode="autopilot"', () => {
+    const props = createDefaultProps({ mode: 'autopilot' });
+    const { queryByTestId } = render(<BottomPanel {...props as React.ComponentProps<typeof BottomPanel>} />);
+    expect(queryByTestId('aiautopilotpanel')).not.toBeNull();
+  });
+
+  test('Pivot tab renders PivotTable when mode="pivot"', () => {
+    const props = createDefaultProps({ mode: 'pivot' });
+    const { queryByTestId } = render(<BottomPanel {...props as React.ComponentProps<typeof BottomPanel>} />);
+    expect(queryByTestId('pivottable')).not.toBeNull();
+  });
+
+  test('Docs tab renders DatabaseDocs when mode="docs"', () => {
+    const props = createDefaultProps({ mode: 'docs' });
+    const { queryByTestId } = render(<BottomPanel {...props as React.ComponentProps<typeof BottomPanel>} />);
+    expect(queryByTestId('databasedocs')).not.toBeNull();
+  });
+
+  test('Diff tab renders SchemaDiff when mode="schemadiff"', () => {
+    const props = createDefaultProps({ mode: 'schemadiff' });
+    const { queryByTestId } = render(<BottomPanel {...props as React.ComponentProps<typeof BottomPanel>} />);
+    expect(queryByTestId('schemadiff')).not.toBeNull();
+  });
+
+  test('Explain tab renders VisualExplain when mode="explain" and result exists', () => {
+    const props = createDefaultProps({
+      mode: 'explain',
+      currentTab: {
+        id: 'tab-1', name: 'Q', query: 'SELECT 1',
+        result: { rows: [{ id: 1 }], fields: ['id'], rowCount: 1, executionTime: 10 },
+        isExecuting: false, type: 'sql' as const,
+      },
+    });
+    const { queryByTestId } = render(<BottomPanel {...props as React.ComponentProps<typeof BottomPanel>} />);
+    expect(queryByTestId('visualexplain')).not.toBeNull();
+  });
+
+  test('clicking NL2SQL tab fires onSetIsNL2SQLOpen(true)', () => {
+    const onSetIsNL2SQLOpen = mock(() => {});
+    const props = createDefaultProps({ onSetIsNL2SQLOpen });
+    const { getByText } = render(<BottomPanel {...props as React.ComponentProps<typeof BottomPanel>} />);
+    fireEvent.click(getByText('NL2SQL').closest('button')!);
+    expect(onSetIsNL2SQLOpen).toHaveBeenCalledWith(true);
+  });
+
+  test('Export dropdown shows when results exist and mode is results', () => {
+    const props = createDefaultProps({
+      mode: 'results',
+      currentTab: {
+        id: 'tab-1', name: 'Q', query: 'SELECT 1',
+        result: { rows: [{ id: 1 }], fields: ['id'], rowCount: 1, executionTime: 42 },
+        isExecuting: false, type: 'sql' as const,
+      },
+    });
+    const { queryByText } = render(<BottomPanel {...props as React.ComponentProps<typeof BottomPanel>} />);
+    expect(queryByText('Export')).not.toBeNull();
+  });
+
+  test('Export dropdown is hidden when result is null', () => {
+    const props = createDefaultProps({ mode: 'results' });
+    const { queryByText } = render(<BottomPanel {...props as React.ComponentProps<typeof BottomPanel>} />);
+    expect(queryByText('Export')).toBeNull();
+  });
+
+  test('Export dropdown is hidden when mode is not results', () => {
+    const props = createDefaultProps({
+      mode: 'charts',
+      currentTab: {
+        id: 'tab-1', name: 'Q', query: 'SELECT 1',
+        result: { rows: [{ id: 1 }], fields: ['id'], rowCount: 1, executionTime: 42 },
+        isExecuting: false, type: 'sql' as const,
+      },
+    });
+    const { queryByText } = render(<BottomPanel {...props as React.ComponentProps<typeof BottomPanel>} />);
+    expect(queryByText('Export')).toBeNull();
+  });
+
+  test('row count and execution time shown in results mode with data', () => {
+    const props = createDefaultProps({
+      mode: 'results',
+      currentTab: {
+        id: 'tab-1', name: 'Q', query: 'SELECT 1',
+        result: { rows: [{ id: 1 }], fields: ['id'], rowCount: 5, executionTime: 123 },
+        isExecuting: false, type: 'sql' as const,
+      },
+    });
+    const { queryByText } = render(<BottomPanel {...props as React.ComponentProps<typeof BottomPanel>} />);
+    expect(queryByText(/5 rows/)).not.toBeNull();
+    expect(queryByText(/123ms/)).not.toBeNull();
+  });
+
+  test('Dashboard tab renders chart dashboard when mode="dashboard"', () => {
+    const props = createDefaultProps({ mode: 'dashboard' });
+    const { queryByText } = render(<BottomPanel {...props as React.ComponentProps<typeof BottomPanel>} />);
+    // ChartDashboardLazy shows empty state with no saved charts
+    expect(queryByText('No saved charts yet')).not.toBeNull();
+  });
+
+  test('clicking Charts tab fires onSetMode with charts', () => {
+    const onSetMode = mock(() => {});
+    const props = createDefaultProps({ onSetMode });
+    const { getByText } = render(<BottomPanel {...props as React.ComponentProps<typeof BottomPanel>} />);
+    fireEvent.click(getByText('Charts').closest('button')!);
+    expect(onSetMode).toHaveBeenCalledWith('charts');
+  });
+
+  test('clicking Pivot tab fires onSetMode with pivot', () => {
+    const onSetMode = mock(() => {});
+    const props = createDefaultProps({ onSetMode });
+    const { getByText } = render(<BottomPanel {...props as React.ComponentProps<typeof BottomPanel>} />);
+    fireEvent.click(getByText('Pivot').closest('button')!);
+    expect(onSetMode).toHaveBeenCalledWith('pivot');
+  });
+
+  test('clicking Diff tab fires onSetMode with schemadiff', () => {
+    const onSetMode = mock(() => {});
+    const props = createDefaultProps({ onSetMode });
+    const { getByText } = render(<BottomPanel {...props as React.ComponentProps<typeof BottomPanel>} />);
+    fireEvent.click(getByText('Diff').closest('button')!);
+    expect(onSetMode).toHaveBeenCalledWith('schemadiff');
+  });
+
+  test('clicking Docs tab fires onSetMode with docs', () => {
+    const onSetMode = mock(() => {});
+    const props = createDefaultProps({ onSetMode });
+    const { getByText } = render(<BottomPanel {...props as React.ComponentProps<typeof BottomPanel>} />);
+    fireEvent.click(getByText('Docs').closest('button')!);
+    expect(onSetMode).toHaveBeenCalledWith('docs');
+  });
 });

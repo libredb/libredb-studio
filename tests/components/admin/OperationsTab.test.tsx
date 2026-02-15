@@ -164,4 +164,70 @@ describe('OperationsTab', () => {
     expect(queryByText('Warning')).not.toBeNull();
     expect(queryByText(/resource-intensive/)).not.toBeNull();
   });
+
+  test('shows table size information', async () => {
+    let renderResult: ReturnType<typeof render>;
+    await act(async () => {
+      renderResult = render(<OperationsTab />);
+    });
+    const { queryByText } = renderResult!;
+    expect(queryByText('16 MB')).not.toBeNull();
+  });
+
+  test('shows session user info', async () => {
+    let renderResult: ReturnType<typeof render>;
+    await act(async () => {
+      renderResult = render(<OperationsTab />);
+    });
+    const { queryByText } = renderResult!;
+    expect(queryByText('admin')).not.toBeNull();
+  });
+
+  test('shows session query info', async () => {
+    let renderResult: ReturnType<typeof render>;
+    await act(async () => {
+      renderResult = render(<OperationsTab />);
+    });
+    const { container } = renderResult!;
+    // Session query from mock data
+    expect(container.textContent).toContain('SELECT 1');
+  });
+
+  test('shows session duration', async () => {
+    let renderResult: ReturnType<typeof render>;
+    await act(async () => {
+      renderResult = render(<OperationsTab />);
+    });
+    const { container } = renderResult!;
+    expect(container.textContent).toContain('00:01:00');
+  });
+
+  test('shows row count for tables', async () => {
+    let renderResult: ReturnType<typeof render>;
+    await act(async () => {
+      renderResult = render(<OperationsTab />);
+    });
+    const { container } = renderResult!;
+    // 1000 rows in mock data — could be displayed as 1,000 or 1000
+    expect(container.textContent).toMatch(/1,?000/);
+  });
+
+  test('shows connection type in selector', async () => {
+    let renderResult: ReturnType<typeof render>;
+    await act(async () => {
+      renderResult = render(<OperationsTab />);
+    });
+    const { container } = renderResult!;
+    // Connection type shown in parentheses
+    expect(container.textContent).toContain('(postgres)');
+  });
+
+  test('shows session state as Active badge', async () => {
+    let renderResult: ReturnType<typeof render>;
+    await act(async () => {
+      renderResult = render(<OperationsTab />);
+    });
+    const { container } = renderResult!;
+    expect(container.textContent).toContain('Active');
+  });
 });

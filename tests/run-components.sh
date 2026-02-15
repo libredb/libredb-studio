@@ -24,7 +24,7 @@ set -e
 
 PASS=0
 FAIL=0
-TOTAL_GROUPS=12
+TOTAL_GROUPS=13
 EXTRA_BUN_ARGS=("$@")
 GROUP_INDEX=0
 COVERAGE_MODE=0
@@ -132,15 +132,18 @@ run_group "Group 11/12: Smoke tests" \
   tests/components/MonitoringPage.test.tsx \
   tests/components/monitoring/MetricChart.test.tsx
 
-# Group 12: All remaining files (safe together)
-run_group "Group 12/12: Remaining components" \
+# Group 12: MaskingSettings (isolated — mocks @/lib/data-masking with different shape than ResultsGrid/DataProfiler)
+run_group "Group 12/13: MaskingSettings" \
+  tests/components/MaskingSettings.test.tsx
+
+# Group 13: All remaining files (safe together)
+run_group "Group 13/13: Remaining components" \
   tests/components/DataCharts.test.tsx \
   tests/components/QueryEditor.test.tsx \
   tests/components/QuerySafetyDialog.test.tsx \
   tests/components/QueryHistory.test.tsx \
   tests/components/ConnectionModal.test.tsx \
   tests/components/CommandPalette.test.tsx \
-  tests/components/MaskingSettings.test.tsx \
   tests/components/ResultsGrid.test.tsx \
   tests/components/SchemaDiagram.test.tsx \
   tests/components/SchemaDiff.test.tsx \

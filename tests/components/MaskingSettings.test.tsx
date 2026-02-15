@@ -175,4 +175,91 @@ describe('MaskingSettings', () => {
     // Email should still be there
     expect(view.queryByText('Email')).not.toBeNull();
   });
+
+  // ── Add New Pattern button ─────────────────────────────────────────────
+
+  test('"Add Pattern" button renders', () => {
+    const { container } = render(<MaskingSettings />);
+    const view = within(container);
+    expect(view.queryByText('Add Pattern')).not.toBeNull();
+  });
+
+  // ── Global toggle changes state ────────────────────────────────────────
+
+  test('global toggle switch can be clicked', () => {
+    const { container } = render(<MaskingSettings />);
+    const switches = container.querySelectorAll('button[role="switch"]');
+    // First switch is the global toggle
+    expect(switches.length).toBeGreaterThanOrEqual(1);
+    fireEvent.click(switches[0]);
+    // No crash — toggle state updated
+  });
+
+  // ── Pattern enabled badge shown ──────────────────────────────────────
+
+  test('enabled pattern shows mask type badge', () => {
+    const { container } = render(<MaskingSettings />);
+    // Email pattern is enabled=true in mock config — badge + column pattern text both say 'email'
+    const emailElements = container.querySelectorAll('[data-slot="badge"]');
+    const emailBadge = Array.from(emailElements).find(el => el.textContent === 'email');
+    expect(emailBadge).not.toBeUndefined();
+  });
+
+  // ── Preview section shows masked data ─────────────────────────────────
+
+  test('preview section renders', () => {
+    const { container } = render(<MaskingSettings />);
+    const view = within(container);
+    expect(view.queryByText('Preview')).not.toBeNull();
+  });
+
+  // ── Pattern mask type badge renders ───────────────────────────────────
+
+  test('pattern mask type badge renders for each pattern', () => {
+    const { container } = render(<MaskingSettings />);
+    const badges = container.querySelectorAll('[data-slot="badge"]');
+    const badgeTexts = Array.from(badges).map(b => b.textContent);
+    // email and phone mask type badges
+    expect(badgeTexts.some(t => t === 'email')).toBe(true);
+    expect(badgeTexts.some(t => t === 'phone')).toBe(true);
+  });
+
+  // ── Edit button exists for patterns ───────────────────────────────────
+
+  test('edit button renders for patterns', () => {
+    const { container } = render(<MaskingSettings />);
+    // Edit buttons have pencil icon (lucide-pencil class)
+    const pencilIcons = container.querySelectorAll('.lucide-pencil');
+    // There should be at least 2 edit icons (one per pattern)
+    expect(pencilIcons.length).toBeGreaterThanOrEqual(2);
+  });
+
+  // ── Column patterns info shown ────────────────────────────────────────
+
+  test('column patterns info shown for patterns', () => {
+    const { container } = render(<MaskingSettings />);
+    const text = container.textContent || '';
+    // Email pattern has columnPatterns: ['email']
+    expect(text).toContain('email');
+    // Phone pattern has columnPatterns: ['phone']
+    expect(text).toContain('phone');
+  });
+
+  // ── Role permission labels ──────────────────────────────────────────
+
+  test('role section shows Can toggle and Can reveal labels', () => {
+    const { container } = render(<MaskingSettings />);
+    const view = within(container);
+    expect(view.getAllByText('Can toggle').length).toBe(2);
+    expect(view.getAllByText('Can reveal').length).toBe(2);
+  });
+
+  // ── Builtin badge for builtin patterns ──────────────────────────────
+
+  test('builtin patterns show builtin badge', () => {
+    const { container } = render(<MaskingSettings />);
+    const view = within(container);
+    // Email is builtin
+    expect(view.queryByText('builtin')).not.toBeNull();
+  });
 });

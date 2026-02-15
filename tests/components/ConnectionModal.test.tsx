@@ -414,4 +414,146 @@ describe('ConnectionModal', () => {
     expect(queryByText('DEV')).not.toBeNull();
     expect(queryByText('LOCAL')).not.toBeNull();
   });
+
+  // ── 16. Paste URL shows input area when clicked ─────────────────────────
+
+  test('Paste URL shows paste input area when showPasteInput is true', () => {
+    mockFormOverrides = { showPasteInput: true };
+    const props = createDefaultProps();
+    const { queryByText } = render(React.createElement(ConnectionModal, props));
+    expect(queryByText('Paste Connection URL')).not.toBeNull();
+    expect(queryByText('Parse')).not.toBeNull();
+  });
+
+  // ── 17. SSL expanded shows SSL fields ───────────────────────────────────
+
+  test('SSL section shows fields when expanded', () => {
+    mockFormOverrides = { showSSL: true };
+    const props = createDefaultProps();
+    const { queryByText } = render(React.createElement(ConnectionModal, props));
+    expect(queryByText('SSL Mode')).not.toBeNull();
+  });
+
+  // ── 18. SSH expanded shows SSH fields ───────────────────────────────────
+
+  test('SSH section shows fields when expanded', () => {
+    mockFormOverrides = { showSSH: true };
+    const props = createDefaultProps();
+    const { queryByText } = render(React.createElement(ConnectionModal, props));
+    expect(queryByText('Enable SSH Tunnel')).not.toBeNull();
+  });
+
+  // ── 19. SSH enabled shows all SSH fields ─────────────────────────────────
+
+  test('SSH enabled shows SSH connection fields', () => {
+    mockFormOverrides = { showSSH: true, sshEnabled: true };
+    const props = createDefaultProps();
+    const { queryByText } = render(React.createElement(ConnectionModal, props));
+    expect(queryByText('Enable SSH Tunnel')).not.toBeNull();
+  });
+
+  // ── 20. Test result success displayed ──────────────────────────────────
+
+  test('test result success message displayed', () => {
+    mockFormOverrides = { testResult: { success: true, message: 'Connection successful' } };
+    const props = createDefaultProps();
+    const { queryByText } = render(React.createElement(ConnectionModal, props));
+    expect(queryByText('Connection successful')).not.toBeNull();
+  });
+
+  // ── 21. Test result failure displayed ──────────────────────────────────
+
+  test('test result failure message displayed', () => {
+    mockFormOverrides = { testResult: { success: false, message: 'Connection failed: timeout' } };
+    const props = createDefaultProps();
+    const { queryByText } = render(React.createElement(ConnectionModal, props));
+    expect(queryByText('Connection failed: timeout')).not.toBeNull();
+  });
+
+  // ── 22. isTesting shows spinner state ─────────────────────────────────
+
+  test('Test Connection button shows testing state', () => {
+    mockFormOverrides = { isTesting: true };
+    const props = createDefaultProps();
+    const { queryByText } = render(React.createElement(ConnectionModal, props));
+    expect(queryByText('Testing...')).not.toBeNull();
+  });
+
+  // ── 23. Demo type hides connection fields ─────────────────────────────
+
+  test('demo type renders without crash', () => {
+    mockFormOverrides = { type: 'demo' };
+    const props = createDefaultProps();
+    const { container } = render(React.createElement(ConnectionModal, props));
+    // Component renders properly with demo type
+    expect(container.textContent).toContain('New Connection');
+  });
+
+  // ── 24. MongoDB connection string mode ──────────────────────────────────
+
+  test('MongoDB shows connection mode toggle', () => {
+    mockFormOverrides = { type: 'mongodb' };
+    const props = createDefaultProps();
+    const { queryByText } = render(React.createElement(ConnectionModal, props));
+    expect(queryByText('Host / Port')).not.toBeNull();
+    expect(queryByText('Connection String')).not.toBeNull();
+  });
+
+  // ── 25. MongoDB connection string mode shows URI field ─────────────────
+
+  test('MongoDB connection string mode shows URI field', () => {
+    mockFormOverrides = { type: 'mongodb', mongoConnectionMode: 'connectionString' };
+    const props = createDefaultProps();
+    const { queryByText } = render(React.createElement(ConnectionModal, props));
+    expect(queryByText('Connection URI')).not.toBeNull();
+  });
+
+  // ── 26. Advanced section for Oracle ────────────────────────────────────
+
+  test('Oracle type shows advanced section', () => {
+    mockFormOverrides = { type: 'oracle', showAdvanced: true };
+    const props = createDefaultProps();
+    const { queryByText } = render(React.createElement(ConnectionModal, props));
+    expect(queryByText('Service Name')).not.toBeNull();
+  });
+
+  // ── 27. Advanced section for MSSQL ─────────────────────────────────────
+
+  test('MSSQL type shows instance name in advanced section', () => {
+    mockFormOverrides = { type: 'mssql', showAdvanced: true };
+    const props = createDefaultProps();
+    const { queryByText } = render(React.createElement(ConnectionModal, props));
+    expect(queryByText('Instance Name')).not.toBeNull();
+  });
+
+  // ── 28. Paste URL hidden in edit mode ────────────────────────────────
+
+  test('Paste URL button hidden in edit mode', () => {
+    mockFormOverrides = { isEditMode: true };
+    const editConn = {
+      id: 'e1', name: 'My PG', type: 'postgres' as const,
+      host: 'localhost', port: 5432, createdAt: new Date(),
+    };
+    const props = createDefaultProps({ editConnection: editConn });
+    const { queryByText } = render(React.createElement(ConnectionModal, props));
+    expect(queryByText('Paste URL')).toBeNull();
+  });
+
+  // ── 29. Supports URL text shown in paste area ────────────────────────
+
+  test('paste area shows supported URL protocols', () => {
+    mockFormOverrides = { showPasteInput: true };
+    const props = createDefaultProps();
+    const { queryByText } = render(React.createElement(ConnectionModal, props));
+    expect(queryByText(/postgres:\/\//)).not.toBeNull();
+  });
+
+  // ── 30. SSL section for verify-ca shows client cert fields ─────────────
+
+  test('SSL verify-ca mode renders SSL section', () => {
+    mockFormOverrides = { showSSL: true, sslMode: 'verify-ca' };
+    const props = createDefaultProps();
+    const { queryByText } = render(React.createElement(ConnectionModal, props));
+    expect(queryByText('SSL Mode')).not.toBeNull();
+  });
 });

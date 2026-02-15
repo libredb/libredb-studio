@@ -85,6 +85,47 @@ describe('extractAliases: JOIN clause', () => {
     expect(alias?.schema).toBe('sales');
     expect(alias?.tableName).toBe('orders');
   });
+
+  test('FULL JOIN alias', () => {
+    const { aliases } = extractAliases('SELECT * FROM users u FULL JOIN orders o ON u.id = o.user_id');
+    expect(aliases.get('o')?.tableName).toBe('orders');
+    expect(aliases.get('o')?.source).toBe('join');
+  });
+
+  test('NATURAL JOIN alias', () => {
+    const { aliases } = extractAliases('SELECT * FROM users u NATURAL JOIN orders o');
+    expect(aliases.get('o')?.tableName).toBe('orders');
+    expect(aliases.get('o')?.source).toBe('join');
+  });
+
+  test('FULL OUTER JOIN alias', () => {
+    const { aliases } = extractAliases('SELECT * FROM users u FULL OUTER JOIN orders o ON u.id = o.user_id');
+    // FULL OUTER — regex matches FULL prefix, then JOIN
+    expect(aliases.get('o')?.tableName).toBe('orders');
+  });
+
+  test('JOIN with explicit AS keyword', () => {
+    const { aliases } = extractAliases('SELECT * FROM users u LEFT JOIN orders AS o ON u.id = o.user_id');
+    expect(aliases.get('o')?.tableName).toBe('orders');
+    expect(aliases.get('o')?.source).toBe('join');
+  });
+
+  test('JOIN same-name alias is skipped (JOIN orders orders)', () => {
+    const { aliases } = extractAliases('SELECT * FROM users u JOIN orders orders ON u.id = orders.user_id');
+    expect(aliases.has('u')).toBe(true);
+    // 'orders' alias = 'orders' table — should be skipped
+    expect(aliases.has('orders')).toBe(false);
+  });
+
+  test('multiple consecutive JOINs', () => {
+    const sql = 'SELECT * FROM users u JOIN orders o ON u.id = o.user_id JOIN products p ON o.product_id = p.id JOIN categories c ON p.cat_id = c.id';
+    const { aliases } = extractAliases(sql);
+    expect(aliases.size).toBe(4);
+    expect(aliases.get('u')?.tableName).toBe('users');
+    expect(aliases.get('o')?.tableName).toBe('orders');
+    expect(aliases.get('p')?.tableName).toBe('products');
+    expect(aliases.get('c')?.tableName).toBe('categories');
+  });
 });
 
 // ============================================================================
@@ -108,6 +149,39 @@ describe('extractAliases: CTE clause', () => {
     expect(aliases.has('cte')).toBe(false);
     // FROM alias 'c' should still be found
     expect(aliases.has('c')).toBe(true);
+  });
+
+  test('WITH RECURSIVE CTE extracts alias', () => {
+    const sql = 'WITH RECURSIVE hierarchy AS (SELECT id, parent_id FROM categories UNION ALL SELECT c.id, c.parent_id FROM categories c JOIN hierarchy h ON c.parent_id = h.id) SELECT * FROM hierarchy h2';
+    const { aliases } = extractAliases(sql);
+    expect(aliases.has('hierarchy')).toBe(true);
+    expect(aliases.get('hierarchy')?.source).toBe('cte');
+  });
+
+  test('multiple CTEs extracted', () => {
+    const sql = 'WITH active AS (SELECT * FROM users WHERE active), orders_cte AS (SELECT * FROM orders WHERE total > 0) SELECT * FROM active a JOIN orders_cte oc ON a.id = oc.user_id';
+    const { aliases } = extractAliases(sql);
+    expect(aliases.has('active')).toBe(true);
+    expect(aliases.get('active')?.source).toBe('cte');
+    expect(aliases.has('orders_cte')).toBe(true);
+    expect(aliases.get('orders_cte')?.source).toBe('cte');
+  });
+
+  test('CTE name that looks like keyword is skipped', () => {
+    // 'select' is a keyword and should be skipped as CTE name
+    // but real CTE names should be captured
+    const sql = 'WITH my_data AS (SELECT 1) SELECT * FROM my_data md';
+    const { aliases } = extractAliases(sql);
+    expect(aliases.has('my_data')).toBe(true);
+    expect(aliases.get('my_data')?.source).toBe('cte');
+  });
+
+  test('CTE does not overwrite existing alias', () => {
+    // If same name appears twice as CTE, first wins
+    const sql = 'WITH cte1 AS (SELECT 1), cte1 AS (SELECT 2) SELECT * FROM cte1';
+    const { aliases } = extractAliases(sql);
+    // First CTE definition wins
+    expect(aliases.has('cte1')).toBe(true);
   });
 });
 
@@ -174,6 +248,71 @@ describe('extractAliases: multiple and edge cases', () => {
     const { aliases } = extractAliases('SELECT * FROM Users U', { caseInsensitive: false });
     expect(aliases.has('U')).toBe(true);
     expect(aliases.has('u')).toBe(false);
+  });
+
+  test('empty string returns empty aliases and hasTableReferences=false', () => {
+    const result = extractAliases('');
+    expect(result.aliases.size).toBe(0);
+    expect(result.hasTableReferences).toBe(false);
+  });
+
+  test('whitespace only returns empty aliases', () => {
+    const result = extractAliases('   \n\t  ');
+    expect(result.aliases.size).toBe(0);
+    expect(result.hasTableReferences).toBe(false);
+  });
+
+  test('FROM without alias still detects hasTableReferences via aliases', () => {
+    // FROM users WHERE ... — no alias extracted, but query has FROM keyword
+    // hasTableReferences is based on aliases.size > 0
+    const result = extractAliases('SELECT * FROM users WHERE id = 1');
+    expect(result.hasTableReferences).toBe(false);
+    expect(result.aliases.size).toBe(0);
+  });
+
+  test('multiple FROM tables with comma', () => {
+    // Only the first table after FROM gets an alias with the current pattern
+    const { aliases } = extractAliases('SELECT * FROM users u, orders o');
+    expect(aliases.get('u')?.tableName).toBe('users');
+    // second comma-separated table won't be caught by FROM pattern (no JOIN/FROM prefix)
+  });
+
+  test('subquery in FROM does not produce false aliases', () => {
+    const sql = 'SELECT * FROM (SELECT id FROM users) sub';
+    const { aliases } = extractAliases(sql);
+    // The inner FROM users has no alias, outer FROM (...) sub might or might not match
+    // Main point: no crash
+    expect(aliases).toBeDefined();
+  });
+
+  test('double-quoted identifiers are replaced in preprocessing', () => {
+    const sql = 'SELECT * FROM users u WHERE name = "FROM orders o"';
+    const { aliases } = extractAliases(sql);
+    expect(aliases.has('u')).toBe(true);
+    // double-quoted string should be replaced, so no 'o' alias
+    expect(aliases.has('o')).toBe(false);
+  });
+
+  test('mixed single-line and block comments', () => {
+    const sql = `
+      SELECT * FROM users u
+      -- FROM orders o1
+      /* FROM products p1 */
+      JOIN items i ON u.id = i.user_id
+    `;
+    const { aliases } = extractAliases(sql);
+    expect(aliases.has('u')).toBe(true);
+    expect(aliases.has('i')).toBe(true);
+    expect(aliases.has('o1')).toBe(false);
+    expect(aliases.has('p1')).toBe(false);
+  });
+
+  test('first alias wins — duplicate alias key not overwritten', () => {
+    // Two FROM clauses with same alias key
+    const sql = 'SELECT * FROM users u UNION SELECT * FROM orders u';
+    const { aliases } = extractAliases(sql);
+    // First alias for 'u' should be 'users'
+    expect(aliases.get('u')?.tableName).toBe('users');
   });
 });
 

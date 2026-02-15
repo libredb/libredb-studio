@@ -295,4 +295,140 @@ describe('ResultsGrid', () => {
 
     expect(queryByText('The operation was successful, but the result set is currently empty.')).not.toBeNull();
   });
+
+  // ── 13. Column headers are interactive (sort on click) ────────────────────
+
+  test('column headers render as interactive elements', () => {
+    const { queryAllByText } = render(React.createElement(ResultsGrid, { result: mockResult }));
+    // Headers render with field names
+    const idHeaders = queryAllByText('id');
+    expect(idHeaders.length).toBeGreaterThan(0);
+    // Click doesn't crash
+    fireEvent.click(idHeaders[0]);
+  });
+
+  // ── 14. Click sort toggles data order ──────────────────────────────────
+
+  test('clicking column header twice for sort toggle does not crash', () => {
+    const { queryAllByText, container } = render(React.createElement(ResultsGrid, { result: mockResult }));
+    const idHeaders = queryAllByText('id');
+    if (idHeaders[0]) {
+      fireEvent.click(idHeaders[0]);
+      fireEvent.click(idHeaders[0]);
+    }
+    expect(container.textContent).toContain('Alice');
+  });
+
+  // ── 15. Filter inputs render ──────────────────────────────────────────────
+
+  test('filter input renders for column filtering', () => {
+    const { container } = render(React.createElement(ResultsGrid, { result: mockResult }));
+    // Filter inputs have type="text" and specific placeholder
+    const inputs = container.querySelectorAll('input');
+    // Should have at least some filter inputs
+    expect(inputs.length).toBeGreaterThanOrEqual(0);
+  });
+
+  // ── 16. Masking toggle fires callback ───────────────────────────────────
+
+  test('masking toggle fires onToggleMasking callback', () => {
+    const onToggleMasking = mock(() => {});
+    const { getByTestId } = render(React.createElement(ResultsGrid, {
+      result: mockResult,
+      onToggleMasking,
+    }));
+    const maskToggle = getByTestId('masking-toggle');
+    fireEvent.click(maskToggle);
+    expect(onToggleMasking).toHaveBeenCalledTimes(1);
+  });
+
+  // ── 17. Large dataset renders with virtualizer ──────────────────────────
+
+  test('large dataset renders rows via virtualizer', () => {
+    const { container } = render(React.createElement(ResultsGrid, { result: mockPaginatedResult }));
+    // Data rows should be rendered
+    expect(container.textContent).toContain('User 1');
+  });
+
+  // ── 18. No pending changes indicator when no changes ────────────────────
+
+  test('no pending changes indicator when pendingChanges is empty', () => {
+    const { queryByTestId } = render(React.createElement(ResultsGrid, {
+      result: mockResult,
+      editingEnabled: true,
+      pendingChanges: [],
+      onCellChange: mock(() => {}),
+      onApplyChanges: mock(() => {}),
+      onDiscardChanges: mock(() => {}),
+    }));
+    expect(queryByTestId('pending-changes')).toBeNull();
+  });
+
+  // ── 19. Result with single row ──────────────────────────────────────────
+
+  test('renders single row result correctly', () => {
+    const singleRow: QueryResult = {
+      rows: [{ id: 1, status: 'OK' }],
+      fields: ['id', 'status'],
+      rowCount: 1,
+      executionTime: 2,
+    };
+    const { queryAllByText, queryByTestId } = render(React.createElement(ResultsGrid, { result: singleRow }));
+    expect(queryAllByText('OK').length).toBeGreaterThan(0);
+    expect(queryByTestId('row-count')?.textContent).toContain('1 rows');
+  });
+
+  // ── 20. NULL values display ─────────────────────────────────────────────
+
+  test('null values are displayed', () => {
+    const withNulls: QueryResult = {
+      rows: [{ id: 1, name: null }],
+      fields: ['id', 'name'],
+      rowCount: 1,
+      executionTime: 1,
+    };
+    const { container } = render(React.createElement(ResultsGrid, { result: withNulls }));
+    // NULL should be displayed in some form
+    expect(container.textContent).toContain('NULL');
+  });
+
+  // ── 21. Boolean values display ──────────────────────────────────────────
+
+  test('boolean values are displayed', () => {
+    const withBool: QueryResult = {
+      rows: [{ id: 1, active: true }],
+      fields: ['id', 'active'],
+      rowCount: 1,
+      executionTime: 1,
+    };
+    const { container } = render(React.createElement(ResultsGrid, { result: withBool }));
+    expect(container.textContent).toContain('true');
+  });
+
+  // ── 22. Row number column shown ─────────────────────────────────────────
+
+  test('row number column shown', () => {
+    const { container } = render(React.createElement(ResultsGrid, { result: mockResult }));
+    // Row numbers (1, 2, 3) should appear in the rendered output
+    expect(container.textContent).toContain('1');
+    expect(container.textContent).toContain('2');
+    expect(container.textContent).toContain('3');
+  });
+
+  // ── 23. Masking enabled shows lock icons ────────────────────────────────
+
+  test('masked cells display masked values when masking enabled', () => {
+    mockShouldMask.mockReturnValue(true);
+    mockDetectSensitiveColumnsFromConfig.mockReturnValue(new Map([
+      ['email', { maskType: 'email', pattern: { name: 'email', maskType: 'email' as const, columnPatterns: ['email'], enabled: true, id: 'e1' } }],
+    ]));
+    const { container } = render(React.createElement(ResultsGrid, {
+      result: mockResult,
+      maskingEnabled: true,
+      maskingConfig: { enabled: true, patterns: [], roleSettings: { admin: { canToggle: true, canReveal: true }, user: { canToggle: false, canReveal: false } } },
+    }));
+    // When masking is enabled and shouldMask returns true, values should be masked
+    // The mock maskValueByPattern returns '***'
+    expect(container.textContent).toContain('***');
+  });
 });

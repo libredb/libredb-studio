@@ -481,4 +481,59 @@ describe('SchemaDiagram', () => {
     rerender(<SchemaDiagram schema={singleTableSchema} onClose={onClose} />);
     expect(view.queryByText('1 tables')).not.toBeNull();
   });
+
+  // ── Panel buttons ─────────────────────────────────────────────────────
+
+  test('top-right panel has PNG, SVG, Compact, and close buttons', () => {
+    const props = createDefaultProps();
+    const { container } = render(<SchemaDiagram {...props} />);
+    const view = within(container);
+    expect(view.queryByText('PNG')).not.toBeNull();
+    expect(view.queryByText('SVG')).not.toBeNull();
+    expect(view.queryByText('Compact')).not.toBeNull();
+    // Close button (X icon)
+    const closeBtn = Array.from(container.querySelectorAll('button')).find(btn =>
+      btn.className.includes('rounded-full')
+    );
+    expect(closeBtn).not.toBeNull();
+  });
+
+  // ── MiniMap rendered ─────────────────────────────────────────────────
+
+  test('MiniMap component renders', () => {
+    const props = createDefaultProps();
+    const { container } = render(<SchemaDiagram {...props} />);
+    expect(container.querySelector('[data-testid="mock-minimap"]')).not.toBeNull();
+  });
+
+  // ── Schema with many tables ─────────────────────────────────────────
+
+  test('schema with many tables renders correct count', () => {
+    const manyTables: TableSchema[] = Array.from({ length: 10 }, (_, i) => ({
+      name: `table_${i}`,
+      columns: [{ name: 'id', type: 'integer', nullable: false, isPrimary: true }],
+      indexes: [],
+      foreignKeys: [],
+      rowCount: i * 10,
+    }));
+    const props = createDefaultProps({ schema: manyTables });
+    const { container } = render(<SchemaDiagram {...props} />);
+    const view = within(container);
+    expect(view.queryByText('10 tables')).not.toBeNull();
+    expect(view.queryByText('0 relationships')).not.toBeNull();
+  });
+
+  // ── Search with partial match ───────────────────────────────────────
+
+  test('search with partial match filters correctly', async () => {
+    const user = userEvent.setup();
+    const props = createDefaultProps();
+    const { container } = render(<SchemaDiagram {...props} />);
+    const view = within(container);
+
+    const searchInput = view.getByPlaceholderText('Filter tables...');
+    await user.type(searchInput, 'ord');
+    // 'orders' matches 'ord'
+    expect(view.queryByText('1 tables')).not.toBeNull();
+  });
 });

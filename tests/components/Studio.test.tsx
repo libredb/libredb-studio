@@ -408,4 +408,58 @@ describe('Studio', () => {
     const modal = queryByTestId('createtablemodal');
     expect(modal).toBeNull();
   });
+
+  test('data import modal hidden by default', () => {
+    const { queryByTestId } = render(<Studio />);
+    expect(queryByTestId('dataimportmodal')).toBeNull();
+  });
+
+  test('data profiler hidden by default', () => {
+    const { queryByTestId } = render(<Studio />);
+    expect(queryByTestId('dataprofiler')).toBeNull();
+  });
+
+  test('code generator hidden by default', () => {
+    const { queryByTestId } = render(<Studio />);
+    expect(queryByTestId('codegenerator')).toBeNull();
+  });
+
+  test('test data generator hidden by default', () => {
+    const { queryByTestId } = render(<Studio />);
+    expect(queryByTestId('testdatagenerator')).toBeNull();
+  });
+
+  test('save query modal hidden by default', () => {
+    const { queryByTestId } = render(<Studio />);
+    expect(queryByTestId('savequerymodal')).toBeNull();
+  });
+
+  test('schema diagram hidden by default', () => {
+    const { queryByTestId } = render(<Studio />);
+    expect(queryByTestId('schemadiagram')).toBeNull();
+  });
+
+  test('query safety dialog hidden by default', () => {
+    const { queryByTestId } = render(<Studio />);
+    expect(queryByTestId('querysafetydialog')).toBeNull();
+  });
+
+  test('resizable panels render', () => {
+    const { container } = render(<Studio />);
+    const groups = container.querySelectorAll('[data-testid="resizable-group"]');
+    expect(groups.length).toBeGreaterThanOrEqual(1);
+  });
+
+  test('resizable handles render', () => {
+    const { container } = render(<Studio />);
+    const handles = container.querySelectorAll('[data-testid="resizable-handle"]');
+    expect(handles.length).toBeGreaterThanOrEqual(1);
+  });
+
+  test('multiple renders do not crash', () => {
+    const { container, rerender } = render(<Studio />);
+    rerender(<Studio />);
+    rerender(<Studio />);
+    expect(container.innerHTML.length).toBeGreaterThan(0);
+  });
 });
