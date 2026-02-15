@@ -1,6 +1,6 @@
 {
   "name": "libredb-studio",
-  "version": "0.6.19",
+  "version": "0.6.20",
   "private": true,
   "scripts": {
     "dev": "next dev --turbopack",
