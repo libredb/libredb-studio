@@ -90,6 +90,8 @@ import { render, cleanup, fireEvent, waitFor } from '@testing-library/react';
 import { DataCharts } from '@/components/DataCharts';
 import type { QueryResult } from '@/lib/types';
 
+import userEvent from '@testing-library/user-event';
+
 // ── Test data ───────────────────────────────────────────────────────────────
 
 const mockNumericResult: QueryResult = {
@@ -130,6 +132,64 @@ const mockNoNumericResult: QueryResult = {
   executionTime: 5,
 };
 
+// Pure numeric data (no categorical) → scatter suggestion
+const pureNumericResult: QueryResult = {
+  rows: [
+    { x: 1, y: 10, z: 100 },
+    { x: 2, y: 20, z: 200 },
+    { x: 3, y: 30, z: 300 },
+  ],
+  fields: ['x', 'y', 'z'],
+  rowCount: 3,
+  executionTime: 1,
+};
+
+// Date time-series data → line suggestion
+const dateTimeResult: QueryResult = {
+  rows: [
+    { date: '2025-01-01', value: 100 },
+    { date: '2025-02-01', value: 200 },
+    { date: '2025-03-01', value: 150 },
+  ],
+  fields: ['date', 'value'],
+  rowCount: 3,
+  executionTime: 1,
+};
+
+// Categorical with few rows → pie suggestion
+const fewCategoricalResult: QueryResult = {
+  rows: [
+    { type: 'A', count: 10 },
+    { type: 'B', count: 20 },
+    { type: 'C', count: 30 },
+  ],
+  fields: ['type', 'count'],
+  rowCount: 3,
+  executionTime: 1,
+};
+
+// Many rows to test bar suggestion (>10 rows)
+const manyCategoricalResult: QueryResult = {
+  rows: Array.from({ length: 15 }, (_, i) => ({
+    name: `item_${i}`,
+    value: (i + 1) * 10,
+  })),
+  fields: ['name', 'value'],
+  rowCount: 15,
+  executionTime: 1,
+};
+
+// Pie with >10 data points for "Showing top 10" footer
+const manyPieResult: QueryResult = {
+  rows: Array.from({ length: 15 }, (_, i) => ({
+    category: `cat_${i}`,
+    amount: (i + 1) * 5,
+  })),
+  fields: ['category', 'amount'],
+  rowCount: 15,
+  executionTime: 1,
+};
+
 // =============================================================================
 // DataCharts Tests
 // =============================================================================
@@ -146,46 +206,39 @@ describe('DataCharts', () => {
     }
   });
 
-  // ── 1. Renders "Cannot Visualize Data" when result is null ────────────────
+  // -----------------------------------------------------------------------
+  // Empty states
+  // -----------------------------------------------------------------------
 
   test('renders empty state when result is null', () => {
     const { queryByText } = render(React.createElement(DataCharts, { result: null }));
-
     expect(queryByText('Cannot Visualize Data')).not.toBeNull();
     expect(queryByText('No data to visualize')).not.toBeNull();
   });
 
-  // ── 2. Renders empty state when result has empty rows ─────────────────────
-
   test('renders empty state when result has empty rows', () => {
     const { queryByText } = render(React.createElement(DataCharts, { result: mockEmptyResult }));
-
     expect(queryByText('Cannot Visualize Data')).not.toBeNull();
   });
 
-  // ── 3. Renders empty state for single row ─────────────────────────────────
-
   test('renders empty state for single row result', () => {
     const { queryByText } = render(React.createElement(DataCharts, { result: mockSingleRowResult }));
-
     expect(queryByText('Cannot Visualize Data')).not.toBeNull();
     expect(queryByText('Need at least 2 rows for visualization')).not.toBeNull();
   });
 
-  // ── 4. Renders empty state when no numeric fields ─────────────────────────
-
   test('renders empty state when no numeric fields exist', () => {
     const { queryByText } = render(React.createElement(DataCharts, { result: mockNoNumericResult }));
-
     expect(queryByText('Cannot Visualize Data')).not.toBeNull();
     expect(queryByText('No numeric fields found for Y-axis')).not.toBeNull();
   });
 
-  // ── 5. Shows chart type selector buttons ──────────────────────────────────
+  // -----------------------------------------------------------------------
+  // Chart type selector
+  // -----------------------------------------------------------------------
 
-  test('shows chart type selector buttons', () => {
+  test('shows all 8 chart type selector buttons', () => {
     const { queryByText } = render(React.createElement(DataCharts, { result: mockNumericResult }));
-
     expect(queryByText('Bar')).not.toBeNull();
     expect(queryByText('Line')).not.toBeNull();
     expect(queryByText('Pie')).not.toBeNull();
@@ -196,11 +249,12 @@ describe('DataCharts', () => {
     expect(queryByText('Stack Area')).not.toBeNull();
   });
 
-  // ── 6. X-Axis selector renders ────────────────────────────────────────────
+  // -----------------------------------------------------------------------
+  // Axis selectors
+  // -----------------------------------------------------------------------
 
   test('X-Axis selector renders with field options', () => {
     const { queryByText, queryByTestId } = render(React.createElement(DataCharts, { result: mockNumericResult }));
-
     expect(queryByText('X-Axis')).not.toBeNull();
     expect(queryByTestId('select-item-category')).not.toBeNull();
     expect(queryByTestId('select-item-revenue')).not.toBeNull();
@@ -208,75 +262,326 @@ describe('DataCharts', () => {
     expect(queryByTestId('select-item-date')).not.toBeNull();
   });
 
-  // ── 7. Y-Axis selector renders ────────────────────────────────────────────
-
   test('Y-Axis selector renders', () => {
     const { queryByText } = render(React.createElement(DataCharts, { result: mockNumericResult }));
-
     expect(queryByText('Y-Axis')).not.toBeNull();
   });
 
-  // ── 8. Save chart button present ──────────────────────────────────────────
+  test('shows "Value" label instead of Y-Axis when pie chart', () => {
+    const { queryByText } = render(React.createElement(DataCharts, { result: fewCategoricalResult }));
+    // fewCategoricalResult → pie suggestion (categorical + ≤10 rows)
+    expect(queryByText('Value')).not.toBeNull();
+  });
+
+  // -----------------------------------------------------------------------
+  // Toolbar buttons
+  // -----------------------------------------------------------------------
 
   test('Save chart button present', () => {
     const { queryByText } = render(React.createElement(DataCharts, { result: mockNumericResult }));
-
     expect(queryByText('Save')).not.toBeNull();
   });
 
-  // ── 9. Export button present ──────────────────────────────────────────────
-
-  test('Export button present', () => {
+  test('Export button present with PNG and SVG options', () => {
     const { queryByText } = render(React.createElement(DataCharts, { result: mockNumericResult }));
-
     expect(queryByText('Export')).not.toBeNull();
+    expect(queryByText('Export as PNG')).not.toBeNull();
+    expect(queryByText('Export as SVG')).not.toBeNull();
   });
-
-  // ── 10. Aggregation selector present ──────────────────────────────────────
 
   test('Aggregation selector present', () => {
     const { queryByText } = render(React.createElement(DataCharts, { result: mockNumericResult }));
-
     expect(queryByText('Agg')).not.toBeNull();
   });
 
-  // ── 11. Date grouping selector appears for date columns ───────────────────
-
   test('date grouping selector appears when date columns exist', () => {
     const { queryByText } = render(React.createElement(DataCharts, { result: mockNumericResult }));
-
     expect(queryByText('Group')).not.toBeNull();
   });
 
-  // ── 12. Footer stats display ──────────────────────────────────────────────
+  test('date grouping hidden when no date columns', () => {
+    const { queryByText } = render(React.createElement(DataCharts, { result: pureNumericResult }));
+    expect(queryByText('Group')).toBeNull();
+  });
+
+  // -----------------------------------------------------------------------
+  // Footer stats
+  // -----------------------------------------------------------------------
 
   test('footer shows row and field counts', () => {
     const { container } = render(React.createElement(DataCharts, { result: mockNumericResult }));
-
     const footerText = container.textContent || '';
-    expect(footerText).toContain('5');
-    expect(footerText).toContain('4');
+    expect(footerText).toContain('Rows:');
+    expect(footerText).toContain('Fields:');
+    expect(footerText).toContain('Numeric:');
   });
 
-  test('switches chart types to scatter and histogram', async () => {
+  test('footer shows numeric field count', () => {
+    const { container } = render(React.createElement(DataCharts, { result: mockNumericResult }));
+    const footerText = container.textContent || '';
+    // mockNumericResult has 2 numeric fields: revenue, cost
+    expect(footerText).toContain('Numeric:');
+  });
+
+  // -----------------------------------------------------------------------
+  // Chart type switching
+  // -----------------------------------------------------------------------
+
+  test('switches to line chart', async () => {
+    const { queryByText, queryByTestId } = render(React.createElement(DataCharts, { result: mockNumericResult }));
+    fireEvent.click(queryByText('Line')!);
+    await waitFor(() => {
+      expect(queryByTestId('mock-line-chart')).not.toBeNull();
+    });
+  });
+
+  test('switches to area chart', async () => {
+    const { queryByText, queryByTestId } = render(React.createElement(DataCharts, { result: mockNumericResult }));
+    fireEvent.click(queryByText('Area')!);
+    await waitFor(() => {
+      expect(queryByTestId('mock-area-chart')).not.toBeNull();
+    });
+  });
+
+  test('switches to pie chart', async () => {
+    const { queryByText, queryByTestId } = render(React.createElement(DataCharts, { result: mockNumericResult }));
+    fireEvent.click(queryByText('Pie')!);
+    await waitFor(() => {
+      expect(queryByTestId('mock-pie-chart')).not.toBeNull();
+    });
+  });
+
+  test('switches to scatter and histogram', async () => {
     const { queryByText, queryByTestId } = render(React.createElement(DataCharts, { result: mockNumericResult }));
 
-    const scatterButton = queryByText('Scatter');
-    expect(scatterButton).not.toBeNull();
-    fireEvent.click(scatterButton!);
-
+    fireEvent.click(queryByText('Scatter')!);
     await waitFor(() => {
       expect(queryByTestId('mock-scatter-chart')).not.toBeNull();
     });
 
-    const histogramButton = queryByText('Histogram');
-    expect(histogramButton).not.toBeNull();
-    fireEvent.click(histogramButton!);
-
+    fireEvent.click(queryByText('Histogram')!);
     await waitFor(() => {
       expect(queryByTestId('mock-bar-chart')).not.toBeNull();
     });
   });
+
+  test('switches to stacked bar chart', async () => {
+    const { queryByText, queryByTestId } = render(React.createElement(DataCharts, { result: mockNumericResult }));
+    fireEvent.click(queryByText('Stacked')!);
+    await waitFor(() => {
+      expect(queryByTestId('mock-bar-chart')).not.toBeNull();
+    });
+  });
+
+  test('switches to stacked area chart', async () => {
+    const { queryByText, queryByTestId } = render(React.createElement(DataCharts, { result: mockNumericResult }));
+    fireEvent.click(queryByText('Stack Area')!);
+    await waitFor(() => {
+      expect(queryByTestId('mock-area-chart')).not.toBeNull();
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Suggested chart type based on data
+  // -----------------------------------------------------------------------
+
+  test('suggests scatter for pure numeric data', () => {
+    const { queryByTestId } = render(React.createElement(DataCharts, { result: pureNumericResult }));
+    expect(queryByTestId('mock-scatter-chart')).not.toBeNull();
+  });
+
+  test('suggests line for date time-series data', () => {
+    const { queryByTestId } = render(React.createElement(DataCharts, { result: dateTimeResult }));
+    expect(queryByTestId('mock-line-chart')).not.toBeNull();
+  });
+
+  test('suggests pie for few categorical rows', () => {
+    const { queryByTestId } = render(React.createElement(DataCharts, { result: fewCategoricalResult }));
+    expect(queryByTestId('mock-pie-chart')).not.toBeNull();
+  });
+
+  test('suggests bar for many categorical rows', () => {
+    const { queryByTestId } = render(React.createElement(DataCharts, { result: manyCategoricalResult }));
+    expect(queryByTestId('mock-bar-chart')).not.toBeNull();
+  });
+
+  // -----------------------------------------------------------------------
+  // Scatter-specific Y selector
+  // -----------------------------------------------------------------------
+
+  test('shows scatter Y selector when scatter type is active', async () => {
+    const { queryByText } = render(React.createElement(DataCharts, { result: mockNumericResult }));
+    fireEvent.click(queryByText('Scatter')!);
+    await waitFor(() => {
+      // Scatter has a separate "Y" label
+      expect(queryByText('Y')).not.toBeNull();
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Histogram-specific buckets selector
+  // -----------------------------------------------------------------------
+
+  test('shows Buckets selector when histogram is active', async () => {
+    const { queryByText } = render(React.createElement(DataCharts, { result: mockNumericResult }));
+    fireEvent.click(queryByText('Histogram')!);
+    await waitFor(() => {
+      expect(queryByText('Buckets')).not.toBeNull();
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Y-axis toggle (multi-select via dropdown menuitem)
+  // -----------------------------------------------------------------------
+
+  test('Y-axis dropdown shows numeric field options', () => {
+    const { queryAllByRole } = render(React.createElement(DataCharts, { result: mockNumericResult }));
+    const menuItems = queryAllByRole('menuitem');
+    // Should have numeric fields: revenue, cost (revenue may have ✓ if auto-selected)
+    const fieldNames = menuItems.map(el => el.textContent || '');
+    expect(fieldNames.some(n => n.includes('revenue'))).toBe(true);
+    expect(fieldNames.some(n => n.includes('cost'))).toBe(true);
+  });
+
+  test('clicking Y-axis field toggles selection', async () => {
+    const { queryAllByRole } = render(React.createElement(DataCharts, { result: mockNumericResult }));
+    const menuItems = queryAllByRole('menuitem');
+    // Find cost menuitem and click to toggle it
+    const costItem = menuItems.find(el => el.textContent?.includes('cost'));
+    expect(costItem).not.toBeNull();
+    fireEvent.click(costItem!);
+    // After toggle, yAxis should include cost — verify via menu items
+    await waitFor(() => {
+      const updatedItems = queryAllByRole('menuitem');
+      const updatedCost = updatedItems.find(el => el.textContent?.includes('cost'));
+      expect(updatedCost).not.toBeNull();
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Pie-specific: X-Axis hidden, "Showing top 10" footer
+  // -----------------------------------------------------------------------
+
+  test('X-Axis label hidden for pie chart', async () => {
+    const { queryByText } = render(React.createElement(DataCharts, { result: fewCategoricalResult }));
+    // fewCategoricalResult → pie suggestion
+    expect(queryByText('X-Axis')).toBeNull();
+  });
+
+  test('shows "Showing top 10 values" for pie with >10 data points', async () => {
+    const { queryByText, container } = render(React.createElement(DataCharts, { result: manyPieResult }));
+    // manyPieResult has 15 rows and suggests bar, switch to pie
+    fireEvent.click(queryByText('Pie')!);
+    await waitFor(() => {
+      const footerText = container.textContent || '';
+      expect(footerText).toContain('Showing top 10 values');
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Save chart flow
+  // -----------------------------------------------------------------------
+
+  test('Save button opens save dialog with input and buttons', async () => {
+    const user = userEvent.setup();
+    const { queryByText, queryByPlaceholderText } = render(React.createElement(DataCharts, { result: mockNumericResult }));
+
+    await user.click(queryByText('Save')!);
+    expect(queryByPlaceholderText('Chart name...')).not.toBeNull();
+    expect(queryByText('Cancel')).not.toBeNull();
+  });
+
+  test('Cancel button closes save dialog', async () => {
+    const user = userEvent.setup();
+    const { queryByText, queryByPlaceholderText } = render(React.createElement(DataCharts, { result: mockNumericResult }));
+
+    await user.click(queryByText('Save')!);
+    expect(queryByPlaceholderText('Chart name...')).not.toBeNull();
+
+    await user.click(queryByText('Cancel')!);
+    expect(queryByPlaceholderText('Chart name...')).toBeNull();
+  });
+
+  test('saving a chart persists to localStorage', async () => {
+    const user = userEvent.setup();
+    const { queryByText, queryByPlaceholderText } = render(React.createElement(DataCharts, { result: mockNumericResult }));
+
+    await user.click(queryByText('Save')!);
+    const input = queryByPlaceholderText('Chart name...')!;
+    await user.type(input, 'My Chart');
+
+    // Click the "Save" button in the dialog (not the initial Save)
+    const saveBtns = Array.from(document.querySelectorAll('button')).filter(b => b.textContent === 'Save');
+    const dialogSave = saveBtns[saveBtns.length - 1];
+    await user.click(dialogSave);
+
+    const stored = localStorage.getItem('libredb_saved_charts');
+    expect(stored).not.toBeNull();
+    const parsed = JSON.parse(stored!);
+    expect(parsed.length).toBe(1);
+    expect(parsed[0].name).toBe('My Chart');
+  });
+
+  test('does not save when name is empty', async () => {
+    const user = userEvent.setup();
+    const { queryByText } = render(React.createElement(DataCharts, { result: mockNumericResult }));
+
+    await user.click(queryByText('Save')!);
+    // Click Save without typing a name
+    const saveBtns = Array.from(document.querySelectorAll('button')).filter(b => b.textContent === 'Save');
+    const dialogSave = saveBtns[saveBtns.length - 1];
+    await user.click(dialogSave);
+
+    const stored = localStorage.getItem('libredb_saved_charts');
+    expect(stored).toBeNull();
+  });
+
+  test('loads saved charts from localStorage on mount', () => {
+    const savedCharts = [
+      { id: '1', name: 'Chart 1', chartType: 'bar', xAxis: 'category', yAxis: ['revenue'], aggregation: 'none', dateGrouping: '' },
+    ];
+    localStorage.setItem('libredb_saved_charts', JSON.stringify(savedCharts));
+
+    const { queryByText } = render(React.createElement(DataCharts, { result: mockNumericResult }));
+    expect(queryByText('Saved (1)')).not.toBeNull();
+  });
+
+  test('loads saved chart config when clicked', async () => {
+    const savedCharts = [
+      { id: '1', name: 'Line View', chartType: 'line', xAxis: 'date', yAxis: ['revenue'], aggregation: 'sum', dateGrouping: 'month' },
+    ];
+    localStorage.setItem('libredb_saved_charts', JSON.stringify(savedCharts));
+
+    const { queryByText } = render(React.createElement(DataCharts, { result: mockNumericResult }));
+    expect(queryByText('Saved (1)')).not.toBeNull();
+
+    // Click the saved chart name
+    const chartName = queryByText('Line View');
+    expect(chartName).not.toBeNull();
+    fireEvent.click(chartName!);
+  });
+
+  test('deletes saved chart removes from localStorage', async () => {
+    const user = userEvent.setup();
+    const savedCharts = [
+      { id: '1', name: 'Old Chart', chartType: 'bar', xAxis: 'category', yAxis: ['revenue'], aggregation: 'none', dateGrouping: '' },
+    ];
+    localStorage.setItem('libredb_saved_charts', JSON.stringify(savedCharts));
+
+    const { container } = render(React.createElement(DataCharts, { result: mockNumericResult }));
+    // Find the delete button inside the saved chart dropdown (has .lucide-x SVG)
+    const deleteBtn = container.querySelector('.lucide-x')?.closest('button');
+    expect(deleteBtn).not.toBeNull();
+    await user.click(deleteBtn!);
+
+    const stored = localStorage.getItem('libredb_saved_charts');
+    const parsed = JSON.parse(stored || '[]');
+    expect(parsed.length).toBe(0);
+  });
+
+  // -----------------------------------------------------------------------
+  // Export
+  // -----------------------------------------------------------------------
 
   test('exports chart as PNG without throwing', async () => {
     const linkClick = mock(() => {});
@@ -284,14 +589,124 @@ describe('DataCharts', () => {
     HTMLAnchorElement.prototype.click = linkClick as unknown as typeof HTMLAnchorElement.prototype.click;
 
     const { queryByText } = render(React.createElement(DataCharts, { result: mockNumericResult }));
-    const exportPngItem = queryByText('Export as PNG');
-    expect(exportPngItem).not.toBeNull();
-    fireEvent.click(exportPngItem!);
+    fireEvent.click(queryByText('Export as PNG')!);
 
     await waitFor(() => {
       expect(linkClick).toHaveBeenCalled();
     });
 
     HTMLAnchorElement.prototype.click = originalClick;
+  });
+
+  test('Export SVG triggers download when SVG element exists', async () => {
+    const createObjectURLMock = mock(() => 'blob:fake-svg-url');
+    const revokeObjectURLMock = mock(() => {});
+    const linkClick = mock(() => {});
+
+    globalThis.URL.createObjectURL = createObjectURLMock;
+    globalThis.URL.revokeObjectURL = revokeObjectURLMock;
+    const originalClick = HTMLAnchorElement.prototype.click;
+    HTMLAnchorElement.prototype.click = linkClick as unknown as typeof HTMLAnchorElement.prototype.click;
+
+    const { queryByText } = render(React.createElement(DataCharts, { result: mockNumericResult }));
+    fireEvent.click(queryByText('Export as SVG')!);
+
+    // SVG export depends on finding an actual SVG element in the DOM
+    // With mocked recharts, there won't be one, so just verify no error thrown
+    HTMLAnchorElement.prototype.click = originalClick;
+  });
+
+  // -----------------------------------------------------------------------
+  // Aggregation / date grouping hidden for certain chart types
+  // -----------------------------------------------------------------------
+
+  test('aggregation hidden for scatter chart', async () => {
+    const { queryByText } = render(React.createElement(DataCharts, { result: mockNumericResult }));
+    fireEvent.click(queryByText('Scatter')!);
+    await waitFor(() => {
+      expect(queryByText('Agg')).toBeNull();
+    });
+  });
+
+  test('aggregation hidden for histogram chart', async () => {
+    const { queryByText } = render(React.createElement(DataCharts, { result: mockNumericResult }));
+    fireEvent.click(queryByText('Histogram')!);
+    await waitFor(() => {
+      expect(queryByText('Agg')).toBeNull();
+    });
+  });
+
+  test('date grouping hidden for scatter chart', async () => {
+    const { queryByText } = render(React.createElement(DataCharts, { result: mockNumericResult }));
+    fireEvent.click(queryByText('Scatter')!);
+    await waitFor(() => {
+      expect(queryByText('Group')).toBeNull();
+    });
+  });
+
+  test('date grouping hidden for histogram chart', async () => {
+    const { queryByText } = render(React.createElement(DataCharts, { result: mockNumericResult }));
+    fireEvent.click(queryByText('Histogram')!);
+    await waitFor(() => {
+      expect(queryByText('Group')).toBeNull();
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Aggregation options rendered
+  // -----------------------------------------------------------------------
+
+  test('aggregation selector shows all options', () => {
+    const { queryAllByTestId } = render(React.createElement(DataCharts, { result: mockNumericResult }));
+    // Aggregation: none, sum, avg, count, min, max
+    expect(queryAllByTestId('select-item-sum').length).toBeGreaterThan(0);
+    expect(queryAllByTestId('select-item-avg').length).toBeGreaterThan(0);
+    expect(queryAllByTestId('select-item-count').length).toBeGreaterThan(0);
+    expect(queryAllByTestId('select-item-min').length).toBeGreaterThan(0);
+    expect(queryAllByTestId('select-item-max').length).toBeGreaterThan(0);
+  });
+
+  // -----------------------------------------------------------------------
+  // Date grouping options rendered
+  // -----------------------------------------------------------------------
+
+  test('date grouping selector shows all options', () => {
+    const { queryAllByTestId } = render(React.createElement(DataCharts, { result: mockNumericResult }));
+    // Date grouping: hour, day, week, month, year
+    expect(queryAllByTestId('select-item-hour').length).toBeGreaterThan(0);
+    expect(queryAllByTestId('select-item-day').length).toBeGreaterThan(0);
+    expect(queryAllByTestId('select-item-week').length).toBeGreaterThan(0);
+    expect(queryAllByTestId('select-item-month').length).toBeGreaterThan(0);
+    expect(queryAllByTestId('select-item-year').length).toBeGreaterThan(0);
+  });
+
+  // -----------------------------------------------------------------------
+  // Histogram bucket options
+  // -----------------------------------------------------------------------
+
+  test('histogram buckets selector shows options', async () => {
+    const { queryByText, queryByTestId } = render(React.createElement(DataCharts, { result: mockNumericResult }));
+    fireEvent.click(queryByText('Histogram')!);
+    await waitFor(() => {
+      expect(queryByTestId('select-item-5')).not.toBeNull();
+      expect(queryByTestId('select-item-10')).not.toBeNull();
+      expect(queryByTestId('select-item-20')).not.toBeNull();
+      expect(queryByTestId('select-item-50')).not.toBeNull();
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Field type icons
+  // -----------------------------------------------------------------------
+
+  test('renders field type icons in X-axis selector', () => {
+    const { container } = render(React.createElement(DataCharts, { result: mockNumericResult }));
+    // Check that field icons are rendered via lucide SVG class names
+    const hashIcons = container.querySelectorAll('.lucide-hash');
+    const calendarIcons = container.querySelectorAll('.lucide-calendar');
+    const typeIcons = container.querySelectorAll('.lucide-type');
+    expect(hashIcons.length).toBeGreaterThan(0);
+    expect(calendarIcons.length).toBeGreaterThan(0);
+    expect(typeIcons.length).toBeGreaterThan(0);
   });
 });

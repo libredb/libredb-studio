@@ -70,10 +70,10 @@ const CHART_COLORS = [
 
 type ChartType = 'bar' | 'line' | 'pie' | 'area' | 'scatter' | 'histogram' | 'stacked-bar' | 'stacked-area';
 
-type AggregationType = 'none' | 'sum' | 'avg' | 'count' | 'min' | 'max';
-type DateGrouping = 'hour' | 'day' | 'week' | 'month' | 'year';
+export type AggregationType = 'none' | 'sum' | 'avg' | 'count' | 'min' | 'max';
+export type DateGrouping = 'hour' | 'day' | 'week' | 'month' | 'year';
 
-interface FieldAnalysis {
+export interface FieldAnalysis {
   name: string;
   type: 'numeric' | 'categorical' | 'date' | 'unknown';
   uniqueValues: number;
@@ -81,7 +81,7 @@ interface FieldAnalysis {
   sample: unknown;
 }
 
-interface DataAnalysis {
+export interface DataAnalysis {
   fields: FieldAnalysis[];
   numericFields: string[];
   categoricalFields: string[];
@@ -95,7 +95,7 @@ interface DataChartsProps {
   result: QueryResult | null;
 }
 
-function analyzeField(name: string, values: unknown[]): FieldAnalysis {
+export function analyzeField(name: string, values: unknown[]): FieldAnalysis {
   const nonNullValues = values.filter(v => v !== null && v !== undefined);
   const uniqueValues = new Set(nonNullValues).size;
   const sample = nonNullValues[0];
@@ -129,7 +129,7 @@ function analyzeField(name: string, values: unknown[]): FieldAnalysis {
   };
 }
 
-function analyzeData(result: QueryResult | null): DataAnalysis {
+export function analyzeData(result: QueryResult | null): DataAnalysis {
   if (!result || !result.rows || result.rows.length === 0) {
     return {
       fields: [],
@@ -198,7 +198,7 @@ function analyzeData(result: QueryResult | null): DataAnalysis {
   };
 }
 
-function formatNumber(value: number): string {
+export function formatNumber(value: number): string {
   if (Math.abs(value) >= 1000000) {
     return (value / 1000000).toFixed(1) + 'M';
   }
@@ -234,7 +234,7 @@ const CustomTooltip = ({ active, payload, label }: TooltipProps) => {
 };
 
 // Histogram bin calculation
-function computeHistogramBins(values: number[], buckets: number): { range: string; count: number; min: number; max: number }[] {
+export function computeHistogramBins(values: number[], buckets: number): { range: string; count: number; min: number; max: number }[] {
   if (values.length === 0) return [];
   const min = Math.min(...values);
   const max = Math.max(...values);
@@ -255,7 +255,7 @@ function computeHistogramBins(values: number[], buckets: number): { range: strin
 }
 
 // Data aggregation helper
-function aggregateData(
+export function aggregateData(
   rows: Record<string, unknown>[],
   groupByField: string,
   metrics: { field: string; aggregation: AggregationType }[],
@@ -290,7 +290,7 @@ function aggregateData(
   });
 }
 
-function groupByDate(dateStr: string, grouping: DateGrouping): string {
+export function groupByDate(dateStr: string, grouping: DateGrouping): string {
   const date = new Date(dateStr);
   if (isNaN(date.getTime())) return dateStr;
   switch (grouping) {
