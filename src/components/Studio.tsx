@@ -1037,7 +1037,12 @@ export default function Studio() {
   useEffect(() => {
     const initializeConnections = async () => {
       const LOG_PREFIX = '[DemoDB]';
-      const loadedConnections = storage.getConnections();
+      
+      // Clean up any invalid connections (missing required fields)
+      storage.cleanupInvalidConnections();
+      
+      // Reload connections after cleanup to ensure we have fresh data
+      let loadedConnections = storage.getConnections();
 
       // Fetch demo connection from server
       try {
@@ -1053,48 +1058,45 @@ export default function Studio() {
               createdAt: new Date(data.connection.createdAt),
             };
 
-            // Check if demo connection already exists (by id or isDemo flag)
-            const existingDemo = loadedConnections.find(
-              c => c.id === demoConn.id || (c.isDemo && c.type === 'postgres')
+            // Remove any old demo connections (by isDemo flag or specific demo IDs)
+            // This prevents duplicates when demo config changes or old demos exist
+            const oldDemoConnections = loadedConnections.filter(
+              c => c.isDemo || c.id === 'demo-postgres-neon' || c.id === 'demo-mock'
             );
-
-            if (existingDemo) {
-              // Update existing demo connection (credentials may have changed)
-              console.log(`${LOG_PREFIX} Updating existing demo connection:`, {
-                id: existingDemo.id,
-                name: demoConn.name,
+            
+            if (oldDemoConnections.length > 0) {
+              console.log(`${LOG_PREFIX} Removing ${oldDemoConnections.length} old demo connection(s)`);
+              oldDemoConnections.forEach(oldDemo => {
+                storage.deleteConnection(oldDemo.id);
               });
-              const updatedDemo = { ...demoConn, id: existingDemo.id };
-              storage.saveConnection(updatedDemo);
-              const updatedConnections = storage.getConnections();
-              setConnections(updatedConnections);
+              // Reload after deletion
+              loadedConnections = storage.getConnections();
+            }
 
-              // Restore persisted active connection, fallback to first
-              if (updatedConnections.length > 0) {
-                const savedId = storage.getActiveConnectionId();
-                const saved = savedId ? updatedConnections.find(c => c.id === savedId) : null;
-                setActiveConnection(saved ?? updatedConnections[0]);
-              }
+            // Add the new demo connection
+            console.log(`${LOG_PREFIX} Adding demo connection:`, {
+              id: demoConn.id,
+              name: demoConn.name,
+              database: demoConn.database,
+            });
+            storage.saveConnection(demoConn);
+            const updatedConnections = storage.getConnections();
+            setConnections(updatedConnections);
+
+            // Restore persisted active connection, fallback to demo if no others
+            const savedId = storage.getActiveConnectionId();
+            const saved = savedId ? updatedConnections.find(c => c.id === savedId) : null;
+            
+            // Only auto-select demo if it was previously active or no other connections exist
+            const wasActiveDemoRemoved = oldDemoConnections.some(d => d.id === savedId);
+            // Use loadedConnections (after demo deletion) to check for non-demo connections
+            const nonDemoConnections = loadedConnections.filter(c => !c.isDemo);
+            
+            if (wasActiveDemoRemoved || nonDemoConnections.length === 0) {
+              console.log(`${LOG_PREFIX} Auto-selecting demo as active connection`);
+              setActiveConnection(saved ?? demoConn);
             } else {
-              // Add new demo connection
-              console.log(`${LOG_PREFIX} Adding new demo connection:`, {
-                id: demoConn.id,
-                name: demoConn.name,
-                database: demoConn.database,
-              });
-              storage.saveConnection(demoConn);
-              const updatedConnections = storage.getConnections();
-              setConnections(updatedConnections);
-
-              // Restore persisted active connection, fallback to demo if no others
-              const savedId = storage.getActiveConnectionId();
-              const saved = savedId ? updatedConnections.find(c => c.id === savedId) : null;
-              if (loadedConnections.length === 0) {
-                console.log(`${LOG_PREFIX} Auto-selecting demo as active connection (no other connections)`);
-                setActiveConnection(saved ?? demoConn);
-              } else {
-                setActiveConnection(saved ?? updatedConnections[0]);
-              }
+              setActiveConnection(saved ?? updatedConnections[0]);
             }
             return;
           } else {
@@ -1107,6 +1109,7 @@ export default function Studio() {
         console.error(`${LOG_PREFIX} Failed to fetch demo connection:`, error);
       }
 
+      // Fallback: no demo connection, use loaded connections
       setConnections(loadedConnections);
       if (loadedConnections.length > 0) {
         const savedId = storage.getActiveConnectionId();
