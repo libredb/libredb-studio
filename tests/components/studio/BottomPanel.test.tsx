@@ -129,9 +129,9 @@ function createDefaultProps(overrides: Partial<Record<string, unknown>> = {}) {
     maskingConfig: {
       enabled: false,
       patterns: [],
-      roles: {
-        admin: { canToggleMasking: true, canRevealValues: true },
-        user: { canToggleMasking: false, canRevealValues: false },
+      roleSettings: {
+        admin: { canToggle: true, canReveal: true },
+        user: { canToggle: false, canReveal: false },
       },
     },
     editingEnabled: false,

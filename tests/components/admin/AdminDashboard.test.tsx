@@ -10,7 +10,7 @@ setupFramerMotionMock();
 
 // Mock child tab components to simplify
 mock.module('@/components/admin/tabs/OverviewTab', () => ({
-  OverviewTab: ({ user }: unknown) => {
+  OverviewTab: ({ user }: { user?: unknown }) => {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const React = require('react');
     const u = user as { username?: string } | null;

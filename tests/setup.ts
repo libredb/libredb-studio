@@ -7,7 +7,7 @@ import { afterEach } from 'bun:test';
 process.env.JWT_SECRET = 'test-jwt-secret-for-unit-tests-32ch';
 process.env.ADMIN_PASSWORD = 'test-admin-password';
 process.env.USER_PASSWORD = 'test-user-password';
-process.env.NODE_ENV = 'test';
+(process.env as Record<string, string>).NODE_ENV = 'test';
 
 // ─── In-memory localStorage mock (SSR/test environment) ────────────────────
 if (typeof globalThis.localStorage === 'undefined') {

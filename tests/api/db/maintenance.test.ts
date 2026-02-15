@@ -23,7 +23,7 @@ const mockProvider = createMockProvider();
 const mockGetOrCreateProvider = mock(async () => mockProvider as never);
 
 // ─── Mock getSession for auth ───────────────────────────────────────────────
-const mockGetSession = mock(async () => ({ role: 'admin' as const, username: 'admin' }));
+const mockGetSession = mock(async (): Promise<{ role: string; username: string } | null> => ({ role: 'admin', username: 'admin' }));
 
 // ─── Mock audit buffer ──────────────────────────────────────────────────────
 const mockAuditPush = mock(() => ({
@@ -97,7 +97,7 @@ describe('POST /api/db/maintenance', () => {
     (mockProvider.getCapabilities as ReturnType<typeof mock>).mockClear();
 
     // Reset implementations
-    mockGetSession.mockImplementation(async () => ({ role: 'admin' as const, username: 'admin' }));
+    mockGetSession.mockImplementation(async (): Promise<{ role: string; username: string } | null> => ({ role: 'admin', username: 'admin' }));
     mockGetOrCreateProvider.mockImplementation(async () => mockProvider as never);
     (mockProvider.runMaintenance as ReturnType<typeof mock>).mockImplementation(async () => ({
       success: true,
@@ -133,7 +133,7 @@ describe('POST /api/db/maintenance', () => {
   });
 
   test('non-admin user returns 403', async () => {
-    mockGetSession.mockImplementation(async () => ({ role: 'user' as const, username: 'user' }));
+    mockGetSession.mockImplementation(async (): Promise<{ role: string; username: string } | null> => ({ role: 'user', username: 'user' }));
 
     const req = createMockRequest('/api/db/maintenance', {
       method: 'POST',

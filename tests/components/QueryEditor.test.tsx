@@ -223,9 +223,13 @@ describe('QueryEditor', () => {
       capabilities: {
         queryLanguage: 'sql',
         supportsExplain: true,
+        supportsExternalQueryLimiting: true,
         supportsCreateTable: true,
+        supportsMaintenance: false,
         maintenanceOperations: [],
-        supportsTransactions: true,
+        supportsConnectionString: false,
+        defaultPort: 5432,
+        schemaRefreshPattern: '',
       },
     });
     const { queryByText } = render(React.createElement(QueryEditor, props));
@@ -239,9 +243,13 @@ describe('QueryEditor', () => {
       capabilities: {
         queryLanguage: 'sql',
         supportsExplain: true,
+        supportsExternalQueryLimiting: true,
         supportsCreateTable: true,
+        supportsMaintenance: false,
         maintenanceOperations: [],
-        supportsTransactions: true,
+        supportsConnectionString: false,
+        defaultPort: 5432,
+        schemaRefreshPattern: '',
       },
     });
     const { queryByText } = render(React.createElement(QueryEditor, props));

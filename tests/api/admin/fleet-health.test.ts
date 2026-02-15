@@ -5,7 +5,7 @@ import { createMockProvider } from '../../helpers/mock-provider';
 // ─── Mock provider ──────────────────────────────────────────────────────────
 const mockProvider = createMockProvider();
 const mockGetOrCreateProvider = mock(async () => mockProvider);
-const mockGetSession = mock(async () => ({ role: 'admin', username: 'admin' }));
+const mockGetSession = mock(async (): Promise<{ role: string; username: string } | null> => ({ role: 'admin', username: 'admin' }));
 
 // ─── Mock @/lib/auth BEFORE importing the route ─────────────────────────────
 mock.module('@/lib/auth', () => ({
@@ -50,7 +50,7 @@ describe('POST /api/admin/fleet-health', () => {
   beforeEach(() => {
     mockGetSession.mockClear();
     mockGetOrCreateProvider.mockClear();
-    mockGetSession.mockImplementation(async () => ({ role: 'admin', username: 'admin' }));
+    mockGetSession.mockImplementation(async (): Promise<{ role: string; username: string } | null> => ({ role: 'admin', username: 'admin' }));
     mockGetOrCreateProvider.mockImplementation(async () => mockProvider);
     (mockProvider.getHealth as ReturnType<typeof mock>).mockClear();
   });

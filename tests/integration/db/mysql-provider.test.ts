@@ -235,7 +235,7 @@ function defaultMockExecute(sql: string): Promise<[unknown[], unknown[]]> {
 // ============================================================================
 
 describe('MySQLProvider', () => {
-  let provider: MySQLProvider;
+  let provider: InstanceType<typeof MySQLProvider>;
 
   beforeEach(() => {
     mockExecuteFn = defaultMockExecute;

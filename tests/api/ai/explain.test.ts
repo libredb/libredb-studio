@@ -111,7 +111,7 @@ describe('POST /api/ai/explain', () => {
     const text = await readStreamResponse(res);
     expect(text).toBe('mock response');
 
-    const callArgs = mockStream.mock.calls[0][0] as { messages: Array<{ role: string; content: string }> };
+    const callArgs = (mockStream.mock.calls as unknown[][])[0][0] as { messages: Array<{ role: string; content: string }> };
     expect(callArgs.messages[0].content).toContain('users(id, name)');
   });
 

@@ -110,7 +110,7 @@ describe('POST /api/ai/describe-schema', () => {
     expect(text).toBe('mock response');
 
     // Verify the table-specific system prompt was used
-    const callArgs = mockStream.mock.calls[0][0] as { messages: Array<{ role: string; content: string }> };
+    const callArgs = (mockStream.mock.calls as unknown[][])[0][0] as { messages: Array<{ role: string; content: string }> };
     expect(callArgs.messages[0].content).toContain('table schema');
   });
 

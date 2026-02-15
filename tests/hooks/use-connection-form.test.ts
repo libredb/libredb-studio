@@ -209,7 +209,7 @@ describe('useConnectionForm', () => {
     });
 
     expect(onConnect).toHaveBeenCalledTimes(1);
-    const connArg = onConnect.mock.calls[0][0] as DatabaseConnection;
+    const connArg = (onConnect.mock.calls as unknown[][])[0][0] as DatabaseConnection;
     expect(connArg.type).toBe('postgres');
     expect(connArg.host).toBe('localhost');
   });
@@ -367,7 +367,7 @@ describe('useConnectionForm', () => {
     // Mock fetch to throw
     globalThis.fetch = (async () => {
       throw new Error('Network error');
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
 
     const { result } = renderHook(() => useConnectionForm(defaultProps));
 

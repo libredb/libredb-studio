@@ -199,7 +199,7 @@ export class OracleProvider extends SQLBaseProvider {
       });
 
       const rows = (result.rows || []) as Record<string, unknown>[];
-      const fields = result.metaData?.map((m) => m.name) ?? [];
+      const fields = result.metaData?.map((m: { name: string }) => m.name) ?? [];
 
       return {
         rows,
@@ -310,7 +310,7 @@ export class OracleProvider extends SQLBaseProvider {
       });
 
       const rows = (result.rows || []) as Record<string, unknown>[];
-      const fields = result.metaData?.map((m) => m.name) ?? [];
+      const fields = result.metaData?.map((m: { name: string }) => m.name) ?? [];
 
       return {
         rows,

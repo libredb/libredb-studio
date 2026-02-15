@@ -27,18 +27,32 @@ const mockMetadata: ProviderMetadata = {
   capabilities: {
     queryLanguage: 'sql',
     supportsExplain: true,
+    supportsExternalQueryLimiting: true,
     supportsCreateTable: true,
+    supportsMaintenance: true,
     maintenanceOperations: [],
+    supportsConnectionString: true,
     schemaRefreshPattern: 'CREATE|ALTER|DROP',
     defaultPort: 5432,
-    supportsPrepareQuery: true,
   },
   labels: {
     entityName: 'Table',
+    entityNamePlural: 'Tables',
+    rowName: 'Row',
+    rowNamePlural: 'Rows',
     selectAction: 'SELECT',
+    generateAction: 'Generate SELECT',
+    analyzeAction: 'Analyze',
+    vacuumAction: 'Vacuum',
     searchPlaceholder: 'Search tables...',
+    analyzeGlobalLabel: 'Analyze All',
+    analyzeGlobalTitle: 'Analyze All Tables',
+    analyzeGlobalDesc: 'Analyze all tables in the database',
+    vacuumGlobalLabel: 'Vacuum All',
+    vacuumGlobalTitle: 'Vacuum All Tables',
+    vacuumGlobalDesc: 'Vacuum all tables in the database',
   },
-} as ProviderMetadata;
+};
 
 describe('useProviderMetadata', () => {
   beforeEach(() => {

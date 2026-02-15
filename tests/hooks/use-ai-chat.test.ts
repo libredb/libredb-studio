@@ -143,7 +143,7 @@ describe('useAiChat', () => {
       return new Promise<Response>((resolve) => {
         resolveFetch = resolve;
       });
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
 
     const { result } = renderHook(() => useAiChat(makeDeps()));
 
@@ -162,7 +162,7 @@ describe('useAiChat', () => {
     });
 
     // Try to submit again while loading
-    const fetchCallCount = (globalThis.fetch as ReturnType<typeof mock>).mock.calls.length;
+    const fetchCallCount = (globalThis.fetch as unknown as ReturnType<typeof mock>).mock.calls.length;
 
     act(() => {
       result.current.setAiPrompt('query two');
@@ -173,7 +173,7 @@ describe('useAiChat', () => {
     });
 
     // Fetch should NOT have been called a second time
-    expect((globalThis.fetch as ReturnType<typeof mock>).mock.calls.length).toBe(fetchCallCount);
+    expect((globalThis.fetch as unknown as ReturnType<typeof mock>).mock.calls.length).toBe(fetchCallCount);
 
     // Clean up: resolve the pending fetch
     resolveFetch!(new Response(makeTextStream('done'), { status: 200 }));
@@ -187,7 +187,7 @@ describe('useAiChat', () => {
   test('handleAiSubmit calls /api/ai/chat POST with correct body', async () => {
     const stream = makeTextStream('SELECT 1');
     const fetchMock = mock(async () => new Response(stream, { status: 200 }));
-    globalThis.fetch = fetchMock as typeof fetch;
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
 
     const deps = makeDeps();
     const { result } = renderHook(() => useAiChat(deps));
@@ -202,11 +202,11 @@ describe('useAiChat', () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
 
-    const [url, init] = fetchMock.mock.calls[0];
+    const [url, init] = (fetchMock.mock.calls as unknown[][])[0];
     expect(url).toBe('/api/ai/chat');
-    expect(init.method).toBe('POST');
+    expect((init as RequestInit).method).toBe('POST');
 
-    const body = JSON.parse(init.body as string);
+    const body = JSON.parse((init as RequestInit).body as string);
     expect(body.prompt).toBe('list all tables');
     expect(body.databaseType).toBe('postgres');
     expect(body.schemaContext).toBeDefined();
@@ -217,7 +217,7 @@ describe('useAiChat', () => {
 
   test('handleAiSubmit reads streaming response and calls setEditorValue', async () => {
     const stream = makeTextStream('SELECT ', '* ', 'FROM users');
-    globalThis.fetch = mock(async () => new Response(stream, { status: 200 })) as typeof fetch;
+    globalThis.fetch = mock(async () => new Response(stream, { status: 200 })) as unknown as typeof fetch;
 
     const mockSetEditorValue = mock(() => {});
     const deps = makeDeps({ setEditorValue: mockSetEditorValue as (v: string) => void });
@@ -233,7 +233,8 @@ describe('useAiChat', () => {
 
     // The final call to setEditorValue should contain the full response
     expect(mockSetEditorValue).toHaveBeenCalled();
-    const lastCall = mockSetEditorValue.mock.calls[mockSetEditorValue.mock.calls.length - 1];
+    const calls = mockSetEditorValue.mock.calls as unknown[][];
+    const lastCall = calls[calls.length - 1];
     expect(lastCall[0]).toContain('SELECT * FROM users');
   });
 
@@ -241,7 +242,7 @@ describe('useAiChat', () => {
 
   test('handleAiSubmit updates aiConversationHistory after success', async () => {
     const stream = makeTextStream('SELECT 1');
-    globalThis.fetch = mock(async () => new Response(stream, { status: 200 })) as typeof fetch;
+    globalThis.fetch = mock(async () => new Response(stream, { status: 200 })) as unknown as typeof fetch;
 
     const { result } = renderHook(() => useAiChat(makeDeps()));
 
@@ -266,7 +267,7 @@ describe('useAiChat', () => {
 
   test('handleAiSubmit clears prompt and hides panel on success', async () => {
     const stream = makeTextStream('SELECT 1');
-    globalThis.fetch = mock(async () => new Response(stream, { status: 200 })) as typeof fetch;
+    globalThis.fetch = mock(async () => new Response(stream, { status: 200 })) as unknown as typeof fetch;
 
     const { result } = renderHook(() => useAiChat(makeDeps()));
 
@@ -292,7 +293,7 @@ describe('useAiChat', () => {
   test('handleAiSubmit sets aiError on fetch failure', async () => {
     globalThis.fetch = mock(async () => {
       throw new Error('Network error');
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
 
     const { result } = renderHook(() => useAiChat(makeDeps()));
 
@@ -316,7 +317,7 @@ describe('useAiChat', () => {
         status: 429,
         headers: { 'content-type': 'application/json' },
       })
-    ) as typeof fetch;
+    ) as unknown as typeof fetch;
 
     const { result } = renderHook(() => useAiChat(makeDeps()));
 

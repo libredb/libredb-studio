@@ -98,7 +98,7 @@ describe('POST /api/ai/chat', () => {
     expect(text).toBe('mock response');
 
     // Verify conversation history was passed in messages
-    const callArgs = mockStream.mock.calls[0][0] as { messages: Array<{ role: string; content: string }> };
+    const callArgs = (mockStream.mock.calls as unknown[][])[0][0] as { messages: Array<{ role: string; content: string }> };
     expect(callArgs.messages.length).toBe(4); // system + 2 history + current prompt
     expect(callArgs.messages[1].role).toBe('user');
     expect(callArgs.messages[2].role).toBe('assistant');
@@ -122,7 +122,7 @@ describe('POST /api/ai/chat', () => {
     expect(text).toBe('mock response');
 
     // System prompt should be MongoDB-specific
-    const callArgs = mockStream.mock.calls[0][0] as { messages: Array<{ role: string; content: string }> };
+    const callArgs = (mockStream.mock.calls as unknown[][])[0][0] as { messages: Array<{ role: string; content: string }> };
     expect(callArgs.messages[0].content).toContain('MongoDB');
   });
 
@@ -139,7 +139,7 @@ describe('POST /api/ai/chat', () => {
     const res = await POST(req as never);
     expect(res.status).toBe(200);
 
-    const callArgs = mockStream.mock.calls[0][0] as { messages: Array<{ role: string; content: string }> };
+    const callArgs = (mockStream.mock.calls as unknown[][])[0][0] as { messages: Array<{ role: string; content: string }> };
     expect(callArgs.messages[0].content).toContain('users(id, name, email)');
   });
 

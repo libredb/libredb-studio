@@ -13,7 +13,7 @@ mock.module('@/lib/data-masking', () => ({
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { render, fireEvent, within, waitFor, cleanup } from '@testing-library/react';
 import React from 'react';
-import { mockGlobalFetch, restoreGlobalFetch } from '../helpers/mock-fetch';
+import { mockGlobalFetch, restoreGlobalFetch, type MockFetchResponse } from '../helpers/mock-fetch';
 
 import { DataProfiler } from '@/components/DataProfiler';
 import { mockPostgresConnection } from '../fixtures/connections';
@@ -124,7 +124,7 @@ describe('DataProfiler', () => {
     restoreGlobalFetch();
     // Use a fetch mock that never resolves
     mockGlobalFetch({
-      '/api/db/profile': () => new Promise(() => {}) as unknown,
+      '/api/db/profile': (() => new Promise(() => {})) as () => Promise<MockFetchResponse>,
     });
 
     const props = createDefaultProps();

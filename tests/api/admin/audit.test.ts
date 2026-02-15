@@ -42,7 +42,7 @@ const mockBuffer = {
   clear: mock(() => {}),
 };
 
-const mockGetSession = mock(async () => ({ role: 'admin' as const, username: 'admin' }));
+const mockGetSession = mock(async (): Promise<{ role: string; username: string } | null> => ({ role: 'admin', username: 'admin' }));
 
 // ─── Mock @/lib/auth BEFORE importing the route ─────────────────────────────
 mock.module('@/lib/auth', () => ({
@@ -68,7 +68,7 @@ const { GET, POST } = await import('@/app/api/admin/audit/route');
 describe('/api/admin/audit', () => {
   beforeEach(() => {
     mockGetSession.mockClear();
-    mockGetSession.mockImplementation(async () => ({ role: 'admin' as const, username: 'admin' }));
+    mockGetSession.mockImplementation(async (): Promise<{ role: string; username: string } | null> => ({ role: 'admin', username: 'admin' }));
     mockBuffer.push.mockClear();
     mockBuffer.getRecent.mockClear();
     mockBuffer.filter.mockClear();
@@ -87,7 +87,7 @@ describe('/api/admin/audit', () => {
     });
 
     test('returns 403 for non-admin', async () => {
-      mockGetSession.mockResolvedValueOnce({ role: 'user' as const, username: 'user' });
+      mockGetSession.mockResolvedValueOnce({ role: 'user', username: 'user' });
 
       const req = createMockRequest('/api/admin/audit');
 
@@ -134,7 +134,7 @@ describe('/api/admin/audit', () => {
     });
 
     test('returns 403 for non-admin on POST', async () => {
-      mockGetSession.mockResolvedValueOnce({ role: 'user' as const, username: 'user' });
+      mockGetSession.mockResolvedValueOnce({ role: 'user', username: 'user' });
 
       const req = createMockRequest('/api/admin/audit', {
         method: 'POST',

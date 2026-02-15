@@ -110,7 +110,7 @@ describe('POST /api/ai/nl2sql', () => {
     const text = await readStreamResponse(res);
     expect(text).toBe('mock response');
 
-    const callArgs = mockStream.mock.calls[0][0] as { messages: Array<{ role: string; content: string }> };
+    const callArgs = (mockStream.mock.calls as unknown[][])[0][0] as { messages: Array<{ role: string; content: string }> };
     // system + 2 history + current question
     expect(callArgs.messages.length).toBe(4);
   });
