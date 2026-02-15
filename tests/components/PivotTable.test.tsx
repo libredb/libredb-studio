@@ -20,16 +20,6 @@ const result: QueryResult = {
   executionTime: 5,
 };
 
-const numericOnlyResult: QueryResult = {
-  rows: [
-    { id: 1, value: 100, score: 50 },
-    { id: 2, value: 200, score: 60 },
-  ],
-  fields: ['id', 'value', 'score'],
-  rowCount: 2,
-  executionTime: 3,
-};
-
 describe('PivotTable', () => {
   afterEach(() => { cleanup(); });
 
