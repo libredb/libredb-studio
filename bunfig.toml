@@ -1,3 +1,3 @@
 [test]
-preload = ["./tests/setup.ts", "./tests/helpers/mock-sonner.ts", "./tests/helpers/mock-navigation.ts"]
+preload = ["./tests/setup-dom.ts", "./tests/setup.ts", "./tests/helpers/mock-sonner.ts", "./tests/helpers/mock-navigation.ts"]
 root = "tests"
