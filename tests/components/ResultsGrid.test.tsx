@@ -58,12 +58,16 @@ mock.module('@/components/results-grid/StatsBar', () => ({
   StatsBar: (props: Record<string, unknown>) =>
     React.createElement('div', { 'data-testid': 'stats-bar' },
       React.createElement('span', { 'data-testid': 'row-count' }, `${(props.result as { rows: unknown[] })?.rows?.length ?? 0} rows`),
+      React.createElement('span', { 'data-testid': 'filtered-count' }, `${props.filteredRowCount} filtered`),
       React.createElement('span', { 'data-testid': 'exec-time' }, `EXEC TIME: ${(props.result as { executionTime?: number })?.executionTime ?? 0}ms`),
       props.onToggleMasking
         ? React.createElement('button', { 'data-testid': 'masking-toggle', onClick: props.onToggleMasking as () => void }, 'MASK')
         : null,
       props.editingEnabled && props.pendingChanges && (props.pendingChanges as unknown[]).length > 0
         ? React.createElement('span', { 'data-testid': 'pending-changes' }, `${(props.pendingChanges as unknown[]).length} changes`)
+        : null,
+      (props.activeFilterCount as number) > 0
+        ? React.createElement('button', { 'data-testid': 'clear-filters', onClick: props.onClearFilters as () => void }, 'Clear Filters')
         : null,
     ),
   LoadMoreFooter: (props: Record<string, unknown>) =>
@@ -101,7 +105,7 @@ mock.module('lucide-react', () => {
 
 // ── Imports AFTER mocks ─────────────────────────────────────────────────────
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { render, fireEvent, cleanup } from '@testing-library/react';
+import { render, fireEvent, cleanup, act } from '@testing-library/react';
 import { ResultsGrid, type CellChange } from '@/components/ResultsGrid';
 import type { QueryResult } from '@/lib/types';
 
@@ -430,5 +434,371 @@ describe('ResultsGrid', () => {
     // When masking is enabled and shouldMask returns true, values should be masked
     // The mock maskValueByPattern returns '***'
     expect(container.textContent).toContain('***');
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // Column Filtering Tests
+  // ═══════════════════════════════════════════════════════════════════════
+
+  describe('Column filtering', () => {
+    test('clicking filter button opens filter dropdown with input', () => {
+      const { container } = render(React.createElement(ResultsGrid, { result: mockResult }));
+
+      const filterButtons = container.querySelectorAll('button[title="Filter column"]');
+      expect(filterButtons.length).toBeGreaterThan(0);
+
+      fireEvent.click(filterButtons[0]);
+
+      const filterInput = container.querySelector('input[placeholder="Filter id..."]');
+      expect(filterInput).not.toBeNull();
+    });
+
+    test('typing in filter input filters rows', () => {
+      const { container } = render(React.createElement(ResultsGrid, { result: mockResult }));
+
+      const filterButtons = container.querySelectorAll('button[title="Filter column"]');
+      fireEvent.click(filterButtons[1]);
+
+      const filterInput = container.querySelector('input[placeholder="Filter name..."]');
+      expect(filterInput).not.toBeNull();
+
+      fireEvent.change(filterInput!, { target: { value: 'Alice' } });
+
+      const filteredCount = container.querySelector('[data-testid="filtered-count"]');
+      expect(filteredCount?.textContent).toContain('1 filtered');
+    });
+
+    test('clearing filter value in input removes filter', () => {
+      const { container } = render(React.createElement(ResultsGrid, { result: mockResult }));
+
+      const filterButtons = container.querySelectorAll('button[title="Filter column"]');
+      fireEvent.click(filterButtons[1]);
+
+      const filterInput = container.querySelector('input[placeholder="Filter name..."]')!;
+      fireEvent.change(filterInput, { target: { value: 'Alice' } });
+      expect(container.querySelector('[data-testid="filtered-count"]')?.textContent).toContain('1 filtered');
+
+      // Re-query input after state change (TanStack Table recreates columns)
+      const filterInput2 = container.querySelector('input[placeholder="Filter name..."]')!;
+      fireEvent.change(filterInput2, { target: { value: '' } });
+      expect(container.querySelector('[data-testid="filtered-count"]')?.textContent).toContain('3 filtered');
+    });
+
+    test('Clear filter button removes single column filter', () => {
+      const { container } = render(React.createElement(ResultsGrid, { result: mockResult }));
+
+      const filterButtons = container.querySelectorAll('button[title="Filter column"]');
+      fireEvent.click(filterButtons[1]);
+
+      const filterInput = container.querySelector('input[placeholder="Filter name..."]')!;
+      fireEvent.change(filterInput, { target: { value: 'Alice' } });
+
+      // "Clear filter" button should appear inside dropdown
+      const clearBtn = Array.from(container.querySelectorAll('button')).find(
+        btn => btn.textContent === 'Clear filter'
+      );
+      expect(clearBtn).not.toBeUndefined();
+      fireEvent.click(clearBtn!);
+
+      expect(container.querySelector('[data-testid="filtered-count"]')?.textContent).toContain('3 filtered');
+    });
+
+    test('Escape key closes filter dropdown', () => {
+      const { container } = render(React.createElement(ResultsGrid, { result: mockResult }));
+
+      const filterButtons = container.querySelectorAll('button[title="Filter column"]');
+      fireEvent.click(filterButtons[0]);
+
+      const filterInput = container.querySelector('input[placeholder="Filter id..."]');
+      expect(filterInput).not.toBeNull();
+
+      fireEvent.keyDown(filterInput!, { key: 'Escape' });
+
+      expect(container.querySelector('input[placeholder="Filter id..."]')).toBeNull();
+    });
+
+    test('Enter key closes filter dropdown', () => {
+      const { container } = render(React.createElement(ResultsGrid, { result: mockResult }));
+
+      const filterButtons = container.querySelectorAll('button[title="Filter column"]');
+      fireEvent.click(filterButtons[0]);
+
+      const filterInput = container.querySelector('input[placeholder="Filter id..."]');
+      expect(filterInput).not.toBeNull();
+
+      fireEvent.keyDown(filterInput!, { key: 'Enter' });
+
+      expect(container.querySelector('input[placeholder="Filter id..."]')).toBeNull();
+    });
+
+    test('clicking same filter button again closes dropdown', () => {
+      const { container } = render(React.createElement(ResultsGrid, { result: mockResult }));
+
+      const filterButtons = container.querySelectorAll('button[title="Filter column"]');
+      fireEvent.click(filterButtons[0]);
+      expect(container.querySelector('input[placeholder="Filter id..."]')).not.toBeNull();
+
+      // Re-query button after re-render
+      const filterButtons2 = container.querySelectorAll('button[title="Filter column"]');
+      fireEvent.click(filterButtons2[0]);
+      expect(container.querySelector('input[placeholder="Filter id..."]')).toBeNull();
+    });
+
+    test('clear all filters via StatsBar handleClearFilters', () => {
+      const { container } = render(React.createElement(ResultsGrid, { result: mockResult }));
+
+      // Set a filter
+      const filterButtons = container.querySelectorAll('button[title="Filter column"]');
+      fireEvent.click(filterButtons[1]);
+      const filterInput = container.querySelector('input[placeholder="Filter name..."]')!;
+      fireEvent.change(filterInput, { target: { value: 'Alice' } });
+
+      // Close dropdown (re-query input after state change)
+      const filterInput2 = container.querySelector('input[placeholder="Filter name..."]')!;
+      fireEvent.keyDown(filterInput2, { key: 'Escape' });
+
+      // Clear all filters button should be visible (activeFilterCount > 0)
+      const clearAllBtn = container.querySelector('[data-testid="clear-filters"]');
+      expect(clearAllBtn).not.toBeNull();
+      fireEvent.click(clearAllBtn!);
+
+      // All rows restored
+      expect(container.querySelector('[data-testid="filtered-count"]')?.textContent).toContain('3 filtered');
+      expect(container.querySelector('[data-testid="clear-filters"]')).toBeNull();
+    });
+
+    test('filter with no matching rows shows 0 filtered', () => {
+      const { container } = render(React.createElement(ResultsGrid, { result: mockResult }));
+
+      const filterButtons = container.querySelectorAll('button[title="Filter column"]');
+      fireEvent.click(filterButtons[1]);
+      const filterInput = container.querySelector('input[placeholder="Filter name..."]')!;
+      fireEvent.change(filterInput, { target: { value: 'Nonexistent' } });
+
+      expect(container.querySelector('[data-testid="filtered-count"]')?.textContent).toContain('0 filtered');
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // Inline Editing Tests
+  // ═══════════════════════════════════════════════════════════════════════
+
+  describe('Inline editing', () => {
+    function findEditInput(container: HTMLElement) {
+      return Array.from(container.querySelectorAll('input')).find(
+        input => input.className.includes('border-blue-500')
+      );
+    }
+
+    test('double-clicking cell enters edit mode with input', () => {
+      const onCellChange = mock(() => {});
+      const { container } = render(React.createElement(ResultsGrid, {
+        result: mockResult,
+        editingEnabled: true,
+        onCellChange,
+        pendingChanges: [],
+      }));
+
+      const cells = container.querySelectorAll('.cursor-text');
+      expect(cells.length).toBeGreaterThan(0);
+
+      fireEvent.doubleClick(cells[0]);
+
+      expect(findEditInput(container)).not.toBeUndefined();
+    });
+
+    test('Enter key commits edit and calls onCellChange', () => {
+      const onCellChange = mock(() => {});
+      const { container } = render(React.createElement(ResultsGrid, {
+        result: mockResult,
+        editingEnabled: true,
+        onCellChange,
+        pendingChanges: [],
+      }));
+
+      const cells = container.querySelectorAll('.cursor-text');
+      const nameCell = Array.from(cells).find(c => c.textContent === 'Alice');
+      expect(nameCell).not.toBeUndefined();
+      fireEvent.doubleClick(nameCell!);
+
+      const editInput = findEditInput(container)!;
+      fireEvent.change(editInput, { target: { value: 'Alicia' } });
+
+      // Re-query after state change (columns memo recomputes on editValue change)
+      const updatedEditInput = findEditInput(container)!;
+      fireEvent.keyDown(updatedEditInput, { key: 'Enter' });
+
+      expect(onCellChange).toHaveBeenCalledTimes(1);
+      const callArg = (onCellChange.mock.calls as unknown[][])[0][0] as Record<string, unknown>;
+      expect(callArg.newValue).toBe('Alicia');
+      expect(callArg.originalValue).toBe('Alice');
+    });
+
+    test('Escape key cancels edit without calling onCellChange', () => {
+      const onCellChange = mock(() => {});
+      const { container } = render(React.createElement(ResultsGrid, {
+        result: mockResult,
+        editingEnabled: true,
+        onCellChange,
+        pendingChanges: [],
+      }));
+
+      const cells = container.querySelectorAll('.cursor-text');
+      fireEvent.doubleClick(cells[0]);
+
+      const editInput = findEditInput(container)!;
+      // Press Escape directly (no value change to avoid stale ref)
+      fireEvent.keyDown(editInput, { key: 'Escape' });
+
+      expect(onCellChange).not.toHaveBeenCalled();
+      expect(findEditInput(container)).toBeUndefined();
+    });
+
+    test('blur commits edit when value changed', () => {
+      const onCellChange = mock(() => {});
+      const { container } = render(React.createElement(ResultsGrid, {
+        result: mockResult,
+        editingEnabled: true,
+        onCellChange,
+        pendingChanges: [],
+      }));
+
+      const cells = container.querySelectorAll('.cursor-text');
+      const nameCell = Array.from(cells).find(c => c.textContent === 'Alice');
+      fireEvent.doubleClick(nameCell!);
+
+      const editInput = findEditInput(container)!;
+      fireEvent.change(editInput, { target: { value: 'Alicia' } });
+
+      // Re-query after state change
+      const updatedEditInput = findEditInput(container)!;
+      fireEvent.blur(updatedEditInput);
+
+      expect(onCellChange).toHaveBeenCalledTimes(1);
+      const callArg = (onCellChange.mock.calls as unknown[][])[0][0] as Record<string, unknown>;
+      expect(callArg.newValue).toBe('Alicia');
+    });
+
+    test('Enter with unchanged value does not call onCellChange', () => {
+      const onCellChange = mock(() => {});
+      const { container } = render(React.createElement(ResultsGrid, {
+        result: mockResult,
+        editingEnabled: true,
+        onCellChange,
+        pendingChanges: [],
+      }));
+
+      const cells = container.querySelectorAll('.cursor-text');
+      const nameCell = Array.from(cells).find(c => c.textContent === 'Alice');
+      fireEvent.doubleClick(nameCell!);
+
+      const editInput = findEditInput(container)!;
+      // Don't change the value, just press Enter
+      fireEvent.keyDown(editInput, { key: 'Enter' });
+
+      expect(onCellChange).not.toHaveBeenCalled();
+    });
+
+    test('blur with unchanged value does not call onCellChange', () => {
+      const onCellChange = mock(() => {});
+      const { container } = render(React.createElement(ResultsGrid, {
+        result: mockResult,
+        editingEnabled: true,
+        onCellChange,
+        pendingChanges: [],
+      }));
+
+      const cells = container.querySelectorAll('.cursor-text');
+      const nameCell = Array.from(cells).find(c => c.textContent === 'Alice');
+      fireEvent.doubleClick(nameCell!);
+
+      const editInput = findEditInput(container)!;
+      fireEvent.blur(editInput);
+
+      expect(onCellChange).not.toHaveBeenCalled();
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // Cell Reveal Tests
+  // ═══════════════════════════════════════════════════════════════════════
+
+  describe('Cell reveal', () => {
+    function setupMasking() {
+      mockShouldMask.mockReturnValue(true);
+      mockCanReveal.mockReturnValue(true);
+      mockDetectSensitiveColumnsFromConfig.mockReturnValue(new Map([
+        ['email', { name: 'email', maskType: 'email' as const, columnPatterns: ['email'], enabled: true, id: 'e1' }],
+      ]));
+    }
+
+    const maskingProps = {
+      result: mockResult,
+      maskingEnabled: true,
+      maskingConfig: { enabled: true, patterns: [], roleSettings: { admin: { canToggle: true, canReveal: true }, user: { canToggle: false, canReveal: false } } },
+    };
+
+    test('clicking reveal button shows actual value with lock icon', () => {
+      setupMasking();
+
+      const { container } = render(React.createElement(ResultsGrid, maskingProps));
+
+      // Initially masked with '***'
+      expect(container.textContent).toContain('***');
+
+      // Find reveal button
+      const revealButton = container.querySelector('button[title="Reveal value (10s)"]');
+      expect(revealButton).not.toBeNull();
+
+      // Click reveal
+      fireEvent.click(revealButton!);
+
+      // After reveal, the cell should show actual email value (not ***)
+      // This confirms the revealed cell branch (lines 328-333) is hit
+      expect(container.textContent).toContain('alice@example.com');
+    });
+
+    test('revealed cell auto-hides after timeout', () => {
+      setupMasking();
+
+      const { container } = render(React.createElement(ResultsGrid, maskingProps));
+
+      // Mock setTimeout AFTER React initialization to avoid breaking React internals
+      const origSetTimeout = globalThis.setTimeout;
+      let capturedCallback: (() => void) | null = null;
+      globalThis.setTimeout = ((fn: (...args: unknown[]) => void, ms?: number) => {
+        if (ms === 10000) {
+          capturedCallback = fn as () => void;
+          return 0 as unknown as ReturnType<typeof setTimeout>;
+        }
+        return origSetTimeout(fn, ms);
+      }) as typeof setTimeout;
+
+      const revealButton = container.querySelector('button[title="Reveal value (10s)"]')!;
+      fireEvent.click(revealButton);
+
+      // Callback should have been captured
+      expect(capturedCallback).not.toBeNull();
+
+      // Execute the timeout callback to cover auto-hide lines (139-143)
+      act(() => { capturedCallback!(); });
+
+      globalThis.setTimeout = origSetTimeout;
+    });
+
+    test('reveal button not shown when canReveal is false', () => {
+      mockShouldMask.mockReturnValue(true);
+      mockCanReveal.mockReturnValue(false);
+      mockDetectSensitiveColumnsFromConfig.mockReturnValue(new Map([
+        ['email', { name: 'email', maskType: 'email' as const, columnPatterns: ['email'], enabled: true, id: 'e1' }],
+      ]));
+
+      const { container } = render(React.createElement(ResultsGrid, maskingProps));
+
+      expect(container.textContent).toContain('***');
+
+      const revealButton = container.querySelector('button[title="Reveal value (10s)"]');
+      expect(revealButton).toBeNull();
+    });
   });
 });
