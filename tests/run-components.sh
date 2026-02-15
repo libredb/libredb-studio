@@ -110,8 +110,9 @@ run_group "Group 9/12: StudioHeaders & TableItem" \
 run_group "Group 10/12: PoolTab" \
   tests/components/monitoring/PoolTab.test.tsx
 
-# Group 11: Smoke tests (isolated - mock globalThis.fetch)
+# Group 11: Smoke tests (isolated - mock globalThis.fetch + MonitoringEmbed)
 run_group "Group 11/12: Smoke tests" \
+  tests/components/admin/MonitoringEmbed.test.tsx \
   tests/components/VisualExplain.test.tsx \
   tests/components/AIAutopilotPanel.test.tsx \
   tests/components/DatabaseDocs.test.tsx \
