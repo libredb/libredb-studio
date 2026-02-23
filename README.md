@@ -63,6 +63,10 @@ The demo runs in **Demo Mode** with simulated data. No real database required!
 
 ---
 
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/libredb/libredb-studio)
+
+---
+
 ## Key Features
 
 ### Professional SQL IDE
