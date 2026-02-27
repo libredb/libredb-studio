@@ -3,7 +3,7 @@
 import React, { useRef, useEffect, useState, useMemo, forwardRef, useImperativeHandle, useCallback } from 'react';
 import Editor, { useMonaco } from '@monaco-editor/react';
 import type * as Monaco from 'monaco-editor';
-import { Zap, Sparkles, Send, X, Loader2, AlignLeft, Trash2, Copy, Play } from 'lucide-react';
+import { Zap, Sparkles, Send, X, Loader2, AlignLeft, Trash2, Copy, Play, Hash } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { motion, AnimatePresence } from 'framer-motion';
 import { format } from 'sql-formatter';
@@ -47,11 +47,11 @@ interface ParsedTable {
 }
 
 // Static editor options - defined outside component to prevent re-creation on every render
-const EDITOR_OPTIONS = {
+const getEditorOptions = (showLineNumbers: boolean) => ({
   minimap: { enabled: false },
   fontSize: 13,
   fontFamily: '"JetBrains Mono", "Fira Code", Menlo, Monaco, Consolas, monospace',
-  lineNumbers: 'on' as const,
+  lineNumbers: showLineNumbers ? ('on' as const) : ('off' as const),
   roundedSelection: true,
   scrollBeyondLastLine: false,
   readOnly: false,
@@ -80,22 +80,31 @@ const EDITOR_OPTIONS = {
   parameterHints: {
     enabled: true
   }
-} as const;
+});
 
 export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
-  value,
-  onChange,
-  onContentChange,
-  onExplain,
-  language = 'sql',
-  tables = [],
-  databaseType,
-  schemaContext,
-  capabilities
-}, ref) => {
+                                                                           value,
+                                                                           onChange,
+                                                                           onContentChange,
+                                                                           onExplain,
+                                                                           language = 'sql',
+                                                                           tables = [],
+                                                                           databaseType,
+                                                                           schemaContext,
+                                                                           capabilities
+                                                                         }, ref) => {
   const monaco = useMonaco();
   const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
   const [hasSelection, setHasSelection] = useState(false);
+
+  // Line numbers toggle state (persisted in localStorage)
+  const [showLineNumbers, setShowLineNumbers] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('editor-line-numbers');
+      return saved !== null ? saved === 'true' : true; // default: true
+    }
+    return true;
+  });
 
   // Track last synced value to detect external changes
   const lastSyncedValueRef = useRef<string>(value);
@@ -115,6 +124,20 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
       }
     }
   }, [value]);
+
+  // Update editor options when line numbers toggle changes
+  useEffect(() => {
+    if (editorRef.current) {
+      editorRef.current.updateOptions({ lineNumbers: showLineNumbers ? 'on' : 'off' });
+    }
+  }, [showLineNumbers]);
+
+  // Persist line numbers preference to localStorage
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('editor-line-numbers', String(showLineNumbers));
+    }
+  }, [showLineNumbers]);
 
   const parsedSchema = useMemo((): ParsedTable[] => {
     if (!schemaContext) return [];
@@ -456,74 +479,88 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
 
 
   return (
-    <div className="h-full w-full flex flex-col bg-[#050505] relative overflow-hidden group">
-      {/* Dynamic Pro Toolbar - Hidden on mobile */}
-      <div className="hidden md:flex items-center gap-1.5 px-3 py-1.5 bg-[#0a0a0a] border-b border-white/5 overflow-x-auto no-scrollbar scroll-smooth">
-        <div className="flex items-center gap-1 mr-2 px-1.5 py-1 rounded bg-white/5 border border-white/5">
-          <span className="text-[9px] font-black text-zinc-500 uppercase tracking-[0.2em]">Quick Actions</span>
-        </div>
+      <div className="h-full w-full flex flex-col bg-[#050505] relative overflow-hidden group">
+        {/* Dynamic Pro Toolbar - Hidden on mobile */}
+        <div className="hidden md:flex items-center gap-1.5 px-3 py-1.5 bg-[#0a0a0a] border-b border-white/5 overflow-x-auto no-scrollbar scroll-smooth">
+          <div className="flex items-center gap-1 mr-2 px-1.5 py-1 rounded bg-white/5 border border-white/5">
+            <span className="text-[9px] font-black text-zinc-500 uppercase tracking-[0.2em]">Quick Actions</span>
+          </div>
 
-        {hasSelection && (
-          <button
-            onClick={handleExecute}
-            className="px-2.5 py-1.5 rounded bg-blue-600 hover:bg-blue-500 text-white text-[10px] font-bold transition-all border border-blue-400/30 active:scale-95 flex items-center gap-1.5 shadow-[0_0_15px_rgba(37,99,235,0.3)] animate-in fade-in zoom-in duration-200"
-          >
-            <Play className="w-3 h-3 fill-current" />
-            RUN SELECTION
-          </button>
-        )}
-
-        <button
-          onClick={handleFormat}
-          title={language === 'json' ? "Format JSON (Shift+Alt+F)" : "Format SQL (Shift+Alt+F)"}
-          className="px-2.5 py-1.5 rounded bg-[#111] hover:bg-zinc-800 text-zinc-500 hover:text-zinc-200 text-[10px] font-mono transition-all border border-white/5 active:scale-95 flex items-center gap-1.5"
-        >
-          <AlignLeft className="w-3 h-3" />
-          FORMAT
-        </button>
-
-        <button
-          onClick={handleCopy}
-          className="px-2.5 py-1.5 rounded bg-[#111] hover:bg-zinc-800 text-zinc-500 hover:text-zinc-200 text-[10px] font-mono transition-all border border-white/5 active:scale-95 flex items-center gap-1.5"
-        >
-          <Copy className="w-3 h-3" />
-          {hasSelection ? 'COPY SELECTION' : 'COPY'}
-        </button>
-
-        <button
-          onClick={handleClear}
-          className="px-2.5 py-1.5 rounded bg-[#111] hover:bg-zinc-800 text-zinc-500 hover:text-red-400 text-[10px] font-mono transition-all border border-white/5 active:scale-95 flex items-center gap-1.5"
-        >
-          <Trash2 className="w-3 h-3" />
-          CLEAR
-        </button>
-
-        <div className="w-px h-4 bg-white/5 mx-1" />
-
-        <button
-          onClick={() => setShowAi(!showAi)}
-          className={cn(
-            "px-2.5 py-1.5 rounded text-[10px] font-bold transition-all border active:scale-95 flex items-center gap-1.5",
-            showAi
-              ? "bg-blue-600 border-blue-500 text-white shadow-[0_0_10px_rgba(37,99,235,0.4)]"
-              : "bg-zinc-900 border-white/5 text-zinc-400 hover:text-blue-400 hover:border-blue-500/30"
+          {hasSelection && (
+              <button
+                  onClick={handleExecute}
+                  className="px-2.5 py-1.5 rounded bg-blue-600 hover:bg-blue-500 text-white text-[10px] font-bold transition-all border border-blue-400/30 active:scale-95 flex items-center gap-1.5 shadow-[0_0_15px_rgba(37,99,235,0.3)] animate-in fade-in zoom-in duration-200"
+              >
+                <Play className="w-3 h-3 fill-current" />
+                RUN SELECTION
+              </button>
           )}
-        >
-          <Sparkles className={cn("w-3.5 h-3.5", showAi && "animate-pulse")} />
-          AI ASSISTANT
-        </button>
 
-        <div className="flex-1" />
+          <button
+              onClick={handleFormat}
+              title={language === 'json' ? "Format JSON (Shift+Alt+F)" : "Format SQL (Shift+Alt+F)"}
+              className="px-2.5 py-1.5 rounded bg-[#111] hover:bg-zinc-800 text-zinc-500 hover:text-zinc-200 text-[10px] font-mono transition-all border border-white/5 active:scale-95 flex items-center gap-1.5"
+          >
+            <AlignLeft className="w-3 h-3" />
+            FORMAT
+          </button>
+
+          <button
+              onClick={handleCopy}
+              className="px-2.5 py-1.5 rounded bg-[#111] hover:bg-zinc-800 text-zinc-500 hover:text-zinc-200 text-[10px] font-mono transition-all border border-white/5 active:scale-95 flex items-center gap-1.5"
+          >
+            <Copy className="w-3 h-3" />
+            {hasSelection ? 'COPY SELECTION' : 'COPY'}
+          </button>
+
+          <button
+              onClick={handleClear}
+              className="px-2.5 py-1.5 rounded bg-[#111] hover:bg-zinc-800 text-zinc-500 hover:text-red-400 text-[10px] font-mono transition-all border border-white/5 active:scale-95 flex items-center gap-1.5"
+          >
+            <Trash2 className="w-3 h-3" />
+            CLEAR
+          </button>
+
+          <div className="w-px h-4 bg-white/5 mx-1" />
+
+          <button
+              onClick={() => setShowLineNumbers(!showLineNumbers)}
+              title={showLineNumbers ? "Hide line numbers" : "Show line numbers"}
+              className={cn(
+                  "px-2.5 py-1.5 rounded text-[10px] font-mono transition-all border active:scale-95 flex items-center gap-1.5",
+                  showLineNumbers
+                      ? "bg-zinc-800 border-white/10 text-zinc-300"
+                      : "bg-[#111] border-white/5 text-zinc-500 hover:text-zinc-300"
+              )}
+          >
+            <Hash className="w-3 h-3" />
+            LINES
+          </button>
+
+          <button
+              onClick={() => setShowAi(!showAi)}
+              className={cn(
+                  "px-2.5 py-1.5 rounded text-[10px] font-bold transition-all border active:scale-95 flex items-center gap-1.5",
+                  showAi
+                      ? "bg-blue-600 border-blue-500 text-white shadow-[0_0_10px_rgba(37,99,235,0.4)]"
+                      : "bg-zinc-900 border-white/5 text-zinc-400 hover:text-blue-400 hover:border-blue-500/30"
+              )}
+          >
+            <Sparkles className={cn("w-3.5 h-3.5", showAi && "animate-pulse")} />
+            AI ASSISTANT
+          </button>
+
+          <div className="flex-1" />
 
           <div className="flex items-center gap-1.5 opacity-50 hover:opacity-100 transition-opacity">
             {onExplain && capabilities?.supportsExplain && (
-              <button
-                onClick={onExplain}
-                className="px-2.5 py-1.5 rounded bg-zinc-900 hover:bg-zinc-800 text-amber-500 hover:text-amber-400 text-[10px] font-bold transition-all border border-amber-500/10 active:scale-95 flex items-center gap-1.5 mr-2"
-              >
-                <Zap className="w-3 h-3" />
-                EXPLAIN
-              </button>
+                <button
+                    onClick={onExplain}
+                    className="px-2.5 py-1.5 rounded bg-zinc-900 hover:bg-zinc-800 text-amber-500 hover:text-amber-400 text-[10px] font-bold transition-all border border-amber-500/10 active:scale-95 flex items-center gap-1.5 mr-2"
+                >
+                  <Zap className="w-3 h-3" />
+                  EXPLAIN
+                </button>
             )}
             <kbd className="px-2 py-1 rounded bg-zinc-900 border border-white/5 text-[9px] text-zinc-500 font-mono">
               ⌘ + ENTER TO RUN
@@ -531,186 +568,186 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
           </div>
         </div>
 
-      {/* Floating AI Input */}
-      <AnimatePresence>
-        {showAi && (
-            <motion.div
-              initial={{ opacity: 0, y: -10, scale: 0.95 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: -10, scale: 0.95 }}
-              className="absolute top-12 left-1/2 -translate-x-1/2 w-full max-w-2xl z-50 px-4"
-            >
-              <form
-                onSubmit={handleAiSubmit}
-                className="bg-[#0f0f0f]/95 backdrop-blur-xl border border-blue-500/40 rounded-2xl shadow-[0_0_50px_rgba(37,99,235,0.25)] overflow-hidden flex flex-col p-1.5"
+        {/* Floating AI Input */}
+        <AnimatePresence>
+          {showAi && (
+              <motion.div
+                  initial={{ opacity: 0, y: -10, scale: 0.95 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: -10, scale: 0.95 }}
+                  className="absolute top-12 left-1/2 -translate-x-1/2 w-full max-w-2xl z-50 px-4"
               >
-                <div className="flex items-center justify-between px-3 py-1.5 border-b border-white/5 mb-1.5">
-                  <div className="flex items-center gap-2">
-                    <div className="p-1 rounded-md bg-blue-500/10">
-                      <Sparkles className="w-3.5 h-3.5 text-blue-400" />
+                <form
+                    onSubmit={handleAiSubmit}
+                    className="bg-[#0f0f0f]/95 backdrop-blur-xl border border-blue-500/40 rounded-2xl shadow-[0_0_50px_rgba(37,99,235,0.25)] overflow-hidden flex flex-col p-1.5"
+                >
+                  <div className="flex items-center justify-between px-3 py-1.5 border-b border-white/5 mb-1.5">
+                    <div className="flex items-center gap-2">
+                      <div className="p-1 rounded-md bg-blue-500/10">
+                        <Sparkles className="w-3.5 h-3.5 text-blue-400" />
+                      </div>
+                      <span className="text-[10px] font-black text-blue-400 uppercase tracking-[0.2em]">Expert DBA Mode</span>
                     </div>
-                    <span className="text-[10px] font-black text-blue-400 uppercase tracking-[0.2em]">Expert DBA Mode</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    {aiConversationHistory.length > 0 && (
-                      <button
-                        type="button"
-                        onClick={() => setAiConversationHistory([])}
-                        className="text-[9px] text-zinc-500 hover:text-zinc-300 font-medium px-1.5 py-0.5 rounded bg-white/5 hover:bg-white/10 transition-colors"
-                        title="Clear conversation history"
-                      >
-                        {aiConversationHistory.length / 2} turns - Clear
-                      </button>
-                    )}
-                    <span className="text-[9px] text-zinc-500 font-medium">Context: {tables.length} tables</span>
-                    <div className="w-1 h-1 rounded-full bg-emerald-500 animate-pulse" />
-                  </div>
+                    <div className="flex items-center gap-2">
+                      {aiConversationHistory.length > 0 && (
+                          <button
+                              type="button"
+                              onClick={() => setAiConversationHistory([])}
+                              className="text-[9px] text-zinc-500 hover:text-zinc-300 font-medium px-1.5 py-0.5 rounded bg-white/5 hover:bg-white/10 transition-colors"
+                              title="Clear conversation history"
+                          >
+                            {aiConversationHistory.length / 2} turns - Clear
+                          </button>
+                      )}
+                      <span className="text-[9px] text-zinc-500 font-medium">Context: {tables.length} tables</span>
+                      <div className="w-1 h-1 rounded-full bg-emerald-500 animate-pulse" />
+                    </div>
                   </div>
 
                   <AnimatePresence>
                     {aiError && (
-                      <motion.div
-                        initial={{ height: 0, opacity: 0 }}
-                        animate={{ height: 'auto', opacity: 1 }}
-                        exit={{ height: 0, opacity: 0 }}
-                        className="px-3 pb-2"
-                      >
-                        <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-2.5 flex items-start gap-2.5">
-                          <div className="p-1 rounded bg-red-500/20 mt-0.5">
-                            <X className="w-3 h-3 text-red-400" />
+                        <motion.div
+                            initial={{ height: 0, opacity: 0 }}
+                            animate={{ height: 'auto', opacity: 1 }}
+                            exit={{ height: 0, opacity: 0 }}
+                            className="px-3 pb-2"
+                        >
+                          <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-2.5 flex items-start gap-2.5">
+                            <div className="p-1 rounded bg-red-500/20 mt-0.5">
+                              <X className="w-3 h-3 text-red-400" />
+                            </div>
+                            <div className="flex-1">
+                              <p className="text-[11px] font-bold text-red-400 uppercase tracking-tight mb-0.5">AI Error</p>
+                              <p className="text-[12px] text-red-300/90 leading-relaxed">{aiError}</p>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => setAiError(null)}
+                                className="text-red-400/50 hover:text-red-400 transition-colors"
+                            >
+                              <X className="w-3.5 h-3.5" />
+                            </button>
                           </div>
-                          <div className="flex-1">
-                            <p className="text-[11px] font-bold text-red-400 uppercase tracking-tight mb-0.5">AI Error</p>
-                            <p className="text-[12px] text-red-300/90 leading-relaxed">{aiError}</p>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => setAiError(null)}
-                            className="text-red-400/50 hover:text-red-400 transition-colors"
-                          >
-                            <X className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      </motion.div>
+                        </motion.div>
                     )}
                   </AnimatePresence>
 
                   <div className="flex items-center gap-2 px-3 pb-1.5">
 
-                  <input
-                    autoFocus
-                    value={aiPrompt}
-                    onChange={(e) => setAiPrompt(e.target.value)}
-                    placeholder="Describe the data you need in plain English... (e.g. 'Show me the revenue growth per month')"
-                    className="bg-transparent border-none outline-none text-[13px] text-zinc-100 w-full h-12 placeholder:text-zinc-600 font-medium"
-                  />
-                  <div className="flex items-center gap-1.5">
-                    <button
-                      type="button"
-                      onClick={() => setShowAi(false)}
-                      className="p-2.5 rounded-xl hover:bg-white/5 text-zinc-500 transition-colors"
-                    >
-                      <X className="w-4.5 h-4.5" />
-                    </button>
-                    <button
-                      type="submit"
-                      disabled={isAiLoading || !aiPrompt.trim()}
-                      className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:hover:bg-blue-600 px-5 py-2.5 rounded-xl text-white text-xs font-bold transition-all shadow-lg shadow-blue-600/30 flex items-center gap-2"
-                    >
-                      {isAiLoading ? (
-                        <>
-                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                          <span>Thinking...</span>
-                        </>
-                      ) : (
-                        <>
-                          <span>Generate</span>
-                          <Send className="w-3.5 h-3.5" />
-                        </>
-                      )}
-                    </button>
+                    <input
+                        autoFocus
+                        value={aiPrompt}
+                        onChange={(e) => setAiPrompt(e.target.value)}
+                        placeholder="Describe the data you need in plain English... (e.g. 'Show me the revenue growth per month')"
+                        className="bg-transparent border-none outline-none text-[13px] text-zinc-100 w-full h-12 placeholder:text-zinc-600 font-medium"
+                    />
+                    <div className="flex items-center gap-1.5">
+                      <button
+                          type="button"
+                          onClick={() => setShowAi(false)}
+                          className="p-2.5 rounded-xl hover:bg-white/5 text-zinc-500 transition-colors"
+                      >
+                        <X className="w-4.5 h-4.5" />
+                      </button>
+                      <button
+                          type="submit"
+                          disabled={isAiLoading || !aiPrompt.trim()}
+                          className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:hover:bg-blue-600 px-5 py-2.5 rounded-xl text-white text-xs font-bold transition-all shadow-lg shadow-blue-600/30 flex items-center gap-2"
+                      >
+                        {isAiLoading ? (
+                            <>
+                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                              <span>Thinking...</span>
+                            </>
+                        ) : (
+                            <>
+                              <span>Generate</span>
+                              <Send className="w-3.5 h-3.5" />
+                            </>
+                        )}
+                      </button>
+                    </div>
                   </div>
-                </div>
-              </form>
-            </motion.div>
-        )}
-      </AnimatePresence>
+                </form>
+              </motion.div>
+          )}
+        </AnimatePresence>
 
-      <div className="flex-1 relative">
-        <Editor
-          height="100%"
-          language={language}
-          theme="db-dark"
-          value={value}
-          beforeMount={handleBeforeMount}
-          onChange={handleEditorChange}
-          loading={<div className="h-full w-full bg-[#050505] flex items-center justify-center"><Loader2 className="w-6 h-6 animate-spin text-zinc-800" /></div>}
-          onMount={(editor, monaco) => {
-            editorRef.current = editor;
+        <div className="flex-1 relative">
+          <Editor
+              height="100%"
+              language={language}
+              theme="db-dark"
+              value={value}
+              beforeMount={handleBeforeMount}
+              onChange={handleEditorChange}
+              loading={<div className="h-full w-full bg-[#050505] flex items-center justify-center"><Loader2 className="w-6 h-6 animate-spin text-zinc-800" /></div>}
+              onMount={(editor, monaco) => {
+                editorRef.current = editor;
 
-            // Sync to parent when editor loses focus
-            editor.onDidBlurEditorText(() => {
-              handleEditorBlur();
-            });
+                // Sync to parent when editor loses focus
+                editor.onDidBlurEditorText(() => {
+                  handleEditorBlur();
+                });
 
-            editor.onDidChangeCursorSelection(() => {
-              const selection = editor.getSelection();
-              setHasSelection(selection ? !selection.isEmpty() : false);
-            });
+                editor.onDidChangeCursorSelection(() => {
+                  const selection = editor.getSelection();
+                  setHasSelection(selection ? !selection.isEmpty() : false);
+                });
 
-            // Add custom keyboard shortcut
-            editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => {
-              handleExecute();
-            });
+                // Add custom keyboard shortcut
+                editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => {
+                  handleExecute();
+                });
 
-            // Add format shortcut
-            editor.addCommand(monaco.KeyMod.Alt | monaco.KeyMod.Shift | monaco.KeyCode.KeyF, () => {
-              handleFormat();
-            });
+                // Add format shortcut
+                editor.addCommand(monaco.KeyMod.Alt | monaco.KeyMod.Shift | monaco.KeyCode.KeyF, () => {
+                  handleFormat();
+                });
 
-            // Context Menu Actions
-            editor.addAction({
-              id: 'run-query',
-              label: 'Run Query',
-              keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter],
-              contextMenuGroupId: 'navigation',
-              contextMenuOrder: 1,
-              run: () => handleExecute()
-            });
+                // Context Menu Actions
+                editor.addAction({
+                  id: 'run-query',
+                  label: 'Run Query',
+                  keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter],
+                  contextMenuGroupId: 'navigation',
+                  contextMenuOrder: 1,
+                  run: () => handleExecute()
+                });
 
-            if (onExplain) {
-              editor.addAction({
-                id: 'explain-query',
-                label: 'Explain Plan',
-                contextMenuGroupId: 'navigation',
-                contextMenuOrder: 2,
-                run: () => onExplain()
-              });
-            }
+                if (onExplain) {
+                  editor.addAction({
+                    id: 'explain-query',
+                    label: 'Explain Plan',
+                    contextMenuGroupId: 'navigation',
+                    contextMenuOrder: 2,
+                    run: () => onExplain()
+                  });
+                }
 
-            editor.addAction({
-              id: 'format-sql',
-              label: 'Format SQL',
-              keybindings: [monaco.KeyMod.Alt | monaco.KeyMod.Shift | monaco.KeyCode.KeyF],
-              contextMenuGroupId: 'modification',
-              contextMenuOrder: 1,
-              run: () => handleFormat()
-            });
-          }}
-          options={EDITOR_OPTIONS}
-        />
+                editor.addAction({
+                  id: 'format-sql',
+                  label: 'Format SQL',
+                  keybindings: [monaco.KeyMod.Alt | monaco.KeyMod.Shift | monaco.KeyCode.KeyF],
+                  contextMenuGroupId: 'modification',
+                  contextMenuOrder: 1,
+                  run: () => handleFormat()
+                });
+              }}
+              options={getEditorOptions(showLineNumbers)}
+          />
 
-        {/* Connection Type Badge */}
-        <div className="absolute top-3 right-6 pointer-events-none select-none z-10">
-          <div className="flex items-center gap-2 px-3 py-1 rounded-md bg-zinc-900/90 border border-white/10 backdrop-blur-md shadow-2xl">
-            <div className="w-1.5 h-1.5 rounded-full bg-blue-500 shadow-[0_0_8px_rgba(59,130,246,0.5)]" />
-            <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">
+          {/* Connection Type Badge */}
+          <div className="absolute top-3 right-6 pointer-events-none select-none z-10">
+            <div className="flex items-center gap-2 px-3 py-1 rounded-md bg-zinc-900/90 border border-white/10 backdrop-blur-md shadow-2xl">
+              <div className="w-1.5 h-1.5 rounded-full bg-blue-500 shadow-[0_0_8px_rgba(59,130,246,0.5)]" />
+              <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">
               {language} Engine
             </span>
+            </div>
           </div>
         </div>
       </div>
-    </div>
   );
 });
 
