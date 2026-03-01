@@ -24,7 +24,7 @@ set -e
 
 PASS=0
 FAIL=0
-TOTAL_GROUPS=14
+TOTAL_GROUPS=15
 EXTRA_BUN_ARGS=("$@")
 GROUP_INDEX=0
 COVERAGE_MODE=0
@@ -140,8 +140,12 @@ run_group "Group 12/13: MaskingSettings" \
 run_group "Group 13/14: SchemaDiff" \
   tests/components/SchemaDiff.test.tsx
 
+# Group 15: ConnectionModal Mobile Drawer (isolated - useIsMobile returns true)
+run_group "Group 15/15: ConnectionModal Mobile" \
+  tests/components/ConnectionModal.mobile.test.tsx
+
 # Group 14: All remaining files (safe together)
-run_group "Group 14/14: Remaining components" \
+run_group "Group 14/15: Remaining components" \
   tests/components/DataCharts.test.tsx \
   tests/components/QueryEditor.test.tsx \
   tests/components/QuerySafetyDialog.test.tsx \
