@@ -31,6 +31,10 @@ describe('StudioMobileHeader', () => {
     isExecuting: false,
     currentQuery: 'SELECT 1',
     queryEditorRef: { current: null },
+    metadata: null,
+    transactionActive: false,
+    playgroundMode: false,
+    editingEnabled: false,
     onSelectConnection: mock(() => {}),
     onAddConnection: mock(() => {}),
     onLogout: mock(() => {}),
@@ -38,6 +42,12 @@ describe('StudioMobileHeader', () => {
     onClearQuery: mock(() => {}),
     onExecuteQuery: mock(() => {}),
     onCancelQuery: mock(() => {}),
+    onBeginTransaction: mock(() => {}),
+    onCommitTransaction: mock(() => {}),
+    onRollbackTransaction: mock(() => {}),
+    onTogglePlayground: mock(() => {}),
+    onToggleEditing: mock(() => {}),
+    onImport: mock(() => {}),
   };
 
   test('renders DB selector and Online badge', () => {

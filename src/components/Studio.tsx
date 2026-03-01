@@ -292,6 +292,10 @@ export default function Studio() {
               isExecuting={tabMgr.currentTab.isExecuting}
               currentQuery={tabMgr.currentTab.query}
               queryEditorRef={queryEditorRef}
+              metadata={metadata}
+              transactionActive={txn.transactionActive}
+              playgroundMode={txn.playgroundMode}
+              editingEnabled={editing.editingEnabled}
               onSelectConnection={conn.setActiveConnection}
               onAddConnection={() => setIsConnectionModalOpen(true)}
               onLogout={handleLogout}
@@ -299,6 +303,16 @@ export default function Studio() {
               onClearQuery={() => tabMgr.updateCurrentTab({ query: '' })}
               onExecuteQuery={() => queryExec.executeQuery()}
               onCancelQuery={queryExec.cancelQuery}
+              onBeginTransaction={() => txn.handleTransaction('begin')}
+              onCommitTransaction={() => txn.handleTransaction('commit')}
+              onRollbackTransaction={() => txn.handleTransaction('rollback')}
+              onTogglePlayground={() => txn.setPlaygroundMode(!txn.playgroundMode)}
+              onToggleEditing={() => {
+                editing.setEditingEnabled(!editing.editingEnabled);
+                if (editing.editingEnabled) editing.handleDiscardChanges();
+              }}
+              onImport={() => setIsImportModalOpen(true)}
+              onExplain={metadata?.capabilities.supportsExplain ? () => queryExec.executeQuery(undefined, undefined, true) : undefined}
             />
 
             <StudioDesktopHeader
@@ -603,7 +617,7 @@ export default function Studio() {
         onShowDiagram={() => setShowDiagram(true)}
         onFormatQuery={() => queryEditorRef.current?.format()}
         onSaveQuery={() => setIsSaveQueryModalOpen(true)}
-        onToggleAI={() => window.dispatchEvent(new CustomEvent('toggle-ai-assistant'))}
+        onToggleAI={() => queryEditorRef.current?.toggleAi()}
         onLogout={handleLogout}
       />
 
