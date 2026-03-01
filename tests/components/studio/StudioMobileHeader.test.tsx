@@ -57,7 +57,7 @@ describe('StudioMobileHeader', () => {
     activeMobileTab: 'editor' as const,
     isExecuting: false,
     currentQuery: 'SELECT 1',
-    queryEditorRef: { current: { toggleAi: mockToggleAi, format: mock(() => {}), getValue: mock(() => 'SELECT 1') } },
+    queryEditorRef: { current: { toggleAi: mockToggleAi, format: mock(() => {}), getValue: mock(() => 'SELECT 1'), getSelectedText: mock(() => ''), getEffectiveQuery: mock(() => 'SELECT 1'), setValue: mock(() => {}), focus: mock(() => {}) } },
     transactionActive: false,
     playgroundMode: false,
     editingEnabled: false,
