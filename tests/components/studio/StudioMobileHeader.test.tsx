@@ -31,7 +31,6 @@ describe('StudioMobileHeader', () => {
     isExecuting: false,
     currentQuery: 'SELECT 1',
     queryEditorRef: { current: null },
-    metadata: null,
     transactionActive: false,
     playgroundMode: false,
     editingEnabled: false,

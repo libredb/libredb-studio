@@ -43,7 +43,6 @@ const defaultProps = {
   isExecuting: false,
   currentQuery: 'SELECT * FROM users',
   queryEditorRef: { current: null },
-  metadata: null,
   transactionActive: false,
   playgroundMode: false,
   editingEnabled: false,

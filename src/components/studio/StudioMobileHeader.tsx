@@ -3,7 +3,6 @@
 import React, { type RefObject } from 'react';
 import type { DatabaseConnection } from '@/lib/types';
 import type { QueryEditorRef } from '@/components/QueryEditor';
-import type { ProviderMetadata } from '@/hooks/use-provider-metadata';
 import { useRouter } from 'next/navigation';
 import { cn } from '@/lib/utils';
 import {
@@ -27,7 +26,6 @@ interface StudioMobileHeaderProps {
   isExecuting: boolean;
   currentQuery: string;
   queryEditorRef: RefObject<QueryEditorRef | null>;
-  metadata: ProviderMetadata | null;
   transactionActive: boolean;
   playgroundMode: boolean;
   editingEnabled: boolean;
@@ -57,7 +55,6 @@ export function StudioMobileHeader({
   isExecuting,
   currentQuery,
   queryEditorRef,
-  metadata,
   transactionActive,
   playgroundMode,
   editingEnabled,

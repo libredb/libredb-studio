@@ -292,7 +292,6 @@ export default function Studio() {
               isExecuting={tabMgr.currentTab.isExecuting}
               currentQuery={tabMgr.currentTab.query}
               queryEditorRef={queryEditorRef}
-              metadata={metadata}
               transactionActive={txn.transactionActive}
               playgroundMode={txn.playgroundMode}
               editingEnabled={editing.editingEnabled}
