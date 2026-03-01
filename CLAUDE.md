@@ -150,6 +150,26 @@ LLM_API_URL=<url>               # For ollama/custom providers
 
 TypeScript path alias `@/*` maps to `./src/*`. Use `@/components/...`, `@/lib/...`, etc.
 
+## Pre-Commit Verification (MANDATORY)
+
+**After every code change, you MUST run the CI pipeline checks locally before considering the task complete.** These match `.github/workflows/ci.yml` and `docker-build-push.yml`:
+
+```bash
+# 1. Lint (ESLint 9)
+bun run lint
+
+# 2. Type check (TypeScript strict)
+bun run typecheck
+
+# 3. Tests (unit + API + integration + hooks + components)
+bun run test
+
+# 4. Build (Next.js production build)
+bun run build
+```
+
+**Do NOT skip any step.** If any step fails, fix the issue before proceeding. The GitHub Actions CI will run all four checks — a local pass on all four guarantees the CI will also pass.
+
 ## Docker Build
 
 The Dockerfile uses multi-stage Bun build with standalone Next.js output. Build args: `JWT_SECRET_BUILD`, `ADMIN_PASSWORD_BUILD`, `USER_PASSWORD_BUILD`. Health check: `GET /api/db/health`.
