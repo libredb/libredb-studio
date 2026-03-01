@@ -82,5 +82,5 @@ Thumbs.db
 .cache
 
 
-.claude/
+!.claude/skills
 .orchids/

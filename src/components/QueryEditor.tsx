@@ -299,35 +299,7 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
     };
   }, []);
 
-  useImperativeHandle(ref, () => ({
-    getSelectedText,
-    getEffectiveQuery: () => getEffectiveQuery().query,
-    getValue: () => editorRef.current?.getValue() || '',
-    setValue: (newValue: string) => {
-      if (editorRef.current) {
-        editorRef.current.setValue(newValue);
-        lastSyncedValueRef.current = newValue;
-      }
-    },
-    focus: () => editorRef.current?.focus(),
-    format: handleFormat,
-    toggleAi: () => setShowAi(!showAi),
-  }));
-
-  const handleCopy = () => {
-    const textToCopy = getSelectedText() || editorRef.current?.getValue() || '';
-    navigator.clipboard.writeText(textToCopy);
-  };
-
-  const handleClear = () => {
-    if (editorRef.current) {
-      editorRef.current.setValue('');
-      lastSyncedValueRef.current = '';
-      onChange?.('');
-    }
-  };
-
-  // AI Chat hook
+  // AI Chat hook (must be before useImperativeHandle that references showAi/setShowAi)
   const getEditorValue = useCallback(() => editorRef.current?.getValue() || '', []);
   const setEditorValueForAi = useCallback((val: string) => {
     if (editorRef.current) {
@@ -355,6 +327,34 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
     setEditorValue: setEditorValueForAi,
     onChange,
   });
+
+  useImperativeHandle(ref, () => ({
+    getSelectedText,
+    getEffectiveQuery: () => getEffectiveQuery().query,
+    getValue: () => editorRef.current?.getValue() || '',
+    setValue: (newValue: string) => {
+      if (editorRef.current) {
+        editorRef.current.setValue(newValue);
+        lastSyncedValueRef.current = newValue;
+      }
+    },
+    focus: () => editorRef.current?.focus(),
+    format: handleFormat,
+    toggleAi: () => setShowAi(!showAi),
+  }));
+
+  const handleCopy = () => {
+    const textToCopy = getSelectedText() || editorRef.current?.getValue() || '';
+    navigator.clipboard.writeText(textToCopy);
+  };
+
+  const handleClear = () => {
+    if (editorRef.current) {
+      editorRef.current.setValue('');
+      lastSyncedValueRef.current = '';
+      onChange?.('');
+    }
+  };
 
   // Store original console.error for cleanup
   const originalConsoleErrorRef = useRef<typeof console.error | null>(null);

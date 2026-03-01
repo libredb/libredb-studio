@@ -1,7 +1,7 @@
 import { describe, test, expect } from 'bun:test';
 import { NextRequest } from 'next/server';
 import { SignJWT } from 'jose';
-import { middleware } from '@/middleware';
+import { proxy } from '@/proxy';
 
 // ─── JWT helpers ────────────────────────────────────────────────────────────
 
@@ -34,7 +34,7 @@ function getRedirectLocation(response: Response): string | null {
 
 // ─── Tests ──────────────────────────────────────────────────────────────────
 
-describe('middleware', () => {
+describe('proxy', () => {
   // ───────────────────────────────────────────────────────────────────────────
   // Public routes
   // ───────────────────────────────────────────────────────────────────────────
@@ -42,35 +42,35 @@ describe('middleware', () => {
   describe('public routes', () => {
     test('/api/auth/login passes through without redirect', async () => {
       const req = createNextRequest('/api/auth/login');
-      const res = await middleware(req);
+      const res = await proxy(req);
 
       expect(isRedirect(res)).toBe(false);
     });
 
     test('/api/db/health passes through without redirect', async () => {
       const req = createNextRequest('/api/db/health');
-      const res = await middleware(req);
+      const res = await proxy(req);
 
       expect(isRedirect(res)).toBe(false);
     });
 
     test('/api/demo-connection passes through without redirect', async () => {
       const req = createNextRequest('/api/demo-connection');
-      const res = await middleware(req);
+      const res = await proxy(req);
 
       expect(isRedirect(res)).toBe(false);
     });
 
     test('/_next/static/chunk.js passes through without redirect', async () => {
       const req = createNextRequest('/_next/static/chunk.js');
-      const res = await middleware(req);
+      const res = await proxy(req);
 
       expect(isRedirect(res)).toBe(false);
     });
 
     test('/favicon.ico passes through without redirect', async () => {
       const req = createNextRequest('/favicon.ico');
-      const res = await middleware(req);
+      const res = await proxy(req);
 
       expect(isRedirect(res)).toBe(false);
     });
@@ -83,7 +83,7 @@ describe('middleware', () => {
   describe('/login page', () => {
     test('allows access without token', async () => {
       const req = createNextRequest('/login');
-      const res = await middleware(req);
+      const res = await proxy(req);
 
       expect(isRedirect(res)).toBe(false);
     });
@@ -91,7 +91,7 @@ describe('middleware', () => {
     test('redirects to /admin with valid admin token', async () => {
       const token = await createToken('admin');
       const req = createNextRequest('/login', token);
-      const res = await middleware(req);
+      const res = await proxy(req);
 
       expect(isRedirect(res)).toBe(true);
       expect(getRedirectLocation(res)).toContain('/admin');
@@ -100,7 +100,7 @@ describe('middleware', () => {
     test('redirects to / with valid user token', async () => {
       const token = await createToken('user');
       const req = createNextRequest('/login', token);
-      const res = await middleware(req);
+      const res = await proxy(req);
 
       expect(isRedirect(res)).toBe(true);
       const location = getRedirectLocation(res)!;
@@ -112,7 +112,7 @@ describe('middleware', () => {
 
     test('allows access with invalid token', async () => {
       const req = createNextRequest('/login', 'invalid-token-garbage');
-      const res = await middleware(req);
+      const res = await proxy(req);
 
       expect(isRedirect(res)).toBe(false);
     });
@@ -125,7 +125,7 @@ describe('middleware', () => {
   describe('protected routes', () => {
     test('redirects to /login without token', async () => {
       const req = createNextRequest('/');
-      const res = await middleware(req);
+      const res = await proxy(req);
 
       expect(isRedirect(res)).toBe(true);
       expect(getRedirectLocation(res)).toContain('/login');
@@ -134,14 +134,14 @@ describe('middleware', () => {
     test('allows access with valid token', async () => {
       const token = await createToken('user');
       const req = createNextRequest('/', token);
-      const res = await middleware(req);
+      const res = await proxy(req);
 
       expect(isRedirect(res)).toBe(false);
     });
 
     test('redirects to /login with expired/invalid token', async () => {
       const req = createNextRequest('/', 'expired-or-invalid-token');
-      const res = await middleware(req);
+      const res = await proxy(req);
 
       expect(isRedirect(res)).toBe(true);
       expect(getRedirectLocation(res)).toContain('/login');
@@ -156,7 +156,7 @@ describe('middleware', () => {
     test('allows admin role to access /admin', async () => {
       const token = await createToken('admin');
       const req = createNextRequest('/admin', token);
-      const res = await middleware(req);
+      const res = await proxy(req);
 
       expect(isRedirect(res)).toBe(false);
     });
@@ -164,7 +164,7 @@ describe('middleware', () => {
     test('redirects user role from /admin to /', async () => {
       const token = await createToken('user');
       const req = createNextRequest('/admin', token);
-      const res = await middleware(req);
+      const res = await proxy(req);
 
       expect(isRedirect(res)).toBe(true);
       const location = getRedirectLocation(res)!;
@@ -182,14 +182,14 @@ describe('middleware', () => {
     test('/api/db/query with valid token passes through', async () => {
       const token = await createToken('user');
       const req = createNextRequest('/api/db/query', token);
-      const res = await middleware(req);
+      const res = await proxy(req);
 
       expect(isRedirect(res)).toBe(false);
     });
 
     test('/api/db/query without token redirects to /login', async () => {
       const req = createNextRequest('/api/db/query');
-      const res = await middleware(req);
+      const res = await proxy(req);
 
       expect(isRedirect(res)).toBe(true);
       expect(getRedirectLocation(res)).toContain('/login');

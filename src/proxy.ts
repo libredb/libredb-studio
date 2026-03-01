@@ -21,7 +21,7 @@ function getJwtSecret(): Uint8Array {
 
 const JWT_SECRET = getJwtSecret();
 
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   const token = request.cookies.get('auth-token')?.value;
