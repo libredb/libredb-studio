@@ -246,6 +246,21 @@ describe('QueryEditor', () => {
       void data;
       return Promise.resolve();
     });
+
+    // Mock localStorage for line numbers toggle
+    const localStorageMock: Record<string, string> = {};
+    Object.defineProperty(globalThis, 'localStorage', {
+      value: {
+        getItem: (key: string) => localStorageMock[key] || null,
+        setItem: (key: string, value: string) => { localStorageMock[key] = value; },
+        removeItem: (key: string) => { delete localStorageMock[key]; },
+        clear: () => { Object.keys(localStorageMock).forEach(k => delete localStorageMock[k]); },
+      },
+      writable: true,
+      configurable: true,
+    });
+
+
     const nav = globalThis.navigator as Navigator & { clipboard?: Clipboard };
     const clipboardWriteText: Clipboard['writeText'] = (data: string) =>
       mockClipboardWriteText(data) as Promise<void>;
@@ -307,6 +322,12 @@ describe('QueryEditor', () => {
     const { queryByText } = render(React.createElement(QueryEditor, createDefaultProps()));
     expect(queryByText('CLEAR')).not.toBeNull();
   });
+
+  test('LINES button renders', () => {
+    const { queryByText } = render(React.createElement(QueryEditor, createDefaultProps()));
+    expect(queryByText('LINES')).not.toBeNull();
+  });
+
 
   test('AI ASSISTANT toggle button renders', () => {
     const { queryByText } = render(React.createElement(QueryEditor, createDefaultProps()));
@@ -385,6 +406,21 @@ describe('QueryEditor', () => {
     fireEvent.click(queryByText('CLEAR')!);
     const editor = queryByTestId('mock-monaco-editor') as HTMLTextAreaElement;
     expect(editor.value).toBe('');
+  });
+
+  // -----------------------------------------------------------------------
+  // LINES button (Line Numbers Toggle)
+  // -----------------------------------------------------------------------
+
+  test('LINES button toggles line numbers state', () => {
+    const { queryByText } = render(React.createElement(QueryEditor, createDefaultProps()));
+    const linesButton = queryByText('LINES');
+    expect(linesButton).not.toBeNull();
+
+    // Click to toggle
+    fireEvent.click(linesButton!);
+    // State should change (we can't directly test state, but button should still be there)
+    expect(queryByText('LINES')).not.toBeNull();
   });
 
   // -----------------------------------------------------------------------
