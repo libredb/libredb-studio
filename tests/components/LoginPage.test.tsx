@@ -7,7 +7,7 @@ import { mock } from 'bun:test';
 // sonner and next/navigation are mocked via preload
 // lucide-react resolves fine natively — no mock needed
 
-const { default: LoginPage } = await import('@/app/login/page');
+const { default: LoginForm } = await import('@/app/login/login-form');
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { cleanup, render, fireEvent, waitFor } from '@testing-library/react';
@@ -15,7 +15,7 @@ import userEvent from '@testing-library/user-event';
 
 function renderLogin() {
   const user = userEvent.setup();
-  const result = render(<LoginPage />);
+  const result = render(<LoginForm authProvider="local" />);
   const form = result.container.querySelector('form')!;
   const emailInput = result.container.querySelector('input[type="email"]')! as HTMLInputElement;
   const passwordInput = result.container.querySelector('input[type="password"]')! as HTMLInputElement;

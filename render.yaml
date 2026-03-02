@@ -7,9 +7,6 @@ services:
     runtime: docker
     # Use Dockerfile for building
     dockerfilePath: ./Dockerfile
-    # Docker build args — NEXT_PUBLIC_ vars must be set at build time
-    dockerBuildArgs:
-      NEXT_PUBLIC_AUTH_PROVIDER_BUILD: oidc
     # Health check endpoint
     healthCheckPath: /api/db/health
     # Auto-deploy on push to main
