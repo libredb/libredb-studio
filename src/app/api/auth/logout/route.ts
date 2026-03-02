@@ -2,11 +2,10 @@ import { logout } from '@/lib/auth';
 import { buildLogoutUrl } from '@/lib/oidc';
 import { NextRequest, NextResponse } from 'next/server';
 
-const authProvider = process.env.NEXT_PUBLIC_AUTH_PROVIDER || 'local';
-
 export async function POST(request: NextRequest) {
   await logout();
 
+  const authProvider = process.env.NEXT_PUBLIC_AUTH_PROVIDER || 'local';
   if (authProvider === 'oidc') {
     const origin = new URL(request.url).origin;
     const returnTo = `${origin}/login`;

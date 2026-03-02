@@ -145,4 +145,26 @@ describe('POST /api/auth/login', () => {
     expect(mockLogin).toHaveBeenCalledTimes(1);
     expect(mockLogin).toHaveBeenCalledWith('user', 'user@libredb.org');
   });
+
+  test('returns 500 when production env vars are missing', async () => {
+    const origNodeEnv = process.env.NODE_ENV;
+    const origAdminEmail = process.env.ADMIN_EMAIL;
+    (process.env as Record<string, string>).NODE_ENV = 'production';
+    delete process.env.ADMIN_EMAIL;
+
+    const req = createMockRequest('/api/auth/login', {
+      method: 'POST',
+      body: { email: 'admin@libredb.org', password: 'LibreDB.2026' },
+    });
+
+    const res = await POST(req as never);
+    const data = await parseResponseJSON<{ success: boolean; message: string }>(res);
+
+    expect(res.status).toBe(500);
+    expect(data.success).toBe(false);
+    expect(data.message).toBe('An error occurred');
+
+    (process.env as Record<string, string>).NODE_ENV = origNodeEnv!;
+    process.env.ADMIN_EMAIL = origAdminEmail!;
+  });
 });

@@ -10,10 +10,8 @@ import { Database, ExternalLink, Lock, Mail, ShieldCheck, UserCheck } from 'luci
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 
-const authProvider = process.env.NEXT_PUBLIC_AUTH_PROVIDER || 'local';
-const isOIDC = authProvider === 'oidc';
-
 function LoginForm() {
+  const isOIDC = process.env.NEXT_PUBLIC_AUTH_PROVIDER === 'oidc';
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
