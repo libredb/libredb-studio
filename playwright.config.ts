@@ -25,7 +25,9 @@ export default defineConfig({
     timeout: 120_000,
     env: {
       JWT_SECRET: 'test-jwt-secret-for-e2e-tests-32ch',
+      ADMIN_EMAIL: 'admin@libredb.org',
       ADMIN_PASSWORD: 'test-admin',
+      USER_EMAIL: 'user@libredb.org',
       USER_PASSWORD: 'test-user',
       DEMO_DB_ENABLED: process.env.DEMO_DB_ENABLED || '',
       DEMO_DB_NAME: process.env.DEMO_DB_NAME || '',
