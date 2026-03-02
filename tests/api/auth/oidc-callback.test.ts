@@ -33,6 +33,10 @@ const mockMapOIDCRole = mock(
     'user' as 'admin' | 'user'
 );
 
+const mockGetPublicOrigin = mock(
+  (req: Request) => new URL(req.url).origin
+);
+
 mock.module('@/lib/oidc', () => ({
   getOIDCConfig: mockGetOIDCConfig,
   discoverProvider: mockDiscoverProvider,
@@ -42,6 +46,7 @@ mock.module('@/lib/oidc', () => ({
   exchangeCode: mockExchangeCode,
   mapOIDCRole: mockMapOIDCRole,
   resetDiscoveryCache: mock(() => {}),
+  getPublicOrigin: mockGetPublicOrigin,
 }));
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -86,6 +91,8 @@ describe('GET /api/auth/oidc/callback', () => {
     mockLogin.mockClear();
     mockCookieGet.mockClear();
     mockCookieStore.delete.mockClear();
+    mockGetPublicOrigin.mockClear();
+    mockGetPublicOrigin.mockImplementation((req: Request) => new URL(req.url).origin);
 
     // Reset defaults
     mockCookieGet.mockReturnValue({ value: 'encrypted-state-cookie' });

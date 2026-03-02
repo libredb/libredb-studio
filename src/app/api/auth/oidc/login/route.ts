@@ -5,6 +5,7 @@ import {
   discoverProvider,
   generateAuthUrl,
   encryptState,
+  getPublicOrigin,
 } from '@/lib/oidc';
 
 export async function GET(request: Request) {
@@ -12,7 +13,7 @@ export async function GET(request: Request) {
     const oidcConfig = getOIDCConfig();
     const config = await discoverProvider(oidcConfig);
 
-    const origin = new URL(request.url).origin;
+    const origin = getPublicOrigin(request);
     const redirectUri = `${origin}/api/auth/oidc/callback`;
 
     const { url, state } = await generateAuthUrl(
@@ -35,8 +36,7 @@ export async function GET(request: Request) {
     return NextResponse.redirect(url.toString());
   } catch (error) {
     console.error('OIDC login error:', error);
-    return NextResponse.redirect(
-      new URL('/login?error=oidc_config', request.url)
-    );
+    const origin = getPublicOrigin(request);
+    return NextResponse.redirect(`${origin}/login?error=oidc_config`);
   }
 }

@@ -34,6 +34,7 @@ mock.module('openid-client', () => ({
 const {
   mapOIDCRole, getOIDCConfig, encryptState, decryptState, buildLogoutUrl,
   discoverProvider, generateAuthUrl, exchangeCode, resetDiscoveryCache,
+  getPublicOrigin,
 } = await import('@/lib/oidc');
 import type { OIDCState } from '@/lib/oidc';
 
@@ -415,6 +416,44 @@ describe('exchangeCode', () => {
     );
 
     expect(result).toBeNull();
+  });
+});
+
+// ─── getPublicOrigin ────────────────────────────────────────────────────────
+
+describe('getPublicOrigin', () => {
+  test('returns origin from request URL when no forwarded headers', () => {
+    const req = new Request('http://localhost:3000/api/auth/oidc/login');
+    expect(getPublicOrigin(req)).toBe('http://localhost:3000');
+  });
+
+  test('uses x-forwarded-host and x-forwarded-proto', () => {
+    const req = new Request('http://0.0.0.0:10000/api/auth/oidc/login', {
+      headers: {
+        'x-forwarded-host': 'app.libredb.org',
+        'x-forwarded-proto': 'https',
+      },
+    });
+    expect(getPublicOrigin(req)).toBe('https://app.libredb.org');
+  });
+
+  test('falls back to host header when x-forwarded-host is absent', () => {
+    const req = new Request('http://0.0.0.0:10000/api/auth/oidc/login', {
+      headers: {
+        host: 'myapp.onrender.com',
+        'x-forwarded-proto': 'https',
+      },
+    });
+    expect(getPublicOrigin(req)).toBe('https://myapp.onrender.com');
+  });
+
+  test('defaults proto to https when x-forwarded-proto is absent', () => {
+    const req = new Request('http://0.0.0.0:10000/api/auth/oidc/login', {
+      headers: {
+        'x-forwarded-host': 'app.libredb.org',
+      },
+    });
+    expect(getPublicOrigin(req)).toBe('https://app.libredb.org');
   });
 });
 

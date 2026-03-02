@@ -7,17 +7,18 @@ import {
   exchangeCode,
   decryptState,
   mapOIDCRole,
+  getPublicOrigin,
 } from '@/lib/oidc';
 
 export async function GET(request: Request) {
+  const origin = getPublicOrigin(request);
+
   try {
     const cookieStore = await cookies();
     const stateCookie = cookieStore.get('oidc-state')?.value;
 
     if (!stateCookie) {
-      return NextResponse.redirect(
-        new URL('/login?error=oidc_state_missing', request.url)
-      );
+      return NextResponse.redirect(`${origin}/login?error=oidc_state_missing`);
     }
 
     // Decrypt and validate state
@@ -25,28 +26,30 @@ export async function GET(request: Request) {
     try {
       oidcState = await decryptState(stateCookie);
     } catch {
-      return NextResponse.redirect(
-        new URL('/login?error=oidc_state_invalid', request.url)
-      );
+      return NextResponse.redirect(`${origin}/login?error=oidc_state_invalid`);
     }
 
     // Exchange code for tokens
     const oidcConfig = getOIDCConfig();
     const config = await discoverProvider(oidcConfig);
 
-    // Exchange code and extract claims
+    // Reconstruct callback URL with public origin for token exchange
+    const internalUrl = new URL(request.url);
+    const callbackUrl = new URL(
+      `${internalUrl.pathname}${internalUrl.search}`,
+      origin
+    );
+
     const claims = await exchangeCode(
       config,
-      new URL(request.url),
+      callbackUrl,
       oidcState.code_verifier,
       oidcState.state,
       oidcState.nonce
     );
 
     if (!claims) {
-      return NextResponse.redirect(
-        new URL('/login?error=oidc_no_claims', request.url)
-      );
+      return NextResponse.redirect(`${origin}/login?error=oidc_no_claims`);
     }
 
     // Map role from claims
@@ -65,15 +68,13 @@ export async function GET(request: Request) {
 
     // Redirect based on role
     return NextResponse.redirect(
-      new URL(role === 'admin' ? '/admin' : '/', request.url)
+      `${origin}${role === 'admin' ? '/admin' : '/'}`
     );
   } catch (error) {
     console.error('OIDC callback error:', error);
     if (error instanceof Error && 'cause' in error) {
       console.error('OIDC error cause:', error.cause);
     }
-    return NextResponse.redirect(
-      new URL('/login?error=oidc_failed', request.url)
-    );
+    return NextResponse.redirect(`${origin}/login?error=oidc_failed`);
   }
 }

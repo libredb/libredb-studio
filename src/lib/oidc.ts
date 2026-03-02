@@ -200,6 +200,23 @@ export async function decryptState(token: string): Promise<OIDCState> {
   };
 }
 
+// ─── Public Origin (reverse proxy / PaaS) ──────────────────────────────────
+
+/**
+ * Derive the public-facing origin from request headers.
+ * On platforms like Render, Railway, Fly.io the app binds to 0.0.0.0:PORT
+ * but the actual public URL comes from x-forwarded-host/x-forwarded-proto.
+ */
+export function getPublicOrigin(request: Request): string {
+  const forwardedHost = request.headers.get('x-forwarded-host');
+  const forwardedProto = request.headers.get('x-forwarded-proto') || 'https';
+  const host = forwardedHost || request.headers.get('host');
+  if (host) {
+    return `${forwardedProto}://${host}`;
+  }
+  return new URL(request.url).origin;
+}
+
 // ─── Logout URL ─────────────────────────────────────────────────────────────
 
 /**

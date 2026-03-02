@@ -28,6 +28,10 @@ const mockEncryptState = mock(async () => 'encrypted-state-token');
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 const mockCookieSet = mock((_name: string, _value: string, _options?: Record<string, unknown>) => {});
 
+const mockGetPublicOrigin = mock(
+  (req: Request) => new URL(req.url).origin
+);
+
 mock.module('@/lib/oidc', () => ({
   getOIDCConfig: mockGetOIDCConfig,
   discoverProvider: mockDiscoverProvider,
@@ -37,6 +41,7 @@ mock.module('@/lib/oidc', () => ({
   exchangeCode: mock(async () => ({})),
   mapOIDCRole: mock(() => 'user'),
   resetDiscoveryCache: mock(() => {}),
+  getPublicOrigin: mockGetPublicOrigin,
 }));
 
 const mockCookieStore = {
@@ -62,6 +67,8 @@ describe('GET /api/auth/oidc/login', () => {
     mockGenerateAuthUrl.mockClear();
     mockEncryptState.mockClear();
     mockCookieSet.mockClear();
+    mockGetPublicOrigin.mockClear();
+    mockGetPublicOrigin.mockImplementation((req: Request) => new URL(req.url).origin);
   });
 
   test('redirects to OIDC provider authorization URL', async () => {
@@ -92,6 +99,17 @@ describe('GET /api/auth/oidc/login', () => {
     expect(mockGenerateAuthUrl).toHaveBeenCalledTimes(1);
     const [, redirectUri] = mockGenerateAuthUrl.mock.calls[0];
     expect(redirectUri).toBe('https://app.example.com/api/auth/oidc/callback');
+  });
+
+  test('uses public origin from getPublicOrigin for redirect_uri', async () => {
+    mockGetPublicOrigin.mockReturnValue('https://app.libredb.org');
+
+    const req = new Request('http://0.0.0.0:10000/api/auth/oidc/login');
+    await GET(req);
+
+    expect(mockGenerateAuthUrl).toHaveBeenCalledTimes(1);
+    const [, redirectUri] = mockGenerateAuthUrl.mock.calls[0];
+    expect(redirectUri).toBe('https://app.libredb.org/api/auth/oidc/callback');
   });
 
   test('redirects to /login?error=oidc_config when config fails', async () => {
