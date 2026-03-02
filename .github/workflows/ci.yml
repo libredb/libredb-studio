@@ -106,6 +106,7 @@ jobs:
   sonarcloud:
     name: SonarCloud Analysis
     needs: [test]
+    if: github.event.pull_request.head.repo.full_name == github.repository || github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
