@@ -15,7 +15,7 @@
 </p>
 
 <p align="center">
-  <a href="https://nextjs.org/"><img src="https://img.shields.io/badge/Next.js-15-black?logo=next.js" alt="Next.js 15"></a>
+  <a href="https://nextjs.org/"><img src="https://img.shields.io/badge/Next.js-16-black?logo=next.js" alt="Next.js 16"></a>
   <a href="https://react.dev/"><img src="https://img.shields.io/badge/React-19-61DAFB?logo=react" alt="React 19"></a>
   <a href="https://www.docker.com/"><img src="https://img.shields.io/badge/Docker-Ready-2496ED?logo=docker" alt="Docker Support"></a>
   <a href="https://kubernetes.io/"><img src="https://img.shields.io/badge/Kubernetes-Compatible-326CE5?logo=kubernetes" alt="Kubernetes Compatible"></a>
@@ -39,7 +39,7 @@
 
 | Demo | URL | Credentials |
 |------|-----|-------------|
-| **Public Demo** | [app.libredb.org](https://app.libredb.org) | `demo` / `demo` |
+| **Public Demo** | [app.libredb.org](https://app.libredb.org) | `admin@libredb.org` / `LibreDB.2026` |
 
 The demo runs in **Demo Mode** with simulated data. No real database required!
 
@@ -54,7 +54,7 @@ The demo runs in **Demo Mode** with simulated data. No real database required!
 - **Multi-Platform**: Native-like experience on both **Web** and **Mobile** browsers.
   - **AI-Native**: Multi-model support (Gemini, OpenAI, or Local LLMs) for NL2SQL.
 - **DevOps Ready**: Optimized for Kubernetes orchestration and Docker environments.
-- **Enterprise Grade**: Built-in RBAC, query auditing, and live health monitoring.
+- **Enterprise Grade**: Built-in RBAC, SSO (OIDC), query auditing, and live health monitoring.
 
 <p align="center">
   <img src="public/screenshots/connection-modal.png" alt="Multi-Database Connection Manager" width="100%" />
@@ -134,6 +134,13 @@ The demo runs in **Demo Mode** with simulated data. No real database required!
   <br/><em>Generate TypeScript interfaces, Prisma models, Go structs, and more from live schemas.</em>
 </p>
 
+### Authentication & SSO
+- **Dual Auth Modes**: Local email/password login or OpenID Connect (OIDC) Single Sign-On — switchable via environment variable.
+- **Vendor-Agnostic OIDC**: Works with any OIDC-compliant provider — Auth0, Keycloak, Okta, Azure AD, Google, and more.
+- **PKCE Security**: Authorization Code Flow with Proof Key for Code Exchange (S256) for secure authentication.
+- **Auto Role Mapping**: Configurable claim-based role mapping with dot-notation for nested claims (e.g., `realm_access.roles`).
+- **Provider Logout**: Logout clears both local JWT session and identity provider session.
+
 ### DBA Maintenance Toolkit (Admin Only)
 - **Live Monitoring Dashboard**: 7-tab monitoring with Overview, Performance, Queries, Sessions, Tables, Storage, and Connection Pool views.
 - **Time-Series Trend Charts**: Real-time metric trends (connections, cache hit ratio, buffer pool, deadlocks) with auto-refreshing ring buffer history.
@@ -165,11 +172,12 @@ The demo runs in **Demo Mode** with simulated data. No real database required!
 
 | Component | Technology | Target |
 | :--- | :--- | :--- |
-| **Framework** | Next.js 15 (App Router), React 19 | Web, Mobile |
+| **Framework** | Next.js 16 (App Router), React 19 | Web, Mobile |
 | **UI Engine** | Tailwind CSS 4, Radix UI, [shadcn/ui](https://ui.shadcn.com/) | Web, Mobile |
 | **Theming** | CSS Variables + `@theme inline` ([Guide](docs/THEMING.md)) | Web, Mobile |
 | **Editor** | Monaco Editor (VS Code Engine) | Web |
 | **AI** | Multi-Model (Gemini, OpenAI, Ollama, Custom) | Web, Mobile |
+| **Auth** | JWT (`jose`) + OIDC (`openid-client`), PKCE, Role Mapping | Web, Mobile |
 | **Database** | PostgreSQL, MySQL, Oracle, SQL Server, SQLite, MongoDB, Redis | Web, Mobile |
 | **Charts** | Recharts (Bar, Line, Pie, Area, Scatter, Histogram, Stacked) | Web, Mobile |
 | **ERD** | React Flow, ELK.js (auto-layout) | Web |
@@ -195,9 +203,18 @@ The demo runs in **Demo Mode** with simulated data. No real database required!
     2. **Configure Environment**
        Create a `.env.local` file:
        ```env
-       ADMIN_PASSWORD=admin123
-       USER_PASSWORD=user123
+       # Authentication (email/password)
+       ADMIN_EMAIL=admin@libredb.org
+       ADMIN_PASSWORD=your_admin_password
+       USER_EMAIL=user@libredb.org
+       USER_PASSWORD=your_user_password
        JWT_SECRET=your_32_character_random_string
+
+       # Optional: OIDC Single Sign-On (Auth0, Keycloak, Okta, Azure AD, etc.)
+       # NEXT_PUBLIC_AUTH_PROVIDER=oidc
+       # OIDC_ISSUER=https://your-provider.com
+       # OIDC_CLIENT_ID=your_client_id
+       # OIDC_CLIENT_SECRET=your_client_secret
 
        # LLM Configuration
        LLM_PROVIDER=gemini # options: gemini, openai, ollama, custom
@@ -267,7 +284,7 @@ Sample tables: `app.customers`, `app.products`, `app.orders`, `app.order_items`,
 
 ## Testing
 
-LibreDB Studio has a comprehensive test suite with **1,671+ unit/integration tests** and **35 E2E tests** across 6 layers, achieving **96%+ line coverage**.
+LibreDB Studio has a comprehensive test suite with **2,500+ unit/integration tests** and **35 E2E tests** across 6 layers, achieving **96%+ line coverage**.
 
 ### Quick Commands
 
@@ -322,12 +339,18 @@ Deploy your own instance of LibreDB Studio with a single click:
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `ADMIN_PASSWORD` | ✅ | Password for admin access |
-| `USER_PASSWORD` | ✅ | Password for user access |
+| `ADMIN_EMAIL` | ✅ | Admin email (default: `admin@libredb.org`) |
+| `ADMIN_PASSWORD` | ✅ | Admin password |
+| `USER_EMAIL` | ✅ | User email (default: `user@libredb.org`) |
+| `USER_PASSWORD` | ✅ | User password |
 | `JWT_SECRET` | ✅ | Secret for JWT tokens (min 32 chars) |
+| `NEXT_PUBLIC_AUTH_PROVIDER` | ❌ | `local` (default) or `oidc` for SSO |
+| `OIDC_ISSUER` | ❌ | OIDC issuer URL (required when `oidc`) |
+| `OIDC_CLIENT_ID` | ❌ | OIDC client ID (required when `oidc`) |
+| `OIDC_CLIENT_SECRET` | ❌ | OIDC client secret (required when `oidc`) |
 | `LLM_PROVIDER` | ❌ | AI provider: `gemini`, `openai`, `ollama` |
 | `LLM_API_KEY` | ❌ | API key for AI features |
-| `LLM_MODEL` | ❌ | Model name (e.g., `gemini-2.0-flash`) |
+| `LLM_MODEL` | ❌ | Model name (e.g., `gemini-2.5-flash`) |
 
 > 💡 **Tip**: Copy `.env.example` to `.env.local` for local development.
 
@@ -343,10 +366,13 @@ LibreDB Studio includes a `render.yaml` Blueprint for one-click deployment:
 2. **Connect to Render**: [dashboard.render.com](https://dashboard.render.com) → New → Blueprint
 3. **Select your forked repo** and Render will auto-detect `render.yaml`
 4. **Set Environment Variables** in Render Dashboard:
-   - `ADMIN_PASSWORD`: Your admin password
-   - `USER_PASSWORD`: User access password  
+   - `ADMIN_EMAIL`: Admin email address
+   - `ADMIN_PASSWORD`: Admin password
+   - `USER_EMAIL`: User email address
+   - `USER_PASSWORD`: User password
    - `JWT_SECRET`: Generate with `openssl rand -base64 32`
    - `LLM_API_KEY`: (Optional) For AI features
+   - `NEXT_PUBLIC_AUTH_PROVIDER`: (Optional) Set to `oidc` for SSO
 5. **Deploy!** 🎉
 
 ### Docker Compose (Self-Hosted)
@@ -380,9 +406,9 @@ LibreDB Studio is optimized for K8s with:
 - [x] **Phase 12**: Advanced Charting (Scatter, Histogram, Stacked Charts, Aggregation, Date Grouping, Chart Save/Load, Chart Dashboard).
 - [x] **Phase 13**: Monitoring Enhancement (Time-Series Trends, Threshold Alerting, Connection Pool Stats, Configurable Polling).
 - [x] **Phase 14**: Enterprise Database Support (Oracle Database via oracledb Thin mode, Microsoft SQL Server via mssql/tedious).
-- [ ] **Phase 15**: DBA & Monitoring (Lock Dependency Graph, Vacuum Scheduler, Prometheus Export).
-- [ ] **Phase 16**: Enterprise Collaboration (User Identity, RBAC, Audit Log, Shared Workspaces).
-- [ ] **Phase 17**: SSO Integration (OIDC/SAML).
+- [x] **Phase 15**: SSO Integration — Vendor-agnostic OIDC authentication (Auth0, Keycloak, Okta, Azure AD) with PKCE, role mapping, and provider logout.
+- [ ] **Phase 16**: DBA & Monitoring (Lock Dependency Graph, Vacuum Scheduler, Prometheus Export).
+- [ ] **Phase 17**: Enterprise Collaboration (User Identity, Shared Workspaces, SAML 2.0).
 
 ---
 
@@ -393,6 +419,8 @@ LibreDB Studio is optimized for K8s with:
 | [DeepWiki](https://deepwiki.com/libredb/libredb-studio) | AI-powered documentation — always up-to-date with the codebase |
 | [SonarCloud](https://sonarcloud.io/project/overview?id=libredb_libredb-studio) | Code quality, security analysis, and technical debt tracking |
 | [API Docs](docs/API_DOCS.md) | Complete REST API reference |
+| [OIDC Setup Guide](docs/OIDC_SETUP.md) | SSO configuration for Auth0, Keycloak, Okta, Azure AD |
+| [OIDC Architecture](docs/OIDC_ARCH.md) | OIDC subsystem internals, security model, extension points |
 | [Theming Guide](docs/THEMING.md) | CSS theming, dark mode, and styling customization |
 | [Architecture](docs/ARCHITECTURE.md) | System architecture and design patterns |
 

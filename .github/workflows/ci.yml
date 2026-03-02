@@ -36,7 +36,9 @@ jobs:
         env:
           NEXT_TELEMETRY_DISABLED: 1
           JWT_SECRET: test-secret-for-ci-build-only-32ch
+          ADMIN_EMAIL: admin@libredb.org
           ADMIN_PASSWORD: test-admin
+          USER_EMAIL: user@libredb.org
           USER_PASSWORD: test-user
 
   test:
@@ -59,7 +61,9 @@ jobs:
         run: bun run test:coverage
         env:
           JWT_SECRET: test-secret-for-ci-build-only-32ch
+          ADMIN_EMAIL: admin@libredb.org
           ADMIN_PASSWORD: test-admin
+          USER_EMAIL: user@libredb.org
           USER_PASSWORD: test-user
 
       - name: Upload coverage artifact
@@ -92,7 +96,9 @@ jobs:
         run: bunx playwright test
         env:
           JWT_SECRET: test-secret-for-ci-build-only-32ch
+          ADMIN_EMAIL: admin@libredb.org
           ADMIN_PASSWORD: test-admin
+          USER_EMAIL: user@libredb.org
           USER_PASSWORD: test-user
           DEMO_DB_ENABLED: true
 
@@ -106,6 +112,7 @@ jobs:
   sonarcloud:
     name: SonarCloud Analysis
     needs: [test]
+    if: github.event.pull_request.head.repo.full_name == github.repository || github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code

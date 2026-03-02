@@ -19,6 +19,7 @@ export interface QueryEditorRef {
   setValue: (value: string) => void;
   focus: () => void;
   format: () => void;
+  toggleAi: () => void;
 }
 
 interface QueryEditorProps {
@@ -321,34 +322,7 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
     };
   }, []);
 
-  useImperativeHandle(ref, () => ({
-    getSelectedText,
-    getEffectiveQuery: () => getEffectiveQuery().query,
-    getValue: () => editorRef.current?.getValue() || '',
-    setValue: (newValue: string) => {
-      if (editorRef.current) {
-        editorRef.current.setValue(newValue);
-        lastSyncedValueRef.current = newValue;
-      }
-    },
-    focus: () => editorRef.current?.focus(),
-    format: handleFormat
-  }));
-
-  const handleCopy = () => {
-    const textToCopy = getSelectedText() || editorRef.current?.getValue() || '';
-    navigator.clipboard.writeText(textToCopy);
-  };
-
-  const handleClear = () => {
-    if (editorRef.current) {
-      editorRef.current.setValue('');
-      lastSyncedValueRef.current = '';
-      onChange?.('');
-    }
-  };
-
-  // AI Chat hook
+  // AI Chat hook (must be before useImperativeHandle that references showAi/setShowAi)
   const getEditorValue = useCallback(() => editorRef.current?.getValue() || '', []);
   const setEditorValueForAi = useCallback((val: string) => {
     if (editorRef.current) {
@@ -376,6 +350,34 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
     setEditorValue: setEditorValueForAi,
     onChange,
   });
+
+  useImperativeHandle(ref, () => ({
+    getSelectedText,
+    getEffectiveQuery: () => getEffectiveQuery().query,
+    getValue: () => editorRef.current?.getValue() || '',
+    setValue: (newValue: string) => {
+      if (editorRef.current) {
+        editorRef.current.setValue(newValue);
+        lastSyncedValueRef.current = newValue;
+      }
+    },
+    focus: () => editorRef.current?.focus(),
+    format: handleFormat,
+    toggleAi: () => setShowAi(!showAi),
+  }));
+
+  const handleCopy = () => {
+    const textToCopy = getSelectedText() || editorRef.current?.getValue() || '';
+    navigator.clipboard.writeText(textToCopy);
+  };
+
+  const handleClear = () => {
+    if (editorRef.current) {
+      editorRef.current.setValue('');
+      lastSyncedValueRef.current = '';
+      onChange?.('');
+    }
+  };
 
   // Store original console.error for cleanup
   const originalConsoleErrorRef = useRef<typeof console.error | null>(null);
@@ -575,7 +577,7 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
               initial={{ opacity: 0, y: -10, scale: 0.95 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: -10, scale: 0.95 }}
-              className="absolute top-12 left-1/2 -translate-x-1/2 w-full max-w-2xl z-50 px-4"
+              className="absolute top-2 md:top-12 left-1/2 -translate-x-1/2 w-full max-w-2xl z-50 px-2 md:px-4"
             >
               <form
                 onSubmit={handleAiSubmit}

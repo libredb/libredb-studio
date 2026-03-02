@@ -3,7 +3,7 @@ import { jwtVerify } from 'jose';
 
 function getJwtSecret(): Uint8Array {
   const secret = process.env.JWT_SECRET;
-  
+
   if (!secret) {
     if (process.env.NODE_ENV === 'production') {
       throw new Error('JWT_SECRET environment variable is required in production');
@@ -11,17 +11,25 @@ function getJwtSecret(): Uint8Array {
     // Development fallback - only for local development
     return new TextEncoder().encode('development-fallback-secret-32ch');
   }
-  
+
   if (secret.length < 32) {
     throw new Error('JWT_SECRET must be at least 32 characters long');
   }
-  
+
   return new TextEncoder().encode(secret);
 }
 
-const JWT_SECRET = getJwtSecret();
+// Lazy-initialized to prevent module-level crash if JWT_SECRET is misconfigured.
+// A module-level throw would block ALL requests (including health check).
+let _jwtSecret: Uint8Array | null = null;
+function jwtSecret(): Uint8Array {
+  if (!_jwtSecret) {
+    _jwtSecret = getJwtSecret();
+  }
+  return _jwtSecret;
+}
 
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   const token = request.cookies.get('auth-token')?.value;
@@ -30,7 +38,7 @@ export async function middleware(request: NextRequest) {
   if (pathname.startsWith('/login')) {
     if (token) {
       try {
-        const { payload } = await jwtVerify(token, JWT_SECRET);
+        const { payload } = await jwtVerify(token, jwtSecret());
         const role = payload.role as string;
         // Redirect authenticated users based on their role
         return NextResponse.redirect(new URL(role === 'admin' ? '/admin' : '/', request.url));
@@ -61,7 +69,7 @@ export async function middleware(request: NextRequest) {
   }
 
   try {
-    const { payload } = await jwtVerify(token, JWT_SECRET);
+    const { payload } = await jwtVerify(token, jwtSecret());
     const role = payload.role as string;
 
     // RBAC: /admin only for admin

@@ -43,6 +43,9 @@ const defaultProps = {
   isExecuting: false,
   currentQuery: 'SELECT * FROM users',
   queryEditorRef: { current: null },
+  transactionActive: false,
+  playgroundMode: false,
+  editingEnabled: false,
   onSelectConnection: noop,
   onAddConnection: noop,
   onLogout: noop,
@@ -50,6 +53,12 @@ const defaultProps = {
   onClearQuery: noop,
   onExecuteQuery: noop,
   onCancelQuery: noop,
+  onBeginTransaction: noop,
+  onCommitTransaction: noop,
+  onRollbackTransaction: noop,
+  onTogglePlayground: noop,
+  onToggleEditing: noop,
+  onImport: noop,
 };
 
 // Mock next/navigation before importing the component

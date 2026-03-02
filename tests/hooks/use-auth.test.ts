@@ -310,6 +310,43 @@ describe('useAuth', () => {
     });
   });
 
+  // ── handleLogout with OIDC redirect ──────────────────────────────────────
+
+  test('handleLogout redirects to OIDC logout URL when present', async () => {
+    // Mock window.location to prevent navigation side effects
+    const savedDescriptor = Object.getOwnPropertyDescriptor(window, 'location');
+    const locationMock = { href: '' };
+    Object.defineProperty(window, 'location', {
+      value: locationMock,
+      writable: true,
+      configurable: true,
+    });
+
+    mockGlobalFetch({
+      '/api/auth/me': { ok: true, json: { user: { role: 'user' } } },
+      '/api/auth/logout': { ok: true, json: { success: true, redirectUrl: 'https://auth0.com/v2/logout?client_id=abc' } },
+    });
+
+    const { result } = renderHook(() => useAuth());
+
+    await waitFor(() => {
+      expect(result.current.user).not.toBeNull();
+    });
+
+    await act(async () => {
+      await result.current.handleLogout();
+    });
+
+    // redirectUrl branch: window.location.href should be set, router.push should NOT
+    expect(locationMock.href).toBe('https://auth0.com/v2/logout?client_id=abc');
+    expect(mockRouterPush).not.toHaveBeenCalledWith('/login');
+
+    // Restore window.location
+    if (savedDescriptor) {
+      Object.defineProperty(window, 'location', savedDescriptor);
+    }
+  });
+
   // ── Logout with non-ok response still navigates ───────────────────────────
 
   test('handleLogout navigates even if logout API returns non-ok', async () => {

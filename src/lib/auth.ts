@@ -20,7 +20,15 @@ function getJwtSecret(): Uint8Array {
   return new TextEncoder().encode(secret);
 }
 
-const JWT_SECRET = getJwtSecret();
+// Lazy-initialized to prevent module-level crash if JWT_SECRET is misconfigured.
+// A module-level throw would crash ALL modules that import auth.ts.
+let _jwtSecret: Uint8Array | null = null;
+function jwtSecret(): Uint8Array {
+  if (!_jwtSecret) {
+    _jwtSecret = getJwtSecret();
+  }
+  return _jwtSecret;
+}
 
 export type Role = 'admin' | 'user';
 
@@ -34,12 +42,12 @@ export async function signJWT(payload: UserPayload) {
     .setProtectedHeader({ alg: 'HS256' })
     .setIssuedAt()
     .setExpirationTime('24h')
-    .sign(JWT_SECRET);
+    .sign(jwtSecret());
 }
 
 export async function verifyJWT(token: string) {
   try {
-    const { payload } = await jwtVerify(token, JWT_SECRET);
+    const { payload } = await jwtVerify(token, jwtSecret());
     return payload as unknown as UserPayload;
   } catch {
     return null;
@@ -53,8 +61,8 @@ export async function getSession() {
   return await verifyJWT(token);
 }
 
-export async function login(role: Role) {
-  const token = await signJWT({ role, username: role });
+export async function login(role: Role, username?: string) {
+  const token = await signJWT({ role, username: username || role });
   const cookieStore = await cookies();
   cookieStore.set('auth-token', token, {
     httpOnly: true,

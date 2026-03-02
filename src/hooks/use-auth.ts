@@ -32,10 +32,16 @@ export function useAuth() {
 
   const handleLogout = useCallback(async () => {
     try {
-      await fetch('/api/auth/logout', { method: 'POST' });
+      const res = await fetch('/api/auth/logout', { method: 'POST' });
+      const data = await res.json();
       toast({ title: "Logged out", description: "You have been successfully logged out." });
-      router.push('/login');
-      router.refresh();
+
+      if (data.redirectUrl) {
+        window.location.href = data.redirectUrl;
+      } else {
+        router.push('/login');
+        router.refresh();
+      }
     } catch {
       toast({ title: "Error", description: "Failed to logout.", variant: "destructive" });
     }
