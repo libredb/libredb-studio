@@ -4,6 +4,7 @@ test.describe('Export Functionality', () => {
   test.beforeEach(async ({ page }) => {
     // Login as user
     await page.goto('/login');
+    await page.locator('input[type="email"]').fill('user@libredb.org');
     await page.locator('input[type="password"]').fill('test-user');
     await page.getByRole('button', { name: /sign in/i }).click();
     await page.waitForURL('/');

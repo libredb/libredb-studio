@@ -1,0 +1,143 @@
+{
+  "repo_notes": [
+    {
+      "content": "LibreDB Studio is a modern, AI-powered, open-source SQL IDE for cloud-native teams. It provides a zero-install, browser-based interface for managing PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, Redis databases, plus a demo mode. Built with Next.js 15 (App Router), React 19, TypeScript strict mode, Tailwind CSS 4, shadcn/ui, and Monaco Editor. The project uses Bun as its preferred runtime.",
+      "author": "Maintainer"
+    },
+    {
+      "content": "The codebase follows a Strategy Pattern for both database providers (src/lib/db/) and LLM providers (src/lib/llm/). Database providers are categorized as SQL (postgres, mysql, sqlite, oracle, mssql), Document (mongodb), and Key-Value (redis). LLM providers support Gemini, OpenAI, Ollama, and Custom endpoints. All providers implement a common interface and are instantiated via factory functions with dynamic imports for code splitting.",
+      "author": "Maintainer"
+    },
+    {
+      "content": "Authentication uses JWT tokens stored in HTTP-only cookies (jose library) with RBAC (admin/user roles). OIDC/SSO support is available via the openid-client library (src/lib/oidc.ts). Middleware at src/middleware.ts protects routes and enforces role-based access. The admin dashboard is restricted to admin role only.",
+      "author": "Maintainer"
+    },
+    {
+      "content": "The frontend architecture centers around the Studio component (src/components/Studio.tsx) as the main application shell. Key sub-systems include: Monaco-based QueryEditor, virtualized ResultsGrid (TanStack Table + react-virtual), SchemaExplorer with tree view, SchemaDiff with migration SQL generation, SchemaDiagram with xyflow/React Flow, real-time MonitoringDashboard with Recharts, and AI-powered panels (NL2SQL, AIAutopilot, QuerySafety).",
+      "author": "Maintainer"
+    },
+    {
+      "content": "Testing is multi-layered: unit tests (tests/unit/), API route handler tests (tests/api/), integration tests with mocked database drivers (tests/integration/), React hook tests (tests/hooks/), component tests with happy-dom (tests/components/), and Playwright E2E tests (e2e/). Component tests use isolated execution groups via tests/run-components.sh to prevent mock.module() cross-contamination. CI pipeline runs lint, typecheck, test, and build.",
+      "author": "Maintainer"
+    },
+    {
+      "content": "The project supports Docker deployment with multi-stage Bun build, standalone Next.js output, and health checks. CI/CD is configured via GitHub Actions (.github/workflows/ci.yml and docker-build-push.yml). Additional DevOps: render.yaml for Render platform deployment, docker/postgres.yml for local PostgreSQL with sample data.",
+      "author": "Maintainer"
+    }
+  ],
+  "pages": [
+    {
+      "title": "Architecture Overview",
+      "purpose": "High-level system architecture including the tech stack (Next.js 15, React 19, TypeScript, Tailwind CSS 4, Monaco Editor, Bun), directory structure (src/app, src/components, src/lib, src/hooks), key architectural patterns (Strategy Pattern, App Router, Server/Client Components), and how the frontend, API layer, database providers, and AI services interact. Cover the mermaid architecture diagram from docs/ARCHITECTURE.md."
+    },
+    {
+      "title": "Database Provider System",
+      "purpose": "Document the database abstraction layer in src/lib/db/ using the Strategy Pattern. Cover BaseDatabaseProvider (src/lib/db/base-provider.ts), SQLBaseProvider (src/lib/db/providers/sql/sql-base.ts), the factory function (src/lib/db/factory.ts), types (src/lib/db/types.ts), and custom error classes (src/lib/db/errors.ts). Explain how new providers are added.",
+      "parent": "Architecture Overview"
+    },
+    {
+      "title": "SQL Database Providers",
+      "purpose": "Document the SQL database providers: PostgreSQL (src/lib/db/providers/sql/postgres.ts), MySQL (src/lib/db/providers/sql/mysql.ts), SQLite (src/lib/db/providers/sql/sqlite.ts), Oracle (src/lib/db/providers/sql/oracle.ts), and SQL Server/MSSQL (src/lib/db/providers/sql/mssql.ts). Cover connection handling, query execution, schema introspection, and provider-specific features. Each extends SQLBaseProvider.",
+      "parent": "Database Provider System"
+    },
+    {
+      "title": "NoSQL Database Providers",
+      "purpose": "Document the MongoDB provider (src/lib/db/providers/document/mongodb.ts) and Redis provider (src/lib/db/providers/keyvalue/redis.ts). Cover JSON-based query format for MongoDB (collection, operation, filter, options), Redis command execution, and how both extend BaseDatabaseProvider. Also cover the Demo provider (src/lib/db/providers/demo.ts) for mock/in-memory mode.",
+      "parent": "Database Provider System"
+    },
+    {
+      "title": "Connection Pool & Query Management",
+      "purpose": "Document the connection pool manager (src/lib/db/utils/pool-manager.ts) and query limiter (src/lib/db/utils/query-limiter.ts). Cover pool configuration, connection reuse, cleanup strategies, query timeout handling, and rate limiting. Also cover SSH tunneling support (src/lib/ssh/tunnel.ts) and connection string parsing (src/lib/connection-string-parser.ts).",
+      "parent": "Database Provider System"
+    },
+    {
+      "title": "AI & LLM System",
+      "purpose": "Document the LLM abstraction layer in src/lib/llm/ using the Strategy Pattern. Cover BaseLLMProvider (src/lib/llm/base-provider.ts), factory (src/lib/llm/factory.ts), types, and all four providers: Gemini (src/lib/llm/providers/gemini.ts), OpenAI (src/lib/llm/providers/openai.ts), Ollama (src/lib/llm/providers/ollama.ts), and Custom (src/lib/llm/providers/custom.ts). Include utility modules: config (src/lib/llm/utils/config.ts), streaming (src/lib/llm/utils/streaming.ts), and retry logic (src/lib/llm/utils/retry.ts).",
+      "parent": "Architecture Overview"
+    },
+    {
+      "title": "AI-Powered Features",
+      "purpose": "Document all AI API endpoints and their corresponding frontend panels. Cover: AI Chat (src/app/api/ai/chat/), Natural Language to SQL (src/app/api/ai/nl2sql/ + src/components/NL2SQLPanel.tsx), SQL Explain (src/app/api/ai/explain/ + src/components/VisualExplain.tsx), Query Safety analysis (src/app/api/ai/query-safety/ + src/components/QuerySafetyDialog.tsx), AI Autopilot (src/app/api/ai/autopilot/ + src/components/AIAutopilotPanel.tsx), Impact analysis (src/app/api/ai/impact/), Schema description (src/app/api/ai/describe-schema/), and Index advisor (src/app/api/ai/index-advisor/).",
+      "parent": "AI & LLM System"
+    },
+    {
+      "title": "Authentication & Security",
+      "purpose": "Document the authentication system: JWT-based auth (src/lib/auth.ts) using the jose library with HTTP-only cookies, login/logout/me API routes (src/app/api/auth/), OIDC/SSO integration (src/lib/oidc.ts, src/app/api/auth/oidc/), middleware route protection (src/middleware.ts), RBAC with admin/user roles, audit logging (src/lib/audit.ts), and data masking (src/lib/data-masking.ts + src/components/MaskingSettings.tsx). Cover environment variables: ADMIN_PASSWORD, USER_PASSWORD, JWT_SECRET, OIDC_* settings.",
+      "parent": "Architecture Overview"
+    },
+    {
+      "title": "API Layer",
+      "purpose": "Document the REST API architecture in src/app/api/. Cover all endpoint groups: auth (login, logout, me, OIDC), database operations (query, multi-query, schema, health, test-connection, transaction, maintenance, pool-stats, provider-meta, schema-snapshot, cancel, monitoring, profile), AI endpoints (chat, nl2sql, explain, query-safety, impact, autopilot, describe-schema, index-advisor), admin endpoints (fleet-health, audit), and demo-connection. Explain request/response patterns, error handling, and authentication requirements.",
+      "parent": "Architecture Overview"
+    },
+    {
+      "title": "Studio Main Shell",
+      "purpose": "Document the main application shell component (src/components/Studio.tsx) which orchestrates the entire IDE experience. Cover the layout system with resizable panels (react-resizable-panels), tab management (src/components/studio/StudioTabBar.tsx), query toolbar (src/components/studio/QueryToolbar.tsx), bottom panel (src/components/studio/BottomPanel.tsx), desktop header (src/components/studio/StudioDesktopHeader.tsx), mobile header (src/components/studio/StudioMobileHeader.tsx), sidebar integration, and mobile navigation (src/components/MobileNav.tsx)."
+    },
+    {
+      "title": "SQL Editor",
+      "purpose": "Document the Monaco Editor integration for SQL editing: QueryEditor component (src/components/QueryEditor.tsx), SQL completions (src/lib/editor/sql-completions.ts), MongoDB completions (src/lib/editor/mongodb-completions.ts), SQL statement splitter (src/lib/sql/statement-splitter.ts), SQL alias extractor (src/lib/sql/alias-extractor.ts), and query generators (src/lib/query-generators.ts). Cover syntax highlighting, auto-completion, multi-statement execution, and sql-formatter integration.",
+      "parent": "Studio Main Shell"
+    },
+    {
+      "title": "Results Grid & Data Display",
+      "purpose": "Document the virtualized data grid system: ResultsGrid (src/components/ResultsGrid.tsx) using TanStack React Table + react-virtual for virtualization. Cover sub-components: ResultCard (src/components/results-grid/ResultCard.tsx), RowDetailSheet (src/components/results-grid/RowDetailSheet.tsx), StatsBar (src/components/results-grid/StatsBar.tsx). Also cover PivotTable (src/components/PivotTable.tsx), DataCharts (src/components/DataCharts.tsx), DataProfiler (src/components/DataProfiler.tsx), and inline editing hook (src/hooks/use-inline-editing.ts).",
+      "parent": "Studio Main Shell"
+    },
+    {
+      "title": "Sidebar & Connection Management",
+      "purpose": "Document the sidebar system: Sidebar (src/components/sidebar/Sidebar.tsx), ConnectionsList (src/components/sidebar/ConnectionsList.tsx), ConnectionItem (src/components/sidebar/ConnectionItem.tsx), ConnectionModal (src/components/ConnectionModal.tsx), and database icons (src/components/icons/db-icons.tsx). Cover connection management hooks: use-connection-manager (src/hooks/use-connection-manager.ts), use-connection-form (src/hooks/use-connection-form.ts). Include LocalStorage management (src/lib/storage.ts) and db-ui-config (src/lib/db-ui-config.ts).",
+      "parent": "Studio Main Shell"
+    },
+    {
+      "title": "Schema Tools",
+      "purpose": "Document schema-related features: SchemaExplorer (src/components/schema-explorer/) with tree view of tables/columns, SchemaDiff (src/components/SchemaDiff.tsx) with diff engine (src/lib/schema-diff/diff-engine.ts) and migration SQL generator (src/lib/schema-diff/migration-generator.ts), SchemaDiagram (src/components/SchemaDiagram.tsx) using @xyflow/react and elkjs for visual ER diagrams, SnapshotTimeline (src/components/SnapshotTimeline.tsx) for schema version tracking, and DatabaseDocs (src/components/DatabaseDocs.tsx) for auto-generated documentation."
+    },
+    {
+      "title": "Monitoring & Admin Dashboard",
+      "purpose": "Document the monitoring system: MonitoringDashboard (src/components/monitoring/MonitoringDashboard.tsx) with tabs for Overview, Pool, Queries, Tables, Performance, Storage, and Sessions (all in src/components/monitoring/tabs/). Cover MetricChart component, monitoring data hook (src/hooks/use-monitoring-data.ts), monitoring thresholds (src/lib/monitoring-thresholds.ts), time-series buffer (src/lib/time-series-buffer.ts), and the monitoring API endpoint (src/app/api/db/monitoring/). Also cover the Admin Dashboard (src/components/admin/AdminDashboard.tsx) with Overview, Operations, Security, Audit, and MonitoringEmbed tabs."
+    },
+    {
+      "title": "Data Management Features",
+      "purpose": "Document data management components: DataImportModal (src/components/DataImportModal.tsx) for CSV/JSON import, CreateTableModal (src/components/CreateTableModal.tsx) for visual table creation, TestDataGenerator (src/components/TestDataGenerator.tsx) for generating sample data, CodeGenerator (src/components/CodeGenerator.tsx) for generating code from queries, QueryHistory (src/components/QueryHistory.tsx), SavedQueries (src/components/SavedQueries.tsx), SaveQueryModal (src/components/SaveQueryModal.tsx), and CommandPalette (src/components/CommandPalette.tsx) for keyboard-driven navigation.",
+      "parent": "Studio Main Shell"
+    },
+    {
+      "title": "Custom React Hooks",
+      "purpose": "Document all custom hooks in src/hooks/: use-auth (authentication state), use-ai-chat (AI chat interaction), use-connection-manager (connection CRUD), use-connection-form (form state), use-inline-editing (cell editing), use-mobile (responsive detection), use-monitoring-data (real-time metrics), use-provider-metadata (database capabilities), use-query-execution (query runner), use-tab-manager (workspace tabs), use-toast (notifications), and use-transaction-control (BEGIN/COMMIT/ROLLBACK).",
+      "parent": "Architecture Overview"
+    },
+    {
+      "title": "Theming & UI System",
+      "purpose": "Document the UI system: Tailwind CSS 4 with @theme inline theming, CSS variables for dark/light mode (src/app/globals.css), shadcn/ui component library (src/components/ui/ with 50+ primitives), cn() utility (src/lib/utils.ts), Framer Motion animations, and the mobile-first responsive design philosophy. Reference docs/THEMING.md for the theming guide.",
+      "parent": "Architecture Overview"
+    },
+    {
+      "title": "Testing Strategy",
+      "purpose": "Document the comprehensive multi-layer testing strategy. Cover: test setup files (tests/setup.ts for env/localStorage mocks, tests/setup-dom.ts for happy-dom), test helpers (tests/helpers/ with mock-monaco, mock-next, mock-navigation, mock-provider, mock-fetch, mock-sonner, render-with-providers), test fixtures (tests/fixtures/ with connections, schemas, query-results, masking-configs), and the component test isolation script (tests/run-components.sh). Explain why component tests need isolation (bun:test mock.module cross-contamination)."
+    },
+    {
+      "title": "Unit & API Tests",
+      "purpose": "Document unit tests (tests/unit/) covering: lib utilities (auth, audit, storage, utils, oidc), database layer (base-provider, factory, errors, pool-manager, query-limiter, sql-base), LLM providers (gemini, openai, ollama, custom, factory, config, retry, streaming), schema-diff (diff-engine, migration-generator), SQL tools (statement-splitter, alias-extractor), and editor completions. Also document API route tests (tests/api/) covering all endpoint handlers for auth, AI, database, and admin routes.",
+      "parent": "Testing Strategy"
+    },
+    {
+      "title": "Integration, Hook & Component Tests",
+      "purpose": "Document integration tests (tests/integration/db/) that test each database provider (postgres, mysql, sqlite, oracle, mssql, mongodb, redis, demo) with mocked drivers. Document hook tests (tests/hooks/) that test all 12 custom React hooks. Document component tests (tests/components/) covering all major UI components including Studio, QueryEditor, ResultsGrid, ConnectionModal, admin tabs, monitoring tabs, sidebar, schema-explorer, and studio sub-components.",
+      "parent": "Testing Strategy"
+    },
+    {
+      "title": "E2E Tests",
+      "purpose": "Document Playwright E2E tests (e2e/) covering: login flow (login.spec.ts), connection management (connection-management.spec.ts), query execution (query-execution.spec.ts), tab management (tab-management.spec.ts), data export (export.spec.ts), demo mode (demo-mode.spec.ts), and admin dashboard (admin-dashboard.spec.ts). Cover Playwright configuration (playwright.config.ts) and how E2E tests integrate with the CI pipeline.",
+      "parent": "Testing Strategy"
+    },
+    {
+      "title": "DevOps & Deployment",
+      "purpose": "Document the deployment infrastructure: Dockerfile with multi-stage Bun build and standalone Next.js output, docker/postgres.yml for local PostgreSQL with extensions and sample data (docker/postgres-init/), GitHub Actions CI pipeline (.github/workflows/ci.yml with lint, typecheck, test, build steps), Docker build and push workflow (.github/workflows/docker-build-push.yml), Render deployment config (render.yaml), environment variable configuration (.env.example), and health check endpoint (GET /api/db/health)."
+    },
+    {
+      "title": "Release History",
+      "purpose": "Document the project's release history from docs/releases/: v0.3.0, v0.4.0, v0.5.0, v0.5.6, v0.6.1, v0.6.7, and v0.7.0 (current). Summarize key features added in each release, the evolution from a simple PostgreSQL editor to a multi-database AI-powered IDE, and the current project version (0.7.0)."
+    }
+  ]
+}

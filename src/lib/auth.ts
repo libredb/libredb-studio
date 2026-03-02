@@ -53,8 +53,8 @@ export async function getSession() {
   return await verifyJWT(token);
 }
 
-export async function login(role: Role) {
-  const token = await signJWT({ role, username: role });
+export async function login(role: Role, username?: string) {
+  const token = await signJWT({ role, username: username || role });
   const cookieStore = await cookies();
   cookieStore.set('auth-token', token, {
     httpOnly: true,

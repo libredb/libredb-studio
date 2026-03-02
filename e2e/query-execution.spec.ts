@@ -4,6 +4,7 @@ test.describe('Query Execution', () => {
   test.beforeEach(async ({ page }) => {
     // Login as user
     await page.goto('/login');
+    await page.locator('input[type="email"]').fill('user@libredb.org');
     await page.locator('input[type="password"]').fill('test-user');
     await page.getByRole('button', { name: 'Sign In' }).click();
     await page.waitForURL('/');
