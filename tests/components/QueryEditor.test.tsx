@@ -13,6 +13,11 @@ let capturedActions: Array<{ id: string; run: () => void }> = [];
 let mockSelectionReturn: { isEmpty: () => boolean } | null = null;
 let mockSelectedText = '';
 let mockUseMonacoReturn: unknown = null;
+let mockCursorOffset = 0;
+let mockGetModelReturn: (() => unknown) | null = null;
+let mockDeltaDecorations = mock((..._a: unknown[]) => ['deco-1']);
+let mockUpdateOptions = mock((..._a: unknown[]) => {});
+let capturedAiChatDeps: Record<string, unknown> | null = null;
 
 // ── Mock Monaco Editor with React.createElement (not plain objects) ─────────
 mock.module('@monaco-editor/react', () => ({
@@ -64,20 +69,20 @@ mock.module('@monaco-editor/react', () => ({
           setTextValue(next);
         },
         getSelection: () => mockSelectionReturn,
-        getModel: () => ({
+        getModel: () => mockGetModelReturn !== null ? mockGetModelReturn() : ({
           getValueInRange: () => mockSelectedText,
           getValue: () => valueRef.current,
-          getOffsetAt: (_pos: unknown) => typeof _pos === 'number' ? _pos : 0,
+          getOffsetAt: () => mockCursorOffset,
           getPositionAt: (offset: number) => ({ lineNumber: 1, column: offset + 1 }),
         }),
-        getPosition: () => ({ lineNumber: 1, column: 1 }),
-        deltaDecorations: mock(() => ['deco-1']),
+        getPosition: () => ({ lineNumber: 1, column: mockCursorOffset + 1 }),
+        deltaDecorations: (...args: unknown[]) => mockDeltaDecorations(...args),
         onDidBlurEditorText: (cb: () => void) => { capturedBlurCb = cb; },
         onDidChangeCursorSelection: (cb: () => void) => { capturedSelectionCb = cb; },
         addCommand: (_keybinding: number, handler: () => void) => { capturedCommands.push({ keybinding: _keybinding, handler }); },
         addAction: (action: { id: string; run: () => void }) => { capturedActions.push(action); },
         focus: mock(() => {}),
-        updateOptions: mock(() => {}),
+        updateOptions: (...args: unknown[]) => mockUpdateOptions(...args),
       };
 
       beforeMount?.(monacoMock);
@@ -144,18 +149,21 @@ let mockClipboardWriteText = mock((data: string) => {
 });
 
 mock.module('@/hooks/use-ai-chat', () => ({
-  useAiChat: mock(() => ({
-    showAi: mockShowAi,
-    setShowAi: mockSetShowAi,
-    aiPrompt: '',
-    setAiPrompt: mockSetAiPrompt,
-    isAiLoading: mockIsAiLoading,
-    aiError: mockAiError,
-    setAiError: mockSetAiError,
-    aiConversationHistory: mockAiConversationHistory,
-    setAiConversationHistory: mockSetAiConversationHistory,
-    handleAiSubmit: mockHandleAiSubmit,
-  })),
+  useAiChat: mock((deps: Record<string, unknown>) => {
+    capturedAiChatDeps = deps;
+    return {
+      showAi: mockShowAi,
+      setShowAi: mockSetShowAi,
+      aiPrompt: '',
+      setAiPrompt: mockSetAiPrompt,
+      isAiLoading: mockIsAiLoading,
+      aiError: mockAiError,
+      setAiError: mockSetAiError,
+      aiConversationHistory: mockAiConversationHistory,
+      setAiConversationHistory: mockSetAiConversationHistory,
+      handleAiSubmit: mockHandleAiSubmit,
+    };
+  }),
 }));
 
 // ── Mock sql-formatter ──────────────────────────────────────────────────────
@@ -243,6 +251,11 @@ describe('QueryEditor', () => {
     mockSetAiConversationHistory.mockClear();
     mockAiError = null;
     mockAiConversationHistory = [];
+    mockCursorOffset = 0;
+    mockGetModelReturn = null;
+    mockDeltaDecorations = mock((..._a: unknown[]) => ['deco-1']);
+    mockUpdateOptions = mock((..._a: unknown[]) => {});
+    capturedAiChatDeps = null;
     mockClipboardWriteText = mock((data: string) => {
       void data;
       return Promise.resolve();
@@ -1190,5 +1203,312 @@ describe('QueryEditor', () => {
     act(() => { editorRef.current?.focus(); });
     // The mock editor's focus is mock(() => {}), verifying it was called
     // Since editorRef.current.focus() delegates to editorMock.focus(), the call succeeds without error
+  });
+
+  // -----------------------------------------------------------------------
+  // getEffectiveQuery — edge cases
+  // -----------------------------------------------------------------------
+
+  test('getEffectiveQuery: JSON language returns full value without semicolon splitting', () => {
+    mockUseMonacoReturn = {
+      Range: class {
+        constructor(public startLineNumber: number, public startColumn: number, public endLineNumber: number, public endColumn: number) {}
+      },
+    };
+
+    let eventDetail: { query: string } | null = null;
+    const handler = ((e: CustomEvent) => { eventDetail = e.detail; }) as EventListener;
+    window.addEventListener('execute-query', handler);
+
+    render(React.createElement(QueryEditor, createDefaultProps({
+      value: '{"collection":"users","operation":"find"}',
+      language: 'json',
+    })));
+    act(() => { capturedCommands[0].handler(); });
+
+    expect(eventDetail!.query).toBe('{"collection":"users","operation":"find"}');
+    window.removeEventListener('execute-query', handler);
+  });
+
+  test('getEffectiveQuery: whitespace-only selection falls through to full value', () => {
+    mockUseMonacoReturn = {
+      Range: class {
+        constructor(public startLineNumber: number, public startColumn: number, public endLineNumber: number, public endColumn: number) {}
+      },
+    };
+    mockSelectionReturn = { isEmpty: () => false };
+    mockSelectedText = '   \n  ';
+
+    let eventDetail: { query: string } | null = null;
+    const handler = ((e: CustomEvent) => { eventDetail = e.detail; }) as EventListener;
+    window.addEventListener('execute-query', handler);
+
+    render(React.createElement(QueryEditor, createDefaultProps({ value: 'SELECT whitespace_test' })));
+    act(() => { capturedCommands[0].handler(); });
+
+    // Should NOT be the whitespace selection — falls through to statement finder
+    expect(eventDetail!.query).not.toBe('   \n  ');
+    expect(eventDetail!.query).toBe('SELECT whitespace_test');
+    window.removeEventListener('execute-query', handler);
+  });
+
+  test('getEffectiveQuery: cursor after last semicolon extracts trailing statement', () => {
+    mockUseMonacoReturn = {
+      Range: class {
+        constructor(public startLineNumber: number, public startColumn: number, public endLineNumber: number, public endColumn: number) {}
+      },
+    };
+    mockCursorOffset = 12; // Inside 'SELECT 2' portion
+
+    let eventDetail: { query: string } | null = null;
+    const handler = ((e: CustomEvent) => { eventDetail = e.detail; }) as EventListener;
+    window.addEventListener('execute-query', handler);
+
+    render(React.createElement(QueryEditor, createDefaultProps({ value: 'SELECT 1; SELECT 2' })));
+    act(() => { capturedCommands[0].handler(); });
+
+    // Cursor at offset 12, no semicolon after → endOffset = fullText.length
+    expect(eventDetail!.query).toBe('SELECT 2');
+    window.removeEventListener('execute-query', handler);
+  });
+
+  test('getEffectiveQuery: empty statement between semicolons falls through to full value', () => {
+    mockUseMonacoReturn = {
+      Range: class {
+        constructor(public startLineNumber: number, public startColumn: number, public endLineNumber: number, public endColumn: number) {}
+      },
+    };
+    mockCursorOffset = 9; // Between the two semicolons
+
+    let eventDetail: { query: string } | null = null;
+    const handler = ((e: CustomEvent) => { eventDetail = e.detail; }) as EventListener;
+    window.addEventListener('execute-query', handler);
+
+    render(React.createElement(QueryEditor, createDefaultProps({ value: 'SELECT 1;;SELECT 2' })));
+    act(() => { capturedCommands[0].handler(); });
+
+    // Empty statement between ;; → falls through to full editor value
+    expect(eventDetail!.query).toBe('SELECT 1;;SELECT 2');
+    window.removeEventListener('execute-query', handler);
+  });
+
+  test('getEffectiveQuery: null model returns full editor value', () => {
+    mockUseMonacoReturn = {
+      Range: class {
+        constructor(public startLineNumber: number, public startColumn: number, public endLineNumber: number, public endColumn: number) {}
+      },
+    };
+    mockGetModelReturn = () => null;
+
+    let eventDetail: { query: string } | null = null;
+    const handler = ((e: CustomEvent) => { eventDetail = e.detail; }) as EventListener;
+    window.addEventListener('execute-query', handler);
+
+    render(React.createElement(QueryEditor, createDefaultProps({ value: 'SELECT null_model' })));
+    act(() => { capturedCommands[0].handler(); });
+
+    expect(eventDetail!.query).toBe('SELECT null_model');
+    window.removeEventListener('execute-query', handler);
+  });
+
+  test('getEffectiveQuery: null monaco returns full editor value', () => {
+    mockUseMonacoReturn = null;
+
+    let eventDetail: { query: string } | null = null;
+    const handler = ((e: CustomEvent) => { eventDetail = e.detail; }) as EventListener;
+    window.addEventListener('execute-query', handler);
+
+    render(React.createElement(QueryEditor, createDefaultProps({ value: 'SELECT no_monaco' })));
+    act(() => { capturedCommands[0].handler(); });
+
+    expect(eventDetail!.query).toBe('SELECT no_monaco');
+    window.removeEventListener('execute-query', handler);
+  });
+
+  // -----------------------------------------------------------------------
+  // flashHighlight — edge cases
+  // -----------------------------------------------------------------------
+
+  test('rapid double-execute clears existing highlight before creating new one', () => {
+    mockUseMonacoReturn = {
+      Range: class {
+        constructor(public startLineNumber: number, public startColumn: number, public endLineNumber: number, public endColumn: number) {}
+      },
+    };
+
+    render(React.createElement(QueryEditor, createDefaultProps({ value: 'SELECT 1' })));
+
+    act(() => { capturedCommands[0].handler(); });
+    act(() => { capturedCommands[0].handler(); });
+
+    // First execute: create (1 call)
+    // Second execute: clear existing + create new (2 calls)
+    // Total: 3+ calls
+    expect(mockDeltaDecorations.mock.calls.length).toBeGreaterThanOrEqual(3);
+    // Second call should be clearing existing decorations
+    expect(mockDeltaDecorations.mock.calls[1][0]).toEqual(['deco-1']);
+    expect(mockDeltaDecorations.mock.calls[1][1]).toEqual([]);
+  });
+
+  test('highlight timeout removes decorations after 1 second', async () => {
+    mockUseMonacoReturn = {
+      Range: class {
+        constructor(public startLineNumber: number, public startColumn: number, public endLineNumber: number, public endColumn: number) {}
+      },
+    };
+
+    render(React.createElement(QueryEditor, createDefaultProps({ value: 'SELECT 1' })));
+    act(() => { capturedCommands[0].handler(); });
+
+    const callCountAfterExecute = mockDeltaDecorations.mock.calls.length;
+
+    await act(async () => {
+      await new Promise(r => setTimeout(r, 1100));
+    });
+
+    // After timeout, deltaDecorations should have been called to clear
+    expect(mockDeltaDecorations.mock.calls.length).toBeGreaterThan(callCountAfterExecute);
+    // Last call should clear decorations
+    const lastCall = mockDeltaDecorations.mock.calls[mockDeltaDecorations.mock.calls.length - 1];
+    expect(lastCall[0]).toEqual(['deco-1']);
+    expect(lastCall[1]).toEqual([]);
+  });
+
+  test('flashHighlight with null range is a no-op', () => {
+    // When monaco is null, getEffectiveQuery returns range: null
+    // flashHighlight(null) should not call deltaDecorations
+    mockUseMonacoReturn = null;
+
+    render(React.createElement(QueryEditor, createDefaultProps({ value: 'SELECT 1' })));
+
+    mockDeltaDecorations.mockClear();
+    act(() => { capturedCommands[0].handler(); });
+
+    // deltaDecorations should NOT be called since range is null
+    expect(mockDeltaDecorations.mock.calls.length).toBe(0);
+  });
+
+  // -----------------------------------------------------------------------
+  // setEditorValueForAi callback
+  // -----------------------------------------------------------------------
+
+  test('setEditorValueForAi callback updates editor value', () => {
+    const { queryByTestId } = render(React.createElement(QueryEditor, createDefaultProps({ value: 'SELECT old' })));
+
+    expect(capturedAiChatDeps).not.toBeNull();
+    const setEditorValue = capturedAiChatDeps!.setEditorValue as (val: string) => void;
+    act(() => { setEditorValue('AI generated SQL'); });
+
+    const editor = queryByTestId('mock-monaco-editor') as HTMLTextAreaElement;
+    expect(editor.value).toBe('AI generated SQL');
+  });
+
+  // -----------------------------------------------------------------------
+  // Console.error cleanup on unmount
+  // -----------------------------------------------------------------------
+
+  test('unmount restores original console.error', () => {
+    const originalError = console.error;
+    const { unmount } = render(React.createElement(QueryEditor, createDefaultProps()));
+
+    // After mount, handleBeforeMount replaced console.error
+    expect(console.error).not.toBe(originalError);
+
+    // Unmount triggers cleanup effect that restores original
+    unmount();
+    expect(console.error).toBe(originalError);
+  });
+
+  // -----------------------------------------------------------------------
+  // Value sync short-circuits
+  // -----------------------------------------------------------------------
+
+  test('rerender with same value does not crash', () => {
+    const props = createDefaultProps({ value: 'SELECT 1' });
+    const { queryByTestId, rerender } = render(React.createElement(QueryEditor, props));
+
+    // Rerender with same value — should be a no-op
+    rerender(React.createElement(QueryEditor, { ...props, value: 'SELECT 1' }));
+    const editor = queryByTestId('mock-monaco-editor') as HTMLTextAreaElement;
+    expect(editor.value).toBe('SELECT 1');
+  });
+
+  test('rerender when editor already has the new value skips extra setValue', () => {
+    const props = createDefaultProps({ value: 'SELECT 1' });
+    const { queryByTestId, rerender } = render(React.createElement(QueryEditor, props));
+
+    // First change to a different value
+    rerender(React.createElement(QueryEditor, { ...props, value: 'SELECT 2' }));
+    const editor = queryByTestId('mock-monaco-editor') as HTMLTextAreaElement;
+    expect(editor.value).toBe('SELECT 2');
+
+    // Rerender again with same value — short-circuits
+    rerender(React.createElement(QueryEditor, { ...props, value: 'SELECT 2' }));
+    expect(editor.value).toBe('SELECT 2');
+  });
+
+  // -----------------------------------------------------------------------
+  // Additional edge cases
+  // -----------------------------------------------------------------------
+
+  test('ref toggleAi() calls setShowAi', () => {
+    const editorRef = React.createRef<import('@/components/QueryEditor').QueryEditorRef>();
+    render(React.createElement(QueryEditor, { ...createDefaultProps(), ref: editorRef }));
+    act(() => { editorRef.current?.toggleAi(); });
+    expect(mockSetShowAi).toHaveBeenCalled();
+  });
+
+  test('LINES toggle calls updateOptions with correct line numbers setting', () => {
+    const { queryByText } = render(React.createElement(QueryEditor, createDefaultProps()));
+
+    // Default is showLineNumbers=true, toggle to false
+    fireEvent.click(queryByText('LINES')!);
+    expect(mockUpdateOptions).toHaveBeenCalledWith({ lineNumbers: 'off' });
+
+    // Toggle back to true
+    mockUpdateOptions.mockClear();
+    fireEvent.click(queryByText('LINES')!);
+    expect(mockUpdateOptions).toHaveBeenCalledWith({ lineNumbers: 'on' });
+  });
+
+  test('COPY with empty editor copies empty string', () => {
+    const { queryByText } = render(React.createElement(QueryEditor, createDefaultProps({ value: '' })));
+    fireEvent.click(queryByText('COPY')!);
+    expect(mockClipboardWriteText).toHaveBeenCalledWith('');
+  });
+
+  test('schema with table having no columns does not crash', () => {
+    const schema = JSON.stringify([
+      { name: 'empty_table', rowCount: 0 },
+    ]);
+    const { queryByTestId } = render(
+      React.createElement(QueryEditor, createDefaultProps({ schemaContext: schema }))
+    );
+    expect(queryByTestId('mock-monaco-editor')).not.toBeNull();
+  });
+
+  test('schema with duplicate column names across tables does not crash', () => {
+    const schema = JSON.stringify([
+      { name: 'users', rowCount: 100, columns: [{ name: 'id', type: 'integer', isPrimary: true }] },
+      { name: 'orders', rowCount: 200, columns: [{ name: 'id', type: 'integer', isPrimary: true }] },
+    ]);
+    const { queryByTestId } = render(
+      React.createElement(QueryEditor, createDefaultProps({ schemaContext: schema }))
+    );
+    expect(queryByTestId('mock-monaco-editor')).not.toBeNull();
+  });
+
+  test('selection callback with null selection hides RUN SELECTION', () => {
+    const { queryByText } = render(React.createElement(QueryEditor, createDefaultProps()));
+
+    // First, create a non-empty selection
+    mockSelectionReturn = { isEmpty: () => false };
+    act(() => { capturedSelectionCb?.(); });
+    expect(queryByText('RUN SELECTION')).not.toBeNull();
+
+    // Now set null selection
+    mockSelectionReturn = null;
+    act(() => { capturedSelectionCb?.(); });
+    expect(queryByText('RUN SELECTION')).toBeNull();
   });
 });
