@@ -51,13 +51,13 @@ The project uses ESLint 9 for linting and `bun:test` for testing with `@testing-
 ## Architecture
 
 ### Tech Stack
-- **Framework:** Next.js 15 (App Router) with React 19 and TypeScript
+- **Framework:** Next.js 16 (App Router) with React 19 and TypeScript
 - **Styling:** Tailwind CSS 4 with Shadcn/UI components
 - **SQL Editor:** Monaco Editor
 - **Data Grid:** TanStack React Table with react-virtual for virtualization
 - **AI:** Multi-model support (Gemini, OpenAI, Ollama, Custom)
 - **Databases:** PostgreSQL (`pg`), MySQL (`mysql2`), SQLite (`better-sqlite3`), Oracle (`oracledb`), SQL Server (`mssql`), MongoDB (`mongodb`), Redis (`ioredis`)
-- **Auth:** JWT-based with `jose` library
+- **Auth:** JWT-based with `jose` library + OIDC SSO with `openid-client` (Auth0, Keycloak, Okta, Azure AD)
 
 ### Directory Structure
 
@@ -66,6 +66,7 @@ src/
 ├── app/                    # Next.js App Router
 │   ├── api/
 │   │   ├── auth/           # Login/logout/me endpoints
+│   │   │   └── oidc/       # OIDC login + callback routes (PKCE, code exchange)
 │   │   ├── ai/             # AI endpoints (chat, nl2sql, explain, safety)
 │   │   ├── db/             # Query, schema, health, maintenance, transactions
 │   │   └── admin/          # Fleet health, audit endpoints
@@ -95,7 +96,8 @@ src/
     ├── schema-diff/        # Schema diff engine + migration SQL generator
     ├── sql/                # SQL statement splitter, alias extractor
     ├── types.ts            # TypeScript type definitions
-    ├── auth.ts             # JWT auth utilities
+    ├── auth.ts             # JWT auth utilities (login, logout, signJWT, verifyJWT)
+    ├── oidc.ts             # OIDC utilities (discovery, PKCE, token exchange, role mapping, logout)
     └── storage.ts          # LocalStorage management
 
 tests/
@@ -123,7 +125,11 @@ e2e/                        # Playwright E2E tests (browser)
 
 2. **LLM Abstraction:** `src/lib/llm/` module provides Strategy Pattern for AI providers (Gemini, OpenAI, Ollama, Custom)
 
-3. **Authentication Flow:** JWT tokens stored in HTTP-only cookies. Middleware (`src/middleware.ts`) protects routes and enforces RBAC (admin vs user roles)
+3. **Authentication Flow:** Supports two modes controlled by `NEXT_PUBLIC_AUTH_PROVIDER`:
+   - **Local** (default): Email/password login → JWT session cookie
+   - **OIDC**: SSO redirect → PKCE code exchange → local JWT session cookie (same as local)
+
+   JWT tokens stored in HTTP-only cookies. Proxy (`src/proxy.ts`) protects routes and enforces RBAC (admin vs user roles). OIDC module (`src/lib/oidc.ts`) handles discovery, PKCE, token exchange, role mapping, and provider logout.
 
 4. **API Routes:** All backend logic in `src/app/api/`. Protected routes require valid JWT. Public routes: `/login`, `/api/auth`, `/api/db/health`
 
@@ -135,14 +141,28 @@ e2e/                        # Playwright E2E tests (browser)
 
 Required in `.env.local`:
 ```
-ADMIN_PASSWORD=<password>       # Admin login
-USER_PASSWORD=<password>        # User login
+# Authentication (local mode)
+ADMIN_EMAIL=admin@libredb.org   # Admin email
+ADMIN_PASSWORD=<password>       # Admin password
+USER_EMAIL=user@libredb.org     # User email
+USER_PASSWORD=<password>        # User password
 JWT_SECRET=<32+ chars>          # JWT signing secret
+
+# Auth provider: "local" (default) or "oidc"
+NEXT_PUBLIC_AUTH_PROVIDER=local
+
+# OIDC config (required when provider=oidc)
+OIDC_ISSUER=<issuer-url>        # e.g. https://dev-xxx.auth0.com
+OIDC_CLIENT_ID=<client-id>
+OIDC_CLIENT_SECRET=<secret>
+OIDC_SCOPE=openid profile email # Optional, defaults shown
+OIDC_ROLE_CLAIM=                # Claim path for role (e.g. realm_access.roles)
+OIDC_ADMIN_ROLES=admin          # Comma-separated admin role values
 
 # Optional AI config
 LLM_PROVIDER=gemini             # gemini, openai, ollama, custom
 LLM_API_KEY=<key>
-LLM_MODEL=gemini-2.0-flash
+LLM_MODEL=gemini-2.5-flash
 LLM_API_URL=<url>               # For ollama/custom providers
 ```
 
