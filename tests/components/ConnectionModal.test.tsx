@@ -20,6 +20,29 @@ mock.module('framer-motion', () => {
   };
 });
 
+// ── Mock Drawer (vaul) ──────────────────────────────────────────────────────
+mock.module('@/components/ui/drawer', () => ({
+  Drawer: ({ open, children }: { open?: boolean; children: React.ReactNode }) => {
+    if (!open) return null;
+    return React.createElement('div', { 'data-testid': 'drawer' }, children);
+  },
+  DrawerContent: ({ children, className }: { children: React.ReactNode; className?: string }) =>
+    React.createElement('div', { 'data-testid': 'drawer-content', className }, children),
+  DrawerHeader: ({ children, className }: { children: React.ReactNode; className?: string }) =>
+    React.createElement('div', { 'data-testid': 'drawer-header', className }, children),
+  DrawerTitle: ({ children }: { children: React.ReactNode }) =>
+    React.createElement('h2', null, children),
+  DrawerDescription: ({ children }: { children: React.ReactNode }) =>
+    React.createElement('p', null, children),
+  DrawerFooter: ({ children, className }: { children: React.ReactNode; className?: string }) =>
+    React.createElement('div', { 'data-testid': 'drawer-footer', className }, children),
+}));
+
+// ── Mock useIsMobile — tests always use Dialog (desktop) path ───────────────
+mock.module('@/hooks/use-mobile', () => ({
+  useIsMobile: () => false,
+}));
+
 // ── Mock Radix Dialog via @/components/ui/dialog ────────────────────────────
 mock.module('@/components/ui/dialog', () => ({
   Dialog: ({ open, children }: { open?: boolean; children: React.ReactNode; onOpenChange?: (open: boolean) => void }) => {
@@ -255,18 +278,18 @@ describe('ConnectionModal', () => {
 
   test('renders dialog content when isOpen is true', () => {
     const props = createDefaultProps({ isOpen: true });
-    const { queryByText } = render(React.createElement(ConnectionModal, props));
+    const { queryAllByText } = render(React.createElement(ConnectionModal, props));
 
-    expect(queryByText('New Connection')).not.toBeNull();
+    expect(queryAllByText('New Connection').length).toBeGreaterThan(0);
   });
 
   // ── 3. Shows "New Connection" title for new connection ──────────────────────
 
   test('shows "New Connection" title for new connection', () => {
     const props = createDefaultProps({ editConnection: null });
-    const { queryByText } = render(React.createElement(ConnectionModal, props));
+    const { queryAllByText } = render(React.createElement(ConnectionModal, props));
 
-    expect(queryByText('New Connection')).not.toBeNull();
+    expect(queryAllByText('New Connection').length).toBeGreaterThan(0);
   });
 
   // ── 4. Shows "Edit Connection" title when editConnection provided ───────────
@@ -283,9 +306,9 @@ describe('ConnectionModal', () => {
       createdAt: new Date(),
     };
     const props = createDefaultProps({ editConnection: editConn });
-    const { queryByText } = render(React.createElement(ConnectionModal, props));
+    const { queryAllByText } = render(React.createElement(ConnectionModal, props));
 
-    expect(queryByText('Edit Connection')).not.toBeNull();
+    expect(queryAllByText('Edit Connection').length).toBeGreaterThan(0);
   });
 
   // ── 5. Database type buttons render ─────────────────────────────────────────

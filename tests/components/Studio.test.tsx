@@ -146,11 +146,13 @@ mock.module('@/hooks/use-tab-manager', () => ({
   })),
 }));
 
+const mockHandleTransaction = mock(() => {});
+
 mock.module('@/hooks/use-transaction-control', () => ({
   useTransactionControl: mock(() => ({
     transactionActive: false,
     playgroundMode: false,
-    handleTransaction: mock(() => {}),
+    handleTransaction: mockHandleTransaction,
     setPlaygroundMode: mockSetPlaygroundMode,
     resetTransactionState: mockResetTransactionState,
   })),
@@ -462,6 +464,7 @@ describe('Studio', () => {
     mockHandleTableClick.mockClear();
     mockHandleGenerateSelect.mockClear();
     mockResetTransactionState.mockClear();
+    mockHandleTransaction.mockClear();
     mockSetPlaygroundMode.mockClear();
     mockExecuteQuery.mockClear();
     mockForceExecuteQuery.mockClear();
@@ -955,5 +958,77 @@ describe('Studio', () => {
     const fn = capturedMobileHeaderProps.onExecuteQuery as () => void;
     act(() => fn());
     expect(mockExecuteQuery).toHaveBeenCalled();
+  });
+
+  test('MobileHeader onBeginTransaction calls handleTransaction("begin")', () => {
+    render(<Studio />);
+    const fn = capturedMobileHeaderProps.onBeginTransaction as () => void;
+    act(() => fn());
+    expect(mockHandleTransaction).toHaveBeenCalledWith('begin');
+  });
+
+  test('MobileHeader onCommitTransaction calls handleTransaction("commit")', () => {
+    render(<Studio />);
+    const fn = capturedMobileHeaderProps.onCommitTransaction as () => void;
+    act(() => fn());
+    expect(mockHandleTransaction).toHaveBeenCalledWith('commit');
+  });
+
+  test('MobileHeader onRollbackTransaction calls handleTransaction("rollback")', () => {
+    render(<Studio />);
+    const fn = capturedMobileHeaderProps.onRollbackTransaction as () => void;
+    act(() => fn());
+    expect(mockHandleTransaction).toHaveBeenCalledWith('rollback');
+  });
+
+  test('MobileHeader onTogglePlayground toggles playground mode', () => {
+    render(<Studio />);
+    const fn = capturedMobileHeaderProps.onTogglePlayground as () => void;
+    act(() => fn());
+    // playgroundMode is false by default → setPlaygroundMode(!false) = setPlaygroundMode(true)
+    expect(mockSetPlaygroundMode).toHaveBeenCalledWith(true);
+  });
+
+  test('MobileHeader onToggleEditing enables editing when disabled', () => {
+    render(<Studio />);
+    const fn = capturedMobileHeaderProps.onToggleEditing as () => void;
+    act(() => fn());
+    expect(mockSetEditingEnabled).toHaveBeenCalledWith(true);
+    expect(mockHandleDiscardChanges).not.toHaveBeenCalled();
+  });
+
+  test('MobileHeader onToggleEditing disables editing and discards changes when enabled', () => {
+    editingOverride = { editingEnabled: true };
+    render(<Studio />);
+    const fn = capturedMobileHeaderProps.onToggleEditing as () => void;
+    act(() => fn());
+    expect(mockSetEditingEnabled).toHaveBeenCalledWith(false);
+    expect(mockHandleDiscardChanges).toHaveBeenCalled();
+  });
+
+  test('MobileHeader onImport opens import modal', () => {
+    const { queryByTestId } = render(<Studio />);
+    expect(queryByTestId('dataimportmodal')).toBeNull();
+    const fn = capturedMobileHeaderProps.onImport as () => void;
+    act(() => fn());
+    expect(queryByTestId('dataimportmodal')).not.toBeNull();
+  });
+
+  test('MobileHeader onExplain calls executeQuery with explain flag', () => {
+    render(<Studio />);
+    const fn = capturedMobileHeaderProps.onExplain as () => void;
+    act(() => fn());
+    expect(mockExecuteQuery).toHaveBeenCalledWith(undefined, undefined, true);
+  });
+
+  // --- CommandPalette onToggleAI ---
+  test('CommandPalette onToggleAI is wired', () => {
+    render(<Studio />);
+    const fn = capturedCommandPaletteProps.onToggleAI as () => void;
+    // The callback calls queryEditorRef.current?.toggleAi() — since the mock
+    // QueryEditor attaches a DOM element to the ref (not a QueryEditorRef),
+    // we just verify the callback is properly wired.
+    expect(fn).toBeDefined();
+    expect(typeof fn).toBe('function');
   });
 });

@@ -19,6 +19,7 @@ export interface QueryEditorRef {
   setValue: (value: string) => void;
   focus: () => void;
   format: () => void;
+  toggleAi: () => void;
 }
 
 interface QueryEditorProps {
@@ -309,7 +310,8 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
       }
     },
     focus: () => editorRef.current?.focus(),
-    format: handleFormat
+    format: handleFormat,
+    toggleAi: () => setShowAi(!showAi),
   }));
 
   const handleCopy = () => {
@@ -538,7 +540,7 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
               initial={{ opacity: 0, y: -10, scale: 0.95 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: -10, scale: 0.95 }}
-              className="absolute top-12 left-1/2 -translate-x-1/2 w-full max-w-2xl z-50 px-4"
+              className="absolute top-2 md:top-12 left-1/2 -translate-x-1/2 w-full max-w-2xl z-50 px-2 md:px-4"
             >
               <form
                 onSubmit={handleAiSubmit}

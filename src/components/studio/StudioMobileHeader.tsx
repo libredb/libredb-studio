@@ -6,13 +6,13 @@ import type { QueryEditorRef } from '@/components/QueryEditor';
 import { useRouter } from 'next/navigation';
 import { cn } from '@/lib/utils';
 import {
-  AlignLeft, ChevronDown, Copy, Database, Gauge,
-  LogOut, MoreVertical, Play, Plus, Save, Settings,
-  Sparkles, Square, Trash2, User,
+  AlignLeft, ChevronDown, Copy, Database, Edit3, Gauge,
+  LogOut, MoreVertical, Pencil, Play, PlayCircle, Plus,
+  Save, Settings, Sparkles, Square, Trash2, Upload, User, Zap,
 } from 'lucide-react';
 import {
   DropdownMenu, DropdownMenuContent,
-  DropdownMenuItem, DropdownMenuTrigger,
+  DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Button } from '@/components/ui/button';
 
@@ -26,6 +26,9 @@ interface StudioMobileHeaderProps {
   isExecuting: boolean;
   currentQuery: string;
   queryEditorRef: RefObject<QueryEditorRef | null>;
+  transactionActive: boolean;
+  playgroundMode: boolean;
+  editingEnabled: boolean;
   onSelectConnection: (conn: DatabaseConnection) => void;
   onAddConnection: () => void;
   onLogout: () => void;
@@ -33,6 +36,13 @@ interface StudioMobileHeaderProps {
   onClearQuery: () => void;
   onExecuteQuery: () => void;
   onCancelQuery: () => void;
+  onBeginTransaction: () => void;
+  onCommitTransaction: () => void;
+  onRollbackTransaction: () => void;
+  onTogglePlayground: () => void;
+  onToggleEditing: () => void;
+  onImport: () => void;
+  onExplain?: () => void;
 }
 
 export function StudioMobileHeader({
@@ -45,6 +55,9 @@ export function StudioMobileHeader({
   isExecuting,
   currentQuery,
   queryEditorRef,
+  transactionActive,
+  playgroundMode,
+  editingEnabled,
   onSelectConnection,
   onAddConnection,
   onLogout,
@@ -52,6 +65,13 @@ export function StudioMobileHeader({
   onClearQuery,
   onExecuteQuery,
   onCancelQuery,
+  onBeginTransaction,
+  onCommitTransaction,
+  onRollbackTransaction,
+  onTogglePlayground,
+  onToggleEditing,
+  onImport,
+  onExplain,
 }: StudioMobileHeaderProps) {
   const router = useRouter();
 
@@ -171,10 +191,7 @@ export function StudioMobileHeader({
               variant="ghost"
               size="sm"
               className="h-7 px-2 gap-1 text-[10px] font-bold text-zinc-500 hover:text-blue-400"
-              onClick={() => {
-                const event = new CustomEvent('toggle-ai-assistant');
-                window.dispatchEvent(event);
-              }}
+              onClick={() => queryEditorRef.current?.toggleAi()}
             >
               <Sparkles className="w-3.5 h-3.5" />
               AI
@@ -186,7 +203,7 @@ export function StudioMobileHeader({
                   <MoreVertical className="w-3.5 h-3.5" />
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="start" className="bg-[#0d0d0d] border-white/10">
+              <DropdownMenuContent align="start" className="bg-[#0d0d0d] border-white/10 w-48">
                 <DropdownMenuItem
                   onClick={() => queryEditorRef.current?.format()}
                   className="cursor-pointer text-xs"
@@ -210,12 +227,90 @@ export function StudioMobileHeader({
                 </DropdownMenuItem>
                 <DropdownMenuItem
                   onClick={onSaveQuery}
-                  className="cursor-pointer text-xs border-t border-white/5 mt-1"
+                  className="cursor-pointer text-xs"
                 >
                   <Save className="w-4 h-4 mr-2" /> Save Query
                 </DropdownMenuItem>
+
+                {onExplain && (
+                  <>
+                    <DropdownMenuSeparator className="bg-white/5" />
+                    <DropdownMenuItem
+                      onClick={onExplain}
+                      className="cursor-pointer text-xs text-amber-400"
+                    >
+                      <Zap className="w-4 h-4 mr-2" /> Explain Plan
+                    </DropdownMenuItem>
+                  </>
+                )}
+
+                <DropdownMenuSeparator className="bg-white/5" />
+                <div className="px-2 py-1">
+                  <span className="text-[9px] font-bold text-zinc-600 uppercase tracking-widest">Advanced</span>
+                </div>
+
+                {!transactionActive ? (
+                  <DropdownMenuItem
+                    onClick={onBeginTransaction}
+                    className="cursor-pointer text-xs"
+                    disabled={!activeConnection}
+                  >
+                    <PlayCircle className="w-4 h-4 mr-2" /> BEGIN Transaction
+                  </DropdownMenuItem>
+                ) : (
+                  <>
+                    <DropdownMenuItem
+                      onClick={onCommitTransaction}
+                      className="cursor-pointer text-xs text-emerald-400"
+                    >
+                      <PlayCircle className="w-4 h-4 mr-2" /> COMMIT
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onClick={onRollbackTransaction}
+                      className="cursor-pointer text-xs text-red-400"
+                    >
+                      <PlayCircle className="w-4 h-4 mr-2" /> ROLLBACK
+                    </DropdownMenuItem>
+                  </>
+                )}
+
+                <DropdownMenuItem
+                  onClick={onTogglePlayground}
+                  className="cursor-pointer text-xs"
+                >
+                  <Pencil className="w-4 h-4 mr-2" />
+                  {playgroundMode ? 'Disable Sandbox' : 'Enable Sandbox'}
+                </DropdownMenuItem>
+
+                <DropdownMenuItem
+                  onClick={onToggleEditing}
+                  className="cursor-pointer text-xs"
+                >
+                  <Edit3 className="w-4 h-4 mr-2" />
+                  {editingEnabled ? 'Disable Editing' : 'Enable Editing'}
+                </DropdownMenuItem>
+
+                <DropdownMenuItem
+                  onClick={onImport}
+                  className="cursor-pointer text-xs"
+                  disabled={!activeConnection}
+                >
+                  <Upload className="w-4 h-4 mr-2" /> Import Data
+                </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
+
+            {/* Status badges */}
+            {transactionActive && (
+              <span className="text-[9px] font-black text-amber-400 px-1.5 py-0.5 rounded bg-amber-500/10 border border-amber-500/20">
+                TXN
+              </span>
+            )}
+            {playgroundMode && (
+              <span className="text-[9px] font-black text-purple-400 px-1.5 py-0.5 rounded bg-purple-500/10 border border-purple-500/20">
+                SANDBOX
+              </span>
+            )}
           </div>
 
           {isExecuting ? (
