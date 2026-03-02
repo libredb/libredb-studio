@@ -7,6 +7,9 @@ services:
     runtime: docker
     # Use Dockerfile for building
     dockerfilePath: ./Dockerfile
+    # Docker build args — NEXT_PUBLIC_ vars must be set at build time
+    dockerBuildArgs:
+      NEXT_PUBLIC_AUTH_PROVIDER_BUILD: oidc
     # Health check endpoint
     healthCheckPath: /api/db/health
     # Auto-deploy on push to main
@@ -18,19 +21,38 @@ services:
       - key: PORT
         value: 3000
       # Authentication - Set these in Render Dashboard
+      - key: ADMIN_EMAIL
+        sync: false
       - key: ADMIN_PASSWORD
         sync: false # Must be set manually in dashboard
+      - key: USER_EMAIL
+        sync: false
       - key: USER_PASSWORD
         sync: false
       - key: JWT_SECRET
+        sync: false # Must be at least 32 characters
+      # OIDC / SSO Configuration - Set in Dashboard
+      - key: NEXT_PUBLIC_AUTH_PROVIDER
+        value: oidc # or "local" for password-based auth
+      - key: OIDC_ISSUER
         sync: false
+      - key: OIDC_CLIENT_ID
+        sync: false
+      - key: OIDC_CLIENT_SECRET
+        sync: false
+      - key: OIDC_SCOPE
+        value: openid profile email
+      - key: OIDC_ROLE_CLAIM
+        sync: false
+      - key: OIDC_ADMIN_ROLES
+        value: admin
       # AI Configuration (Optional) - Set in Dashboard
       - key: LLM_PROVIDER
         value: gemini
       - key: LLM_API_KEY
         sync: false
       - key: LLM_MODEL
-        value: gemini-2.0-flash
+        value: gemini-2.5-flash
     # Disk for persistent storage (optional)
     # disk:
     #   name: libredb-data
