@@ -2,7 +2,8 @@ import { describe, test, expect, mock, beforeEach } from 'bun:test';
 import { createMockRequest, parseResponseJSON } from '../../helpers/mock-next';
 
 // ─── Mock @/lib/auth BEFORE importing the route ─────────────────────────────
-const mockLogin = mock(async () => {});
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+const mockLogin = mock(async (_role: string, _email?: string) => {});
 
 mock.module('@/lib/auth', () => ({
   login: mockLogin,
@@ -21,10 +22,10 @@ describe('POST /api/auth/login', () => {
     mockLogin.mockClear();
   });
 
-  test('returns 200 with role admin when admin password is provided', async () => {
+  test('returns 200 with role admin when admin credentials are provided', async () => {
     const req = createMockRequest('/api/auth/login', {
       method: 'POST',
-      body: { password: process.env.ADMIN_PASSWORD },
+      body: { email: 'admin@libredb.org', password: 'LibreDB.2026' },
     });
 
     const res = await POST(req as never);
@@ -35,10 +36,10 @@ describe('POST /api/auth/login', () => {
     expect(data.role).toBe('admin');
   });
 
-  test('returns 200 with role user when user password is provided', async () => {
+  test('returns 200 with role user when user credentials are provided', async () => {
     const req = createMockRequest('/api/auth/login', {
       method: 'POST',
-      body: { password: process.env.USER_PASSWORD },
+      body: { email: 'user@libredb.org', password: 'LibreDB.2026' },
     });
 
     const res = await POST(req as never);
@@ -52,7 +53,7 @@ describe('POST /api/auth/login', () => {
   test('returns 401 when wrong password is provided', async () => {
     const req = createMockRequest('/api/auth/login', {
       method: 'POST',
-      body: { password: 'wrong-password' },
+      body: { email: 'admin@libredb.org', password: 'wrong-password' },
     });
 
     const res = await POST(req as never);
@@ -60,13 +61,13 @@ describe('POST /api/auth/login', () => {
 
     expect(res.status).toBe(401);
     expect(data.success).toBe(false);
-    expect(data.message).toBe('Invalid password');
+    expect(data.message).toBe('Invalid email or password');
   });
 
-  test('returns 401 when empty string password is provided', async () => {
+  test('returns 401 when wrong email is provided', async () => {
     const req = createMockRequest('/api/auth/login', {
       method: 'POST',
-      body: { password: '' },
+      body: { email: 'unknown@example.com', password: 'LibreDB.2026' },
     });
 
     const res = await POST(req as never);
@@ -74,7 +75,21 @@ describe('POST /api/auth/login', () => {
 
     expect(res.status).toBe(401);
     expect(data.success).toBe(false);
-    expect(data.message).toBe('Invalid password');
+    expect(data.message).toBe('Invalid email or password');
+  });
+
+  test('returns 401 when empty credentials are provided', async () => {
+    const req = createMockRequest('/api/auth/login', {
+      method: 'POST',
+      body: { email: '', password: '' },
+    });
+
+    const res = await POST(req as never);
+    const data = await parseResponseJSON<{ success: boolean; message: string }>(res);
+
+    expect(res.status).toBe(401);
+    expect(data.success).toBe(false);
+    expect(data.message).toBe('Invalid email or password');
   });
 
   test('returns 500 when body is not valid JSON', async () => {
@@ -107,27 +122,27 @@ describe('POST /api/auth/login', () => {
     expect(data.message).toBe('An error occurred');
   });
 
-  test('calls login() with "admin" for admin password', async () => {
+  test('calls login() with role and email for admin', async () => {
     const req = createMockRequest('/api/auth/login', {
       method: 'POST',
-      body: { password: process.env.ADMIN_PASSWORD },
+      body: { email: 'admin@libredb.org', password: 'LibreDB.2026' },
     });
 
     await POST(req as never);
 
     expect(mockLogin).toHaveBeenCalledTimes(1);
-    expect(mockLogin).toHaveBeenCalledWith('admin');
+    expect(mockLogin).toHaveBeenCalledWith('admin', 'admin@libredb.org');
   });
 
-  test('calls login() with "user" for user password', async () => {
+  test('calls login() with role and email for user', async () => {
     const req = createMockRequest('/api/auth/login', {
       method: 'POST',
-      body: { password: process.env.USER_PASSWORD },
+      body: { email: 'user@libredb.org', password: 'LibreDB.2026' },
     });
 
     await POST(req as never);
 
     expect(mockLogin).toHaveBeenCalledTimes(1);
-    expect(mockLogin).toHaveBeenCalledWith('user');
+    expect(mockLogin).toHaveBeenCalledWith('user', 'user@libredb.org');
   });
 });

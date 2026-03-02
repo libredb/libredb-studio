@@ -1,42 +1,56 @@
 import { login } from '@/lib/auth';
 import { NextRequest, NextResponse } from 'next/server';
 
-function getAuthPasswords() {
+interface AuthUser {
+  email: string;
+  password: string;
+  role: 'admin' | 'user';
+}
+
+function getAuthUsers(): AuthUser[] {
+  const adminEmail = process.env.ADMIN_EMAIL;
   const adminPassword = process.env.ADMIN_PASSWORD;
+  const userEmail = process.env.USER_EMAIL;
   const userPassword = process.env.USER_PASSWORD;
-  
+
   if (process.env.NODE_ENV === 'production') {
-    if (!adminPassword || !userPassword) {
-      throw new Error('ADMIN_PASSWORD and USER_PASSWORD environment variables are required in production');
+    if (!adminEmail || !adminPassword || !userEmail || !userPassword) {
+      throw new Error(
+        'ADMIN_EMAIL, ADMIN_PASSWORD, USER_EMAIL, and USER_PASSWORD environment variables are required in production'
+      );
     }
   }
-  
-  return {
-    admin: adminPassword || 'admin123',
-    user: userPassword || 'user123',
-  };
+
+  return [
+    {
+      email: adminEmail || 'admin@libredb.org',
+      password: adminPassword || 'LibreDB.2026',
+      role: 'admin',
+    },
+    {
+      email: userEmail || 'user@libredb.org',
+      password: userPassword || 'LibreDB.2026',
+      role: 'user',
+    },
+  ];
 }
 
 export async function POST(request: NextRequest) {
   try {
-    const { password } = await request.json();
-    const passwords = getAuthPasswords();
-    
-    const ADMIN_PASSWORD = passwords.admin;
-    const USER_PASSWORD = passwords.user;
+    const { email, password } = await request.json();
+    const users = getAuthUsers();
 
-    if (password === ADMIN_PASSWORD) {
-      await login('admin');
-      return NextResponse.json({ success: true, role: 'admin' });
-    }
+    const matched = users.find(
+      (u) => u.email === email && u.password === password
+    );
 
-    if (password === USER_PASSWORD) {
-      await login('user');
-      return NextResponse.json({ success: true, role: 'user' });
+    if (matched) {
+      await login(matched.role, matched.email);
+      return NextResponse.json({ success: true, role: matched.role });
     }
 
     return NextResponse.json(
-      { success: false, message: 'Invalid password' },
+      { success: false, message: 'Invalid email or password' },
       { status: 401 }
     );
   } catch {

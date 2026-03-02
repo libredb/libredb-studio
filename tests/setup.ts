@@ -5,8 +5,11 @@ import { afterEach } from 'bun:test';
 
 // ─── Environment Variables ──────────────────────────────────────────────────
 process.env.JWT_SECRET = 'test-jwt-secret-for-unit-tests-32ch';
-process.env.ADMIN_PASSWORD = 'test-admin-password';
-process.env.USER_PASSWORD = 'test-user-password';
+process.env.ADMIN_EMAIL = 'admin@libredb.org';
+process.env.ADMIN_PASSWORD = 'LibreDB.2026';
+process.env.USER_EMAIL = 'user@libredb.org';
+process.env.USER_PASSWORD = 'LibreDB.2026';
+process.env.NEXT_PUBLIC_AUTH_PROVIDER = 'local';
 (process.env as Record<string, string>).NODE_ENV = 'test';
 
 // ─── In-memory localStorage mock (SSR/test environment) ────────────────────
