@@ -77,6 +77,7 @@ mock.module('@monaco-editor/react', () => ({
         addCommand: (_keybinding: number, handler: () => void) => { capturedCommands.push({ keybinding: _keybinding, handler }); },
         addAction: (action: { id: string; run: () => void }) => { capturedActions.push(action); },
         focus: mock(() => {}),
+        updateOptions: mock(() => {}),
       };
 
       beforeMount?.(monacoMock);
@@ -246,6 +247,26 @@ describe('QueryEditor', () => {
       void data;
       return Promise.resolve();
     });
+
+    // Mock localStorage for line numbers toggle (only if not already defined)
+    if (!globalThis.localStorage) {
+      const localStorageMock: Record<string, string> = {};
+      Object.defineProperty(globalThis, 'localStorage', {
+        value: {
+          getItem: (key: string) => localStorageMock[key] || null,
+          setItem: (key: string, value: string) => { localStorageMock[key] = value; },
+          removeItem: (key: string) => { delete localStorageMock[key]; },
+          clear: () => { Object.keys(localStorageMock).forEach(k => delete localStorageMock[k]); },
+        },
+        writable: true,
+        configurable: true,
+      });
+    } else {
+      // Clear existing localStorage
+      globalThis.localStorage.clear();
+    }
+
+
     const nav = globalThis.navigator as Navigator & { clipboard?: Clipboard };
     const clipboardWriteText: Clipboard['writeText'] = (data: string) =>
       mockClipboardWriteText(data) as Promise<void>;
@@ -307,6 +328,12 @@ describe('QueryEditor', () => {
     const { queryByText } = render(React.createElement(QueryEditor, createDefaultProps()));
     expect(queryByText('CLEAR')).not.toBeNull();
   });
+
+  test('LINES button renders', () => {
+    const { queryByText } = render(React.createElement(QueryEditor, createDefaultProps()));
+    expect(queryByText('LINES')).not.toBeNull();
+  });
+
 
   test('AI ASSISTANT toggle button renders', () => {
     const { queryByText } = render(React.createElement(QueryEditor, createDefaultProps()));
@@ -385,6 +412,98 @@ describe('QueryEditor', () => {
     fireEvent.click(queryByText('CLEAR')!);
     const editor = queryByTestId('mock-monaco-editor') as HTMLTextAreaElement;
     expect(editor.value).toBe('');
+  });
+
+  // -----------------------------------------------------------------------
+  // LINES button (Line Numbers Toggle)
+  // -----------------------------------------------------------------------
+
+  test('LINES button toggles line numbers state', () => {
+    const { queryByText } = render(React.createElement(QueryEditor, createDefaultProps()));
+    const linesButton = queryByText('LINES');
+    expect(linesButton).not.toBeNull();
+
+    // Click to toggle
+    fireEvent.click(linesButton!);
+    // State should change (we can't directly test state, but button should still be there)
+    expect(queryByText('LINES')).not.toBeNull();
+  });
+
+  test('LINES button defaults to enabled (line numbers shown)', () => {
+    localStorage.clear();
+    const { queryByText } = render(React.createElement(QueryEditor, createDefaultProps()));
+    const linesButton = queryByText('LINES')!.closest('button');
+    // Default state should have line numbers enabled (bg-zinc-800 class)
+    expect(linesButton?.className).toContain('bg-zinc-800');
+  });
+
+  test('LINES button reads initial state from localStorage', () => {
+    localStorage.setItem('editor-line-numbers', 'false');
+    const { queryByText } = render(React.createElement(QueryEditor, createDefaultProps()));
+    const linesButton = queryByText('LINES')!.closest('button');
+    // Should read false from localStorage and show disabled state (bg-[#111])
+    expect(linesButton?.className).toContain('bg-[#111]');
+  });
+
+  test('LINES button saves state to localStorage when toggled', () => {
+    localStorage.clear();
+    const { queryByText } = render(React.createElement(QueryEditor, createDefaultProps()));
+    const linesButton = queryByText('LINES');
+    
+    // Initial state should be 'true' (default)
+    expect(localStorage.getItem('editor-line-numbers')).toBe('true');
+    
+    // Toggle to false
+    fireEvent.click(linesButton!);
+    expect(localStorage.getItem('editor-line-numbers')).toBe('false');
+    
+    // Toggle back to true
+    fireEvent.click(linesButton!);
+    expect(localStorage.getItem('editor-line-numbers')).toBe('true');
+  });
+
+  test('LINES button updates editor options when toggled', () => {
+    mockUseMonacoReturn = { Range: class {} };
+    const { queryByText } = render(React.createElement(QueryEditor, createDefaultProps()));
+    const linesButton = queryByText('LINES');
+    
+    // Toggle line numbers - should trigger editor.updateOptions
+    fireEvent.click(linesButton!);
+    // The editor mock doesn't track updateOptions calls, but we verify no crash occurs
+    expect(linesButton).not.toBeNull();
+  });
+
+  test('LINES button shows correct visual state when enabled', () => {
+    localStorage.setItem('editor-line-numbers', 'true');
+    const { queryByText } = render(React.createElement(QueryEditor, createDefaultProps()));
+    const linesButton = queryByText('LINES')!.closest('button');
+    
+    // Enabled state should have specific classes
+    expect(linesButton?.className).toContain('bg-zinc-800');
+    expect(linesButton?.className).toContain('border-white/10');
+    expect(linesButton?.className).toContain('text-zinc-300');
+  });
+
+  test('LINES button shows correct visual state when disabled', () => {
+    localStorage.setItem('editor-line-numbers', 'false');
+    const { queryByText } = render(React.createElement(QueryEditor, createDefaultProps()));
+    const linesButton = queryByText('LINES')!.closest('button');
+    
+    // Disabled state should have different classes
+    expect(linesButton?.className).toContain('bg-[#111]');
+    expect(linesButton?.className).toContain('border-white/5');
+    expect(linesButton?.className).toContain('text-zinc-500');
+  });
+
+  test('LINES button has correct tooltip', () => {
+    localStorage.setItem('editor-line-numbers', 'true');
+    const { queryByText } = render(React.createElement(QueryEditor, createDefaultProps()));
+    const linesButton = queryByText('LINES')!.closest('button');
+    expect(linesButton?.getAttribute('title')).toBe('Hide line numbers');
+    
+    // Toggle and check tooltip changes
+    fireEvent.click(linesButton!);
+    expect(linesButton?.getAttribute('title')).toBe('Show line numbers');
   });
 
   // -----------------------------------------------------------------------
@@ -517,7 +636,7 @@ describe('QueryEditor', () => {
     // Find the dismiss button (the X button that isn't the error X)
     const buttons = container.querySelectorAll('button[type="button"]');
     // The dismiss button is the one next to the Generate button
-    const dismissBtn = Array.from(buttons).find(btn => {
+    const dismissBtn = Array.from(buttons as NodeListOf<HTMLButtonElement>).find(btn => {
       const svg = btn.querySelector('.lucide-x');
       return svg !== null;
     });

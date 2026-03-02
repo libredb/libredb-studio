@@ -3,7 +3,7 @@
 import React, { useRef, useEffect, useState, useMemo, forwardRef, useImperativeHandle, useCallback } from 'react';
 import Editor, { useMonaco } from '@monaco-editor/react';
 import type * as Monaco from 'monaco-editor';
-import { Zap, Sparkles, Send, X, Loader2, AlignLeft, Trash2, Copy, Play } from 'lucide-react';
+import { Zap, Sparkles, Send, X, Loader2, AlignLeft, Trash2, Copy, Play, Hash } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { motion, AnimatePresence } from 'framer-motion';
 import { format } from 'sql-formatter';
@@ -48,11 +48,11 @@ interface ParsedTable {
 }
 
 // Static editor options - defined outside component to prevent re-creation on every render
-const EDITOR_OPTIONS = {
+const getEditorOptions = (showLineNumbers: boolean) => ({
   minimap: { enabled: false },
   fontSize: 13,
   fontFamily: '"JetBrains Mono", "Fira Code", Menlo, Monaco, Consolas, monospace',
-  lineNumbers: 'on' as const,
+  lineNumbers: showLineNumbers ? ('on' as const) : ('off' as const),
   roundedSelection: true,
   scrollBeyondLastLine: false,
   readOnly: false,
@@ -81,7 +81,7 @@ const EDITOR_OPTIONS = {
   parameterHints: {
     enabled: true
   }
-} as const;
+});
 
 export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
   value,
@@ -97,6 +97,15 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
   const monaco = useMonaco();
   const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
   const [hasSelection, setHasSelection] = useState(false);
+  
+  // Line numbers toggle state (persisted in localStorage)
+  const [showLineNumbers, setShowLineNumbers] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('editor-line-numbers');
+      return saved !== null ? saved === 'true' : true; // default: true
+    }
+    return true;
+  });
 
   // Track last synced value to detect external changes
   const lastSyncedValueRef = useRef<string>(value);
@@ -116,6 +125,20 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
       }
     }
   }, [value]);
+
+  // Update editor options when line numbers toggle changes
+  useEffect(() => {
+    if (editorRef.current) {
+      editorRef.current.updateOptions({ lineNumbers: showLineNumbers ? 'on' : 'off' });
+    }
+  }, [showLineNumbers]);
+
+  // Persist line numbers preference to localStorage
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('editor-line-numbers', String(showLineNumbers));
+    }
+  }, [showLineNumbers]);
 
   const parsedSchema = useMemo((): ParsedTable[] => {
     if (!schemaContext) return [];
@@ -503,6 +526,20 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
         <div className="w-px h-4 bg-white/5 mx-1" />
 
         <button
+          onClick={() => setShowLineNumbers(!showLineNumbers)}
+          title={showLineNumbers ? "Hide line numbers" : "Show line numbers"}
+          className={cn(
+            "px-2.5 py-1.5 rounded text-[10px] font-mono transition-all border active:scale-95 flex items-center gap-1.5",
+            showLineNumbers
+              ? "bg-zinc-800 border-white/10 text-zinc-300"
+              : "bg-[#111] border-white/5 text-zinc-500 hover:text-zinc-300"
+          )}
+        >
+          <Hash className="w-3 h-3" />
+          LINES
+        </button>
+
+        <button
           onClick={() => setShowAi(!showAi)}
           className={cn(
             "px-2.5 py-1.5 rounded text-[10px] font-bold transition-all border active:scale-95 flex items-center gap-1.5",
@@ -699,7 +736,7 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
               run: () => handleFormat()
             });
           }}
-          options={EDITOR_OPTIONS}
+          options={getEditorOptions(showLineNumbers)}
         />
 
         {/* Connection Type Badge */}
