@@ -15,8 +15,13 @@ mock.module('@/lib/auth', () => ({
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 const mockBuildLogoutUrl = mock((_returnTo: string) => null as string | null);
 
+const mockGetPublicOrigin = mock(
+  (req: Request) => new URL(req.url).origin
+);
+
 mock.module('@/lib/oidc', () => ({
   buildLogoutUrl: mockBuildLogoutUrl,
+  getPublicOrigin: mockGetPublicOrigin,
   getOIDCConfig: mock(() => ({})),
   discoverProvider: mock(async () => ({})),
   generateAuthUrl: mock(async () => ({})),

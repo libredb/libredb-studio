@@ -1,5 +1,5 @@
 import { logout } from '@/lib/auth';
-import { buildLogoutUrl } from '@/lib/oidc';
+import { buildLogoutUrl, getPublicOrigin } from '@/lib/oidc';
 import { NextRequest, NextResponse } from 'next/server';
 
 export async function POST(request: NextRequest) {
@@ -7,7 +7,7 @@ export async function POST(request: NextRequest) {
 
   const authProvider = process.env.NEXT_PUBLIC_AUTH_PROVIDER || 'local';
   if (authProvider === 'oidc') {
-    const origin = new URL(request.url).origin;
+    const origin = getPublicOrigin(request);
     const returnTo = `${origin}/login`;
     const oidcLogoutUrl = buildLogoutUrl(returnTo);
 
