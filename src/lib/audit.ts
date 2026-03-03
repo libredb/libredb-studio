@@ -1,3 +1,5 @@
+import { storage } from '@/lib/storage';
+
 export type AuditEventType =
   | 'maintenance'
   | 'kill_session'
@@ -19,7 +21,6 @@ export interface AuditEvent {
   details?: string;
 }
 
-const AUDIT_STORAGE_KEY = 'libredb_audit_log';
 const MAX_EVENTS = 1000;
 
 export class AuditRingBuffer {
@@ -93,23 +94,11 @@ export function getServerAuditBuffer(): AuditRingBuffer {
   return _serverBuffer;
 }
 
-// Client-side localStorage persistence
+// Client-side localStorage persistence — delegates to storage module
 export function loadAuditFromStorage(): AuditEvent[] {
-  if (typeof window === 'undefined') return [];
-  try {
-    const stored = localStorage.getItem(AUDIT_STORAGE_KEY);
-    return stored ? JSON.parse(stored) : [];
-  } catch {
-    return [];
-  }
+  return storage.getAuditLog();
 }
 
 export function saveAuditToStorage(events: AuditEvent[]) {
-  if (typeof window === 'undefined') return;
-  try {
-    const trimmed = events.slice(-MAX_EVENTS);
-    localStorage.setItem(AUDIT_STORAGE_KEY, JSON.stringify(trimmed));
-  } catch {
-    // Storage full, ignore
-  }
+  storage.saveAuditLog(events);
 }

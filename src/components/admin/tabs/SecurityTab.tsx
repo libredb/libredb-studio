@@ -19,22 +19,8 @@ import {
   DEFAULT_THRESHOLDS,
   type ThresholdConfig,
 } from '@/lib/monitoring-thresholds';
+import { storage } from '@/lib/storage';
 import { toast } from 'sonner';
-
-const THRESHOLD_STORAGE_KEY = 'libredb_threshold_config';
-
-function loadThresholds(): ThresholdConfig[] {
-  if (typeof window === 'undefined') return DEFAULT_THRESHOLDS;
-  try {
-    const stored = localStorage.getItem(THRESHOLD_STORAGE_KEY);
-    if (stored) return JSON.parse(stored);
-  } catch { /* ignore */ }
-  return DEFAULT_THRESHOLDS;
-}
-
-function saveThresholds(thresholds: ThresholdConfig[]) {
-  localStorage.setItem(THRESHOLD_STORAGE_KEY, JSON.stringify(thresholds));
-}
 
 export function SecurityTab() {
   return (
@@ -151,7 +137,7 @@ function ThresholdSettings() {
   const [hasChanges, setHasChanges] = useState(false);
 
   useEffect(() => {
-    setThresholds(loadThresholds());
+    setThresholds(storage.getThresholdConfig());
   }, []);
 
   const updateThreshold = (
@@ -168,14 +154,14 @@ function ThresholdSettings() {
   };
 
   const handleSave = () => {
-    saveThresholds(thresholds);
+    storage.saveThresholdConfig(thresholds);
     setHasChanges(false);
     toast.success('Threshold configuration saved');
   };
 
   const handleReset = () => {
     setThresholds(DEFAULT_THRESHOLDS);
-    saveThresholds(DEFAULT_THRESHOLDS);
+    storage.saveThresholdConfig(DEFAULT_THRESHOLDS);
     setHasChanges(false);
     toast.success('Thresholds reset to defaults');
   };

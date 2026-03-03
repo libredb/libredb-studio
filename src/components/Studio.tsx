@@ -31,6 +31,7 @@ import { useTabManager } from '@/hooks/use-tab-manager';
 import { useTransactionControl } from '@/hooks/use-transaction-control';
 import { useQueryExecution } from '@/hooks/use-query-execution';
 import { useInlineEditing } from '@/hooks/use-inline-editing';
+import { useStorageSync } from '@/hooks/use-storage-sync';
 import { storage } from '@/lib/storage';
 import { getRandomShowcaseQuery } from '@/lib/showcase-queries';
 import {
@@ -64,6 +65,9 @@ export default function Studio() {
 
   // 1. Auth
   const { user, isAdmin, handleLogout } = useAuth();
+
+  // 1.5. Storage sync (write-through cache for server mode)
+  useStorageSync();
 
   // 2. Connection Manager + Provider Metadata
   const conn = useConnectionManager();

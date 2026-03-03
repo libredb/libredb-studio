@@ -24,7 +24,7 @@ set -e
 
 PASS=0
 FAIL=0
-TOTAL_GROUPS=15
+TOTAL_GROUPS=16
 EXTRA_BUN_ARGS=("$@")
 GROUP_INDEX=0
 COVERAGE_MODE=0
@@ -140,13 +140,16 @@ run_group "Group 12/13: MaskingSettings" \
 run_group "Group 13/14: SchemaDiff" \
   tests/components/SchemaDiff.test.tsx
 
-# Group 15: ConnectionModal Mobile Drawer (isolated - useIsMobile returns true)
-run_group "Group 15/15: ConnectionModal Mobile" \
+# Group 16: ConnectionModal Mobile Drawer (isolated - useIsMobile returns true)
+run_group "Group 16/16: ConnectionModal Mobile" \
   tests/components/ConnectionModal.mobile.test.tsx
 
-# Group 14: All remaining files (safe together)
-run_group "Group 14/15: Remaining components" \
-  tests/components/DataCharts.test.tsx \
+# Group 14: DataCharts (isolated — mocks @/lib/storage with chart methods)
+run_group "Group 14/16: DataCharts" \
+  tests/components/DataCharts.test.tsx
+
+# Group 15: All remaining files (safe together)
+run_group "Group 15/16: Remaining components" \
   tests/components/QueryEditor.test.tsx \
   tests/components/QuerySafetyDialog.test.tsx \
   tests/components/QueryHistory.test.tsx \

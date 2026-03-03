@@ -351,38 +351,16 @@ export function canReveal(role: string | undefined, config: MaskingConfig): bool
 
 // ─── Config Persistence ──────────────────────────────────────────────────────
 
+import { storage } from '@/lib/storage';
+
 export const MASKING_CONFIG_KEY = 'libredb_masking_config';
 
 export function loadMaskingConfig(): MaskingConfig {
-  if (typeof window === 'undefined') return DEFAULT_MASKING_CONFIG;
-  try {
-    const stored = localStorage.getItem(MASKING_CONFIG_KEY);
-    if (!stored) return DEFAULT_MASKING_CONFIG;
-    const parsed = JSON.parse(stored) as MaskingConfig;
-    // Merge with defaults to ensure new builtin patterns are included
-    const builtinIds = new Set(DEFAULT_MASKING_CONFIG.patterns.filter(p => p.isBuiltin).map(p => p.id));
-    const storedIds = new Set(parsed.patterns.map(p => p.id));
-    // Add any new builtins that don't exist in stored config
-    for (const defaultPattern of DEFAULT_MASKING_CONFIG.patterns) {
-      if (defaultPattern.isBuiltin && !storedIds.has(defaultPattern.id)) {
-        parsed.patterns.push(defaultPattern);
-      }
-    }
-    // Ensure roleSettings exists
-    if (!parsed.roleSettings) {
-      parsed.roleSettings = DEFAULT_MASKING_CONFIG.roleSettings;
-    }
-    // Remove stale builtin IDs that are no longer in defaults (unlikely but safe)
-    parsed.patterns = parsed.patterns.filter(p => !p.isBuiltin || builtinIds.has(p.id) || !p.id.startsWith('builtin-'));
-    return parsed;
-  } catch {
-    return DEFAULT_MASKING_CONFIG;
-  }
+  return storage.getMaskingConfig();
 }
 
 export function saveMaskingConfig(config: MaskingConfig): void {
-  if (typeof window === 'undefined') return;
-  localStorage.setItem(MASKING_CONFIG_KEY, JSON.stringify(config));
+  storage.saveMaskingConfig(config);
 }
 
 // ─── Preview Samples ─────────────────────────────────────────────────────────
