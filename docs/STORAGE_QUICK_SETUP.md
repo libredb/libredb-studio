@@ -38,19 +38,41 @@ bun dev
 
 A single file on the server. Great for self-hosted single-node deployments.
 
-### Local Development
+### Minimal Setup (Just One Env Var)
 
 ```bash
 # .env.local
 STORAGE_PROVIDER=sqlite
-STORAGE_SQLITE_PATH=./data/libredb-storage.db
 ```
 
 ```bash
 bun dev
 ```
 
-The database file and directory are created automatically on first request.
+That's it. When `STORAGE_SQLITE_PATH` is not provided, the default path is `./data/libredb-storage.db`.
+
+### What Happens Automatically
+
+On the first API request, the SQLite provider:
+
+1. **Creates the directory** — `./data/` (or whatever parent directory the path points to) is created recursively if it doesn't exist
+2. **Creates the database file** — `libredb-storage.db` is created by `better-sqlite3`
+3. **Enables WAL mode** — Write-Ahead Logging for better concurrent read performance
+4. **Creates the table** — `user_storage` table with the schema below
+
+No manual setup, no migrations, no SQL scripts needed.
+
+### Custom Path
+
+If you want the database file in a different location:
+
+```bash
+# .env.local
+STORAGE_PROVIDER=sqlite
+STORAGE_SQLITE_PATH=/var/lib/libredb/storage.db
+```
+
+The directory must be writable by the app process. The directory and file are created automatically.
 
 ### Docker
 
@@ -84,11 +106,33 @@ curl http://localhost:3000/api/storage/config
 # → {"provider":"sqlite","serverMode":true}
 ```
 
+### Manual Table Creation (Optional)
+
+The table is auto-created, but if you prefer to create it yourself (e.g., for auditing or version control):
+
+```sql
+CREATE TABLE IF NOT EXISTS user_storage (
+  user_id    TEXT NOT NULL,
+  collection TEXT NOT NULL,
+  data       TEXT NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (user_id, collection)
+);
+
+-- Recommended: enable WAL mode for concurrent read performance
+PRAGMA journal_mode = WAL;
+```
+
 ---
 
 ## 3. PostgreSQL Mode
 
 Recommended for production, teams, and high-availability deployments.
+
+> **Important:** Unlike SQLite, `STORAGE_POSTGRES_URL` is **required**. There is no default value. If you set `STORAGE_PROVIDER=postgres` without providing a connection string, the app will throw an error on the first storage request:
+> ```
+> Error: STORAGE_POSTGRES_URL is required when STORAGE_PROVIDER=postgres
+> ```
 
 ### Local Development
 
@@ -112,7 +156,27 @@ STORAGE_POSTGRES_URL=postgresql://libredb:secret@localhost:5432/libredb
 bun dev
 ```
 
-The `user_storage` table is created automatically on first request.
+### What Happens Automatically
+
+On the first API request, the PostgreSQL provider:
+
+1. **Creates a connection pool** — max 5 connections, 30s idle timeout
+2. **Creates the table** — `user_storage` table with the schema below via `CREATE TABLE IF NOT EXISTS`
+
+The database itself must already exist. The **table** is auto-created, but the **database** is not.
+
+### Required Privileges
+
+The PostgreSQL user specified in `STORAGE_POSTGRES_URL` needs:
+
+| Privilege | Why |
+|-----------|-----|
+| `CREATE TABLE` | Auto-create `user_storage` on first request (only needed once) |
+| `INSERT` | Save user data |
+| `UPDATE` | Update existing data |
+| `SELECT` | Read user data |
+
+If your DBA restricts `CREATE TABLE`, you can create the table manually (see below) and the user only needs `INSERT`/`UPDATE`/`SELECT`.
 
 ### Docker Compose (App + PostgreSQL)
 
@@ -154,20 +218,45 @@ docker-compose up -d
 
 ### Using an Existing PostgreSQL
 
-Just set the connection string — no special schema setup needed:
+Just set the connection string — the table is auto-created:
 
 ```bash
 STORAGE_PROVIDER=postgres
 STORAGE_POSTGRES_URL=postgresql://user:pass@your-pg-host:5432/your_db
 ```
 
-The required table is auto-created on startup. The user needs `CREATE TABLE` and `INSERT`/`UPDATE`/`SELECT` privileges.
-
 ### Verify
 
 ```bash
 curl http://localhost:3000/api/storage/config
 # → {"provider":"postgres","serverMode":true}
+```
+
+### Manual Table Creation (Optional)
+
+The table is auto-created on first request. However, if you prefer to create it yourself — for example, in environments where the app user doesn't have `CREATE TABLE` privileges, or you want to track schema changes in version control:
+
+```sql
+-- PostgreSQL
+CREATE TABLE IF NOT EXISTS user_storage (
+  user_id    TEXT NOT NULL,
+  collection TEXT NOT NULL,
+  data       TEXT NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (user_id, collection)
+);
+
+-- Optional: index for faster lookups by user
+CREATE INDEX IF NOT EXISTS idx_user_storage_user_id ON user_storage (user_id);
+```
+
+#### Minimal Privileges (When Table Already Exists)
+
+If a DBA creates the table, the app user only needs:
+
+```sql
+-- Grant only data access (no DDL needed)
+GRANT SELECT, INSERT, UPDATE ON user_storage TO libredb_app;
 ```
 
 ---
@@ -191,13 +280,21 @@ When you switch from local mode to SQLite or PostgreSQL, **existing browser data
 
 ## Environment Variables Reference
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `STORAGE_PROVIDER` | `local` | `local`, `sqlite`, or `postgres` |
-| `STORAGE_SQLITE_PATH` | `./data/libredb-storage.db` | Path to SQLite file (sqlite mode) |
-| `STORAGE_POSTGRES_URL` | — | PostgreSQL connection string (postgres mode) |
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `STORAGE_PROVIDER` | No | `local` | `local`, `sqlite`, or `postgres` |
+| `STORAGE_SQLITE_PATH` | No | `./data/libredb-storage.db` | Path to SQLite file. Directory and file are auto-created. |
+| `STORAGE_POSTGRES_URL` | **Yes** (postgres mode) | — | PostgreSQL connection string. **No default — app will error without it.** |
 
 > These are **server-side only** variables (no `NEXT_PUBLIC_` prefix). The client discovers the mode at runtime via `GET /api/storage/config`. This means one Docker image works for all modes.
+
+### Default Behavior Summary
+
+| Mode | Config needed | What's auto-created |
+|------|--------------|---------------------|
+| `local` | Nothing | N/A (browser localStorage) |
+| `sqlite` | Just `STORAGE_PROVIDER=sqlite` | Directory + DB file + WAL mode + table |
+| `postgres` | `STORAGE_PROVIDER=postgres` + `STORAGE_POSTGRES_URL` | Table only (database must exist) |
 
 ---
 
@@ -228,6 +325,12 @@ curl -b cookies.txt http://localhost:3000/api/storage
 - The directory in `STORAGE_SQLITE_PATH` must be writable by the app process
 - In Docker, make sure the volume is mounted correctly
 
+### PostgreSQL: "STORAGE_POSTGRES_URL is required"
+
+- You set `STORAGE_PROVIDER=postgres` but didn't provide `STORAGE_POSTGRES_URL`
+- Unlike SQLite, PostgreSQL has **no default** — a connection string is always required
+- Fix: add `STORAGE_POSTGRES_URL=postgresql://user:pass@host:5432/dbname` to your env
+
 ### PostgreSQL: "Connection refused"
 
 - Verify `STORAGE_POSTGRES_URL` is correct and the database is reachable
@@ -244,6 +347,52 @@ curl -b cookies.txt http://localhost:3000/api/storage
 
 - Migration uses ID-based deduplication — this shouldn't happen
 - If it does, check if the same user logged in from multiple browsers before migration completed
+
+---
+
+## Database Schema Reference
+
+Both SQLite and PostgreSQL use the same single-table design. The table is auto-created on first request, but the full DDL is provided here for reference.
+
+### SQLite
+
+```sql
+CREATE TABLE IF NOT EXISTS user_storage (
+  user_id    TEXT NOT NULL,
+  collection TEXT NOT NULL,
+  data       TEXT NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (user_id, collection)
+);
+
+PRAGMA journal_mode = WAL;
+```
+
+### PostgreSQL
+
+```sql
+CREATE TABLE IF NOT EXISTS user_storage (
+  user_id    TEXT NOT NULL,
+  collection TEXT NOT NULL,
+  data       TEXT NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (user_id, collection)
+);
+
+-- Optional: index for faster lookups by user
+CREATE INDEX IF NOT EXISTS idx_user_storage_user_id ON user_storage (user_id);
+```
+
+### Schema Explanation
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `user_id` | TEXT | User's email from JWT token (e.g., `admin@libredb.org`) |
+| `collection` | TEXT | Data category: `connections`, `history`, `saved_queries`, `schema_snapshots`, `saved_charts`, `active_connection_id`, `audit_log`, `masking_config`, `threshold_config` |
+| `data` | TEXT | JSON-serialized collection data |
+| `updated_at` | TEXT / TIMESTAMPTZ | Last modification timestamp |
+
+Each row stores **one user's one collection** as a JSON blob. Adding a new collection type requires no schema changes — just a new row.
 
 ---
 
