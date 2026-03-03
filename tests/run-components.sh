@@ -68,7 +68,7 @@ run_group() {
 
 # Group 0a: useStorageSync hook (isolated — mocks @/lib/storage which contaminates other hook tests)
 run_group "Group 0a: useStorageSync hook" \
-  tests/hooks-isolated/use-storage-sync.test.ts
+  tests/isolated/use-storage-sync.test.ts
 
 # Group 0b: Factory singleton (isolated — mocks provider modules which contaminates provider unit tests)
 run_group "Group 0b: Factory singleton" \
