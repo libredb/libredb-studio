@@ -63,8 +63,20 @@ export async function GET(request: Request) {
     const username = claims.email || claims.preferred_username || claims.sub || role;
     await login(role, username);
 
-    // Clean up state cookie
+    // Check if this was a popup login
+    const isPopup = cookieStore.get('oidc-mode')?.value === 'popup';
+
+    // Clean up cookies
     cookieStore.delete('oidc-state');
+    cookieStore.delete('oidc-mode');
+
+    if (isPopup) {
+      // Close popup and let the parent window detect the auth via /api/auth/me
+      return new NextResponse(
+        '<html><body><script>window.close();</script></body></html>',
+        { headers: { 'Content-Type': 'text/html' } }
+      );
+    }
 
     // Redirect based on role
     return NextResponse.redirect(
@@ -74,6 +86,18 @@ export async function GET(request: Request) {
     console.error('OIDC callback error:', error);
     if (error instanceof Error && 'cause' in error) {
       console.error('OIDC error cause:', error.cause);
+    }
+
+    // Clean up popup cookie on error too
+    const cookieStore2 = await cookies();
+    const isPopup = cookieStore2.get('oidc-mode')?.value === 'popup';
+    cookieStore2.delete('oidc-mode');
+
+    if (isPopup) {
+      return new NextResponse(
+        '<html><body><script>window.close();</script></body></html>',
+        { headers: { 'Content-Type': 'text/html' } }
+      );
     }
     return NextResponse.redirect(`${origin}/login?error=oidc_failed`);
   }

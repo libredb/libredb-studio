@@ -19,6 +19,50 @@ function LoginFormInner({ authProvider }: { authProvider: string }) {
   const searchParams = useSearchParams();
   const oidcError = searchParams.get('error');
 
+  const handleSSO = () => {
+    setIsLoading(true);
+    const isMobile = window.innerWidth < 768;
+
+    if (isMobile) {
+      window.location.href = '/api/auth/oidc/login?mode=redirect';
+      return;
+    }
+
+    // Desktop: open SSO as a side-by-side window on the right half of the screen
+    const screenW = window.screen.availWidth;
+    const screenH = window.screen.availHeight;
+    const halfW = Math.round(screenW / 2);
+
+    const ssoWindow = window.open(
+      '/api/auth/oidc/login?mode=popup',
+      'sso-login',
+      `width=${halfW},height=${screenH},left=${halfW},top=0,toolbar=no,menubar=no,scrollbars=yes`
+    );
+
+    // Move main window to the left half
+    try {
+      window.moveTo(0, 0);
+      window.resizeTo(halfW, screenH);
+    } catch {
+      // Some browsers block window resize - that's fine
+    }
+
+    // Listen for SSO window close
+    const checkSSO = setInterval(() => {
+      if (!ssoWindow || ssoWindow.closed) {
+        clearInterval(checkSSO);
+        setIsLoading(false);
+        router.refresh();
+        // Check if auth succeeded
+        fetch('/api/auth/me').then(res => res.json()).then(data => {
+          if (data.authenticated) {
+            router.push(data.role === 'admin' ? '/admin' : '/');
+          }
+        }).catch(() => {});
+      }
+    }, 500);
+  };
+
   const handleLogin = async (e?: React.FormEvent, directEmail?: string, directPassword?: string) => {
     if (e) e.preventDefault();
     const loginEmail = directEmail || email;
@@ -176,17 +220,38 @@ function LoginFormInner({ authProvider }: { authProvider: string }) {
                       Authentication failed. Please try again.
                     </div>
                   )}
+
+                  <div className="flex flex-col items-center text-center space-y-3 py-2">
+                    <div className="flex h-12 w-12 items-center justify-center rounded-full bg-primary/10">
+                      <ShieldCheck className="h-6 w-6 text-primary" />
+                    </div>
+                    <div className="space-y-1">
+                      <p className="text-sm font-medium text-foreground">Single Sign-On</p>
+                      <p className="text-xs text-muted-foreground">
+                        Sign in securely with your organization&apos;s identity provider
+                      </p>
+                    </div>
+                  </div>
+
                   <Button
                     className="w-full h-11 text-base font-medium shadow-lg shadow-primary/20 active:scale-[0.98] transition-all gap-2"
-                    onClick={() => {
-                      setIsLoading(true);
-                      window.location.href = '/api/auth/oidc/login';
-                    }}
+                    onClick={handleSSO}
                     disabled={isLoading}
                   >
                     <ExternalLink className="h-4 w-4" />
                     {isLoading ? 'Redirecting...' : 'Login with SSO'}
                   </Button>
+
+                  <div className="flex items-center justify-center gap-4 pt-2">
+                    <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                      <Lock className="h-3 w-3" />
+                      <span>Encrypted</span>
+                    </div>
+                    <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                      <Shield className="h-3 w-3" />
+                      <span>OIDC Protected</span>
+                    </div>
+                  </div>
                 </>
               ) : (
                 <>
