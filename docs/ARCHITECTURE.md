@@ -150,9 +150,20 @@ Controlled by `NEXT_PUBLIC_AUTH_PROVIDER` (`local` | `oidc`). Both flows result 
 
 Multi-statement queries execute sequentially via `POST /api/db/multi-query`.
 
-### 4.4. Client State Management
+### 4.4. Storage Abstraction Layer
 
-- **LocalStorage** for persistent data: connections, query history, saved queries, schema snapshots, chart configs, masking config
+- **Write-through cache architecture**: localStorage (L1 cache) + optional server storage (L2 persistent)
+- **Three storage modes** controlled by `STORAGE_PROVIDER` env var:
+  - `local` (default): Browser localStorage only, zero configuration
+  - `sqlite`: Server-side SQLite file via `better-sqlite3`
+  - `postgres`: Server-side PostgreSQL via `pg`
+- **`useStorageSync` hook** in Studio.tsx: discovers mode at runtime via `/api/storage/config`, pulls on mount, pushes mutations (debounced 500ms)
+- **Migration**: First login auto-migrates localStorage to server; `libredb_server_migrated` flag prevents re-migration
+- **Graceful degradation**: If server unreachable, localStorage continues working
+
+### 4.5. Client State Management
+
+- **Storage module** (`src/lib/storage/`) for persistent data: connections, query history, saved queries, schema snapshots, chart configs, audit log, masking config, threshold config
 - **React hooks** for UI state: tabs, active connection, execution status
 - **Custom hooks** extracted from Studio.tsx: `useAuth`, `useConnectionManager`, `useTabManager`, `useTransactionControl`, `useQueryExecution`, `useInlineEditing`
 
@@ -165,6 +176,7 @@ src/
 │   │   ├── auth/           # Login/logout/me + OIDC (PKCE, callback)
 │   │   ├── ai/             # Chat, NL2SQL, explain, safety
 │   │   ├── db/             # Query, schema, health, maintenance, transactions
+│   │   ├── storage/        # Storage sync API (config, CRUD, migrate)
 │   │   └── admin/          # Fleet health, audit
 │   ├── admin/              # Admin dashboard (RBAC protected)
 │   └── login/              # Login page
@@ -192,7 +204,12 @@ src/
     ├── ssh/                 # SSH tunnel support
     ├── auth.ts              # JWT utilities
     ├── oidc.ts              # OIDC utilities
-    └── storage.ts           # LocalStorage management
+    └── storage/             # Storage abstraction layer
+        ├── index.ts         # Barrel export
+        ├── storage-facade.ts # Public sync API + CustomEvent dispatch
+        ├── local-storage.ts  # Pure localStorage CRUD
+        ├── factory.ts       # Env-based provider factory
+        └── providers/       # SQLite + PostgreSQL backends
 ```
 
 ## 6. Deployment

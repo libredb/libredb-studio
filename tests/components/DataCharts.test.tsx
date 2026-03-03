@@ -71,6 +71,33 @@ mock.module('@/components/ui/dropdown-menu', () => ({
     React.createElement('div', { role: 'menuitem', onClick: onClick as (() => void), className }, children as React.ReactNode),
 }));
 
+const mockGetSavedCharts = mock(() => {
+  try {
+    const stored = localStorage.getItem('libredb_saved_charts');
+    return stored ? JSON.parse(stored) : [];
+  } catch { return []; }
+});
+const mockSaveChart = mock((chart: Record<string, unknown>) => {
+  const stored = localStorage.getItem('libredb_saved_charts');
+  const charts = stored ? JSON.parse(stored) : [];
+  charts.push(chart);
+  localStorage.setItem('libredb_saved_charts', JSON.stringify(charts));
+});
+const mockDeleteChart = mock((id: string) => {
+  const stored = localStorage.getItem('libredb_saved_charts');
+  const charts = stored ? JSON.parse(stored) : [];
+  const filtered = charts.filter((c: Record<string, unknown>) => c.id !== id);
+  localStorage.setItem('libredb_saved_charts', JSON.stringify(filtered));
+});
+
+mock.module('@/lib/storage', () => ({
+  storage: {
+    getSavedCharts: mockGetSavedCharts,
+    saveChart: mockSaveChart,
+    deleteChart: mockDeleteChart,
+  },
+}));
+
 mock.module('@/components/ui/select', () => ({
   Select: ({ children, value }: Record<string, unknown>) =>
     React.createElement('div', { 'data-testid': 'select', 'data-value': value }, children as React.ReactNode),
