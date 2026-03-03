@@ -131,4 +131,101 @@ describe('PostgresStorageProvider', () => {
     expect(queries[0]).toBe('BEGIN');
     expect(queries[queries.length - 1]).toBe('COMMIT');
   });
+
+  test('mergeData rolls back on error and releases client', async () => {
+    await provider.initialize();
+
+    let callCount = 0;
+    const mockClientQuery = mock(async (sql: string): Promise<{ rows: unknown[] }> => {
+      callCount++;
+      // Fail on the INSERT (3rd call: BEGIN, then INSERT fails)
+      if (callCount === 2) throw new Error('Insert failed');
+      return { rows: [] };
+    });
+    const mockClientRelease = mock(() => {});
+    const client = {
+      query: mockClientQuery,
+      release: mockClientRelease,
+    };
+    mockPool.connect = mock(async () => client);
+
+    await expect(
+      provider.mergeData('admin@test.com', {
+        connections: [{ id: 'c1', name: 'Test', type: 'postgres', createdAt: new Date() } as import('@/lib/types').DatabaseConnection],
+      })
+    ).rejects.toThrow('Insert failed');
+
+    // ROLLBACK should have been called
+    const queries = (mockClientQuery.mock.calls as unknown[][]).map((c) => c[0] as string);
+    expect(queries).toContain('ROLLBACK');
+    // Client always released (finally block)
+    expect(mockClientRelease).toHaveBeenCalledTimes(1);
+  });
+
+  test('mergeData only writes provided collections', async () => {
+    await provider.initialize();
+
+    const mockClientQuery = mock(async (): Promise<{ rows: unknown[] }> => ({ rows: [] }));
+    const client = {
+      query: mockClientQuery,
+      release: mock(() => {}),
+    };
+    mockPool.connect = mock(async () => client);
+
+    await provider.mergeData('admin@test.com', {
+      connections: [{ id: 'c1', name: 'Test', type: 'postgres', createdAt: new Date() } as import('@/lib/types').DatabaseConnection],
+    });
+
+    const queries = (mockClientQuery.mock.calls as unknown[][]).map((c) => c[0] as string);
+    // BEGIN + 1 INSERT + COMMIT = 3 queries
+    expect(queries.length).toBe(3);
+    expect(queries[0]).toBe('BEGIN');
+    expect(queries[1]).toContain('INSERT INTO user_storage');
+    expect(queries[2]).toBe('COMMIT');
+  });
+
+  test('getCollection returns null for corrupted JSON', async () => {
+    await provider.initialize();
+    mockQuery.mockResolvedValueOnce({
+      rows: [{ data: 'invalid-json{{{' }],
+    });
+
+    const result = await provider.getCollection('admin@test.com', 'connections');
+    expect(result).toBeNull();
+  });
+
+  test('getAllData skips corrupted JSON rows', async () => {
+    await provider.initialize();
+    mockQuery.mockResolvedValueOnce({
+      rows: [
+        { collection: 'connections', data: JSON.stringify([{ id: 'c1' }]) },
+        { collection: 'history', data: 'corrupted{{{' },
+      ],
+    });
+
+    const result = await provider.getAllData('admin@test.com');
+    expect(result.connections as unknown).toEqual([{ id: 'c1' }]);
+    expect(result.history).toBeUndefined();
+  });
+
+  test('initialize throws when no connection string', async () => {
+    const origEnv = process.env.STORAGE_POSTGRES_URL;
+    delete process.env.STORAGE_POSTGRES_URL;
+    try {
+      const noUrlProvider = new PostgresStorageProvider('');
+      await expect(noUrlProvider.initialize()).rejects.toThrow('STORAGE_POSTGRES_URL is required');
+    } finally {
+      if (origEnv !== undefined) process.env.STORAGE_POSTGRES_URL = origEnv;
+    }
+  });
+
+  test('close on uninitialized provider does not throw', async () => {
+    const freshProvider = new PostgresStorageProvider('postgresql://localhost/test');
+    await expect(freshProvider.close()).resolves.toBeUndefined();
+  });
+
+  test('ensurePool throws when not initialized', async () => {
+    const freshProvider = new PostgresStorageProvider('postgresql://localhost/test');
+    await expect(freshProvider.getAllData('test@test.com')).rejects.toThrow('not initialized');
+  });
 });

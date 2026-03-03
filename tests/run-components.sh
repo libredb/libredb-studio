@@ -24,7 +24,7 @@ set -e
 
 PASS=0
 FAIL=0
-TOTAL_GROUPS=16
+TOTAL_GROUPS=18
 EXTRA_BUN_ARGS=("$@")
 GROUP_INDEX=0
 COVERAGE_MODE=0
@@ -65,6 +65,14 @@ run_group() {
     echo "FAILED: $label"
   fi
 }
+
+# Group 0a: useStorageSync hook (isolated — mocks @/lib/storage which contaminates other hook tests)
+run_group "Group 0a: useStorageSync hook" \
+  tests/hooks-isolated/use-storage-sync.test.ts
+
+# Group 0b: Factory singleton (isolated — mocks provider modules which contaminates provider unit tests)
+run_group "Group 0b: Factory singleton" \
+  tests/isolated/factory-singleton.test.ts
 
 # Group 1: Studio (isolated — mocks almost every child component)
 run_group "Group 1/6: Studio" \

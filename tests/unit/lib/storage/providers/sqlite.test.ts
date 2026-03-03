@@ -137,4 +137,96 @@ describe('SQLiteStorageProvider', () => {
     await provider.close();
     expect(mockClose).toHaveBeenCalledTimes(1);
   });
+
+  test('mergeData uses transaction', async () => {
+    const mockRun = mock((..._args: unknown[]) => {});
+    mockPrepare.mockReturnValue({
+      all: mock(() => []),
+      get: mock(() => undefined),
+      run: mockRun,
+    });
+
+    const txFn = mock((fn: () => void) => fn);
+    mockDbInstance.transaction = txFn;
+
+    await provider.initialize();
+    await provider.mergeData('admin@test.com', {
+      connections: [{ id: 'c1', name: 'DB', type: 'postgres', host: 'localhost', port: 5432, createdAt: new Date() }] as import('@/lib/types').DatabaseConnection[],
+      history: [{ id: 'h1', connectionId: 'c1', query: 'SELECT 1', executionTime: 10, status: 'success', executedAt: new Date() }] as import('@/lib/types').QueryHistoryItem[],
+    });
+
+    // Transaction wrapper was called
+    expect(txFn).toHaveBeenCalledTimes(1);
+    // run was called for each provided collection
+    expect(mockRun.mock.calls.length).toBeGreaterThanOrEqual(2);
+  });
+
+  test('mergeData only writes provided collections', async () => {
+    const mockRun = mock((..._args: unknown[]) => {});
+    mockPrepare.mockReturnValue({
+      all: mock(() => []),
+      get: mock(() => undefined),
+      run: mockRun,
+    });
+    mockDbInstance.transaction = mock((fn: () => void) => fn);
+
+    await provider.initialize();
+    await provider.mergeData('admin@test.com', {
+      connections: [{ id: 'c1', name: 'DB', type: 'postgres', host: 'localhost', port: 5432, createdAt: new Date() }] as import('@/lib/types').DatabaseConnection[],
+    });
+
+    // Only connections was provided, so only 1 run call for data
+    expect(mockRun).toHaveBeenCalledTimes(1);
+    const args = (mockRun.mock.calls as unknown[][])[0];
+    expect(args[1]).toBe('connections');
+  });
+
+  test('isHealthy returns false on error', async () => {
+    mockPrepare.mockReturnValue({
+      all: mock(() => []),
+      get: mock(() => { throw new Error('DB crashed'); }),
+      run: mock(() => {}),
+    });
+
+    await provider.initialize();
+    expect(await provider.isHealthy()).toBe(false);
+  });
+
+  test('getCollection returns null for corrupted JSON', async () => {
+    mockPrepare.mockReturnValue({
+      all: mock(() => []),
+      get: mock(() => ({ data: 'not-valid-json{{{' })),
+      run: mock(() => {}),
+    });
+
+    await provider.initialize();
+    const result = await provider.getCollection('admin@test.com', 'connections');
+    expect(result).toBeNull();
+  });
+
+  test('getAllData skips corrupted JSON rows', async () => {
+    mockPrepare.mockReturnValue({
+      all: mock(() => [
+        { collection: 'connections', data: JSON.stringify([{ id: 'c1' }]) },
+        { collection: 'history', data: 'corrupted{{{' },
+      ]),
+      get: mock(() => undefined),
+      run: mock(() => {}),
+    });
+
+    await provider.initialize();
+    const result = await provider.getAllData('admin@test.com');
+    expect(result.connections as unknown).toEqual([{ id: 'c1' }]);
+    expect(result.history).toBeUndefined();
+  });
+
+  test('close on uninitialized provider does not throw', async () => {
+    const freshProvider = new SQLiteStorageProvider(':memory:');
+    await expect(freshProvider.close()).resolves.toBeUndefined();
+  });
+
+  test('ensureDb throws when not initialized', async () => {
+    const freshProvider = new SQLiteStorageProvider(':memory:');
+    await expect(freshProvider.getAllData('test@test.com')).rejects.toThrow('not initialized');
+  });
 });
