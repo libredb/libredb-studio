@@ -150,7 +150,7 @@ function LoginFormInner({ authProvider }: { authProvider: string }) {
               </div>
             </div>
             <div className="text-center space-y-1">
-              <h1 className="text-2xl font-bold tracking-tight">LibreDB Studio</h1>
+              <h2 className="text-2xl font-bold tracking-tight">LibreDB Studio</h2>
               <p className="text-sm text-muted-foreground">Open-source database management</p>
             </div>
           </div>

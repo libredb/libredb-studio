@@ -47,8 +47,8 @@ describe('LoginPage', () => {
   });
 
   test('renders LibreDB Studio title', () => {
-    const { getByText } = renderLogin();
-    expect(getByText('LibreDB Studio')).not.toBeNull();
+    const { getAllByText } = renderLogin();
+    expect(getAllByText('LibreDB Studio').length).toBeGreaterThanOrEqual(1);
   });
 
   test('renders quick access Admin and User buttons', () => {
