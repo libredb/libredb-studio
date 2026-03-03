@@ -1,8 +1,8 @@
 import { DatabaseConnection, QueryHistoryItem, SavedQuery, SchemaSnapshot, SavedChartConfig } from './types';
 
-const CONNECTIONS_KEY = 'orchids_db_connections';
-const HISTORY_KEY = 'orchids_db_history';
-const SAVED_QUERIES_KEY = 'orchids_db_saved';
+const CONNECTIONS_KEY = 'libredb_connections';
+const HISTORY_KEY = 'libredb_history';
+const SAVED_QUERIES_KEY = 'libredb_saved_queries';
 const SCHEMA_SNAPSHOTS_KEY = 'libredb_schema_snapshots';
 const SAVED_CHARTS_KEY = 'libredb_saved_charts';
 const ACTIVE_CONNECTION_KEY = 'libredb_active_connection_id';

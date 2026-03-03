@@ -291,17 +291,17 @@ describe('storage: active connection ID', () => {
 
 describe('storage: broken JSON', () => {
   test('getConnections returns empty array on invalid JSON', () => {
-    localStorage.setItem('orchids_db_connections', 'not-json{{{');
+    localStorage.setItem('libredb_connections', 'not-json{{{');
     expect(storage.getConnections()).toEqual([]);
   });
 
   test('getHistory returns empty array on invalid JSON', () => {
-    localStorage.setItem('orchids_db_history', '{bad');
+    localStorage.setItem('libredb_history', '{bad');
     expect(storage.getHistory()).toEqual([]);
   });
 
   test('getSavedQueries returns empty array on invalid JSON', () => {
-    localStorage.setItem('orchids_db_saved', 'nope');
+    localStorage.setItem('libredb_saved_queries', 'nope');
     expect(storage.getSavedQueries()).toEqual([]);
   });
 
