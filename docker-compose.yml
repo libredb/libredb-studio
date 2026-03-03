@@ -15,7 +15,19 @@ services:
       - STORAGE_POSTGRES_URL=${STORAGE_POSTGRES_URL}
     volumes:
       - storage-data:/app/data
-    restart: always
+
+  libredb-postgres:
+    image: postgres:17-alpine
+    container_name: libredb-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: libredb_storage
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
 
 volumes:
   storage-data:
+  pgdata:

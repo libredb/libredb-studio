@@ -11,6 +11,7 @@ WORKDIR /usr/src/app
 
 # Install dependencies only when needed
 FROM base AS deps
+RUN apt-get update && apt-get install -y python3 make g++ --no-install-recommends && rm -rf /var/lib/apt/lists/*
 COPY package.json bun.lock ./
 RUN bun install --frozen-lockfile
 
@@ -61,7 +62,7 @@ COPY --from=builder /usr/src/app/.next/static ./.next/static
 COPY --from=builder /usr/src/app/node_modules/better-sqlite3 ./node_modules/better-sqlite3
 COPY --from=builder /usr/src/app/node_modules/bindings ./node_modules/bindings
 COPY --from=builder /usr/src/app/node_modules/file-uri-to-path ./node_modules/file-uri-to-path
-COPY --from=builder /usr/src/app/node_modules/prebuild-install ./node_modules/prebuild-install 2>/dev/null || true
+# prebuild-install is only needed at build time, not runtime
 
 # Create non-root user for security
 RUN addgroup --system --gid 1001 nodejs && \
