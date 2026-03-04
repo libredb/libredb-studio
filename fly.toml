@@ -1,0 +1,35 @@
+# LibreDB Studio — Fly.io Configuration
+# Deploy: fly deploy --image ghcr.io/libredb/libredb-studio:latest
+# Docs:   https://fly.io/docs/reference/configuration/
+
+app = 'libredb-studio'
+primary_region = 'ams'
+
+[build]
+  image = 'ghcr.io/libredb/libredb-studio:latest'
+
+[env]
+  PORT = '3000'
+  NODE_ENV = 'production'
+  NEXT_PUBLIC_AUTH_PROVIDER = 'local'
+  STORAGE_PROVIDER = 'local'
+
+[http_service]
+  internal_port = 3000
+  force_https = true
+  auto_stop_machines = 'stop'
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ['app']
+
+[[http_service.checks]]
+  grace_period = '10s'
+  interval = '30s'
+  method = 'GET'
+  path = '/api/db/health'
+  timeout = '5s'
+
+[[vm]]
+  memory = '512mb'
+  cpu_kind = 'shared'
+  cpus = 1
