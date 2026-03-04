@@ -1,6 +1,7 @@
-# LibreDB Studio — Fly.io Configuration
-# Deploy: fly deploy --image ghcr.io/libredb/libredb-studio:latest
-# Docs:   https://fly.io/docs/reference/configuration/
+# fly.toml app configuration file generated for libredb-studio on 2026-03-04T03:50:40+03:00
+#
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+#
 
 app = 'libredb-studio'
 primary_region = 'ams'
@@ -9,9 +10,9 @@ primary_region = 'ams'
   image = 'ghcr.io/libredb/libredb-studio:latest'
 
 [env]
-  PORT = '3000'
-  NODE_ENV = 'production'
   NEXT_PUBLIC_AUTH_PROVIDER = 'local'
+  NODE_ENV = 'production'
+  PORT = '3000'
   STORAGE_PROVIDER = 'local'
 
 [http_service]
@@ -22,14 +23,15 @@ primary_region = 'ams'
   min_machines_running = 0
   processes = ['app']
 
-[[http_service.checks]]
-  grace_period = '10s'
-  interval = '30s'
-  method = 'GET'
-  path = '/api/db/health'
-  timeout = '5s'
+  [[http_service.checks]]
+    interval = '30s'
+    timeout = '5s'
+    grace_period = '10s'
+    method = 'GET'
+    path = '/api/db/health'
 
 [[vm]]
   memory = '512mb'
   cpu_kind = 'shared'
   cpus = 1
+  memory_mb = 512
