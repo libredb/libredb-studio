@@ -170,6 +170,34 @@ Navigate to `/login` and click **"Login with SSO"**.
    OIDC_ADMIN_ROLES=Admin,admin
    ```
 
+### Zitadel
+
+1. **Create Project & Application** in Zitadel Console → Projects → Create New Project → Add Application (Web)
+   - Auth Method: PKCE
+
+2. **Settings:**
+   ```
+   Redirect URIs:       http://localhost:3000/api/auth/oidc/callback
+   Post Logout URIs:    http://localhost:3000/login
+   ```
+
+3. **Environment Variables:**
+   ```env
+   NEXT_PUBLIC_AUTH_PROVIDER=oidc
+   OIDC_ISSUER=https://your-instance.zitadel.cloud
+   OIDC_CLIENT_ID=your_client_id
+   OIDC_CLIENT_SECRET=your_client_secret
+   ```
+
+4. **Role Mapping:**
+
+   Zitadel includes roles if requested via scopes. Ensure `OIDC_SCOPE` includes `urn:zitadel:iam:org:project:roles`.
+   ```env
+   OIDC_SCOPE=openid profile email urn:zitadel:iam:org:project:roles
+   OIDC_ROLE_CLAIM=urn:zitadel:iam:org:project:roles
+   OIDC_ADMIN_ROLES=admin
+   ```
+
 ### Google Workspace
 
 1. **Create OAuth Client** in Google Cloud Console → APIs & Services → Credentials → Create OAuth Client ID → Web Application
