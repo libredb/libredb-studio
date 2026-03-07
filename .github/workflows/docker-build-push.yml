@@ -50,17 +50,11 @@ jobs:
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             VERSION="${{ github.event.inputs.version }}"
-          elif [[ "${GITHUB_REF}" == "refs/heads/main" ]]; then
-            # Get version from package.json for main branch
-            VERSION=$(bun -e "const fs = require('fs'); const pkg = JSON.parse(fs.readFileSync('./package.json', 'utf8')); console.log(pkg.version)")
-            echo "Using package.json version: ${VERSION}"
           else
-            # Extract version from release branch name
-            VERSION=$(echo ${GITHUB_REF#refs/heads/release/})
-            echo "Using branch version: ${VERSION}"
+            VERSION=$(bun -e "console.log(require('./package.json').version)")
           fi
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
-          echo "Final version: ${VERSION}"
+          echo "Version: ${VERSION}"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
