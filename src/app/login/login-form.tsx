@@ -54,7 +54,7 @@ function LoginFormInner({ authProvider }: { authProvider: string }) {
   };
 
   const features = [
-    { icon: Globe, title: '7+ Database Engines', desc: 'PostgreSQL, MySQL, SQLite, MongoDB, Redis, Oracle & SQL Server' },
+    { icon: Globe, title: '7+ Database Engines', desc: 'PostgreSQL, MySQL, MongoDB, Oracle, SQL Server' },
     { icon: Zap, title: 'AI-Native Queries', desc: 'Natural language to SQL with multi-model LLM support' },
     { icon: Shield, title: 'Zero Install', desc: 'Browser-based — deploy anywhere with Docker in seconds' },
     { icon: Layers, title: 'Real-Time Monitoring', desc: 'Live metrics, schema explorer, and visual ERD diagrams' },
@@ -128,7 +128,7 @@ function LoginFormInner({ authProvider }: { authProvider: string }) {
           <div className="space-y-3">
             <p className="text-xs text-zinc-600 uppercase tracking-widest font-medium">Supported Databases</p>
             <div className="flex flex-wrap gap-2">
-              {['PostgreSQL', 'MySQL', 'SQLite', 'MongoDB', 'Redis', 'Oracle', 'SQL Server'].map((db) => (
+              {['PostgreSQL', 'MySQL', 'MongoDB', 'Oracle', 'SQL Server'].map((db) => (
                 <span
                   key={db}
                   className="text-xs px-3 py-1.5 rounded-full bg-white/[0.04] text-zinc-500 border border-white/[0.05] font-medium"
@@ -313,7 +313,7 @@ function LoginFormInner({ authProvider }: { authProvider: string }) {
 
           {/* Mobile feature pills */}
           <div className="flex flex-wrap justify-center gap-2 lg:hidden">
-            {['PostgreSQL', 'MySQL', 'MongoDB', 'Redis', 'SQLite'].map((db) => (
+            {['PostgreSQL', 'MySQL', 'MongoDB', 'Oracle', 'SQL Server'].map((db) => (
               <span
                 key={db}
                 className="text-[10px] px-2.5 py-1 rounded-full bg-muted text-muted-foreground font-medium"
