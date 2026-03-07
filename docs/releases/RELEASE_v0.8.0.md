@@ -1,6 +1,6 @@
-# Release v0.8.0 - Pluggable Storage Layer
+# Release v0.8.0 - Pluggable Storage Layer, Login Redesign & Zitadel OIDC
 
-This release introduces a **pluggable storage abstraction layer** that allows LibreDB Studio to persist user data beyond the browser. Choose between localStorage (default), SQLite, or PostgreSQL — controlled by a single environment variable, no code changes or rebuild required.
+This release introduces a **pluggable storage abstraction layer**, a **redesigned login page**, and **Zitadel OIDC support**. Storage supports localStorage (default), SQLite, or PostgreSQL — controlled by a single environment variable. The login page features a modern split-panel layout with responsive design. Zitadel joins Auth0, Keycloak, Okta, and Azure AD as a supported OIDC provider.
 
 ---
 
@@ -12,6 +12,8 @@ This release introduces a **pluggable storage abstraction layer** that allows Li
 - **Per-User Isolation:** Server storage is scoped by JWT username — no cross-user data leaks
 - **Single Docker Image:** Runtime config via `STORAGE_PROVIDER` env var — one image supports all modes
 - **Zero Breaking Changes:** All 16+ consumer components keep the same synchronous `storage.*` API
+- **Login Redesign:** Modern split-panel layout with branding panel, responsive mobile view, and OIDC/local mode support
+- **Zitadel OIDC:** Full integration with Zitadel identity provider — PKCE, role mapping, and RP-Initiated logout
 
 ---
 
@@ -383,6 +385,88 @@ Then register it in `factory.ts` — no changes to facade, API routes, sync hook
 
 ---
 
+## Login Page Redesign
+
+The login page has been completely redesigned with a modern split-panel layout (PR [#34](https://github.com/libredb/libredb-studio/pull/34) by [@yusuf-gundogdu](https://github.com/yusuf-gundogdu)).
+
+### Desktop Layout
+
+| Left Panel (55%) | Right Panel (45%) |
+|---|---|
+| Branding, hero text, feature cards, DB badges | Login form (OIDC or email/password) |
+
+- **Left panel:** Zinc-950 base with subtle blue ambient glow, dot grid pattern, glassmorphism feature cards, and supported database badges
+- **Right panel:** Card-based login form — adapts between OIDC (SSO button + security badges) and local mode (email/password + quick access demo buttons)
+- **Design system alignment:** Uses the app's zinc/blue dark theme, `border-white/[0.05]` glassmorphism, and `blue-400` accent — consistent with admin dashboard and editor
+
+### Mobile Layout
+
+- Left branding panel hidden; compact branding shown above the form (`lg:hidden`)
+- Card title changes from "Welcome back" to "Sign in" on mobile
+- Database badges shown as pills at the bottom
+- Accessibility: mobile branding uses `<h2>` to avoid duplicate `<h1>` tags
+
+### OIDC Mode
+
+- ShieldCheck icon with "Single Sign-On" description
+- "Login with SSO" button — standard full-page redirect (no popup)
+- Security badges: "Encrypted" + "OIDC Protected"
+
+### Files Changed
+
+| File | Change |
+|------|--------|
+| `src/app/login/login-form.tsx` | Complete redesign — split-panel layout, responsive, OIDC/local modes |
+| `src/app/api/auth/oidc/callback/route.ts` | Cleanup: removed unused popup cookie logic |
+| `tests/components/LoginPage.test.tsx` | Updated: `getByText` → `getAllByText` for multi-location "LibreDB Studio" |
+
+---
+
+## Zitadel OIDC Integration
+
+Zitadel has been added as a supported OIDC identity provider (PR [#36](https://github.com/libredb/libredb-studio/pull/36) by [@hbasria](https://github.com/hbasria)).
+
+### Configuration
+
+```env
+NEXT_PUBLIC_AUTH_PROVIDER=oidc
+OIDC_ISSUER=https://your-instance.zitadel.cloud
+OIDC_CLIENT_ID=your_client_id
+OIDC_CLIENT_SECRET=your_client_secret
+OIDC_SCOPE=openid profile email urn:zitadel:iam:org:project:roles
+OIDC_ROLE_CLAIM=urn:zitadel:iam:org:project:roles
+OIDC_ADMIN_ROLES=admin
+```
+
+### Key Details
+
+- **Scope:** Zitadel requires `urn:zitadel:iam:org:project:roles` scope to include roles in the token
+- **Role Claim:** Uses `urn:zitadel:iam:org:project:roles` as the claim path
+- **Logout:** RP-Initiated logout via `/oidc/v1/end_session` with `client_id` and `post_logout_redirect_uri`
+- **Auth Method:** PKCE (Authorization Code Flow with S256)
+
+### Files Changed
+
+| File | Change |
+|------|--------|
+| `src/lib/oidc.ts` | Added Zitadel RP-Initiated logout URL builder (`/oidc/v1/end_session`) |
+| `tests/unit/lib/oidc.test.ts` | Added Zitadel logout URL generation test |
+| `docs/OIDC_SETUP.md` | Added Zitadel setup guide (project, application, scopes, role mapping) |
+| `.env.example` | Added Zitadel-specific scope and role claim comments |
+| `README.md` | Added Zitadel to supported OIDC providers list |
+
+### Supported OIDC Providers
+
+| Provider | Issuer Pattern | Role Claim | Logout |
+|----------|---------------|------------|--------|
+| Auth0 | `*.auth0.com` | Custom namespace | `/v2/logout` |
+| Keycloak | Custom | `realm_access.roles` | `/protocol/openid-connect/logout` |
+| Okta | `*.okta.com` | `groups` | `/protocol/openid-connect/logout` |
+| Azure AD | `login.microsoftonline.com` | `roles` | `/protocol/openid-connect/logout` |
+| **Zitadel** | `*.zitadel.cloud` | `urn:zitadel:iam:org:project:roles` | `/oidc/v1/end_session` |
+
+---
+
 ## What's Next
 
 ### v0.8.x (Planned)
@@ -396,6 +480,8 @@ Then register it in `factory.ts` — no changes to facade, API routes, sync hook
 ## Full Changelog
 
 ### Added
+- Login page redesign — split-panel layout with branding, responsive mobile view, OIDC/local mode support ([#34](https://github.com/libredb/libredb-studio/pull/34))
+- Zitadel OIDC integration — PKCE auth, role mapping, RP-Initiated logout ([#36](https://github.com/libredb/libredb-studio/pull/36))
 - Pluggable storage abstraction layer (`src/lib/storage/`) with Strategy Pattern
 - SQLite storage provider (`better-sqlite3`, WAL mode, auto-create)
 - PostgreSQL storage provider (`pg` pool, transactional merge)
@@ -412,6 +498,9 @@ Then register it in `factory.ts` — no changes to facade, API routes, sync hook
 - `STORAGE_QUICK_SETUP.md` — quick setup guide with Docker examples (404 lines)
 
 ### Changed
+- Login page completely redesigned with split-panel layout (desktop) and compact branding (mobile)
+- OIDC SSO login uses standard redirect (removed popup window approach)
+- README, `.env.example`, `OIDC_SETUP.md` updated with Zitadel as supported provider
 - Monolithic `src/lib/storage.ts` refactored into modular `src/lib/storage/` directory
 - localStorage keys standardized to `libredb_` prefix (v0.7.1)
 - `DataCharts.tsx`, `SecurityTab.tsx`, `BottomPanel.tsx`, `audit.ts`, `data-masking.ts` — use storage module
