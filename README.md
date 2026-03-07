@@ -351,9 +351,14 @@ Deploy your own instance of LibreDB Studio with a single click and a free accoun
 | `OIDC_ISSUER` | ❌ | OIDC issuer URL (required when `oidc`) |
 | `OIDC_CLIENT_ID` | ❌ | OIDC client ID (required when `oidc`) |
 | `OIDC_CLIENT_SECRET` | ❌ | OIDC client secret (required when `oidc`) |
+| `OIDC_ADMIN_ROLES` | ❌ | Comma-separated admin role values (default: `admin`) |
+| `OIDC_ROLE_CLAIM` | ❌ | Claim path for role (e.g. `realm_access.roles`) |
+| `OIDC_SCOPE` | ❌ | OIDC scope (default: `openid profile email`) |
 | `LLM_PROVIDER` | ❌ | AI provider: `gemini`, `openai`, `ollama` |
 | `LLM_API_KEY` | ❌ | API key for AI features |
 | `LLM_MODEL` | ❌ | Model name (e.g., `gemini-2.5-flash`) |
+| `STORAGE_PROVIDER` |❌ | Storage provider: default=`local` in localStorage, persists in `sqlite` or `postgres` databases |
+| `STORAGE_POSTGRES_URL` |❌  |`postgresql://postgres:postgres@localhost:5432/libredb_storage` (required when `STORAGE_PROVIDER=postgres`) |
 
 > 💡 **Tip**: Copy `.env.example` to `.env.local` for local development.
 
@@ -361,7 +366,15 @@ Deploy your own instance of LibreDB Studio with a single click and a free accoun
 
 ## Deployment (DevOps)
 
-### Render (Recommended) 🚀
+### Koyeb (Recommended for cloud deployment)
+
+1. **Fork this repository**
+2. **Connect to Koyeb**: [app.koyeb.com](https://app.koyeb.com) → New → Blueprint
+3. **Select your forked repo** and Koyeb will auto-detect `koyeb.yaml`
+4. **Set Environment Variables** in Koyeb Dashboard:
+5. **Deploy!** 🎉
+
+### Render (Recommended for cloud deployment)
 
 LibreDB Studio includes a `render.yaml` Blueprint for one-click deployment:
 
@@ -369,13 +382,6 @@ LibreDB Studio includes a `render.yaml` Blueprint for one-click deployment:
 2. **Connect to Render**: [dashboard.render.com](https://dashboard.render.com) → New → Blueprint
 3. **Select your forked repo** and Render will auto-detect `render.yaml`
 4. **Set Environment Variables** in Render Dashboard:
-   - `ADMIN_EMAIL`: Admin email address
-   - `ADMIN_PASSWORD`: Admin password
-   - `USER_EMAIL`: User email address
-   - `USER_PASSWORD`: User password
-   - `JWT_SECRET`: Generate with `openssl rand -base64 32`
-   - `LLM_API_KEY`: (Optional) For AI features
-   - `NEXT_PUBLIC_AUTH_PROVIDER`: (Optional) Set to `oidc` for SSO
 5. **Deploy!** 🎉
 
 ### Docker Compose (Self-Hosted)
