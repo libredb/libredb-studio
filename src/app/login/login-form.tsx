@@ -6,7 +6,7 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
-import { Database, ExternalLink, Lock, Mail, ShieldCheck, UserCheck, Zap, Globe, Shield, BarChart3 } from 'lucide-react';
+import { Database, ExternalLink, Lock, Mail, ShieldCheck, UserCheck, Zap, Globe, Shield, Layers } from 'lucide-react';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 
@@ -54,39 +54,42 @@ function LoginFormInner({ authProvider }: { authProvider: string }) {
   };
 
   const features = [
-    { icon: Globe, title: 'Multi-Database Support', desc: 'PostgreSQL, MySQL, SQLite, MongoDB, Redis & more' },
-    { icon: Zap, title: 'AI-Powered Queries', desc: 'Natural language to SQL with intelligent suggestions' },
-    { icon: Shield, title: 'Enterprise Security', desc: 'JWT auth, OIDC SSO, role-based access control' },
-    { icon: BarChart3, title: 'Visual Schema Explorer', desc: 'Explore tables, relations, and data visually' },
+    { icon: Globe, title: '7+ Database Engines', desc: 'PostgreSQL, MySQL, SQLite, MongoDB, Redis, Oracle & SQL Server' },
+    { icon: Zap, title: 'AI-Native Queries', desc: 'Natural language to SQL with multi-model LLM support' },
+    { icon: Shield, title: 'Zero Install', desc: 'Browser-based — deploy anywhere with Docker in seconds' },
+    { icon: Layers, title: 'Real-Time Monitoring', desc: 'Live metrics, schema explorer, and visual ERD diagrams' },
   ];
 
   return (
     <div className="flex min-h-[100dvh] bg-background">
       {/* Left Panel - Branding (hidden on mobile) */}
       <div className="hidden lg:flex lg:w-1/2 xl:w-[55%] relative overflow-hidden">
-        {/* Gradient background */}
-        <div className="absolute inset-0 bg-gradient-to-br from-violet-950 via-purple-900 to-emerald-900" />
+        {/* Base background matching app zinc-950 */}
+        <div className="absolute inset-0 bg-zinc-950" />
+        <div className="absolute inset-0 bg-gradient-to-b from-blue-950/20 via-transparent to-cyan-950/10" />
 
-        {/* Decorative grid pattern */}
+        {/* Dot grid pattern */}
         <div
-          className="absolute inset-0 opacity-[0.07]"
+          className="absolute inset-0 opacity-[0.04]"
           style={{
             backgroundImage: 'radial-gradient(circle at 1px 1px, white 1px, transparent 0)',
-            backgroundSize: '40px 40px',
+            backgroundSize: '32px 32px',
           }}
         />
 
-        {/* Floating gradient orbs */}
-        <div className="absolute top-1/4 -left-20 w-72 h-72 bg-purple-500/30 rounded-full blur-3xl" />
-        <div className="absolute bottom-1/4 right-10 w-60 h-60 bg-emerald-500/20 rounded-full blur-3xl" />
-        <div className="absolute top-1/2 left-1/3 w-40 h-40 bg-violet-400/15 rounded-full blur-2xl" />
+        {/* Ambient glow orbs — blue accent family */}
+        <div className="absolute top-1/4 -left-20 w-80 h-80 bg-blue-500/[0.07] rounded-full blur-3xl" />
+        <div className="absolute bottom-1/3 right-10 w-64 h-64 bg-cyan-500/[0.05] rounded-full blur-3xl" />
+
+        {/* Right edge separator */}
+        <div className="absolute right-0 top-0 bottom-0 w-px bg-white/[0.06]" />
 
         {/* Content */}
         <div className="relative z-10 flex flex-col justify-between p-12 xl:p-16 w-full">
           {/* Top: Logo */}
           <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-white/10 backdrop-blur-sm border border-white/10">
-              <Database className="h-5 w-5 text-white" />
+            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-white/[0.06] border border-white/[0.08]">
+              <Database className="h-5 w-5 text-blue-400" />
             </div>
             <span className="text-xl font-semibold text-white tracking-tight">LibreDB Studio</span>
           </div>
@@ -95,26 +98,26 @@ function LoginFormInner({ authProvider }: { authProvider: string }) {
           <div className="space-y-10">
             <div className="space-y-4 max-w-lg">
               <h1 className="text-4xl xl:text-5xl font-bold text-white tracking-tight leading-[1.1]">
-                Your fastest path to
-                <span className="bg-gradient-to-r from-emerald-400 to-cyan-400 bg-clip-text text-transparent"> database mastery</span>
+                The open-source SQL IDE for
+                <span className="bg-gradient-to-r from-blue-400 to-cyan-400 bg-clip-text text-transparent"> cloud-native teams</span>
               </h1>
-              <p className="text-lg text-white/70 leading-relaxed">
-                Open-source database studio to query, explore, and manage all your databases from a single, powerful interface.
+              <p className="text-lg text-zinc-400 leading-relaxed">
+                Query, explore, and manage all your databases from a single AI-powered interface. Zero install — deploy with Docker in seconds.
               </p>
             </div>
 
-            <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
               {features.map((feature) => (
                 <div
                   key={feature.title}
-                  className="flex gap-3 p-3 rounded-xl bg-white/[0.05] backdrop-blur-sm border border-white/[0.08] pointer-events-none select-none"
+                  className="flex gap-3 p-3 rounded-xl bg-white/[0.03] border border-white/[0.05] pointer-events-none select-none"
                 >
-                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white/10">
-                    <feature.icon className="h-4 w-4 text-emerald-400" />
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-blue-500/10 border border-blue-500/10">
+                    <feature.icon className="h-4 w-4 text-blue-400" />
                   </div>
                   <div>
-                    <p className="text-sm font-medium text-white">{feature.title}</p>
-                    <p className="text-xs text-white/50 mt-0.5">{feature.desc}</p>
+                    <p className="text-sm font-medium text-zinc-200">{feature.title}</p>
+                    <p className="text-xs text-zinc-500 mt-0.5">{feature.desc}</p>
                   </div>
                 </div>
               ))}
@@ -123,12 +126,12 @@ function LoginFormInner({ authProvider }: { authProvider: string }) {
 
           {/* Bottom: DB badges */}
           <div className="space-y-3">
-            <p className="text-xs text-white/40 uppercase tracking-widest font-medium">Supported Databases</p>
+            <p className="text-xs text-zinc-600 uppercase tracking-widest font-medium">Supported Databases</p>
             <div className="flex flex-wrap gap-2">
               {['PostgreSQL', 'MySQL', 'SQLite', 'MongoDB', 'Redis', 'Oracle', 'SQL Server'].map((db) => (
                 <span
                   key={db}
-                  className="text-xs px-3 py-1.5 rounded-full bg-white/[0.07] text-white/60 border border-white/[0.08] font-medium"
+                  className="text-xs px-3 py-1.5 rounded-full bg-white/[0.04] text-zinc-500 border border-white/[0.05] font-medium"
                 >
                   {db}
                 </span>
@@ -144,14 +147,14 @@ function LoginFormInner({ authProvider }: { authProvider: string }) {
           {/* Mobile branding (visible only on mobile) */}
           <div className="flex flex-col items-center gap-4 lg:hidden">
             <div className="relative">
-              <div className="absolute -inset-2 rounded-full bg-gradient-to-r from-violet-600 to-emerald-600 opacity-20 blur-lg" />
-              <div className="relative flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-violet-600 to-emerald-600 shadow-lg">
-                <Database className="h-7 w-7 text-white" />
+              <div className="absolute -inset-2 rounded-full bg-blue-500/20 blur-lg" />
+              <div className="relative flex h-14 w-14 items-center justify-center rounded-2xl bg-zinc-900 border border-white/[0.08] shadow-lg shadow-blue-500/10">
+                <Database className="h-7 w-7 text-blue-400" />
               </div>
             </div>
             <div className="text-center space-y-1">
               <h2 className="text-2xl font-bold tracking-tight">LibreDB Studio</h2>
-              <p className="text-sm text-muted-foreground">Open-source database management</p>
+              <p className="text-sm text-muted-foreground">Open-source SQL IDE for cloud-native teams</p>
             </div>
           </div>
 
