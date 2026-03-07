@@ -26,6 +26,7 @@ import {
   DropdownMenuItem, DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Button } from '@/components/ui/button';
+import { storage } from '@/lib/storage';
 
 export type BottomPanelMode = 'results' | 'explain' | 'history' | 'saved' | 'charts' | 'nl2sql' | 'autopilot' | 'pivot' | 'docs' | 'schemadiff' | 'dashboard';
 
@@ -33,10 +34,8 @@ export type BottomPanelMode = 'results' | 'explain' | 'history' | 'saved' | 'cha
 function ChartDashboardLazy({ result }: { result: QueryResult | null }) {
   const [savedCharts, setSavedCharts] = React.useState<{ id: string; name: string; chartType: string; xAxis: string; yAxis: string[] }[]>([]);
   React.useEffect(() => {
-    try {
-      const stored = localStorage.getItem('libredb_saved_charts');
-      if (stored) setSavedCharts(JSON.parse(stored));
-    } catch { /* ignore */ }
+    const charts = storage.getSavedCharts();
+    if (charts.length > 0) setSavedCharts(charts);
   }, []);
 
   if (savedCharts.length === 0) {

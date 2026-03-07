@@ -6,6 +6,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 LibreDB Studio is a web-based SQL IDE for cloud-native teams. It supports PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, Redis, and a demo mode with AI-powered query assistance.
 
+## Github
+* Repository: https://github.com/libredb/libredb-studio
+* Container Registry: https://github.com/libredb/libredb-studio/pkgs/container/libredb-studio
+* Docker Image: ghcr.io/libredb/libredb-studio:latest
+
 ## Development Commands
 
 ```bash
@@ -58,6 +63,7 @@ The project uses ESLint 9 for linting and `bun:test` for testing with `@testing-
 - **AI:** Multi-model support (Gemini, OpenAI, Ollama, Custom)
 - **Databases:** PostgreSQL (`pg`), MySQL (`mysql2`), SQLite (`better-sqlite3`), Oracle (`oracledb`), SQL Server (`mssql`), MongoDB (`mongodb`), Redis (`ioredis`)
 - **Auth:** JWT-based with `jose` library + OIDC SSO with `openid-client` (Auth0, Keycloak, Okta, Azure AD)
+- **Storage:** Pluggable storage layer — localStorage (default), SQLite (`better-sqlite3`), or PostgreSQL (`pg`)
 
 ### Directory Structure
 
@@ -69,6 +75,7 @@ src/
 │   │   │   └── oidc/       # OIDC login + callback routes (PKCE, code exchange)
 │   │   ├── ai/             # AI endpoints (chat, nl2sql, explain, safety)
 │   │   ├── db/             # Query, schema, health, maintenance, transactions
+│   │   ├── storage/        # Storage sync API (config, CRUD, migrate)
 │   │   └── admin/          # Fleet health, audit endpoints
 │   ├── admin/              # Admin dashboard (RBAC protected)
 │   └── login/              # Login page
@@ -83,6 +90,15 @@ src/
 │   └── ui/                 # Shadcn/UI primitives
 ├── hooks/                  # Custom React hooks
 └── lib/
+    ├── storage/            # Storage abstraction layer
+    │   ├── index.ts        # Barrel export
+    │   ├── types.ts        # StorageData, ServerStorageProvider interfaces
+    │   ├── storage-facade.ts # Public sync API + CustomEvent dispatch
+    │   ├── local-storage.ts  # Pure localStorage CRUD
+    │   ├── factory.ts      # Env-based provider factory (singleton)
+    │   └── providers/
+    │       ├── sqlite.ts   # better-sqlite3 backend
+    │       └── postgres.ts # pg backend
     ├── db/                 # Database provider module (Strategy Pattern)
     │   ├── providers/
     │   │   ├── sql/        # SQL providers (postgres, mysql, sqlite, oracle, mssql)
@@ -133,7 +149,12 @@ e2e/                        # Playwright E2E tests (browser)
 
 4. **API Routes:** All backend logic in `src/app/api/`. Protected routes require valid JWT. Public routes: `/login`, `/api/auth`, `/api/db/health`
 
-5. **Client State:** LocalStorage for connections, query history, and saved queries (`src/lib/storage.ts`)
+5. **Storage Abstraction:** `src/lib/storage/` module provides pluggable persistence:
+   - **Local** (default): Browser localStorage, zero config
+   - **SQLite**: `better-sqlite3` file DB for single-node persistent storage
+   - **PostgreSQL**: `pg` for multi-node enterprise storage
+   - Write-through cache: localStorage always serves reads; `useStorageSync` hook pushes mutations to server (debounced)
+   - Controlled by `STORAGE_PROVIDER` env var (server-side only, discovered at runtime via `/api/storage/config`)
 
 6. **Multi-Tab Workspace:** Each query tab has independent state (query, results, execution status)
 
@@ -164,6 +185,11 @@ LLM_PROVIDER=gemini             # gemini, openai, ollama, custom
 LLM_API_KEY=<key>
 LLM_MODEL=gemini-2.5-flash
 LLM_API_URL=<url>               # For ollama/custom providers
+
+# Optional storage config (server-side only, not NEXT_PUBLIC_)
+STORAGE_PROVIDER=local                  # local (default) | sqlite | postgres
+STORAGE_SQLITE_PATH=./data/libredb-storage.db  # SQLite file path
+STORAGE_POSTGRES_URL=postgresql://...           # PostgreSQL connection URL
 ```
 
 ### Path Aliases

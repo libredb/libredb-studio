@@ -55,6 +55,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { storage } from '@/lib/storage';
 
 // Chart colors matching CSS variables
 const CHART_COLORS = [
@@ -320,12 +321,20 @@ export function DataCharts({ result }: DataChartsProps) {
   const [showSaveDialog, setShowSaveDialog] = useState(false);
   const [saveName, setSaveName] = useState('');
 
-  // Load saved charts from localStorage
+  // Load saved charts from storage
   React.useEffect(() => {
-    try {
-      const stored = localStorage.getItem('libredb_saved_charts');
-      if (stored) setSavedCharts(JSON.parse(stored));
-    } catch { /* ignore */ }
+    const charts = storage.getSavedCharts();
+    if (charts.length > 0) {
+      setSavedCharts(charts.map(c => ({
+        id: c.id,
+        name: c.name,
+        chartType: c.chartType as ChartType,
+        xAxis: c.xAxis,
+        yAxis: c.yAxis,
+        aggregation: (c.aggregation || 'none') as AggregationType,
+        dateGrouping: c.dateGrouping || '',
+      })));
+    }
   }, []);
 
   // Initialize axis selections when analysis changes
@@ -411,7 +420,16 @@ export function DataCharts({ result }: DataChartsProps) {
     };
     const updated = [...savedCharts, newChart];
     setSavedCharts(updated);
-    localStorage.setItem('libredb_saved_charts', JSON.stringify(updated));
+    storage.saveChart({
+      id: newChart.id,
+      name: newChart.name,
+      chartType: newChart.chartType,
+      xAxis: newChart.xAxis,
+      yAxis: newChart.yAxis,
+      aggregation: newChart.aggregation,
+      dateGrouping: (newChart.dateGrouping || undefined) as DateGrouping | undefined,
+      createdAt: new Date(),
+    });
     setShowSaveDialog(false);
     setSaveName('');
   }, [saveName, chartType, xAxis, yAxis, aggregation, dateGrouping, savedCharts]);
@@ -429,7 +447,7 @@ export function DataCharts({ result }: DataChartsProps) {
   const deleteSavedChart = useCallback((id: string) => {
     const updated = savedCharts.filter(c => c.id !== id);
     setSavedCharts(updated);
-    localStorage.setItem('libredb_saved_charts', JSON.stringify(updated));
+    storage.deleteChart(id);
   }, [savedCharts]);
 
   const exportChart = useCallback(async (format: 'png' | 'svg') => {

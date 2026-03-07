@@ -10,4 +10,24 @@ services:
       - LLM_API_KEY=${LLM_API_KEY}
       - LLM_MODEL=${LLM_MODEL:-gemini-2.5-flash}
       - LLM_API_URL=${LLM_API_URL}
-    restart: always
+      - STORAGE_PROVIDER=${STORAGE_PROVIDER:-local}
+      - STORAGE_SQLITE_PATH=${STORAGE_SQLITE_PATH:-/app/data/libredb-storage.db}
+      - STORAGE_POSTGRES_URL=${STORAGE_POSTGRES_URL}
+    volumes:
+      - storage-data:/app/data
+
+  libredb-postgres:
+    image: postgres:17-alpine
+    container_name: libredb-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: libredb_storage
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+volumes:
+  storage-data:
+  pgdata:

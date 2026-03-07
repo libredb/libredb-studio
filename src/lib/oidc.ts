@@ -228,12 +228,21 @@ export function buildLogoutUrl(returnTo: string): string | null {
   try {
     const config = getOIDCConfig();
     const issuerUrl = new URL(config.issuer);
+    const roleClaim = config.roleClaim;
 
     // Auth0 uses /v2/logout
     if (issuerUrl.hostname.includes('auth0.com')) {
       const logoutUrl = new URL('/v2/logout', config.issuer);
       logoutUrl.searchParams.set('client_id', config.clientId);
       logoutUrl.searchParams.set('returnTo', returnTo);
+      return logoutUrl.toString();
+    }
+
+    // Zitadel RP-Initiated Logout
+    if (roleClaim.includes('zitadel')) {
+      const logoutUrl = new URL('/oidc/v1/end_session', config.issuer);
+      logoutUrl.searchParams.set('client_id', config.clientId);
+      logoutUrl.searchParams.set('post_logout_redirect_uri', returnTo);
       return logoutUrl.toString();
     }
 

@@ -11,6 +11,7 @@ WORKDIR /usr/src/app
 
 # Install dependencies only when needed
 FROM base AS deps
+RUN apt-get update && apt-get install -y python3 make g++ --no-install-recommends && rm -rf /var/lib/apt/lists/*
 COPY package.json bun.lock ./
 RUN bun install --frozen-lockfile
 
@@ -49,13 +50,19 @@ ENV NODE_OPTIONS="--max-old-space-size=384"
 
 COPY --from=builder /usr/src/app/public ./public
 
-# Set the correct permission for prerender cache
-RUN mkdir -p .next
+# Set the correct permission for prerender cache and storage
+RUN mkdir -p .next data
 
 # Automatically leverage output traces to reduce image size
 # https://nextjs.org/docs/advanced-features/output-file-tracing
 COPY --from=builder /usr/src/app/.next/standalone ./
 COPY --from=builder /usr/src/app/.next/static ./.next/static
+
+# Copy better-sqlite3 native binding for server storage support
+COPY --from=builder /usr/src/app/node_modules/better-sqlite3 ./node_modules/better-sqlite3
+COPY --from=builder /usr/src/app/node_modules/bindings ./node_modules/bindings
+COPY --from=builder /usr/src/app/node_modules/file-uri-to-path ./node_modules/file-uri-to-path
+# prebuild-install is only needed at build time, not runtime
 
 # Create non-root user for security
 RUN addgroup --system --gid 1001 nodejs && \

@@ -136,7 +136,7 @@ The demo runs in **Demo Mode** with simulated data. No real database required!
 
 ### Authentication & SSO
 - **Dual Auth Modes**: Local email/password login or OpenID Connect (OIDC) Single Sign-On — switchable via environment variable.
-- **Vendor-Agnostic OIDC**: Works with any OIDC-compliant provider — Auth0, Keycloak, Okta, Azure AD, Google, and more.
+- **Vendor-Agnostic OIDC**: Works with any OIDC-compliant provider — Auth0, Keycloak, Okta, Azure AD, Zitadel, Google, and more.
 - **PKCE Security**: Authorization Code Flow with Proof Key for Code Exchange (S256) for secure authentication.
 - **Auto Role Mapping**: Configurable claim-based role mapping with dot-notation for nested claims (e.g., `realm_access.roles`).
 - **Provider Logout**: Logout clears both local JWT session and identity provider session.
@@ -406,7 +406,7 @@ LibreDB Studio is optimized for K8s with:
 - [x] **Phase 12**: Advanced Charting (Scatter, Histogram, Stacked Charts, Aggregation, Date Grouping, Chart Save/Load, Chart Dashboard).
 - [x] **Phase 13**: Monitoring Enhancement (Time-Series Trends, Threshold Alerting, Connection Pool Stats, Configurable Polling).
 - [x] **Phase 14**: Enterprise Database Support (Oracle Database via oracledb Thin mode, Microsoft SQL Server via mssql/tedious).
-- [x] **Phase 15**: SSO Integration — Vendor-agnostic OIDC authentication (Auth0, Keycloak, Okta, Azure AD) with PKCE, role mapping, and provider logout.
+- [x] **Phase 15**: SSO Integration — Vendor-agnostic OIDC authentication (Auth0, Keycloak, Okta, Azure AD, Zitadel) with PKCE, role mapping, and provider logout.
 - [ ] **Phase 16**: DBA & Monitoring (Lock Dependency Graph, Vacuum Scheduler, Prometheus Export).
 - [ ] **Phase 17**: Enterprise Collaboration (User Identity, Shared Workspaces, SAML 2.0).
 
@@ -419,7 +419,7 @@ LibreDB Studio is optimized for K8s with:
 | [DeepWiki](https://deepwiki.com/libredb/libredb-studio) | AI-powered documentation — always up-to-date with the codebase |
 | [SonarCloud](https://sonarcloud.io/project/overview?id=libredb_libredb-studio) | Code quality, security analysis, and technical debt tracking |
 | [API Docs](docs/API_DOCS.md) | Complete REST API reference |
-| [OIDC Setup Guide](docs/OIDC_SETUP.md) | SSO configuration for Auth0, Keycloak, Okta, Azure AD |
+| [OIDC Setup Guide](docs/OIDC_SETUP.md) | SSO configuration for Auth0, Keycloak, Okta, Azure AD, Zitadel |
 | [OIDC Architecture](docs/OIDC_ARCH.md) | OIDC subsystem internals, security model, extension points |
 | [Theming Guide](docs/THEMING.md) | CSS theming, dark mode, and styling customization |
 | [Architecture](docs/ARCHITECTURE.md) | System architecture and design patterns |

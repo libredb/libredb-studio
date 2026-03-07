@@ -230,6 +230,16 @@ describe('buildLogoutUrl', () => {
     expect(url).toContain('post_logout_redirect_uri=');
   });
 
+  test('builds Zitadel logout URL', () => {
+    process.env.OIDC_ISSUER = 'https://my-instance.zitadel.cloud';
+    process.env.OIDC_ROLE_CLAIM = 'urn:zitadel:iam:org:project:roles';
+    const url = buildLogoutUrl('http://localhost:3000/login');
+    expect(url).not.toBeNull();
+    expect(url).toContain('/oidc/v1/end_session');
+    expect(url).toContain('client_id=test-client-id');
+    expect(url).toContain('post_logout_redirect_uri=');
+  });
+
   test('returns null when OIDC config is missing', () => {
     delete process.env.OIDC_ISSUER;
     const url = buildLogoutUrl('http://localhost:3000/login');
