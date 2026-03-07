@@ -75,6 +75,7 @@ export async function GET(request: Request) {
     if (error instanceof Error && 'cause' in error) {
       console.error('OIDC error cause:', error.cause);
     }
+
     return NextResponse.redirect(`${origin}/login?error=oidc_failed`);
   }
 }
