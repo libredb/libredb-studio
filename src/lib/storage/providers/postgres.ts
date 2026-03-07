@@ -34,6 +34,9 @@ export class PostgresStorageProvider implements ServerStorageProvider {
       connectionString: this.connectionString,
       max: 5,
       idleTimeoutMillis: 30000,
+      ssl: this.connectionString.includes('sslmode=disable')
+        ? false
+        : { rejectUnauthorized: false },
     });
 
     // Create table

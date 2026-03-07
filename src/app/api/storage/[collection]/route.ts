@@ -37,6 +37,13 @@ export async function PUT(
 
   const body = await request.json();
 
+  if (body.data === undefined || body.data === null) {
+    return NextResponse.json(
+      { error: 'Missing required field: data' },
+      { status: 400 }
+    );
+  }
+
   await provider.setCollection(
     session.username,
     collection as StorageCollection,
