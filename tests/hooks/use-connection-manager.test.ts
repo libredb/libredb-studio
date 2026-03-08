@@ -67,7 +67,7 @@ describe('useConnectionManager', () => {
       '/api/demo-connection': { ok: false, status: 404, json: {} },
     });
 
-    const { result } = renderHook(() => useConnectionManager());
+    const { result } = renderHook(() => useConnectionManager(true));
 
     expect(result.current.connections).toEqual([]);
     expect(result.current.activeConnection).toBeNull();
@@ -87,7 +87,7 @@ describe('useConnectionManager', () => {
       '/api/db/health': { ok: true, json: { status: 'healthy' } },
     });
 
-    const { result } = renderHook(() => useConnectionManager());
+    const { result } = renderHook(() => useConnectionManager(true));
 
     await waitFor(() => {
       expect(result.current.connections.length).toBe(1);
@@ -113,7 +113,7 @@ describe('useConnectionManager', () => {
       },
     });
 
-    const { result } = renderHook(() => useConnectionManager());
+    const { result } = renderHook(() => useConnectionManager(true));
 
     await waitFor(() => {
       expect(result.current.connections.length).toBe(1);
@@ -137,7 +137,7 @@ describe('useConnectionManager', () => {
       '/api/db/health': { ok: true, json: { status: 'healthy' } },
     });
 
-    const { result } = renderHook(() => useConnectionManager());
+    const { result } = renderHook(() => useConnectionManager(true));
 
     await waitFor(() => {
       expect(result.current.activeConnection).not.toBeNull();
@@ -161,7 +161,7 @@ describe('useConnectionManager', () => {
       '/api/db/health': { ok: true, json: { status: 'healthy' } },
     });
 
-    const { result } = renderHook(() => useConnectionManager());
+    const { result } = renderHook(() => useConnectionManager(true));
 
     await waitFor(() => {
       expect(result.current.activeConnection).not.toBeNull();
@@ -180,7 +180,7 @@ describe('useConnectionManager', () => {
       '/api/db/schema': { ok: true, json: schemaData },
     });
 
-    const { result } = renderHook(() => useConnectionManager());
+    const { result } = renderHook(() => useConnectionManager(true));
 
     const conn = makeConnection();
     await act(async () => {
@@ -206,7 +206,7 @@ describe('useConnectionManager', () => {
       '/api/db/schema': { ok: false, status: 500, json: { error: 'Connection refused' } },
     });
 
-    const { result } = renderHook(() => useConnectionManager());
+    const { result } = renderHook(() => useConnectionManager(true));
 
     const conn = makeConnection();
     await act(async () => {
@@ -233,7 +233,7 @@ describe('useConnectionManager', () => {
       '/api/db/schema': { ok: true, json: schemaData },
     });
 
-    const { result } = renderHook(() => useConnectionManager());
+    const { result } = renderHook(() => useConnectionManager(true));
 
     await act(async () => {
       await result.current.fetchSchema(makeConnection());
@@ -252,7 +252,7 @@ describe('useConnectionManager', () => {
       '/api/db/schema': { ok: true, json: schemaData },
     });
 
-    const { result } = renderHook(() => useConnectionManager());
+    const { result } = renderHook(() => useConnectionManager(true));
 
     await act(async () => {
       await result.current.fetchSchema(makeConnection());
@@ -283,7 +283,7 @@ describe('useConnectionManager', () => {
       return originalMockedFetch(input, init);
     }) as typeof fetch;
 
-    const { result } = renderHook(() => useConnectionManager());
+    const { result } = renderHook(() => useConnectionManager(true));
 
     // Start fetching schema
     let fetchPromise: Promise<void>;
@@ -315,7 +315,7 @@ describe('useConnectionManager', () => {
       '/api/db/health': { ok: true, json: { status: 'healthy' } },
     });
 
-    const { result } = renderHook(() => useConnectionManager());
+    const { result } = renderHook(() => useConnectionManager(true));
 
     const conn = makeConnection({ id: 'new-conn-42' });
 
@@ -335,7 +335,7 @@ describe('useConnectionManager', () => {
       '/api/demo-connection': { ok: false, status: 404, json: {} },
     });
 
-    const { result } = renderHook(() => useConnectionManager());
+    const { result } = renderHook(() => useConnectionManager(true));
 
     const newConns = [
       makeConnection({ id: 'a', name: 'Alpha' }),
@@ -362,7 +362,7 @@ describe('useConnectionManager', () => {
       '/api/db/health': { ok: true, json: { status: 'healthy' } },
     });
 
-    const { result } = renderHook(() => useConnectionManager());
+    const { result } = renderHook(() => useConnectionManager(true));
 
     await waitFor(() => {
       expect(result.current.connectionPulse).toBe('healthy');
@@ -381,7 +381,7 @@ describe('useConnectionManager', () => {
       },
     });
 
-    const { result } = renderHook(() => useConnectionManager());
+    const { result } = renderHook(() => useConnectionManager(true));
 
     await waitFor(() => {
       expect(result.current.activeConnection).not.toBeNull();
@@ -399,7 +399,7 @@ describe('useConnectionManager', () => {
       '/api/db/schema': { ok: false, status: 500, json: { error: 'Timeout' } },
     });
 
-    const { result } = renderHook(() => useConnectionManager());
+    const { result } = renderHook(() => useConnectionManager(true));
 
     const demoConn = makeConnection({ id: 'demo-1', isDemo: true });
     await act(async () => {
@@ -433,7 +433,7 @@ describe('useConnectionManager', () => {
       },
     });
 
-    const { result } = renderHook(() => useConnectionManager());
+    const { result } = renderHook(() => useConnectionManager(true));
 
     await waitFor(() => {
       expect(result.current.connections.length).toBeGreaterThan(0);
@@ -452,7 +452,7 @@ describe('useConnectionManager', () => {
       '/api/demo-connection': { ok: true, json: { enabled: false } },
     });
 
-    const { result } = renderHook(() => useConnectionManager());
+    const { result } = renderHook(() => useConnectionManager(true));
 
     // Should still initialize but without demo connection
     await waitFor(() => {
@@ -478,7 +478,7 @@ describe('useConnectionManager', () => {
       '/api/db/health': { ok: false, status: 503, json: { error: 'Service Unavailable' } },
     });
 
-    const { result } = renderHook(() => useConnectionManager());
+    const { result } = renderHook(() => useConnectionManager(true));
 
     await waitFor(() => {
       expect(result.current.connectionPulse).toBe('degraded');
@@ -504,7 +504,7 @@ describe('useConnectionManager', () => {
       return new Response(JSON.stringify({ error: 'Not found' }), { status: 404 });
     }) as typeof fetch;
 
-    const { result } = renderHook(() => useConnectionManager());
+    const { result } = renderHook(() => useConnectionManager(true));
 
     await waitFor(() => {
       expect(result.current.connectionPulse).toBe('error');
@@ -535,7 +535,7 @@ describe('useConnectionManager', () => {
       '/api/db/health': { ok: true, json: { status: 'healthy' } },
     });
 
-    const { result } = renderHook(() => useConnectionManager());
+    const { result } = renderHook(() => useConnectionManager(true));
 
     await waitFor(() => {
       expect(result.current.activeConnection).not.toBeNull();
@@ -560,7 +560,7 @@ describe('useConnectionManager', () => {
       return new Response(JSON.stringify({ error: 'Not found' }), { status: 404 });
     }) as typeof fetch;
 
-    const { result } = renderHook(() => useConnectionManager());
+    const { result } = renderHook(() => useConnectionManager(true));
 
     const conn = makeConnection();
     await act(async () => {
@@ -593,7 +593,7 @@ describe('useConnectionManager', () => {
       return new Response('{}', { status: 404 });
     }) as typeof fetch;
 
-    const { result } = renderHook(() => useConnectionManager());
+    const { result } = renderHook(() => useConnectionManager(true));
 
     // Should still load local connections despite demo fetch error
     await waitFor(() => {
@@ -612,7 +612,7 @@ describe('useConnectionManager', () => {
       '/api/demo-connection': { ok: true, json: { enabled: true, connection: null } },
     });
 
-    const { result } = renderHook(() => useConnectionManager());
+    const { result } = renderHook(() => useConnectionManager(true));
 
     await act(async () => {
       await new Promise(resolve => setTimeout(resolve, 50));
@@ -637,7 +637,7 @@ describe('useConnectionManager', () => {
       return new Response('{}', { status: 404 });
     }) as typeof fetch;
 
-    const { result } = renderHook(() => useConnectionManager());
+    const { result } = renderHook(() => useConnectionManager(true));
 
     const conn = makeConnection();
     await act(async () => {
@@ -663,7 +663,7 @@ describe('useConnectionManager', () => {
       '/api/db/schema': { ok: true, json: schemaData },
     });
 
-    const { result } = renderHook(() => useConnectionManager());
+    const { result } = renderHook(() => useConnectionManager(true));
 
     const demoConn = makeConnection({ id: 'demo-1', isDemo: true });
     await act(async () => {
@@ -681,7 +681,7 @@ describe('useConnectionManager', () => {
       '/api/demo-connection': { ok: false, status: 404, json: {} },
     });
 
-    const { result } = renderHook(() => useConnectionManager());
+    const { result } = renderHook(() => useConnectionManager(true));
 
     // activeConnection should be null (no saved connections)
     expect(result.current.activeConnection).toBeNull();
@@ -720,7 +720,7 @@ describe('useConnectionManager', () => {
       },
     });
 
-    const { result } = renderHook(() => useConnectionManager());
+    const { result } = renderHook(() => useConnectionManager(true));
 
     await waitFor(() => {
       expect(result.current.connections.length).toBeGreaterThan(0);

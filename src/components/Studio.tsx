@@ -67,10 +67,10 @@ export default function Studio() {
   const { user, isAdmin, handleLogout } = useAuth();
 
   // 1.5. Storage sync (write-through cache for server mode)
-  useStorageSync();
+  const { isReady: storageReady } = useStorageSync();
 
   // 2. Connection Manager + Provider Metadata
-  const conn = useConnectionManager();
+  const conn = useConnectionManager(storageReady);
   const { metadata } = useProviderMetadata(conn.activeConnection);
 
   // 3. Tab Manager

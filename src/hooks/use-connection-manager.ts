@@ -5,7 +5,7 @@ import type { DatabaseConnection, TableSchema } from '@/lib/types';
 import { useToast } from '@/hooks/use-toast';
 import { storage } from '@/lib/storage';
 
-export function useConnectionManager() {
+export function useConnectionManager(storageReady = false) {
   const [connections, setConnections] = useState<DatabaseConnection[]>([]);
   const [activeConnection, setActiveConnection] = useState<DatabaseConnection | null>(null);
   const [schema, setSchema] = useState<TableSchema[]>([]);
@@ -63,8 +63,10 @@ export function useConnectionManager() {
   const tableNames = useMemo(() => schema.map(s => s.name), [schema]);
   const schemaContext = useMemo(() => JSON.stringify(schema), [schema]);
 
-  // Initialize connections on mount
+  // Initialize connections once storage sync is ready
   useEffect(() => {
+    if (!storageReady) return;
+
     const initializeConnections = async () => {
       const LOG_PREFIX = '[DemoDB]';
       const loadedConnections = storage.getConnections();
@@ -146,7 +148,8 @@ export function useConnectionManager() {
     };
 
     initializeConnections();
-  }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [storageReady]);
 
   // Persist active connection ID
   useEffect(() => {

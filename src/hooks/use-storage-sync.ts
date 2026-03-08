@@ -9,6 +9,7 @@ const DEBOUNCE_MS = 500;
 export interface StorageSyncState {
   isServerMode: boolean;
   isSyncing: boolean;
+  isReady: boolean;
   lastSyncedAt: Date | null;
   syncError: string | null;
 }
@@ -25,6 +26,7 @@ export interface StorageSyncState {
 export function useStorageSync(): StorageSyncState {
   const [isServerMode, setIsServerMode] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [isReady, setIsReady] = useState(false);
   const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
   const [syncError, setSyncError] = useState<string | null>(null);
 
@@ -119,13 +121,29 @@ export function useStorageSync(): StorageSyncState {
     if (typeof window === 'undefined') return;
     if (localStorage.getItem(MIGRATION_FLAG)) return;
 
+    // Check if localStorage actually has any libredb data to migrate.
+    // On a fresh browser, no libredb_* keys exist — skip migration to
+    // avoid overwriting server data with empty defaults.
+    const hasLocalData = STORAGE_COLLECTIONS.some(
+      (col) => localStorage.getItem(`libredb_${col}`) !== null
+    );
+
+    if (!hasLocalData) {
+      localStorage.setItem(MIGRATION_FLAG, new Date().toISOString());
+      return;
+    }
+
     setIsSyncing(true);
     try {
       const allData: Partial<StorageData> = {};
       for (const col of STORAGE_COLLECTIONS) {
-        const data = getCollectionData(col);
-        if (data !== null && data !== undefined) {
-          (allData as Record<string, unknown>)[col] = data;
+        // Only include collections that actually exist in localStorage
+        const raw = localStorage.getItem(`libredb_${col}`);
+        if (raw !== null) {
+          const data = getCollectionData(col);
+          if (data !== null && data !== undefined) {
+            (allData as Record<string, unknown>)[col] = data;
+          }
         }
       }
 
@@ -172,6 +190,10 @@ export function useStorageSync(): StorageSyncState {
         }
       } catch {
         // Server unreachable — stay in local mode
+      } finally {
+        if (!cancelled) {
+          setIsReady(true);
+        }
       }
     }
 
@@ -201,7 +223,7 @@ export function useStorageSync(): StorageSyncState {
     };
   }, [isServerMode, schedulePush]);
 
-  return { isServerMode, isSyncing, lastSyncedAt, syncError };
+  return { isServerMode, isSyncing, isReady, lastSyncedAt, syncError };
 }
 
 // ── Helpers ──

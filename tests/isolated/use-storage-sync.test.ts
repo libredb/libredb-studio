@@ -125,7 +125,9 @@ describe('useStorageSync', () => {
   // ── Migration ───────────────────────────────────────────────────────────
 
   describe('migration', () => {
-    test('performs migration on first server-mode visit', async () => {
+    test('performs migration on first server-mode visit when localStorage has data', async () => {
+      // Seed localStorage with actual data so migration has something to send
+      localStorage.setItem('libredb_connections', JSON.stringify([{ id: 'test', name: 'Test DB' }]));
       const fetchMock = setupServerMode();
 
       const { result } = renderHook(() => useStorageSync());
@@ -143,6 +145,26 @@ describe('useStorageSync', () => {
         return new URL(url, 'http://localhost:3000').pathname;
       });
       expect(calls).toContain('/api/storage/migrate');
+    });
+
+    test('skips migration on fresh browser with empty localStorage', async () => {
+      const fetchMock = setupServerMode();
+
+      const { result } = renderHook(() => useStorageSync());
+
+      await waitFor(() => {
+        expect(result.current.isServerMode).toBe(true);
+      });
+
+      // Migration flag should still be set (to prevent future re-checks)
+      expect(localStorage.getItem('libredb_server_migrated')).not.toBeNull();
+
+      // migrate endpoint should NOT be called — no local data to migrate
+      const calls = (fetchMock.mock.calls as unknown[][]).map((c) => {
+        const url = typeof c[0] === 'string' ? c[0] : '';
+        return new URL(url, 'http://localhost:3000').pathname;
+      });
+      expect(calls).not.toContain('/api/storage/migrate');
     });
 
     test('skips migration when flag already set', async () => {
@@ -345,6 +367,7 @@ describe('useStorageSync', () => {
       expect(result.current).toEqual({
         isServerMode: false,
         isSyncing: false,
+        isReady: false,
         lastSyncedAt: null,
         syncError: null,
       });
