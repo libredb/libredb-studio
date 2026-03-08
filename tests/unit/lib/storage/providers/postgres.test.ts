@@ -76,6 +76,19 @@ describe('PostgresStorageProvider', () => {
     await localProvider.close();
   });
 
+  test('initialize disables SSL for docker local host aliases', async () => {
+    const localProvider = new PostgresStorageProvider(
+      'postgresql://host.docker.internal:5432/test'
+    );
+    await localProvider.initialize();
+
+    const poolConfig = (mockPoolConstructor.mock.calls as unknown[][])[0]?.[0] as {
+      ssl?: unknown;
+    };
+    expect(poolConfig.ssl).toBe(false);
+    await localProvider.close();
+  });
+
   test('initialize enables SSL when sslmode=require', async () => {
     const cloudProvider = new PostgresStorageProvider(
       'postgresql://db.example.com:5432/test?sslmode=require'
@@ -89,9 +102,9 @@ describe('PostgresStorageProvider', () => {
     await cloudProvider.close();
   });
 
-  test('initialize enables SSL for cloud hosts by default', async () => {
+  test('initialize enables SSL for non-local hosts by default', async () => {
     const cloudProvider = new PostgresStorageProvider(
-      'postgresql://my-neon-instance.neon.tech:5432/test'
+      'postgresql://db.internal.example:5432/test'
     );
     await cloudProvider.initialize();
 
@@ -100,6 +113,19 @@ describe('PostgresStorageProvider', () => {
     };
     expect(poolConfig.ssl).toEqual({ rejectUnauthorized: false });
     await cloudProvider.close();
+  });
+
+  test('initialize disables SSL for all loopback 127.x.x.x addresses', async () => {
+    const localProvider = new PostgresStorageProvider(
+      'postgresql://127.0.0.42:5432/test'
+    );
+    await localProvider.initialize();
+
+    const poolConfig = (mockPoolConstructor.mock.calls as unknown[][])[0]?.[0] as {
+      ssl?: unknown;
+    };
+    expect(poolConfig.ssl).toBe(false);
+    await localProvider.close();
   });
 
   test('getAllData returns parsed collections', async () => {

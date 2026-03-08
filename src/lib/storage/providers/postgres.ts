@@ -185,8 +185,7 @@ export class PostgresStorageProvider implements ServerStorageProvider {
     }
 
     if (this.isLocalHost(host)) return false;
-    if (this.isCloudHost(host)) return { rejectUnauthorized: false };
-    return false;
+    return { rejectUnauthorized: false };
   }
 
   private parseConnectionString(connectionString: string): {
@@ -208,24 +207,16 @@ export class PostgresStorageProvider implements ServerStorageProvider {
   }
 
   private isLocalHost(host: string): boolean {
-    return host === 'localhost' || host === '127.0.0.1' || host === '::1';
-  }
-
-  private isCloudHost(host: string): boolean {
-    const cloudHints = [
-      'supabase',
-      'render',
-      'neon',
-      'planetscale',
-      'amazonaws.com',
-      'azure',
-      'gcp',
-      'googleapis.com',
-      'cloud',
-      'aiven',
-      'railway',
-      'elephantsql',
-    ];
-    return cloudHints.some((hint) => host.includes(hint));
+    const localHosts = new Set([
+      'localhost',
+      '::1',
+      'host.docker.internal',
+      'docker.for.mac.localhost',
+      'docker.for.win.localhost',
+      'gateway.docker.internal',
+    ]);
+    if (localHosts.has(host)) return true;
+    if (host.startsWith('127.')) return true;
+    return false;
   }
 }
