@@ -34,21 +34,29 @@ export class PostgresStorageProvider implements ServerStorageProvider {
       connectionString: this.connectionString,
       max: 5,
       idleTimeoutMillis: 30000,
-      ssl: this.connectionString.includes('sslmode=disable')
-        ? false
-        : { rejectUnauthorized: false },
+      ssl: this.buildSSLConfig(),
     });
 
     // Create table
-    await this.pool.query(`
-      CREATE TABLE IF NOT EXISTS user_storage (
-        user_id    TEXT NOT NULL,
-        collection TEXT NOT NULL,
-        data       TEXT NOT NULL,
-        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        PRIMARY KEY (user_id, collection)
-      )
-    `);
+    try {
+      await this.pool.query(`
+        CREATE TABLE IF NOT EXISTS user_storage (
+          user_id    TEXT NOT NULL,
+          collection TEXT NOT NULL,
+          data       TEXT NOT NULL,
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          PRIMARY KEY (user_id, collection)
+        )
+      `);
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('does not support SSL')) {
+        throw new Error(
+          'PostgreSQL storage connection failed: server does not support SSL. Add ?sslmode=disable to STORAGE_POSTGRES_URL for local PostgreSQL.',
+          { cause: error }
+        );
+      }
+      throw error;
+    }
   }
 
   async getAllData(userId: string): Promise<Partial<StorageData>> {
@@ -152,5 +160,72 @@ export class PostgresStorageProvider implements ServerStorageProvider {
         'PostgreSQL storage not initialized. Call initialize() first.'
       );
     }
+  }
+
+  private buildSSLConfig(): boolean | { rejectUnauthorized: boolean } {
+    const { host, searchParams } = this.parseConnectionString(this.connectionString);
+
+    const sslMode = searchParams.get('sslmode')?.toLowerCase();
+    if (sslMode === 'disable') return false;
+    if (
+      sslMode === 'require' ||
+      sslMode === 'prefer' ||
+      sslMode === 'verify-ca' ||
+      sslMode === 'verify-full'
+    ) {
+      return { rejectUnauthorized: false };
+    }
+
+    const sslParam = searchParams.get('ssl')?.toLowerCase();
+    if (sslParam === 'false' || sslParam === '0' || sslParam === 'no') {
+      return false;
+    }
+    if (sslParam === 'true' || sslParam === '1' || sslParam === 'yes') {
+      return { rejectUnauthorized: false };
+    }
+
+    if (this.isLocalHost(host)) return false;
+    if (this.isCloudHost(host)) return { rejectUnauthorized: false };
+    return false;
+  }
+
+  private parseConnectionString(connectionString: string): {
+    host: string;
+    searchParams: URLSearchParams;
+  } {
+    try {
+      const parsed = new URL(connectionString);
+      return {
+        host: parsed.hostname.toLowerCase(),
+        searchParams: parsed.searchParams,
+      };
+    } catch {
+      return {
+        host: '',
+        searchParams: new URLSearchParams(),
+      };
+    }
+  }
+
+  private isLocalHost(host: string): boolean {
+    return host === 'localhost' || host === '127.0.0.1' || host === '::1';
+  }
+
+  private isCloudHost(host: string): boolean {
+    const cloudHints = [
+      'supabase',
+      'render',
+      'neon',
+      'planetscale',
+      'amazonaws.com',
+      'azure',
+      'gcp',
+      'googleapis.com',
+      'cloud',
+      'aiven',
+      'railway',
+      'elephantsql',
+    ];
+    return cloudHints.some((hint) => host.includes(hint));
   }
 }

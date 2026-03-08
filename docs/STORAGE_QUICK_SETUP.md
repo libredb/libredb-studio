@@ -149,7 +149,7 @@ docker run -d --name libredb-pg \
 ```bash
 # .env.local
 STORAGE_PROVIDER=postgres
-STORAGE_POSTGRES_URL=postgresql://libredb:secret@localhost:5432/libredb
+STORAGE_POSTGRES_URL=postgresql://libredb:secret@localhost:5432/libredb?sslmode=disable
 ```
 
 ```bash
@@ -189,7 +189,7 @@ services:
       - "3000:3000"
     environment:
       - STORAGE_PROVIDER=postgres
-      - STORAGE_POSTGRES_URL=postgresql://libredb:secret@db:5432/libredb
+      - STORAGE_POSTGRES_URL=postgresql://libredb:secret@db:5432/libredb?sslmode=disable
     depends_on:
       db:
         condition: service_healthy
@@ -223,6 +223,16 @@ Just set the connection string — the table is auto-created:
 ```bash
 STORAGE_PROVIDER=postgres
 STORAGE_POSTGRES_URL=postgresql://user:pass@your-pg-host:5432/your_db
+```
+
+Use `sslmode=disable` for local/non-SSL PostgreSQL and `sslmode=require` for managed cloud PostgreSQL:
+
+```bash
+# Local PostgreSQL
+STORAGE_POSTGRES_URL=postgresql://user:pass@localhost:5432/your_db?sslmode=disable
+
+# Cloud PostgreSQL
+STORAGE_POSTGRES_URL=postgresql://user:pass@your-pg-host:5432/your_db?sslmode=require
 ```
 
 ### Verify
@@ -336,6 +346,12 @@ curl -b cookies.txt http://localhost:3000/api/storage
 - Verify `STORAGE_POSTGRES_URL` is correct and the database is reachable
 - In Docker Compose, use the service name (`db`) as the host, not `localhost`
 - Check that the PostgreSQL container is healthy: `docker-compose ps`
+
+### PostgreSQL: "server does not support SSL connections"
+
+- Your PostgreSQL server does not accept SSL, but SSL is enabled in the connection URL
+- Fix local setups by adding `?sslmode=disable` to `STORAGE_POSTGRES_URL`
+- For managed cloud PostgreSQL, use `?sslmode=require`
 
 ### "Data disappeared after switching modes"
 
