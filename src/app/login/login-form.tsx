@@ -6,9 +6,52 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
-import { Database, ExternalLink, Lock, Mail, ShieldCheck, UserCheck, Zap, Globe, Shield, Layers } from 'lucide-react';
+import { ExternalLink, Lock, Mail, ShieldCheck, UserCheck, Zap, Globe, Shield, Layers } from 'lucide-react';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
+
+function LibreDBLogo({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg" className={className}>
+      {/* Hexagon outline */}
+      <path
+        d="M20 2L36 11.5V29.5L20 39L4 29.5V11.5L20 2Z"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinejoin="round"
+        opacity="0.4"
+      />
+      {/* Inner hexagon */}
+      <path
+        d="M20 7L32 14V27L20 34L8 27V14L20 7Z"
+        stroke="currentColor"
+        strokeWidth="1"
+        strokeLinejoin="round"
+        opacity="0.15"
+      />
+      {/* Left bracket < */}
+      <path
+        d="M15 15L10 20.5L15 26"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      {/* Right bracket > */}
+      <path
+        d="M25 15L30 20.5L25 26"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      {/* Three horizontal lines ≡ */}
+      <line x1="17" y1="17.5" x2="23" y2="17.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      <line x1="17" y1="20.5" x2="23" y2="20.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      <line x1="17" y1="23.5" x2="23" y2="23.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  );
+}
 
 function LoginFormInner({ authProvider }: { authProvider: string }) {
   const isOIDC = authProvider === 'oidc';
@@ -89,7 +132,7 @@ function LoginFormInner({ authProvider }: { authProvider: string }) {
           {/* Top: Logo */}
           <div className="flex items-center gap-3">
             <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-white/[0.06] border border-white/[0.08]">
-              <Database className="h-5 w-5 text-blue-400" />
+              <LibreDBLogo className="h-6 w-6 text-blue-400" />
             </div>
             <span className="text-xl font-semibold text-white tracking-tight">LibreDB Studio</span>
           </div>
@@ -149,7 +192,7 @@ function LoginFormInner({ authProvider }: { authProvider: string }) {
             <div className="relative">
               <div className="absolute -inset-2 rounded-full bg-blue-500/20 blur-lg" />
               <div className="relative flex h-14 w-14 items-center justify-center rounded-2xl bg-zinc-900 border border-white/[0.08] shadow-lg shadow-blue-500/10">
-                <Database className="h-7 w-7 text-blue-400" />
+                <LibreDBLogo className="h-8 w-8 text-blue-400" />
               </div>
             </div>
             <div className="text-center space-y-1">
