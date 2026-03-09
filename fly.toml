@@ -14,6 +14,12 @@ primary_region = 'ams'
   NODE_ENV = 'production'
   PORT = '3000'
   STORAGE_PROVIDER = 'local'
+  ADMIN_EMAIL = 'admin@libredb.org'
+  ADMIN_PASSWORD = 'LibreDB.2026'
+  USER_EMAIL = 'user@libredb.org'
+  USER_PASSWORD = 'LibreDB.2026'
+  JWT_SECRET = 'LibreDB.2026'
+
 
 [http_service]
   internal_port = 3000
