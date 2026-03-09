@@ -1,7 +1,7 @@
 import '../setup-dom';
 
 import { describe, test, expect, mock, beforeEach } from 'bun:test';
-import { renderHook, act } from '@testing-library/react';
+import { renderHook, act, waitFor } from '@testing-library/react';
 
 // Shared mocks — process-wide singletons (no contamination)
 import '../helpers/mock-sonner';
@@ -10,7 +10,6 @@ import '../helpers/mock-navigation';
 import { useTabManager } from '@/hooks/use-tab-manager';
 import type { DatabaseConnection, TableSchema } from '@/lib/types';
 import type { ProviderMetadata } from '@/hooks/use-provider-metadata';
-import type { RefObject } from 'react';
 
 // Helper to create a minimal connection
 function makeConnection(overrides: Partial<DatabaseConnection> = {}): DatabaseConnection {
@@ -70,14 +69,9 @@ const testSchema: TableSchema[] = [
   },
 ];
 
-// Null ref for queryEditorRef
-function makeEditorRef(): RefObject<null> {
-  return { current: null };
-}
-
 describe('useTabManager', () => {
   beforeEach(() => {
-    // Reset any state between tests
+    localStorage.clear();
   });
 
   test('starts with one default tab', () => {
@@ -86,7 +80,6 @@ describe('useTabManager', () => {
         activeConnection: null,
         metadata: null,
         schema: [],
-        queryEditorRef: makeEditorRef(),
       })
     );
 
@@ -103,7 +96,6 @@ describe('useTabManager', () => {
         activeConnection: null,
         metadata: null,
         schema: [],
-        queryEditorRef: makeEditorRef(),
       })
     );
 
@@ -119,7 +111,6 @@ describe('useTabManager', () => {
         activeConnection: connection,
         metadata: defaultMetadata,
         schema: [],
-        queryEditorRef: makeEditorRef(),
       })
     );
 
@@ -143,7 +134,6 @@ describe('useTabManager', () => {
         activeConnection: null,
         metadata: null,
         schema: [],
-        queryEditorRef: makeEditorRef(),
       })
     );
 
@@ -171,7 +161,6 @@ describe('useTabManager', () => {
         activeConnection: null,
         metadata: null,
         schema: [],
-        queryEditorRef: makeEditorRef(),
       })
     );
 
@@ -200,7 +189,6 @@ describe('useTabManager', () => {
         activeConnection: null,
         metadata: null,
         schema: [],
-        queryEditorRef: makeEditorRef(),
       })
     );
 
@@ -221,7 +209,6 @@ describe('useTabManager', () => {
         activeConnection: null,
         metadata: null,
         schema: [],
-        queryEditorRef: makeEditorRef(),
       })
     );
 
@@ -233,6 +220,32 @@ describe('useTabManager', () => {
     expect(result.current.currentTab.name).toBe('Renamed Tab');
   });
 
+  test('updateTabById updates only the targeted tab query', () => {
+    const { result } = renderHook(() =>
+      useTabManager({
+        activeConnection: null,
+        metadata: null,
+        schema: [],
+      })
+    );
+
+    act(() => {
+      result.current.updateCurrentTab({ query: 'SELECT 1;' });
+      result.current.addTab();
+    });
+
+    const [firstTab, secondTab] = result.current.tabs;
+    expect(firstTab.query).toBe('SELECT 1;');
+    expect(secondTab.query).toBe('-- Start typing your SQL query here\n');
+
+    act(() => {
+      result.current.updateTabById(firstTab.id, { query: 'SELECT 42;' });
+    });
+
+    expect(result.current.tabs[0].query).toBe('SELECT 42;');
+    expect(result.current.tabs[1].query).toBe('-- Start typing your SQL query here\n');
+  });
+
   test('handleTableClick creates new tab with query and calls executeQueryFn', () => {
     const connection = makeConnection();
     const executeFn = mock(() => {});
@@ -242,7 +255,6 @@ describe('useTabManager', () => {
         activeConnection: connection,
         metadata: defaultMetadata,
         schema: testSchema,
-        queryEditorRef: makeEditorRef(),
       })
     );
 
@@ -277,7 +289,6 @@ describe('useTabManager', () => {
         activeConnection: connection,
         metadata: defaultMetadata,
         schema: testSchema,
-        queryEditorRef: makeEditorRef(),
       })
     );
 
@@ -301,7 +312,6 @@ describe('useTabManager', () => {
         activeConnection: null,
         metadata: null,
         schema: [],
-        queryEditorRef: makeEditorRef(),
       })
     );
 
@@ -328,7 +338,6 @@ describe('useTabManager', () => {
         activeConnection: null,
         metadata: null,
         schema: [],
-        queryEditorRef: makeEditorRef(),
       })
     );
 
@@ -370,7 +379,6 @@ describe('useTabManager', () => {
         activeConnection: connection,
         metadata: mongoMetadata,
         schema: [],
-        queryEditorRef: makeEditorRef(),
       })
     );
 
@@ -380,5 +388,390 @@ describe('useTabManager', () => {
 
     const newTab = result.current.tabs[1];
     expect(newTab.type).toBe('mongodb');
+  });
+
+  // ─── Persistence: Load Effect ───
+
+  test('load — empty storage with persistWorkspace defaults to DEFAULT_TAB', async () => {
+    // No data in localStorage for this key
+    const { result } = renderHook(() =>
+      useTabManager({
+        activeConnection: null,
+        metadata: null,
+        schema: [],
+        persistWorkspace: true,
+      })
+    );
+
+    await waitFor(() => {
+      expect(result.current.tabs).toHaveLength(1);
+      expect(result.current.tabs[0].id).toBe('default');
+      expect(result.current.activeTabId).toBe('default');
+    });
+  });
+
+  test('load — corrupted JSON falls back to DEFAULT_TAB', async () => {
+    localStorage.setItem('libredb_workspace_tabs_v1:default', '<<<INVALID JSON>>>');
+
+    const { result } = renderHook(() =>
+      useTabManager({
+        activeConnection: null,
+        metadata: null,
+        schema: [],
+        persistWorkspace: true,
+      })
+    );
+
+    await waitFor(() => {
+      expect(result.current.tabs).toHaveLength(1);
+      expect(result.current.tabs[0].id).toBe('default');
+      expect(result.current.activeTabId).toBe('default');
+    });
+  });
+
+  test('load — empty tabs array falls back to DEFAULT_TAB', async () => {
+    localStorage.setItem(
+      'libredb_workspace_tabs_v1:default',
+      JSON.stringify({ activeTabId: 'x', tabs: [] })
+    );
+
+    const { result } = renderHook(() =>
+      useTabManager({
+        activeConnection: null,
+        metadata: null,
+        schema: [],
+        persistWorkspace: true,
+      })
+    );
+
+    await waitFor(() => {
+      expect(result.current.tabs).toHaveLength(1);
+      expect(result.current.tabs[0].id).toBe('default');
+    });
+  });
+
+  test('load — stored activeTabId not in tabs falls back to first tab', async () => {
+    localStorage.setItem(
+      'libredb_workspace_tabs_v1:default',
+      JSON.stringify({
+        activeTabId: 'non-existent-id',
+        tabs: [
+          { id: 'tab-a', name: 'A', query: 'SELECT 1;', type: 'sql' },
+          { id: 'tab-b', name: 'B', query: 'SELECT 2;', type: 'sql' },
+        ],
+      })
+    );
+
+    const { result } = renderHook(() =>
+      useTabManager({
+        activeConnection: null,
+        metadata: null,
+        schema: [],
+        persistWorkspace: true,
+      })
+    );
+
+    await waitFor(() => {
+      expect(result.current.tabs).toHaveLength(2);
+      expect(result.current.activeTabId).toBe('tab-a');
+    });
+  });
+
+  test('restores tabs and active tab from workspace storage', async () => {
+    localStorage.setItem(
+      'libredb_workspace_tabs_v1:default',
+      JSON.stringify({
+        activeTabId: 'tab-2',
+        tabs: [
+          { id: 'tab-1', name: 'Query 1', query: 'SELECT 1;', type: 'sql' },
+          { id: 'tab-2', name: 'Query 2', query: 'SELECT 2;', type: 'sql' },
+        ],
+      })
+    );
+
+    const { result } = renderHook(() =>
+      useTabManager({
+        activeConnection: null,
+        metadata: null,
+        schema: [],
+        persistWorkspace: true,
+      })
+    );
+
+    await waitFor(() => {
+      expect(result.current.tabs).toHaveLength(2);
+      expect(result.current.activeTabId).toBe('tab-2');
+      expect(result.current.currentTab.query).toBe('SELECT 2;');
+    });
+  });
+
+  test('persists query updates into workspace storage after debounce', async () => {
+    const { result } = renderHook(() =>
+      useTabManager({
+        activeConnection: makeConnection({ id: 'persist-conn' }),
+        metadata: null,
+        schema: [],
+        persistWorkspace: true,
+      })
+    );
+
+    act(() => {
+      result.current.updateCurrentTab({ query: 'SELECT now();' });
+    });
+
+    // Save is debounced by 500ms — wait for it to flush
+    await waitFor(() => {
+      const raw = localStorage.getItem('libredb_workspace_tabs_v1:persist-conn');
+      expect(raw).toBeTruthy();
+
+      const parsed = JSON.parse(raw || '{}') as {
+        activeTabId: string;
+        tabs: Array<{ query: string }>;
+      };
+
+      expect(parsed.activeTabId).toBe(result.current.activeTabId);
+      expect(parsed.tabs[0].query).toBe('SELECT now();');
+    }, { timeout: 2000 });
+  });
+
+  test('debounce — rapid updates only persist final state', async () => {
+    const { result } = renderHook(() =>
+      useTabManager({
+        activeConnection: makeConnection({ id: 'debounce-conn' }),
+        metadata: null,
+        schema: [],
+        persistWorkspace: true,
+      })
+    );
+
+    // Rapid-fire 3 updates within debounce window
+    act(() => {
+      result.current.updateCurrentTab({ query: 'first' });
+    });
+    act(() => {
+      result.current.updateCurrentTab({ query: 'second' });
+    });
+    act(() => {
+      result.current.updateCurrentTab({ query: 'third' });
+    });
+
+    await waitFor(() => {
+      const raw = localStorage.getItem('libredb_workspace_tabs_v1:debounce-conn');
+      expect(raw).toBeTruthy();
+      const parsed = JSON.parse(raw!) as { tabs: Array<{ query: string }> };
+      expect(parsed.tabs[0].query).toBe('third');
+    }, { timeout: 2000 });
+  });
+
+  test('connection switch race — old tabs not saved to new connection key', async () => {
+    // Seed connection A with tabs
+    localStorage.setItem(
+      'libredb_workspace_tabs_v1:conn-a',
+      JSON.stringify({
+        activeTabId: 'a-tab',
+        tabs: [{ id: 'a-tab', name: 'A Tab', query: 'SELECT a;', type: 'sql' }],
+      })
+    );
+
+    const connA = makeConnection({ id: 'conn-a' });
+    const connB = makeConnection({ id: 'conn-b' });
+
+    // Start with connection A
+    const { result, rerender } = renderHook(
+      ({ conn }) =>
+        useTabManager({
+          activeConnection: conn,
+          metadata: null,
+          schema: [],
+          persistWorkspace: true,
+        }),
+      { initialProps: { conn: connA } }
+    );
+
+    // Wait for load to finish
+    await waitFor(() => {
+      expect(result.current.tabs).toHaveLength(1);
+      expect(result.current.tabs[0].query).toBe('SELECT a;');
+    });
+
+    // Switch to connection B (which has no saved workspace)
+    rerender({ conn: connB });
+
+    // Wait for load to set defaults for B
+    await waitFor(() => {
+      expect(result.current.tabs[0].id).toBe('default');
+    });
+
+    // Wait for any potential debounced saves to flush
+    await new Promise(r => setTimeout(r, 700));
+
+    // Connection B's storage should only have the default tab, not A's tabs
+    const rawB = localStorage.getItem('libredb_workspace_tabs_v1:conn-b');
+    if (rawB) {
+      const parsed = JSON.parse(rawB) as { tabs: Array<{ query: string }> };
+      expect(parsed.tabs[0].query).toBe('-- Start typing your SQL query here\n');
+    }
+
+    // Connection A's storage should still be intact
+    const rawA = localStorage.getItem('libredb_workspace_tabs_v1:conn-a');
+    expect(rawA).toBeTruthy();
+    const parsedA = JSON.parse(rawA!) as { tabs: Array<{ query: string }> };
+    expect(parsedA.tabs[0].query).toBe('SELECT a;');
+  });
+
+  // ─── Functionality: Fallback & Edge Cases ───
+
+  test('currentTab falls back to tabs[0] when activeTabId is stale', () => {
+    const { result } = renderHook(() =>
+      useTabManager({
+        activeConnection: null,
+        metadata: null,
+        schema: [],
+      })
+    );
+
+    // Force a stale activeTabId via setActiveTabId
+    act(() => {
+      result.current.setActiveTabId('non-existent-id');
+    });
+
+    // currentTab should fall back to tabs[0]
+    expect(result.current.currentTab).toBeDefined();
+    expect(result.current.currentTab.id).toBe('default');
+  });
+
+  test('handleTableClick without metadata uses fallback query', () => {
+    const executeFn = mock(() => {});
+    const { result } = renderHook(() =>
+      useTabManager({
+        activeConnection: makeConnection(),
+        metadata: null,
+        schema: testSchema,
+      })
+    );
+
+    act(() => {
+      result.current.handleTableClick('users', executeFn);
+    });
+
+    const newTab = result.current.tabs[1];
+    expect(newTab.query).toBe('SELECT * FROM users LIMIT 50;');
+    expect(newTab.type).toBe('sql');
+    expect(newTab.name).toBe('users');
+  });
+
+  test('handleTableClick with MongoDB metadata creates mongodb tab', () => {
+    const executeFn = mock(() => {});
+    const mongoMetadata: ProviderMetadata = {
+      capabilities: {
+        ...defaultMetadata.capabilities,
+        queryLanguage: 'json' as const,
+      },
+      labels: defaultMetadata.labels,
+    } as ProviderMetadata;
+
+    const { result } = renderHook(() =>
+      useTabManager({
+        activeConnection: makeConnection({ type: 'mongodb' }),
+        metadata: mongoMetadata,
+        schema: [],
+      })
+    );
+
+    act(() => {
+      result.current.handleTableClick('users', executeFn);
+    });
+
+    const newTab = result.current.tabs[1];
+    expect(newTab.type).toBe('mongodb');
+    expect(newTab.query).toContain('"collection": "users"');
+    expect(newTab.query).toContain('"operation": "find"');
+  });
+
+  test('handleGenerateSelect without metadata uses fallback SELECT', () => {
+    const { result } = renderHook(() =>
+      useTabManager({
+        activeConnection: makeConnection(),
+        metadata: null,
+        schema: testSchema,
+      })
+    );
+
+    act(() => {
+      result.current.handleGenerateSelect('users');
+    });
+
+    const newTab = result.current.tabs[1];
+    expect(newTab.query).toContain('SELECT');
+    expect(newTab.query).toContain('id');
+    expect(newTab.query).toContain('name');
+    expect(newTab.query).toContain('LIMIT 100;');
+    expect(newTab.type).toBe('sql');
+  });
+
+  test('handleGenerateSelect for unknown table uses * for columns', () => {
+    const { result } = renderHook(() =>
+      useTabManager({
+        activeConnection: makeConnection(),
+        metadata: null,
+        schema: [],  // empty schema — table not found
+      })
+    );
+
+    act(() => {
+      result.current.handleGenerateSelect('unknown_table');
+    });
+
+    const newTab = result.current.tabs[1];
+    expect(newTab.query).toContain('  *');
+    expect(newTab.query).toContain('FROM unknown_table');
+  });
+
+  test('handleGenerateSelect with MongoDB metadata creates mongodb tab', () => {
+    const mongoMetadata: ProviderMetadata = {
+      capabilities: {
+        ...defaultMetadata.capabilities,
+        queryLanguage: 'json' as const,
+      },
+      labels: defaultMetadata.labels,
+    } as ProviderMetadata;
+
+    const { result } = renderHook(() =>
+      useTabManager({
+        activeConnection: makeConnection({ type: 'mongodb' }),
+        metadata: mongoMetadata,
+        schema: testSchema,
+      })
+    );
+
+    act(() => {
+      result.current.handleGenerateSelect('users');
+    });
+
+    const newTab = result.current.tabs[1];
+    expect(newTab.type).toBe('mongodb');
+    expect(newTab.query).toContain('"collection": "users"');
+    expect(newTab.query).toContain('"operation": "find"');
+  });
+
+  test('addTab with demo connection uses showcase query', () => {
+    const demoConnection = makeConnection({ id: 'demo', type: 'demo', isDemo: true });
+    const { result } = renderHook(() =>
+      useTabManager({
+        activeConnection: demoConnection,
+        metadata: defaultMetadata,
+        schema: [],
+      })
+    );
+
+    act(() => {
+      result.current.addTab();
+    });
+
+    const newTab = result.current.tabs[1];
+    // Demo queries are random but always contain SQL keywords
+    expect(newTab.query).not.toBe('-- Start typing your SQL query here\n');
+    expect(newTab.query.length).toBeGreaterThan(50);
+    expect(newTab.type).toBe('sql');
   });
 });

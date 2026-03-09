@@ -78,7 +78,6 @@ export default function Studio() {
     activeConnection: conn.activeConnection,
     metadata,
     schema: conn.schema,
-    queryEditorRef,
   });
 
   // 4. Transaction Control
@@ -440,7 +439,7 @@ export default function Studio() {
                           <QueryEditor
                             ref={queryEditorRef}
                             value={tabMgr.currentTab.query}
-                            onChange={(val) => tabMgr.updateCurrentTab({ query: val })}
+                            onContentChange={(val) => tabMgr.updateTabById(tabMgr.currentTab.id, { query: val })}
                             onExplain={metadata?.capabilities.supportsExplain ? () => queryExec.executeQuery(undefined, undefined, true) : undefined}
                             language={tabMgr.currentTab.type === 'mongodb' ? 'json' : 'sql'}
                             tables={conn.tableNames}
