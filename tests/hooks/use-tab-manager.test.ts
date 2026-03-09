@@ -607,10 +607,9 @@ describe('useTabManager', () => {
 
     // Connection B's storage should only have the default tab, not A's tabs
     const rawB = localStorage.getItem('libredb_workspace_tabs_v1:conn-b');
-    if (rawB) {
-      const parsed = JSON.parse(rawB) as { tabs: Array<{ query: string }> };
-      expect(parsed.tabs[0].query).toBe('-- Start typing your SQL query here\n');
-    }
+    expect(rawB).toBeTruthy();
+    const parsedB = JSON.parse(rawB!) as { tabs: Array<{ query: string }> };
+    expect(parsedB.tabs[0].query).toBe('-- Start typing your SQL query here\n');
 
     // Connection A's storage should still be intact
     const rawA = localStorage.getItem('libredb_workspace_tabs_v1:conn-a');

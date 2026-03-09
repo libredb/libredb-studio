@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
+import { useState, useCallback, useEffect, useMemo } from 'react';
 import type { DatabaseConnection, TableSchema, QueryTab } from '@/lib/types';
 import type { ProviderMetadata } from '@/hooks/use-provider-metadata';
 import { getDefaultQuery } from '@/lib/showcase-queries';
@@ -46,7 +46,7 @@ export function useTabManager({
   const [activeTabId, setActiveTabId] = useState<string>('default');
   const [editingTabId, setEditingTabId] = useState<string | null>(null);
   const [editingTabName, setEditingTabName] = useState('');
-  const workspaceReadyRef = useRef(false);
+  const [isWorkspaceHydrated, setIsWorkspaceHydrated] = useState(false);
 
   const workspaceKey = useMemo(
     () => `${WORKSPACE_STORAGE_PREFIX}:${activeConnection?.id ?? 'default'}`,
@@ -58,8 +58,9 @@ export function useTabManager({
 
   // LOAD EFFECT — restore tabs from localStorage on connection switch
   useEffect(() => {
+    setIsWorkspaceHydrated(false);
     if (!shouldPersistWorkspace) return;
-    workspaceReadyRef.current = false;
+
     const storage = typeof globalThis !== 'undefined' && 'localStorage' in globalThis
       ? globalThis.localStorage
       : null;
@@ -97,14 +98,14 @@ export function useTabManager({
       setTabs([DEFAULT_TAB]);
       setActiveTabId(DEFAULT_TAB.id);
     }
-    // NOTE: workspaceReadyRef stays false — set by ready effect below
+    // NOTE: hydration flag stays false — set by ready effect below.
   }, [workspaceKey, shouldPersistWorkspace]);
 
   // READY EFFECT — fires after load's setTabs commits (next render)
   useEffect(() => {
-    if (!shouldPersistWorkspace || workspaceReadyRef.current) return;
-    workspaceReadyRef.current = true;
-  }, [tabs, shouldPersistWorkspace]);
+    if (!shouldPersistWorkspace || isWorkspaceHydrated) return;
+    setIsWorkspaceHydrated(true);
+  }, [tabs, activeTabId, shouldPersistWorkspace, isWorkspaceHydrated]);
 
   // SAVE EFFECT — debounced write to localStorage (500ms)
   useEffect(() => {
@@ -112,7 +113,7 @@ export function useTabManager({
     const storage = typeof globalThis !== 'undefined' && 'localStorage' in globalThis
       ? globalThis.localStorage
       : null;
-    if (!workspaceReadyRef.current || !storage) return;
+    if (!isWorkspaceHydrated || !storage) return;
 
     const timer = setTimeout(() => {
       const serialized: PersistedWorkspaceState = {
@@ -128,7 +129,7 @@ export function useTabManager({
     }, 500);
 
     return () => clearTimeout(timer);
-  }, [tabs, activeTabId, workspaceKey, shouldPersistWorkspace]);
+  }, [tabs, activeTabId, workspaceKey, shouldPersistWorkspace, isWorkspaceHydrated]);
 
   const updateTabById = useCallback((tabId: string, updates: Partial<QueryTab>) => {
     setTabs(prev => prev.map(t => t.id === tabId ? { ...t, ...updates } : t));
