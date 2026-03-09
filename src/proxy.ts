@@ -31,6 +31,7 @@ function jwtSecret(): Uint8Array {
 
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
+  const isStaticAsset = /\.[a-z0-9]+$/i.test(pathname);
 
   const token = request.cookies.get('auth-token')?.value;
 
@@ -55,6 +56,7 @@ export async function proxy(request: NextRequest) {
   if (
     pathname.startsWith('/api/auth') ||
     pathname.startsWith('/_next') ||
+    isStaticAsset ||
     pathname === '/favicon.ico' ||
     // Health check endpoint for load balancers (Render, K8s, etc.)
     pathname === '/api/db/health' ||
@@ -97,6 +99,6 @@ export const config = {
      * - _next/image (image optimization files)
      * - favicon.ico (favicon file)
      */
-    '/((?!api/auth|api/db/health|api/demo-connection|api/storage/config|_next/static|_next/image|favicon.ico).*)',
+    '/((?!api/auth|api/db/health|api/demo-connection|api/storage/config|_next/static|_next/image|.*\\..*).*)',
   ],
 };
