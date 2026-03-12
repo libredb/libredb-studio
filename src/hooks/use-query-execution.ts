@@ -10,6 +10,7 @@ import { isDangerousQuery } from '@/components/QuerySafetyDialog';
 import { isMultiStatement } from '@/lib/sql/statement-splitter';
 import { shouldRefreshSchema } from '@/lib/query-generators';
 import { ApiErrorCode } from '@/lib/api/error-codes';
+import { logger } from '@/lib/logger';
 
 export interface QueryExecutionOptions {
   limit?: number;
@@ -143,11 +144,14 @@ export function useQueryExecution({
 
     try {
       if (isPlaygroundRun) {
-        await fetch('/api/db/transaction', {
+        const beginRes = await fetch('/api/db/transaction', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ connection: activeConnection, action: 'begin' }),
         });
+        if (!beginRes.ok) {
+          logger.warn('Playground transaction BEGIN failed', { route: 'use-query-execution' });
+        }
       }
 
       // If isExplain mode, run EXPLAIN query instead
@@ -346,11 +350,15 @@ export function useQueryExecution({
 
       // Playground mode: auto-rollback after getting results
       if (isPlaygroundRun) {
-        await fetch('/api/db/transaction', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ connection: activeConnection, action: 'rollback' }),
-        });
+        try {
+          await fetch('/api/db/transaction', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ connection: activeConnection, action: 'rollback' }),
+          });
+        } catch {
+          logger.warn('Playground transaction rollback failed', { route: 'use-query-execution' });
+        }
         toast({
           title: "Playground",
           description: "Changes auto-rolled back. No data was modified.",
@@ -373,7 +381,9 @@ export function useQueryExecution({
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ connection: activeConnection, action: 'rollback' }),
           });
-        } catch { /* best effort */ }
+        } catch {
+          logger.warn('Playground transaction rollback failed', { route: 'use-query-execution' });
+        }
       }
       setTabs(prev => prev.map(t => t.id === targetTabId ? {
         ...t,
@@ -426,7 +436,7 @@ export function useQueryExecution({
           }),
         });
       } catch {
-        // Best effort - the abort already handles the client side
+        logger.warn('Query cancellation request failed', { route: 'use-query-execution' });
       }
     }
   }, [activeConnection]);

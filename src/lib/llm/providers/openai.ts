@@ -13,6 +13,7 @@ import {
 } from '../types';
 import { createStreamFromSSEResponse } from '../utils/streaming';
 import { DEFAULT_API_URLS } from '../utils/config';
+import { logger } from '@/lib/logger';
 
 // ============================================================================
 // OpenAI Provider
@@ -102,7 +103,7 @@ export class OpenAIProvider extends BaseLLMProvider {
       const errorJson = JSON.parse(errorBody);
       errorMessage = errorJson.error?.message ?? errorBody;
     } catch {
-      // Use default error message
+      logger.debug('Could not parse error response body as JSON', { provider: 'openai' });
     }
 
     if (response.status === 401 || response.status === 403) {

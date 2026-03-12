@@ -26,7 +26,15 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const body = (await request.json()) as Partial<StorageData>;
+    let body: Partial<StorageData>;
+    try {
+      body = (await request.json()) as Partial<StorageData>;
+    } catch {
+      return NextResponse.json(
+        { error: 'Invalid JSON in request body' },
+        { status: 400 }
+      );
+    }
 
     await provider.mergeData(session.username, body);
 

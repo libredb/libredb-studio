@@ -28,6 +28,7 @@ export async function GET(request: Request) {
       oidcState = await decryptState(stateCookie);
     } catch (decryptError) {
       logger.warn('OIDC state decryption failed', { route: 'GET /api/auth/oidc/callback', error: decryptError instanceof Error ? decryptError.message : 'Unknown' });
+      cookieStore.delete('oidc-state');
       return NextResponse.redirect(`${origin}/login?error=oidc_state_invalid`);
     }
 
@@ -51,6 +52,7 @@ export async function GET(request: Request) {
     );
 
     if (!claims) {
+      logger.warn('OIDC callback: no claims returned from token exchange', { route: 'oidc/callback' });
       return NextResponse.redirect(`${origin}/login?error=oidc_no_claims`);
     }
 
@@ -74,7 +76,7 @@ export async function GET(request: Request) {
     );
   } catch (error) {
     logger.error('OIDC callback error', error, { route: 'GET /api/auth/oidc/callback' });
-
-    return NextResponse.redirect(`${origin}/login?error=oidc_failed`);
+    const errorCode = error instanceof Error && error.message.includes('config') ? 'oidc_config' : 'oidc_failed';
+    return NextResponse.redirect(`${origin}/login?error=${errorCode}`);
   }
 }

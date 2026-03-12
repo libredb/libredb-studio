@@ -50,7 +50,7 @@ export function useStorageSync(): StorageSyncState {
       setLastSyncedAt(new Date());
       setSyncError(null);
     } catch (err) {
-      console.warn(`[StorageSync] Push failed for ${collection}:`, err);
+      logger.warn('StorageSync push failed', { collection, error: err instanceof Error ? err.message : String(err) });
       setSyncError(err instanceof Error ? err.message : 'Sync failed');
     }
   }, []);
@@ -110,7 +110,7 @@ export function useStorageSync(): StorageSyncState {
       setLastSyncedAt(new Date());
       setSyncError(null);
     } catch (err) {
-      console.warn('[StorageSync] Pull failed:', err);
+      logger.warn('StorageSync pull failed', { error: err instanceof Error ? err.message : String(err) });
       setSyncError(err instanceof Error ? err.message : 'Pull failed');
     } finally {
       setIsSyncing(false);
@@ -163,7 +163,7 @@ export function useStorageSync(): StorageSyncState {
         localStorage.setItem(MIGRATION_FLAG, new Date().toISOString());
       }
     } catch (err) {
-      console.warn('[StorageSync] Migration failed:', err);
+      logger.warn('StorageSync migration failed', { error: err instanceof Error ? err.message : String(err) });
     } finally {
       setIsSyncing(false);
     }

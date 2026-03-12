@@ -7,6 +7,7 @@ import {
   PoolExhaustedError,
   QueryError,
   TimeoutError,
+  QueryCancelledError,
   isDatabaseError,
   isConnectionError,
   isQueryError,
@@ -391,5 +392,12 @@ describe('mapDatabaseError', () => {
     const err = new Error('Access denied for user');
     const result = mapDatabaseError(err, 'mysql');
     expect(result).toBeInstanceOf(AuthenticationError);
+  });
+
+  test('returns QueryCancelledError for "kill query" message', () => {
+    const error = new Error('kill query 12345');
+    const result = mapDatabaseError(error, 'mysql');
+    expect(result).toBeInstanceOf(QueryCancelledError);
+    expect(result.message).toBe('Query was cancelled');
   });
 });

@@ -166,6 +166,46 @@ describe('POST /api/storage/migrate', () => {
   });
 });
 
+// ── Malformed JSON body tests ──────────────────────────────────────────────
+
+describe('PUT /api/storage/[collection]: malformed JSON', () => {
+  beforeEach(() => {
+    mockSession = { username: 'admin@test.com', role: 'admin' };
+    providerEnabled = true;
+  });
+
+  test('returns 400 for malformed JSON body in PUT', async () => {
+    const request = new NextRequest('http://localhost/api/storage/connections', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{invalid json}',
+    });
+    const res = await PUT(request, { params: Promise.resolve({ collection: 'connections' }) });
+    expect(res.status).toBe(400);
+    const json = await res.json();
+    expect(json.error).toContain('Invalid JSON');
+  });
+});
+
+describe('POST /api/storage/migrate: malformed JSON', () => {
+  beforeEach(() => {
+    mockSession = { username: 'admin@test.com', role: 'admin' };
+    providerEnabled = true;
+  });
+
+  test('returns 400 for malformed JSON body in POST', async () => {
+    const request = new NextRequest('http://localhost/api/storage/migrate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{invalid json}',
+    });
+    const res = await POST(request);
+    expect(res.status).toBe(400);
+    const json = await res.json();
+    expect(json.error).toContain('Invalid JSON');
+  });
+});
+
 // ── Error propagation from provider ────────────────────────────────────────
 
 describe('API routes: provider error propagation', () => {

@@ -11,6 +11,7 @@ import {
 } from './types';
 import { DatabaseConfigError } from './errors';
 import { createSSHTunnel, closeSSHTunnel } from '@/lib/ssh/tunnel';
+import { logger } from '@/lib/logger';
 
 // Only Demo Provider is imported statically (no native dependencies)
 import { DemoProvider } from './providers/demo';
@@ -141,8 +142,9 @@ export async function getOrCreateProvider(
 
   // If SSH tunnel is configured, create tunnel first and rewrite connection
   let effectiveConnection = connection;
+  let tunnel: Awaited<ReturnType<typeof createSSHTunnel>> | null = null;
   if (connection.sshTunnel?.enabled && connection.host && connection.port) {
-    const tunnel = await createSSHTunnel(
+    tunnel = await createSSHTunnel(
       connection.id,
       connection.sshTunnel,
       connection.host,
@@ -158,7 +160,15 @@ export async function getOrCreateProvider(
 
   // Create new provider (async - dynamically loads the provider module)
   provider = await createDatabaseProvider(effectiveConnection, options);
-  await provider.connect();
+  try {
+    await provider.connect();
+  } catch (error) {
+    // Clean up SSH tunnel if provider connect fails to prevent FD leak
+    if (tunnel) {
+      await tunnel.close().catch(() => {});
+    }
+    throw error;
+  }
 
   // Cache it
   providerCache.set(cacheKey, provider);
@@ -176,13 +186,17 @@ export async function removeProvider(connectionId: string): Promise<void> {
     try {
       await provider.disconnect();
     } catch (error) {
-      console.error(`[DB] Error disconnecting provider ${connectionId}:`, error);
+      logger.warn(`Error disconnecting provider ${connectionId}`, { connectionId, error: String(error) });
     }
     providerCache.delete(connectionId);
   }
 
   // Close SSH tunnel if exists
-  await closeSSHTunnel(connectionId);
+  try {
+    await closeSSHTunnel(connectionId);
+  } catch (error) {
+    logger.warn(`Error closing SSH tunnel for ${connectionId}`, { connectionId, error: String(error) });
+  }
 }
 
 /**

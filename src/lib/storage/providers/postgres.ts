@@ -56,6 +56,7 @@ export class PostgresStorageProvider implements ServerStorageProvider {
           { cause: error }
         );
       }
+      logger.error('PostgreSQL storage initialization failed', error, { provider: 'postgres' });
       throw error;
     }
   }
@@ -93,6 +94,7 @@ export class PostgresStorageProvider implements ServerStorageProvider {
     try {
       return JSON.parse(rows[0].data) as StorageData[K];
     } catch {
+      logger.warn('Corrupted data in storage collection', { provider: 'postgres', collection });
       return null;
     }
   }

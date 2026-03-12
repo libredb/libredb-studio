@@ -148,9 +148,10 @@ export function useConnectionManager(storageReady = false) {
       }
     };
 
-    initializeConnections();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [storageReady]);
+    initializeConnections().catch((err) => {
+      logger.warn('Connection initialization failed', { route: 'use-connection-manager', error: err instanceof Error ? err.message : String(err) });
+    });
+  }, [storageReady]);  
 
   // Persist active connection ID
   useEffect(() => {
@@ -177,7 +178,7 @@ export function useConnectionManager(storageReady = false) {
         setConnectionPulse('error');
       }
     };
-    checkHealth();
+    checkHealth().catch(() => {});
     const interval = setInterval(checkHealth, 60000);
     return () => clearInterval(interval);
   }, [activeConnection]);
