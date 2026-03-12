@@ -58,6 +58,8 @@ export class PostgresProvider extends SQLBaseProvider {
   // Transaction support: dedicated client held outside pool
   private txClient: PoolClient | null = null;
   private txActive = false;
+  private txTimeout: ReturnType<typeof setTimeout> | null = null;
+  private static readonly TX_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 
   constructor(config: DatabaseConnection, options: ProviderOptions = {}) {
     super(config, options);
@@ -252,16 +254,39 @@ export class PostgresProvider extends SQLBaseProvider {
   // Transaction Support
   // ============================================================================
 
+  private clearTxTimeout(): void {
+    if (this.txTimeout) {
+      clearTimeout(this.txTimeout);
+      this.txTimeout = null;
+    }
+  }
+
   public async beginTransaction(): Promise<void> {
     this.ensureConnected();
     if (this.txActive) throw new QueryError('Transaction already active', 'postgres');
     this.txClient = await this.pool!.connect();
     await this.txClient.query('BEGIN');
     this.txActive = true;
+
+    // Auto-rollback after timeout to prevent leaked locks
+    this.txTimeout = setTimeout(async () => {
+      if (this.txActive && this.txClient) {
+        console.warn('[Postgres] Transaction timed out after 5 minutes, auto-rolling back');
+        try {
+          await this.txClient.query('ROLLBACK');
+        } catch { /* ignore */ } finally {
+          this.txClient.release();
+          this.txClient = null;
+          this.txActive = false;
+          this.txTimeout = null;
+        }
+      }
+    }, PostgresProvider.TX_TIMEOUT_MS);
   }
 
   public async commitTransaction(): Promise<void> {
     if (!this.txClient || !this.txActive) throw new QueryError('No active transaction', 'postgres');
+    this.clearTxTimeout();
     try {
       await this.txClient.query('COMMIT');
     } finally {
@@ -273,6 +298,7 @@ export class PostgresProvider extends SQLBaseProvider {
 
   public async rollbackTransaction(): Promise<void> {
     if (!this.txClient || !this.txActive) throw new QueryError('No active transaction', 'postgres');
+    this.clearTxTimeout();
     try {
       await this.txClient.query('ROLLBACK');
     } finally {

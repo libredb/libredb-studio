@@ -26,6 +26,7 @@ export {
   removeProvider,
   clearProviderCache,
   getProviderCacheStats,
+  registerShutdownHandlers,
 } from './factory';
 
 // ============================================================================

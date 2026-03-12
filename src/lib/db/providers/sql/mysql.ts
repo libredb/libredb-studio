@@ -42,6 +42,8 @@ export class MySQLProvider extends SQLBaseProvider {
   // Transaction support: dedicated connection held outside pool
   private txConn: PoolConnection | null = null;
   private txActive = false;
+  private txTimeout: ReturnType<typeof setTimeout> | null = null;
+  private static readonly TX_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 
   constructor(config: DatabaseConnection, options: ProviderOptions = {}) {
     super(config, options);
@@ -232,16 +234,39 @@ export class MySQLProvider extends SQLBaseProvider {
   // Transaction Support
   // ============================================================================
 
+  private clearTxTimeout(): void {
+    if (this.txTimeout) {
+      clearTimeout(this.txTimeout);
+      this.txTimeout = null;
+    }
+  }
+
   public async beginTransaction(): Promise<void> {
     this.ensureConnected();
     if (this.txActive) throw new QueryError('Transaction already active', 'mysql');
     this.txConn = await this.pool!.getConnection();
     await this.txConn.beginTransaction();
     this.txActive = true;
+
+    // Auto-rollback after timeout to prevent leaked locks
+    this.txTimeout = setTimeout(async () => {
+      if (this.txActive && this.txConn) {
+        console.warn('[MySQL] Transaction timed out after 5 minutes, auto-rolling back');
+        try {
+          await this.txConn.rollback();
+        } catch { /* ignore */ } finally {
+          this.txConn.release();
+          this.txConn = null;
+          this.txActive = false;
+          this.txTimeout = null;
+        }
+      }
+    }, MySQLProvider.TX_TIMEOUT_MS);
   }
 
   public async commitTransaction(): Promise<void> {
     if (!this.txConn || !this.txActive) throw new QueryError('No active transaction', 'mysql');
+    this.clearTxTimeout();
     try {
       await this.txConn.commit();
     } finally {
@@ -253,6 +278,7 @@ export class MySQLProvider extends SQLBaseProvider {
 
   public async rollbackTransaction(): Promise<void> {
     if (!this.txConn || !this.txActive) throw new QueryError('No active transaction', 'mysql');
+    this.clearTxTimeout();
     try {
       await this.txConn.rollback();
     } finally {
