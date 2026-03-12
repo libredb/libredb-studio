@@ -188,6 +188,26 @@ The demo runs in **Demo Mode** with simulated data. No real database required!
 
 ## Getting Started
 
+  ### Quick Start (Docker)
+
+  Run LibreDB Studio with a single command — no clone, no install, no build:
+
+```bash
+docker run -d \
+  --name libredb-studio \
+  -p 3000:3000 \
+  -e ADMIN_EMAIL=admin@libredb.org \
+  -e ADMIN_PASSWORD=LibreDB.2026 \
+  -e USER_EMAIL=user@libredb.org \
+  -e USER_PASSWORD=LibreDB.2026 \
+  -e JWT_SECRET=change-me-to-a-random-32-char-string \
+  ghcr.io/libredb/libredb-studio:latest
+```
+
+  Open [http://localhost:3000](http://localhost:3000) and login with `admin@libredb.org` / `LibreDB.2026`.
+
+  > **Tip**: Add `-e LLM_PROVIDER=gemini -e LLM_API_KEY=your_key -e LLM_MODEL=gemini-2.5-flash` to enable AI features.
+
   ### Prerequisites
   - [Bun](https://bun.sh/) (Recommended) or Node.js 20+
   - A target database to query (PostgreSQL, MySQL, Oracle, SQL Server, SQLite, MongoDB, or Redis)
