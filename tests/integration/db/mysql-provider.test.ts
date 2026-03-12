@@ -504,6 +504,26 @@ describe('MySQLProvider', () => {
       // Clean up
       await provider.rollbackTransaction();
     });
+
+    test('expireTransaction auto-rollbacks an active transaction', async () => {
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+
+      await provider.beginTransaction();
+      expect(provider.isInTransaction()).toBe(true);
+
+      await provider.expireTransaction();
+      expect(provider.isInTransaction()).toBe(false);
+    });
+
+    test('expireTransaction is no-op when no active transaction', async () => {
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+
+      // Should not throw
+      await provider.expireTransaction();
+      expect(provider.isInTransaction()).toBe(false);
+    });
   });
 
   // --------------------------------------------------------------------------

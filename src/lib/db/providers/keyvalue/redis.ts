@@ -126,8 +126,14 @@ export class RedisProvider extends BaseDatabaseProvider {
 
   public async disconnect(): Promise<void> {
     if (this.client) {
-      this.client.disconnect();
-      this.client = null;
+      try {
+        await this.client.quit();
+      } catch {
+        // quit() may fail if already disconnected; force disconnect
+        try { this.client.disconnect(); } catch { /* ignore */ }
+      } finally {
+        this.client = null;
+      }
     }
     this.setConnected(false);
   }

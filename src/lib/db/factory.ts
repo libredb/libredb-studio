@@ -117,7 +117,64 @@ export async function createDatabaseProvider(
 // Provider Cache (for connection reuse)
 // ============================================================================
 
-const providerCache = new Map<string, DatabaseProvider>();
+interface CachedProvider {
+  provider: DatabaseProvider;
+  lastUsed: number;
+}
+
+const providerCache = new Map<string, CachedProvider>();
+
+/** Idle timeout: evict providers unused for 30 minutes */
+const IDLE_TIMEOUT_MS = 30 * 60 * 1000;
+/** Sweep interval: check for idle providers every 5 minutes */
+const SWEEP_INTERVAL_MS = 5 * 60 * 1000;
+
+let sweepTimer: ReturnType<typeof setInterval> | null = null;
+
+/**
+ * Evict providers that have been idle longer than maxIdleMs.
+ * Called by the periodic sweep timer, but also exported for direct testing.
+ *
+ * @returns number of evicted providers
+ */
+export async function evictIdleProviders(maxIdleMs: number = IDLE_TIMEOUT_MS): Promise<number> {
+  const now = Date.now();
+  let evicted = 0;
+
+  for (const [id, entry] of providerCache) {
+    if (now - entry.lastUsed >= maxIdleMs) {
+      logger.info(`[DB] Evicting idle provider: ${id} (idle ${Math.round((now - entry.lastUsed) / 60000)}min)`);
+      try {
+        await entry.provider.disconnect();
+      } catch (error) {
+        logger.warn(`[DB] Error disconnecting idle provider ${id}`, { connectionId: id, error: String(error) });
+      }
+      providerCache.delete(id);
+      // Also close SSH tunnel
+      try {
+        await closeSSHTunnel(id);
+      } catch { /* ignore */ }
+      evicted++;
+    }
+  }
+
+  // Stop sweeping if cache is empty
+  if (providerCache.size === 0 && sweepTimer) {
+    clearInterval(sweepTimer);
+    sweepTimer = null;
+  }
+
+  return evicted;
+}
+
+function startIdleSweep(): void {
+  if (sweepTimer) return;
+  sweepTimer = setInterval(() => { evictIdleProviders(); }, SWEEP_INTERVAL_MS);
+  // Allow process to exit even if timer is running
+  if (sweepTimer && typeof sweepTimer === 'object' && 'unref' in sweepTimer) {
+    sweepTimer.unref();
+  }
+}
 
 /**
  * Get or create a database provider with caching
@@ -134,10 +191,11 @@ export async function getOrCreateProvider(
   const cacheKey = connection.id;
 
   // Check cache
-  let provider = providerCache.get(cacheKey);
+  const cached = providerCache.get(cacheKey);
 
-  if (provider && provider.isConnected()) {
-    return provider;
+  if (cached?.provider.isConnected()) {
+    cached.lastUsed = Date.now();
+    return cached.provider;
   }
 
   // If SSH tunnel is configured, create tunnel first and rewrite connection
@@ -159,7 +217,7 @@ export async function getOrCreateProvider(
   }
 
   // Create new provider (async - dynamically loads the provider module)
-  provider = await createDatabaseProvider(effectiveConnection, options);
+  const provider = await createDatabaseProvider(effectiveConnection, options);
   try {
     await provider.connect();
   } catch (error) {
@@ -171,7 +229,10 @@ export async function getOrCreateProvider(
   }
 
   // Cache it
-  providerCache.set(cacheKey, provider);
+  providerCache.set(cacheKey, { provider, lastUsed: Date.now() });
+
+  // Start idle sweep if not already running
+  startIdleSweep();
 
   return provider;
 }
@@ -180,11 +241,11 @@ export async function getOrCreateProvider(
  * Remove a provider from cache and disconnect
  */
 export async function removeProvider(connectionId: string): Promise<void> {
-  const provider = providerCache.get(connectionId);
+  const cached = providerCache.get(connectionId);
 
-  if (provider) {
+  if (cached) {
     try {
-      await provider.disconnect();
+      await cached.provider.disconnect();
     } catch (error) {
       logger.warn(`Error disconnecting provider ${connectionId}`, { connectionId, error: String(error) });
     }
@@ -203,11 +264,17 @@ export async function removeProvider(connectionId: string): Promise<void> {
  * Clear all cached providers
  */
 export async function clearProviderCache(): Promise<void> {
+  // Stop idle sweep
+  if (sweepTimer) {
+    clearInterval(sweepTimer);
+    sweepTimer = null;
+  }
+
   const disconnectPromises: Promise<void>[] = [];
 
-  for (const [id, provider] of providerCache) {
+  for (const [id, entry] of providerCache) {
     disconnectPromises.push(
-      provider.disconnect().catch((error) => {
+      entry.provider.disconnect().catch((error) => {
         console.error(`[DB] Error disconnecting provider ${id}:`, error);
       })
     );
@@ -225,4 +292,38 @@ export function getProviderCacheStats(): { size: number; connections: string[] }
     size: providerCache.size,
     connections: Array.from(providerCache.keys()),
   };
+}
+
+// ============================================================================
+// Graceful Shutdown
+// ============================================================================
+
+let shutdownRegistered = false;
+
+/**
+ * Register process signal handlers for graceful shutdown.
+ * Safe to call multiple times — handlers are only registered once.
+ */
+export function registerShutdownHandlers(): void {
+  if (shutdownRegistered) return;
+  shutdownRegistered = true;
+
+  const shutdown = async (signal: string) => {
+    logger.info(`[DB] Received ${signal}, closing all database connections...`);
+    try {
+      await clearProviderCache();
+      logger.info('[DB] All database connections closed gracefully');
+    } catch (error) {
+      logger.error('[DB] Error during graceful shutdown', { error: String(error) });
+    }
+    process.exit(0);
+  };
+
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
+}
+
+// Auto-register on server-side (not during tests)
+if (typeof process !== 'undefined' && process.env.NODE_ENV !== 'test') {
+  registerShutdownHandlers();
 }

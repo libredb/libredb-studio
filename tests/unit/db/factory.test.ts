@@ -185,6 +185,8 @@ const {
   removeProvider,
   clearProviderCache,
   getProviderCacheStats,
+  evictIdleProviders,
+  registerShutdownHandlers,
 } = await import('@/lib/db/factory');
 
 // ============================================================================
@@ -374,5 +376,68 @@ describe('getProviderCacheStats', () => {
     expect(stats.connections).toContain('demo-x');
     expect(stats.connections).toContain('demo-y');
     expect(stats.connections).toContain('demo-z');
+  });
+});
+
+// ─── evictIdleProviders ──────────────────────────────────────────────────
+
+describe('evictIdleProviders', () => {
+  test('evicts providers idle longer than maxIdleMs', async () => {
+    await getOrCreateProvider(makeConnection('demo', { id: 'idle-a' }));
+    await getOrCreateProvider(makeConnection('demo', { id: 'idle-b' }));
+
+    expect(getProviderCacheStats().size).toBe(2);
+
+    // Use maxIdleMs=0 so all providers are considered idle immediately
+    const evicted = await evictIdleProviders(0);
+    expect(evicted).toBe(2);
+    expect(getProviderCacheStats().size).toBe(0);
+  });
+
+  test('does not evict recently used providers', async () => {
+    await getOrCreateProvider(makeConnection('demo', { id: 'fresh-a' }));
+
+    // Use a very large maxIdleMs — nothing should be evicted
+    const evicted = await evictIdleProviders(999_999_999);
+    expect(evicted).toBe(0);
+    expect(getProviderCacheStats().size).toBe(1);
+  });
+
+  test('returns 0 when cache is empty', async () => {
+    const evicted = await evictIdleProviders(0);
+    expect(evicted).toBe(0);
+  });
+
+  test('closes SSH tunnel for evicted providers', async () => {
+    await getOrCreateProvider(makeConnection('demo', { id: 'tunnel-evict' }));
+    await evictIdleProviders(0);
+    expect(mockCloseSSHTunnel).toHaveBeenCalledWith('tunnel-evict');
+  });
+
+  test('handles disconnect errors gracefully during eviction', async () => {
+    const conn = makeConnection('demo', { id: 'err-evict' });
+    const provider = await getOrCreateProvider(conn);
+    // Make disconnect throw
+    const origDisconnect = provider.disconnect.bind(provider);
+    provider.disconnect = async () => {
+      await origDisconnect();
+      throw new Error('disconnect failed');
+    };
+
+    // Should not throw — errors are caught internally
+    const evicted = await evictIdleProviders(0);
+    expect(evicted).toBe(1);
+    expect(getProviderCacheStats().size).toBe(0);
+  });
+});
+
+// ─── registerShutdownHandlers ─────────────────────────────────────────────
+
+describe('registerShutdownHandlers', () => {
+  test('can be called multiple times without error (idempotent)', () => {
+    // Should not throw even when called repeatedly
+    registerShutdownHandlers();
+    registerShutdownHandlers();
+    registerShutdownHandlers();
   });
 });
