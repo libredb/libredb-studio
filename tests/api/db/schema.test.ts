@@ -121,14 +121,15 @@ describe('POST /api/db/schema', () => {
     });
 
     const res = await POST(req as never);
-    const data = await parseResponseJSON<{ error: string }>(res);
+    const data = await parseResponseJSON<{ error: string; code: string }>(res);
 
     expect(res.status).toBe(503);
-    expect(data.error).toContain('Connection failed');
+    expect(data.error).toContain('Connection refused');
+    expect(data.code).toBe('CONNECTION_ERROR');
   });
 
   test('returns 500 for DatabaseError', async () => {
-    const dbError = new DatabaseError('Database internal error', 'postgres', 'INTERNAL');
+    const dbError = new DatabaseError('Database internal error', 'postgres', 'INTERNAL_ERROR');
     mockGetOrCreateProvider.mockResolvedValueOnce(mockProvider);
     (mockProvider.getSchema as ReturnType<typeof mock>).mockRejectedValueOnce(dbError);
 
@@ -142,7 +143,7 @@ describe('POST /api/db/schema', () => {
 
     expect(res.status).toBe(500);
     expect(data.error).toBe('Database internal error');
-    expect(data.code).toBe('INTERNAL');
+    expect(data.code).toBe('INTERNAL_ERROR');
   });
 
   test('returns 500 for generic error', async () => {

@@ -32,10 +32,14 @@ export function useProviderMetadata(connection: DatabaseConnection | null): {
     lastConnectionId.current = connection.id;
     setIsLoading(true);
 
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
+
     fetch('/api/db/provider-meta', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(connection),
+      signal: controller.signal,
     })
       .then((res) => {
         if (!res.ok) throw new Error('Failed to fetch provider metadata');
@@ -49,6 +53,7 @@ export function useProviderMetadata(connection: DatabaseConnection | null): {
         setMetadata(null);
       })
       .finally(() => {
+        clearTimeout(timeoutId);
         setIsLoading(false);
       });
   }, [connection]);

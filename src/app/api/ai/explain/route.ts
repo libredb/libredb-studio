@@ -1,12 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import {
-  createLLMProvider,
-  LLMError,
-  LLMAuthError,
-  LLMRateLimitError,
-  LLMSafetyError,
-  LLMConfigError,
-} from '@/lib/llm';
+import { createLLMProvider } from '@/lib/llm';
+import { createErrorResponse } from '@/lib/api/errors';
 
 function buildExplainSystemPrompt(databaseType: string, schemaContext: string): string {
   return `You are an Expert Database Performance Analyst specializing in query optimization for ${databaseType || 'PostgreSQL'}.
@@ -87,25 +81,6 @@ Provide a plain-language explanation, identify performance issues, give specific
       },
     });
   } catch (error) {
-    console.error('[AI:explain] Error:', error);
-
-    if (error instanceof LLMConfigError) {
-      return NextResponse.json({ error: error.message }, { status: 500 });
-    }
-    if (error instanceof LLMAuthError) {
-      return NextResponse.json({ error: 'Invalid API key.' }, { status: 401 });
-    }
-    if (error instanceof LLMRateLimitError) {
-      return NextResponse.json({ error: 'Rate limit reached.' }, { status: 429 });
-    }
-    if (error instanceof LLMSafetyError) {
-      return NextResponse.json({ error: 'Blocked by safety filters.' }, { status: 400 });
-    }
-    if (error instanceof LLMError) {
-      return NextResponse.json({ error: error.message }, { status: error.statusCode ?? 500 });
-    }
-
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    return NextResponse.json({ error: errorMessage }, { status: 500 });
+    return createErrorResponse(error, { route: 'api/ai/explain' });
   }
 }

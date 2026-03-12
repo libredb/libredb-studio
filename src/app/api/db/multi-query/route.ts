@@ -1,11 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import {
-  getOrCreateProvider,
-  QueryError,
-  TimeoutError,
-  isDatabaseError,
-} from '@/lib/db';
+import { getOrCreateProvider } from '@/lib/db';
 import { splitStatements } from '@/lib/sql/statement-splitter';
+import { createErrorResponse } from '@/lib/api/errors';
 
 export interface StatementResult {
   index: number;
@@ -105,30 +101,6 @@ export async function POST(req: NextRequest) {
       statements: results,
     });
   } catch (error) {
-    console.error('[API:multi-query] Error:', error);
-
-    if (error instanceof QueryError) {
-      return NextResponse.json(
-        { error: error.message, code: error.code },
-        { status: 400 }
-      );
-    }
-
-    if (error instanceof TimeoutError) {
-      return NextResponse.json(
-        { error: 'Query timed out.' },
-        { status: 408 }
-      );
-    }
-
-    if (isDatabaseError(error)) {
-      return NextResponse.json(
-        { error: error.message, code: error.code },
-        { status: 500 }
-      );
-    }
-
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    return NextResponse.json({ error: errorMessage }, { status: 500 });
+    return createErrorResponse(error, { route: 'api/db/multi-query' });
   }
 }

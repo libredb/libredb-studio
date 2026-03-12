@@ -1,9 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import {
-  getOrCreateProvider,
-  QueryError,
-  isDatabaseError,
-} from '@/lib/db';
+import { getOrCreateProvider } from '@/lib/db';
+import { createErrorResponse } from '@/lib/api/errors';
 
 interface TransactionProvider {
   beginTransaction(): Promise<void>;
@@ -99,23 +96,6 @@ export async function POST(req: NextRequest) {
         );
     }
   } catch (error) {
-    console.error('[API:transaction] Error:', error);
-
-    if (error instanceof QueryError) {
-      return NextResponse.json(
-        { error: error.message, code: error.code },
-        { status: 400 }
-      );
-    }
-
-    if (isDatabaseError(error)) {
-      return NextResponse.json(
-        { error: error.message, code: error.code },
-        { status: 500 }
-      );
-    }
-
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    return NextResponse.json({ error: errorMessage }, { status: 500 });
+    return createErrorResponse(error, { route: 'api/db/transaction' });
   }
 }

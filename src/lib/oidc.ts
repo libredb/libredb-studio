@@ -1,5 +1,6 @@
 import * as client from 'openid-client';
 import { SignJWT, jwtVerify } from 'jose';
+import { logger } from '@/lib/logger';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -131,7 +132,10 @@ export async function exchangeCode(
   });
 
   const claims = tokens.claims();
-  if (!claims) return null;
+  if (!claims) {
+    logger.warn('OIDC token exchange succeeded but claims are empty', { route: 'oidc' });
+    return null;
+  }
 
   return claims as unknown as OIDCClaims;
 }
@@ -251,7 +255,8 @@ export function buildLogoutUrl(returnTo: string): string | null {
     logoutUrl.searchParams.set('client_id', config.clientId);
     logoutUrl.searchParams.set('post_logout_redirect_uri', returnTo);
     return logoutUrl.toString();
-  } catch {
+  } catch (error) {
+    logger.warn('Failed to build OIDC logout URL', { route: 'oidc', error: error instanceof Error ? error.message : String(error) });
     return null;
   }
 }

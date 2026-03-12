@@ -1,6 +1,6 @@
 {
   "name": "libredb-studio",
-  "version": "0.8.4",
+  "version": "0.8.7",
   "private": true,
   "scripts": {
     "dev": "next dev",

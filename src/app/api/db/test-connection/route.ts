@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createDatabaseProvider } from '@/lib/db/factory';
-import { DatabaseConfigError } from '@/lib/db/errors';
+import { createErrorResponse } from '@/lib/api/errors';
 
 export async function POST(req: NextRequest) {
   let provider = null;
@@ -42,19 +42,6 @@ export async function POST(req: NextRequest) {
       try { await provider.disconnect(); } catch { /* ignore */ }
     }
 
-    console.error('[API:test-connection] Error:', error);
-
-    if (error instanceof DatabaseConfigError) {
-      return NextResponse.json(
-        { success: false, error: error.message },
-        { status: 400 }
-      );
-    }
-
-    const errorMessage = error instanceof Error ? error.message : 'Connection failed';
-    return NextResponse.json(
-      { success: false, error: errorMessage },
-      { status: 200 } // 200 so client can read the error message
-    );
+    return createErrorResponse(error, { route: 'api/db/test-connection' });
   }
 }

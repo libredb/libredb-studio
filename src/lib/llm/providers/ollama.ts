@@ -12,6 +12,7 @@ import {
 } from '../types';
 import { createStreamFromSSEResponse } from '../utils/streaming';
 import { DEFAULT_API_URLS } from '../utils/config';
+import { logger } from '@/lib/logger';
 
 // ============================================================================
 // Ollama Provider
@@ -108,7 +109,7 @@ export class OllamaProvider extends BaseLLMProvider {
       const errorJson = JSON.parse(errorBody);
       errorMessage = errorJson.error?.message ?? errorBody;
     } catch {
-      // Use default error message
+      logger.debug('Could not parse error response body as JSON', { provider: 'ollama' });
     }
 
     // Ollama-specific errors

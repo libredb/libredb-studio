@@ -57,6 +57,50 @@ describe('local-storage: readString / writeString', () => {
   });
 });
 
+describe('local-storage: writeJSON quota handling', () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  test('returns true on success', () => {
+    const result = writeJSON('test-key', { data: 'value' });
+    expect(result).toBe(true);
+  });
+
+  test('returns false on QuotaExceededError', () => {
+    const originalSetItem = localStorage.setItem;
+    localStorage.setItem = () => { throw new DOMException('quota exceeded', 'QuotaExceededError'); };
+    try {
+      const result = writeJSON('test-key', { data: 'value' });
+      expect(result).toBe(false);
+    } finally {
+      localStorage.setItem = originalSetItem;
+    }
+  });
+});
+
+describe('local-storage: writeString quota handling', () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  test('returns true on success', () => {
+    const result = writeString('active_connection_id', 'conn-42');
+    expect(result).toBe(true);
+  });
+
+  test('returns false on QuotaExceededError', () => {
+    const originalSetItem = localStorage.setItem;
+    localStorage.setItem = () => { throw new DOMException('quota exceeded', 'QuotaExceededError'); };
+    try {
+      const result = writeString('active_connection_id', 'conn-42');
+      expect(result).toBe(false);
+    } finally {
+      localStorage.setItem = originalSetItem;
+    }
+  });
+});
+
 describe('local-storage: remove', () => {
   beforeEach(() => {
     localStorage.clear();

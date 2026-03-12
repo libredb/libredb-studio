@@ -5,6 +5,7 @@
 
 import type { ServerStorageProvider, StorageCollection, StorageData } from '../types';
 import { STORAGE_COLLECTIONS } from '../types';
+import { logger } from '@/lib/logger';
 
 let Pool: typeof import('pg').Pool;
 
@@ -55,6 +56,7 @@ export class PostgresStorageProvider implements ServerStorageProvider {
           { cause: error }
         );
       }
+      logger.error('PostgreSQL storage initialization failed', error, { provider: 'postgres' });
       throw error;
     }
   }
@@ -73,7 +75,7 @@ export class PostgresStorageProvider implements ServerStorageProvider {
           row.data
         );
       } catch {
-        // Skip corrupted data
+        logger.warn('Skipping corrupted storage data', { provider: 'postgres', collection: row.collection });
       }
     }
     return result;
@@ -92,6 +94,7 @@ export class PostgresStorageProvider implements ServerStorageProvider {
     try {
       return JSON.parse(rows[0].data) as StorageData[K];
     } catch {
+      logger.warn('Corrupted data in storage collection', { provider: 'postgres', collection });
       return null;
     }
   }

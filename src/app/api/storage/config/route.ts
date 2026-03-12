@@ -6,7 +6,12 @@
 
 import { NextResponse } from 'next/server';
 import { getStorageConfig } from '@/lib/storage/factory';
+import { createErrorResponse } from '@/lib/api/errors';
 
 export async function GET() {
-  return NextResponse.json(getStorageConfig());
+  try {
+    return NextResponse.json(getStorageConfig());
+  } catch (error) {
+    return createErrorResponse(error, { route: 'GET /api/storage/config' });
+  }
 }

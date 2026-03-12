@@ -13,6 +13,7 @@ import {
   LLMConfigError,
 } from '../types';
 import { createStreamFromSSEResponse } from '../utils/streaming';
+import { logger } from '@/lib/logger';
 
 // ============================================================================
 // Custom Provider
@@ -129,7 +130,7 @@ export class CustomProvider extends BaseLLMProvider {
       const errorJson = JSON.parse(errorBody);
       errorMessage = errorJson.error?.message ?? errorBody;
     } catch {
-      // Use default error message
+      logger.debug('Could not parse error response body as JSON', { provider: 'custom' });
     }
 
     if (response.status === 401 || response.status === 403) {

@@ -916,6 +916,23 @@ describe('useQueryExecution', () => {
     expect(mockToastSuccess).toHaveBeenCalled();
   });
 
+  test('handles QUERY_CANCELLED response code from API', async () => {
+    mockGlobalFetch({
+      '/api/db/query': { ok: false, status: 499, json: { error: 'Query was cancelled', code: 'QUERY_CANCELLED', statusCode: 499 } },
+    });
+    const params = createDefaultParams();
+
+    const { result } = renderHook(() => useQueryExecution(params));
+
+    await act(async () => {
+      await result.current.executeQuery('SELECT pg_sleep(60)');
+    });
+
+    // Should show cancellation toast via code check, not generic error
+    expect(mockToastSuccess).toHaveBeenCalled();
+    expect(mockToastError).not.toHaveBeenCalled();
+  });
+
   // ── execute-query custom event listener ────────────────────────────────
 
   test('listens for execute-query custom events', async () => {

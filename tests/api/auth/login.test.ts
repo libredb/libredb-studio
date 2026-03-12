@@ -100,11 +100,11 @@ describe('POST /api/auth/login', () => {
     });
 
     const res = await POST(req as never);
-    const data = await parseResponseJSON<{ success: boolean; message: string }>(res);
+    const data = await parseResponseJSON<{ error: string; code: string; statusCode: number }>(res);
 
     expect(res.status).toBe(500);
-    expect(data.success).toBe(false);
-    expect(data.message).toBe('An error occurred');
+    expect(data.code).toBe('INTERNAL_ERROR');
+    expect(data.statusCode).toBe(500);
   });
 
   test('returns 500 when body is empty', async () => {
@@ -115,11 +115,11 @@ describe('POST /api/auth/login', () => {
     });
 
     const res = await POST(req as never);
-    const data = await parseResponseJSON<{ success: boolean; message: string }>(res);
+    const data = await parseResponseJSON<{ error: string; code: string; statusCode: number }>(res);
 
     expect(res.status).toBe(500);
-    expect(data.success).toBe(false);
-    expect(data.message).toBe('An error occurred');
+    expect(data.code).toBe('INTERNAL_ERROR');
+    expect(data.statusCode).toBe(500);
   });
 
   test('calls login() with role and email for admin', async () => {
@@ -158,11 +158,11 @@ describe('POST /api/auth/login', () => {
     });
 
     const res = await POST(req as never);
-    const data = await parseResponseJSON<{ success: boolean; message: string }>(res);
+    const data = await parseResponseJSON<{ error: string; code: string; statusCode: number }>(res);
 
     expect(res.status).toBe(500);
-    expect(data.success).toBe(false);
-    expect(data.message).toBe('An error occurred');
+    expect(data.code).toBe('INTERNAL_ERROR');
+    expect(data.statusCode).toBe(500);
 
     (process.env as Record<string, string>).NODE_ENV = origNodeEnv!;
     process.env.ADMIN_EMAIL = origAdminEmail!;

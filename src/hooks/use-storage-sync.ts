@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { storage, type StorageConfigResponse, type StorageChangeDetail, type StorageData, STORAGE_COLLECTIONS } from '@/lib/storage';
+import { logger } from '@/lib/logger';
 
 const MIGRATION_FLAG = 'libredb_server_migrated';
 const DEBOUNCE_MS = 500;
@@ -49,7 +50,7 @@ export function useStorageSync(): StorageSyncState {
       setLastSyncedAt(new Date());
       setSyncError(null);
     } catch (err) {
-      console.warn(`[StorageSync] Push failed for ${collection}:`, err);
+      logger.warn('StorageSync push failed', { collection, error: err instanceof Error ? err.message : String(err) });
       setSyncError(err instanceof Error ? err.message : 'Sync failed');
     }
   }, []);
@@ -109,7 +110,7 @@ export function useStorageSync(): StorageSyncState {
       setLastSyncedAt(new Date());
       setSyncError(null);
     } catch (err) {
-      console.warn('[StorageSync] Pull failed:', err);
+      logger.warn('StorageSync pull failed', { error: err instanceof Error ? err.message : String(err) });
       setSyncError(err instanceof Error ? err.message : 'Pull failed');
     } finally {
       setIsSyncing(false);
@@ -162,7 +163,7 @@ export function useStorageSync(): StorageSyncState {
         localStorage.setItem(MIGRATION_FLAG, new Date().toISOString());
       }
     } catch (err) {
-      console.warn('[StorageSync] Migration failed:', err);
+      logger.warn('StorageSync migration failed', { error: err instanceof Error ? err.message : String(err) });
     } finally {
       setIsSyncing(false);
     }
@@ -190,6 +191,7 @@ export function useStorageSync(): StorageSyncState {
         }
       } catch {
         // Server unreachable — stay in local mode
+        logger.debug('Storage server unreachable, staying in local mode');
       } finally {
         if (!cancelled) {
           setIsReady(true);

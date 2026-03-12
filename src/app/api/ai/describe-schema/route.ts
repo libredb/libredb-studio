@@ -1,11 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import {
-  createLLMProvider,
-  LLMConfigError,
-  LLMAuthError,
-  LLMRateLimitError,
-  LLMSafetyError,
-} from '@/lib/llm';
+import { createLLMProvider } from '@/lib/llm';
+import { createErrorResponse } from '@/lib/api/errors';
 
 export async function POST(req: NextRequest) {
   try {
@@ -52,19 +47,6 @@ Format as clean markdown. Be concise. Database type: ${databaseType || 'SQL'}.`;
       },
     });
   } catch (error) {
-    if (error instanceof LLMConfigError) {
-      return NextResponse.json({ error: 'AI not configured. Set LLM_PROVIDER and LLM_API_KEY in environment.' }, { status: 503 });
-    }
-    if (error instanceof LLMAuthError) {
-      return NextResponse.json({ error: 'AI authentication failed. Check your API key.' }, { status: 401 });
-    }
-    if (error instanceof LLMRateLimitError) {
-      return NextResponse.json({ error: 'AI rate limit reached. Try again later.' }, { status: 429 });
-    }
-    if (error instanceof LLMSafetyError) {
-      return NextResponse.json({ error: 'Request blocked by AI safety filters.' }, { status: 400 });
-    }
-    const msg = error instanceof Error ? error.message : 'Unknown error';
-    return NextResponse.json({ error: msg }, { status: 500 });
+    return createErrorResponse(error, { route: 'api/ai/describe-schema' });
   }
 }

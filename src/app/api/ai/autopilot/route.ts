@@ -1,12 +1,6 @@
-import { NextRequest, NextResponse } from 'next/server';
-import {
-  createLLMProvider,
-  LLMError,
-  LLMAuthError,
-  LLMRateLimitError,
-  LLMSafetyError,
-  LLMConfigError,
-} from '@/lib/llm';
+import { NextRequest } from 'next/server';
+import { createLLMProvider } from '@/lib/llm';
+import { createErrorResponse } from '@/lib/api/errors';
 
 function buildAutopilotPrompt(databaseType: string): string {
   return `You are a Database Performance Autopilot for ${databaseType || 'PostgreSQL'}. You combine slow query analysis, execution plans, table statistics, and index usage into a comprehensive optimization report.
@@ -106,15 +100,6 @@ export async function POST(req: NextRequest) {
       },
     });
   } catch (error) {
-    console.error('[AI:autopilot] Error:', error);
-
-    if (error instanceof LLMConfigError) return NextResponse.json({ error: error.message }, { status: 500 });
-    if (error instanceof LLMAuthError) return NextResponse.json({ error: 'Invalid API key.' }, { status: 401 });
-    if (error instanceof LLMRateLimitError) return NextResponse.json({ error: 'Rate limit reached.' }, { status: 429 });
-    if (error instanceof LLMSafetyError) return NextResponse.json({ error: 'Blocked by safety filters.' }, { status: 400 });
-    if (error instanceof LLMError) return NextResponse.json({ error: error.message }, { status: error.statusCode ?? 500 });
-
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    return NextResponse.json({ error: errorMessage }, { status: 500 });
+    return createErrorResponse(error, { route: 'api/ai/autopilot' });
   }
 }

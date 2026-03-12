@@ -4,6 +4,7 @@
  */
 
 import { LLMStreamError, type LLMProviderType } from '../types';
+import { logger } from '@/lib/logger';
 
 // ============================================================================
 // Text Encoding/Decoding
@@ -70,7 +71,7 @@ export function createSSEParser(): TransformStream<Uint8Array, Uint8Array> {
               controller.enqueue(encodeText(content));
             }
           } catch {
-            // Skip malformed JSON chunks (can happen with partial data)
+            logger.debug('Skipping malformed JSON chunk in SSE stream');
           }
         }
       }
@@ -88,7 +89,7 @@ export function createSSEParser(): TransformStream<Uint8Array, Uint8Array> {
               controller.enqueue(encodeText(content));
             }
           } catch {
-            // Ignore parsing errors on flush
+            logger.debug('Skipping malformed JSON chunk in SSE stream flush');
           }
         }
       }

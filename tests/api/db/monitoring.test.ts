@@ -166,17 +166,16 @@ describe('POST /api/db/monitoring', () => {
     });
 
     const res = await POST(req as never);
-    const data = await parseResponseJSON<{ error: string; overview: { version: string } }>(res);
+    const data = await parseResponseJSON<{ error: string; code: string }>(res);
 
     expect(res.status).toBe(503);
-    expect(data.error).toContain('Connection failed');
-    expect(data.overview).toBeDefined();
-    expect(data.overview.version).toBe('N/A');
+    expect(data.error).toContain('Connection refused');
+    expect(data.code).toBe('CONNECTION_ERROR');
   });
 
   test('DatabaseError returns 500', async () => {
     mockGetOrCreateProvider.mockImplementation(async () => {
-      throw new DatabaseError('Internal error', 'postgres', 'DB_ERR');
+      throw new DatabaseError('Internal error', 'postgres', 'DATABASE_ERROR');
     });
 
     const req = createMockRequest('/api/db/monitoring', {
@@ -185,10 +184,11 @@ describe('POST /api/db/monitoring', () => {
     });
 
     const res = await POST(req as never);
-    const data = await parseResponseJSON<{ error: string; code: string }>(res);
+    const data = await parseResponseJSON<{ error: string; code: string; statusCode: number }>(res);
 
     expect(res.status).toBe(500);
     expect(data.error).toContain('Internal error');
-    expect(data.code).toBe('DB_ERR');
+    expect(data.code).toBe('DATABASE_ERROR');
+    expect(data.statusCode).toBe(500);
   });
 });

@@ -32,6 +32,9 @@ class MockLLMRateLimitError extends MockLLMError {
 class MockLLMSafetyError extends MockLLMError {
   constructor(msg: string) { super(msg, undefined, 400); this.name = 'LLMSafetyError'; }
 }
+class MockLLMStreamError extends MockLLMError {
+  constructor(msg: string) { super(msg); this.name = 'LLMStreamError'; }
+}
 
 // ─── Mock @/lib/llm BEFORE importing the route ─────────────────────────────
 
@@ -41,10 +44,20 @@ const mockCreateLLMProvider = mock(async () => mockProvider);
 
 mock.module('@/lib/llm', () => ({
   createLLMProvider: mockCreateLLMProvider,
+  LLMError: MockLLMError,
   LLMConfigError: MockLLMConfigError,
   LLMAuthError: MockLLMAuthError,
   LLMRateLimitError: MockLLMRateLimitError,
   LLMSafetyError: MockLLMSafetyError,
+}));
+
+mock.module('@/lib/llm/types', () => ({
+  LLMError: MockLLMError,
+  LLMConfigError: MockLLMConfigError,
+  LLMAuthError: MockLLMAuthError,
+  LLMRateLimitError: MockLLMRateLimitError,
+  LLMSafetyError: MockLLMSafetyError,
+  LLMStreamError: MockLLMStreamError,
 }));
 
 // ─── Import route handler AFTER mocking ─────────────────────────────────────
@@ -114,7 +127,7 @@ describe('POST /api/ai/describe-schema', () => {
     expect(callArgs.messages[0].content).toContain('table schema');
   });
 
-  test('returns 503 on LLMConfigError (different from other AI routes)', async () => {
+  test('returns 503 on LLMConfigError', async () => {
     mockCreateLLMProvider.mockImplementation(async () => {
       throw new MockLLMConfigError('AI not configured');
     });
@@ -145,7 +158,7 @@ describe('POST /api/ai/describe-schema', () => {
     expect(res.status).toBe(401);
 
     const data = await parseResponseJSON<{ error: string }>(res);
-    expect(data.error).toContain('authentication');
+    expect(data.error).toContain('Invalid API key');
   });
 
   test('returns 429 on LLMRateLimitError', async () => {
@@ -162,7 +175,7 @@ describe('POST /api/ai/describe-schema', () => {
     expect(res.status).toBe(429);
 
     const data = await parseResponseJSON<{ error: string }>(res);
-    expect(data.error).toContain('rate limit');
+    expect(data.error).toContain('usage limit');
   });
 
   test('returns 400 on LLMSafetyError', async () => {
@@ -199,7 +212,7 @@ describe('POST /api/ai/describe-schema', () => {
     expect(data.error).toBe('Something went wrong');
   });
 
-  test('returns 500 with Unknown error for non-Error thrown', async () => {
+  test('returns 500 with Internal server error for non-Error thrown', async () => {
     mockCreateLLMProvider.mockImplementation(async () => {
       throw 'string error';
     });
@@ -213,7 +226,7 @@ describe('POST /api/ai/describe-schema', () => {
     expect(res.status).toBe(500);
 
     const data = await parseResponseJSON<{ error: string }>(res);
-    expect(data.error).toBe('Unknown error');
+    expect(data.error).toBe('Internal server error');
   });
 
   test('mode omitted uses database overview prompt (not table prompt)', async () => {
