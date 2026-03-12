@@ -131,31 +131,45 @@ const SWEEP_INTERVAL_MS = 5 * 60 * 1000;
 
 let sweepTimer: ReturnType<typeof setInterval> | null = null;
 
+/**
+ * Evict providers that have been idle longer than maxIdleMs.
+ * Called by the periodic sweep timer, but also exported for direct testing.
+ *
+ * @returns number of evicted providers
+ */
+export async function evictIdleProviders(maxIdleMs: number = IDLE_TIMEOUT_MS): Promise<number> {
+  const now = Date.now();
+  let evicted = 0;
+
+  for (const [id, entry] of providerCache) {
+    if (now - entry.lastUsed >= maxIdleMs) {
+      logger.info(`[DB] Evicting idle provider: ${id} (idle ${Math.round((now - entry.lastUsed) / 60000)}min)`);
+      try {
+        await entry.provider.disconnect();
+      } catch (error) {
+        logger.warn(`[DB] Error disconnecting idle provider ${id}`, { connectionId: id, error: String(error) });
+      }
+      providerCache.delete(id);
+      // Also close SSH tunnel
+      try {
+        await closeSSHTunnel(id);
+      } catch { /* ignore */ }
+      evicted++;
+    }
+  }
+
+  // Stop sweeping if cache is empty
+  if (providerCache.size === 0 && sweepTimer) {
+    clearInterval(sweepTimer);
+    sweepTimer = null;
+  }
+
+  return evicted;
+}
+
 function startIdleSweep(): void {
   if (sweepTimer) return;
-  sweepTimer = setInterval(async () => {
-    const now = Date.now();
-    for (const [id, entry] of providerCache) {
-      if (now - entry.lastUsed > IDLE_TIMEOUT_MS) {
-        logger.info(`[DB] Evicting idle provider: ${id} (idle ${Math.round((now - entry.lastUsed) / 60000)}min)`);
-        try {
-          await entry.provider.disconnect();
-        } catch (error) {
-          logger.warn(`[DB] Error disconnecting idle provider ${id}`, { connectionId: id, error: String(error) });
-        }
-        providerCache.delete(id);
-        // Also close SSH tunnel
-        try {
-          await closeSSHTunnel(id);
-        } catch { /* ignore */ }
-      }
-    }
-    // Stop sweeping if cache is empty
-    if (providerCache.size === 0 && sweepTimer) {
-      clearInterval(sweepTimer);
-      sweepTimer = null;
-    }
-  }, SWEEP_INTERVAL_MS);
+  sweepTimer = setInterval(() => { evictIdleProviders(); }, SWEEP_INTERVAL_MS);
   // Allow process to exit even if timer is running
   if (sweepTimer && typeof sweepTimer === 'object' && 'unref' in sweepTimer) {
     sweepTimer.unref();

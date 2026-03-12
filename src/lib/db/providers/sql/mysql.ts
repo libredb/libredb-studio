@@ -241,6 +241,24 @@ export class MySQLProvider extends SQLBaseProvider {
     }
   }
 
+  /**
+   * Force-expire an active transaction (auto-rollback).
+   * Called by the timeout timer, but also available for testing.
+   */
+  public async expireTransaction(): Promise<void> {
+    if (this.txActive && this.txConn) {
+      console.warn('[MySQL] Transaction timed out, auto-rolling back');
+      try {
+        await this.txConn.rollback();
+      } catch { /* ignore */ } finally {
+        this.txConn.release();
+        this.txConn = null;
+        this.txActive = false;
+        this.clearTxTimeout();
+      }
+    }
+  }
+
   public async beginTransaction(): Promise<void> {
     this.ensureConnected();
     if (this.txActive) throw new QueryError('Transaction already active', 'mysql');
@@ -249,19 +267,7 @@ export class MySQLProvider extends SQLBaseProvider {
     this.txActive = true;
 
     // Auto-rollback after timeout to prevent leaked locks
-    this.txTimeout = setTimeout(async () => {
-      if (this.txActive && this.txConn) {
-        console.warn('[MySQL] Transaction timed out after 5 minutes, auto-rolling back');
-        try {
-          await this.txConn.rollback();
-        } catch { /* ignore */ } finally {
-          this.txConn.release();
-          this.txConn = null;
-          this.txActive = false;
-          this.txTimeout = null;
-        }
-      }
-    }, MySQLProvider.TX_TIMEOUT_MS);
+    this.txTimeout = setTimeout(() => { this.expireTransaction(); }, MySQLProvider.TX_TIMEOUT_MS);
   }
 
   public async commitTransaction(): Promise<void> {

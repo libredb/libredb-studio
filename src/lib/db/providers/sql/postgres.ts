@@ -261,6 +261,24 @@ export class PostgresProvider extends SQLBaseProvider {
     }
   }
 
+  /**
+   * Force-expire an active transaction (auto-rollback).
+   * Called by the timeout timer, but also available for testing.
+   */
+  public async expireTransaction(): Promise<void> {
+    if (this.txActive && this.txClient) {
+      console.warn('[Postgres] Transaction timed out, auto-rolling back');
+      try {
+        await this.txClient.query('ROLLBACK');
+      } catch { /* ignore */ } finally {
+        this.txClient.release();
+        this.txClient = null;
+        this.txActive = false;
+        this.clearTxTimeout();
+      }
+    }
+  }
+
   public async beginTransaction(): Promise<void> {
     this.ensureConnected();
     if (this.txActive) throw new QueryError('Transaction already active', 'postgres');
@@ -269,19 +287,7 @@ export class PostgresProvider extends SQLBaseProvider {
     this.txActive = true;
 
     // Auto-rollback after timeout to prevent leaked locks
-    this.txTimeout = setTimeout(async () => {
-      if (this.txActive && this.txClient) {
-        console.warn('[Postgres] Transaction timed out after 5 minutes, auto-rolling back');
-        try {
-          await this.txClient.query('ROLLBACK');
-        } catch { /* ignore */ } finally {
-          this.txClient.release();
-          this.txClient = null;
-          this.txActive = false;
-          this.txTimeout = null;
-        }
-      }
-    }, PostgresProvider.TX_TIMEOUT_MS);
+    this.txTimeout = setTimeout(() => { this.expireTransaction(); }, PostgresProvider.TX_TIMEOUT_MS);
   }
 
   public async commitTransaction(): Promise<void> {
