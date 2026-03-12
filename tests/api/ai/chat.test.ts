@@ -32,6 +32,9 @@ class MockLLMRateLimitError extends MockLLMError {
 class MockLLMSafetyError extends MockLLMError {
   constructor(msg: string) { super(msg, undefined, 400); this.name = 'LLMSafetyError'; }
 }
+class MockLLMStreamError extends MockLLMError {
+  constructor(msg: string) { super(msg); this.name = 'LLMStreamError'; }
+}
 
 // ─── Mock @/lib/llm BEFORE importing the route ─────────────────────────────
 
@@ -46,6 +49,15 @@ mock.module('@/lib/llm', () => ({
   LLMAuthError: MockLLMAuthError,
   LLMRateLimitError: MockLLMRateLimitError,
   LLMSafetyError: MockLLMSafetyError,
+}));
+
+mock.module('@/lib/llm/types', () => ({
+  LLMError: MockLLMError,
+  LLMConfigError: MockLLMConfigError,
+  LLMAuthError: MockLLMAuthError,
+  LLMRateLimitError: MockLLMRateLimitError,
+  LLMSafetyError: MockLLMSafetyError,
+  LLMStreamError: MockLLMStreamError,
 }));
 
 // ─── Import route handler AFTER mocking ─────────────────────────────────────
@@ -143,7 +155,7 @@ describe('POST /api/ai/chat', () => {
     expect(callArgs.messages[0].content).toContain('users(id, name, email)');
   });
 
-  test('returns 500 on LLMConfigError', async () => {
+  test('returns 503 on LLMConfigError', async () => {
     mockCreateLLMProvider.mockImplementation(async () => {
       throw new MockLLMConfigError('LLM not configured');
     });
@@ -154,7 +166,7 @@ describe('POST /api/ai/chat', () => {
     });
 
     const res = await POST(req as never);
-    expect(res.status).toBe(500);
+    expect(res.status).toBe(503);
 
     const data = await parseResponseJSON<{ error: string }>(res);
     expect(data.error).toContain('LLM not configured');

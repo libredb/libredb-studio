@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { storage, type StorageConfigResponse, type StorageChangeDetail, type StorageData, STORAGE_COLLECTIONS } from '@/lib/storage';
+import { logger } from '@/lib/logger';
 
 const MIGRATION_FLAG = 'libredb_server_migrated';
 const DEBOUNCE_MS = 500;
@@ -190,6 +191,7 @@ export function useStorageSync(): StorageSyncState {
         }
       } catch {
         // Server unreachable — stay in local mode
+        logger.debug('Storage server unreachable, staying in local mode');
       } finally {
         if (!cancelled) {
           setIsReady(true);

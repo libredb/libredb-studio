@@ -5,6 +5,7 @@
 
 import type { ServerStorageProvider, StorageCollection, StorageData } from '../types';
 import { STORAGE_COLLECTIONS } from '../types';
+import { logger } from '@/lib/logger';
 
 let Pool: typeof import('pg').Pool;
 
@@ -73,7 +74,7 @@ export class PostgresStorageProvider implements ServerStorageProvider {
           row.data
         );
       } catch {
-        // Skip corrupted data
+        logger.warn('Skipping corrupted storage data', { provider: 'postgres', collection: row.collection });
       }
     }
     return result;

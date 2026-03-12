@@ -1,12 +1,6 @@
-import { NextRequest, NextResponse } from 'next/server';
-import {
-  createLLMProvider,
-  LLMError,
-  LLMAuthError,
-  LLMRateLimitError,
-  LLMSafetyError,
-  LLMConfigError,
-} from '@/lib/llm';
+import { NextRequest } from 'next/server';
+import { createLLMProvider } from '@/lib/llm';
+import { createErrorResponse } from '@/lib/api/errors';
 
 // ============================================================================
 // System Prompt Builder
@@ -133,52 +127,6 @@ export async function POST(req: NextRequest) {
       },
     });
   } catch (error) {
-    console.error('[AI Route] Error:', error);
-
-    // Handle LLM-specific errors
-    if (error instanceof LLMConfigError) {
-      return NextResponse.json(
-        { error: error.message },
-        { status: 500 }
-      );
-    }
-
-    if (error instanceof LLMAuthError) {
-      return NextResponse.json(
-        { error: 'Invalid API key. Please check your configuration.' },
-        { status: 401 }
-      );
-    }
-
-    if (error instanceof LLMRateLimitError) {
-      return NextResponse.json(
-        { error: 'AI usage limit reached. Please try again later or check your billing status.' },
-        { status: 429 }
-      );
-    }
-
-    if (error instanceof LLMSafetyError) {
-      return NextResponse.json(
-        { error: 'The prompt was blocked by safety filters.' },
-        { status: 400 }
-      );
-    }
-
-    if (error instanceof LLMError) {
-      return NextResponse.json(
-        { error: error.message },
-        { status: error.statusCode ?? 500 }
-      );
-    }
-
-    // Generic error
-    const errorMessage = error instanceof Error
-      ? error.message
-      : 'An unexpected error occurred in the AI assistant.';
-
-    return NextResponse.json(
-      { error: errorMessage },
-      { status: 500 }
-    );
+    return createErrorResponse(error, { route: 'api/ai/chat' });
   }
 }

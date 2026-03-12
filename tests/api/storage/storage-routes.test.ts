@@ -177,10 +177,12 @@ describe('API routes: provider error propagation', () => {
     mockProvider.mergeData.mockClear();
   });
 
-  test('GET /api/storage propagates provider error', async () => {
+  test('GET /api/storage returns 500 on provider error', async () => {
     mockProvider.getAllData.mockRejectedValueOnce(new Error('DB connection lost'));
-    // Route has no try/catch — error propagates (Next.js catches in production)
-    await expect(GET()).rejects.toThrow('DB connection lost');
+    const res = await GET();
+    expect(res.status).toBe(500);
+    const json = await res.json();
+    expect(json.error).toBe('DB connection lost');
   });
 
   test('PUT collection response includes ok:true on success', async () => {

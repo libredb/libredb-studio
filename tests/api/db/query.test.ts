@@ -2,51 +2,22 @@ import { describe, test, expect, mock, beforeEach } from 'bun:test';
 import { createMockRequest, parseResponseJSON } from '../../helpers/mock-next';
 import { createMockProvider } from '../../helpers/mock-provider';
 import {
+  QueryError,
+  TimeoutError,
+  DatabaseError,
+  DatabaseConfigError,
+  ConnectionError,
   AuthenticationError,
   PoolExhaustedError,
+  QueryCancelledError,
+  isDatabaseError,
+  isConnectionError,
+  isQueryError,
+  isTimeoutError,
+  isAuthenticationError,
+  isRetryableError,
+  mapDatabaseError,
 } from '@/lib/db/errors';
-
-// ─── Mock error classes (must match instanceof checks in route) ─────────────
-class MockQueryError extends Error {
-  code?: string;
-  constructor(message: string) {
-    super(message);
-    this.name = 'QueryError';
-    this.code = 'QUERY_ERROR';
-  }
-}
-
-class MockTimeoutError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'TimeoutError';
-  }
-}
-
-class MockDatabaseError extends Error {
-  provider?: string;
-  code?: string;
-  constructor(message: string, provider?: string, code?: string) {
-    super(message);
-    this.name = 'DatabaseError';
-    this.provider = provider;
-    this.code = code;
-  }
-}
-
-class MockConnectionError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'ConnectionError';
-  }
-}
-
-class MockDatabaseConfigError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'DatabaseConfigError';
-  }
-}
 
 // ─── Mock provider ──────────────────────────────────────────────────────────
 const mockProvider = createMockProvider();
@@ -59,20 +30,21 @@ mock.module('@/lib/db', () => ({
   removeProvider: mock(),
   clearProviderCache: mock(),
   getProviderCacheStats: mock(),
-  QueryError: MockQueryError,
-  TimeoutError: MockTimeoutError,
-  DatabaseError: MockDatabaseError,
-  isDatabaseError: mock((e: unknown) => e instanceof MockDatabaseError),
-  ConnectionError: MockConnectionError,
-  DatabaseConfigError: MockDatabaseConfigError,
+  QueryError,
+  TimeoutError,
+  DatabaseError,
+  DatabaseConfigError,
+  ConnectionError,
   AuthenticationError,
   PoolExhaustedError,
-  isConnectionError: mock((e: unknown) => e instanceof MockConnectionError),
-  isQueryError: mock((e: unknown) => e instanceof MockQueryError),
-  isTimeoutError: mock((e: unknown) => e instanceof MockTimeoutError),
-  isAuthenticationError: mock(() => false),
-  isRetryableError: mock(() => false),
-  mapDatabaseError: mock(),
+  QueryCancelledError,
+  isDatabaseError,
+  isConnectionError,
+  isQueryError,
+  isTimeoutError,
+  isAuthenticationError,
+  isRetryableError,
+  mapDatabaseError,
   BaseDatabaseProvider: class {},
   DemoProvider: class {},
 }));
@@ -148,7 +120,7 @@ describe('POST /api/db/query', () => {
 
   test('returns 400 for QueryError', async () => {
     (mockProvider.query as ReturnType<typeof mock>).mockRejectedValueOnce(
-      new MockQueryError('syntax error at or near "FORM"')
+      new QueryError('syntax error at or near "FORM"')
     );
 
     const req = createMockRequest('/api/db/query', {
@@ -166,7 +138,7 @@ describe('POST /api/db/query', () => {
 
   test('returns 408 for TimeoutError', async () => {
     (mockProvider.query as ReturnType<typeof mock>).mockRejectedValueOnce(
-      new MockTimeoutError('Query timed out after 30000ms')
+      new TimeoutError('Query timed out after 30000ms')
     );
 
     const req = createMockRequest('/api/db/query', {
@@ -182,7 +154,7 @@ describe('POST /api/db/query', () => {
   });
 
   test('returns 500 for DatabaseError', async () => {
-    const dbError = new MockDatabaseError('Internal database failure', 'postgres', 'INTERNAL');
+    const dbError = new DatabaseError('Internal database failure', 'postgres', 'INTERNAL_ERROR');
     (mockProvider.query as ReturnType<typeof mock>).mockRejectedValueOnce(dbError);
 
     const req = createMockRequest('/api/db/query', {
@@ -195,12 +167,12 @@ describe('POST /api/db/query', () => {
 
     expect(res.status).toBe(500);
     expect(data.error).toBe('Internal database failure');
-    expect(data.code).toBe('INTERNAL');
+    expect(data.code).toBe('INTERNAL_ERROR');
   });
 
   test('returns 499 for cancelled query', async () => {
     (mockProvider.query as ReturnType<typeof mock>).mockRejectedValueOnce(
-      new Error('canceling statement due to user request')
+      new QueryCancelledError('Query was cancelled')
     );
 
     const req = createMockRequest('/api/db/query', {
@@ -209,10 +181,10 @@ describe('POST /api/db/query', () => {
     });
 
     const res = await POST(req as never);
-    const data = await parseResponseJSON<{ error: string; cancelled: boolean }>(res);
+    const data = await parseResponseJSON<{ error: string; code: string }>(res);
 
     expect(res.status).toBe(499);
-    expect(data.cancelled).toBe(true);
+    expect(data.code).toBe('QUERY_CANCELLED');
     expect(data.error).toContain('cancelled');
   });
 
@@ -299,7 +271,7 @@ describe('POST /api/db/query', () => {
 
   test('returns 499 for interrupted query execution', async () => {
     (mockProvider.query as ReturnType<typeof mock>).mockRejectedValueOnce(
-      new Error('Query execution was interrupted')
+      new QueryCancelledError('Query execution was interrupted')
     );
 
     const req = createMockRequest('/api/db/query', {
@@ -308,9 +280,9 @@ describe('POST /api/db/query', () => {
     });
 
     const res = await POST(req as never);
-    const data = await parseResponseJSON<{ error: string; cancelled: boolean }>(res);
+    const data = await parseResponseJSON<{ error: string; code: string }>(res);
 
     expect(res.status).toBe(499);
-    expect(data.cancelled).toBe(true);
+    expect(data.code).toBe('QUERY_CANCELLED');
   });
 });

@@ -4,6 +4,7 @@
  */
 
 import type { DatabaseType } from './types';
+import { ApiErrorCode } from '@/lib/api/error-codes';
 
 // ============================================================================
 // Base Database Error
@@ -16,7 +17,7 @@ export class DatabaseError extends Error {
   constructor(
     message: string,
     public readonly provider?: DatabaseType,
-    public readonly code?: string,
+    public readonly code?: ApiErrorCode,
     public readonly query?: string
   ) {
     super(message);
@@ -45,7 +46,7 @@ export class DatabaseError extends Error {
  */
 export class DatabaseConfigError extends DatabaseError {
   constructor(message: string, provider?: DatabaseType) {
-    super(message, provider, 'CONFIG_ERROR');
+    super(message, provider, ApiErrorCode.CONFIG_ERROR);
     this.name = 'DatabaseConfigError';
     Object.setPrototypeOf(this, DatabaseConfigError.prototype);
   }
@@ -65,7 +66,7 @@ export class ConnectionError extends DatabaseError {
     public readonly host?: string,
     public readonly port?: number
   ) {
-    super(message, provider, 'CONNECTION_ERROR');
+    super(message, provider, ApiErrorCode.CONNECTION_ERROR);
     this.name = 'ConnectionError';
     Object.setPrototypeOf(this, ConnectionError.prototype);
   }
@@ -76,7 +77,7 @@ export class ConnectionError extends DatabaseError {
  */
 export class AuthenticationError extends DatabaseError {
   constructor(message: string, provider?: DatabaseType) {
-    super(message, provider, 'AUTH_ERROR');
+    super(message, provider, ApiErrorCode.AUTH_ERROR);
     this.name = 'AuthenticationError';
     Object.setPrototypeOf(this, AuthenticationError.prototype);
   }
@@ -91,7 +92,7 @@ export class PoolExhaustedError extends DatabaseError {
     provider?: DatabaseType,
     public readonly poolSize?: number
   ) {
-    super(message, provider, 'POOL_EXHAUSTED');
+    super(message, provider, ApiErrorCode.POOL_EXHAUSTED);
     this.name = 'PoolExhaustedError';
     Object.setPrototypeOf(this, PoolExhaustedError.prototype);
   }
@@ -112,7 +113,7 @@ export class QueryError extends DatabaseError {
     public readonly position?: number,
     public readonly detail?: string
   ) {
-    super(message, provider, 'QUERY_ERROR', query);
+    super(message, provider, ApiErrorCode.QUERY_ERROR, query);
     this.name = 'QueryError';
     Object.setPrototypeOf(this, QueryError.prototype);
   }
@@ -128,9 +129,20 @@ export class TimeoutError extends DatabaseError {
     public readonly timeout?: number,
     query?: string
   ) {
-    super(message, provider, 'TIMEOUT_ERROR', query);
+    super(message, provider, ApiErrorCode.TIMEOUT_ERROR, query);
     this.name = 'TimeoutError';
     Object.setPrototypeOf(this, TimeoutError.prototype);
+  }
+}
+
+/**
+ * Query cancelled error - user-initiated cancellation
+ */
+export class QueryCancelledError extends DatabaseError {
+  constructor(message: string, provider?: DatabaseType, query?: string) {
+    super(message, provider, ApiErrorCode.QUERY_CANCELLED, query);
+    this.name = 'QueryCancelledError';
+    Object.setPrototypeOf(this, QueryCancelledError.prototype);
   }
 }
 
@@ -156,6 +168,10 @@ export function isTimeoutError(error: unknown): error is TimeoutError {
 
 export function isAuthenticationError(error: unknown): error is AuthenticationError {
   return error instanceof AuthenticationError;
+}
+
+export function isQueryCancelledError(error: unknown): error is QueryCancelledError {
+  return error instanceof QueryCancelledError;
 }
 
 // ============================================================================
@@ -232,11 +248,24 @@ export function mapDatabaseError(
     );
   }
 
+  // Query cancellation (must check before timeout — 'canceling statement' is cancellation, not timeout)
+  if (
+    message.includes('canceling statement') ||
+    message.includes('query execution was interrupted') ||
+    message.includes('query was cancelled') ||
+    message.includes('kill query')
+  ) {
+    return new QueryCancelledError(
+      'Query was cancelled',
+      provider,
+      query
+    );
+  }
+
   // Timeout errors
   if (
     message.includes('timeout') ||
-    message.includes('timed out') ||
-    message.includes('canceling statement')
+    message.includes('timed out')
   ) {
     return new TimeoutError(
       `Query timeout: ${error.message}`,

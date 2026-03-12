@@ -1,10 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import {
-  getOrCreateProvider,
-  isDatabaseError,
-  ConnectionError,
-} from '@/lib/db';
+import { getOrCreateProvider } from '@/lib/db';
 import type { MonitoringOptions, DatabaseConnection } from '@/lib/db/types';
+import { createErrorResponse } from '@/lib/api/errors';
 
 /**
  * POST /api/db/monitoring
@@ -55,41 +52,6 @@ export async function POST(req: NextRequest) {
       return new Response(null, { status: 499 }); // Client Closed Request
     }
 
-    console.error('[API:monitoring] Error:', error);
-
-    if (error instanceof ConnectionError) {
-      return NextResponse.json(
-        {
-          error: `Connection failed: ${error.message}`,
-          timestamp: new Date(),
-          overview: {
-            version: 'N/A',
-            uptime: 'N/A',
-            activeConnections: 0,
-            maxConnections: 0,
-            databaseSize: 'N/A',
-            databaseSizeBytes: 0,
-            tableCount: 0,
-            indexCount: 0,
-          },
-          performance: {
-            cacheHitRatio: 0,
-          },
-          slowQueries: [],
-          activeSessions: [],
-        },
-        { status: 503 }
-      );
-    }
-
-    if (isDatabaseError(error)) {
-      return NextResponse.json(
-        { error: error.message, code: error.code },
-        { status: 500 }
-      );
-    }
-
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    return NextResponse.json({ error: errorMessage }, { status: 500 });
+    return createErrorResponse(error, { route: 'api/db/monitoring' });
   }
 }

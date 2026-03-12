@@ -1,5 +1,6 @@
 import * as client from 'openid-client';
 import { SignJWT, jwtVerify } from 'jose';
+import { logger } from '@/lib/logger';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -252,6 +253,7 @@ export function buildLogoutUrl(returnTo: string): string | null {
     logoutUrl.searchParams.set('post_logout_redirect_uri', returnTo);
     return logoutUrl.toString();
   } catch {
+    logger.warn('Failed to build OIDC logout URL', { route: 'oidc' });
     return null;
   }
 }

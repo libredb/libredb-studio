@@ -2,6 +2,7 @@ import { getSession } from '@/lib/auth';
 import { NextResponse } from 'next/server';
 import { getOrCreateProvider } from '@/lib/db';
 import type { DatabaseConnection } from '@/lib/types';
+import { createErrorResponse } from '@/lib/api/errors';
 
 export interface FleetHealthItem {
   connectionId: string;
@@ -70,8 +71,6 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ results });
   } catch (error) {
-    const errorMessage =
-      error instanceof Error ? error.message : 'Unknown error';
-    return NextResponse.json({ error: errorMessage }, { status: 500 });
+    return createErrorResponse(error, { route: 'POST /api/admin/fleet-health' });
   }
 }

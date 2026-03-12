@@ -9,6 +9,7 @@ import { storage } from '@/lib/storage';
 import { isDangerousQuery } from '@/components/QuerySafetyDialog';
 import { isMultiStatement } from '@/lib/sql/statement-splitter';
 import { shouldRefreshSchema } from '@/lib/query-generators';
+import { ApiErrorCode } from '@/lib/api/error-codes';
 
 export interface QueryExecutionOptions {
   limit?: number;
@@ -210,6 +211,7 @@ export function useQueryExecution({
       if (!response.ok) {
         const error = await response.json();
         const errorMessage = error.error || 'Query failed';
+        const errorCode = error.code as string | undefined;
 
         if (activeConnection.isDemo) {
           console.error('[DemoDB] Query failed:', { errorMessage, executionTime });
@@ -226,6 +228,17 @@ export function useQueryExecution({
           executedAt: new Date(),
           errorMessage
         });
+
+        // Handle query cancellation via response code
+        if (errorCode === ApiErrorCode.QUERY_CANCELLED) {
+          setTabs(prev => prev.map(t => t.id === targetTabId ? {
+            ...t,
+            isExecuting: false,
+            isLoadingMore: false,
+          } : t));
+          toast({ title: "Query Cancelled", description: "Query execution was cancelled." });
+          return;
+        }
 
         // Provide more context for demo connection errors
         if (activeConnection.isDemo) {
@@ -376,7 +389,8 @@ export function useQueryExecution({
 
       const title = activeConnection?.isDemo ? "Demo Database Error" : "Query Error";
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      if (errorMessage.includes('Query was cancelled')) {
+      // Fallback string check for cancellation errors not caught by response code
+      if (errorMessage.includes('Query was cancelled') || errorMessage.includes('cancelled')) {
         toast({ title: "Query Cancelled", description: "Query execution was cancelled." });
         return;
       }

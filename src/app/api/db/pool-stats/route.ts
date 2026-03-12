@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getOrCreateProvider } from '@/lib/db/factory';
 import type { DatabaseConnection } from '@/lib/types';
+import { createErrorResponse } from '@/lib/api/errors';
 
 export async function POST(request: NextRequest) {
   try {
@@ -27,7 +28,6 @@ export async function POST(request: NextRequest) {
       message: 'Pool statistics not available for this provider',
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Failed to fetch pool stats';
-    return NextResponse.json({ error: message }, { status: 500 });
+    return createErrorResponse(error, { route: 'api/db/pool-stats' });
   }
 }

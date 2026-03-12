@@ -1,10 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import {
-  getOrCreateProvider,
-  QueryError,
-  TimeoutError,
-  isDatabaseError,
-} from '@/lib/db';
+import { getOrCreateProvider } from '@/lib/db';
+import { createErrorResponse } from '@/lib/api/errors';
 
 export async function POST(req: NextRequest) {
   try {
@@ -39,38 +35,6 @@ export async function POST(req: NextRequest) {
       },
     });
   } catch (error) {
-    console.error('[API:query] Error:', error);
-
-    if (error instanceof QueryError) {
-      return NextResponse.json(
-        { error: error.message, code: error.code },
-        { status: 400 }
-      );
-    }
-
-    if (error instanceof TimeoutError) {
-      return NextResponse.json(
-        { error: 'Query timed out. Please try a simpler query or increase timeout.' },
-        { status: 408 }
-      );
-    }
-
-    if (isDatabaseError(error)) {
-      return NextResponse.json(
-        { error: error.message, code: error.code },
-        { status: 500 }
-      );
-    }
-
-    // Check if query was cancelled
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    if (errorMessage.includes('canceling statement') || errorMessage.includes('Query execution was interrupted')) {
-      return NextResponse.json(
-        { error: 'Query was cancelled', cancelled: true },
-        { status: 499 }
-      );
-    }
-
-    return NextResponse.json({ error: errorMessage }, { status: 500 });
+    return createErrorResponse(error, { route: 'api/db/query' });
   }
 }

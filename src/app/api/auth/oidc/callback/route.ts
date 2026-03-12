@@ -9,6 +9,7 @@ import {
   mapOIDCRole,
   getPublicOrigin,
 } from '@/lib/oidc';
+import { logger } from '@/lib/logger';
 
 export async function GET(request: Request) {
   const origin = getPublicOrigin(request);
@@ -25,7 +26,8 @@ export async function GET(request: Request) {
     let oidcState;
     try {
       oidcState = await decryptState(stateCookie);
-    } catch {
+    } catch (decryptError) {
+      logger.warn('OIDC state decryption failed', { route: 'GET /api/auth/oidc/callback', error: decryptError instanceof Error ? decryptError.message : 'Unknown' });
       return NextResponse.redirect(`${origin}/login?error=oidc_state_invalid`);
     }
 
@@ -71,10 +73,7 @@ export async function GET(request: Request) {
       `${origin}${role === 'admin' ? '/admin' : '/'}`
     );
   } catch (error) {
-    console.error('OIDC callback error:', error);
-    if (error instanceof Error && 'cause' in error) {
-      console.error('OIDC error cause:', error.cause);
-    }
+    logger.error('OIDC callback error', error, { route: 'GET /api/auth/oidc/callback' });
 
     return NextResponse.redirect(`${origin}/login?error=oidc_failed`);
   }

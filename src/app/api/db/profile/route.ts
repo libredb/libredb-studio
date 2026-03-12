@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getOrCreateProvider } from '@/lib/db/factory';
+import { createErrorResponse } from '@/lib/api/errors';
 
 export async function POST(req: NextRequest) {
   try {
@@ -128,7 +129,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ tableName, totalRows, columns: columnProfiles });
     }
   } catch (error) {
-    const msg = error instanceof Error ? error.message : 'Unknown error';
-    return NextResponse.json({ error: msg }, { status: 500 });
+    return createErrorResponse(error, { route: 'api/db/profile' });
   }
 }
