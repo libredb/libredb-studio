@@ -193,7 +193,7 @@ export async function getOrCreateProvider(
   // Check cache
   const cached = providerCache.get(cacheKey);
 
-  if (cached && cached.provider.isConnected()) {
+  if (cached?.provider.isConnected()) {
     cached.lastUsed = Date.now();
     return cached.provider;
   }
