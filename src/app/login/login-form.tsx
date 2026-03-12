@@ -6,10 +6,10 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
-import { ExternalLink, Lock, Mail, ShieldCheck, UserCheck, Zap, Globe, Shield, Layers } from 'lucide-react';
+import { ExternalLink, Lock, Mail, ShieldCheck, Zap, Globe, Shield, Layers } from 'lucide-react';
 import { toast } from 'sonner';
-import { Badge } from '@/components/ui/badge';
 import LibreDBLogo from '@/components/libredb-logo';
+import { CommunitySection } from '@/components/community-section';
 
 function LoginFormInner({ authProvider }: { authProvider: string }) {
   const isOIDC = authProvider === 'oidc';
@@ -20,12 +20,10 @@ function LoginFormInner({ authProvider }: { authProvider: string }) {
   const searchParams = useSearchParams();
   const oidcError = searchParams.get('error');
 
-  const handleLogin = async (e?: React.FormEvent, directEmail?: string, directPassword?: string) => {
+  const handleLogin = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    const loginEmail = directEmail || email;
-    const loginPassword = directPassword || password;
 
-    if (!loginEmail || !loginPassword) {
+    if (!email || !password) {
       toast.error('Please enter email and password');
       return;
     }
@@ -35,7 +33,7 @@ function LoginFormInner({ authProvider }: { authProvider: string }) {
       const response = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: loginEmail, password: loginPassword }),
+        body: JSON.stringify({ email, password }),
       });
 
       const data = await response.json();
@@ -86,17 +84,17 @@ function LoginFormInner({ authProvider }: { authProvider: string }) {
         <div className="absolute right-0 top-0 bottom-0 w-px bg-white/[0.06]" />
 
         {/* Content */}
-        <div className="relative z-10 flex flex-col justify-between p-12 xl:p-16 w-full">
+        <div className="relative z-10 flex flex-col p-12 xl:p-16 w-full overflow-y-auto">
           {/* Top: Logo */}
-          <div className="flex items-center gap-3">
-            <div className="flex h-14 w-14 items-center justify-center rounded-xl bg-white/[0.06] border border-white/[0.08]">
+          <a href="https://libredb.org" target="_blank" rel="noopener noreferrer" className="flex items-center gap-3 group w-fit">
+            <div className="flex h-14 w-14 items-center justify-center rounded-xl bg-white/[0.06] border border-white/[0.08] group-hover:bg-white/[0.10] group-hover:border-white/[0.12] transition-all duration-200">
               <LibreDBLogo className="h-9 w-9 text-blue-400" />
             </div>
-            <span className="text-xl font-semibold text-white tracking-tight">LibreDB Studio</span>
-          </div>
+            <span className="text-xl font-semibold text-white tracking-tight group-hover:text-blue-400 transition-colors duration-200">LibreDB Studio</span>
+          </a>
 
           {/* Middle: Hero text + Features */}
-          <div className="space-y-10">
+          <div className="space-y-10 mt-auto">
             <div className="space-y-4 max-w-lg">
               <h1 className="text-4xl xl:text-5xl font-bold text-white tracking-tight leading-[1.1]">
                 The open-source SQL IDE for
@@ -125,19 +123,22 @@ function LoginFormInner({ authProvider }: { authProvider: string }) {
             </div>
           </div>
 
-          {/* Bottom: DB badges */}
-          <div className="space-y-3">
-            <p className="text-xs text-zinc-600 uppercase tracking-widest font-medium">Supported Databases</p>
-            <div className="flex flex-wrap gap-2">
-              {['PostgreSQL', 'MySQL', 'MongoDB', 'Oracle', 'SQL Server'].map((db) => (
-                <span
-                  key={db}
-                  className="text-xs px-3 py-1.5 rounded-full bg-white/[0.04] text-zinc-500 border border-white/[0.05] font-medium"
-                >
-                  {db}
-                </span>
-              ))}
+          {/* Bottom: DB badges + Community */}
+          <div className="space-y-6 mt-auto">
+            <div className="space-y-3">
+              <p className="text-xs text-zinc-600 uppercase tracking-widest font-medium">Supported Databases</p>
+              <div className="flex flex-wrap gap-2">
+                {['PostgreSQL', 'MySQL', 'MongoDB', 'Oracle', 'SQL Server'].map((db) => (
+                  <span
+                    key={db}
+                    className="text-xs px-3 py-1.5 rounded-full bg-white/[0.04] text-zinc-500 border border-white/[0.05] font-medium"
+                  >
+                    {db}
+                  </span>
+                ))}
+              </div>
             </div>
+            <CommunitySection variant="desktop" />
           </div>
         </div>
       </div>
@@ -146,18 +147,18 @@ function LoginFormInner({ authProvider }: { authProvider: string }) {
       <div className="flex w-full lg:w-1/2 xl:w-[45%] items-center justify-center p-4 sm:p-6 lg:p-8">
         <div className="w-full max-w-md space-y-8">
           {/* Mobile branding (visible only on mobile) */}
-          <div className="flex flex-col items-center gap-4 lg:hidden">
+          <a href="https://libredb.org" target="_blank" rel="noopener noreferrer" className="flex flex-col items-center gap-4 lg:hidden group">
             <div className="relative">
               <div className="absolute -inset-2 rounded-full bg-blue-500/20 blur-lg" />
-              <div className="relative flex h-20 w-20 items-center justify-center rounded-2xl bg-zinc-900 border border-white/[0.08] shadow-lg shadow-blue-500/10">
+              <div className="relative flex h-20 w-20 items-center justify-center rounded-2xl bg-zinc-900 border border-white/[0.08] shadow-lg shadow-blue-500/10 group-hover:border-blue-500/20 transition-all duration-200">
                 <LibreDBLogo className="h-12 w-12 text-blue-400" />
               </div>
             </div>
             <div className="text-center space-y-1">
-              <h2 className="text-2xl font-bold tracking-tight">LibreDB Studio</h2>
+              <h2 className="text-2xl font-bold tracking-tight group-hover:text-blue-400 transition-colors duration-200">LibreDB Studio</h2>
               <p className="text-sm text-muted-foreground">Open-source SQL IDE for cloud-native teams</p>
             </div>
-          </div>
+          </a>
 
           <Card className="border-muted-foreground/10 shadow-2xl transition-all duration-300 hover:shadow-primary/5">
             {/* Desktop header inside card */}
@@ -257,47 +258,6 @@ function LoginFormInner({ authProvider }: { authProvider: string }) {
                       {isLoading ? 'Authenticating...' : 'Sign In'}
                     </Button>
                   </form>
-
-                  <div className="relative">
-                    <div className="absolute inset-0 flex items-center">
-                      <span className="w-full border-t border-muted" />
-                    </div>
-                    <div className="relative flex justify-center text-xs uppercase">
-                      <span className="bg-card px-2 text-muted-foreground font-medium">Quick Access for Demo</span>
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-3">
-                    <Button
-                      variant="outline"
-                      className="h-auto py-3 px-4 flex-col gap-2 hover:border-primary/50 hover:bg-primary/5 transition-all group"
-                      onClick={() => handleLogin(undefined, 'admin@libredb.org', 'LibreDB.2026')}
-                      disabled={isLoading}
-                    >
-                      <div className="flex items-center gap-2 font-semibold text-foreground group-hover:text-primary transition-colors">
-                        <ShieldCheck className="h-4 w-4" />
-                        <span>Admin</span>
-                      </div>
-                      <Badge variant="secondary" className="font-mono text-[10px] tracking-wider py-0 px-1.5 opacity-80 group-hover:opacity-100">
-                        admin@libredb.org
-                      </Badge>
-                    </Button>
-
-                    <Button
-                      variant="outline"
-                      className="h-auto py-3 px-4 flex-col gap-2 hover:border-primary/50 hover:bg-primary/5 transition-all group"
-                      onClick={() => handleLogin(undefined, 'user@libredb.org', 'LibreDB.2026')}
-                      disabled={isLoading}
-                    >
-                      <div className="flex items-center gap-2 font-semibold text-foreground group-hover:text-primary transition-colors">
-                        <UserCheck className="h-4 w-4" />
-                        <span>User</span>
-                      </div>
-                      <Badge variant="secondary" className="font-mono text-[10px] tracking-wider py-0 px-1.5 opacity-80 group-hover:opacity-100">
-                        user@libredb.org
-                      </Badge>
-                    </Button>
-                  </div>
                 </>
               )}
             </CardContent>
@@ -312,16 +272,19 @@ function LoginFormInner({ authProvider }: { authProvider: string }) {
             </CardFooter>
           </Card>
 
-          {/* Mobile feature pills */}
-          <div className="flex flex-wrap justify-center gap-2 lg:hidden">
-            {['PostgreSQL', 'MySQL', 'MongoDB', 'Oracle', 'SQL Server'].map((db) => (
-              <span
-                key={db}
-                className="text-[10px] px-2.5 py-1 rounded-full bg-muted text-muted-foreground font-medium"
-              >
-                {db}
-              </span>
-            ))}
+          {/* Mobile community + DB pills */}
+          <div className="lg:hidden space-y-4">
+            <CommunitySection variant="mobile" />
+            <div className="flex flex-wrap justify-center gap-2">
+              {['PostgreSQL', 'MySQL', 'MongoDB', 'Oracle', 'SQL Server'].map((db) => (
+                <span
+                  key={db}
+                  className="text-[10px] px-2.5 py-1 rounded-full bg-muted text-muted-foreground font-medium"
+                >
+                  {db}
+                </span>
+              ))}
+            </div>
           </div>
         </div>
       </div>
