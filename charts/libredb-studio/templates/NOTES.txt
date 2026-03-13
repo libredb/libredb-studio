@@ -46,7 +46,7 @@ Configuration:
 Health check:
   kubectl --namespace {{ .Release.Namespace }} exec deploy/{{ include "libredb-studio.fullname" . }} -- wget -qO- http://localhost:{{ .Values.service.targetPort }}/api/db/health
 
-{{- if not .Values.secrets.jwtSecret }}
+{{- if and (not .Values.secrets.jwtSecret) (not .Values.secrets.existingSecret) }}
 
 WARNING: No JWT secret was provided. Please set secrets.jwtSecret to a strong random value (min 32 chars):
   helm upgrade {{ .Release.Name }} libredb/libredb-studio --set secrets.jwtSecret=$(openssl rand -base64 32)
