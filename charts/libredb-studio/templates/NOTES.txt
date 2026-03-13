@@ -3,9 +3,9 @@ LibreDB Studio has been deployed successfully!
 {{- if .Values.ingress.enabled }}
 
 Access LibreDB Studio via Ingress:
-{{- range .Values.ingress.hosts }}
+{{- range $host := .Values.ingress.hosts }}
   {{- range .paths }}
-  http{{ if $.Values.ingress.tls }}s{{ end }}://{{ .host | default $.Values.ingress.hosts }}{{ .path }}
+  http{{ if $.Values.ingress.tls }}s{{ end }}://{{ $host.host }}{{ .path }}
   {{- end }}
 {{- end }}
 
@@ -28,8 +28,8 @@ Access LibreDB Studio via LoadBalancer:
 {{- else }}
 
 Access LibreDB Studio via port-forward:
-  kubectl --namespace {{ .Release.Namespace }} port-forward svc/{{ include "libredb-studio.fullname" . }} 3000:{{ .Values.service.port }}
-  Open http://localhost:3000
+  kubectl --namespace {{ .Release.Namespace }} port-forward svc/{{ include "libredb-studio.fullname" . }} {{ .Values.service.targetPort }}:{{ .Values.service.port }}
+  Open http://localhost:{{ .Values.service.targetPort }}
 
 {{- end }}
 
@@ -44,7 +44,7 @@ Configuration:
 {{- end }}
 
 Health check:
-  kubectl --namespace {{ .Release.Namespace }} exec deploy/{{ include "libredb-studio.fullname" . }} -- wget -qO- http://localhost:3000/api/db/health
+  kubectl --namespace {{ .Release.Namespace }} exec deploy/{{ include "libredb-studio.fullname" . }} -- wget -qO- http://localhost:{{ .Values.service.targetPort }}/api/db/health
 
 {{- if not .Values.secrets.jwtSecret }}
 

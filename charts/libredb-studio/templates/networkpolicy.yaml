@@ -14,7 +14,7 @@ spec:
     - Egress
   ingress:
     - ports:
-        - port: 3000
+        - port: {{ .Values.service.targetPort }}
           protocol: TCP
     {{- with .Values.networkPolicy.additionalIngress }}
     {{- toYaml . | nindent 4 }}
