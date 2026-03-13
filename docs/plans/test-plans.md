@@ -117,7 +117,7 @@ test:
   name: Unit & Integration Tests
   runs-on: ubuntu-latest
   steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
     - uses: oven-sh/setup-bun@v2
       with:
         bun-version: latest
@@ -140,7 +140,7 @@ e2e:
   needs: [lint-and-build]
   runs-on: ubuntu-latest
   steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
     - uses: oven-sh/setup-bun@v2
     - run: bun install --frozen-lockfile
     - run: bunx playwright install --with-deps chromium
@@ -163,7 +163,7 @@ sonarcloud:
   needs: [test]  # coverage artifact'ını bekle
   runs-on: ubuntu-latest
   steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
       with:
         fetch-depth: 0
     - uses: actions/download-artifact@v4
