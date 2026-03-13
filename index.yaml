@@ -1,3 +1,59 @@
 apiVersion: v1
-entries: {}
-generated: "2026-03-14T00:00:00Z"
+entries:
+  libredb-studio:
+  - annotations:
+      artifacthub.io/category: database
+      artifacthub.io/changes: |
+        - Initial Helm chart release
+      artifacthub.io/containsSecurityUpdates: "false"
+      artifacthub.io/images: |
+        - name: libredb-studio
+          image: ghcr.io/libredb/libredb-studio:0.8.10
+          platforms:
+            - linux/amd64
+      artifacthub.io/license: MIT
+      artifacthub.io/links: |
+        - name: Documentation
+          url: https://github.com/libredb/libredb-studio#readme
+        - name: Container Image
+          url: https://github.com/libredb/libredb-studio/pkgs/container/libredb-studio
+        - name: Source
+          url: https://github.com/libredb/libredb-studio
+      artifacthub.io/prerelease: "true"
+    apiVersion: v2
+    appVersion: 0.8.10
+    created: "2026-03-14T02:22:28.34182259+03:00"
+    dependencies:
+    - condition: postgresql.enabled
+      name: postgresql
+      repository: https://charts.bitnami.com/bitnami
+      version: 16.x.x
+    description: Web-based SQL IDE for cloud-native teams supporting PostgreSQL, MySQL,
+      SQLite, Oracle, SQL Server, MongoDB, and Redis
+    digest: 04202a95a4a8c2adf9f8d7ec1b1458502a7c55244e7e115615d40d41a6ba9bde
+    home: https://github.com/libredb/libredb-studio
+    icon: https://raw.githubusercontent.com/libredb/libredb-studio/main/public/logo.svg
+    keywords:
+    - sql
+    - ide
+    - database
+    - postgresql
+    - mysql
+    - mongodb
+    - redis
+    - sqlite
+    - oracle
+    - mssql
+    - web-ide
+    kubeVersion: '>=1.26.0-0'
+    maintainers:
+    - name: cevheri
+      url: https://github.com/cevheri
+    name: libredb-studio
+    sources:
+    - https://github.com/libredb/libredb-studio
+    type: application
+    urls:
+    - https://github.com/libredb/libredb-studio/releases/download/libredb-studio-0.1.0/libredb-studio-0.1.0.tgz
+    version: 0.1.0
+generated: "2026-03-14T02:22:28.328807759+03:00"
