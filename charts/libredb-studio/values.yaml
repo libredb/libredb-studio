@@ -1,0 +1,280 @@
+# -- Number of replicas. Note: SQLite storage mode only supports 1 replica.
+replicaCount: 1
+
+image:
+  # -- Container image repository
+  repository: ghcr.io/libredb/libredb-studio
+  # -- Image pull policy
+  pullPolicy: IfNotPresent
+  # -- Overrides the image tag (default: Chart appVersion)
+  tag: ""
+
+# -- Image pull secrets for private registries
+imagePullSecrets: []
+# -- Override the chart name
+nameOverride: ""
+# -- Override the full release name
+fullnameOverride: ""
+
+# =============================================================================
+# Secrets — sensitive values stored in a Kubernetes Secret
+# =============================================================================
+secrets:
+  # -- Use an existing Secret instead of creating one.
+  # When set, all other secret values are ignored.
+  existingSecret: ""
+  # -- Key name mapping for existing secrets.
+  # Override if your existing secret uses different key names.
+  existingSecretKeys:
+    jwtSecret: jwt-secret
+    adminEmail: admin-email
+    adminPassword: admin-password
+    userEmail: user-email
+    userPassword: user-password
+    llmApiKey: llm-api-key
+    oidcClientId: oidc-client-id
+    oidcClientSecret: oidc-client-secret
+    storagePostgresUrl: storage-postgres-url
+  # -- JWT signing secret (min 32 chars). Required.
+  jwtSecret: ""
+  # -- Admin account email
+  adminEmail: "admin@libredb.org"
+  # -- Admin account password. Required.
+  adminPassword: ""
+  # -- Regular user account email
+  userEmail: "user@libredb.org"
+  # -- Regular user account password. Required.
+  userPassword: ""
+  # -- LLM API key (optional, for AI features)
+  llmApiKey: ""
+  # -- OIDC client ID (required when authProvider=oidc)
+  oidcClientId: ""
+  # -- OIDC client secret (required when authProvider=oidc)
+  oidcClientSecret: ""
+  # -- PostgreSQL connection URL for storage (required when storageProvider=postgres and postgresql.enabled=false)
+  storagePostgresUrl: ""
+
+# =============================================================================
+# Config — non-sensitive values stored in a ConfigMap
+# =============================================================================
+
+# -- Authentication provider: "local" or "oidc"
+authProvider: "local"
+
+config:
+  # -- Log level
+  logLevel: "info"
+  # -- Storage provider: "local" (browser), "sqlite" (file), or "postgres" (database)
+  storageProvider: "local"
+  # -- SQLite database file path (when storageProvider=sqlite)
+  storageSqlitePath: "/app/data/libredb-storage.db"
+  # -- LLM provider: gemini, openai, ollama, custom (optional)
+  llmProvider: ""
+  # -- LLM model name (optional)
+  llmModel: ""
+  # -- LLM API URL for ollama/custom providers (optional)
+  llmApiUrl: ""
+  # -- OIDC issuer URL (required when authProvider=oidc)
+  oidcIssuer: ""
+  # -- OIDC scopes (space-separated)
+  oidcScope: "openid profile email"
+  # -- OIDC claim path for role extraction
+  oidcRoleClaim: ""
+  # -- OIDC admin role values (comma-separated)
+  oidcAdminRoles: "admin"
+
+# =============================================================================
+# Demo Mode
+# =============================================================================
+demo:
+  # -- Enable demo mode with mock database
+  enabled: false
+
+# =============================================================================
+# Persistence — PVC for SQLite storage mode
+# =============================================================================
+persistence:
+  # -- Enable persistent storage. Auto-enabled when storageProvider=sqlite.
+  enabled: false
+  # -- Storage class name (leave empty for default)
+  storageClassName: ""
+  # -- Access modes
+  accessModes:
+    - ReadWriteOnce
+  # -- Storage size
+  size: 1Gi
+  # -- Use an existing PVC instead of creating one
+  existingClaim: ""
+  # -- Annotations for the PVC
+  annotations: {}
+
+# =============================================================================
+# Security
+# =============================================================================
+serviceAccount:
+  # -- Create a ServiceAccount
+  create: true
+  # -- Annotations (e.g., for IRSA or Workload Identity)
+  annotations: {}
+  # -- ServiceAccount name (auto-generated if empty)
+  name: ""
+  # -- Automount API credentials
+  automountServiceAccountToken: false
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1001
+  runAsGroup: 1001
+  fsGroup: 1001
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+# -- Pod annotations
+podAnnotations: {}
+# -- Pod labels
+podLabels: {}
+
+# =============================================================================
+# Probes — uses /api/db/health endpoint
+# =============================================================================
+startupProbe:
+  httpGet:
+    path: /api/db/health
+    port: http
+  failureThreshold: 30
+  periodSeconds: 2
+
+readinessProbe:
+  httpGet:
+    path: /api/db/health
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 10
+
+livenessProbe:
+  httpGet:
+    path: /api/db/health
+    port: http
+  initialDelaySeconds: 30
+  periodSeconds: 30
+
+# =============================================================================
+# Resources
+# =============================================================================
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    memory: 512Mi
+
+# =============================================================================
+# Networking
+# =============================================================================
+service:
+  # -- Service type: ClusterIP, NodePort, or LoadBalancer
+  type: ClusterIP
+  # -- Service port
+  port: 80
+  # -- Container target port
+  targetPort: 3000
+  # -- NodePort (only when type=NodePort)
+  nodePort: ""
+  # -- Service annotations
+  annotations: {}
+
+ingress:
+  # -- Enable Ingress
+  enabled: false
+  # -- Ingress class name (e.g., nginx, traefik)
+  className: ""
+  # -- Ingress annotations
+  annotations: {}
+  # -- Ingress hosts
+  hosts:
+    - host: libredb.local
+      paths:
+        - path: /
+          pathType: Prefix
+  # -- TLS configuration
+  tls: []
+  #  - secretName: libredb-tls
+  #    hosts:
+  #      - libredb.local
+
+networkPolicy:
+  # -- Enable NetworkPolicy
+  enabled: false
+  # -- Additional ingress rules
+  additionalIngress: []
+  # -- Additional egress rules
+  additionalEgress: []
+
+# =============================================================================
+# Autoscaling & HA
+# =============================================================================
+autoscaling:
+  # -- Enable HorizontalPodAutoscaler
+  enabled: false
+  # -- Minimum replicas
+  minReplicas: 2
+  # -- Maximum replicas
+  maxReplicas: 10
+  # -- Target CPU utilization percentage
+  targetCPUUtilizationPercentage: 75
+  # -- Target memory utilization percentage
+  targetMemoryUtilizationPercentage: 80
+
+podDisruptionBudget:
+  # -- Enable PodDisruptionBudget
+  enabled: false
+  # -- Minimum available pods (mutually exclusive with maxUnavailable)
+  minAvailable: 1
+  # -- Maximum unavailable pods
+  # maxUnavailable: 1
+
+# =============================================================================
+# PostgreSQL Subchart (Bitnami)
+# =============================================================================
+postgresql:
+  # -- Deploy a PostgreSQL instance for storage backend
+  enabled: false
+  auth:
+    # -- PostgreSQL username
+    username: "libredb"
+    # -- PostgreSQL password
+    password: ""
+    # -- PostgreSQL database name
+    database: "libredb_storage"
+
+# =============================================================================
+# Scheduling
+# =============================================================================
+# -- Node selector
+nodeSelector: {}
+# -- Tolerations
+tolerations: []
+# -- Affinity rules
+affinity: {}
+# -- Topology spread constraints
+topologySpreadConstraints: []
+
+# =============================================================================
+# Extra configuration
+# =============================================================================
+# -- Additional environment variables
+extraEnv: []
+#  - name: MY_VAR
+#    value: "my-value"
+
+# -- Additional envFrom references
+extraEnvFrom: []
+#  - configMapRef:
+#      name: my-config

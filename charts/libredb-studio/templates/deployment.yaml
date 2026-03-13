@@ -1,0 +1,168 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "libredb-studio.fullname" . }}
+  labels:
+    {{- include "libredb-studio.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "libredb-studio.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "libredb-studio.labels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "libredb-studio.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: {{ .Chart.Name }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: {{ include "libredb-studio.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 3000
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: {{ include "libredb-studio.configMapName" . }}
+            {{- with .Values.extraEnvFrom }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          env:
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "libredb-studio.secretName" . }}
+                  key: {{ .Values.secrets.existingSecretKeys.jwtSecret }}
+            - name: ADMIN_EMAIL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "libredb-studio.secretName" . }}
+                  key: {{ .Values.secrets.existingSecretKeys.adminEmail }}
+            - name: ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "libredb-studio.secretName" . }}
+                  key: {{ .Values.secrets.existingSecretKeys.adminPassword }}
+            - name: USER_EMAIL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "libredb-studio.secretName" . }}
+                  key: {{ .Values.secrets.existingSecretKeys.userEmail }}
+            - name: USER_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "libredb-studio.secretName" . }}
+                  key: {{ .Values.secrets.existingSecretKeys.userPassword }}
+            {{- if or .Values.secrets.llmApiKey .Values.secrets.existingSecret }}
+            - name: LLM_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "libredb-studio.secretName" . }}
+                  key: {{ .Values.secrets.existingSecretKeys.llmApiKey }}
+                  optional: true
+            {{- end }}
+            {{- if or .Values.secrets.oidcClientId .Values.secrets.existingSecret }}
+            - name: OIDC_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "libredb-studio.secretName" . }}
+                  key: {{ .Values.secrets.existingSecretKeys.oidcClientId }}
+                  optional: true
+            {{- end }}
+            {{- if or .Values.secrets.oidcClientSecret .Values.secrets.existingSecret }}
+            - name: OIDC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "libredb-studio.secretName" . }}
+                  key: {{ .Values.secrets.existingSecretKeys.oidcClientSecret }}
+                  optional: true
+            {{- end }}
+            {{- if .Values.postgresql.enabled }}
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "libredb-studio.fullname" . }}-postgresql
+                  key: password
+            - name: STORAGE_POSTGRES_URL
+              value: {{ include "libredb-studio.postgresql.url" . | quote }}
+            {{- else if or .Values.secrets.storagePostgresUrl .Values.secrets.existingSecret }}
+            - name: STORAGE_POSTGRES_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "libredb-studio.secretName" . }}
+                  key: {{ .Values.secrets.existingSecretKeys.storagePostgresUrl }}
+                  optional: true
+            {{- end }}
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- with .Values.startupProbe }}
+          startupProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.readinessProbe }}
+          readinessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.livenessProbe }}
+          livenessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: next-cache
+              mountPath: /app/.next/cache
+            - name: tmp
+              mountPath: /tmp
+            {{- if include "libredb-studio.persistenceEnabled" . }}
+            - name: data
+              mountPath: /app/data
+            {{- end }}
+      volumes:
+        - name: next-cache
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+        {{- if include "libredb-studio.persistenceEnabled" . }}
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "libredb-studio.pvcName" . }}
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
