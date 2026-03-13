@@ -39,7 +39,6 @@
         },
         "jwtSecret": {
           "type": "string",
-          "minLength": 32,
           "description": "JWT signing secret (min 32 chars)"
         },
         "adminEmail": {
