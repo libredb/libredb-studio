@@ -120,15 +120,16 @@ Return the full image reference (repository:tag)
 {{- end }}
 
 {{/*
-Return the PostgreSQL host when subchart is enabled
+Return the PostgreSQL subchart fullname.
+Bitnami subchart names resources as: <release>-postgresql (not <release>-<chart>-postgresql).
 */}}
-{{- define "libredb-studio.postgresql.host" -}}
-{{- printf "%s-postgresql" (include "libredb-studio.fullname" .) }}
+{{- define "libredb-studio.postgresql.fullname" -}}
+{{- printf "%s-postgresql" .Release.Name }}
 {{- end }}
 
 {{/*
 Return the PostgreSQL URL when subchart is enabled
 */}}
 {{- define "libredb-studio.postgresql.url" -}}
-{{- printf "postgresql://%s:$(POSTGRES_PASSWORD)@%s:5432/%s" .Values.postgresql.auth.username (include "libredb-studio.postgresql.host" .) .Values.postgresql.auth.database }}
+{{- printf "postgresql://%s:$(POSTGRES_PASSWORD)@%s:5432/%s" .Values.postgresql.auth.username (include "libredb-studio.postgresql.fullname" .) .Values.postgresql.auth.database }}
 {{- end }}

@@ -75,6 +75,9 @@ jobs:
       - name: Add Bitnami repo
         run: helm repo add bitnami https://charts.bitnami.com/bitnami
 
+      - name: Build chart dependencies
+        run: helm dependency build charts/libredb-studio
+
       - name: Run chart-releaser
         uses: helm/chart-releaser-action@v1.7.0
         env:

@@ -102,7 +102,7 @@ spec:
             - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "libredb-studio.fullname" . }}-postgresql
+                  name: {{ include "libredb-studio.postgresql.fullname" . }}
                   key: password
             - name: STORAGE_POSTGRES_URL
               value: {{ include "libredb-studio.postgresql.url" . | quote }}

@@ -6,7 +6,7 @@ metadata:
     {{- include "libredb-studio.labels" . | nindent 4 }}
 data:
   NODE_ENV: "production"
-  PORT: "3000"
+  PORT: {{ .Values.service.targetPort | quote }}
   HOSTNAME: "0.0.0.0"
   NEXT_TELEMETRY_DISABLED: "1"
   NODE_OPTIONS: "--max-old-space-size=384"
