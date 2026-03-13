@@ -1,0 +1,245 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "replicaCount": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Number of replicas"
+    },
+    "image": {
+      "type": "object",
+      "properties": {
+        "repository": {
+          "type": "string",
+          "description": "Container image repository"
+        },
+        "pullPolicy": {
+          "type": "string",
+          "enum": ["Always", "IfNotPresent", "Never"],
+          "description": "Image pull policy"
+        },
+        "tag": {
+          "type": "string",
+          "description": "Image tag override"
+        }
+      }
+    },
+    "authProvider": {
+      "type": "string",
+      "enum": ["local", "oidc"],
+      "description": "Authentication provider"
+    },
+    "secrets": {
+      "type": "object",
+      "properties": {
+        "existingSecret": {
+          "type": "string",
+          "description": "Name of existing secret"
+        },
+        "jwtSecret": {
+          "type": "string",
+          "description": "JWT signing secret (min 32 chars)"
+        },
+        "adminEmail": {
+          "type": "string",
+          "format": "email",
+          "description": "Admin account email"
+        },
+        "adminPassword": {
+          "type": "string",
+          "description": "Admin account password"
+        },
+        "userEmail": {
+          "type": "string",
+          "format": "email",
+          "description": "User account email"
+        },
+        "userPassword": {
+          "type": "string",
+          "description": "User account password"
+        },
+        "llmApiKey": {
+          "type": "string",
+          "description": "LLM API key"
+        },
+        "oidcClientId": {
+          "type": "string",
+          "description": "OIDC client ID"
+        },
+        "oidcClientSecret": {
+          "type": "string",
+          "description": "OIDC client secret"
+        },
+        "storagePostgresUrl": {
+          "type": "string",
+          "description": "PostgreSQL connection URL for storage"
+        }
+      }
+    },
+    "config": {
+      "type": "object",
+      "properties": {
+        "logLevel": {
+          "type": "string",
+          "enum": ["debug", "info", "warn", "error"],
+          "description": "Log level"
+        },
+        "storageProvider": {
+          "type": "string",
+          "enum": ["local", "sqlite", "postgres"],
+          "description": "Storage provider"
+        },
+        "storageSqlitePath": {
+          "type": "string",
+          "description": "SQLite database file path"
+        },
+        "llmProvider": {
+          "type": "string",
+          "enum": ["", "gemini", "openai", "ollama", "custom"],
+          "description": "LLM provider"
+        },
+        "llmModel": {
+          "type": "string",
+          "description": "LLM model name"
+        },
+        "llmApiUrl": {
+          "type": "string",
+          "description": "LLM API URL"
+        },
+        "oidcIssuer": {
+          "type": "string",
+          "description": "OIDC issuer URL"
+        },
+        "oidcScope": {
+          "type": "string",
+          "description": "OIDC scopes"
+        },
+        "oidcRoleClaim": {
+          "type": "string",
+          "description": "OIDC role claim path"
+        },
+        "oidcAdminRoles": {
+          "type": "string",
+          "description": "OIDC admin role values"
+        }
+      }
+    },
+    "persistence": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Enable persistent storage"
+        },
+        "size": {
+          "type": "string",
+          "pattern": "^[0-9]+(Gi|Mi|Ti)$",
+          "description": "Storage size"
+        },
+        "existingClaim": {
+          "type": "string",
+          "description": "Existing PVC name"
+        },
+        "storageClassName": {
+          "type": "string",
+          "description": "Storage class name"
+        }
+      }
+    },
+    "service": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["ClusterIP", "NodePort", "LoadBalancer"],
+          "description": "Service type"
+        },
+        "port": {
+          "type": "integer",
+          "description": "Service port"
+        },
+        "targetPort": {
+          "type": "integer",
+          "description": "Container target port"
+        }
+      }
+    },
+    "ingress": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Enable Ingress"
+        },
+        "className": {
+          "type": "string",
+          "description": "Ingress class name"
+        }
+      }
+    },
+    "autoscaling": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Enable HPA"
+        },
+        "minReplicas": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Minimum replicas"
+        },
+        "maxReplicas": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Maximum replicas"
+        },
+        "targetCPUUtilizationPercentage": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100,
+          "description": "Target CPU utilization"
+        },
+        "targetMemoryUtilizationPercentage": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100,
+          "description": "Target memory utilization"
+        }
+      }
+    },
+    "podDisruptionBudget": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Enable PDB"
+        },
+        "minAvailable": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Minimum available pods"
+        }
+      }
+    },
+    "demo": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Enable demo mode"
+        }
+      }
+    },
+    "postgresql": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Deploy PostgreSQL subchart"
+        }
+      }
+    }
+  }
+}

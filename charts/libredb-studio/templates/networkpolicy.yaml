@@ -1,0 +1,50 @@
+{{- if .Values.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "libredb-studio.fullname" . }}
+  labels:
+    {{- include "libredb-studio.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "libredb-studio.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - ports:
+        - port: {{ .Values.service.targetPort }}
+          protocol: TCP
+    {{- with .Values.networkPolicy.additionalIngress }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  egress:
+    # Allow DNS resolution
+    - ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    # Allow HTTPS outbound (for database connections, AI APIs, OIDC)
+    - ports:
+        - port: 443
+          protocol: TCP
+    # Allow common database ports
+    - ports:
+        - port: 5432
+          protocol: TCP
+        - port: 3306
+          protocol: TCP
+        - port: 1521
+          protocol: TCP
+        - port: 1433
+          protocol: TCP
+        - port: 27017
+          protocol: TCP
+        - port: 6379
+          protocol: TCP
+    {{- with .Values.networkPolicy.additionalEgress }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+{{- end }}

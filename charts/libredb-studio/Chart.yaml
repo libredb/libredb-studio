@@ -1,0 +1,50 @@
+apiVersion: v2
+name: libredb-studio
+description: Web-based SQL IDE for cloud-native teams supporting PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, and Redis
+type: application
+version: 0.1.0
+appVersion: "0.8.10"
+kubeVersion: ">=1.26.0-0"
+home: https://github.com/libredb/libredb-studio
+icon: https://raw.githubusercontent.com/libredb/libredb-studio/main/public/logo.svg
+sources:
+  - https://github.com/libredb/libredb-studio
+keywords:
+  - sql
+  - ide
+  - database
+  - postgresql
+  - mysql
+  - mongodb
+  - redis
+  - sqlite
+  - oracle
+  - mssql
+  - web-ide
+maintainers:
+  - name: cevheri
+    url: https://github.com/cevheri
+annotations:
+  artifacthub.io/category: database
+  artifacthub.io/license: MIT
+  artifacthub.io/prerelease: "true"
+  artifacthub.io/containsSecurityUpdates: "false"
+  artifacthub.io/images: |
+    - name: libredb-studio
+      image: ghcr.io/libredb/libredb-studio:0.8.10
+      platforms:
+        - linux/amd64
+  artifacthub.io/links: |
+    - name: Documentation
+      url: https://github.com/libredb/libredb-studio#readme
+    - name: Container Image
+      url: https://github.com/libredb/libredb-studio/pkgs/container/libredb-studio
+    - name: Source
+      url: https://github.com/libredb/libredb-studio
+  artifacthub.io/changes: |
+    - Initial Helm chart release
+dependencies:
+  - name: postgresql
+    version: "16.x.x"
+    repository: https://charts.bitnami.com/bitnami
+    condition: postgresql.enabled
