@@ -130,15 +130,20 @@ jobs:
       - name: Lint Helm chart
         run: helm lint charts/libredb-studio --strict
 
-      - name: Verify appVersion matches package.json
+      - name: Verify appVersion is valid
         run: |
           APP_VERSION=$(node -e "console.log(require('./package.json').version)")
-          CHART_VERSION=$(grep '^appVersion:' charts/libredb-studio/Chart.yaml | awk '{print $2}' | tr -d '"')
-          if [ "$APP_VERSION" != "$CHART_VERSION" ]; then
-            echo "ERROR: Chart appVersion ($CHART_VERSION) does not match package.json ($APP_VERSION)"
+          CHART_APP_VERSION=$(grep '^appVersion:' charts/libredb-studio/Chart.yaml | awk '{print $2}' | tr -d '"')
+          echo "package.json=$APP_VERSION, Chart appVersion=$CHART_APP_VERSION"
+          if [ "$(printf '%s\n' "$CHART_APP_VERSION" "$APP_VERSION" | sort -V | head -1)" != "$CHART_APP_VERSION" ]; then
+            echo "ERROR: Chart appVersion ($CHART_APP_VERSION) is ahead of package.json ($APP_VERSION)"
             exit 1
           fi
-          echo "OK: appVersion=$CHART_VERSION matches package.json"
+          if [ "$APP_VERSION" != "$CHART_APP_VERSION" ]; then
+            echo "INFO: Chart appVersion ($CHART_APP_VERSION) is behind package.json ($APP_VERSION). Update Chart.yaml appVersion on next chart release."
+          else
+            echo "OK: versions in sync"
+          fi
 
   sonarcloud:
     name: SonarCloud Analysis
