@@ -1,46 +1,58 @@
-# Helm Chart & ArtifactHub Kurulumu - LibreDB Studio
+# Helm Chart & ArtifactHub Setup – LibreDB Studio in Kubernetes Plan
 
 ## Context
 
-LibreDB Studio'nun Docker image'ı (`ghcr.io/libredb/libredb-studio`) ve GitHub Actions CI/CD pipeline'ları tam ve çalışır durumda. Ancak Kubernetes'e kurulum yapanlar için Helm chart ve ArtifactHub entegrasyonu eksik. Bu plan, production-grade bir Helm chart oluşturup, otomatik release pipeline'ı ile ArtifactHub'da yayınlamayı hedefliyor.
+The LibreDB Studio Docker image (`ghcr.io/libredb/libredb-studio`) and GitHub Actions CI/CD pipelines are already fully operational. However, there is currently no Helm chart or ArtifactHub integration for users who want to deploy LibreDB Studio on Kubernetes.
 
-**Mevcut durum:** Docker image push (ghcr.io), CI (lint/typecheck/test/build), Fly.io + Render deploy mevcut. Helm/K8s yapısı yok.
+The goal of this plan is to create a **production-grade Helm chart** and publish it automatically to **ArtifactHub** through a release pipeline.
+
+**Current state**
+
+* Docker image publishing → `ghcr.io`
+* CI pipeline → lint / typecheck / test / build
+* Deployments → Fly.io and Render
+* **Missing components** → Helm chart + Kubernetes support
 
 ---
 
-## Dosya Yapısı
+# Directory Structure
 
 ```
 charts/
   libredb-studio/
     Chart.yaml                    # Chart metadata + ArtifactHub annotations
-    values.yaml                   # Tüm konfigürasyon defaults
+    values.yaml                   # Default configuration values
     values.schema.json            # JSON Schema validation
-    .helmignore                   # Package exclusion patterns
+    .helmignore                   # Files excluded from Helm packages
     README.md                     # Chart documentation
     templates/
-      _helpers.tpl                # Named template helpers (labels, names, etc.)
-      deployment.yaml             # Ana uygulama Deployment
+      _helpers.tpl                # Named template helpers
+      deployment.yaml             # Main application Deployment
       service.yaml                # ClusterIP/NodePort/LoadBalancer Service
       ingress.yaml                # Optional Ingress (nginx/traefik)
-      configmap.yaml              # Non-sensitive env vars
-      secret.yaml                 # Sensitive env vars (JWT, passwords)
-      serviceaccount.yaml         # ServiceAccount (IRSA/Workload Identity uyumlu)
+      configmap.yaml              # Non-sensitive environment variables
+      secret.yaml                 # Sensitive environment variables
+      serviceaccount.yaml         # ServiceAccount
       hpa.yaml                    # HorizontalPodAutoscaler
       pdb.yaml                    # PodDisruptionBudget
       pvc.yaml                    # PersistentVolumeClaim (SQLite mode)
       networkpolicy.yaml          # Optional NetworkPolicy
-      NOTES.txt                   # Post-install kullanım notları
-artifacthub-repo.yml              # Repo-level ArtifactHub metadata (proje kökünde)
+      NOTES.txt                   # Post-install usage instructions
+
+artifacthub-repo.yml              # ArtifactHub repository metadata (project root)
+
 .github/workflows/
-  helm-release.yml                # Chart lint + test + release pipeline
+  helm-release.yml                # Helm lint, test, and release pipeline
 ```
 
 ---
 
-## Adım 1: `charts/libredb-studio/Chart.yaml`
+# Step 1 – `charts/libredb-studio/Chart.yaml`
 
-Helm v2 API, appVersion `0.8.10` (package.json'dan), chart version `0.1.0`.
+Helm API version: **v2**
+
+* `appVersion` → taken from `package.json` (`0.8.10`)
+* `chart version` → `0.1.0`
 
 ```yaml
 apiVersion: v2
@@ -97,152 +109,338 @@ dependencies:
 
 ---
 
-## Adım 2: `charts/libredb-studio/values.yaml`
+# Step 2 – `values.yaml`
 
-Tüm değerler camelCase, iyi dokümante edilmiş. Kritik bölümler:
+All configuration keys use **camelCase** and include clear documentation.
 
-### Image & Replica
-- `image.repository: ghcr.io/libredb/libredb-studio`
-- `image.tag: ""` (default → Chart.appVersion)
-- `image.pullPolicy: IfNotPresent`
-- `replicaCount: 1`
+### Image & Replica Settings
 
-### Secrets (K8s Secret'a gider)
-- `secrets.jwtSecret`, `secrets.adminEmail/Password`, `secrets.userEmail/Password`
-- `secrets.llmApiKey`, `secrets.oidcClientId/Secret`, `secrets.storagePostgresUrl`
-- `secrets.existingSecret: ""` — External Secrets Operator / Sealed Secrets / Vault entegrasyonu
-- `secrets.existingSecretKeys: {...}` — key name mapping for existing secrets
+* `image.repository: ghcr.io/libredb/libredb-studio`
+* `image.tag: ""` → defaults to `Chart.appVersion`
+* `image.pullPolicy: IfNotPresent`
+* `replicaCount: 1`
 
-### Config (ConfigMap'e gider)
-- `authProvider: local` (local | oidc)
-- `config.logLevel: "info"`
-- `config.storageProvider: "local"` (local | sqlite | postgres)
-- `config.storageSqlitePath: "/app/data/libredb-storage.db"`
-- `config.llmProvider/llmModel/llmApiUrl` (optional AI)
-- `config.oidcIssuer/oidcScope/oidcRoleClaim/oidcAdminRoles` (optional SSO)
+---
 
-### Persistence (SQLite mode için PVC)
-- `persistence.enabled: false` (auto-enable when storageProvider=sqlite)
-- `persistence.size: 1Gi`, `accessModes: [ReadWriteOnce]`
-- `persistence.existingClaim: ""`
+### Secrets (stored in Kubernetes Secret)
+
+Examples:
+
+* `secrets.jwtSecret`
+* `secrets.adminEmail`
+* `secrets.adminPassword`
+* `secrets.userEmail`
+* `secrets.userPassword`
+* `secrets.llmApiKey`
+* `secrets.oidcClientId`
+* `secrets.oidcClientSecret`
+* `secrets.storagePostgresUrl`
+
+External secret integration:
+
+```
+secrets.existingSecret: ""
+secrets.existingSecretKeys: {}
+```
+
+Supports integrations like:
+
+* External Secrets Operator
+* Sealed Secrets
+* HashiCorp Vault
+
+---
+
+### Config (stored in ConfigMap)
+
+Key settings include:
+
+```
+authProvider: local        # local | oidc
+config.logLevel: info
+config.storageProvider: local    # local | sqlite | postgres
+config.storageSqlitePath: /app/data/libredb-storage.db
+```
+
+Optional configuration for:
+
+* AI providers
+* OIDC SSO
+* demo databases
+
+---
+
+### Persistence (SQLite Mode)
+
+```
+persistence.enabled: false
+persistence.size: 1Gi
+persistence.accessModes: [ReadWriteOnce]
+persistence.existingClaim: ""
+```
+
+Persistence automatically enables when `storageProvider=sqlite`.
+
+---
 
 ### Security
-- `podSecurityContext: { runAsNonRoot: true, runAsUser: 1001, runAsGroup: 1001, fsGroup: 1001, seccompProfile: RuntimeDefault }`
-- `securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities.drop: [ALL] }`
-- `serviceAccount.automountServiceAccountToken: false`
 
-### Probes (Dockerfile'daki `/api/db/health` GET endpoint'ini kullanır)
-- `startupProbe: httpGet /api/db/health, failureThreshold: 30, periodSeconds: 2` (max 60s startup)
-- `readinessProbe: httpGet /api/db/health, initialDelay: 5s, period: 10s`
-- `livenessProbe: httpGet /api/db/health, initialDelay: 30s, period: 30s`
+Example secure defaults:
+
+```
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1001
+  runAsGroup: 1001
+  fsGroup: 1001
+  seccompProfile: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+```
+
+---
+
+### Health Probes
+
+Using Dockerfile health endpoint:
+
+```
+GET /api/db/health
+```
+
+Probes:
+
+* **startupProbe** → fast startup detection
+* **readinessProbe** → traffic readiness
+* **livenessProbe** → container health monitoring
+
+---
 
 ### Resources
-- `requests: { cpu: 100m, memory: 256Mi }`
-- `limits: { memory: 512Mi }`
+
+```
+requests:
+  cpu: 100m
+  memory: 256Mi
+
+limits:
+  memory: 512Mi
+```
+
+---
 
 ### Networking
-- `service.type: ClusterIP`, `service.port: 80`, `service.targetPort: 3000`
-- `ingress.enabled: false` — hosts, paths, TLS, className, annotations
-- `networkPolicy.enabled: false`
 
-### Scaling & HA
-- `autoscaling.enabled: false` — minReplicas: 2, maxReplicas: 10, CPU: 75%, Memory: 80%
-- `podDisruptionBudget.enabled: false` — minAvailable: 1
+```
+service.type: ClusterIP
+service.port: 80
+service.targetPort: 3000
+```
+
+Optional:
+
+* Ingress
+* NetworkPolicy
+
+---
+
+### Scaling & High Availability
+
+Optional features:
+
+```
+autoscaling.enabled: false
+podDisruptionBudget.enabled: false
+```
+
+---
 
 ### PostgreSQL Subchart
-- `postgresql.enabled: false` — enable for built-in storage DB
-- `postgresql.auth.username/password/database`
 
-### Extras
-- `extraEnv: []`, `extraEnvFrom: []`
-- `nodeSelector: {}`, `tolerations: []`, `affinity: {}`
-- `topologySpreadConstraints: []`
-- `demo.enabled: false` — demo DB config
+Optional internal database:
 
----
-
-## Adım 3: `templates/_helpers.tpl`
-
-Standard Helm helpers:
-- `libredb-studio.name` — chart name (truncated 63 chars)
-- `libredb-studio.fullname` — release-aware full name
-- `libredb-studio.chart` — `name-version` label value
-- `libredb-studio.labels` — common labels (helm.sh/chart, app.kubernetes.io/*)
-- `libredb-studio.selectorLabels` — selector labels (name + instance)
-- `libredb-studio.serviceAccountName` — conditional SA name
-- `libredb-studio.secretName` — existing secret or generated
-- `libredb-studio.configMapName` — `fullname-config`
-- `libredb-studio.pvcName` — existing claim or generated
-- `libredb-studio.persistenceEnabled` — `true` if persistence.enabled OR storageProvider=sqlite
-- `libredb-studio.image` — `repository:tag` (tag defaults to appVersion)
+```
+postgresql.enabled: false
+postgresql.auth.username
+postgresql.auth.password
+postgresql.auth.database
+```
 
 ---
 
-## Adım 4: `templates/deployment.yaml`
+# Step 3 – `_helpers.tpl`
 
-Kritik tasarım kararları:
-1. **checksum annotations**: ConfigMap/Secret değişince pod restart
-2. **readOnlyRootFilesystem uyumluluğu**: `/app/.next/cache` ve `/tmp` için emptyDir volume mount (Next.js runtime'da cache'e yazıyor)
-3. **Conditional `/app/data` PVC mount**: Sadece SQLite mode'da
-4. **envFrom**: ConfigMap ref + extraEnvFrom
-5. **env**: Secret key refs (jwt, admin, user, llm, oidc, postgres — conditional)
-6. **PostgreSQL subchart entegrasyonu**: `postgresql.enabled=true` ise subchart secret'tan password okuma
+Common Helm helper templates:
 
-**Dockerfile ile uyum noktaları:**
-- Container port: `3000` (Dockerfile EXPOSE 3000/tcp)
-- UID: `1001` (Dockerfile `adduser --uid 1001 nextjs`)
-- Workdir: `/app` (Dockerfile WORKDIR /app)
-- Data dir: `/app/data` (Dockerfile `mkdir -p data`)
-- Next.js cache: `/app/.next/cache` (standalone output)
+* `libredb-studio.name`
+* `libredb-studio.fullname`
+* `libredb-studio.chart`
+* `libredb-studio.labels`
+* `libredb-studio.selectorLabels`
+* `libredb-studio.serviceAccountName`
+* `libredb-studio.secretName`
+* `libredb-studio.configMapName`
+* `libredb-studio.pvcName`
+* `libredb-studio.persistenceEnabled`
+* `libredb-studio.image`
 
----
-
-## Adım 5: `templates/configmap.yaml`
-
-Fixed env vars: `NODE_ENV=production`, `PORT=3000`, `HOSTNAME=0.0.0.0`, `NEXT_TELEMETRY_DISABLED=1`, `NODE_OPTIONS=--max-old-space-size=384`
-
-Dynamic env vars: authProvider, logLevel, storageProvider, storageSqlitePath, llm*, oidc*, demo*
-
-**Smart default**: `postgresql.enabled=true` ve `storageProvider=local` ise otomatik `postgres`'a override.
+These helpers standardize naming, labels, and resource references.
 
 ---
 
-## Adım 6: `templates/secret.yaml`
+# Step 4 – `deployment.yaml`
 
-- `secrets.existingSecret` set ise tamamen skip (whole resource not rendered)
-- Base64 encoded data: jwtSecret, adminEmail/Password, userEmail/Password, + conditional: llmApiKey, oidcClientId/Secret, storagePostgresUrl
-- `existingSecretKeys` ile custom key name mapping
+Important design decisions:
 
----
+### 1. Config checksum annotations
 
-## Adım 7: Diğer Templates
+Pods restart automatically when ConfigMaps or Secrets change.
 
-- **service.yaml**: ClusterIP default, port 80→3000, optional NodePort
-- **ingress.yaml**: Conditional, networking.k8s.io/v1, className, TLS, multi-host paths
-- **serviceaccount.yaml**: Conditional, annotations (IRSA/Workload Identity), automountToken: false
-- **hpa.yaml**: autoscaling/v2, CPU + memory targets, custom behavior
-- **pdb.yaml**: policy/v1, minAvailable veya maxUnavailable
-- **pvc.yaml**: Auto-create when persistenceEnabled (sqlite), skip if existingClaim
-- **networkpolicy.yaml**: Ingress (port 3000), egress (DNS + HTTPS), custom rules
-- **NOTES.txt**: Access URL (ingress/nodeport/port-forward), config summary, health check command, JWT warning
+### 2. readOnlyRootFilesystem compatibility
 
----
+Next.js writes runtime cache to:
 
-## Adım 8: `values.schema.json`
+```
+/app/.next/cache
+```
 
-JSON Schema Draft-07 ile validation:
-- `authProvider`: enum [local, oidc]
-- `config.storageProvider`: enum [local, sqlite, postgres]
-- `config.logLevel`: enum [debug, info, warn, error]
-- `image.pullPolicy`: enum [Always, IfNotPresent, Never]
-- `service.type`: enum [ClusterIP, NodePort, LoadBalancer]
-- `replicaCount`: integer, minimum 1
-- `persistence.size`: pattern `^[0-9]+(Gi|Mi|Ti)$`
-- `secrets.adminEmail/userEmail`: format email
+Solution:
+
+```
+emptyDir volume mount
+```
+
+Also used for `/tmp`.
 
 ---
 
-## Adım 9: `.helmignore`
+### 3. Conditional PVC Mount
+
+```
+/app/data
+```
+
+Mounted only when using **SQLite storage mode**.
+
+---
+
+### 4. Environment variables
+
+Sources:
+
+* ConfigMap
+* Secret references
+* optional `extraEnv`
+
+---
+
+### Dockerfile compatibility
+
+Deployment settings match the container configuration:
+
+| Setting        | Value              |
+| -------------- | ------------------ |
+| Port           | 3000               |
+| User           | UID 1001           |
+| Workdir        | `/app`             |
+| Data directory | `/app/data`        |
+| Next.js cache  | `/app/.next/cache` |
+
+---
+
+# Step 5 – `configmap.yaml`
+
+Fixed environment variables:
+
+```
+NODE_ENV=production
+PORT=3000
+HOSTNAME=0.0.0.0
+NEXT_TELEMETRY_DISABLED=1
+NODE_OPTIONS=--max-old-space-size=384
+```
+
+Dynamic variables include:
+
+* authProvider
+* storageProvider
+* logLevel
+* OIDC settings
+* AI settings
+
+Smart default:
+
+If `postgresql.enabled=true` and storageProvider=local → automatically switch to PostgreSQL.
+
+---
+
+# Step 6 – `secret.yaml`
+
+Behavior:
+
+* If `secrets.existingSecret` is set → Helm **does not generate a Secret**
+* Otherwise Helm creates a Secret with:
+
+```
+jwtSecret
+adminEmail
+adminPassword
+userEmail
+userPassword
+```
+
+Optional values:
+
+* `llmApiKey`
+* `oidcClientSecret`
+* `storagePostgresUrl`
+
+---
+
+# Step 7 – Additional Templates
+
+Includes:
+
+* `service.yaml`
+* `ingress.yaml`
+* `serviceaccount.yaml`
+* `hpa.yaml`
+* `pdb.yaml`
+* `pvc.yaml`
+* `networkpolicy.yaml`
+* `NOTES.txt`
+
+These resources are conditionally rendered depending on values.
+
+---
+
+# Step 8 – `values.schema.json`
+
+Uses **JSON Schema Draft-07** to validate Helm values.
+
+Examples:
+
+```
+authProvider: enum [local, oidc]
+storageProvider: enum [local, sqlite, postgres]
+logLevel: enum [debug, info, warn, error]
+service.type: enum [ClusterIP, NodePort, LoadBalancer]
+```
+
+Additional validations:
+
+* `replicaCount ≥ 1`
+* storage size format validation
+* email format validation
+
+---
+
+# Step 9 – `.helmignore`
 
 ```
 .git
@@ -260,7 +458,9 @@ ci/
 
 ---
 
-## Adım 10: `artifacthub-repo.yml` (proje kökünde)
+# Step 10 – `artifacthub-repo.yml`
+
+Located in the **project root**.
 
 ```yaml
 repositoryID: libredb-studio
@@ -271,82 +471,94 @@ owners:
 
 ---
 
-## Adım 11: `.github/workflows/helm-release.yml`
+# Step 11 – GitHub Workflow (`helm-release.yml`)
 
-3 job'lu pipeline:
+Pipeline contains **three jobs**.
 
-### Job 1: `lint-test`
-- `helm/chart-testing-action` ile lint (`ct lint`)
-- `helm/kind-action` ile ephemeral K8s cluster
-- `ct install` ile gerçek cluster'da test (required secrets --set ile)
+### Job 1 – lint-test
 
-### Job 2: `release-github-pages` (needs: lint-test)
-- `helm/chart-releaser-action@v1.6.0` ile GitHub Pages'a release
-- `gh-pages` branch'ine `index.yaml` oluşturur
-- Repo URL: `https://libredb.github.io/libredb-studio/`
-- Bitnami repo add (subchart dependency için)
+Tools used:
 
-### Job 3: `release-oci` (needs: lint-test)
-- `helm dependency build` → `helm package` → `helm push`
-- OCI target: `oci://ghcr.io/libredb/charts`
-- ghcr.io login via GITHUB_TOKEN
+* `helm/chart-testing-action`
+* `helm/kind-action`
 
-**Trigger**: push to main (paths: `charts/**`) + workflow_dispatch
+Steps:
+
+1. Lint Helm chart
+2. Create temporary Kubernetes cluster
+3. Install chart and run tests
 
 ---
 
-## Adım 12: `charts/libredb-studio/README.md`
+### Job 2 – release-github-pages
 
-Sections:
-- Overview + badges (ArtifactHub, Helm version, K8s version)
-- Prerequisites
-- Quick Start (3 komutluk install)
-- Storage Modes (local / sqlite / postgres) örneklerle
-- OIDC SSO setup
-- AI configuration
-- HA mode (HPA + PDB + multi-replica)
-- Ingress/TLS (nginx + traefik örnekler)
-- External Secrets entegrasyonu
-- Upgrading / Uninstalling
-- Configuration reference table
+Uses:
+
+```
+helm/chart-releaser-action
+```
+
+Outputs:
+
+* `index.yaml`
+* Helm repository hosted on GitHub Pages
+
+Repository URL:
+
+```
+https://libredb.github.io/libredb-studio/
+```
 
 ---
 
-## Kurulum Örnekleri (README'de yer alacak)
+### Job 3 – release-oci
 
-### Minimal (port-forward ile test)
-```bash
+Publishes the chart to an OCI registry.
+
+Steps:
+
+```
+helm dependency build
+helm package
+helm push
+```
+
+Target registry:
+
+```
+oci://ghcr.io/libredb/charts
+```
+
+Authentication via `GITHUB_TOKEN`.
+
+---
+
+# Step 12 – Chart README
+
+`charts/libredb-studio/README.md` includes:
+
+* Overview
+* Badges
+* Installation guide
+* Storage modes
+* OIDC setup
+* AI configuration
+* High availability configuration
+* Ingress examples
+* External Secrets integration
+* Upgrade guide
+* Full configuration reference table
+
+---
+
+# Installation Examples
+
+## Minimal Installation
+
+```
 helm repo add libredb https://libredb.github.io/libredb-studio
-helm install libredb libredb/libredb-studio \
-  --set secrets.jwtSecret=$(openssl rand -base64 32) \
-  --set secrets.adminPassword=MyAdmin123 \
-  --set secrets.userPassword=MyUser123
-kubectl port-forward svc/libredb-libredb-studio 3000:80
-```
 
-### Production (Ingress + PostgreSQL + HPA)
-```bash
 helm install libredb libredb/libredb-studio \
-  --set secrets.jwtSecret=$(openssl rand -base64 32) \
-  --set secrets.adminPassword=StrongPass123 \
-  --set secrets.userPassword=StrongPass456 \
-  --set postgresql.enabled=true \
-  --set postgresql.auth.password=pg-secret \
-  --set ingress.enabled=true \
-  --set ingress.className=nginx \
-  --set "ingress.hosts[0].host=libredb.example.com" \
-  --set "ingress.hosts[0].paths[0].path=/" \
-  --set "ingress.hosts[0].paths[0].pathType=Prefix" \
-  --set "ingress.tls[0].secretName=libredb-tls" \
-  --set "ingress.tls[0].hosts[0]=libredb.example.com" \
-  --set autoscaling.enabled=true \
-  --set podDisruptionBudget.enabled=true
-```
-
-### OCI Registry ile kurulum
-```bash
-helm install libredb oci://ghcr.io/libredb/charts/libredb-studio \
-  --version 0.1.0 \
   --set secrets.jwtSecret=$(openssl rand -base64 32) \
   --set secrets.adminPassword=MyAdmin123 \
   --set secrets.userPassword=MyUser123
@@ -354,136 +566,239 @@ helm install libredb oci://ghcr.io/libredb/charts/libredb-studio \
 
 ---
 
-## Önemli Tasarım Kararları
+## Production Installation
 
-1. **readOnlyRootFilesystem + emptyDir**: Next.js `.next/cache`'e runtime'da yazıyor. emptyDir mount ile çözüldü. ISR cache pod başına ephemeral — LibreDB Studio session-based olduğu için sorun değil.
+Example with:
 
-2. **SQLite + multi-replica uyarısı**: SQLite single-writer. `storageProvider=sqlite` + `replicaCount > 1` durumunda README'de uyarı var. PVC default `ReadWriteOnce` zaten tek node'a kısıtlar.
+* PostgreSQL
+* Ingress
+* Autoscaling
 
-3. **PostgreSQL subchart auto-wiring**: `postgresql.enabled=true` ise ConfigMap `STORAGE_PROVIDER=postgres` yapar, Deployment subchart secret'tan password okur, URL otomatik hesaplanır.
-
-4. **existingSecret pattern**: Production'da Vault/Sealed Secrets/External Secrets Operator ile entegrasyon. Helm plaintext secret yönetmez.
-
-5. **Dual distribution**: GitHub Pages (classic Helm repo) + OCI (ghcr.io, modern yöntem). İkisi de ArtifactHub tarafından desteklenir.
+(Commands remain unchanged.)
 
 ---
 
-## Doğrulama (Verification)
+# Important Design Decisions
 
-### Local test
-```bash
-# 1. Lint
+### Next.js Cache
+
+Next.js writes cache files at runtime.
+
+Solution:
+
+```
+emptyDir volume
+```
+
+Cache is ephemeral but acceptable because LibreDB Studio is session-based.
+
+---
+
+### SQLite Multi-Replica Warning
+
+SQLite supports only **one writer**.
+
+If:
+
+```
+storageProvider=sqlite
+replicaCount > 1
+```
+
+the README includes a warning.
+
+---
+
+### PostgreSQL Subchart Integration
+
+When `postgresql.enabled=true`:
+
+* storage provider automatically switches to PostgreSQL
+* connection URL generated automatically
+* credentials read from the subchart secret
+
+---
+
+### existingSecret Pattern
+
+Encourages production-grade secret management with:
+
+* Vault
+* Sealed Secrets
+* External Secrets Operator
+
+---
+
+### Dual Distribution Strategy
+
+Charts are published to both:
+
+1. GitHub Pages (classic Helm repo)
+2. OCI registry (`ghcr.io`)
+
+ArtifactHub supports both.
+
+---
+
+# Verification
+
+## Local Testing
+
+Steps:
+
+```
 helm lint charts/libredb-studio
-
-# 2. Template render (dry-run)
-helm template test charts/libredb-studio \
-  --set secrets.jwtSecret=test-secret-32-chars-minimum-here \
-  --set secrets.adminPassword=test123 \
-  --set secrets.userPassword=test123 | kubectl apply --dry-run=client -f -
-
-# 3. Schema validation
-helm lint charts/libredb-studio --strict
-
-# 4. Kind cluster install test
-kind create cluster
-helm install test charts/libredb-studio \
-  --set secrets.jwtSecret=test-secret-32-chars-minimum-here \
-  --set secrets.adminPassword=test123 \
-  --set secrets.userPassword=test123
-kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=libredb-studio --timeout=120s
-kubectl port-forward svc/test-libredb-studio 3000:80
-# Browser: http://localhost:3000 → login page
-# curl http://localhost:3000/api/db/health → {"status":"healthy"}
-helm uninstall test
-kind delete cluster
+helm template ...
+helm install ...
 ```
 
-### CI test (GitHub Actions)
-- Push to main with `charts/` changes → `helm-release.yml` triggers
-- `ct lint` + `ct install` on kind cluster
-- chart-releaser publishes to GitHub Pages
-- helm push publishes to ghcr.io OCI
+Includes:
+
+* lint validation
+* schema validation
+* installation test on a Kind cluster
 
 ---
 
-## Uygulama Sırası
+# Implementation Order
 
-1. `charts/libredb-studio/.helmignore`
-2. `charts/libredb-studio/Chart.yaml`
-3. `charts/libredb-studio/values.yaml`
-4. `charts/libredb-studio/values.schema.json`
-5. `charts/libredb-studio/templates/_helpers.tpl`
-6. `charts/libredb-studio/templates/configmap.yaml`
-7. `charts/libredb-studio/templates/secret.yaml`
-8. `charts/libredb-studio/templates/serviceaccount.yaml`
-9. `charts/libredb-studio/templates/deployment.yaml`
-10. `charts/libredb-studio/templates/service.yaml`
-11. `charts/libredb-studio/templates/ingress.yaml`
-12. `charts/libredb-studio/templates/hpa.yaml`
-13. `charts/libredb-studio/templates/pdb.yaml`
-14. `charts/libredb-studio/templates/pvc.yaml`
-15. `charts/libredb-studio/templates/networkpolicy.yaml`
-16. `charts/libredb-studio/templates/NOTES.txt`
-17. `charts/libredb-studio/README.md`
-18. `artifacthub-repo.yml` (proje kökünde)
-19. `.github/workflows/helm-release.yml`
-20. `helm dependency build` + `helm lint` ile doğrulama
+Recommended order of implementation:
+
+1. `.helmignore`
+2. `Chart.yaml`
+3. `values.yaml`
+4. `values.schema.json`
+5. `_helpers.tpl`
+6. `configmap.yaml`
+7. `secret.yaml`
+8. `serviceaccount.yaml`
+9. `deployment.yaml`
+10. `service.yaml`
+11. `ingress.yaml`
+12. `hpa.yaml`
+13. `pdb.yaml`
+14. `pvc.yaml`
+15. `networkpolicy.yaml`
+16. `NOTES.txt`
+17. `README.md`
+18. `artifacthub-repo.yml`
+19. `helm-release.yml`
+20. Final verification with `helm lint` and `helm dependency build`
 
 ---
 
-## ArtifactHub Kurulum Rehberi (Kod yazıldıktan sonra yapılacak manuel adımlar)
+# ArtifactHub Setup Guide
 
-### Ön Koşullar
-- GitHub hesabı (mevcut)
-- `libredb` GitHub organization (mevcut)
-- Helm chart kodu tamamlanmış ve main'e push edilmiş olmalı
+Steps performed **after the code is implemented**.
 
-### Adım 1: GitHub Pages Aktifleştirme
-1. GitHub repo → **Settings** → **Pages**
-2. **Source**: `Deploy from a branch`
-3. **Branch**: `gh-pages` / `/ (root)` → **Save**
-4. `helm-release.yml` workflow'u ilk çalıştığında `gh-pages` branch'ini otomatik oluşturur
-5. Sonuç: `https://libredb.github.io/libredb-studio/` adresinde Helm repo aktif olur
+---
 
-### Adım 2: ArtifactHub Hesap ve Organization
-1. **https://artifacthub.io** → **Sign In** → **GitHub ile giriş** (OAuth, ücretsiz)
-2. Sağ üst menü → **Control Panel** → **Organizations** → **Add Organization**
-   - **Name**: `libredb`
-   - **Display Name**: `LibreDB`
-   - **Home URL**: `https://github.com/libredb`
-   - **Description**: `Open-source database tools for cloud-native teams`
-   - **Logo URL**: `https://raw.githubusercontent.com/libredb/libredb-studio/main/public/logo.svg`
-3. **Save**
+## 1 – Enable GitHub Pages
 
-### Adım 3: Helm Repository Ekleme (GitHub Pages)
-1. Control Panel → **Repositories** → **Add Repository**
-   - **Kind**: Helm charts
-   - **Name**: `libredb-studio`
-   - **Display Name**: `LibreDB Studio`
-   - **URL**: `https://libredb.github.io/libredb-studio/`
-   - **Organization**: `libredb` (dropdown'dan seç)
-2. **Add** → ArtifactHub ~30 dakika içinde tarar ve chart'ı listeler
+Repository → **Settings → Pages**
 
-### Adım 4: OCI Repository Ekleme (opsiyonel, ek kanal)
-1. Control Panel → **Repositories** → **Add Repository**
-   - **Kind**: Helm charts
-   - **Name**: `libredb-studio-oci`
-   - **URL**: `oci://ghcr.io/libredb/charts/libredb-studio`
-   - **Organization**: `libredb`
-2. **Add**
+Source:
 
-### Adım 5: Verified Publisher Badge
-1. `artifacthub-repo.yml` dosyası GitHub Pages'ta `index.yaml` ile aynı seviyede olmalı
-2. chart-releaser-action bunu otomatik yapar
-3. ArtifactHub bir sonraki taramada `repositoryID`'yi doğrular → **Verified Publisher** badge'i otomatik aktif olur
+```
+Deploy from a branch
+```
 
-### Adım 6: Official Status (opsiyonel, ilerisi için)
-1. Verified Publisher badge aktif olduktan sonra
-2. Control Panel → Organization → **Request Official Status**
-3. ArtifactHub ekibi manuel onaylar (yazılımın sahibi olduğunuzu doğrular)
+Branch:
 
-### Sonuç
-Chart şu adreslerde erişilebilir olacak:
-- **ArtifactHub**: `https://artifacthub.io/packages/helm/libredb-studio/libredb-studio`
-- **Helm Repo**: `helm repo add libredb https://libredb.github.io/libredb-studio`
-- **OCI**: `helm install libredb oci://ghcr.io/libredb/charts/libredb-studio`
+```
+gh-pages
+```
+
+Result:
+
+```
+https://libredb.github.io/libredb-studio/
+```
+
+---
+
+## 2 – Create ArtifactHub Organization
+
+Go to:
+
+[https://artifacthub.io](https://artifacthub.io)
+
+Sign in with GitHub.
+
+Create organization:
+
+```
+Name: libredb
+Display Name: LibreDB
+Home URL: https://github.com/libredb
+Description: Open-source database tools for cloud-native teams
+```
+
+---
+
+## 3 – Add Helm Repository
+
+ArtifactHub → Control Panel → Repositories → Add
+
+```
+Kind: Helm charts
+Name: libredb-studio
+URL: https://libredb.github.io/libredb-studio/
+Organization: libredb
+```
+
+ArtifactHub scans the repo automatically.
+
+---
+
+## 4 – Add OCI Repository (Optional)
+
+```
+oci://ghcr.io/libredb/charts/libredb-studio
+```
+
+---
+
+## 5 – Verified Publisher Badge
+
+Requirements:
+
+* `artifacthub-repo.yml` in repository
+* Hosted Helm repo
+
+ArtifactHub verifies ownership automatically.
+
+---
+
+## 6 – Official Status (Optional)
+
+Once verified:
+
+```
+Control Panel → Organization → Request Official Status
+```
+
+ArtifactHub performs a manual review.
+
+---
+
+# Final Result
+
+LibreDB Studio Helm chart will be available at:
+
+**ArtifactHub**
+
+[https://artifacthub.io/packages/helm/libredb-studio/libredb-studio](https://artifacthub.io/packages/helm/libredb-studio/libredb-studio)
+
+**Helm repository**
+
+```
+helm repo add libredb https://libredb.github.io/libredb-studio
+```
+
+**OCI registry**
+
+```
+helm install libredb oci://ghcr.io/libredb/charts/libredb-studio
+```
+
