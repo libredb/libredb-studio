@@ -411,12 +411,25 @@ LibreDB Studio includes a `render.yaml` Blueprint for one-click deployment:
 docker-compose up -d
 ```
 
-### Kubernetes Compatibility
+### Kubernetes (Helm Chart)
 
-LibreDB Studio is optimized for K8s with:
-- **Standalone Mode**: Reduced image size via Next.js output tracing.
-- **Horizontal Scaling**: Stateless architecture (JWT-based) for effortless scaling.
-- **Health Checks**: Integrated `/api/db/health` endpoint for readiness/liveness probes.
+```bash
+helm repo add libredb https://libredb.org/libredb-studio/
+helm install libredb libredb/libredb-studio \
+  --set secrets.jwtSecret=$(openssl rand -base64 32) \
+  --set secrets.adminPassword=MyAdmin123 \
+  --set secrets.userPassword=MyUser123
+```
+
+Or via OCI registry:
+```bash
+helm install libredb oci://ghcr.io/libredb/charts/libredb-studio --version 0.1.0 \
+  --set secrets.jwtSecret=$(openssl rand -base64 32) \
+  --set secrets.adminPassword=MyAdmin123 \
+  --set secrets.userPassword=MyUser123
+```
+
+Features: PostgreSQL subchart, Ingress/TLS, HPA, PDB, NetworkPolicy, ExternalSecrets support. See [charts/libredb-studio/README.md](charts/libredb-studio/README.md) for full documentation.
 
 ---
 

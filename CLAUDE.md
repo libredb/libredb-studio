@@ -10,6 +10,9 @@ LibreDB Studio is a web-based SQL IDE for cloud-native teams. It supports Postgr
 * Repository: https://github.com/libredb/libredb-studio
 * Container Registry: https://github.com/libredb/libredb-studio/pkgs/container/libredb-studio
 * Docker Image: ghcr.io/libredb/libredb-studio:latest
+* Helm Chart: https://artifacthub.io/packages/helm/libredb-studio/libredb-studio
+* Helm Repo: https://libredb.org/libredb-studio/
+* Helm OCI: oci://ghcr.io/libredb/charts/libredb-studio
 
 ## Development Commands
 
@@ -47,6 +50,11 @@ bun run test:coverage
 
 # Docker development
 docker-compose up -d
+
+# Helm chart
+helm lint charts/libredb-studio --strict
+helm template test charts/libredb-studio --set secrets.jwtSecret=test-secret-32-chars-minimum-here --set secrets.adminPassword=test123 --set secrets.userPassword=test123
+helm dependency build charts/libredb-studio
 ```
 
 The project uses ESLint 9 for linting and `bun:test` for testing with `@testing-library/react` + `happy-dom` for component tests and Playwright for E2E tests.
@@ -129,6 +137,13 @@ tests/
 └── components/             # Component tests (happy-dom)
 
 e2e/                        # Playwright E2E tests (browser)
+
+charts/
+└── libredb-studio/         # Helm chart for Kubernetes deployment
+    ├── Chart.yaml           # Chart metadata + ArtifactHub annotations
+    ├── values.yaml          # Default configuration
+    ├── values.schema.json   # JSON Schema validation
+    └── templates/           # K8s manifests (deployment, service, ingress, etc.)
 ```
 
 ### Key Patterns
