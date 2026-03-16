@@ -60,7 +60,9 @@ export async function createDatabaseProvider(
   connection: DatabaseConnection,
   options: ProviderOptions = {}
 ): Promise<DatabaseProvider> {
-  console.log(`[DB] Creating ${connection.type} provider for "${connection.name}"`);
+  // Sanitize user-controlled values to prevent log injection
+  const sanitize = (v: string) => v.replace(/[\r\n]/g, ' ').replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, '');
+  console.log(`[DB] Creating ${sanitize(connection.type)} provider for "${sanitize(connection.name || '')}"`);
 
   switch (connection.type) {
     // SQL Databases - dynamically imported to reduce memory

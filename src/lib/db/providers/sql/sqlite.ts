@@ -169,13 +169,28 @@ export class SQLiteProvider extends SQLBaseProvider {
   }
 
   private getDatabasePath(): string {
+    let dbPath: string;
     if (this.config.connectionString) {
-      if (this.config.connectionString.startsWith('file:')) {
-        return this.config.connectionString.replace('file:', '');
-      }
-      return this.config.connectionString;
+      dbPath = this.config.connectionString.startsWith('file:')
+        ? this.config.connectionString.replace('file:', '')
+        : this.config.connectionString;
+    } else {
+      dbPath = this.config.database || ':memory:';
     }
-    return this.config.database || ':memory:';
+
+    // Allow :memory: without path validation
+    if (dbPath === ':memory:') return dbPath;
+
+    // Resolve to absolute path and reject path traversal attempts
+    const resolved = path.resolve(dbPath);
+    if (resolved !== path.normalize(resolved) || dbPath.includes('\0')) {
+      throw new DatabaseConfigError(
+        'Invalid database path: path traversal is not allowed',
+        'sqlite'
+      );
+    }
+
+    return resolved;
   }
 
   // ============================================================================

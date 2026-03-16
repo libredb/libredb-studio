@@ -65,6 +65,11 @@ function extractError(error: unknown): { name: string; message: string; stack?: 
   return { name: 'Unknown', message: String(error) };
 }
 
+/** Sanitize log message to prevent log injection (newlines, control chars) */
+function sanitizeLogValue(value: string): string {
+  return value.replace(/[\r\n]/g, ' ').replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, '');
+}
+
 function log(level: LogLevel, message: string, error?: unknown, context?: LogContext): void {
   if (!shouldLog(level)) return;
 
@@ -73,31 +78,35 @@ function log(level: LogLevel, message: string, error?: unknown, context?: LogCon
   const ctx = formatContext(context);
   const errInfo = level === 'error' ? extractError(error) : undefined;
 
-  const line = `[${tag}] [${timestamp}]${ctx} ${message}`;
+  const line = `[${tag}] [${timestamp}]${sanitizeLogValue(ctx)} ${sanitizeLogValue(message)}`;
 
   if (errInfo) {
-    const errLine = ` | ${errInfo.name}: ${errInfo.message}`;
+    const errLine = ` | ${sanitizeLogValue(errInfo.name)}: ${sanitizeLogValue(errInfo.message)}`;
     const full = line + errLine;
     if (errInfo.stack) {
-      console.error(full + '\n' + errInfo.stack);
+      // Stack traces contain intentional newlines — sanitize control chars only
+      const safeStack = errInfo.stack.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, '');
+      console.error(full, '\n', safeStack);
     } else {
       console.error(full);
     }
     return;
   }
 
+  // All values in `line` are already sanitized via sanitizeLogValue
+  const safeLine = line;
   switch (level) {
     case 'debug':
-      console.debug(line);
+      console.debug(safeLine);
       break;
     case 'info':
-      console.info(line);
+      console.info(safeLine);
       break;
     case 'warn':
-      console.warn(line);
+      console.warn(safeLine);
       break;
     case 'error':
-      console.error(line);
+      console.error(safeLine);
       break;
   }
 }

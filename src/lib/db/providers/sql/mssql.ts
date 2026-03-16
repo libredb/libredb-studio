@@ -120,7 +120,7 @@ export class MSSQLProvider extends SQLBaseProvider {
   private buildConfig(): mssql.config {
     const host = this.config.host || 'localhost';
     const port = this.config.port || 1433;
-    const isAzure = host.includes('.database.windows.net');
+    const isAzure = host.endsWith('.database.windows.net');
 
     const sslConfig = this.config.ssl;
     // SQL Server 2022+ enforces encryption by default; always encrypt and trust self-signed certs for non-Azure
