@@ -235,7 +235,7 @@ export function buildLogoutUrl(returnTo: string): string | null {
     const roleClaim = config.roleClaim;
 
     // Auth0 uses /v2/logout
-    if (issuerUrl.hostname.includes('auth0.com')) {
+    if (issuerUrl.hostname === 'auth0.com' || issuerUrl.hostname.endsWith('.auth0.com')) {
       const logoutUrl = new URL('/v2/logout', config.issuer);
       logoutUrl.searchParams.set('client_id', config.clientId);
       logoutUrl.searchParams.set('returnTo', returnTo);
