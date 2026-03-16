@@ -263,9 +263,12 @@ export abstract class BaseDatabaseProvider implements DatabaseProvider {
    */
   protected logError(operation: string, error: unknown): void {
     const errorMessage = error instanceof Error ? error.message : String(error);
+    // Sanitize to prevent log injection via newlines/control chars
+    const safeMessage = errorMessage.replace(/[\r\n]/g, ' ').replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, '');
+    const safeOperation = operation.replace(/[\r\n]/g, ' ');
     console.error(
-      `[DB:${this.type}] ${operation} failed:`,
-      errorMessage,
+      `[DB:${this.type}] ${safeOperation} failed:`,
+      safeMessage,
       this.getSafeConfig()
     );
   }

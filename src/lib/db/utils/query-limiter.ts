@@ -48,7 +48,8 @@ export interface LimitedQueryResult {
  * SQL sorgusunu analiz eder ve türünü, LIMIT/OFFSET durumunu belirler.
  */
 export function analyzeQuery(sql: string): ParsedQueryInfo {
-  const trimmed = sql.trim();
+  // Strip trailing whitespace and semicolons upfront to avoid ReDoS-prone \s*;?\s*$ patterns
+  const trimmed = sql.trim().replace(/;+\s*$/, '');
   const normalized = trimmed.replace(/\s+/g, ' ').toUpperCase();
 
   // Query type detection
@@ -66,7 +67,7 @@ export function analyzeQuery(sql: string): ParsedQueryInfo {
   // LIMIT/OFFSET detection - en dıştaki sorgunun LIMIT'ini bul
   // Regex: Sorgunun sonundaki LIMIT [sayı] [OFFSET sayı] pattern'i
   const limitMatch = trimmed.match(
-    /\bLIMIT\s+(\d+)(?:\s*,\s*(\d+)|\s+OFFSET\s+(\d+))?\s*;?\s*$/i
+    /\bLIMIT\s+(\d+)(?:\s*,\s*(\d+)|\s+OFFSET\s+(\d+))?\s*$/i
   );
 
   let hasLimit = false;
@@ -88,7 +89,7 @@ export function analyzeQuery(sql: string): ParsedQueryInfo {
 
   // Oracle/MSSQL: FETCH FIRST N ROWS ONLY / FETCH NEXT N ROWS ONLY
   if (!hasLimit) {
-    const fetchMatch = trimmed.match(/\bFETCH\s+(?:FIRST|NEXT)\s+(\d+)\s+ROWS?\s+ONLY\s*;?\s*$/i);
+    const fetchMatch = trimmed.match(/\bFETCH\s+(?:FIRST|NEXT)\s+(\d+)\s+ROWS?\s+ONLY\s*$/i);
     if (fetchMatch) {
       hasLimit = true;
       existingLimit = parseInt(fetchMatch[1]);
@@ -110,7 +111,7 @@ export function analyzeQuery(sql: string): ParsedQueryInfo {
   }
 
   // OFFSET without LIMIT (rare but possible in PostgreSQL)
-  const offsetOnlyMatch = !hasLimit && trimmed.match(/\bOFFSET\s+(\d+)\s*;?\s*$/i);
+  const offsetOnlyMatch = !hasLimit && trimmed.match(/\bOFFSET\s+(\d+)\s*$/i);
   const hasOffset = hasLimit ? existingOffset !== undefined : !!offsetOnlyMatch;
 
   if (offsetOnlyMatch && !hasLimit) {
@@ -176,24 +177,20 @@ export function applyQueryLimit(
     };
   }
 
-  let modifiedSql = sql.trim();
+  // Check for trailing semicolon before stripping
+  const hasSemicolon = /;\s*$/.test(sql.trim());
+  let modifiedSql = sql.trim().replace(/;+\s*$/, '');
 
   // Mevcut LIMIT/OFFSET'i kaldır (eğer forceLimit true ise)
   if (info.hasLimit && forceLimit) {
     // MySQL style: LIMIT offset, count
     modifiedSql = modifiedSql
-      .replace(/\bLIMIT\s+\d+\s*,\s*\d+\s*;?\s*$/i, '')
+      .replace(/\bLIMIT\s+\d+\s*,\s*\d+\s*$/i, '')
       .trim();
     // Standard style: LIMIT count OFFSET offset
     modifiedSql = modifiedSql
-      .replace(/\bLIMIT\s+\d+(?:\s+OFFSET\s+\d+)?\s*;?\s*$/i, '')
+      .replace(/\bLIMIT\s+\d+(?:\s+OFFSET\s+\d+)?\s*$/i, '')
       .trim();
-  }
-
-  // Sondaki noktalı virgülü kaldır
-  const hasSemicolon = modifiedSql.endsWith(';');
-  if (hasSemicolon) {
-    modifiedSql = modifiedSql.slice(0, -1).trim();
   }
 
   // LIMIT OFFSET clause'u ekle

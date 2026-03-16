@@ -65,6 +65,11 @@ function extractError(error: unknown): { name: string; message: string; stack?: 
   return { name: 'Unknown', message: String(error) };
 }
 
+/** Sanitize log message to prevent log injection (newlines, control chars) */
+function sanitizeLogValue(value: string): string {
+  return value.replace(/[\r\n]/g, ' ').replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, '');
+}
+
 function log(level: LogLevel, message: string, error?: unknown, context?: LogContext): void {
   if (!shouldLog(level)) return;
 
@@ -73,7 +78,7 @@ function log(level: LogLevel, message: string, error?: unknown, context?: LogCon
   const ctx = formatContext(context);
   const errInfo = level === 'error' ? extractError(error) : undefined;
 
-  const line = `[${tag}] [${timestamp}]${ctx} ${message}`;
+  const line = `[${tag}] [${timestamp}]${sanitizeLogValue(ctx)} ${sanitizeLogValue(message)}`;
 
   if (errInfo) {
     const errLine = ` | ${errInfo.name}: ${errInfo.message}`;
