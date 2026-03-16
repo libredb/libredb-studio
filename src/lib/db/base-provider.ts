@@ -264,12 +264,9 @@ export abstract class BaseDatabaseProvider implements DatabaseProvider {
   protected logError(operation: string, error: unknown): void {
     const errorMessage = error instanceof Error ? error.message : String(error);
     // Sanitize to prevent log injection via newlines/control chars
-    const safeMessage = errorMessage.replace(/[\r\n]/g, ' ').replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, '');
-    const safeOperation = operation.replace(/[\r\n]/g, ' ');
+    const sanitize = (v: string) => v.replace(/[\r\n]/g, ' ').replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, '');
     console.error(
-      `[DB:${this.type}] ${safeOperation} failed:`,
-      safeMessage,
-      this.getSafeConfig()
+      `[DB:${sanitize(this.type)}] ${sanitize(operation)} failed: ${sanitize(errorMessage)}`
     );
   }
 

@@ -47,9 +47,18 @@ export interface LimitedQueryResult {
 /**
  * SQL sorgusunu analiz eder ve türünü, LIMIT/OFFSET durumunu belirler.
  */
+/** Strip trailing semicolons and whitespace without regex to avoid ReDoS */
+function stripTrailingSemicolon(s: string): string {
+  let end = s.length;
+  while (end > 0 && (s[end - 1] === ' ' || s[end - 1] === '\t' || s[end - 1] === '\n' || s[end - 1] === '\r')) end--;
+  while (end > 0 && s[end - 1] === ';') end--;
+  while (end > 0 && (s[end - 1] === ' ' || s[end - 1] === '\t' || s[end - 1] === '\n' || s[end - 1] === '\r')) end--;
+  return s.slice(0, end);
+}
+
 export function analyzeQuery(sql: string): ParsedQueryInfo {
-  // Strip trailing whitespace and semicolons upfront to avoid ReDoS-prone \s*;?\s*$ patterns
-  const trimmed = sql.trim().replace(/;+\s*$/, '');
+  // Strip trailing whitespace and semicolons upfront to avoid ReDoS-prone patterns
+  const trimmed = stripTrailingSemicolon(sql.trim());
   const normalized = trimmed.replace(/\s+/g, ' ').toUpperCase();
 
   // Query type detection
@@ -177,9 +186,10 @@ export function applyQueryLimit(
     };
   }
 
-  // Check for trailing semicolon before stripping
-  const hasSemicolon = /;\s*$/.test(sql.trim());
-  let modifiedSql = sql.trim().replace(/;+\s*$/, '');
+  // Check for trailing semicolon before stripping (string-based to avoid ReDoS)
+  const trimmedInput = sql.trim();
+  let modifiedSql = stripTrailingSemicolon(trimmedInput);
+  const hasSemicolon = modifiedSql.length < trimmedInput.length && trimmedInput.includes(';');
 
   // Mevcut LIMIT/OFFSET'i kaldır (eğer forceLimit true ise)
   if (info.hasLimit && forceLimit) {
