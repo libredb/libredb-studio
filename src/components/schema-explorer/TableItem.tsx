@@ -129,9 +129,9 @@ export const TableItem = React.memo(function TableItem({
   const callbacks = { onTableClick, onGenerateSelect, onProfileTable, onGenerateCode, onGenerateTestData, onOpenMaintenance };
 
   return (
-    <ContextMenu>
-      <ContextMenuTrigger asChild>
-        <div className="group flex flex-col">
+    <div className="group flex flex-col">
+      <ContextMenu>
+        <ContextMenuTrigger asChild>
           <div
             className={cn(
               'flex items-center gap-1.5 px-2 py-1.5 rounded-md cursor-pointer transition-all',
@@ -186,25 +186,25 @@ export const TableItem = React.memo(function TableItem({
               </DropdownMenu>
             </div>
           </div>
+        </ContextMenuTrigger>
+        <ContextMenuContent className="w-48">
+          {renderMenuItems(table, labels, isAdmin, callbacks, copyToClipboard, ContextMenuItem, ContextMenuSeparator)}
+        </ContextMenuContent>
+      </ContextMenu>
 
-          <AnimatePresence>
-            {isExpanded && (
-              <motion.div
-                initial={{ height: 0, opacity: 0 }}
-                animate={{ height: 'auto', opacity: 1 }}
-                exit={{ height: 0, opacity: 0 }}
-                transition={{ duration: 0.2 }}
-                className="overflow-hidden"
-              >
-                <ColumnList columns={table.columns} indexes={table.indexes} />
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </div>
-      </ContextMenuTrigger>
-      <ContextMenuContent className="w-48">
-        {renderMenuItems(table, labels, isAdmin, callbacks, copyToClipboard, ContextMenuItem, ContextMenuSeparator)}
-      </ContextMenuContent>
-    </ContextMenu>
+      <AnimatePresence>
+        {isExpanded && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            className="overflow-hidden"
+          >
+            <ColumnList columns={table.columns} indexes={table.indexes} />
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
   );
 });
