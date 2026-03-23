@@ -163,10 +163,10 @@ describe('POST /api/db/cancel', () => {
     });
 
     const res = await POST(req as never);
-    const data = await parseResponseJSON<{ error: string; cancelled: boolean }>(res);
+    const data = await parseResponseJSON<{ error: string; code: string }>(res);
 
     expect(res.status).toBe(500);
-    expect(data.cancelled).toBe(false);
     expect(data.error).toContain('Failed to cancel query');
+    expect(data.code).toBe('INTERNAL_ERROR');
   });
 });

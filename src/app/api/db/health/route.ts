@@ -1,9 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import {
-  getOrCreateProvider,
-  isDatabaseError,
-  ConnectionError,
-} from '@/lib/db';
+import { getOrCreateProvider } from '@/lib/db';
+import { createErrorResponse } from '@/lib/api/errors';
 
 /**
  * GET /api/db/health
@@ -38,30 +35,6 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json(health);
   } catch (error) {
-    console.error('[API:health] Error:', error);
-
-    if (error instanceof ConnectionError) {
-      return NextResponse.json(
-        {
-          error: `Connection failed: ${error.message}`,
-          activeConnections: 0,
-          databaseSize: 'N/A',
-          cacheHitRatio: 'N/A',
-          slowQueries: [],
-          activeSessions: [],
-        },
-        { status: 503 }
-      );
-    }
-
-    if (isDatabaseError(error)) {
-      return NextResponse.json(
-        { error: error.message, code: error.code },
-        { status: 500 }
-      );
-    }
-
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    return NextResponse.json({ error: errorMessage }, { status: 500 });
+    return createErrorResponse(error, { route: 'api/db/health' });
   }
 }

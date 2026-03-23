@@ -78,7 +78,6 @@ export default function Studio() {
     activeConnection: conn.activeConnection,
     metadata,
     schema: conn.schema,
-    queryEditorRef,
   });
 
   // 4. Transaction Control
@@ -248,6 +247,13 @@ export default function Studio() {
   };
 
   const handleDeleteConnection = (id: string) => {
+    // Clean up server-side provider cache and close connections/tunnels
+    fetch('/api/db/disconnect', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ connectionId: id }),
+    }).catch(() => { /* best-effort cleanup */ });
+
     storage.deleteConnection(id);
     const updated = storage.getConnections();
     conn.setConnections(updated);
@@ -256,7 +262,7 @@ export default function Studio() {
 
   return (
     <div className="flex h-screen w-full bg-[#050505] text-zinc-100 overflow-hidden font-sans select-none">
-      <ResizablePanelGroup direction="horizontal" className="h-full">
+      <ResizablePanelGroup id="studio-main" direction="horizontal" className="h-full">
         <ResizablePanel defaultSize={22} minSize={15} maxSize={35} className="hidden md:block">
           <Sidebar
             connections={conn.connections}
@@ -412,7 +418,7 @@ export default function Studio() {
                 activeMobileTab !== 'editor' && "hidden md:block"
               )}>
                 <div className="h-full">
-                  <ResizablePanelGroup direction="vertical">
+                  <ResizablePanelGroup id="studio-editor" direction="vertical">
                     <ResizablePanel defaultSize={40} minSize={20}>
                       <div className="h-full flex flex-col">
                         <QueryToolbar
@@ -440,7 +446,7 @@ export default function Studio() {
                           <QueryEditor
                             ref={queryEditorRef}
                             value={tabMgr.currentTab.query}
-                            onChange={(val) => tabMgr.updateCurrentTab({ query: val })}
+                            onContentChange={(val) => tabMgr.updateTabById(tabMgr.currentTab.id, { query: val })}
                             onExplain={metadata?.capabilities.supportsExplain ? () => queryExec.executeQuery(undefined, undefined, true) : undefined}
                             language={tabMgr.currentTab.type === 'mongodb' ? 'json' : 'sql'}
                             tables={conn.tableNames}

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getOrCreateProvider } from '@/lib/db';
+import { createErrorResponse } from '@/lib/api/errors';
 
 export async function POST(req: NextRequest) {
   try {
@@ -26,8 +27,6 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ cancelled });
   } catch (error) {
-    console.error('[API:cancel] Error:', error);
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    return NextResponse.json({ error: errorMessage, cancelled: false }, { status: 500 });
+    return createErrorResponse(error, { route: 'api/db/cancel' });
   }
 }

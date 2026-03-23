@@ -7,6 +7,7 @@ import {
   encryptState,
   getPublicOrigin,
 } from '@/lib/oidc';
+import { logger } from '@/lib/logger';
 
 export async function GET(request: Request) {
   try {
@@ -35,7 +36,7 @@ export async function GET(request: Request) {
 
     return NextResponse.redirect(url.toString());
   } catch (error) {
-    console.error('OIDC login error:', error);
+    logger.error('OIDC login error', error, { route: 'GET /api/auth/oidc/login' });
     const origin = getPublicOrigin(request);
     return NextResponse.redirect(`${origin}/login?error=oidc_config`);
   }

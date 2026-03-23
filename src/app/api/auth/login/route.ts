@@ -1,5 +1,7 @@
 import { login } from '@/lib/auth';
 import { NextRequest, NextResponse } from 'next/server';
+import { createErrorResponse } from '@/lib/api/errors';
+import { logger } from '@/lib/logger';
 
 interface AuthUser {
   email: string;
@@ -49,14 +51,12 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: true, role: matched.role });
     }
 
+    logger.warn('Failed login attempt', { route: 'POST /api/auth/login', email });
     return NextResponse.json(
       { success: false, message: 'Invalid email or password' },
       { status: 401 }
     );
-  } catch {
-    return NextResponse.json(
-      { success: false, message: 'An error occurred' },
-      { status: 500 }
-    );
+  } catch (error) {
+    return createErrorResponse(error, { route: 'POST /api/auth/login' });
   }
 }

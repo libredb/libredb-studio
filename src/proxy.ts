@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { jwtVerify } from 'jose';
+import { logger } from '@/lib/logger';
 
 function getJwtSecret(): Uint8Array {
   const secret = process.env.JWT_SECRET;
@@ -31,6 +32,7 @@ function jwtSecret(): Uint8Array {
 
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
+  const isStaticAsset = /\.[a-z0-9]+$/i.test(pathname);
 
   const token = request.cookies.get('auth-token')?.value;
 
@@ -44,6 +46,7 @@ export async function proxy(request: NextRequest) {
         return NextResponse.redirect(new URL(role === 'admin' ? '/admin' : '/', request.url));
       } catch {
         // Invalid token, allow access to login page
+        logger.debug('Invalid token on login page, allowing access', { route: 'proxy' });
         return NextResponse.next();
       }
     }
@@ -55,6 +58,7 @@ export async function proxy(request: NextRequest) {
   if (
     pathname.startsWith('/api/auth') ||
     pathname.startsWith('/_next') ||
+    isStaticAsset ||
     pathname === '/favicon.ico' ||
     // Health check endpoint for load balancers (Render, K8s, etc.)
     pathname === '/api/db/health' ||
@@ -81,6 +85,7 @@ export async function proxy(request: NextRequest) {
 
     return NextResponse.next();
   } catch {
+    logger.warn('JWT verification failed, redirecting to login', { route: 'proxy' });
     return NextResponse.redirect(new URL('/login', request.url));
   }
 }
@@ -97,6 +102,6 @@ export const config = {
      * - _next/image (image optimization files)
      * - favicon.ico (favicon file)
      */
-    '/((?!api/auth|api/db/health|api/demo-connection|api/storage/config|_next/static|_next/image|favicon.ico).*)',
+    '/((?!api/auth|api/db/health|api/demo-connection|api/storage/config|_next/static|_next/image|.*\\..*).*)',
   ],
 };

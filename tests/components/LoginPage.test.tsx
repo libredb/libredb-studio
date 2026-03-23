@@ -51,12 +51,6 @@ describe('LoginPage', () => {
     expect(getAllByText('LibreDB Studio').length).toBeGreaterThanOrEqual(1);
   });
 
-  test('renders quick access Admin and User buttons', () => {
-    const { getByText } = renderLogin();
-    expect(getByText('Admin')).not.toBeNull();
-    expect(getByText('User')).not.toBeNull();
-  });
-
   test('shows error toast when submitting empty form', () => {
     const { form } = renderLogin();
     fireEvent.submit(form);
@@ -166,63 +160,4 @@ describe('LoginPage', () => {
     });
   });
 
-  test('Admin quick access button sends admin credentials', async () => {
-    const mockFetch = mock(() =>
-      Promise.resolve(new Response(JSON.stringify({ success: true, role: 'admin' })))
-    );
-    globalThis.fetch = mockFetch as never;
-
-    const { getByText, user } = renderLogin();
-    await user.click(getByText('Admin'));
-
-    await waitFor(() => {
-      expect(mockFetch).toHaveBeenCalledTimes(1);
-    });
-
-    const [, options] = mockFetch.mock.calls[0] as unknown as [string, RequestInit];
-    expect(JSON.parse(options.body as string)).toEqual({ email: 'admin@libredb.org', password: 'LibreDB.2026' });
-  });
-
-  test('User quick access button sends user credentials', async () => {
-    const mockFetch = mock(() =>
-      Promise.resolve(new Response(JSON.stringify({ success: true, role: 'user' })))
-    );
-    globalThis.fetch = mockFetch as never;
-
-    const { getByText, user } = renderLogin();
-    await user.click(getByText('User'));
-
-    await waitFor(() => {
-      expect(mockFetch).toHaveBeenCalledTimes(1);
-    });
-
-    const [, options] = mockFetch.mock.calls[0] as unknown as [string, RequestInit];
-    expect(JSON.parse(options.body as string)).toEqual({ email: 'user@libredb.org', password: 'LibreDB.2026' });
-  });
-
-  test('disables buttons while loading', async () => {
-    let resolveFetch!: (v: Response) => void;
-    globalThis.fetch = mock(() =>
-      new Promise<Response>((resolve) => { resolveFetch = resolve; })
-    ) as never;
-
-    const { form, emailInput, passwordInput, user, getByText } = renderLogin();
-    await user.type(emailInput, 'test@example.com');
-    await user.type(passwordInput, 'test');
-    fireEvent.submit(form);
-
-    await waitFor(() => {
-      expect(getByText('Authenticating...')).not.toBeNull();
-    });
-
-    const adminBtn = getByText('Admin').closest('button')!;
-    const userBtn = getByText('User').closest('button')!;
-    expect(adminBtn.hasAttribute('disabled')).toBe(true);
-    expect(userBtn.hasAttribute('disabled')).toBe(true);
-
-    resolveFetch(new Response(JSON.stringify({ success: false })));
-    await waitFor(() => {
-      expect(getByText('Sign In')).not.toBeNull();
-    });
-  });
 });

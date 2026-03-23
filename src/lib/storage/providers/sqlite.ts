@@ -7,6 +7,7 @@
 import type { ServerStorageProvider, StorageCollection, StorageData } from '../types';
 import { STORAGE_COLLECTIONS } from '../types';
 import type BetterSqlite3 from 'better-sqlite3';
+import { logger } from '@/lib/logger';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let Database: any;
@@ -20,35 +21,40 @@ export class SQLiteStorageProvider implements ServerStorageProvider {
   }
 
   async initialize(): Promise<void> {
-    // Dynamic import to avoid requiring better-sqlite3 when not needed
-    if (!Database) {
-      const mod = await import('better-sqlite3');
-      Database = mod.default;
+    try {
+      // Dynamic import to avoid requiring better-sqlite3 when not needed
+      if (!Database) {
+        const mod = await import('better-sqlite3');
+        Database = mod.default;
+      }
+
+      // Ensure directory exists
+      const path = await import('path');
+      const fs = await import('fs');
+      const dir = path.dirname(this.dbPath);
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+
+      this.db = new Database(this.dbPath) as BetterSqlite3.Database;
+
+      // Enable WAL mode for better concurrent read performance
+      this.db!.pragma('journal_mode = WAL');
+
+      // Create table
+      this.db!.exec(`
+        CREATE TABLE IF NOT EXISTS user_storage (
+          user_id    TEXT NOT NULL,
+          collection TEXT NOT NULL,
+          data       TEXT NOT NULL,
+          updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+          PRIMARY KEY (user_id, collection)
+        )
+      `);
+    } catch (error) {
+      logger.error('SQLite storage initialization failed', error, { provider: 'sqlite', path: this.dbPath });
+      throw error;
     }
-
-    // Ensure directory exists
-    const path = await import('path');
-    const fs = await import('fs');
-    const dir = path.dirname(this.dbPath);
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
-    }
-
-    this.db = new Database(this.dbPath) as BetterSqlite3.Database;
-
-    // Enable WAL mode for better concurrent read performance
-    this.db!.pragma('journal_mode = WAL');
-
-    // Create table
-    this.db!.exec(`
-      CREATE TABLE IF NOT EXISTS user_storage (
-        user_id    TEXT NOT NULL,
-        collection TEXT NOT NULL,
-        data       TEXT NOT NULL,
-        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-        PRIMARY KEY (user_id, collection)
-      )
-    `);
   }
 
   async getAllData(userId: string): Promise<Partial<StorageData>> {
@@ -63,7 +69,7 @@ export class SQLiteStorageProvider implements ServerStorageProvider {
       try {
         (result as Record<string, unknown>)[row.collection] = JSON.parse(row.data);
       } catch {
-        // Skip corrupted data
+        logger.warn('Skipping corrupted storage data', { provider: 'sqlite', collection: row.collection });
       }
     }
     return result;
@@ -82,6 +88,7 @@ export class SQLiteStorageProvider implements ServerStorageProvider {
     try {
       return JSON.parse(row.data) as StorageData[K];
     } catch {
+      logger.warn('Corrupted data in storage collection', { provider: 'sqlite', collection });
       return null;
     }
   }

@@ -19,8 +19,10 @@ const mockPool: Record<string, any> = {
   end: mockEnd,
 };
 
+const mockPoolConstructor = mock(() => mockPool);
+
 mock.module('pg', () => ({
-  Pool: mock(() => mockPool),
+  Pool: mockPoolConstructor,
 }));
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
@@ -33,6 +35,7 @@ describe('PostgresStorageProvider', () => {
     mockQuery.mockClear();
     mockEnd.mockClear();
     mockRelease.mockClear();
+    mockPoolConstructor.mockClear();
     provider = new PostgresStorageProvider('postgresql://localhost:5432/test');
   });
 
@@ -45,6 +48,84 @@ describe('PostgresStorageProvider', () => {
     expect(mockQuery).toHaveBeenCalledTimes(1);
     const sql = (mockQuery.mock.calls as unknown[][])[0][0] as string;
     expect(sql).toContain('CREATE TABLE IF NOT EXISTS user_storage');
+  });
+
+  test('initialize disables SSL for localhost when no ssl params', async () => {
+    const localProvider = new PostgresStorageProvider(
+      'postgresql://localhost:5432/test'
+    );
+    await localProvider.initialize();
+
+    const poolConfig = (mockPoolConstructor.mock.calls as unknown[][])[0]?.[0] as {
+      ssl?: unknown;
+    };
+    expect(poolConfig.ssl).toBe(false);
+    await localProvider.close();
+  });
+
+  test('initialize disables SSL when sslmode=disable', async () => {
+    const localProvider = new PostgresStorageProvider(
+      'postgresql://localhost:5432/test?sslmode=disable'
+    );
+    await localProvider.initialize();
+
+    const poolConfig = (mockPoolConstructor.mock.calls as unknown[][])[0]?.[0] as {
+      ssl?: unknown;
+    };
+    expect(poolConfig.ssl).toBe(false);
+    await localProvider.close();
+  });
+
+  test('initialize disables SSL for docker local host aliases', async () => {
+    const localProvider = new PostgresStorageProvider(
+      'postgresql://host.docker.internal:5432/test'
+    );
+    await localProvider.initialize();
+
+    const poolConfig = (mockPoolConstructor.mock.calls as unknown[][])[0]?.[0] as {
+      ssl?: unknown;
+    };
+    expect(poolConfig.ssl).toBe(false);
+    await localProvider.close();
+  });
+
+  test('initialize enables SSL when sslmode=require', async () => {
+    const cloudProvider = new PostgresStorageProvider(
+      'postgresql://db.example.com:5432/test?sslmode=require'
+    );
+    await cloudProvider.initialize();
+
+    const poolConfig = (mockPoolConstructor.mock.calls as unknown[][])[0]?.[0] as {
+      ssl?: unknown;
+    };
+    expect(poolConfig.ssl).toEqual({ rejectUnauthorized: false });
+    await cloudProvider.close();
+  });
+
+  test('initialize enables SSL for non-local hosts by default', async () => {
+    const cloudProvider = new PostgresStorageProvider(
+      'postgresql://db.internal.example:5432/test'
+    );
+    await cloudProvider.initialize();
+
+    const poolConfig = (mockPoolConstructor.mock.calls as unknown[][])[0]?.[0] as {
+      ssl?: unknown;
+    };
+    expect(poolConfig.ssl).toEqual({ rejectUnauthorized: false });
+    await cloudProvider.close();
+  });
+
+  test('initialize disables SSL for all loopback 127.x.x.x addresses', async () => {
+    const localProvider = new PostgresStorageProvider(
+      'postgresql://127.0.0.42:5432/test'
+    );
+    await localProvider.initialize();
+
+    const poolConfig = (mockPoolConstructor.mock.calls as unknown[][])[0]?.[0] as {
+      ssl?: unknown;
+    };
+    expect(poolConfig.ssl).toBe(false);
+    await localProvider.close();
   });
 
   test('getAllData returns parsed collections', async () => {

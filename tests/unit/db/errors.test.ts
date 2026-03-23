@@ -7,6 +7,7 @@ import {
   PoolExhaustedError,
   QueryError,
   TimeoutError,
+  QueryCancelledError,
   isDatabaseError,
   isConnectionError,
   isQueryError,
@@ -15,6 +16,7 @@ import {
   isRetryableError,
   mapDatabaseError,
 } from '@/lib/db/errors';
+import { ApiErrorCode } from '@/lib/api/error-codes';
 
 // ============================================================================
 // Error Classes
@@ -27,10 +29,10 @@ describe('DatabaseError', () => {
   });
 
   test('stores message, provider, code, and query', () => {
-    const err = new DatabaseError('msg', 'postgres', 'ERR01', 'SELECT 1');
+    const err = new DatabaseError('msg', 'postgres', ApiErrorCode.DATABASE_ERROR, 'SELECT 1');
     expect(err.message).toBe('msg');
     expect(err.provider).toBe('postgres');
-    expect(err.code).toBe('ERR01');
+    expect(err.code).toBe(ApiErrorCode.DATABASE_ERROR);
     expect(err.query).toBe('SELECT 1');
   });
 
@@ -40,13 +42,13 @@ describe('DatabaseError', () => {
   });
 
   test('toJSON() returns structured object', () => {
-    const err = new DatabaseError('test', 'mysql', 'CODE1', 'SELECT 1');
+    const err = new DatabaseError('test', 'mysql', ApiErrorCode.QUERY_ERROR, 'SELECT 1');
     const json = err.toJSON();
     expect(json).toEqual({
       name: 'DatabaseError',
       message: 'test',
       provider: 'mysql',
-      code: 'CODE1',
+      code: ApiErrorCode.QUERY_ERROR,
       query: 'SELECT 1...',
     });
   });
@@ -390,5 +392,12 @@ describe('mapDatabaseError', () => {
     const err = new Error('Access denied for user');
     const result = mapDatabaseError(err, 'mysql');
     expect(result).toBeInstanceOf(AuthenticationError);
+  });
+
+  test('returns QueryCancelledError for "kill query" message', () => {
+    const error = new Error('kill query 12345');
+    const result = mapDatabaseError(error, 'mysql');
+    expect(result).toBeInstanceOf(QueryCancelledError);
+    expect(result.message).toBe('Query was cancelled');
   });
 });

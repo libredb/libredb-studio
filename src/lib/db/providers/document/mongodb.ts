@@ -170,10 +170,13 @@ export class MongoDBProvider extends BaseDatabaseProvider {
 
   public async disconnect(): Promise<void> {
     if (this.client) {
-      await this.client.close();
-      this.client = null;
-      this.db = null;
-      this.setConnected(false);
+      try {
+        await this.client.close();
+      } finally {
+        this.client = null;
+        this.db = null;
+        this.setConnected(false);
+      }
     }
   }
 

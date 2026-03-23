@@ -1,9 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import {
-  getOrCreateProvider,
-  isDatabaseError,
-  ConnectionError,
-} from '@/lib/db';
+import { getOrCreateProvider } from '@/lib/db';
+import { createErrorResponse } from '@/lib/api/errors';
 
 export const dynamic = 'force-dynamic';
 
@@ -30,23 +27,6 @@ export async function POST(req: NextRequest) {
       labels: provider.getLabels(),
     });
   } catch (error) {
-    console.error('[API:provider-meta] Error:', error);
-
-    if (error instanceof ConnectionError) {
-      return NextResponse.json(
-        { error: `Connection failed: ${error.message}` },
-        { status: 503 }
-      );
-    }
-
-    if (isDatabaseError(error)) {
-      return NextResponse.json(
-        { error: error.message, code: error.code },
-        { status: 500 }
-      );
-    }
-
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    return NextResponse.json({ error: errorMessage }, { status: 500 });
+    return createErrorResponse(error, { route: 'api/db/provider-meta' });
   }
 }

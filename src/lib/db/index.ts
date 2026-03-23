@@ -26,6 +26,8 @@ export {
   removeProvider,
   clearProviderCache,
   getProviderCacheStats,
+  evictIdleProviders,
+  registerShutdownHandlers,
 } from './factory';
 
 // ============================================================================
@@ -71,10 +73,12 @@ export {
   AuthenticationError,
   PoolExhaustedError,
   QueryError,
+  QueryCancelledError,
   TimeoutError,
   isDatabaseError,
   isConnectionError,
   isQueryError,
+  isQueryCancelledError,
   isTimeoutError,
   isAuthenticationError,
   isRetryableError,

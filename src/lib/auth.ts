@@ -1,5 +1,6 @@
 import { SignJWT, jwtVerify } from 'jose';
 import { cookies } from 'next/headers';
+import { logger } from '@/lib/logger';
 
 function getJwtSecret(): Uint8Array {
   const secret = process.env.JWT_SECRET;
@@ -49,7 +50,14 @@ export async function verifyJWT(token: string) {
   try {
     const { payload } = await jwtVerify(token, jwtSecret());
     return payload as unknown as UserPayload;
-  } catch {
+  } catch (error) {
+    if (error instanceof Error) {
+      if (error.message.includes('expired')) {
+        logger.debug('JWT token expired', { route: 'auth' });
+      } else {
+        logger.warn('JWT verification failed', { route: 'auth' });
+      }
+    }
     return null;
   }
 }

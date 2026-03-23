@@ -228,7 +228,7 @@ describe('POST /api/db/maintenance', () => {
 
   test('DatabaseError from runMaintenance returns 500', async () => {
     (mockProvider.runMaintenance as ReturnType<typeof mock>).mockImplementation(async () => {
-      throw new DatabaseError('Internal maintenance failure', 'postgres', 'MAINT_ERR');
+      throw new DatabaseError('Internal maintenance failure', 'postgres', 'DATABASE_ERROR');
     });
 
     const req = createMockRequest('/api/db/maintenance', {

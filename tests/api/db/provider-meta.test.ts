@@ -132,7 +132,7 @@ describe('POST /api/db/provider-meta', () => {
 
   test('returns 500 for DatabaseError', async () => {
     mockGetOrCreateProvider.mockRejectedValueOnce(
-      new DatabaseError('Internal failure', 'postgres', 'INTERNAL')
+      new DatabaseError('Internal failure', 'postgres', 'INTERNAL_ERROR')
     );
 
     const req = createMockRequest('/api/db/provider-meta', {
@@ -145,7 +145,7 @@ describe('POST /api/db/provider-meta', () => {
 
     expect(res.status).toBe(500);
     expect(data.error).toBe('Internal failure');
-    expect(data.code).toBe('INTERNAL');
+    expect(data.code).toBe('INTERNAL_ERROR');
   });
 
   test('returns 500 for generic error', async () => {

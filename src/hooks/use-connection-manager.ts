@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import type { DatabaseConnection, TableSchema } from '@/lib/types';
 import { useToast } from '@/hooks/use-toast';
 import { storage } from '@/lib/storage';
+import { logger } from '@/lib/logger';
 
 export function useConnectionManager(storageReady = false) {
   const [connections, setConnections] = useState<DatabaseConnection[]>([]);
@@ -135,8 +136,8 @@ export function useConnectionManager(storageReady = false) {
         } else {
           console.warn(`${LOG_PREFIX} API returned non-ok status:`, res.status);
         }
-      } catch (error) {
-        console.error(`${LOG_PREFIX} Failed to fetch demo connection:`, error);
+      } catch {
+        logger.warn('Failed to fetch demo connection', { route: 'use-connection-manager' });
       }
 
       setConnections(loadedConnections);
@@ -147,9 +148,10 @@ export function useConnectionManager(storageReady = false) {
       }
     };
 
-    initializeConnections();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [storageReady]);
+    initializeConnections().catch((err) => {
+      logger.warn('Connection initialization failed', { route: 'use-connection-manager', error: err instanceof Error ? err.message : String(err) });
+    });
+  }, [storageReady]);  
 
   // Persist active connection ID
   useEffect(() => {
@@ -176,7 +178,7 @@ export function useConnectionManager(storageReady = false) {
         setConnectionPulse('error');
       }
     };
-    checkHealth();
+    checkHealth().catch(() => {});
     const interval = setInterval(checkHealth, 60000);
     return () => clearInterval(interval);
   }, [activeConnection]);

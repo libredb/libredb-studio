@@ -1,0 +1,59 @@
+LibreDB Studio has been deployed successfully!
+
+{{- if .Values.ingress.enabled }}
+
+Access LibreDB Studio via Ingress:
+{{- range $host := .Values.ingress.hosts }}
+  {{- range .paths }}
+  http{{ if $.Values.ingress.tls }}s{{ end }}://{{ $host.host }}{{ .path }}
+  {{- end }}
+{{- end }}
+
+{{- else if contains "NodePort" .Values.service.type }}
+
+Access LibreDB Studio via NodePort:
+  export NODE_PORT=$(kubectl get --namespace {{ .Release.Namespace }} -o jsonpath="{.spec.ports[0].nodePort}" services {{ include "libredb-studio.fullname" . }})
+  export NODE_IP=$(kubectl get nodes --namespace {{ .Release.Namespace }} -o jsonpath="{.items[0].status.addresses[0].address}")
+  echo "http://${NODE_IP}:${NODE_PORT}"
+
+{{- else if contains "LoadBalancer" .Values.service.type }}
+
+Access LibreDB Studio via LoadBalancer:
+  NOTE: It may take a few minutes for the LoadBalancer IP to be available.
+  Watch status with: kubectl get --namespace {{ .Release.Namespace }} svc -w {{ include "libredb-studio.fullname" . }}
+
+  export SERVICE_IP=$(kubectl get svc --namespace {{ .Release.Namespace }} {{ include "libredb-studio.fullname" . }} --template "{{"{{ range (index .status.loadBalancer.ingress 0) }}{{.}}{{ end }}"}}")
+  echo "http://${SERVICE_IP}:{{ .Values.service.port }}"
+
+{{- else }}
+
+Access LibreDB Studio via port-forward:
+  kubectl --namespace {{ .Release.Namespace }} port-forward svc/{{ include "libredb-studio.fullname" . }} {{ .Values.service.targetPort }}:{{ .Values.service.port }}
+  Open http://localhost:{{ .Values.service.targetPort }}
+
+{{- end }}
+
+Configuration:
+  Auth Provider:    {{ .Values.authProvider }}
+  Storage Provider: {{ include "libredb-studio.storageProvider" . }}
+{{- if .Values.postgresql.enabled }}
+  PostgreSQL:       Built-in (subchart)
+{{- end }}
+{{- if .Values.autoscaling.enabled }}
+  Autoscaling:      {{ .Values.autoscaling.minReplicas }}-{{ .Values.autoscaling.maxReplicas }} replicas
+{{- end }}
+
+Health check:
+  kubectl --namespace {{ .Release.Namespace }} exec deploy/{{ include "libredb-studio.fullname" . }} -- wget -qO- http://localhost:{{ .Values.service.targetPort }}/api/db/health
+
+{{- if and (not .Values.secrets.jwtSecret) (not .Values.secrets.existingSecret) }}
+
+WARNING: No JWT secret was provided. Please set secrets.jwtSecret to a strong random value (min 32 chars):
+  helm upgrade {{ .Release.Name }} libredb/libredb-studio --set secrets.jwtSecret=$(openssl rand -base64 32)
+{{- end }}
+
+{{- if and (eq (include "libredb-studio.storageProvider" .) "sqlite") (gt (int .Values.replicaCount) 1) }}
+
+WARNING: SQLite storage with multiple replicas is not recommended.
+SQLite is a single-writer database. Consider using storageProvider=postgres for multi-replica setups.
+{{- end }}

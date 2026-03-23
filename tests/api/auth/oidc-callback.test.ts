@@ -158,6 +158,7 @@ describe('GET /api/auth/oidc/callback', () => {
 
     expect(res.status).toBe(307);
     expect(res.headers.get('location')).toContain('error=oidc_state_invalid');
+    expect(mockCookieStore.delete).toHaveBeenCalledWith('oidc-state');
   });
 
   test('redirects to /login?error=oidc_no_claims when no claims', async () => {

@@ -825,6 +825,26 @@ describe('PostgresProvider', () => {
 
       await expect(provider.queryInTransaction('SELECT 1')).rejects.toThrow('No active transaction');
     });
+
+    test('expireTransaction auto-rollbacks an active transaction', async () => {
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+
+      await provider.beginTransaction();
+      expect(provider.isInTransaction()).toBe(true);
+
+      await provider.expireTransaction();
+      expect(provider.isInTransaction()).toBe(false);
+    });
+
+    test('expireTransaction is no-op when no active transaction', async () => {
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+
+      // Should not throw
+      await provider.expireTransaction();
+      expect(provider.isInTransaction()).toBe(false);
+    });
   });
 
   // --------------------------------------------------------------------------

@@ -270,7 +270,7 @@ describe('POST /api/db/transaction', () => {
 
   test('DatabaseError returns 500', async () => {
     mockTxProvider.beginTransaction.mockImplementation(async () => {
-      throw new DatabaseError('Internal database error', 'postgres', 'DB_ERROR');
+      throw new DatabaseError('Internal database error', 'postgres', 'DATABASE_ERROR');
     });
 
     const req = createMockRequest('/api/db/transaction', {

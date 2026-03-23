@@ -1,0 +1,40 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "libredb-studio.configMapName" . }}
+  labels:
+    {{- include "libredb-studio.labels" . | nindent 4 }}
+data:
+  NODE_ENV: "production"
+  PORT: {{ .Values.service.targetPort | quote }}
+  HOSTNAME: "0.0.0.0"
+  NEXT_TELEMETRY_DISABLED: "1"
+  NODE_OPTIONS: "--max-old-space-size=384"
+  NEXT_PUBLIC_AUTH_PROVIDER: {{ .Values.authProvider | quote }}
+  LOG_LEVEL: {{ .Values.config.logLevel | quote }}
+  STORAGE_PROVIDER: {{ include "libredb-studio.storageProvider" . | quote }}
+  {{- if eq (include "libredb-studio.storageProvider" .) "sqlite" }}
+  STORAGE_SQLITE_PATH: {{ .Values.config.storageSqlitePath | quote }}
+  {{- end }}
+  {{- if .Values.config.llmProvider }}
+  LLM_PROVIDER: {{ .Values.config.llmProvider | quote }}
+  {{- end }}
+  {{- if .Values.config.llmModel }}
+  LLM_MODEL: {{ .Values.config.llmModel | quote }}
+  {{- end }}
+  {{- if .Values.config.llmApiUrl }}
+  LLM_API_URL: {{ .Values.config.llmApiUrl | quote }}
+  {{- end }}
+  {{- if eq .Values.authProvider "oidc" }}
+  {{- if .Values.config.oidcIssuer }}
+  OIDC_ISSUER: {{ .Values.config.oidcIssuer | quote }}
+  {{- end }}
+  OIDC_SCOPE: {{ .Values.config.oidcScope | quote }}
+  {{- if .Values.config.oidcRoleClaim }}
+  OIDC_ROLE_CLAIM: {{ .Values.config.oidcRoleClaim | quote }}
+  {{- end }}
+  OIDC_ADMIN_ROLES: {{ .Values.config.oidcAdminRoles | quote }}
+  {{- end }}
+  {{- if .Values.demo.enabled }}
+  DEMO_MODE: "true"
+  {{- end }}

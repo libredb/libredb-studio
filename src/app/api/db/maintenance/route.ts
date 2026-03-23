@@ -2,11 +2,10 @@ import { getSession } from '@/lib/auth';
 import { NextResponse } from 'next/server';
 import {
   getOrCreateProvider,
-  isDatabaseError,
-  DatabaseConfigError,
   type MaintenanceType,
 } from '@/lib/db';
 import { getServerAuditBuffer } from '@/lib/audit';
+import { createErrorResponse } from '@/lib/api/errors';
 
 export async function POST(request: Request) {
   // Check admin authorization
@@ -72,23 +71,6 @@ export async function POST(request: Request) {
 
     return NextResponse.json(result);
   } catch (error) {
-    console.error('[API:maintenance] Error:', error);
-
-    if (error instanceof DatabaseConfigError) {
-      return NextResponse.json(
-        { error: error.message },
-        { status: 400 }
-      );
-    }
-
-    if (isDatabaseError(error)) {
-      return NextResponse.json(
-        { error: error.message, code: error.code },
-        { status: 500 }
-      );
-    }
-
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    return NextResponse.json({ error: errorMessage }, { status: 500 });
+    return createErrorResponse(error, { route: 'api/db/maintenance' });
   }
 }

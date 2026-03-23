@@ -264,13 +264,14 @@ STORAGE_SQLITE_PATH=./data/libredb-storage.db   # default
 | Feature | Detail |
 |---------|--------|
 | **Pool config** | max: 5, idleTimeoutMillis: 30000 |
+| **SSL behavior** | `sslmode=disable` for local/non-SSL servers, `sslmode=require` for cloud servers |
 | **Upsert** | `INSERT ... ON CONFLICT (user_id, collection) DO UPDATE` |
 | **Transactions** | `mergeData()` uses `BEGIN`/`COMMIT`/`ROLLBACK` with client checkout |
 | **Health check** | `SELECT 1 AS ok` |
 
 ```env
 STORAGE_PROVIDER=postgres
-STORAGE_POSTGRES_URL=postgresql://user:pass@host:5432/libredb
+STORAGE_POSTGRES_URL=postgresql://user:pass@localhost:5432/libredb?sslmode=disable
 ```
 
 ### 7.4 Factory
@@ -431,7 +432,7 @@ This ensures existing localStorage data is preserved when transitioning to serve
 |----------|---------|----------|-------------|
 | `STORAGE_PROVIDER` | `local` | No | Storage backend: `local`, `sqlite`, or `postgres` |
 | `STORAGE_SQLITE_PATH` | `./data/libredb-storage.db` | No | Path to SQLite database file |
-| `STORAGE_POSTGRES_URL` | — | If `postgres` | PostgreSQL connection string |
+| `STORAGE_POSTGRES_URL` | — | If `postgres` | PostgreSQL connection string (`sslmode=disable` local, `sslmode=require` cloud) |
 
 ### Why Not `NEXT_PUBLIC_*`?
 

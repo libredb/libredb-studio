@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createDatabaseProvider } from '@/lib/db/factory';
 import type { DatabaseConnection } from '@/lib/types';
+import { createErrorResponse } from '@/lib/api/errors';
 
 export async function POST(request: NextRequest) {
   let provider = null;
@@ -32,7 +33,6 @@ export async function POST(request: NextRequest) {
       try { await provider.disconnect(); } catch { /* ignore */ }
     }
 
-    const message = error instanceof Error ? error.message : 'Failed to fetch schema snapshot';
-    return NextResponse.json({ error: message }, { status: 500 });
+    return createErrorResponse(error, { route: 'api/db/schema-snapshot' });
   }
 }

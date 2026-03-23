@@ -12,6 +12,7 @@
   <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"></a>
   <a href="https://sonarcloud.io/project/overview?id=libredb_libredb-studio"><img src="https://sonarcloud.io/api/project_badges/measure?project=libredb_libredb-studio&metric=alert_status" alt="Quality Gate"></a>
   <a href="https://deepwiki.com/libredb/libredb-studio"><img src="https://img.shields.io/badge/Docs-DeepWiki-blue?logo=gitbook" alt="DeepWiki Docs"></a>
+  <a href="https://artifacthub.io/packages/search?repo=libredb-studio"><img src="https://img.shields.io/endpoint?url=https://artifacthub.io/badge/repository/libredb-studio" alt="Artifact Hub"></a>
 </p>
 
 <p align="center">
@@ -187,6 +188,26 @@ The demo runs in **Demo Mode** with simulated data. No real database required!
 ---
 
 ## Getting Started
+
+  ### Quick Start (Docker)
+
+  Run LibreDB Studio with a single command — no clone, no install, no build:
+
+```bash
+docker run -d \
+  --name libredb-studio \
+  -p 3000:3000 \
+  -e ADMIN_EMAIL=admin@libredb.org \
+  -e ADMIN_PASSWORD=LibreDB.2026 \
+  -e USER_EMAIL=user@libredb.org \
+  -e USER_PASSWORD=LibreDB.2026 \
+  -e JWT_SECRET=change-me-to-a-random-32-char-string \
+  ghcr.io/libredb/libredb-studio:latest
+```
+
+  Open [http://localhost:3000](http://localhost:3000) and login with `admin@libredb.org` / `LibreDB.2026`.
+
+  > **Tip**: Add `-e LLM_PROVIDER=gemini -e LLM_API_KEY=your_key -e LLM_MODEL=gemini-2.5-flash` to enable AI features.
 
   ### Prerequisites
   - [Bun](https://bun.sh/) (Recommended) or Node.js 20+
@@ -390,12 +411,25 @@ LibreDB Studio includes a `render.yaml` Blueprint for one-click deployment:
 docker-compose up -d
 ```
 
-### Kubernetes Compatibility
+### Kubernetes (Helm Chart)
 
-LibreDB Studio is optimized for K8s with:
-- **Standalone Mode**: Reduced image size via Next.js output tracing.
-- **Horizontal Scaling**: Stateless architecture (JWT-based) for effortless scaling.
-- **Health Checks**: Integrated `/api/db/health` endpoint for readiness/liveness probes.
+```bash
+helm repo add libredb https://libredb.org/libredb-studio/
+helm install libredb libredb/libredb-studio \
+  --set secrets.jwtSecret=$(openssl rand -base64 32) \
+  --set secrets.adminPassword=MyAdmin123 \
+  --set secrets.userPassword=MyUser123
+```
+
+Or via OCI registry:
+```bash
+helm install libredb oci://ghcr.io/libredb/charts/libredb-studio --version 0.1.0 \
+  --set secrets.jwtSecret=$(openssl rand -base64 32) \
+  --set secrets.adminPassword=MyAdmin123 \
+  --set secrets.userPassword=MyUser123
+```
+
+Features: PostgreSQL subchart, Ingress/TLS, HPA, PDB, NetworkPolicy, ExternalSecrets support. See [charts/libredb-studio/README.md](charts/libredb-studio/README.md) for full documentation.
 
 ---
 

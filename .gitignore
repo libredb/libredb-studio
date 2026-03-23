@@ -86,4 +86,10 @@ Thumbs.db
 .orchids/
 .codegraph/
 
+
 *.pid
+
+# Helm subchart dependencies (built at CI time via helm dependency build)
+charts/*/charts/*.tgz
+
+

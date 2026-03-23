@@ -4,7 +4,7 @@ import '../../helpers/mock-navigation';
 
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
-import { cleanup, fireEvent, render } from '@testing-library/react';
+import { cleanup, fireEvent, render, within } from '@testing-library/react';
 
 // ── Mocks ───────────────────────────────────────────────────────────────────
 
@@ -33,6 +33,18 @@ mock.module('@/components/ui/dropdown-menu', () => ({
   DropdownMenuItem: ({ children, onClick }: { children: React.ReactNode; onClick?: () => void }) =>
     React.createElement('div', { onClick, role: 'menuitem' }, children),
   DropdownMenuSeparator: () => React.createElement('hr'),
+}));
+
+mock.module('@/components/ui/context-menu', () => ({
+  ContextMenu: ({ children }: { children: React.ReactNode }) =>
+    React.createElement('div', {}, children),
+  ContextMenuTrigger: ({ children }: { children: React.ReactNode }) =>
+    React.createElement('div', {}, children),
+  ContextMenuContent: ({ children }: { children: React.ReactNode }) =>
+    React.createElement('div', { 'data-testid': 'context-menu' }, children),
+  ContextMenuItem: ({ children, onClick }: { children: React.ReactNode; onClick?: () => void }) =>
+    React.createElement('div', { onClick, role: 'menuitem' }, children),
+  ContextMenuSeparator: () => React.createElement('hr'),
 }));
 
 mock.module('@/components/schema-explorer/ColumnList', () => ({
@@ -117,12 +129,11 @@ describe('TableItem', () => {
   });
 
   test('does not render row count when undefined', () => {
-    const { container } = render(
+    const { queryByText } = render(
       <TableItem table={noRowCountTable} isExpanded={false} onToggle={mock(() => {})} isAdmin={false} />
     );
-    // No row count badge should be rendered
-    const spans = container.querySelectorAll('span.text-\\[9px\\]');
-    expect(spans.length).toBe(0);
+    // No row count text should be rendered
+    expect(queryByText(/^\d/)).toBeNull();
   });
 
   // ── Expand / Collapse ─────────────────────────────────────────────────────
@@ -167,29 +178,32 @@ describe('TableItem', () => {
 
   test('onTableClick fires with table name on "Select Top 100" click', () => {
     const onTableClick = mock((name: string) => { void name; });
-    const { queryByText } = render(
+    const { getByTestId } = render(
       <TableItem table={largeTable} isExpanded={false} onToggle={mock(() => {})} isAdmin={false} onTableClick={onTableClick} />
     );
-    fireEvent.click(queryByText('Select Top 100')!);
+    const dropdown = within(getByTestId('dropdown'));
+    fireEvent.click(dropdown.getByText('Select Top 100'));
     expect(onTableClick).toHaveBeenCalledTimes(1);
     expect(onTableClick.mock.calls[0][0]).toBe('users');
   });
 
   test('onGenerateSelect fires with table name on "Generate Query" click', () => {
     const onGenerateSelect = mock((name: string) => { void name; });
-    const { queryByText } = render(
+    const { getByTestId } = render(
       <TableItem table={largeTable} isExpanded={false} onToggle={mock(() => {})} isAdmin={false} onGenerateSelect={onGenerateSelect} />
     );
-    fireEvent.click(queryByText('Generate Query')!);
+    const dropdown = within(getByTestId('dropdown'));
+    fireEvent.click(dropdown.getByText('Generate Query'));
     expect(onGenerateSelect).toHaveBeenCalledTimes(1);
     expect(onGenerateSelect.mock.calls[0][0]).toBe('users');
   });
 
   test('copyToClipboard copies table name and shows toast on "Copy Name" click', () => {
-    const { queryByText } = render(
+    const { getByTestId } = render(
       <TableItem table={largeTable} isExpanded={false} onToggle={mock(() => {})} isAdmin={false} />
     );
-    fireEvent.click(queryByText('Copy Name')!);
+    const dropdown = within(getByTestId('dropdown'));
+    fireEvent.click(dropdown.getByText('Copy Name'));
     expect(mockWriteText).toHaveBeenCalledTimes(1);
     expect(mockWriteText.mock.calls[0][0]).toBe('users');
     expect(mockToastSuccess).toHaveBeenCalledTimes(1);
@@ -198,30 +212,33 @@ describe('TableItem', () => {
 
   test('onProfileTable fires with table name on "Profile Table" click', () => {
     const onProfileTable = mock((name: string) => { void name; });
-    const { queryByText } = render(
+    const { getByTestId } = render(
       <TableItem table={largeTable} isExpanded={false} onToggle={mock(() => {})} isAdmin={false} onProfileTable={onProfileTable} />
     );
-    fireEvent.click(queryByText('Profile Table')!);
+    const dropdown = within(getByTestId('dropdown'));
+    fireEvent.click(dropdown.getByText('Profile Table'));
     expect(onProfileTable).toHaveBeenCalledTimes(1);
     expect(onProfileTable.mock.calls[0][0]).toBe('users');
   });
 
   test('onGenerateCode fires with table name on "Generate Code" click', () => {
     const onGenerateCode = mock((name: string) => { void name; });
-    const { queryByText } = render(
+    const { getByTestId } = render(
       <TableItem table={largeTable} isExpanded={false} onToggle={mock(() => {})} isAdmin={false} onGenerateCode={onGenerateCode} />
     );
-    fireEvent.click(queryByText('Generate Code')!);
+    const dropdown = within(getByTestId('dropdown'));
+    fireEvent.click(dropdown.getByText('Generate Code'));
     expect(onGenerateCode).toHaveBeenCalledTimes(1);
     expect(onGenerateCode.mock.calls[0][0]).toBe('users');
   });
 
   test('onGenerateTestData fires with table name on "Generate Test Data" click', () => {
     const onGenerateTestData = mock((name: string) => { void name; });
-    const { queryByText } = render(
+    const { getByTestId } = render(
       <TableItem table={largeTable} isExpanded={false} onToggle={mock(() => {})} isAdmin={false} onGenerateTestData={onGenerateTestData} />
     );
-    fireEvent.click(queryByText('Generate Test Data')!);
+    const dropdown = within(getByTestId('dropdown'));
+    fireEvent.click(dropdown.getByText('Generate Test Data'));
     expect(onGenerateTestData).toHaveBeenCalledTimes(1);
     expect(onGenerateTestData.mock.calls[0][0]).toBe('users');
   });
@@ -229,27 +246,30 @@ describe('TableItem', () => {
   // ── Admin-only actions ────────────────────────────────────────────────────
 
   test('shows Analyze and Vacuum actions for admin', () => {
-    const { queryByText } = render(
+    const { getByTestId } = render(
       <TableItem table={largeTable} isExpanded={false} onToggle={mock(() => {})} isAdmin />
     );
-    expect(queryByText('Analyze Table')).not.toBeNull();
-    expect(queryByText('Vacuum Table')).not.toBeNull();
+    const dropdown = within(getByTestId('dropdown'));
+    expect(dropdown.queryByText('Analyze Table')).not.toBeNull();
+    expect(dropdown.queryByText('Vacuum Table')).not.toBeNull();
   });
 
   test('hides Analyze and Vacuum actions for non-admin', () => {
-    const { queryByText } = render(
+    const { getByTestId } = render(
       <TableItem table={largeTable} isExpanded={false} onToggle={mock(() => {})} isAdmin={false} />
     );
-    expect(queryByText('Analyze Table')).toBeNull();
-    expect(queryByText('Vacuum Table')).toBeNull();
+    const dropdown = within(getByTestId('dropdown'));
+    expect(dropdown.queryByText('Analyze Table')).toBeNull();
+    expect(dropdown.queryByText('Vacuum Table')).toBeNull();
   });
 
   test('onOpenMaintenance fires with "tables" and table name on Analyze click', () => {
     const onOpenMaintenance = mock((tab?: string, tbl?: string) => { void tab; void tbl; });
-    const { queryByText } = render(
+    const { getByTestId } = render(
       <TableItem table={largeTable} isExpanded={false} onToggle={mock(() => {})} isAdmin onOpenMaintenance={onOpenMaintenance} />
     );
-    fireEvent.click(queryByText('Analyze Table')!);
+    const dropdown = within(getByTestId('dropdown'));
+    fireEvent.click(dropdown.getByText('Analyze Table'));
     expect(onOpenMaintenance).toHaveBeenCalledTimes(1);
     expect(onOpenMaintenance.mock.calls[0][0]).toBe('tables');
     expect(onOpenMaintenance.mock.calls[0][1]).toBe('users');
@@ -257,10 +277,11 @@ describe('TableItem', () => {
 
   test('onOpenMaintenance fires on Vacuum click', () => {
     const onOpenMaintenance = mock((tab?: string, tbl?: string) => { void tab; void tbl; });
-    const { queryByText } = render(
+    const { getByTestId } = render(
       <TableItem table={largeTable} isExpanded={false} onToggle={mock(() => {})} isAdmin onOpenMaintenance={onOpenMaintenance} />
     );
-    fireEvent.click(queryByText('Vacuum Table')!);
+    const dropdown = within(getByTestId('dropdown'));
+    fireEvent.click(dropdown.getByText('Vacuum Table'));
     expect(onOpenMaintenance).toHaveBeenCalledTimes(1);
     expect(onOpenMaintenance.mock.calls[0][0]).toBe('tables');
     expect(onOpenMaintenance.mock.calls[0][1]).toBe('users');
@@ -286,16 +307,17 @@ describe('TableItem', () => {
       vacuumGlobalTitle: 'Compact',
       vacuumGlobalDesc: 'Compact all',
     };
-    const { queryByText } = render(
+    const { getByTestId } = render(
       <TableItem table={largeTable} isExpanded={false} onToggle={mock(() => {})} isAdmin labels={labels} />
     );
-    expect(queryByText('Run db.find()')).not.toBeNull();
-    expect(queryByText('Build Aggregation')).not.toBeNull();
-    expect(queryByText('Run Stats')).not.toBeNull();
-    expect(queryByText('Compact')).not.toBeNull();
+    const dropdown = within(getByTestId('dropdown'));
+    expect(dropdown.queryByText('Run db.find()')).not.toBeNull();
+    expect(dropdown.queryByText('Build Aggregation')).not.toBeNull();
+    expect(dropdown.queryByText('Run Stats')).not.toBeNull();
+    expect(dropdown.queryByText('Compact')).not.toBeNull();
     // Default labels should not appear
-    expect(queryByText('Select Top 100')).toBeNull();
-    expect(queryByText('Generate Query')).toBeNull();
+    expect(dropdown.queryByText('Select Top 100')).toBeNull();
+    expect(dropdown.queryByText('Generate Query')).toBeNull();
   });
 
   test('copyToClipboard uses custom entityName in toast', () => {
@@ -316,27 +338,29 @@ describe('TableItem', () => {
       vacuumGlobalTitle: 'Compact',
       vacuumGlobalDesc: 'Compact all',
     };
-    const { queryByText } = render(
+    const { getByTestId } = render(
       <TableItem table={largeTable} isExpanded={false} onToggle={mock(() => {})} isAdmin={false} labels={labels} />
     );
-    fireEvent.click(queryByText('Copy Name')!);
+    const dropdown = within(getByTestId('dropdown'));
+    fireEvent.click(dropdown.getByText('Copy Name'));
     expect(mockToastSuccess.mock.calls[0][0]).toContain('Collection');
   });
 
   // ── Callbacks not provided (optional chaining safety) ─────────────────────
 
   test('does not crash when optional callbacks are not provided', () => {
-    const { queryByText } = render(
+    const { getByTestId } = render(
       <TableItem table={largeTable} isExpanded={false} onToggle={mock(() => {})} isAdmin />
     );
+    const dropdown = within(getByTestId('dropdown'));
     // Click all menu items without providing callbacks - should not throw
-    fireEvent.click(queryByText('Select Top 100')!);
-    fireEvent.click(queryByText('Generate Query')!);
-    fireEvent.click(queryByText('Profile Table')!);
-    fireEvent.click(queryByText('Generate Code')!);
-    fireEvent.click(queryByText('Generate Test Data')!);
-    fireEvent.click(queryByText('Analyze Table')!);
-    fireEvent.click(queryByText('Vacuum Table')!);
+    fireEvent.click(dropdown.getByText('Select Top 100'));
+    fireEvent.click(dropdown.getByText('Generate Query'));
+    fireEvent.click(dropdown.getByText('Profile Table'));
+    fireEvent.click(dropdown.getByText('Generate Code'));
+    fireEvent.click(dropdown.getByText('Generate Test Data'));
+    fireEvent.click(dropdown.getByText('Analyze Table'));
+    fireEvent.click(dropdown.getByText('Vacuum Table'));
     // If we got here, no crash occurred
     expect(true).toBe(true);
   });
@@ -359,5 +383,33 @@ describe('TableItem', () => {
     const nameSpan = queryByText('users');
     expect(nameSpan).not.toBeNull();
     expect(nameSpan!.className).toContain('text-muted-foreground');
+  });
+
+  // ── Context menu ──────────────────────────────────────────────────────────
+
+  test('renders context menu with same actions as dropdown', () => {
+    const { queryAllByText } = render(
+      <TableItem table={largeTable} isExpanded={false} onToggle={mock(() => {})} isAdmin />
+    );
+    // Each action should appear twice: once in dropdown, once in context menu
+    expect(queryAllByText('Select Top 100').length).toBe(2);
+    expect(queryAllByText('Generate Query').length).toBe(2);
+    expect(queryAllByText('Copy Name').length).toBe(2);
+    expect(queryAllByText('Profile Table').length).toBe(2);
+    expect(queryAllByText('Generate Code').length).toBe(2);
+    expect(queryAllByText('Generate Test Data').length).toBe(2);
+    expect(queryAllByText('Analyze Table').length).toBe(2);
+    expect(queryAllByText('Vacuum Table').length).toBe(2);
+  });
+
+  test('context menu actions are not duplicated for non-admin', () => {
+    const { queryAllByText } = render(
+      <TableItem table={largeTable} isExpanded={false} onToggle={mock(() => {})} isAdmin={false} />
+    );
+    // Standard actions appear twice (dropdown + context menu)
+    expect(queryAllByText('Select Top 100').length).toBe(2);
+    // Admin-only actions should not appear at all
+    expect(queryAllByText('Analyze Table').length).toBe(0);
+    expect(queryAllByText('Vacuum Table').length).toBe(0);
   });
 });

@@ -116,14 +116,14 @@ describe('POST /api/db/test-connection', () => {
     });
 
     const res = await POST(req as never);
-    const data = await parseResponseJSON<{ success: boolean; error: string }>(res);
+    const data = await parseResponseJSON<{ error: string; code: string }>(res);
 
     expect(res.status).toBe(400);
-    expect(data.success).toBe(false);
     expect(data.error).toBe('Invalid database configuration');
+    expect(data.code).toBe('CONFIG_ERROR');
   });
 
-  test('returns 200 with success:false when connection error occurs', async () => {
+  test('returns 500 when connection error occurs', async () => {
     (mockProvider.connect as ReturnType<typeof mock>).mockImplementation(async () => {
       throw new Error('ECONNREFUSED');
     });
@@ -134,11 +134,11 @@ describe('POST /api/db/test-connection', () => {
     });
 
     const res = await POST(req as never);
-    const data = await parseResponseJSON<{ success: boolean; error: string }>(res);
+    const data = await parseResponseJSON<{ error: string; code: string }>(res);
 
-    expect(res.status).toBe(200);
-    expect(data.success).toBe(false);
+    expect(res.status).toBe(500);
     expect(data.error).toBe('ECONNREFUSED');
+    expect(data.code).toBe('INTERNAL_ERROR');
   });
 
   test('calls connect and disconnect on successful test', async () => {

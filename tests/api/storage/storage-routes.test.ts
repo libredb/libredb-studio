@@ -166,6 +166,46 @@ describe('POST /api/storage/migrate', () => {
   });
 });
 
+// ── Malformed JSON body tests ──────────────────────────────────────────────
+
+describe('PUT /api/storage/[collection]: malformed JSON', () => {
+  beforeEach(() => {
+    mockSession = { username: 'admin@test.com', role: 'admin' };
+    providerEnabled = true;
+  });
+
+  test('returns 400 for malformed JSON body in PUT', async () => {
+    const request = new NextRequest('http://localhost/api/storage/connections', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{invalid json}',
+    });
+    const res = await PUT(request, { params: Promise.resolve({ collection: 'connections' }) });
+    expect(res.status).toBe(400);
+    const json = await res.json();
+    expect(json.error).toContain('Invalid JSON');
+  });
+});
+
+describe('POST /api/storage/migrate: malformed JSON', () => {
+  beforeEach(() => {
+    mockSession = { username: 'admin@test.com', role: 'admin' };
+    providerEnabled = true;
+  });
+
+  test('returns 400 for malformed JSON body in POST', async () => {
+    const request = new NextRequest('http://localhost/api/storage/migrate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{invalid json}',
+    });
+    const res = await POST(request);
+    expect(res.status).toBe(400);
+    const json = await res.json();
+    expect(json.error).toContain('Invalid JSON');
+  });
+});
+
 // ── Error propagation from provider ────────────────────────────────────────
 
 describe('API routes: provider error propagation', () => {
@@ -177,10 +217,12 @@ describe('API routes: provider error propagation', () => {
     mockProvider.mergeData.mockClear();
   });
 
-  test('GET /api/storage propagates provider error', async () => {
+  test('GET /api/storage returns 500 on provider error', async () => {
     mockProvider.getAllData.mockRejectedValueOnce(new Error('DB connection lost'));
-    // Route has no try/catch — error propagates (Next.js catches in production)
-    await expect(GET()).rejects.toThrow('DB connection lost');
+    const res = await GET();
+    expect(res.status).toBe(500);
+    const json = await res.json();
+    expect(json.error).toBe('DB connection lost');
   });
 
   test('PUT collection response includes ok:true on success', async () => {

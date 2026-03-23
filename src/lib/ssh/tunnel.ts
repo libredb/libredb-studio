@@ -7,6 +7,7 @@
 import { Client } from 'ssh2';
 import net from 'net';
 import type { SSHTunnelConfig } from '@/lib/types';
+import { logger } from '@/lib/logger';
 
 export interface TunnelInfo {
   localHost: string;
@@ -28,6 +29,8 @@ export async function createSSHTunnel(
   remotePort: number
 ): Promise<TunnelInfo> {
   // Return existing tunnel if already active
+  // Note: cached tunnel may be stale if the SSH connection dropped silently.
+  // Callers should handle connection errors and call closeSSHTunnel() to evict stale entries.
   const existing = activeTunnels.get(connectionId);
   if (existing) {
     return existing;
@@ -59,9 +62,18 @@ export async function createSSHTunnel(
               socket.end();
               return;
             }
+            // Prevent unhandled stream errors from crashing the process
+            stream.on('error', () => { socket.destroy(); });
+            socket.on('error', () => { stream.close(); });
             socket.pipe(stream).pipe(socket);
           }
         );
+      });
+
+      // Attach error handler before listen to catch bind/listen errors
+      localServer.on('error', (err) => {
+        cleanup();
+        reject(new Error(`SSH tunnel local server error: ${err.message}`));
       });
 
       // Listen on a random available port
@@ -73,17 +85,14 @@ export async function createSSHTunnel(
           close: cleanup,
         };
         activeTunnels.set(connectionId, tunnelInfo);
-        console.log(`[SSH] Tunnel created for ${connectionId}: 127.0.0.1:${address.port} -> ${remoteHost}:${remotePort}`);
+        logger.info(`Tunnel created for ${connectionId}: 127.0.0.1:${address.port} -> ${remoteHost}:${remotePort}`, { connectionId });
         resolve(tunnelInfo);
-      });
-
-      localServer.on('error', (err) => {
-        cleanup();
-        reject(new Error(`SSH tunnel local server error: ${err.message}`));
       });
     });
 
     sshClient.on('error', (err) => {
+      // Ensure SSH file descriptors are released before rejecting
+      sshClient.end();
       cleanup();
       reject(new Error(`SSH connection error: ${err.message}`));
     });

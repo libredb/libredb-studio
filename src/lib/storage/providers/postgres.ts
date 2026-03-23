@@ -5,6 +5,7 @@
 
 import type { ServerStorageProvider, StorageCollection, StorageData } from '../types';
 import { STORAGE_COLLECTIONS } from '../types';
+import { logger } from '@/lib/logger';
 
 let Pool: typeof import('pg').Pool;
 
@@ -34,21 +35,30 @@ export class PostgresStorageProvider implements ServerStorageProvider {
       connectionString: this.connectionString,
       max: 5,
       idleTimeoutMillis: 30000,
-      ssl: this.connectionString.includes('sslmode=disable')
-        ? false
-        : { rejectUnauthorized: false },
+      ssl: this.buildSSLConfig(),
     });
 
     // Create table
-    await this.pool.query(`
-      CREATE TABLE IF NOT EXISTS user_storage (
-        user_id    TEXT NOT NULL,
-        collection TEXT NOT NULL,
-        data       TEXT NOT NULL,
-        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        PRIMARY KEY (user_id, collection)
-      )
-    `);
+    try {
+      await this.pool.query(`
+        CREATE TABLE IF NOT EXISTS user_storage (
+          user_id    TEXT NOT NULL,
+          collection TEXT NOT NULL,
+          data       TEXT NOT NULL,
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          PRIMARY KEY (user_id, collection)
+        )
+      `);
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('does not support SSL')) {
+        throw new Error(
+          'PostgreSQL storage connection failed: server does not support SSL. Add ?sslmode=disable to STORAGE_POSTGRES_URL for local PostgreSQL.',
+          { cause: error }
+        );
+      }
+      logger.error('PostgreSQL storage initialization failed', error, { provider: 'postgres' });
+      throw error;
+    }
   }
 
   async getAllData(userId: string): Promise<Partial<StorageData>> {
@@ -65,7 +75,7 @@ export class PostgresStorageProvider implements ServerStorageProvider {
           row.data
         );
       } catch {
-        // Skip corrupted data
+        logger.warn('Skipping corrupted storage data', { provider: 'postgres', collection: row.collection });
       }
     }
     return result;
@@ -84,6 +94,7 @@ export class PostgresStorageProvider implements ServerStorageProvider {
     try {
       return JSON.parse(rows[0].data) as StorageData[K];
     } catch {
+      logger.warn('Corrupted data in storage collection', { provider: 'postgres', collection });
       return null;
     }
   }
@@ -152,5 +163,63 @@ export class PostgresStorageProvider implements ServerStorageProvider {
         'PostgreSQL storage not initialized. Call initialize() first.'
       );
     }
+  }
+
+  private buildSSLConfig(): boolean | { rejectUnauthorized: boolean } {
+    const { host, searchParams } = this.parseConnectionString(this.connectionString);
+
+    const sslMode = searchParams.get('sslmode')?.toLowerCase();
+    if (sslMode === 'disable') return false;
+    if (
+      sslMode === 'require' ||
+      sslMode === 'prefer' ||
+      sslMode === 'verify-ca' ||
+      sslMode === 'verify-full'
+    ) {
+      return { rejectUnauthorized: false };
+    }
+
+    const sslParam = searchParams.get('ssl')?.toLowerCase();
+    if (sslParam === 'false' || sslParam === '0' || sslParam === 'no') {
+      return false;
+    }
+    if (sslParam === 'true' || sslParam === '1' || sslParam === 'yes') {
+      return { rejectUnauthorized: false };
+    }
+
+    if (this.isLocalHost(host)) return false;
+    return { rejectUnauthorized: false };
+  }
+
+  private parseConnectionString(connectionString: string): {
+    host: string;
+    searchParams: URLSearchParams;
+  } {
+    try {
+      const parsed = new URL(connectionString);
+      return {
+        host: parsed.hostname.toLowerCase(),
+        searchParams: parsed.searchParams,
+      };
+    } catch {
+      return {
+        host: '',
+        searchParams: new URLSearchParams(),
+      };
+    }
+  }
+
+  private isLocalHost(host: string): boolean {
+    const localHosts = new Set([
+      'localhost',
+      '::1',
+      'host.docker.internal',
+      'docker.for.mac.localhost',
+      'docker.for.win.localhost',
+      'gateway.docker.internal',
+    ]);
+    if (localHosts.has(host)) return true;
+    if (host.startsWith('127.')) return true;
+    return false;
   }
 }
