@@ -3,31 +3,24 @@
 # Optimized for Render, Railway, Fly.io, and Kubernetes
 # ==============================================================================
 
-# use the official Bun image (full version, not slim)
-# see all versions at https://hub.docker.com/r/oven/bun/tags
-# Reference: https://bun.com/docs/guides/ecosystem/docker
-FROM oven/bun:1 AS base
+# Bun for fast dependency installation, Node.js for build
+# Bun's JIT compiler segfaults under QEMU emulation (ARM64 cross-build),
+# so we use Node.js for the Next.js build step.
+FROM oven/bun:1 AS deps
 WORKDIR /usr/src/app
-
-# Install dependencies only when needed
-FROM base AS deps
 RUN apt-get update && apt-get install -y python3 make g++ --no-install-recommends && rm -rf /var/lib/apt/lists/*
 COPY package.json bun.lock ./
 RUN bun install --frozen-lockfile
 
-# Rebuild the source code only when needed
-FROM base AS builder
+# Build with Node.js to avoid Bun/QEMU segfaults on ARM64
+FROM node:20-slim AS builder
+WORKDIR /usr/src/app
 COPY --from=deps /usr/src/app/node_modules ./node_modules
 COPY . .
 
-# Next.js collects completely anonymous education data about general usage.
-# Learn more here: https://nextjs.org/telemetry
 ENV NEXT_TELEMETRY_DISABLED=1
-
-# Enable standalone output for Docker builds
 ENV DOCKER_BUILD=true
 
-# Build-time environment variables (replaced at runtime)
 ARG JWT_SECRET_BUILD="build-time-placeholder-secret-32ch"
 ARG ADMIN_PASSWORD_BUILD="build"
 ARG USER_PASSWORD_BUILD="build"
@@ -35,7 +28,7 @@ ENV JWT_SECRET=$JWT_SECRET_BUILD
 ENV ADMIN_PASSWORD=$ADMIN_PASSWORD_BUILD
 ENV USER_PASSWORD=$USER_PASSWORD_BUILD
 
-RUN bun run build
+RUN npx next build
 
 # Production image - use Node.js slim for lower memory footprint
 FROM node:20-slim AS runner
