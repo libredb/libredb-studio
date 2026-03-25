@@ -7,6 +7,33 @@ import { DatabaseConfigError } from '@/lib/db/errors';
 const mockProvider = createMockProvider();
 const mockCreateDatabaseProvider = mock(async () => mockProvider);
 
+// ─── Mock auth + seed resolution BEFORE importing route ─────────────────────
+mock.module('@/lib/auth', () => ({
+  getSession: mock(async () => ({ role: 'admin', username: 'admin' })),
+  signJWT: mock(async () => 'mock-token'),
+  verifyJWT: mock(async () => null),
+  login: mock(async () => {}),
+  logout: mock(async () => {}),
+}));
+
+mock.module('@/lib/seed/resolve-connection', () => {
+  class SeedConnectionError extends Error {
+    constructor(message: string, public statusCode: number) {
+      super(message);
+      this.name = 'SeedConnectionError';
+    }
+  }
+  return {
+    resolveConnection: mock(async (body: Record<string, unknown>) => {
+      if (!body.connection && !body.connectionId) {
+        throw new SeedConnectionError('Either connection or connectionId is required', 400);
+      }
+      return body.connection;
+    }),
+    SeedConnectionError,
+  };
+});
+
 // ─── Mock dependencies BEFORE importing route ───────────────────────────────
 mock.module('@/lib/db/factory', () => ({
   createDatabaseProvider: mockCreateDatabaseProvider,

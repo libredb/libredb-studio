@@ -6,6 +6,7 @@ import {
 } from '@/lib/db';
 import { getServerAuditBuffer } from '@/lib/audit';
 import { createErrorResponse } from '@/lib/api/errors';
+import { resolveConnection } from '@/lib/seed/resolve-connection';
 
 export async function POST(request: Request) {
   // Check admin authorization
@@ -19,15 +20,10 @@ export async function POST(request: Request) {
   }
 
   try {
-    const { type, target, connection } = await request.json();
+    const body = await request.json();
+    const { type, target } = body;
 
-    // Validate connection
-    if (!connection) {
-      return NextResponse.json(
-        { error: 'Connection is required' },
-        { status: 400 }
-      );
-    }
+    const connection = await resolveConnection(body, session);
 
     if (!type) {
       return NextResponse.json(

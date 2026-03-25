@@ -1,12 +1,22 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getOrCreateProvider } from '@/lib/db/factory';
 import { createErrorResponse } from '@/lib/api/errors';
+import { resolveConnection } from '@/lib/seed/resolve-connection';
+import { getSession } from '@/lib/auth';
 
 export async function POST(req: NextRequest) {
   try {
-    const { connection, tableName, columns } = await req.json();
+    const body = await req.json();
+    const { tableName, columns } = body;
 
-    if (!connection || !tableName) {
+    const session = await getSession();
+    if (!session) {
+      return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
+    }
+
+    const connection = await resolveConnection(body, session);
+
+    if (!tableName) {
       return NextResponse.json({ error: 'Connection and tableName required' }, { status: 400 });
     }
 

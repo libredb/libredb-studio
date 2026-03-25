@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getOrCreateProvider } from '@/lib/db';
 import { createErrorResponse } from '@/lib/api/errors';
+import { resolveConnection } from '@/lib/seed/resolve-connection';
+import { getSession } from '@/lib/auth';
 
 interface TransactionProvider {
   beginTransaction(): Promise<void>;
@@ -22,9 +24,17 @@ function isTransactionProvider(provider: unknown): provider is TransactionProvid
 
 export async function POST(req: NextRequest) {
   try {
-    const { connection, action, sql, options = {} } = await req.json();
+    const body = await req.json();
+    const { action, sql, options = {} } = body;
 
-    if (!connection || !action) {
+    const session = await getSession();
+    if (!session) {
+      return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
+    }
+
+    const connection = await resolveConnection(body, session);
+
+    if (!action) {
       return NextResponse.json(
         { error: 'Connection and action are required' },
         { status: 400 }

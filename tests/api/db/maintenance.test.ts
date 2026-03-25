@@ -45,6 +45,24 @@ mock.module('@/lib/auth', () => ({
   logout: mock(async () => {}),
 }));
 
+mock.module('@/lib/seed/resolve-connection', () => {
+  class SeedConnectionError extends Error {
+    constructor(message: string, public statusCode: number) {
+      super(message);
+      this.name = 'SeedConnectionError';
+    }
+  }
+  return {
+    resolveConnection: mock(async (body: Record<string, unknown>) => {
+      if (!body.connection && !body.connectionId) {
+        throw new SeedConnectionError('Either connection or connectionId is required', 400);
+      }
+      return body.connection;
+    }),
+    SeedConnectionError,
+  };
+});
+
 mock.module('@/lib/audit', () => ({
   getServerAuditBuffer: () => ({ push: mockAuditPush }),
   AuditRingBuffer: class {},
@@ -172,7 +190,7 @@ describe('POST /api/db/maintenance', () => {
     const data = await parseResponseJSON<{ error: string }>(res);
 
     expect(res.status).toBe(400);
-    expect(data.error).toContain('Connection is required');
+    expect(data.error).toContain('required');
   });
 
   test('missing type returns 400', async () => {

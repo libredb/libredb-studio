@@ -1,17 +1,21 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createDatabaseProvider } from '@/lib/db/factory';
-import type { DatabaseConnection } from '@/lib/types';
 import { createErrorResponse } from '@/lib/api/errors';
+import { resolveConnection } from '@/lib/seed/resolve-connection';
+import { getSession } from '@/lib/auth';
 
 export async function POST(request: NextRequest) {
   let provider = null;
 
   try {
-    const { connection } = await request.json() as { connection: DatabaseConnection };
+    const body = await request.json();
 
-    if (!connection) {
-      return NextResponse.json({ error: 'Connection is required' }, { status: 400 });
+    const session = await getSession();
+    if (!session) {
+      return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
     }
+
+    const connection = await resolveConnection(body, session);
 
     provider = await createDatabaseProvider(connection);
     await provider.connect();
