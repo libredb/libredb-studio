@@ -1,4 +1,4 @@
-import { loadConfig, resetCache } from './config-loader';
+import { loadConfig } from './config-loader';
 import { resolveAllCredentials } from './credential-resolver';
 import { filterByRoles, mergeDefaults } from './connection-filter';
 import type { ManagedConnection } from './types';

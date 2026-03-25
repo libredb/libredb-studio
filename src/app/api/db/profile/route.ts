@@ -17,7 +17,7 @@ export async function POST(req: NextRequest) {
     const connection = await resolveConnection(body, session);
 
     if (!tableName) {
-      return NextResponse.json({ error: 'Connection and tableName required' }, { status: 400 });
+      return NextResponse.json({ error: 'tableName is required' }, { status: 400 });
     }
 
     const provider = await getOrCreateProvider(connection);

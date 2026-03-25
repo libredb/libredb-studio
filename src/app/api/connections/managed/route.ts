@@ -22,7 +22,8 @@ export async function GET() {
       return conn;
     });
 
-    const cacheTTL = Number(process.env.SEED_CACHE_TTL_MS) || 60_000;
+    const rawTTL = Number(process.env.SEED_CACHE_TTL_MS);
+    const cacheTTL = Number.isFinite(rawTTL) ? rawTTL : 60_000;
 
     return NextResponse.json({ connections: sanitized, cacheHint: cacheTTL });
   } catch (error) {

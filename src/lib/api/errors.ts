@@ -53,8 +53,13 @@ export function createErrorResponse(
   // --- Seed Connection Error ---
   if (error instanceof SeedConnectionError) {
     logger.warn('Seed connection error', { route, statusCode: error.statusCode });
+    const code = error.statusCode === 403 || error.statusCode === 401
+      ? ApiErrorCode.AUTH_ERROR
+      : error.statusCode === 400
+        ? ApiErrorCode.CONFIG_ERROR
+        : undefined;
     return NextResponse.json(
-      { error: error.message, code: ApiErrorCode.CONFIG_ERROR, statusCode: error.statusCode },
+      { error: error.message, ...(code ? { code } : {}), statusCode: error.statusCode },
       { status: error.statusCode }
     );
   }

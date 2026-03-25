@@ -112,7 +112,11 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
       const res = await fetch('/api/db/schema-snapshot', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ connection: conn }),
+        body: JSON.stringify(
+          conn.managed && conn.seedId
+            ? { connectionId: `seed:${conn.seedId}` }
+            : { connection: conn }
+        ),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);

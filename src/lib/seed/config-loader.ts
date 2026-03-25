@@ -10,7 +10,8 @@ let cachedAt = 0;
 let cacheIsNull = false;
 
 function getCacheTTL(): number {
-  return Number(process.env.SEED_CACHE_TTL_MS) || 60_000;
+  const raw = Number(process.env.SEED_CACHE_TTL_MS);
+  return Number.isFinite(raw) ? raw : 60_000;
 }
 
 function getConfigPath(): string {
