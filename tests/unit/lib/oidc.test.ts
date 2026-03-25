@@ -171,6 +171,17 @@ describe('encryptState / decryptState', () => {
     nonce: 'test-nonce-def456',
   };
 
+  // Ensure JWT_SECRET is always restored — prevents cross-test contamination
+  const CRYPTO_TEST_SECRET = 'oidc-crypto-test-secret-32chars!!';
+
+  beforeEach(() => {
+    process.env.JWT_SECRET = CRYPTO_TEST_SECRET;
+  });
+
+  afterEach(() => {
+    process.env.JWT_SECRET = 'test-jwt-secret-for-unit-tests-32ch';
+  });
+
   test('round-trips state correctly', async () => {
     const encrypted = await encryptState(testState);
     expect(typeof encrypted).toBe('string');
@@ -189,12 +200,12 @@ describe('encryptState / decryptState', () => {
   });
 
   test('throws when JWT_SECRET is not set', async () => {
-    const savedSecret = process.env.JWT_SECRET;
     delete process.env.JWT_SECRET;
-
-    await expect(encryptState(testState)).rejects.toThrow('JWT_SECRET is required');
-
-    process.env.JWT_SECRET = savedSecret;
+    try {
+      await expect(encryptState(testState)).rejects.toThrow('JWT_SECRET is required');
+    } finally {
+      process.env.JWT_SECRET = 'test-jwt-secret-for-unit-tests-32ch';
+    }
   });
 });
 
