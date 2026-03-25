@@ -94,3 +94,4 @@ testdb
 charts/*/charts/*.tgz
 
 
+seed-connections.yaml
