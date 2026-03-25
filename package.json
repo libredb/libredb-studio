@@ -86,6 +86,7 @@
     "ssh2": "^1.17.0",
     "tailwind-merge": "^3.4.0",
     "vaul": "^1.1.2",
+    "yaml": "^2.8.3",
     "zod": "^4.1.12"
   },
   "devDependencies": {

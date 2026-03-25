@@ -1,0 +1,8 @@
+version: "1"
+
+connections:
+  - id: "minimal-pg"
+    name: "Minimal PG"
+    type: postgres
+    host: localhost
+    roles: ["*"]

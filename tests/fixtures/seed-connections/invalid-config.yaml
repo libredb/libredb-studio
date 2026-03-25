@@ -1,0 +1,7 @@
+version: "2"
+
+connections:
+  - id: "INVALID_ID!"
+    name: ""
+    type: nosql
+    roles: []
