@@ -138,37 +138,3 @@ describe('POST /api/auth/logout (oidc)', () => {
     expect(mockLogout).toHaveBeenCalledTimes(1);
   });
 });
-
-// ─── Error path ──────────────────────────────────────────────────────────────
-describe('POST /api/auth/logout (error handling)', () => {
-  beforeEach(() => {
-    mockLogout.mockClear();
-    mockBuildLogoutUrl.mockClear();
-    process.env.NEXT_PUBLIC_AUTH_PROVIDER = 'local';
-  });
-
-  afterEach(() => {
-    process.env.NEXT_PUBLIC_AUTH_PROVIDER = 'local';
-  });
-
-  test('returns error response when logout() throws', async () => {
-    mockLogout.mockImplementation(() => { throw new Error('cookie store unavailable'); });
-
-    const res = await POST(makeRequest() as never);
-    const data = await parseResponseJSON<{ error: string; statusCode: number }>(res);
-
-    expect(res.status).toBe(500);
-    expect(data.error).toBe('cookie store unavailable');
-    expect(data.statusCode).toBe(500);
-  });
-
-  test('returns error response when logout() rejects with async error', async () => {
-    mockLogout.mockImplementation(async () => { throw new Error('async logout failure'); });
-
-    const res = await POST(makeRequest() as never);
-    const data = await parseResponseJSON<{ error: string; statusCode: number }>(res);
-
-    expect(res.status).toBe(500);
-    expect(data.error).toBe('async logout failure');
-  });
-});

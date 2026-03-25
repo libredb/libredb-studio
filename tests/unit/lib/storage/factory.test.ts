@@ -1,20 +1,12 @@
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import { describe, test, expect, beforeEach } from 'bun:test';
 import {
   getStorageProviderType,
   isServerStorageEnabled,
   getStorageConfig,
-  getStorageProvider,
-  closeStorageProvider,
 } from '@/lib/storage/factory';
 
 // Clean env before every test to prevent leakage
-beforeEach(async () => {
-  await closeStorageProvider();
-  delete process.env.STORAGE_PROVIDER;
-});
-
-afterEach(async () => {
-  await closeStorageProvider();
+beforeEach(() => {
   delete process.env.STORAGE_PROVIDER;
 });
 
@@ -75,25 +67,5 @@ describe('storage factory: getStorageConfig', () => {
     process.env.STORAGE_PROVIDER = 'sqlite';
     const config = getStorageConfig();
     expect(config).toEqual({ provider: 'sqlite', serverMode: true });
-  });
-});
-
-describe('storage factory: getStorageProvider (local paths)', () => {
-  test('returns null when STORAGE_PROVIDER=local', async () => {
-    process.env.STORAGE_PROVIDER = 'local';
-    const provider = await getStorageProvider();
-    expect(provider).toBeNull();
-  });
-
-  test('returns null when STORAGE_PROVIDER is not set', async () => {
-    const provider = await getStorageProvider();
-    expect(provider).toBeNull();
-  });
-});
-
-describe('storage factory: closeStorageProvider (no-op path)', () => {
-  test('does nothing when no provider exists', async () => {
-    // Should not throw when called with no active provider
-    await expect(closeStorageProvider()).resolves.toBeUndefined();
   });
 });

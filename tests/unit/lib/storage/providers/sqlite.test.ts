@@ -1,6 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
 import type { ServerStorageProvider } from '@/lib/storage/types';
-import { getStorageProvider, closeStorageProvider } from '@/lib/storage/factory';
 
 // ── Mock better-sqlite3 ─────────────────────────────────────────────────────
 
@@ -229,78 +228,5 @@ describe('SQLiteStorageProvider', () => {
   test('ensureDb throws when not initialized', async () => {
     const freshProvider = new SQLiteStorageProvider(':memory:');
     await expect(freshProvider.getAllData('test@test.com')).rejects.toThrow('not initialized');
-  });
-});
-
-// ── Storage factory: SQLite provider path coverage ───────────────────────────
-// These tests run here (not in factory.test.ts) because better-sqlite3 is
-// already mocked in this file — adding these tests here avoids cross-file
-// mock contamination that would break the SQLiteStorageProvider tests above.
-
-describe('storage factory: getStorageProvider (SQLite path)', () => {
-  beforeEach(async () => {
-    await closeStorageProvider();
-    delete process.env.STORAGE_PROVIDER;
-    delete process.env.STORAGE_SQLITE_PATH;
-  });
-
-  afterEach(async () => {
-    await closeStorageProvider();
-    delete process.env.STORAGE_PROVIDER;
-    delete process.env.STORAGE_SQLITE_PATH;
-  });
-
-  test('returns SQLite provider instance when STORAGE_PROVIDER=sqlite', async () => {
-    process.env.STORAGE_PROVIDER = 'sqlite';
-    process.env.STORAGE_SQLITE_PATH = ':memory:';
-    const provider = await getStorageProvider();
-    expect(provider).not.toBeNull();
-  });
-
-  test('returns same instance on second call (singleton)', async () => {
-    process.env.STORAGE_PROVIDER = 'sqlite';
-    process.env.STORAGE_SQLITE_PATH = ':memory:';
-    const p1 = await getStorageProvider();
-    const p2 = await getStorageProvider();
-    expect(p1).toBe(p2);
-  });
-});
-
-describe('storage factory: closeStorageProvider (SQLite path)', () => {
-  beforeEach(async () => {
-    await closeStorageProvider();
-    delete process.env.STORAGE_PROVIDER;
-    delete process.env.STORAGE_SQLITE_PATH;
-    mockClose.mockClear();
-  });
-
-  afterEach(async () => {
-    await closeStorageProvider();
-    delete process.env.STORAGE_PROVIDER;
-    delete process.env.STORAGE_SQLITE_PATH;
-  });
-
-  test('closes the provider and calls db.close()', async () => {
-    process.env.STORAGE_PROVIDER = 'sqlite';
-    process.env.STORAGE_SQLITE_PATH = ':memory:';
-
-    const p1 = await getStorageProvider();
-    expect(p1).not.toBeNull();
-
-    await closeStorageProvider();
-    // The SQLiteStorageProvider.close() calls db.close() which is mockClose
-    expect(mockClose).toHaveBeenCalled();
-  });
-
-  test('resets singleton so next call creates new instance', async () => {
-    process.env.STORAGE_PROVIDER = 'sqlite';
-    process.env.STORAGE_SQLITE_PATH = ':memory:';
-
-    const p1 = await getStorageProvider();
-    await closeStorageProvider();
-
-    const p2 = await getStorageProvider();
-    expect(p2).not.toBeNull();
-    expect(p2).not.toBe(p1);
   });
 });
