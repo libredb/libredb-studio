@@ -115,6 +115,31 @@ describe('PUT /api/storage/[collection]', () => {
       data
     );
   });
+
+  test('returns 400 when data field is missing from body', async () => {
+    const request = new NextRequest('http://localhost/api/storage/connections', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ notData: 'hello' }),
+    });
+    const res = await PUT(request, { params: Promise.resolve({ collection: 'connections' }) });
+    expect(res.status).toBe(400);
+    const json = await res.json();
+    expect(json.error).toContain('Missing required field');
+  });
+
+  test('returns 500 when provider.setCollection throws', async () => {
+    mockProvider.setCollection.mockRejectedValueOnce(new Error('Storage write failed'));
+    const request = new NextRequest('http://localhost/api/storage/connections', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ data: [{ id: 'c1' }] }),
+    });
+    const res = await PUT(request, { params: Promise.resolve({ collection: 'connections' }) });
+    expect(res.status).toBe(500);
+    const json = await res.json();
+    expect(json.error).toBe('Storage write failed');
+  });
 });
 
 describe('POST /api/storage/migrate', () => {
