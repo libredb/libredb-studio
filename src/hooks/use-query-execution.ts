@@ -11,6 +11,7 @@ import { isMultiStatement } from '@/lib/sql/statement-splitter';
 import { shouldRefreshSchema } from '@/lib/query-generators';
 import { ApiErrorCode } from '@/lib/api/error-codes';
 import { logger } from '@/lib/logger';
+import { buildConnectionPayload } from './use-connection-payload';
 
 export interface QueryExecutionOptions {
   limit?: number;
@@ -147,7 +148,7 @@ export function useQueryExecution({
         const beginRes = await fetch('/api/db/transaction', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ connection: activeConnection, action: 'begin' }),
+          body: JSON.stringify({ ...buildConnectionPayload(activeConnection), action: 'begin' }),
         });
         if (!beginRes.ok) {
           logger.warn('Playground transaction BEGIN failed', { route: 'use-query-execution' });
@@ -177,7 +178,7 @@ export function useQueryExecution({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          connection: activeConnection,
+          ...buildConnectionPayload(activeConnection),
           ...(useTransaction
             ? { action: 'query', sql: queryToExecute, options: { limit, offset, unlimited } }
             : {
@@ -199,7 +200,7 @@ export function useQueryExecution({
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              connection: activeConnection,
+              ...buildConnectionPayload(activeConnection),
               sql: explainSql,
               options: {},
             }),
@@ -354,7 +355,7 @@ export function useQueryExecution({
           await fetch('/api/db/transaction', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ connection: activeConnection, action: 'rollback' }),
+            body: JSON.stringify({ ...buildConnectionPayload(activeConnection), action: 'rollback' }),
           });
         } catch {
           logger.warn('Playground transaction rollback failed', { route: 'use-query-execution' });
@@ -379,7 +380,7 @@ export function useQueryExecution({
           await fetch('/api/db/transaction', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ connection: activeConnection, action: 'rollback' }),
+            body: JSON.stringify({ ...buildConnectionPayload(activeConnection), action: 'rollback' }),
           });
         } catch {
           logger.warn('Playground transaction rollback failed', { route: 'use-query-execution' });
@@ -431,7 +432,7 @@ export function useQueryExecution({
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            connection: activeConnection,
+            ...buildConnectionPayload(activeConnection),
             queryId: activeQueryIdRef.current,
           }),
         });
