@@ -3,7 +3,6 @@
 import { useState, useCallback, useEffect, useMemo } from 'react';
 import type { DatabaseConnection, TableSchema, QueryTab } from '@/lib/types';
 import type { ProviderMetadata } from '@/hooks/use-provider-metadata';
-import { getDefaultQuery } from '@/lib/showcase-queries';
 import { generateTableQuery, generateSelectQuery } from '@/lib/query-generators';
 
 const DEFAULT_TAB: QueryTab = {
@@ -141,12 +140,11 @@ export function useTabManager({
 
   const addTab = useCallback(() => {
     const newId = Math.random().toString(36).substring(7);
-    const isDemo = activeConnection?.isDemo || activeConnection?.type === 'demo';
     const queryLanguage = metadata?.capabilities.queryLanguage;
     setTabs(prev => [...prev, {
       id: newId,
       name: `Query ${prev.length + 1}`,
-      query: getDefaultQuery(isDemo, queryLanguage),
+      query: '',
       result: null,
       isExecuting: false,
       type: queryLanguage === 'json' ? 'mongodb' : 'sql'

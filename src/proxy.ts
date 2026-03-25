@@ -62,8 +62,6 @@ export async function proxy(request: NextRequest) {
     pathname === '/favicon.ico' ||
     // Health check endpoint for load balancers (Render, K8s, etc.)
     pathname === '/api/db/health' ||
-    // Demo connection endpoint (public for initial load)
-    pathname === '/api/demo-connection' ||
     // Storage config endpoint (public, returns only mode info)
     pathname === '/api/storage/config'
   ) {
@@ -96,12 +94,11 @@ export const config = {
      * Match all request paths except for the ones starting with:
      * - api/auth (auth endpoints)
      * - api/db/health (health check for load balancers)
-     * - api/demo-connection (demo database connection - public)
      * - api/storage/config (storage mode discovery - public)
      * - _next/static (static files)
      * - _next/image (image optimization files)
      * - favicon.ico (favicon file)
      */
-    '/((?!api/auth|api/db/health|api/demo-connection|api/storage/config|_next/static|_next/image|.*\\..*).*)',
+    '/((?!api/auth|api/db/health|api/storage/config|_next/static|_next/image|.*\\..*).*)',
   ],
 };

@@ -1,6 +1,6 @@
 import React from 'react';
 import { DatabaseConnection, ENVIRONMENT_LABELS } from '@/lib/types';
-import { Lock, Trash2, Pencil, Sparkles } from 'lucide-react';
+import { Lock, Trash2, Pencil } from 'lucide-react';
 import { getDBIcon } from '@/lib/db-ui-config';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -28,8 +28,7 @@ export const ConnectionItem = React.memo(function ConnectionItem({
         'group flex items-center gap-2.5 px-3 py-2 rounded-lg cursor-pointer transition-all duration-200 text-sm relative overflow-hidden',
         isActive
           ? 'bg-blue-600/10 text-blue-400'
-          : 'hover:bg-accent/50 text-muted-foreground hover:text-foreground',
-        conn.isDemo && 'border border-emerald-500/20'
+          : 'hover:bg-accent/50 text-muted-foreground hover:text-foreground'
       )}
       onClick={() => onSelect(conn)}
     >
@@ -43,18 +42,13 @@ export const ConnectionItem = React.memo(function ConnectionItem({
       <div
         className={cn(
           'p-1 rounded transition-colors',
-          isActive ? 'bg-blue-500/20' : 'bg-muted group-hover:bg-accent',
-          conn.isDemo && 'bg-emerald-500/20'
+          isActive ? 'bg-blue-500/20' : 'bg-muted group-hover:bg-accent'
         )}
       >
-        {conn.isDemo ? (
-          <Sparkles className="w-3 h-3 text-emerald-400" />
-        ) : (
-          (() => {
-            const Icon = getDBIcon(conn.type);
-            return <Icon className="w-3 h-3" />;
-          })()
-        )}
+        {(() => {
+          const Icon = getDBIcon(conn.type);
+          return <Icon className="w-3 h-3" />;
+        })()}
       </div>
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-1.5">
@@ -71,14 +65,8 @@ export const ConnectionItem = React.memo(function ConnectionItem({
             </span>
           )}
         </div>
-        {conn.isDemo && (
-          <span className="text-[9px] uppercase tracking-wider text-emerald-400/80 font-semibold">
-            Demo Database
-          </span>
-        )}
       </div>
-      {!conn.isDemo && (
-        <div className="flex items-center gap-0.5">
+      <div className="flex items-center gap-0.5">
           {conn.managed && (
             <div
               data-testid={`managed-lock-${conn.seedId || conn.id}`}
@@ -115,7 +103,6 @@ export const ConnectionItem = React.memo(function ConnectionItem({
             </Button>
           )}
         </div>
-      )}
     </motion.div>
   );
 });

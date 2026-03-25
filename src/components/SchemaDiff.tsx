@@ -211,12 +211,12 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
                   </div>
                 </SelectItem>
               ))}
-              {allConnections.filter(c => c.id !== connection?.id && !c.isDemo).length > 0 && (
+              {allConnections.filter(c => c.id !== connection?.id).length > 0 && (
                 <>
                   <div className="px-2 py-1 text-[9px] text-zinc-600 uppercase border-t border-white/5 mt-1">
                     Fetch from connection
                   </div>
-                  {allConnections.filter(c => c.id !== connection?.id && !c.isDemo).map(c => (
+                  {allConnections.filter(c => c.id !== connection?.id).map(c => (
                     <SelectItem key={`conn:${c.id}`} value={`conn:${c.id}`} className="text-xs">
                       <div className="flex items-center gap-1">
                         <Database className="w-3 h-3 text-blue-400" /> {c.name}

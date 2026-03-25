@@ -214,15 +214,12 @@ export function OverviewTab({ user }: OverviewTabProps) {
 
   const fetchFleetHealth = useCallback(async () => {
     if (connections.length === 0) return;
-    const nonDemo = connections.filter((c) => !c.isDemo);
-    if (nonDemo.length === 0) return;
-
     setFleetLoading(true);
     try {
       const res = await fetch('/api/admin/fleet-health', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ connections: nonDemo }),
+        body: JSON.stringify({ connections }),
       });
       const data = await res.json();
       if (data.results) setFleetHealth(data.results);
@@ -352,7 +349,7 @@ export function OverviewTab({ user }: OverviewTabProps) {
     return items.slice(0, 15);
   }, [auditEvents, history]);
 
-  const hasConnections = connections.filter((c) => !c.isDemo).length > 0;
+  const hasConnections = connections.length > 0;
 
   if (!hasConnections) {
     return <EmptyState />;
@@ -695,8 +692,7 @@ function FleetHealthSection({
   fleetLoading: boolean;
   connections: DatabaseConnection[];
 }) {
-  const nonDemo = connections.filter((c) => !c.isDemo);
-  if (nonDemo.length === 0) return null;
+  if (connections.length === 0) return null;
 
   const getStatusColor = (status: string) => {
     switch (status) {

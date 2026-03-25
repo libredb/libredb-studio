@@ -33,7 +33,6 @@ import { useQueryExecution } from '@/hooks/use-query-execution';
 import { useInlineEditing } from '@/hooks/use-inline-editing';
 import { useStorageSync } from '@/hooks/use-storage-sync';
 import { storage } from '@/lib/storage';
-import { getRandomShowcaseQuery } from '@/lib/showcase-queries';
 import {
   type MaskingConfig,
   loadMaskingConfig,
@@ -113,17 +112,12 @@ export default function Studio() {
       editing.setEditingEnabled(false);
       editing.handleDiscardChanges();
       conn.fetchSchema(conn.activeConnection);
-      const isDemo = conn.activeConnection.isDemo || conn.activeConnection.type === 'demo';
       const tabType = metadata?.capabilities.queryLanguage === 'json' ? 'mongodb' :
                       conn.activeConnection.type === 'redis' ? 'redis' : 'sql';
-      tabMgr.setTabs(prev => prev.map((t, index) => {
-        const hasDefaultQuery = t.query === '-- Start typing your SQL query here\n' ||
-                                t.query.startsWith('-- Start typing');
-        const shouldUpdateWithShowcase = isDemo && index === 0 && hasDefaultQuery;
+      tabMgr.setTabs(prev => prev.map((t) => {
         return {
           ...t,
           type: tabType,
-          ...(shouldUpdateWithShowcase ? { query: getRandomShowcaseQuery() } : {})
         };
       }));
     } else {

@@ -28,11 +28,6 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Demo connections always succeed
-    if (connection.type === 'demo') {
-      return NextResponse.json({ success: true, message: 'Demo connection is always available.' });
-    }
-
     provider = await createDatabaseProvider(connection, { queryTimeout: 10000 });
     await provider.connect();
 

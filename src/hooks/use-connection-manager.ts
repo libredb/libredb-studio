@@ -20,10 +20,6 @@ export function useConnectionManager(storageReady = false) {
   const fetchSchema = useCallback(async (conn: DatabaseConnection) => {
     setIsLoadingSchema(true);
 
-    if (conn.isDemo) {
-      console.log('[DemoDB] Fetching schema for demo connection:', conn.name);
-    }
-
     try {
       const payload = conn.managed && conn.seedId
         ? { connectionId: `seed:${conn.seedId}` }
@@ -37,28 +33,14 @@ export function useConnectionManager(storageReady = false) {
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
         const errorMessage = errorData.error || 'Failed to fetch schema';
-
-        if (conn.isDemo) {
-          console.error('[DemoDB] Schema fetch failed:', errorMessage);
-          throw new Error(`Demo database unavailable: ${errorMessage}. You can add your own database connection.`);
-        }
         throw new Error(errorMessage);
       }
 
       const data = await response.json();
-
-      if (conn.isDemo) {
-        console.log('[DemoDB] Schema loaded successfully:', {
-          tables: data.length,
-          tableNames: data.slice(0, 5).map((t: TableSchema) => t.name),
-        });
-      }
-
       setSchema(data);
     } catch (error) {
-      const title = conn.isDemo ? "Demo Database Error" : "Schema Error";
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      toast({ title, description: errorMessage, variant: "destructive" });
+      toast({ title: "Schema Error", description: errorMessage, variant: "destructive" });
     } finally {
       setIsLoadingSchema(false);
     }
@@ -73,76 +55,7 @@ export function useConnectionManager(storageReady = false) {
     if (!storageReady) return;
 
     const initializeConnections = async () => {
-      const LOG_PREFIX = '[DemoDB]';
       const loadedConnections = storage.getConnections();
-
-      // Fetch demo connection from server
-      try {
-        console.log(`${LOG_PREFIX} Checking for demo connection...`);
-        const res = await fetch('/api/demo-connection');
-
-        if (res.ok) {
-          const data = await res.json();
-
-          if (data.enabled && data.connection) {
-            const demoConn = {
-              ...data.connection,
-              createdAt: new Date(data.connection.createdAt),
-            };
-
-            // Check if demo connection already exists (by id or isDemo flag)
-            const existingDemo = loadedConnections.find(
-              (c: DatabaseConnection) => c.id === demoConn.id || (c.isDemo && c.type === 'postgres')
-            );
-
-            if (existingDemo) {
-              // Update existing demo connection (credentials may have changed)
-              console.log(`${LOG_PREFIX} Updating existing demo connection:`, {
-                id: existingDemo.id,
-                name: demoConn.name,
-              });
-              const updatedDemo = { ...demoConn, id: existingDemo.id };
-              storage.saveConnection(updatedDemo);
-              const updatedConnections = storage.getConnections();
-              setConnections(updatedConnections);
-
-              // Restore persisted active connection, fallback to first
-              if (updatedConnections.length > 0) {
-                const savedId = storage.getActiveConnectionId();
-                const saved = savedId ? updatedConnections.find((c: DatabaseConnection) => c.id === savedId) : null;
-                setActiveConnection(saved ?? updatedConnections[0]);
-              }
-            } else {
-              // Add new demo connection
-              console.log(`${LOG_PREFIX} Adding new demo connection:`, {
-                id: demoConn.id,
-                name: demoConn.name,
-                database: demoConn.database,
-              });
-              storage.saveConnection(demoConn);
-              const updatedConnections = storage.getConnections();
-              setConnections(updatedConnections);
-
-              // Restore persisted active connection, fallback to demo if no others
-              const savedId = storage.getActiveConnectionId();
-              const saved = savedId ? updatedConnections.find((c: DatabaseConnection) => c.id === savedId) : null;
-              if (loadedConnections.length === 0) {
-                console.log(`${LOG_PREFIX} Auto-selecting demo as active connection (no other connections)`);
-                setActiveConnection(saved ?? demoConn);
-              } else {
-                setActiveConnection(saved ?? updatedConnections[0]);
-              }
-            }
-            return;
-          } else {
-            console.log(`${LOG_PREFIX} Demo connection not enabled or not configured`);
-          }
-        } else {
-          console.warn(`${LOG_PREFIX} API returned non-ok status:`, res.status);
-        }
-      } catch {
-        logger.warn('Failed to fetch demo connection', { route: 'use-connection-manager' });
-      }
 
       // Fetch managed (seed) connections
       let managedMerged = false;
@@ -217,7 +130,7 @@ export function useConnectionManager(storageReady = false) {
 
   // Connection pulse — quick health check every 60s
   useEffect(() => {
-    if (!activeConnection || activeConnection.isDemo) {
+    if (!activeConnection) {
       setConnectionPulse(null);
       return;
     }
