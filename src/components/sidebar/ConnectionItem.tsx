@@ -1,6 +1,6 @@
 import React from 'react';
 import { DatabaseConnection, ENVIRONMENT_LABELS } from '@/lib/types';
-import { Trash2, Pencil, Sparkles } from 'lucide-react';
+import { Lock, Trash2, Pencil, Sparkles } from 'lucide-react';
 import { getDBIcon } from '@/lib/db-ui-config';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -79,7 +79,16 @@ export const ConnectionItem = React.memo(function ConnectionItem({
       </div>
       {!conn.isDemo && (
         <div className="flex items-center gap-0.5">
-          {onEdit && (
+          {conn.managed && (
+            <div
+              data-testid={`managed-lock-${conn.seedId || conn.id}`}
+              className="w-6 h-6 flex items-center justify-center text-amber-500/60"
+              title="Managed by administrator"
+            >
+              <Lock className="w-3 h-3" />
+            </div>
+          )}
+          {!conn.managed && onEdit && (
             <Button
               variant="ghost"
               size="icon"
@@ -92,17 +101,19 @@ export const ConnectionItem = React.memo(function ConnectionItem({
               <Pencil className="w-3 h-3" />
             </Button>
           )}
-          <Button
-            variant="ghost"
-            size="icon"
-            className="w-6 h-6 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-500/20 hover:text-red-400"
-            onClick={(e) => {
-              e.stopPropagation();
-              onDelete(conn.id);
-            }}
-          >
-            <Trash2 className="w-3 h-3" />
-          </Button>
+          {!conn.managed && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="w-6 h-6 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-500/20 hover:text-red-400"
+              onClick={(e) => {
+                e.stopPropagation();
+                onDelete(conn.id);
+              }}
+            >
+              <Trash2 className="w-3 h-3" />
+            </Button>
+          )}
         </div>
       )}
     </motion.div>
