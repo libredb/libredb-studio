@@ -86,10 +86,12 @@ export function useConnectionManager(storageReady = false) {
 
             // Add remaining user connections (not from seeds)
             const seedIds = new Set(managedConns.map((mc: { seedId: string }) => mc.seedId));
+            const mergedIds = new Set(merged.map((c) => c.id));
             for (const uc of userConns) {
-              if (!uc.seedId || !seedIds.has(uc.seedId)) {
-                merged.push(uc);
-              }
+              // Skip if this user connection came from a seed (by seedId or id match)
+              if (uc.seedId && seedIds.has(uc.seedId)) continue;
+              if (mergedIds.has(uc.id)) continue;
+              merged.push(uc);
             }
 
             setConnections(merged);
