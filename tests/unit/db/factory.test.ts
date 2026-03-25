@@ -259,29 +259,29 @@ describe('createDatabaseProvider', () => {
   });
 });
 
-// ─── getOrCreateProvider — uses 'demo' to avoid native driver issues ─────
+// ─── getOrCreateProvider — uses 'sqlite' for lightweight testing ─────
 
 describe('getOrCreateProvider', () => {
   test('creates and caches a provider', async () => {
-    const conn = makeConnection('demo');
+    const conn = makeConnection('sqlite');
     const provider = await getOrCreateProvider(conn);
     expect(provider).toBeDefined();
     expect(provider.isConnected()).toBe(true);
 
     const stats = getProviderCacheStats();
     expect(stats.size).toBe(1);
-    expect(stats.connections).toContain('test-demo');
+    expect(stats.connections).toContain('test-sqlite');
   });
 
   test('returns cached provider on second call', async () => {
-    const conn = makeConnection('demo');
+    const conn = makeConnection('sqlite');
     const first = await getOrCreateProvider(conn);
     const second = await getOrCreateProvider(conn);
     expect(first).toBe(second);
   });
 
   test('creates new provider if cached one is disconnected', async () => {
-    const conn = makeConnection('demo');
+    const conn = makeConnection('sqlite');
     const first = await getOrCreateProvider(conn);
     await first.disconnect();
     expect(first.isConnected()).toBe(false);
@@ -292,7 +292,7 @@ describe('getOrCreateProvider', () => {
   });
 
   test('creates SSH tunnel when sshTunnel is configured', async () => {
-    const conn = makeConnection('demo', {
+    const conn = makeConnection('sqlite', {
       id: 'ssh-conn',
       host: 'remote-db.example.com',
       port: 5432,
@@ -315,7 +315,7 @@ describe('getOrCreateProvider', () => {
 
 describe('removeProvider', () => {
   test('removes provider from cache and calls disconnect', async () => {
-    const conn = makeConnection('demo');
+    const conn = makeConnection('sqlite');
     const provider = await getOrCreateProvider(conn);
     expect(provider.isConnected()).toBe(true);
 
@@ -323,11 +323,11 @@ describe('removeProvider', () => {
 
     const stats = getProviderCacheStats();
     expect(stats.size).toBe(0);
-    expect(stats.connections).not.toContain('test-demo');
+    expect(stats.connections).not.toContain('test-sqlite');
   });
 
   test('calls closeSSHTunnel', async () => {
-    const conn = makeConnection('demo');
+    const conn = makeConnection('sqlite');
     await getOrCreateProvider(conn);
     await removeProvider(conn.id);
     expect(mockCloseSSHTunnel).toHaveBeenCalledWith(conn.id);
@@ -338,8 +338,8 @@ describe('removeProvider', () => {
 
 describe('clearProviderCache', () => {
   test('clears all cached providers and disconnects each', async () => {
-    const d1 = makeConnection('demo', { id: 'demo-a' });
-    const d2 = makeConnection('demo', { id: 'demo-b' });
+    const d1 = makeConnection('sqlite', { id: 'sqlite-a' });
+    const d2 = makeConnection('sqlite', { id: 'sqlite-b' });
 
     const prov1 = await getOrCreateProvider(d1);
     const prov2 = await getOrCreateProvider(d2);
@@ -360,15 +360,15 @@ describe('getProviderCacheStats', () => {
   test('returns correct size and connection IDs', async () => {
     expect(getProviderCacheStats()).toEqual({ size: 0, connections: [] });
 
-    await getOrCreateProvider(makeConnection('demo', { id: 'demo-x' }));
-    await getOrCreateProvider(makeConnection('demo', { id: 'demo-y' }));
-    await getOrCreateProvider(makeConnection('demo', { id: 'demo-z' }));
+    await getOrCreateProvider(makeConnection('sqlite', { id: 'sqlite-x' }));
+    await getOrCreateProvider(makeConnection('sqlite', { id: 'sqlite-y' }));
+    await getOrCreateProvider(makeConnection('sqlite', { id: 'sqlite-z' }));
 
     const stats = getProviderCacheStats();
     expect(stats.size).toBe(3);
-    expect(stats.connections).toContain('demo-x');
-    expect(stats.connections).toContain('demo-y');
-    expect(stats.connections).toContain('demo-z');
+    expect(stats.connections).toContain('sqlite-x');
+    expect(stats.connections).toContain('sqlite-y');
+    expect(stats.connections).toContain('sqlite-z');
   });
 });
 
@@ -376,8 +376,8 @@ describe('getProviderCacheStats', () => {
 
 describe('evictIdleProviders', () => {
   test('evicts providers idle longer than maxIdleMs', async () => {
-    await getOrCreateProvider(makeConnection('demo', { id: 'idle-a' }));
-    await getOrCreateProvider(makeConnection('demo', { id: 'idle-b' }));
+    await getOrCreateProvider(makeConnection('sqlite', { id: 'idle-a' }));
+    await getOrCreateProvider(makeConnection('sqlite', { id: 'idle-b' }));
 
     expect(getProviderCacheStats().size).toBe(2);
 
@@ -388,7 +388,7 @@ describe('evictIdleProviders', () => {
   });
 
   test('does not evict recently used providers', async () => {
-    await getOrCreateProvider(makeConnection('demo', { id: 'fresh-a' }));
+    await getOrCreateProvider(makeConnection('sqlite', { id: 'fresh-a' }));
 
     // Use a very large maxIdleMs — nothing should be evicted
     const evicted = await evictIdleProviders(999_999_999);
@@ -402,13 +402,13 @@ describe('evictIdleProviders', () => {
   });
 
   test('closes SSH tunnel for evicted providers', async () => {
-    await getOrCreateProvider(makeConnection('demo', { id: 'tunnel-evict' }));
+    await getOrCreateProvider(makeConnection('sqlite', { id: 'tunnel-evict' }));
     await evictIdleProviders(0);
     expect(mockCloseSSHTunnel).toHaveBeenCalledWith('tunnel-evict');
   });
 
   test('handles disconnect errors gracefully during eviction', async () => {
-    const conn = makeConnection('demo', { id: 'err-evict' });
+    const conn = makeConnection('sqlite', { id: 'err-evict' });
     const provider = await getOrCreateProvider(conn);
     // Make disconnect throw
     const origDisconnect = provider.disconnect.bind(provider);

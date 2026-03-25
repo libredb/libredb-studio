@@ -8,7 +8,7 @@ import { generateTableQuery, generateSelectQuery } from '@/lib/query-generators'
 const DEFAULT_TAB: QueryTab = {
   id: 'default',
   name: 'Query 1',
-  query: '-- Start typing your SQL query here\n',
+  query: '',
   result: null,
   isExecuting: false,
   type: 'sql'
