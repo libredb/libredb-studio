@@ -58,6 +58,8 @@ export interface DatabaseConnection {
   sshTunnel?: SSHTunnelConfig;
   serviceName?: string;   // Oracle: service name (e.g. ORCL, XEPDB1)
   instanceName?: string;  // MSSQL: named instance (e.g. SQLEXPRESS)
+  managed?: boolean;      // true = admin-controlled, read-only in UI
+  seedId?: string;        // stable reference to seed config ID
 }
 
 export interface TableSchema {
