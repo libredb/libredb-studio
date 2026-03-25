@@ -223,15 +223,6 @@
         }
       }
     },
-    "demo": {
-      "type": "object",
-      "properties": {
-        "enabled": {
-          "type": "boolean",
-          "description": "Enable demo mode"
-        }
-      }
-    },
     "postgresql": {
       "type": "object",
       "properties": {

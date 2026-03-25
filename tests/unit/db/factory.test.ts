@@ -202,13 +202,6 @@ beforeEach(async () => {
 // ─── createDatabaseProvider ────────────────────────────────────────────────
 
 describe('createDatabaseProvider', () => {
-  test('creates DemoProvider for type "demo"', async () => {
-    const conn = makeConnection('demo');
-    const provider = await createDatabaseProvider(conn);
-    expect(provider).toBeDefined();
-    expect(provider.type).toBe('demo');
-  });
-
   test('throws DatabaseConfigError for unknown type', async () => {
     const conn = makeConnection('unknown');
     await expect(createDatabaseProvider(conn)).rejects.toThrow(

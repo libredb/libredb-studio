@@ -92,20 +92,6 @@ describe('POST /api/db/test-connection', () => {
     expect(typeof data.latency).toBe('number');
   });
 
-  test('returns success for demo connection type', async () => {
-    const req = createMockRequest('/api/db/test-connection', {
-      method: 'POST',
-      body: { type: 'demo' },
-    });
-
-    const res = await POST(req as never);
-    const data = await parseResponseJSON<{ success: boolean; message: string }>(res);
-
-    expect(res.status).toBe(200);
-    expect(data.success).toBe(true);
-    expect(data.message).toBe('Demo connection is always available.');
-  });
-
   test('returns 400 when connection type is missing', async () => {
     const req = createMockRequest('/api/db/test-connection', {
       method: 'POST',

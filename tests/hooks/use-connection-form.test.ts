@@ -235,32 +235,6 @@ describe('useConnectionForm', () => {
     expect(result.current.testResult!.success).toBe(false);
   });
 
-  // ── handleConnect skips test for demo type ─────────────────────────────────
-
-  test('handleConnect skips test for demo type', async () => {
-    const fetchMock = mockGlobalFetch({});
-    const onConnect = mock(() => {});
-
-    const { result } = renderHook(() =>
-      useConnectionForm({ ...defaultProps, onConnect })
-    );
-
-    act(() => {
-      result.current.setType('demo');
-    });
-
-    await act(async () => {
-      await result.current.handleConnect();
-    });
-
-    expect(onConnect).toHaveBeenCalledTimes(1);
-    // Should not have called test-connection endpoint
-    const testCalls = fetchMock.mock.calls.filter(
-      (call) => typeof call[0] === 'string' && call[0].includes('/api/db/test-connection')
-    );
-    expect(testCalls.length).toBe(0);
-  });
-
   // ── handlePasteConnectionString parses and fills form ──────────────────────
 
   test('handlePasteConnectionString parses and fills form fields', () => {

@@ -54,13 +54,6 @@ describe('proxy', () => {
       expect(isRedirect(res)).toBe(false);
     });
 
-    test('/api/demo-connection passes through without redirect', async () => {
-      const req = createNextRequest('/api/demo-connection');
-      const res = await proxy(req);
-
-      expect(isRedirect(res)).toBe(false);
-    });
-
     test('/_next/static/chunk.js passes through without redirect', async () => {
       const req = createNextRequest('/_next/static/chunk.js');
       const res = await proxy(req);

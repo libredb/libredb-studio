@@ -85,14 +85,6 @@ export const mockMSSQLConnection: DatabaseConnection = {
   environment: 'staging',
 };
 
-export const mockDemoConnection: DatabaseConnection = {
-  id: 'test-demo-1',
-  name: 'Demo',
-  type: 'demo',
-  isDemo: true,
-  createdAt: new Date('2025-01-01T00:00:00Z'),
-};
-
 export const allMockConnections: DatabaseConnection[] = [
   mockPostgresConnection,
   mockMySQLConnection,
@@ -101,5 +93,4 @@ export const allMockConnections: DatabaseConnection[] = [
   mockRedisConnection,
   mockOracleConnection,
   mockMSSQLConnection,
-  mockDemoConnection,
 ];

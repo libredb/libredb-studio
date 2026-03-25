@@ -192,7 +192,6 @@ function getDefaultForm() {
       { value: 'sqlite', label: 'SQLite', icon: () => React.createElement('span', null, 'SL'), color: 'text-cyan-400' },
       { value: 'mongodb', label: 'MongoDB', icon: () => React.createElement('span', null, 'MG'), color: 'text-emerald-400' },
       { value: 'redis', label: 'Redis', icon: () => React.createElement('span', null, 'RD'), color: 'text-red-400' },
-      { value: 'demo', label: 'Demo', icon: () => React.createElement('span', null, 'DM'), color: 'text-yellow-400' },
     ],
     ...mockFormOverrides,
   };
@@ -500,16 +499,6 @@ describe('ConnectionModal', () => {
     const props = createDefaultProps();
     const { queryByText } = render(React.createElement(ConnectionModal, props));
     expect(queryByText('Testing...')).not.toBeNull();
-  });
-
-  // ── 23. Demo type hides connection fields ─────────────────────────────
-
-  test('demo type renders without crash', () => {
-    mockFormOverrides = { type: 'demo' };
-    const props = createDefaultProps();
-    const { container } = render(React.createElement(ConnectionModal, props));
-    // Component renders properly with demo type
-    expect(container.textContent).toContain('New Connection');
   });
 
   // ── 24. MongoDB connection string mode ──────────────────────────────────

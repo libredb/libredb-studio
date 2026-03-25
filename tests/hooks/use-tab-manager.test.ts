@@ -753,24 +753,4 @@ describe('useTabManager', () => {
     expect(newTab.query).toContain('"operation": "find"');
   });
 
-  test('addTab with demo connection uses showcase query', () => {
-    const demoConnection = makeConnection({ id: 'demo', type: 'demo', isDemo: true });
-    const { result } = renderHook(() =>
-      useTabManager({
-        activeConnection: demoConnection,
-        metadata: defaultMetadata,
-        schema: [],
-      })
-    );
-
-    act(() => {
-      result.current.addTab();
-    });
-
-    const newTab = result.current.tabs[1];
-    // Demo queries are random but always contain SQL keywords
-    expect(newTab.query).not.toBe('-- Start typing your SQL query here\n');
-    expect(newTab.query.length).toBeGreaterThan(50);
-    expect(newTab.type).toBe('sql');
-  });
 });
