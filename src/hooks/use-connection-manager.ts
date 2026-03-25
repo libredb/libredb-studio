@@ -5,6 +5,7 @@ import type { DatabaseConnection, TableSchema } from '@/lib/types';
 import { useToast } from '@/hooks/use-toast';
 import { storage } from '@/lib/storage';
 import { logger } from '@/lib/logger';
+import { buildConnectionPayload } from './use-connection-payload';
 
 export function useConnectionManager(storageReady = false) {
   const [connections, setConnections] = useState<DatabaseConnection[]>([]);
@@ -24,10 +25,13 @@ export function useConnectionManager(storageReady = false) {
     }
 
     try {
+      const payload = conn.managed && conn.seedId
+        ? { connectionId: `seed:${conn.seedId}` }
+        : conn;  // bare conn for backward compat with schema route
       const response = await fetch('/api/db/schema', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(conn),
+        body: JSON.stringify(payload),
       });
 
       if (!response.ok) {
@@ -140,11 +144,62 @@ export function useConnectionManager(storageReady = false) {
         logger.warn('Failed to fetch demo connection', { route: 'use-connection-manager' });
       }
 
-      setConnections(loadedConnections);
-      if (loadedConnections.length > 0) {
-        const savedId = storage.getActiveConnectionId();
-        const saved = savedId ? loadedConnections.find((c: DatabaseConnection) => c.id === savedId) : null;
-        setActiveConnection(saved ?? loadedConnections[0]);
+      // Fetch managed (seed) connections
+      let managedMerged = false;
+      try {
+        const managedRes = await fetch('/api/connections/managed');
+        if (managedRes.ok) {
+          const { connections: managedConns } = await managedRes.json();
+          if (managedConns?.length > 0) {
+            const userConns = storage.getConnections();
+            const merged: DatabaseConnection[] = [];
+
+            // Add managed:true connections (always from server)
+            for (const mc of managedConns) {
+              if (mc.managed) {
+                merged.push({ ...mc, createdAt: new Date(mc.createdAt) });
+              } else {
+                // managed:false — check if already copied (by seedId)
+                const existingCopy = userConns.find((uc: DatabaseConnection) => uc.seedId === mc.seedId);
+                if (existingCopy) {
+                  merged.push(existingCopy);
+                } else {
+                  const userCopy: DatabaseConnection = { ...mc, createdAt: new Date(mc.createdAt), managed: false };
+                  storage.saveConnection(userCopy);
+                  merged.push(userCopy);
+                }
+              }
+            }
+
+            // Add remaining user connections (not from seeds)
+            const seedIds = new Set(managedConns.map((mc: { seedId: string }) => mc.seedId));
+            for (const uc of userConns) {
+              if (!uc.seedId || !seedIds.has(uc.seedId)) {
+                merged.push(uc);
+              }
+            }
+
+            setConnections(merged);
+            managedMerged = true;
+
+            if (merged.length > 0) {
+              const savedId = storage.getActiveConnectionId();
+              const saved = savedId ? merged.find((c: DatabaseConnection) => c.id === savedId) : null;
+              setActiveConnection(saved ?? merged[0]);
+            }
+          }
+        }
+      } catch {
+        // Managed connections are optional — don't break app
+      }
+
+      if (!managedMerged) {
+        setConnections(loadedConnections);
+        if (loadedConnections.length > 0) {
+          const savedId = storage.getActiveConnectionId();
+          const saved = savedId ? loadedConnections.find((c: DatabaseConnection) => c.id === savedId) : null;
+          setActiveConnection(saved ?? loadedConnections[0]);
+        }
       }
     };
 
@@ -171,7 +226,7 @@ export function useConnectionManager(storageReady = false) {
         const res = await fetch('/api/db/health', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ connection: activeConnection }),
+          body: JSON.stringify(buildConnectionPayload(activeConnection)),
         });
         setConnectionPulse(res.ok ? 'healthy' : 'degraded');
       } catch {
