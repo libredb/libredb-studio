@@ -240,6 +240,16 @@
           "description": "Deploy PostgreSQL subchart"
         }
       }
+    },
+    "seedConnections": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean", "default": false },
+        "config": { "type": "object" },
+        "existingConfigMap": { "type": "string", "default": "" },
+        "configMapKey": { "type": "string", "default": "seed-connections.yaml" },
+        "cacheTTL": { "type": "integer", "default": 60000, "minimum": 5000 }
+      }
     }
   }
 }

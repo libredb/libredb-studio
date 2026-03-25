@@ -13,6 +13,11 @@ services:
       - STORAGE_PROVIDER=${STORAGE_PROVIDER:-local}
       - STORAGE_SQLITE_PATH=${STORAGE_SQLITE_PATH:-/app/data/libredb-storage.db}
       - STORAGE_POSTGRES_URL=${STORAGE_POSTGRES_URL}
+    # Uncomment to enable pre-configured database connections:
+    # volumes:
+    #   - ./seed-connections.yaml:/app/config/seed-connections.yaml:ro
+    # environment:
+    #   SEED_CONFIG_PATH: /app/config/seed-connections.yaml
     volumes:
       - storage-data:/app/data
 

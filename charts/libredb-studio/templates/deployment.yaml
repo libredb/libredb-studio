@@ -114,6 +114,12 @@ spec:
                   key: {{ .Values.secrets.existingSecretKeys.storagePostgresUrl }}
                   optional: true
             {{- end }}
+            {{- if .Values.seedConnections.enabled }}
+            - name: SEED_CONFIG_PATH
+              value: "/app/config/{{ .Values.seedConnections.configMapKey | default "seed-connections.yaml" }}"
+            - name: SEED_CACHE_TTL_MS
+              value: {{ .Values.seedConnections.cacheTTL | default 60000 | quote }}
+            {{- end }}
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -140,6 +146,11 @@ spec:
             - name: data
               mountPath: /app/data
             {{- end }}
+            {{- if .Values.seedConnections.enabled }}
+            - name: seed-config
+              mountPath: /app/config
+              readOnly: true
+            {{- end }}
       volumes:
         - name: next-cache
           emptyDir: {}
@@ -149,6 +160,11 @@ spec:
         - name: data
           persistentVolumeClaim:
             claimName: {{ include "libredb-studio.pvcName" . }}
+        {{- end }}
+        {{- if .Values.seedConnections.enabled }}
+        - name: seed-config
+          configMap:
+            name: {{ .Values.seedConnections.existingConfigMap | default (printf "%s-seed-connections" (include "libredb-studio.fullname" .)) }}
         {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:

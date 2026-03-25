@@ -1,0 +1,11 @@
+{{- if and .Values.seedConnections.enabled (not .Values.seedConnections.existingConfigMap) .Values.seedConnections.config }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "libredb-studio.fullname" . }}-seed-connections
+  labels:
+    {{- include "libredb-studio.labels" . | nindent 4 }}
+data:
+  {{ .Values.seedConnections.configMapKey | default "seed-connections.yaml" }}: |
+    {{- .Values.seedConnections.config | toYaml | nindent 4 }}
+{{- end }}
