@@ -177,6 +177,32 @@ describe('POST /api/db/health', () => {
     expect(data.code).toBe('INTERNAL_ERROR');
   });
 
+  test('returns 401 when no session', async () => {
+    const { getSession } = await import('@/lib/auth');
+    (getSession as ReturnType<typeof mock>).mockResolvedValueOnce(null);
+
+    const req = createMockRequest('/api/db/health', {
+      method: 'POST',
+      body: { connection: validConnection },
+    });
+
+    const res = await POST(req as never);
+    expect(res.status).toBe(401);
+  });
+
+  test('returns 400 when connection has no type', async () => {
+    const { resolveConnection } = await import('@/lib/seed/resolve-connection');
+    (resolveConnection as ReturnType<typeof mock>).mockResolvedValueOnce({ id: 'x', name: 'X' });
+
+    const req = createMockRequest('/api/db/health', {
+      method: 'POST',
+      body: { connection: { id: 'x', name: 'X' } },
+    });
+
+    const res = await POST(req as never);
+    expect(res.status).toBe(400);
+  });
+
   test('returns 500 for generic error', async () => {
     (mockProvider.getHealth as ReturnType<typeof mock>).mockRejectedValueOnce(
       new Error('Unexpected failure')

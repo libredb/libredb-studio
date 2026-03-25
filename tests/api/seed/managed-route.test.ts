@@ -69,4 +69,45 @@ describe('GET /api/connections/managed', () => {
     process.env.SEED_CONFIG_PATH = origPath;
     resetCache();
   });
+
+  it('includes credentials for managed:false connections', async () => {
+    const origPath = process.env.SEED_CONFIG_PATH;
+    process.env.SEED_CONFIG_PATH = path.join(
+      path.resolve(__dirname, '../../fixtures/seed-connections'),
+      'valid-config.yaml',
+    );
+    process.env.TEST_PG_PASSWORD = 'pg-pass';
+    process.env.TEST_MYSQL_PASSWORD = 'mysql-pass';
+    process.env.TEST_MONGO_URI = 'mongodb://host/db';
+    process.env.TEST_REDIS_PASSWORD = 'redis-pass';
+    resetCache();
+
+    const res = await GET();
+    const data = await res.json();
+    const unmanaged = data.connections.find((c: { managed: boolean }) => !c.managed);
+    expect(unmanaged).toBeDefined();
+    expect(unmanaged.password).toBe('mysql-pass');
+
+    process.env.SEED_CONFIG_PATH = origPath;
+    delete process.env.TEST_PG_PASSWORD;
+    delete process.env.TEST_MYSQL_PASSWORD;
+    delete process.env.TEST_MONGO_URI;
+    delete process.env.TEST_REDIS_PASSWORD;
+    resetCache();
+  });
+
+  it('returns 500 when config is invalid', async () => {
+    const origPath = process.env.SEED_CONFIG_PATH;
+    process.env.SEED_CONFIG_PATH = path.join(
+      path.resolve(__dirname, '../../fixtures/seed-connections'),
+      'invalid-config.yaml',
+    );
+    resetCache();
+
+    const res = await GET();
+    expect(res.status).toBe(500);
+
+    process.env.SEED_CONFIG_PATH = origPath;
+    resetCache();
+  });
 });
