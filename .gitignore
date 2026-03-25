@@ -95,3 +95,6 @@ charts/*/charts/*.tgz
 
 
 seed-connections.yaml
+
+.playwright-mcp/*.png
+
