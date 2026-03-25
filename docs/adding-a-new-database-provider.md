@@ -29,7 +29,6 @@ DatabaseProvider (interface)
         │     ├── MySQLProvider
         │     └── SQLiteProvider
         ├── MongoDBProvider (document-based, extends BaseDatabaseProvider directly)
-        └── DemoProvider (mock data)
 ```
 
 **Key files:**
@@ -93,10 +92,10 @@ Before you start, decide:
 
 ```typescript
 // Before:
-export type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'mongodb' | 'redis' | 'demo';
+export type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'mongodb' | 'redis' | 'oracle' | 'mssql';
 
 // After (example: adding CockroachDB):
-export type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'mongodb' | 'redis' | 'cockroachdb' | 'demo';
+export type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'mongodb' | 'redis' | 'oracle' | 'mssql' | 'cockroachdb';
 ```
 
 > **Note:** `redis` is already in the union but not yet implemented. If you're implementing Redis, skip this step.
@@ -437,7 +436,7 @@ export async function createDatabaseProvider(
 }
 ```
 
-> **Important:** Use dynamic `import()` to keep the initial bundle small. Only the DemoProvider is statically imported.
+> **Important:** Use dynamic `import()` to keep the initial bundle small.
 
 ---
 
@@ -470,7 +469,7 @@ Then add the type to the selectable list in `ConnectionModal.tsx`:
 
 ```typescript
 const selectableTypes: DatabaseType[] = [
-  'postgres', 'mysql', 'cockroachdb', 'mongodb', 'redis', 'demo'
+  'postgres', 'mysql', 'cockroachdb', 'mongodb', 'redis'
 ];
 ```
 
@@ -626,14 +625,6 @@ const result = await provider.query(prepared.query);
 - Labels: fully custom (Collection, document, Find Documents, etc.)
 - `prepareQuery`: pass-through (MongoDB handles its own limiting)
 - Query format: JSON `{ collection, operation, filter, options }`
-
-### DemoProvider (`src/lib/db/providers/demo.ts`)
-
-- Extends: `BaseDatabaseProvider`
-- No real database connection — returns mock data
-- Capabilities: SQL defaults with `defaultPort: null`, `supportsConnectionString: false`
-- Labels: defaults
-- Useful as a minimal reference implementation
 
 ---
 

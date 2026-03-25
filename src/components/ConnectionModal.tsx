@@ -152,48 +152,44 @@ export function ConnectionModal({ isOpen, onClose, onConnect, editConnection }: 
 
         <div className="space-y-4 md:space-y-6">
           {/* Connection Name - always visible */}
-          {type !== 'demo' && (
-            <div className="space-y-2">
-              <div className="flex items-center gap-2 mb-1">
-                <Database className="w-3 h-3 text-zinc-500" />
-                <Label htmlFor="name" className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Connection Name</Label>
-              </div>
-              <Input
-                id="name"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="My Database"
-                className="h-10 bg-zinc-900/50 border-white/5 focus:border-blue-500/50 transition-all text-sm"
-              />
+          <div className="space-y-2">
+            <div className="flex items-center gap-2 mb-1">
+              <Database className="w-3 h-3 text-zinc-500" />
+              <Label htmlFor="name" className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Connection Name</Label>
             </div>
-          )}
+            <Input
+              id="name"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="My Database"
+              className="h-10 bg-zinc-900/50 border-white/5 focus:border-blue-500/50 transition-all text-sm"
+            />
+          </div>
 
           {/* Environment Selector */}
-          {type !== 'demo' && (
-            <div className="space-y-2">
-              <Label className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Environment</Label>
-              <div className="flex flex-wrap items-center gap-2">
-                {(Object.keys(ENVIRONMENT_COLORS) as ConnectionEnvironment[]).map((env) => (
-                  <button
-                    key={env}
-                    onClick={() => setEnvironment(env)}
-                    className={cn(
-                      "flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[10px] font-bold uppercase tracking-wider transition-all border",
-                      environment === env
-                        ? "border-white/20 bg-white/5 text-zinc-200"
-                        : "border-transparent text-zinc-500 hover:text-zinc-300 hover:bg-white/5"
-                    )}
-                  >
-                    <div
-                      className="w-2 h-2 rounded-full"
-                      style={{ backgroundColor: ENVIRONMENT_COLORS[env] }}
-                    />
-                    {env === 'other' ? 'Other' : ENVIRONMENT_LABELS[env]}
-                  </button>
-                ))}
-              </div>
+          <div className="space-y-2">
+            <Label className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Environment</Label>
+            <div className="flex flex-wrap items-center gap-2">
+              {(Object.keys(ENVIRONMENT_COLORS) as ConnectionEnvironment[]).map((env) => (
+                <button
+                  key={env}
+                  onClick={() => setEnvironment(env)}
+                  className={cn(
+                    "flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[10px] font-bold uppercase tracking-wider transition-all border",
+                    environment === env
+                      ? "border-white/20 bg-white/5 text-zinc-200"
+                      : "border-transparent text-zinc-500 hover:text-zinc-300 hover:bg-white/5"
+                  )}
+                >
+                  <div
+                    className="w-2 h-2 rounded-full"
+                    style={{ backgroundColor: ENVIRONMENT_COLORS[env] }}
+                  />
+                  {env === 'other' ? 'Other' : ENVIRONMENT_LABELS[env]}
+                </button>
+              ))}
             </div>
-          )}
+          </div>
 
           {/* DB Type Selector */}
           <div className="grid grid-cols-2 gap-3">
@@ -224,9 +220,8 @@ export function ConnectionModal({ isOpen, onClose, onConnect, editConnection }: 
           </div>
 
             <div className="space-y-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
-              {type !== 'demo' ? (
-                <>
-                  {/* Connection string mode toggle */}
+              <>
+                {/* Connection string mode toggle */}
                   {getDBConfig(type).showConnectionStringToggle && (
                     <div className="flex items-center gap-2 p-1 rounded-lg bg-zinc-900/50 border border-white/5">
                       <button
@@ -354,28 +349,7 @@ export function ConnectionModal({ isOpen, onClose, onConnect, editConnection }: 
                       </div>
                     </>
                   )}
-                </>
-              ) : (
-                <div className="p-4 md:p-8 border border-white/5 rounded-xl bg-zinc-900/30 text-center space-y-3">
-                  <Zap className="w-8 h-8 text-yellow-500 mx-auto opacity-50" />
-                  <div className="space-y-1">
-                    <h4 className="text-sm font-semibold text-zinc-300">Demo Connection Mode</h4>
-                    <p className="text-xs text-zinc-500 leading-relaxed">
-                      No real database required. This mode will load a pre-populated schema with mock data for testing the interface.
-                    </p>
-                  </div>
-                  <div className="pt-2">
-                     <Label htmlFor="name" className="text-[10px] font-bold uppercase tracking-wider text-zinc-500 mb-2 block text-left">Connection Name</Label>
-                     <Input
-                      id="name"
-                      value={name}
-                      onChange={(e) => setName(e.target.value)}
-                      placeholder="My Demo DB"
-                      className="h-10 bg-zinc-900/50 border-white/5 focus:border-blue-500/50 transition-all text-sm"
-                    />
-                  </div>
-                </div>
-              )}
+              </>
             </div>
 
           {/* Advanced Settings (Oracle/MSSQL) */}
@@ -439,8 +413,8 @@ export function ConnectionModal({ isOpen, onClose, onConnect, editConnection }: 
             </div>
           )}
 
-          {/* SSL/TLS & SSH Panels - only for non-demo, non-sqlite */}
-          {type !== 'demo' && type !== 'sqlite' && (
+          {/* SSL/TLS & SSH Panels - only for non-sqlite */}
+          {type !== 'sqlite' && (
             <div className="space-y-2">
               {/* SSL/TLS Toggle */}
               <button
@@ -704,23 +678,21 @@ export function ConnectionModal({ isOpen, onClose, onConnect, editConnection }: 
             Cancel
           </Button>
           <div className="flex flex-col gap-2 md:flex-row md:items-center md:gap-2">
-            {type !== 'demo' && (
-              <Button
-                variant="outline"
-                onClick={handleTestConnection}
-                disabled={isTesting}
-                className="w-full md:w-auto border-white/10 text-zinc-400 hover:text-white hover:bg-white/5 text-xs font-bold h-10 px-4"
-              >
-                {isTesting ? (
-                  <div className="flex items-center gap-2">
-                    <div className="w-3 h-3 border-2 border-zinc-400/30 border-t-zinc-400 rounded-full animate-spin" />
-                    Testing...
-                  </div>
-                ) : (
-                  'Test Connection'
-                )}
-              </Button>
-            )}
+            <Button
+              variant="outline"
+              onClick={handleTestConnection}
+              disabled={isTesting}
+              className="w-full md:w-auto border-white/10 text-zinc-400 hover:text-white hover:bg-white/5 text-xs font-bold h-10 px-4"
+            >
+              {isTesting ? (
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 border-2 border-zinc-400/30 border-t-zinc-400 rounded-full animate-spin" />
+                  Testing...
+                </div>
+              ) : (
+                'Test Connection'
+              )}
+            </Button>
             <Button
               onClick={handleConnect}
               disabled={isTesting || (getDBConfig(type).showConnectionStringToggle && mongoConnectionMode === 'connectionString' && !connectionString.trim())}

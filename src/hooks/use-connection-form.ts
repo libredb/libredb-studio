@@ -204,13 +204,6 @@ export function useConnectionForm({ isOpen, onConnect, editConnection }: UseConn
     try {
       const conn = buildConnection();
 
-      // Skip real test for demo connections
-      if (type === 'demo') {
-        onConnect(conn);
-        setIsTesting(false);
-        return;
-      }
-
       // Real connection test before saving
       const response = await fetch('/api/db/test-connection', {
         method: 'POST',
@@ -275,7 +268,7 @@ export function useConnectionForm({ isOpen, onConnect, editConnection }: UseConn
     setTestResult({ success: true, message: 'Connection string parsed successfully. Review the fields and connect.' });
   }, [pasteInput, name]);
 
-  const selectableTypes: DatabaseType[] = ['postgres', 'mysql', 'oracle', 'mssql', 'mongodb', 'redis', 'demo'];
+  const selectableTypes: DatabaseType[] = ['postgres', 'mysql', 'oracle', 'mssql', 'mongodb', 'redis'];
   const dbTypes = selectableTypes.map(t => {
     const cfg = getDBConfig(t);
     return { value: t, label: cfg.label, icon: cfg.icon, color: cfg.color };

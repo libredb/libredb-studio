@@ -35,6 +35,3 @@ data:
   {{- end }}
   OIDC_ADMIN_ROLES: {{ .Values.config.oidcAdminRoles | quote }}
   {{- end }}
-  {{- if .Values.demo.enabled }}
-  DEMO_MODE: "true"
-  {{- end }}

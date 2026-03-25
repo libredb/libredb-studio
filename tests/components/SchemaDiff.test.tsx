@@ -133,7 +133,6 @@ const mockDeleteSchemaSnapshot = mock(() => {});
 const mockGetConnections = mock(() => [
   { id: 'remote-1', name: 'Remote PG', type: 'postgres', host: 'remote', port: 5432, database: 'db', createdAt: new Date() },
   { id: 'remote-2', name: 'Prod DB', type: 'postgres', host: 'prod', port: 5432, database: 'db', environment: 'production', createdAt: new Date() },
-  { id: 'demo-1', name: 'Demo', type: 'demo', isDemo: true, createdAt: new Date() },
 ]);
 
 mock.module('@/lib/storage', () => ({
@@ -143,6 +142,13 @@ mock.module('@/lib/storage', () => ({
     deleteSchemaSnapshot: mockDeleteSchemaSnapshot,
     getConnections: mockGetConnections,
   },
+}));
+
+mock.module('@/hooks/use-all-connections', () => ({
+  useAllConnections: () => ({
+    connections: mockGetConnections(),
+    loading: false,
+  }),
 }));
 
 // ── Imports AFTER mocks ──────────────────────────────────────────────────────
@@ -213,7 +219,6 @@ describe('SchemaDiff', () => {
     mockGetConnections.mockImplementation(() => [
       { id: 'remote-1', name: 'Remote PG', type: 'postgres', host: 'remote', port: 5432, database: 'db', createdAt: new Date() },
       { id: 'remote-2', name: 'Prod DB', type: 'postgres', host: 'prod', port: 5432, database: 'db', environment: 'production', createdAt: new Date() },
-      { id: 'demo-1', name: 'Demo', type: 'demo', isDemo: true, createdAt: new Date() },
     ]);
   });
 
@@ -729,11 +734,10 @@ describe('SchemaDiff', () => {
       expect(getByText('Fetch from connection')).toBeTruthy();
     });
 
-    test('renders remote connections (excluding current and demo)', () => {
-      const { getByText, queryByText } = renderDiff();
+    test('renders remote connections', () => {
+      const { getByText } = renderDiff();
       expect(getByText('Remote PG')).toBeTruthy();
       expect(getByText('Prod DB')).toBeTruthy();
-      expect(queryByText('Demo')).toBeNull();
     });
 
     test('does not show "Fetch from connection" when no other connections', () => {

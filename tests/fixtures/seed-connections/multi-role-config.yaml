@@ -1,0 +1,30 @@
+version: "1"
+
+connections:
+  - id: "admin-only"
+    name: "Admin Only DB"
+    type: postgres
+    host: admin-pg.internal
+    password: "${ADMIN_PG_PASS}"
+    roles: ["admin"]
+
+  - id: "user-only"
+    name: "User Only DB"
+    type: mysql
+    host: user-mysql.internal
+    password: "${USER_MYSQL_PASS}"
+    roles: ["user"]
+
+  - id: "everyone"
+    name: "Everyone DB"
+    type: postgres
+    host: shared-pg.internal
+    password: "${SHARED_PG_PASS}"
+    roles: ["*"]
+
+  - id: "admin-and-user"
+    name: "Admin And User DB"
+    type: postgres
+    host: both-pg.internal
+    password: "${BOTH_PG_PASS}"
+    roles: ["admin", "user"]

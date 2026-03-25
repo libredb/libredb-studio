@@ -1,0 +1,51 @@
+version: "1"
+
+defaults:
+  managed: true
+  environment: production
+
+connections:
+  - id: "test-postgres"
+    name: "Test PostgreSQL"
+    type: postgres
+    host: pg.internal
+    port: 5432
+    database: testdb
+    user: "testuser"
+    password: "${TEST_PG_PASSWORD}"
+    environment: production
+    group: "Backend"
+    roles: ["admin"]
+    managed: true
+    color: "#10B981"
+
+  - id: "test-mysql"
+    name: "Test MySQL"
+    type: mysql
+    host: mysql.internal
+    port: 3306
+    database: appdb
+    user: "devuser"
+    password: "${TEST_MYSQL_PASSWORD}"
+    environment: staging
+    group: "Backend"
+    roles: ["*"]
+    managed: false
+
+  - id: "test-mongo"
+    name: "Test MongoDB"
+    type: mongodb
+    connectionString: "${TEST_MONGO_URI}"
+    group: "Platform"
+    roles: ["admin"]
+    managed: true
+
+  - id: "test-redis"
+    name: "Test Redis"
+    type: redis
+    host: redis.internal
+    port: 6379
+    database: "0"
+    password: "${TEST_REDIS_PASSWORD}"
+    roles: ["*"]
+    managed: true

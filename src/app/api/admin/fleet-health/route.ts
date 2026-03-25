@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server';
 import { getOrCreateProvider } from '@/lib/db';
 import type { DatabaseConnection } from '@/lib/types';
 import { createErrorResponse } from '@/lib/api/errors';
+import { resolveConnection } from '@/lib/seed/resolve-connection';
 
 export interface FleetHealthItem {
   connectionId: string;
@@ -41,7 +42,11 @@ export async function POST(request: Request) {
       connections.map(async (conn): Promise<FleetHealthItem> => {
         const start = Date.now();
         try {
-          const provider = await getOrCreateProvider(conn);
+          // Resolve managed seed connections (server-side credential injection)
+          const resolved = conn.managed && conn.seedId
+            ? await resolveConnection({ connectionId: `seed:${conn.seedId}` }, session!)
+            : conn;
+          const provider = await getOrCreateProvider(resolved);
           const health = await provider.getHealth();
           const latencyMs = Date.now() - start;
 

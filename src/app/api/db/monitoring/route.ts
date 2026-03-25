@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getOrCreateProvider } from '@/lib/db';
-import type { MonitoringOptions, DatabaseConnection } from '@/lib/db/types';
+import type { MonitoringOptions } from '@/lib/db/types';
 import { createErrorResponse } from '@/lib/api/errors';
+import { resolveConnection } from '@/lib/seed/resolve-connection';
+import { getSession } from '@/lib/auth';
 
 /**
  * POST /api/db/monitoring
@@ -27,12 +29,15 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const { connection, options } = body as {
-      connection: DatabaseConnection;
-      options?: MonitoringOptions;
-    };
+    const session = await getSession();
+    if (!session) {
+      return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
+    }
 
-    if (!connection || !connection.type) {
+    const connection = await resolveConnection(body, session);
+    const { options } = body as { options?: MonitoringOptions };
+
+    if (!connection.type) {
       return NextResponse.json(
         { error: 'Valid connection configuration is required' },
         { status: 400 }

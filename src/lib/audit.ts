@@ -6,7 +6,8 @@ export type AuditEventType =
   | 'masking_config'
   | 'threshold_config'
   | 'connection_test'
-  | 'query_execution';
+  | 'query_execution'
+  | 'managed_connection';
 
 export interface AuditEvent {
   id: string;

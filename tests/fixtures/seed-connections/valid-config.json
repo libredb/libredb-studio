@@ -1,0 +1,15 @@
+{
+  "version": "1",
+  "defaults": { "managed": true, "environment": "production" },
+  "connections": [
+    {
+      "id": "test-postgres",
+      "name": "Test PostgreSQL",
+      "type": "postgres",
+      "host": "pg.internal",
+      "port": 5432,
+      "password": "${TEST_PG_PASSWORD}",
+      "roles": ["admin"]
+    }
+  ]
+}

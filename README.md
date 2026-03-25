@@ -23,7 +23,7 @@
 </p>
 
 <p align="center">
-  <a href="#-live-demo"><strong>🚀 Try Live Demo</strong></a> •
+  <a href="#-live-test"><strong>🚀 Try Live Test</strong></a> •
   <a href="#getting-started"><strong>📖 Documentation</strong></a> •
   <a href="#-one-click-deploy"><strong>⚡ Deploy Your Own</strong></a>
 </p>
@@ -34,15 +34,15 @@
 
 ---
 
-## 🚀 Live Demo
+## 🚀 Live Test
 
 > **Try LibreDB Studio instantly without installation!**
 
-| Demo | URL | Credentials |
+| Test | URL | Credentials |
 |------|-----|-------------|
-| **Public Demo** | [app.libredb.org](https://app.libredb.org) | `admin@libredb.org` / `LibreDB.2026` |
+| **Public Test** | [app.libredb.org](https://app.libredb.org) | `admin@libredb.org` / `LibreDB.2026` |
 
-The demo runs in **Demo Mode** with simulated data. No real database required!
+The test instance comes with a pre-configured PostgreSQL database via [Seed Connections](#seed-connections-pre-configured-databases). No setup required!
 
 ---
 
@@ -333,10 +333,10 @@ bun run test:coverage
 |-------|-----------|--------|-------|----------------|
 | **Unit** | `tests/unit/` | `bun:test` | ~800 | Pure functions: SQL parser, connection strings, data masking, query limiter, schema diff, error classes, DB icons, showcase queries |
 | **API** | `tests/api/` | `bun:test` | ~205 | Route handlers: auth, query, transaction, maintenance, AI endpoints, middleware |
-| **Integration** | `tests/integration/` | `bun:test` | ~294 | Database providers: PG, MySQL, SQLite, MongoDB, Redis, Oracle, MSSQL, Demo (mocked drivers) |
+| **Integration** | `tests/integration/` | `bun:test` | ~294 | Database providers: PG, MySQL, SQLite, MongoDB, Redis, Oracle, MSSQL|
 | **Hooks** | `tests/hooks/` | `bun:test` | ~178 | React hooks: auth, connections, tabs, query execution, transactions, inline editing, AI chat, monitoring |
 | **Components** | `tests/components/` | `bun:test` + happy-dom | ~194 | UI components: Studio, Sidebar, QueryEditor, ResultsGrid, Admin Dashboard, Charts, ERD |
-| **E2E** | `e2e/` | Playwright | ~35 | Full browser flows: login, demo mode, connections, query execution, tabs, export, admin |
+| **E2E** | `e2e/` | Playwright | ~35 | Full browser flows: login, connections, query execution, tabs, export, admin |
 
 ### Key Details
 
@@ -354,7 +354,7 @@ bun run test:coverage
 
 Deploy your own instance of LibreDB Studio with a single click and a free account on Koyeb or Render:
 
- [![Deploy to Koyeb](https://www.koyeb.com/static/images/deploy/button.svg)](https://app.koyeb.com/deploy?name=libredb-studio&type=docker&image=ghcr.io%2Flibredb%2Flibredb-studio%3Alatest&instance_type=free&regions=fra&instances_min=0&autoscaling_sleep_idle_delay=3900&env%5BADMIN_EMAIL%5D=admin%40libredb.org&env%5BADMIN_PASSWORD%5D=LibreDB.2026&env%5BDEMO_DB_DATABASE%5D=employees&env%5BDEMO_DB_ENABLED%5D=true&env%5BDEMO_DB_HOST%5D=yourhostname.eu-central-1.aws.neon.tech&env%5BDEMO_DB_NAME%5D=Employee+Demo&env%5BDEMO_DB_PASSWORD%5D=your_readonly_secure_pass&env%5BDEMO_DB_PORT%5D=5432&env%5BDEMO_DB_USER%5D=employees_readonly&env%5BJWT_SECRET%5D=your_secure_pass%3D&env%5BLLM_API_KEY%5D=your_GEMINI_API_KEY&env%5BLLM_API_URL%5D=http%3A%2F%2Flocalhost%3A11434%2Fv1&env%5BLLM_MODEL%5D=gemini-2.5-flash&env%5BLLM_PROVIDER%5D=gemini&env%5BNEXT_PUBLIC_AUTH_PROVIDER%5D=local&env%5BOIDC_ADMIN_ROLES%5D=admin&env%5BOIDC_CLIENT_ID%5D=your_oidc_client_id&env%5BOIDC_CLIENT_SECRET%5D=your_oidc_client_secret&env%5BOIDC_ISSUER%5D=https%3A%2F%2Flibredb.eu.auth0.com&env%5BOIDC_ROLE_CLAIM%5D=https%3A%2F%2Flibredb.org%2Froles&env%5BOIDC_SCOPE%5D=openid+profile+email&env%5BSTORAGE_POSTGRES_URL%5D=postgresql%3A%2F%2Fdb_user%3Adb_pass%40your_host.eu-central-1.pg.koyeb.app%2Flibredb_storage&env%5BSTORAGE_PROVIDER%5D=postgres&env%5BUSER_EMAIL%5D=user%40libredb.org&env%5BUSER_PASSWORD%5D=LibreDB.2026&ports=3000%3Bhttp%3B%2F&hc_protocol%5B3000%5D=tcp&hc_grace_period%5B3000%5D=5&hc_interval%5B3000%5D=30&hc_restart_limit%5B3000%5D=3&hc_timeout%5B3000%5D=5&hc_path%5B3000%5D=%2F&hc_method%5B3000%5D=get)  
+ [![Deploy to Koyeb](https://www.koyeb.com/static/images/deploy/button.svg)](https://app.koyeb.com/deploy?name=libredb-studio&type=docker&image=ghcr.io%2Flibredb%2Flibredb-studio%3Alatest&instance_type=free&regions=fra&instances_min=0&autoscaling_sleep_idle_delay=3900&env%5BADMIN_EMAIL%5D=admin%40libredb.org&env%5BADMIN_PASSWORD%5D=LibreDB.2026&env%5BJWT_SECRET%5D=your_secure_pass%3D&env%5BLLM_API_KEY%5D=your_GEMINI_API_KEY&env%5BLLM_MODEL%5D=gemini-2.5-flash&env%5BLLM_PROVIDER%5D=gemini&env%5BNEXT_PUBLIC_AUTH_PROVIDER%5D=local&env%5BSTORAGE_PROVIDER%5D=postgres&env%5BSTORAGE_POSTGRES_URL%5D=postgresql%3A%2F%2Fdb_user%3Adb_pass%40your_host.eu-central-1.pg.koyeb.app%2Flibredb_storage&env%5BUSER_EMAIL%5D=user%40libredb.org&env%5BUSER_PASSWORD%5D=LibreDB.2026&ports=3000%3Bhttp%3B%2F&hc_protocol%5B3000%5D=tcp&hc_grace_period%5B3000%5D=5&hc_interval%5B3000%5D=30&hc_restart_limit%5B3000%5D=3&hc_timeout%5B3000%5D=5&hc_path%5B3000%5D=%2F&hc_method%5B3000%5D=get)  
 
  [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/libredb/libredb-studio)  
 
@@ -378,10 +378,12 @@ Deploy your own instance of LibreDB Studio with a single click and a free accoun
 | `LLM_PROVIDER` | ❌ | AI provider: `gemini`, `openai`, `ollama` |
 | `LLM_API_KEY` | ❌ | API key for AI features |
 | `LLM_MODEL` | ❌ | Model name (e.g., `gemini-2.5-flash`) |
-| `STORAGE_PROVIDER` |❌ | Storage provider: default=`local` in localStorage, persists in `sqlite` or `postgres` databases |
-| `STORAGE_POSTGRES_URL` |❌  |`postgresql://postgres:postgres@localhost:5432/libredb_storage` (required when `STORAGE_PROVIDER=postgres`) |
+| `STORAGE_PROVIDER` | ❌ | Storage provider: `local` (default), `sqlite`, or `postgres` |
+| `STORAGE_POSTGRES_URL` | ❌ | PostgreSQL connection URL (required when `STORAGE_PROVIDER=postgres`) |
+| `SEED_CONFIG_PATH` | ❌ | Path to seed connections YAML config (see [Seed Connections](#seed-connections-pre-configured-databases)) |
+| `SEED_CACHE_TTL_MS` | ❌ | Seed config cache TTL in ms (default: `60000`) |
 
-> 💡 **Tip**: Copy `.env.example` to `.env.local` for local development.
+> **Tip**: Copy `.env.example` to `.env.local` for local development.
 
 ---
 
@@ -430,6 +432,127 @@ helm install libredb oci://ghcr.io/libredb/charts/libredb-studio --version 0.1.0
 ```
 
 Features: PostgreSQL subchart, Ingress/TLS, HPA, PDB, NetworkPolicy, ExternalSecrets support. See [charts/libredb-studio/README.md](charts/libredb-studio/README.md) for full documentation.
+
+### Seed Connections (Pre-Configured Databases)
+
+Pre-configure database connections via a YAML config file so users see them immediately after login. Ideal for Platform/SaaS deployments where admins provision databases for teams.
+
+**Features:**
+- Role-based access control (`admin`, `user`, `*` wildcard)
+- Hybrid model: `managed: true` (read-only, admin-controlled) or `managed: false` (editable copy for user)
+- Credentials injected via `${ENV_VAR}` syntax — never stored in config file
+- Hot-reload: config changes apply within 60s without restart
+- Works with Docker, docker-compose, and Kubernetes (Helm)
+
+**1. Create a config file** (`seed-connections.yaml`):
+
+```yaml
+version: "1"
+
+defaults:
+  managed: true
+  environment: production
+
+connections:
+  - id: "prod-analytics"
+    name: "Production Analytics"
+    type: postgres
+    host: analytics-db.internal
+    port: 5432
+    database: analytics
+    user: "readonly_user"
+    password: "${ANALYTICS_DB_PASSWORD}"
+    roles: ["admin"]
+    color: "#10B981"
+
+  - id: "dev-sandbox"
+    name: "Dev Sandbox"
+    type: mysql
+    host: dev-mysql.internal
+    port: 3306
+    database: sandbox
+    user: "dev_user"
+    password: "${DEV_DB_PASSWORD}"
+    roles: ["*"]
+    managed: false
+```
+
+**2. Mount and configure:**
+
+<details>
+<summary><strong>Docker</strong></summary>
+
+```bash
+docker run -v ./seed-connections.yaml:/app/config/seed-connections.yaml:ro \
+  -e SEED_CONFIG_PATH=/app/config/seed-connections.yaml \
+  -e ANALYTICS_DB_PASSWORD=secret \
+  -e DEV_DB_PASSWORD=devsecret \
+  ghcr.io/libredb/libredb-studio:latest
+```
+</details>
+
+<details>
+<summary><strong>Docker Compose</strong></summary>
+
+```yaml
+services:
+  app:
+    image: ghcr.io/libredb/libredb-studio:latest
+    volumes:
+      - ./seed-connections.yaml:/app/config/seed-connections.yaml:ro
+    environment:
+      SEED_CONFIG_PATH: /app/config/seed-connections.yaml
+      ANALYTICS_DB_PASSWORD: ${ANALYTICS_DB_PASSWORD}
+      DEV_DB_PASSWORD: ${DEV_DB_PASSWORD}
+```
+</details>
+
+<details>
+<summary><strong>Kubernetes (Helm)</strong></summary>
+
+```yaml
+# values.yaml
+seedConnections:
+  enabled: true
+  config:
+    version: "1"
+    connections:
+      - id: "prod-analytics"
+        name: "Production Analytics"
+        type: postgres
+        host: analytics-db.internal
+        password: "${ANALYTICS_DB_PASSWORD}"
+        roles: ["admin"]
+
+# Credentials via K8s Secret:
+extraEnvFrom:
+  - secretRef:
+      name: seed-db-credentials
+```
+</details>
+
+**Config Reference:**
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `version` | Yes | Must be `"1"` |
+| `defaults` | No | Default values merged into all connections |
+| `connections[].id` | Yes | Unique slug (`[a-z0-9-]+`, max 64 chars) |
+| `connections[].name` | Yes | Display name in UI |
+| `connections[].type` | Yes | `postgres`, `mysql`, `sqlite`, `mongodb`, `redis`, `oracle`, `mssql` |
+| `connections[].roles` | Yes | `["*"]` (everyone), `["admin"]`, `["user"]`, or `["admin", "user"]` |
+| `connections[].managed` | No | `true` = read-only (default), `false` = editable copy for user |
+| `connections[].password` | No | Use `${ENV_VAR}` syntax for secrets |
+| `connections[].environment` | No | `production`, `staging`, `development`, `local`, `other` |
+| `connections[].group` | No | Group label in sidebar |
+| `connections[].color` | No | Hex color for badge (e.g., `#10B981`) |
+
+**Environment Variables:**
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SEED_CONFIG_PATH` | `/app/config/seed-connections.yaml` | Path to config file |
+| `SEED_CACHE_TTL_MS` | `60000` | Cache TTL in ms (hot-reload interval) |
 
 ---
 

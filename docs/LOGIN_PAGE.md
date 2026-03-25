@@ -37,7 +37,7 @@ src/app/login/
 │    teams"                   │   │              │   │
 │                             │   │  Local:      │   │
 │   ┌─────────┐ ┌─────────┐   │   │  email/pass  │   │
-│   │Feature 1│ │Feature 2│   │   │  + demo btns │   │
+│   │Feature 1│ │Feature 2│   │   │  + test btns │   │
 │   └─────────┘ └─────────┘   │   │              │   │
 │   ┌─────────┐ ┌─────────┐   │   └──────────────┘   │
 │   │Feature 3│ │Feature 4│   │                      │
@@ -93,7 +93,7 @@ When local auth is active, the right panel shows:
 
 1. **Email/password form** with icon-prefixed inputs
 2. **"Sign In" button** — calls `POST /api/auth/login` with JSON body
-3. **Quick Access section** — two demo buttons (Admin / User) that auto-fill credentials and submit
+3. **Quick Access section** — two test buttons (Admin / User) that auto-fill credentials and submit
 
 On successful login, the user is redirected based on their role:
 - `admin` → `/admin`

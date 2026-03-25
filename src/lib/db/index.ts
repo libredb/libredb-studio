@@ -90,7 +90,6 @@ export {
 // ============================================================================
 
 export { BaseDatabaseProvider } from './base-provider';
-export { DemoProvider } from './providers/demo';
 
 // ============================================================================
 // Provider Classes (Lazy Loaded)

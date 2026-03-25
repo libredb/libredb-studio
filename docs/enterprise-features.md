@@ -714,6 +714,5 @@ Her sprint sonunda:
 2. `bun run lint` - Lint hatasiz olmali
 3. Manuel test: Tum mevcut ozellikler kirilmamis olmali (regression)
 4. Yeni ozellik icin end-to-end test: Browser'da gercek senaryo
-5. Demo modunda yeni ozelligin calismasi kontrol edilmeli
 6. Mobile responsive kontrol (768px breakpoint)
 7. Provider-agnostic test: Ozelligin en az 2 farkli DB tipinde calismasi dogrulanmali

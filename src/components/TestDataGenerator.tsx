@@ -90,7 +90,7 @@ const FAKE = {
   datetime: () => { const d = new Date(Date.now() - Math.random() * 365 * 86400000); return d.toISOString().replace('T', ' ').substring(0, 19); },
   uuid: () => 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => { const r = Math.random() * 16 | 0; return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16); }),
   json: () => '{}',
-  text: () => ['Sample text', 'Test data', 'Example value', 'Demo content', 'Placeholder'][Math.floor(Math.random() * 5)],
+  text: () => ['Sample text', 'Test data', 'Example value', 'Test content', 'Placeholder'][Math.floor(Math.random() * 5)],
 };
 
 export function TestDataGenerator({

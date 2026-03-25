@@ -4,7 +4,7 @@ This document outlines the architectural patterns, tech stack, and system design
 
 ## System Overview
 
-LibreDB Studio is a hybrid, cloud-native database management tool that provides an IDE-like experience in the browser. It supports **8 database backends** via a Strategy Pattern abstraction: PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, Redis, and a transient Demo mode.
+LibreDB Studio is a hybrid, cloud-native database management tool that provides an IDE-like experience in the browser. It supports **8 database backends** via a Strategy Pattern abstraction: PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, Redis.
 
 ## 1. Core Tech Stack
 
@@ -39,7 +39,6 @@ graph TD
         DBFactory --> SQL[SQL Providers]
         DBFactory --> Document[Document Providers]
         DBFactory --> KeyValue[Key-Value Providers]
-        DBFactory --> Demo[Demo Provider]
 
         SQL --> PG[(PostgreSQL)]
         SQL --> MySQL[(MySQL)]
@@ -90,7 +89,6 @@ classDiagram
     BaseDatabaseProvider <|-- SQLBaseProvider
     BaseDatabaseProvider <|-- MongoDBProvider
     BaseDatabaseProvider <|-- RedisProvider
-    BaseDatabaseProvider <|-- DemoProvider
 
     SQLBaseProvider <|-- PostgresProvider
     SQLBaseProvider <|-- MySQLProvider

@@ -26,6 +26,7 @@ import {
 } from '@/components/ui/select';
 import { useMonitoringData } from '@/hooks/use-monitoring-data';
 import { storage } from '@/lib/storage';
+import { useAllConnections } from '@/hooks/use-all-connections';
 import type { DatabaseConnection } from '@/lib/types';
 
 import { OverviewTab } from './tabs/OverviewTab';
@@ -68,20 +69,19 @@ export function MonitoringDashboard({ isEmbedded = false }: MonitoringDashboardP
     runMaintenance,
   } = useMonitoringData(selectedConnection, monitoringOptions);
 
-  // Load connections on mount
+  // Load connections (user + managed seed connections)
+  const { connections: allConns } = useAllConnections();
   useEffect(() => {
-    const loadedConnections = storage.getConnections();
-    setConnections(loadedConnections);
+    if (allConns.length === 0) return;
+    setConnections(allConns);
 
-    // Restore persisted active connection, fallback to first
     setSelectedConnection((prev) => {
       if (prev) return prev;
-      if (loadedConnections.length === 0) return null;
       const savedId = storage.getActiveConnectionId();
-      const saved = savedId ? loadedConnections.find(c => c.id === savedId) : null;
-      return saved ?? loadedConnections[0];
+      const saved = savedId ? allConns.find(c => c.id === savedId) : null;
+      return saved ?? allConns[0];
     });
-  }, []);
+  }, [allConns]);
 
   const handleConnectionChange = (connectionId: string) => {
     const connection = connections.find((c) => c.id === connectionId);

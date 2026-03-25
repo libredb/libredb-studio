@@ -32,6 +32,33 @@ const mockNoCancelProvider = createMockProvider();
 
 const mockGetOrCreateProvider = mock(async () => mockCancelProvider as never);
 
+// ─── Mock auth + seed resolution BEFORE importing route ─────────────────────
+mock.module('@/lib/auth', () => ({
+  getSession: mock(async () => ({ role: 'admin', username: 'admin' })),
+  signJWT: mock(async () => 'mock-token'),
+  verifyJWT: mock(async () => null),
+  login: mock(async () => {}),
+  logout: mock(async () => {}),
+}));
+
+mock.module('@/lib/seed/resolve-connection', () => {
+  class SeedConnectionError extends Error {
+    constructor(message: string, public statusCode: number) {
+      super(message);
+      this.name = 'SeedConnectionError';
+    }
+  }
+  return {
+    resolveConnection: mock(async (body: Record<string, unknown>) => {
+      if (!body.connection && !body.connectionId) {
+        throw new SeedConnectionError('Either connection or connectionId is required', 400);
+      }
+      return body.connection;
+    }),
+    SeedConnectionError,
+  };
+});
+
 // ─── Mock dependencies BEFORE importing route ───────────────────────────────
 mock.module('@/lib/db', () => ({
   getOrCreateProvider: mockGetOrCreateProvider,
@@ -54,7 +81,6 @@ mock.module('@/lib/db', () => ({
   isRetryableError,
   mapDatabaseError,
   BaseDatabaseProvider: class {},
-  DemoProvider: class {},
 }));
 
 // ─── Import route handler AFTER mocking ─────────────────────────────────────
@@ -105,7 +131,7 @@ describe('POST /api/db/cancel', () => {
     const data = await parseResponseJSON<{ error: string }>(res);
 
     expect(res.status).toBe(400);
-    expect(data.error).toContain('Connection and queryId are required');
+    expect(data.error).toContain('required');
   });
 
   test('missing queryId returns 400', async () => {

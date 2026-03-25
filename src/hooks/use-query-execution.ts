@@ -11,6 +11,7 @@ import { isMultiStatement } from '@/lib/sql/statement-splitter';
 import { shouldRefreshSchema } from '@/lib/query-generators';
 import { ApiErrorCode } from '@/lib/api/error-codes';
 import { logger } from '@/lib/logger';
+import { buildConnectionPayload } from './use-connection-payload';
 
 export interface QueryExecutionOptions {
   limit?: number;
@@ -106,12 +107,6 @@ export function useQueryExecution({
     } : t));
     setBottomPanelMode(isExplain ? 'explain' : 'results');
 
-    if (activeConnection.isDemo && process.env.NODE_ENV === 'development') {
-      console.log('[DemoDB] Executing query on demo connection:', {
-        queryPreview: queryToExecute.substring(0, 100) + (queryToExecute.length > 100 ? '...' : ''),
-      });
-    }
-
     // Check EXPLAIN support via capabilities
     if (isExplain && metadata && !metadata.capabilities.supportsExplain) {
       toast({ title: "Not Supported", description: "EXPLAIN is not available for this database type.", variant: "destructive" });
@@ -147,7 +142,7 @@ export function useQueryExecution({
         const beginRes = await fetch('/api/db/transaction', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ connection: activeConnection, action: 'begin' }),
+          body: JSON.stringify({ ...buildConnectionPayload(activeConnection), action: 'begin' }),
         });
         if (!beginRes.ok) {
           logger.warn('Playground transaction BEGIN failed', { route: 'use-query-execution' });
@@ -177,7 +172,7 @@ export function useQueryExecution({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          connection: activeConnection,
+          ...buildConnectionPayload(activeConnection),
           ...(useTransaction
             ? { action: 'query', sql: queryToExecute, options: { limit, offset, unlimited } }
             : {
@@ -199,7 +194,7 @@ export function useQueryExecution({
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              connection: activeConnection,
+              ...buildConnectionPayload(activeConnection),
               sql: explainSql,
               options: {},
             }),
@@ -216,10 +211,6 @@ export function useQueryExecution({
         const error = await response.json();
         const errorMessage = error.error || 'Query failed';
         const errorCode = error.code as string | undefined;
-
-        if (activeConnection.isDemo) {
-          console.error('[DemoDB] Query failed:', { errorMessage, executionTime });
-        }
 
         storage.addToHistory({
           id: Math.random().toString(36).substring(7),
@@ -244,21 +235,10 @@ export function useQueryExecution({
           return;
         }
 
-        // Provide more context for demo connection errors
-        if (activeConnection.isDemo) {
-          throw new Error(`Demo database error: ${errorMessage}. The demo database may be temporarily unavailable.`);
-        }
         throw new Error(errorMessage);
       }
 
       const resultData = await response.json();
-
-      if (activeConnection.isDemo && process.env.NODE_ENV === 'development') {
-        console.log('[DemoDB] Query executed successfully:', {
-          rowCount: resultData.rowCount,
-          executionTime: resultData.executionTime || executionTime,
-        });
-      }
 
       // Only add to history for new queries (not load more)
       if (!isLoadMore) {
@@ -354,7 +334,7 @@ export function useQueryExecution({
           await fetch('/api/db/transaction', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ connection: activeConnection, action: 'rollback' }),
+            body: JSON.stringify({ ...buildConnectionPayload(activeConnection), action: 'rollback' }),
           });
         } catch {
           logger.warn('Playground transaction rollback failed', { route: 'use-query-execution' });
@@ -379,7 +359,7 @@ export function useQueryExecution({
           await fetch('/api/db/transaction', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ connection: activeConnection, action: 'rollback' }),
+            body: JSON.stringify({ ...buildConnectionPayload(activeConnection), action: 'rollback' }),
           });
         } catch {
           logger.warn('Playground transaction rollback failed', { route: 'use-query-execution' });
@@ -397,7 +377,7 @@ export function useQueryExecution({
         return;
       }
 
-      const title = activeConnection?.isDemo ? "Demo Database Error" : "Query Error";
+      const title = "Query Error";
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       // Fallback string check for cancellation errors not caught by response code
       if (errorMessage.includes('Query was cancelled') || errorMessage.includes('cancelled')) {
@@ -431,7 +411,7 @@ export function useQueryExecution({
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            connection: activeConnection,
+            ...buildConnectionPayload(activeConnection),
             queryId: activeQueryIdRef.current,
           }),
         });

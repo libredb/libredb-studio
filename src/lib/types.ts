@@ -1,4 +1,4 @@
-export type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'mongodb' | 'redis' | 'oracle' | 'mssql' | 'demo';
+export type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'mongodb' | 'redis' | 'oracle' | 'mssql';
 
 export type ConnectionEnvironment = 'production' | 'staging' | 'development' | 'local' | 'other';
 
@@ -50,7 +50,6 @@ export interface DatabaseConnection {
   database?: string;
   connectionString?: string;
   createdAt: Date;
-  isDemo?: boolean;
   color?: string;
   environment?: ConnectionEnvironment;
   group?: string;
@@ -58,6 +57,8 @@ export interface DatabaseConnection {
   sshTunnel?: SSHTunnelConfig;
   serviceName?: string;   // Oracle: service name (e.g. ORCL, XEPDB1)
   instanceName?: string;  // MSSQL: named instance (e.g. SQLEXPRESS)
+  managed?: boolean;      // true = admin-controlled, read-only in UI
+  seedId?: string;        // stable reference to seed config ID
 }
 
 export interface TableSchema {

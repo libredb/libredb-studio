@@ -8,7 +8,7 @@ Organizations face challenges with sensitive data visibility:
 - Developers seeing production PII during debugging
 - Screenshots/screen shares exposing customer data
 - Compliance requirements (GDPR, HIPAA, PCI-DSS)
-- Accidental data exposure in demos/presentations
+- Accidental data exposure in presentations
 
 Current solutions are inadequate:
 - Database-level masking (complex to configure)

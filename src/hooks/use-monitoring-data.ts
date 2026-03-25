@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import type { DatabaseConnection } from '@/lib/types';
+import { buildConnectionPayload } from './use-connection-payload';
 import type {
   MonitoringData,
   MonitoringOptions,
@@ -88,7 +89,7 @@ export function useMonitoringData(
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          connection: currentConnection,
+          ...buildConnectionPayload(currentConnection),
           options: optionsRef.current
         }),
         signal: abortControllerRef.current.signal,
@@ -195,7 +196,7 @@ export function useMonitoringData(
         body: JSON.stringify({
           type: 'kill',
           target: String(pid),
-          connection: currentConnection,
+          ...buildConnectionPayload(currentConnection),
         }),
       });
 
@@ -229,7 +230,7 @@ export function useMonitoringData(
         body: JSON.stringify({
           type,
           target,
-          connection: currentConnection,
+          ...buildConnectionPayload(currentConnection),
         }),
       });
 

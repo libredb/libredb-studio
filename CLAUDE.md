@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-LibreDB Studio is a web-based SQL IDE for cloud-native teams. It supports PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, Redis, and a demo mode with AI-powered query assistance.
+LibreDB Studio is a web-based SQL IDE for cloud-native teams. It supports PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, Redis with AI-powered query assistance.
 
 ## Github
 * Repository: https://github.com/libredb/libredb-studio
@@ -112,7 +112,6 @@ src/
     │   │   ├── sql/        # SQL providers (postgres, mysql, sqlite, oracle, mssql)
     │   │   ├── document/   # Document providers (mongodb)
     │   │   ├── keyvalue/   # Key-value providers (redis)
-    │   │   └── demo.ts     # Demo mock provider
     │   ├── factory.ts      # Provider factory
     │   ├── types.ts        # Database types
     │   └── errors.ts       # Custom error classes
@@ -152,7 +151,6 @@ charts/
    - **SQL:** PostgreSQL, MySQL, SQLite, Oracle, SQL Server (extend `SQLBaseProvider`)
    - **Document:** MongoDB (extends `BaseDatabaseProvider`)
    - **Key-Value:** Redis (extends `BaseDatabaseProvider`)
-   - **Demo:** Mock data provider for testing
 
 2. **LLM Abstraction:** `src/lib/llm/` module provides Strategy Pattern for AI providers (Gemini, OpenAI, Ollama, Custom)
 

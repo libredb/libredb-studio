@@ -53,6 +53,7 @@ import {
 } from 'lucide-react';
 import { useMonitoringData } from '@/hooks/use-monitoring-data';
 import { storage } from '@/lib/storage';
+import { useAllConnections } from '@/hooks/use-all-connections';
 import type { DatabaseConnection } from '@/lib/types';
 import type { ActiveSessionDetails } from '@/lib/db/types';
 
@@ -88,15 +89,14 @@ export function OperationsTab() {
     runMaintenance,
   } = useMonitoringData(selectedConnection, monitoringOptions);
 
+  const { connections: allConns } = useAllConnections();
   useEffect(() => {
-    const loadedConnections = storage.getConnections();
-    setConnections(loadedConnections);
-    if (loadedConnections.length > 0) {
-      const savedId = storage.getActiveConnectionId();
-      const saved = savedId ? loadedConnections.find((c) => c.id === savedId) : null;
-      setSelectedConnection(saved ?? loadedConnections[0]);
-    }
-  }, []);
+    if (allConns.length === 0) return;
+    setConnections(allConns);
+    const savedId = storage.getActiveConnectionId();
+    const saved = savedId ? allConns.find((c) => c.id === savedId) : null;
+    setSelectedConnection(saved ?? allConns[0]);
+  }, [allConns]);
 
   const handleConnectionChange = (id: string) => {
     const conn = connections.find((c) => c.id === id);

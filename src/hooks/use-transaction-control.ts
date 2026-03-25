@@ -3,6 +3,7 @@
 import { useState, useCallback } from 'react';
 import type { DatabaseConnection } from '@/lib/types';
 import { useToast } from '@/hooks/use-toast';
+import { buildConnectionPayload } from './use-connection-payload';
 
 interface UseTransactionControlParams {
   activeConnection: DatabaseConnection | null;
@@ -20,7 +21,10 @@ export function useTransactionControl({ activeConnection }: UseTransactionContro
       const res = await fetch('/api/db/transaction', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ connection: activeConnection, action }),
+        body: JSON.stringify({
+          ...buildConnectionPayload(activeConnection),
+          action,
+        }),
       });
 
       const data = await res.json();

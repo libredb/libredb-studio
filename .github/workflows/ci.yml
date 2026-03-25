@@ -104,7 +104,6 @@ jobs:
           ADMIN_PASSWORD: test-admin
           USER_EMAIL: user@libredb.org
           USER_PASSWORD: test-user
-          DEMO_DB_ENABLED: true
 
       - name: Upload Playwright report
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

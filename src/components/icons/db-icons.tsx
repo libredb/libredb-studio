@@ -82,10 +82,3 @@ export const MSSQLIcon: React.FC<IconProps> = ({ className, ...props }) => (
     <path d="M4 15.5c0 1.66 3.58 3 8 3s8-1.34 8-3" />
   </svg>
 );
-
-/** Demo/Playground lightning icon */
-export const DemoIcon: React.FC<IconProps> = ({ className, ...props }) => (
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className={className} {...props}>
-    <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
-  </svg>
-);

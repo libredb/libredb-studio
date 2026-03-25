@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getOrCreateProvider } from '@/lib/db';
 import { splitStatements } from '@/lib/sql/statement-splitter';
 import { createErrorResponse } from '@/lib/api/errors';
+import { resolveConnection } from '@/lib/seed/resolve-connection';
+import { getSession } from '@/lib/auth';
 
 export interface StatementResult {
   index: number;
@@ -17,9 +19,17 @@ export interface StatementResult {
 
 export async function POST(req: NextRequest) {
   try {
-    const { connection, sql, options = {} } = await req.json();
+    const body = await req.json();
+    const { sql, options = {} } = body;
 
-    if (!connection || !sql) {
+    const session = await getSession();
+    if (!session) {
+      return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
+    }
+
+    const connection = await resolveConnection(body, session);
+
+    if (!sql) {
       return NextResponse.json(
         { error: 'Connection and query are required' },
         { status: 400 }

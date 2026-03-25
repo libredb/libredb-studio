@@ -24,6 +24,7 @@ import {
   LLMSafetyError,
   LLMStreamError,
 } from '@/lib/llm/types';
+import { SeedConnectionError } from '@/lib/seed/resolve-connection';
 
 // ============================================================================
 // Types
@@ -48,6 +49,20 @@ export function createErrorResponse(
   context?: { route?: string }
 ): NextResponse<ApiErrorResponse> {
   const route = context?.route;
+
+  // --- Seed Connection Error ---
+  if (error instanceof SeedConnectionError) {
+    logger.warn('Seed connection error', { route, statusCode: error.statusCode });
+    const code = error.statusCode === 403 || error.statusCode === 401
+      ? ApiErrorCode.AUTH_ERROR
+      : error.statusCode === 400
+        ? ApiErrorCode.CONFIG_ERROR
+        : undefined;
+    return NextResponse.json(
+      { error: error.message, ...(code ? { code } : {}), statusCode: error.statusCode },
+      { status: error.statusCode }
+    );
+  }
 
   // --- Query Cancelled ---
   if (error instanceof QueryCancelledError) {

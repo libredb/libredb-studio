@@ -26,6 +26,7 @@ import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import type { TableSchema, SchemaSnapshot, DatabaseType, DatabaseConnection } from '@/lib/types';
 import { storage } from '@/lib/storage';
+import { useAllConnections } from '@/hooks/use-all-connections';
 import { diffSchemas } from '@/lib/schema-diff/diff-engine';
 import { generateMigrationSQL } from '@/lib/schema-diff/migration-generator';
 import type { SchemaDiff as SchemaDiffType, TableDiff } from '@/lib/schema-diff/types';
@@ -98,7 +99,7 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
   }, [diff, connection]);
 
   // Get all connections for cross-connection comparison
-  const allConnections = useMemo(() => storage.getConnections(), []);
+  const { connections: allConnections } = useAllConnections();
   const [fetchingRemote, setFetchingRemote] = useState(false);
 
   // Fetch schema from a remote connection
@@ -111,7 +112,11 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
       const res = await fetch('/api/db/schema-snapshot', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ connection: conn }),
+        body: JSON.stringify(
+          conn.managed && conn.seedId
+            ? { connectionId: `seed:${conn.seedId}` }
+            : { connection: conn }
+        ),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
@@ -211,12 +216,12 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
                   </div>
                 </SelectItem>
               ))}
-              {allConnections.filter(c => c.id !== connection?.id && !c.isDemo).length > 0 && (
+              {allConnections.filter(c => c.id !== connection?.id).length > 0 && (
                 <>
                   <div className="px-2 py-1 text-[9px] text-zinc-600 uppercase border-t border-white/5 mt-1">
                     Fetch from connection
                   </div>
-                  {allConnections.filter(c => c.id !== connection?.id && !c.isDemo).map(c => (
+                  {allConnections.filter(c => c.id !== connection?.id).map(c => (
                     <SelectItem key={`conn:${c.id}`} value={`conn:${c.id}`} className="text-xs">
                       <div className="flex items-center gap-1">
                         <Database className="w-3 h-3 text-blue-400" /> {c.name}

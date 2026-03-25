@@ -84,13 +84,6 @@ config:
   oidcAdminRoles: "admin"
 
 # =============================================================================
-# Demo Mode
-# =============================================================================
-demo:
-  # -- Enable demo mode with mock database
-  enabled: false
-
-# =============================================================================
 # Persistence — PVC for SQLite storage mode
 # =============================================================================
 persistence:
@@ -278,3 +271,16 @@ extraEnv: []
 extraEnvFrom: []
 #  - configMapRef:
 #      name: my-config
+
+# -- Seed connections: pre-configured database connections
+seedConnections:
+  # -- Enable seed connections feature
+  enabled: false
+  # -- Inline config (rendered as YAML in ConfigMap)
+  config: {}
+  # -- Use an existing ConfigMap instead of inline config
+  existingConfigMap: ""
+  # -- Key within the ConfigMap containing the YAML config
+  configMapKey: "seed-connections.yaml"
+  # -- Cache TTL in milliseconds for config reloading
+  cacheTTL: 60000
