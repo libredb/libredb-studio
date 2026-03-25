@@ -1,4 +1,4 @@
-export type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'mongodb' | 'redis' | 'oracle' | 'mssql' | 'demo';
+export type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'mongodb' | 'redis' | 'oracle' | 'mssql';
 
 export type ConnectionEnvironment = 'production' | 'staging' | 'development' | 'local' | 'other';
 
@@ -50,7 +50,6 @@ export interface DatabaseConnection {
   database?: string;
   connectionString?: string;
   createdAt: Date;
-  isDemo?: boolean;
   color?: string;
   environment?: ConnectionEnvironment;
   group?: string;

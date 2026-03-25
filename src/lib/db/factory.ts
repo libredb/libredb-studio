@@ -13,9 +13,6 @@ import { DatabaseConfigError } from './errors';
 import { createSSHTunnel, closeSSHTunnel } from '@/lib/ssh/tunnel';
 import { logger } from '@/lib/logger';
 
-// Only Demo Provider is imported statically (no native dependencies)
-import { DemoProvider } from './providers/demo';
-
 // ============================================================================
 // Provider Factory
 // ============================================================================
@@ -97,10 +94,6 @@ export async function createDatabaseProvider(
       return new MongoDBProvider(connection, options);
     }
 
-    // Demo Mode - no native dependencies, statically imported
-    case 'demo':
-      return new DemoProvider(connection, options);
-
     // Key-Value Stores - dynamically imported
     case 'redis': {
       const { RedisProvider } = await import('./providers/keyvalue/redis');
@@ -109,7 +102,7 @@ export async function createDatabaseProvider(
 
     default:
       throw new DatabaseConfigError(
-        `Unknown database type: ${connection.type}. Supported types: postgres, mysql, sqlite, oracle, mssql, mongodb, redis, demo`,
+        `Unknown database type: ${connection.type}. Supported types: postgres, mysql, sqlite, oracle, mssql, mongodb, redis`,
         connection.type
       );
   }

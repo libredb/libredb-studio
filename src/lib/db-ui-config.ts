@@ -1,5 +1,5 @@
 import { type LucideIcon } from 'lucide-react';
-import { PostgreSQLIcon, MySQLIcon, SQLiteIcon, MongoDBIcon, RedisIcon, OracleIcon, MSSQLIcon, DemoIcon } from '@/components/icons/db-icons';
+import { PostgreSQLIcon, MySQLIcon, SQLiteIcon, MongoDBIcon, RedisIcon, OracleIcon, MSSQLIcon } from '@/components/icons/db-icons';
 import type { DatabaseType } from '@/lib/types';
 
 // DB brand icons share the same interface as LucideIcon (className + SVG props)
@@ -70,14 +70,6 @@ const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
     defaultPort: '1433',
     showConnectionStringToggle: false,
     connectionFields: ['host', 'port', 'user', 'password', 'database', 'instanceName'],
-  },
-  demo: {
-    icon: DemoIcon,
-    color: 'text-yellow-400',
-    label: 'Demo Data',
-    defaultPort: '',
-    showConnectionStringToggle: false,
-    connectionFields: [],
   },
 };
 
