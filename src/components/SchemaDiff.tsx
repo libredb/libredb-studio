@@ -26,6 +26,7 @@ import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import type { TableSchema, SchemaSnapshot, DatabaseType, DatabaseConnection } from '@/lib/types';
 import { storage } from '@/lib/storage';
+import { useAllConnections } from '@/hooks/use-all-connections';
 import { diffSchemas } from '@/lib/schema-diff/diff-engine';
 import { generateMigrationSQL } from '@/lib/schema-diff/migration-generator';
 import type { SchemaDiff as SchemaDiffType, TableDiff } from '@/lib/schema-diff/types';
@@ -98,7 +99,7 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
   }, [diff, connection]);
 
   // Get all connections for cross-connection comparison
-  const allConnections = useMemo(() => storage.getConnections(), []);
+  const { connections: allConnections } = useAllConnections();
   const [fetchingRemote, setFetchingRemote] = useState(false);
 
   // Fetch schema from a remote connection

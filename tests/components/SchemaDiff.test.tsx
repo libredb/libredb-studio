@@ -144,6 +144,13 @@ mock.module('@/lib/storage', () => ({
   },
 }));
 
+mock.module('@/hooks/use-all-connections', () => ({
+  useAllConnections: () => ({
+    connections: mockGetConnections(),
+    loading: false,
+  }),
+}));
+
 // ── Imports AFTER mocks ──────────────────────────────────────────────────────
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';

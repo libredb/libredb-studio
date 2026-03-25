@@ -249,7 +249,10 @@ export default function Studio() {
     }).catch(() => { /* best-effort cleanup */ });
 
     storage.deleteConnection(id);
-    const updated = storage.getConnections();
+    // Preserve managed (seed) connections that aren't in localStorage
+    const userConns = storage.getConnections();
+    const managedConns = conn.connections.filter((c) => c.managed && !userConns.some((uc) => uc.id === c.id));
+    const updated = [...managedConns, ...userConns];
     conn.setConnections(updated);
     if (conn.activeConnection?.id === id) conn.setActiveConnection(updated[0] || null);
   };
@@ -505,7 +508,9 @@ export default function Studio() {
         onClose={() => { setIsConnectionModalOpen(false); setEditingConnection(null); }}
         onConnect={(c) => {
           storage.saveConnection(c);
-          conn.setConnections(storage.getConnections());
+          const userConns = storage.getConnections();
+          const managedConns = conn.connections.filter((mc) => mc.managed && !userConns.some((uc) => uc.id === mc.id));
+          conn.setConnections([...managedConns, ...userConns]);
           conn.setActiveConnection(c);
           setIsConnectionModalOpen(false);
           setEditingConnection(null);

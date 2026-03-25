@@ -5,6 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { storage } from '@/lib/storage';
+import { useAllConnections } from '@/hooks/use-all-connections';
 import { getDBIcon, getDBColor } from '@/lib/db-ui-config';
 import {
   type DatabaseType,
@@ -198,11 +199,11 @@ export function OverviewTab({ user }: OverviewTabProps) {
   const [fleetLoading, setFleetLoading] = useState(false);
   const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([]);
 
+  const { connections: allConns } = useAllConnections();
   useEffect(() => {
-    const conns = storage.getConnections();
-    setConnections(conns);
+    setConnections(allConns);
     setHistory(storage.getHistory());
-  }, []);
+  }, [allConns]);
 
   // Fetch audit events for activity feed
   useEffect(() => {
