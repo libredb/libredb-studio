@@ -1,3 +1,4 @@
+import type { SSLConfig } from '@/lib/types';
 import type { SeedConnection, SeedDefaults, ManagedConnection } from './types';
 
 export function mergeDefaults(
@@ -37,7 +38,7 @@ export function filterByRoles(
       environment: conn.environment,
       group: conn.group,
       color: conn.color,
-      ssl: conn.ssl,
+      ssl: conn.ssl as SSLConfig | undefined,
       serviceName: conn.serviceName,
       instanceName: conn.instanceName,
       createdAt: new Date(),
