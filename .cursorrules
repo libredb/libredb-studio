@@ -55,7 +55,7 @@ interface DatabaseConnection {
   type: DatabaseType;
 }
 
-type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'mongodb' | 'demo';
+type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'mongodb' | 'redis' | 'oracle' | 'mssql';
 
 // ❌ Bad
 type DatabaseConnection = {

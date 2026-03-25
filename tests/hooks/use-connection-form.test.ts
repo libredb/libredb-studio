@@ -325,7 +325,6 @@ describe('useConnectionForm', () => {
     expect(types).toContain('postgres');
     expect(types).toContain('mysql');
     expect(types).toContain('mongodb');
-    expect(types).toContain('demo');
 
     // Each entry has value, label, icon, color
     const first = result.current.dbTypes[0];

@@ -23,7 +23,7 @@
 </p>
 
 <p align="center">
-  <a href="#-live-demo"><strong>🚀 Try Live Demo</strong></a> •
+  <a href="#-live-test"><strong>🚀 Try Live Test</strong></a> •
   <a href="#getting-started"><strong>📖 Documentation</strong></a> •
   <a href="#-one-click-deploy"><strong>⚡ Deploy Your Own</strong></a>
 </p>
@@ -34,15 +34,15 @@
 
 ---
 
-## 🚀 Live Demo
+## 🚀 Live Test
 
 > **Try LibreDB Studio instantly without installation!**
 
-| Demo | URL | Credentials |
+| Test | URL | Credentials |
 |------|-----|-------------|
-| **Public Demo** | [app.libredb.org](https://app.libredb.org) | `admin@libredb.org` / `LibreDB.2026` |
+| **Public Test** | [app.libredb.org](https://app.libredb.org) | `admin@libredb.org` / `LibreDB.2026` |
 
-The demo runs in **Demo Mode** with simulated data. No real database required!
+The test runs in **Test Mode** with simulated data. No real database required!
 
 ---
 
@@ -333,10 +333,10 @@ bun run test:coverage
 |-------|-----------|--------|-------|----------------|
 | **Unit** | `tests/unit/` | `bun:test` | ~800 | Pure functions: SQL parser, connection strings, data masking, query limiter, schema diff, error classes, DB icons, showcase queries |
 | **API** | `tests/api/` | `bun:test` | ~205 | Route handlers: auth, query, transaction, maintenance, AI endpoints, middleware |
-| **Integration** | `tests/integration/` | `bun:test` | ~294 | Database providers: PG, MySQL, SQLite, MongoDB, Redis, Oracle, MSSQL, Demo (mocked drivers) |
+| **Integration** | `tests/integration/` | `bun:test` | ~294 | Database providers: PG, MySQL, SQLite, MongoDB, Redis, Oracle, MSSQL|
 | **Hooks** | `tests/hooks/` | `bun:test` | ~178 | React hooks: auth, connections, tabs, query execution, transactions, inline editing, AI chat, monitoring |
 | **Components** | `tests/components/` | `bun:test` + happy-dom | ~194 | UI components: Studio, Sidebar, QueryEditor, ResultsGrid, Admin Dashboard, Charts, ERD |
-| **E2E** | `e2e/` | Playwright | ~35 | Full browser flows: login, demo mode, connections, query execution, tabs, export, admin |
+| **E2E** | `e2e/` | Playwright | ~35 | Full browser flows: login, connections, query execution, tabs, export, admin |
 
 ### Key Details
 

@@ -210,9 +210,6 @@ public async getMonitoringData(options: MonitoringOptions = {}): Promise<Monitor
 | `getIndexStats()` | `$indexStats` aggregation |
 | `getStorageStats()` | `dbStats`, storage engine metrics |
 
-### 2.6 Demo Provider (`src/lib/db/providers/demo.ts`)
-
-Mock data döndür - UI test için.
 
 ---
 
@@ -421,7 +418,6 @@ useEffect(() => {
 15. `src/lib/db/providers/sql/mysql.ts` - MySQL monitoring
 16. `src/lib/db/providers/sql/sqlite.ts` - SQLite monitoring
 17. `src/lib/db/providers/document/mongodb.ts` - MongoDB monitoring
-18. `src/lib/db/providers/demo.ts` - Demo mock data
 
 ### Step 9: Navigation Link
 19. `src/components/Studio.tsx` - Monitoring sayfasına link ekle
@@ -438,7 +434,6 @@ useEffect(() => {
 | `src/lib/db/providers/sql/mysql.ts` | Monitoring implementasyonu |
 | `src/lib/db/providers/sql/sqlite.ts` | Temel monitoring |
 | `src/lib/db/providers/document/mongodb.ts` | MongoDB monitoring |
-| `src/lib/db/providers/demo.ts` | Mock data |
 | `src/app/api/db/monitoring/route.ts` | Yeni API endpoint |
 | `src/app/monitoring/page.tsx` | Yeni route |
 | `src/components/monitoring/*.tsx` | Yeni UI components |

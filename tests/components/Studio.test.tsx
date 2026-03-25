@@ -206,10 +206,6 @@ mock.module('@/lib/storage', () => ({
   },
 }));
 
-mock.module('@/lib/showcase-queries', () => ({
-  getRandomShowcaseQuery: mock(() => 'SELECT * FROM demo_users'),
-}));
-
 mock.module('@/lib/data-masking', () => ({
   loadMaskingConfig: mock(() => ({
     enabled: false,

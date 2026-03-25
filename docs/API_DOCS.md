@@ -21,7 +21,7 @@
 
 ## Overview
 
-LibreDB Studio provides a RESTful API for database management operations. The API supports multiple database types including PostgreSQL, MySQL, SQLite, MongoDB, and a demo mode.
+LibreDB Studio provides a RESTful API for database management operations. The API supports multiple database types including PostgreSQL, MySQL, SQLite, MongoDB
 
 ### Key Features
 
@@ -560,7 +560,7 @@ interface DatabaseConnection {
   createdAt: Date;         // Creation timestamp
 }
 
-type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'mongodb' | 'redis' | 'demo';
+type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'mongodb' | 'redis' | 'oracle' | 'mssql';
 ```
 
 ### TableSchema

@@ -727,11 +727,10 @@ describe('SchemaDiff', () => {
       expect(getByText('Fetch from connection')).toBeTruthy();
     });
 
-    test('renders remote connections (excluding current and demo)', () => {
-      const { getByText, queryByText } = renderDiff();
+    test('renders remote connections', () => {
+      const { getByText } = renderDiff();
       expect(getByText('Remote PG')).toBeTruthy();
       expect(getByText('Prod DB')).toBeTruthy();
-      expect(queryByText('Demo')).toBeNull();
     });
 
     test('does not show "Fetch from connection" when no other connections', () => {

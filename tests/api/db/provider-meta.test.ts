@@ -71,7 +71,6 @@ mock.module('@/lib/db', () => ({
   isRetryableError,
   mapDatabaseError,
   BaseDatabaseProvider: class {},
-  DemoProvider: class {},
 }));
 
 // ─── Import route handler AFTER mocking ─────────────────────────────────────

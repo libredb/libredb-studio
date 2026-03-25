@@ -1,7 +1,7 @@
 {
   "repo_notes": [
     {
-      "content": "LibreDB Studio is a modern, AI-powered, open-source SQL IDE for cloud-native teams. It provides a zero-install, browser-based interface for managing PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, Redis databases, plus a demo mode. Built with Next.js 15 (App Router), React 19, TypeScript strict mode, Tailwind CSS 4, shadcn/ui, and Monaco Editor. The project uses Bun as its preferred runtime.",
+      "content": "LibreDB Studio is a modern, AI-powered, open-source SQL IDE for cloud-native teams. It provides a zero-install, browser-based interface for managing PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, Redis databases. Built with Next.js 15 (App Router), React 19, TypeScript strict mode, Tailwind CSS 4, shadcn/ui, and Monaco Editor. The project uses Bun as its preferred runtime.",
       "author": "Maintainer"
     },
     {
@@ -42,7 +42,7 @@
     },
     {
       "title": "NoSQL Database Providers",
-      "purpose": "Document the MongoDB provider (src/lib/db/providers/document/mongodb.ts) and Redis provider (src/lib/db/providers/keyvalue/redis.ts). Cover JSON-based query format for MongoDB (collection, operation, filter, options), Redis command execution, and how both extend BaseDatabaseProvider. Also cover the Demo provider (src/lib/db/providers/demo.ts) for mock/in-memory mode.",
+      "purpose": "Document the MongoDB provider (src/lib/db/providers/document/mongodb.ts) and Redis provider (src/lib/db/providers/keyvalue/redis.ts). Cover JSON-based query format for MongoDB (collection, operation, filter, options), Redis command execution, and how both extend BaseDatabaseProvider.",
       "parent": "Database Provider System"
     },
     {
@@ -67,7 +67,7 @@
     },
     {
       "title": "API Layer",
-      "purpose": "Document the REST API architecture in src/app/api/. Cover all endpoint groups: auth (login, logout, me, OIDC), database operations (query, multi-query, schema, health, test-connection, transaction, maintenance, pool-stats, provider-meta, schema-snapshot, cancel, monitoring, profile), AI endpoints (chat, nl2sql, explain, query-safety, impact, autopilot, describe-schema, index-advisor), admin endpoints (fleet-health, audit), and demo-connection. Explain request/response patterns, error handling, and authentication requirements.",
+      "purpose": "Document the REST API architecture in src/app/api/. Cover all endpoint groups: auth (login, logout, me, OIDC), database operations (query, multi-query, schema, health, test-connection, transaction, maintenance, pool-stats, provider-meta, schema-snapshot, cancel, monitoring, profile), AI endpoints (chat, nl2sql, explain, query-safety, impact, autopilot, describe-schema, index-advisor), admin endpoints (fleet-health, audit). Explain request/response patterns, error handling, and authentication requirements.",
       "parent": "Architecture Overview"
     },
     {
@@ -123,12 +123,12 @@
     },
     {
       "title": "Integration, Hook & Component Tests",
-      "purpose": "Document integration tests (tests/integration/db/) that test each database provider (postgres, mysql, sqlite, oracle, mssql, mongodb, redis, demo) with mocked drivers. Document hook tests (tests/hooks/) that test all 12 custom React hooks. Document component tests (tests/components/) covering all major UI components including Studio, QueryEditor, ResultsGrid, ConnectionModal, admin tabs, monitoring tabs, sidebar, schema-explorer, and studio sub-components.",
+      "purpose": "Document integration tests (tests/integration/db/) that test each database provider (postgres, mysql, sqlite, oracle, mssql, mongodb, redis) with mocked drivers. Document hook tests (tests/hooks/) that test all 12 custom React hooks. Document component tests (tests/components/) covering all major UI components including Studio, QueryEditor, ResultsGrid, ConnectionModal, admin tabs, monitoring tabs, sidebar, schema-explorer, and studio sub-components.",
       "parent": "Testing Strategy"
     },
     {
       "title": "E2E Tests",
-      "purpose": "Document Playwright E2E tests (e2e/) covering: login flow (login.spec.ts), connection management (connection-management.spec.ts), query execution (query-execution.spec.ts), tab management (tab-management.spec.ts), data export (export.spec.ts), demo mode (demo-mode.spec.ts), and admin dashboard (admin-dashboard.spec.ts). Cover Playwright configuration (playwright.config.ts) and how E2E tests integrate with the CI pipeline.",
+      "purpose": "Document Playwright E2E tests (e2e/) covering: login flow (login.spec.ts), connection management (connection-management.spec.ts), query execution (query-execution.spec.ts), tab management (tab-management.spec.ts), data export (export.spec.ts), and admin dashboard (admin-dashboard.spec.ts). Cover Playwright configuration (playwright.config.ts) and how E2E tests integrate with the CI pipeline.",
       "parent": "Testing Strategy"
     },
     {

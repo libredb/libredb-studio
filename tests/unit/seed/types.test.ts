@@ -30,11 +30,6 @@ describe('SeedConnectionSchema', () => {
     expect(result.success).toBe(false);
   });
 
-  it('rejects demo type', () => {
-    const result = SeedConnectionSchema.safeParse({ ...validConn, type: 'demo' });
-    expect(result.success).toBe(false);
-  });
-
   it('rejects empty roles array', () => {
     const result = SeedConnectionSchema.safeParse({ ...validConn, roles: [] });
     expect(result.success).toBe(false);

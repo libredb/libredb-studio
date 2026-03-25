@@ -166,7 +166,6 @@ Optional configuration for:
 
 * AI providers
 * OIDC SSO
-* demo databases
 
 ---
 

@@ -1052,24 +1052,6 @@ describe('useQueryExecution', () => {
     expect(setTabsMock).toHaveBeenCalled();
   });
 
-  // ── executeQuery demo connection error has enhanced message ─────────────
-
-  test('executeQuery on demo connection shows enhanced error message', async () => {
-    mockGlobalFetch({
-      '/api/db/query': { ok: false, status: 500, json: { error: 'Connection timeout' } },
-    });
-    const demoConnection = { ...mockConnection, isDemo: true };
-    const params = createDefaultParams({ activeConnection: demoConnection });
-
-    const { result } = renderHook(() => useQueryExecution(params));
-
-    await act(async () => {
-      await result.current.executeQuery('SELECT * FROM users');
-    });
-
-    expect(mockToastError).toHaveBeenCalled();
-  });
-
   // ── metadata=null + isExplain=true → skips EXPLAIN support check ──────
 
   test('executeQuery with metadata=null and isExplain=true skips support check', async () => {

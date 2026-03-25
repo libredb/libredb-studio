@@ -299,7 +299,7 @@ The proxy (Next.js 16 middleware) has zero OIDC awareness:
 
 ```typescript
 // Public routes — includes /api/auth/* which covers OIDC routes
-const publicPaths = ['/api/auth', '/_next', '/favicon.ico', '/api/db/health', '/api/demo-connection'];
+const publicPaths = ['/api/auth', '/_next', '/favicon.ico', '/api/db/health'];
 
 // All auth checks use the same auth-token JWT
 const token = request.cookies.get('auth-token')?.value;

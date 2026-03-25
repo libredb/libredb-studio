@@ -166,7 +166,7 @@ CREATE TABLE connections (
     id TEXT PRIMARY KEY,
     user_id TEXT REFERENCES users(id),
     name TEXT NOT NULL,
-    type TEXT NOT NULL,  -- postgres, mysql, sqlite, mongodb, demo
+    type TEXT NOT NULL,  -- postgres, mysql, sqlite, mongodb
     host TEXT,
     port INTEGER,
     database_name TEXT,

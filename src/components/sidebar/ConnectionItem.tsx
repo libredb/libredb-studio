@@ -45,10 +45,7 @@ export const ConnectionItem = React.memo(function ConnectionItem({
           isActive ? 'bg-blue-500/20' : 'bg-muted group-hover:bg-accent'
         )}
       >
-        {(() => {
-          const Icon = getDBIcon(conn.type);
-          return <Icon className="w-3 h-3" />;
-        })()}
+        {React.createElement(getDBIcon(conn.type), { className: 'w-3 h-3' })}
       </div>
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-1.5">

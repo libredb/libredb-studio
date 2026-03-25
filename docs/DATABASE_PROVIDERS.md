@@ -25,7 +25,6 @@ src/lib/db/
 │   ├── document/               # Document Database Providers
 │   │   ├── index.ts            # Document exports
 │   │   └── mongodb.ts          # MongoDB Strategy
-│   └── demo.ts                 # Demo/Mock Strategy
 └── utils/
     └── pool-manager.ts         # Connection pool utilities
 ```
@@ -39,7 +38,6 @@ BaseDatabaseProvider (abstract)
 │   ├── MySQLProvider                       │ (shared SQL utilities)
 │   └── SQLiteProvider                      │
 ├── MongoDBProvider ────────────────────────┤ Document Databases
-└── DemoProvider ───────────────────────────┘ Mock/Testing
 ```
 
 ## Supported Databases
@@ -50,7 +48,8 @@ BaseDatabaseProvider (abstract)
 | SQL      | MySQL      | Full   | `mysql2`         | Yes     | Production ready         |
 | SQL      | SQLite     | Full   | `better-sqlite3` | No      | File-based, sync driver  |
 | Document | MongoDB    | Full   | `mongodb`        | Yes     | JSON-based queries       |
-| Other    | Demo       | Full   | Mock data        | N/A     | For testing/demos        |
+| SQL      | Oracle     | Full   | `oracledb`       | Yes     | Production ready         |
+| SQL      | SQL Server | Full   | `mssql`          | Yes     | Production ready         |
 
 ## Core Interface
 
@@ -288,7 +287,7 @@ case 'oracle':
 4. Update types:
 
 ```typescript
-export type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'oracle' | 'mongodb' | 'demo';
+export type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'oracle' | 'mongodb';
 ```
 
 ### Adding a New Document Database (e.g., Couchbase)
@@ -341,12 +340,6 @@ export class CouchbaseProvider extends BaseDatabaseProvider {
 - Automatic schema inference from documents
 - Compact, validate, reIndex maintenance operations
 - Profiler integration for slow query monitoring
-
-### Demo
-
-- In-memory mock data (users, products, orders)
-- Simulated query execution
-- No external dependencies
 
 ## Security Considerations
 

@@ -321,7 +321,6 @@ describe('ConnectionModal', () => {
     expect(queryByText('SQLite')).not.toBeNull();
     expect(queryByText('MongoDB')).not.toBeNull();
     expect(queryByText('Redis')).not.toBeNull();
-    expect(queryByText('Demo')).not.toBeNull();
   });
 
   // ── 6. Name input renders ──────────────────────────────────────────────────

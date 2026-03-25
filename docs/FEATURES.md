@@ -44,9 +44,10 @@
       *   **PostgreSQL:** Full support with connection pooling (`pg`), schema inspection, and maintenance tools.
       *   **MySQL:** Full support with connection pooling (`mysql2`), performance schema integration.
       *   **SQLite:** File-based database support (`better-sqlite3`) with WAL mode.
+      *   **Oracle:** Full support with connection pooling (`oracledb`), performance schema integration.
+      *   **SQL Server:** Full support with connection pooling (`mssql`), performance schema integration.
   *   **Document Databases:**
       *   **MongoDB:** Full support with official driver, JSON-based MQL queries, automatic schema inference, and aggregation pipelines.
-  *   **No-Setup Demo Mode:** Instant access to a mock demo environment for testing features without database credentials.
   *   **Connection Pooling:** Configurable pool settings (min/max connections, idle timeout) for production workloads.
   *   **Query Timeout:** 60-second default timeout with per-provider configuration.
 

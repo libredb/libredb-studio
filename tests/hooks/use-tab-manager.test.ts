@@ -123,7 +123,7 @@ describe('useTabManager', () => {
     const newTab = result.current.tabs[1];
     expect(result.current.activeTabId).toBe(newTab.id);
     expect(newTab.name).toBe('Query 2');
-    expect(newTab.query).toBe('-- Start typing your SQL query here\n');
+    expect(newTab.query).toBe('');
     expect(newTab.result).toBeNull();
     expect(newTab.isExecuting).toBe(false);
   });
@@ -236,14 +236,14 @@ describe('useTabManager', () => {
 
     const [firstTab, secondTab] = result.current.tabs;
     expect(firstTab.query).toBe('SELECT 1;');
-    expect(secondTab.query).toBe('-- Start typing your SQL query here\n');
+    expect(secondTab.query).toBe('');
 
     act(() => {
       result.current.updateTabById(firstTab.id, { query: 'SELECT 42;' });
     });
 
     expect(result.current.tabs[0].query).toBe('SELECT 42;');
-    expect(result.current.tabs[1].query).toBe('-- Start typing your SQL query here\n');
+    expect(result.current.tabs[1].query).toBe('');
   });
 
   test('handleTableClick creates new tab with query and calls executeQueryFn', () => {
@@ -609,7 +609,7 @@ describe('useTabManager', () => {
     const rawB = localStorage.getItem('libredb_workspace_tabs_v1:conn-b');
     expect(rawB).toBeTruthy();
     const parsedB = JSON.parse(rawB!) as { tabs: Array<{ query: string }> };
-    expect(parsedB.tabs[0].query).toBe('-- Start typing your SQL query here\n');
+    expect(parsedB.tabs[0].query).toBe('');
 
     // Connection A's storage should still be intact
     const rawA = localStorage.getItem('libredb_workspace_tabs_v1:conn-a');
