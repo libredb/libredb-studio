@@ -19,9 +19,11 @@ interface ConnectionModalProps {
   onClose: () => void;
   onConnect: (conn: DatabaseConnection) => void;
   editConnection?: DatabaseConnection | null;
+  /** Optional API adapter: when provided, bypasses the built-in /api/db/test-connection fetch. */
+  onTestConnection?: (connection: DatabaseConnection) => Promise<{ success: boolean; latency?: number; error?: string }>;
 }
 
-export function ConnectionModal({ isOpen, onClose, onConnect, editConnection }: ConnectionModalProps) {
+export function ConnectionModal({ isOpen, onClose, onConnect, editConnection, onTestConnection }: ConnectionModalProps) {
   const isMobile = useIsMobile();
   const {
     // Connection fields
@@ -73,7 +75,7 @@ export function ConnectionModal({ isOpen, onClose, onConnect, editConnection }: 
 
     // Derived data
     dbTypes,
-  } = useConnectionForm({ isOpen, onClose, onConnect, editConnection });
+  } = useConnectionForm({ isOpen, onClose, onConnect, editConnection, onTestConnection });
 
   const formContent = (
     <>

@@ -25,6 +25,8 @@ interface QuerySafetyDialogProps {
   databaseType?: string;
   onClose: () => void;
   onProceed: () => void;
+  /** Optional API adapter: when provided, bypasses the built-in /api/ai/query-safety fetch. */
+  onAnalyzeSafety?: (params: { query: string; schemaContext: string }) => Promise<SafetyAnalysis>;
 }
 
 function parseSafetyResponse(text: string): SafetyAnalysis | null {
@@ -55,6 +57,7 @@ export function QuerySafetyDialog({
   databaseType,
   onClose,
   onProceed,
+  onAnalyzeSafety,
 }: QuerySafetyDialogProps) {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysis, setAnalysis] = useState<SafetyAnalysis | null>(null);
@@ -91,31 +94,38 @@ export function QuerySafetyDialog({
         }
       }
 
-      const response = await fetch('/api/ai/query-safety', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query, schemaContext: filteredSchema, databaseType }),
-      });
+      if (onAnalyzeSafety) {
+        // Platform adapter: use callback instead of fetch
+        const result = await onAnalyzeSafety({ query, schemaContext: filteredSchema });
+        setAnalysis(result);
+      } else {
+        // Default: existing fetch behavior
+        const response = await fetch('/api/ai/query-safety', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query, schemaContext: filteredSchema, databaseType }),
+        });
 
-      if (!response.ok) {
-        const errData = await response.json();
-        throw new Error(errData.error || 'Analysis failed');
-      }
+        if (!response.ok) {
+          const errData = await response.json();
+          throw new Error(errData.error || 'Analysis failed');
+        }
 
-      const reader = response.body?.getReader();
-      if (!reader) throw new Error('No reader');
+        const reader = response.body?.getReader();
+        if (!reader) throw new Error('No reader');
 
-      let fullResponse = '';
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        fullResponse += new TextDecoder().decode(value);
-        setRawResponse(fullResponse);
-      }
+        let fullResponse = '';
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          fullResponse += new TextDecoder().decode(value);
+          setRawResponse(fullResponse);
+        }
 
-      const parsed = parseSafetyResponse(fullResponse);
-      if (parsed) {
-        setAnalysis(parsed);
+        const parsed = parseSafetyResponse(fullResponse);
+        if (parsed) {
+          setAnalysis(parsed);
+        }
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error');

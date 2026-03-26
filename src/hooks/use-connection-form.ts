@@ -10,9 +10,11 @@ interface UseConnectionFormProps {
   onClose: () => void;
   onConnect: (conn: DatabaseConnection) => void;
   editConnection?: DatabaseConnection | null;
+  /** Optional API adapter: when provided, bypasses the built-in /api/db/test-connection fetch. */
+  onTestConnection?: (connection: DatabaseConnection) => Promise<{ success: boolean; latency?: number; error?: string }>;
 }
 
-export function useConnectionForm({ isOpen, onConnect, editConnection }: UseConnectionFormProps) {
+export function useConnectionForm({ isOpen, onConnect, editConnection, onTestConnection }: UseConnectionFormProps) {
   const [type, setType] = useState<DatabaseType>('postgres');
   const [name, setName] = useState('');
   const [host, setHost] = useState('localhost');
@@ -176,26 +178,40 @@ export function useConnectionForm({ isOpen, onConnect, editConnection }: UseConn
 
     try {
       const conn = buildConnection();
-      const response = await fetch('/api/db/test-connection', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(conn),
-      });
 
-      const result = await response.json();
-      setTestResult({
-        success: result.success,
-        message: result.success
-          ? `Connected successfully${result.latency ? ` (${result.latency}ms)` : ''}`
-          : result.error || 'Connection failed',
-        latency: result.latency,
-      });
+      if (onTestConnection) {
+        // Platform adapter: use callback instead of fetch
+        const result = await onTestConnection(conn);
+        setTestResult({
+          success: result.success,
+          message: result.success
+            ? `Connected successfully${result.latency ? ` (${result.latency}ms)` : ''}`
+            : result.error || 'Connection failed',
+          latency: result.latency,
+        });
+      } else {
+        // Default: existing fetch behavior
+        const response = await fetch('/api/db/test-connection', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(conn),
+        });
+
+        const result = await response.json();
+        setTestResult({
+          success: result.success,
+          message: result.success
+            ? `Connected successfully${result.latency ? ` (${result.latency}ms)` : ''}`
+            : result.error || 'Connection failed',
+          latency: result.latency,
+        });
+      }
     } catch {
       setTestResult({ success: false, message: 'Network error - could not reach server' });
     } finally {
       setIsTesting(false);
     }
-  }, [buildConnection]);
+  }, [buildConnection, onTestConnection]);
 
   const handleConnect = useCallback(async () => {
     setIsTesting(true);
@@ -204,14 +220,19 @@ export function useConnectionForm({ isOpen, onConnect, editConnection }: UseConn
     try {
       const conn = buildConnection();
 
-      // Real connection test before saving
-      const response = await fetch('/api/db/test-connection', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(conn),
-      });
-
-      const result = await response.json();
+      let result: { success: boolean; error?: string };
+      if (onTestConnection) {
+        // Platform adapter: use callback instead of fetch
+        result = await onTestConnection(conn);
+      } else {
+        // Default: existing fetch behavior
+        const response = await fetch('/api/db/test-connection', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(conn),
+        });
+        result = await response.json();
+      }
 
       if (result.success) {
         onConnect(conn);
@@ -231,7 +252,7 @@ export function useConnectionForm({ isOpen, onConnect, editConnection }: UseConn
     } finally {
       setIsTesting(false);
     }
-  }, [buildConnection, type, onConnect]);
+  }, [buildConnection, type, onConnect, onTestConnection]);
 
   const handlePasteConnectionString = useCallback(() => {
     const trimmed = pasteInput.trim();
