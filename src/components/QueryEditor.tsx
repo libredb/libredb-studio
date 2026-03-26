@@ -489,12 +489,6 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
     <div className="h-full w-full flex flex-col bg-[#050505] relative overflow-hidden group">
       {/* Dynamic Pro Toolbar - Hidden on mobile */}
       <div className="hidden md:flex items-center gap-1 px-4 py-1.5 bg-[#0a0a0a] border-b border-white/5 overflow-x-auto no-scrollbar scroll-smooth">
-        <div className="flex items-center gap-2 px-2 py-0.5 rounded bg-zinc-500/5 border border-zinc-500/10">
-          <Zap className="w-3 h-3 text-zinc-400" />
-          <span className="text-xs font-bold text-zinc-400 uppercase tracking-widest">Actions</span>
-        </div>
-        <div className="h-4 w-px bg-white/5" />
-
         {hasSelection && (
           <Button
             variant="ghost"

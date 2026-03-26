@@ -48,6 +48,11 @@ bun run test:e2e
 # Coverage report
 bun run test:coverage
 
+# Library build (tsup) — exports @libredb/studio package for platform consumption
+# IMPORTANT: After changing any component used by platform (workspace, providers, etc.),
+# you MUST run this command. `bun run build` (Next.js) does NOT update the package dist.
+bun run build:lib
+
 # Docker development
 docker-compose up -d
 
