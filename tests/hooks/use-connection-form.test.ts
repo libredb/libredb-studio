@@ -76,7 +76,7 @@ describe('useConnectionForm', () => {
       name: 'My PG',
       type: 'postgres',
       host: 'db.example.com',
-      port: 5433,
+      port: 5432,
       user: 'pgadmin',
       password: 'pgpass',
       database: 'mydb',
@@ -91,7 +91,7 @@ describe('useConnectionForm', () => {
     expect(result.current.type).toBe('postgres');
     expect(result.current.name).toBe('My PG');
     expect(result.current.host).toBe('db.example.com');
-    expect(result.current.port).toBe('5433');
+    expect(result.current.port).toBe('5432');
     expect(result.current.user).toBe('pgadmin');
     expect(result.current.password).toBe('pgpass');
     expect(result.current.database).toBe('mydb');
