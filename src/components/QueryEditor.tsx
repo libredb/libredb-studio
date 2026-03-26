@@ -35,6 +35,8 @@ interface QueryEditorProps {
   databaseType?: string;
   schemaContext?: string;
   capabilities?: import('@/lib/db/types').ProviderCapabilities;
+  /** Optional API adapter: when provided, bypasses the built-in /api/ai/chat fetch. */
+  onAiChat?: (params: { prompt: string; schemaContext: string; history: { role: string; content: string }[] }) => Promise<string>;
 }
 
 interface ParsedTable {
@@ -92,7 +94,8 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
   tables = [],
   databaseType,
   schemaContext,
-  capabilities
+  capabilities,
+  onAiChat,
 }, ref) => {
   const monaco = useMonaco();
   const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
@@ -349,6 +352,7 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
     getEditorValue,
     setEditorValue: setEditorValueForAi,
     onChange,
+    onAiChat,
   });
 
   useImperativeHandle(ref, () => ({

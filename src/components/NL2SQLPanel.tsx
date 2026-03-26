@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, type FormEvent } from 'react';
 import { Send, Loader2, Sparkles, X, Play, MessageSquare, Trash2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -18,6 +18,8 @@ interface NL2SQLPanelProps {
   schemaContext: string;
   databaseType?: string;
   queryLanguage?: string;
+  /** Optional API adapter: when provided, bypasses the built-in /api/ai/nl2sql fetch. */
+  onNL2SQL?: (params: { prompt: string; schemaContext: string; conversationHistory?: { role: string; content: string }[] }) => Promise<string>;
 }
 
 function extractCodeBlock(text: string): string | null {
@@ -34,6 +36,7 @@ export function NL2SQLPanel({
   schemaContext,
   databaseType,
   queryLanguage,
+  onNL2SQL,
 }: NL2SQLPanelProps) {
   const [question, setQuestion] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -50,7 +53,7 @@ export function NL2SQLPanel({
     if (isOpen) inputRef.current?.focus();
   }, [isOpen]);
 
-  const handleSubmit = async (e?: React.FormEvent) => {
+  const handleSubmit = async (e?: FormEvent) => {
     if (e) e.preventDefault();
     if (!question.trim() || isLoading) return;
 
@@ -81,31 +84,42 @@ export function NL2SQLPanel({
       // Build conversation history (exclude current question)
       const history = messages.map(m => ({ role: m.role, content: m.content }));
 
-      const response = await fetch('/api/ai/nl2sql', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          question: question.trim(),
-          schemaContext: filteredSchema,
-          databaseType,
-          queryLanguage,
-          conversationHistory: history,
-        }),
-      });
-
-      if (!response.ok) {
-        const errData = await response.json();
-        throw new Error(errData.error || 'Request failed');
-      }
-
-      const reader = response.body?.getReader();
-      if (!reader) throw new Error('No reader');
-
       let fullResponse = '';
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        fullResponse += new TextDecoder().decode(value);
+
+      if (onNL2SQL) {
+        // Platform adapter: use callback instead of fetch
+        fullResponse = await onNL2SQL({
+          prompt: question.trim(),
+          schemaContext: filteredSchema,
+          conversationHistory: history,
+        });
+      } else {
+        // Default: existing fetch behavior
+        const response = await fetch('/api/ai/nl2sql', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            question: question.trim(),
+            schemaContext: filteredSchema,
+            databaseType,
+            queryLanguage,
+            conversationHistory: history,
+          }),
+        });
+
+        if (!response.ok) {
+          const errData = await response.json();
+          throw new Error(errData.error || 'Request failed');
+        }
+
+        const reader = response.body?.getReader();
+        if (!reader) throw new Error('No reader');
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          fullResponse += new TextDecoder().decode(value);
+        }
       }
 
       const extractedQuery = extractCodeBlock(fullResponse);

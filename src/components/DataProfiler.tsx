@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Loader2, BarChart3, X, Hash, AlertCircle, Sparkles, Lock } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { TableSchema, DatabaseConnection } from '@/lib/types';
@@ -33,6 +33,10 @@ interface DataProfilerProps {
   connection: DatabaseConnection | null;
   schemaContext?: string;
   databaseType?: string;
+  /** Optional API adapter: when provided, bypasses the built-in /api/db/profile fetch. */
+  onProfile?: (params: { connectionId: string; tableName: string }) => Promise<ProfileData>;
+  /** Optional API adapter: when provided, bypasses the built-in /api/ai/describe-schema fetch. */
+  onDescribeSchema?: (params: { tableName: string; schemaContext: string }) => Promise<string>;
 }
 
 export function DataProfiler({
@@ -43,6 +47,8 @@ export function DataProfiler({
   connection,
   schemaContext,
   databaseType,
+  onProfile,
+  onDescribeSchema,
 }: DataProfilerProps) {
   const [isLoading, setIsLoading] = useState(false);
   const [profile, setProfile] = useState<ProfileData | null>(null);
@@ -74,19 +80,28 @@ export function DataProfiler({
     setError(null);
 
     try {
-      const columns = tableSchema.columns?.map(c => c.name) || [];
-      const response = await fetch('/api/db/profile', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ connection, tableName, columns }),
-      });
+      let data: ProfileData;
 
-      if (!response.ok) {
-        const err = await response.json();
-        throw new Error(err.error || 'Profile failed');
+      if (onProfile) {
+        // Platform adapter: use callback instead of fetch
+        data = await onProfile({ connectionId: connection.id, tableName });
+      } else {
+        // Default: existing fetch behavior
+        const columns = tableSchema.columns?.map(c => c.name) || [];
+        const response = await fetch('/api/db/profile', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ connection, tableName, columns }),
+        });
+
+        if (!response.ok) {
+          const err = await response.json();
+          throw new Error(err.error || 'Profile failed');
+        }
+
+        data = await response.json();
       }
 
-      const data: ProfileData = await response.json();
       setProfile(data);
 
       // Trigger AI summary
@@ -105,27 +120,36 @@ export function DataProfiler({
         `${c.name}: ${c.nullPercent}% null, ${c.distinctCount} distinct, min=${c.minValue || 'N/A'}, max=${c.maxValue || 'N/A'}`
       ).join('\n');
 
-      const response = await fetch('/api/ai/describe-schema', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          schemaContext: `Table: ${tableName} (${data.totalRows} rows)\n\nColumn Profiles:\n${profileSummary}\n\nSchema:\n${schemaContext || ''}`,
-          databaseType,
-          mode: 'table',
-        }),
-      });
+      const fullSchemaContext = `Table: ${tableName} (${data.totalRows} rows)\n\nColumn Profiles:\n${profileSummary}\n\nSchema:\n${schemaContext || ''}`;
 
-      if (!response.ok) return;
+      if (onDescribeSchema) {
+        // Platform adapter: use callback instead of fetch
+        const result = await onDescribeSchema({ tableName, schemaContext: fullSchemaContext });
+        setAiSummary(result);
+      } else {
+        // Default: existing fetch behavior
+        const response = await fetch('/api/ai/describe-schema', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            schemaContext: fullSchemaContext,
+            databaseType,
+            mode: 'table',
+          }),
+        });
 
-      const reader = response.body?.getReader();
-      if (!reader) return;
+        if (!response.ok) return;
 
-      let full = '';
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        full += new TextDecoder().decode(value);
-        setAiSummary(full);
+        const reader = response.body?.getReader();
+        if (!reader) return;
+
+        let full = '';
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          full += new TextDecoder().decode(value);
+          setAiSummary(full);
+        }
       }
     } catch {
       // AI summary is optional, don't show error
