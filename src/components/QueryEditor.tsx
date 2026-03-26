@@ -5,6 +5,7 @@ import Editor, { useMonaco } from '@monaco-editor/react';
 import type * as Monaco from 'monaco-editor';
 import { Zap, Sparkles, Send, X, Loader2, AlignLeft, Trash2, Copy, Play, Hash } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { Button } from '@/components/ui/button';
 import { motion, AnimatePresence } from 'framer-motion';
 import { format } from 'sql-formatter';
 import { registerSQLCompletionProvider } from '@/lib/editor/sql-completions';
@@ -487,86 +488,93 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
   return (
     <div className="h-full w-full flex flex-col bg-[#050505] relative overflow-hidden group">
       {/* Dynamic Pro Toolbar - Hidden on mobile */}
-      <div className="hidden md:flex items-center gap-1 px-2 py-1 bg-[#0a0a0a] border-b border-white/5 overflow-x-auto no-scrollbar scroll-smooth">
-        <div className="flex items-center mr-1.5 px-1.5 py-0.5 rounded bg-white/5 border border-white/5">
-          <span className="text-caption font-black text-zinc-600 uppercase tracking-[0.15em]">Actions</span>
+      <div className="hidden md:flex items-center gap-1 px-4 py-1.5 bg-[#0a0a0a] border-b border-white/5 overflow-x-auto no-scrollbar scroll-smooth">
+        <div className="flex items-center gap-2 px-2 py-0.5 rounded bg-zinc-500/5 border border-zinc-500/10">
+          <Zap className="w-3 h-3 text-zinc-400" />
+          <span className="text-xs font-bold text-zinc-400 uppercase tracking-widest">Actions</span>
         </div>
+        <div className="h-4 w-px bg-white/5" />
 
         {hasSelection && (
-          <button
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 text-xs font-bold uppercase tracking-widest text-white bg-blue-600 hover:bg-blue-500 hover:text-white gap-2 shadow-[0_0_10px_rgba(37,99,235,0.3)] animate-in fade-in zoom-in duration-200"
             onClick={handleExecute}
-            className="px-1.5 py-0.5 rounded bg-blue-600 hover:bg-blue-500 text-white text-label font-bold transition-all border border-blue-400/30 active:scale-95 flex items-center gap-1 shadow-[0_0_10px_rgba(37,99,235,0.3)] animate-in fade-in zoom-in duration-200"
           >
-            <Play className="w-2.5 h-2.5 fill-current" />
-            RUN SEL
-          </button>
+            <Play className="w-3 h-3 fill-current" /> Run Sel
+          </Button>
         )}
 
-        <button
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-7 text-xs font-bold uppercase tracking-widest text-zinc-500 hover:text-white gap-2"
           onClick={handleFormat}
           title={language === 'json' ? "Format JSON (Shift+Alt+F)" : "Format SQL (Shift+Alt+F)"}
-          className="px-1.5 py-0.5 rounded bg-[#111] hover:bg-zinc-800 text-zinc-500 hover:text-zinc-200 text-label font-mono transition-all border border-white/5 active:scale-95 flex items-center gap-1"
         >
-          <AlignLeft className="w-2.5 h-2.5" />
-          FORMAT
-        </button>
+          <AlignLeft className="w-3 h-3" /> Format
+        </Button>
 
-        <button
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-7 text-xs font-bold uppercase tracking-widest text-zinc-500 hover:text-white gap-2"
           onClick={handleCopy}
-          className="px-1.5 py-0.5 rounded bg-[#111] hover:bg-zinc-800 text-zinc-500 hover:text-zinc-200 text-label font-mono transition-all border border-white/5 active:scale-95 flex items-center gap-1"
         >
-          <Copy className="w-2.5 h-2.5" />
-          {hasSelection ? 'COPY SEL' : 'COPY'}
-        </button>
+          <Copy className="w-3 h-3" /> {hasSelection ? 'Copy Sel' : 'Copy'}
+        </Button>
 
-        <button
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-7 text-xs font-bold uppercase tracking-widest text-zinc-500 hover:text-red-400 gap-2"
           onClick={handleClear}
-          className="px-1.5 py-0.5 rounded bg-[#111] hover:bg-zinc-800 text-zinc-500 hover:text-red-400 text-label font-mono transition-all border border-white/5 active:scale-95 flex items-center gap-1"
         >
-          <Trash2 className="w-2.5 h-2.5" />
-          CLEAR
-        </button>
+          <Trash2 className="w-3 h-3" /> Clear
+        </Button>
 
-        <div className="w-px h-3 bg-white/5 mx-0.5" />
+        <div className="h-4 w-px bg-white/5" />
 
-        <button
+        <Button
+          variant="ghost"
+          size="sm"
+          className={cn(
+            "h-7 text-xs font-bold uppercase tracking-widest gap-2",
+            showLineNumbers ? "text-zinc-300" : "text-zinc-500 hover:text-white"
+          )}
           onClick={() => setShowLineNumbers(!showLineNumbers)}
           title={showLineNumbers ? "Hide line numbers" : "Show line numbers"}
-          className={cn(
-            "px-1.5 py-0.5 rounded text-label font-mono transition-all border active:scale-95 flex items-center gap-1",
-            showLineNumbers
-              ? "bg-zinc-800 border-white/10 text-zinc-300"
-              : "bg-[#111] border-white/5 text-zinc-500 hover:text-zinc-300"
-          )}
         >
-          <Hash className="w-2.5 h-2.5" />
-          LINES
-        </button>
+          <Hash className="w-3 h-3" /> Lines
+        </Button>
 
-        <button
-          onClick={() => setShowAi(!showAi)}
+        <Button
+          variant="ghost"
+          size="sm"
           className={cn(
-            "px-1.5 py-0.5 rounded text-label font-bold transition-all border active:scale-95 flex items-center gap-1",
+            "h-7 text-xs font-bold uppercase tracking-widest gap-2",
             showAi
-              ? "bg-blue-600 border-blue-500 text-white shadow-[0_0_10px_rgba(37,99,235,0.4)]"
-              : "bg-zinc-900 border-white/5 text-zinc-400 hover:text-blue-400 hover:border-blue-500/30"
+              ? "text-white bg-blue-600 hover:bg-blue-500 hover:text-white shadow-[0_0_10px_rgba(37,99,235,0.4)]"
+              : "text-zinc-500 hover:text-blue-400"
           )}
+          onClick={() => setShowAi(!showAi)}
         >
-          <Sparkles className={cn("w-2.5 h-2.5", showAi && "animate-pulse")} />
-          AI
-        </button>
+          <Sparkles className={cn("w-3 h-3", showAi && "animate-pulse")} /> AI
+        </Button>
 
         <div className="flex-1" />
 
-          <div className="flex items-center gap-1 opacity-50 hover:opacity-100 transition-opacity">
+          <div className="flex items-center gap-2 opacity-50 hover:opacity-100 transition-opacity">
             {onExplain && capabilities?.supportsExplain && (
-              <button
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 text-xs font-bold uppercase tracking-widest text-amber-500 hover:text-amber-400 gap-2"
                 onClick={onExplain}
-                className="px-1.5 py-0.5 rounded bg-zinc-900 hover:bg-zinc-800 text-amber-500 hover:text-amber-400 text-label font-bold transition-all border border-amber-500/10 active:scale-95 flex items-center gap-1 mr-1"
               >
-                <Zap className="w-2.5 h-2.5" />
-                EXPLAIN
-              </button>
+                <Zap className="w-3 h-3" /> Explain
+              </Button>
             )}
             <kbd className="px-1.5 py-0.5 rounded bg-zinc-900 border border-white/5 text-caption text-zinc-600 font-mono">
               ⌘+Enter
