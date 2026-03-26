@@ -49,10 +49,10 @@ export const ConnectionItem = React.memo(function ConnectionItem({
       </div>
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-1.5">
-          <span className="truncate block font-medium text-[13px]">{conn.name}</span>
+          <span className="truncate block font-medium text-body">{conn.name}</span>
           {conn.environment && conn.environment !== 'other' && (
             <span
-              className="text-[8px] uppercase tracking-wider font-bold px-1.5 py-0.5 rounded-sm shrink-0"
+              className="text-micro uppercase tracking-wider font-bold px-1.5 py-0.5 rounded-sm shrink-0"
               style={{
                 color: conn.color || '#6b7280',
                 backgroundColor: `${conn.color || '#6b7280'}15`,

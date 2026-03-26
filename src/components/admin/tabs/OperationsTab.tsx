@@ -164,15 +164,15 @@ export function OperationsTab() {
   const getStateBadge = (state: string) => {
     switch (state) {
       case 'active':
-        return <Badge className="bg-green-500/10 text-green-400 border border-green-500/20 text-[9px]">Active</Badge>;
+        return <Badge className="bg-green-500/10 text-green-400 border border-green-500/20 text-label">Active</Badge>;
       case 'idle':
-        return <Badge variant="secondary" className="text-[9px]">Idle</Badge>;
+        return <Badge variant="secondary" className="text-label">Idle</Badge>;
       case 'idle in transaction':
-        return <Badge className="bg-yellow-500/10 text-yellow-400 border border-yellow-500/20 text-[9px]">Idle TX</Badge>;
+        return <Badge className="bg-yellow-500/10 text-yellow-400 border border-yellow-500/20 text-label">Idle TX</Badge>;
       case 'idle in transaction (aborted)':
-        return <Badge className="bg-red-500/10 text-red-400 border border-red-500/20 text-[9px]">Abort</Badge>;
+        return <Badge className="bg-red-500/10 text-red-400 border border-red-500/20 text-label">Abort</Badge>;
       default:
-        return <Badge variant="outline" className="text-[9px]">{state}</Badge>;
+        return <Badge variant="outline" className="text-label">{state}</Badge>;
     }
   };
 
@@ -263,7 +263,7 @@ export function OperationsTab() {
               <Button
                 size="sm"
                 variant="outline"
-                className="h-7 text-[10px] border-white/10 hover:bg-yellow-500/10 hover:text-yellow-500"
+                className="h-7 text-xs border-white/10 hover:bg-yellow-500/10 hover:text-yellow-500"
                 onClick={() => handleRunMaintenance('analyze')}
                 disabled={!!actionLoading || !selectedConnection}
               >
@@ -274,7 +274,7 @@ export function OperationsTab() {
               </Button>
             </div>
             <h4 className="text-sm font-bold text-zinc-200 mb-1">Update Statistics</h4>
-            <p className="text-[11px] text-zinc-500 leading-relaxed">
+            <p className="text-body text-zinc-500 leading-relaxed">
               Updates query planner statistics for all tables.
             </p>
           </div>
@@ -288,7 +288,7 @@ export function OperationsTab() {
               <Button
                 size="sm"
                 variant="outline"
-                className="h-7 text-[10px] border-white/10 hover:bg-blue-500/10 hover:text-blue-500"
+                className="h-7 text-xs border-white/10 hover:bg-blue-500/10 hover:text-blue-500"
                 onClick={() => handleRunMaintenance('vacuum')}
                 disabled={!!actionLoading || !selectedConnection}
               >
@@ -299,7 +299,7 @@ export function OperationsTab() {
               </Button>
             </div>
             <h4 className="text-sm font-bold text-zinc-200 mb-1">Reclaim Space</h4>
-            <p className="text-[11px] text-zinc-500 leading-relaxed">
+            <p className="text-body text-zinc-500 leading-relaxed">
               Removes dead rows and returns space to the OS.
             </p>
           </div>
@@ -313,7 +313,7 @@ export function OperationsTab() {
               <Button
                 size="sm"
                 variant="outline"
-                className="h-7 text-[10px] border-white/10 hover:bg-purple-500/10 hover:text-purple-500"
+                className="h-7 text-xs border-white/10 hover:bg-purple-500/10 hover:text-purple-500"
                 onClick={() => handleRunMaintenance('reindex')}
                 disabled={!!actionLoading || !selectedConnection}
               >
@@ -324,7 +324,7 @@ export function OperationsTab() {
               </Button>
             </div>
             <h4 className="text-sm font-bold text-zinc-200 mb-1">Rebuild Indexes</h4>
-            <p className="text-[11px] text-zinc-500 leading-relaxed">
+            <p className="text-body text-zinc-500 leading-relaxed">
               Reconstructs all indexes in the database.
             </p>
           </div>
@@ -333,11 +333,11 @@ export function OperationsTab() {
           <div className="p-4 rounded-xl border border-red-500/10 bg-red-500/5 flex flex-col justify-center">
             <div className="flex items-center gap-2 text-red-400 mb-2">
               <ShieldAlert className="w-4 h-4" />
-              <span className="text-[11px] font-bold uppercase tracking-wider">
+              <span className="text-body font-bold uppercase tracking-wider">
                 Warning
               </span>
             </div>
-            <p className="text-[11px] text-red-400/70 leading-relaxed italic">
+            <p className="text-body text-red-400/70 leading-relaxed italic">
               These operations can be resource-intensive. Avoid running them
               during peak traffic hours.
             </p>
@@ -385,14 +385,14 @@ export function OperationsTab() {
                       <div className="text-sm font-medium text-zinc-300 truncate max-w-[160px]">
                         {table.tableName}
                       </div>
-                      <div className="flex items-center gap-2 text-[10px] text-zinc-500">
+                      <div className="flex items-center gap-2 text-xs text-zinc-500">
                         <span className="font-mono">
                           {table.rowCount.toLocaleString()} rows
                         </span>
                         <span>-</span>
                         <span className="font-mono">{table.tableSize}</span>
                         {(table.bloatRatio ?? 0) > 10 && (
-                          <Badge variant="outline" className="text-[9px] text-yellow-400 border-yellow-500/20 h-4">
+                          <Badge variant="outline" className="text-label text-yellow-400 border-yellow-500/20 h-4">
                             {(table.bloatRatio ?? 0).toFixed(0)}% bloat
                           </Badge>
                         )}
@@ -447,19 +447,19 @@ export function OperationsTab() {
             <div className="grid grid-cols-4 gap-2">
               <div className="rounded-lg bg-white/[0.03] p-2 text-center">
                 <div className="text-lg font-bold text-zinc-200 tabular-nums">{activeCount}</div>
-                <div className="text-[9px] text-zinc-500 uppercase font-bold">Active</div>
+                <div className="text-label text-zinc-500 uppercase font-bold">Active</div>
               </div>
               <div className="rounded-lg bg-white/[0.03] p-2 text-center">
                 <div className="text-lg font-bold text-zinc-200 tabular-nums">{idleCount}</div>
-                <div className="text-[9px] text-zinc-500 uppercase font-bold">Idle</div>
+                <div className="text-label text-zinc-500 uppercase font-bold">Idle</div>
               </div>
               <div className="rounded-lg bg-white/[0.03] p-2 text-center">
                 <div className={`text-lg font-bold tabular-nums ${idleInTxCount > 0 ? 'text-yellow-400' : 'text-zinc-200'}`}>{idleInTxCount}</div>
-                <div className="text-[9px] text-zinc-500 uppercase font-bold">In TX</div>
+                <div className="text-label text-zinc-500 uppercase font-bold">In TX</div>
               </div>
               <div className="rounded-lg bg-white/[0.03] p-2 text-center">
                 <div className={`text-lg font-bold tabular-nums ${waitingCount > 0 ? 'text-orange-400' : 'text-zinc-200'}`}>{waitingCount}</div>
-                <div className="text-[9px] text-zinc-500 uppercase font-bold">Wait</div>
+                <div className="text-label text-zinc-500 uppercase font-bold">Wait</div>
               </div>
             </div>
           </div>
@@ -478,18 +478,18 @@ export function OperationsTab() {
               <Table>
                 <TableHeader>
                   <TableRow className="border-white/5 hover:bg-transparent">
-                    <TableHead className="text-[10px] text-zinc-500 font-bold uppercase w-[60px]">PID</TableHead>
-                    <TableHead className="text-[10px] text-zinc-500 font-bold uppercase">User</TableHead>
-                    <TableHead className="text-[10px] text-zinc-500 font-bold uppercase">State</TableHead>
-                    <TableHead className="text-[10px] text-zinc-500 font-bold uppercase hidden md:table-cell">Query</TableHead>
-                    <TableHead className="text-[10px] text-zinc-500 font-bold uppercase">Time</TableHead>
-                    <TableHead className="text-right text-[10px] text-zinc-500 font-bold uppercase w-10">Act</TableHead>
+                    <TableHead className="text-xs text-zinc-500 font-bold uppercase w-[60px]">PID</TableHead>
+                    <TableHead className="text-xs text-zinc-500 font-bold uppercase">User</TableHead>
+                    <TableHead className="text-xs text-zinc-500 font-bold uppercase">State</TableHead>
+                    <TableHead className="text-xs text-zinc-500 font-bold uppercase hidden md:table-cell">Query</TableHead>
+                    <TableHead className="text-xs text-zinc-500 font-bold uppercase">Time</TableHead>
+                    <TableHead className="text-right text-xs text-zinc-500 font-bold uppercase w-10">Act</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {sessions.map((session) => (
                     <TableRow key={session.pid} className="group border-white/5 hover:bg-white/[0.03]">
-                      <TableCell className="font-mono text-[10px] text-zinc-400 py-2">
+                      <TableCell className="font-mono text-xs text-zinc-400 py-2">
                         {session.pid}
                       </TableCell>
                       <TableCell className="py-2">
@@ -498,7 +498,7 @@ export function OperationsTab() {
                         </span>
                       </TableCell>
                       <TableCell className="py-2">{getStateBadge(session.state)}</TableCell>
-                      <TableCell className="font-mono text-[10px] text-zinc-500 hidden md:table-cell py-2">
+                      <TableCell className="font-mono text-xs text-zinc-500 hidden md:table-cell py-2">
                         <TooltipProvider>
                           <Tooltip>
                             <TooltipTrigger asChild>
@@ -523,7 +523,7 @@ export function OperationsTab() {
                                 ? 'outline'
                                 : 'secondary'
                           }
-                          className="text-[9px]"
+                          className="text-label"
                         >
                           {session.duration}
                         </Badge>
@@ -567,7 +567,7 @@ export function OperationsTab() {
                 key={entry.id}
                 className="flex items-center gap-3 px-4 py-2 text-xs hover:bg-white/[0.03] transition-colors"
               >
-                <span className="text-zinc-600 font-mono text-[10px] w-[50px] shrink-0">
+                <span className="text-zinc-600 font-mono text-xs w-[50px] shrink-0">
                   {entry.timestamp.toLocaleTimeString([], {
                     hour: '2-digit',
                     minute: '2-digit',
@@ -575,7 +575,7 @@ export function OperationsTab() {
                 </span>
                 <Badge
                   variant="outline"
-                  className="text-[9px] font-bold w-[70px] justify-center shrink-0 border-white/10"
+                  className="text-label font-bold w-[70px] justify-center shrink-0 border-white/10"
                 >
                   {entry.type}
                 </Badge>
@@ -588,7 +588,7 @@ export function OperationsTab() {
                   ) : (
                     <XCircle className="w-3 h-3 text-red-500" />
                   )}
-                  <span className="text-zinc-600 font-mono text-[10px]">
+                  <span className="text-zinc-600 font-mono text-xs">
                     {entry.duration}ms
                   </span>
                 </div>

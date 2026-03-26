@@ -120,9 +120,9 @@ export function Sidebar({
         <div className="flex items-center justify-between px-2 py-1.5 rounded-lg bg-muted/30 border border-border/50">
           <div className="flex items-center gap-2">
             <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
-            <span className="text-[10px] font-medium text-muted-foreground">Connected</span>
+            <span className="text-xs font-medium text-muted-foreground">Connected</span>
           </div>
-          <span className="text-[10px] font-mono text-muted-foreground/70">v1.2.5</span>
+          <span className="text-xs font-mono text-muted-foreground/70">v1.2.5</span>
         </div>
       </div>
     </div>

@@ -196,15 +196,15 @@ export function DataProfiler({
               {/* Summary Stats */}
               <div className="grid grid-cols-3 gap-3">
                 <div className="bg-[#0a0a0a] rounded-lg p-3 border border-white/5">
-                  <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Total Rows</p>
+                  <p className="text-xs font-bold text-zinc-500 uppercase tracking-wider">Total Rows</p>
                   <p className="text-lg font-bold text-zinc-200 mt-1">{profile.totalRows.toLocaleString()}</p>
                 </div>
                 <div className="bg-[#0a0a0a] rounded-lg p-3 border border-white/5">
-                  <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Columns</p>
+                  <p className="text-xs font-bold text-zinc-500 uppercase tracking-wider">Columns</p>
                   <p className="text-lg font-bold text-zinc-200 mt-1">{profile.columns.length}</p>
                 </div>
                 <div className="bg-[#0a0a0a] rounded-lg p-3 border border-white/5">
-                  <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Avg Null %</p>
+                  <p className="text-xs font-bold text-zinc-500 uppercase tracking-wider">Avg Null %</p>
                   <p className="text-lg font-bold text-zinc-200 mt-1">
                     {profile.columns.length > 0
                       ? Math.round(profile.columns.reduce((sum, c) => sum + c.nullPercent, 0) / profile.columns.length)
@@ -223,19 +223,19 @@ export function DataProfiler({
                         <Hash className="w-3 h-3 text-blue-400" />
                         <span className="text-xs font-bold text-zinc-200">{col.name}</span>
                         {col.type && (
-                          <span className="text-[10px] text-zinc-500 font-mono">{col.type}</span>
+                          <span className="text-xs text-zinc-500 font-mono">{col.type}</span>
                         )}
                         {sensitiveColumnNames.has(col.name) && (
                           <span title="Sensitive column - values masked"><Lock className="w-3 h-3 text-purple-400" /></span>
                         )}
                       </div>
-                      <span className="text-[10px] text-zinc-500">
+                      <span className="text-xs text-zinc-500">
                         {col.distinctCount.toLocaleString()} distinct
                       </span>
                     </div>
 
                     {col.error ? (
-                      <p className="text-[10px] text-amber-400">{col.error}</p>
+                      <p className="text-xs text-amber-400">{col.error}</p>
                     ) : (
                       <>
                         {/* Null bar */}
@@ -252,7 +252,7 @@ export function DataProfiler({
                             />
                           </div>
                           <span className={cn(
-                            "text-[10px] font-mono w-10 text-right",
+                            "text-xs font-mono w-10 text-right",
                             col.nullPercent > 50 ? "text-red-400" :
                             col.nullPercent > 20 ? "text-amber-400" :
                             "text-emerald-400"
@@ -262,7 +262,7 @@ export function DataProfiler({
                         </div>
 
                         {/* Min/Max */}
-                        <div className="flex gap-4 text-[10px]">
+                        <div className="flex gap-4 text-xs">
                           {col.minValue && (() => {
                             const rule = sensitiveColumnNames.get(col.name);
                             const display = rule
@@ -296,7 +296,7 @@ export function DataProfiler({
                                 ? maskValue(val, rule)
                                 : val.substring(0, 20);
                               return (
-                                <span key={i} className={cn("text-[10px] px-1.5 py-0.5 bg-zinc-800 rounded font-mono", rule ? "text-zinc-500 italic" : "text-zinc-400")}>
+                                <span key={i} className={cn("text-xs px-1.5 py-0.5 bg-zinc-800 rounded font-mono", rule ? "text-zinc-500 italic" : "text-zinc-400")}>
                                   {display}
                                 </span>
                               );
@@ -314,7 +314,7 @@ export function DataProfiler({
                 <div className="bg-cyan-500/5 border border-cyan-500/10 rounded-lg p-4">
                   <div className="flex items-center gap-2 mb-2">
                     <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
-                    <span className="text-[10px] font-bold text-cyan-400 uppercase tracking-wider">
+                    <span className="text-xs font-bold text-cyan-400 uppercase tracking-wider">
                       AI Analysis
                     </span>
                     {isAiLoading && <Loader2 className="w-3 h-3 animate-spin text-cyan-400" />}

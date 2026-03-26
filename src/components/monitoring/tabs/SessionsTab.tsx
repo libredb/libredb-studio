@@ -92,7 +92,7 @@ export function SessionsTab({ data, loading, onKillSession, isAdmin = true }: Se
       <div className="grid grid-cols-4 gap-2 sm:gap-4">
         <Card className="p-0">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 p-2 sm:p-4 pb-1 sm:pb-2">
-            <CardTitle className="text-[10px] sm:text-sm font-medium text-muted-foreground">
+            <CardTitle className="text-xs sm:text-sm font-medium text-muted-foreground">
               Active
             </CardTitle>
             <Activity className="h-3 w-3 sm:h-4 sm:w-4 text-green-500" />
@@ -104,7 +104,7 @@ export function SessionsTab({ data, loading, onKillSession, isAdmin = true }: Se
 
         <Card className="p-0">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 p-2 sm:p-4 pb-1 sm:pb-2">
-            <CardTitle className="text-[10px] sm:text-sm font-medium text-muted-foreground">
+            <CardTitle className="text-xs sm:text-sm font-medium text-muted-foreground">
               Idle
             </CardTitle>
             <Clock className="h-3 w-3 sm:h-4 sm:w-4 text-muted-foreground" />
@@ -116,7 +116,7 @@ export function SessionsTab({ data, loading, onKillSession, isAdmin = true }: Se
 
         <Card className="p-0">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 p-2 sm:p-4 pb-1 sm:pb-2">
-            <CardTitle className="text-[10px] sm:text-sm font-medium text-muted-foreground">
+            <CardTitle className="text-xs sm:text-sm font-medium text-muted-foreground">
               In TX
             </CardTitle>
             <Clock className={`h-3 w-3 sm:h-4 sm:w-4 ${idleInTxCount > 0 ? 'text-yellow-500' : 'text-muted-foreground'}`} />
@@ -128,7 +128,7 @@ export function SessionsTab({ data, loading, onKillSession, isAdmin = true }: Se
 
         <Card className="p-0">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 p-2 sm:p-4 pb-1 sm:pb-2">
-            <CardTitle className="text-[10px] sm:text-sm font-medium text-muted-foreground">
+            <CardTitle className="text-xs sm:text-sm font-medium text-muted-foreground">
               Wait
             </CardTitle>
             <Users className={`h-3 w-3 sm:h-4 sm:w-4 ${waitingCount > 0 ? 'text-orange-500' : 'text-muted-foreground'}`} />
@@ -170,21 +170,21 @@ export function SessionsTab({ data, loading, onKillSession, isAdmin = true }: Se
                 <TableBody>
                   {sessions.map((session) => (
                     <TableRow key={session.pid}>
-                      <TableCell className="font-mono text-[10px] sm:text-xs py-2">
+                      <TableCell className="font-mono text-xs sm:text-xs py-2">
                         {session.pid}
                       </TableCell>
                       <TableCell className="py-2">
                         <div className="flex flex-col">
                           <span className="font-medium text-xs truncate max-w-[60px] sm:max-w-[100px]">{session.user}</span>
                           {session.applicationName && (
-                            <span className="text-[10px] text-muted-foreground truncate max-w-[60px] sm:max-w-[100px] hidden sm:block">
+                            <span className="text-xs text-muted-foreground truncate max-w-[60px] sm:max-w-[100px] hidden sm:block">
                               {session.applicationName}
                             </span>
                           )}
                         </div>
                       </TableCell>
                       <TableCell className="py-2">{getStateBadge(session.state)}</TableCell>
-                      <TableCell className="font-mono text-[10px] hidden md:table-cell py-2">
+                      <TableCell className="font-mono text-xs hidden md:table-cell py-2">
                         <TooltipProvider>
                           <Tooltip>
                             <TooltipTrigger asChild>
@@ -212,12 +212,12 @@ export function SessionsTab({ data, loading, onKillSession, isAdmin = true }: Se
                                 ? 'outline'
                                 : 'secondary'
                           }
-                          className="text-[10px] sm:text-xs"
+                          className="text-xs sm:text-xs"
                         >
                           {session.duration}
                         </Badge>
                       </TableCell>
-                      <TableCell className="text-[10px] text-muted-foreground hidden lg:table-cell py-2">
+                      <TableCell className="text-xs text-muted-foreground hidden lg:table-cell py-2">
                         {session.waitEventType
                           ? `${session.waitEventType}`
                           : '-'}
@@ -238,7 +238,7 @@ export function SessionsTab({ data, loading, onKillSession, isAdmin = true }: Se
                             )}
                           </Button>
                         ) : (
-                          <span className="text-[10px] text-muted-foreground">-</span>
+                          <span className="text-xs text-muted-foreground">-</span>
                         )}
                       </TableCell>
                     </TableRow>

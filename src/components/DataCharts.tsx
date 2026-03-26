@@ -554,7 +554,7 @@ export function DataCharts({ result }: DataChartsProps) {
         {/* X-Axis Selector */}
         {chartType !== 'pie' && (
           <div className="flex items-center gap-2">
-            <span className="text-[10px] text-zinc-600 uppercase tracking-wider">X-Axis</span>
+            <span className="text-xs text-zinc-600 uppercase tracking-wider">X-Axis</span>
             <Select value={xAxis} onValueChange={setXAxis}>
               <SelectTrigger className="h-7 w-[140px] text-xs bg-white/5 border-white/10">
                 <SelectValue placeholder="Select field" />
@@ -575,7 +575,7 @@ export function DataCharts({ result }: DataChartsProps) {
 
         {/* Y-Axis Selector (for pie, this becomes the value field) */}
         <div className="flex items-center gap-2">
-          <span className="text-[10px] text-zinc-600 uppercase tracking-wider">
+          <span className="text-xs text-zinc-600 uppercase tracking-wider">
             {chartType === 'pie' ? 'Value' : 'Y-Axis'}
           </span>
           <DropdownMenu>
@@ -607,7 +607,7 @@ export function DataCharts({ result }: DataChartsProps) {
         {/* Scatter Y-axis */}
         {chartType === 'scatter' && (
           <div className="flex items-center gap-2">
-            <span className="text-[10px] text-zinc-600 uppercase tracking-wider">Y</span>
+            <span className="text-xs text-zinc-600 uppercase tracking-wider">Y</span>
             <Select value={scatterY} onValueChange={setScatterY}>
               <SelectTrigger className="h-7 w-[120px] text-xs bg-white/5 border-white/10">
                 <SelectValue placeholder="Y field" />
@@ -624,7 +624,7 @@ export function DataCharts({ result }: DataChartsProps) {
         {/* Histogram buckets */}
         {chartType === 'histogram' && (
           <div className="flex items-center gap-2">
-            <span className="text-[10px] text-zinc-600 uppercase tracking-wider">Buckets</span>
+            <span className="text-xs text-zinc-600 uppercase tracking-wider">Buckets</span>
             <Select value={String(histogramBuckets)} onValueChange={(v) => setHistogramBuckets(Number(v))}>
               <SelectTrigger className="h-7 w-[70px] text-xs bg-white/5 border-white/10">
                 <SelectValue />
@@ -641,7 +641,7 @@ export function DataCharts({ result }: DataChartsProps) {
         {/* Aggregation */}
         {chartType !== 'scatter' && chartType !== 'histogram' && chartType !== 'pie' && (
           <div className="flex items-center gap-2">
-            <span className="text-[10px] text-zinc-600 uppercase tracking-wider">Agg</span>
+            <span className="text-xs text-zinc-600 uppercase tracking-wider">Agg</span>
             <Select value={aggregation} onValueChange={(v) => setAggregation(v as AggregationType)}>
               <SelectTrigger className="h-7 w-[80px] text-xs bg-white/5 border-white/10">
                 <SelectValue />
@@ -658,7 +658,7 @@ export function DataCharts({ result }: DataChartsProps) {
         {/* Date Grouping */}
         {analysis.dateFields.length > 0 && chartType !== 'scatter' && chartType !== 'histogram' && (
           <div className="flex items-center gap-2">
-            <span className="text-[10px] text-zinc-600 uppercase tracking-wider">Group</span>
+            <span className="text-xs text-zinc-600 uppercase tracking-wider">Group</span>
             <Select value={dateGrouping || 'none'} onValueChange={(v) => setDateGrouping(v === 'none' ? '' : v as DateGrouping)}>
               <SelectTrigger className="h-7 w-[80px] text-xs bg-white/5 border-white/10">
                 <SelectValue />
@@ -693,13 +693,13 @@ export function DataCharts({ result }: DataChartsProps) {
           </div>
         ) : (
           <div className="flex items-center gap-1">
-            <Button variant="ghost" size="sm" className="h-7 text-[10px] text-zinc-500 hover:text-white gap-1" onClick={() => setShowSaveDialog(true)}>
+            <Button variant="ghost" size="sm" className="h-7 text-xs text-zinc-500 hover:text-white gap-1" onClick={() => setShowSaveDialog(true)}>
               <Save className="w-3 h-3" /> Save
             </Button>
             {savedCharts.length > 0 && (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" size="sm" className="h-7 text-[10px] text-zinc-500 hover:text-white gap-1">
+                  <Button variant="ghost" size="sm" className="h-7 text-xs text-zinc-500 hover:text-white gap-1">
                     <FolderOpen className="w-3 h-3" /> Saved ({savedCharts.length})
                   </Button>
                 </DropdownMenuTrigger>
@@ -721,7 +721,7 @@ export function DataCharts({ result }: DataChartsProps) {
         {/* Export Button */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="sm" className="h-7 text-[10px] font-bold uppercase text-zinc-500 hover:text-white gap-1">
+            <Button variant="ghost" size="sm" className="h-7 text-xs font-bold uppercase text-zinc-500 hover:text-white gap-1">
               <Download className="w-3 h-3" /> Export
             </Button>
           </DropdownMenuTrigger>
@@ -949,7 +949,7 @@ export function DataCharts({ result }: DataChartsProps) {
       </div>
 
       {/* Footer Stats */}
-      <div className="px-3 py-2 border-t border-white/5 bg-[#0a0a0a] flex items-center gap-4 text-[10px] text-zinc-600">
+      <div className="px-3 py-2 border-t border-white/5 bg-[#0a0a0a] flex items-center gap-4 text-xs text-zinc-600">
         <span>Rows: <span className="text-zinc-400 font-mono">{result?.rows.length || 0}</span></span>
         <span>Fields: <span className="text-zinc-400 font-mono">{analysis.fields.length}</span></span>
         <span>Numeric: <span className="text-zinc-400 font-mono">{analysis.numericFields.length}</span></span>

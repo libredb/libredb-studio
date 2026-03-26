@@ -115,7 +115,7 @@ export function PoolTab({ connection }: PoolTabProps) {
           </CardHeader>
           <CardContent className="p-3 sm:p-4 pt-0">
             <div className="text-lg sm:text-2xl font-bold">{stats?.total ?? 0}</div>
-            <p className="text-[10px] sm:text-xs text-muted-foreground mt-1">
+            <p className="text-xs sm:text-xs text-muted-foreground mt-1">
               Max pool size
             </p>
           </CardContent>
@@ -131,7 +131,7 @@ export function PoolTab({ connection }: PoolTabProps) {
           <CardContent className="p-3 sm:p-4 pt-0">
             <div className="text-lg sm:text-2xl font-bold">{stats?.active ?? 0}</div>
             <Progress value={usagePercent} className="h-1 mt-1 sm:mt-2" />
-            <p className="text-[10px] sm:text-xs text-muted-foreground mt-1">
+            <p className="text-xs sm:text-xs text-muted-foreground mt-1">
               {usagePercent}% utilized
             </p>
           </CardContent>
@@ -146,7 +146,7 @@ export function PoolTab({ connection }: PoolTabProps) {
           </CardHeader>
           <CardContent className="p-3 sm:p-4 pt-0">
             <div className="text-lg sm:text-2xl font-bold">{stats?.idle ?? 0}</div>
-            <p className="text-[10px] sm:text-xs text-muted-foreground mt-1">
+            <p className="text-xs sm:text-xs text-muted-foreground mt-1">
               Available
             </p>
           </CardContent>
@@ -163,7 +163,7 @@ export function PoolTab({ connection }: PoolTabProps) {
           </CardHeader>
           <CardContent className="p-3 sm:p-4 pt-0">
             <div className="text-lg sm:text-2xl font-bold">{stats?.waiting ?? 0}</div>
-            <p className="text-[10px] sm:text-xs text-muted-foreground mt-1">
+            <p className="text-xs sm:text-xs text-muted-foreground mt-1">
               {stats?.waiting ? 'Queued requests' : 'No queue'}
             </p>
           </CardContent>

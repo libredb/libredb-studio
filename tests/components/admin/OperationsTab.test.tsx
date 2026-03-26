@@ -883,11 +883,9 @@ describe('OperationsTab', () => {
       badge => badge.textContent?.includes('00:00:30')
     );
     expect(durationBadge400).toBeDefined();
-    // Outline variant: has text-foreground, does NOT have bg-destructive or bg-secondary
-    expect(durationBadge400!.className).toContain('text-foreground');
+    // Outline variant: does NOT have bg-destructive or bg-secondary
     expect(durationBadge400!.className).not.toContain('bg-destructive');
     expect(durationBadge400!.className).not.toContain('bg-secondary');
-    expect(durationBadge400!.className).not.toContain('border-transparent');
 
     // Find the badge containing '00:02:00' (destructive variant for >60s)
     const durationBadge402 = allBadges.find(

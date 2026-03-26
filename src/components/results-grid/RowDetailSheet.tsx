@@ -129,7 +129,7 @@ export function RowDetailSheet({
                 >
                   <div className="flex items-start justify-between gap-4">
                     <div className="flex-1 min-w-0">
-                      <p className="text-[10px] uppercase tracking-widest text-zinc-500 mb-1 font-mono flex items-center gap-1">
+                      <p className="text-xs uppercase tracking-widest text-zinc-500 mb-1 font-mono flex items-center gap-1">
                         {field}
                         {isMasked && <Lock className="w-2.5 h-2.5 text-purple-400" />}
                       </p>

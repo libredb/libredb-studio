@@ -39,7 +39,7 @@ function DesktopCommunity() {
           <h3 className="text-sm font-semibold text-zinc-200">Join the Community</h3>
           <p className="text-xs text-zinc-500">This project is open source. Your contributions make it better!</p>
         </div>
-        <span className="shrink-0 text-[10px] font-medium px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+        <span className="shrink-0 text-xs font-medium px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
           Open Source
         </span>
       </div>

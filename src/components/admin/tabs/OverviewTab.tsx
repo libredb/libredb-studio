@@ -503,7 +503,7 @@ function HeroStatusBanner({
               >
                 {animatedScore}%
               </span>
-              <span className="text-[10px] text-zinc-500 uppercase tracking-wider">
+              <span className="text-xs text-zinc-500 uppercase tracking-wider">
                 Health
               </span>
             </div>
@@ -514,7 +514,7 @@ function HeroStatusBanner({
                 animate={{ scale: [1, 1.05, 1], opacity: [0.7, 1, 0.7] }}
                 transition={{ duration: 2, repeat: Infinity, ease: 'easeInOut' }}
               />
-              <span className="text-[9px] font-bold text-emerald-400 uppercase tracking-widest">
+              <span className="text-label font-bold text-emerald-400 uppercase tracking-widest">
                 Live
               </span>
             </div>
@@ -528,11 +528,11 @@ function HeroStatusBanner({
                 <span className={`text-sm font-bold ${statusColor}`}>
                   {statusText}
                 </span>
-                <div className="flex gap-1.5 text-[10px]">
+                <div className="flex gap-1.5 text-xs">
                   {healthyCount > 0 && (
                     <Badge
                       variant="outline"
-                      className="border-emerald-500/30 text-emerald-400 h-5 text-[9px]"
+                      className="border-emerald-500/30 text-emerald-400 h-5 text-label"
                     >
                       {healthyCount} healthy
                     </Badge>
@@ -540,7 +540,7 @@ function HeroStatusBanner({
                   {degradedCount > 0 && (
                     <Badge
                       variant="outline"
-                      className="border-amber-500/30 text-amber-400 h-5 text-[9px]"
+                      className="border-amber-500/30 text-amber-400 h-5 text-label"
                     >
                       {degradedCount} degraded
                     </Badge>
@@ -548,7 +548,7 @@ function HeroStatusBanner({
                   {errorCount > 0 && (
                     <Badge
                       variant="outline"
-                      className="border-red-500/30 text-red-400 h-5 text-[9px]"
+                      className="border-red-500/30 text-red-400 h-5 text-label"
                     >
                       {errorCount} error
                     </Badge>
@@ -559,7 +559,7 @@ function HeroStatusBanner({
                 {user && (
                   <Badge
                     variant="outline"
-                    className="border-white/10 text-zinc-500 h-5 text-[9px]"
+                    className="border-white/10 text-zinc-500 h-5 text-label"
                   >
                     {user.username} ({user.role})
                   </Badge>
@@ -567,7 +567,7 @@ function HeroStatusBanner({
                 <Button
                   variant="ghost"
                   size="sm"
-                  className="h-7 text-[10px] text-zinc-500 hover:text-zinc-300"
+                  className="h-7 text-xs text-zinc-500 hover:text-zinc-300"
                   onClick={onRefresh}
                   disabled={fleetLoading}
                 >
@@ -649,7 +649,7 @@ function CounterCard({
     <div className="rounded-xl border border-white/5 bg-white/[0.02] p-3">
       <div className="flex items-center gap-1.5 mb-1.5">
         <Icon className={`w-3.5 h-3.5 ${color}`} />
-        <span className="text-[10px] text-zinc-500 uppercase tracking-wider">
+        <span className="text-xs text-zinc-500 uppercase tracking-wider">
           {label}
         </span>
       </div>
@@ -663,7 +663,7 @@ function CounterCard({
       </div>
       {trend !== undefined && trend !== 0 && (
         <div
-          className={`flex items-center gap-0.5 mt-1 text-[10px] ${
+          className={`flex items-center gap-0.5 mt-1 text-xs ${
             trend > 0 ? 'text-emerald-400' : 'text-red-400'
           }`}
         >
@@ -729,7 +729,7 @@ function FleetHealthSection({
       <div className="flex items-center gap-2 mb-3">
         <Radio className="h-4 w-4 text-blue-400" />
         <h2 className="text-sm font-bold text-zinc-300">Fleet Status</h2>
-        <span className="text-[10px] text-zinc-600">
+        <span className="text-xs text-zinc-600">
           {fleetHealth.length} endpoint{fleetHealth.length !== 1 ? 's' : ''}
         </span>
       </div>
@@ -786,7 +786,7 @@ function FleetHealthSection({
                     {item.environment && (
                       <Badge
                         variant="outline"
-                        className="text-[9px] h-4"
+                        className="text-label h-4"
                         style={{
                           borderColor:
                             ENVIRONMENT_COLORS[
@@ -824,7 +824,7 @@ function FleetHealthSection({
                   </div>
                 </div>
 
-                <div className="flex items-center gap-3 text-[11px] text-zinc-500">
+                <div className="flex items-center gap-3 text-body text-zinc-500">
                   <span className="font-mono text-zinc-400">
                     {item.status === 'error' ? 'timeout' : `${item.latencyMs}ms`}
                   </span>
@@ -847,7 +847,7 @@ function FleetHealthSection({
                 </div>
 
                 {item.error && (
-                  <div className="text-red-400 text-[10px] truncate mt-1.5">
+                  <div className="text-red-400 text-xs truncate mt-1.5">
                     {item.error}
                   </div>
                 )}
@@ -958,10 +958,10 @@ function MetricGauge({
           >
             {displayValue ?? animatedValue}
           </span>
-          <span className="text-[9px] text-zinc-500">{unit}</span>
+          <span className="text-label text-zinc-500">{unit}</span>
         </div>
       </div>
-      <span className="text-[10px] text-zinc-500 mt-1 uppercase tracking-wider">
+      <span className="text-xs text-zinc-500 mt-1 uppercase tracking-wider">
         {label}
       </span>
     </div>
@@ -989,12 +989,12 @@ function MetricBigNumber({
       <span className="text-3xl font-bold text-zinc-100 tabular-nums">
         {formatNumber(animatedValue)}
       </span>
-      <span className="text-[10px] text-zinc-500 mt-1 uppercase tracking-wider">
+      <span className="text-xs text-zinc-500 mt-1 uppercase tracking-wider">
         {label}
       </span>
       {trend !== 0 && (
         <div
-          className={`flex items-center gap-0.5 mt-1.5 text-[10px] ${
+          className={`flex items-center gap-0.5 mt-1.5 text-xs ${
             trend > 0 ? 'text-emerald-400' : 'text-red-400'
           }`}
         >
@@ -1121,7 +1121,7 @@ function AnalyticsSection({
                         {item.text}
                       </div>
                       {item.connectionName && (
-                        <div className="text-[10px] text-zinc-600 truncate">
+                        <div className="text-xs text-zinc-600 truncate">
                           {item.connectionName}
                         </div>
                       )}
@@ -1132,7 +1132,7 @@ function AnalyticsSection({
                       ) : (
                         <XCircle className="w-3 h-3 text-red-500" />
                       )}
-                      <span className="text-[10px] text-zinc-600 whitespace-nowrap">
+                      <span className="text-xs text-zinc-600 whitespace-nowrap">
                         {formatRelativeTime(item.time)}
                       </span>
                     </div>
@@ -1206,10 +1206,10 @@ function QuickActionsSection() {
               <h3 className="text-sm font-bold text-zinc-200 mb-1">
                 {action.label}
               </h3>
-              <p className="text-[11px] text-zinc-500 mb-3">
+              <p className="text-body text-zinc-500 mb-3">
                 {action.description}
               </p>
-              <div className="flex items-center gap-1 text-[11px] text-zinc-600 group-hover:text-zinc-400 transition-colors">
+              <div className="flex items-center gap-1 text-body text-zinc-600 group-hover:text-zinc-400 transition-colors">
                 <span>Open</span>
                 <ArrowRight className="w-3 h-3 group-hover:translate-x-1 transition-transform" />
               </div>
@@ -1308,7 +1308,7 @@ function EmptyState() {
               <div className="text-sm font-bold text-zinc-200 mb-1">
                 {f.label}
               </div>
-              <div className="text-[11px] text-zinc-500">{f.description}</div>
+              <div className="text-body text-zinc-500">{f.description}</div>
             </motion.div>
           ))}
         </motion.div>

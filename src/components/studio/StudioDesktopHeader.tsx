@@ -39,7 +39,7 @@ export function StudioDesktopHeader({
             {activeConnection ? activeConnection.name : 'Quick Access'}
           </h1>
           {activeConnection && (
-            <p className="text-[10px] text-zinc-500 font-mono uppercase tracking-widest leading-none mt-0.5">
+            <p className="text-xs text-zinc-500 font-mono uppercase tracking-widest leading-none mt-0.5">
               {activeConnection.type}
               {activeConnection.environment && activeConnection.environment !== 'other' && (
                 <span
@@ -66,7 +66,7 @@ export function StudioDesktopHeader({
               connectionPulse === 'degraded' && "bg-amber-500",
               connectionPulse === 'error' && "bg-red-500",
             )} />
-            <span className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">
+            <span className="text-xs font-bold uppercase tracking-widest text-zinc-500">
               {connectionPulse === 'healthy' ? 'Online' : connectionPulse === 'degraded' ? 'Slow' : 'Error'}
             </span>
           </div>
@@ -75,7 +75,7 @@ export function StudioDesktopHeader({
         <Button
           variant="ghost"
           size="sm"
-          className="h-7 px-3 text-[10px] font-bold uppercase tracking-widest gap-2 text-zinc-500 hover:text-purple-400 hover:bg-purple-500/10"
+          className="h-7 px-3 text-xs font-bold uppercase tracking-widest gap-2 text-zinc-500 hover:text-purple-400 hover:bg-purple-500/10"
           onClick={() => router.push('/monitoring')}
         >
           <Gauge className="w-3 h-3" /> Monitoring
@@ -105,7 +105,7 @@ export function StudioDesktopHeader({
           </DropdownMenu>
         )}
         <Settings className="w-4 h-4 text-zinc-400 cursor-pointer hover:text-white transition-colors mx-2" />
-        <span className="text-[10px] text-zinc-500 font-mono">
+        <span className="text-xs text-zinc-500 font-mono">
           v{process.env.NEXT_PUBLIC_APP_VERSION}
         </span>
       </div>

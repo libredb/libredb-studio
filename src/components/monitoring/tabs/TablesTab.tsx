@@ -80,14 +80,14 @@ export function TablesTab({ data, loading, onRunMaintenance, isAdmin = true }: T
       <div className="grid grid-cols-3 gap-2 sm:gap-4">
         <Card className="p-0">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 p-2 sm:p-4 pb-1 sm:pb-2">
-            <CardTitle className="text-[10px] sm:text-sm font-medium text-muted-foreground">
+            <CardTitle className="text-xs sm:text-sm font-medium text-muted-foreground">
               Tables
             </CardTitle>
             <Table2 className="h-3 w-3 sm:h-4 sm:w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent className="p-2 sm:p-4 pt-0">
             <div className="text-lg sm:text-2xl font-bold">{tables.length}</div>
-            <p className="text-[10px] sm:text-xs text-muted-foreground mt-1">
+            <p className="text-xs sm:text-xs text-muted-foreground mt-1">
               {formatNumber(totalRows)} rows
             </p>
           </CardContent>
@@ -95,14 +95,14 @@ export function TablesTab({ data, loading, onRunMaintenance, isAdmin = true }: T
 
         <Card className="p-0">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 p-2 sm:p-4 pb-1 sm:pb-2">
-            <CardTitle className="text-[10px] sm:text-sm font-medium text-muted-foreground">
+            <CardTitle className="text-xs sm:text-sm font-medium text-muted-foreground">
               Size
             </CardTitle>
             <Search className="h-3 w-3 sm:h-4 sm:w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent className="p-2 sm:p-4 pt-0">
             <div className="text-lg sm:text-2xl font-bold">{formatBytes(totalSize)}</div>
-            <p className="text-[10px] sm:text-xs text-muted-foreground mt-1">
+            <p className="text-xs sm:text-xs text-muted-foreground mt-1">
               Total
             </p>
           </CardContent>
@@ -110,7 +110,7 @@ export function TablesTab({ data, loading, onRunMaintenance, isAdmin = true }: T
 
         <Card className="p-0">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 p-2 sm:p-4 pb-1 sm:pb-2">
-            <CardTitle className="text-[10px] sm:text-sm font-medium text-muted-foreground">
+            <CardTitle className="text-xs sm:text-sm font-medium text-muted-foreground">
               Vacuum
             </CardTitle>
             <AlertTriangle
@@ -119,7 +119,7 @@ export function TablesTab({ data, loading, onRunMaintenance, isAdmin = true }: T
           </CardHeader>
           <CardContent className="p-2 sm:p-4 pt-0">
             <div className="text-lg sm:text-2xl font-bold">{tablesNeedingVacuum}</div>
-            <p className="text-[10px] sm:text-xs text-muted-foreground mt-1">
+            <p className="text-xs sm:text-xs text-muted-foreground mt-1">
               {tablesNeedingVacuum > 0 ? 'Need' : 'OK'}
             </p>
           </CardContent>
@@ -170,7 +170,7 @@ export function TablesTab({ data, loading, onRunMaintenance, isAdmin = true }: T
                           <span className="font-medium text-xs sm:text-sm truncate max-w-[100px] sm:max-w-[200px]">
                             {table.tableName}
                           </span>
-                          <span className="text-[10px] sm:text-xs text-muted-foreground">
+                          <span className="text-xs sm:text-xs text-muted-foreground">
                             {table.schemaName}
                           </span>
                         </div>
@@ -178,7 +178,7 @@ export function TablesTab({ data, loading, onRunMaintenance, isAdmin = true }: T
                       <TableCell className="text-right font-mono text-xs py-2">
                         {formatNumber(table.rowCount)}
                         {table.deadRowCount ? (
-                          <span className="text-[10px] text-muted-foreground block">
+                          <span className="text-xs text-muted-foreground block">
                             {formatNumber(table.deadRowCount)} dead
                           </span>
                         ) : null}
@@ -198,7 +198,7 @@ export function TablesTab({ data, loading, onRunMaintenance, isAdmin = true }: T
                                 ? 'outline'
                                 : 'secondary'
                           }
-                          className="text-[10px] sm:text-xs"
+                          className="text-xs sm:text-xs"
                         >
                           {(table.bloatRatio ?? 0).toFixed(1)}%
                         </Badge>
@@ -253,7 +253,7 @@ export function TablesTab({ data, loading, onRunMaintenance, isAdmin = true }: T
                             </Button>
                           </div>
                         ) : (
-                          <span className="text-[10px] text-muted-foreground">-</span>
+                          <span className="text-xs text-muted-foreground">-</span>
                         )}
                       </TableCell>
                     </TableRow>

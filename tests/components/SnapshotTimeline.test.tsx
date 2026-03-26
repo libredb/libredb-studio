@@ -108,7 +108,7 @@ describe('SnapshotTimeline', () => {
     const { container } = render(
       <SnapshotTimeline snapshots={reversedSnapshots} onCompare={mock(() => {})} onDelete={mock(() => {})} />
     );
-    const labels = container.querySelectorAll('.text-\\[10px\\].font-medium');
+    const labels = container.querySelectorAll('.text-xs.font-medium.truncate');
     expect(labels[0]?.textContent).toBe('Older');
     expect(labels[1]?.textContent).toBe('Newer');
   });
