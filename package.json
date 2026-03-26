@@ -1,7 +1,14 @@
 {
-  "name": "libredb-studio",
+  "name": "@libredb/studio",
   "version": "0.9.7",
   "private": false,
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/libredb/libredb-studio"
+  },
   "exports": {
     ".": "./src/exports/index.ts",
     "./components": "./src/exports/components.ts",
