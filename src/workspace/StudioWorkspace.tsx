@@ -38,31 +38,50 @@ import { cn } from '@/lib/utils';
  */
 const STUDIO_SCOPED_CSS = `
 [data-studio-workspace] {
+  /* Dark theme — monochrome (black/white/gray) */
   --background: #09090b;
   --foreground: #fafafa;
-  --card: #0a0a0a;
+  --card: #09090b;
   --card-foreground: #fafafa;
-  --popover: #0a0a0a;
+  --popover: #09090b;
   --popover-foreground: #fafafa;
   --primary: #fafafa;
-  --primary-foreground: #171717;
+  --primary-foreground: #09090b;
   --secondary: #27272a;
   --secondary-foreground: #fafafa;
   --muted: #27272a;
   --muted-foreground: #a1a1aa;
   --accent: #27272a;
   --accent-foreground: #fafafa;
-  --destructive: #7f1d1d;
+  --destructive: #dc2626;
   --destructive-foreground: #fafafa;
   --border: #27272a;
   --input: #27272a;
   --ring: #d4d4d8;
   --radius: 0.5rem;
-  --chart-1: #3b82f6;
-  --chart-2: #22c55e;
-  --chart-3: #f59e0b;
-  --chart-4: #a855f7;
-  --chart-5: #ec4899;
+  --chart-1: #e4e4e7;
+  --chart-2: #a1a1aa;
+  --chart-3: #71717a;
+  --chart-4: #52525b;
+  --chart-5: #3f3f46;
+
+  /* Font — Geist (inherited from host or fallback to system) */
+  font-family: var(--font-geist-sans, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-feature-settings: "rlig" 1, "calt" 1;
+  letter-spacing: -0.011em;
+}
+[data-studio-workspace] *,
+[data-studio-workspace] *::before,
+[data-studio-workspace] *::after {
+  font-family: inherit;
+}
+[data-studio-workspace] code,
+[data-studio-workspace] pre,
+[data-studio-workspace] kbd,
+[data-studio-workspace] .font-mono {
+  font-family: var(--font-geist-mono, ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace);
 }
 `;
 
