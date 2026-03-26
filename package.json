@@ -1,6 +1,6 @@
 {
   "name": "@libredb/studio",
-  "version": "0.9.7",
+  "version": "0.9.12",
   "private": false,
   "publishConfig": {
     "access": "public"
