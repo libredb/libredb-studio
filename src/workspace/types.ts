@@ -1,5 +1,5 @@
 // src/workspace/types.ts
-import type { DatabaseType, TableSchema, QueryResult, SavedQuery } from '@/lib/types';
+import type { DatabaseType, TableSchema, SavedQuery } from '@/lib/types';
 
 // === Connection (platform → studio) ===
 
