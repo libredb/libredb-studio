@@ -743,15 +743,6 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
           options={getEditorOptions(showLineNumbers)}
         />
 
-        {/* Connection Type Badge */}
-        <div className="absolute top-3 right-6 pointer-events-none select-none z-10">
-          <div className="flex items-center gap-2 px-3 py-1 rounded-md bg-zinc-900/90 border border-white/10 backdrop-blur-md shadow-2xl">
-            <div className="w-1.5 h-1.5 rounded-full bg-blue-500 shadow-[0_0_8px_rgba(59,130,246,0.5)]" />
-            <span className="text-xs font-bold text-zinc-400 uppercase tracking-widest">
-              {language} Engine
-            </span>
-          </div>
-        </div>
       </div>
     </div>
   );
