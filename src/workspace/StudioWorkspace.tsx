@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { Sidebar, ConnectionsList } from '@/components/sidebar';
-import { MobileNav } from '@/components/MobileNav';
+// MobileNav excluded in embedded mode — platform provides its own navigation
 import { SchemaExplorer } from '@/components/schema-explorer';
 import { QueryEditor, QueryEditorRef } from '@/components/QueryEditor';
 import { DataImportModal } from '@/components/DataImportModal';
@@ -28,6 +28,40 @@ import {
   DEFAULT_WORKSPACE_FEATURES,
 } from '@/workspace/types';
 import { cn } from '@/lib/utils';
+
+/**
+ * Scoped CSS variables for studio's dark theme.
+ * When embedded in a host app (e.g. platform uses OKLCH colors),
+ * studio needs its own hex-based CSS variables to render correctly.
+ */
+const STUDIO_THEME_VARS: React.CSSProperties = {
+  // @ts-expect-error -- CSS custom properties
+  '--background': '#09090b',
+  '--foreground': '#fafafa',
+  '--card': '#0a0a0a',
+  '--card-foreground': '#fafafa',
+  '--popover': '#0a0a0a',
+  '--popover-foreground': '#fafafa',
+  '--primary': '#fafafa',
+  '--primary-foreground': '#171717',
+  '--secondary': '#27272a',
+  '--secondary-foreground': '#fafafa',
+  '--muted': '#27272a',
+  '--muted-foreground': '#a1a1aa',
+  '--accent': '#27272a',
+  '--accent-foreground': '#fafafa',
+  '--destructive': '#7f1d1d',
+  '--destructive-foreground': '#fafafa',
+  '--border': '#27272a',
+  '--input': '#27272a',
+  '--ring': '#d4d4d8',
+  '--radius': '0.5rem',
+  '--chart-1': '#3b82f6',
+  '--chart-2': '#22c55e',
+  '--chart-3': '#f59e0b',
+  '--chart-4': '#a855f7',
+  '--chart-5': '#ec4899',
+};
 import { AlertTriangle, Database } from 'lucide-react';
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from '@/components/ui/resizable';
 import { AnimatePresence } from 'framer-motion';
@@ -209,7 +243,10 @@ export function StudioWorkspace({
   const noop = useCallback(() => {}, []);
 
   return (
-    <div className={cn('flex h-full w-full bg-[#050505] text-zinc-100 overflow-hidden font-sans select-none', className)}>
+    <div
+      className={cn('dark flex h-full w-full bg-[#050505] text-zinc-100 overflow-hidden font-sans select-none', className)}
+      style={STUDIO_THEME_VARS}
+    >
       <ResizablePanelGroup id="workspace-main" direction="horizontal" className="h-full">
         <ResizablePanel defaultSize={22} minSize={15} maxSize={35} className="hidden md:block">
           <Sidebar
@@ -236,7 +273,7 @@ export function StudioWorkspace({
         </ResizablePanel>
         <ResizableHandle className="hidden md:flex w-1 bg-transparent hover:bg-blue-500/30 transition-colors" />
         <ResizablePanel defaultSize={78}>
-          <div className="flex-1 flex flex-col min-w-0 h-full bg-[#0a0a0a] pb-16 md:pb-0">
+          <div className="flex-1 flex flex-col min-w-0 h-full bg-[#0a0a0a]">
             {/* No desktop/mobile headers — platform provides its own */}
 
             <StudioTabBar
@@ -512,12 +549,7 @@ export function StudioWorkspace({
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* Mobile Navigation */}
-      <MobileNav
-        activeTab={activeMobileTab}
-        onTabChange={setActiveMobileTab}
-        hasResult={!!tabMgr.currentTab.result}
-      />
+      {/* Mobile Navigation — hidden in embedded mode, platform provides its own */}
     </div>
   );
 }
