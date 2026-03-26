@@ -5,7 +5,8 @@ import ReactDOMServer from 'react-dom/server';
 
 // Mock next/font/google
 mock.module('next/font/google', () => ({
-  Inter: () => ({ className: 'mock-inter' }),
+  Geist: () => ({ variable: 'mock-geist-sans', className: 'mock-geist-sans' }),
+  Geist_Mono: () => ({ variable: 'mock-geist-mono', className: 'mock-geist-mono' }),
 }));
 
 // Mock @/components/ui/sonner directly to avoid sonner/next-themes/lucide-react chain
@@ -65,7 +66,7 @@ describe('RootLayout', () => {
       </RootLayout>
     );
     expect(html).toContain('lang="en"');
-    expect(html).toContain('mock-inter');
+    expect(html).toContain('mock-geist-sans');
     expect(html).toContain('antialiased');
     expect(html).toContain('dark');
   });
