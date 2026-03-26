@@ -1,7 +1,17 @@
 {
   "name": "libredb-studio",
   "version": "0.9.7",
-  "private": true,
+  "private": false,
+  "exports": {
+    ".": "./src/exports/index.ts",
+    "./components": "./src/exports/components.ts",
+    "./providers": "./src/exports/providers.ts",
+    "./types": "./src/exports/types.ts"
+  },
+  "peerDependencies": {
+    "react": "^19",
+    "react-dom": "^19"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
