@@ -418,7 +418,7 @@ export function StudioWorkspace({
         />
       )}
 
-      {/* Safety dialog — simplified, no AI analysis */}
+      {/* Safety dialog — stub AI analysis to prevent internal fetch */}
       <QuerySafetyDialog
         isOpen={!!queryExec.safetyCheckQuery}
         query={queryExec.safetyCheckQuery || ''}
@@ -428,6 +428,19 @@ export function StudioWorkspace({
         onProceed={() => {
           if (queryExec.safetyCheckQuery) queryExec.forceExecuteQuery(queryExec.safetyCheckQuery);
         }}
+        onAnalyzeSafety={async () => ({
+          riskLevel: 'high' as const,
+          summary: 'Potentially dangerous query detected',
+          warnings: [{
+            type: 'destructive',
+            severity: 'high',
+            message: 'This query may modify or delete data',
+            detail: 'Review carefully before proceeding.',
+          }],
+          affectedRows: 'unknown',
+          cascadeEffects: 'unknown',
+          recommendation: 'Review this query carefully before proceeding.',
+        })}
       />
 
       {/* Data Profiler */}
