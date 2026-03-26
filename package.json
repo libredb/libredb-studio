@@ -9,12 +9,8 @@
     "type": "git",
     "url": "https://github.com/libredb/libredb-studio"
   },
-  "exports": {
-    ".": "./src/exports/index.ts",
-    "./components": "./src/exports/components.ts",
-    "./providers": "./src/exports/providers.ts",
-    "./types": "./src/exports/types.ts"
-  },
+  "main": "./src/exports/index.js",
+  "types": "./src/exports/index.ts",
   "peerDependencies": {
     "react": "^19",
     "react-dom": "^19"
