@@ -268,11 +268,11 @@ export function MaskingSettings() {
                         <div className="flex items-center gap-2">
                           <span className="text-sm font-medium text-zinc-200">{pattern.name}</span>
                           {pattern.isBuiltin && (
-                            <Badge variant="secondary" className="text-[9px] h-4 px-1">builtin</Badge>
+                            <Badge variant="secondary" className="text-label h-4 px-1">builtin</Badge>
                           )}
-                          <Badge variant="outline" className="text-[9px] h-4 px-1">{pattern.maskType}</Badge>
+                          <Badge variant="outline" className="text-label h-4 px-1">{pattern.maskType}</Badge>
                         </div>
-                        <p className="text-[10px] text-zinc-500 font-mono truncate mt-0.5">
+                        <p className="text-xs text-zinc-500 font-mono truncate mt-0.5">
                           {pattern.columnPatterns.join(', ')}
                         </p>
                       </div>
@@ -387,13 +387,13 @@ export function MaskingSettings() {
                 onChange={(e) => setEditColumnPatterns(e.target.value)}
                 placeholder={"email\ne_mail\nuser_email"}
               />
-              <p className="text-[10px] text-zinc-500">
+              <p className="text-xs text-zinc-500">
                 Each line is matched against column names (case-insensitive). Supports regex.
               </p>
             </div>
             {/* Preview */}
             <div className="rounded-lg border border-white/5 bg-[#0a0a0a] p-3">
-              <p className="text-[10px] text-zinc-500 mb-1">Preview:</p>
+              <p className="text-xs text-zinc-500 mb-1">Preview:</p>
               <p className="text-sm font-mono text-purple-300">
                 {getPreviewMasked(editMaskType, editMaskType === 'custom' ? editCustomMask : undefined)}
               </p>

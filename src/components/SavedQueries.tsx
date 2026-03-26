@@ -79,7 +79,7 @@ export function SavedQueries({ onSelectQuery, connectionType, refreshTrigger }: 
                       {q.name}
                     </h4>
                     {q.description && (
-                      <p className="text-[10px] text-zinc-500 line-clamp-1">{q.description}</p>
+                      <p className="text-xs text-zinc-500 line-clamp-1">{q.description}</p>
                     )}
                   </div>
                   <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -98,23 +98,23 @@ export function SavedQueries({ onSelectQuery, connectionType, refreshTrigger }: 
                 </div>
 
                 <div className="bg-[#050505] border border-white/5 rounded-md p-2 mb-3">
-                  <pre className="text-[10px] font-mono text-zinc-400 line-clamp-3">
+                  <pre className="text-xs font-mono text-zinc-400 line-clamp-3">
                     {q.query}
                   </pre>
                 </div>
 
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
-                    <span className="px-1.5 py-0.5 rounded bg-blue-500/10 border border-blue-500/20 text-[9px] font-bold text-blue-400 uppercase tracking-tighter">
+                    <span className="px-1.5 py-0.5 rounded bg-blue-500/10 border border-blue-500/20 text-label font-bold text-blue-400 uppercase tracking-tighter">
                       {q.connectionType}
                     </span>
                     {q.tags?.map(tag => (
-                      <span key={tag} className="flex items-center gap-1 text-[9px] text-zinc-500">
+                      <span key={tag} className="flex items-center gap-1 text-label text-zinc-500">
                         <Tag className="w-2.5 h-2.5" /> {tag}
                       </span>
                     ))}
                   </div>
-                  <span className="text-[9px] text-zinc-600 flex items-center gap-1 font-mono">
+                  <span className="text-label text-zinc-600 flex items-center gap-1 font-mono">
                     <Calendar className="w-2.5 h-2.5" /> {format(q.updatedAt, 'MMM d, yyyy')}
                   </span>
                 </div>

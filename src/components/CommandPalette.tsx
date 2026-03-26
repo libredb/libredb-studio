@@ -161,7 +161,7 @@ export function CommandPalette({
                   <Icon className="w-4 h-4" />
                   <span>{conn.name}</span>
                   {activeConnection?.id === conn.id && (
-                    <span className="ml-auto text-[10px] text-emerald-500 font-medium">Active</span>
+                    <span className="ml-auto text-xs text-emerald-500 font-medium">Active</span>
                   )}
                 </CommandItem>
               );
@@ -179,7 +179,7 @@ export function CommandPalette({
               >
                 <Table2 className="w-4 h-4 text-zinc-500" />
                 <span>{table.name}</span>
-                <span className="ml-auto text-[10px] text-zinc-600">
+                <span className="ml-auto text-xs text-zinc-600">
                   {table.columns.length} cols
                   {table.rowCount !== undefined && ` / ${table.rowCount} rows`}
                 </span>
@@ -198,7 +198,7 @@ export function CommandPalette({
               >
                 <Bookmark className="w-4 h-4 text-purple-400" />
                 <span>{sq.name}</span>
-                <span className="ml-auto text-[10px] text-zinc-600 truncate max-w-[150px]">
+                <span className="ml-auto text-xs text-zinc-600 truncate max-w-[150px]">
                   {sq.query.substring(0, 40)}...
                 </span>
               </CommandItem>
@@ -216,7 +216,7 @@ export function CommandPalette({
               >
                 <Clock className="w-4 h-4 text-zinc-500" />
                 <span className="truncate max-w-[350px] text-zinc-400">{item.query.substring(0, 60)}</span>
-                <span className="ml-auto text-[10px] text-zinc-600">{item.executionTime}ms</span>
+                <span className="ml-auto text-xs text-zinc-600">{item.executionTime}ms</span>
               </CommandItem>
             ))}
           </CommandGroup>

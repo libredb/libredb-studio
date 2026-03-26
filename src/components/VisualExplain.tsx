@@ -275,15 +275,15 @@ const PlanNode = ({ node, depth = 0, maxTime }: { node: ExplainPlanNode; depth?:
         {/* Type & Table */}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
-            <span className="text-[11px] font-medium text-zinc-200 truncate">{nodeType}</span>
+            <span className="text-body font-medium text-zinc-200 truncate">{nodeType}</span>
             {node['Relation Name'] && (
-              <span className="text-[10px] text-zinc-500 font-mono truncate">{node['Relation Name']}</span>
+              <span className="text-xs text-zinc-500 font-mono truncate">{node['Relation Name']}</span>
             )}
           </div>
         </div>
 
         {/* Stats */}
-        <div className="flex items-center gap-4 text-[10px] font-mono">
+        <div className="flex items-center gap-4 text-xs font-mono">
           <span className="text-zinc-500 w-16 text-right">{formatNumber(actualRows)} rows</span>
           <span className={cn(
             "w-16 text-right",
@@ -309,21 +309,21 @@ const PlanNode = ({ node, depth = 0, maxTime }: { node: ExplainPlanNode; depth?:
         <div className="ml-8 pl-4 border-l border-white/5" style={{ marginLeft: depth * 20 + 32 }}>
           {/* Filter info */}
           {node['Filter'] && (
-            <div className="flex items-start gap-2 py-1 text-[10px]">
+            <div className="flex items-start gap-2 py-1 text-xs">
               <span className="text-amber-500/70 font-medium shrink-0">Filter:</span>
               <span className="text-zinc-500 font-mono break-all">{node['Filter']}</span>
             </div>
           )}
           {/* Index info */}
           {node['Index Name'] && (
-            <div className="flex items-center gap-2 py-1 text-[10px]">
+            <div className="flex items-center gap-2 py-1 text-xs">
               <span className="text-emerald-500/70 font-medium">Index:</span>
               <span className="text-emerald-400 font-mono">{node['Index Name']}</span>
             </div>
           )}
           {/* Buffer stats */}
           {((node['Shared Hit Blocks'] ?? 0) > 0 || (node['Shared Read Blocks'] ?? 0) > 0) && (
-            <div className="flex items-center gap-4 py-1 text-[10px] text-zinc-600">
+            <div className="flex items-center gap-4 py-1 text-xs text-zinc-600">
               {(node['Shared Hit Blocks'] ?? 0) > 0 && <span>Cache hits: {node['Shared Hit Blocks']}</span>}
               {(node['Shared Read Blocks'] ?? 0) > 0 && <span>Disk reads: {node['Shared Read Blocks']}</span>}
             </div>
@@ -435,7 +435,7 @@ function AIExplainTab({
           elements.push(
             <div key={`code-${idx}`} className="my-3 relative group/code">
               <pre className={cn(
-                "text-[11px] font-mono p-3 rounded-lg overflow-x-auto border",
+                "text-body font-mono p-3 rounded-lg overflow-x-auto border",
                 isSql ? "bg-blue-500/5 border-blue-500/10 text-blue-300" : "bg-white/[0.02] border-white/5 text-zinc-400"
               )}>
                 {content}
@@ -443,7 +443,7 @@ function AIExplainTab({
               {isSql && onLoadQuery && (
                 <button
                   onClick={() => onLoadQuery(content)}
-                  className="absolute top-2 right-2 opacity-0 group-hover/code:opacity-100 transition-opacity px-2 py-1 rounded bg-blue-600 hover:bg-blue-500 text-white text-[10px] font-bold flex items-center gap-1"
+                  className="absolute top-2 right-2 opacity-0 group-hover/code:opacity-100 transition-opacity px-2 py-1 rounded bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold flex items-center gap-1"
                 >
                   <Play className="w-3 h-3" /> Try This
                 </button>
@@ -469,19 +469,19 @@ function AIExplainTab({
       // Headers
       if (line.startsWith('## ')) {
         elements.push(
-          <h2 key={idx} className="text-[13px] font-bold text-zinc-200 mt-4 mb-2 flex items-center gap-2">
+          <h2 key={idx} className="text-body font-bold text-zinc-200 mt-4 mb-2 flex items-center gap-2">
             {line.slice(3)}
           </h2>
         );
       } else if (line.startsWith('### ')) {
         elements.push(
-          <h3 key={idx} className="text-[12px] font-semibold text-zinc-300 mt-3 mb-1">
+          <h3 key={idx} className="text-data font-semibold text-zinc-300 mt-3 mb-1">
             {line.slice(4)}
           </h3>
         );
       } else if (line.startsWith('- ')) {
         elements.push(
-          <div key={idx} className="flex items-start gap-2 text-[11px] text-zinc-400 leading-relaxed ml-2 my-0.5">
+          <div key={idx} className="flex items-start gap-2 text-body text-zinc-400 leading-relaxed ml-2 my-0.5">
             <span className="text-zinc-600 mt-1 shrink-0">•</span>
             <span>{renderInlineFormatting(line.slice(2))}</span>
           </div>
@@ -489,7 +489,7 @@ function AIExplainTab({
       } else if (/^\d+\.\s/.test(line)) {
         const num = line.match(/^(\d+)\./)?.[1];
         elements.push(
-          <div key={idx} className="flex items-start gap-2 text-[11px] text-zinc-400 leading-relaxed ml-2 my-0.5">
+          <div key={idx} className="flex items-start gap-2 text-body text-zinc-400 leading-relaxed ml-2 my-0.5">
             <span className="text-blue-400 font-bold mt-0 shrink-0 w-4">{num}.</span>
             <span>{renderInlineFormatting(line.replace(/^\d+\.\s*/, ''))}</span>
           </div>
@@ -498,7 +498,7 @@ function AIExplainTab({
         elements.push(<div key={idx} className="h-1" />);
       } else {
         elements.push(
-          <p key={idx} className="text-[11px] text-zinc-400 leading-relaxed my-0.5">
+          <p key={idx} className="text-body text-zinc-400 leading-relaxed my-0.5">
             {renderInlineFormatting(line)}
           </p>
         );
@@ -516,7 +516,7 @@ function AIExplainTab({
         return <strong key={i} className="text-zinc-200 font-medium">{part.slice(2, -2)}</strong>;
       }
       if (part.startsWith('`') && part.endsWith('`')) {
-        return <code key={i} className="text-blue-400 bg-blue-500/10 px-1 rounded text-[10px] font-mono">{part.slice(1, -1)}</code>;
+        return <code key={i} className="text-blue-400 bg-blue-500/10 px-1 rounded text-xs font-mono">{part.slice(1, -1)}</code>;
       }
       return part;
     });
@@ -530,7 +530,7 @@ function AIExplainTab({
           <Sparkles className="w-7 h-7 text-purple-400" />
         </div>
         <h3 className="text-sm font-semibold text-zinc-200 mb-1">AI Query Analysis</h3>
-        <p className="text-[11px] text-zinc-500 max-w-[280px] leading-relaxed mb-4">
+        <p className="text-body text-zinc-500 max-w-[280px] leading-relaxed mb-4">
           Get a plain-language explanation of your query&apos;s execution plan with concrete optimization suggestions.
         </p>
         <button
@@ -547,7 +547,7 @@ function AIExplainTab({
           Analyze with AI
         </button>
         {!query && (
-          <p className="text-[10px] text-zinc-600 mt-2">Run a query first to enable AI analysis.</p>
+          <p className="text-xs text-zinc-600 mt-2">Run a query first to enable AI analysis.</p>
         )}
       </div>
     );
@@ -559,12 +559,12 @@ function AIExplainTab({
       <div className="flex items-center justify-between px-4 py-2 border-b border-white/5 bg-[#0a0a0a]">
         <div className="flex items-center gap-2">
           <Sparkles className="w-3.5 h-3.5 text-purple-400" />
-          <span className="text-[10px] font-bold text-purple-400 uppercase tracking-wider">AI Analysis</span>
+          <span className="text-xs font-bold text-purple-400 uppercase tracking-wider">AI Analysis</span>
         </div>
         <button
           onClick={analyzeWithAI}
           disabled={isLoading}
-          className="flex items-center gap-1.5 px-2 py-1 rounded-md text-[10px] font-bold text-zinc-400 hover:text-white hover:bg-white/5 transition-all"
+          className="flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-bold text-zinc-400 hover:text-white hover:bg-white/5 transition-all"
         >
           {isLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
           {isLoading ? 'Analyzing...' : 'Re-analyze'}
@@ -594,7 +594,7 @@ function AIExplainTab({
         )}
 
         {isLoading && aiResponse && (
-          <div className="flex items-center gap-2 mt-2 text-zinc-600 text-[10px]">
+          <div className="flex items-center gap-2 mt-2 text-zinc-600 text-xs">
             <Loader2 className="w-3 h-3 animate-spin" />
             <span>Still generating...</span>
           </div>
@@ -642,24 +642,24 @@ export function VisualExplain({ plan, query, schemaContext, databaseType, onLoad
           <div className="flex items-center gap-6">
             <div className="flex items-center gap-2">
               <Clock className="w-3.5 h-3.5 text-blue-400" />
-              <span className="text-[13px] font-medium text-zinc-200">
+              <span className="text-body font-medium text-zinc-200">
                 {formatTime(analysis?.executionTime || 0)}
               </span>
-              <span className="text-[10px] text-zinc-600">execution</span>
+              <span className="text-xs text-zinc-600">execution</span>
             </div>
             <div className="flex items-center gap-2">
               <TrendingUp className="w-3.5 h-3.5 text-zinc-500" />
-              <span className="text-[13px] font-medium text-zinc-400">
+              <span className="text-body font-medium text-zinc-400">
                 {formatNumber(analysis?.totalRows || 0)}
               </span>
-              <span className="text-[10px] text-zinc-600">rows</span>
+              <span className="text-xs text-zinc-600">rows</span>
             </div>
             <div className="flex items-center gap-2">
               <HardDrive className="w-3.5 h-3.5 text-zinc-500" />
-              <span className="text-[13px] font-medium text-zinc-400">
+              <span className="text-body font-medium text-zinc-400">
                 {formatNumber(analysis?.totalCost || 0)}
               </span>
-              <span className="text-[10px] text-zinc-600">cost</span>
+              <span className="text-xs text-zinc-600">cost</span>
             </div>
           </div>
 
@@ -670,7 +670,7 @@ export function VisualExplain({ plan, query, schemaContext, databaseType, onLoad
                 key={tab}
                 onClick={() => setActiveTab(tab)}
                 className={cn(
-                  "px-3 py-1 text-[10px] font-medium rounded-md transition-all uppercase tracking-wide",
+                  "px-3 py-1 text-xs font-medium rounded-md transition-all uppercase tracking-wide",
                   activeTab === tab
                     ? tab === 'ai' ? "bg-purple-500/20 text-purple-300" : "bg-white/10 text-zinc-200"
                     : "text-zinc-500 hover:text-zinc-300"
@@ -704,7 +704,7 @@ export function VisualExplain({ plan, query, schemaContext, databaseType, onLoad
             {/* Warnings */}
             {analysis && analysis.warnings.length > 0 && (
               <div className="space-y-2">
-                <h3 className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-2">
+                <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-wider mb-2">
                   Performance Issues
                 </h3>
                 {analysis.warnings.map((warning, idx) => (
@@ -737,7 +737,7 @@ export function VisualExplain({ plan, query, schemaContext, databaseType, onLoad
                     </div>
                     <div className="flex-1 min-w-0">
                       <h4 className={cn(
-                        "text-[11px] font-medium",
+                        "text-body font-medium",
                         warning.type === 'critical'
                           ? "text-red-300"
                           : warning.type === 'warning'
@@ -746,7 +746,7 @@ export function VisualExplain({ plan, query, schemaContext, databaseType, onLoad
                       )}>
                         {warning.title}
                       </h4>
-                      <p className="text-[10px] text-zinc-500 mt-0.5 leading-relaxed">
+                      <p className="text-xs text-zinc-500 mt-0.5 leading-relaxed">
                         {warning.description}
                       </p>
                     </div>
@@ -762,8 +762,8 @@ export function VisualExplain({ plan, query, schemaContext, databaseType, onLoad
                   <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
                 </div>
                 <div>
-                  <h4 className="text-[11px] font-medium text-emerald-300">Query looks good</h4>
-                  <p className="text-[10px] text-zinc-500">No obvious performance issues detected.</p>
+                  <h4 className="text-body font-medium text-emerald-300">Query looks good</h4>
+                  <p className="text-xs text-zinc-500">No obvious performance issues detected.</p>
                 </div>
               </div>
             )}
@@ -774,7 +774,7 @@ export function VisualExplain({ plan, query, schemaContext, databaseType, onLoad
                 <div key={idx} className="p-3 rounded-lg bg-white/[0.02] border border-white/5">
                   <div className="flex items-center gap-2 mb-1">
                     <StatusBadge status={insight.status} />
-                    <span className="text-[9px] text-zinc-500 uppercase tracking-wider font-medium">
+                    <span className="text-label text-zinc-500 uppercase tracking-wider font-medium">
                       {insight.label}
                     </span>
                   </div>
@@ -785,7 +785,7 @@ export function VisualExplain({ plan, query, schemaContext, databaseType, onLoad
 
             {/* Plan tree preview */}
             <div>
-              <h3 className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-2">
+              <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-wider mb-2">
                 Execution Plan
               </h3>
               <div className="rounded-lg border border-white/5 bg-white/[0.01] p-2">
@@ -809,7 +809,7 @@ export function VisualExplain({ plan, query, schemaContext, databaseType, onLoad
 
         {activeTab === 'raw' && (
           <div className="p-4">
-            <pre className="text-[10px] font-mono text-zinc-400 bg-white/[0.02] rounded-lg p-4 overflow-auto border border-white/5">
+            <pre className="text-xs font-mono text-zinc-400 bg-white/[0.02] rounded-lg p-4 overflow-auto border border-white/5">
               {JSON.stringify(plan, null, 2)}
             </pre>
           </div>

@@ -86,7 +86,7 @@ export function QueriesTab({ data, loading }: QueriesTabProps) {
       <div className="grid grid-cols-3 gap-2 sm:gap-4">
         <Card className="p-0">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 p-2 sm:p-4 pb-1 sm:pb-2">
-            <CardTitle className="text-[10px] sm:text-sm font-medium text-muted-foreground">
+            <CardTitle className="text-xs sm:text-sm font-medium text-muted-foreground">
               Queries
             </CardTitle>
             <Search className="h-3 w-3 sm:h-4 sm:w-4 text-muted-foreground" />
@@ -98,7 +98,7 @@ export function QueriesTab({ data, loading }: QueriesTabProps) {
 
         <Card className="p-0">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 p-2 sm:p-4 pb-1 sm:pb-2">
-            <CardTitle className="text-[10px] sm:text-sm font-medium text-muted-foreground">
+            <CardTitle className="text-xs sm:text-sm font-medium text-muted-foreground">
               Avg Time
             </CardTitle>
             <Clock className="h-3 w-3 sm:h-4 sm:w-4 text-muted-foreground" />
@@ -110,7 +110,7 @@ export function QueriesTab({ data, loading }: QueriesTabProps) {
 
         <Card className="p-0">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 p-2 sm:p-4 pb-1 sm:pb-2">
-            <CardTitle className="text-[10px] sm:text-sm font-medium text-muted-foreground">
+            <CardTitle className="text-xs sm:text-sm font-medium text-muted-foreground">
               Slow
             </CardTitle>
             <AlertTriangle
@@ -130,7 +130,7 @@ export function QueriesTab({ data, loading }: QueriesTabProps) {
             <Clock className="h-3 w-3 sm:h-4 sm:w-4" />
             Slowest Queries
             {slowQueries.length === 0 && (
-              <Badge variant="secondary" className="ml-2 text-[10px] sm:text-xs">
+              <Badge variant="secondary" className="ml-2 text-xs sm:text-xs">
                 pg_stat_statements required
               </Badge>
             )}
@@ -200,7 +200,7 @@ export function QueriesTab({ data, loading }: QueriesTabProps) {
                 <TableBody>
                   {sortedQueries.map((query, index) => (
                     <TableRow key={query.queryId || index}>
-                      <TableCell className="font-mono text-[10px] sm:text-xs py-2">
+                      <TableCell className="font-mono text-xs sm:text-xs py-2">
                         <TooltipProvider>
                           <Tooltip>
                             <TooltipTrigger asChild>
@@ -223,7 +223,7 @@ export function QueriesTab({ data, loading }: QueriesTabProps) {
                       <TableCell className="hidden md:table-cell py-2">
                         <Badge
                           variant={query.totalTime > 60000 ? 'destructive' : 'secondary'}
-                          className="text-[10px] sm:text-xs"
+                          className="text-xs sm:text-xs"
                         >
                           {formatTime(query.totalTime)}
                         </Badge>
@@ -237,7 +237,7 @@ export function QueriesTab({ data, loading }: QueriesTabProps) {
                                 ? 'outline'
                                 : 'secondary'
                           }
-                          className="text-[10px] sm:text-xs"
+                          className="text-xs sm:text-xs"
                         >
                           {formatTime(query.avgTime)}
                         </Badge>

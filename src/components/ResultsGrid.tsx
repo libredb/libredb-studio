@@ -237,7 +237,7 @@ export function ResultsGrid({
                     setColumnFilters(next);
                   }}
                   onKeyDown={e => { if (e.key === 'Escape' || e.key === 'Enter') setActiveFilterCol(null); }}
-                  className="w-full bg-[#050505] border border-white/10 rounded px-2 py-1 text-[13px] text-zinc-200 outline-none focus:border-blue-500/30"
+                  className="w-full bg-[#050505] border border-white/10 rounded px-2 py-1 text-body text-zinc-200 outline-none focus:border-blue-500/30"
                 />
                 {hasFilter && (
                   <button

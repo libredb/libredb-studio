@@ -60,7 +60,7 @@ export function OverviewTab({ data, loading, history = [] }: OverviewTabProps) {
           {overview?.uptime || 'N/A'}
         </Badge>
         {data?.timestamp && (
-          <span className="text-[10px] sm:text-xs text-muted-foreground">
+          <span className="text-xs sm:text-xs text-muted-foreground">
             {new Date(data.timestamp).toLocaleTimeString()}
           </span>
         )}
@@ -84,7 +84,7 @@ export function OverviewTab({ data, loading, history = [] }: OverviewTabProps) {
               </span>
             </div>
             <Progress value={connectionPercent} className="h-1 mt-1 sm:mt-2" />
-            <p className="text-[10px] sm:text-xs text-muted-foreground mt-1">
+            <p className="text-xs sm:text-xs text-muted-foreground mt-1">
               {connectionPercent}% used
             </p>
           </CardContent>
@@ -100,7 +100,7 @@ export function OverviewTab({ data, loading, history = [] }: OverviewTabProps) {
           </CardHeader>
           <CardContent className="p-3 sm:p-4 pt-0">
             <div className="text-lg sm:text-2xl font-bold">{overview?.databaseSize || 'N/A'}</div>
-            <p className="text-[10px] sm:text-xs text-muted-foreground mt-1">
+            <p className="text-xs sm:text-xs text-muted-foreground mt-1">
               Total storage
             </p>
           </CardContent>
@@ -122,7 +122,7 @@ export function OverviewTab({ data, loading, history = [] }: OverviewTabProps) {
               value={performance?.cacheHitRatio ?? 0}
               className="h-1 mt-1 sm:mt-2"
             />
-            <p className="text-[10px] sm:text-xs text-muted-foreground mt-1 truncate">
+            <p className="text-xs sm:text-xs text-muted-foreground mt-1 truncate">
               {(performance?.cacheHitRatio ?? 0) >= 90
                 ? 'Excellent'
                 : (performance?.cacheHitRatio ?? 0) >= 80
@@ -144,7 +144,7 @@ export function OverviewTab({ data, loading, history = [] }: OverviewTabProps) {
             <div className="text-lg sm:text-2xl font-bold">
               {overview?.tableCount ?? 0}
             </div>
-            <p className="text-[10px] sm:text-xs text-muted-foreground mt-1">
+            <p className="text-xs sm:text-xs text-muted-foreground mt-1">
               {overview?.indexCount ?? 0} indexes
             </p>
           </CardContent>

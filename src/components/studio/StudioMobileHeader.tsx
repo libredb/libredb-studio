@@ -129,7 +129,7 @@ export function StudioMobileHeader({
           </DropdownMenu>
 
           {activeConnection && (
-            <span className="text-[10px] text-emerald-500 font-medium px-1.5 py-0.5 rounded bg-emerald-500/10">
+            <span className="text-xs text-emerald-500 font-medium px-1.5 py-0.5 rounded bg-emerald-500/10">
               Online
             </span>
           )}
@@ -175,7 +175,7 @@ export function StudioMobileHeader({
                   <LogOut className="w-4 h-4 mr-2" /> Logout
                 </DropdownMenuItem>
                 <div className="border-t border-white/5 mt-1 pt-1 px-2 pb-1">
-                  <span className="text-[10px] text-zinc-500 font-mono">v{process.env.NEXT_PUBLIC_APP_VERSION}</span>
+                  <span className="text-xs text-zinc-500 font-mono">v{process.env.NEXT_PUBLIC_APP_VERSION}</span>
                 </div>
               </DropdownMenuContent>
             </DropdownMenu>
@@ -190,7 +190,7 @@ export function StudioMobileHeader({
             <Button
               variant="ghost"
               size="sm"
-              className="h-7 px-2 gap-1 text-[10px] font-bold text-zinc-500 hover:text-blue-400"
+              className="h-7 px-2 gap-1 text-xs font-bold text-zinc-500 hover:text-blue-400"
               onClick={() => queryEditorRef.current?.toggleAi()}
             >
               <Sparkles className="w-3.5 h-3.5" />
@@ -199,7 +199,7 @@ export function StudioMobileHeader({
 
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="sm" className="h-7 px-2 gap-1 text-[10px] text-zinc-500">
+                <Button variant="ghost" size="sm" className="h-7 px-2 gap-1 text-xs text-zinc-500">
                   <MoreVertical className="w-3.5 h-3.5" />
                 </Button>
               </DropdownMenuTrigger>
@@ -246,7 +246,7 @@ export function StudioMobileHeader({
 
                 <DropdownMenuSeparator className="bg-white/5" />
                 <div className="px-2 py-1">
-                  <span className="text-[9px] font-bold text-zinc-600 uppercase tracking-widest">Advanced</span>
+                  <span className="text-label font-bold text-zinc-600 uppercase tracking-widest">Advanced</span>
                 </div>
 
                 {!transactionActive ? (
@@ -302,12 +302,12 @@ export function StudioMobileHeader({
 
             {/* Status badges */}
             {transactionActive && (
-              <span className="text-[9px] font-black text-amber-400 px-1.5 py-0.5 rounded bg-amber-500/10 border border-amber-500/20">
+              <span className="text-label font-black text-amber-400 px-1.5 py-0.5 rounded bg-amber-500/10 border border-amber-500/20">
                 TXN
               </span>
             )}
             {playgroundMode && (
-              <span className="text-[9px] font-black text-purple-400 px-1.5 py-0.5 rounded bg-purple-500/10 border border-purple-500/20">
+              <span className="text-label font-black text-purple-400 px-1.5 py-0.5 rounded bg-purple-500/10 border border-purple-500/20">
                 SANDBOX
               </span>
             )}
@@ -316,7 +316,7 @@ export function StudioMobileHeader({
           {isExecuting ? (
             <Button
               size="sm"
-              className="bg-red-600 hover:bg-red-500 text-white font-bold text-[11px] h-7 px-4 gap-1.5"
+              className="bg-red-600 hover:bg-red-500 text-white font-bold text-body h-7 px-4 gap-1.5"
               onClick={onCancelQuery}
             >
               <Square className="w-3 h-3 fill-current" />
@@ -325,7 +325,7 @@ export function StudioMobileHeader({
           ) : (
             <Button
               size="sm"
-              className="bg-blue-600 hover:bg-blue-500 text-white font-bold text-[11px] h-7 px-4 gap-1.5"
+              className="bg-blue-600 hover:bg-blue-500 text-white font-bold text-body h-7 px-4 gap-1.5"
               onClick={onExecuteQuery}
               disabled={!activeConnection}
             >

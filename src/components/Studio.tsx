@@ -581,22 +581,22 @@ export default function Studio() {
                 <AlertTriangle className="w-5 h-5 text-amber-400" />
               </div>
               <div className="flex-1 min-w-0">
-                <AlertDialogTitle className="text-[15px] font-semibold text-zinc-100 mb-1">
+                <AlertDialogTitle className="text-title font-semibold text-zinc-100 mb-1">
                   Load all results?
                 </AlertDialogTitle>
-                <AlertDialogDescription className="text-[13px] text-zinc-500 leading-relaxed">
+                <AlertDialogDescription className="text-body text-zinc-500 leading-relaxed">
                   This may slow down your browser. Max <span className="text-zinc-400">100K</span> rows will be loaded.
                 </AlertDialogDescription>
               </div>
             </div>
           </div>
           <div className="px-6 pb-6 flex gap-2">
-            <AlertDialogCancel className="flex-1 h-9 bg-white/5 border-0 text-zinc-400 text-[13px] font-medium hover:bg-white/10 hover:text-zinc-200">
+            <AlertDialogCancel className="flex-1 h-9 bg-white/5 border-0 text-zinc-400 text-body font-medium hover:bg-white/10 hover:text-zinc-200">
               Cancel
             </AlertDialogCancel>
             <AlertDialogAction
               onClick={queryExec.handleUnlimitedQuery}
-              className="flex-1 h-9 bg-amber-600 border-0 text-white text-[13px] font-medium hover:bg-amber-500"
+              className="flex-1 h-9 bg-amber-600 border-0 text-white text-body font-medium hover:bg-amber-500"
             >
               Load All
             </AlertDialogAction>

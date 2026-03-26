@@ -128,7 +128,7 @@ export function QueryHistory({ onSelectQuery, activeConnectionId, refreshTrigger
               <h3 className="text-sm font-bold text-zinc-100 uppercase tracking-widest flex items-center gap-2">
                 Query History
               </h3>
-              <p className="text-[10px] text-zinc-500 font-medium">
+              <p className="text-xs text-zinc-500 font-medium">
                 Showing {filteredHistory.length} executions
               </p>
             </div>
@@ -137,7 +137,7 @@ export function QueryHistory({ onSelectQuery, activeConnectionId, refreshTrigger
           <div className="flex items-center gap-2">
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="sm" className="h-8 text-[10px] font-bold uppercase tracking-widest text-zinc-400 hover:text-white gap-2">
+                <Button variant="ghost" size="sm" className="h-8 text-xs font-bold uppercase tracking-widest text-zinc-400 hover:text-white gap-2">
                   <Download className="w-3.5 h-3.5" /> Export
                 </Button>
               </DropdownMenuTrigger>
@@ -155,7 +155,7 @@ export function QueryHistory({ onSelectQuery, activeConnectionId, refreshTrigger
               variant="ghost" 
               size="sm" 
               onClick={handleClearHistory} 
-              className="h-8 text-[10px] font-bold uppercase tracking-widest text-red-400/70 hover:text-red-400 hover:bg-red-400/10"
+              className="h-8 text-xs font-bold uppercase tracking-widest text-red-400/70 hover:text-red-400 hover:bg-red-400/10"
             >
               <Trash2 className="w-3.5 h-3.5 mr-2" /> Clear
             </Button>
@@ -185,7 +185,7 @@ export function QueryHistory({ onSelectQuery, activeConnectionId, refreshTrigger
             <button
               onClick={() => setIsGlobal(false)}
               className={cn(
-                "px-3 py-1.5 text-[10px] font-bold uppercase rounded-md transition-all",
+                "px-3 py-1.5 text-xs font-bold uppercase rounded-md transition-all",
                 !isGlobal ? "bg-emerald-600 text-white shadow-lg shadow-emerald-600/20" : "text-zinc-500 hover:text-zinc-300"
               )}
             >
@@ -194,7 +194,7 @@ export function QueryHistory({ onSelectQuery, activeConnectionId, refreshTrigger
             <button
               onClick={() => setIsGlobal(true)}
               className={cn(
-                "px-3 py-1.5 text-[10px] font-bold uppercase rounded-md transition-all",
+                "px-3 py-1.5 text-xs font-bold uppercase rounded-md transition-all",
                 isGlobal ? "bg-emerald-600 text-white shadow-lg shadow-emerald-600/20" : "text-zinc-500 hover:text-zinc-300"
               )}
             >
@@ -208,7 +208,7 @@ export function QueryHistory({ onSelectQuery, activeConnectionId, refreshTrigger
                 key={status}
                 onClick={() => setFilterStatus(status)}
                 className={cn(
-                  "px-3 py-1.5 text-[10px] font-bold uppercase rounded-md transition-all",
+                  "px-3 py-1.5 text-xs font-bold uppercase rounded-md transition-all",
                   filterStatus === status ? "bg-white/10 text-white" : "text-zinc-500 hover:text-zinc-300"
                 )}
               >
@@ -230,7 +230,7 @@ export function QueryHistory({ onSelectQuery, activeConnectionId, refreshTrigger
           <div className="min-w-[800px]">
             <table className="w-full text-left border-collapse">
               <thead>
-                <tr className="bg-white/[0.02] border-b border-white/5 text-[10px] font-bold uppercase tracking-wider text-zinc-500">
+                <tr className="bg-white/[0.02] border-b border-white/5 text-xs font-bold uppercase tracking-wider text-zinc-500">
                   <th className="px-4 py-3 w-10 text-center">Status</th>
                   <th className="px-4 py-3 cursor-pointer hover:text-zinc-300 transition-colors group" onClick={() => handleSort('executedAt')}>
                     <div className="flex items-center gap-2">
@@ -279,7 +279,7 @@ export function QueryHistory({ onSelectQuery, activeConnectionId, refreshTrigger
                         <span className="text-zinc-200 font-medium">
                           {item.executedAt ? format(new Date(item.executedAt), 'MMM d, HH:mm:ss') : '-'}
                         </span>
-                        <span className="text-[10px] text-zinc-500 font-mono mt-0.5">
+                        <span className="text-xs text-zinc-500 font-mono mt-0.5">
                           {item.executedAt ? format(new Date(item.executedAt), 'yyyy') : ''}
                         </span>
                       </div>
@@ -290,7 +290,7 @@ export function QueryHistory({ onSelectQuery, activeConnectionId, refreshTrigger
                           <Database className="w-3 h-3 text-blue-400" />
                           <span className="font-semibold">{item.connectionName || 'Unknown'}</span>
                         </div>
-                        <div className="flex items-center gap-1.5 text-zinc-500 text-[10px]">
+                        <div className="flex items-center gap-1.5 text-zinc-500 text-xs">
                           <Hash className="w-2.5 h-2.5" />
                           <span>{item.tabName || 'Default Tab'}</span>
                         </div>
@@ -298,11 +298,11 @@ export function QueryHistory({ onSelectQuery, activeConnectionId, refreshTrigger
                     </td>
                     <td className="px-4 py-4 max-w-md">
                       <div className="bg-[#050505] border border-white/5 rounded-md p-2 relative group-hover:border-white/10 transition-colors">
-                        <pre className="text-[11px] font-mono text-zinc-400 line-clamp-2 break-all whitespace-pre-wrap leading-relaxed">
+                        <pre className="text-body font-mono text-zinc-400 line-clamp-2 break-all whitespace-pre-wrap leading-relaxed">
                           {item.query}
                         </pre>
                         {item.errorMessage && (
-                          <div className="mt-2 pt-2 border-t border-red-500/10 text-[10px] text-red-400/80 font-mono italic">
+                          <div className="mt-2 pt-2 border-t border-red-500/10 text-xs text-red-400/80 font-mono italic">
                             {item.errorMessage}
                           </div>
                         )}
@@ -310,7 +310,7 @@ export function QueryHistory({ onSelectQuery, activeConnectionId, refreshTrigger
                     </td>
                     <td className="px-4 py-4 whitespace-nowrap">
                       <span className={cn(
-                        "px-2 py-0.5 rounded text-[10px] font-mono font-bold",
+                        "px-2 py-0.5 rounded text-xs font-mono font-bold",
                         item.executionTime > 500 ? "text-amber-400 bg-amber-400/10" : "text-zinc-400 bg-white/5"
                       )}>
                         {item.executionTime}ms

@@ -69,7 +69,7 @@ export function ResultCard({
               {displayPrimary}
             </p>
             {idValue != null && (
-              <p className="text-[10px] text-zinc-500 font-mono">#{String(idValue)}</p>
+              <p className="text-xs text-zinc-500 font-mono">#{String(idValue)}</p>
             )}
           </div>
         </div>
@@ -101,7 +101,7 @@ export function ResultCard({
           );
         })}
         {fields.length > previewFields.length + 2 && (
-          <p className="text-[10px] text-zinc-600 text-center pt-1">
+          <p className="text-xs text-zinc-600 text-center pt-1">
             +{fields.length - previewFields.length - 2} more fields
           </p>
         )}

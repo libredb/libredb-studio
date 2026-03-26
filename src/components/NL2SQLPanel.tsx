@@ -152,11 +152,11 @@ export function NL2SQLPanel({
           <div className="p-1 rounded bg-violet-500/10">
             <MessageSquare className="w-3.5 h-3.5 text-violet-400" />
           </div>
-          <span className="text-[10px] font-bold text-violet-400 uppercase tracking-widest">
+          <span className="text-xs font-bold text-violet-400 uppercase tracking-widest">
             Natural Language Query
           </span>
           {messages.length > 0 && (
-            <span className="text-[9px] text-zinc-500 font-mono">
+            <span className="text-label text-zinc-500 font-mono">
               {messages.filter(m => m.role === 'user').length} questions
             </span>
           )}
@@ -186,7 +186,7 @@ export function NL2SQLPanel({
           <div className="flex flex-col items-center justify-center h-full opacity-40">
             <Sparkles className="w-8 h-8 mb-3" />
             <p className="text-sm font-medium">Ask a question in plain English</p>
-            <p className="text-[10px] text-zinc-500 mt-1">
+            <p className="text-xs text-zinc-500 mt-1">
               e.g. &quot;Show me the top 10 employees by salary&quot;
             </p>
           </div>
@@ -207,19 +207,19 @@ export function NL2SQLPanel({
                   {/* Show extracted query with action buttons */}
                   {msg.query && (
                     <div className="mb-2">
-                      <pre className="bg-[#050505] rounded p-2 text-[11px] font-mono text-blue-300 overflow-x-auto whitespace-pre-wrap border border-white/5">
+                      <pre className="bg-[#050505] rounded p-2 text-body font-mono text-blue-300 overflow-x-auto whitespace-pre-wrap border border-white/5">
                         {msg.query}
                       </pre>
                       <div className="flex gap-1.5 mt-1.5">
                         <button
                           onClick={() => onExecuteQuery(msg.query!)}
-                          className="flex items-center gap-1 px-2 py-1 rounded bg-blue-600/20 border border-blue-500/20 text-blue-400 text-[10px] font-bold hover:bg-blue-600/30 transition-colors"
+                          className="flex items-center gap-1 px-2 py-1 rounded bg-blue-600/20 border border-blue-500/20 text-blue-400 text-xs font-bold hover:bg-blue-600/30 transition-colors"
                         >
                           <Play className="w-3 h-3 fill-current" /> Run
                         </button>
                         <button
                           onClick={() => onLoadQuery(msg.query!)}
-                          className="flex items-center gap-1 px-2 py-1 rounded bg-white/5 border border-white/5 text-zinc-400 text-[10px] font-bold hover:bg-white/10 transition-colors"
+                          className="flex items-center gap-1 px-2 py-1 rounded bg-white/5 border border-white/5 text-zinc-400 text-xs font-bold hover:bg-white/10 transition-colors"
                         >
                           Load to Editor
                         </button>
@@ -228,7 +228,7 @@ export function NL2SQLPanel({
                   )}
                   {/* Show explanation text (non-code parts) */}
                   {msg.content.replace(/```[\s\S]*?```/g, '').trim() && (
-                    <p className="text-zinc-400 text-[11px] leading-relaxed whitespace-pre-wrap">
+                    <p className="text-zinc-400 text-body leading-relaxed whitespace-pre-wrap">
                       {msg.content.replace(/```[\s\S]*?```/g, '').trim()}
                     </p>
                   )}

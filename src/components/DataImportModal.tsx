@@ -272,11 +272,11 @@ export function DataImportModal({ isOpen, onClose, onImport, tables, databaseTyp
           {(['upload', 'preview', 'configure', 'ready'] as ImportStep[]).map((s, idx) => (
             <React.Fragment key={s}>
               <div className={cn(
-                "flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider",
+                "flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider",
                 step === s ? "text-blue-400" : idx < ['upload', 'preview', 'configure', 'ready'].indexOf(step) ? "text-emerald-400" : "text-zinc-600"
               )}>
                 <div className={cn(
-                  "w-5 h-5 rounded-full flex items-center justify-center text-[9px]",
+                  "w-5 h-5 rounded-full flex items-center justify-center text-label",
                   step === s ? "bg-blue-500/20 border border-blue-500/40" :
                   idx < ['upload', 'preview', 'configure', 'ready'].indexOf(step) ? "bg-emerald-500/20 border border-emerald-500/40" :
                   "bg-white/5 border border-white/10"
@@ -314,11 +314,11 @@ export function DataImportModal({ isOpen, onClose, onImport, tables, databaseTyp
                 <div className="flex items-center justify-center gap-4 mt-4">
                   <div className="flex items-center gap-1.5 text-zinc-500">
                     <FileSpreadsheet className="w-4 h-4" />
-                    <span className="text-[10px]">CSV</span>
+                    <span className="text-xs">CSV</span>
                   </div>
                   <div className="flex items-center gap-1.5 text-zinc-500">
                     <FileJson className="w-4 h-4" />
-                    <span className="text-[10px]">JSON</span>
+                    <span className="text-xs">JSON</span>
                   </div>
                 </div>
               </div>
@@ -353,7 +353,7 @@ export function DataImportModal({ isOpen, onClose, onImport, tables, databaseTyp
                   )}
                   <div>
                     <p className="text-sm font-medium">{fileName}</p>
-                    <p className="text-[10px] text-zinc-500">
+                    <p className="text-xs text-zinc-500">
                       {parsedData.totalRows} rows, {parsedData.headers.length} columns
                     </p>
                   </div>
@@ -374,7 +374,7 @@ export function DataImportModal({ isOpen, onClose, onImport, tables, databaseTyp
                   <thead>
                     <tr className="bg-[#0d0d0d]">
                       {parsedData.headers.map(h => (
-                        <th key={h} className="px-3 py-2 text-left text-[10px] uppercase tracking-wider text-zinc-500 font-mono border-b border-white/5 whitespace-nowrap">
+                        <th key={h} className="px-3 py-2 text-left text-xs uppercase tracking-wider text-zinc-500 font-mono border-b border-white/5 whitespace-nowrap">
                           {h}
                         </th>
                       ))}
@@ -393,7 +393,7 @@ export function DataImportModal({ isOpen, onClose, onImport, tables, databaseTyp
                   </tbody>
                 </table>
                 {parsedData.totalRows > 10 && (
-                  <div className="text-center py-2 text-[10px] text-zinc-600 bg-[#0d0d0d]">
+                  <div className="text-center py-2 text-xs text-zinc-600 bg-[#0d0d0d]">
                     ... and {parsedData.totalRows - 10} more rows
                   </div>
                 )}
@@ -471,7 +471,7 @@ export function DataImportModal({ isOpen, onClose, onImport, tables, databaseTyp
               <div className="space-y-2">
                 <label className="text-xs text-zinc-400 font-medium">Column Mapping</label>
                 <div className="border border-white/5 rounded-lg overflow-hidden">
-                  <div className="bg-[#0d0d0d] grid grid-cols-[1fr,auto,1fr] gap-2 px-3 py-1.5 text-[10px] uppercase tracking-wider text-zinc-500 border-b border-white/5">
+                  <div className="bg-[#0d0d0d] grid grid-cols-[1fr,auto,1fr] gap-2 px-3 py-1.5 text-xs uppercase tracking-wider text-zinc-500 border-b border-white/5">
                     <span>Source Column</span>
                     <span></span>
                     <span>Target Column</span>
@@ -520,12 +520,12 @@ export function DataImportModal({ isOpen, onClose, onImport, tables, databaseTyp
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm font-medium">Ready to Import</p>
-                  <p className="text-[10px] text-zinc-500 mt-0.5">
+                  <p className="text-xs text-zinc-500 mt-0.5">
                     {parsedData?.totalRows} rows into {createNewTable ? newTableName || 'imported_data' : targetTable}
                   </p>
                 </div>
                 {databaseType && (
-                  <span className="text-[10px] uppercase tracking-wider text-zinc-500 bg-white/5 px-2 py-1 rounded">
+                  <span className="text-xs uppercase tracking-wider text-zinc-500 bg-white/5 px-2 py-1 rounded">
                     {databaseType}
                   </span>
                 )}

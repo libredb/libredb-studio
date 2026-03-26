@@ -155,7 +155,7 @@ export function QuerySafetyDialog({
 
         {/* Query Preview */}
         <div className="px-5 py-3 bg-[#0a0a0a] border-b border-white/5">
-          <pre className="text-[11px] font-mono text-zinc-400 whitespace-pre-wrap max-h-24 overflow-auto">
+          <pre className="text-body font-mono text-zinc-400 whitespace-pre-wrap max-h-24 overflow-auto">
             {query.length > 300 ? query.substring(0, 300) + '...' : query}
           </pre>
         </div>
@@ -222,7 +222,7 @@ export function QuerySafetyDialog({
               {/* Recommendation */}
               {analysis.recommendation && (
                 <div className="bg-[#0a0a0a] rounded-lg p-3 border border-white/5">
-                  <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1">Recommendation</p>
+                  <p className="text-xs font-bold text-zinc-500 uppercase tracking-wider mb-1">Recommendation</p>
                   <p className="text-xs text-zinc-300">{analysis.recommendation}</p>
                 </div>
               )}

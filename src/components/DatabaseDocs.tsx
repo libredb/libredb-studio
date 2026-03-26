@@ -137,17 +137,17 @@ export function DatabaseDocs({ schema, schemaContext, databaseType }: DatabaseDo
           <div className="p-1 rounded bg-teal-500/10">
             <FileText className="w-3.5 h-3.5 text-teal-400" />
           </div>
-          <span className="text-[10px] font-bold text-teal-400 uppercase tracking-widest">
+          <span className="text-xs font-bold text-teal-400 uppercase tracking-widest">
             Database Docs
           </span>
-          <span className="text-[9px] text-zinc-500 font-mono">{schema.length} tables</span>
+          <span className="text-label text-zinc-500 font-mono">{schema.length} tables</span>
         </div>
         <div className="flex items-center gap-1.5">
           <button
             onClick={generateAiDocs}
             disabled={isAiLoading}
             className={cn(
-              "flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-bold transition-colors",
+              "flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold transition-colors",
               isAiLoading
                 ? "bg-teal-600/20 text-teal-400 cursor-wait"
                 : "bg-teal-600 hover:bg-teal-500 text-white"
@@ -158,7 +158,7 @@ export function DatabaseDocs({ schema, schemaContext, databaseType }: DatabaseDo
           </button>
           <button
             onClick={exportMarkdown}
-            className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white/5 text-zinc-400 text-[10px] font-bold hover:bg-white/10 transition-colors"
+            className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white/5 text-zinc-400 text-xs font-bold hover:bg-white/10 transition-colors"
           >
             <Download className="w-3 h-3" /> Export MD
           </button>
@@ -191,7 +191,7 @@ export function DatabaseDocs({ schema, schemaContext, databaseType }: DatabaseDo
           <div className="bg-teal-500/5 border border-teal-500/10 rounded-lg p-4 mb-4">
             <div className="flex items-center gap-2 mb-3">
               <Sparkles className="w-3.5 h-3.5 text-teal-400" />
-              <span className="text-[10px] font-bold text-teal-400 uppercase tracking-wider">
+              <span className="text-xs font-bold text-teal-400 uppercase tracking-wider">
                 AI-Generated Documentation
               </span>
               {isAiLoading && <Loader2 className="w-3 h-3 animate-spin text-teal-400" />}
@@ -212,14 +212,14 @@ export function DatabaseDocs({ schema, schemaContext, databaseType }: DatabaseDo
               <div className="flex items-center gap-2">
                 <span className="text-xs font-bold text-zinc-200">{table.name}</span>
                 {table.rowCount !== undefined && (
-                  <span className="text-[10px] text-zinc-500 font-mono">{table.rowCount.toLocaleString()} rows</span>
+                  <span className="text-xs text-zinc-500 font-mono">{table.rowCount.toLocaleString()} rows</span>
                 )}
               </div>
-              <span className="text-[10px] text-zinc-600">{table.columns?.length || 0} columns</span>
+              <span className="text-xs text-zinc-600">{table.columns?.length || 0} columns</span>
             </div>
             {table.columns && table.columns.length > 0 && (
               <div className="border-t border-white/5">
-                <table className="w-full text-[11px]">
+                <table className="w-full text-body">
                   <thead>
                     <tr className="text-zinc-500">
                       <th className="text-left px-3 py-1 font-normal">Column</th>
@@ -234,7 +234,7 @@ export function DatabaseDocs({ schema, schemaContext, databaseType }: DatabaseDo
                         <td className="px-3 py-1 text-zinc-300 font-mono">{col.name}</td>
                         <td className="px-3 py-1 text-zinc-500 font-mono">{col.type}</td>
                         <td className="px-3 py-1">
-                          {col.isPrimary && <span className="text-amber-400 text-[9px] font-bold">PK</span>}
+                          {col.isPrimary && <span className="text-amber-400 text-label font-bold">PK</span>}
                         </td>
                         <td className="px-3 py-1 text-zinc-600">{col.nullable !== false ? 'Yes' : 'No'}</td>
                       </tr>

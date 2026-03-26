@@ -208,7 +208,7 @@ export function CodeGenerator({
             <span className="text-sm font-bold text-zinc-200">Code Generator</span>
             <span className="text-xs text-zinc-500 font-mono">{tableName}</span>
             {databaseType && (
-              <span className="text-[10px] text-zinc-600 font-mono uppercase">{databaseType}</span>
+              <span className="text-xs text-zinc-600 font-mono uppercase">{databaseType}</span>
             )}
           </div>
           <button onClick={onClose} className="p-1 rounded hover:bg-white/5 text-zinc-500">
@@ -247,7 +247,7 @@ export function CodeGenerator({
 
         {/* Code Preview */}
         <div className="relative">
-          <pre className="p-5 text-[11px] font-mono text-zinc-300 overflow-auto max-h-[50vh] bg-[#050505] leading-relaxed whitespace-pre">
+          <pre className="p-5 text-body font-mono text-zinc-300 overflow-auto max-h-[50vh] bg-[#050505] leading-relaxed whitespace-pre">
             {code}
           </pre>
           <button
@@ -261,7 +261,7 @@ export function CodeGenerator({
 
         {/* Footer */}
         <div className="px-5 py-3 border-t border-white/5 bg-[#0a0a0a]">
-          <p className="text-[10px] text-zinc-600">
+          <p className="text-xs text-zinc-600">
             Generated from <span className="text-zinc-500">{tableName}</span> • {tableSchema?.columns?.length || 0} columns • {currentLang.ext} format
           </p>
         </div>

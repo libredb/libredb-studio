@@ -143,9 +143,9 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
 
   const getActionBadge = (action: string) => {
     switch (action) {
-      case 'added': return <Badge className="bg-green-500/20 text-green-400 border-green-500/30 text-[10px]"><Plus className="w-2.5 h-2.5 mr-0.5" />Added</Badge>;
-      case 'removed': return <Badge className="bg-red-500/20 text-red-400 border-red-500/30 text-[10px]"><Minus className="w-2.5 h-2.5 mr-0.5" />Removed</Badge>;
-      case 'modified': return <Badge className="bg-yellow-500/20 text-yellow-400 border-yellow-500/30 text-[10px]"><Edit3 className="w-2.5 h-2.5 mr-0.5" />Modified</Badge>;
+      case 'added': return <Badge className="bg-green-500/20 text-green-400 border-green-500/30 text-xs"><Plus className="w-2.5 h-2.5 mr-0.5" />Added</Badge>;
+      case 'removed': return <Badge className="bg-red-500/20 text-red-400 border-red-500/30 text-xs"><Minus className="w-2.5 h-2.5 mr-0.5" />Removed</Badge>;
+      case 'modified': return <Badge className="bg-yellow-500/20 text-yellow-400 border-yellow-500/30 text-xs"><Edit3 className="w-2.5 h-2.5 mr-0.5" />Modified</Badge>;
       default: return null;
     }
   };
@@ -160,13 +160,13 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
       {/* Header */}
       <div className="flex items-center gap-2 px-3 py-2 border-b border-white/5 bg-[#0a0a0a] flex-wrap">
         <GitCompare className="w-4 h-4 text-rose-400" />
-        <span className="text-[10px] font-bold uppercase text-zinc-400 tracking-wider">Schema Diff</span>
+        <span className="text-xs font-bold uppercase text-zinc-400 tracking-wider">Schema Diff</span>
 
         <div className="h-4 w-px bg-white/10" />
 
         {/* Source selector */}
         <div className="flex items-center gap-1">
-          <span className="text-[10px] text-zinc-600 uppercase">Source</span>
+          <span className="text-xs text-zinc-600 uppercase">Source</span>
           <Select value={sourceId} onValueChange={setSourceId}>
             <SelectTrigger className="h-7 w-[180px] text-xs bg-white/5 border-white/10">
               <SelectValue placeholder="Select source" />
@@ -192,7 +192,7 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
 
         {/* Target selector */}
         <div className="flex items-center gap-1">
-          <span className="text-[10px] text-zinc-600 uppercase">Target</span>
+          <span className="text-xs text-zinc-600 uppercase">Target</span>
           <Select value={targetId} onValueChange={(v) => {
             if (v.startsWith('conn:')) {
               fetchRemoteSchema(v.replace('conn:', ''));
@@ -218,7 +218,7 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
               ))}
               {allConnections.filter(c => c.id !== connection?.id).length > 0 && (
                 <>
-                  <div className="px-2 py-1 text-[9px] text-zinc-600 uppercase border-t border-white/5 mt-1">
+                  <div className="px-2 py-1 text-label text-zinc-600 uppercase border-t border-white/5 mt-1">
                     Fetch from connection
                   </div>
                   {allConnections.filter(c => c.id !== connection?.id).map(c => (
@@ -235,7 +235,7 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
               )}
             </SelectContent>
           </Select>
-          {fetchingRemote && <span className="text-[10px] text-zinc-500 animate-pulse">Fetching...</span>}
+          {fetchingRemote && <span className="text-xs text-zinc-500 animate-pulse">Fetching...</span>}
         </div>
 
         <div className="flex-1" />
@@ -263,7 +263,7 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
           <Button
             variant="ghost"
             size="sm"
-            className="h-7 text-[10px] font-bold uppercase text-zinc-500 hover:text-white gap-1"
+            className="h-7 text-xs font-bold uppercase text-zinc-500 hover:text-white gap-1"
             onClick={() => setShowLabelInput(true)}
             disabled={!connection}
           >
@@ -275,7 +275,7 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
           <Button
             variant="ghost"
             size="sm"
-            className="h-7 text-[10px] font-bold uppercase text-zinc-500 hover:text-white gap-1"
+            className="h-7 text-xs font-bold uppercase text-zinc-500 hover:text-white gap-1"
             onClick={() => setShowMigration(!showMigration)}
           >
             <FileCode className="w-3 h-3" /> {showMigration ? 'Diff View' : 'SQL Migration'}
@@ -316,7 +316,7 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
             {/* Table List */}
             <div className="w-64 border-r border-white/5 overflow-auto">
               <div className="p-2 border-b border-white/5">
-                <div className="text-[10px] text-zinc-500 uppercase px-2 mb-1">
+                <div className="text-xs text-zinc-500 uppercase px-2 mb-1">
                   {diff.summary.added} added, {diff.summary.removed} removed, {diff.summary.modified} modified
                 </div>
               </div>
@@ -373,7 +373,7 @@ function TableDiffDetail({ diff }: { diff: TableDiff }) {
         <Database className="w-4 h-4 text-zinc-400" />
         <h3 className="text-sm font-bold text-zinc-200">{diff.tableName}</h3>
         <Badge className={cn(
-          "text-[10px]",
+          "text-xs",
           diff.action === 'added' && "bg-green-500/20 text-green-400",
           diff.action === 'removed' && "bg-red-500/20 text-red-400",
           diff.action === 'modified' && "bg-yellow-500/20 text-yellow-400",
@@ -385,7 +385,7 @@ function TableDiffDetail({ diff }: { diff: TableDiff }) {
       {/* Columns */}
       {diff.columns.length > 0 && (
         <div>
-          <h4 className="text-[10px] uppercase text-zinc-500 mb-2 font-bold">Columns</h4>
+          <h4 className="text-xs uppercase text-zinc-500 mb-2 font-bold">Columns</h4>
           <div className="space-y-1">
             {diff.columns.map((col, i) => (
               <div key={i} className={cn(
@@ -398,15 +398,15 @@ function TableDiffDetail({ diff }: { diff: TableDiff }) {
                 {col.action === 'modified' && (
                   <div className="flex flex-col gap-0.5">
                     {col.changes.map((change, j) => (
-                      <span key={j} className="text-[10px] text-zinc-500">{change}</span>
+                      <span key={j} className="text-xs text-zinc-500">{change}</span>
                     ))}
                   </div>
                 )}
                 {col.action === 'added' && (
-                  <span className="text-[10px] text-green-400 font-mono">{col.targetType}</span>
+                  <span className="text-xs text-green-400 font-mono">{col.targetType}</span>
                 )}
                 {col.action === 'removed' && (
-                  <span className="text-[10px] text-red-400 font-mono">{col.sourceType}</span>
+                  <span className="text-xs text-red-400 font-mono">{col.sourceType}</span>
                 )}
                 <span className="ml-auto">{getActionIcon(col.action)}</span>
               </div>
@@ -418,7 +418,7 @@ function TableDiffDetail({ diff }: { diff: TableDiff }) {
       {/* Indexes */}
       {diff.indexes.length > 0 && (
         <div>
-          <h4 className="text-[10px] uppercase text-zinc-500 mb-2 font-bold">Indexes</h4>
+          <h4 className="text-xs uppercase text-zinc-500 mb-2 font-bold">Indexes</h4>
           <div className="space-y-1">
             {diff.indexes.map((idx, i) => (
               <div key={i} className={cn(
@@ -429,7 +429,7 @@ function TableDiffDetail({ diff }: { diff: TableDiff }) {
               )}>
                 <span className="font-mono text-zinc-300">{idx.indexName}</span>
                 {idx.changes.map((change, j) => (
-                  <span key={j} className="text-[10px] text-zinc-500">{change}</span>
+                  <span key={j} className="text-xs text-zinc-500">{change}</span>
                 ))}
                 <span className="ml-auto">{getActionIcon(idx.action)}</span>
               </div>
@@ -441,7 +441,7 @@ function TableDiffDetail({ diff }: { diff: TableDiff }) {
       {/* Foreign Keys */}
       {diff.foreignKeys.length > 0 && (
         <div>
-          <h4 className="text-[10px] uppercase text-zinc-500 mb-2 font-bold">Foreign Keys</h4>
+          <h4 className="text-xs uppercase text-zinc-500 mb-2 font-bold">Foreign Keys</h4>
           <div className="space-y-1">
             {diff.foreignKeys.map((fk, i) => (
               <div key={i} className={cn(
@@ -451,7 +451,7 @@ function TableDiffDetail({ diff }: { diff: TableDiff }) {
               )}>
                 <span className="font-mono text-zinc-300">{fk.columnName}</span>
                 {fk.changes.map((change, j) => (
-                  <span key={j} className="text-[10px] text-zinc-500">{change}</span>
+                  <span key={j} className="text-xs text-zinc-500">{change}</span>
                 ))}
                 <span className="ml-auto">{getActionIcon(fk.action)}</span>
               </div>

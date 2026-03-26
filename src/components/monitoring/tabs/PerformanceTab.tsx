@@ -51,7 +51,7 @@ export function PerformanceTab({ data, loading, history = [] }: PerformanceTabPr
         {/* Cache Hit Ratio */}
         <Card className={`p-0 border-2 transition-colors ${getThresholdColor(cacheThreshold)}`}>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 p-2 sm:p-4 pb-1 sm:pb-2">
-            <CardTitle className="text-[10px] sm:text-sm font-medium text-muted-foreground">
+            <CardTitle className="text-xs sm:text-sm font-medium text-muted-foreground">
               Cache Hit
             </CardTitle>
             <Activity className={`h-3 w-3 sm:h-4 sm:w-4 ${cacheStatus.color}`} />
@@ -68,10 +68,10 @@ export function PerformanceTab({ data, loading, history = [] }: PerformanceTabPr
               className="h-1 sm:h-2 mt-1 sm:mt-3"
             />
             <div className="flex items-center justify-between mt-1 sm:mt-2">
-              <Badge variant="outline" className={`${cacheStatus.color} text-[10px] sm:text-xs`}>
+              <Badge variant="outline" className={`${cacheStatus.color} text-xs sm:text-xs`}>
                 {cacheStatus.label}
               </Badge>
-              <span className="text-[10px] sm:text-xs text-muted-foreground hidden sm:inline">95%+</span>
+              <span className="text-xs sm:text-xs text-muted-foreground hidden sm:inline">95%+</span>
             </div>
           </CardContent>
         </Card>
@@ -79,7 +79,7 @@ export function PerformanceTab({ data, loading, history = [] }: PerformanceTabPr
         {/* Buffer Pool Usage */}
         <Card className={`p-0 border-2 transition-colors ${getThresholdColor(bufferThreshold)}`}>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 p-2 sm:p-4 pb-1 sm:pb-2">
-            <CardTitle className="text-[10px] sm:text-sm font-medium text-muted-foreground">
+            <CardTitle className="text-xs sm:text-sm font-medium text-muted-foreground">
               Buffer
             </CardTitle>
             <Gauge className={`h-3 w-3 sm:h-4 sm:w-4 ${bufferStatus.color}`} />
@@ -96,10 +96,10 @@ export function PerformanceTab({ data, loading, history = [] }: PerformanceTabPr
               className="h-1 sm:h-2 mt-1 sm:mt-3"
             />
             <div className="flex items-center justify-between mt-1 sm:mt-2">
-              <Badge variant="outline" className={`${bufferStatus.color} text-[10px] sm:text-xs`}>
+              <Badge variant="outline" className={`${bufferStatus.color} text-xs sm:text-xs`}>
                 {bufferStatus.label}
               </Badge>
-              <span className="text-[10px] sm:text-xs text-muted-foreground hidden sm:inline">Cache</span>
+              <span className="text-xs sm:text-xs text-muted-foreground hidden sm:inline">Cache</span>
             </div>
           </CardContent>
         </Card>
@@ -107,7 +107,7 @@ export function PerformanceTab({ data, loading, history = [] }: PerformanceTabPr
         {/* Deadlocks */}
         <Card className={`p-0 border-2 transition-colors ${getThresholdColor(deadlockThreshold)}`}>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 p-2 sm:p-4 pb-1 sm:pb-2">
-            <CardTitle className="text-[10px] sm:text-sm font-medium text-muted-foreground">
+            <CardTitle className="text-xs sm:text-sm font-medium text-muted-foreground">
               Deadlocks
             </CardTitle>
             <AlertTriangle
@@ -120,14 +120,14 @@ export function PerformanceTab({ data, loading, history = [] }: PerformanceTabPr
                 {performance?.deadlocks ?? 0}
               </span>
             </div>
-            <p className="text-[10px] sm:text-xs text-muted-foreground mt-1 sm:mt-3 hidden sm:block">
+            <p className="text-xs sm:text-xs text-muted-foreground mt-1 sm:mt-3 hidden sm:block">
               {performance?.deadlocks
                 ? 'Review queries'
                 : 'None detected'}
             </p>
             <Badge
               variant={performance?.deadlocks ? 'destructive' : 'secondary'}
-              className="mt-1 sm:mt-2 text-[10px] sm:text-xs"
+              className="mt-1 sm:mt-2 text-xs sm:text-xs"
             >
               {performance?.deadlocks ? 'Attention' : 'Healthy'}
             </Badge>
@@ -140,7 +140,7 @@ export function PerformanceTab({ data, loading, history = [] }: PerformanceTabPr
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 sm:gap-4">
           <Card className="p-0">
             <CardHeader className="p-2 sm:p-3 pb-0">
-              <CardTitle className="text-[10px] sm:text-xs font-medium text-muted-foreground">Cache Hit Trend</CardTitle>
+              <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">Cache Hit Trend</CardTitle>
             </CardHeader>
             <CardContent className="p-2 sm:p-3 pt-0">
               <MetricChart data={cacheHistory} color="#22c55e" title="Cache Hit" unit="%" />
@@ -148,7 +148,7 @@ export function PerformanceTab({ data, loading, history = [] }: PerformanceTabPr
           </Card>
           <Card className="p-0">
             <CardHeader className="p-2 sm:p-3 pb-0">
-              <CardTitle className="text-[10px] sm:text-xs font-medium text-muted-foreground">Buffer Pool Trend</CardTitle>
+              <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">Buffer Pool Trend</CardTitle>
             </CardHeader>
             <CardContent className="p-2 sm:p-3 pt-0">
               <MetricChart data={bufferHistory} color="#3b82f6" title="Buffer Pool" unit="%" />
@@ -156,7 +156,7 @@ export function PerformanceTab({ data, loading, history = [] }: PerformanceTabPr
           </Card>
           <Card className="p-0">
             <CardHeader className="p-2 sm:p-3 pb-0">
-              <CardTitle className="text-[10px] sm:text-xs font-medium text-muted-foreground">Deadlock Trend</CardTitle>
+              <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">Deadlock Trend</CardTitle>
             </CardHeader>
             <CardContent className="p-2 sm:p-3 pt-0">
               <MetricChart data={deadlockHistory} color="#ef4444" title="Deadlocks" />
@@ -177,12 +177,12 @@ export function PerformanceTab({ data, loading, history = [] }: PerformanceTabPr
           </CardHeader>
           <CardContent className="p-3 sm:p-4 pt-0 space-y-2 sm:space-y-4">
             <div className="p-2 sm:p-4 bg-muted/30 rounded-lg">
-              <p className="text-[10px] sm:text-sm text-muted-foreground">Write & Sync</p>
+              <p className="text-xs sm:text-sm text-muted-foreground">Write & Sync</p>
               <p className="text-sm sm:text-lg font-mono mt-1 truncate">
                 {performance?.checkpointWriteTime || 'N/A'}
               </p>
             </div>
-            <p className="text-[10px] sm:text-xs text-muted-foreground hidden sm:block">
+            <p className="text-xs sm:text-xs text-muted-foreground hidden sm:block">
               Checkpoint write time affects database performance during heavy writes.
             </p>
           </CardContent>
@@ -202,7 +202,7 @@ export function PerformanceTab({ data, loading, history = [] }: PerformanceTabPr
                 <AlertTriangle className="h-3 w-3 sm:h-4 sm:w-4 text-yellow-500 mt-0.5 flex-shrink-0" />
                 <div>
                   <p className="text-xs sm:text-sm font-medium">Low Cache Hit</p>
-                  <p className="text-[10px] sm:text-xs text-muted-foreground hidden sm:block">
+                  <p className="text-xs sm:text-xs text-muted-foreground hidden sm:block">
                     Increase shared_buffers
                   </p>
                 </div>
@@ -213,7 +213,7 @@ export function PerformanceTab({ data, loading, history = [] }: PerformanceTabPr
                 <AlertTriangle className="h-3 w-3 sm:h-4 sm:w-4 text-red-500 mt-0.5 flex-shrink-0" />
                 <div>
                   <p className="text-xs sm:text-sm font-medium">Deadlocks</p>
-                  <p className="text-[10px] sm:text-xs text-muted-foreground hidden sm:block">
+                  <p className="text-xs sm:text-xs text-muted-foreground hidden sm:block">
                     Review lock ordering
                   </p>
                 </div>
