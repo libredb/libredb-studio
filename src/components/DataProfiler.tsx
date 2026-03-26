@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Loader2, BarChart3, X, Hash, AlertCircle, Sparkles, Lock } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { TableSchema, DatabaseConnection } from '@/lib/types';

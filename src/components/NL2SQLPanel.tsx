@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, type FormEvent } from 'react';
 import { Send, Loader2, Sparkles, X, Play, MessageSquare, Trash2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -53,7 +53,7 @@ export function NL2SQLPanel({
     if (isOpen) inputRef.current?.focus();
   }, [isOpen]);
 
-  const handleSubmit = async (e?: React.FormEvent) => {
+  const handleSubmit = async (e?: FormEvent) => {
     if (e) e.preventDefault();
     if (!question.trim() || isLoading) return;
 
