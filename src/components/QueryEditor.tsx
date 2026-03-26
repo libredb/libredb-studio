@@ -487,89 +487,89 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
   return (
     <div className="h-full w-full flex flex-col bg-[#050505] relative overflow-hidden group">
       {/* Dynamic Pro Toolbar - Hidden on mobile */}
-      <div className="hidden md:flex items-center gap-1.5 px-3 py-1.5 bg-[#0a0a0a] border-b border-white/5 overflow-x-auto no-scrollbar scroll-smooth">
-        <div className="flex items-center gap-1 mr-2 px-1.5 py-1 rounded bg-white/5 border border-white/5">
-          <span className="text-label font-black text-zinc-500 uppercase tracking-[0.2em]">Quick Actions</span>
+      <div className="hidden md:flex items-center gap-1 px-2 py-1 bg-[#0a0a0a] border-b border-white/5 overflow-x-auto no-scrollbar scroll-smooth">
+        <div className="flex items-center mr-1.5 px-1.5 py-0.5 rounded bg-white/5 border border-white/5">
+          <span className="text-caption font-black text-zinc-600 uppercase tracking-[0.15em]">Actions</span>
         </div>
 
         {hasSelection && (
           <button
             onClick={handleExecute}
-            className="px-2.5 py-1.5 rounded bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold transition-all border border-blue-400/30 active:scale-95 flex items-center gap-1.5 shadow-[0_0_15px_rgba(37,99,235,0.3)] animate-in fade-in zoom-in duration-200"
+            className="px-1.5 py-0.5 rounded bg-blue-600 hover:bg-blue-500 text-white text-label font-bold transition-all border border-blue-400/30 active:scale-95 flex items-center gap-1 shadow-[0_0_10px_rgba(37,99,235,0.3)] animate-in fade-in zoom-in duration-200"
           >
-            <Play className="w-3 h-3 fill-current" />
-            RUN SELECTION
+            <Play className="w-2.5 h-2.5 fill-current" />
+            RUN SEL
           </button>
         )}
 
         <button
           onClick={handleFormat}
           title={language === 'json' ? "Format JSON (Shift+Alt+F)" : "Format SQL (Shift+Alt+F)"}
-          className="px-2.5 py-1.5 rounded bg-[#111] hover:bg-zinc-800 text-zinc-500 hover:text-zinc-200 text-xs font-mono transition-all border border-white/5 active:scale-95 flex items-center gap-1.5"
+          className="px-1.5 py-0.5 rounded bg-[#111] hover:bg-zinc-800 text-zinc-500 hover:text-zinc-200 text-label font-mono transition-all border border-white/5 active:scale-95 flex items-center gap-1"
         >
-          <AlignLeft className="w-3 h-3" />
+          <AlignLeft className="w-2.5 h-2.5" />
           FORMAT
         </button>
 
         <button
           onClick={handleCopy}
-          className="px-2.5 py-1.5 rounded bg-[#111] hover:bg-zinc-800 text-zinc-500 hover:text-zinc-200 text-xs font-mono transition-all border border-white/5 active:scale-95 flex items-center gap-1.5"
+          className="px-1.5 py-0.5 rounded bg-[#111] hover:bg-zinc-800 text-zinc-500 hover:text-zinc-200 text-label font-mono transition-all border border-white/5 active:scale-95 flex items-center gap-1"
         >
-          <Copy className="w-3 h-3" />
-          {hasSelection ? 'COPY SELECTION' : 'COPY'}
+          <Copy className="w-2.5 h-2.5" />
+          {hasSelection ? 'COPY SEL' : 'COPY'}
         </button>
 
         <button
           onClick={handleClear}
-          className="px-2.5 py-1.5 rounded bg-[#111] hover:bg-zinc-800 text-zinc-500 hover:text-red-400 text-xs font-mono transition-all border border-white/5 active:scale-95 flex items-center gap-1.5"
+          className="px-1.5 py-0.5 rounded bg-[#111] hover:bg-zinc-800 text-zinc-500 hover:text-red-400 text-label font-mono transition-all border border-white/5 active:scale-95 flex items-center gap-1"
         >
-          <Trash2 className="w-3 h-3" />
+          <Trash2 className="w-2.5 h-2.5" />
           CLEAR
         </button>
 
-        <div className="w-px h-4 bg-white/5 mx-1" />
+        <div className="w-px h-3 bg-white/5 mx-0.5" />
 
         <button
           onClick={() => setShowLineNumbers(!showLineNumbers)}
           title={showLineNumbers ? "Hide line numbers" : "Show line numbers"}
           className={cn(
-            "px-2.5 py-1.5 rounded text-xs font-mono transition-all border active:scale-95 flex items-center gap-1.5",
+            "px-1.5 py-0.5 rounded text-label font-mono transition-all border active:scale-95 flex items-center gap-1",
             showLineNumbers
               ? "bg-zinc-800 border-white/10 text-zinc-300"
               : "bg-[#111] border-white/5 text-zinc-500 hover:text-zinc-300"
           )}
         >
-          <Hash className="w-3 h-3" />
+          <Hash className="w-2.5 h-2.5" />
           LINES
         </button>
 
         <button
           onClick={() => setShowAi(!showAi)}
           className={cn(
-            "px-2.5 py-1.5 rounded text-xs font-bold transition-all border active:scale-95 flex items-center gap-1.5",
+            "px-1.5 py-0.5 rounded text-label font-bold transition-all border active:scale-95 flex items-center gap-1",
             showAi
               ? "bg-blue-600 border-blue-500 text-white shadow-[0_0_10px_rgba(37,99,235,0.4)]"
               : "bg-zinc-900 border-white/5 text-zinc-400 hover:text-blue-400 hover:border-blue-500/30"
           )}
         >
-          <Sparkles className={cn("w-3.5 h-3.5", showAi && "animate-pulse")} />
-          AI ASSISTANT
+          <Sparkles className={cn("w-2.5 h-2.5", showAi && "animate-pulse")} />
+          AI
         </button>
 
         <div className="flex-1" />
 
-          <div className="flex items-center gap-1.5 opacity-50 hover:opacity-100 transition-opacity">
+          <div className="flex items-center gap-1 opacity-50 hover:opacity-100 transition-opacity">
             {onExplain && capabilities?.supportsExplain && (
               <button
                 onClick={onExplain}
-                className="px-2.5 py-1.5 rounded bg-zinc-900 hover:bg-zinc-800 text-amber-500 hover:text-amber-400 text-xs font-bold transition-all border border-amber-500/10 active:scale-95 flex items-center gap-1.5 mr-2"
+                className="px-1.5 py-0.5 rounded bg-zinc-900 hover:bg-zinc-800 text-amber-500 hover:text-amber-400 text-label font-bold transition-all border border-amber-500/10 active:scale-95 flex items-center gap-1 mr-1"
               >
-                <Zap className="w-3 h-3" />
+                <Zap className="w-2.5 h-2.5" />
                 EXPLAIN
               </button>
             )}
-            <kbd className="px-2 py-1 rounded bg-zinc-900 border border-white/5 text-label text-zinc-500 font-mono">
-              ⌘ + ENTER TO RUN
+            <kbd className="px-1.5 py-0.5 rounded bg-zinc-900 border border-white/5 text-caption text-zinc-600 font-mono">
+              ⌘+Enter
             </kbd>
           </div>
         </div>
@@ -592,7 +592,7 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
                     <div className="p-1 rounded-md bg-blue-500/10">
                       <Sparkles className="w-3.5 h-3.5 text-blue-400" />
                     </div>
-                    <span className="text-xs font-black text-blue-400 uppercase tracking-[0.2em]">Expert DBA Mode</span>
+                    <span className="text-label font-black text-blue-400 uppercase tracking-[0.2em]">Expert DBA Mode</span>
                   </div>
                   <div className="flex items-center gap-2">
                     {aiConversationHistory.length > 0 && (
@@ -658,7 +658,7 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
                     <button
                       type="submit"
                       disabled={isAiLoading || !aiPrompt.trim()}
-                      className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:hover:bg-blue-600 px-5 py-2.5 rounded-xl text-white text-xs font-bold transition-all shadow-lg shadow-blue-600/30 flex items-center gap-2"
+                      className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:hover:bg-blue-600 px-4 py-2 rounded-xl text-white text-label font-bold transition-all shadow-lg shadow-blue-600/30 flex items-center gap-2"
                     >
                       {isAiLoading ? (
                         <>

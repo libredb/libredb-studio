@@ -308,14 +308,9 @@ describe('QueryEditor', () => {
     expect(editor.value).toBe('SELECT 1');
   });
 
-  test('shows language badge (SQL)', () => {
+  test('does not show language badge (removed)', () => {
     const { queryByText } = render(React.createElement(QueryEditor, createDefaultProps({ language: 'sql' })));
-    expect(queryByText('sql Engine')).not.toBeNull();
-  });
-
-  test('shows language badge (JSON)', () => {
-    const { queryByText } = render(React.createElement(QueryEditor, createDefaultProps({ language: 'json' })));
-    expect(queryByText('json Engine')).not.toBeNull();
+    expect(queryByText('sql Engine')).toBeNull();
   });
 
   // -----------------------------------------------------------------------
