@@ -30,38 +30,55 @@ import {
 import { cn } from '@/lib/utils';
 
 /**
- * Scoped CSS variables for studio's dark theme.
- * When embedded in a host app (e.g. platform uses OKLCH colors),
- * studio needs its own hex-based CSS variables to render correctly.
+ * Scoped CSS for studio's dark theme.
+ * When embedded in a host app that uses different CSS variable formats
+ * (e.g. OKLCH instead of hex), studio injects its own scoped styles
+ * to ensure correct rendering. Uses data-studio-workspace attribute
+ * for high-specificity scoping without affecting the host app.
  */
-const STUDIO_THEME_VARS: React.CSSProperties = {
-  // @ts-expect-error -- CSS custom properties
-  '--background': '#09090b',
-  '--foreground': '#fafafa',
-  '--card': '#0a0a0a',
-  '--card-foreground': '#fafafa',
-  '--popover': '#0a0a0a',
-  '--popover-foreground': '#fafafa',
-  '--primary': '#fafafa',
-  '--primary-foreground': '#171717',
-  '--secondary': '#27272a',
-  '--secondary-foreground': '#fafafa',
-  '--muted': '#27272a',
-  '--muted-foreground': '#a1a1aa',
-  '--accent': '#27272a',
-  '--accent-foreground': '#fafafa',
-  '--destructive': '#7f1d1d',
-  '--destructive-foreground': '#fafafa',
-  '--border': '#27272a',
-  '--input': '#27272a',
-  '--ring': '#d4d4d8',
-  '--radius': '0.5rem',
-  '--chart-1': '#3b82f6',
-  '--chart-2': '#22c55e',
-  '--chart-3': '#f59e0b',
-  '--chart-4': '#a855f7',
-  '--chart-5': '#ec4899',
-};
+const STUDIO_SCOPED_CSS = `
+[data-studio-workspace] {
+  --background: #09090b;
+  --foreground: #fafafa;
+  --card: #0a0a0a;
+  --card-foreground: #fafafa;
+  --popover: #0a0a0a;
+  --popover-foreground: #fafafa;
+  --primary: #fafafa;
+  --primary-foreground: #171717;
+  --secondary: #27272a;
+  --secondary-foreground: #fafafa;
+  --muted: #27272a;
+  --muted-foreground: #a1a1aa;
+  --accent: #27272a;
+  --accent-foreground: #fafafa;
+  --destructive: #7f1d1d;
+  --destructive-foreground: #fafafa;
+  --border: #27272a;
+  --input: #27272a;
+  --ring: #d4d4d8;
+  --radius: 0.5rem;
+  --chart-1: #3b82f6;
+  --chart-2: #22c55e;
+  --chart-3: #f59e0b;
+  --chart-4: #a855f7;
+  --chart-5: #ec4899;
+}
+`;
+
+function useStudioTheme() {
+  useEffect(() => {
+    const id = 'studio-workspace-theme';
+    if (document.getElementById(id)) return;
+    const style = document.createElement('style');
+    style.id = id;
+    style.textContent = STUDIO_SCOPED_CSS;
+    document.head.appendChild(style);
+    return () => {
+      document.getElementById(id)?.remove();
+    };
+  }, []);
+}
 import { AlertTriangle, Database } from 'lucide-react';
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from '@/components/ui/resizable';
 import { AnimatePresence } from 'framer-motion';
@@ -127,6 +144,9 @@ export function StudioWorkspace({
     fetchSchema: conn.fetchSchema,
     features,
   });
+
+  // === Inject scoped dark theme CSS ===
+  useStudioTheme();
 
   // === Connection change effect ===
   useEffect(() => {
@@ -244,8 +264,8 @@ export function StudioWorkspace({
 
   return (
     <div
+      data-studio-workspace=""
       className={cn('dark flex h-full w-full bg-[#050505] text-zinc-100 overflow-hidden font-sans select-none', className)}
-      style={STUDIO_THEME_VARS}
     >
       <ResizablePanelGroup id="workspace-main" direction="horizontal" className="h-full">
         <ResizablePanel defaultSize={22} minSize={15} maxSize={35} className="hidden md:block">
