@@ -1,0 +1,27 @@
+# Publish only source code needed for npm consumers
+# Everything is ignored by default, then we allowlist
+
+# Ignore everything
+*
+
+# Allow source exports
+!src/exports/
+!src/exports/**
+
+# Allow library code (providers, types, utils)
+!src/lib/
+!src/lib/**
+
+# Allow components
+!src/components/
+!src/components/**
+
+# Allow hooks (used by components)
+!src/hooks/
+!src/hooks/**
+
+# Allow package files
+!package.json
+!README.md
+!LICENSE
+!tsconfig.json
