@@ -2,9 +2,15 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+> **CRITICAL: This project is published as an npm package (`@libredb/studio`) and consumed by `libredb-platform`.**
+> Every CSS class, Tailwind utility, icon prop, and component choice MUST follow the Platform Integration Rules below.
+> Violations cause silent style/layout breakage that only appears when embedded in platform — not in standalone studio.
+
 ## Project Overview
 
 LibreDB Studio is a web-based SQL IDE for cloud-native teams. It supports PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, Redis with AI-powered query assistance.
+
+**Dual usage:** Studio runs both as a standalone Next.js app AND as an embedded npm package inside libredb-platform. The `build:lib` command (tsup) produces the package dist. Any UI change must be verified in both modes.
 
 ## Github
 * Repository: https://github.com/libredb/libredb-studio
@@ -65,6 +71,51 @@ helm dependency build charts/libredb-studio
 The project uses ESLint 9 for linting and `bun:test` for testing with `@testing-library/react` + `happy-dom` for component tests and Playwright for E2E tests.
 
 > **Important**: Always use `bun run test` instead of bare `bun test`. Component tests require isolated execution groups (handled by `tests/run-components.sh`) to prevent `mock.module()` cross-contamination between test files.
+
+## Platform Integration Rules (npm package @libredb/studio)
+
+Studio is consumed by libredb-platform as an npm package via `build:lib` (tsup). These rules prevent silent style/layout breakage that only appears when embedded in platform.
+
+### Tailwind CSS Rules
+
+| Do | Don't | Why |
+|----|-------|-----|
+| `text-xs`, `text-sm` (standard) | `text-body`, `text-data` (custom @theme) | `tailwind-merge` strips custom tokens silently |
+| `text-[0.625rem]` (arbitrary value) | `text-label` (custom @theme) | Arbitrary values are twMerge-safe |
+| `font-medium`, `font-normal` | `font-bold` everywhere | Studio is compact IDE, lighter weights |
+| `w-3 h-3`, `w-3.5 h-3.5` (icons) | `w-4 h-4` or larger | Studio icons smaller than platform |
+
+**Never define custom text tokens in `@theme` block.** `tailwind-merge` (used in `cn()`) interprets `text-body` as a color utility, not font-size. When combined with `text-muted-foreground`, twMerge silently removes `text-body` → no font-size applied → browser default 16px. This bug is invisible in standalone studio (Tailwind generates the CSS) but breaks embedded mode.
+
+### Lucide Icon Rules
+
+Always pass `strokeWidth={1.5}` to every Lucide icon:
+```tsx
+<Lock strokeWidth={1.5} className="w-3 h-3" />
+```
+Lucide defaults to `strokeWidth=2` and emits `width="24" height="24"` HTML attributes. Custom DB icons use `strokeWidth=1.5` without HTML size attributes. Without this prop, Lucide icons appear thicker and potentially larger than custom icons.
+
+### Component Rules
+
+- **Small icon buttons:** Use plain `<button className="p-1 rounded ...">` instead of shadcn `<Button size="icon">`. Platform's Button CSS can override studio's size classes due to specificity.
+- **Responsive classes:** `md:hidden`, `hidden md:block` etc. must work. If a component is in a tsup chunk, verify platform's `@source` scans that chunk.
+
+### Platform-Side Requirements
+
+Platform's `globals.css` must scan ALL studio dist files (tsup creates chunks):
+```css
+@source "../../node_modules/@libredb/studio/dist/workspace.mjs";
+@source "../../node_modules/@libredb/studio/dist/chunk-*.mjs";
+```
+Without chunk scanning, responsive/utility classes in chunked components won't generate CSS.
+
+### Verification Workflow
+
+After any UI change in studio:
+1. `bun run build:lib` — rebuild tsup dist
+2. `cp -r dist/* ../libredb-platform/node_modules/@libredb/studio/dist/` — copy to platform
+3. `rm -rf ../libredb-platform/.next` — clear platform cache (for CSS changes)
+4. Restart platform dev server and verify at `localhost:3000/workspace`
 
 ## Architecture
 
