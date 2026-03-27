@@ -1,0 +1,77 @@
+name: Platform Integration Check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  integration-rules:
+    name: Platform Integration Rules
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: "1.3.9"
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build library dist
+        run: bun run build:lib
+
+      - name: Check — No custom @theme text tokens
+        run: |
+          echo "Checking globals.css for custom text tokens..."
+          if grep -E '^\s*--text-[a-z]+:' src/app/globals.css | grep -v 'font-'; then
+            echo "::error::Custom text tokens found in @theme. tailwind-merge will silently strip these."
+            echo "Use standard Tailwind classes (text-xs, text-sm) or arbitrary values (text-[0.625rem]) instead."
+            exit 1
+          fi
+          echo "✓ No custom text tokens"
+
+      - name: Check — No custom text-* classes in components
+        run: |
+          echo "Checking for custom text token usage in components..."
+          CUSTOM=$(grep -rn '\btext-body\b\|\btext-data\b\|\btext-label\b\|\btext-title\b\|\btext-micro\b\|\btext-caption\b' \
+            src/components/ src/workspace/ --include="*.tsx" || true)
+          if [ -n "$CUSTOM" ]; then
+            echo "::error::Custom text tokens used in components. twMerge strips these silently."
+            echo "$CUSTOM"
+            exit 1
+          fi
+          echo "✓ No custom text token usage"
+
+      - name: Check — No shadcn Button size=icon in sidebar/explorer
+        run: |
+          echo "Checking for shadcn Button in compact areas..."
+          BUTTONS=$(grep -rn 'size="icon"' \
+            src/components/sidebar/ src/components/schema-explorer/ --include="*.tsx" || true)
+          if [ -n "$BUTTONS" ]; then
+            echo "::error::shadcn Button size='icon' in sidebar/explorer. Use plain <button> to avoid platform CSS conflicts."
+            echo "$BUTTONS"
+            exit 1
+          fi
+          echo "✓ No Button size=icon in compact areas"
+
+      - name: Check — Dist chunks contain expected classes
+        run: |
+          echo "Checking dist for responsive class coverage..."
+          ALL_MD=$(grep -roh 'md:[a-z-]*' dist/*.mjs | sort -u)
+          WORKSPACE_MD=$(grep -roh 'md:[a-z-]*' dist/workspace.mjs | sort -u)
+          ONLY_IN_CHUNKS=$(comm -23 <(echo "$ALL_MD") <(echo "$WORKSPACE_MD"))
+          if [ -n "$ONLY_IN_CHUNKS" ]; then
+            echo "::notice::Responsive classes found only in chunks (not workspace.mjs):"
+            echo "$ONLY_IN_CHUNKS"
+            echo "Platform must scan chunk-*.mjs via @source directive."
+          fi
+          echo "✓ Dist chunk analysis complete"
