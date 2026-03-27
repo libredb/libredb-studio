@@ -3,7 +3,7 @@ name: libredb-studio
 description: Web-based SQL IDE for cloud-native teams supporting PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, and Redis
 type: application
 version: 0.1.0
-appVersion: "0.8.10"
+appVersion: "0.9.13"
 kubeVersion: ">=1.26.0-0"
 home: https://github.com/libredb/libredb-studio
 icon: https://raw.githubusercontent.com/libredb/libredb-studio/main/public/logo.svg
