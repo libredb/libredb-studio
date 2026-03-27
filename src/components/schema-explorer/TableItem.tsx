@@ -14,7 +14,6 @@ import {
   BarChart3,
   Wand2,
 } from 'lucide-react';
-import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
@@ -171,14 +170,12 @@ export const TableItem = React.memo(function TableItem({
               )}
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="absolute inset-0 w-full h-full opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100 focus-within:opacity-100 transition-opacity hover:bg-accent"
+                  <button
+                    className="absolute inset-0 w-full h-full opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100 focus-within:opacity-100 transition-opacity hover:bg-accent flex items-center justify-center"
                     onClick={(e) => e.stopPropagation()}
                   >
                     <MoreVertical strokeWidth={1.5} className="w-3.5 h-3.5 text-muted-foreground group-hover:text-foreground" />
-                  </Button>
+                  </button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="w-48">
                   {renderMenuItems(table, labels, isAdmin, callbacks, copyToClipboard, DropdownMenuItem, DropdownMenuSeparator)}
