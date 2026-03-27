@@ -90,13 +90,13 @@ function AccessSummary() {
           <Separator className="bg-white/5" />
           <div className="flex items-center justify-between">
             <span className="text-zinc-500">Admin Access</span>
-            <Badge className="bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[10px]">
+            <Badge className="bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-xs">
               ENABLED
             </Badge>
           </div>
           <div className="flex items-center justify-between">
             <span className="text-zinc-500">User Access</span>
-            <Badge className="bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[10px]">
+            <Badge className="bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-xs">
               ENABLED
             </Badge>
           </div>
@@ -108,21 +108,21 @@ function AccessSummary() {
         <div className="space-y-3 text-sm">
           <div className="flex items-center justify-between">
             <span className="text-zinc-500">SSL/TLS</span>
-            <Badge variant="secondary" className="text-[10px]">
+            <Badge variant="secondary" className="text-xs">
               Supported
             </Badge>
           </div>
           <Separator className="bg-white/5" />
           <div className="flex items-center justify-between">
             <span className="text-zinc-500">SSH Tunnel</span>
-            <Badge variant="secondary" className="text-[10px]">
+            <Badge variant="secondary" className="text-xs">
               Supported
             </Badge>
           </div>
           <Separator className="bg-white/5" />
           <div className="flex items-center justify-between">
             <span className="text-zinc-500">Data Masking</span>
-            <Badge variant="secondary" className="text-[10px]">
+            <Badge variant="secondary" className="text-xs">
               Configurable
             </Badge>
           </div>
@@ -180,7 +180,7 @@ function ThresholdSettings() {
           <Activity className="h-4 w-4 text-blue-400" />
           Monitoring Thresholds
         </h3>
-        <p className="text-[11px] text-zinc-500 mb-6">
+        <p className="text-xs text-zinc-500 mb-6">
           Configure warning and critical thresholds for monitoring alerts. These
           values are used by the monitoring dashboard to trigger visual alerts.
         </p>
@@ -197,7 +197,7 @@ function ThresholdSettings() {
                   <span className="text-sm font-medium text-zinc-300">
                     {threshold.label}
                   </span>
-                  <span className="text-[10px] text-zinc-600 uppercase font-bold">
+                  <span className="text-xs text-zinc-600 uppercase font-bold">
                     {threshold.direction === 'above'
                       ? 'Alert when above'
                       : 'Alert when below'}

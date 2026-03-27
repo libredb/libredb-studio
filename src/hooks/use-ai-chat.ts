@@ -25,6 +25,8 @@ interface AiChatDeps {
   setEditorValue: (value: string) => void;
   /** Notifies the parent of a value change */
   onChange?: (val: string) => void;
+  /** Optional API adapter: when provided, bypasses the built-in /api/ai/chat fetch. */
+  onAiChat?: (params: { prompt: string; schemaContext: string; history: { role: string; content: string }[] }) => Promise<string>;
 }
 
 export interface AiChatState {
@@ -47,7 +49,7 @@ export interface AiChatState {
  * this hook independent of the Monaco editor instance.
  */
 export function useAiChat(deps: AiChatDeps): AiChatState {
-  const { parsedSchema, schemaContext, databaseType, getEditorValue, setEditorValue, onChange } = deps;
+  const { parsedSchema, schemaContext, databaseType, getEditorValue, setEditorValue, onChange, onAiChat } = deps;
 
   const [showAi, setShowAi] = useState(false);
   const [aiPrompt, setAiPrompt] = useState('');
@@ -81,25 +83,6 @@ export function useAiChat(deps: AiChatDeps): AiChatState {
         }
       }
 
-      const response = await fetch('/api/ai/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          prompt: aiPrompt,
-          databaseType,
-          schemaContext: filteredSchemaContext,
-          conversationHistory: aiConversationHistory.length > 0 ? aiConversationHistory : undefined,
-        }),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'AI request failed');
-      }
-
-      const reader = response.body?.getReader();
-      if (!reader) throw new Error('No reader available');
-
       const currentVal = getEditorValue();
       const shouldReplace = !currentVal || currentVal.startsWith('--');
 
@@ -108,31 +91,63 @@ export function useAiChat(deps: AiChatDeps): AiChatState {
         fullAiResponse = currentVal + '\n\n';
       }
 
-      // Buffered update using requestAnimationFrame to avoid excessive re-renders
-      let rafId: number | null = null;
-      const updateEditor = () => {
+      if (onAiChat) {
+        // Platform adapter: use callback instead of fetch
+        const result = await onAiChat({
+          prompt: aiPrompt,
+          schemaContext: filteredSchemaContext,
+          history: aiConversationHistory,
+        });
+        fullAiResponse += result;
         setEditorValue(fullAiResponse);
-        rafId = null;
-      };
+        onChange?.(fullAiResponse);
+      } else {
+        // Default: existing fetch behavior
+        const response = await fetch('/api/ai/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            prompt: aiPrompt,
+            databaseType,
+            schemaContext: filteredSchemaContext,
+            conversationHistory: aiConversationHistory.length > 0 ? aiConversationHistory : undefined,
+          }),
+        });
 
-      while (true) {
-        const { done, value: chunkValue } = await reader.read();
-        if (done) break;
-        const chunk = new TextDecoder().decode(chunkValue);
-        fullAiResponse += chunk;
-
-        // Schedule update on next animation frame if not already scheduled
-        if (!rafId) {
-          rafId = requestAnimationFrame(updateEditor);
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(errorData.error || 'AI request failed');
         }
-      }
 
-      // Ensure final content is set and cancel any pending RAF
-      if (rafId) {
-        cancelAnimationFrame(rafId);
+        const reader = response.body?.getReader();
+        if (!reader) throw new Error('No reader available');
+
+        // Buffered update using requestAnimationFrame to avoid excessive re-renders
+        let rafId: number | null = null;
+        const updateEditor = () => {
+          setEditorValue(fullAiResponse);
+          rafId = null;
+        };
+
+        while (true) {
+          const { done, value: chunkValue } = await reader.read();
+          if (done) break;
+          const chunk = new TextDecoder().decode(chunkValue);
+          fullAiResponse += chunk;
+
+          // Schedule update on next animation frame if not already scheduled
+          if (!rafId) {
+            rafId = requestAnimationFrame(updateEditor);
+          }
+        }
+
+        // Ensure final content is set and cancel any pending RAF
+        if (rafId) {
+          cancelAnimationFrame(rafId);
+        }
+        setEditorValue(fullAiResponse);
+        onChange?.(fullAiResponse);
       }
-      setEditorValue(fullAiResponse);
-      onChange?.(fullAiResponse);
 
       // Save conversation history for multi-turn
       setAiConversationHistory(prev => [
@@ -150,7 +165,7 @@ export function useAiChat(deps: AiChatDeps): AiChatState {
     } finally {
       setIsAiLoading(false);
     }
-  }, [aiPrompt, isAiLoading, schemaContext, parsedSchema, databaseType, aiConversationHistory, getEditorValue, setEditorValue, onChange]);
+  }, [aiPrompt, isAiLoading, schemaContext, parsedSchema, databaseType, aiConversationHistory, getEditorValue, setEditorValue, onChange, onAiChat]);
 
   return {
     showAi,

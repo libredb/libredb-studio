@@ -1,0 +1,15 @@
+// src/exports/components.ts
+// Re-export UI components for npm consumers
+export { QueryEditor } from '../components/QueryEditor'
+export type { QueryEditorRef } from '../components/QueryEditor'
+export { ResultsGrid } from '../components/ResultsGrid'
+export { SchemaDiagram } from '../components/SchemaDiagram'
+export { DataCharts } from '../components/DataCharts'
+export { CodeGenerator } from '../components/CodeGenerator'
+export { TestDataGenerator } from '../components/TestDataGenerator'
+export { VisualExplain } from '../components/VisualExplain'
+export { NL2SQLPanel } from '../components/NL2SQLPanel'
+export { DataProfiler } from '../components/DataProfiler'
+export { QuerySafetyDialog } from '../components/QuerySafetyDialog'
+export { ConnectionModal } from '../components/ConnectionModal'
+export { SchemaExplorer } from '../components/schema-explorer'

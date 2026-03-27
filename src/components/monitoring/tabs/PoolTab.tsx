@@ -60,7 +60,7 @@ export function PoolTab({ connection }: PoolTabProps) {
   if (loading && !stats) {
     return (
       <div className="flex items-center justify-center h-full gap-2 text-muted-foreground">
-        <Loader2 className="h-4 w-4 animate-spin" />
+        <Loader2 strokeWidth={1.5} className="h-4 w-4 animate-spin" />
         Loading pool statistics...
       </div>
     );
@@ -69,7 +69,7 @@ export function PoolTab({ connection }: PoolTabProps) {
   if (error && !stats) {
     return (
       <div className="flex flex-col items-center justify-center h-full gap-2 text-destructive">
-        <p className="text-sm">{error}</p>
+        <p className="text-xs">{error}</p>
         <Button variant="outline" size="sm" onClick={fetchStats}>Try Again</Button>
       </div>
     );
@@ -84,8 +84,8 @@ export function PoolTab({ connection }: PoolTabProps) {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <Server className="h-4 w-4 sm:h-5 sm:w-5 text-primary" />
-          <h2 className="text-sm sm:text-base font-semibold">Connection Pool</h2>
+          <Server strokeWidth={1.5} className="h-4 w-4 sm:h-5 sm:w-5 text-primary" />
+          <h2 className="text-xs sm:text-base font-medium">Connection Pool</h2>
         </div>
         <Button
           variant="ghost"
@@ -99,7 +99,7 @@ export function PoolTab({ connection }: PoolTabProps) {
       </div>
 
       {stats?.message && (
-        <div className="text-sm text-muted-foreground bg-muted/30 rounded-lg p-3">
+        <div className="text-xs text-muted-foreground bg-muted/30 rounded-lg p-3">
           {stats.message}
         </div>
       )}
@@ -108,14 +108,14 @@ export function PoolTab({ connection }: PoolTabProps) {
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-4">
         <Card className="p-0">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 p-3 sm:p-4 pb-1 sm:pb-2">
-            <CardTitle className="text-xs sm:text-sm font-medium text-muted-foreground">
+            <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">
               Total
             </CardTitle>
-            <Server className="h-3 w-3 sm:h-4 sm:w-4 text-blue-500" />
+            <Server strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4 text-blue-500" />
           </CardHeader>
           <CardContent className="p-3 sm:p-4 pt-0">
-            <div className="text-lg sm:text-2xl font-bold">{stats?.total ?? 0}</div>
-            <p className="text-[10px] sm:text-xs text-muted-foreground mt-1">
+            <div className="text-lg sm:text-2xl font-medium">{stats?.total ?? 0}</div>
+            <p className="text-xs sm:text-xs text-muted-foreground mt-1">
               Max pool size
             </p>
           </CardContent>
@@ -123,15 +123,15 @@ export function PoolTab({ connection }: PoolTabProps) {
 
         <Card className="p-0">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 p-3 sm:p-4 pb-1 sm:pb-2">
-            <CardTitle className="text-xs sm:text-sm font-medium text-muted-foreground">
+            <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">
               Active
             </CardTitle>
-            <Activity className="h-3 w-3 sm:h-4 sm:w-4 text-green-500" />
+            <Activity strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4 text-green-500" />
           </CardHeader>
           <CardContent className="p-3 sm:p-4 pt-0">
-            <div className="text-lg sm:text-2xl font-bold">{stats?.active ?? 0}</div>
+            <div className="text-lg sm:text-2xl font-medium">{stats?.active ?? 0}</div>
             <Progress value={usagePercent} className="h-1 mt-1 sm:mt-2" />
-            <p className="text-[10px] sm:text-xs text-muted-foreground mt-1">
+            <p className="text-xs sm:text-xs text-muted-foreground mt-1">
               {usagePercent}% utilized
             </p>
           </CardContent>
@@ -139,14 +139,14 @@ export function PoolTab({ connection }: PoolTabProps) {
 
         <Card className="p-0">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 p-3 sm:p-4 pb-1 sm:pb-2">
-            <CardTitle className="text-xs sm:text-sm font-medium text-muted-foreground">
+            <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">
               Idle
             </CardTitle>
-            <Clock className="h-3 w-3 sm:h-4 sm:w-4 text-yellow-500" />
+            <Clock strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4 text-yellow-500" />
           </CardHeader>
           <CardContent className="p-3 sm:p-4 pt-0">
-            <div className="text-lg sm:text-2xl font-bold">{stats?.idle ?? 0}</div>
-            <p className="text-[10px] sm:text-xs text-muted-foreground mt-1">
+            <div className="text-lg sm:text-2xl font-medium">{stats?.idle ?? 0}</div>
+            <p className="text-xs sm:text-xs text-muted-foreground mt-1">
               Available
             </p>
           </CardContent>
@@ -154,7 +154,7 @@ export function PoolTab({ connection }: PoolTabProps) {
 
         <Card className="p-0">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 p-3 sm:p-4 pb-1 sm:pb-2">
-            <CardTitle className="text-xs sm:text-sm font-medium text-muted-foreground">
+            <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">
               Waiting
             </CardTitle>
             <Badge variant={stats?.waiting ? 'destructive' : 'secondary'} className="text-xs">
@@ -162,8 +162,8 @@ export function PoolTab({ connection }: PoolTabProps) {
             </Badge>
           </CardHeader>
           <CardContent className="p-3 sm:p-4 pt-0">
-            <div className="text-lg sm:text-2xl font-bold">{stats?.waiting ?? 0}</div>
-            <p className="text-[10px] sm:text-xs text-muted-foreground mt-1">
+            <div className="text-lg sm:text-2xl font-medium">{stats?.waiting ?? 0}</div>
+            <p className="text-xs sm:text-xs text-muted-foreground mt-1">
               {stats?.waiting ? 'Queued requests' : 'No queue'}
             </p>
           </CardContent>

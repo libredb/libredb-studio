@@ -23,7 +23,7 @@ export function ConnectionsList({
   return (
     <section>
       <div className="px-3 mb-2 flex items-center justify-between">
-        <span className="text-[10px] font-bold uppercase tracking-[0.15em] text-muted-foreground">
+        <span className="text-xs font-medium text-muted-foreground">
           Connections
         </span>
         <div className="h-[1px] flex-1 bg-border/30 ml-3" />
@@ -32,13 +32,13 @@ export function ConnectionsList({
       <div className="space-y-0.5">
         {connections.length === 0 ? (
           <div className="px-3 py-6 text-center border border-dashed border-border/50 rounded-lg mx-2">
-            <p className="text-[11px] text-muted-foreground mb-3 leading-relaxed">
+            <p className="text-xs text-muted-foreground mb-3 leading-relaxed">
               No database connections established yet.
             </p>
             <Button
               variant="outline"
               size="sm"
-              className="h-7 text-[10px]"
+              className="h-7 text-xs"
               onClick={onAddConnection}
             >
               Add Connection

@@ -45,7 +45,7 @@ export function StudioTabBar({
             activeTabId === tab.id ? "bg-[#141414] text-zinc-100 border-blue-500" : "text-zinc-500 hover:bg-white/5 border-transparent"
           )}
         >
-          {tab.type === 'sql' ? <Hash className="w-3 h-3" /> : <FileJson className="w-3 h-3" />}
+          {tab.type === 'sql' ? <Hash strokeWidth={1.5} className="w-3 h-3" /> : <FileJson strokeWidth={1.5} className="w-3 h-3" />}
           {editingTabId === tab.id ? (
             <input
               autoFocus
@@ -73,10 +73,10 @@ export function StudioTabBar({
           ) : (
             <span className="text-xs truncate font-medium">{tab.name}</span>
           )}
-          {tabs.length > 1 && <X className="w-3 h-3 ml-auto opacity-0 group-hover:opacity-100 hover:text-white shrink-0" onClick={(e) => onCloseTab(tab.id, e)} />}
+          {tabs.length > 1 && <X strokeWidth={1.5} className="w-3 h-3 ml-auto opacity-0 group-hover:opacity-100 hover:text-white shrink-0" onClick={(e) => onCloseTab(tab.id, e)} />}
         </div>
       ))}
-      <Plus className="w-4 h-4 text-zinc-500 cursor-pointer hover:text-white mx-2" onClick={onAddTab} />
+      <Plus strokeWidth={1.5} className="w-3.5 h-3.5 text-zinc-500 cursor-pointer hover:text-white mx-2" onClick={onAddTab} />
     </div>
   );
 }

@@ -38,7 +38,7 @@ export function SaveQueryModal({ isOpen, onClose, onSave, defaultQuery }: SaveQu
       <DialogContent className="bg-[#0d0d0d] border-white/10 text-zinc-300 sm:max-w-[425px]">
         <DialogHeader>
           <DialogTitle className="text-white flex items-center gap-2">
-            <Bookmark className="w-5 h-5 text-blue-500" /> Save Query
+            <Bookmark strokeWidth={1.5} className="w-5 h-5 text-blue-500" /> Save Query
           </DialogTitle>
           <DialogDescription className="text-zinc-500">
             Give your query a name and description to find it easily later.
@@ -47,7 +47,7 @@ export function SaveQueryModal({ isOpen, onClose, onSave, defaultQuery }: SaveQu
         
         <div className="grid gap-4 py-4">
           <div className="grid gap-2">
-            <Label htmlFor="name" className="text-xs font-bold uppercase tracking-widest text-zinc-500">Name</Label>
+            <Label htmlFor="name" className="text-xs font-medium text-zinc-500">Name</Label>
             <Input
               id="name"
               value={name}
@@ -57,7 +57,7 @@ export function SaveQueryModal({ isOpen, onClose, onSave, defaultQuery }: SaveQu
             />
           </div>
           <div className="grid gap-2">
-            <Label htmlFor="description" className="text-xs font-bold uppercase tracking-widest text-zinc-500">Description</Label>
+            <Label htmlFor="description" className="text-xs font-medium text-zinc-500">Description</Label>
             <Textarea
               id="description"
               value={description}
@@ -67,8 +67,8 @@ export function SaveQueryModal({ isOpen, onClose, onSave, defaultQuery }: SaveQu
             />
           </div>
           <div className="grid gap-2">
-            <Label htmlFor="tags" className="text-xs font-bold uppercase tracking-widest text-zinc-500 flex items-center gap-2">
-              <Tag className="w-3 h-3" /> Tags (comma separated)
+            <Label htmlFor="tags" className="text-xs font-medium text-zinc-500 flex items-center gap-2">
+              <Tag strokeWidth={1.5} className="w-3 h-3" /> Tags (comma separated)
             </Label>
             <Input
               id="tags"
@@ -79,9 +79,9 @@ export function SaveQueryModal({ isOpen, onClose, onSave, defaultQuery }: SaveQu
             />
           </div>
           <div className="mt-2">
-            <Label className="text-xs font-bold uppercase tracking-widest text-zinc-500 mb-2 block">Preview</Label>
+            <Label className="text-xs font-medium text-zinc-500 mb-2 block">Preview</Label>
             <div className="bg-[#050505] p-3 rounded-md border border-white/5 max-h-[100px] overflow-y-auto">
-              <pre className="text-[10px] font-mono text-zinc-500 italic whitespace-pre-wrap break-words">
+              <pre className="text-xs font-mono text-zinc-500 italic whitespace-pre-wrap break-words">
                 {defaultQuery}
               </pre>
             </div>
@@ -93,7 +93,7 @@ export function SaveQueryModal({ isOpen, onClose, onSave, defaultQuery }: SaveQu
           <Button 
             onClick={handleSave} 
             disabled={!name}
-            className="bg-blue-600 hover:bg-blue-500 text-white font-bold"
+            className="bg-blue-600 hover:bg-blue-500 text-white font-medium"
           >
             Save Query
           </Button>

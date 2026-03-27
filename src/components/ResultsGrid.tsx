@@ -199,15 +199,15 @@ export function ResultsGrid({
             >
               <span className="truncate">{field}</span>
               {isSensitive && (
-                <span title="Masked column"><Lock className="w-3 h-3 text-purple-400 shrink-0" /></span>
+                <span title="Masked column"><Lock strokeWidth={1.5} className="w-3 h-3 text-purple-400 shrink-0" /></span>
               )}
               <div className="flex-shrink-0 opacity-0 group-hover/header:opacity-100 transition-opacity">
                 {column.getIsSorted() === "asc" ? (
                   <ArrowUp className="w-3 h-3" />
                 ) : column.getIsSorted() === "desc" ? (
-                  <ArrowDown className="w-3 h-3" />
+                  <ArrowDown strokeWidth={1.5} className="w-3 h-3" />
                 ) : (
-                  <ArrowUpDown className="w-3 h-3" />
+                  <ArrowUpDown strokeWidth={1.5} className="w-3 h-3" />
                 )}
               </div>
             </div>
@@ -219,7 +219,7 @@ export function ResultsGrid({
               onClick={(e) => { e.stopPropagation(); setActiveFilterCol(activeFilterCol === field ? null : field); }}
               title="Filter column"
             >
-              <Filter className="w-3 h-3" />
+              <Filter strokeWidth={1.5} className="w-3 h-3" />
             </button>
             {activeFilterCol === field && (
               <div
@@ -237,11 +237,11 @@ export function ResultsGrid({
                     setColumnFilters(next);
                   }}
                   onKeyDown={e => { if (e.key === 'Escape' || e.key === 'Enter') setActiveFilterCol(null); }}
-                  className="w-full bg-[#050505] border border-white/10 rounded px-2 py-1 text-[11px] text-zinc-200 outline-none focus:border-blue-500/30"
+                  className="w-full bg-[#050505] border border-white/10 rounded px-2 py-1 text-xs text-zinc-200 outline-none focus:border-blue-500/30"
                 />
                 {hasFilter && (
                   <button
-                    className="mt-1 text-[10px] text-red-400 hover:text-red-300"
+                    className="mt-1 text-xs text-red-400 hover:text-red-300"
                     onClick={() => {
                       const next = new Map(columnFilters);
                       next.delete(field);
@@ -329,7 +329,7 @@ export function ResultsGrid({
           return (
             <div className="truncate w-full h-full flex items-center gap-1">
               <span className={className}>{display}</span>
-              <Lock className="w-2.5 h-2.5 text-purple-400/50 shrink-0" />
+              <Lock strokeWidth={1.5} className="w-2.5 h-2.5 text-purple-400/50 shrink-0" />
             </div>
           );
         }
@@ -404,7 +404,7 @@ export function ResultsGrid({
         <div className="w-16 h-16 rounded-2xl bg-zinc-900/50 flex items-center justify-center mb-6 border border-white/5 shadow-2xl">
           <span className="text-2xl text-zinc-500">&#x2205;</span>
         </div>
-        <p className="text-sm font-semibold text-zinc-400">Query returned no data</p>
+        <p className="text-xs font-medium text-zinc-400">Query returned no data</p>
         <p className="text-xs text-zinc-600 mt-2 max-w-[280px] leading-relaxed">
           The operation was successful, but the result set is currently empty.
         </p>
@@ -488,13 +488,13 @@ export function ResultsGrid({
                 <div
                   key={field}
                   className={cn(
-                    "h-10 px-4 flex items-center gap-1 border-r border-b border-white/5 text-[10px] uppercase font-mono tracking-wider text-zinc-500 bg-[#0d0d0d] whitespace-nowrap",
+                    "h-10 px-4 flex items-center gap-1 border-r border-b border-white/5 text-xs uppercase font-mono text-zinc-500 bg-[#0d0d0d] whitespace-nowrap",
                     idx === 0 && "sticky left-0 z-30 bg-[#0d0d0d] shadow-[2px_0_8px_rgba(0,0,0,0.3)]",
                     "min-w-[120px]"
                   )}
                 >
                   {field}
-                  {isSensitive && <Lock className="w-2.5 h-2.5 text-purple-400" />}
+                  {isSensitive && <Lock strokeWidth={1.5} className="w-2.5 h-2.5 text-purple-400" />}
                 </div>
               );
             })}
@@ -537,7 +537,7 @@ export function ResultsGrid({
                       <div
                         key={field}
                         className={cn(
-                          "h-full px-4 py-3 border-r border-white/5 text-[12px] font-mono whitespace-nowrap overflow-hidden flex items-center",
+                          "h-full px-4 py-3 border-r border-white/5 text-xs font-mono whitespace-nowrap overflow-hidden flex items-center",
                           idx === 0 && "sticky left-0 z-10 bg-[#080808] shadow-[2px_0_8px_rgba(0,0,0,0.3)]",
                           "min-w-[120px]"
                         )}
@@ -566,7 +566,7 @@ export function ResultsGrid({
                 <div
                   key={header.id}
                   style={{ width: header.getSize(), minWidth: header.getSize() }}
-                  className="h-10 px-4 flex items-center border-r border-b border-white/5 text-[10px] uppercase font-mono tracking-wider text-zinc-500 bg-[#0d0d0d] relative group shrink-0"
+                  className="h-10 px-4 flex items-center border-r border-b border-white/5 text-xs uppercase font-mono text-zinc-500 bg-[#0d0d0d] relative group shrink-0"
                 >
                   {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
 
@@ -605,7 +605,7 @@ export function ResultsGrid({
                     <div
                       key={cell.id}
                       style={{ width: cell.column.getSize(), minWidth: cell.column.getSize() }}
-                      className="h-full px-4 py-2 border-r border-white/5 text-[12px] font-mono whitespace-nowrap overflow-hidden group-hover:border-white/10 flex items-center shrink-0"
+                      className="h-full px-4 py-2 border-r border-white/5 text-xs font-mono whitespace-nowrap overflow-hidden group-hover:border-white/10 flex items-center shrink-0"
                     >
                       {flexRender(cell.column.columnDef.cell, cell.getContext())}
                     </div>

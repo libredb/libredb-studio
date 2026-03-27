@@ -80,14 +80,14 @@ export function TablesTab({ data, loading, onRunMaintenance, isAdmin = true }: T
       <div className="grid grid-cols-3 gap-2 sm:gap-4">
         <Card className="p-0">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 p-2 sm:p-4 pb-1 sm:pb-2">
-            <CardTitle className="text-[10px] sm:text-sm font-medium text-muted-foreground">
+            <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">
               Tables
             </CardTitle>
-            <Table2 className="h-3 w-3 sm:h-4 sm:w-4 text-muted-foreground" />
+            <Table2 strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent className="p-2 sm:p-4 pt-0">
-            <div className="text-lg sm:text-2xl font-bold">{tables.length}</div>
-            <p className="text-[10px] sm:text-xs text-muted-foreground mt-1">
+            <div className="text-lg sm:text-2xl font-medium">{tables.length}</div>
+            <p className="text-xs sm:text-xs text-muted-foreground mt-1">
               {formatNumber(totalRows)} rows
             </p>
           </CardContent>
@@ -95,14 +95,14 @@ export function TablesTab({ data, loading, onRunMaintenance, isAdmin = true }: T
 
         <Card className="p-0">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 p-2 sm:p-4 pb-1 sm:pb-2">
-            <CardTitle className="text-[10px] sm:text-sm font-medium text-muted-foreground">
+            <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">
               Size
             </CardTitle>
-            <Search className="h-3 w-3 sm:h-4 sm:w-4 text-muted-foreground" />
+            <Search strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent className="p-2 sm:p-4 pt-0">
-            <div className="text-lg sm:text-2xl font-bold">{formatBytes(totalSize)}</div>
-            <p className="text-[10px] sm:text-xs text-muted-foreground mt-1">
+            <div className="text-lg sm:text-2xl font-medium">{formatBytes(totalSize)}</div>
+            <p className="text-xs sm:text-xs text-muted-foreground mt-1">
               Total
             </p>
           </CardContent>
@@ -110,7 +110,7 @@ export function TablesTab({ data, loading, onRunMaintenance, isAdmin = true }: T
 
         <Card className="p-0">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 p-2 sm:p-4 pb-1 sm:pb-2">
-            <CardTitle className="text-[10px] sm:text-sm font-medium text-muted-foreground">
+            <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">
               Vacuum
             </CardTitle>
             <AlertTriangle
@@ -118,8 +118,8 @@ export function TablesTab({ data, loading, onRunMaintenance, isAdmin = true }: T
             />
           </CardHeader>
           <CardContent className="p-2 sm:p-4 pt-0">
-            <div className="text-lg sm:text-2xl font-bold">{tablesNeedingVacuum}</div>
-            <p className="text-[10px] sm:text-xs text-muted-foreground mt-1">
+            <div className="text-lg sm:text-2xl font-medium">{tablesNeedingVacuum}</div>
+            <p className="text-xs sm:text-xs text-muted-foreground mt-1">
               {tablesNeedingVacuum > 0 ? 'Need' : 'OK'}
             </p>
           </CardContent>
@@ -130,23 +130,23 @@ export function TablesTab({ data, loading, onRunMaintenance, isAdmin = true }: T
       <Card className="p-0">
         <CardHeader className="p-3 sm:p-4">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 sm:gap-4">
-            <CardTitle className="text-xs sm:text-sm font-medium flex items-center gap-2">
-              <Table2 className="h-3 w-3 sm:h-4 sm:w-4" />
+            <CardTitle className="text-xs sm:text-xs font-medium flex items-center gap-2">
+              <Table2 strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4" />
               Table Statistics
             </CardTitle>
             <Input
               placeholder="Search..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full sm:w-[200px] h-8 text-sm"
+              className="w-full sm:w-[200px] h-8 text-xs"
             />
           </div>
         </CardHeader>
         <CardContent className="p-0 sm:p-4 sm:pt-0">
           {filteredTables.length === 0 ? (
             <div className="text-center py-8 text-muted-foreground">
-              <Table2 className="h-8 w-8 mx-auto mb-2 opacity-50" />
-              <p className="text-sm">No tables found.</p>
+              <Table2 strokeWidth={1.5} className="h-8 w-8 mx-auto mb-2 opacity-50" />
+              <p className="text-xs">No tables found.</p>
             </div>
           ) : (
             <div className="overflow-x-auto">
@@ -167,10 +167,10 @@ export function TablesTab({ data, loading, onRunMaintenance, isAdmin = true }: T
                     <TableRow key={`${table.schemaName}.${table.tableName}`}>
                       <TableCell className="py-2">
                         <div className="flex flex-col">
-                          <span className="font-medium text-xs sm:text-sm truncate max-w-[100px] sm:max-w-[200px]">
+                          <span className="font-medium text-xs sm:text-xs truncate max-w-[100px] sm:max-w-[200px]">
                             {table.tableName}
                           </span>
-                          <span className="text-[10px] sm:text-xs text-muted-foreground">
+                          <span className="text-xs sm:text-xs text-muted-foreground">
                             {table.schemaName}
                           </span>
                         </div>
@@ -178,7 +178,7 @@ export function TablesTab({ data, loading, onRunMaintenance, isAdmin = true }: T
                       <TableCell className="text-right font-mono text-xs py-2">
                         {formatNumber(table.rowCount)}
                         {table.deadRowCount ? (
-                          <span className="text-[10px] text-muted-foreground block">
+                          <span className="text-xs text-muted-foreground block">
                             {formatNumber(table.deadRowCount)} dead
                           </span>
                         ) : null}
@@ -198,7 +198,7 @@ export function TablesTab({ data, loading, onRunMaintenance, isAdmin = true }: T
                                 ? 'outline'
                                 : 'secondary'
                           }
-                          className="text-[10px] sm:text-xs"
+                          className="text-xs sm:text-xs"
                         >
                           {(table.bloatRatio ?? 0).toFixed(1)}%
                         </Badge>
@@ -218,9 +218,9 @@ export function TablesTab({ data, loading, onRunMaintenance, isAdmin = true }: T
                               title="Analyze"
                             >
                               {actionLoading === `analyze-${table.tableName}` ? (
-                                <Loader2 className="h-3 w-3 animate-spin" />
+                                <Loader2 strokeWidth={1.5} className="h-3 w-3 animate-spin" />
                               ) : (
-                                <Search className="h-3 w-3" />
+                                <Search strokeWidth={1.5} className="h-3 w-3" />
                               )}
                             </Button>
                             <Button
@@ -232,9 +232,9 @@ export function TablesTab({ data, loading, onRunMaintenance, isAdmin = true }: T
                               title="Vacuum"
                             >
                               {actionLoading === `vacuum-${table.tableName}` ? (
-                                <Loader2 className="h-3 w-3 animate-spin" />
+                                <Loader2 strokeWidth={1.5} className="h-3 w-3 animate-spin" />
                               ) : (
-                                <RefreshCw className="h-3 w-3" />
+                                <RefreshCw strokeWidth={1.5} className="h-3 w-3" />
                               )}
                             </Button>
                             <Button
@@ -246,14 +246,14 @@ export function TablesTab({ data, loading, onRunMaintenance, isAdmin = true }: T
                               title="Reindex"
                             >
                               {actionLoading === `reindex-${table.tableName}` ? (
-                                <Loader2 className="h-3 w-3 animate-spin" />
+                                <Loader2 strokeWidth={1.5} className="h-3 w-3 animate-spin" />
                               ) : (
-                                <Zap className="h-3 w-3" />
+                                <Zap strokeWidth={1.5} className="h-3 w-3" />
                               )}
                             </Button>
                           </div>
                         ) : (
-                          <span className="text-[10px] text-muted-foreground">-</span>
+                          <span className="text-xs text-muted-foreground">-</span>
                         )}
                       </TableCell>
                     </TableRow>

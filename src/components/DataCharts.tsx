@@ -226,7 +226,7 @@ const CustomTooltip = ({ active, payload, label }: TooltipProps) => {
     <div className="bg-[#111] border border-white/10 rounded-lg px-3 py-2 shadow-xl">
       <p className="text-zinc-400 text-xs mb-1">{label}</p>
       {payload.map((entry, index) => (
-        <p key={index} className="text-sm" style={{ color: entry.color }}>
+        <p key={index} className="text-xs" style={{ color: entry.color }}>
           {entry.name}: <span className="font-mono font-medium">{formatNumber(entry.value)}</span>
         </p>
       ))}
@@ -499,29 +499,29 @@ export function DataCharts({ result }: DataChartsProps) {
     return (
       <div className="h-full flex flex-col items-center justify-center bg-[#080808] text-zinc-500">
         <TrendingUp className="w-12 h-12 mb-4 opacity-30" />
-        <p className="text-sm font-medium mb-1">Cannot Visualize Data</p>
+        <p className="text-xs font-medium mb-1">Cannot Visualize Data</p>
         <p className="text-xs text-zinc-600">{analysis.reason}</p>
       </div>
     );
   }
 
   const chartTypes: { type: ChartType; icon: React.ReactNode; label: string }[] = [
-    { type: 'bar', icon: <BarChart3 className="w-4 h-4" />, label: 'Bar' },
-    { type: 'line', icon: <LineChartIcon className="w-4 h-4" />, label: 'Line' },
-    { type: 'pie', icon: <PieChartIcon className="w-4 h-4" />, label: 'Pie' },
-    { type: 'area', icon: <AreaChartIcon className="w-4 h-4" />, label: 'Area' },
-    { type: 'scatter', icon: <Circle className="w-4 h-4" />, label: 'Scatter' },
-    { type: 'histogram', icon: <BarChart2 className="w-4 h-4" />, label: 'Histogram' },
-    { type: 'stacked-bar', icon: <BarChart3 className="w-4 h-4" />, label: 'Stacked' },
-    { type: 'stacked-area', icon: <AreaChartIcon className="w-4 h-4" />, label: 'Stack Area' },
+    { type: 'bar', icon: <BarChart3 strokeWidth={1.5} className="w-3.5 h-3.5" />, label: 'Bar' },
+    { type: 'line', icon: <LineChartIcon strokeWidth={1.5} className="w-3.5 h-3.5" />, label: 'Line' },
+    { type: 'pie', icon: <PieChartIcon strokeWidth={1.5} className="w-3.5 h-3.5" />, label: 'Pie' },
+    { type: 'area', icon: <AreaChartIcon strokeWidth={1.5} className="w-3.5 h-3.5" />, label: 'Area' },
+    { type: 'scatter', icon: <Circle strokeWidth={1.5} className="w-3.5 h-3.5" />, label: 'Scatter' },
+    { type: 'histogram', icon: <BarChart2 strokeWidth={1.5} className="w-3.5 h-3.5" />, label: 'Histogram' },
+    { type: 'stacked-bar', icon: <BarChart3 strokeWidth={1.5} className="w-3.5 h-3.5" />, label: 'Stacked' },
+    { type: 'stacked-area', icon: <AreaChartIcon strokeWidth={1.5} className="w-3.5 h-3.5" />, label: 'Stack Area' },
   ];
 
   const getFieldIcon = (type: FieldAnalysis['type']) => {
     switch (type) {
-      case 'numeric': return <Hash className="w-3 h-3" />;
+      case 'numeric': return <Hash strokeWidth={1.5} className="w-3 h-3" />;
       case 'date': return <Calendar className="w-3 h-3" />;
-      case 'categorical': return <Type className="w-3 h-3" />;
-      default: return <AlertCircle className="w-3 h-3" />;
+      case 'categorical': return <Type strokeWidth={1.5} className="w-3 h-3" />;
+      default: return <AlertCircle strokeWidth={1.5} className="w-3 h-3" />;
     }
   };
 
@@ -554,7 +554,7 @@ export function DataCharts({ result }: DataChartsProps) {
         {/* X-Axis Selector */}
         {chartType !== 'pie' && (
           <div className="flex items-center gap-2">
-            <span className="text-[10px] text-zinc-600 uppercase tracking-wider">X-Axis</span>
+            <span className="text-xs text-zinc-600r">X-Axis</span>
             <Select value={xAxis} onValueChange={setXAxis}>
               <SelectTrigger className="h-7 w-[140px] text-xs bg-white/5 border-white/10">
                 <SelectValue placeholder="Select field" />
@@ -575,14 +575,14 @@ export function DataCharts({ result }: DataChartsProps) {
 
         {/* Y-Axis Selector (for pie, this becomes the value field) */}
         <div className="flex items-center gap-2">
-          <span className="text-[10px] text-zinc-600 uppercase tracking-wider">
+          <span className="text-xs text-zinc-600r">
             {chartType === 'pie' ? 'Value' : 'Y-Axis'}
           </span>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="outline" size="sm" className="h-7 text-xs bg-white/5 border-white/10 gap-1">
                 {yAxis.length > 0 ? yAxis.join(', ') : 'Select fields'}
-                <Settings2 className="w-3 h-3 ml-1" />
+                <Settings2 strokeWidth={1.5} className="w-3 h-3 ml-1" />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent className="bg-[#111] border-white/10">
@@ -595,7 +595,7 @@ export function DataCharts({ result }: DataChartsProps) {
                     yAxis.includes(field) && "bg-blue-600/20 text-blue-400"
                   )}
                 >
-                  <Hash className="w-3 h-3 mr-2" />
+                  <Hash strokeWidth={1.5} className="w-3 h-3 mr-2" />
                   {field}
                   {yAxis.includes(field) && <span className="ml-auto">✓</span>}
                 </DropdownMenuItem>
@@ -607,7 +607,7 @@ export function DataCharts({ result }: DataChartsProps) {
         {/* Scatter Y-axis */}
         {chartType === 'scatter' && (
           <div className="flex items-center gap-2">
-            <span className="text-[10px] text-zinc-600 uppercase tracking-wider">Y</span>
+            <span className="text-xs text-zinc-600r">Y</span>
             <Select value={scatterY} onValueChange={setScatterY}>
               <SelectTrigger className="h-7 w-[120px] text-xs bg-white/5 border-white/10">
                 <SelectValue placeholder="Y field" />
@@ -624,7 +624,7 @@ export function DataCharts({ result }: DataChartsProps) {
         {/* Histogram buckets */}
         {chartType === 'histogram' && (
           <div className="flex items-center gap-2">
-            <span className="text-[10px] text-zinc-600 uppercase tracking-wider">Buckets</span>
+            <span className="text-xs text-zinc-600r">Buckets</span>
             <Select value={String(histogramBuckets)} onValueChange={(v) => setHistogramBuckets(Number(v))}>
               <SelectTrigger className="h-7 w-[70px] text-xs bg-white/5 border-white/10">
                 <SelectValue />
@@ -641,14 +641,14 @@ export function DataCharts({ result }: DataChartsProps) {
         {/* Aggregation */}
         {chartType !== 'scatter' && chartType !== 'histogram' && chartType !== 'pie' && (
           <div className="flex items-center gap-2">
-            <span className="text-[10px] text-zinc-600 uppercase tracking-wider">Agg</span>
+            <span className="text-xs text-zinc-600r">Agg</span>
             <Select value={aggregation} onValueChange={(v) => setAggregation(v as AggregationType)}>
               <SelectTrigger className="h-7 w-[80px] text-xs bg-white/5 border-white/10">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent className="bg-[#111] border-white/10">
                 {(['none', 'sum', 'avg', 'count', 'min', 'max'] as const).map(a => (
-                  <SelectItem key={a} value={a} className="text-xs uppercase">{a}</SelectItem>
+                  <SelectItem key={a} value={a} className="text-xs">{a}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
@@ -658,7 +658,7 @@ export function DataCharts({ result }: DataChartsProps) {
         {/* Date Grouping */}
         {analysis.dateFields.length > 0 && chartType !== 'scatter' && chartType !== 'histogram' && (
           <div className="flex items-center gap-2">
-            <span className="text-[10px] text-zinc-600 uppercase tracking-wider">Group</span>
+            <span className="text-xs text-zinc-600r">Group</span>
             <Select value={dateGrouping || 'none'} onValueChange={(v) => setDateGrouping(v === 'none' ? '' : v as DateGrouping)}>
               <SelectTrigger className="h-7 w-[80px] text-xs bg-white/5 border-white/10">
                 <SelectValue />
@@ -693,14 +693,14 @@ export function DataCharts({ result }: DataChartsProps) {
           </div>
         ) : (
           <div className="flex items-center gap-1">
-            <Button variant="ghost" size="sm" className="h-7 text-[10px] text-zinc-500 hover:text-white gap-1" onClick={() => setShowSaveDialog(true)}>
-              <Save className="w-3 h-3" /> Save
+            <Button variant="ghost" size="sm" className="h-7 text-xs text-zinc-500 hover:text-white gap-1" onClick={() => setShowSaveDialog(true)}>
+              <Save strokeWidth={1.5} className="w-3 h-3" /> Save
             </Button>
             {savedCharts.length > 0 && (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" size="sm" className="h-7 text-[10px] text-zinc-500 hover:text-white gap-1">
-                    <FolderOpen className="w-3 h-3" /> Saved ({savedCharts.length})
+                  <Button variant="ghost" size="sm" className="h-7 text-xs text-zinc-500 hover:text-white gap-1">
+                    <FolderOpen strokeWidth={1.5} className="w-3 h-3" /> Saved ({savedCharts.length})
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="bg-[#111] border-white/10 max-h-48 overflow-auto">
@@ -708,7 +708,7 @@ export function DataCharts({ result }: DataChartsProps) {
                     <DropdownMenuItem key={chart.id} className="text-xs cursor-pointer flex items-center justify-between gap-4">
                       <span onClick={() => loadSavedChart(chart)}>{chart.name} <span className="text-zinc-600">({chart.chartType})</span></span>
                       <button onClick={(e) => { e.stopPropagation(); deleteSavedChart(chart.id); }} className="text-zinc-600 hover:text-red-400">
-                        <X className="w-3 h-3" />
+                        <X strokeWidth={1.5} className="w-3 h-3" />
                       </button>
                     </DropdownMenuItem>
                   ))}
@@ -721,8 +721,8 @@ export function DataCharts({ result }: DataChartsProps) {
         {/* Export Button */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="sm" className="h-7 text-[10px] font-bold uppercase text-zinc-500 hover:text-white gap-1">
-              <Download className="w-3 h-3" /> Export
+            <Button variant="ghost" size="sm" className="h-7 text-xs font-medium text-zinc-500 hover:text-white gap-1">
+              <Download strokeWidth={1.5} className="w-3 h-3" /> Export
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="bg-[#111] border-white/10">
@@ -739,7 +739,7 @@ export function DataCharts({ result }: DataChartsProps) {
       {/* Chart Area */}
       <div ref={chartRef} className="flex-1 p-4 min-h-0">
         {yAxis.length === 0 ? (
-          <div className="h-full flex items-center justify-center text-zinc-600 text-sm">
+          <div className="h-full flex items-center justify-center text-zinc-600 text-xs">
             Select at least one numeric field for the chart
           </div>
         ) : (
@@ -949,7 +949,7 @@ export function DataCharts({ result }: DataChartsProps) {
       </div>
 
       {/* Footer Stats */}
-      <div className="px-3 py-2 border-t border-white/5 bg-[#0a0a0a] flex items-center gap-4 text-[10px] text-zinc-600">
+      <div className="px-3 py-2 border-t border-white/5 bg-[#0a0a0a] flex items-center gap-4 text-xs text-zinc-600">
         <span>Rows: <span className="text-zinc-400 font-mono">{result?.rows.length || 0}</span></span>
         <span>Fields: <span className="text-zinc-400 font-mono">{analysis.fields.length}</span></span>
         <span>Numeric: <span className="text-zinc-400 font-mono">{analysis.numericFields.length}</span></span>

@@ -59,21 +59,21 @@ export function ResultCard({
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2 flex-1 min-w-0">
           <div className="w-8 h-8 rounded-lg bg-blue-500/10 flex items-center justify-center shrink-0">
-            <Hash className="w-4 h-4 text-blue-400" />
+            <Hash strokeWidth={1.5} className="w-3.5 h-3.5 text-blue-400" />
           </div>
           <div className="min-w-0 flex-1">
             <p className={cn(
-              "text-sm font-semibold truncate",
+              "text-xs font-medium truncate",
               maskingActive && sensitiveColumns?.has(primaryColumn) ? "text-zinc-500 italic" : "text-zinc-100"
             )}>
               {displayPrimary}
             </p>
             {idValue != null && (
-              <p className="text-[10px] text-zinc-500 font-mono">#{String(idValue)}</p>
+              <p className="text-xs text-zinc-500 font-mono">#{String(idValue)}</p>
             )}
           </div>
         </div>
-        <ChevronRight className="w-4 h-4 text-zinc-600" />
+        <ChevronRight strokeWidth={1.5} className="w-3.5 h-3.5 text-zinc-600" />
       </div>
 
       {/* Preview Fields */}
@@ -92,7 +92,7 @@ export function ResultCard({
             <div key={field} className="flex items-center justify-between text-xs">
               <span className="text-zinc-500 truncate mr-2">
                 {field}
-                {isMasked && <Lock className="w-2.5 h-2.5 inline ml-1 text-purple-400" />}
+                {isMasked && <Lock strokeWidth={1.5} className="w-2.5 h-2.5 inline ml-1 text-purple-400" />}
               </span>
               <span className={cn("truncate max-w-[60%] text-right font-mono", className)}>
                 {displayValue}
@@ -101,7 +101,7 @@ export function ResultCard({
           );
         })}
         {fields.length > previewFields.length + 2 && (
-          <p className="text-[10px] text-zinc-600 text-center pt-1">
+          <p className="text-xs text-zinc-600 text-center pt-1">
             +{fields.length - previewFields.length - 2} more fields
           </p>
         )}

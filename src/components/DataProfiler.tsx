@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Loader2, BarChart3, X, Hash, AlertCircle, Sparkles, Lock } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { TableSchema, DatabaseConnection } from '@/lib/types';
@@ -33,6 +33,10 @@ interface DataProfilerProps {
   connection: DatabaseConnection | null;
   schemaContext?: string;
   databaseType?: string;
+  /** Optional API adapter: when provided, bypasses the built-in /api/db/profile fetch. */
+  onProfile?: (params: { connectionId: string; tableName: string }) => Promise<ProfileData>;
+  /** Optional API adapter: when provided, bypasses the built-in /api/ai/describe-schema fetch. */
+  onDescribeSchema?: (params: { tableName: string; schemaContext: string }) => Promise<string>;
 }
 
 export function DataProfiler({
@@ -43,6 +47,8 @@ export function DataProfiler({
   connection,
   schemaContext,
   databaseType,
+  onProfile,
+  onDescribeSchema,
 }: DataProfilerProps) {
   const [isLoading, setIsLoading] = useState(false);
   const [profile, setProfile] = useState<ProfileData | null>(null);
@@ -74,19 +80,28 @@ export function DataProfiler({
     setError(null);
 
     try {
-      const columns = tableSchema.columns?.map(c => c.name) || [];
-      const response = await fetch('/api/db/profile', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ connection, tableName, columns }),
-      });
+      let data: ProfileData;
 
-      if (!response.ok) {
-        const err = await response.json();
-        throw new Error(err.error || 'Profile failed');
+      if (onProfile) {
+        // Platform adapter: use callback instead of fetch
+        data = await onProfile({ connectionId: connection.id, tableName });
+      } else {
+        // Default: existing fetch behavior
+        const columns = tableSchema.columns?.map(c => c.name) || [];
+        const response = await fetch('/api/db/profile', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ connection, tableName, columns }),
+        });
+
+        if (!response.ok) {
+          const err = await response.json();
+          throw new Error(err.error || 'Profile failed');
+        }
+
+        data = await response.json();
       }
 
-      const data: ProfileData = await response.json();
       setProfile(data);
 
       // Trigger AI summary
@@ -105,27 +120,36 @@ export function DataProfiler({
         `${c.name}: ${c.nullPercent}% null, ${c.distinctCount} distinct, min=${c.minValue || 'N/A'}, max=${c.maxValue || 'N/A'}`
       ).join('\n');
 
-      const response = await fetch('/api/ai/describe-schema', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          schemaContext: `Table: ${tableName} (${data.totalRows} rows)\n\nColumn Profiles:\n${profileSummary}\n\nSchema:\n${schemaContext || ''}`,
-          databaseType,
-          mode: 'table',
-        }),
-      });
+      const fullSchemaContext = `Table: ${tableName} (${data.totalRows} rows)\n\nColumn Profiles:\n${profileSummary}\n\nSchema:\n${schemaContext || ''}`;
 
-      if (!response.ok) return;
+      if (onDescribeSchema) {
+        // Platform adapter: use callback instead of fetch
+        const result = await onDescribeSchema({ tableName, schemaContext: fullSchemaContext });
+        setAiSummary(result);
+      } else {
+        // Default: existing fetch behavior
+        const response = await fetch('/api/ai/describe-schema', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            schemaContext: fullSchemaContext,
+            databaseType,
+            mode: 'table',
+          }),
+        });
 
-      const reader = response.body?.getReader();
-      if (!reader) return;
+        if (!response.ok) return;
 
-      let full = '';
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        full += new TextDecoder().decode(value);
-        setAiSummary(full);
+        const reader = response.body?.getReader();
+        if (!reader) return;
+
+        let full = '';
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          full += new TextDecoder().decode(value);
+          setAiSummary(full);
+        }
       }
     } catch {
       // AI summary is optional, don't show error
@@ -142,12 +166,12 @@ export function DataProfiler({
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-3 border-b border-white/5">
           <div className="flex items-center gap-2">
-            <BarChart3 className="w-4 h-4 text-cyan-400" />
-            <span className="text-sm font-bold text-zinc-200">Data Profiler</span>
+            <BarChart3 strokeWidth={1.5} className="w-3.5 h-3.5 text-cyan-400" />
+            <span className="text-xs font-medium text-zinc-200">Data Profiler</span>
             <span className="text-xs text-zinc-500 font-mono">{tableName}</span>
           </div>
           <button onClick={onClose} className="p-1 rounded hover:bg-white/5 text-zinc-500">
-            <X className="w-4 h-4" />
+            <X strokeWidth={1.5} className="w-3.5 h-3.5" />
           </button>
         </div>
 
@@ -155,14 +179,14 @@ export function DataProfiler({
         <div className="flex-1 overflow-auto p-5 space-y-4">
           {isLoading && (
             <div className="flex items-center justify-center gap-2 py-12 text-zinc-500">
-              <Loader2 className="w-5 h-5 animate-spin" />
-              <span className="text-sm">Profiling {tableName}...</span>
+              <Loader2 strokeWidth={1.5} className="w-5 h-5 animate-spin" />
+              <span className="text-xs">Profiling {tableName}...</span>
             </div>
           )}
 
           {error && (
             <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-3 text-xs text-red-400 flex items-center gap-2">
-              <AlertCircle className="w-4 h-4 shrink-0" />
+              <AlertCircle strokeWidth={1.5} className="w-3.5 h-3.5 shrink-0" />
               {error}
             </div>
           )}
@@ -172,16 +196,16 @@ export function DataProfiler({
               {/* Summary Stats */}
               <div className="grid grid-cols-3 gap-3">
                 <div className="bg-[#0a0a0a] rounded-lg p-3 border border-white/5">
-                  <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Total Rows</p>
-                  <p className="text-lg font-bold text-zinc-200 mt-1">{profile.totalRows.toLocaleString()}</p>
+                  <p className="text-xs font-medium text-zinc-500r">Total Rows</p>
+                  <p className="text-xs font-medium text-zinc-200 mt-1">{profile.totalRows.toLocaleString()}</p>
                 </div>
                 <div className="bg-[#0a0a0a] rounded-lg p-3 border border-white/5">
-                  <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Columns</p>
-                  <p className="text-lg font-bold text-zinc-200 mt-1">{profile.columns.length}</p>
+                  <p className="text-xs font-medium text-zinc-500r">Columns</p>
+                  <p className="text-xs font-medium text-zinc-200 mt-1">{profile.columns.length}</p>
                 </div>
                 <div className="bg-[#0a0a0a] rounded-lg p-3 border border-white/5">
-                  <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Avg Null %</p>
-                  <p className="text-lg font-bold text-zinc-200 mt-1">
+                  <p className="text-xs font-medium text-zinc-500r">Avg Null %</p>
+                  <p className="text-xs font-medium text-zinc-200 mt-1">
                     {profile.columns.length > 0
                       ? Math.round(profile.columns.reduce((sum, c) => sum + c.nullPercent, 0) / profile.columns.length)
                       : 0}%
@@ -191,27 +215,27 @@ export function DataProfiler({
 
               {/* Column Profiles */}
               <div className="space-y-2">
-                <h3 className="text-xs font-bold text-zinc-400 uppercase tracking-wider">Column Profiles</h3>
+                <h3 className="text-xs font-medium text-zinc-400r">Column Profiles</h3>
                 {profile.columns.map((col) => (
                   <div key={col.name} className="bg-[#0a0a0a] rounded-lg p-3 border border-white/5">
                     <div className="flex items-center justify-between mb-2">
                       <div className="flex items-center gap-2">
-                        <Hash className="w-3 h-3 text-blue-400" />
-                        <span className="text-xs font-bold text-zinc-200">{col.name}</span>
+                        <Hash strokeWidth={1.5} className="w-3 h-3 text-blue-400" />
+                        <span className="text-xs font-medium text-zinc-200">{col.name}</span>
                         {col.type && (
-                          <span className="text-[10px] text-zinc-500 font-mono">{col.type}</span>
+                          <span className="text-xs text-zinc-500 font-mono">{col.type}</span>
                         )}
                         {sensitiveColumnNames.has(col.name) && (
-                          <span title="Sensitive column - values masked"><Lock className="w-3 h-3 text-purple-400" /></span>
+                          <span title="Sensitive column - values masked"><Lock strokeWidth={1.5} className="w-3 h-3 text-purple-400" /></span>
                         )}
                       </div>
-                      <span className="text-[10px] text-zinc-500">
+                      <span className="text-xs text-zinc-500">
                         {col.distinctCount.toLocaleString()} distinct
                       </span>
                     </div>
 
                     {col.error ? (
-                      <p className="text-[10px] text-amber-400">{col.error}</p>
+                      <p className="text-xs text-amber-400">{col.error}</p>
                     ) : (
                       <>
                         {/* Null bar */}
@@ -228,7 +252,7 @@ export function DataProfiler({
                             />
                           </div>
                           <span className={cn(
-                            "text-[10px] font-mono w-10 text-right",
+                            "text-xs font-mono w-10 text-right",
                             col.nullPercent > 50 ? "text-red-400" :
                             col.nullPercent > 20 ? "text-amber-400" :
                             "text-emerald-400"
@@ -238,7 +262,7 @@ export function DataProfiler({
                         </div>
 
                         {/* Min/Max */}
-                        <div className="flex gap-4 text-[10px]">
+                        <div className="flex gap-4 text-xs">
                           {col.minValue && (() => {
                             const rule = sensitiveColumnNames.get(col.name);
                             const display = rule
@@ -272,7 +296,7 @@ export function DataProfiler({
                                 ? maskValue(val, rule)
                                 : val.substring(0, 20);
                               return (
-                                <span key={i} className={cn("text-[10px] px-1.5 py-0.5 bg-zinc-800 rounded font-mono", rule ? "text-zinc-500 italic" : "text-zinc-400")}>
+                                <span key={i} className={cn("text-xs px-1.5 py-0.5 bg-zinc-800 rounded font-mono", rule ? "text-zinc-500 italic" : "text-zinc-400")}>
                                   {display}
                                 </span>
                               );
@@ -289,11 +313,11 @@ export function DataProfiler({
               {(aiSummary || isAiLoading) && (
                 <div className="bg-cyan-500/5 border border-cyan-500/10 rounded-lg p-4">
                   <div className="flex items-center gap-2 mb-2">
-                    <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
-                    <span className="text-[10px] font-bold text-cyan-400 uppercase tracking-wider">
+                    <Sparkles strokeWidth={1.5} className="w-3.5 h-3.5 text-cyan-400" />
+                    <span className="text-xs font-medium text-cyan-400r">
                       AI Analysis
                     </span>
-                    {isAiLoading && <Loader2 className="w-3 h-3 animate-spin text-cyan-400" />}
+                    {isAiLoading && <Loader2 strokeWidth={1.5} className="w-3 h-3 animate-spin text-cyan-400" />}
                   </div>
                   {aiSummary && (
                     <div className="text-xs text-zinc-400 leading-relaxed whitespace-pre-wrap">

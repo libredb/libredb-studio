@@ -25,7 +25,7 @@ export const ConnectionItem = React.memo(function ConnectionItem({
     <motion.div
       initial={false}
       className={cn(
-        'group flex items-center gap-2.5 px-3 py-2 rounded-lg cursor-pointer transition-all duration-200 text-sm relative overflow-hidden',
+        'group flex items-center gap-2.5 px-3 py-2 rounded-lg cursor-pointer transition-all duration-200 text-xs relative overflow-hidden',
         isActive
           ? 'bg-blue-600/10 text-blue-400'
           : 'hover:bg-accent/50 text-muted-foreground hover:text-foreground'
@@ -49,10 +49,10 @@ export const ConnectionItem = React.memo(function ConnectionItem({
       </div>
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-1.5">
-          <span className="truncate block font-medium text-[13px]">{conn.name}</span>
+          <span className="truncate block font-medium text-xs">{conn.name}</span>
           {conn.environment && conn.environment !== 'other' && (
             <span
-              className="text-[8px] uppercase tracking-wider font-bold px-1.5 py-0.5 rounded-sm shrink-0"
+              className="text-[0.5rem] font-medium px-1.5 py-0.5 rounded-sm shrink-0"
               style={{
                 color: conn.color || '#6b7280',
                 backgroundColor: `${conn.color || '#6b7280'}15`,
@@ -67,37 +67,33 @@ export const ConnectionItem = React.memo(function ConnectionItem({
           {conn.managed && (
             <div
               data-testid={`managed-lock-${conn.seedId || conn.id}`}
-              className="w-6 h-6 flex items-center justify-center text-amber-500/60"
+              className="flex items-center justify-center text-amber-500/60"
               title="Managed by administrator"
             >
-              <Lock className="w-3 h-3" />
+              <Lock strokeWidth={1.5} className="w-3 h-3" />
             </div>
           )}
           {!conn.managed && onEdit && (
-            <Button
-              variant="ghost"
-              size="icon"
-              className="w-6 h-6 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-blue-500/20 hover:text-blue-400"
+            <button
+              className="p-1 rounded opacity-0 group-hover:opacity-100 transition-opacity hover:bg-blue-500/20 hover:text-blue-400"
               onClick={(e) => {
                 e.stopPropagation();
                 onEdit(conn);
               }}
             >
-              <Pencil className="w-3 h-3" />
-            </Button>
+              <Pencil strokeWidth={1.5} className="w-3 h-3" />
+            </button>
           )}
           {!conn.managed && (
-            <Button
-              variant="ghost"
-              size="icon"
-              className="w-6 h-6 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-500/20 hover:text-red-400"
+            <button
+              className="p-1 rounded opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-500/20 hover:text-red-400"
               onClick={(e) => {
                 e.stopPropagation();
                 onDelete(conn.id);
               }}
             >
-              <Trash2 className="w-3 h-3" />
-            </Button>
+              <Trash2 strokeWidth={1.5} className="w-3 h-3" />
+            </button>
           )}
         </div>
     </motion.div>

@@ -87,17 +87,17 @@ export function StudioMobileHeader({
                 size="sm"
                 className="h-8 px-2 gap-1 bg-[#111] border-white/10 hover:bg-white/5 text-zinc-300 max-w-[160px]"
               >
-                <Database className="w-3.5 h-3.5 text-blue-400 shrink-0" />
+                <Database strokeWidth={1.5} className="w-3 h-3 text-blue-400 shrink-0" />
                 <span className="truncate text-xs font-medium">
                   {activeConnection ? activeConnection.name : 'Select DB'}
                 </span>
-                <ChevronDown className="w-3 h-3 text-zinc-500 shrink-0" />
+                <ChevronDown strokeWidth={1.5} className="w-3 h-3 text-zinc-500 shrink-0" />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start" className="w-64 bg-[#0d0d0d] border-white/10">
               {connections.length === 0 ? (
                 <DropdownMenuItem onClick={onAddConnection} className="text-zinc-400 cursor-pointer">
-                  <Plus className="w-4 h-4 mr-2" /> Add Connection
+                  <Plus strokeWidth={1.5} className="w-3.5 h-3.5 mr-2" /> Add Connection
                 </DropdownMenuItem>
               ) : (
                 <>
@@ -110,7 +110,7 @@ export function StudioMobileHeader({
                         activeConnection?.id === c.id && "bg-blue-600/20 text-blue-400"
                       )}
                     >
-                      <Database className="w-4 h-4 mr-2" />
+                      <Database strokeWidth={1.5} className="w-3.5 h-3.5 mr-2" />
                       <span className="truncate">{c.name}</span>
                       {activeConnection?.id === c.id && (
                         <div className="ml-auto w-1.5 h-1.5 rounded-full bg-blue-500" />
@@ -121,7 +121,7 @@ export function StudioMobileHeader({
                     onClick={onAddConnection}
                     className="text-zinc-500 cursor-pointer border-t border-white/5 mt-1"
                   >
-                    <Plus className="w-4 h-4 mr-2" /> Add New
+                    <Plus strokeWidth={1.5} className="w-3.5 h-3.5 mr-2" /> Add New
                   </DropdownMenuItem>
                 </>
               )}
@@ -129,7 +129,7 @@ export function StudioMobileHeader({
           </DropdownMenu>
 
           {activeConnection && (
-            <span className="text-[10px] text-emerald-500 font-medium px-1.5 py-0.5 rounded bg-emerald-500/10">
+            <span className="text-xs text-emerald-500 font-medium px-1.5 py-0.5 rounded bg-emerald-500/10">
               Online
             </span>
           )}
@@ -142,7 +142,7 @@ export function StudioMobileHeader({
             className="h-8 w-8 p-0 text-zinc-500 hover:text-purple-400"
             onClick={() => router.push('/monitoring')}
           >
-            <Gauge className="w-4 h-4" />
+            <Gauge strokeWidth={1.5} className="w-3.5 h-3.5" />
           </Button>
           {connectionPulse && (
             <div className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-white/5" title={`Connection: ${connectionPulse}`}>
@@ -158,24 +158,24 @@ export function StudioMobileHeader({
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
-                  <User className="w-4 h-4 text-zinc-400" />
+                  <User strokeWidth={1.5} className="w-3.5 h-3.5 text-zinc-400" />
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="bg-[#0d0d0d] border-white/10">
                 {isAdmin && (
                   <DropdownMenuItem onClick={() => router.push('/admin')} className="cursor-pointer">
-                    <Settings className="w-4 h-4 mr-2" /> Admin Dashboard
+                    <Settings strokeWidth={1.5} className="w-3.5 h-3.5 mr-2" /> Admin Dashboard
                   </DropdownMenuItem>
                 )}
                 <DropdownMenuItem onClick={() => router.push('/monitoring')} className="cursor-pointer">
-                  <Gauge className="w-4 h-4 mr-2" /> Monitoring
+                  <Gauge strokeWidth={1.5} className="w-3.5 h-3.5 mr-2" /> Monitoring
                 </DropdownMenuItem>
                 <div className="border-t border-white/5 my-1" />
                 <DropdownMenuItem onClick={onLogout} className="text-red-400 cursor-pointer">
-                  <LogOut className="w-4 h-4 mr-2" /> Logout
+                  <LogOut strokeWidth={1.5} className="w-3.5 h-3.5 mr-2" /> Logout
                 </DropdownMenuItem>
                 <div className="border-t border-white/5 mt-1 pt-1 px-2 pb-1">
-                  <span className="text-[10px] text-zinc-500 font-mono">v{process.env.NEXT_PUBLIC_APP_VERSION}</span>
+                  <span className="text-xs text-zinc-500 font-mono">v{process.env.NEXT_PUBLIC_APP_VERSION}</span>
                 </div>
               </DropdownMenuContent>
             </DropdownMenu>
@@ -190,17 +190,17 @@ export function StudioMobileHeader({
             <Button
               variant="ghost"
               size="sm"
-              className="h-7 px-2 gap-1 text-[10px] font-bold text-zinc-500 hover:text-blue-400"
+              className="h-7 px-2 gap-1 text-xs font-medium text-zinc-500 hover:text-blue-400"
               onClick={() => queryEditorRef.current?.toggleAi()}
             >
-              <Sparkles className="w-3.5 h-3.5" />
+              <Sparkles strokeWidth={1.5} className="w-3 h-3" />
               AI
             </Button>
 
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="sm" className="h-7 px-2 gap-1 text-[10px] text-zinc-500">
-                  <MoreVertical className="w-3.5 h-3.5" />
+                <Button variant="ghost" size="sm" className="h-7 px-2 gap-1 text-xs text-zinc-500">
+                  <MoreVertical strokeWidth={1.5} className="w-3 h-3" />
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="start" className="bg-[#0d0d0d] border-white/10 w-48">
@@ -208,7 +208,7 @@ export function StudioMobileHeader({
                   onClick={() => queryEditorRef.current?.format()}
                   className="cursor-pointer text-xs"
                 >
-                  <AlignLeft className="w-4 h-4 mr-2" /> Format SQL
+                  <AlignLeft strokeWidth={1.5} className="w-3.5 h-3.5 mr-2" /> Format SQL
                 </DropdownMenuItem>
                 <DropdownMenuItem
                   onClick={() => {
@@ -217,19 +217,19 @@ export function StudioMobileHeader({
                   }}
                   className="cursor-pointer text-xs"
                 >
-                  <Copy className="w-4 h-4 mr-2" /> Copy Query
+                  <Copy strokeWidth={1.5} className="w-3.5 h-3.5 mr-2" /> Copy Query
                 </DropdownMenuItem>
                 <DropdownMenuItem
                   onClick={onClearQuery}
                   className="cursor-pointer text-xs text-red-400"
                 >
-                  <Trash2 className="w-4 h-4 mr-2" /> Clear
+                  <Trash2 strokeWidth={1.5} className="w-3.5 h-3.5 mr-2" /> Clear
                 </DropdownMenuItem>
                 <DropdownMenuItem
                   onClick={onSaveQuery}
                   className="cursor-pointer text-xs"
                 >
-                  <Save className="w-4 h-4 mr-2" /> Save Query
+                  <Save strokeWidth={1.5} className="w-3.5 h-3.5 mr-2" /> Save Query
                 </DropdownMenuItem>
 
                 {onExplain && (
@@ -239,14 +239,14 @@ export function StudioMobileHeader({
                       onClick={onExplain}
                       className="cursor-pointer text-xs text-amber-400"
                     >
-                      <Zap className="w-4 h-4 mr-2" /> Explain Plan
+                      <Zap strokeWidth={1.5} className="w-3.5 h-3.5 mr-2" /> Explain Plan
                     </DropdownMenuItem>
                   </>
                 )}
 
                 <DropdownMenuSeparator className="bg-white/5" />
                 <div className="px-2 py-1">
-                  <span className="text-[9px] font-bold text-zinc-600 uppercase tracking-widest">Advanced</span>
+                  <span className="text-[0.625rem] font-medium text-zinc-600">Advanced</span>
                 </div>
 
                 {!transactionActive ? (
@@ -255,7 +255,7 @@ export function StudioMobileHeader({
                     className="cursor-pointer text-xs"
                     disabled={!activeConnection}
                   >
-                    <PlayCircle className="w-4 h-4 mr-2" /> BEGIN Transaction
+                    <PlayCircle strokeWidth={1.5} className="w-3.5 h-3.5 mr-2" /> BEGIN Transaction
                   </DropdownMenuItem>
                 ) : (
                   <>
@@ -263,13 +263,13 @@ export function StudioMobileHeader({
                       onClick={onCommitTransaction}
                       className="cursor-pointer text-xs text-emerald-400"
                     >
-                      <PlayCircle className="w-4 h-4 mr-2" /> COMMIT
+                      <PlayCircle strokeWidth={1.5} className="w-3.5 h-3.5 mr-2" /> COMMIT
                     </DropdownMenuItem>
                     <DropdownMenuItem
                       onClick={onRollbackTransaction}
                       className="cursor-pointer text-xs text-red-400"
                     >
-                      <PlayCircle className="w-4 h-4 mr-2" /> ROLLBACK
+                      <PlayCircle strokeWidth={1.5} className="w-3.5 h-3.5 mr-2" /> ROLLBACK
                     </DropdownMenuItem>
                   </>
                 )}
@@ -278,7 +278,7 @@ export function StudioMobileHeader({
                   onClick={onTogglePlayground}
                   className="cursor-pointer text-xs"
                 >
-                  <Pencil className="w-4 h-4 mr-2" />
+                  <Pencil strokeWidth={1.5} className="w-3.5 h-3.5 mr-2" />
                   {playgroundMode ? 'Disable Sandbox' : 'Enable Sandbox'}
                 </DropdownMenuItem>
 
@@ -286,7 +286,7 @@ export function StudioMobileHeader({
                   onClick={onToggleEditing}
                   className="cursor-pointer text-xs"
                 >
-                  <Edit3 className="w-4 h-4 mr-2" />
+                  <Edit3 strokeWidth={1.5} className="w-3.5 h-3.5 mr-2" />
                   {editingEnabled ? 'Disable Editing' : 'Enable Editing'}
                 </DropdownMenuItem>
 
@@ -295,19 +295,19 @@ export function StudioMobileHeader({
                   className="cursor-pointer text-xs"
                   disabled={!activeConnection}
                 >
-                  <Upload className="w-4 h-4 mr-2" /> Import Data
+                  <Upload strokeWidth={1.5} className="w-3.5 h-3.5 mr-2" /> Import Data
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
 
             {/* Status badges */}
             {transactionActive && (
-              <span className="text-[9px] font-black text-amber-400 px-1.5 py-0.5 rounded bg-amber-500/10 border border-amber-500/20">
+              <span className="text-[0.625rem] font-medium text-amber-400 px-1.5 py-0.5 rounded bg-amber-500/10 border border-amber-500/20">
                 TXN
               </span>
             )}
             {playgroundMode && (
-              <span className="text-[9px] font-black text-purple-400 px-1.5 py-0.5 rounded bg-purple-500/10 border border-purple-500/20">
+              <span className="text-[0.625rem] font-medium text-purple-400 px-1.5 py-0.5 rounded bg-purple-500/10 border border-purple-500/20">
                 SANDBOX
               </span>
             )}
@@ -316,20 +316,20 @@ export function StudioMobileHeader({
           {isExecuting ? (
             <Button
               size="sm"
-              className="bg-red-600 hover:bg-red-500 text-white font-bold text-[11px] h-7 px-4 gap-1.5"
+              className="bg-red-600 hover:bg-red-500 text-white font-medium text-xs h-7 px-4 gap-1.5"
               onClick={onCancelQuery}
             >
-              <Square className="w-3 h-3 fill-current" />
+              <Square strokeWidth={1.5} className="w-3 h-3 fill-current" />
               CANCEL
             </Button>
           ) : (
             <Button
               size="sm"
-              className="bg-blue-600 hover:bg-blue-500 text-white font-bold text-[11px] h-7 px-4 gap-1.5"
+              className="bg-blue-600 hover:bg-blue-500 text-white font-medium text-xs h-7 px-4 gap-1.5"
               onClick={onExecuteQuery}
               disabled={!activeConnection}
             >
-              <Play className="w-3 h-3 fill-current" />
+              <Play strokeWidth={1.5} className="w-3 h-3 fill-current" />
               RUN
             </Button>
           )}

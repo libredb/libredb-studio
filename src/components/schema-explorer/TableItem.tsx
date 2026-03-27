@@ -14,7 +14,6 @@ import {
   BarChart3,
   Wand2,
 } from 'lucide-react';
-import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
@@ -67,39 +66,39 @@ function renderMenuItems(
   return (
     <>
       <Item onClick={() => callbacks.onTableClick?.(table.name)}>
-        <Play className="w-3.5 h-3.5 mr-2 text-green-500" />
+        <Play strokeWidth={1.5} className="w-3.5 h-3.5 mr-2 text-green-500" />
         {labels?.selectAction || 'Select Top 100'}
       </Item>
       <Item onClick={() => callbacks.onGenerateSelect?.(table.name)}>
-        <Filter className="w-3.5 h-3.5 mr-2 text-blue-500" />
+        <Filter strokeWidth={1.5} className="w-3.5 h-3.5 mr-2 text-blue-500" />
         {labels?.generateAction || 'Generate Query'}
       </Item>
       <Item onClick={() => copyToClipboard(table.name, `${labels?.entityName || 'Table'} name`)}>
-        <Copy className="w-3.5 h-3.5 mr-2 text-muted-foreground" />
+        <Copy strokeWidth={1.5} className="w-3.5 h-3.5 mr-2 text-muted-foreground" />
         Copy Name
       </Item>
       <Separator />
       <Item onClick={() => callbacks.onProfileTable?.(table.name)}>
-        <BarChart3 className="w-3.5 h-3.5 mr-2 text-cyan-500" />
+        <BarChart3 strokeWidth={1.5} className="w-3.5 h-3.5 mr-2 text-cyan-500" />
         Profile Table
       </Item>
       <Item onClick={() => callbacks.onGenerateCode?.(table.name)}>
-        <Code className="w-3.5 h-3.5 mr-2 text-purple-500" />
+        <Code strokeWidth={1.5} className="w-3.5 h-3.5 mr-2 text-purple-500" />
         Generate Code
       </Item>
       <Item onClick={() => callbacks.onGenerateTestData?.(table.name)}>
-        <Wand2 className="w-3.5 h-3.5 mr-2 text-amber-500" />
+        <Wand2 strokeWidth={1.5} className="w-3.5 h-3.5 mr-2 text-amber-500" />
         Generate Test Data
       </Item>
       {isAdmin && (
         <>
           <Separator />
           <Item onClick={() => callbacks.onOpenMaintenance?.('tables', table.name)}>
-            <Search className="w-3.5 h-3.5 mr-2 text-amber-500" />
+            <Search strokeWidth={1.5} className="w-3.5 h-3.5 mr-2 text-amber-500" />
             {labels?.analyzeAction || 'Analyze Table'}
           </Item>
           <Item onClick={() => callbacks.onOpenMaintenance?.('tables', table.name)}>
-            <Trash2 className="w-3.5 h-3.5 mr-2 text-blue-400" />
+            <Trash2 strokeWidth={1.5} className="w-3.5 h-3.5 mr-2 text-blue-400" />
             {labels?.vacuumAction || 'Vacuum Table'}
           </Item>
         </>
@@ -144,7 +143,7 @@ export const TableItem = React.memo(function TableItem({
               transition={{ duration: 0.2 }}
               className="shrink-0"
             >
-              <ChevronRight className="w-3 h-3 text-muted-foreground" />
+              <ChevronRight strokeWidth={1.5} className="w-3.5 h-3.5 text-muted-foreground" />
             </motion.div>
 
             <TableIcon
@@ -156,7 +155,7 @@ export const TableItem = React.memo(function TableItem({
 
             <span
               className={cn(
-                'truncate min-w-0 flex-1 text-[13px] font-medium transition-colors',
+                'truncate min-w-0 flex-1 text-xs font-medium transition-colors',
                 isExpanded ? 'text-foreground' : 'text-muted-foreground group-hover:text-foreground'
               )}
             >
@@ -165,20 +164,18 @@ export const TableItem = React.memo(function TableItem({
 
             <div className="shrink-0 relative w-8 h-6 flex items-center justify-center">
               {table.rowCount !== undefined && (
-                <span className="absolute inset-0 flex items-center justify-center text-[9px] font-mono text-muted-foreground/70 whitespace-nowrap opacity-100 group-hover:opacity-0 transition-opacity pointer-events-none">
+                <span className="absolute inset-0 flex items-center justify-center text-[0.625rem] font-mono text-muted-foreground/70 whitespace-nowrap opacity-100 group-hover:opacity-0 transition-opacity pointer-events-none">
                   {table.rowCount >= 1000 ? `${(table.rowCount / 1000).toFixed(1)}k` : table.rowCount}
                 </span>
               )}
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="absolute inset-0 w-full h-full opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100 focus-within:opacity-100 transition-opacity hover:bg-accent"
+                  <button
+                    className="absolute inset-0 w-full h-full opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100 focus-within:opacity-100 transition-opacity hover:bg-accent flex items-center justify-center"
                     onClick={(e) => e.stopPropagation()}
                   >
-                    <MoreVertical className="w-4 h-4 text-muted-foreground group-hover:text-foreground" />
-                  </Button>
+                    <MoreVertical strokeWidth={1.5} className="w-3.5 h-3.5 text-muted-foreground group-hover:text-foreground" />
+                  </button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="w-48">
                   {renderMenuItems(table, labels, isAdmin, callbacks, copyToClipboard, DropdownMenuItem, DropdownMenuSeparator)}

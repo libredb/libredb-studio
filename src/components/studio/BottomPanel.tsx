@@ -41,8 +41,8 @@ function ChartDashboardLazy({ result }: { result: QueryResult | null }) {
   if (savedCharts.length === 0) {
     return (
       <div className="h-full flex flex-col items-center justify-center bg-[#080808] text-zinc-500 gap-2">
-        <LayoutDashboard className="w-10 h-10 opacity-30" />
-        <p className="text-sm">No saved charts yet</p>
+        <LayoutDashboard strokeWidth={1.5} className="w-10 h-10 opacity-30" />
+        <p className="text-xs">No saved charts yet</p>
         <p className="text-xs text-zinc-600">Save charts from the Charts tab to display them here</p>
       </div>
     );
@@ -54,10 +54,10 @@ function ChartDashboardLazy({ result }: { result: QueryResult | null }) {
         {savedCharts.map(chart => (
           <div key={chart.id} className="bg-[#0d0d0d] border border-white/10 rounded-lg p-3">
             <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-bold text-zinc-300">{chart.name}</span>
-              <span className="text-[10px] text-zinc-600 uppercase">{chart.chartType}</span>
+              <span className="text-xs font-medium text-zinc-300">{chart.name}</span>
+              <span className="text-xs text-zinc-600">{chart.chartType}</span>
             </div>
-            <div className="text-[10px] text-zinc-500">
+            <div className="text-xs text-zinc-500">
               {chart.xAxis && <span>X: {chart.xAxis}</span>}
               {chart.yAxis?.length > 0 && <span className="ml-2">Y: {chart.yAxis.join(', ')}</span>}
             </div>
@@ -66,7 +66,7 @@ function ChartDashboardLazy({ result }: { result: QueryResult | null }) {
                 <DataCharts result={result} />
               </div>
             ) : (
-              <div className="mt-2 h-[100px] flex items-center justify-center text-zinc-600 text-[10px]">
+              <div className="mt-2 h-[100px] flex items-center justify-center text-zinc-600 text-xs">
                 Execute a query to see chart
               </div>
             )}
@@ -136,17 +136,17 @@ export function BottomPanel({
   onExportResults,
 }: BottomPanelProps) {
   const tabs: { key: BottomPanelMode; label: string; icon: React.ReactNode; activeClass: string }[] = [
-    { key: 'results', label: 'Results', icon: <LayoutGrid className="w-3 h-3" />, activeClass: 'text-blue-400 border-blue-500 bg-white/5' },
-    { key: 'explain', label: 'Explain', icon: <Zap className="w-3 h-3" />, activeClass: 'text-amber-400 border-amber-500 bg-white/5' },
-    { key: 'history', label: 'History', icon: <Clock className="w-3 h-3" />, activeClass: 'text-emerald-400 border-emerald-500 bg-white/5' },
-    { key: 'saved', label: 'Saved', icon: <Bookmark className="w-3 h-3" />, activeClass: 'text-purple-400 border-purple-500 bg-white/5' },
-    { key: 'charts', label: 'Charts', icon: <BarChart3 className="w-3 h-3" />, activeClass: 'text-cyan-400 border-cyan-500 bg-white/5' },
-    { key: 'nl2sql', label: 'NL2SQL', icon: <Sparkles className="w-3 h-3" />, activeClass: 'text-violet-400 border-violet-500 bg-white/5' },
-    { key: 'autopilot', label: 'Autopilot', icon: <Zap className="w-3 h-3" />, activeClass: 'text-cyan-400 border-cyan-500 bg-white/5' },
-    { key: 'pivot', label: 'Pivot', icon: <Columns3 className="w-3 h-3" />, activeClass: 'text-orange-400 border-orange-500 bg-white/5' },
-    { key: 'docs', label: 'Docs', icon: <FileText className="w-3 h-3" />, activeClass: 'text-teal-400 border-teal-500 bg-white/5' },
-    { key: 'schemadiff', label: 'Diff', icon: <GitCompare className="w-3 h-3" />, activeClass: 'text-rose-400 border-rose-500 bg-white/5' },
-    { key: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard className="w-3 h-3" />, activeClass: 'text-indigo-400 border-indigo-500 bg-white/5' },
+    { key: 'results', label: 'Results', icon: <LayoutGrid strokeWidth={1.5} className="w-3 h-3" />, activeClass: 'text-blue-400 border-blue-500 bg-white/5' },
+    { key: 'explain', label: 'Explain', icon: <Zap strokeWidth={1.5} className="w-3 h-3" />, activeClass: 'text-amber-400 border-amber-500 bg-white/5' },
+    { key: 'history', label: 'History', icon: <Clock strokeWidth={1.5} className="w-3 h-3" />, activeClass: 'text-emerald-400 border-emerald-500 bg-white/5' },
+    { key: 'saved', label: 'Saved', icon: <Bookmark strokeWidth={1.5} className="w-3 h-3" />, activeClass: 'text-purple-400 border-purple-500 bg-white/5' },
+    { key: 'charts', label: 'Charts', icon: <BarChart3 strokeWidth={1.5} className="w-3 h-3" />, activeClass: 'text-cyan-400 border-cyan-500 bg-white/5' },
+    { key: 'nl2sql', label: 'NL2SQL', icon: <Sparkles strokeWidth={1.5} className="w-3 h-3" />, activeClass: 'text-violet-400 border-violet-500 bg-white/5' },
+    { key: 'autopilot', label: 'Autopilot', icon: <Zap strokeWidth={1.5} className="w-3 h-3" />, activeClass: 'text-cyan-400 border-cyan-500 bg-white/5' },
+    { key: 'pivot', label: 'Pivot', icon: <Columns3 strokeWidth={1.5} className="w-3 h-3" />, activeClass: 'text-orange-400 border-orange-500 bg-white/5' },
+    { key: 'docs', label: 'Docs', icon: <FileText strokeWidth={1.5} className="w-3 h-3" />, activeClass: 'text-teal-400 border-teal-500 bg-white/5' },
+    { key: 'schemadiff', label: 'Diff', icon: <GitCompare strokeWidth={1.5} className="w-3 h-3" />, activeClass: 'text-rose-400 border-rose-500 bg-white/5' },
+    { key: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard strokeWidth={1.5} className="w-3 h-3" />, activeClass: 'text-indigo-400 border-indigo-500 bg-white/5' },
   ];
 
   return (
@@ -161,7 +161,7 @@ export function BottomPanel({
                 if (tab.key === 'nl2sql') onSetIsNL2SQLOpen(true);
               }}
               className={cn(
-                "h-full px-3 text-[10px] font-bold uppercase transition-all border-b-2 flex items-center gap-2",
+                "h-full px-3 text-xs font-medium transition-all border-b-2 flex items-center gap-2",
                 mode === tab.key
                   ? tab.activeClass
                   : "text-zinc-500 border-transparent hover:text-zinc-300"
@@ -174,13 +174,13 @@ export function BottomPanel({
 
         {currentTab.result && mode === 'results' && (
           <div className="flex items-center gap-1">
-            <span className="text-[10px] font-mono text-zinc-500 mr-2">
+            <span className="text-xs font-mono text-zinc-500 mr-2">
               {currentTab.result.rowCount} rows • {currentTab.result.executionTime}ms
             </span>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="sm" className="h-7 text-[10px] font-bold uppercase text-zinc-500 hover:text-white gap-2">
-                  <Download className="w-3 h-3" /> Export
+                <Button variant="ghost" size="sm" className="h-7 text-xs font-medium text-zinc-500 hover:text-white gap-2">
+                  <Download strokeWidth={1.5} className="w-3 h-3" /> Export
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="bg-[#0d0d0d] border-white/10 text-zinc-300">
@@ -275,9 +275,9 @@ export function BottomPanel({
           )
         ) : (
           <div className="h-full flex flex-col items-center justify-center opacity-20 bg-[#0a0a0a]">
-            <Terminal className="w-12 h-12 mb-4" />
-            <p className="text-sm font-medium">Execute a query or check history</p>
-            <p className="text-[10px] uppercase tracking-widest mt-2">Ready to query</p>
+            <Terminal strokeWidth={1.5} className="w-12 h-12 mb-4" />
+            <p className="text-xs font-medium">Execute a query or check history</p>
+            <p className="text-xs mt-2">Ready to query</p>
           </div>
         )}
       </div>

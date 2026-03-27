@@ -353,14 +353,14 @@ export default function Studio() {
               {activeMobileTab === 'database' && (
                 <div className="md:hidden h-full bg-[#080808] overflow-auto p-4">
                   <div className="mb-4 flex items-center justify-between">
-                    <h2 className="text-sm font-bold text-zinc-300 uppercase tracking-widest">Connections</h2>
+                    <h2 className="text-xs font-medium text-zinc-300">Connections</h2>
                     <Button
                       variant="outline"
                       size="sm"
                       className="h-8 text-xs border-white/10 hover:bg-white/5"
                       onClick={() => setIsConnectionModalOpen(true)}
                     >
-                      <Plus className="w-3 h-3 mr-1" /> Add
+                      <Plus strokeWidth={1.5} className="w-3 h-3 mr-1" /> Add
                     </Button>
                   </div>
                   <ConnectionsList
@@ -402,8 +402,8 @@ export default function Studio() {
                     />
                   ) : (
                     <div className="flex flex-col items-center justify-center h-full text-zinc-500">
-                      <Database className="w-12 h-12 mb-4 opacity-30" />
-                      <p className="text-sm">Select a connection first</p>
+                      <Database strokeWidth={1.5} className="w-12 h-12 mb-4 opacity-30" />
+                      <p className="text-xs">Select a connection first</p>
                     </div>
                   )}
                 </div>
@@ -578,25 +578,25 @@ export default function Studio() {
           <div className="px-6 pt-6 pb-4">
             <div className="flex items-start gap-3">
               <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-amber-500/20 to-red-500/10 flex items-center justify-center shrink-0">
-                <AlertTriangle className="w-5 h-5 text-amber-400" />
+                <AlertTriangle strokeWidth={1.5} className="w-5 h-5 text-amber-400" />
               </div>
               <div className="flex-1 min-w-0">
-                <AlertDialogTitle className="text-[15px] font-semibold text-zinc-100 mb-1">
+                <AlertDialogTitle className="text-[0.8125rem] font-medium text-zinc-100 mb-1">
                   Load all results?
                 </AlertDialogTitle>
-                <AlertDialogDescription className="text-[13px] text-zinc-500 leading-relaxed">
+                <AlertDialogDescription className="text-xs text-zinc-500 leading-relaxed">
                   This may slow down your browser. Max <span className="text-zinc-400">100K</span> rows will be loaded.
                 </AlertDialogDescription>
               </div>
             </div>
           </div>
           <div className="px-6 pb-6 flex gap-2">
-            <AlertDialogCancel className="flex-1 h-9 bg-white/5 border-0 text-zinc-400 text-[13px] font-medium hover:bg-white/10 hover:text-zinc-200">
+            <AlertDialogCancel className="flex-1 h-9 bg-white/5 border-0 text-zinc-400 text-xs font-medium hover:bg-white/10 hover:text-zinc-200">
               Cancel
             </AlertDialogCancel>
             <AlertDialogAction
               onClick={queryExec.handleUnlimitedQuery}
-              className="flex-1 h-9 bg-amber-600 border-0 text-white text-[13px] font-medium hover:bg-amber-500"
+              className="flex-1 h-9 bg-amber-600 border-0 text-white text-xs font-medium hover:bg-amber-500"
             >
               Load All
             </AlertDialogAction>

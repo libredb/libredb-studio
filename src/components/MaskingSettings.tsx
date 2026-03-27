@@ -172,7 +172,7 @@ export function MaskingSettings() {
       {/* Global Toggle */}
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-lg">
+          <CardTitle className="flex items-center gap-2 text-xs">
             <Shield className="h-5 w-5 text-purple-400" />
             Data Masking Settings
           </CardTitle>
@@ -181,7 +181,7 @@ export function MaskingSettings() {
           {/* Global Enable */}
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm font-medium">Enable Data Masking Globally</p>
+              <p className="text-xs font-medium">Enable Data Masking Globally</p>
               <p className="text-xs text-muted-foreground">
                 When enabled, sensitive columns are automatically detected and masked
               </p>
@@ -194,7 +194,7 @@ export function MaskingSettings() {
 
           {/* Role Permissions */}
           <div className="space-y-3">
-            <h3 className="text-sm font-semibold text-zinc-300">Role Permissions</h3>
+            <h3 className="text-xs font-medium text-zinc-300">Role Permissions</h3>
             <div className="grid gap-3 rounded-lg border border-white/10 p-4">
               {/* Admin Row */}
               <div className="flex items-center justify-between">
@@ -246,9 +246,9 @@ export function MaskingSettings() {
           {/* Masking Patterns */}
           <div className="space-y-3">
             <div className="flex items-center justify-between">
-              <h3 className="text-sm font-semibold text-zinc-300">Masking Patterns</h3>
+              <h3 className="text-xs font-medium text-zinc-300">Masking Patterns</h3>
               <Button variant="outline" size="sm" className="h-7 text-xs" onClick={openNewDialog}>
-                <Plus className="w-3 h-3 mr-1" />
+                <Plus strokeWidth={1.5} className="w-3 h-3 mr-1" />
                 Add Pattern
               </Button>
             </div>
@@ -266,13 +266,13 @@ export function MaskingSettings() {
                       />
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2">
-                          <span className="text-sm font-medium text-zinc-200">{pattern.name}</span>
+                          <span className="text-xs font-medium text-zinc-200">{pattern.name}</span>
                           {pattern.isBuiltin && (
-                            <Badge variant="secondary" className="text-[9px] h-4 px-1">builtin</Badge>
+                            <Badge variant="secondary" className="text-[0.625rem] h-4 px-1">builtin</Badge>
                           )}
-                          <Badge variant="outline" className="text-[9px] h-4 px-1">{pattern.maskType}</Badge>
+                          <Badge variant="outline" className="text-[0.625rem] h-4 px-1">{pattern.maskType}</Badge>
                         </div>
-                        <p className="text-[10px] text-zinc-500 font-mono truncate mt-0.5">
+                        <p className="text-xs text-zinc-500 font-mono truncate mt-0.5">
                           {pattern.columnPatterns.join(', ')}
                         </p>
                       </div>
@@ -284,7 +284,7 @@ export function MaskingSettings() {
                         className="h-7 w-7 p-0"
                         onClick={() => openEditDialog(pattern)}
                       >
-                        <Pencil className="w-3 h-3 text-zinc-500" />
+                        <Pencil strokeWidth={1.5} className="w-3 h-3 text-zinc-500" />
                       </Button>
                       {!pattern.isBuiltin && (
                         <Button
@@ -293,7 +293,7 @@ export function MaskingSettings() {
                           className="h-7 w-7 p-0 text-red-400 hover:text-red-300"
                           onClick={() => deletePattern(pattern.id)}
                         >
-                          <Trash2 className="w-3 h-3" />
+                          <Trash2 strokeWidth={1.5} className="w-3 h-3" />
                         </Button>
                       )}
                     </div>
@@ -305,14 +305,14 @@ export function MaskingSettings() {
 
           {/* Preview */}
           <div className="space-y-3">
-            <h3 className="text-sm font-semibold text-zinc-300">Preview</h3>
+            <h3 className="text-xs font-medium text-zinc-300">Preview</h3>
             <div className="rounded-lg border border-white/5 bg-[#0a0a0a] p-4 space-y-2">
               {config.patterns.filter(p => p.enabled).slice(0, 5).map(pattern => {
                 const preview = MASK_TYPE_PREVIEWS[pattern.maskType];
                 const masked = getPreviewMasked(pattern.maskType, pattern.customMask);
                 return (
                   <div key={pattern.id} className="flex items-center gap-2 text-xs font-mono">
-                    <Lock className="w-3 h-3 text-purple-400 shrink-0" />
+                    <Lock strokeWidth={1.5} className="w-3 h-3 text-purple-400 shrink-0" />
                     <span className="text-zinc-500 w-24 truncate">{pattern.name}:</span>
                     <span className="text-zinc-600 line-through">{preview.sample}</span>
                     <span className="text-zinc-400 mx-1">&rarr;</span>
@@ -330,7 +330,7 @@ export function MaskingSettings() {
               Reset Defaults
             </Button>
             <Button size="sm" onClick={handleSave}>
-              <Save className="w-3 h-3 mr-1" />
+              <Save strokeWidth={1.5} className="w-3 h-3 mr-1" />
               Save Config
             </Button>
           </div>
@@ -382,19 +382,19 @@ export function MaskingSettings() {
             <div className="space-y-2">
               <label className="text-xs font-medium text-zinc-300">Column Patterns (one per line)</label>
               <textarea
-                className="w-full h-32 bg-[#0a0a0a] border border-white/10 rounded-md px-3 py-2 text-sm font-mono text-zinc-200 focus:outline-none focus:ring-1 focus:ring-purple-500/50 resize-none"
+                className="w-full h-32 bg-[#0a0a0a] border border-white/10 rounded-md px-3 py-2 text-xs font-mono text-zinc-200 focus:outline-none focus:ring-1 focus:ring-purple-500/50 resize-none"
                 value={editColumnPatterns}
                 onChange={(e) => setEditColumnPatterns(e.target.value)}
                 placeholder={"email\ne_mail\nuser_email"}
               />
-              <p className="text-[10px] text-zinc-500">
+              <p className="text-xs text-zinc-500">
                 Each line is matched against column names (case-insensitive). Supports regex.
               </p>
             </div>
             {/* Preview */}
             <div className="rounded-lg border border-white/5 bg-[#0a0a0a] p-3">
-              <p className="text-[10px] text-zinc-500 mb-1">Preview:</p>
-              <p className="text-sm font-mono text-purple-300">
+              <p className="text-xs text-zinc-500 mb-1">Preview:</p>
+              <p className="text-xs font-mono text-purple-300">
                 {getPreviewMasked(editMaskType, editMaskType === 'custom' ? editCustomMask : undefined)}
               </p>
             </div>

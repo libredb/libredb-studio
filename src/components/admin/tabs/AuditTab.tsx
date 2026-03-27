@@ -183,7 +183,7 @@ function OperationsAudit() {
           <div className="p-8 text-center text-zinc-600 text-sm">
             <Wrench className="h-8 w-8 mx-auto mb-2 opacity-30" />
             <p>No audit events found.</p>
-            <p className="text-[11px] mt-1 text-zinc-700">
+            <p className="text-xs mt-1 text-zinc-700">
               Operations will appear here when maintenance tasks are run.
             </p>
           </div>
@@ -191,13 +191,13 @@ function OperationsAudit() {
           <Table>
             <TableHeader>
               <TableRow className="border-white/5 hover:bg-transparent">
-                <TableHead className="text-[10px] text-zinc-500 font-bold uppercase w-[30px]" />
-                <TableHead className="text-[10px] text-zinc-500 font-bold uppercase">Time</TableHead>
-                <TableHead className="text-[10px] text-zinc-500 font-bold uppercase">Action</TableHead>
-                <TableHead className="text-[10px] text-zinc-500 font-bold uppercase">Target</TableHead>
-                <TableHead className="text-[10px] text-zinc-500 font-bold uppercase hidden md:table-cell">Connection</TableHead>
-                <TableHead className="text-[10px] text-zinc-500 font-bold uppercase hidden lg:table-cell">User</TableHead>
-                <TableHead className="text-right text-[10px] text-zinc-500 font-bold uppercase">Duration</TableHead>
+                <TableHead className="text-xs text-zinc-500 font-bold uppercase w-[30px]" />
+                <TableHead className="text-xs text-zinc-500 font-bold uppercase">Time</TableHead>
+                <TableHead className="text-xs text-zinc-500 font-bold uppercase">Action</TableHead>
+                <TableHead className="text-xs text-zinc-500 font-bold uppercase">Target</TableHead>
+                <TableHead className="text-xs text-zinc-500 font-bold uppercase hidden md:table-cell">Connection</TableHead>
+                <TableHead className="text-xs text-zinc-500 font-bold uppercase hidden lg:table-cell">User</TableHead>
+                <TableHead className="text-right text-xs text-zinc-500 font-bold uppercase">Duration</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -210,7 +210,7 @@ function OperationsAudit() {
                       <XCircle className="w-3.5 h-3.5 text-red-500" />
                     )}
                   </TableCell>
-                  <TableCell className="py-2 font-mono text-[10px] text-zinc-500">
+                  <TableCell className="py-2 font-mono text-xs text-zinc-500">
                     {new Date(event.timestamp).toLocaleString([], {
                       month: 'short',
                       day: 'numeric',
@@ -221,7 +221,7 @@ function OperationsAudit() {
                   <TableCell className="py-2">
                     <Badge
                       variant="outline"
-                      className="text-[9px] font-bold border-white/10"
+                      className="text-[0.625rem] font-bold border-white/10"
                     >
                       {event.action}
                     </Badge>
@@ -235,7 +235,7 @@ function OperationsAudit() {
                   <TableCell className="py-2 text-xs text-zinc-500 hidden lg:table-cell">
                     {event.user}
                   </TableCell>
-                  <TableCell className="py-2 text-right font-mono text-[10px] text-zinc-500">
+                  <TableCell className="py-2 text-right font-mono text-xs text-zinc-500">
                     {event.duration ? `${event.duration}ms` : '-'}
                   </TableCell>
                 </TableRow>
@@ -314,12 +314,12 @@ function QueryAudit() {
           <Table>
             <TableHeader>
               <TableRow className="border-white/5 hover:bg-transparent">
-                <TableHead className="text-[10px] text-zinc-500 font-bold uppercase w-[30px]" />
-                <TableHead className="text-[10px] text-zinc-500 font-bold uppercase">Time</TableHead>
-                <TableHead className="text-[10px] text-zinc-500 font-bold uppercase">Query</TableHead>
-                <TableHead className="text-[10px] text-zinc-500 font-bold uppercase hidden md:table-cell">Connection</TableHead>
-                <TableHead className="text-right text-[10px] text-zinc-500 font-bold uppercase">Duration</TableHead>
-                <TableHead className="text-right text-[10px] text-zinc-500 font-bold uppercase hidden sm:table-cell">Rows</TableHead>
+                <TableHead className="text-xs text-zinc-500 font-bold uppercase w-[30px]" />
+                <TableHead className="text-xs text-zinc-500 font-bold uppercase">Time</TableHead>
+                <TableHead className="text-xs text-zinc-500 font-bold uppercase">Query</TableHead>
+                <TableHead className="text-xs text-zinc-500 font-bold uppercase hidden md:table-cell">Connection</TableHead>
+                <TableHead className="text-right text-xs text-zinc-500 font-bold uppercase">Duration</TableHead>
+                <TableHead className="text-right text-xs text-zinc-500 font-bold uppercase hidden sm:table-cell">Rows</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -332,7 +332,7 @@ function QueryAudit() {
                       <XCircle className="w-3.5 h-3.5 text-red-500" />
                     )}
                   </TableCell>
-                  <TableCell className="py-2 font-mono text-[10px] text-zinc-500 whitespace-nowrap">
+                  <TableCell className="py-2 font-mono text-xs text-zinc-500 whitespace-nowrap">
                     {new Date(item.executedAt).toLocaleString([], {
                       month: 'short',
                       day: 'numeric',
@@ -341,17 +341,17 @@ function QueryAudit() {
                     })}
                   </TableCell>
                   <TableCell className="py-2">
-                    <div className="font-mono text-[11px] text-zinc-400 truncate max-w-[250px] lg:max-w-[400px]">
+                    <div className="font-mono text-xs text-zinc-400 truncate max-w-[250px] lg:max-w-[400px]">
                       {item.query}
                     </div>
                   </TableCell>
                   <TableCell className="py-2 text-xs text-zinc-500 hidden md:table-cell truncate max-w-[100px]">
                     {item.connectionName || '-'}
                   </TableCell>
-                  <TableCell className="py-2 text-right font-mono text-[10px] text-zinc-500">
+                  <TableCell className="py-2 text-right font-mono text-xs text-zinc-500">
                     {item.executionTime}ms
                   </TableCell>
-                  <TableCell className="py-2 text-right font-mono text-[10px] text-zinc-500 hidden sm:table-cell">
+                  <TableCell className="py-2 text-right font-mono text-xs text-zinc-500 hidden sm:table-cell">
                     {item.rowCount ?? '-'}
                   </TableCell>
                 </TableRow>

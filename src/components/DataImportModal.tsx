@@ -257,7 +257,7 @@ export function DataImportModal({ isOpen, onClose, onImport, tables, databaseTyp
       <DialogContent className="bg-[#0a0a0a] border-white/10 text-zinc-100 max-w-2xl max-h-[85vh] overflow-hidden flex flex-col">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <Upload className="w-5 h-5 text-blue-400" />
+            <Upload strokeWidth={1.5} className="w-5 h-5 text-blue-400" />
             Import Data
             {fileName && (
               <span className="text-xs text-zinc-500 font-normal ml-2">
@@ -272,24 +272,24 @@ export function DataImportModal({ isOpen, onClose, onImport, tables, databaseTyp
           {(['upload', 'preview', 'configure', 'ready'] as ImportStep[]).map((s, idx) => (
             <React.Fragment key={s}>
               <div className={cn(
-                "flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider",
+                "flex items-center gap-1.5 text-xs font-mediumr",
                 step === s ? "text-blue-400" : idx < ['upload', 'preview', 'configure', 'ready'].indexOf(step) ? "text-emerald-400" : "text-zinc-600"
               )}>
                 <div className={cn(
-                  "w-5 h-5 rounded-full flex items-center justify-center text-[9px]",
+                  "w-5 h-5 rounded-full flex items-center justify-center text-[0.625rem]",
                   step === s ? "bg-blue-500/20 border border-blue-500/40" :
                   idx < ['upload', 'preview', 'configure', 'ready'].indexOf(step) ? "bg-emerald-500/20 border border-emerald-500/40" :
                   "bg-white/5 border border-white/10"
                 )}>
                   {idx < ['upload', 'preview', 'configure', 'ready'].indexOf(step) ? (
-                    <Check className="w-3 h-3" />
+                    <Check strokeWidth={1.5} className="w-3 h-3" />
                   ) : (
                     idx + 1
                   )}
                 </div>
                 <span className="hidden sm:inline">{s === 'upload' ? 'Upload' : s === 'preview' ? 'Preview' : s === 'configure' ? 'Configure' : 'Import'}</span>
               </div>
-              {idx < 3 && <ArrowRight className="w-3 h-3 text-zinc-700" />}
+              {idx < 3 && <ArrowRight strokeWidth={1.5} className="w-3 h-3 text-zinc-700" />}
             </React.Fragment>
           ))}
         </div>
@@ -304,8 +304,8 @@ export function DataImportModal({ isOpen, onClose, onImport, tables, databaseTyp
                 onClick={() => fileInputRef.current?.click()}
                 className="border-2 border-dashed border-white/10 rounded-xl p-12 text-center cursor-pointer hover:border-blue-500/30 hover:bg-blue-500/5 transition-all"
               >
-                <Upload className="w-10 h-10 text-zinc-600 mx-auto mb-4" />
-                <p className="text-sm text-zinc-400 mb-1">
+                <Upload strokeWidth={1.5} className="w-10 h-10 text-zinc-600 mx-auto mb-4" />
+                <p className="text-xs text-zinc-400 mb-1">
                   Drop a file here or click to browse
                 </p>
                 <p className="text-xs text-zinc-600">
@@ -313,12 +313,12 @@ export function DataImportModal({ isOpen, onClose, onImport, tables, databaseTyp
                 </p>
                 <div className="flex items-center justify-center gap-4 mt-4">
                   <div className="flex items-center gap-1.5 text-zinc-500">
-                    <FileSpreadsheet className="w-4 h-4" />
-                    <span className="text-[10px]">CSV</span>
+                    <FileSpreadsheet strokeWidth={1.5} className="w-3.5 h-3.5" />
+                    <span className="text-xs">CSV</span>
                   </div>
                   <div className="flex items-center gap-1.5 text-zinc-500">
-                    <FileJson className="w-4 h-4" />
-                    <span className="text-[10px]">JSON</span>
+                    <FileJson strokeWidth={1.5} className="w-3.5 h-3.5" />
+                    <span className="text-xs">JSON</span>
                   </div>
                 </div>
               </div>
@@ -334,7 +334,7 @@ export function DataImportModal({ isOpen, onClose, onImport, tables, databaseTyp
               />
               {error && (
                 <div className="mt-4 p-3 rounded-lg bg-red-500/10 border border-red-500/20 flex items-center gap-2">
-                  <AlertTriangle className="w-4 h-4 text-red-400 shrink-0" />
+                  <AlertTriangle strokeWidth={1.5} className="w-3.5 h-3.5 text-red-400 shrink-0" />
                   <span className="text-xs text-red-400">{error}</span>
                 </div>
               )}
@@ -347,13 +347,13 @@ export function DataImportModal({ isOpen, onClose, onImport, tables, databaseTyp
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
                   {fileType === 'json' ? (
-                    <FileJson className="w-5 h-5 text-amber-400" />
+                    <FileJson strokeWidth={1.5} className="w-5 h-5 text-amber-400" />
                   ) : (
-                    <FileText className="w-5 h-5 text-emerald-400" />
+                    <FileText strokeWidth={1.5} className="w-5 h-5 text-emerald-400" />
                   )}
                   <div>
-                    <p className="text-sm font-medium">{fileName}</p>
-                    <p className="text-[10px] text-zinc-500">
+                    <p className="text-xs font-medium">{fileName}</p>
+                    <p className="text-xs text-zinc-500">
                       {parsedData.totalRows} rows, {parsedData.headers.length} columns
                     </p>
                   </div>
@@ -364,7 +364,7 @@ export function DataImportModal({ isOpen, onClose, onImport, tables, databaseTyp
                   className="h-7 text-xs text-zinc-500"
                   onClick={() => { resetState(); }}
                 >
-                  <X className="w-3 h-3 mr-1" /> Reset
+                  <X strokeWidth={1.5} className="w-3 h-3 mr-1" /> Reset
                 </Button>
               </div>
 
@@ -374,7 +374,7 @@ export function DataImportModal({ isOpen, onClose, onImport, tables, databaseTyp
                   <thead>
                     <tr className="bg-[#0d0d0d]">
                       {parsedData.headers.map(h => (
-                        <th key={h} className="px-3 py-2 text-left text-[10px] uppercase tracking-wider text-zinc-500 font-mono border-b border-white/5 whitespace-nowrap">
+                        <th key={h} className="px-3 py-2 text-left text-xs uppercase text-zinc-500 font-mono border-b border-white/5 whitespace-nowrap">
                           {h}
                         </th>
                       ))}
@@ -393,7 +393,7 @@ export function DataImportModal({ isOpen, onClose, onImport, tables, databaseTyp
                   </tbody>
                 </table>
                 {parsedData.totalRows > 10 && (
-                  <div className="text-center py-2 text-[10px] text-zinc-600 bg-[#0d0d0d]">
+                  <div className="text-center py-2 text-xs text-zinc-600 bg-[#0d0d0d]">
                     ... and {parsedData.totalRows - 10} more rows
                   </div>
                 )}
@@ -405,7 +405,7 @@ export function DataImportModal({ isOpen, onClose, onImport, tables, databaseTyp
                   className="bg-blue-600 hover:bg-blue-500 h-8 text-xs gap-1"
                   onClick={() => setStep('configure')}
                 >
-                  Configure Import <ArrowRight className="w-3 h-3" />
+                  Configure Import <ArrowRight strokeWidth={1.5} className="w-3 h-3" />
                 </Button>
               </div>
             </div>
@@ -425,7 +425,7 @@ export function DataImportModal({ isOpen, onClose, onImport, tables, databaseTyp
                     )}
                     onClick={() => setCreateNewTable(false)}
                   >
-                    <Table2 className="w-4 h-4 mb-1" />
+                    <Table2 strokeWidth={1.5} className="w-3.5 h-3.5 mb-1" />
                     Existing Table
                   </button>
                   <button
@@ -435,7 +435,7 @@ export function DataImportModal({ isOpen, onClose, onImport, tables, databaseTyp
                     )}
                     onClick={() => setCreateNewTable(true)}
                   >
-                    <FileSpreadsheet className="w-4 h-4 mb-1" />
+                    <FileSpreadsheet strokeWidth={1.5} className="w-3.5 h-3.5 mb-1" />
                     New Table
                   </button>
                 </div>
@@ -448,7 +448,7 @@ export function DataImportModal({ isOpen, onClose, onImport, tables, databaseTyp
                     value={newTableName}
                     onChange={(e) => setNewTableName(e.target.value)}
                     placeholder="imported_data"
-                    className="mt-1 bg-[#111] border-white/10 text-sm h-9"
+                    className="mt-1 bg-[#111] border-white/10 text-xs h-9"
                   />
                 </div>
               ) : (
@@ -457,7 +457,7 @@ export function DataImportModal({ isOpen, onClose, onImport, tables, databaseTyp
                   <select
                     value={targetTable}
                     onChange={(e) => setTargetTable(e.target.value)}
-                    className="w-full mt-1 bg-[#111] border border-white/10 rounded-md px-3 py-2 text-sm text-zinc-300 outline-none focus:border-blue-500/40"
+                    className="w-full mt-1 bg-[#111] border border-white/10 rounded-md px-3 py-2 text-xs text-zinc-300 outline-none focus:border-blue-500/40"
                   >
                     <option value="">-- Select a table --</option>
                     {tables.map(t => (
@@ -471,7 +471,7 @@ export function DataImportModal({ isOpen, onClose, onImport, tables, databaseTyp
               <div className="space-y-2">
                 <label className="text-xs text-zinc-400 font-medium">Column Mapping</label>
                 <div className="border border-white/5 rounded-lg overflow-hidden">
-                  <div className="bg-[#0d0d0d] grid grid-cols-[1fr,auto,1fr] gap-2 px-3 py-1.5 text-[10px] uppercase tracking-wider text-zinc-500 border-b border-white/5">
+                  <div className="bg-[#0d0d0d] grid grid-cols-[1fr,auto,1fr] gap-2 px-3 py-1.5 text-xs text-zinc-500 border-b border-white/5">
                     <span>Source Column</span>
                     <span></span>
                     <span>Target Column</span>
@@ -480,7 +480,7 @@ export function DataImportModal({ isOpen, onClose, onImport, tables, databaseTyp
                     {parsedData.headers.map(header => (
                       <div key={header} className="grid grid-cols-[1fr,auto,1fr] gap-2 items-center px-3 py-1.5 border-b border-white/5">
                         <span className="text-xs text-zinc-300 font-mono truncate">{header}</span>
-                        <ArrowRight className="w-3 h-3 text-zinc-600" />
+                        <ArrowRight strokeWidth={1.5} className="w-3 h-3 text-zinc-600" />
                         <Input
                           value={columnMapping[header] || ''}
                           onChange={(e) => setColumnMapping(prev => ({ ...prev, [header]: e.target.value }))}
@@ -508,7 +508,7 @@ export function DataImportModal({ isOpen, onClose, onImport, tables, databaseTyp
                   onClick={() => setStep('ready')}
                   disabled={!createNewTable && !targetTable}
                 >
-                  Review SQL <ArrowRight className="w-3 h-3" />
+                  Review SQL <ArrowRight strokeWidth={1.5} className="w-3 h-3" />
                 </Button>
               </div>
             </div>
@@ -519,13 +519,13 @@ export function DataImportModal({ isOpen, onClose, onImport, tables, databaseTyp
             <div className="p-4 space-y-4">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm font-medium">Ready to Import</p>
-                  <p className="text-[10px] text-zinc-500 mt-0.5">
+                  <p className="text-xs font-medium">Ready to Import</p>
+                  <p className="text-xs text-zinc-500 mt-0.5">
                     {parsedData?.totalRows} rows into {createNewTable ? newTableName || 'imported_data' : targetTable}
                   </p>
                 </div>
                 {databaseType && (
-                  <span className="text-[10px] uppercase tracking-wider text-zinc-500 bg-white/5 px-2 py-1 rounded">
+                  <span className="text-xs text-zinc-500 bg-white/5 px-2 py-1 rounded">
                     {databaseType}
                   </span>
                 )}
@@ -566,9 +566,9 @@ export function DataImportModal({ isOpen, onClose, onImport, tables, databaseTyp
                     disabled={isImporting}
                   >
                     {isImporting ? (
-                      <><Loader2 className="w-3 h-3 animate-spin" /> Importing...</>
+                      <><Loader2 strokeWidth={1.5} className="w-3 h-3 animate-spin" /> Importing...</>
                     ) : (
-                      <><Upload className="w-3 h-3" /> Execute Import</>
+                      <><Upload strokeWidth={1.5} className="w-3 h-3" /> Execute Import</>
                     )}
                   </Button>
                 </div>

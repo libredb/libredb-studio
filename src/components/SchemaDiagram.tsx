@@ -46,16 +46,16 @@ const TableNode = ({ data }: NodeProps<Node<TableNodeData>>) => {
       isHighlighted ? 'border-blue-500/60 ring-1 ring-blue-500/30' : 'border-white/10'
     }`}>
       <div className="bg-blue-600/10 px-3 py-2 border-b border-white/5 flex items-center gap-2">
-        <Database className="w-3.5 h-3.5 text-blue-400" />
-        <span className="text-xs font-bold text-zinc-100 uppercase tracking-wider">{table.name}</span>
-        <span className="text-[9px] text-zinc-600 ml-auto">{table.columns?.length || 0} cols</span>
+        <Database strokeWidth={1.5} className="w-3.5 h-3.5 text-blue-400" />
+        <span className="text-xs font-medium text-zinc-100r">{table.name}</span>
+        <span className="text-[0.625rem] text-zinc-600 ml-auto">{table.columns?.length || 0} cols</span>
       </div>
       {!isCompact && (
         <div className="p-1">
           {table.columns?.map((col: { name: string; type: string; isPrimary: boolean; nullable?: boolean; defaultValue?: string }, idx: number) => {
             const isFk = fkColumns.has(col.name);
             return (
-              <div key={idx} className="flex items-center justify-between px-2 py-1 text-[10px] hover:bg-white/5 rounded transition-colors group relative">
+              <div key={idx} className="flex items-center justify-between px-2 py-1 text-xs hover:bg-white/5 rounded transition-colors group relative">
                 <Handle
                   type="source"
                   position={Position.Right}
@@ -71,13 +71,13 @@ const TableNode = ({ data }: NodeProps<Node<TableNodeData>>) => {
 
                 <div className="flex items-center gap-2">
                   {col.isPrimary ? (
-                    <Key className="w-2.5 h-2.5 text-yellow-500" />
+                    <Key strokeWidth={1.5} className="w-2.5 h-2.5 text-yellow-500" />
                   ) : isFk ? (
-                    <Link2 className="w-2.5 h-2.5 text-blue-400" />
+                    <Link2 strokeWidth={1.5} className="w-2.5 h-2.5 text-blue-400" />
                   ) : col.type.toLowerCase().includes('int') ? (
-                    <Hash className="w-2.5 h-2.5 text-zinc-500" />
+                    <Hash strokeWidth={1.5} className="w-2.5 h-2.5 text-zinc-500" />
                   ) : (
-                    <Type className="w-2.5 h-2.5 text-zinc-500" />
+                    <Type strokeWidth={1.5} className="w-2.5 h-2.5 text-zinc-500" />
                   )}
                   <span className={
                     col.isPrimary ? "text-yellow-500/90 font-medium" :
@@ -88,13 +88,13 @@ const TableNode = ({ data }: NodeProps<Node<TableNodeData>>) => {
                   </span>
                 </div>
                 <div className="flex items-center gap-1">
-                  {col.nullable === false && <span className="text-[8px] text-red-500/60">NN</span>}
-                  <span className="text-[9px] text-zinc-600 font-mono uppercase">{col.type}</span>
+                  {col.nullable === false && <span className="text-[0.5rem] text-red-500/60">NN</span>}
+                  <span className="text-[0.625rem] text-zinc-600 font-mono uppercase">{col.type}</span>
                 </div>
 
                 {/* Hover tooltip */}
                 <div className="absolute left-full ml-2 top-0 z-50 hidden group-hover:block">
-                  <div className="bg-[#1a1a1a] border border-white/10 rounded px-2 py-1 text-[9px] whitespace-nowrap shadow-xl">
+                  <div className="bg-[#1a1a1a] border border-white/10 rounded px-2 py-1 text-[0.625rem] whitespace-nowrap shadow-xl">
                     <div className="text-zinc-300">{col.name}: <span className="text-zinc-500">{col.type}</span></div>
                     {col.isPrimary && <div className="text-yellow-500">Primary Key</div>}
                     {isFk && <div className="text-blue-400">Foreign Key</div>}
@@ -348,8 +348,8 @@ function SchemaDiagramInner({ schema, onClose }: SchemaDiagramProps) {
   if (schema.length === 0) {
     return (
       <div className="absolute inset-0 z-50 bg-[#050505] flex flex-col items-center justify-center">
-        <Loader2 className="w-8 h-8 text-blue-500 animate-spin mb-4" />
-        <p className="text-zinc-500 text-sm">Generating ERD Diagram...</p>
+        <Loader2 strokeWidth={1.5} className="w-8 h-8 text-blue-500 animate-spin mb-4" />
+        <p className="text-zinc-500 text-xs">Generating ERD Diagram...</p>
       </div>
     );
   }
@@ -389,7 +389,7 @@ function SchemaDiagramInner({ schema, onClose }: SchemaDiagramProps) {
               className="bg-[#0d0d0d] border-white/10 hover:bg-white/5 text-xs gap-1"
               onClick={() => exportDiagram('png')}
             >
-              <Download className="w-3 h-3" /> PNG
+              <Download strokeWidth={1.5} className="w-3 h-3" /> PNG
             </Button>
             <Button
               variant="outline"
@@ -397,7 +397,7 @@ function SchemaDiagramInner({ schema, onClose }: SchemaDiagramProps) {
               className="bg-[#0d0d0d] border-white/10 hover:bg-white/5 text-xs gap-1"
               onClick={() => exportDiagram('svg')}
             >
-              <Download className="w-3 h-3" /> SVG
+              <Download strokeWidth={1.5} className="w-3 h-3" /> SVG
             </Button>
             <Button
               variant="outline"
@@ -413,7 +413,7 @@ function SchemaDiagramInner({ schema, onClose }: SchemaDiagramProps) {
               className="rounded-full bg-[#0d0d0d] border-white/10 hover:bg-white/5"
               onClick={onClose}
             >
-              <X className="w-4 h-4" />
+              <X strokeWidth={1.5} className="w-3.5 h-3.5" />
             </Button>
           </div>
         </Panel>
@@ -421,39 +421,39 @@ function SchemaDiagramInner({ schema, onClose }: SchemaDiagramProps) {
         {/* Info panel with stats and search */}
         <Panel position="top-left" className="p-4">
           <div className="bg-[#0d0d0d]/80 backdrop-blur-md border border-white/10 p-3 rounded-xl shadow-2xl space-y-2">
-            <h3 className="text-xs font-bold text-white uppercase tracking-widest mb-1 flex items-center gap-2">
+            <h3 className="text-xs font-medium text-white mb-1 flex items-center gap-2">
               <div className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
               ERD Visualizer
             </h3>
-            <div className="flex items-center gap-3 text-[10px] text-zinc-500">
+            <div className="flex items-center gap-3 text-xs text-zinc-500">
               <span>{filteredSchema.length} tables</span>
               <span>{edgeCount} relationships</span>
             </div>
 
             {/* Search */}
             <div className="relative">
-              <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-zinc-600" />
+              <Search strokeWidth={1.5} className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-zinc-600" />
               <input
                 type="text"
                 placeholder="Filter tables..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-7 pr-2 py-1.5 bg-white/5 border border-white/10 rounded text-[10px] text-zinc-300 placeholder-zinc-600 focus:outline-none focus:border-blue-500/50"
+                className="w-full pl-7 pr-2 py-1.5 bg-white/5 border border-white/10 rounded text-xs text-zinc-300 placeholder-zinc-600 focus:outline-none focus:border-blue-500/50"
               />
             </div>
 
             {/* No FK warning */}
             {!hasForeignKeys && (
-              <div className="flex items-start gap-1.5 text-[9px] text-amber-500/80">
-                <Info className="w-3 h-3 mt-0.5 shrink-0" />
+              <div className="flex items-start gap-1.5 text-[0.625rem] text-amber-500/80">
+                <Info strokeWidth={1.5} className="w-3 h-3 mt-0.5 shrink-0" />
                 <span>No FK data available. Showing heuristic relationships (dashed).</span>
               </div>
             )}
 
             {/* Selected node info */}
             {selectedNode && (
-              <div className="text-[10px] text-blue-400 border-t border-white/5 pt-2">
-                Selected: <span className="font-mono font-bold">{selectedNode}</span>
+              <div className="text-xs text-blue-400 border-t border-white/5 pt-2">
+                Selected: <span className="font-mono font-medium">{selectedNode}</span>
                 <button onClick={() => setSelectedNode(null)} className="ml-2 text-zinc-600 hover:text-zinc-400">clear</button>
               </div>
             )}

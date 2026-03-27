@@ -22,11 +22,11 @@ describe('parseConnectionString', () => {
     });
 
     test('parses postgresql:// URL', () => {
-      const result = parseConnectionString('postgresql://user:pass@db.example.com:5433/appdb');
+      const result = parseConnectionString('postgresql://user:pass@db.example.com:5432/appdb');
       expect(result).not.toBeNull();
       expect(result!.type).toBe('postgres');
       expect(result!.host).toBe('db.example.com');
-      expect(result!.port).toBe('5433');
+      expect(result!.port).toBe('5432');
       expect(result!.database).toBe('appdb');
     });
 

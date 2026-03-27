@@ -50,9 +50,9 @@ export function SnapshotTimeline({ snapshots, onCompare, onDelete }: SnapshotTim
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between px-2">
-        <span className="text-[10px] uppercase text-zinc-500 font-bold">Timeline</span>
+        <span className="text-xs text-zinc-500 font-medium">Timeline</span>
         {canCompare && (
-          <span className="text-[10px] text-blue-400">Comparing 2 snapshots</span>
+          <span className="text-xs text-blue-400">Comparing 2 snapshots</span>
         )}
       </div>
 
@@ -73,7 +73,7 @@ export function SnapshotTimeline({ snapshots, onCompare, onDelete }: SnapshotTim
             >
               {/* Dot */}
               <div className={cn(
-                "w-4 h-4 rounded-full border-2 z-10 transition-all",
+                "w-3.5 h-3.5 rounded-full border-2 z-10 transition-all",
                 isSelected
                   ? "bg-blue-500 border-blue-400 scale-125"
                   : "bg-[#0d0d0d] border-white/20 hover:border-white/40"
@@ -89,13 +89,13 @@ export function SnapshotTimeline({ snapshots, onCompare, onDelete }: SnapshotTim
                 "mt-2 text-center transition-colors",
                 isSelected ? "text-blue-400" : "text-zinc-500 group-hover:text-zinc-300"
               )}>
-                <div className="text-[10px] font-medium truncate max-w-[90px]">
+                <div className="text-xs font-medium truncate max-w-[90px]">
                   {snapshot.label || snapshot.connectionName}
                 </div>
-                <div className="text-[9px] text-zinc-600">
+                <div className="text-[0.625rem] text-zinc-600">
                   {date.toLocaleDateString()} {date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                 </div>
-                <Badge variant="secondary" className="text-[9px] mt-1">
+                <Badge variant="secondary" className="text-[0.625rem] mt-1">
                   {snapshot.schema.length} tables
                 </Badge>
               </div>
@@ -105,7 +105,7 @@ export function SnapshotTimeline({ snapshots, onCompare, onDelete }: SnapshotTim
                 onClick={(e) => { e.stopPropagation(); onDelete(snapshot.id); }}
                 className="absolute -top-2 -right-1 p-0.5 text-zinc-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"
               >
-                <Trash2 className="w-2.5 h-2.5" />
+                <Trash2 strokeWidth={1.5} className="w-2.5 h-2.5" />
               </button>
             </div>
           );
