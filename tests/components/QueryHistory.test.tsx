@@ -327,8 +327,8 @@ describe('QueryHistory', () => {
     // Only one item visible
     expect(view.queryByText('DROP TABLE bad')).toBeNull();
 
-    // Click the X clear button
-    const clearSearchButton = container.querySelector('button .w-3.h-3')?.closest('button');
+    // Click the X clear button (find the button near the search input)
+    const clearSearchButton = container.querySelector('.lucide-x')?.closest('button');
     expect(clearSearchButton).not.toBeNull();
     await user.click(clearSearchButton!);
 

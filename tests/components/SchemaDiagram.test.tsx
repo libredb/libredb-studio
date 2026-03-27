@@ -775,7 +775,7 @@ describe('SchemaDiagram', () => {
       // Selection should appear with selected node name and clear button
       expect(view.queryByText('Selected:')).not.toBeNull();
       // The selected table name appears in a font-mono span
-      const selectedSpan = container.querySelector('.font-mono.font-bold');
+      const selectedSpan = container.querySelector('.font-mono.font-medium');
       expect(selectedSpan).not.toBeNull();
       expect(selectedSpan!.textContent).toBe('users');
       expect(view.queryByText('clear')).not.toBeNull();
