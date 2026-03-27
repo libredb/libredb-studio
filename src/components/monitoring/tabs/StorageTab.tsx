@@ -55,13 +55,13 @@ export function StorageTab({ data, loading }: StorageTabProps) {
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-4">
         <Card className="p-0">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 p-2 sm:p-4 pb-1 sm:pb-2">
-            <CardTitle className="text-xs sm:text-sm font-medium text-muted-foreground">
+            <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">
               DB Size
             </CardTitle>
             <Database className="h-3 w-3 sm:h-4 sm:w-4 text-blue-500" />
           </CardHeader>
           <CardContent className="p-2 sm:p-4 pt-0">
-            <div className="text-lg sm:text-2xl font-bold truncate">
+            <div className="text-lg sm:text-2xl font-medium truncate">
               {overview?.databaseSize || 'N/A'}
             </div>
           </CardContent>
@@ -69,13 +69,13 @@ export function StorageTab({ data, loading }: StorageTabProps) {
 
         <Card className="p-0">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 p-2 sm:p-4 pb-1 sm:pb-2">
-            <CardTitle className="text-xs sm:text-sm font-medium text-muted-foreground">
+            <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">
               Tables
             </CardTitle>
             <HardDrive className="h-3 w-3 sm:h-4 sm:w-4 text-green-500" />
           </CardHeader>
           <CardContent className="p-2 sm:p-4 pt-0">
-            <div className="text-lg sm:text-2xl font-bold truncate">{formatBytes(totalTableSize)}</div>
+            <div className="text-lg sm:text-2xl font-medium truncate">{formatBytes(totalTableSize)}</div>
             <p className="text-xs sm:text-xs text-muted-foreground mt-1">
               {tablePercent.toFixed(1)}%
             </p>
@@ -84,13 +84,13 @@ export function StorageTab({ data, loading }: StorageTabProps) {
 
         <Card className="p-0">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 p-2 sm:p-4 pb-1 sm:pb-2">
-            <CardTitle className="text-xs sm:text-sm font-medium text-muted-foreground">
+            <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">
               Indexes
             </CardTitle>
             <Archive className="h-3 w-3 sm:h-4 sm:w-4 text-purple-500" />
           </CardHeader>
           <CardContent className="p-2 sm:p-4 pt-0">
-            <div className="text-lg sm:text-2xl font-bold truncate">{formatBytes(totalIndexSize)}</div>
+            <div className="text-lg sm:text-2xl font-medium truncate">{formatBytes(totalIndexSize)}</div>
             <p className="text-xs sm:text-xs text-muted-foreground mt-1">
               {indexPercent.toFixed(1)}%
             </p>
@@ -99,13 +99,13 @@ export function StorageTab({ data, loading }: StorageTabProps) {
 
         <Card className="p-0">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 p-2 sm:p-4 pb-1 sm:pb-2">
-            <CardTitle className="text-xs sm:text-sm font-medium text-muted-foreground">
+            <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">
               WAL
             </CardTitle>
             <FolderOpen className="h-3 w-3 sm:h-4 sm:w-4 text-orange-500" />
           </CardHeader>
           <CardContent className="p-2 sm:p-4 pt-0">
-            <div className="text-lg sm:text-2xl font-bold truncate">
+            <div className="text-lg sm:text-2xl font-medium truncate">
               {walStorage?.walSize || walStorage?.size || 'N/A'}
             </div>
           </CardContent>
@@ -115,7 +115,7 @@ export function StorageTab({ data, loading }: StorageTabProps) {
       {/* Storage Breakdown */}
       <Card className="p-0">
         <CardHeader className="p-3 sm:p-4 pb-2">
-          <CardTitle className="text-xs sm:text-sm font-medium flex items-center gap-2">
+          <CardTitle className="text-xs sm:text-xs font-medium flex items-center gap-2">
             <HardDrive className="h-3 w-3 sm:h-4 sm:w-4" />
             Storage Breakdown
           </CardTitle>
@@ -123,7 +123,7 @@ export function StorageTab({ data, loading }: StorageTabProps) {
         <CardContent className="p-3 sm:p-4 pt-0 space-y-3 sm:space-y-4">
           <div className="space-y-2 sm:space-y-3">
             <div>
-              <div className="flex items-center justify-between text-xs sm:text-sm mb-1">
+              <div className="flex items-center justify-between text-xs sm:text-xs mb-1">
                 <span className="flex items-center gap-1 sm:gap-2">
                   <div className="w-2 h-2 sm:w-3 sm:h-3 rounded-sm bg-green-500" />
                   Tables
@@ -134,7 +134,7 @@ export function StorageTab({ data, loading }: StorageTabProps) {
             </div>
 
             <div>
-              <div className="flex items-center justify-between text-xs sm:text-sm mb-1">
+              <div className="flex items-center justify-between text-xs sm:text-xs mb-1">
                 <span className="flex items-center gap-1 sm:gap-2">
                   <div className="w-2 h-2 sm:w-3 sm:h-3 rounded-sm bg-purple-500" />
                   Indexes
@@ -145,7 +145,7 @@ export function StorageTab({ data, loading }: StorageTabProps) {
             </div>
 
             <div>
-              <div className="flex items-center justify-between text-xs sm:text-sm mb-1">
+              <div className="flex items-center justify-between text-xs sm:text-xs mb-1">
                 <span className="flex items-center gap-1 sm:gap-2">
                   <div className="w-2 h-2 sm:w-3 sm:h-3 rounded-sm bg-muted-foreground" />
                   <span className="hidden sm:inline">Other (TOAST, FSM)</span>
@@ -164,7 +164,7 @@ export function StorageTab({ data, loading }: StorageTabProps) {
       {/* Tablespaces */}
       <Card className="p-0">
         <CardHeader className="p-3 sm:p-4 pb-2">
-          <CardTitle className="text-xs sm:text-sm font-medium flex items-center gap-2">
+          <CardTitle className="text-xs sm:text-xs font-medium flex items-center gap-2">
             <FolderOpen className="h-3 w-3 sm:h-4 sm:w-4" />
             Tablespaces
           </CardTitle>
@@ -173,7 +173,7 @@ export function StorageTab({ data, loading }: StorageTabProps) {
           {storage.length === 0 ? (
             <div className="text-center py-8 text-muted-foreground">
               <FolderOpen className="h-8 w-8 mx-auto mb-2 opacity-50" />
-              <p className="text-sm">No tablespace information available.</p>
+              <p className="text-xs">No tablespace information available.</p>
             </div>
           ) : (
             <div className="overflow-x-auto">
@@ -192,7 +192,7 @@ export function StorageTab({ data, loading }: StorageTabProps) {
                       <TableCell className="py-2">
                         <div className="flex items-center gap-1 sm:gap-2">
                           <FolderOpen className="h-3 w-3 sm:h-4 sm:w-4 text-muted-foreground flex-shrink-0" />
-                          <span className="font-medium text-xs sm:text-sm truncate max-w-[80px] sm:max-w-none">{ts.name}</span>
+                          <span className="font-medium text-xs sm:text-xs truncate max-w-[80px] sm:max-w-none">{ts.name}</span>
                           {ts.name === 'pg_default' && (
                             <Badge variant="secondary" className="text-xs sm:text-xs hidden sm:inline-flex">Default</Badge>
                           )}
@@ -232,7 +232,7 @@ export function StorageTab({ data, loading }: StorageTabProps) {
       {/* Top Tables by Size */}
       <Card className="p-0">
         <CardHeader className="p-3 sm:p-4 pb-2">
-          <CardTitle className="text-xs sm:text-sm font-medium flex items-center gap-2">
+          <CardTitle className="text-xs sm:text-xs font-medium flex items-center gap-2">
             <Database className="h-3 w-3 sm:h-4 sm:w-4" />
             Largest Tables
           </CardTitle>
@@ -241,7 +241,7 @@ export function StorageTab({ data, loading }: StorageTabProps) {
           {tables.length === 0 ? (
             <div className="text-center py-8 text-muted-foreground">
               <Database className="h-8 w-8 mx-auto mb-2 opacity-50" />
-              <p className="text-sm">No table information available.</p>
+              <p className="text-xs">No table information available.</p>
             </div>
           ) : (
             <div className="overflow-x-auto">
@@ -267,7 +267,7 @@ export function StorageTab({ data, loading }: StorageTabProps) {
                         <TableRow key={`${table.schemaName}.${table.tableName}`}>
                           <TableCell className="py-2">
                             <div className="flex flex-col">
-                              <span className="font-medium text-xs sm:text-sm truncate max-w-[100px] sm:max-w-[200px]">{table.tableName}</span>
+                              <span className="font-medium text-xs sm:text-xs truncate max-w-[100px] sm:max-w-[200px]">{table.tableName}</span>
                               <span className="text-xs sm:text-xs text-muted-foreground">
                                 {table.schemaName}
                               </span>

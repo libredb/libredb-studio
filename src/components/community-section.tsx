@@ -36,7 +36,7 @@ function DesktopCommunity() {
 
       <div className="flex items-center justify-between">
         <div className="space-y-1">
-          <h3 className="text-sm font-semibold text-zinc-200">Join the Community</h3>
+          <h3 className="text-xs font-medium text-zinc-200">Join the Community</h3>
           <p className="text-xs text-zinc-500">This project is open source. Your contributions make it better!</p>
         </div>
         <span className="shrink-0 text-xs font-medium px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
@@ -71,7 +71,7 @@ function MobileCommunity() {
     <div className="space-y-3">
       <div className="h-px bg-muted" />
 
-      <p className="text-xs font-semibold text-center text-muted-foreground">Join the Community</p>
+      <p className="text-xs font-medium text-center text-muted-foreground">Join the Community</p>
 
       <div className="flex flex-wrap justify-center gap-2">
         {communityActions.map((action) => (

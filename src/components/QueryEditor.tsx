@@ -493,7 +493,7 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
           <Button
             variant="ghost"
             size="sm"
-            className="h-7 text-xs font-bold uppercase tracking-widest text-white bg-blue-600 hover:bg-blue-500 hover:text-white gap-2 shadow-[0_0_10px_rgba(37,99,235,0.3)] animate-in fade-in zoom-in duration-200"
+            className="h-7 text-xs font-medium text-white bg-blue-600 hover:bg-blue-500 hover:text-white gap-2 shadow-[0_0_10px_rgba(37,99,235,0.3)] animate-in fade-in zoom-in duration-200"
             onClick={handleExecute}
           >
             <Play className="w-3 h-3 fill-current" /> Run Sel
@@ -503,7 +503,7 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
         <Button
           variant="ghost"
           size="sm"
-          className="h-7 text-xs font-bold uppercase tracking-widest text-zinc-500 hover:text-white gap-2"
+          className="h-7 text-xs font-medium text-zinc-500 hover:text-white gap-2"
           onClick={handleFormat}
           title={language === 'json' ? "Format JSON (Shift+Alt+F)" : "Format SQL (Shift+Alt+F)"}
         >
@@ -513,7 +513,7 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
         <Button
           variant="ghost"
           size="sm"
-          className="h-7 text-xs font-bold uppercase tracking-widest text-zinc-500 hover:text-white gap-2"
+          className="h-7 text-xs font-medium text-zinc-500 hover:text-white gap-2"
           onClick={handleCopy}
         >
           <Copy className="w-3 h-3" /> {hasSelection ? 'Copy Sel' : 'Copy'}
@@ -522,7 +522,7 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
         <Button
           variant="ghost"
           size="sm"
-          className="h-7 text-xs font-bold uppercase tracking-widest text-zinc-500 hover:text-red-400 gap-2"
+          className="h-7 text-xs font-medium text-zinc-500 hover:text-red-400 gap-2"
           onClick={handleClear}
         >
           <Trash2 className="w-3 h-3" /> Clear
@@ -534,7 +534,7 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
           variant="ghost"
           size="sm"
           className={cn(
-            "h-7 text-xs font-bold uppercase tracking-widest gap-2",
+            "h-7 text-xs font-medium gap-2",
             showLineNumbers ? "text-zinc-300" : "text-zinc-500 hover:text-white"
           )}
           onClick={() => setShowLineNumbers(!showLineNumbers)}
@@ -547,7 +547,7 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
           variant="ghost"
           size="sm"
           className={cn(
-            "h-7 text-xs font-bold uppercase tracking-widest gap-2",
+            "h-7 text-xs font-medium gap-2",
             showAi
               ? "text-white bg-blue-600 hover:bg-blue-500 hover:text-white shadow-[0_0_10px_rgba(37,99,235,0.4)]"
               : "text-zinc-500 hover:text-blue-400"
@@ -564,13 +564,13 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
               <Button
                 variant="ghost"
                 size="sm"
-                className="h-7 text-xs font-bold uppercase tracking-widest text-amber-500 hover:text-amber-400 gap-2"
+                className="h-7 text-xs font-medium text-amber-500 hover:text-amber-400 gap-2"
                 onClick={onExplain}
               >
                 <Zap className="w-3 h-3" /> Explain
               </Button>
             )}
-            <kbd className="px-1.5 py-0.5 rounded bg-zinc-900 border border-white/5 text-caption text-zinc-600 font-mono">
+            <kbd className="px-1.5 py-0.5 rounded bg-zinc-900 border border-white/5 text-[0.5625rem] text-zinc-600 font-mono">
               ⌘+Enter
             </kbd>
           </div>
@@ -594,20 +594,20 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
                     <div className="p-1 rounded-md bg-blue-500/10">
                       <Sparkles className="w-3.5 h-3.5 text-blue-400" />
                     </div>
-                    <span className="text-label font-black text-blue-400 uppercase tracking-[0.2em]">Expert DBA Mode</span>
+                    <span className="text-[0.625rem] font-black text-blue-400">Expert DBA Mode</span>
                   </div>
                   <div className="flex items-center gap-2">
                     {aiConversationHistory.length > 0 && (
                       <button
                         type="button"
                         onClick={() => setAiConversationHistory([])}
-                        className="text-label text-zinc-500 hover:text-zinc-300 font-medium px-1.5 py-0.5 rounded bg-white/5 hover:bg-white/10 transition-colors"
+                        className="text-[0.625rem] text-zinc-500 hover:text-zinc-300 font-medium px-1.5 py-0.5 rounded bg-white/5 hover:bg-white/10 transition-colors"
                         title="Clear conversation history"
                       >
                         {aiConversationHistory.length / 2} turns - Clear
                       </button>
                     )}
-                    <span className="text-label text-zinc-500 font-medium">Context: {tables.length} tables</span>
+                    <span className="text-[0.625rem] text-zinc-500 font-medium">Context: {tables.length} tables</span>
                     <div className="w-1 h-1 rounded-full bg-emerald-500 animate-pulse" />
                   </div>
                   </div>
@@ -625,8 +625,8 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
                             <X className="w-3 h-3 text-red-400" />
                           </div>
                           <div className="flex-1">
-                            <p className="text-body font-bold text-red-400 uppercase tracking-tight mb-0.5">AI Error</p>
-                            <p className="text-data text-red-300/90 leading-relaxed">{aiError}</p>
+                            <p className="text-xs font-medium text-red-400 mb-0.5">AI Error</p>
+                            <p className="text-xs text-red-300/90 leading-relaxed">{aiError}</p>
                           </div>
                           <button
                             type="button"
@@ -647,7 +647,7 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
                     value={aiPrompt}
                     onChange={(e) => setAiPrompt(e.target.value)}
                     placeholder="Describe the data you need in plain English... (e.g. 'Show me the revenue growth per month')"
-                    className="bg-transparent border-none outline-none text-body text-zinc-100 w-full h-12 placeholder:text-zinc-600 font-medium"
+                    className="bg-transparent border-none outline-none text-xs text-zinc-100 w-full h-12 placeholder:text-zinc-600 font-medium"
                   />
                   <div className="flex items-center gap-1.5">
                     <button
@@ -660,7 +660,7 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
                     <button
                       type="submit"
                       disabled={isAiLoading || !aiPrompt.trim()}
-                      className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:hover:bg-blue-600 px-4 py-2 rounded-xl text-white text-label font-bold transition-all shadow-lg shadow-blue-600/30 flex items-center gap-2"
+                      className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:hover:bg-blue-600 px-4 py-2 rounded-xl text-white text-[0.625rem] font-medium transition-all shadow-lg shadow-blue-600/30 flex items-center gap-2"
                     >
                       {isAiLoading ? (
                         <>

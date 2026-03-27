@@ -183,7 +183,7 @@ function OperationsAudit() {
           <div className="p-8 text-center text-zinc-600 text-sm">
             <Wrench className="h-8 w-8 mx-auto mb-2 opacity-30" />
             <p>No audit events found.</p>
-            <p className="text-body mt-1 text-zinc-700">
+            <p className="text-xs mt-1 text-zinc-700">
               Operations will appear here when maintenance tasks are run.
             </p>
           </div>
@@ -221,7 +221,7 @@ function OperationsAudit() {
                   <TableCell className="py-2">
                     <Badge
                       variant="outline"
-                      className="text-label font-bold border-white/10"
+                      className="text-[0.625rem] font-bold border-white/10"
                     >
                       {event.action}
                     </Badge>
@@ -341,7 +341,7 @@ function QueryAudit() {
                     })}
                   </TableCell>
                   <TableCell className="py-2">
-                    <div className="font-mono text-body text-zinc-400 truncate max-w-[250px] lg:max-w-[400px]">
+                    <div className="font-mono text-xs text-zinc-400 truncate max-w-[250px] lg:max-w-[400px]">
                       {item.query}
                     </div>
                   </TableCell>

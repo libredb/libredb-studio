@@ -93,7 +93,7 @@ export function StatsBar({
               variant="ghost"
               size="sm"
               className={cn(
-                "h-6 px-2 text-xs font-bold gap-1",
+                "h-6 px-2 text-xs font-medium gap-1",
                 effectiveMaskingEnabled ? "text-purple-400 bg-purple-500/10" : "text-zinc-500"
               )}
               onClick={onToggleMasking}
@@ -103,7 +103,7 @@ export function StatsBar({
               {effectiveMaskingEnabled ? 'MASKED' : 'MASK'}
             </Button>
           ) : effectiveMaskingEnabled ? (
-            <span className="h-6 px-2 text-xs font-bold text-purple-400 bg-purple-500/10 rounded flex items-center gap-1">
+            <span className="h-6 px-2 text-xs font-medium text-purple-400 bg-purple-500/10 rounded flex items-center gap-1">
               <Lock className="w-3 h-3" />
               MASKED
             </span>

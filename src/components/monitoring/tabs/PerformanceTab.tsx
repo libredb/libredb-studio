@@ -51,17 +51,17 @@ export function PerformanceTab({ data, loading, history = [] }: PerformanceTabPr
         {/* Cache Hit Ratio */}
         <Card className={`p-0 border-2 transition-colors ${getThresholdColor(cacheThreshold)}`}>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 p-2 sm:p-4 pb-1 sm:pb-2">
-            <CardTitle className="text-xs sm:text-sm font-medium text-muted-foreground">
+            <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">
               Cache Hit
             </CardTitle>
             <Activity className={`h-3 w-3 sm:h-4 sm:w-4 ${cacheStatus.color}`} />
           </CardHeader>
           <CardContent className="p-2 sm:p-4 pt-0">
             <div className="flex items-end gap-1">
-              <span className="text-lg sm:text-3xl font-bold">
+              <span className="text-lg sm:text-3xl font-medium">
                 {performance?.cacheHitRatio?.toFixed(1) ?? 0}
               </span>
-              <span className="text-sm sm:text-xl text-muted-foreground">%</span>
+              <span className="text-xs sm:text-xl text-muted-foreground">%</span>
             </div>
             <Progress
               value={performance?.cacheHitRatio ?? 0}
@@ -79,17 +79,17 @@ export function PerformanceTab({ data, loading, history = [] }: PerformanceTabPr
         {/* Buffer Pool Usage */}
         <Card className={`p-0 border-2 transition-colors ${getThresholdColor(bufferThreshold)}`}>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 p-2 sm:p-4 pb-1 sm:pb-2">
-            <CardTitle className="text-xs sm:text-sm font-medium text-muted-foreground">
+            <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">
               Buffer
             </CardTitle>
             <Gauge className={`h-3 w-3 sm:h-4 sm:w-4 ${bufferStatus.color}`} />
           </CardHeader>
           <CardContent className="p-2 sm:p-4 pt-0">
             <div className="flex items-end gap-1">
-              <span className="text-lg sm:text-3xl font-bold">
+              <span className="text-lg sm:text-3xl font-medium">
                 {performance?.bufferPoolUsage?.toFixed(0) ?? 0}
               </span>
-              <span className="text-sm sm:text-xl text-muted-foreground">%</span>
+              <span className="text-xs sm:text-xl text-muted-foreground">%</span>
             </div>
             <Progress
               value={performance?.bufferPoolUsage ?? 0}
@@ -107,7 +107,7 @@ export function PerformanceTab({ data, loading, history = [] }: PerformanceTabPr
         {/* Deadlocks */}
         <Card className={`p-0 border-2 transition-colors ${getThresholdColor(deadlockThreshold)}`}>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 p-2 sm:p-4 pb-1 sm:pb-2">
-            <CardTitle className="text-xs sm:text-sm font-medium text-muted-foreground">
+            <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">
               Deadlocks
             </CardTitle>
             <AlertTriangle
@@ -116,7 +116,7 @@ export function PerformanceTab({ data, loading, history = [] }: PerformanceTabPr
           </CardHeader>
           <CardContent className="p-2 sm:p-4 pt-0">
             <div className="flex items-end gap-1">
-              <span className="text-lg sm:text-3xl font-bold">
+              <span className="text-lg sm:text-3xl font-medium">
                 {performance?.deadlocks ?? 0}
               </span>
             </div>
@@ -170,15 +170,15 @@ export function PerformanceTab({ data, loading, history = [] }: PerformanceTabPr
         {/* Checkpoint Stats */}
         <Card className="p-0">
           <CardHeader className="p-3 sm:p-4 pb-2">
-            <CardTitle className="text-xs sm:text-sm font-medium flex items-center gap-2">
+            <CardTitle className="text-xs sm:text-xs font-medium flex items-center gap-2">
               <Zap className="h-3 w-3 sm:h-4 sm:w-4" />
               Checkpoint Stats
             </CardTitle>
           </CardHeader>
           <CardContent className="p-3 sm:p-4 pt-0 space-y-2 sm:space-y-4">
             <div className="p-2 sm:p-4 bg-muted/30 rounded-lg">
-              <p className="text-xs sm:text-sm text-muted-foreground">Write & Sync</p>
-              <p className="text-sm sm:text-lg font-mono mt-1 truncate">
+              <p className="text-xs sm:text-xs text-muted-foreground">Write & Sync</p>
+              <p className="text-xs sm:text-lg font-mono mt-1 truncate">
                 {performance?.checkpointWriteTime || 'N/A'}
               </p>
             </div>
@@ -191,7 +191,7 @@ export function PerformanceTab({ data, loading, history = [] }: PerformanceTabPr
         {/* Performance Tips */}
         <Card className="p-0">
           <CardHeader className="p-3 sm:p-4 pb-2">
-            <CardTitle className="text-xs sm:text-sm font-medium flex items-center gap-2">
+            <CardTitle className="text-xs sm:text-xs font-medium flex items-center gap-2">
               <Activity className="h-3 w-3 sm:h-4 sm:w-4" />
               Tips
             </CardTitle>
@@ -201,7 +201,7 @@ export function PerformanceTab({ data, loading, history = [] }: PerformanceTabPr
               <div className="flex items-start gap-2 p-2 bg-yellow-500/10 rounded-md">
                 <AlertTriangle className="h-3 w-3 sm:h-4 sm:w-4 text-yellow-500 mt-0.5 flex-shrink-0" />
                 <div>
-                  <p className="text-xs sm:text-sm font-medium">Low Cache Hit</p>
+                  <p className="text-xs sm:text-xs font-medium">Low Cache Hit</p>
                   <p className="text-xs sm:text-xs text-muted-foreground hidden sm:block">
                     Increase shared_buffers
                   </p>
@@ -212,7 +212,7 @@ export function PerformanceTab({ data, loading, history = [] }: PerformanceTabPr
               <div className="flex items-start gap-2 p-2 bg-red-500/10 rounded-md">
                 <AlertTriangle className="h-3 w-3 sm:h-4 sm:w-4 text-red-500 mt-0.5 flex-shrink-0" />
                 <div>
-                  <p className="text-xs sm:text-sm font-medium">Deadlocks</p>
+                  <p className="text-xs sm:text-xs font-medium">Deadlocks</p>
                   <p className="text-xs sm:text-xs text-muted-foreground hidden sm:block">
                     Review lock ordering
                   </p>
@@ -222,7 +222,7 @@ export function PerformanceTab({ data, loading, history = [] }: PerformanceTabPr
             {(performance?.cacheHitRatio ?? 0) >= 90 && !(performance?.deadlocks) && (
               <div className="flex items-center gap-2 p-2 bg-green-500/10 rounded-md">
                 <Activity className="h-3 w-3 sm:h-4 sm:w-4 text-green-500 flex-shrink-0" />
-                <p className="text-xs sm:text-sm">Performing well!</p>
+                <p className="text-xs sm:text-xs">Performing well!</p>
               </div>
             )}
           </CardContent>

@@ -23,7 +23,7 @@ export const ColumnList = React.memo(function ColumnList({ columns, indexes }: C
             </div>
           )}
 
-          <span className="text-data text-muted-foreground flex-1 truncate group-hover/col:text-foreground">
+          <span className="text-xs text-muted-foreground flex-1 truncate group-hover/col:text-foreground">
             {column.name}
           </span>
 
@@ -36,7 +36,7 @@ export const ColumnList = React.memo(function ColumnList({ columns, indexes }: C
         <div className="pt-2 pb-1">
           <div className="flex items-center gap-1.5 px-2 mb-1">
             <Hash className="w-2.5 h-2.5 text-purple-500/40" />
-            <span className="text-label uppercase tracking-wider font-bold text-muted-foreground">Indexes</span>
+            <span className="text-[0.625rem] font-medium text-muted-foreground">Indexes</span>
           </div>
           {indexes.map(idx => (
             <div key={idx.name} className="flex items-center gap-2 py-0.5 px-2">

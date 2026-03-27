@@ -164,15 +164,15 @@ export function OperationsTab() {
   const getStateBadge = (state: string) => {
     switch (state) {
       case 'active':
-        return <Badge className="bg-green-500/10 text-green-400 border border-green-500/20 text-label">Active</Badge>;
+        return <Badge className="bg-green-500/10 text-green-400 border border-green-500/20 text-[0.625rem]">Active</Badge>;
       case 'idle':
-        return <Badge variant="secondary" className="text-label">Idle</Badge>;
+        return <Badge variant="secondary" className="text-[0.625rem]">Idle</Badge>;
       case 'idle in transaction':
-        return <Badge className="bg-yellow-500/10 text-yellow-400 border border-yellow-500/20 text-label">Idle TX</Badge>;
+        return <Badge className="bg-yellow-500/10 text-yellow-400 border border-yellow-500/20 text-[0.625rem]">Idle TX</Badge>;
       case 'idle in transaction (aborted)':
-        return <Badge className="bg-red-500/10 text-red-400 border border-red-500/20 text-label">Abort</Badge>;
+        return <Badge className="bg-red-500/10 text-red-400 border border-red-500/20 text-[0.625rem]">Abort</Badge>;
       default:
-        return <Badge variant="outline" className="text-label">{state}</Badge>;
+        return <Badge variant="outline" className="text-[0.625rem]">{state}</Badge>;
     }
   };
 
@@ -274,7 +274,7 @@ export function OperationsTab() {
               </Button>
             </div>
             <h4 className="text-sm font-bold text-zinc-200 mb-1">Update Statistics</h4>
-            <p className="text-body text-zinc-500 leading-relaxed">
+            <p className="text-xs text-zinc-500 leading-relaxed">
               Updates query planner statistics for all tables.
             </p>
           </div>
@@ -299,7 +299,7 @@ export function OperationsTab() {
               </Button>
             </div>
             <h4 className="text-sm font-bold text-zinc-200 mb-1">Reclaim Space</h4>
-            <p className="text-body text-zinc-500 leading-relaxed">
+            <p className="text-xs text-zinc-500 leading-relaxed">
               Removes dead rows and returns space to the OS.
             </p>
           </div>
@@ -324,7 +324,7 @@ export function OperationsTab() {
               </Button>
             </div>
             <h4 className="text-sm font-bold text-zinc-200 mb-1">Rebuild Indexes</h4>
-            <p className="text-body text-zinc-500 leading-relaxed">
+            <p className="text-xs text-zinc-500 leading-relaxed">
               Reconstructs all indexes in the database.
             </p>
           </div>
@@ -333,11 +333,11 @@ export function OperationsTab() {
           <div className="p-4 rounded-xl border border-red-500/10 bg-red-500/5 flex flex-col justify-center">
             <div className="flex items-center gap-2 text-red-400 mb-2">
               <ShieldAlert className="w-4 h-4" />
-              <span className="text-body font-bold uppercase tracking-wider">
+              <span className="text-xs font-bold uppercase tracking-wider">
                 Warning
               </span>
             </div>
-            <p className="text-body text-red-400/70 leading-relaxed italic">
+            <p className="text-xs text-red-400/70 leading-relaxed italic">
               These operations can be resource-intensive. Avoid running them
               during peak traffic hours.
             </p>
@@ -392,7 +392,7 @@ export function OperationsTab() {
                         <span>-</span>
                         <span className="font-mono">{table.tableSize}</span>
                         {(table.bloatRatio ?? 0) > 10 && (
-                          <Badge variant="outline" className="text-label text-yellow-400 border-yellow-500/20 h-4">
+                          <Badge variant="outline" className="text-[0.625rem] text-yellow-400 border-yellow-500/20 h-4">
                             {(table.bloatRatio ?? 0).toFixed(0)}% bloat
                           </Badge>
                         )}
@@ -447,19 +447,19 @@ export function OperationsTab() {
             <div className="grid grid-cols-4 gap-2">
               <div className="rounded-lg bg-white/[0.03] p-2 text-center">
                 <div className="text-lg font-bold text-zinc-200 tabular-nums">{activeCount}</div>
-                <div className="text-label text-zinc-500 uppercase font-bold">Active</div>
+                <div className="text-[0.625rem] text-zinc-500 uppercase font-bold">Active</div>
               </div>
               <div className="rounded-lg bg-white/[0.03] p-2 text-center">
                 <div className="text-lg font-bold text-zinc-200 tabular-nums">{idleCount}</div>
-                <div className="text-label text-zinc-500 uppercase font-bold">Idle</div>
+                <div className="text-[0.625rem] text-zinc-500 uppercase font-bold">Idle</div>
               </div>
               <div className="rounded-lg bg-white/[0.03] p-2 text-center">
                 <div className={`text-lg font-bold tabular-nums ${idleInTxCount > 0 ? 'text-yellow-400' : 'text-zinc-200'}`}>{idleInTxCount}</div>
-                <div className="text-label text-zinc-500 uppercase font-bold">In TX</div>
+                <div className="text-[0.625rem] text-zinc-500 uppercase font-bold">In TX</div>
               </div>
               <div className="rounded-lg bg-white/[0.03] p-2 text-center">
                 <div className={`text-lg font-bold tabular-nums ${waitingCount > 0 ? 'text-orange-400' : 'text-zinc-200'}`}>{waitingCount}</div>
-                <div className="text-label text-zinc-500 uppercase font-bold">Wait</div>
+                <div className="text-[0.625rem] text-zinc-500 uppercase font-bold">Wait</div>
               </div>
             </div>
           </div>
@@ -523,7 +523,7 @@ export function OperationsTab() {
                                 ? 'outline'
                                 : 'secondary'
                           }
-                          className="text-label"
+                          className="text-[0.625rem]"
                         >
                           {session.duration}
                         </Badge>
@@ -575,7 +575,7 @@ export function OperationsTab() {
                 </span>
                 <Badge
                   variant="outline"
-                  className="text-label font-bold w-[70px] justify-center shrink-0 border-white/10"
+                  className="text-[0.625rem] font-bold w-[70px] justify-center shrink-0 border-white/10"
                 >
                   {entry.type}
                 </Badge>

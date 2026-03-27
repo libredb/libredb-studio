@@ -353,7 +353,7 @@ export default function Studio() {
               {activeMobileTab === 'database' && (
                 <div className="md:hidden h-full bg-[#080808] overflow-auto p-4">
                   <div className="mb-4 flex items-center justify-between">
-                    <h2 className="text-sm font-bold text-zinc-300 uppercase tracking-widest">Connections</h2>
+                    <h2 className="text-xs font-medium text-zinc-300">Connections</h2>
                     <Button
                       variant="outline"
                       size="sm"
@@ -403,7 +403,7 @@ export default function Studio() {
                   ) : (
                     <div className="flex flex-col items-center justify-center h-full text-zinc-500">
                       <Database className="w-12 h-12 mb-4 opacity-30" />
-                      <p className="text-sm">Select a connection first</p>
+                      <p className="text-xs">Select a connection first</p>
                     </div>
                   )}
                 </div>
@@ -581,22 +581,22 @@ export default function Studio() {
                 <AlertTriangle className="w-5 h-5 text-amber-400" />
               </div>
               <div className="flex-1 min-w-0">
-                <AlertDialogTitle className="text-title font-semibold text-zinc-100 mb-1">
+                <AlertDialogTitle className="text-[0.8125rem] font-medium text-zinc-100 mb-1">
                   Load all results?
                 </AlertDialogTitle>
-                <AlertDialogDescription className="text-body text-zinc-500 leading-relaxed">
+                <AlertDialogDescription className="text-xs text-zinc-500 leading-relaxed">
                   This may slow down your browser. Max <span className="text-zinc-400">100K</span> rows will be loaded.
                 </AlertDialogDescription>
               </div>
             </div>
           </div>
           <div className="px-6 pb-6 flex gap-2">
-            <AlertDialogCancel className="flex-1 h-9 bg-white/5 border-0 text-zinc-400 text-body font-medium hover:bg-white/10 hover:text-zinc-200">
+            <AlertDialogCancel className="flex-1 h-9 bg-white/5 border-0 text-zinc-400 text-xs font-medium hover:bg-white/10 hover:text-zinc-200">
               Cancel
             </AlertDialogCancel>
             <AlertDialogAction
               onClick={queryExec.handleUnlimitedQuery}
-              className="flex-1 h-9 bg-amber-600 border-0 text-white text-body font-medium hover:bg-amber-500"
+              className="flex-1 h-9 bg-amber-600 border-0 text-white text-xs font-medium hover:bg-amber-500"
             >
               Load All
             </AlertDialogAction>

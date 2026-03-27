@@ -166,7 +166,7 @@ export function TestDataGenerator({
         <div className="flex items-center justify-between px-5 py-3 border-b border-white/5">
           <div className="flex items-center gap-2">
             <Wand2 className="w-4 h-4 text-amber-400" />
-            <span className="text-sm font-bold text-zinc-200">Test Data Generator</span>
+            <span className="text-xs font-medium text-zinc-200">Test Data Generator</span>
             <span className="text-xs text-zinc-500 font-mono">{tableName}</span>
           </div>
           <button onClick={onClose} className="p-1 rounded hover:bg-white/5 text-zinc-500">
@@ -177,14 +177,14 @@ export function TestDataGenerator({
         {/* Controls */}
         <div className="px-5 py-3 border-b border-white/5 bg-[#0a0a0a] flex items-center gap-4">
           <div className="flex items-center gap-2">
-            <span className="text-xs text-zinc-500 uppercase tracking-wider font-bold">Rows:</span>
+            <span className="text-xs text-zinc-500r font-medium">Rows:</span>
             <div className="flex items-center gap-1">
               {[5, 10, 25, 50, 100].map(n => (
                 <button
                   key={n}
                   onClick={() => setRowCount(n)}
                   className={cn(
-                    "px-2 py-0.5 rounded text-xs font-bold transition-colors",
+                    "px-2 py-0.5 rounded text-xs font-medium transition-colors",
                     rowCount === n
                       ? "bg-amber-500/20 text-amber-400 border border-amber-500/20"
                       : "text-zinc-500 hover:text-zinc-300 hover:bg-white/5"
@@ -197,7 +197,7 @@ export function TestDataGenerator({
           </div>
           <button
             onClick={() => setRefreshKey(k => k + 1)}
-            className="flex items-center gap-1 px-2 py-1 rounded text-xs font-bold text-zinc-500 hover:text-zinc-300 hover:bg-white/5 transition-colors"
+            className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium text-zinc-500 hover:text-zinc-300 hover:bg-white/5 transition-colors"
             title="Regenerate random data"
           >
             <RefreshCw className="w-3 h-3" /> Regenerate
@@ -226,7 +226,7 @@ export function TestDataGenerator({
 
         {/* Preview */}
         <div className="flex-1 overflow-auto relative">
-          <pre className="p-5 text-body font-mono text-blue-300 whitespace-pre-wrap leading-relaxed">
+          <pre className="p-5 text-xs font-mono text-blue-300 whitespace-pre-wrap leading-relaxed">
             {generatedQuery}
           </pre>
         </div>
@@ -239,7 +239,7 @@ export function TestDataGenerator({
           <div className="flex items-center gap-2">
             <button
               onClick={handleCopy}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/5 text-zinc-400 text-xs font-bold hover:bg-white/10 transition-colors"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/5 text-zinc-400 text-xs font-medium hover:bg-white/10 transition-colors"
             >
               {copied ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
               {copied ? 'Copied!' : 'Copy'}
@@ -249,7 +249,7 @@ export function TestDataGenerator({
                 onExecuteQuery(generatedQuery);
                 onClose();
               }}
-              className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold transition-colors"
+              className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white text-xs font-medium transition-colors"
             >
               <Play className="w-3 h-3 fill-current" /> Execute
             </button>

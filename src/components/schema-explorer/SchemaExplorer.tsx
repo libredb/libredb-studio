@@ -80,7 +80,7 @@ export function SchemaExplorer({
           <Loader2 className="w-8 h-8 animate-spin text-blue-500/20" />
           <Database className="w-4 h-4 absolute inset-0 m-auto text-blue-500 animate-pulse" />
         </div>
-        <span className="text-xs uppercase tracking-[0.2em] font-bold animate-pulse">Scanning Schema...</span>
+        <span className="text-xs font-medium animate-pulse">Scanning Schema...</span>
       </div>
     );
   }
@@ -91,8 +91,8 @@ export function SchemaExplorer({
         <div className="w-12 h-12 rounded-full bg-muted flex items-center justify-center mb-4 border border-border">
           <AlertCircle className="w-6 h-6 text-muted-foreground" />
         </div>
-        <h3 className="text-foreground text-sm font-medium mb-1">No structures found</h3>
-        <p className="text-body text-muted-foreground leading-relaxed">
+        <h3 className="text-foreground text-xs font-medium mb-1">No structures found</h3>
+        <p className="text-xs text-muted-foreground leading-relaxed">
           We couldn&apos;t find any tables or views in this connection.
         </p>
       </div>
@@ -105,7 +105,7 @@ export function SchemaExplorer({
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Database className="w-3.5 h-3.5 text-blue-500/50" />
-            <span className="text-xs font-bold uppercase tracking-[0.15em] text-muted-foreground">
+            <span className="text-xs font-medium text-muted-foreground">
               Explorer
             </span>
           </div>
@@ -132,7 +132,7 @@ export function SchemaExplorer({
                 <Plus className="w-3.5 h-3.5" />
               </Button>
             )}
-            <span className="text-label bg-blue-500/10 text-blue-400 px-1.5 py-0.5 rounded-full font-mono border border-blue-500/10">
+            <span className="text-[0.625rem] bg-blue-500/10 text-blue-400 px-1.5 py-0.5 rounded-full font-mono border border-blue-500/10">
               {schema.length}
             </span>
           </div>
@@ -144,7 +144,7 @@ export function SchemaExplorer({
             placeholder={labels?.searchPlaceholder || "Search tables or columns..."}
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="h-8 pl-8 pr-8 text-data bg-muted/50 border-border focus-visible:ring-1 focus-visible:ring-blue-500/50 placeholder:text-muted-foreground/50"
+            className="h-8 pl-8 pr-8 text-xs bg-muted/50 border-border focus-visible:ring-1 focus-visible:ring-blue-500/50 placeholder:text-muted-foreground/50"
           />
           {searchQuery && (
             <button

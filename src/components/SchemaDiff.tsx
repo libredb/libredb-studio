@@ -160,13 +160,13 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
       {/* Header */}
       <div className="flex items-center gap-2 px-3 py-2 border-b border-white/5 bg-[#0a0a0a] flex-wrap">
         <GitCompare className="w-4 h-4 text-rose-400" />
-        <span className="text-xs font-bold uppercase text-zinc-400 tracking-wider">Schema Diff</span>
+        <span className="text-xs font-medium text-zinc-400r">Schema Diff</span>
 
         <div className="h-4 w-px bg-white/10" />
 
         {/* Source selector */}
         <div className="flex items-center gap-1">
-          <span className="text-xs text-zinc-600 uppercase">Source</span>
+          <span className="text-xs text-zinc-600">Source</span>
           <Select value={sourceId} onValueChange={setSourceId}>
             <SelectTrigger className="h-7 w-[180px] text-xs bg-white/5 border-white/10">
               <SelectValue placeholder="Select source" />
@@ -192,7 +192,7 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
 
         {/* Target selector */}
         <div className="flex items-center gap-1">
-          <span className="text-xs text-zinc-600 uppercase">Target</span>
+          <span className="text-xs text-zinc-600">Target</span>
           <Select value={targetId} onValueChange={(v) => {
             if (v.startsWith('conn:')) {
               fetchRemoteSchema(v.replace('conn:', ''));
@@ -218,7 +218,7 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
               ))}
               {allConnections.filter(c => c.id !== connection?.id).length > 0 && (
                 <>
-                  <div className="px-2 py-1 text-label text-zinc-600 uppercase border-t border-white/5 mt-1">
+                  <div className="px-2 py-1 text-[0.625rem] text-zinc-600 border-t border-white/5 mt-1">
                     Fetch from connection
                   </div>
                   {allConnections.filter(c => c.id !== connection?.id).map(c => (
@@ -263,7 +263,7 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
           <Button
             variant="ghost"
             size="sm"
-            className="h-7 text-xs font-bold uppercase text-zinc-500 hover:text-white gap-1"
+            className="h-7 text-xs font-medium text-zinc-500 hover:text-white gap-1"
             onClick={() => setShowLabelInput(true)}
             disabled={!connection}
           >
@@ -275,7 +275,7 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
           <Button
             variant="ghost"
             size="sm"
-            className="h-7 text-xs font-bold uppercase text-zinc-500 hover:text-white gap-1"
+            className="h-7 text-xs font-medium text-zinc-500 hover:text-white gap-1"
             onClick={() => setShowMigration(!showMigration)}
           >
             <FileCode className="w-3 h-3" /> {showMigration ? 'Diff View' : 'SQL Migration'}
@@ -288,7 +288,7 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
         {!targetId ? (
           <div className="flex-1 flex flex-col items-center justify-center text-zinc-600 gap-3">
             <GitCompare className="w-10 h-10 opacity-30" />
-            <p className="text-sm">Select source and target to compare schemas</p>
+            <p className="text-xs">Select source and target to compare schemas</p>
             <p className="text-xs text-zinc-700">Take a snapshot first, then compare with the current schema</p>
 
             {/* Snapshot Timeline */}
@@ -316,7 +316,7 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
             {/* Table List */}
             <div className="w-64 border-r border-white/5 overflow-auto">
               <div className="p-2 border-b border-white/5">
-                <div className="text-xs text-zinc-500 uppercase px-2 mb-1">
+                <div className="text-xs text-zinc-500 px-2 mb-1">
                   {diff.summary.added} added, {diff.summary.removed} removed, {diff.summary.modified} modified
                 </div>
               </div>
@@ -345,7 +345,7 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
               {selectedTable ? (
                 <TableDiffDetail diff={diff.tables.find(t => t.tableName === selectedTable)!} />
               ) : (
-                <div className="h-full flex items-center justify-center text-zinc-600 text-sm">
+                <div className="h-full flex items-center justify-center text-zinc-600 text-xs">
                   Select a table to view diff details
                 </div>
               )}
@@ -353,12 +353,12 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
           </>
         ) : diff && !diff.hasChanges ? (
           <div className="flex-1 flex items-center justify-center text-zinc-600 gap-2">
-            <span className="text-sm">No differences found between source and target</span>
+            <span className="text-xs">No differences found between source and target</span>
           </div>
         ) : (
           <div className="flex-1 flex items-center justify-center text-zinc-600 gap-2">
             <AlertTriangle className="w-4 h-4" />
-            <span className="text-sm">Cannot compare same schema with itself</span>
+            <span className="text-xs">Cannot compare same schema with itself</span>
           </div>
         )}
       </div>
@@ -371,7 +371,7 @@ function TableDiffDetail({ diff }: { diff: TableDiff }) {
     <div className="space-y-4">
       <div className="flex items-center gap-2">
         <Database className="w-4 h-4 text-zinc-400" />
-        <h3 className="text-sm font-bold text-zinc-200">{diff.tableName}</h3>
+        <h3 className="text-xs font-medium text-zinc-200">{diff.tableName}</h3>
         <Badge className={cn(
           "text-xs",
           diff.action === 'added' && "bg-green-500/20 text-green-400",
@@ -385,7 +385,7 @@ function TableDiffDetail({ diff }: { diff: TableDiff }) {
       {/* Columns */}
       {diff.columns.length > 0 && (
         <div>
-          <h4 className="text-xs uppercase text-zinc-500 mb-2 font-bold">Columns</h4>
+          <h4 className="text-xs text-zinc-500 mb-2 font-medium">Columns</h4>
           <div className="space-y-1">
             {diff.columns.map((col, i) => (
               <div key={i} className={cn(
@@ -418,7 +418,7 @@ function TableDiffDetail({ diff }: { diff: TableDiff }) {
       {/* Indexes */}
       {diff.indexes.length > 0 && (
         <div>
-          <h4 className="text-xs uppercase text-zinc-500 mb-2 font-bold">Indexes</h4>
+          <h4 className="text-xs text-zinc-500 mb-2 font-medium">Indexes</h4>
           <div className="space-y-1">
             {diff.indexes.map((idx, i) => (
               <div key={i} className={cn(
@@ -441,7 +441,7 @@ function TableDiffDetail({ diff }: { diff: TableDiff }) {
       {/* Foreign Keys */}
       {diff.foreignKeys.length > 0 && (
         <div>
-          <h4 className="text-xs uppercase text-zinc-500 mb-2 font-bold">Foreign Keys</h4>
+          <h4 className="text-xs text-zinc-500 mb-2 font-medium">Foreign Keys</h4>
           <div className="space-y-1">
             {diff.foreignKeys.map((fk, i) => (
               <div key={i} className={cn(

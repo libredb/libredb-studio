@@ -50,7 +50,7 @@ export function SnapshotTimeline({ snapshots, onCompare, onDelete }: SnapshotTim
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between px-2">
-        <span className="text-xs uppercase text-zinc-500 font-bold">Timeline</span>
+        <span className="text-xs text-zinc-500 font-medium">Timeline</span>
         {canCompare && (
           <span className="text-xs text-blue-400">Comparing 2 snapshots</span>
         )}
@@ -92,10 +92,10 @@ export function SnapshotTimeline({ snapshots, onCompare, onDelete }: SnapshotTim
                 <div className="text-xs font-medium truncate max-w-[90px]">
                   {snapshot.label || snapshot.connectionName}
                 </div>
-                <div className="text-label text-zinc-600">
+                <div className="text-[0.625rem] text-zinc-600">
                   {date.toLocaleDateString()} {date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                 </div>
-                <Badge variant="secondary" className="text-label mt-1">
+                <Badge variant="secondary" className="text-[0.625rem] mt-1">
                   {snapshot.schema.length} tables
                 </Badge>
               </div>

@@ -156,7 +156,7 @@ export const TableItem = React.memo(function TableItem({
 
             <span
               className={cn(
-                'truncate min-w-0 flex-1 text-body font-medium transition-colors',
+                'truncate min-w-0 flex-1 text-xs font-medium transition-colors',
                 isExpanded ? 'text-foreground' : 'text-muted-foreground group-hover:text-foreground'
               )}
             >
@@ -165,7 +165,7 @@ export const TableItem = React.memo(function TableItem({
 
             <div className="shrink-0 relative w-8 h-6 flex items-center justify-center">
               {table.rowCount !== undefined && (
-                <span className="absolute inset-0 flex items-center justify-center text-label font-mono text-muted-foreground/70 whitespace-nowrap opacity-100 group-hover:opacity-0 transition-opacity pointer-events-none">
+                <span className="absolute inset-0 flex items-center justify-center text-[0.625rem] font-mono text-muted-foreground/70 whitespace-nowrap opacity-100 group-hover:opacity-0 transition-opacity pointer-events-none">
                   {table.rowCount >= 1000 ? `${(table.rowCount / 1000).toFixed(1)}k` : table.rowCount}
                 </span>
               )}

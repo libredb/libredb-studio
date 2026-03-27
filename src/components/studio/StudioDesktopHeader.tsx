@@ -35,15 +35,15 @@ export function StudioDesktopHeader({
           <Database className="w-4 h-4 text-blue-400" />
         </div>
         <div>
-          <h1 className="text-sm font-semibold tracking-tight text-zinc-200 truncate max-w-[120px]">
+          <h1 className="text-xs font-medium text-zinc-200 truncate max-w-[120px]">
             {activeConnection ? activeConnection.name : 'Quick Access'}
           </h1>
           {activeConnection && (
-            <p className="text-xs text-zinc-500 font-mono uppercase tracking-widest leading-none mt-0.5">
+            <p className="text-xs text-zinc-500 font-mono uppercase leading-none mt-0.5">
               {activeConnection.type}
               {activeConnection.environment && activeConnection.environment !== 'other' && (
                 <span
-                  className="ml-1 font-bold"
+                  className="ml-1 font-medium"
                   style={{ color: activeConnection.color || '#22c55e' }}
                 >
                   • {activeConnection.environment}
@@ -66,7 +66,7 @@ export function StudioDesktopHeader({
               connectionPulse === 'degraded' && "bg-amber-500",
               connectionPulse === 'error' && "bg-red-500",
             )} />
-            <span className="text-xs font-bold uppercase tracking-widest text-zinc-500">
+            <span className="text-xs font-medium text-zinc-500">
               {connectionPulse === 'healthy' ? 'Online' : connectionPulse === 'degraded' ? 'Slow' : 'Error'}
             </span>
           </div>
@@ -75,7 +75,7 @@ export function StudioDesktopHeader({
         <Button
           variant="ghost"
           size="sm"
-          className="h-7 px-3 text-xs font-bold uppercase tracking-widest gap-2 text-zinc-500 hover:text-purple-400 hover:bg-purple-500/10"
+          className="h-7 px-3 text-xs font-medium gap-2 text-zinc-500 hover:text-purple-400 hover:bg-purple-500/10"
           onClick={() => router.push('/monitoring')}
         >
           <Gauge className="w-3 h-3" /> Monitoring

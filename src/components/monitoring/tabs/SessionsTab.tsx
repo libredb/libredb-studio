@@ -92,49 +92,49 @@ export function SessionsTab({ data, loading, onKillSession, isAdmin = true }: Se
       <div className="grid grid-cols-4 gap-2 sm:gap-4">
         <Card className="p-0">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 p-2 sm:p-4 pb-1 sm:pb-2">
-            <CardTitle className="text-xs sm:text-sm font-medium text-muted-foreground">
+            <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">
               Active
             </CardTitle>
             <Activity className="h-3 w-3 sm:h-4 sm:w-4 text-green-500" />
           </CardHeader>
           <CardContent className="p-2 sm:p-4 pt-0">
-            <div className="text-lg sm:text-2xl font-bold">{activeCount}</div>
+            <div className="text-lg sm:text-2xl font-medium">{activeCount}</div>
           </CardContent>
         </Card>
 
         <Card className="p-0">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 p-2 sm:p-4 pb-1 sm:pb-2">
-            <CardTitle className="text-xs sm:text-sm font-medium text-muted-foreground">
+            <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">
               Idle
             </CardTitle>
             <Clock className="h-3 w-3 sm:h-4 sm:w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent className="p-2 sm:p-4 pt-0">
-            <div className="text-lg sm:text-2xl font-bold">{idleCount}</div>
+            <div className="text-lg sm:text-2xl font-medium">{idleCount}</div>
           </CardContent>
         </Card>
 
         <Card className="p-0">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 p-2 sm:p-4 pb-1 sm:pb-2">
-            <CardTitle className="text-xs sm:text-sm font-medium text-muted-foreground">
+            <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">
               In TX
             </CardTitle>
             <Clock className={`h-3 w-3 sm:h-4 sm:w-4 ${idleInTxCount > 0 ? 'text-yellow-500' : 'text-muted-foreground'}`} />
           </CardHeader>
           <CardContent className="p-2 sm:p-4 pt-0">
-            <div className="text-lg sm:text-2xl font-bold">{idleInTxCount}</div>
+            <div className="text-lg sm:text-2xl font-medium">{idleInTxCount}</div>
           </CardContent>
         </Card>
 
         <Card className="p-0">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 p-2 sm:p-4 pb-1 sm:pb-2">
-            <CardTitle className="text-xs sm:text-sm font-medium text-muted-foreground">
+            <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">
               Wait
             </CardTitle>
             <Users className={`h-3 w-3 sm:h-4 sm:w-4 ${waitingCount > 0 ? 'text-orange-500' : 'text-muted-foreground'}`} />
           </CardHeader>
           <CardContent className="p-2 sm:p-4 pt-0">
-            <div className="text-lg sm:text-2xl font-bold">{waitingCount}</div>
+            <div className="text-lg sm:text-2xl font-medium">{waitingCount}</div>
           </CardContent>
         </Card>
       </div>
@@ -142,7 +142,7 @@ export function SessionsTab({ data, loading, onKillSession, isAdmin = true }: Se
       {/* Sessions Table */}
       <Card className="p-0">
         <CardHeader className="p-3 sm:p-4">
-          <CardTitle className="text-xs sm:text-sm font-medium flex items-center gap-2">
+          <CardTitle className="text-xs sm:text-xs font-medium flex items-center gap-2">
             <Users className="h-3 w-3 sm:h-4 sm:w-4" />
             Sessions ({sessions.length})
           </CardTitle>
@@ -151,7 +151,7 @@ export function SessionsTab({ data, loading, onKillSession, isAdmin = true }: Se
           {sessions.length === 0 ? (
             <div className="text-center py-8 text-muted-foreground">
               <Users className="h-8 w-8 mx-auto mb-2 opacity-50" />
-              <p className="text-sm">No active sessions found.</p>
+              <p className="text-xs">No active sessions found.</p>
             </div>
           ) : (
             <div className="overflow-x-auto">
@@ -257,7 +257,7 @@ export function SessionsTab({ data, loading, onKillSession, isAdmin = true }: Se
             <AlertDialogTitle>Terminate Session?</AlertDialogTitle>
             <AlertDialogDescription>
               Are you sure you want to terminate session{' '}
-              <span className="font-mono font-bold">{confirmKill?.pid}</span>?
+              <span className="font-mono font-medium">{confirmKill?.pid}</span>?
               <br />
               <br />
               User: <span className="font-medium">{confirmKill?.user}</span>

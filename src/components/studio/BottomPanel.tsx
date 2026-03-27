@@ -42,7 +42,7 @@ function ChartDashboardLazy({ result }: { result: QueryResult | null }) {
     return (
       <div className="h-full flex flex-col items-center justify-center bg-[#080808] text-zinc-500 gap-2">
         <LayoutDashboard className="w-10 h-10 opacity-30" />
-        <p className="text-sm">No saved charts yet</p>
+        <p className="text-xs">No saved charts yet</p>
         <p className="text-xs text-zinc-600">Save charts from the Charts tab to display them here</p>
       </div>
     );
@@ -54,8 +54,8 @@ function ChartDashboardLazy({ result }: { result: QueryResult | null }) {
         {savedCharts.map(chart => (
           <div key={chart.id} className="bg-[#0d0d0d] border border-white/10 rounded-lg p-3">
             <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-bold text-zinc-300">{chart.name}</span>
-              <span className="text-xs text-zinc-600 uppercase">{chart.chartType}</span>
+              <span className="text-xs font-medium text-zinc-300">{chart.name}</span>
+              <span className="text-xs text-zinc-600">{chart.chartType}</span>
             </div>
             <div className="text-xs text-zinc-500">
               {chart.xAxis && <span>X: {chart.xAxis}</span>}
@@ -161,7 +161,7 @@ export function BottomPanel({
                 if (tab.key === 'nl2sql') onSetIsNL2SQLOpen(true);
               }}
               className={cn(
-                "h-full px-3 text-xs font-bold uppercase transition-all border-b-2 flex items-center gap-2",
+                "h-full px-3 text-xs font-medium transition-all border-b-2 flex items-center gap-2",
                 mode === tab.key
                   ? tab.activeClass
                   : "text-zinc-500 border-transparent hover:text-zinc-300"
@@ -179,7 +179,7 @@ export function BottomPanel({
             </span>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="sm" className="h-7 text-xs font-bold uppercase text-zinc-500 hover:text-white gap-2">
+                <Button variant="ghost" size="sm" className="h-7 text-xs font-medium text-zinc-500 hover:text-white gap-2">
                   <Download className="w-3 h-3" /> Export
                 </Button>
               </DropdownMenuTrigger>
@@ -276,8 +276,8 @@ export function BottomPanel({
         ) : (
           <div className="h-full flex flex-col items-center justify-center opacity-20 bg-[#0a0a0a]">
             <Terminal className="w-12 h-12 mb-4" />
-            <p className="text-sm font-medium">Execute a query or check history</p>
-            <p className="text-xs uppercase tracking-widest mt-2">Ready to query</p>
+            <p className="text-xs font-medium">Execute a query or check history</p>
+            <p className="text-xs mt-2">Ready to query</p>
           </div>
         )}
       </div>

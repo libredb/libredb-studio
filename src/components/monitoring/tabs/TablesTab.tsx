@@ -80,13 +80,13 @@ export function TablesTab({ data, loading, onRunMaintenance, isAdmin = true }: T
       <div className="grid grid-cols-3 gap-2 sm:gap-4">
         <Card className="p-0">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 p-2 sm:p-4 pb-1 sm:pb-2">
-            <CardTitle className="text-xs sm:text-sm font-medium text-muted-foreground">
+            <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">
               Tables
             </CardTitle>
             <Table2 className="h-3 w-3 sm:h-4 sm:w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent className="p-2 sm:p-4 pt-0">
-            <div className="text-lg sm:text-2xl font-bold">{tables.length}</div>
+            <div className="text-lg sm:text-2xl font-medium">{tables.length}</div>
             <p className="text-xs sm:text-xs text-muted-foreground mt-1">
               {formatNumber(totalRows)} rows
             </p>
@@ -95,13 +95,13 @@ export function TablesTab({ data, loading, onRunMaintenance, isAdmin = true }: T
 
         <Card className="p-0">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 p-2 sm:p-4 pb-1 sm:pb-2">
-            <CardTitle className="text-xs sm:text-sm font-medium text-muted-foreground">
+            <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">
               Size
             </CardTitle>
             <Search className="h-3 w-3 sm:h-4 sm:w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent className="p-2 sm:p-4 pt-0">
-            <div className="text-lg sm:text-2xl font-bold">{formatBytes(totalSize)}</div>
+            <div className="text-lg sm:text-2xl font-medium">{formatBytes(totalSize)}</div>
             <p className="text-xs sm:text-xs text-muted-foreground mt-1">
               Total
             </p>
@@ -110,7 +110,7 @@ export function TablesTab({ data, loading, onRunMaintenance, isAdmin = true }: T
 
         <Card className="p-0">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 p-2 sm:p-4 pb-1 sm:pb-2">
-            <CardTitle className="text-xs sm:text-sm font-medium text-muted-foreground">
+            <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">
               Vacuum
             </CardTitle>
             <AlertTriangle
@@ -118,7 +118,7 @@ export function TablesTab({ data, loading, onRunMaintenance, isAdmin = true }: T
             />
           </CardHeader>
           <CardContent className="p-2 sm:p-4 pt-0">
-            <div className="text-lg sm:text-2xl font-bold">{tablesNeedingVacuum}</div>
+            <div className="text-lg sm:text-2xl font-medium">{tablesNeedingVacuum}</div>
             <p className="text-xs sm:text-xs text-muted-foreground mt-1">
               {tablesNeedingVacuum > 0 ? 'Need' : 'OK'}
             </p>
@@ -130,7 +130,7 @@ export function TablesTab({ data, loading, onRunMaintenance, isAdmin = true }: T
       <Card className="p-0">
         <CardHeader className="p-3 sm:p-4">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 sm:gap-4">
-            <CardTitle className="text-xs sm:text-sm font-medium flex items-center gap-2">
+            <CardTitle className="text-xs sm:text-xs font-medium flex items-center gap-2">
               <Table2 className="h-3 w-3 sm:h-4 sm:w-4" />
               Table Statistics
             </CardTitle>
@@ -138,7 +138,7 @@ export function TablesTab({ data, loading, onRunMaintenance, isAdmin = true }: T
               placeholder="Search..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full sm:w-[200px] h-8 text-sm"
+              className="w-full sm:w-[200px] h-8 text-xs"
             />
           </div>
         </CardHeader>
@@ -146,7 +146,7 @@ export function TablesTab({ data, loading, onRunMaintenance, isAdmin = true }: T
           {filteredTables.length === 0 ? (
             <div className="text-center py-8 text-muted-foreground">
               <Table2 className="h-8 w-8 mx-auto mb-2 opacity-50" />
-              <p className="text-sm">No tables found.</p>
+              <p className="text-xs">No tables found.</p>
             </div>
           ) : (
             <div className="overflow-x-auto">
@@ -167,7 +167,7 @@ export function TablesTab({ data, loading, onRunMaintenance, isAdmin = true }: T
                     <TableRow key={`${table.schemaName}.${table.tableName}`}>
                       <TableCell className="py-2">
                         <div className="flex flex-col">
-                          <span className="font-medium text-xs sm:text-sm truncate max-w-[100px] sm:max-w-[200px]">
+                          <span className="font-medium text-xs sm:text-xs truncate max-w-[100px] sm:max-w-[200px]">
                             {table.tableName}
                           </span>
                           <span className="text-xs sm:text-xs text-muted-foreground">

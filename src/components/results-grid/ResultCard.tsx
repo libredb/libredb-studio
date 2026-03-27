@@ -63,7 +63,7 @@ export function ResultCard({
           </div>
           <div className="min-w-0 flex-1">
             <p className={cn(
-              "text-sm font-semibold truncate",
+              "text-xs font-medium truncate",
               maskingActive && sensitiveColumns?.has(primaryColumn) ? "text-zinc-500 italic" : "text-zinc-100"
             )}>
               {displayPrimary}

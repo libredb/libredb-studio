@@ -48,7 +48,7 @@ export function QueryToolbar({
       {playgroundMode && (
         <div className="hidden md:flex items-center justify-center gap-2 px-4 py-1 bg-emerald-500/10 border-b border-emerald-500/20 text-emerald-400">
           <FlaskConical className="w-3 h-3" />
-          <span className="text-xs font-bold uppercase tracking-widest">
+          <span className="text-xs font-mediumr">
             Sandbox Mode — All changes will be auto-rolled back
           </span>
         </div>
@@ -59,13 +59,13 @@ export function QueryToolbar({
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-2 px-2 py-0.5 rounded bg-blue-500/5 border border-blue-500/10">
             <Terminal className="w-3 h-3 text-blue-400" />
-            <span className="text-xs font-bold text-blue-400 uppercase tracking-widest">Query</span>
+            <span className="text-xs font-medium text-blue-400">Query</span>
           </div>
           <div className="h-4 w-px bg-white/5" />
           <Button
             variant="ghost"
             size="sm"
-            className="h-7 text-xs font-bold uppercase tracking-widest text-zinc-500 hover:text-white gap-2"
+            className="h-7 text-xs font-medium text-zinc-500 hover:text-white gap-2"
             onClick={onSaveQuery}
           >
             <Save className="w-3 h-3" /> Save
@@ -74,7 +74,7 @@ export function QueryToolbar({
         {isExecuting ? (
           <Button
             size="sm"
-            className="bg-red-600 hover:bg-red-500 text-white font-bold text-body h-7 px-4 gap-2"
+            className="bg-red-600 hover:bg-red-500 text-white font-medium text-xs h-7 px-4 gap-2"
             onClick={onCancelQuery}
           >
             <Square className="w-3 h-3 fill-current" />
@@ -83,7 +83,7 @@ export function QueryToolbar({
         ) : (
           <Button
             size="sm"
-            className="bg-blue-600 hover:bg-blue-500 text-white font-bold text-body h-7 px-4 gap-2"
+            className="bg-blue-600 hover:bg-blue-500 text-white font-medium text-xs h-7 px-4 gap-2"
             onClick={onExecuteQuery}
             disabled={!activeConnection}
           >
@@ -97,13 +97,13 @@ export function QueryToolbar({
           <div className="flex items-center gap-1 ml-2 pl-2 border-l border-white/10">
             {transactionActive ? (
               <>
-                <span className="text-label font-bold text-amber-400 uppercase tracking-wider px-1.5 py-0.5 bg-amber-500/10 rounded border border-amber-500/20 mr-1">
+                <span className="text-[0.625rem] font-medium text-amber-400 px-1.5 py-0.5 bg-amber-500/10 rounded border border-amber-500/20 mr-1">
                   TXN
                 </span>
                 <Button
                   size="sm"
                   variant="ghost"
-                  className="h-7 text-xs font-bold text-emerald-400 hover:text-emerald-300 hover:bg-emerald-500/10 gap-1"
+                  className="h-7 text-xs font-medium text-emerald-400 hover:text-emerald-300 hover:bg-emerald-500/10 gap-1"
                   onClick={onCommitTransaction}
                 >
                   COMMIT
@@ -111,7 +111,7 @@ export function QueryToolbar({
                 <Button
                   size="sm"
                   variant="ghost"
-                  className="h-7 text-xs font-bold text-red-400 hover:text-red-300 hover:bg-red-500/10 gap-1"
+                  className="h-7 text-xs font-medium text-red-400 hover:text-red-300 hover:bg-red-500/10 gap-1"
                   onClick={onRollbackTransaction}
                 >
                   ROLLBACK
@@ -121,7 +121,7 @@ export function QueryToolbar({
               <Button
                 size="sm"
                 variant="ghost"
-                className="h-7 text-xs font-bold uppercase tracking-widest text-zinc-500 hover:text-white gap-1"
+                className="h-7 text-xs font-medium text-zinc-500 hover:text-white gap-1"
                 onClick={onBeginTransaction}
                 disabled={playgroundMode}
               >
@@ -133,7 +133,7 @@ export function QueryToolbar({
               size="sm"
               variant="ghost"
               className={cn(
-                "h-7 text-xs font-bold uppercase tracking-widest gap-1",
+                "h-7 text-xs font-medium gap-1",
                 playgroundMode
                   ? "text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20"
                   : "text-zinc-500 hover:text-white"
@@ -150,7 +150,7 @@ export function QueryToolbar({
               size="sm"
               variant="ghost"
               className={cn(
-                "h-7 text-xs font-bold uppercase tracking-widest gap-1",
+                "h-7 text-xs font-medium gap-1",
                 editingEnabled
                   ? "text-amber-400 bg-amber-500/10 hover:bg-amber-500/20"
                   : "text-zinc-500 hover:text-white"
@@ -165,7 +165,7 @@ export function QueryToolbar({
             <Button
               size="sm"
               variant="ghost"
-              className="h-7 text-xs font-bold uppercase tracking-widest text-zinc-500 hover:text-white gap-1"
+              className="h-7 text-xs font-medium text-zinc-500 hover:text-white gap-1"
               onClick={onImport}
               title="Import data from CSV/JSON"
             >

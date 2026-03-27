@@ -128,8 +128,8 @@ export function CreateTableModal({ isOpen, onClose, onTableCreated }: CreateTabl
               <TableIcon className="w-5 h-5 text-blue-400" />
             </div>
             <div>
-              <DialogTitle className="text-xl font-bold tracking-tight">Create New Table</DialogTitle>
-              <p className="text-xs text-zinc-500 mt-1 uppercase tracking-widest font-medium">Define schema structure</p>
+              <DialogTitle className="text-xs font-medium">Create New Table</DialogTitle>
+              <p className="text-xs text-zinc-500 mt-1 font-medium">Define schema structure</p>
             </div>
           </div>
         </DialogHeader>
@@ -139,7 +139,7 @@ export function CreateTableModal({ isOpen, onClose, onTableCreated }: CreateTabl
           <div className="space-y-4">
             <div className="flex items-center gap-2">
               <Settings2 className="w-4 h-4 text-blue-500/50" />
-              <Label className="text-xs font-bold uppercase tracking-[0.2em] text-zinc-500">General Settings</Label>
+              <Label className="text-xs font-medium text-zinc-500">General Settings</Label>
             </div>
             <div className="grid gap-2">
               <Label htmlFor="tableName" className="text-xs font-medium text-zinc-400">Table Name</Label>
@@ -158,13 +158,13 @@ export function CreateTableModal({ isOpen, onClose, onTableCreated }: CreateTabl
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <Type className="w-4 h-4 text-emerald-500/50" />
-                <Label className="text-xs font-bold uppercase tracking-[0.2em] text-zinc-500">Column Definitions</Label>
+                <Label className="text-xs font-medium text-zinc-500">Column Definitions</Label>
               </div>
               <Button 
                 variant="ghost" 
                 size="sm" 
                 onClick={addColumn}
-                className="h-7 text-xs uppercase tracking-widest font-bold gap-2 hover:bg-emerald-500/10 hover:text-emerald-400"
+                className="h-7 text-xs font-medium gap-2 hover:bg-emerald-500/10 hover:text-emerald-400"
               >
                 <Plus className="w-3 h-3" /> Add Column
               </Button>
@@ -177,7 +177,7 @@ export function CreateTableModal({ isOpen, onClose, onTableCreated }: CreateTabl
                   className="flex items-end gap-3 p-3 rounded-lg bg-zinc-900/30 border border-white/5 group hover:border-white/10 transition-colors"
                 >
                   <div className="flex-1 space-y-2">
-                    <Label className="text-xs text-zinc-500 uppercase font-bold">Column Name</Label>
+                    <Label className="text-xs text-zinc-500 font-medium">Column Name</Label>
                     <Input
                       value={col.name}
                       onChange={(e) => updateColumn(index, { name: e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, '_') })}
@@ -187,7 +187,7 @@ export function CreateTableModal({ isOpen, onClose, onTableCreated }: CreateTabl
                   </div>
 
                   <div className="w-40 space-y-2">
-                    <Label className="text-xs text-zinc-500 uppercase font-bold">Type</Label>
+                    <Label className="text-xs text-zinc-500 font-medium">Type</Label>
                     <Select 
                       value={col.type} 
                       onValueChange={(val) => updateColumn(index, { type: val })}
@@ -206,7 +206,7 @@ export function CreateTableModal({ isOpen, onClose, onTableCreated }: CreateTabl
 
                   <div className="flex items-center gap-4 pb-2 px-2">
                     <div className="flex flex-col items-center gap-1.5" title="Primary Key">
-                      <Label className="text-micro text-zinc-600 uppercase font-black">PK</Label>
+                      <Label className="text-[0.5rem] text-zinc-600 uppercase font-black">PK</Label>
                       <Checkbox 
                         checked={col.isPrimary} 
                         onCheckedChange={(checked) => updateColumn(index, { 
@@ -217,7 +217,7 @@ export function CreateTableModal({ isOpen, onClose, onTableCreated }: CreateTabl
                       />
                     </div>
                     <div className="flex flex-col items-center gap-1.5" title="Nullable">
-                      <Label className="text-micro text-zinc-600 uppercase font-black">Null</Label>
+                      <Label className="text-[0.5rem] text-zinc-600 uppercase font-black">Null</Label>
                       <Checkbox 
                         checked={col.isNullable} 
                         onCheckedChange={(checked) => updateColumn(index, { isNullable: !!checked })}
@@ -225,7 +225,7 @@ export function CreateTableModal({ isOpen, onClose, onTableCreated }: CreateTabl
                       />
                     </div>
                     <div className="flex flex-col items-center gap-1.5" title="Unique">
-                      <Label className="text-micro text-zinc-600 uppercase font-black">Unq</Label>
+                      <Label className="text-[0.5rem] text-zinc-600 uppercase font-black">Unq</Label>
                       <Checkbox 
                         checked={col.isUnique} 
                         onCheckedChange={(checked) => updateColumn(index, { isUnique: !!checked })}
@@ -252,9 +252,9 @@ export function CreateTableModal({ isOpen, onClose, onTableCreated }: CreateTabl
              <div className="flex items-center justify-between mb-3">
                <div className="flex items-center gap-2">
                  <div className="w-2 h-2 rounded-full bg-blue-500" />
-                 <span className="text-xs uppercase font-bold text-zinc-500 tracking-widest">SQL Preview</span>
+                 <span className="text-xs font-medium text-zinc-500">SQL Preview</span>
                </div>
-               <span className="text-label text-zinc-700">Auto-generated</span>
+               <span className="text-[0.625rem] text-zinc-700">Auto-generated</span>
              </div>
              <pre className="text-xs text-blue-400/80 whitespace-pre-wrap leading-relaxed">
                {generateSQL() || '-- Name your table to see SQL'}
@@ -269,7 +269,7 @@ export function CreateTableModal({ isOpen, onClose, onTableCreated }: CreateTabl
           <Button 
             onClick={handleCreate} 
             disabled={isSubmitting || !tableName}
-            className="bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold gap-2 px-6"
+            className="bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium gap-2 px-6"
           >
             {isSubmitting ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />}
             CREATE TABLE

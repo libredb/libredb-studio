@@ -237,7 +237,7 @@ export function ResultsGrid({
                     setColumnFilters(next);
                   }}
                   onKeyDown={e => { if (e.key === 'Escape' || e.key === 'Enter') setActiveFilterCol(null); }}
-                  className="w-full bg-[#050505] border border-white/10 rounded px-2 py-1 text-body text-zinc-200 outline-none focus:border-blue-500/30"
+                  className="w-full bg-[#050505] border border-white/10 rounded px-2 py-1 text-xs text-zinc-200 outline-none focus:border-blue-500/30"
                 />
                 {hasFilter && (
                   <button
@@ -404,7 +404,7 @@ export function ResultsGrid({
         <div className="w-16 h-16 rounded-2xl bg-zinc-900/50 flex items-center justify-center mb-6 border border-white/5 shadow-2xl">
           <span className="text-2xl text-zinc-500">&#x2205;</span>
         </div>
-        <p className="text-sm font-semibold text-zinc-400">Query returned no data</p>
+        <p className="text-xs font-medium text-zinc-400">Query returned no data</p>
         <p className="text-xs text-zinc-600 mt-2 max-w-[280px] leading-relaxed">
           The operation was successful, but the result set is currently empty.
         </p>
@@ -488,7 +488,7 @@ export function ResultsGrid({
                 <div
                   key={field}
                   className={cn(
-                    "h-10 px-4 flex items-center gap-1 border-r border-b border-white/5 text-xs uppercase font-mono tracking-wider text-zinc-500 bg-[#0d0d0d] whitespace-nowrap",
+                    "h-10 px-4 flex items-center gap-1 border-r border-b border-white/5 text-xs uppercase font-mono text-zinc-500 bg-[#0d0d0d] whitespace-nowrap",
                     idx === 0 && "sticky left-0 z-30 bg-[#0d0d0d] shadow-[2px_0_8px_rgba(0,0,0,0.3)]",
                     "min-w-[120px]"
                   )}
@@ -566,7 +566,7 @@ export function ResultsGrid({
                 <div
                   key={header.id}
                   style={{ width: header.getSize(), minWidth: header.getSize() }}
-                  className="h-10 px-4 flex items-center border-r border-b border-white/5 text-xs uppercase font-mono tracking-wider text-zinc-500 bg-[#0d0d0d] relative group shrink-0"
+                  className="h-10 px-4 flex items-center border-r border-b border-white/5 text-xs uppercase font-mono text-zinc-500 bg-[#0d0d0d] relative group shrink-0"
                 >
                   {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
 

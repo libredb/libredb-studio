@@ -44,7 +44,7 @@ export function SavedQueries({ onSelectQuery, connectionType, refreshTrigger }: 
   return (
     <div className="h-full flex flex-col bg-[#0a0a0a]">
       <div className="p-4 border-b border-white/5 flex flex-col gap-4">
-        <h3 className="text-sm font-bold text-zinc-400 uppercase tracking-widest flex items-center gap-2">
+        <h3 className="text-xs font-medium text-zinc-400 flex items-center gap-2">
           <Bookmark className="w-4 h-4" /> Saved Queries
         </h3>
         
@@ -63,7 +63,7 @@ export function SavedQueries({ onSelectQuery, connectionType, refreshTrigger }: 
         {filteredQueries.length === 0 ? (
           <div className="h-full flex flex-col items-center justify-center opacity-20 p-8 text-center">
             <Bookmark className="w-12 h-12 mb-4" />
-            <p className="text-sm italic">No saved queries found</p>
+            <p className="text-xs italic">No saved queries found</p>
           </div>
         ) : (
           <div className="grid grid-cols-1 gap-px bg-white/5">
@@ -75,7 +75,7 @@ export function SavedQueries({ onSelectQuery, connectionType, refreshTrigger }: 
               >
                 <div className="flex items-start justify-between mb-2">
                   <div>
-                    <h4 className="text-xs font-bold text-blue-400 mb-1 group-hover:text-blue-300 transition-colors">
+                    <h4 className="text-xs font-medium text-blue-400 mb-1 group-hover:text-blue-300 transition-colors">
                       {q.name}
                     </h4>
                     {q.description && (
@@ -105,16 +105,16 @@ export function SavedQueries({ onSelectQuery, connectionType, refreshTrigger }: 
 
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
-                    <span className="px-1.5 py-0.5 rounded bg-blue-500/10 border border-blue-500/20 text-label font-bold text-blue-400 uppercase tracking-tighter">
+                    <span className="px-1.5 py-0.5 rounded bg-blue-500/10 border border-blue-500/20 text-[0.625rem] font-medium text-blue-400er">
                       {q.connectionType}
                     </span>
                     {q.tags?.map(tag => (
-                      <span key={tag} className="flex items-center gap-1 text-label text-zinc-500">
+                      <span key={tag} className="flex items-center gap-1 text-[0.625rem] text-zinc-500">
                         <Tag className="w-2.5 h-2.5" /> {tag}
                       </span>
                     ))}
                   </div>
-                  <span className="text-label text-zinc-600 flex items-center gap-1 font-mono">
+                  <span className="text-[0.625rem] text-zinc-600 flex items-center gap-1 font-mono">
                     <Calendar className="w-2.5 h-2.5" /> {format(q.updatedAt, 'MMM d, yyyy')}
                   </span>
                 </div>

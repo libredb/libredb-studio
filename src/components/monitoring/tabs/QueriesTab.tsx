@@ -86,31 +86,31 @@ export function QueriesTab({ data, loading }: QueriesTabProps) {
       <div className="grid grid-cols-3 gap-2 sm:gap-4">
         <Card className="p-0">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 p-2 sm:p-4 pb-1 sm:pb-2">
-            <CardTitle className="text-xs sm:text-sm font-medium text-muted-foreground">
+            <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">
               Queries
             </CardTitle>
             <Search className="h-3 w-3 sm:h-4 sm:w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent className="p-2 sm:p-4 pt-0">
-            <div className="text-lg sm:text-2xl font-bold">{formatNumber(totalQueries)}</div>
+            <div className="text-lg sm:text-2xl font-medium">{formatNumber(totalQueries)}</div>
           </CardContent>
         </Card>
 
         <Card className="p-0">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 p-2 sm:p-4 pb-1 sm:pb-2">
-            <CardTitle className="text-xs sm:text-sm font-medium text-muted-foreground">
+            <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">
               Avg Time
             </CardTitle>
             <Clock className="h-3 w-3 sm:h-4 sm:w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent className="p-2 sm:p-4 pt-0">
-            <div className="text-lg sm:text-2xl font-bold">{formatTime(avgTime)}</div>
+            <div className="text-lg sm:text-2xl font-medium">{formatTime(avgTime)}</div>
           </CardContent>
         </Card>
 
         <Card className="p-0">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 p-2 sm:p-4 pb-1 sm:pb-2">
-            <CardTitle className="text-xs sm:text-sm font-medium text-muted-foreground">
+            <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">
               Slow
             </CardTitle>
             <AlertTriangle
@@ -118,7 +118,7 @@ export function QueriesTab({ data, loading }: QueriesTabProps) {
             />
           </CardHeader>
           <CardContent className="p-2 sm:p-4 pt-0">
-            <div className="text-lg sm:text-2xl font-bold">{slowCount}</div>
+            <div className="text-lg sm:text-2xl font-medium">{slowCount}</div>
           </CardContent>
         </Card>
       </div>
@@ -126,7 +126,7 @@ export function QueriesTab({ data, loading }: QueriesTabProps) {
       {/* Queries Table */}
       <Card className="p-0">
         <CardHeader className="p-3 sm:p-4">
-          <CardTitle className="text-xs sm:text-sm font-medium flex items-center gap-2">
+          <CardTitle className="text-xs sm:text-xs font-medium flex items-center gap-2">
             <Clock className="h-3 w-3 sm:h-4 sm:w-4" />
             Slowest Queries
             {slowQueries.length === 0 && (
@@ -140,7 +140,7 @@ export function QueriesTab({ data, loading }: QueriesTabProps) {
           {slowQueries.length === 0 ? (
             <div className="text-center py-8 text-muted-foreground">
               <Search className="h-8 w-8 mx-auto mb-2 opacity-50" />
-              <p className="text-sm">No query statistics available.</p>
+              <p className="text-xs">No query statistics available.</p>
               <p className="text-xs mt-1">
                 Enable pg_stat_statements extension to see query stats.
               </p>

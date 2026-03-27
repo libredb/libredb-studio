@@ -59,7 +59,7 @@ export function Sidebar({
           <div className="w-6 h-6 bg-blue-600 rounded-md flex items-center justify-center">
             <Zap className="w-3.5 h-3.5 text-white fill-current" />
           </div>
-          <span className="font-bold text-sm tracking-tight bg-gradient-to-r from-foreground to-muted-foreground bg-clip-text text-transparent">
+          <span className="font-medium text-xs tracking-tight bg-gradient-to-r from-foreground to-muted-foreground bg-clip-text text-transparent">
             LibreDB Studio
           </span>
         </div>

@@ -205,7 +205,7 @@ export function CodeGenerator({
         <div className="flex items-center justify-between px-5 py-3 border-b border-white/5">
           <div className="flex items-center gap-2">
             <Code className="w-4 h-4 text-purple-400" />
-            <span className="text-sm font-bold text-zinc-200">Code Generator</span>
+            <span className="text-xs font-medium text-zinc-200">Code Generator</span>
             <span className="text-xs text-zinc-500 font-mono">{tableName}</span>
             {databaseType && (
               <span className="text-xs text-zinc-600 font-mono uppercase">{databaseType}</span>
@@ -247,7 +247,7 @@ export function CodeGenerator({
 
         {/* Code Preview */}
         <div className="relative">
-          <pre className="p-5 text-body font-mono text-zinc-300 overflow-auto max-h-[50vh] bg-[#050505] leading-relaxed whitespace-pre">
+          <pre className="p-5 text-xs font-mono text-zinc-300 overflow-auto max-h-[50vh] bg-[#050505] leading-relaxed whitespace-pre">
             {code}
           </pre>
           <button

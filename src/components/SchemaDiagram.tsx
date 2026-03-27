@@ -47,8 +47,8 @@ const TableNode = ({ data }: NodeProps<Node<TableNodeData>>) => {
     }`}>
       <div className="bg-blue-600/10 px-3 py-2 border-b border-white/5 flex items-center gap-2">
         <Database className="w-3.5 h-3.5 text-blue-400" />
-        <span className="text-xs font-bold text-zinc-100 uppercase tracking-wider">{table.name}</span>
-        <span className="text-label text-zinc-600 ml-auto">{table.columns?.length || 0} cols</span>
+        <span className="text-xs font-medium text-zinc-100r">{table.name}</span>
+        <span className="text-[0.625rem] text-zinc-600 ml-auto">{table.columns?.length || 0} cols</span>
       </div>
       {!isCompact && (
         <div className="p-1">
@@ -88,13 +88,13 @@ const TableNode = ({ data }: NodeProps<Node<TableNodeData>>) => {
                   </span>
                 </div>
                 <div className="flex items-center gap-1">
-                  {col.nullable === false && <span className="text-micro text-red-500/60">NN</span>}
-                  <span className="text-label text-zinc-600 font-mono uppercase">{col.type}</span>
+                  {col.nullable === false && <span className="text-[0.5rem] text-red-500/60">NN</span>}
+                  <span className="text-[0.625rem] text-zinc-600 font-mono uppercase">{col.type}</span>
                 </div>
 
                 {/* Hover tooltip */}
                 <div className="absolute left-full ml-2 top-0 z-50 hidden group-hover:block">
-                  <div className="bg-[#1a1a1a] border border-white/10 rounded px-2 py-1 text-label whitespace-nowrap shadow-xl">
+                  <div className="bg-[#1a1a1a] border border-white/10 rounded px-2 py-1 text-[0.625rem] whitespace-nowrap shadow-xl">
                     <div className="text-zinc-300">{col.name}: <span className="text-zinc-500">{col.type}</span></div>
                     {col.isPrimary && <div className="text-yellow-500">Primary Key</div>}
                     {isFk && <div className="text-blue-400">Foreign Key</div>}
@@ -349,7 +349,7 @@ function SchemaDiagramInner({ schema, onClose }: SchemaDiagramProps) {
     return (
       <div className="absolute inset-0 z-50 bg-[#050505] flex flex-col items-center justify-center">
         <Loader2 className="w-8 h-8 text-blue-500 animate-spin mb-4" />
-        <p className="text-zinc-500 text-sm">Generating ERD Diagram...</p>
+        <p className="text-zinc-500 text-xs">Generating ERD Diagram...</p>
       </div>
     );
   }
@@ -421,7 +421,7 @@ function SchemaDiagramInner({ schema, onClose }: SchemaDiagramProps) {
         {/* Info panel with stats and search */}
         <Panel position="top-left" className="p-4">
           <div className="bg-[#0d0d0d]/80 backdrop-blur-md border border-white/10 p-3 rounded-xl shadow-2xl space-y-2">
-            <h3 className="text-xs font-bold text-white uppercase tracking-widest mb-1 flex items-center gap-2">
+            <h3 className="text-xs font-medium text-white mb-1 flex items-center gap-2">
               <div className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
               ERD Visualizer
             </h3>
@@ -444,7 +444,7 @@ function SchemaDiagramInner({ schema, onClose }: SchemaDiagramProps) {
 
             {/* No FK warning */}
             {!hasForeignKeys && (
-              <div className="flex items-start gap-1.5 text-label text-amber-500/80">
+              <div className="flex items-start gap-1.5 text-[0.625rem] text-amber-500/80">
                 <Info className="w-3 h-3 mt-0.5 shrink-0" />
                 <span>No FK data available. Showing heuristic relationships (dashed).</span>
               </div>
@@ -453,7 +453,7 @@ function SchemaDiagramInner({ schema, onClose }: SchemaDiagramProps) {
             {/* Selected node info */}
             {selectedNode && (
               <div className="text-xs text-blue-400 border-t border-white/5 pt-2">
-                Selected: <span className="font-mono font-bold">{selectedNode}</span>
+                Selected: <span className="font-mono font-medium">{selectedNode}</span>
                 <button onClick={() => setSelectedNode(null)} className="ml-2 text-zinc-600 hover:text-zinc-400">clear</button>
               </div>
             )}

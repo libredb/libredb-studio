@@ -146,7 +146,7 @@ export function QuerySafetyDialog({
         <div className="flex items-center justify-between px-5 py-3 border-b border-white/5">
           <div className="flex items-center gap-2">
             <ShieldAlert className="w-4 h-4 text-amber-400" />
-            <span className="text-sm font-bold text-zinc-200">Query Safety Check</span>
+            <span className="text-xs font-medium text-zinc-200">Query Safety Check</span>
           </div>
           <button onClick={onClose} className="p-1 rounded hover:bg-white/5 text-zinc-500">
             <X className="w-4 h-4" />
@@ -155,7 +155,7 @@ export function QuerySafetyDialog({
 
         {/* Query Preview */}
         <div className="px-5 py-3 bg-[#0a0a0a] border-b border-white/5">
-          <pre className="text-body font-mono text-zinc-400 whitespace-pre-wrap max-h-24 overflow-auto">
+          <pre className="text-xs font-mono text-zinc-400 whitespace-pre-wrap max-h-24 overflow-auto">
             {query.length > 300 ? query.substring(0, 300) + '...' : query}
           </pre>
         </div>
@@ -165,7 +165,7 @@ export function QuerySafetyDialog({
           {isAnalyzing && (
             <div className="flex items-center justify-center gap-2 py-8 text-zinc-500">
               <Loader2 className="w-5 h-5 animate-spin" />
-              <span className="text-sm">Analyzing query safety...</span>
+              <span className="text-xs">Analyzing query safety...</span>
             </div>
           )}
 
@@ -181,7 +181,7 @@ export function QuerySafetyDialog({
               <div className={cn("flex items-center gap-2 px-3 py-2 rounded-lg", risk.bg, "border", risk.border)}>
                 <RiskIcon className={cn("w-5 h-5", risk.color)} />
                 <div>
-                  <span className={cn("text-sm font-bold", risk.color)}>{risk.label}</span>
+                  <span className={cn("text-xs font-medium", risk.color)}>{risk.label}</span>
                   <p className="text-xs text-zinc-400 mt-0.5">{analysis.summary}</p>
                 </div>
               </div>
@@ -196,7 +196,7 @@ export function QuerySafetyDialog({
                       w.severity === 'warning' ? 'bg-amber-500/5 border-amber-500/20' :
                       'bg-blue-500/5 border-blue-500/20'
                     )}>
-                      <p className="font-bold text-zinc-300">{w.message}</p>
+                      <p className="font-medium text-zinc-300">{w.message}</p>
                       <p className="text-zinc-500 mt-0.5">{w.detail}</p>
                     </div>
                   ))}
@@ -222,7 +222,7 @@ export function QuerySafetyDialog({
               {/* Recommendation */}
               {analysis.recommendation && (
                 <div className="bg-[#0a0a0a] rounded-lg p-3 border border-white/5">
-                  <p className="text-xs font-bold text-zinc-500 uppercase tracking-wider mb-1">Recommendation</p>
+                  <p className="text-xs font-medium text-zinc-500r mb-1">Recommendation</p>
                   <p className="text-xs text-zinc-300">{analysis.recommendation}</p>
                 </div>
               )}
@@ -239,7 +239,7 @@ export function QuerySafetyDialog({
         <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-white/5 bg-[#0a0a0a]">
           <button
             onClick={onClose}
-            className="px-4 py-2 rounded-lg bg-white/5 text-zinc-400 text-xs font-bold hover:bg-white/10 transition-colors"
+            className="px-4 py-2 rounded-lg bg-white/5 text-zinc-400 text-xs font-medium hover:bg-white/10 transition-colors"
           >
             Cancel
           </button>
@@ -247,7 +247,7 @@ export function QuerySafetyDialog({
             onClick={onProceed}
             disabled={isAnalyzing}
             className={cn(
-              "px-4 py-2 rounded-lg text-white text-xs font-bold transition-colors flex items-center gap-1.5",
+              "px-4 py-2 rounded-lg text-white text-xs font-medium transition-colors flex items-center gap-1.5",
               analysis?.riskLevel === 'critical' || analysis?.riskLevel === 'high'
                 ? "bg-red-600 hover:bg-red-500"
                 : "bg-blue-600 hover:bg-blue-500",

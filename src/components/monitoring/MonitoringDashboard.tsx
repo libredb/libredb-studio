@@ -113,7 +113,7 @@ export function MonitoringDashboard({ isEmbedded = false }: MonitoringDashboardP
             )}
             <div className="flex items-center gap-2">
               <Activity className="h-4 w-4 sm:h-5 sm:w-5 text-primary" />
-              <h1 className="text-sm sm:text-lg font-semibold hidden xs:block">
+              <h1 className="text-xs sm:text-lg font-medium hidden xs:block">
                 <span className="hidden sm:inline">Database </span>Monitoring
               </h1>
             </div>
@@ -121,7 +121,7 @@ export function MonitoringDashboard({ isEmbedded = false }: MonitoringDashboardP
 
           {/* Refresh Controls */}
           <div className="flex items-center gap-1 sm:gap-2">
-            <div className="hidden sm:flex items-center gap-2 text-sm text-muted-foreground mr-2">
+            <div className="hidden sm:flex items-center gap-2 text-xs text-muted-foreground mr-2">
               <div
                 className={`h-2 w-2 rounded-full ${autoRefresh ? 'bg-green-500 animate-pulse' : 'bg-muted'}`}
               />
@@ -209,7 +209,7 @@ export function MonitoringDashboard({ isEmbedded = false }: MonitoringDashboardP
                 </SelectItem>
               ))}
               {connections.length === 0 && (
-                <div className="px-2 py-1 text-sm text-muted-foreground">
+                <div className="px-2 py-1 text-xs text-muted-foreground">
                   No connections available
                 </div>
               )}
@@ -223,7 +223,7 @@ export function MonitoringDashboard({ isEmbedded = false }: MonitoringDashboardP
         <div className="flex flex-col items-center justify-center flex-1 gap-4 text-muted-foreground">
           <Database className="h-12 w-12" />
           <h2 className="text-lg font-medium">No Connection Selected</h2>
-          <p className="text-sm">Select a database connection to view monitoring data.</p>
+          <p className="text-xs">Select a database connection to view monitoring data.</p>
           <Button variant="outline" onClick={() => router.push('/')}>
             Manage Connections
           </Button>
@@ -232,7 +232,7 @@ export function MonitoringDashboard({ isEmbedded = false }: MonitoringDashboardP
         <div className="flex flex-col items-center justify-center flex-1 gap-4 text-destructive">
           <Activity className="h-12 w-12" />
           <h2 className="text-lg font-medium">Connection Error</h2>
-          <p className="text-sm">{error}</p>
+          <p className="text-xs">{error}</p>
           <Button variant="outline" onClick={refresh}>
             Try Again
           </Button>
@@ -249,7 +249,7 @@ export function MonitoringDashboard({ isEmbedded = false }: MonitoringDashboardP
               <TabsList className="h-12 w-full justify-between sm:justify-start rounded-none bg-transparent p-0">
                 <TabsTrigger
                   value="overview"
-                  className="flex-1 sm:flex-initial gap-2 px-2 sm:px-4 rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent text-xs sm:text-sm"
+                  className="flex-1 sm:flex-initial gap-2 px-2 sm:px-4 rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent text-xs sm:text-xs"
                   title="Overview"
                 >
                   <LayoutDashboard className="h-4 w-4 sm:h-4 sm:w-4" />
@@ -257,7 +257,7 @@ export function MonitoringDashboard({ isEmbedded = false }: MonitoringDashboardP
                 </TabsTrigger>
                 <TabsTrigger
                   value="performance"
-                  className="flex-1 sm:flex-initial gap-2 px-2 sm:px-4 rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent text-xs sm:text-sm"
+                  className="flex-1 sm:flex-initial gap-2 px-2 sm:px-4 rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent text-xs sm:text-xs"
                   title="Performance"
                 >
                   <Activity className="h-4 w-4 sm:h-4 sm:w-4" />
@@ -265,7 +265,7 @@ export function MonitoringDashboard({ isEmbedded = false }: MonitoringDashboardP
                 </TabsTrigger>
                 <TabsTrigger
                   value="queries"
-                  className="flex-1 sm:flex-initial gap-2 px-2 sm:px-4 rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent text-xs sm:text-sm"
+                  className="flex-1 sm:flex-initial gap-2 px-2 sm:px-4 rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent text-xs sm:text-xs"
                   title="Queries"
                 >
                   <Clock className="h-4 w-4 sm:h-4 sm:w-4" />
@@ -273,7 +273,7 @@ export function MonitoringDashboard({ isEmbedded = false }: MonitoringDashboardP
                 </TabsTrigger>
                 <TabsTrigger
                   value="sessions"
-                  className="flex-1 sm:flex-initial gap-2 px-2 sm:px-4 rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent text-xs sm:text-sm"
+                  className="flex-1 sm:flex-initial gap-2 px-2 sm:px-4 rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent text-xs sm:text-xs"
                   title="Sessions"
                 >
                   <Users className="h-4 w-4 sm:h-4 sm:w-4" />
@@ -281,7 +281,7 @@ export function MonitoringDashboard({ isEmbedded = false }: MonitoringDashboardP
                 </TabsTrigger>
                 <TabsTrigger
                   value="tables"
-                  className="flex-1 sm:flex-initial gap-2 px-2 sm:px-4 rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent text-xs sm:text-sm"
+                  className="flex-1 sm:flex-initial gap-2 px-2 sm:px-4 rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent text-xs sm:text-xs"
                   title="Tables"
                 >
                   <Table2 className="h-4 w-4 sm:h-4 sm:w-4" />
@@ -289,7 +289,7 @@ export function MonitoringDashboard({ isEmbedded = false }: MonitoringDashboardP
                 </TabsTrigger>
                 <TabsTrigger
                   value="storage"
-                  className="flex-1 sm:flex-initial gap-2 px-2 sm:px-4 rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent text-xs sm:text-sm"
+                  className="flex-1 sm:flex-initial gap-2 px-2 sm:px-4 rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent text-xs sm:text-xs"
                   title="Storage"
                 >
                   <HardDrive className="h-4 w-4 sm:h-4 sm:w-4" />
@@ -297,7 +297,7 @@ export function MonitoringDashboard({ isEmbedded = false }: MonitoringDashboardP
                 </TabsTrigger>
                 <TabsTrigger
                   value="pool"
-                  className="flex-1 sm:flex-initial gap-2 px-2 sm:px-4 rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent text-xs sm:text-sm"
+                  className="flex-1 sm:flex-initial gap-2 px-2 sm:px-4 rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent text-xs sm:text-xs"
                   title="Pool"
                 >
                   <Database className="h-4 w-4 sm:h-4 sm:w-4" />

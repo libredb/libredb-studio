@@ -180,7 +180,7 @@ function ThresholdSettings() {
           <Activity className="h-4 w-4 text-blue-400" />
           Monitoring Thresholds
         </h3>
-        <p className="text-body text-zinc-500 mb-6">
+        <p className="text-xs text-zinc-500 mb-6">
           Configure warning and critical thresholds for monitoring alerts. These
           values are used by the monitoring dashboard to trigger visual alerts.
         </p>

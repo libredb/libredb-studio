@@ -514,7 +514,7 @@ function HeroStatusBanner({
                 animate={{ scale: [1, 1.05, 1], opacity: [0.7, 1, 0.7] }}
                 transition={{ duration: 2, repeat: Infinity, ease: 'easeInOut' }}
               />
-              <span className="text-label font-bold text-emerald-400 uppercase tracking-widest">
+              <span className="text-[0.625rem] font-bold text-emerald-400 uppercase tracking-widest">
                 Live
               </span>
             </div>
@@ -532,7 +532,7 @@ function HeroStatusBanner({
                   {healthyCount > 0 && (
                     <Badge
                       variant="outline"
-                      className="border-emerald-500/30 text-emerald-400 h-5 text-label"
+                      className="border-emerald-500/30 text-emerald-400 h-5 text-[0.625rem]"
                     >
                       {healthyCount} healthy
                     </Badge>
@@ -540,7 +540,7 @@ function HeroStatusBanner({
                   {degradedCount > 0 && (
                     <Badge
                       variant="outline"
-                      className="border-amber-500/30 text-amber-400 h-5 text-label"
+                      className="border-amber-500/30 text-amber-400 h-5 text-[0.625rem]"
                     >
                       {degradedCount} degraded
                     </Badge>
@@ -548,7 +548,7 @@ function HeroStatusBanner({
                   {errorCount > 0 && (
                     <Badge
                       variant="outline"
-                      className="border-red-500/30 text-red-400 h-5 text-label"
+                      className="border-red-500/30 text-red-400 h-5 text-[0.625rem]"
                     >
                       {errorCount} error
                     </Badge>
@@ -559,7 +559,7 @@ function HeroStatusBanner({
                 {user && (
                   <Badge
                     variant="outline"
-                    className="border-white/10 text-zinc-500 h-5 text-label"
+                    className="border-white/10 text-zinc-500 h-5 text-[0.625rem]"
                   >
                     {user.username} ({user.role})
                   </Badge>
@@ -786,7 +786,7 @@ function FleetHealthSection({
                     {item.environment && (
                       <Badge
                         variant="outline"
-                        className="text-label h-4"
+                        className="text-[0.625rem] h-4"
                         style={{
                           borderColor:
                             ENVIRONMENT_COLORS[
@@ -824,7 +824,7 @@ function FleetHealthSection({
                   </div>
                 </div>
 
-                <div className="flex items-center gap-3 text-body text-zinc-500">
+                <div className="flex items-center gap-3 text-xs text-zinc-500">
                   <span className="font-mono text-zinc-400">
                     {item.status === 'error' ? 'timeout' : `${item.latencyMs}ms`}
                   </span>
@@ -958,7 +958,7 @@ function MetricGauge({
           >
             {displayValue ?? animatedValue}
           </span>
-          <span className="text-label text-zinc-500">{unit}</span>
+          <span className="text-[0.625rem] text-zinc-500">{unit}</span>
         </div>
       </div>
       <span className="text-xs text-zinc-500 mt-1 uppercase tracking-wider">
@@ -1206,10 +1206,10 @@ function QuickActionsSection() {
               <h3 className="text-sm font-bold text-zinc-200 mb-1">
                 {action.label}
               </h3>
-              <p className="text-body text-zinc-500 mb-3">
+              <p className="text-xs text-zinc-500 mb-3">
                 {action.description}
               </p>
-              <div className="flex items-center gap-1 text-body text-zinc-600 group-hover:text-zinc-400 transition-colors">
+              <div className="flex items-center gap-1 text-xs text-zinc-600 group-hover:text-zinc-400 transition-colors">
                 <span>Open</span>
                 <ArrowRight className="w-3 h-3 group-hover:translate-x-1 transition-transform" />
               </div>
@@ -1308,7 +1308,7 @@ function EmptyState() {
               <div className="text-sm font-bold text-zinc-200 mb-1">
                 {f.label}
               </div>
-              <div className="text-body text-zinc-500">{f.description}</div>
+              <div className="text-xs text-zinc-500">{f.description}</div>
             </motion.div>
           ))}
         </motion.div>

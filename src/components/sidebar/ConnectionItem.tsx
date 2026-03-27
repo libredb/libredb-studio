@@ -25,7 +25,7 @@ export const ConnectionItem = React.memo(function ConnectionItem({
     <motion.div
       initial={false}
       className={cn(
-        'group flex items-center gap-2.5 px-3 py-2 rounded-lg cursor-pointer transition-all duration-200 text-sm relative overflow-hidden',
+        'group flex items-center gap-2.5 px-3 py-2 rounded-lg cursor-pointer transition-all duration-200 text-xs relative overflow-hidden',
         isActive
           ? 'bg-blue-600/10 text-blue-400'
           : 'hover:bg-accent/50 text-muted-foreground hover:text-foreground'
@@ -49,10 +49,10 @@ export const ConnectionItem = React.memo(function ConnectionItem({
       </div>
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-1.5">
-          <span className="truncate block font-medium text-body">{conn.name}</span>
+          <span className="truncate block font-medium text-xs">{conn.name}</span>
           {conn.environment && conn.environment !== 'other' && (
             <span
-              className="text-micro uppercase tracking-wider font-bold px-1.5 py-0.5 rounded-sm shrink-0"
+              className="text-[0.5rem] font-medium px-1.5 py-0.5 rounded-sm shrink-0"
               style={{
                 color: conn.color || '#6b7280',
                 backgroundColor: `${conn.color || '#6b7280'}15`,
