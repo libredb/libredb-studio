@@ -95,7 +95,7 @@ export function SessionsTab({ data, loading, onKillSession, isAdmin = true }: Se
             <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">
               Active
             </CardTitle>
-            <Activity className="h-3 w-3 sm:h-4 sm:w-4 text-green-500" />
+            <Activity strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4 text-green-500" />
           </CardHeader>
           <CardContent className="p-2 sm:p-4 pt-0">
             <div className="text-lg sm:text-2xl font-medium">{activeCount}</div>
@@ -107,7 +107,7 @@ export function SessionsTab({ data, loading, onKillSession, isAdmin = true }: Se
             <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">
               Idle
             </CardTitle>
-            <Clock className="h-3 w-3 sm:h-4 sm:w-4 text-muted-foreground" />
+            <Clock strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent className="p-2 sm:p-4 pt-0">
             <div className="text-lg sm:text-2xl font-medium">{idleCount}</div>
@@ -143,14 +143,14 @@ export function SessionsTab({ data, loading, onKillSession, isAdmin = true }: Se
       <Card className="p-0">
         <CardHeader className="p-3 sm:p-4">
           <CardTitle className="text-xs sm:text-xs font-medium flex items-center gap-2">
-            <Users className="h-3 w-3 sm:h-4 sm:w-4" />
+            <Users strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4" />
             Sessions ({sessions.length})
           </CardTitle>
         </CardHeader>
         <CardContent className="p-0 sm:p-4 sm:pt-0">
           {sessions.length === 0 ? (
             <div className="text-center py-8 text-muted-foreground">
-              <Users className="h-8 w-8 mx-auto mb-2 opacity-50" />
+              <Users strokeWidth={1.5} className="h-8 w-8 mx-auto mb-2 opacity-50" />
               <p className="text-xs">No active sessions found.</p>
             </div>
           ) : (
@@ -232,9 +232,9 @@ export function SessionsTab({ data, loading, onKillSession, isAdmin = true }: Se
                             disabled={killingPid === session.pid}
                           >
                             {killingPid === session.pid ? (
-                              <Loader2 className="h-3 w-3 sm:h-4 sm:w-4 animate-spin" />
+                              <Loader2 strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4 animate-spin" />
                             ) : (
-                              <Skull className="h-3 w-3 sm:h-4 sm:w-4" />
+                              <Skull strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4" />
                             )}
                           </Button>
                         ) : (

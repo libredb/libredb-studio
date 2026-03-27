@@ -130,7 +130,7 @@ export function AIAutopilotPanel({ connection, schemaContext, onExecuteQuery }: 
                   className="p-1 rounded bg-white/10 hover:bg-white/20 text-zinc-400"
                   title="Copy"
                 >
-                  {copiedIndex === blockIndex ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                  {copiedIndex === blockIndex ? <Check strokeWidth={1.5} className="w-3 h-3 text-emerald-400" /> : <Copy strokeWidth={1.5} className="w-3 h-3" />}
                 </button>
                 {onExecuteQuery && (
                   <button
@@ -138,7 +138,7 @@ export function AIAutopilotPanel({ connection, schemaContext, onExecuteQuery }: 
                     className="p-1 rounded bg-blue-600/20 hover:bg-blue-600/30 text-blue-400"
                     title="Execute"
                   >
-                    <Play className="w-3 h-3 fill-current" />
+                    <Play strokeWidth={1.5} className="w-3 h-3 fill-current" />
                   </button>
                 )}
               </div>
@@ -185,7 +185,7 @@ export function AIAutopilotPanel({ connection, schemaContext, onExecuteQuery }: 
       <div className="flex items-center justify-between px-4 py-2 border-b border-white/5 bg-[#0a0a0a]">
         <div className="flex items-center gap-2">
           <div className="p-1 rounded bg-cyan-500/10">
-            <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
+            <Sparkles strokeWidth={1.5} className="w-3 h-3 text-cyan-400" />
           </div>
           <span className="text-xs font-medium text-cyan-400">
             AI Performance Autopilot
@@ -202,9 +202,9 @@ export function AIAutopilotPanel({ connection, schemaContext, onExecuteQuery }: 
           )}
         >
           {isLoading ? (
-            <><Loader2 className="w-3 h-3 animate-spin" /> Analyzing...</>
+            <><Loader2 strokeWidth={1.5} className="w-3 h-3 animate-spin" /> Analyzing...</>
           ) : (
-            <><RefreshCw className="w-3 h-3" /> {report ? 'Re-analyze' : 'Run Analysis'}</>
+            <><RefreshCw strokeWidth={1.5} className="w-3 h-3" /> {report ? 'Re-analyze' : 'Run Analysis'}</>
           )}
         </button>
       </div>
@@ -213,7 +213,7 @@ export function AIAutopilotPanel({ connection, schemaContext, onExecuteQuery }: 
       <div ref={reportRef} className="flex-1 overflow-auto p-4">
         {!report && !isLoading && !error && (
           <div className="flex flex-col items-center justify-center h-full opacity-40">
-            <Sparkles className="w-8 h-8 mb-3" />
+            <Sparkles strokeWidth={1.5} className="w-8 h-8 mb-3" />
             <p className="text-xs font-medium">AI Performance Autopilot</p>
             <p className="text-xs text-zinc-500 mt-1">
               Click &quot;Run Analysis&quot; to get AI-powered optimization recommendations

@@ -41,7 +41,7 @@ function ChartDashboardLazy({ result }: { result: QueryResult | null }) {
   if (savedCharts.length === 0) {
     return (
       <div className="h-full flex flex-col items-center justify-center bg-[#080808] text-zinc-500 gap-2">
-        <LayoutDashboard className="w-10 h-10 opacity-30" />
+        <LayoutDashboard strokeWidth={1.5} className="w-10 h-10 opacity-30" />
         <p className="text-xs">No saved charts yet</p>
         <p className="text-xs text-zinc-600">Save charts from the Charts tab to display them here</p>
       </div>
@@ -136,17 +136,17 @@ export function BottomPanel({
   onExportResults,
 }: BottomPanelProps) {
   const tabs: { key: BottomPanelMode; label: string; icon: React.ReactNode; activeClass: string }[] = [
-    { key: 'results', label: 'Results', icon: <LayoutGrid className="w-3 h-3" />, activeClass: 'text-blue-400 border-blue-500 bg-white/5' },
-    { key: 'explain', label: 'Explain', icon: <Zap className="w-3 h-3" />, activeClass: 'text-amber-400 border-amber-500 bg-white/5' },
-    { key: 'history', label: 'History', icon: <Clock className="w-3 h-3" />, activeClass: 'text-emerald-400 border-emerald-500 bg-white/5' },
-    { key: 'saved', label: 'Saved', icon: <Bookmark className="w-3 h-3" />, activeClass: 'text-purple-400 border-purple-500 bg-white/5' },
-    { key: 'charts', label: 'Charts', icon: <BarChart3 className="w-3 h-3" />, activeClass: 'text-cyan-400 border-cyan-500 bg-white/5' },
-    { key: 'nl2sql', label: 'NL2SQL', icon: <Sparkles className="w-3 h-3" />, activeClass: 'text-violet-400 border-violet-500 bg-white/5' },
-    { key: 'autopilot', label: 'Autopilot', icon: <Zap className="w-3 h-3" />, activeClass: 'text-cyan-400 border-cyan-500 bg-white/5' },
-    { key: 'pivot', label: 'Pivot', icon: <Columns3 className="w-3 h-3" />, activeClass: 'text-orange-400 border-orange-500 bg-white/5' },
-    { key: 'docs', label: 'Docs', icon: <FileText className="w-3 h-3" />, activeClass: 'text-teal-400 border-teal-500 bg-white/5' },
-    { key: 'schemadiff', label: 'Diff', icon: <GitCompare className="w-3 h-3" />, activeClass: 'text-rose-400 border-rose-500 bg-white/5' },
-    { key: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard className="w-3 h-3" />, activeClass: 'text-indigo-400 border-indigo-500 bg-white/5' },
+    { key: 'results', label: 'Results', icon: <LayoutGrid strokeWidth={1.5} className="w-3 h-3" />, activeClass: 'text-blue-400 border-blue-500 bg-white/5' },
+    { key: 'explain', label: 'Explain', icon: <Zap strokeWidth={1.5} className="w-3 h-3" />, activeClass: 'text-amber-400 border-amber-500 bg-white/5' },
+    { key: 'history', label: 'History', icon: <Clock strokeWidth={1.5} className="w-3 h-3" />, activeClass: 'text-emerald-400 border-emerald-500 bg-white/5' },
+    { key: 'saved', label: 'Saved', icon: <Bookmark strokeWidth={1.5} className="w-3 h-3" />, activeClass: 'text-purple-400 border-purple-500 bg-white/5' },
+    { key: 'charts', label: 'Charts', icon: <BarChart3 strokeWidth={1.5} className="w-3 h-3" />, activeClass: 'text-cyan-400 border-cyan-500 bg-white/5' },
+    { key: 'nl2sql', label: 'NL2SQL', icon: <Sparkles strokeWidth={1.5} className="w-3 h-3" />, activeClass: 'text-violet-400 border-violet-500 bg-white/5' },
+    { key: 'autopilot', label: 'Autopilot', icon: <Zap strokeWidth={1.5} className="w-3 h-3" />, activeClass: 'text-cyan-400 border-cyan-500 bg-white/5' },
+    { key: 'pivot', label: 'Pivot', icon: <Columns3 strokeWidth={1.5} className="w-3 h-3" />, activeClass: 'text-orange-400 border-orange-500 bg-white/5' },
+    { key: 'docs', label: 'Docs', icon: <FileText strokeWidth={1.5} className="w-3 h-3" />, activeClass: 'text-teal-400 border-teal-500 bg-white/5' },
+    { key: 'schemadiff', label: 'Diff', icon: <GitCompare strokeWidth={1.5} className="w-3 h-3" />, activeClass: 'text-rose-400 border-rose-500 bg-white/5' },
+    { key: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard strokeWidth={1.5} className="w-3 h-3" />, activeClass: 'text-indigo-400 border-indigo-500 bg-white/5' },
   ];
 
   return (
@@ -180,7 +180,7 @@ export function BottomPanel({
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="ghost" size="sm" className="h-7 text-xs font-medium text-zinc-500 hover:text-white gap-2">
-                  <Download className="w-3 h-3" /> Export
+                  <Download strokeWidth={1.5} className="w-3 h-3" /> Export
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="bg-[#0d0d0d] border-white/10 text-zinc-300">
@@ -275,7 +275,7 @@ export function BottomPanel({
           )
         ) : (
           <div className="h-full flex flex-col items-center justify-center opacity-20 bg-[#0a0a0a]">
-            <Terminal className="w-12 h-12 mb-4" />
+            <Terminal strokeWidth={1.5} className="w-12 h-12 mb-4" />
             <p className="text-xs font-medium">Execute a query or check history</p>
             <p className="text-xs mt-2">Ready to query</p>
           </div>

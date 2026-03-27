@@ -97,7 +97,7 @@ export function RowDetailSheet({
           <div className="flex items-center justify-between">
             <SheetTitle className="text-zinc-100 flex items-center gap-2">
               <div className="w-8 h-8 rounded-lg bg-blue-500/10 flex items-center justify-center">
-                <FileJson className="w-4 h-4 text-blue-400" />
+                <FileJson strokeWidth={1.5} className="w-3.5 h-3.5 text-blue-400" />
               </div>
               Row #{rowIndex + 1}
             </SheetTitle>
@@ -108,9 +108,9 @@ export function RowDetailSheet({
               onClick={copyAllAsJson}
             >
               {copiedField === '__all__' ? (
-                <><Check className="w-3 h-3 mr-1 text-emerald-400" /> Copied</>
+                <><Check strokeWidth={1.5} className="w-3 h-3 mr-1 text-emerald-400" /> Copied</>
               ) : (
-                <><Copy className="w-3 h-3 mr-1" /> Copy JSON</>
+                <><Copy strokeWidth={1.5} className="w-3 h-3 mr-1" /> Copy JSON</>
               )}
             </Button>
           </div>
@@ -131,7 +131,7 @@ export function RowDetailSheet({
                     <div className="flex-1 min-w-0">
                       <p className="text-xs text-zinc-500 mb-1 font-mono flex items-center gap-1">
                         {field}
-                        {isMasked && <Lock className="w-2.5 h-2.5 text-purple-400" />}
+                        {isMasked && <Lock strokeWidth={1.5} className="w-2.5 h-2.5 text-purple-400" />}
                       </p>
                       <p className={cn(
                         "font-mono text-xs break-all",
@@ -160,9 +160,9 @@ export function RowDetailSheet({
                         onClick={() => copyValue(field, row[field])}
                       >
                         {copiedField === field ? (
-                          <Check className="w-3.5 h-3.5 text-emerald-400" />
+                          <Check strokeWidth={1.5} className="w-3.5 h-3.5 text-emerald-400" />
                         ) : (
-                          <Copy className="w-3.5 h-3.5 text-zinc-500" />
+                          <Copy strokeWidth={1.5} className="w-3.5 h-3.5 text-zinc-500" />
                         )}
                       </Button>
                     </div>

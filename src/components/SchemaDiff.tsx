@@ -143,9 +143,9 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
 
   const getActionBadge = (action: string) => {
     switch (action) {
-      case 'added': return <Badge className="bg-green-500/20 text-green-400 border-green-500/30 text-xs"><Plus className="w-2.5 h-2.5 mr-0.5" />Added</Badge>;
+      case 'added': return <Badge className="bg-green-500/20 text-green-400 border-green-500/30 text-xs"><Plus strokeWidth={1.5} className="w-2.5 h-2.5 mr-0.5" />Added</Badge>;
       case 'removed': return <Badge className="bg-red-500/20 text-red-400 border-red-500/30 text-xs"><Minus className="w-2.5 h-2.5 mr-0.5" />Removed</Badge>;
-      case 'modified': return <Badge className="bg-yellow-500/20 text-yellow-400 border-yellow-500/30 text-xs"><Edit3 className="w-2.5 h-2.5 mr-0.5" />Modified</Badge>;
+      case 'modified': return <Badge className="bg-yellow-500/20 text-yellow-400 border-yellow-500/30 text-xs"><Edit3 strokeWidth={1.5} className="w-2.5 h-2.5 mr-0.5" />Modified</Badge>;
       default: return null;
     }
   };
@@ -159,7 +159,7 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
     <div className="h-full flex flex-col bg-[#080808]">
       {/* Header */}
       <div className="flex items-center gap-2 px-3 py-2 border-b border-white/5 bg-[#0a0a0a] flex-wrap">
-        <GitCompare className="w-4 h-4 text-rose-400" />
+        <GitCompare strokeWidth={1.5} className="w-3.5 h-3.5 text-rose-400" />
         <span className="text-xs font-medium text-zinc-400r">Schema Diff</span>
 
         <div className="h-4 w-px bg-white/10" />
@@ -174,13 +174,13 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
             <SelectContent className="bg-[#111] border-white/10">
               <SelectItem value="current" className="text-xs">
                 <div className="flex items-center gap-1">
-                  <Database className="w-3 h-3" /> Current Schema
+                  <Database strokeWidth={1.5} className="w-3 h-3" /> Current Schema
                 </div>
               </SelectItem>
               {snapshots.map(s => (
                 <SelectItem key={s.id} value={s.id} className="text-xs">
                   <div className="flex items-center gap-1">
-                    <Clock className="w-3 h-3" /> {formatSnapshotLabel(s)}
+                    <Clock strokeWidth={1.5} className="w-3 h-3" /> {formatSnapshotLabel(s)}
                   </div>
                 </SelectItem>
               ))}
@@ -206,13 +206,13 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
             <SelectContent className="bg-[#111] border-white/10">
               <SelectItem value="current" className="text-xs">
                 <div className="flex items-center gap-1">
-                  <Database className="w-3 h-3" /> Current Schema
+                  <Database strokeWidth={1.5} className="w-3 h-3" /> Current Schema
                 </div>
               </SelectItem>
               {snapshots.map(s => (
                 <SelectItem key={s.id} value={s.id} className="text-xs">
                   <div className="flex items-center gap-1">
-                    <Clock className="w-3 h-3" /> {formatSnapshotLabel(s)}
+                    <Clock strokeWidth={1.5} className="w-3 h-3" /> {formatSnapshotLabel(s)}
                   </div>
                 </SelectItem>
               ))}
@@ -224,9 +224,9 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
                   {allConnections.filter(c => c.id !== connection?.id).map(c => (
                     <SelectItem key={`conn:${c.id}`} value={`conn:${c.id}`} className="text-xs">
                       <div className="flex items-center gap-1">
-                        <Database className="w-3 h-3 text-blue-400" /> {c.name}
+                        <Database strokeWidth={1.5} className="w-3 h-3 text-blue-400" /> {c.name}
                         {c.environment === 'production' && (
-                          <AlertTriangle className="w-3 h-3 text-red-400" />
+                          <AlertTriangle strokeWidth={1.5} className="w-3 h-3 text-red-400" />
                         )}
                       </div>
                     </SelectItem>
@@ -287,7 +287,7 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
       <div className="flex-1 overflow-hidden flex">
         {!targetId ? (
           <div className="flex-1 flex flex-col items-center justify-center text-zinc-600 gap-3">
-            <GitCompare className="w-10 h-10 opacity-30" />
+            <GitCompare strokeWidth={1.5} className="w-10 h-10 opacity-30" />
             <p className="text-xs">Select source and target to compare schemas</p>
             <p className="text-xs text-zinc-700">Take a snapshot first, then compare with the current schema</p>
 
@@ -330,9 +330,9 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
                   )}
                 >
                   {selectedTable === table.tableName ? (
-                    <ChevronDown className="w-3 h-3 text-zinc-500" />
+                    <ChevronDown strokeWidth={1.5} className="w-3 h-3 text-zinc-500" />
                   ) : (
-                    <ChevronRight className="w-3 h-3 text-zinc-500" />
+                    <ChevronRight strokeWidth={1.5} className="w-3 h-3 text-zinc-500" />
                   )}
                   <span className="text-zinc-300">{table.tableName}</span>
                   <span className="ml-auto">{getActionBadge(table.action)}</span>
@@ -357,7 +357,7 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
           </div>
         ) : (
           <div className="flex-1 flex items-center justify-center text-zinc-600 gap-2">
-            <AlertTriangle className="w-4 h-4" />
+            <AlertTriangle strokeWidth={1.5} className="w-3.5 h-3.5" />
             <span className="text-xs">Cannot compare same schema with itself</span>
           </div>
         )}
@@ -370,7 +370,7 @@ function TableDiffDetail({ diff }: { diff: TableDiff }) {
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-2">
-        <Database className="w-4 h-4 text-zinc-400" />
+        <Database strokeWidth={1.5} className="w-3.5 h-3.5 text-zinc-400" />
         <h3 className="text-xs font-medium text-zinc-200">{diff.tableName}</h3>
         <Badge className={cn(
           "text-xs",
@@ -465,9 +465,9 @@ function TableDiffDetail({ diff }: { diff: TableDiff }) {
 
 function getActionIcon(action: string) {
   switch (action) {
-    case 'added': return <Plus className="w-3 h-3 text-green-400" />;
+    case 'added': return <Plus strokeWidth={1.5} className="w-3 h-3 text-green-400" />;
     case 'removed': return <Minus className="w-3 h-3 text-red-400" />;
-    case 'modified': return <Edit3 className="w-3 h-3 text-yellow-400" />;
+    case 'modified': return <Edit3 strokeWidth={1.5} className="w-3 h-3 text-yellow-400" />;
     default: return null;
   }
 }

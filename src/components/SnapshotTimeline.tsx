@@ -73,7 +73,7 @@ export function SnapshotTimeline({ snapshots, onCompare, onDelete }: SnapshotTim
             >
               {/* Dot */}
               <div className={cn(
-                "w-4 h-4 rounded-full border-2 z-10 transition-all",
+                "w-3.5 h-3.5 rounded-full border-2 z-10 transition-all",
                 isSelected
                   ? "bg-blue-500 border-blue-400 scale-125"
                   : "bg-[#0d0d0d] border-white/20 hover:border-white/40"
@@ -105,7 +105,7 @@ export function SnapshotTimeline({ snapshots, onCompare, onDelete }: SnapshotTim
                 onClick={(e) => { e.stopPropagation(); onDelete(snapshot.id); }}
                 className="absolute -top-2 -right-1 p-0.5 text-zinc-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"
               >
-                <Trash2 className="w-2.5 h-2.5" />
+                <Trash2 strokeWidth={1.5} className="w-2.5 h-2.5" />
               </button>
             </div>
           );

@@ -496,7 +496,7 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
             className="h-7 text-xs font-medium text-white bg-blue-600 hover:bg-blue-500 hover:text-white gap-2 shadow-[0_0_10px_rgba(37,99,235,0.3)] animate-in fade-in zoom-in duration-200"
             onClick={handleExecute}
           >
-            <Play className="w-3 h-3 fill-current" /> Run Sel
+            <Play strokeWidth={1.5} className="w-3 h-3 fill-current" /> Run Sel
           </Button>
         )}
 
@@ -507,7 +507,7 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
           onClick={handleFormat}
           title={language === 'json' ? "Format JSON (Shift+Alt+F)" : "Format SQL (Shift+Alt+F)"}
         >
-          <AlignLeft className="w-3 h-3" /> Format
+          <AlignLeft strokeWidth={1.5} className="w-3 h-3" /> Format
         </Button>
 
         <Button
@@ -516,7 +516,7 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
           className="h-7 text-xs font-medium text-zinc-500 hover:text-white gap-2"
           onClick={handleCopy}
         >
-          <Copy className="w-3 h-3" /> {hasSelection ? 'Copy Sel' : 'Copy'}
+          <Copy strokeWidth={1.5} className="w-3 h-3" /> {hasSelection ? 'Copy Sel' : 'Copy'}
         </Button>
 
         <Button
@@ -525,7 +525,7 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
           className="h-7 text-xs font-medium text-zinc-500 hover:text-red-400 gap-2"
           onClick={handleClear}
         >
-          <Trash2 className="w-3 h-3" /> Clear
+          <Trash2 strokeWidth={1.5} className="w-3 h-3" /> Clear
         </Button>
 
         <div className="h-4 w-px bg-white/5" />
@@ -540,7 +540,7 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
           onClick={() => setShowLineNumbers(!showLineNumbers)}
           title={showLineNumbers ? "Hide line numbers" : "Show line numbers"}
         >
-          <Hash className="w-3 h-3" /> Lines
+          <Hash strokeWidth={1.5} className="w-3 h-3" /> Lines
         </Button>
 
         <Button
@@ -567,7 +567,7 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
                 className="h-7 text-xs font-medium text-amber-500 hover:text-amber-400 gap-2"
                 onClick={onExplain}
               >
-                <Zap className="w-3 h-3" /> Explain
+                <Zap strokeWidth={1.5} className="w-3 h-3" /> Explain
               </Button>
             )}
             <kbd className="px-1.5 py-0.5 rounded bg-zinc-900 border border-white/5 text-[0.5625rem] text-zinc-600 font-mono">
@@ -592,7 +592,7 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
                 <div className="flex items-center justify-between px-3 py-1.5 border-b border-white/5 mb-1.5">
                   <div className="flex items-center gap-2">
                     <div className="p-1 rounded-md bg-blue-500/10">
-                      <Sparkles className="w-3.5 h-3.5 text-blue-400" />
+                      <Sparkles strokeWidth={1.5} className="w-3 h-3 text-blue-400" />
                     </div>
                     <span className="text-[0.625rem] font-black text-blue-400">Expert DBA Mode</span>
                   </div>
@@ -622,7 +622,7 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
                       >
                         <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-2.5 flex items-start gap-2.5">
                           <div className="p-1 rounded bg-red-500/20 mt-0.5">
-                            <X className="w-3 h-3 text-red-400" />
+                            <X strokeWidth={1.5} className="w-3 h-3 text-red-400" />
                           </div>
                           <div className="flex-1">
                             <p className="text-xs font-medium text-red-400 mb-0.5">AI Error</p>
@@ -633,7 +633,7 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
                             onClick={() => setAiError(null)}
                             className="text-red-400/50 hover:text-red-400 transition-colors"
                           >
-                            <X className="w-3.5 h-3.5" />
+                            <X strokeWidth={1.5} className="w-3 h-3" />
                           </button>
                         </div>
                       </motion.div>
@@ -655,7 +655,7 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
                       onClick={() => setShowAi(false)}
                       className="p-2.5 rounded-xl hover:bg-white/5 text-zinc-500 transition-colors"
                     >
-                      <X className="w-4.5 h-4.5" />
+                      <X strokeWidth={1.5} className="w-3.5 h-3.5" />
                     </button>
                     <button
                       type="submit"
@@ -664,13 +664,13 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
                     >
                       {isAiLoading ? (
                         <>
-                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          <Loader2 strokeWidth={1.5} className="w-3 h-3 animate-spin" />
                           <span>Thinking...</span>
                         </>
                       ) : (
                         <>
                           <span>Generate</span>
-                          <Send className="w-3.5 h-3.5" />
+                          <Send strokeWidth={1.5} className="w-3 h-3" />
                         </>
                       )}
                     </button>
@@ -689,7 +689,7 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
           value={value}
           beforeMount={handleBeforeMount}
           onChange={handleEditorChange}
-          loading={<div className="h-full w-full bg-[#050505] flex items-center justify-center"><Loader2 className="w-6 h-6 animate-spin text-zinc-800" /></div>}
+          loading={<div className="h-full w-full bg-[#050505] flex items-center justify-center"><Loader2 strokeWidth={1.5} className="w-6 h-6 animate-spin text-zinc-800" /></div>}
           onMount={(editor, monaco) => {
             editorRef.current = editor;
 

@@ -125,7 +125,7 @@ export function CreateTableModal({ isOpen, onClose, onTableCreated }: CreateTabl
         <DialogHeader className="px-6 py-4 border-b border-white/5 bg-zinc-900/50">
           <div className="flex items-center gap-3">
             <div className="p-2 rounded-lg bg-blue-500/10 border border-blue-500/20">
-              <TableIcon className="w-5 h-5 text-blue-400" />
+              <TableIcon strokeWidth={1.5} className="w-5 h-5 text-blue-400" />
             </div>
             <div>
               <DialogTitle className="text-xs font-medium">Create New Table</DialogTitle>
@@ -138,7 +138,7 @@ export function CreateTableModal({ isOpen, onClose, onTableCreated }: CreateTabl
           {/* Table Name Section */}
           <div className="space-y-4">
             <div className="flex items-center gap-2">
-              <Settings2 className="w-4 h-4 text-blue-500/50" />
+              <Settings2 strokeWidth={1.5} className="w-3.5 h-3.5 text-blue-500/50" />
               <Label className="text-xs font-medium text-zinc-500">General Settings</Label>
             </div>
             <div className="grid gap-2">
@@ -157,7 +157,7 @@ export function CreateTableModal({ isOpen, onClose, onTableCreated }: CreateTabl
           <div className="space-y-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <Type className="w-4 h-4 text-emerald-500/50" />
+                <Type strokeWidth={1.5} className="w-3.5 h-3.5 text-emerald-500/50" />
                 <Label className="text-xs font-medium text-zinc-500">Column Definitions</Label>
               </div>
               <Button 
@@ -166,7 +166,7 @@ export function CreateTableModal({ isOpen, onClose, onTableCreated }: CreateTabl
                 onClick={addColumn}
                 className="h-7 text-xs font-medium gap-2 hover:bg-emerald-500/10 hover:text-emerald-400"
               >
-                <Plus className="w-3 h-3" /> Add Column
+                <Plus strokeWidth={1.5} className="w-3 h-3" /> Add Column
               </Button>
             </div>
 
@@ -240,7 +240,7 @@ export function CreateTableModal({ isOpen, onClose, onTableCreated }: CreateTabl
                     className="h-8 w-8 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 mb-0.5"
                     onClick={() => removeColumn(index)}
                   >
-                    <Trash2 className="w-3.5 h-3.5" />
+                    <Trash2 strokeWidth={1.5} className="w-3.5 h-3.5" />
                   </Button>
                 </div>
               ))}
@@ -271,7 +271,7 @@ export function CreateTableModal({ isOpen, onClose, onTableCreated }: CreateTabl
             disabled={isSubmitting || !tableName}
             className="bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium gap-2 px-6"
           >
-            {isSubmitting ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />}
+            {isSubmitting ? <Loader2 strokeWidth={1.5} className="w-3 h-3 animate-spin" /> : <Plus strokeWidth={1.5} className="w-3 h-3" />}
             CREATE TABLE
           </Button>
         </DialogFooter>

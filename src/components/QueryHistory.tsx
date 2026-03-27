@@ -122,7 +122,7 @@ export function QueryHistory({ onSelectQuery, activeConnectionId, refreshTrigger
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="p-2 rounded-lg bg-emerald-500/10 border border-emerald-500/20">
-              <HistoryIcon className="w-4 h-4 text-emerald-400" />
+              <HistoryIcon strokeWidth={1.5} className="w-3.5 h-3.5 text-emerald-400" />
             </div>
             <div>
               <h3 className="text-xs font-medium text-zinc-100 flex items-center gap-2">
@@ -138,7 +138,7 @@ export function QueryHistory({ onSelectQuery, activeConnectionId, refreshTrigger
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="ghost" size="sm" className="h-8 text-xs font-medium text-zinc-400 hover:text-white gap-2">
-                  <Download className="w-3.5 h-3.5" /> Export
+                  <Download strokeWidth={1.5} className="w-3 h-3" /> Export
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="bg-[#0d0d0d] border-white/10 text-zinc-300">
@@ -157,14 +157,14 @@ export function QueryHistory({ onSelectQuery, activeConnectionId, refreshTrigger
               onClick={handleClearHistory} 
               className="h-8 text-xs font-medium text-red-400/70 hover:text-red-400 hover:bg-red-400/10"
             >
-              <Trash2 className="w-3.5 h-3.5 mr-2" /> Clear
+              <Trash2 strokeWidth={1.5} className="w-3 h-3 mr-2" /> Clear
             </Button>
           </div>
         </div>
         
         <div className="flex flex-wrap items-center gap-3">
           <div className="relative flex-1 min-w-[240px]">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-zinc-500" />
+            <Search strokeWidth={1.5} className="absolute left-3 top-1/2 -translate-y-1/2 w-3 h-3 text-zinc-500" />
             <Input 
               placeholder="Search by query, connection or tab..." 
               value={search}
@@ -176,7 +176,7 @@ export function QueryHistory({ onSelectQuery, activeConnectionId, refreshTrigger
                 onClick={() => setSearch('')}
                 className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-white"
               >
-                <X className="w-3 h-3" />
+                <X strokeWidth={1.5} className="w-3 h-3" />
               </button>
             )}
           </div>
@@ -222,7 +222,7 @@ export function QueryHistory({ onSelectQuery, activeConnectionId, refreshTrigger
       <div className="flex-1 overflow-auto custom-scrollbar">
         {filteredHistory.length === 0 ? (
           <div className="h-full flex flex-col items-center justify-center opacity-20 p-8 text-center">
-            <HistoryIcon className="w-16 h-16 mb-4 text-zinc-600" />
+            <HistoryIcon strokeWidth={1.5} className="w-16 h-16 mb-4 text-zinc-600" />
             <p className="text-xs font-medium">No history items found</p>
             <p className="text-xs text-zinc-500 mt-1r">Run some queries to see them here</p>
           </div>
@@ -265,11 +265,11 @@ export function QueryHistory({ onSelectQuery, activeConnectionId, refreshTrigger
                       <div className="flex justify-center">
                         {item.status === 'success' ? (
                           <div className="w-5 h-5 rounded-full bg-emerald-500/10 flex items-center justify-center border border-emerald-500/20">
-                            <CheckCircle2 className="w-3 h-3 text-emerald-500" />
+                            <CheckCircle2 strokeWidth={1.5} className="w-3 h-3 text-emerald-500" />
                           </div>
                         ) : (
                           <div className="w-5 h-5 rounded-full bg-red-500/10 flex items-center justify-center border border-red-500/20">
-                            <AlertCircle className="w-3 h-3 text-red-500" />
+                            <AlertCircle strokeWidth={1.5} className="w-3 h-3 text-red-500" />
                           </div>
                         )}
                       </div>
@@ -287,11 +287,11 @@ export function QueryHistory({ onSelectQuery, activeConnectionId, refreshTrigger
                     <td className="px-4 py-4 whitespace-nowrap">
                       <div className="flex flex-col gap-1">
                         <div className="flex items-center gap-1.5 text-zinc-300">
-                          <Database className="w-3 h-3 text-blue-400" />
+                          <Database strokeWidth={1.5} className="w-3 h-3 text-blue-400" />
                           <span className="font-medium">{item.connectionName || 'Unknown'}</span>
                         </div>
                         <div className="flex items-center gap-1.5 text-zinc-500 text-xs">
-                          <Hash className="w-2.5 h-2.5" />
+                          <Hash strokeWidth={1.5} className="w-2.5 h-2.5" />
                           <span>{item.tabName || 'Default Tab'}</span>
                         </div>
                       </div>
@@ -329,7 +329,7 @@ export function QueryHistory({ onSelectQuery, activeConnectionId, refreshTrigger
                         onClick={() => onSelectQuery(item.query)}
                         title="Restore Query"
                       >
-                        <RotateCcw className="w-3.5 h-3.5" />
+                        <RotateCcw className="w-3 h-3" />
                       </Button>
                     </td>
                   </tr>

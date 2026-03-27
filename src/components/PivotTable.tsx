@@ -125,7 +125,7 @@ export function PivotTable({ result, onLoadQuery }: PivotTableProps) {
   if (!result || rows.length === 0) {
     return (
       <div className="h-full flex flex-col items-center justify-center opacity-30">
-        <Columns3 className="w-8 h-8 mb-3" />
+        <Columns3 strokeWidth={1.5} className="w-8 h-8 mb-3" />
         <p className="text-xs font-medium">Pivot Table</p>
         <p className="text-xs text-zinc-500 mt-1">Execute a query to create pivot tables</p>
       </div>
@@ -202,7 +202,7 @@ export function PivotTable({ result, onLoadQuery }: PivotTableProps) {
             }}
             className="ml-auto flex items-center gap-1 px-2 py-1 rounded text-xs font-medium text-zinc-500 hover:text-blue-400 hover:bg-blue-500/10 transition-colors"
           >
-            <ArrowRight className="w-3 h-3" /> Generate SQL
+            <ArrowRight strokeWidth={1.5} className="w-3 h-3" /> Generate SQL
           </button>
         )}
       </div>
@@ -240,7 +240,7 @@ export function PivotTable({ result, onLoadQuery }: PivotTableProps) {
           </table>
         ) : (
           <div className="flex flex-col items-center justify-center h-full opacity-30">
-            <GripVertical className="w-6 h-6 mb-2" />
+            <GripVertical strokeWidth={1.5} className="w-6 h-6 mb-2" />
             <p className="text-xs">Select row and value fields to build pivot</p>
           </div>
         )}

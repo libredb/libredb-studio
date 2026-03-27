@@ -60,7 +60,7 @@ export function PoolTab({ connection }: PoolTabProps) {
   if (loading && !stats) {
     return (
       <div className="flex items-center justify-center h-full gap-2 text-muted-foreground">
-        <Loader2 className="h-4 w-4 animate-spin" />
+        <Loader2 strokeWidth={1.5} className="h-4 w-4 animate-spin" />
         Loading pool statistics...
       </div>
     );
@@ -84,7 +84,7 @@ export function PoolTab({ connection }: PoolTabProps) {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <Server className="h-4 w-4 sm:h-5 sm:w-5 text-primary" />
+          <Server strokeWidth={1.5} className="h-4 w-4 sm:h-5 sm:w-5 text-primary" />
           <h2 className="text-xs sm:text-base font-medium">Connection Pool</h2>
         </div>
         <Button
@@ -111,7 +111,7 @@ export function PoolTab({ connection }: PoolTabProps) {
             <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">
               Total
             </CardTitle>
-            <Server className="h-3 w-3 sm:h-4 sm:w-4 text-blue-500" />
+            <Server strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4 text-blue-500" />
           </CardHeader>
           <CardContent className="p-3 sm:p-4 pt-0">
             <div className="text-lg sm:text-2xl font-medium">{stats?.total ?? 0}</div>
@@ -126,7 +126,7 @@ export function PoolTab({ connection }: PoolTabProps) {
             <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">
               Active
             </CardTitle>
-            <Activity className="h-3 w-3 sm:h-4 sm:w-4 text-green-500" />
+            <Activity strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4 text-green-500" />
           </CardHeader>
           <CardContent className="p-3 sm:p-4 pt-0">
             <div className="text-lg sm:text-2xl font-medium">{stats?.active ?? 0}</div>
@@ -142,7 +142,7 @@ export function PoolTab({ connection }: PoolTabProps) {
             <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">
               Idle
             </CardTitle>
-            <Clock className="h-3 w-3 sm:h-4 sm:w-4 text-yellow-500" />
+            <Clock strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4 text-yellow-500" />
           </CardHeader>
           <CardContent className="p-3 sm:p-4 pt-0">
             <div className="text-lg sm:text-2xl font-medium">{stats?.idle ?? 0}</div>

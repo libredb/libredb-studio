@@ -83,7 +83,7 @@ export function TablesTab({ data, loading, onRunMaintenance, isAdmin = true }: T
             <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">
               Tables
             </CardTitle>
-            <Table2 className="h-3 w-3 sm:h-4 sm:w-4 text-muted-foreground" />
+            <Table2 strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent className="p-2 sm:p-4 pt-0">
             <div className="text-lg sm:text-2xl font-medium">{tables.length}</div>
@@ -98,7 +98,7 @@ export function TablesTab({ data, loading, onRunMaintenance, isAdmin = true }: T
             <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">
               Size
             </CardTitle>
-            <Search className="h-3 w-3 sm:h-4 sm:w-4 text-muted-foreground" />
+            <Search strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent className="p-2 sm:p-4 pt-0">
             <div className="text-lg sm:text-2xl font-medium">{formatBytes(totalSize)}</div>
@@ -131,7 +131,7 @@ export function TablesTab({ data, loading, onRunMaintenance, isAdmin = true }: T
         <CardHeader className="p-3 sm:p-4">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 sm:gap-4">
             <CardTitle className="text-xs sm:text-xs font-medium flex items-center gap-2">
-              <Table2 className="h-3 w-3 sm:h-4 sm:w-4" />
+              <Table2 strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4" />
               Table Statistics
             </CardTitle>
             <Input
@@ -145,7 +145,7 @@ export function TablesTab({ data, loading, onRunMaintenance, isAdmin = true }: T
         <CardContent className="p-0 sm:p-4 sm:pt-0">
           {filteredTables.length === 0 ? (
             <div className="text-center py-8 text-muted-foreground">
-              <Table2 className="h-8 w-8 mx-auto mb-2 opacity-50" />
+              <Table2 strokeWidth={1.5} className="h-8 w-8 mx-auto mb-2 opacity-50" />
               <p className="text-xs">No tables found.</p>
             </div>
           ) : (
@@ -218,9 +218,9 @@ export function TablesTab({ data, loading, onRunMaintenance, isAdmin = true }: T
                               title="Analyze"
                             >
                               {actionLoading === `analyze-${table.tableName}` ? (
-                                <Loader2 className="h-3 w-3 animate-spin" />
+                                <Loader2 strokeWidth={1.5} className="h-3 w-3 animate-spin" />
                               ) : (
-                                <Search className="h-3 w-3" />
+                                <Search strokeWidth={1.5} className="h-3 w-3" />
                               )}
                             </Button>
                             <Button
@@ -232,9 +232,9 @@ export function TablesTab({ data, loading, onRunMaintenance, isAdmin = true }: T
                               title="Vacuum"
                             >
                               {actionLoading === `vacuum-${table.tableName}` ? (
-                                <Loader2 className="h-3 w-3 animate-spin" />
+                                <Loader2 strokeWidth={1.5} className="h-3 w-3 animate-spin" />
                               ) : (
-                                <RefreshCw className="h-3 w-3" />
+                                <RefreshCw strokeWidth={1.5} className="h-3 w-3" />
                               )}
                             </Button>
                             <Button
@@ -246,9 +246,9 @@ export function TablesTab({ data, loading, onRunMaintenance, isAdmin = true }: T
                               title="Reindex"
                             >
                               {actionLoading === `reindex-${table.tableName}` ? (
-                                <Loader2 className="h-3 w-3 animate-spin" />
+                                <Loader2 strokeWidth={1.5} className="h-3 w-3 animate-spin" />
                               ) : (
-                                <Zap className="h-3 w-3" />
+                                <Zap strokeWidth={1.5} className="h-3 w-3" />
                               )}
                             </Button>
                           </div>

@@ -506,22 +506,22 @@ export function DataCharts({ result }: DataChartsProps) {
   }
 
   const chartTypes: { type: ChartType; icon: React.ReactNode; label: string }[] = [
-    { type: 'bar', icon: <BarChart3 className="w-4 h-4" />, label: 'Bar' },
-    { type: 'line', icon: <LineChartIcon className="w-4 h-4" />, label: 'Line' },
-    { type: 'pie', icon: <PieChartIcon className="w-4 h-4" />, label: 'Pie' },
-    { type: 'area', icon: <AreaChartIcon className="w-4 h-4" />, label: 'Area' },
-    { type: 'scatter', icon: <Circle className="w-4 h-4" />, label: 'Scatter' },
-    { type: 'histogram', icon: <BarChart2 className="w-4 h-4" />, label: 'Histogram' },
-    { type: 'stacked-bar', icon: <BarChart3 className="w-4 h-4" />, label: 'Stacked' },
-    { type: 'stacked-area', icon: <AreaChartIcon className="w-4 h-4" />, label: 'Stack Area' },
+    { type: 'bar', icon: <BarChart3 strokeWidth={1.5} className="w-3.5 h-3.5" />, label: 'Bar' },
+    { type: 'line', icon: <LineChartIcon strokeWidth={1.5} className="w-3.5 h-3.5" />, label: 'Line' },
+    { type: 'pie', icon: <PieChartIcon strokeWidth={1.5} className="w-3.5 h-3.5" />, label: 'Pie' },
+    { type: 'area', icon: <AreaChartIcon strokeWidth={1.5} className="w-3.5 h-3.5" />, label: 'Area' },
+    { type: 'scatter', icon: <Circle strokeWidth={1.5} className="w-3.5 h-3.5" />, label: 'Scatter' },
+    { type: 'histogram', icon: <BarChart2 strokeWidth={1.5} className="w-3.5 h-3.5" />, label: 'Histogram' },
+    { type: 'stacked-bar', icon: <BarChart3 strokeWidth={1.5} className="w-3.5 h-3.5" />, label: 'Stacked' },
+    { type: 'stacked-area', icon: <AreaChartIcon strokeWidth={1.5} className="w-3.5 h-3.5" />, label: 'Stack Area' },
   ];
 
   const getFieldIcon = (type: FieldAnalysis['type']) => {
     switch (type) {
-      case 'numeric': return <Hash className="w-3 h-3" />;
+      case 'numeric': return <Hash strokeWidth={1.5} className="w-3 h-3" />;
       case 'date': return <Calendar className="w-3 h-3" />;
-      case 'categorical': return <Type className="w-3 h-3" />;
-      default: return <AlertCircle className="w-3 h-3" />;
+      case 'categorical': return <Type strokeWidth={1.5} className="w-3 h-3" />;
+      default: return <AlertCircle strokeWidth={1.5} className="w-3 h-3" />;
     }
   };
 
@@ -582,7 +582,7 @@ export function DataCharts({ result }: DataChartsProps) {
             <DropdownMenuTrigger asChild>
               <Button variant="outline" size="sm" className="h-7 text-xs bg-white/5 border-white/10 gap-1">
                 {yAxis.length > 0 ? yAxis.join(', ') : 'Select fields'}
-                <Settings2 className="w-3 h-3 ml-1" />
+                <Settings2 strokeWidth={1.5} className="w-3 h-3 ml-1" />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent className="bg-[#111] border-white/10">
@@ -595,7 +595,7 @@ export function DataCharts({ result }: DataChartsProps) {
                     yAxis.includes(field) && "bg-blue-600/20 text-blue-400"
                   )}
                 >
-                  <Hash className="w-3 h-3 mr-2" />
+                  <Hash strokeWidth={1.5} className="w-3 h-3 mr-2" />
                   {field}
                   {yAxis.includes(field) && <span className="ml-auto">✓</span>}
                 </DropdownMenuItem>
@@ -694,13 +694,13 @@ export function DataCharts({ result }: DataChartsProps) {
         ) : (
           <div className="flex items-center gap-1">
             <Button variant="ghost" size="sm" className="h-7 text-xs text-zinc-500 hover:text-white gap-1" onClick={() => setShowSaveDialog(true)}>
-              <Save className="w-3 h-3" /> Save
+              <Save strokeWidth={1.5} className="w-3 h-3" /> Save
             </Button>
             {savedCharts.length > 0 && (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button variant="ghost" size="sm" className="h-7 text-xs text-zinc-500 hover:text-white gap-1">
-                    <FolderOpen className="w-3 h-3" /> Saved ({savedCharts.length})
+                    <FolderOpen strokeWidth={1.5} className="w-3 h-3" /> Saved ({savedCharts.length})
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="bg-[#111] border-white/10 max-h-48 overflow-auto">
@@ -708,7 +708,7 @@ export function DataCharts({ result }: DataChartsProps) {
                     <DropdownMenuItem key={chart.id} className="text-xs cursor-pointer flex items-center justify-between gap-4">
                       <span onClick={() => loadSavedChart(chart)}>{chart.name} <span className="text-zinc-600">({chart.chartType})</span></span>
                       <button onClick={(e) => { e.stopPropagation(); deleteSavedChart(chart.id); }} className="text-zinc-600 hover:text-red-400">
-                        <X className="w-3 h-3" />
+                        <X strokeWidth={1.5} className="w-3 h-3" />
                       </button>
                     </DropdownMenuItem>
                   ))}
@@ -722,7 +722,7 @@ export function DataCharts({ result }: DataChartsProps) {
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="ghost" size="sm" className="h-7 text-xs font-medium text-zinc-500 hover:text-white gap-1">
-              <Download className="w-3 h-3" /> Export
+              <Download strokeWidth={1.5} className="w-3 h-3" /> Export
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="bg-[#111] border-white/10">

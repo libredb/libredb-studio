@@ -171,7 +171,7 @@ export function PerformanceTab({ data, loading, history = [] }: PerformanceTabPr
         <Card className="p-0">
           <CardHeader className="p-3 sm:p-4 pb-2">
             <CardTitle className="text-xs sm:text-xs font-medium flex items-center gap-2">
-              <Zap className="h-3 w-3 sm:h-4 sm:w-4" />
+              <Zap strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4" />
               Checkpoint Stats
             </CardTitle>
           </CardHeader>
@@ -192,14 +192,14 @@ export function PerformanceTab({ data, loading, history = [] }: PerformanceTabPr
         <Card className="p-0">
           <CardHeader className="p-3 sm:p-4 pb-2">
             <CardTitle className="text-xs sm:text-xs font-medium flex items-center gap-2">
-              <Activity className="h-3 w-3 sm:h-4 sm:w-4" />
+              <Activity strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4" />
               Tips
             </CardTitle>
           </CardHeader>
           <CardContent className="p-3 sm:p-4 pt-0 space-y-2 sm:space-y-3">
             {(performance?.cacheHitRatio ?? 100) < 90 && (
               <div className="flex items-start gap-2 p-2 bg-yellow-500/10 rounded-md">
-                <AlertTriangle className="h-3 w-3 sm:h-4 sm:w-4 text-yellow-500 mt-0.5 flex-shrink-0" />
+                <AlertTriangle strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4 text-yellow-500 mt-0.5 flex-shrink-0" />
                 <div>
                   <p className="text-xs sm:text-xs font-medium">Low Cache Hit</p>
                   <p className="text-xs sm:text-xs text-muted-foreground hidden sm:block">
@@ -210,7 +210,7 @@ export function PerformanceTab({ data, loading, history = [] }: PerformanceTabPr
             )}
             {(performance?.deadlocks ?? 0) > 0 && (
               <div className="flex items-start gap-2 p-2 bg-red-500/10 rounded-md">
-                <AlertTriangle className="h-3 w-3 sm:h-4 sm:w-4 text-red-500 mt-0.5 flex-shrink-0" />
+                <AlertTriangle strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4 text-red-500 mt-0.5 flex-shrink-0" />
                 <div>
                   <p className="text-xs sm:text-xs font-medium">Deadlocks</p>
                   <p className="text-xs sm:text-xs text-muted-foreground hidden sm:block">
@@ -221,7 +221,7 @@ export function PerformanceTab({ data, loading, history = [] }: PerformanceTabPr
             )}
             {(performance?.cacheHitRatio ?? 0) >= 90 && !(performance?.deadlocks) && (
               <div className="flex items-center gap-2 p-2 bg-green-500/10 rounded-md">
-                <Activity className="h-3 w-3 sm:h-4 sm:w-4 text-green-500 flex-shrink-0" />
+                <Activity strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4 text-green-500 flex-shrink-0" />
                 <p className="text-xs sm:text-xs">Performing well!</p>
               </div>
             )}

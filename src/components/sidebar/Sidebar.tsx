@@ -56,8 +56,8 @@ export function Sidebar({
     <div className="flex w-full h-full border-r border-border flex-col bg-background select-none">
       <div className="h-14 px-4 flex items-center justify-between border-b border-border">
         <div className="flex items-center gap-2">
-          <div className="w-6 h-6 bg-blue-600 rounded-md flex items-center justify-center">
-            <Zap className="w-3.5 h-3.5 text-white fill-current" />
+          <div className="w-5 h-5 bg-blue-600 rounded flex items-center justify-center">
+            <Zap strokeWidth={1.5} className="w-3 h-3 text-white fill-current" />
           </div>
           <span className="font-medium text-xs tracking-tight bg-gradient-to-r from-foreground to-muted-foreground bg-clip-text text-transparent">
             LibreDB Studio
@@ -65,24 +65,20 @@ export function Sidebar({
         </div>
         <div className="flex items-center gap-1">
           {activeConnection && (
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-8 w-8 hover:bg-accent text-muted-foreground hover:text-foreground transition-colors"
+            <button
+              className="p-1 rounded hover:bg-accent text-muted-foreground hover:text-foreground transition-colors"
               onClick={onShowDiagram}
               title="Show ERD Diagram"
             >
-              <Layers className="w-4 h-4" />
-            </Button>
+              <Layers strokeWidth={1.5} className="w-3.5 h-3.5" />
+            </button>
           )}
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-8 w-8 hover:bg-accent text-muted-foreground hover:text-foreground transition-colors"
+          <button
+            className="p-1 rounded hover:bg-accent text-muted-foreground hover:text-foreground transition-colors"
             onClick={onAddConnection}
           >
-            <Plus className="w-4 h-4" />
-          </Button>
+            <Plus strokeWidth={1.5} className="w-3.5 h-3.5" />
+          </button>
         </div>
       </div>
 

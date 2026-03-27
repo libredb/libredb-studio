@@ -220,15 +220,15 @@ function analyzePlan(plan: ExplainPlanResult[]): PlanAnalysis {
 // ============================================================================
 
 const NodeIcon = ({ type }: { type: string }) => {
-  if (type.includes('Seq Scan')) return <Search className="w-4 h-4 text-amber-400" />;
-  if (type.includes('Index Scan') || type.includes('Index Only')) return <Target className="w-4 h-4 text-emerald-400" />;
-  if (type.includes('Scan')) return <Search className="w-4 h-4 text-blue-400" />;
-  if (type.includes('Join')) return <Layers className="w-4 h-4 text-purple-400" />;
-  if (type.includes('Sort')) return <ArrowDown className="w-4 h-4 text-amber-400" />;
-  if (type.includes('Limit')) return <LayoutGrid className="w-4 h-4 text-zinc-400" />;
-  if (type.includes('Aggregate') || type.includes('Group')) return <Zap className="w-4 h-4 text-pink-400" />;
-  if (type.includes('Hash')) return <HardDrive className="w-4 h-4 text-cyan-400" />;
-  return <Database className="w-4 h-4 text-zinc-500" />;
+  if (type.includes('Seq Scan')) return <Search strokeWidth={1.5} className="w-3.5 h-3.5 text-amber-400" />;
+  if (type.includes('Index Scan') || type.includes('Index Only')) return <Target strokeWidth={1.5} className="w-3.5 h-3.5 text-emerald-400" />;
+  if (type.includes('Scan')) return <Search strokeWidth={1.5} className="w-3.5 h-3.5 text-blue-400" />;
+  if (type.includes('Join')) return <Layers strokeWidth={1.5} className="w-3.5 h-3.5 text-purple-400" />;
+  if (type.includes('Sort')) return <ArrowDown strokeWidth={1.5} className="w-3.5 h-3.5 text-amber-400" />;
+  if (type.includes('Limit')) return <LayoutGrid strokeWidth={1.5} className="w-3.5 h-3.5 text-zinc-400" />;
+  if (type.includes('Aggregate') || type.includes('Group')) return <Zap strokeWidth={1.5} className="w-3.5 h-3.5 text-pink-400" />;
+  if (type.includes('Hash')) return <HardDrive strokeWidth={1.5} className="w-3.5 h-3.5 text-cyan-400" />;
+  return <Database strokeWidth={1.5} className="w-3.5 h-3.5 text-zinc-500" />;
 };
 
 const StatusBadge = ({ status }: { status: 'good' | 'warning' | 'critical' }) => {
@@ -445,7 +445,7 @@ function AIExplainTab({
                   onClick={() => onLoadQuery(content)}
                   className="absolute top-2 right-2 opacity-0 group-hover/code:opacity-100 transition-opacity px-2 py-1 rounded bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium flex items-center gap-1"
                 >
-                  <Play className="w-3 h-3" /> Try This
+                  <Play strokeWidth={1.5} className="w-3 h-3" /> Try This
                 </button>
               )}
             </div>
@@ -527,7 +527,7 @@ function AIExplainTab({
     return (
       <div className="h-full flex flex-col items-center justify-center p-8 text-center">
         <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-purple-500/20 to-blue-500/10 flex items-center justify-center mb-4">
-          <Sparkles className="w-7 h-7 text-purple-400" />
+          <Sparkles strokeWidth={1.5} className="w-7 h-7 text-purple-400" />
         </div>
         <h3 className="text-xs font-medium text-zinc-200 mb-1">AI Query Analysis</h3>
         <p className="text-xs text-zinc-500 max-w-[280px] leading-relaxed mb-4">
@@ -543,7 +543,7 @@ function AIExplainTab({
               : "bg-white/5 text-zinc-600 cursor-not-allowed"
           )}
         >
-          <Sparkles className="w-3.5 h-3.5" />
+          <Sparkles strokeWidth={1.5} className="w-3 h-3" />
           Analyze with AI
         </button>
         {!query && (
@@ -558,7 +558,7 @@ function AIExplainTab({
       {/* Re-analyze button */}
       <div className="flex items-center justify-between px-4 py-2 border-b border-white/5 bg-[#0a0a0a]">
         <div className="flex items-center gap-2">
-          <Sparkles className="w-3.5 h-3.5 text-purple-400" />
+          <Sparkles strokeWidth={1.5} className="w-3 h-3 text-purple-400" />
           <span className="text-xs font-medium text-purple-400r">AI Analysis</span>
         </div>
         <button
@@ -566,7 +566,7 @@ function AIExplainTab({
           disabled={isLoading}
           className="flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-medium text-zinc-400 hover:text-white hover:bg-white/5 transition-all"
         >
-          {isLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
+          {isLoading ? <Loader2 strokeWidth={1.5} className="w-3 h-3 animate-spin" /> : <Sparkles strokeWidth={1.5} className="w-3 h-3" />}
           {isLoading ? 'Analyzing...' : 'Re-analyze'}
         </button>
       </div>
@@ -575,7 +575,7 @@ function AIExplainTab({
       <div className="flex-1 overflow-auto p-4">
         {error && (
           <div className="flex items-center gap-2 p-3 rounded-lg bg-red-500/5 border border-red-500/10 text-red-400 text-xs mb-4">
-            <AlertTriangle className="w-4 h-4 shrink-0" />
+            <AlertTriangle strokeWidth={1.5} className="w-3.5 h-3.5 shrink-0" />
             {error}
           </div>
         )}
@@ -588,14 +588,14 @@ function AIExplainTab({
 
         {isLoading && !aiResponse && (
           <div className="flex items-center gap-3 text-zinc-500 text-xs">
-            <Loader2 className="w-4 h-4 animate-spin text-purple-400" />
+            <Loader2 strokeWidth={1.5} className="w-3.5 h-3.5 animate-spin text-purple-400" />
             <span>Analyzing execution plan...</span>
           </div>
         )}
 
         {isLoading && aiResponse && (
           <div className="flex items-center gap-2 mt-2 text-zinc-600 text-xs">
-            <Loader2 className="w-3 h-3 animate-spin" />
+            <Loader2 strokeWidth={1.5} className="w-3 h-3 animate-spin" />
             <span>Still generating...</span>
           </div>
         )}
@@ -621,7 +621,7 @@ export function VisualExplain({ plan, query, schemaContext, databaseType, onLoad
     return (
       <div className="h-full flex flex-col items-center justify-center text-zinc-500 bg-[#080808] p-12 text-center">
         <div className="w-12 h-12 rounded-xl bg-white/5 flex items-center justify-center mb-4">
-          <Activity className="w-6 h-6 text-zinc-600" />
+          <Activity strokeWidth={1.5} className="w-6 h-6 text-zinc-600" />
         </div>
         <h3 className="text-xs font-medium text-zinc-300 mb-1">No execution plan</h3>
         <p className="text-xs text-zinc-600 max-w-[240px]">
@@ -641,21 +641,21 @@ export function VisualExplain({ plan, query, schemaContext, databaseType, onLoad
           {/* Quick stats */}
           <div className="flex items-center gap-6">
             <div className="flex items-center gap-2">
-              <Clock className="w-3.5 h-3.5 text-blue-400" />
+              <Clock strokeWidth={1.5} className="w-3 h-3 text-blue-400" />
               <span className="text-xs font-medium text-zinc-200">
                 {formatTime(analysis?.executionTime || 0)}
               </span>
               <span className="text-xs text-zinc-600">execution</span>
             </div>
             <div className="flex items-center gap-2">
-              <TrendingUp className="w-3.5 h-3.5 text-zinc-500" />
+              <TrendingUp className="w-3 h-3 text-zinc-500" />
               <span className="text-xs font-medium text-zinc-400">
                 {formatNumber(analysis?.totalRows || 0)}
               </span>
               <span className="text-xs text-zinc-600">rows</span>
             </div>
             <div className="flex items-center gap-2">
-              <HardDrive className="w-3.5 h-3.5 text-zinc-500" />
+              <HardDrive strokeWidth={1.5} className="w-3 h-3 text-zinc-500" />
               <span className="text-xs font-medium text-zinc-400">
                 {formatNumber(analysis?.totalCost || 0)}
               </span>
@@ -676,10 +676,10 @@ export function VisualExplain({ plan, query, schemaContext, databaseType, onLoad
                     : "text-zinc-500 hover:text-zinc-300"
                 )}
               >
-                {tab === 'insights' && <Zap className="w-3 h-3 inline mr-1" />}
-                {tab === 'ai' && <Sparkles className="w-3 h-3 inline mr-1" />}
-                {tab === 'tree' && <Layers className="w-3 h-3 inline mr-1" />}
-                {tab === 'raw' && <FileJson className="w-3 h-3 inline mr-1" />}
+                {tab === 'insights' && <Zap strokeWidth={1.5} className="w-3 h-3 inline mr-1" />}
+                {tab === 'ai' && <Sparkles strokeWidth={1.5} className="w-3 h-3 inline mr-1" />}
+                {tab === 'tree' && <Layers strokeWidth={1.5} className="w-3 h-3 inline mr-1" />}
+                {tab === 'raw' && <FileJson strokeWidth={1.5} className="w-3 h-3 inline mr-1" />}
                 {tab === 'ai' ? 'AI Explain' : tab}
               </button>
             ))}
@@ -728,11 +728,11 @@ export function VisualExplain({ plan, query, schemaContext, databaseType, onLoad
                         : "bg-blue-500/10"
                     )}>
                       {warning.type === 'critical' ? (
-                        <AlertTriangle className="w-3.5 h-3.5 text-red-400" />
+                        <AlertTriangle strokeWidth={1.5} className="w-3 h-3 text-red-400" />
                       ) : warning.type === 'warning' ? (
-                        <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
+                        <AlertTriangle strokeWidth={1.5} className="w-3 h-3 text-amber-400" />
                       ) : (
-                        <Info className="w-3.5 h-3.5 text-blue-400" />
+                        <Info strokeWidth={1.5} className="w-3 h-3 text-blue-400" />
                       )}
                     </div>
                     <div className="flex-1 min-w-0">
@@ -759,7 +759,7 @@ export function VisualExplain({ plan, query, schemaContext, databaseType, onLoad
             {analysis && analysis.warnings.length === 0 && (
               <div className="flex items-center gap-3 p-3 rounded-lg bg-emerald-500/5 border border-emerald-500/10">
                 <div className="p-1 rounded bg-emerald-500/10">
-                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                  <CheckCircle2 strokeWidth={1.5} className="w-3 h-3 text-emerald-400" />
                 </div>
                 <div>
                   <h4 className="text-xs font-medium text-emerald-300">Query looks good</h4>

@@ -47,7 +47,7 @@ export function QueryToolbar({
       {/* Playground Mode Banner */}
       {playgroundMode && (
         <div className="hidden md:flex items-center justify-center gap-2 px-4 py-1 bg-emerald-500/10 border-b border-emerald-500/20 text-emerald-400">
-          <FlaskConical className="w-3 h-3" />
+          <FlaskConical strokeWidth={1.5} className="w-3 h-3" />
           <span className="text-xs font-mediumr">
             Sandbox Mode — All changes will be auto-rolled back
           </span>
@@ -58,7 +58,7 @@ export function QueryToolbar({
       <div className="hidden md:flex items-center justify-between px-4 py-1.5 bg-[#0a0a0a] border-b border-white/5">
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-2 px-2 py-0.5 rounded bg-blue-500/5 border border-blue-500/10">
-            <Terminal className="w-3 h-3 text-blue-400" />
+            <Terminal strokeWidth={1.5} className="w-3 h-3 text-blue-400" />
             <span className="text-xs font-medium text-blue-400">Query</span>
           </div>
           <div className="h-4 w-px bg-white/5" />
@@ -68,7 +68,7 @@ export function QueryToolbar({
             className="h-7 text-xs font-medium text-zinc-500 hover:text-white gap-2"
             onClick={onSaveQuery}
           >
-            <Save className="w-3 h-3" /> Save
+            <Save strokeWidth={1.5} className="w-3 h-3" /> Save
           </Button>
         </div>
         {isExecuting ? (
@@ -77,7 +77,7 @@ export function QueryToolbar({
             className="bg-red-600 hover:bg-red-500 text-white font-medium text-xs h-7 px-4 gap-2"
             onClick={onCancelQuery}
           >
-            <Square className="w-3 h-3 fill-current" />
+            <Square strokeWidth={1.5} className="w-3 h-3 fill-current" />
             CANCEL
           </Button>
         ) : (
@@ -87,7 +87,7 @@ export function QueryToolbar({
             onClick={onExecuteQuery}
             disabled={!activeConnection}
           >
-            <Play className="w-3 h-3 fill-current" />
+            <Play strokeWidth={1.5} className="w-3 h-3 fill-current" />
             RUN
           </Button>
         )}
@@ -142,7 +142,7 @@ export function QueryToolbar({
               disabled={transactionActive}
               title="Playground mode: queries are auto-rolled back"
             >
-              <FlaskConical className="w-3 h-3" />
+              <FlaskConical strokeWidth={1.5} className="w-3 h-3" />
               SANDBOX
             </Button>
 
@@ -158,7 +158,7 @@ export function QueryToolbar({
               onClick={onToggleEditing}
               title="Enable inline data editing"
             >
-              <Pencil className="w-3 h-3" />
+              <Pencil strokeWidth={1.5} className="w-3 h-3" />
               EDIT
             </Button>
 
@@ -169,7 +169,7 @@ export function QueryToolbar({
               onClick={onImport}
               title="Import data from CSV/JSON"
             >
-              <Upload className="w-3 h-3" />
+              <Upload strokeWidth={1.5} className="w-3 h-3" />
               IMPORT
             </Button>
           </div>

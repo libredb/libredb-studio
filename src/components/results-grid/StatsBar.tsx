@@ -73,9 +73,9 @@ export function StatsBar({
             onClick={onClearFilters}
             title="Clear all filters"
           >
-            <Filter className="w-3 h-3" />
+            <Filter strokeWidth={1.5} className="w-3 h-3" />
             {activeFilterCount} filter{activeFilterCount > 1 ? 's' : ''} &bull; {filteredRowCount} shown
-            <X className="w-3 h-3" />
+            <X strokeWidth={1.5} className="w-3 h-3" />
           </button>
         )}
         {result.pagination?.wasLimited && (
@@ -104,7 +104,7 @@ export function StatsBar({
             </Button>
           ) : effectiveMaskingEnabled ? (
             <span className="h-6 px-2 text-xs font-medium text-purple-400 bg-purple-500/10 rounded flex items-center gap-1">
-              <Lock className="w-3 h-3" />
+              <Lock strokeWidth={1.5} className="w-3 h-3" />
               MASKED
             </span>
           ) : null
@@ -122,7 +122,7 @@ export function StatsBar({
               className="h-6 px-1.5 text-xs text-emerald-400 hover:bg-emerald-500/10"
               onClick={onApplyChanges}
             >
-              <Save className="w-3 h-3" />
+              <Save strokeWidth={1.5} className="w-3 h-3" />
             </Button>
             <Button
               variant="ghost"
@@ -130,7 +130,7 @@ export function StatsBar({
               className="h-6 px-1.5 text-xs text-red-400 hover:bg-red-500/10"
               onClick={onDiscardChanges}
             >
-              <X className="w-3 h-3" />
+              <X strokeWidth={1.5} className="w-3 h-3" />
             </Button>
           </div>
         )}
@@ -149,7 +149,7 @@ export function StatsBar({
               viewMode === 'card' ? "bg-blue-600 text-white" : "text-zinc-500"
             )}
           >
-            <LayoutGrid className="w-4 h-4" />
+            <LayoutGrid strokeWidth={1.5} className="w-3.5 h-3.5" />
           </button>
           <button
             onClick={() => onSetViewMode('table')}
@@ -158,7 +158,7 @@ export function StatsBar({
               viewMode === 'table' ? "bg-blue-600 text-white" : "text-zinc-500"
             )}
           >
-            <Table2 className="w-4 h-4" />
+            <Table2 strokeWidth={1.5} className="w-3.5 h-3.5" />
           </button>
         </div>
       </div>
@@ -186,12 +186,12 @@ export function LoadMoreFooter({ hasMore, onLoadMore, isLoadingMore }: LoadMoreF
       >
         {isLoadingMore ? (
           <>
-            <Loader2 className="w-3 h-3 mr-2 animate-spin" />
+            <Loader2 strokeWidth={1.5} className="w-3 h-3 mr-2 animate-spin" />
             Loading...
           </>
         ) : (
           <>
-            <ChevronDown className="w-3 h-3 mr-2" />
+            <ChevronDown strokeWidth={1.5} className="w-3 h-3 mr-2" />
             Load More (500 rows)
           </>
         )}

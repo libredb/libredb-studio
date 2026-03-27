@@ -145,11 +145,11 @@ export function QuerySafetyDialog({
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-3 border-b border-white/5">
           <div className="flex items-center gap-2">
-            <ShieldAlert className="w-4 h-4 text-amber-400" />
+            <ShieldAlert strokeWidth={1.5} className="w-3.5 h-3.5 text-amber-400" />
             <span className="text-xs font-medium text-zinc-200">Query Safety Check</span>
           </div>
           <button onClick={onClose} className="p-1 rounded hover:bg-white/5 text-zinc-500">
-            <X className="w-4 h-4" />
+            <X strokeWidth={1.5} className="w-3.5 h-3.5" />
           </button>
         </div>
 
@@ -164,7 +164,7 @@ export function QuerySafetyDialog({
         <div className="px-5 py-4 max-h-80 overflow-auto">
           {isAnalyzing && (
             <div className="flex items-center justify-center gap-2 py-8 text-zinc-500">
-              <Loader2 className="w-5 h-5 animate-spin" />
+              <Loader2 strokeWidth={1.5} className="w-5 h-5 animate-spin" />
               <span className="text-xs">Analyzing query safety...</span>
             </div>
           )}
@@ -254,7 +254,7 @@ export function QuerySafetyDialog({
               isAnalyzing && "opacity-50 cursor-not-allowed"
             )}
           >
-            <Play className="w-3 h-3 fill-current" />
+            <Play strokeWidth={1.5} className="w-3 h-3 fill-current" />
             {analysis?.riskLevel === 'critical' ? 'Execute Anyway' :
              analysis?.riskLevel === 'high' ? 'Proceed with Caution' :
              'Execute Query'}

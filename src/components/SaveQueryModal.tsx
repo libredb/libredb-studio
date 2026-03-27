@@ -38,7 +38,7 @@ export function SaveQueryModal({ isOpen, onClose, onSave, defaultQuery }: SaveQu
       <DialogContent className="bg-[#0d0d0d] border-white/10 text-zinc-300 sm:max-w-[425px]">
         <DialogHeader>
           <DialogTitle className="text-white flex items-center gap-2">
-            <Bookmark className="w-5 h-5 text-blue-500" /> Save Query
+            <Bookmark strokeWidth={1.5} className="w-5 h-5 text-blue-500" /> Save Query
           </DialogTitle>
           <DialogDescription className="text-zinc-500">
             Give your query a name and description to find it easily later.
@@ -68,7 +68,7 @@ export function SaveQueryModal({ isOpen, onClose, onSave, defaultQuery }: SaveQu
           </div>
           <div className="grid gap-2">
             <Label htmlFor="tags" className="text-xs font-medium text-zinc-500 flex items-center gap-2">
-              <Tag className="w-3 h-3" /> Tags (comma separated)
+              <Tag strokeWidth={1.5} className="w-3 h-3" /> Tags (comma separated)
             </Label>
             <Input
               id="tags"

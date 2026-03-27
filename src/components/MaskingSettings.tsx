@@ -248,7 +248,7 @@ export function MaskingSettings() {
             <div className="flex items-center justify-between">
               <h3 className="text-xs font-medium text-zinc-300">Masking Patterns</h3>
               <Button variant="outline" size="sm" className="h-7 text-xs" onClick={openNewDialog}>
-                <Plus className="w-3 h-3 mr-1" />
+                <Plus strokeWidth={1.5} className="w-3 h-3 mr-1" />
                 Add Pattern
               </Button>
             </div>
@@ -284,7 +284,7 @@ export function MaskingSettings() {
                         className="h-7 w-7 p-0"
                         onClick={() => openEditDialog(pattern)}
                       >
-                        <Pencil className="w-3 h-3 text-zinc-500" />
+                        <Pencil strokeWidth={1.5} className="w-3 h-3 text-zinc-500" />
                       </Button>
                       {!pattern.isBuiltin && (
                         <Button
@@ -293,7 +293,7 @@ export function MaskingSettings() {
                           className="h-7 w-7 p-0 text-red-400 hover:text-red-300"
                           onClick={() => deletePattern(pattern.id)}
                         >
-                          <Trash2 className="w-3 h-3" />
+                          <Trash2 strokeWidth={1.5} className="w-3 h-3" />
                         </Button>
                       )}
                     </div>
@@ -312,7 +312,7 @@ export function MaskingSettings() {
                 const masked = getPreviewMasked(pattern.maskType, pattern.customMask);
                 return (
                   <div key={pattern.id} className="flex items-center gap-2 text-xs font-mono">
-                    <Lock className="w-3 h-3 text-purple-400 shrink-0" />
+                    <Lock strokeWidth={1.5} className="w-3 h-3 text-purple-400 shrink-0" />
                     <span className="text-zinc-500 w-24 truncate">{pattern.name}:</span>
                     <span className="text-zinc-600 line-through">{preview.sample}</span>
                     <span className="text-zinc-400 mx-1">&rarr;</span>
@@ -330,7 +330,7 @@ export function MaskingSettings() {
               Reset Defaults
             </Button>
             <Button size="sm" onClick={handleSave}>
-              <Save className="w-3 h-3 mr-1" />
+              <Save strokeWidth={1.5} className="w-3 h-3 mr-1" />
               Save Config
             </Button>
           </div>

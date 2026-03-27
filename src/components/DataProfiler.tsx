@@ -166,12 +166,12 @@ export function DataProfiler({
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-3 border-b border-white/5">
           <div className="flex items-center gap-2">
-            <BarChart3 className="w-4 h-4 text-cyan-400" />
+            <BarChart3 strokeWidth={1.5} className="w-3.5 h-3.5 text-cyan-400" />
             <span className="text-xs font-medium text-zinc-200">Data Profiler</span>
             <span className="text-xs text-zinc-500 font-mono">{tableName}</span>
           </div>
           <button onClick={onClose} className="p-1 rounded hover:bg-white/5 text-zinc-500">
-            <X className="w-4 h-4" />
+            <X strokeWidth={1.5} className="w-3.5 h-3.5" />
           </button>
         </div>
 
@@ -179,14 +179,14 @@ export function DataProfiler({
         <div className="flex-1 overflow-auto p-5 space-y-4">
           {isLoading && (
             <div className="flex items-center justify-center gap-2 py-12 text-zinc-500">
-              <Loader2 className="w-5 h-5 animate-spin" />
+              <Loader2 strokeWidth={1.5} className="w-5 h-5 animate-spin" />
               <span className="text-xs">Profiling {tableName}...</span>
             </div>
           )}
 
           {error && (
             <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-3 text-xs text-red-400 flex items-center gap-2">
-              <AlertCircle className="w-4 h-4 shrink-0" />
+              <AlertCircle strokeWidth={1.5} className="w-3.5 h-3.5 shrink-0" />
               {error}
             </div>
           )}
@@ -220,13 +220,13 @@ export function DataProfiler({
                   <div key={col.name} className="bg-[#0a0a0a] rounded-lg p-3 border border-white/5">
                     <div className="flex items-center justify-between mb-2">
                       <div className="flex items-center gap-2">
-                        <Hash className="w-3 h-3 text-blue-400" />
+                        <Hash strokeWidth={1.5} className="w-3 h-3 text-blue-400" />
                         <span className="text-xs font-medium text-zinc-200">{col.name}</span>
                         {col.type && (
                           <span className="text-xs text-zinc-500 font-mono">{col.type}</span>
                         )}
                         {sensitiveColumnNames.has(col.name) && (
-                          <span title="Sensitive column - values masked"><Lock className="w-3 h-3 text-purple-400" /></span>
+                          <span title="Sensitive column - values masked"><Lock strokeWidth={1.5} className="w-3 h-3 text-purple-400" /></span>
                         )}
                       </div>
                       <span className="text-xs text-zinc-500">
@@ -313,11 +313,11 @@ export function DataProfiler({
               {(aiSummary || isAiLoading) && (
                 <div className="bg-cyan-500/5 border border-cyan-500/10 rounded-lg p-4">
                   <div className="flex items-center gap-2 mb-2">
-                    <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
+                    <Sparkles strokeWidth={1.5} className="w-3.5 h-3.5 text-cyan-400" />
                     <span className="text-xs font-medium text-cyan-400r">
                       AI Analysis
                     </span>
-                    {isAiLoading && <Loader2 className="w-3 h-3 animate-spin text-cyan-400" />}
+                    {isAiLoading && <Loader2 strokeWidth={1.5} className="w-3 h-3 animate-spin text-cyan-400" />}
                   </div>
                   {aiSummary && (
                     <div className="text-xs text-zinc-400 leading-relaxed whitespace-pre-wrap">

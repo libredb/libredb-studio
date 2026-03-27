@@ -92,7 +92,7 @@ export function ConnectionModal({ isOpen, onClose, onConnect, editConnection, on
         <div className="mb-4 md:mb-8">
           <div className="flex items-center gap-3 mb-2">
             <div className="p-2 rounded-xl bg-blue-500/10 border border-blue-500/20">
-              <Zap className="w-5 h-5 text-blue-400" />
+              <Zap strokeWidth={1.5} className="w-5 h-5 text-blue-400" />
             </div>
             <h2 className="text-xs md:text-[0.8125rem] font-medium">
               {isEditMode ? 'Edit Connection' : 'New Connection'}
@@ -107,7 +107,7 @@ export function ConnectionModal({ isOpen, onClose, onConnect, editConnection, on
                 onClick={() => setShowPasteInput(!showPasteInput)}
                 className="flex items-center gap-1.5 text-xs font-mediumr text-blue-400 hover:text-blue-300 transition-colors px-2 py-1 rounded-md hover:bg-blue-500/10"
               >
-                <ClipboardPaste className="w-3 h-3" />
+                <ClipboardPaste strokeWidth={1.5} className="w-3 h-3" />
                 Paste URL
               </button>
             )}
@@ -155,7 +155,7 @@ export function ConnectionModal({ isOpen, onClose, onConnect, editConnection, on
           {/* Connection Name - always visible */}
           <div className="space-y-2">
             <div className="flex items-center gap-2 mb-1">
-              <Database className="w-3 h-3 text-zinc-500" />
+              <Database strokeWidth={1.5} className="w-3 h-3 text-zinc-500" />
               <Label htmlFor="name" className="text-xs font-mediumr text-zinc-500">Connection Name</Label>
             </div>
             <Input
@@ -234,7 +234,7 @@ export function ConnectionModal({ isOpen, onClose, onConnect, editConnection, on
                             : "text-zinc-500 hover:text-zinc-300"
                         )}
                       >
-                        <Globe className="w-3 h-3" />
+                        <Globe strokeWidth={1.5} className="w-3 h-3" />
                         Host / Port
                       </button>
                       <button
@@ -246,7 +246,7 @@ export function ConnectionModal({ isOpen, onClose, onConnect, editConnection, on
                             : "text-zinc-500 hover:text-zinc-300"
                         )}
                       >
-                        <Link className="w-3 h-3" />
+                        <Link strokeWidth={1.5} className="w-3 h-3" />
                         Connection String
                       </button>
                     </div>
@@ -256,7 +256,7 @@ export function ConnectionModal({ isOpen, onClose, onConnect, editConnection, on
                     <>
                       <div className="space-y-2">
                         <div className="flex items-center gap-2 mb-1">
-                          <Link className="w-3 h-3 text-zinc-500" />
+                          <Link strokeWidth={1.5} className="w-3 h-3 text-zinc-500" />
                           <Label htmlFor="connectionString" className="text-xs font-mediumr text-zinc-500">Connection URI</Label>
                         </div>
                         <Input
@@ -269,7 +269,7 @@ export function ConnectionModal({ isOpen, onClose, onConnect, editConnection, on
                       </div>
                       <div className="space-y-2">
                         <div className="flex items-center gap-2 mb-1">
-                          <Database className="w-3 h-3 text-zinc-500" />
+                          <Database strokeWidth={1.5} className="w-3 h-3 text-zinc-500" />
                           <Label htmlFor="database" className="text-xs font-mediumr text-zinc-500">Database Name (optional override)</Label>
                         </div>
                         <Input
@@ -285,7 +285,7 @@ export function ConnectionModal({ isOpen, onClose, onConnect, editConnection, on
                     <>
                       <div className="space-y-2">
                         <div className="flex items-center gap-2 mb-1">
-                          <Globe className="w-3 h-3 text-zinc-500" />
+                          <Globe strokeWidth={1.5} className="w-3 h-3 text-zinc-500" />
                           <Label htmlFor="host" className="text-xs font-mediumr text-zinc-500">Host & Instance</Label>
                         </div>
                         <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
@@ -308,7 +308,7 @@ export function ConnectionModal({ isOpen, onClose, onConnect, editConnection, on
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div className="space-y-2">
                           <div className="flex items-center gap-2 mb-1">
-                            <Key className="w-3 h-3 text-zinc-500" />
+                            <Key strokeWidth={1.5} className="w-3 h-3 text-zinc-500" />
                             <Label htmlFor="user" className="text-xs font-mediumr text-zinc-500">Username</Label>
                           </div>
                           <Input
@@ -321,7 +321,7 @@ export function ConnectionModal({ isOpen, onClose, onConnect, editConnection, on
                         </div>
                         <div className="space-y-2">
                           <div className="flex items-center gap-2 mb-1">
-                            <ShieldCheck className="w-3 h-3 text-zinc-500" />
+                            <ShieldCheck strokeWidth={1.5} className="w-3 h-3 text-zinc-500" />
                             <Label htmlFor="password" className="text-xs font-mediumr text-zinc-500">Password</Label>
                           </div>
                           <Input
@@ -337,7 +337,7 @@ export function ConnectionModal({ isOpen, onClose, onConnect, editConnection, on
 
                       <div className="space-y-2">
                         <div className="flex items-center gap-2 mb-1">
-                          <Database className="w-3 h-3 text-zinc-500" />
+                          <Database strokeWidth={1.5} className="w-3 h-3 text-zinc-500" />
                           <Label htmlFor="database" className="text-xs font-mediumr text-zinc-500">Database Name</Label>
                         </div>
                         <Input
@@ -361,7 +361,7 @@ export function ConnectionModal({ isOpen, onClose, onConnect, editConnection, on
                 onClick={() => setShowAdvanced(!showAdvanced)}
                 className="flex items-center gap-2 w-full px-3 py-2 rounded-lg border border-white/5 hover:border-white/10 bg-zinc-900/30 text-xs font-medium text-zinc-400 hover:text-zinc-200 transition-all"
               >
-                <Settings2 className="w-3.5 h-3.5 text-orange-500" />
+                <Settings2 strokeWidth={1.5} className="w-3.5 h-3.5 text-orange-500" />
                 <span>Advanced</span>
                 {(serviceName || instanceName) && (
                   <span className="ml-1 px-1.5 py-0.5 rounded text-[0.625rem] bg-orange-500/10 text-orange-400 border border-orange-500/20">
@@ -423,7 +423,7 @@ export function ConnectionModal({ isOpen, onClose, onConnect, editConnection, on
                 onClick={() => setShowSSL(!showSSL)}
                 className="flex items-center gap-2 w-full px-3 py-2 rounded-lg border border-white/5 hover:border-white/10 bg-zinc-900/30 text-xs font-medium text-zinc-400 hover:text-zinc-200 transition-all"
               >
-                <Lock className="w-3.5 h-3.5 text-emerald-500" />
+                <Lock strokeWidth={1.5} className="w-3.5 h-3.5 text-emerald-500" />
                 <span>SSL / TLS</span>
                 {sslMode !== 'disable' && (
                   <span className="ml-1 px-1.5 py-0.5 rounded text-[0.625rem] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
@@ -510,7 +510,7 @@ export function ConnectionModal({ isOpen, onClose, onConnect, editConnection, on
                 onClick={() => setShowSSH(!showSSH)}
                 className="flex items-center gap-2 w-full px-3 py-2 rounded-lg border border-white/5 hover:border-white/10 bg-zinc-900/30 text-xs font-medium text-zinc-400 hover:text-zinc-200 transition-all"
               >
-                <Terminal className="w-3.5 h-3.5 text-purple-500" />
+                <Terminal strokeWidth={1.5} className="w-3.5 h-3.5 text-purple-500" />
                 <span>SSH Tunnel</span>
                 {sshEnabled && (
                   <span className="ml-1 px-1.5 py-0.5 rounded text-[0.625rem] bg-purple-500/10 text-purple-400 border border-purple-500/20">
@@ -656,9 +656,9 @@ export function ConnectionModal({ isOpen, onClose, onConnect, editConnection, on
                     : "bg-red-500/5 border-red-500/20 text-red-400"
                 )}>
                   {testResult.success ? (
-                    <CheckCircle2 className="w-4 h-4 shrink-0" />
+                    <CheckCircle2 strokeWidth={1.5} className="w-3.5 h-3.5 shrink-0" />
                   ) : (
-                    <XCircle className="w-4 h-4 shrink-0" />
+                    <XCircle strokeWidth={1.5} className="w-3.5 h-3.5 shrink-0" />
                   )}
                   <span className="leading-relaxed">{testResult.message}</span>
                 </div>

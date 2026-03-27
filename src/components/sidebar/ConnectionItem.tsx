@@ -67,37 +67,33 @@ export const ConnectionItem = React.memo(function ConnectionItem({
           {conn.managed && (
             <div
               data-testid={`managed-lock-${conn.seedId || conn.id}`}
-              className="w-6 h-6 flex items-center justify-center text-amber-500/60"
+              className="flex items-center justify-center text-amber-500/60"
               title="Managed by administrator"
             >
-              <Lock className="w-3 h-3" />
+              <Lock strokeWidth={1.5} className="w-3 h-3" />
             </div>
           )}
           {!conn.managed && onEdit && (
-            <Button
-              variant="ghost"
-              size="icon"
-              className="w-6 h-6 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-blue-500/20 hover:text-blue-400"
+            <button
+              className="p-1 rounded opacity-0 group-hover:opacity-100 transition-opacity hover:bg-blue-500/20 hover:text-blue-400"
               onClick={(e) => {
                 e.stopPropagation();
                 onEdit(conn);
               }}
             >
-              <Pencil className="w-3 h-3" />
-            </Button>
+              <Pencil strokeWidth={1.5} className="w-3 h-3" />
+            </button>
           )}
           {!conn.managed && (
-            <Button
-              variant="ghost"
-              size="icon"
-              className="w-6 h-6 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-500/20 hover:text-red-400"
+            <button
+              className="p-1 rounded opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-500/20 hover:text-red-400"
               onClick={(e) => {
                 e.stopPropagation();
                 onDelete(conn.id);
               }}
             >
-              <Trash2 className="w-3 h-3" />
-            </Button>
+              <Trash2 strokeWidth={1.5} className="w-3 h-3" />
+            </button>
           )}
         </div>
     </motion.div>

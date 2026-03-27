@@ -204,7 +204,7 @@ export function CodeGenerator({
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-3 border-b border-white/5">
           <div className="flex items-center gap-2">
-            <Code className="w-4 h-4 text-purple-400" />
+            <Code strokeWidth={1.5} className="w-3.5 h-3.5 text-purple-400" />
             <span className="text-xs font-medium text-zinc-200">Code Generator</span>
             <span className="text-xs text-zinc-500 font-mono">{tableName}</span>
             {databaseType && (
@@ -212,7 +212,7 @@ export function CodeGenerator({
             )}
           </div>
           <button onClick={onClose} className="p-1 rounded hover:bg-white/5 text-zinc-500">
-            <X className="w-4 h-4" />
+            <X strokeWidth={1.5} className="w-3.5 h-3.5" />
           </button>
         </div>
 
@@ -224,7 +224,7 @@ export function CodeGenerator({
               className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 text-xs text-zinc-300 hover:bg-white/10 transition-colors"
             >
               {currentLang.label}
-              <ChevronDown className="w-3 h-3 text-zinc-500" />
+              <ChevronDown strokeWidth={1.5} className="w-3 h-3 text-zinc-500" />
             </button>
             {showLangDropdown && (
               <div className="absolute top-full left-0 mt-1 bg-[#111] border border-white/10 rounded-lg shadow-xl z-10 py-1 w-48">
@@ -254,7 +254,7 @@ export function CodeGenerator({
             onClick={handleCopy}
             className="absolute top-3 right-3 flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-xs text-zinc-400 transition-colors"
           >
-            {copied ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+            {copied ? <Check strokeWidth={1.5} className="w-3 h-3 text-emerald-400" /> : <Copy strokeWidth={1.5} className="w-3 h-3" />}
             {copied ? 'Copied!' : 'Copy'}
           </button>
         </div>

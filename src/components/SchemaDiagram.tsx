@@ -46,7 +46,7 @@ const TableNode = ({ data }: NodeProps<Node<TableNodeData>>) => {
       isHighlighted ? 'border-blue-500/60 ring-1 ring-blue-500/30' : 'border-white/10'
     }`}>
       <div className="bg-blue-600/10 px-3 py-2 border-b border-white/5 flex items-center gap-2">
-        <Database className="w-3.5 h-3.5 text-blue-400" />
+        <Database strokeWidth={1.5} className="w-3.5 h-3.5 text-blue-400" />
         <span className="text-xs font-medium text-zinc-100r">{table.name}</span>
         <span className="text-[0.625rem] text-zinc-600 ml-auto">{table.columns?.length || 0} cols</span>
       </div>
@@ -71,13 +71,13 @@ const TableNode = ({ data }: NodeProps<Node<TableNodeData>>) => {
 
                 <div className="flex items-center gap-2">
                   {col.isPrimary ? (
-                    <Key className="w-2.5 h-2.5 text-yellow-500" />
+                    <Key strokeWidth={1.5} className="w-2.5 h-2.5 text-yellow-500" />
                   ) : isFk ? (
-                    <Link2 className="w-2.5 h-2.5 text-blue-400" />
+                    <Link2 strokeWidth={1.5} className="w-2.5 h-2.5 text-blue-400" />
                   ) : col.type.toLowerCase().includes('int') ? (
-                    <Hash className="w-2.5 h-2.5 text-zinc-500" />
+                    <Hash strokeWidth={1.5} className="w-2.5 h-2.5 text-zinc-500" />
                   ) : (
-                    <Type className="w-2.5 h-2.5 text-zinc-500" />
+                    <Type strokeWidth={1.5} className="w-2.5 h-2.5 text-zinc-500" />
                   )}
                   <span className={
                     col.isPrimary ? "text-yellow-500/90 font-medium" :
@@ -348,7 +348,7 @@ function SchemaDiagramInner({ schema, onClose }: SchemaDiagramProps) {
   if (schema.length === 0) {
     return (
       <div className="absolute inset-0 z-50 bg-[#050505] flex flex-col items-center justify-center">
-        <Loader2 className="w-8 h-8 text-blue-500 animate-spin mb-4" />
+        <Loader2 strokeWidth={1.5} className="w-8 h-8 text-blue-500 animate-spin mb-4" />
         <p className="text-zinc-500 text-xs">Generating ERD Diagram...</p>
       </div>
     );
@@ -389,7 +389,7 @@ function SchemaDiagramInner({ schema, onClose }: SchemaDiagramProps) {
               className="bg-[#0d0d0d] border-white/10 hover:bg-white/5 text-xs gap-1"
               onClick={() => exportDiagram('png')}
             >
-              <Download className="w-3 h-3" /> PNG
+              <Download strokeWidth={1.5} className="w-3 h-3" /> PNG
             </Button>
             <Button
               variant="outline"
@@ -397,7 +397,7 @@ function SchemaDiagramInner({ schema, onClose }: SchemaDiagramProps) {
               className="bg-[#0d0d0d] border-white/10 hover:bg-white/5 text-xs gap-1"
               onClick={() => exportDiagram('svg')}
             >
-              <Download className="w-3 h-3" /> SVG
+              <Download strokeWidth={1.5} className="w-3 h-3" /> SVG
             </Button>
             <Button
               variant="outline"
@@ -413,7 +413,7 @@ function SchemaDiagramInner({ schema, onClose }: SchemaDiagramProps) {
               className="rounded-full bg-[#0d0d0d] border-white/10 hover:bg-white/5"
               onClick={onClose}
             >
-              <X className="w-4 h-4" />
+              <X strokeWidth={1.5} className="w-3.5 h-3.5" />
             </Button>
           </div>
         </Panel>
@@ -432,7 +432,7 @@ function SchemaDiagramInner({ schema, onClose }: SchemaDiagramProps) {
 
             {/* Search */}
             <div className="relative">
-              <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-zinc-600" />
+              <Search strokeWidth={1.5} className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-zinc-600" />
               <input
                 type="text"
                 placeholder="Filter tables..."
@@ -445,7 +445,7 @@ function SchemaDiagramInner({ schema, onClose }: SchemaDiagramProps) {
             {/* No FK warning */}
             {!hasForeignKeys && (
               <div className="flex items-start gap-1.5 text-[0.625rem] text-amber-500/80">
-                <Info className="w-3 h-3 mt-0.5 shrink-0" />
+                <Info strokeWidth={1.5} className="w-3 h-3 mt-0.5 shrink-0" />
                 <span>No FK data available. Showing heuristic relationships (dashed).</span>
               </div>
             )}

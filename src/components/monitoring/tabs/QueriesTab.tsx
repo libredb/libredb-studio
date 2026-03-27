@@ -89,7 +89,7 @@ export function QueriesTab({ data, loading }: QueriesTabProps) {
             <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">
               Queries
             </CardTitle>
-            <Search className="h-3 w-3 sm:h-4 sm:w-4 text-muted-foreground" />
+            <Search strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent className="p-2 sm:p-4 pt-0">
             <div className="text-lg sm:text-2xl font-medium">{formatNumber(totalQueries)}</div>
@@ -101,7 +101,7 @@ export function QueriesTab({ data, loading }: QueriesTabProps) {
             <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">
               Avg Time
             </CardTitle>
-            <Clock className="h-3 w-3 sm:h-4 sm:w-4 text-muted-foreground" />
+            <Clock strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent className="p-2 sm:p-4 pt-0">
             <div className="text-lg sm:text-2xl font-medium">{formatTime(avgTime)}</div>
@@ -127,7 +127,7 @@ export function QueriesTab({ data, loading }: QueriesTabProps) {
       <Card className="p-0">
         <CardHeader className="p-3 sm:p-4">
           <CardTitle className="text-xs sm:text-xs font-medium flex items-center gap-2">
-            <Clock className="h-3 w-3 sm:h-4 sm:w-4" />
+            <Clock strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4" />
             Slowest Queries
             {slowQueries.length === 0 && (
               <Badge variant="secondary" className="ml-2 text-xs sm:text-xs">
@@ -139,7 +139,7 @@ export function QueriesTab({ data, loading }: QueriesTabProps) {
         <CardContent className="p-0 sm:p-4 sm:pt-0">
           {slowQueries.length === 0 ? (
             <div className="text-center py-8 text-muted-foreground">
-              <Search className="h-8 w-8 mx-auto mb-2 opacity-50" />
+              <Search strokeWidth={1.5} className="h-8 w-8 mx-auto mb-2 opacity-50" />
               <p className="text-xs">No query statistics available.</p>
               <p className="text-xs mt-1">
                 Enable pg_stat_statements extension to see query stats.
@@ -159,7 +159,7 @@ export function QueriesTab({ data, loading }: QueriesTabProps) {
                         onClick={() => handleSort('calls')}
                       >
                         Calls
-                        <ArrowUpDown className="h-3 w-3" />
+                        <ArrowUpDown strokeWidth={1.5} className="h-3 w-3" />
                       </Button>
                     </TableHead>
                     <TableHead className="text-xs hidden md:table-cell">
@@ -170,7 +170,7 @@ export function QueriesTab({ data, loading }: QueriesTabProps) {
                         onClick={() => handleSort('totalTime')}
                       >
                         Total
-                        <ArrowUpDown className="h-3 w-3" />
+                        <ArrowUpDown strokeWidth={1.5} className="h-3 w-3" />
                       </Button>
                     </TableHead>
                     <TableHead className="text-xs">
@@ -181,7 +181,7 @@ export function QueriesTab({ data, loading }: QueriesTabProps) {
                         onClick={() => handleSort('avgTime')}
                       >
                         Avg
-                        <ArrowUpDown className="h-3 w-3" />
+                        <ArrowUpDown strokeWidth={1.5} className="h-3 w-3" />
                       </Button>
                     </TableHead>
                     <TableHead className="text-xs hidden lg:table-cell">
@@ -192,7 +192,7 @@ export function QueriesTab({ data, loading }: QueriesTabProps) {
                         onClick={() => handleSort('rows')}
                       >
                         Rows
-                        <ArrowUpDown className="h-3 w-3" />
+                        <ArrowUpDown strokeWidth={1.5} className="h-3 w-3" />
                       </Button>
                     </TableHead>
                   </TableRow>

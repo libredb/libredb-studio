@@ -52,11 +52,11 @@ export function OverviewTab({ data, loading, history = [] }: OverviewTabProps) {
       {/* Version & Status */}
       <div className="flex items-center gap-2 sm:gap-4 flex-wrap">
         <Badge variant="outline" className="gap-1.5 sm:gap-2 py-1 sm:py-1.5 px-2 sm:px-3 text-xs">
-          <Server className="h-3 w-3 sm:h-4 sm:w-4" />
+          <Server strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4" />
           <span className="truncate max-w-[120px] sm:max-w-none">{overview?.version || 'Unknown'}</span>
         </Badge>
         <Badge variant="secondary" className="gap-1.5 sm:gap-2 py-1 sm:py-1.5 px-2 sm:px-3 text-xs">
-          <Clock className="h-3 w-3 sm:h-4 sm:w-4" />
+          <Clock strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4" />
           {overview?.uptime || 'N/A'}
         </Badge>
         {data?.timestamp && (
@@ -74,7 +74,7 @@ export function OverviewTab({ data, loading, history = [] }: OverviewTabProps) {
             <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">
               Connections
             </CardTitle>
-            <Zap className="h-3 w-3 sm:h-4 sm:w-4 text-yellow-500" />
+            <Zap strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4 text-yellow-500" />
           </CardHeader>
           <CardContent className="p-3 sm:p-4 pt-0">
             <div className="text-lg sm:text-2xl font-medium">
@@ -96,7 +96,7 @@ export function OverviewTab({ data, loading, history = [] }: OverviewTabProps) {
             <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">
               DB Size
             </CardTitle>
-            <Database className="h-3 w-3 sm:h-4 sm:w-4 text-blue-500" />
+            <Database strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4 text-blue-500" />
           </CardHeader>
           <CardContent className="p-3 sm:p-4 pt-0">
             <div className="text-lg sm:text-2xl font-medium">{overview?.databaseSize || 'N/A'}</div>
@@ -112,7 +112,7 @@ export function OverviewTab({ data, loading, history = [] }: OverviewTabProps) {
             <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">
               Cache Hit
             </CardTitle>
-            <Activity className="h-3 w-3 sm:h-4 sm:w-4 text-green-500" />
+            <Activity strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4 text-green-500" />
           </CardHeader>
           <CardContent className="p-3 sm:p-4 pt-0">
             <div className="text-lg sm:text-2xl font-medium">
@@ -138,7 +138,7 @@ export function OverviewTab({ data, loading, history = [] }: OverviewTabProps) {
             <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">
               Tables
             </CardTitle>
-            <Table2 className="h-3 w-3 sm:h-4 sm:w-4 text-purple-500" />
+            <Table2 strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4 text-purple-500" />
           </CardHeader>
           <CardContent className="p-3 sm:p-4 pt-0">
             <div className="text-lg sm:text-2xl font-medium">
@@ -156,7 +156,7 @@ export function OverviewTab({ data, loading, history = [] }: OverviewTabProps) {
         <Card className="p-0">
           <CardHeader className="p-3 sm:p-4 pb-1">
             <CardTitle className="text-xs sm:text-xs font-medium flex items-center gap-2">
-              <Activity className="h-3 w-3 sm:h-4 sm:w-4" />
+              <Activity strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4" />
               Connection Trend
             </CardTitle>
           </CardHeader>
@@ -172,7 +172,7 @@ export function OverviewTab({ data, loading, history = [] }: OverviewTabProps) {
         <Card className="p-0">
           <CardHeader className="p-3 sm:p-4 pb-2">
             <CardTitle className="text-xs sm:text-xs font-medium flex items-center gap-2">
-              <Activity className="h-3 w-3 sm:h-4 sm:w-4" />
+              <Activity strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4" />
               Performance
             </CardTitle>
           </CardHeader>
@@ -208,7 +208,7 @@ export function OverviewTab({ data, loading, history = [] }: OverviewTabProps) {
         <Card className="p-0">
           <CardHeader className="p-3 sm:p-4 pb-2">
             <CardTitle className="text-xs sm:text-xs font-medium flex items-center gap-2">
-              <Hash className="h-3 w-3 sm:h-4 sm:w-4" />
+              <Hash strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4" />
               Quick Stats
             </CardTitle>
           </CardHeader>

@@ -199,15 +199,15 @@ export function ResultsGrid({
             >
               <span className="truncate">{field}</span>
               {isSensitive && (
-                <span title="Masked column"><Lock className="w-3 h-3 text-purple-400 shrink-0" /></span>
+                <span title="Masked column"><Lock strokeWidth={1.5} className="w-3 h-3 text-purple-400 shrink-0" /></span>
               )}
               <div className="flex-shrink-0 opacity-0 group-hover/header:opacity-100 transition-opacity">
                 {column.getIsSorted() === "asc" ? (
                   <ArrowUp className="w-3 h-3" />
                 ) : column.getIsSorted() === "desc" ? (
-                  <ArrowDown className="w-3 h-3" />
+                  <ArrowDown strokeWidth={1.5} className="w-3 h-3" />
                 ) : (
-                  <ArrowUpDown className="w-3 h-3" />
+                  <ArrowUpDown strokeWidth={1.5} className="w-3 h-3" />
                 )}
               </div>
             </div>
@@ -219,7 +219,7 @@ export function ResultsGrid({
               onClick={(e) => { e.stopPropagation(); setActiveFilterCol(activeFilterCol === field ? null : field); }}
               title="Filter column"
             >
-              <Filter className="w-3 h-3" />
+              <Filter strokeWidth={1.5} className="w-3 h-3" />
             </button>
             {activeFilterCol === field && (
               <div
@@ -329,7 +329,7 @@ export function ResultsGrid({
           return (
             <div className="truncate w-full h-full flex items-center gap-1">
               <span className={className}>{display}</span>
-              <Lock className="w-2.5 h-2.5 text-purple-400/50 shrink-0" />
+              <Lock strokeWidth={1.5} className="w-2.5 h-2.5 text-purple-400/50 shrink-0" />
             </div>
           );
         }
@@ -494,7 +494,7 @@ export function ResultsGrid({
                   )}
                 >
                   {field}
-                  {isSensitive && <Lock className="w-2.5 h-2.5 text-purple-400" />}
+                  {isSensitive && <Lock strokeWidth={1.5} className="w-2.5 h-2.5 text-purple-400" />}
                 </div>
               );
             })}

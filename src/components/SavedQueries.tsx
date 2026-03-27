@@ -45,11 +45,11 @@ export function SavedQueries({ onSelectQuery, connectionType, refreshTrigger }: 
     <div className="h-full flex flex-col bg-[#0a0a0a]">
       <div className="p-4 border-b border-white/5 flex flex-col gap-4">
         <h3 className="text-xs font-medium text-zinc-400 flex items-center gap-2">
-          <Bookmark className="w-4 h-4" /> Saved Queries
+          <Bookmark strokeWidth={1.5} className="w-3.5 h-3.5" /> Saved Queries
         </h3>
         
         <div className="relative">
-          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-zinc-500" />
+          <Search strokeWidth={1.5} className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3 h-3 text-zinc-500" />
           <Input 
             placeholder="Search saved queries..." 
             value={search}
@@ -62,7 +62,7 @@ export function SavedQueries({ onSelectQuery, connectionType, refreshTrigger }: 
       <div className="flex-1 overflow-y-auto custom-scrollbar">
         {filteredQueries.length === 0 ? (
           <div className="h-full flex flex-col items-center justify-center opacity-20 p-8 text-center">
-            <Bookmark className="w-12 h-12 mb-4" />
+            <Bookmark strokeWidth={1.5} className="w-12 h-12 mb-4" />
             <p className="text-xs italic">No saved queries found</p>
           </div>
         ) : (
@@ -84,7 +84,7 @@ export function SavedQueries({ onSelectQuery, connectionType, refreshTrigger }: 
                   </div>
                   <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                     <Button variant="ghost" size="icon" className="h-6 w-6 text-zinc-500 hover:text-white">
-                      <Edit3 className="w-3 h-3" />
+                      <Edit3 strokeWidth={1.5} className="w-3 h-3" />
                     </Button>
                     <Button 
                       variant="ghost" 
@@ -92,7 +92,7 @@ export function SavedQueries({ onSelectQuery, connectionType, refreshTrigger }: 
                       className="h-6 w-6 text-zinc-500 hover:text-red-400"
                       onClick={(e) => handleDelete(q.id, e)}
                     >
-                      <Trash2 className="w-3 h-3" />
+                      <Trash2 strokeWidth={1.5} className="w-3 h-3" />
                     </Button>
                   </div>
                 </div>
@@ -110,7 +110,7 @@ export function SavedQueries({ onSelectQuery, connectionType, refreshTrigger }: 
                     </span>
                     {q.tags?.map(tag => (
                       <span key={tag} className="flex items-center gap-1 text-[0.625rem] text-zinc-500">
-                        <Tag className="w-2.5 h-2.5" /> {tag}
+                        <Tag strokeWidth={1.5} className="w-2.5 h-2.5" /> {tag}
                       </span>
                     ))}
                   </div>

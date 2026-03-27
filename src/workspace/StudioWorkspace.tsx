@@ -383,7 +383,7 @@ export function StudioWorkspace({
                     />
                   ) : (
                     <div className="flex flex-col items-center justify-center h-full text-zinc-500">
-                      <Database className="w-12 h-12 mb-4 opacity-30" />
+                      <Database strokeWidth={1.5} className="w-12 h-12 mb-4 opacity-30" />
                       <p className="text-xs">Select a connection first</p>
                     </div>
                   )}
@@ -562,7 +562,7 @@ export function StudioWorkspace({
           <div className="px-6 pt-6 pb-4">
             <div className="flex items-start gap-3">
               <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-amber-500/20 to-red-500/10 flex items-center justify-center shrink-0">
-                <AlertTriangle className="w-5 h-5 text-amber-400" />
+                <AlertTriangle strokeWidth={1.5} className="w-5 h-5 text-amber-400" />
               </div>
               <div className="flex-1 min-w-0">
                 <AlertDialogTitle className="text-xs font-medium text-zinc-100 mb-1">
