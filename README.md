@@ -409,9 +409,22 @@ LibreDB Studio includes a `render.yaml` Blueprint for one-click deployment:
 
 ### Docker Compose (Self-Hosted)
 
+Use the ready-to-use [`docker-compose.example.yml`](docker-compose.example.yml) — it pulls the published image (`ghcr.io/libredb/libredb-studio:latest`), so no source build is needed. It documents every supported environment variable (auth, OIDC, storage, LLM, seed connections), with the less-common ones commented out.
+
 ```bash
-docker-compose up -d
+# 1. Copy the ready-to-use compose file
+cp docker-compose.example.yml docker-compose.yml
+
+# 2. Create your .env (set at least JWT_SECRET / ADMIN_PASSWORD / USER_PASSWORD)
+cp .env.example .env
+
+# 3. Start
+docker compose up -d   # → http://localhost:3000
 ```
+
+This file is platform-neutral and works with PaaS tools that consume a plain `docker-compose.yml` (Dokploy, Coolify, Portainer, etc.) — point them at the file and set the secrets as environment variables.
+
+> The repository's default `docker-compose.yml` builds the image from source (`build: .`) and is intended for local development.
 
 ### Kubernetes (Helm Chart)
 
