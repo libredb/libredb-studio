@@ -71,6 +71,8 @@ helm dependency build charts/libredb-studio
 The project uses ESLint 9 for linting and `bun:test` for testing with `@testing-library/react` + `happy-dom` for component tests and Playwright for E2E tests.
 
 > **Important**: Always use `bun run test` instead of bare `bun test`. Component tests require isolated execution groups (handled by `tests/run-components.sh`) to prevent `mock.module()` cross-contamination between test files.
+>
+> **Coverage isolation**: `bun`'s `mock.module()` is process-wide, so a test file that mocks a shared module (e.g. `@/lib/db/factory`, `@/lib/oidc`, the audit module) poisons any other file that imports the real module if they share a process — yielding nondeterministic failures like `clearProviderCache is not a function` or `Export named 'removeProvider' not found`. It passes locally by load-order luck but fails in CI. For this reason `test:coverage:core` runs every core test file in its **own `bun` process** via `tests/run-core.sh` (each writing to `coverage/core/file-N`), and `test:coverage` merges all the per-file lcov reports. Do NOT collapse this back into a single `bun test tests/unit tests/api tests/integration` invocation.
 
 ## Platform Integration Rules (npm package @libredb/studio)
 
