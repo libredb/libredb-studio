@@ -96,11 +96,11 @@ npm run formatter                 # "All matched files use Prettier code style!"
 
 ## Acceptance criteria
 
-- [ ] `deploy/caprover/` committed on the feature branch (yml + png + README).
-- [ ] Spec committed.
-- [ ] GitHub Issue opened on `libredb/libredb-studio` (English).
-- [ ] PR opened on `caprover/one-click-apps` with passing validator + formatter.
-- [ ] LibreDB 3rd-party repo structure prepared (publish/Pages steps documented).
+- [x] `deploy/caprover/` committed on the feature branch (yml + png + README).
+- [x] Spec committed.
+- [x] GitHub Issue opened on `libredb/libredb-studio` (English) — [#56](https://github.com/libredb/libredb-studio/issues/56).
+- [x] PR opened on `caprover/one-click-apps` with passing validator + formatter — [#1303](https://github.com/caprover/one-click-apps/pull/1303).
+- [x] LibreDB 3rd-party repo live — [libredb/caprover-one-click-apps](https://github.com/libredb/caprover-one-click-apps), published at <https://libredb.org/caprover-one-click-apps> (verified serving `/v4/list`).
 
 ## Maintenance
 

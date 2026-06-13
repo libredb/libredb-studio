@@ -23,8 +23,14 @@ CapRover dashboard → **Apps → One-Click Apps/Databases** → search **LibreD
 ## Install (LibreDB 3rd-party repo, available now)
 
 CapRover dashboard → **Apps → One-Click Apps/Databases** → scroll to
-**3rd party repositories** → add the LibreDB repository URL → search
-**LibreDB Studio**.
+**3rd party repositories** → paste the URL below → **Connect New Repository** →
+search **LibreDB Studio**:
+
+```
+https://libredb.org/caprover-one-click-apps
+```
+
+Source for that repo: <https://github.com/libredb/caprover-one-click-apps>.
 
 ## Install (manual template — works today, no repo needed)
 
