@@ -5,12 +5,20 @@ on:
     branches:
       - main
       - 'release/v*'
+      - 'feat/**'
+      - 'fix/**'
   workflow_dispatch:
     inputs:
       version:
         description: 'Version tag (e.g., v0.5.5)'
         required: true
         type: string
+
+# Cancel an in-progress build when a newer commit is pushed to the same ref,
+# so rapid pushes to a feature/fix branch don't stack multi-arch builds.
+concurrency:
+  group: docker-build-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   REGISTRY: ghcr.io
@@ -126,9 +134,9 @@ jobs:
         with:
           images: ${{ steps.images.outputs.list }}
           tags: |
-            type=raw,value=${{ steps.extract-version.outputs.version }}
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/') }}
-            type=raw,value=dev,enable=${{ github.ref == 'refs/heads/main' }}
+            type=raw,value=${{ steps.extract-version.outputs.version }},enable=${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/') || github.event_name == 'workflow_dispatch' }}
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+            type=raw,value=dev,enable=${{ github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/heads/release/') }}
             type=sha,prefix=sha-
 
       - name: Build and push Docker image
