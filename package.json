@@ -1,6 +1,6 @@
 {
   "name": "@libredb/studio",
-  "version": "0.9.18",
+  "version": "0.9.19",
   "private": false,
   "publishConfig": {
     "access": "public"
@@ -84,6 +84,7 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "bun test tests/unit tests/api tests/integration && bun test tests/hooks && bun run test:components",
+    "test:ci": "bash tests/run-core.sh && bun run test:components",
     "test:unit": "bun test tests/unit",
     "test:integration": "bun test tests/integration",
     "test:hooks": "bun test tests/hooks",
