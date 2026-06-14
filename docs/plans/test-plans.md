@@ -120,7 +120,7 @@ test:
     - uses: actions/checkout@v6
     - uses: oven-sh/setup-bun@v2
       with:
-        bun-version: latest
+        bun-version: "1.3.14"
     - run: bun install --frozen-lockfile
     - run: bun test --coverage --coverage-reporter=lcov --coverage-dir=coverage
       env:
