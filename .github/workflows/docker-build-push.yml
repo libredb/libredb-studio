@@ -176,6 +176,10 @@ jobs:
     needs: build-and-push
     if: ${{ github.ref == 'refs/heads/main' && vars.DOCKER_HUB_USERNAME != '' }}
     runs-on: ubuntu-latest
+    # Only needs to read the repo to checkout DOCKERHUB.md; the Docker Hub
+    # update authenticates with DOCKER_HUB_TOKEN, not GITHUB_TOKEN.
+    permissions:
+      contents: read
     steps:
       - name: Checkout code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
