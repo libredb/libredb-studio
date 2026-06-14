@@ -39,7 +39,7 @@ Feature suggestions are welcome! Please provide:
 
 ### Prerequisites
 
-- [Bun](https://bun.sh/) (recommended) or Node.js 20+
+- [Bun](https://bun.sh/) (recommended) or Node.js 24+
 - Git
 
 ### Getting Started
