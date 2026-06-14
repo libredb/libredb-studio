@@ -168,3 +168,24 @@ jobs:
           echo "${{ steps.meta.outputs.tags }}" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
 
+  # Mirror the Docker Hub repository overview from DOCKERHUB.md after each main
+  # build. Runs only on main and only when Docker Hub is configured
+  # (DOCKER_HUB_USERNAME variable present), so forks are unaffected.
+  dockerhub-readme:
+    name: Sync Docker Hub README
+    needs: build-and-push
+    if: ${{ github.ref == 'refs/heads/main' && vars.DOCKER_HUB_USERNAME != '' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Update Docker Hub repository description
+        uses: peter-evans/dockerhub-description@1b9a80c056b620d92cedb9d9b5a223409c68ddfa # v5.0.0
+        with:
+          username: ${{ vars.DOCKER_HUB_USERNAME }}
+          password: ${{ secrets.DOCKER_HUB_TOKEN }}
+          repository: ${{ vars.DOCKER_HUB_USERNAME }}/libredb-studio
+          short-description: "Open-source AI-powered web SQL IDE — Postgres, MySQL, Mongo, Redis, Oracle, MSSQL, SQLite"
+          readme-filepath: ./DOCKERHUB.md
+
