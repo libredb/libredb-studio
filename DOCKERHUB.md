@@ -158,4 +158,4 @@ Health check endpoint: `GET /api/db/health` · Container HTTP port: `3000`.
 - **DeepWiki docs:** <https://deepwiki.com/libredb/libredb-studio>
 - **License:** MIT
 
-<sub>This page is generated from <a href="https://github.com/libredb/libredb-studio/blob/main/DOCKERHUB.md">DOCKERHUB.md</a> and synced automatically on every <code>main</code> build.</sub>
+<sub>This page mirrors <a href="https://github.com/libredb/libredb-studio/blob/main/DOCKERHUB.md">DOCKERHUB.md</a> in the GitHub repository.</sub>
