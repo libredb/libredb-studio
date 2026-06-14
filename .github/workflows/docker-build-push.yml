@@ -34,6 +34,7 @@ jobs:
     outputs:
       version: ${{ steps.extract-version.outputs.version }}
       image: ${{ steps.meta.outputs.tags }}
+      dockerhub_enabled: ${{ steps.dockerhub.outputs.enabled }}
     
     steps:
       - name: Checkout code
@@ -174,7 +175,10 @@ jobs:
   dockerhub-readme:
     name: Sync Docker Hub README
     needs: build-and-push
-    if: ${{ github.ref == 'refs/heads/main' && vars.DOCKER_HUB_USERNAME != '' }}
+    # Run only on main, only when Docker Hub is fully configured: the token
+    # (checked via the build job's dockerhub_enabled output — secrets can't be
+    # read in an `if:`) AND the username variable.
+    if: ${{ github.ref == 'refs/heads/main' && needs.build-and-push.outputs.dockerhub_enabled == 'true' && vars.DOCKER_HUB_USERNAME != '' }}
     runs-on: ubuntu-latest
     # Only needs to read the repo to checkout DOCKERHUB.md; the Docker Hub
     # update authenticates with DOCKER_HUB_TOKEN, not GITHUB_TOKEN.

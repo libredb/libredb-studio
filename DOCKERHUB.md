@@ -31,14 +31,14 @@ docker run -d \
   --name libredb-studio \
   -p 3000:3000 \
   -e ADMIN_EMAIL=admin@libredb.org \
-  -e ADMIN_PASSWORD=LibreDB.2026 \
+  -e ADMIN_PASSWORD=change-me-admin \
   -e USER_EMAIL=user@libredb.org \
-  -e USER_PASSWORD=LibreDB.2026 \
+  -e USER_PASSWORD=change-me-user \
   -e JWT_SECRET=change-me-to-a-random-32-char-string \
   libredb/libredb-studio:latest
 ```
 
-Open <http://localhost:3000> and log in with `admin@libredb.org` / `LibreDB.2026`.
+Open <http://localhost:3000> and log in with the `ADMIN_EMAIL` / `ADMIN_PASSWORD` you set above. **Use your own strong passwords and a random `JWT_SECRET`** — the values here are placeholders.
 
 > **Enable AI:** add `-e LLM_PROVIDER=gemini -e LLM_API_KEY=your_key -e LLM_MODEL=gemini-2.5-flash`.
 
@@ -74,7 +74,7 @@ A ready-to-use, fully-commented compose file is in the repo: [`docker-compose.ex
 | Tag | Pushed from | Use |
 |-----|-------------|-----|
 | `latest` | `main` | Latest stable build |
-| `X.Y.Z` (e.g. `0.9.15`) | `main` / release | Pin a specific version (recommended for production) |
+| `X.Y.Z` | `main` / release | Pin an exact version, e.g. `docker pull libredb/libredb-studio:0.9.16` (recommended for production) |
 | `dev` | `feat/**`, `fix/**` branches | Bleeding-edge / preview |
 | `sha-<commit>` | every build | Exact immutable commit |
 
@@ -158,4 +158,4 @@ Health check endpoint: `GET /api/db/health` · Container HTTP port: `3000`.
 - **DeepWiki docs:** <https://deepwiki.com/libredb/libredb-studio>
 - **License:** MIT
 
-<sub>This page is generated from <a href="https://github.com/libredb/libredb-studio/blob/main/DOCKERHUB.md">DOCKERHUB.md</a> and synced automatically on each release.</sub>
+<sub>This page is generated from <a href="https://github.com/libredb/libredb-studio/blob/main/DOCKERHUB.md">DOCKERHUB.md</a> and synced automatically on every <code>main</code> build.</sub>
