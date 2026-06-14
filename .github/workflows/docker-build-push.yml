@@ -5,12 +5,20 @@ on:
     branches:
       - main
       - 'release/v*'
+      - 'feat/**'
+      - 'fix/**'
   workflow_dispatch:
     inputs:
       version:
         description: 'Version tag (e.g., v0.5.5)'
         required: true
         type: string
+
+# Cancel an in-progress build when a newer commit is pushed to the same ref,
+# so rapid pushes to a feature/fix branch don't stack multi-arch builds.
+concurrency:
+  group: docker-build-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   REGISTRY: ghcr.io
@@ -26,6 +34,7 @@ jobs:
     outputs:
       version: ${{ steps.extract-version.outputs.version }}
       image: ${{ steps.meta.outputs.tags }}
+      dockerhub_enabled: ${{ steps.dockerhub.outputs.enabled }}
     
     steps:
       - name: Checkout code
@@ -57,7 +66,7 @@ jobs:
           echo "Version: ${VERSION}"
 
       - name: Set up QEMU for multi-platform builds
-        uses: docker/setup-qemu-action@v4
+        uses: docker/setup-qemu-action@06116385d9baf250c9f4dcb4858b16962ea869c3 # v4.1.0
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
@@ -69,22 +78,66 @@ jobs:
           username: ${{ github.repository_owner }}
           password: ${{ secrets.GHCR_PAT || secrets.GITHUB_TOKEN }}
 
+      # Docker Hub is an optional secondary mirror for discoverability. It is
+      # only used when DOCKER_HUB_TOKEN is configured (so forks without the
+      # secret still build/push to GHCR cleanly).
+      - name: Check Docker Hub availability
+        id: dockerhub
+        env:
+          DOCKER_HUB_TOKEN: ${{ secrets.DOCKER_HUB_TOKEN }}
+        run: |
+          if [ -n "$DOCKER_HUB_TOKEN" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Log in to Docker Hub
+        if: steps.dockerhub.outputs.enabled == 'true'
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          username: ${{ vars.DOCKER_HUB_USERNAME }}
+          password: ${{ secrets.DOCKER_HUB_TOKEN }}
+
       - name: Prepare image name (lowercase)
         id: image
         run: |
           IMAGE_NAME_LOWER=$(echo "${{ env.IMAGE_NAME }}" | tr '[:upper:]' '[:lower:]')
           echo "name=${IMAGE_NAME_LOWER}" >> $GITHUB_OUTPUT
           echo "Image name (lowercase): ${IMAGE_NAME_LOWER}"
-      
+
+      # Build the list of target images. GHCR is always included; Docker Hub
+      # (docker.io/<DOCKER_HUB_USERNAME>/<repo>) is added only when enabled.
+      - name: Compose registry image list
+        id: images
+        env:
+          GHCR_IMAGE: ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}
+          REPO_NAME: ${{ steps.image.outputs.name }}
+          DH_ENABLED: ${{ steps.dockerhub.outputs.enabled }}
+          DH_USERNAME: ${{ vars.DOCKER_HUB_USERNAME }}
+        run: |
+          IMAGES="$GHCR_IMAGE"
+          if [ "$DH_ENABLED" = "true" ] && [ -n "$DH_USERNAME" ]; then
+            SHORT_NAME="${REPO_NAME##*/}"
+            IMAGES="$(printf '%s\ndocker.io/%s/%s' "$IMAGES" "$DH_USERNAME" "$SHORT_NAME")"
+          fi
+          {
+            echo "list<<EOF"
+            printf '%s\n' "$IMAGES"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+          echo "Target images:"
+          printf '%s\n' "$IMAGES"
+
       - name: Extract metadata for Docker
         id: meta
         uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
         with:
-          images: ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}
+          images: ${{ steps.images.outputs.list }}
           tags: |
-            type=raw,value=${{ steps.extract-version.outputs.version }}
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/') }}
-            type=raw,value=dev,enable=${{ github.ref == 'refs/heads/main' }}
+            type=raw,value=${{ steps.extract-version.outputs.version }},enable=${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/') || github.event_name == 'workflow_dispatch' }}
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+            type=raw,value=dev,enable=${{ github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/heads/release/') }}
             type=sha,prefix=sha-
 
       - name: Build and push Docker image
@@ -108,11 +161,39 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Branch:** ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
           echo "**Version:** ${{ steps.extract-version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Registry:** ${{ env.REGISTRY }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Docker Hub mirror:** ${{ steps.dockerhub.outputs.enabled }}" >> $GITHUB_STEP_SUMMARY
           echo "**Image:** ${{ steps.image.outputs.name }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Tags:" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
           echo "${{ steps.meta.outputs.tags }}" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
+
+  # Mirror the Docker Hub repository overview from DOCKERHUB.md after each main
+  # build. Runs only on main and only when Docker Hub is configured
+  # (DOCKER_HUB_USERNAME variable present), so forks are unaffected.
+  dockerhub-readme:
+    name: Sync Docker Hub README
+    needs: build-and-push
+    # Run only on main, only when Docker Hub is fully configured: the token
+    # (checked via the build job's dockerhub_enabled output — secrets can't be
+    # read in an `if:`) AND the username variable.
+    if: ${{ github.ref == 'refs/heads/main' && needs.build-and-push.outputs.dockerhub_enabled == 'true' && vars.DOCKER_HUB_USERNAME != '' }}
+    runs-on: ubuntu-latest
+    # Only needs to read the repo to checkout DOCKERHUB.md; the Docker Hub
+    # update authenticates with DOCKER_HUB_TOKEN, not GITHUB_TOKEN.
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Update Docker Hub repository description
+        uses: peter-evans/dockerhub-description@1b9a80c056b620d92cedb9d9b5a223409c68ddfa # v5.0.0
+        with:
+          username: ${{ vars.DOCKER_HUB_USERNAME }}
+          password: ${{ secrets.DOCKER_HUB_TOKEN }}
+          repository: ${{ vars.DOCKER_HUB_USERNAME }}/libredb-studio
+          short-description: "Open-source AI-powered web SQL IDE — Postgres, MySQL, Mongo, Redis, Oracle, MSSQL, SQLite"
+          readme-filepath: ./DOCKERHUB.md
 
