@@ -205,12 +205,14 @@ docker run -d \
   ghcr.io/libredb/libredb-studio:latest
 ```
 
+  > **Registry**: `ghcr.io/libredb/libredb-studio` is the primary image (no pull rate limits — preferred for Kubernetes/CI). The same image is also mirrored to Docker Hub as [`libredb/libredb-studio`](https://hub.docker.com/r/libredb/libredb-studio) for convenience.
+
   Open [http://localhost:3000](http://localhost:3000) and login with `admin@libredb.org` / `LibreDB.2026`.
 
   > **Tip**: Add `-e LLM_PROVIDER=gemini -e LLM_API_KEY=your_key -e LLM_MODEL=gemini-2.5-flash` to enable AI features.
 
   ### Prerequisites
-  - [Bun](https://bun.sh/) (Recommended) or Node.js 20+
+  - [Bun](https://bun.sh/) (Recommended) or Node.js 24+
   - A target database to query (PostgreSQL, MySQL, Oracle, SQL Server, SQLite, MongoDB, or Redis)
 
   ### Quick Start (Local)
@@ -598,8 +600,7 @@ extraEnvFrom:
 | [DeepWiki](https://deepwiki.com/libredb/libredb-studio) | AI-powered documentation — always up-to-date with the codebase |
 | [SonarCloud](https://sonarcloud.io/project/overview?id=libredb_libredb-studio) | Code quality, security analysis, and technical debt tracking |
 | [API Docs](docs/API_DOCS.md) | Complete REST API reference |
-| [OIDC Setup Guide](docs/OIDC_SETUP.md) | SSO configuration for Auth0, Keycloak, Okta, Azure AD, Zitadel |
-| [OIDC Architecture](docs/OIDC_ARCH.md) | OIDC subsystem internals, security model, extension points |
+| [OIDC SSO](docs/OIDC.md) | SSO setup (Auth0, Keycloak, Okta, Azure AD, Zitadel, Google) + subsystem internals & security model |
 | [Theming Guide](docs/THEMING.md) | CSS theming, dark mode, and styling customization |
 | [Architecture](docs/ARCHITECTURE.md) | System architecture and design patterns |
 

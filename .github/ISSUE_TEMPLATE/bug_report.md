@@ -30,7 +30,7 @@ Please provide the following information:
 - **LibreDB Studio Version**: (e.g., 0.5.4)
 - **Browser**: (e.g., Chrome 120, Firefox 121, Safari 17)
 - **OS**: (e.g., macOS 14, Windows 11, Ubuntu 22.04)
-- **Node.js/Bun Version**: (e.g., Bun 1.0.0, Node.js 20.10.0)
+- **Node.js/Bun Version**: (e.g., Bun 1.3.14, Node.js 24.16.0)
 - **Database Type**: (e.g., PostgreSQL 15, MySQL 8.0, SQLite 3.42, MongoDB 7.0)
 - **Database Version**: (e.g., PostgreSQL 15.3)
 

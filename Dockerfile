@@ -6,14 +6,16 @@
 # Bun for fast dependency installation, Node.js for build
 # Bun's JIT compiler segfaults under QEMU emulation (ARM64 cross-build),
 # so we use Node.js for the Next.js build step.
-FROM oven/bun:1 AS deps
+FROM oven/bun:1.3.14 AS deps
 WORKDIR /usr/src/app
 RUN apt-get update && apt-get install -y python3 make g++ --no-install-recommends && rm -rf /var/lib/apt/lists/*
 COPY package.json bun.lock ./
 RUN bun install --frozen-lockfile
 
 # Build with Node.js to avoid Bun/QEMU segfaults on ARM64
-FROM node:20-slim AS builder
+# trixie-slim: must match the oven/bun deps stage glibc (Debian 13 / glibc 2.41),
+# otherwise native modules (better-sqlite3) compiled in deps fail to load here.
+FROM node:24.16.0-trixie-slim AS builder
 WORKDIR /usr/src/app
 COPY --from=deps /usr/src/app/node_modules ./node_modules
 COPY . .
@@ -31,7 +33,8 @@ ENV USER_PASSWORD=$USER_PASSWORD_BUILD
 RUN npx next build
 
 # Production image - use Node.js slim for lower memory footprint
-FROM node:20-slim AS runner
+# trixie-slim: glibc must match the stage where native modules were built (see builder).
+FROM node:24.16.0-trixie-slim AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production
