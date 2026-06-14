@@ -146,11 +146,9 @@ describe('POST /api/auth/login', () => {
     expect(mockLogin).toHaveBeenCalledWith('user', 'user@libredb.org');
   });
 
-  test('returns 500 when production env vars are missing', async () => {
-    const origNodeEnv = process.env.NODE_ENV;
-    const origAdminEmail = process.env.ADMIN_EMAIL;
-    (process.env as Record<string, string>).NODE_ENV = 'production';
-    delete process.env.ADMIN_EMAIL;
+  test('returns 500 when required password env vars are missing', async () => {
+    const origAdminPassword = process.env.ADMIN_PASSWORD;
+    delete process.env.ADMIN_PASSWORD;
 
     const req = createMockRequest('/api/auth/login', {
       method: 'POST',
@@ -164,7 +162,6 @@ describe('POST /api/auth/login', () => {
     expect(data.code).toBe('INTERNAL_ERROR');
     expect(data.statusCode).toBe(500);
 
-    (process.env as Record<string, string>).NODE_ENV = origNodeEnv!;
-    process.env.ADMIN_EMAIL = origAdminEmail!;
+    process.env.ADMIN_PASSWORD = origAdminPassword!;
   });
 });
