@@ -210,7 +210,7 @@ docker run -d \
   > **Tip**: Add `-e LLM_PROVIDER=gemini -e LLM_API_KEY=your_key -e LLM_MODEL=gemini-2.5-flash` to enable AI features.
 
   ### Prerequisites
-  - [Bun](https://bun.sh/) (Recommended) or Node.js 20+
+  - [Bun](https://bun.sh/) (Recommended) or Node.js 24+
   - A target database to query (PostgreSQL, MySQL, Oracle, SQL Server, SQLite, MongoDB, or Redis)
 
   ### Quick Start (Local)
