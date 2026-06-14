@@ -14,8 +14,9 @@ LibreDB Studio is a web-based SQL IDE for cloud-native teams. It supports Postgr
 
 ## Github
 * Repository: https://github.com/libredb/libredb-studio
-* Container Registry: https://github.com/libredb/libredb-studio/pkgs/container/libredb-studio
-* Docker Image: ghcr.io/libredb/libredb-studio:latest
+* Container Registry (primary): https://github.com/libredb/libredb-studio/pkgs/container/libredb-studio
+* Docker Image (primary): ghcr.io/libredb/libredb-studio:latest — no pull rate limits, use in all copy-paste examples
+* Docker Hub (mirror): https://hub.docker.com/r/libredb/libredb-studio — `libredb/libredb-studio` (convenience/discoverability only; GHCR stays canonical)
 * Helm Chart: https://artifacthub.io/packages/helm/libredb-studio/libredb-studio
 * Helm Repo: https://libredb.org/libredb-studio/
 * Helm OCI: oci://ghcr.io/libredb/charts/libredb-studio

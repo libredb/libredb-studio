@@ -205,6 +205,8 @@ docker run -d \
   ghcr.io/libredb/libredb-studio:latest
 ```
 
+  > **Registry**: `ghcr.io/libredb/libredb-studio` is the primary image (no pull rate limits — preferred for Kubernetes/CI). The same image is also mirrored to Docker Hub as [`libredb/libredb-studio`](https://hub.docker.com/r/libredb/libredb-studio) for convenience.
+
   Open [http://localhost:3000](http://localhost:3000) and login with `admin@libredb.org` / `LibreDB.2026`.
 
   > **Tip**: Add `-e LLM_PROVIDER=gemini -e LLM_API_KEY=your_key -e LLM_MODEL=gemini-2.5-flash` to enable AI features.

@@ -79,7 +79,7 @@ A ready-to-use, fully-commented compose file is in the repo: [`docker-compose.ex
 | `sha-<commit>` | every build | Exact immutable commit |
 
 - **Architectures:** `linux/amd64`, `linux/arm64` (multi-arch manifest).
-- **Also on GHCR:** `ghcr.io/libredb/libredb-studio` (canonical mirror, no pull rate limits — preferred for Kubernetes).
+- **Primary registry:** `ghcr.io/libredb/libredb-studio` (GitHub Container Registry — no pull rate limits, preferred for Kubernetes/CI). This Docker Hub repository is a convenience mirror for discoverability; both registries serve the identical multi-arch image.
 
 ---
 
