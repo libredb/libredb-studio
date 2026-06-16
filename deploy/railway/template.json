@@ -1,0 +1,48 @@
+{
+  "$comment": "Reviewable serialization of the LibreDB Studio Railway template. Railway does not ingest this file directly — the marketplace template is built in the composer at https://railway.com/compose. This file is the single source of truth for what to enter there (see PUBLISH.md) and what a future API automation would consume. Mirrors deploy/caprover/libredb-studio.yml.",
+  "name": "LibreDB Studio",
+  "description": "Open-source web-based SQL IDE. Query PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB & Redis from your browser, with AI-powered query assistance.",
+  "tags": ["database", "sql", "ide", "postgres", "mysql", "mongodb", "redis"],
+  "services": [
+    {
+      "name": "libredb-studio",
+      "icon": "https://raw.githubusercontent.com/libredb/libredb-studio/main/deploy/railway/libredb-studio.png",
+      "source": {
+        "image": "ghcr.io/libredb/libredb-studio:0.9.19"
+      },
+      "networking": {
+        "public": true,
+        "targetPort": 3000
+      },
+      "healthcheck": {
+        "path": "/api/db/health",
+        "timeoutSeconds": 120
+      },
+      "restartPolicy": {
+        "type": "ON_FAILURE",
+        "maxRetries": 3
+      },
+      "volumes": [
+        {
+          "name": "libredb-data",
+          "mountPath": "/app/data"
+        }
+      ],
+      "variables": {
+        "JWT_SECRET": "${{ secret(48) }}",
+        "ADMIN_EMAIL": "admin@libredb.org",
+        "ADMIN_PASSWORD": "${{ secret(16) }}",
+        "USER_EMAIL": "user@libredb.org",
+        "USER_PASSWORD": "${{ secret(16) }}",
+        "NEXT_PUBLIC_AUTH_PROVIDER": "local",
+        "STORAGE_PROVIDER": "sqlite",
+        "STORAGE_SQLITE_PATH": "/app/data/libredb-storage.db",
+        "PORT": "3000",
+        "LLM_PROVIDER": "",
+        "LLM_API_KEY": "",
+        "LLM_MODEL": "",
+        "LLM_API_URL": ""
+      }
+    }
+  ]
+}
