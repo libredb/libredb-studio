@@ -28,7 +28,7 @@ enter are in [`template.json`](./template.json).
   - `LLM_PROVIDER`, `LLM_API_KEY`, `LLM_MODEL`, `LLM_API_URL` = leave blank
 - **Settings** tab — enable **Public Networking**, target port `3000`; set
   **Healthcheck Path** to `/api/db/health`.
-- **Volume** — right-click the service → **Attach Volume**, mount path `/app/data`.
+- **Volume** — select the service, open its **Volumes** section, and add a volume with mount path `/app/data`.
 
 ## 4. Create the template
 
@@ -48,7 +48,7 @@ enter are in [`template.json`](./template.json).
 - Click **Publish** (or Workspace → Templates → **Publish** next to it).
 - Fill the form: display name **LibreDB Studio**, the description and tags from
   `template.json`, the logo (`libredb-studio.png`), category Database/Developer Tools.
-- Submit. The template is now in the marketplace and eligible for kickbacks.
+- Submit. The template is now in the marketplace and eligible for Railway's template kickback (revenue-share) program.
 
 ## 7. Wire up the Deploy button
 
