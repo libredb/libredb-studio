@@ -1,16 +1,18 @@
 # Publishing the LibreDB Studio Railway Template
 
-A Railway **marketplace template** is built in the visual composer, not from a
-repo file. This is the exact checklist to create and publish it. The values to
-enter are in [`template.json`](./template.json).
+A Railway **marketplace template** is built in the visual template editor, not
+from a repo file. This is the exact checklist to create and publish it. The
+values to enter are in [`template.json`](./template.json).
 
-## 1. Open the composer
+## 1. Open the template editor
 
-- Go to https://railway.com/compose (or Workspace → **Templates** → **New Template**).
+- Go to your **Workspace → Templates** page: <https://railway.com/workspace/templates>
+- Click **New Template**. This opens the template editor (a canvas, like a project).
 
 ## 2. Add the Studio service
 
-- Click **Add New → Docker Image**.
+- In the editor, click **+ New** (top-right), or open the command palette
+  (`⌘K` / `Ctrl+K`) → **+ New Service** → **Docker Image**.
 - Image: `ghcr.io/libredb/libredb-studio:0.9.21` (pinned — never `:latest`).
 - Rename the service to `libredb-studio`.
 
@@ -65,5 +67,5 @@ On a new Studio release:
 
 1. Bump the image tag in `deploy/railway/template.json` and
    `deploy/railway/README.md`.
-2. In the composer / published template, update the image tag and re-publish
-   (Docker-image templates are **not** auto-updated by Railway).
+2. In the template editor / published template, update the image tag and
+   re-publish (Docker-image templates are **not** auto-updated by Railway).

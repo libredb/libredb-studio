@@ -1,5 +1,5 @@
 {
-  "$comment": "Reviewable serialization of the LibreDB Studio Railway template. Railway does not ingest this file directly — the marketplace template is built in the composer at https://railway.com/compose. This file is the single source of truth for what to enter there (see PUBLISH.md) and what a future API automation would consume. Mirrors deploy/caprover/libredb-studio.yml.",
+  "$comment": "Reviewable serialization of the LibreDB Studio Railway template. Railway does not ingest this file directly — the marketplace template is built in Railway's template editor (Workspace -> Templates -> New Template, at https://railway.com/workspace/templates). This file is the single source of truth for what to enter there (see PUBLISH.md) and what a future API automation would consume. Mirrors deploy/caprover/libredb-studio.yml.",
   "name": "LibreDB Studio",
   "description": "Open-source web-based SQL IDE. Query PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB & Redis from your browser, with AI-powered query assistance.",
   "tags": ["database", "sql", "ide", "postgres", "mysql", "mongodb", "redis"],
