@@ -137,6 +137,41 @@ function mergeRecords(inputRecords) {
   return [...byFile.values()].sort((a, b) => a.sf.localeCompare(b.sf));
 }
 
+/**
+ * Bun's lcov reporter emits DA (line) entries for non-executable lines —
+ * blank lines, comments, and bare structural punctuation (`}`, `});`, ...).
+ * Standard coverage tools (istanbul/nyc) never count these, but SonarCloud
+ * treats every DA line as coverable, so they show up as permanently-uncovered
+ * "new code" and sink the new-code coverage gate. Strip them based on the
+ * actual source, so coverage reflects executable lines only.
+ */
+function isNonExecutableLine(src) {
+  const t = src.trim();
+  if (t === "") return true; // blank
+  if (t.startsWith("//")) return true; // line comment
+  if (t.startsWith("/*")) return true; // block comment opener
+  if (t === "*/" || /^\*( |$|\/)/.test(t)) return true; // JSDoc / block comment body
+  if (/^[{}()\[\];,]+$/.test(t)) return true; // bare structural punctuation
+  return false;
+}
+
+function stripNonExecutableLines(records) {
+  for (const record of records) {
+    let sourceLines;
+    try {
+      sourceLines = fs.readFileSync(record.sf, "utf8").split("\n");
+    } catch {
+      continue; // source unavailable — leave coverage as-is
+    }
+    for (const lineNo of [...record.lines.keys()]) {
+      const src = sourceLines[lineNo - 1];
+      if (src !== undefined && isNonExecutableLine(src)) {
+        record.lines.delete(lineNo);
+      }
+    }
+  }
+}
+
 function serializeRecords(records) {
   const chunks = [];
 
@@ -213,6 +248,10 @@ function main() {
   }
 
   const merged = mergeRecords(allRecords);
+
+  // Drop DA entries for non-executable lines (comments, blanks, bare braces)
+  // that bun over-reports and SonarCloud would otherwise count as uncovered.
+  stripNonExecutableLines(merged);
 
   // Filter out non-source files that SonarCloud can't resolve:
   // - tests/ and e2e/ directories (test infrastructure, not source)
