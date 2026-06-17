@@ -35,6 +35,22 @@ export function quoteIdentifier(name: string, capabilities: ProviderCapabilities
   return /^[a-z_][a-z0-9_$]*$/.test(name) ? name : `"${name.replaceAll('"', '""')}"`;
 }
 
+/**
+ * Quote a possibly schema-qualified name (e.g. `employees.department`) by quoting
+ * each dotted segment independently. Quoting the whole string as one identifier
+ * (`"employees.department"`) would make the database look for a single relation
+ * literally named with a dot, which fails. Each segment is still quoted only when
+ * needed, so `employees.department` stays unquoted and `public.Order` becomes
+ * `public."Order"`.
+ */
+export function quoteQualifiedName(name: string, capabilities: ProviderCapabilities): string {
+  if (capabilities.queryLanguage === 'json') return name;
+  return name
+    .split('.')
+    .map((part) => quoteIdentifier(part, capabilities))
+    .join('.');
+}
+
 export function generateTableQuery(tableName: string, capabilities: ProviderCapabilities): string {
   if (capabilities.queryLanguage === 'json') {
     return JSON.stringify(
@@ -43,7 +59,7 @@ export function generateTableQuery(tableName: string, capabilities: ProviderCapa
       2
     );
   }
-  const table = quoteIdentifier(tableName, capabilities);
+  const table = quoteQualifiedName(tableName, capabilities);
   // Oracle
   if (capabilities.defaultPort === 1521) {
     return `SELECT * FROM ${table} FETCH FIRST 50 ROWS ONLY;`;
@@ -79,7 +95,7 @@ export function generateSelectQuery(
       2
     );
   }
-  const table = quoteIdentifier(tableName, capabilities);
+  const table = quoteQualifiedName(tableName, capabilities);
   const cols = columns.map((c) => `  ${quoteIdentifier(c.name, capabilities)}`).join(',\n') || '  *';
   // Oracle
   if (capabilities.defaultPort === 1521) {
