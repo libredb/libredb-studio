@@ -103,3 +103,4 @@ npmjs-token
 .npmrc
 
 .token
+.sonar-token
