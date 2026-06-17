@@ -39,8 +39,31 @@
         "STORAGE_SQLITE_PATH": "/app/data/libredb-storage.db",
         "PORT": "3000"
       },
-      "$variablesNote": "Do NOT add LLM_* (AI) variables with empty values: Railway treats an empty template variable as a REQUIRED user input, which breaks the one-click flow. AI is optional and added post-deploy (LLM_PROVIDER, LLM_API_KEY, LLM_MODEL, LLM_API_URL) — see README. Likewise OIDC_* are post-install only.",
-      "$volumeNote": "Volumes are NOT in the service Settings panel. Attach by right-clicking the service on the template editor canvas -> Attach Volume -> mount path /app/data."
+      "variableDescriptions": {
+        "JWT_SECRET": "Secret key used to sign login session tokens. Auto-generated — keep it.",
+        "ADMIN_EMAIL": "Login email for the ADMIN account (full access incl. maintenance tools).",
+        "ADMIN_PASSWORD": "Password for the admin account. Auto-generated; find it in Variables after deploy.",
+        "USER_EMAIL": "Login email for the standard, query-only account.",
+        "USER_PASSWORD": "Password for the standard user. Auto-generated; find it in Variables after deploy.",
+        "NEXT_PUBLIC_AUTH_PROVIDER": "Auth mode: 'local' (email/password). Set 'oidc' for SSO (needs the OIDC_* optional vars).",
+        "STORAGE_PROVIDER": "Where saved connections & settings live: 'sqlite' (on the volume) or 'postgres' (multi-node).",
+        "STORAGE_SQLITE_PATH": "SQLite file path on the mounted volume (/app/data). Keep the default.",
+        "PORT": "Port the app listens on. Must match the HTTP Proxy Port. Leave as 3000."
+      },
+      "optionalVariables": {
+        "LLM_PROVIDER": { "example": "gemini", "description": "Optional AI query assistance: gemini | openai | ollama | custom. Omit to keep AI off." },
+        "LLM_API_KEY": { "example": "AIza... / sk-...", "description": "API key for the chosen AI provider (Gemini/OpenAI). Not needed for a local Ollama." },
+        "LLM_MODEL": { "example": "gemini-2.5-flash", "description": "AI model name; provider default used if empty (e.g. gpt-4o-mini, llama3.1)." },
+        "LLM_API_URL": { "example": "http://host:11434/v1", "description": "Base URL for ollama/custom AI providers only. Not needed for gemini/openai." },
+        "OIDC_ISSUER": { "example": "https://tenant.auth0.com", "description": "OIDC issuer URL for SSO. Required when NEXT_PUBLIC_AUTH_PROVIDER=oidc." },
+        "OIDC_CLIENT_ID": { "example": "", "description": "OIDC application client ID (SSO)." },
+        "OIDC_CLIENT_SECRET": { "example": "", "description": "OIDC application client secret (SSO)." },
+        "OIDC_SCOPE": { "example": "openid profile email", "description": "OIDC scopes. Defaults to 'openid profile email' if empty." },
+        "OIDC_ROLE_CLAIM": { "example": "realm_access.roles", "description": "Claim path holding user roles, used for admin mapping." },
+        "OIDC_ADMIN_ROLES": { "example": "admin", "description": "Comma-separated role values mapped to admin. Defaults to 'admin'." },
+        "STORAGE_POSTGRES_URL": { "example": "postgresql://user:pass@host:5432/db", "description": "PostgreSQL URL for multi-node storage. Also set STORAGE_PROVIDER=postgres." }
+      },
+      "$note": "variables = pre-configured (entered with defaults). optionalVariables = mark each as OPTIONAL in the editor so deployers can fill them only if needed (empty non-optional vars become REQUIRED in Railway). Volumes are attached via right-click on the canvas, not the Settings panel."
     }
   ]
 }
