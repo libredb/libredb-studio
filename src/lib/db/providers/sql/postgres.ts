@@ -993,12 +993,12 @@ export class PostgresProvider extends SQLBaseProvider {
           n_live_tup as live_row_count,
           n_dead_tup as dead_row_count,
           n_live_tup + n_dead_tup as row_count,
-          pg_size_pretty(pg_table_size(schemaname || '.' || relname)) as table_size,
-          pg_table_size(schemaname || '.' || relname) as table_size_bytes,
-          pg_size_pretty(pg_indexes_size(schemaname || '.' || relname)) as index_size,
-          pg_indexes_size(schemaname || '.' || relname) as index_size_bytes,
-          pg_size_pretty(pg_total_relation_size(schemaname || '.' || relname)) as total_size,
-          pg_total_relation_size(schemaname || '.' || relname) as total_size_bytes,
+          pg_size_pretty(pg_table_size(quote_ident(schemaname) || '.' || quote_ident(relname))) as table_size,
+          pg_table_size(quote_ident(schemaname) || '.' || quote_ident(relname)) as table_size_bytes,
+          pg_size_pretty(pg_indexes_size(quote_ident(schemaname) || '.' || quote_ident(relname))) as index_size,
+          pg_indexes_size(quote_ident(schemaname) || '.' || quote_ident(relname)) as index_size_bytes,
+          pg_size_pretty(pg_total_relation_size(quote_ident(schemaname) || '.' || quote_ident(relname))) as total_size,
+          pg_total_relation_size(quote_ident(schemaname) || '.' || quote_ident(relname)) as total_size_bytes,
           last_vacuum,
           last_autovacuum,
           last_analyze,
@@ -1010,7 +1010,7 @@ export class PostgresProvider extends SQLBaseProvider {
           END as bloat_ratio
         FROM pg_stat_user_tables
         ${whereClause}
-        ORDER BY pg_total_relation_size(schemaname || '.' || relname) DESC
+        ORDER BY pg_total_relation_size(quote_ident(schemaname) || '.' || quote_ident(relname)) DESC
       `, params);
 
       return res.rows.map((r) => ({
