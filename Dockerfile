@@ -64,7 +64,17 @@ COPY --from=builder /usr/src/app/node_modules/file-uri-to-path ./node_modules/fi
 RUN addgroup --system --gid 1001 nodejs && \
     adduser --system --uid 1001 nextjs && \
     chown -R nextjs:nodejs /app
-USER nextjs
+
+# gosu lets the entrypoint drop from root to the app user after fixing the
+# permissions of a mounted (often root-owned) data volume.
+RUN apt-get update && apt-get install -y --no-install-recommends gosu && \
+    rm -rf /var/lib/apt/lists/*
+
+# Entrypoint makes the SQLite data dir writable by `nextjs` then drops privileges.
+# The container starts as root only long enough to chown the volume mount; the
+# app process itself runs as the non-root `nextjs` user.
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 # Render uses PORT env variable, default to 3000
 EXPOSE 3000/tcp
@@ -73,4 +83,5 @@ ENV HOSTNAME="0.0.0.0"
 
 # server.js is created by next build from the standalone output
 # https://nextjs.org/docs/pages/api-reference/next-config-js/output
+ENTRYPOINT ["docker-entrypoint.sh"]
 CMD ["node", "server.js"]

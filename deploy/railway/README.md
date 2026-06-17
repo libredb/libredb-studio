@@ -5,9 +5,10 @@ This folder is the **source of truth** for deploying LibreDB Studio on
 
 | File | Purpose |
 |------|---------|
-| `template.json` | Reviewable serialization of the composer service config (image, env vars, volume, healthcheck). Railway does not ingest it directly — see note below. |
+| `template.json` | Reviewable serialization of the template service config (image, env vars, volume, healthcheck). Railway does not ingest it directly — see note below. |
 | `README.md` | This file — install + post-install instructions. |
-| `PUBLISH.md` | Step-by-step checklist to create and publish the template in the Railway composer. |
+| `PUBLISH.md` | Step-by-step checklist to create and publish the template in Railway's template editor. |
+| `TEMPLATE_OVERVIEW.md` | Marketplace overview/README pasted into the publish form's "Template Overview" field. |
 | `libredb-studio.png` | 256×256 app logo. |
 
 > **Why no `railway.json` in the repo?** Railway config-as-code only controls how
@@ -17,18 +18,18 @@ This folder is the **source of truth** for deploying LibreDB Studio on
 > config file. A `railway.toml` would only cause a redundant rebuild of an image
 > CI already publishes.
 
-## Deploy (once published)
+## Deploy
 
-Click the button (replace `CODE` with the published template code):
+Click the button to deploy from the Railway template marketplace:
 
-[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/new/template/CODE?utm_medium=integration&utm_source=button&utm_campaign=libredb-studio)
+[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/libredb-studio?referralCode=bGijnc&utm_medium=integration&utm_source=template&utm_campaign=generic)
 
 Or browse the Railway template marketplace and search **LibreDB Studio**.
 
 ## Deploy (manual — works today, before publishing)
 
 Railway dashboard → **New Project**, then in the project view click **+ New → Docker Image** →
-enter `ghcr.io/libredb/libredb-studio:0.9.19`, then configure the service to
+enter `ghcr.io/libredb/libredb-studio:0.9.22`, then configure the service to
 match [`template.json`](./template.json):
 
 - **Networking:** enable a public domain, target port `3000`.
