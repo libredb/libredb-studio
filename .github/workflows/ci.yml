@@ -35,6 +35,9 @@ jobs:
       - name: Run TypeScript type check
         run: bun run typecheck
 
+      - name: Run knip (unused files, exports, dependencies)
+        run: bun run knip
+
       - name: Build project
         run: bun run build
         env:

@@ -25,12 +25,6 @@ export function decodeText(bytes: Uint8Array): string {
 // SSE (Server-Sent Events) Parser
 // ============================================================================
 
-export interface SSEChunk {
-  data: string;
-  event?: string;
-  id?: string;
-}
-
 /**
  * Parse SSE formatted response for OpenAI-compatible APIs
  * Handles chunked responses and extracts content from delta objects

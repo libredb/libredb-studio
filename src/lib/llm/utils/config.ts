@@ -9,7 +9,7 @@ import { type LLMConfig, type LLMProviderType, LLMConfigError } from '../types';
 // Default Configuration
 // ============================================================================
 
-export const DEFAULT_PROVIDER: LLMProviderType = 'gemini';
+const DEFAULT_PROVIDER: LLMProviderType = 'gemini';
 
 export const DEFAULT_MODELS: Record<LLMProviderType, string> = {
   gemini: 'gemini-2.5-flash',

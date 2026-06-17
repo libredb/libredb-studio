@@ -4,7 +4,11 @@
     "incremental": false,
     "noEmit": false,
     "declaration": true,
-    "emitDeclarationOnly": true
+    "emitDeclarationOnly": true,
+    // tsup's .d.ts bundler injects `baseUrl` to resolve the `@/*` path alias.
+    // TS 6 deprecates `baseUrl` (removed in TS 7); silence the deprecation error
+    // until the alias resolution is migrated. See https://aka.ms/ts6
+    "ignoreDeprecations": "6.0"
   },
   "include": ["src/**/*.ts", "src/**/*.tsx"],
   "exclude": ["node_modules", "tests", "e2e", ".next"]

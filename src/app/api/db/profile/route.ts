@@ -3,6 +3,7 @@ import { getOrCreateProvider } from '@/lib/db/factory';
 import { createErrorResponse } from '@/lib/api/errors';
 import { resolveConnection } from '@/lib/seed/resolve-connection';
 import { getSession } from '@/lib/auth';
+import { quoteIdentifier } from '@/lib/query-generators';
 
 export async function POST(req: NextRequest) {
   try {
@@ -69,13 +70,16 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: 'No columns to profile' }, { status: 400 });
       }
 
+      // Quote the table once for the target dialect (mixed-case / special names)
+      const safeTable = quoteIdentifier(tableName, capabilities);
+
       // Get total row count
-      const countResult = await provider.query(`SELECT COUNT(*) as total FROM ${tableName}`);
+      const countResult = await provider.query(`SELECT COUNT(*) as total FROM ${safeTable}`);
       const totalRows = Number(countResult.rows[0]?.total || 0);
 
       // Build profiling query for each column
       const profileParts = colList.slice(0, 20).map((col) => {
-        const safeCol = `"${col}"`;
+        const safeCol = quoteIdentifier(col, capabilities);
         return `
           SELECT
             '${col.replace(/'/g, "''")}' as column_name,
@@ -85,7 +89,7 @@ export async function POST(req: NextRequest) {
             COUNT(DISTINCT ${safeCol}) as distinct_count,
             MIN(${safeCol}::text) as min_value,
             MAX(${safeCol}::text) as max_value
-          FROM ${tableName}
+          FROM ${safeTable}
         `;
       });
 
@@ -124,10 +128,10 @@ export async function POST(req: NextRequest) {
 
       // Get sample values for top 5 columns
       const topCols = colList.slice(0, 5);
-      const safeCols = topCols.map(c => `"${c}"`).join(', ');
+      const safeCols = topCols.map(c => quoteIdentifier(c, capabilities)).join(', ');
       try {
         const sampleResult = await provider.query(
-          `SELECT ${safeCols} FROM ${tableName} LIMIT 5`
+          `SELECT ${safeCols} FROM ${safeTable} LIMIT 5`
         );
         for (const profile of columnProfiles) {
           if (topCols.includes(profile.name)) {

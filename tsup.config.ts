@@ -30,7 +30,7 @@ export default defineConfig({
     'elkjs', 'recharts',
     'framer-motion', 'html2canvas',
     '@tanstack/react-table', '@tanstack/react-virtual',
-    'react-resizable-panels', 'react-hook-form', '@hookform/resolvers',
+    'react-resizable-panels', 'react-hook-form',
     'react-day-picker', 'embla-carousel-react', 'input-otp',
     'sonner', 'vaul', 'cmdk', 'next-themes',
     // Radix primitives

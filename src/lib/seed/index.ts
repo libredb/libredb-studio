@@ -4,9 +4,7 @@ import { filterByRoles, mergeDefaults } from './connection-filter';
 import type { ManagedConnection } from './types';
 
 export type { ManagedConnection, SeedConfig, SeedConnection, SeedDefaults } from './types';
-export { SeedConfigSchema, SeedConnectionSchema, SeedDefaultsSchema } from './types';
 export { resetCache } from './config-loader';
-export { resetPlaintextWarnings } from './credential-resolver';
 
 async function loadAndResolve(): Promise<ManagedConnection[]> {
   const config = await loadConfig();

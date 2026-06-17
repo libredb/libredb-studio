@@ -19,7 +19,7 @@
 // Factory (Primary API)
 // ============================================================================
 
-export { createLLMProvider, getDefaultProvider, resetDefaultProvider } from './factory';
+export { createLLMProvider } from './factory';
 
 // ============================================================================
 // Types & Interfaces
@@ -35,27 +35,6 @@ export type {
 } from './types';
 
 // ============================================================================
-// Error Classes
-// ============================================================================
-
-export {
-  LLMError,
-  LLMConfigError,
-  LLMAuthError,
-  LLMRateLimitError,
-  LLMSafetyError,
-  LLMStreamError,
-  isLLMError,
-  isRetryableError,
-} from './types';
-
-// ============================================================================
-// Base Provider (for extension)
-// ============================================================================
-
-export { BaseLLMProvider } from './base-provider';
-
-// ============================================================================
 // Provider Classes (Lazy Loaded)
 // ============================================================================
 // NOTE: Individual providers are NOT exported statically to reduce memory usage.
@@ -67,24 +46,3 @@ export { BaseLLMProvider } from './base-provider';
 //   import { OllamaProvider } from '@/lib/llm/providers/ollama';
 //   import { CustomProvider } from '@/lib/llm/providers/custom';
 // ============================================================================
-
-// ============================================================================
-// Utilities (for advanced usage)
-// ============================================================================
-
-export {
-  resolveConfig,
-  validateConfig,
-  DEFAULT_MODELS,
-  DEFAULT_API_URLS,
-  DEFAULT_PROVIDER,
-} from './utils/config';
-
-export { withRetry, makeRetryable, type RetryOptions } from './utils/retry';
-
-export {
-  createSSEParser,
-  createStreamFromSSEResponse,
-  encodeText,
-  decodeText,
-} from './utils/streaming';

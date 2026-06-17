@@ -1,0 +1,29 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "entry": [
+    "src/exports/index.js",
+    "src/components/ui/**/*.{ts,tsx}",
+    "tests/**/*.{ts,tsx}",
+    "e2e/**/*.ts",
+    "scripts/*.mjs"
+  ],
+  "project": [
+    "src/**/*.{ts,tsx}",
+    "tests/**/*.{ts,tsx}",
+    "e2e/**/*.ts",
+    "scripts/*.mjs"
+  ],
+  "ignoreDependencies": [
+    "tailwindcss"
+  ],
+  "ignoreBinaries": [
+    "genhtml"
+  ],
+  "ignoreExportsUsedInFile": {
+    "interface": true,
+    "type": true
+  },
+  "tags": [
+    "-lintignore"
+  ]
+}
