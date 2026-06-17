@@ -46,7 +46,7 @@
         "USER_EMAIL": "Login email for the standard, query-only account.",
         "USER_PASSWORD": "Password for the standard user. Auto-generated; find it in Variables after deploy.",
         "NEXT_PUBLIC_AUTH_PROVIDER": "Auth mode: 'local' (email/password). Set 'oidc' for SSO (needs the OIDC_* optional vars).",
-        "STORAGE_PROVIDER": "Where saved connections & settings live: 'sqlite' (on the volume) or 'postgres' (multi-node).",
+        "STORAGE_PROVIDER": "Server-side storage for saved connections & settings: 'local' (browser only) | 'sqlite' (file on the volume) | 'postgres' (multi-node). Keep 'sqlite'.",
         "STORAGE_SQLITE_PATH": "SQLite file path on the mounted volume (/app/data). Keep the default.",
         "PORT": "Port the app listens on. Must match the HTTP Proxy Port. Leave as 3000."
       },

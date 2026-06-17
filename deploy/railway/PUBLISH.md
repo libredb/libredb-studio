@@ -32,7 +32,7 @@ The `${{ secret(...) }}` values are auto-generated per deploy.
 | `USER_EMAIL` | `user@libredb.org` | Login email for the standard, query-only account. |
 | `USER_PASSWORD` | `${{ secret(16) }}` | Password for the standard user. Auto-generated; find it in Variables after deploy. |
 | `NEXT_PUBLIC_AUTH_PROVIDER` | `local` | Auth mode: 'local' (email/password). Set 'oidc' for SSO (needs the OIDC_* optional vars). |
-| `STORAGE_PROVIDER` | `sqlite` | Where saved connections & settings live: 'sqlite' (on the volume) or 'postgres' (multi-node). |
+| `STORAGE_PROVIDER` | `sqlite` | Server-side storage for saved connections & settings: 'local' (browser only, no server persistence) \| 'sqlite' (file on the volume) \| 'postgres' (multi-node). Keep 'sqlite'. |
 | `STORAGE_SQLITE_PATH` | `/app/data/libredb-storage.db` | SQLite file path on the mounted volume (/app/data). Keep the default. |
 | `PORT` | `3000` | Port the app listens on. Must match the HTTP Proxy Port. Leave as 3000. |
 
