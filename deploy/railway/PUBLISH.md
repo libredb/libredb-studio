@@ -13,7 +13,7 @@ values to enter are in [`template.json`](./template.json).
 
 - In the editor, click **+ New** (top-right), or open the command palette
   (`⌘K` / `Ctrl+K`) → **+ New Service** → **Docker Image**.
-- Image: `ghcr.io/libredb/libredb-studio:0.9.21` (pinned — never `:latest`).
+- Image: `ghcr.io/libredb/libredb-studio:0.9.22` (pinned — never `:latest`).
 - Rename the service to `libredb-studio`.
 
 ## 3. Variables

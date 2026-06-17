@@ -8,7 +8,7 @@
       "name": "libredb-studio",
       "icon": "https://raw.githubusercontent.com/libredb/libredb-studio/main/deploy/railway/libredb-studio.png",
       "source": {
-        "image": "ghcr.io/libredb/libredb-studio:0.9.21"
+        "image": "ghcr.io/libredb/libredb-studio:0.9.22"
       },
       "networking": {
         "public": true,
