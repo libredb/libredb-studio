@@ -91,12 +91,15 @@ The `${{ secret(...) }}` values are auto-generated per deploy.
 
 ## 8. Wire up the Deploy button
 
-- Copy the template code from the published URL
-  (`https://railway.com/new/template/<CODE>`).
-- Replace `CODE` in:
+- After publishing, the marketplace URL has the form
+  `https://railway.com/deploy/<template-name>?referralCode=<code>` (the
+  `referralCode` is how Railway attributes deploys/kickbacks to you).
+- Put the **Deploy on Railway** button (image `https://railway.com/button.svg`)
+  with that URL in:
   - root `README.md` (the `## ⚡ One-Click Deploy` section)
   - `deploy/railway/README.md`
-- Commit the change.
+- Current published link:
+  `https://railway.com/deploy/libredb-studio?referralCode=bGijnc&utm_medium=integration&utm_source=template&utm_campaign=generic`
 
 ## Maintaining the template
 

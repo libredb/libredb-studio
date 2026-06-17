@@ -18,11 +18,11 @@ This folder is the **source of truth** for deploying LibreDB Studio on
 > config file. A `railway.toml` would only cause a redundant rebuild of an image
 > CI already publishes.
 
-## Deploy (once published)
+## Deploy
 
-Click the button (replace `CODE` with the published template code):
+Click the button to deploy from the Railway template marketplace:
 
-[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/new/template/CODE?utm_medium=integration&utm_source=button&utm_campaign=libredb-studio)
+[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/libredb-studio?referralCode=bGijnc&utm_medium=integration&utm_source=template&utm_campaign=generic)
 
 Or browse the Railway template marketplace and search **LibreDB Studio**.
 
