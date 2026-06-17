@@ -1007,6 +1007,31 @@ describe('PostgresProvider', () => {
       expect(result.message).toContain('REINDEX');
     });
 
+    test('quotes a mixed-case target (defaults to public schema)', async () => {
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      let capturedSql = '';
+      mockQueryFn = (sql: string) => {
+        capturedSql = sql;
+        return defaultMockQuery(sql);
+      };
+      await provider.runMaintenance('vacuum', 'MyTable');
+      expect(capturedSql).toContain('public."MyTable"');
+    });
+
+    test('quotes a schema-qualified target per part (not forced to public)', async () => {
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      let capturedSql = '';
+      mockQueryFn = (sql: string) => {
+        capturedSql = sql;
+        return defaultMockQuery(sql);
+      };
+      await provider.runMaintenance('reindex', 'reporting.MonthlySummary');
+      expect(capturedSql).toContain('"reporting"."MonthlySummary"');
+      expect(capturedSql).not.toContain('public.');
+    });
+
     test('kill with valid PID returns success', async () => {
       provider = new PostgresProvider(makePgConfig());
       await provider.connect();
@@ -1228,6 +1253,19 @@ describe('PostgresProvider', () => {
       await provider.connect();
       const stats = await provider.getTableStats({ schema: 'public' });
       expect(Array.isArray(stats)).toBe(true);
+    });
+
+    test('quotes identifiers in the stats query for mixed-case safety', async () => {
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      let capturedSql = '';
+      mockQueryFn = (sql: string) => {
+        capturedSql = sql;
+        return defaultMockQuery(sql);
+      };
+      await provider.getTableStats();
+      expect(capturedSql).toContain('quote_ident(schemaname)');
+      expect(capturedSql).toContain('quote_ident(relname)');
     });
   });
 

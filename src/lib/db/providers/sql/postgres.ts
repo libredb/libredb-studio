@@ -616,6 +616,19 @@ export class PostgresProvider extends SQLBaseProvider {
   // Maintenance Operations
   // ============================================================================
 
+  /**
+   * Resolve a maintenance target into a schema-qualified, quoted identifier.
+   * Bare table names default to the public schema; "schema.table" is quoted
+   * per-part. Returns an empty string when no target is given.
+   */
+  private qualifyMaintenanceTarget(target?: string): string {
+    if (!target) return '';
+    if (target.includes('.')) {
+      return target.split('.').map((p) => this.escapeIdentifier(p)).join('.');
+    }
+    return 'public.' + this.escapeIdentifier(target);
+  }
+
   public async runMaintenance(
     type: MaintenanceType,
     target?: string
@@ -626,13 +639,9 @@ export class PostgresProvider extends SQLBaseProvider {
       const client = await this.pool!.connect();
       try {
         let sql = '';
-        // Resolve target into a schema-qualified, quoted identifier. Bare table
-        // names default to the public schema; "schema.table" is also supported.
-        const qualifiedTarget = target
-          ? (target.includes('.')
-              ? target.split('.').map((p) => this.escapeIdentifier(p)).join('.')
-              : 'public.' + this.escapeIdentifier(target))
-          : '';
+        // Resolve target into a schema-qualified, quoted identifier (defaults to
+        // the public schema for bare names; "schema.table" is also supported).
+        const qualifiedTarget = this.qualifyMaintenanceTarget(target);
 
         switch (type) {
           case 'vacuum':

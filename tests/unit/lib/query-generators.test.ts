@@ -137,6 +137,17 @@ describe('quoteIdentifier', () => {
     expect(quoteIdentifier('Customer', makeCaps({ queryLanguage: 'json', defaultPort: null }))).toBe('Customer');
   });
 
+  test('escapes embedded quote characters per dialect', () => {
+    // Postgres/SQLite: embedded double-quote is doubled
+    expect(quoteIdentifier('we"ird', makeCaps({ defaultPort: 5432 }))).toBe('"we""ird"');
+    // MySQL: embedded backtick is doubled
+    expect(quoteIdentifier('we`ird', makeCaps({ defaultPort: 3306 }))).toBe('`we``ird`');
+    // SQL Server: embedded closing bracket is doubled
+    expect(quoteIdentifier('we]ird', makeCaps({ defaultPort: 1433 }))).toBe('[we]]ird]');
+    // Oracle: embedded double-quote is doubled
+    expect(quoteIdentifier('we"ird', makeCaps({ defaultPort: 1521 }))).toBe('"we""ird"');
+  });
+
   test('generateTableQuery quotes a mixed-case Postgres table', () => {
     expect(generateTableQuery('Customer', makeCaps({ defaultPort: 5432 })))
       .toBe('SELECT * FROM "Customer" LIMIT 50;');

@@ -21,18 +21,18 @@ export function quoteIdentifier(name: string, capabilities: ProviderCapabilities
 
   if (capabilities.defaultPort === 1521) {
     // Oracle
-    return /^[A-Z_][A-Z0-9_$#]*$/.test(name) ? name : `"${name.replace(/"/g, '""')}"`;
+    return /^[A-Z_][A-Z0-9_$#]*$/.test(name) ? name : `"${name.replaceAll('"', '""')}"`;
   }
   if (capabilities.defaultPort === 1433) {
     // SQL Server
-    return /^[A-Za-z_][A-Za-z0-9_]*$/.test(name) ? name : `[${name.replace(/\]/g, ']]')}]`;
+    return /^[A-Za-z_]\w*$/.test(name) ? name : `[${name.replaceAll(']', ']]')}]`;
   }
   if (capabilities.defaultPort === 3306) {
     // MySQL
-    return /^[A-Za-z_][A-Za-z0-9_$]*$/.test(name) ? name : `\`${name.replace(/`/g, '``')}\``;
+    return /^[A-Za-z_][\w$]*$/.test(name) ? name : `\`${name.replaceAll('`', '``')}\``;
   }
   // PostgreSQL / SQLite / default
-  return /^[a-z_][a-z0-9_$]*$/.test(name) ? name : `"${name.replace(/"/g, '""')}"`;
+  return /^[a-z_][a-z0-9_$]*$/.test(name) ? name : `"${name.replaceAll('"', '""')}"`;
 }
 
 export function generateTableQuery(tableName: string, capabilities: ProviderCapabilities): string {
