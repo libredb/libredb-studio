@@ -81,8 +81,12 @@ The `${{ secret(...) }}` values are auto-generated per deploy.
 ## 7. Publish
 
 - Click **Publish** (or Workspace → Templates → **Publish** next to it).
-- Fill the form: display name **LibreDB Studio**, the description and tags from
-  `template.json`, the logo (`libredb-studio.png`), category Database/Developer Tools.
+- Fill the form: display name **LibreDB Studio**, a short description (≤75 chars,
+  e.g. `Open-source web SQL IDE with AI — PostgreSQL, MySQL, Mongo, Redis & more`),
+  tags from `template.json`, the logo (`libredb-studio.png`), category
+  Database/Developer Tools.
+- **Template Overview** (the long marketplace README field): paste the contents
+  of [`TEMPLATE_OVERVIEW.md`](./TEMPLATE_OVERVIEW.md).
 - Submit. The template is now in the marketplace and eligible for Railway's template kickback (revenue-share) program.
 
 ## 8. Wire up the Deploy button

@@ -8,6 +8,7 @@ This folder is the **source of truth** for deploying LibreDB Studio on
 | `template.json` | Reviewable serialization of the template service config (image, env vars, volume, healthcheck). Railway does not ingest it directly — see note below. |
 | `README.md` | This file — install + post-install instructions. |
 | `PUBLISH.md` | Step-by-step checklist to create and publish the template in Railway's template editor. |
+| `TEMPLATE_OVERVIEW.md` | Marketplace overview/README pasted into the publish form's "Template Overview" field. |
 | `libredb-studio.png` | 256×256 app logo. |
 
 > **Why no `railway.json` in the repo?** Railway config-as-code only controls how
