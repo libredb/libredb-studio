@@ -626,21 +626,28 @@ export class PostgresProvider extends SQLBaseProvider {
       const client = await this.pool!.connect();
       try {
         let sql = '';
+        // Resolve target into a schema-qualified, quoted identifier. Bare table
+        // names default to the public schema; "schema.table" is also supported.
+        const qualifiedTarget = target
+          ? (target.includes('.')
+              ? target.split('.').map((p) => this.escapeIdentifier(p)).join('.')
+              : 'public.' + this.escapeIdentifier(target))
+          : '';
 
         switch (type) {
           case 'vacuum':
             sql = target
-              ? `VACUUM ANALYZE public.${this.escapeIdentifier(target)}`
+              ? `VACUUM ANALYZE ${qualifiedTarget}`
               : 'VACUUM ANALYZE';
             break;
           case 'analyze':
             sql = target
-              ? `ANALYZE public.${this.escapeIdentifier(target)}`
+              ? `ANALYZE ${qualifiedTarget}`
               : 'ANALYZE';
             break;
           case 'reindex':
             sql = target
-              ? `REINDEX TABLE public.${this.escapeIdentifier(target)}`
+              ? `REINDEX TABLE ${qualifiedTarget}`
               : `REINDEX DATABASE ${this.escapeIdentifier(this.config.database || '')}`;
             break;
           case 'kill':
