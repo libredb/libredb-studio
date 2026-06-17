@@ -3,7 +3,7 @@ import { getOrCreateProvider } from '@/lib/db/factory';
 import { createErrorResponse } from '@/lib/api/errors';
 import { resolveConnection } from '@/lib/seed/resolve-connection';
 import { getSession } from '@/lib/auth';
-import { quoteIdentifier } from '@/lib/query-generators';
+import { quoteIdentifier, quoteQualifiedName } from '@/lib/query-generators';
 
 export async function POST(req: NextRequest) {
   try {
@@ -71,7 +71,7 @@ export async function POST(req: NextRequest) {
       }
 
       // Quote the table once for the target dialect (mixed-case / special names)
-      const safeTable = quoteIdentifier(tableName, capabilities);
+      const safeTable = quoteQualifiedName(tableName, capabilities);
 
       // Get total row count
       const countResult = await provider.query(`SELECT COUNT(*) as total FROM ${safeTable}`);
