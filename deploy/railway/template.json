@@ -37,12 +37,10 @@
         "NEXT_PUBLIC_AUTH_PROVIDER": "local",
         "STORAGE_PROVIDER": "sqlite",
         "STORAGE_SQLITE_PATH": "/app/data/libredb-storage.db",
-        "PORT": "3000",
-        "LLM_PROVIDER": "",
-        "LLM_API_KEY": "",
-        "LLM_MODEL": "",
-        "LLM_API_URL": ""
-      }
+        "PORT": "3000"
+      },
+      "$variablesNote": "Do NOT add LLM_* (AI) variables with empty values: Railway treats an empty template variable as a REQUIRED user input, which breaks the one-click flow. AI is optional and added post-deploy (LLM_PROVIDER, LLM_API_KEY, LLM_MODEL, LLM_API_URL) — see README. Likewise OIDC_* are post-install only.",
+      "$volumeNote": "Volumes are NOT in the service Settings panel. Attach by right-clicking the service on the template editor canvas -> Attach Volume -> mount path /app/data."
     }
   ]
 }

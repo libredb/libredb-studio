@@ -18,19 +18,29 @@ values to enter are in [`template.json`](./template.json).
 
 ## 3. Configure the service (match `template.json`)
 
-- **Variables** tab — add each variable from `template.json`. For the generated
-  ones, type the function literally:
-  - `JWT_SECRET` = `${{ secret(48) }}`
-  - `ADMIN_PASSWORD` = `${{ secret(16) }}`
-  - `USER_PASSWORD` = `${{ secret(16) }}`
-  - `ADMIN_EMAIL` = `admin@libredb.org`, `USER_EMAIL` = `user@libredb.org`
-  - `NEXT_PUBLIC_AUTH_PROVIDER` = `local`
-  - `STORAGE_PROVIDER` = `sqlite`, `STORAGE_SQLITE_PATH` = `/app/data/libredb-storage.db`
-  - `PORT` = `3000`
-  - `LLM_PROVIDER`, `LLM_API_KEY`, `LLM_MODEL`, `LLM_API_URL` = leave blank
-- **Settings** tab — enable **Public Networking**, target port `3000`; set
-  **Healthcheck Path** to `/api/db/health`.
-- **Volume** — select the service, open its **Volumes** section, and add a volume with mount path `/app/data`.
+- **Variables** tab → **Raw Editor** → **ENV** — paste this block, then **Update Variables**:
+  ```env
+  JWT_SECRET=${{ secret(48) }}
+  ADMIN_EMAIL=admin@libredb.org
+  ADMIN_PASSWORD=${{ secret(16) }}
+  USER_EMAIL=user@libredb.org
+  USER_PASSWORD=${{ secret(16) }}
+  NEXT_PUBLIC_AUTH_PROVIDER=local
+  STORAGE_PROVIDER=sqlite
+  STORAGE_SQLITE_PATH=/app/data/libredb-storage.db
+  PORT=3000
+  ```
+  ⚠️ Do NOT add `LLM_*` (or `OIDC_*`) with empty values — Railway treats an empty
+  template variable as a **required user input**, breaking the one-click flow. AI
+  is optional and added post-deploy (see the README). The `${{ secret(...) }}`
+  values are auto-generated per deploy.
+- **Settings** tab → **Networking** — set **HTTP Proxy Port** to `3000` (this
+  enables public HTTP access).
+- **Settings** tab → **Deploy** — set **Healthcheck Path** to `/api/db/health`
+  (Restart Policy `On Failure` is a sensible default).
+- **Volume** — volumes are NOT in the Settings panel. Close the settings modal,
+  then on the editor **canvas right-click the `libredb-studio` service → Attach
+  Volume**, and set the mount path to `/app/data`.
 
 ## 4. Create the template
 
