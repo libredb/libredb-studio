@@ -7,38 +7,6 @@ import { type PoolConfig, DEFAULT_POOL_CONFIG, type DatabaseType } from '../type
 import { TimeoutError } from '../errors';
 
 // ============================================================================
-// Pool Statistics
-// ============================================================================
-
-export interface PoolStats {
-  /** Total connections in pool */
-  total: number;
-  /** Currently idle connections */
-  idle: number;
-  /** Currently active/busy connections */
-  active: number;
-  /** Connections waiting in queue */
-  waiting: number;
-}
-
-// ============================================================================
-// Pool Manager Interface
-// ============================================================================
-
-export interface PoolManager<T> {
-  /** Acquire a connection from the pool */
-  acquire(): Promise<T>;
-  /** Release a connection back to the pool */
-  release(connection: T): void;
-  /** Get pool statistics */
-  getStats(): PoolStats;
-  /** Drain all connections and close pool */
-  drain(): Promise<void>;
-  /** Check if pool is healthy */
-  isHealthy(): boolean;
-}
-
-// ============================================================================
 // Pool Configuration Utilities
 // ============================================================================
 

@@ -145,7 +145,7 @@ export class LLMStreamError extends LLMError {
 // Type Guards
 // ============================================================================
 
-export function isLLMError(error: unknown): error is LLMError {
+function isLLMError(error: unknown): error is LLMError {
   return error instanceof LLMError;
 }
 
