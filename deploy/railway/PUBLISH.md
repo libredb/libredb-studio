@@ -11,7 +11,7 @@ enter are in [`template.json`](./template.json).
 ## 2. Add the Studio service
 
 - Click **Add New → Docker Image**.
-- Image: `ghcr.io/libredb/libredb-studio:0.9.19` (pinned — never `:latest`).
+- Image: `ghcr.io/libredb/libredb-studio:0.9.21` (pinned — never `:latest`).
 - Rename the service to `libredb-studio`.
 
 ## 3. Configure the service (match `template.json`)
