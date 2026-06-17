@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'bun:test';
-import { generateTableQuery, generateSelectQuery, shouldRefreshSchema, quoteIdentifier } from '@/lib/query-generators';
+import { generateTableQuery, generateSelectQuery, shouldRefreshSchema, quoteIdentifier, quoteQualifiedName } from '@/lib/query-generators';
 import type { ProviderCapabilities } from '@/lib/db/types';
 import type { ColumnSchema } from '@/lib/types';
 
@@ -151,6 +151,24 @@ describe('quoteIdentifier', () => {
   test('generateTableQuery quotes a mixed-case Postgres table', () => {
     expect(generateTableQuery('Customer', makeCaps({ defaultPort: 5432 })))
       .toBe('SELECT * FROM "Customer" LIMIT 50;');
+  });
+
+  test('schema-qualified names are quoted per-segment, not as one identifier', () => {
+    // lowercase schema.table → no quotes (Postgres)
+    expect(quoteQualifiedName('employees.department', makeCaps({ defaultPort: 5432 })))
+      .toBe('employees.department');
+    // mixed-case table in a schema → only the table segment is quoted
+    expect(quoteQualifiedName('public.Order', makeCaps({ defaultPort: 5432 })))
+      .toBe('public."Order"');
+    // bare name (no dot) is unchanged
+    expect(quoteQualifiedName('Customer', makeCaps({ defaultPort: 5432 })))
+      .toBe('"Customer"');
+  });
+
+  test('generateTableQuery on a schema-qualified table does NOT wrap the dot (regression)', () => {
+    // Was producing the broken `"employees.department"`; must be `employees.department`.
+    expect(generateTableQuery('employees.department', makeCaps({ defaultPort: 5432 })))
+      .toBe('SELECT * FROM employees.department LIMIT 50;');
   });
 
   test('generateSelectQuery quotes mixed-case table and columns (Postgres)', () => {
