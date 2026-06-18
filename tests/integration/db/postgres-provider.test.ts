@@ -901,6 +901,243 @@ describe('PostgresProvider', () => {
   });
 
   // --------------------------------------------------------------------------
+  // getSchemaList() — fast structural path (tables + columns + PKs only)
+  // --------------------------------------------------------------------------
+
+  describe('getSchemaList()', () => {
+    // The fast path shares the tables/columns/pk CTE shape with getSchema(), so
+    // the default mock (information_schema + table_type = 'base table') applies.
+    // What it must NOT do is populate indexes/foreignKeys — those are deferred
+    // to getSchemaRelations() so a slow stats query can't block the table list.
+    test('returns tables with columns and PKs but empty indexes/foreignKeys', async () => {
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      const schema = await provider.getSchemaList();
+
+      expect(schema.length).toBe(2);
+      for (const table of schema) {
+        expect(typeof table.name).toBe('string');
+        expect(table.columns.length).toBeGreaterThan(0);
+        // The whole point of the split: relations are intentionally absent here.
+        expect(table.indexes).toEqual([]);
+        expect(table.foreignKeys).toEqual([]);
+      }
+    });
+
+    test('primary key columns are detected via isPrimary flag', async () => {
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      const schema = await provider.getSchemaList();
+
+      const usersTable = schema.find((t) => t.name === 'users');
+      expect(usersTable).toBeDefined();
+      expect(usersTable!.columns.find((c) => c.name === 'id')!.isPrimary).toBe(true);
+      expect(usersTable!.columns.find((c) => c.name === 'name')!.isPrimary).toBe(false);
+    });
+
+    test('non-public schema tables get schema prefix in name', async () => {
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      const schema = await provider.getSchemaList();
+
+      expect(schema.find((t) => t.name === 'analytics.events')).toBeDefined();
+      expect(schema.find((t) => t.name === 'users')).toBeDefined();
+    });
+
+    test('negative reltuples row_count is clamped to zero', async () => {
+      // Never-analyzed tables report reltuples = -1; the UI must never show -1.
+      mockQueryFn = (sql: string) => {
+        if (sql.toLowerCase().includes("table_type = 'base table'")) {
+          return Promise.resolve({
+            rows: [
+              {
+                table_schema: 'public',
+                table_name: 'fresh',
+                row_count: '-1',
+                total_size: '0',
+                columns: [{ name: 'id', type: 'integer', nullable: false, defaultValue: null }],
+                pk_columns: ['id'],
+              },
+            ],
+            fields: [],
+            rowCount: 1,
+          });
+        }
+        return defaultMockQuery(sql);
+      };
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      const schema = await provider.getSchemaList();
+
+      expect(schema[0].rowCount).toBe(0);
+    });
+
+    test('table with no columns yields an empty columns array (not a crash)', async () => {
+      mockQueryFn = (sql: string) => {
+        if (sql.toLowerCase().includes("table_type = 'base table'")) {
+          return Promise.resolve({
+            rows: [
+              {
+                table_schema: 'public',
+                table_name: 'empty_table',
+                row_count: '0',
+                total_size: '0',
+                columns: null,
+                pk_columns: null,
+              },
+            ],
+            fields: [],
+            rowCount: 1,
+          });
+        }
+        return defaultMockQuery(sql);
+      };
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      const schema = await provider.getSchemaList();
+
+      expect(schema[0].name).toBe('empty_table');
+      expect(schema[0].columns).toEqual([]);
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // getSchemaRelations() — heavy FK/index path, keyed by table display name
+  // --------------------------------------------------------------------------
+
+  describe('getSchemaRelations()', () => {
+    // The relations query (fk_info + index_info, FULL OUTER JOIN) does not match
+    // the default schema mock, so each test supplies its own relation rows.
+    function withRelationRows(rows: unknown[]) {
+      mockQueryFn = (sql: string) => {
+        const normalized = sql.toLowerCase();
+        if (normalized.includes('fk_info') || normalized.includes('full outer join')) {
+          return Promise.resolve({ rows, fields: [], rowCount: rows.length });
+        }
+        return defaultMockQuery(sql);
+      };
+    }
+
+    test('returns foreignKeys and indexes keyed by table display name', async () => {
+      withRelationRows([
+        {
+          table_schema: 'public',
+          table_name: 'orders',
+          foreign_keys: [
+            {
+              columnName: 'user_id',
+              referencedSchema: 'public',
+              referencedTable: 'users',
+              referencedColumn: 'id',
+            },
+          ],
+          indexes: [{ name: 'orders_pkey', columns: ['id'], unique: true }],
+        },
+      ]);
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      const relations = await provider.getSchemaRelations();
+
+      expect(relations.length).toBe(1);
+      const orders = relations.find((r) => r.name === 'orders');
+      expect(orders).toBeDefined();
+      expect(orders!.foreignKeys.length).toBe(1);
+      expect(orders!.foreignKeys[0].columnName).toBe('user_id');
+      expect(orders!.foreignKeys[0].referencedColumn).toBe('id');
+      expect(orders!.indexes.length).toBe(1);
+      expect(orders!.indexes[0].unique).toBe(true);
+    });
+
+    test('non-public schema is prefixed on both table name and referenced table', async () => {
+      withRelationRows([
+        {
+          table_schema: 'analytics',
+          table_name: 'events',
+          foreign_keys: [
+            {
+              columnName: 'account_id',
+              referencedSchema: 'billing',
+              referencedTable: 'accounts',
+              referencedColumn: 'id',
+            },
+          ],
+          indexes: [],
+        },
+      ]);
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      const relations = await provider.getSchemaRelations();
+
+      const events = relations.find((r) => r.name === 'analytics.events');
+      expect(events).toBeDefined();
+      expect(events!.foreignKeys[0].referencedTable).toBe('billing.accounts');
+    });
+
+    test('public referenced table keeps its bare name (no prefix)', async () => {
+      withRelationRows([
+        {
+          table_schema: 'analytics',
+          table_name: 'events',
+          foreign_keys: [
+            {
+              columnName: 'user_id',
+              referencedSchema: 'public',
+              referencedTable: 'users',
+              referencedColumn: 'id',
+            },
+          ],
+          indexes: [],
+        },
+      ]);
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      const relations = await provider.getSchemaRelations();
+
+      expect(relations[0].foreignKeys[0].referencedTable).toBe('users');
+    });
+
+    test('empty fk/index arrays are tolerated (index-only or fk-only tables)', async () => {
+      withRelationRows([
+        { table_schema: 'public', table_name: 'logs', foreign_keys: [], indexes: [] },
+        {
+          table_schema: 'public',
+          table_name: 'metrics',
+          foreign_keys: null,
+          indexes: [{ name: 'metrics_ts_idx', columns: ['ts'], unique: false }],
+        },
+      ]);
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      const relations = await provider.getSchemaRelations();
+
+      const logs = relations.find((r) => r.name === 'logs')!;
+      expect(logs.foreignKeys).toEqual([]);
+      expect(logs.indexes).toEqual([]);
+
+      const metrics = relations.find((r) => r.name === 'metrics')!;
+      expect(metrics.foreignKeys).toEqual([]);
+      expect(metrics.indexes[0].columns).toEqual(['ts']);
+      expect(metrics.indexes[0].unique).toBe(false);
+    });
+
+    test('null index columns coerce to an empty array', async () => {
+      withRelationRows([
+        {
+          table_schema: 'public',
+          table_name: 'weird',
+          foreign_keys: [],
+          indexes: [{ name: 'broken_idx', columns: null, unique: false }],
+        },
+      ]);
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      const relations = await provider.getSchemaRelations();
+
+      expect(relations[0].indexes[0].columns).toEqual([]);
+    });
+  });
+
+  // --------------------------------------------------------------------------
   // Health
   // --------------------------------------------------------------------------
 
