@@ -147,7 +147,7 @@ const CTE_FK_INFO = `
             AND tc.table_schema = kcu.table_schema
           JOIN information_schema.constraint_column_usage ccu
             ON ccu.constraint_name = tc.constraint_name
-            AND ccu.table_schema = tc.table_schema
+            AND ccu.constraint_schema = tc.constraint_schema
           WHERE tc.constraint_type = 'FOREIGN KEY'
           GROUP BY tc.table_schema, tc.table_name
         )`;

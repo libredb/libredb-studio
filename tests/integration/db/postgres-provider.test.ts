@@ -1135,6 +1135,24 @@ describe('PostgresProvider', () => {
 
       expect(relations[0].indexes[0].columns).toEqual([]);
     });
+
+    // Regression guard: constraint_column_usage reports the *referenced* table's
+    // schema in ccu.table_schema, so joining it to tc.table_schema drops every
+    // cross-schema foreign key. The join must be on the constraint's own schema.
+    // The query result is mocked, so this asserts the SQL itself.
+    test('FK introspection joins constraint_column_usage on constraint_schema', async () => {
+      let capturedSql = '';
+      mockQueryFn = (sql: string) => {
+        capturedSql = sql;
+        return Promise.resolve({ rows: [], fields: [], rowCount: 0 });
+      };
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      await provider.getSchemaRelations();
+
+      expect(capturedSql).toContain('ccu.constraint_schema = tc.constraint_schema');
+      expect(capturedSql).not.toContain('ccu.table_schema = tc.table_schema');
+    });
   });
 
   // --------------------------------------------------------------------------
