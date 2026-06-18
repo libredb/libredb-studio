@@ -19,18 +19,18 @@ import {
   mapDatabaseError,
 } from '@/lib/db/errors';
 
-// getSchemaRelations() is optional on the provider interface; the mock helper
-// does not implement it, which lets us exercise the route's "[]" fallback as
-// well as the implemented path.
+// NOTE: mocks are defined inline (not in a shared helper) on purpose. bun's
+// mock.module() is scoped per test FILE that calls it; moving these into a
+// helper breaks re-application when another file in the same (non-isolated)
+// process also mocks @/lib/db. See CLAUDE.md "Coverage isolation".
+
 type AugmentedProvider = ReturnType<typeof createMockProvider> & {
   getSchemaRelations?: ReturnType<typeof mock>;
 };
 
-// ─── Mock provider ──────────────────────────────────────────────────────────
 const mockProvider = createMockProvider() as AugmentedProvider;
 const mockGetOrCreateProvider = mock(async () => mockProvider);
 
-// ─── Mock auth + seed resolution BEFORE importing the route ─────────────────
 const mockGetSession = mock(async () => ({ role: 'admin', username: 'admin' }) as unknown);
 mock.module('@/lib/auth', () => ({
   getSession: mockGetSession,
@@ -58,7 +58,6 @@ mock.module('@/lib/seed/resolve-connection', () => {
   };
 });
 
-// ─── Mock @/lib/db BEFORE importing the route ───────────────────────────────
 mock.module('@/lib/db', () => ({
   getOrCreateProvider: mockGetOrCreateProvider,
   createDatabaseProvider: mock(),
@@ -82,10 +81,8 @@ mock.module('@/lib/db', () => ({
   BaseDatabaseProvider: class {},
 }));
 
-// ─── Import route handler AFTER mocking ─────────────────────────────────────
 const { POST } = await import('@/app/api/db/schema/relations/route');
 
-// ─── Fixtures ───────────────────────────────────────────────────────────────
 const validConnection = {
   id: 'test-1',
   name: 'Test DB',
@@ -103,7 +100,6 @@ const relations: TableRelations[] = [
   },
 ];
 
-// ─── Tests ──────────────────────────────────────────────────────────────────
 describe('POST /api/db/schema/relations', () => {
   beforeEach(() => {
     mockGetOrCreateProvider.mockClear();
@@ -145,6 +141,16 @@ describe('POST /api/db/schema/relations', () => {
       headers: { 'content-type': 'application/json' },
       body: '',
     });
+
+    const res = await POST(req as never);
+    const data = await parseResponseJSON<{ error: string }>(res);
+
+    expect(res.status).toBe(400);
+    expect(data.error).toContain('Empty request body');
+  });
+
+  test('returns 400 for an empty JSON object body', async () => {
+    const req = createMockRequest('/api/db/schema/relations', { method: 'POST', body: {} });
 
     const res = await POST(req as never);
     const data = await parseResponseJSON<{ error: string }>(res);
