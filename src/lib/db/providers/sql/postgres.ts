@@ -8,6 +8,7 @@ import { SQLBaseProvider } from './sql-base';
 import {
   type DatabaseConnection,
   type TableSchema,
+  type TableRelations,
   type QueryResult,
   type HealthInfo,
   type MaintenanceType,
@@ -350,8 +351,13 @@ export class PostgresProvider extends SQLBaseProvider {
     try {
       // Optimized single query to fetch all schema information
       // This replaces the N+1 pattern (1 + N*4 queries) with a single query
+      // CTEs are MATERIALIZED on purpose: PG12+ inlines single-reference CTEs,
+      // which lets the planner re-execute these information_schema-based CTEs
+      // inside nested-loop joins (it estimates rows=1 for them). On large schemas
+      // (100+ tables/constraints/indexes) that explodes to minutes. MATERIALIZED
+      // forces each CTE to compute once — ~295s -> ~2.6s on a 122-table schema.
       const result = await client.query(`
-        WITH tables_info AS (
+        WITH tables_info AS MATERIALIZED (
           SELECT
             t.table_schema,
             t.table_name,
@@ -362,7 +368,7 @@ export class PostgresProvider extends SQLBaseProvider {
           WHERE t.table_schema NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
           AND t.table_type = 'BASE TABLE'
         ),
-        columns_info AS (
+        columns_info AS MATERIALIZED (
           SELECT
             c.table_schema,
             c.table_name,
@@ -378,7 +384,7 @@ export class PostgresProvider extends SQLBaseProvider {
           WHERE c.table_schema NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
           GROUP BY c.table_schema, c.table_name
         ),
-        pk_info AS (
+        pk_info AS MATERIALIZED (
           SELECT
             tc.table_schema,
             tc.table_name,
@@ -390,7 +396,7 @@ export class PostgresProvider extends SQLBaseProvider {
           WHERE tc.constraint_type = 'PRIMARY KEY'
           GROUP BY tc.table_schema, tc.table_name
         ),
-        fk_info AS (
+        fk_info AS MATERIALIZED (
           SELECT
             tc.table_schema,
             tc.table_name,
@@ -412,7 +418,7 @@ export class PostgresProvider extends SQLBaseProvider {
           WHERE tc.constraint_type = 'FOREIGN KEY'
           GROUP BY tc.table_schema, tc.table_name
         ),
-        index_info AS (
+        index_info AS MATERIALIZED (
           SELECT
             n.nspname as table_schema,
             t.relname as table_name,
@@ -516,6 +522,197 @@ export class PostgresProvider extends SQLBaseProvider {
           columns,
           indexes,
           foreignKeys,
+        };
+      });
+    } finally {
+      client.release();
+    }
+  }
+
+  /**
+   * Fast structural schema: tables + columns + primary keys + row counts/sizes.
+   * Deliberately EXCLUDES foreign keys and indexes (the expensive
+   * information_schema joins) so the schema tree renders immediately.
+   * Relationships/indexes are loaded separately via getSchemaRelations()
+   * and merged in asynchronously by the client, so a slow/failing stats
+   * query never blocks the table list.
+   */
+  public async getSchemaList(): Promise<TableSchema[]> {
+    this.ensureConnected();
+    const client = await this.pool!.connect();
+    try {
+      const result = await client.query(`
+        WITH tables_info AS MATERIALIZED (
+          SELECT
+            t.table_schema,
+            t.table_name,
+            COALESCE(c.reltuples::bigint, 0) as row_count,
+            COALESCE(pg_total_relation_size(c.oid), 0) as total_size
+          FROM information_schema.tables t
+          LEFT JOIN pg_class c ON c.oid = (quote_ident(t.table_schema) || '.' || quote_ident(t.table_name))::regclass
+          WHERE t.table_schema NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
+          AND t.table_type = 'BASE TABLE'
+        ),
+        columns_info AS MATERIALIZED (
+          SELECT
+            c.table_schema,
+            c.table_name,
+            json_agg(
+              json_build_object(
+                'name', c.column_name,
+                'type', c.data_type,
+                'nullable', c.is_nullable = 'YES',
+                'defaultValue', c.column_default
+              ) ORDER BY c.ordinal_position
+            ) FILTER (WHERE c.ordinal_position <= 100) as columns
+          FROM information_schema.columns c
+          WHERE c.table_schema NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
+          GROUP BY c.table_schema, c.table_name
+        ),
+        pk_info AS MATERIALIZED (
+          SELECT
+            tc.table_schema,
+            tc.table_name,
+            array_agg(kcu.column_name) as pk_columns
+          FROM information_schema.table_constraints tc
+          JOIN information_schema.key_column_usage kcu
+            ON tc.constraint_name = kcu.constraint_name
+            AND tc.table_schema = kcu.table_schema
+          WHERE tc.constraint_type = 'PRIMARY KEY'
+          GROUP BY tc.table_schema, tc.table_name
+        )
+        SELECT
+          ti.table_schema,
+          ti.table_name,
+          ti.row_count,
+          ti.total_size,
+          COALESCE(ci.columns, '[]'::json) as columns,
+          COALESCE(pk.pk_columns, ARRAY[]::text[]) as pk_columns
+        FROM tables_info ti
+        LEFT JOIN columns_info ci ON ci.table_schema = ti.table_schema AND ci.table_name = ti.table_name
+        LEFT JOIN pk_info pk ON pk.table_schema = ti.table_schema AND pk.table_name = ti.table_name
+        ORDER BY ti.table_schema, ti.table_name ASC;
+      `);
+
+      interface ListRow {
+        table_schema: string;
+        table_name: string;
+        row_count: string;
+        total_size: string;
+        pk_columns: string[];
+        columns?: Array<{ name: string; type: string; nullable: boolean; defaultValue?: string | null }>;
+      }
+
+      return result.rows.map((row: ListRow) => {
+        const displayName = row.table_schema === 'public' ? row.table_name : `${row.table_schema}.${row.table_name}`;
+        const pkColumns: string[] = row.pk_columns || [];
+        const columns = (row.columns || []).map((col) => ({
+          name: col.name,
+          type: col.type,
+          nullable: col.nullable,
+          isPrimary: pkColumns.includes(col.name),
+          defaultValue: col.defaultValue ?? undefined,
+        }));
+        return {
+          name: displayName,
+          rowCount: Math.max(0, parseInt(row.row_count || '0')),
+          size: formatBytes(parseInt(row.total_size || '0')),
+          columns,
+          indexes: [],
+          foreignKeys: [],
+        };
+      });
+    } finally {
+      client.release();
+    }
+  }
+
+  /**
+   * Heavy relationship/index introspection (foreign keys + indexes), keyed by
+   * table display name so the client can merge it into the result of
+   * getSchemaList(). Kept separate so its cost never blocks the table list.
+   * CTEs are MATERIALIZED (see getSchema for the rationale).
+   */
+  public async getSchemaRelations(): Promise<TableRelations[]> {
+    this.ensureConnected();
+    const client = await this.pool!.connect();
+    try {
+      const result = await client.query(`
+        WITH fk_info AS MATERIALIZED (
+          SELECT
+            tc.table_schema,
+            tc.table_name,
+            json_agg(
+              json_build_object(
+                'columnName', kcu.column_name,
+                'referencedSchema', ccu.table_schema,
+                'referencedTable', ccu.table_name,
+                'referencedColumn', ccu.column_name
+              )
+            ) as foreign_keys
+          FROM information_schema.table_constraints tc
+          JOIN information_schema.key_column_usage kcu
+            ON tc.constraint_name = kcu.constraint_name
+            AND tc.table_schema = kcu.table_schema
+          JOIN information_schema.constraint_column_usage ccu
+            ON ccu.constraint_name = tc.constraint_name
+            AND ccu.table_schema = tc.table_schema
+          WHERE tc.constraint_type = 'FOREIGN KEY'
+          GROUP BY tc.table_schema, tc.table_name
+        ),
+        index_info AS MATERIALIZED (
+          SELECT
+            n.nspname as table_schema,
+            t.relname as table_name,
+            json_agg(
+              json_build_object(
+                'name', i.relname,
+                'columns', (
+                  SELECT array_agg(a.attname ORDER BY array_position(ix.indkey, a.attnum))
+                  FROM pg_attribute a
+                  WHERE a.attrelid = t.oid AND a.attnum = ANY(ix.indkey)
+                ),
+                'unique', ix.indisunique
+              )
+            ) as indexes
+          FROM pg_index ix
+          JOIN pg_class t ON t.oid = ix.indrelid
+          JOIN pg_class i ON i.oid = ix.indexrelid
+          JOIN pg_namespace n ON n.oid = t.relnamespace
+          WHERE n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
+          GROUP BY n.nspname, t.relname
+        )
+        SELECT
+          COALESCE(fk.table_schema, ii.table_schema) as table_schema,
+          COALESCE(fk.table_name, ii.table_name) as table_name,
+          COALESCE(fk.foreign_keys, '[]'::json) as foreign_keys,
+          COALESCE(ii.indexes, '[]'::json) as indexes
+        FROM fk_info fk
+        FULL OUTER JOIN index_info ii
+          ON ii.table_schema = fk.table_schema AND ii.table_name = fk.table_name;
+      `);
+
+      interface RelRow {
+        table_schema: string;
+        table_name: string;
+        foreign_keys?: Array<{ columnName: string; referencedSchema: string; referencedTable: string; referencedColumn: string }>;
+        indexes?: Array<{ name: string; columns: string[]; unique: boolean }>;
+      }
+
+      return result.rows.map((row: RelRow) => {
+        const displayName = row.table_schema === 'public' ? row.table_name : `${row.table_schema}.${row.table_name}`;
+        return {
+          name: displayName,
+          foreignKeys: (row.foreign_keys || []).map((fk) => ({
+            columnName: fk.columnName,
+            referencedTable: fk.referencedSchema === 'public' ? fk.referencedTable : `${fk.referencedSchema}.${fk.referencedTable}`,
+            referencedColumn: fk.referencedColumn,
+          })),
+          indexes: (row.indexes || []).map((idx) => ({
+            name: idx.name,
+            columns: Array.isArray(idx.columns) ? idx.columns : [],
+            unique: idx.unique,
+          })),
         };
       });
     } finally {

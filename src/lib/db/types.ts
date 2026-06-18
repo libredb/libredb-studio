@@ -8,6 +8,7 @@ export type {
   DatabaseType,
   DatabaseConnection,
   TableSchema,
+  TableRelations,
   ColumnSchema,
   IndexSchema,
   ForeignKeySchema,
@@ -18,6 +19,7 @@ import type {
   DatabaseType,
   DatabaseConnection,
   TableSchema,
+  TableRelations,
   QueryResult,
 } from '../types';
 
@@ -171,6 +173,19 @@ export interface DatabaseProvider {
    * @returns Array of table schemas with columns, indexes, and foreign keys
    */
   getSchema(): Promise<TableSchema[]>;
+
+  /**
+   * Fast structural schema (tables + columns + PKs), excluding the expensive
+   * foreign-key/index introspection. Optional: providers that don't implement
+   * it fall back to getSchema(). Pairs with getSchemaRelations().
+   */
+  getSchemaList?(): Promise<TableSchema[]>;
+
+  /**
+   * Heavy relationship/index data (foreign keys + indexes) keyed by table
+   * display name, for async merge into getSchemaList() results. Optional.
+   */
+  getSchemaRelations?(): Promise<TableRelations[]>;
 
   /**
    * Get list of table names
