@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import type { DatabaseConnection, TableSchema } from '@/lib/types';
+import type { DatabaseConnection, TableSchema, TableRelations } from '@/lib/types';
 import { useToast } from '@/hooks/use-toast';
 import { storage } from '@/lib/storage';
 import { logger } from '@/lib/logger';
@@ -16,33 +16,57 @@ export function useConnectionManager(storageReady = false) {
 
   const { toast } = useToast();
 
-  // Fetch schema for a connection
+  // Fetch schema for a connection — two phases so a slow/failing stats query
+  // never blocks the table list:
+  //   1. /api/db/schema/list      → tables + columns + PKs (fast)  → render tree
+  //   2. /api/db/schema/relations → foreign keys + indexes (heavy) → async merge
   const fetchSchema = useCallback(async (conn: DatabaseConnection) => {
     setIsLoadingSchema(true);
 
-    try {
-      const payload = conn.managed && conn.seedId
-        ? { connectionId: `seed:${conn.seedId}` }
-        : conn;  // bare conn for backward compat with schema route
-      const response = await fetch('/api/db/schema', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
+    const payload = conn.managed && conn.seedId
+      ? { connectionId: `seed:${conn.seedId}` }
+      : conn;  // bare conn for backward compat with schema route
+    const init = (path: string): [string, RequestInit] => [
+      path,
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) },
+    ];
 
+    // Phase 1 — structural list (blocks; this is what the explorer needs)
+    try {
+      const response = await fetch(...init('/api/db/schema/list'));
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
-        const errorMessage = errorData.error || 'Failed to fetch schema';
-        throw new Error(errorMessage);
+        throw new Error(errorData.error || 'Failed to fetch schema');
       }
-
-      const data = await response.json();
-      setSchema(data);
+      const list: TableSchema[] = await response.json();
+      setSchema(list);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       toast({ title: "Schema Error", description: errorMessage, variant: "destructive" });
+      return; // finally still clears the loading flag; skip relations
     } finally {
       setIsLoadingSchema(false);
+    }
+
+    // Phase 2 — relationships + indexes (best-effort; never breaks the list)
+    try {
+      const relRes = await fetch(...init('/api/db/schema/relations'));
+      if (!relRes.ok) {
+        const errorData = await relRes.json().catch(() => ({}));
+        throw new Error(errorData.error || 'Failed to fetch schema relations');
+      }
+      const relations: TableRelations[] = await relRes.json();
+      const byName = new Map(relations.map(r => [r.name, r]));
+      setSchema(prev => prev.map(t => {
+        const r = byName.get(t.name);
+        return r ? { ...t, foreignKeys: r.foreignKeys, indexes: r.indexes } : t;
+      }));
+    } catch (error) {
+      // Foreign keys / indexes are non-essential for browsing — log and move on.
+      logger.error('Failed to load schema relations (FK/indexes); table list unaffected', {
+        route: 'use-connection-manager',
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   }, [toast]);
 

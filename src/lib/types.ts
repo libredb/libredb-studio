@@ -76,6 +76,18 @@ export interface ForeignKeySchema {
   referencedColumn: string;
 }
 
+/**
+ * Heavy relationship/index data for a table, loaded separately from the fast
+ * structural schema (see getSchemaList / getSchemaRelations) and merged on the
+ * client by `name`. Keeping it separate prevents a slow stats query from
+ * blocking the table list.
+ */
+export interface TableRelations {
+  name: string;
+  foreignKeys: ForeignKeySchema[];
+  indexes: IndexSchema[];
+}
+
 export interface ColumnSchema {
   name: string;
   type: string;

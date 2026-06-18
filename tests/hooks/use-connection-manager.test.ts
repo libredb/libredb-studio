@@ -190,6 +190,134 @@ describe('useConnectionManager', () => {
     );
   });
 
+  // ── Two-phase schema loading (list + relations) ───────────────────────────
+  // The schema fetch was split so a slow/failing FK+index query can never block
+  // (or wipe) the table list. These tests lock in that contract.
+
+  // A list-phase payload: tables + columns + PKs, with relations intentionally
+  // absent (indexes empty, no foreignKeys) — exactly what /schema/list returns.
+  const makeListSchema = (): TableSchema[] => [
+    {
+      name: 'users',
+      columns: [{ name: 'id', type: 'integer', nullable: false, isPrimary: true }],
+      indexes: [],
+      foreignKeys: [],
+      rowCount: 100,
+    },
+    {
+      name: 'orders',
+      columns: [{ name: 'id', type: 'integer', nullable: false, isPrimary: true }],
+      indexes: [],
+      foreignKeys: [],
+      rowCount: 500,
+    },
+  ];
+
+  test('phase 1 renders the table list, phase 2 merges FKs/indexes by table name', async () => {
+    const relations = [
+      { name: 'users', foreignKeys: [], indexes: [{ name: 'users_pkey', columns: ['id'], unique: true }] },
+      {
+        name: 'orders',
+        foreignKeys: [{ columnName: 'user_id', referencedTable: 'users', referencedColumn: 'id' }],
+        indexes: [{ name: 'orders_pkey', columns: ['id'], unique: true }],
+      },
+    ];
+
+    mockGlobalFetch({
+      '/api/db/schema/list': { ok: true, json: makeListSchema() },
+      '/api/db/schema/relations': { ok: true, json: relations },
+    });
+
+    const { result } = renderHook(() => useConnectionManager(true));
+
+    await act(async () => {
+      await result.current.fetchSchema(makeConnection());
+    });
+
+    const orders = result.current.schema.find((t) => t.name === 'orders')!;
+    expect(orders.foreignKeys).toEqual([
+      { columnName: 'user_id', referencedTable: 'users', referencedColumn: 'id' },
+    ]);
+    expect(orders.indexes).toEqual([{ name: 'orders_pkey', columns: ['id'], unique: true }]);
+
+    // Columns from phase 1 survive the merge.
+    expect(orders.columns[0].name).toBe('id');
+    expect(result.current.isLoadingSchema).toBe(false);
+  });
+
+  test('relations failure does NOT wipe the table list and shows no error toast', async () => {
+    // This is the whole reason for the split: FK/index introspection is the slow,
+    // timeout-prone query. If it fails the user must still see their tables.
+    const listData = makeListSchema();
+
+    mockGlobalFetch({
+      '/api/db/schema/list': { ok: true, json: listData },
+      '/api/db/schema/relations': { ok: false, status: 500, json: { error: 'statement timeout' } },
+    });
+
+    const { result } = renderHook(() => useConnectionManager(true));
+
+    await act(async () => {
+      await result.current.fetchSchema(makeConnection());
+    });
+
+    // Table list is fully intact (relations merge never ran).
+    expect(result.current.schema).toEqual(listData);
+    expect(result.current.isLoadingSchema).toBe(false);
+    // Relations are best-effort — failure is logged, never surfaced as a toast.
+    expect(mockToastError).not.toHaveBeenCalled();
+  });
+
+  test('phase 1 failure short-circuits — relations endpoint is never called', async () => {
+    const fetchMock = mockGlobalFetch({
+      '/api/db/schema/list': { ok: false, status: 503, json: { error: 'Connection refused' } },
+      '/api/db/schema/relations': { ok: true, json: [] },
+    });
+
+    const { result } = renderHook(() => useConnectionManager(true));
+
+    await act(async () => {
+      await result.current.fetchSchema(makeConnection());
+    });
+
+    expect(result.current.schema).toEqual([]);
+    expect(mockToastError).toHaveBeenCalledWith('Schema Error', { description: 'Connection refused' });
+
+    // The expensive phase 2 must be skipped entirely when the list fails.
+    const relationsCalled = fetchMock.mock.calls.some(
+      (call) => typeof call[0] === 'string' && call[0].includes('/api/db/schema/relations')
+    );
+    expect(relationsCalled).toBe(false);
+  });
+
+  test('tables absent from the relations payload are left unchanged', async () => {
+    // Only 'orders' comes back from relations; 'users' must keep its list-phase shape.
+    mockGlobalFetch({
+      '/api/db/schema/list': { ok: true, json: makeListSchema() },
+      '/api/db/schema/relations': {
+        ok: true,
+        json: [
+          {
+            name: 'orders',
+            foreignKeys: [{ columnName: 'user_id', referencedTable: 'users', referencedColumn: 'id' }],
+            indexes: [],
+          },
+        ],
+      },
+    });
+
+    const { result } = renderHook(() => useConnectionManager(true));
+
+    await act(async () => {
+      await result.current.fetchSchema(makeConnection());
+    });
+
+    const users = result.current.schema.find((t) => t.name === 'users')!;
+    expect(users.foreignKeys).toEqual([]);
+    const orders = result.current.schema.find((t) => t.name === 'orders')!;
+    expect(orders.foreignKeys!.length).toBe(1);
+  });
+
   // ── tableNames derived value ──────────────────────────────────────────────
 
   test('tableNames returns array of table name strings', async () => {
