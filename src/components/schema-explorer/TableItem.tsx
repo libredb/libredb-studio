@@ -68,7 +68,7 @@ function renderMenuItems(
     <>
       <Item onClick={() => callbacks.onTableClick?.(table.name)}>
         <Play strokeWidth={1.5} className="w-3.5 h-3.5 mr-2 text-green-500" />
-        {labels?.selectAction || 'Select Top 100'}
+        {labels?.selectAction || 'Select Top 50'}
       </Item>
       <Item onClick={() => callbacks.onGenerateSelect?.(table.name)}>
         <Filter strokeWidth={1.5} className="w-3.5 h-3.5 mr-2 text-blue-500" />

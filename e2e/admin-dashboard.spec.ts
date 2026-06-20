@@ -23,15 +23,18 @@ test.describe('Admin Dashboard', () => {
   });
 
   test('default tab is overview', async ({ page }) => {
-    // Overview tab content should be visible by default
-    await expect(page.locator('text=Command Center').first()).toBeVisible({ timeout: 10000 });
+    // Overview content is mounted by default — assert on the content region, not
+    // empty-state copy, so the test holds whether or not seed connections exist.
+    await expect(page.getByTestId('admin-content-overview')).toBeVisible({ timeout: 10000 });
+    await expect(page.getByRole('tab', { name: /Overview/i })).toHaveAttribute('aria-selected', 'true');
   });
 
   test('can switch to operations tab', async ({ page }) => {
     await page.locator('button:has-text("Operations"), [role="tab"]:has-text("Operations")').first().click();
-    await page.waitForTimeout(500);
-    // Operations tab content
-    await expect(page.locator('text=Connection').first()).toBeVisible({ timeout: 5000 });
+    // Operations content region mounts regardless of connection state (empty
+    // state or populated dashboard), so this is stable across environments.
+    await expect(page.getByTestId('admin-content-operations')).toBeVisible({ timeout: 5000 });
+    await expect(page.getByRole('tab', { name: /Operations/i })).toHaveAttribute('aria-selected', 'true');
   });
 
   test('can switch to security tab', async ({ page }) => {

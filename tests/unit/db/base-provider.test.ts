@@ -233,7 +233,7 @@ describe('BaseDatabaseProvider', () => {
       expect(labels.entityNamePlural).toBe('Tables');
       expect(labels.rowName).toBe('row');
       expect(labels.rowNamePlural).toBe('rows');
-      expect(labels.selectAction).toBe('Select Top 100');
+      expect(labels.selectAction).toBe('Select Top 50');
       expect(labels.searchPlaceholder).toBe('Search tables or columns...');
     });
   });
