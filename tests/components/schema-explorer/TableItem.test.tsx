@@ -176,13 +176,13 @@ describe('TableItem', () => {
 
   // ── Dropdown action callbacks ─────────────────────────────────────────────
 
-  test('onTableClick fires with table name on "Select Top 100" click', () => {
+  test('onTableClick fires with table name on "Select Top 50" click', () => {
     const onTableClick = mock((name: string) => { void name; });
     const { getByTestId } = render(
       <TableItem table={largeTable} isExpanded={false} onToggle={mock(() => {})} isAdmin={false} onTableClick={onTableClick} />
     );
     const dropdown = within(getByTestId('dropdown'));
-    fireEvent.click(dropdown.getByText('Select Top 100'));
+    fireEvent.click(dropdown.getByText('Select Top 50'));
     expect(onTableClick).toHaveBeenCalledTimes(1);
     expect(onTableClick.mock.calls[0][0]).toBe('users');
   });
@@ -316,7 +316,7 @@ describe('TableItem', () => {
     expect(dropdown.queryByText('Run Stats')).not.toBeNull();
     expect(dropdown.queryByText('Compact')).not.toBeNull();
     // Default labels should not appear
-    expect(dropdown.queryByText('Select Top 100')).toBeNull();
+    expect(dropdown.queryByText('Select Top 50')).toBeNull();
     expect(dropdown.queryByText('Generate Query')).toBeNull();
   });
 
@@ -354,7 +354,7 @@ describe('TableItem', () => {
     );
     const dropdown = within(getByTestId('dropdown'));
     // Click all menu items without providing callbacks - should not throw
-    fireEvent.click(dropdown.getByText('Select Top 100'));
+    fireEvent.click(dropdown.getByText('Select Top 50'));
     fireEvent.click(dropdown.getByText('Generate Query'));
     fireEvent.click(dropdown.getByText('Profile Table'));
     fireEvent.click(dropdown.getByText('Generate Code'));
@@ -392,7 +392,7 @@ describe('TableItem', () => {
       <TableItem table={largeTable} isExpanded={false} onToggle={mock(() => {})} isAdmin />
     );
     // Each action should appear twice: once in dropdown, once in context menu
-    expect(queryAllByText('Select Top 100').length).toBe(2);
+    expect(queryAllByText('Select Top 50').length).toBe(2);
     expect(queryAllByText('Generate Query').length).toBe(2);
     expect(queryAllByText('Copy Name').length).toBe(2);
     expect(queryAllByText('Profile Table').length).toBe(2);
@@ -407,7 +407,7 @@ describe('TableItem', () => {
       <TableItem table={largeTable} isExpanded={false} onToggle={mock(() => {})} isAdmin={false} />
     );
     // Standard actions appear twice (dropdown + context menu)
-    expect(queryAllByText('Select Top 100').length).toBe(2);
+    expect(queryAllByText('Select Top 50').length).toBe(2);
     // Admin-only actions should not appear at all
     expect(queryAllByText('Analyze Table').length).toBe(0);
     expect(queryAllByText('Vacuum Table').length).toBe(0);

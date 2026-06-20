@@ -193,7 +193,7 @@ export abstract class BaseDatabaseProvider implements DatabaseProvider {
       entityNamePlural: 'Tables',
       rowName: 'row',
       rowNamePlural: 'rows',
-      selectAction: 'Select Top 100',
+      selectAction: 'Select Top 50',
       generateAction: 'Generate Query',
       analyzeAction: 'Analyze Table',
       vacuumAction: 'Vacuum Table',
