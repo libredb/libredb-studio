@@ -134,12 +134,12 @@ export default function AdminDashboard() {
 
         <div className="flex-1 overflow-auto">
           <TabsContent value="overview" className="m-0 p-0">
-            <div className="mx-auto max-w-7xl px-4 sm:px-6 py-6">
+            <div data-testid="admin-content-overview" className="mx-auto max-w-7xl px-4 sm:px-6 py-6">
               <OverviewTab user={user} />
             </div>
           </TabsContent>
           <TabsContent value="operations" className="m-0 p-0">
-            <div className="mx-auto max-w-7xl px-4 sm:px-6 py-6">
+            <div data-testid="admin-content-operations" className="mx-auto max-w-7xl px-4 sm:px-6 py-6">
               <OperationsTab />
             </div>
           </TabsContent>
