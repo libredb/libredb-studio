@@ -16,7 +16,7 @@
 | **Query language** | `sql` |
 | **Default port** | `1521` |
 | **Connection pooling** | Yes — `oracledb` pool (`poolMin`/`poolMax`/`poolTimeout`) |
-| **Connection string** | Supported (EZConnect `host:port/service` or `oracle://`) |
+| **Connection string** | Supported — EZConnect `host:port/service` or a TNS string (passed straight to the driver's `connectString`) |
 | **Transactions** | Yes — explicit begin/commit/rollback (**no** auto-rollback timeout) |
 | **Query cancellation** | Yes — tracked connection + `connection.break()` |
 | **SSL** | Not configured by the provider (TLS via connect string / Oracle wallet) |
@@ -143,7 +143,10 @@ const a = { id: 'or-1', name: 'XE', type: 'oracle',
   host: 'localhost', port: 1521, serviceName: 'XEPDB1',
   user: 'app', password: 'secret', createdAt: new Date() };
 
-// Connection string (EZConnect or oracle://)
+// Connection string — EZConnect host:port/service (or a TNS string); passed
+// straight to oracledb's connectString. (An `oracle://…` URL is NOT a valid
+// driver connect string — it's only decomposed into discrete fields by the UI
+// paste-parser before it ever reaches the provider.)
 const b = { id: 'or-1', name: 'XE', type: 'oracle',
   connectionString: 'localhost:1521/XEPDB1',
   user: 'app', password: 'secret', createdAt: new Date() };
