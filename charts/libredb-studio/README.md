@@ -13,7 +13,7 @@ Web-based SQL IDE for cloud-native teams supporting PostgreSQL, MySQL, SQLite, O
 
 ```bash
 # Add the Helm repository
-helm repo add libredb https://libredb.github.io/libredb-studio
+helm repo add libredb https://libredb.org/libredb-studio/
 helm repo update
 
 # Install with minimal configuration
