@@ -112,11 +112,14 @@ Unlike the MySQL/Oracle providers (which report `rows.length`), `query()` sets
 `rowCount = result.rowsAffected?.[0] ?? recordset.length` ([mssql.ts:250](../../src/lib/db/providers/sql/mssql.ts)),
 so a non-`SELECT` statement returns its real affected-row count.
 
-### 3.5 Server-side query timeout *is* wired
+### 3.5 A query timeout *is* wired (driver-enforced)
 
 `buildConfig()` maps `ProviderOptions.queryTimeout` to the driver's `requestTimeout` and
-`pool.acquireTimeout` to `connectTimeout`. So — unlike MySQL and Oracle — SQL Server **does** enforce
-a server-side per-request timeout; an overrunning query fails with a timeout (→ `TimeoutError`).
+`pool.acquireTimeout` to `connectTimeout`. So — unlike MySQL and Oracle, which wire no query timeout
+at all — SQL Server **does** bound a request: `requestTimeout` is enforced **client-side by the
+`mssql`/Tedious driver** (it aborts the request and signals the server), not a server-enforced
+statement timeout like Postgres's `statement_timeout`. An overrunning query still surfaces as a
+`TimeoutError`.
 
 ### 3.6 No transaction auto-rollback timeout
 
@@ -184,8 +187,10 @@ See the [non-Azure trust caveat](#14-known-limitations--future-work).
 `sqlserver://` URLs — but it **decomposes them into discrete fields** (`host`/`port`/`user`/`password`/
 `database`) before they reach the provider. `buildConfig()` itself **never reads
 `config.connectionString`**; it always builds from the discrete fields (defaulting `host` to
-`localhost`). So a config carrying *only* a raw `connectionString` would silently connect to
-`localhost` — in practice the connection always has discrete fields because the UI populates them.
+`localhost`). So a config carrying *only* a raw `connectionString` would be built against
+`localhost` with the other fields unset — i.e. it targets an unintended server (and would likely
+fail on the missing user/password/database) rather than honouring the URL. In practice the
+connection always has discrete fields because the UI populates them.
 
 ---
 
@@ -317,8 +322,9 @@ global labels. The UI display name for the database type is *"SQL Server"* (`db-
 | `requestTimeout` exceeded (message contains *timeout*) | `TimeoutError` |
 | Cancelled request / other errors | generic `QueryError` / `DatabaseError` with the original message |
 
-Because `requestTimeout` *is* wired ([§3.5](#35-server-side-query-timeout-is-wired)), an overrunning
-query genuinely produces a `TimeoutError` here (contrast MySQL/Oracle).
+Because `requestTimeout` *is* wired ([§3.5](#35-a-query-timeout-is-wired-driver-enforced)) — even
+though it's driver-enforced rather than server-side — an overrunning query genuinely produces a
+`TimeoutError` here (contrast MySQL/Oracle, which wire no query timeout).
 
 ---
 
