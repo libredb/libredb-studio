@@ -27,6 +27,7 @@ charts/libredb-studio/
     ├── service.yaml           # ClusterIP / NodePort / LoadBalancer
     ├── ingress.yaml           # Optional Ingress (nginx/traefik)
     ├── configmap.yaml         # Non-sensitive env vars (PORT, storage, LLM, OIDC)
+    ├── seed-configmap.yaml    # Optional seed-connections config (rendered when enabled)
     ├── secret.yaml            # Sensitive env vars (JWT, passwords, API keys)
     ├── serviceaccount.yaml    # SA with IRSA/Workload Identity annotations
     ├── hpa.yaml               # HorizontalPodAutoscaler (CPU + memory)
@@ -154,11 +155,15 @@ All non-sensitive configuration flows through a ConfigMap:
 | `PORT` | `service.targetPort` | Always |
 | `HOSTNAME` | Fixed `0.0.0.0` | Always |
 | `NEXT_TELEMETRY_DISABLED` | Fixed `1` | Always |
+| `NODE_OPTIONS` | Fixed `--max-old-space-size=384` | Always |
 | `NEXT_PUBLIC_AUTH_PROVIDER` | `authProvider` | Always |
 | `STORAGE_PROVIDER` | Auto-wired (see above) | Always |
 | `STORAGE_SQLITE_PATH` | `config.storageSqlitePath` | When sqlite |
+| `SEED_CONFIG_PATH` / `SEED_CACHE_TTL_MS` | `seedConnections.*` | When `seedConnections.enabled` |
 | `LLM_PROVIDER/MODEL/API_URL` | `config.llm*` | When set |
 | `OIDC_*` | `config.oidc*` | When `authProvider=oidc` |
+
+> For the complete, authoritative list of configurable values and defaults, see the chart's own [`README.md`](../charts/libredb-studio/README.md#configuration-reference). This document covers architecture and rationale; the chart README is the values reference.
 
 ### 7. Pod Restart on Config Change
 
@@ -171,6 +176,14 @@ annotations:
 ```
 
 Any change to configuration values triggers a rolling restart automatically.
+
+### 8. Seed Connections
+
+When `seedConnections.enabled=true`, the chart provisions a set of pre-defined database connections at startup:
+
+- Connection definitions come from inline `seedConnections.config` (rendered into `seed-configmap.yaml`) or an `existingConfigMap`.
+- The deployment mounts the config at `/app/config/seed-connections.yaml` and sets `SEED_CONFIG_PATH` (plus `SEED_CACHE_TTL_MS` from `seedConnections.cacheTTL`).
+- Credentials referenced by the seed config resolve from environment/secret at runtime, so secrets stay out of the ConfigMap.
 
 ## Release Pipeline
 
@@ -205,8 +218,8 @@ ArtifactHub auto-scan (~30 min)
 ### Version Management
 
 - `Chart.yaml version` (e.g., `0.1.0`): Chart version, bumped for chart-only changes
-- `Chart.yaml appVersion` (e.g., `0.8.10`): Must match `package.json` version
-- CI enforces `appVersion == package.json.version` via the `helm-lint` job
+- `Chart.yaml appVersion`: The app image version this chart deploys; set manually in `Chart.yaml`
+- CI guard (`ci.yml`, "Verify appVersion is valid"): the build **fails if `appVersion` is _ahead_ of `package.json`**. When `appVersion` is _behind_, CI emits an info notice ("update on next chart release") but does **not** fail — the chart version is bumped independently of the app version.
 
 ## Deployment Examples
 
@@ -249,4 +262,4 @@ helm install libredb libredb/libredb-studio \
 
 1. **SQLite + Multi-Replica**: SQLite is single-writer. `storageProvider=sqlite` with `replicaCount > 1` will cause write conflicts. Use `postgres` for multi-replica.
 2. **ISR Cache**: Next.js ISR cache is per-pod (emptyDir). Session-based app, so no impact.
-3. **Chart appVersion**: Must be manually synced with `package.json` (CI validates but doesn't auto-bump).
+3. **Chart appVersion**: Set manually in `Chart.yaml`; CI fails only if it is *ahead* of `package.json` (being behind is tolerated). It is not auto-bumped.
