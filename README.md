@@ -23,9 +23,9 @@
 </p>
 
 <p align="center">
-  <a href="#-live-test"><strong>🚀 Try Live Test</strong></a> •
-  <a href="#getting-started"><strong>📖 Documentation</strong></a> •
-  <a href="#-one-click-deploy"><strong>⚡ Deploy Your Own</strong></a>
+  <a href="#-live-test"><strong>Try Live Test</strong></a> •
+  <a href="#getting-started"><strong>Documentation</strong></a> •
+  <a href="#-one-click-deploy"><strong>Deploy Your Own</strong></a>
 </p>
 
 <p align="center">
@@ -34,7 +34,7 @@
 
 ---
 
-## 🚀 Live Test
+## Live Test
 
 > **Try LibreDB Studio instantly without installation!**
 
@@ -167,7 +167,7 @@ The test instance comes with a pre-configured PostgreSQL database via [Seed Conn
 
 > All SQL databases share: schema explorer, ER diagrams, schema diff & migration, data masking, monitoring dashboard, and connection string import.
 
-> 📚 **Provider reference docs:** each database has an in-depth reference (design, connection, query format, monitoring, limitations) under [`docs/providers/`](docs/providers/README.md). For the provider architecture and a guide to adding a new database, see [`docs/DATABASE_PROVIDERS.md`](docs/DATABASE_PROVIDERS.md).
+> **Provider reference docs:** each database has an in-depth reference (design, connection, query format, monitoring, limitations) under [`docs/providers/`](docs/providers/README.md). For the provider architecture and a guide to adding a new database, see [`docs/DATABASE_PROVIDERS.md`](docs/DATABASE_PROVIDERS.md).
 
 ---
 
@@ -256,7 +256,7 @@ docker run -d \
 
 ---
 
-## 🗄️ Development Databases
+## Development Databases
 
 Need databases to test with? We provide ready-to-use containers for all supported engines:
 
@@ -354,7 +354,7 @@ bun run test:coverage
 
 ---
 
-## ⚡ One-Click Deploy
+## One-Click Deploy
 
 Deploy your own instance of LibreDB Studio with a single click on Koyeb, Render, Railway, or CapRover:
 
@@ -405,7 +405,7 @@ Deploy your own instance of LibreDB Studio with a single click on Koyeb, Render,
 2. **Connect to Koyeb**: [app.koyeb.com](https://app.koyeb.com) → New → Blueprint
 3. **Select your forked repo** and Koyeb will auto-detect `koyeb.yaml`
 4. **Set Environment Variables** in Koyeb Dashboard:
-5. **Deploy!** 🎉
+5. **Deploy!**
 
 ### Railway
 
@@ -423,7 +423,7 @@ LibreDB Studio is published in the official [CapRover One-Click Apps](https://gi
 1. **Open your CapRover dashboard** → **Apps → One-Click Apps/Databases**
 2. **Search** for **LibreDB Studio**
 3. **Fill in the variables** (admin/user credentials, `JWT_SECRET`, optional AI/storage settings)
-4. **Deploy!** 🎉
+4. **Deploy!**
 
 The app runs the prebuilt `ghcr.io/libredb/libredb-studio` image. As with Railway, Docker-image templates require a manual version bump on each release.
 
@@ -435,7 +435,7 @@ LibreDB Studio includes a `render.yaml` Blueprint for one-click deployment:
 2. **Connect to Render**: [dashboard.render.com](https://dashboard.render.com) → New → Blueprint
 3. **Select your forked repo** and Render will auto-detect `render.yaml`
 4. **Set Environment Variables** in Render Dashboard:
-5. **Deploy!** 🎉
+5. **Deploy!**
 
 ### Docker Compose (Self-Hosted)
 
