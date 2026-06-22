@@ -46,10 +46,10 @@
 *   **Strategy Pattern Architecture:** Modular, extensible database provider system with clear separation by database category.
 *   **SQL Databases:**
     *   **PostgreSQL:** Full support with connection pooling (`pg`), schema inspection, and maintenance tools.
-    *   **MySQL:** Full support with connection pooling (`mysql2`), performance schema integration.
-    *   **SQLite:** File-based database support (`better-sqlite3`) with WAL mode.
-    *   **Oracle:** Full support with connection pooling (`oracledb`), performance schema integration.
-    *   **SQL Server:** Full support with connection pooling (`mssql`), performance schema integration.
+    *   **MySQL:** Full support with connection pooling (`mysql2`) and `performance_schema` integration.
+    *   **SQLite:** File-based database support via `bun:sqlite` (the DB provider; the storage layer uses `better-sqlite3`).
+    *   **Oracle:** Full support with connection pooling (`oracledb`); introspection/monitoring via the `ALL_*`/`DBA_*` data-dictionary views.
+    *   **SQL Server:** Full support with connection pooling (`mssql`); monitoring via DMVs (`sys.dm_*`).
 *   **Document Databases:**
     *   **MongoDB:** Full support with official driver, JSON-based MQL queries, automatic schema inference, and aggregation pipelines.
 *   **Key-Value Stores:**

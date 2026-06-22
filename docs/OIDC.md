@@ -878,13 +878,15 @@ function buildLogoutUrl(returnTo: string): string | null {
 
 ### Provider Logout Endpoints
 
-| Provider | Endpoint | Return Param |
-|----------|----------|--------------|
-| **Auth0** | `{issuer}/v2/logout` | `returnTo` |
-| **Zitadel** | `{issuer}/oidc/v1/end_session` (auto-detected via role claim) | `post_logout_redirect_uri` |
-| **Keycloak** | `{issuer}/protocol/openid-connect/logout` | `post_logout_redirect_uri` |
-| **Okta** | RP-Initiated Logout (via discovery) | `post_logout_redirect_uri` |
-| **Azure AD** | `{issuer}/oauth2/v2.0/logout` | `post_logout_redirect_uri` |
+> **What `buildLogoutUrl()` actually implements:** only **Auth0** and **Zitadel** are special-cased. Every other issuer — including Keycloak, Okta, and Azure AD — falls back to `/protocol/openid-connect/logout`. The table lists each provider's *native* logout endpoint; the "Wired?" column shows whether the code routes there today. For Okta/Azure AD the native endpoint differs from the fallback, so RP-initiated logout against those providers may need an explicit `buildLogoutUrl()` branch (see Extension Point below).
+
+| Provider | Native Endpoint | Return Param | Wired? |
+|----------|-----------------|--------------|--------|
+| **Auth0** | `{issuer}/v2/logout` | `returnTo` | ✅ special-cased |
+| **Zitadel** | `{issuer}/oidc/v1/end_session` (auto-detected via role claim) | `post_logout_redirect_uri` | ✅ special-cased |
+| **Keycloak** | `{issuer}/protocol/openid-connect/logout` | `post_logout_redirect_uri` | ✅ matches generic fallback |
+| **Okta** | RP-Initiated Logout (via discovery) | `post_logout_redirect_uri` | ⚠️ generic fallback only |
+| **Azure AD** | `{issuer}/oauth2/v2.0/logout` | `post_logout_redirect_uri` | ⚠️ generic fallback only |
 
 ### Extension Point
 
