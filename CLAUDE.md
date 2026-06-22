@@ -110,7 +110,7 @@ After any UI change in studio:
 - **SQL Editor:** Monaco Editor
 - **Data Grid:** TanStack React Table with react-virtual for virtualization
 - **AI:** Multi-model support (Gemini, OpenAI, Ollama, Custom)
-- **Databases:** PostgreSQL (`pg`), MySQL (`mysql2`), SQLite (`better-sqlite3`), Oracle (`oracledb`), SQL Server (`mssql`), MongoDB (`mongodb`), Redis (`ioredis`)
+- **Databases:** PostgreSQL (`pg`), MySQL (`mysql2`), SQLite (`bun:sqlite`), Oracle (`oracledb`), SQL Server (`mssql`), MongoDB (`mongodb`), Redis (`ioredis`)
 - **Auth:** JWT-based with `jose` library + OIDC SSO with `openid-client` (Auth0, Keycloak, Okta, Azure AD)
 - **Storage:** Pluggable storage layer — localStorage (default), SQLite (`better-sqlite3`), or PostgreSQL (`pg`)
 
