@@ -338,272 +338,35 @@ For most SQL databases, the existing `'sql'` type is sufficient. You only need a
 
 ## Step 2: Create the Provider Class
 
-### For SQL databases
+Create the file under the right family folder — `src/lib/db/providers/sql/<name>.ts` for SQL,
+`src/lib/db/providers/<family>/<name>.ts` (e.g. `document/`, `keyvalue/`) for non-SQL.
 
-Create a file under `src/lib/db/providers/sql/`:
+**Start from the closest existing provider — it is the authoritative, code-verified template** (and
+is kept in sync with its per-provider doc). Don't copy a skeleton from this guide; copy a real file:
 
-```
-src/lib/db/providers/sql/cockroachdb.ts
-```
+| Your database is… | Extend | Copy as template | Reference |
+|-------------------|--------|------------------|-----------|
+| Pooled SQL (wire-protocol DB) | `SQLBaseProvider` | `postgres.ts` / `mysql.ts` | [postgres.md](./providers/postgres.md) · [mysql.md](./providers/mysql.md) |
+| Embedded / file SQL | `SQLBaseProvider` | `sqlite.ts` | [sqlite.md](./providers/sqlite.md) |
+| Document store | `BaseDatabaseProvider` | `mongodb.ts` | [mongodb.md](./providers/mongodb.md) |
+| Key-value store | `BaseDatabaseProvider` | `redis.ts` | [redis.md](./providers/redis.md) |
 
-```typescript
-/**
- * CockroachDB Database Provider
- * PostgreSQL-compatible distributed SQL database
- */
+**Implement the abstract methods** from the `DatabaseProvider` interface: `connect`, `disconnect`,
+`query`, `getSchema`, `getHealth`, `runMaintenance`, plus the monitoring set (`getOverview`,
+`getPerformanceMetrics`, `getSlowQueries`, `getActiveSessions`, `getTableStats`, `getIndexStats`,
+`getStorageStats`). Return `[]` from the monitoring methods that don't apply to your engine.
 
-import { Pool } from 'pg'; // CockroachDB uses the PostgreSQL wire protocol
-import { SQLBaseProvider } from './sql-base';
-import {
-  type DatabaseConnection,
-  type TableSchema,
-  type ColumnSchema,
-  type IndexSchema,
-  type QueryResult,
-  type HealthInfo,
-  type MaintenanceType,
-  type MaintenanceResult,
-  type ProviderOptions,
-  type ProviderCapabilities,
-  type DatabaseOverview,
-  type PerformanceMetrics,
-  type SlowQueryStats,
-  type ActiveSessionDetails,
-  type TableStats,
-  type IndexStats,
-  type StorageStats,
-} from '../../types';
-import {
-  DatabaseConfigError,
-  ConnectionError,
-  QueryError,
-  mapDatabaseError,
-} from '../../errors';
+**Override the metadata hooks** so the shared UI renders correctly:
 
-export class CockroachDBProvider extends SQLBaseProvider {
-  private pool: Pool | null = null;
+- `getCapabilities()` — query language (`sql` | `json`), `defaultPort`, supported `maintenanceOperations`, the `supportsExplain`/`supportsConnectionString`/`supportsCreateTable` flags, and `schemaRefreshPattern`.
+- `getLabels()` — only if the generic SQL wording ("Table" / "row" / "Select Top 50" / …) doesn't fit. Non-relational providers relabel it (Redis → "Key Pattern"/"key", MongoDB → "Collection"/"document").
+- `prepareQuery()` — only if your dialect needs non-standard pagination. SQL `LIMIT` injection is inherited from `SQLBaseProvider`; Oracle/SQL Server override it for `FETCH FIRST` / `TOP`; the non-SQL providers make it a metadata-only pass-through.
 
-  constructor(config: DatabaseConnection, options: ProviderOptions = {}) {
-    super(config, options);
-    this.validate();
-  }
+Wrap native driver errors with `mapDatabaseError(err, '<type>', sql)` so they normalise onto the
+shared error classes. For the exact DTO shapes see [Reference: Interface Contracts](#reference-interface-contracts);
+for worked, code-verified examples see each provider's **Design decisions** section in
+[`docs/providers/`](./providers/README.md).
 
-  // ──────────────────────────────────────────────
-  // Provider Metadata (REQUIRED OVERRIDES)
-  // ──────────────────────────────────────────────
-
-  public override getCapabilities(): ProviderCapabilities {
-    return {
-      ...super.getCapabilities(),           // Inherits SQL defaults
-      defaultPort: 26257,                    // CockroachDB default port
-      supportsExplain: true,                 // Supports EXPLAIN
-      supportsConnectionString: true,        // Supports connection URI
-      maintenanceOperations: ['analyze'],     // Only ANALYZE supported
-    };
-  }
-
-  // getLabels() — SQL defaults from BaseDatabaseProvider are fine
-  //   entityName: 'Table', selectAction: 'Select Top 100', etc.
-  //   Override only if you need different labels.
-
-  // prepareQuery() — SQLBaseProvider handles LIMIT injection automatically
-  //   Override only if your SQL dialect has a different LIMIT syntax.
-
-  // ──────────────────────────────────────────────
-  // Connection Management (REQUIRED)
-  // ──────────────────────────────────────────────
-
-  public async connect(): Promise<void> {
-    try {
-      this.pool = new Pool({
-        host: this.config.host,
-        port: this.config.port || 26257,
-        database: this.config.database,
-        user: this.config.user,
-        password: this.config.password,
-        max: this.poolConfig.max,
-        idleTimeoutMillis: this.poolConfig.idleTimeout,
-        connectionTimeoutMillis: this.poolConfig.acquireTimeout,
-        ssl: this.shouldEnableSSL() ? { rejectUnauthorized: false } : undefined,
-      });
-
-      // Test connection
-      const client = await this.pool.connect();
-      client.release();
-      this.setConnected(true);
-    } catch (error) {
-      this.setError(error as Error);
-      throw new ConnectionError(
-        `Failed to connect to CockroachDB: ${(error as Error).message}`,
-        'cockroachdb'
-      );
-    }
-  }
-
-  public async disconnect(): Promise<void> {
-    if (this.pool) {
-      await this.pool.end();
-      this.pool = null;
-    }
-    this.setConnected(false);
-  }
-
-  // ──────────────────────────────────────────────
-  // Query Execution (REQUIRED)
-  // ──────────────────────────────────────────────
-
-  public async query(sql: string, params?: unknown[]): Promise<QueryResult> {
-    this.ensureConnected();
-    if (!this.pool) throw new ConnectionError('Pool not initialized', 'cockroachdb');
-
-    return this.trackQuery(async () => {
-      const { result, executionTime } = await this.measureExecution(async () => {
-        return this.pool!.query(sql, params);
-      });
-
-      return {
-        rows: result.rows || [],
-        fields: result.fields?.map(f => f.name) || [],
-        rowCount: result.rows?.length || 0,
-        executionTime,
-      };
-    });
-  }
-
-  // ──────────────────────────────────────────────
-  // Schema Introspection (REQUIRED)
-  // ──────────────────────────────────────────────
-
-  public async getSchema(): Promise<TableSchema[]> {
-    this.ensureConnected();
-    // Use information_schema (same as PostgreSQL)
-    const tablesResult = await this.query(`
-      SELECT table_name, ...
-      FROM information_schema.tables
-      WHERE table_schema = 'public'
-    `);
-    // ... build TableSchema[] from results
-    return [];
-  }
-
-  // ──────────────────────────────────────────────
-  // Health & Monitoring (REQUIRED)
-  // ──────────────────────────────────────────────
-
-  public async getHealth(): Promise<HealthInfo> { /* ... */ }
-  public async getOverview(): Promise<DatabaseOverview> { /* ... */ }
-  public async getPerformanceMetrics(): Promise<PerformanceMetrics> { /* ... */ }
-  public async getSlowQueries(): Promise<SlowQueryStats[]> { /* ... */ }
-  public async getActiveSessions(): Promise<ActiveSessionDetails[]> { /* ... */ }
-  public async getTableStats(): Promise<TableStats[]> { /* ... */ }
-  public async getIndexStats(): Promise<IndexStats[]> { /* ... */ }
-  public async getStorageStats(): Promise<StorageStats[]> { /* ... */ }
-
-  // ──────────────────────────────────────────────
-  // Maintenance (REQUIRED)
-  // ──────────────────────────────────────────────
-
-  public async runMaintenance(type: MaintenanceType, target?: string): Promise<MaintenanceResult> {
-    this.ensureConnected();
-    const { result, executionTime } = await this.measureExecution(async () => {
-      switch (type) {
-        case 'analyze':
-          if (target) {
-            await this.query(`ANALYZE ${this.escapeIdentifier(target)}`);
-          } else {
-            // CockroachDB doesn't have a global ANALYZE; iterate tables
-          }
-          return { success: true };
-        default:
-          throw new QueryError(`Unsupported maintenance operation: ${type}`, 'cockroachdb');
-      }
-    });
-    return {
-      success: true,
-      executionTime,
-      message: `${type} completed successfully`,
-    };
-  }
-
-  // ──────────────────────────────────────────────
-  // Validation
-  // ──────────────────────────────────────────────
-
-  public override validate(): void {
-    super.validate();
-    if (!this.config.connectionString && !this.config.host) {
-      throw new DatabaseConfigError('Host or connection string is required', 'cockroachdb');
-    }
-    if (!this.config.database && !this.config.connectionString) {
-      throw new DatabaseConfigError('Database name is required', 'cockroachdb');
-    }
-  }
-}
-```
-
-### For non-SQL databases
-
-Create a file under `src/lib/db/providers/` (choose an appropriate subdirectory):
-
-```
-src/lib/db/providers/keyvalue/redis.ts
-```
-
-Extend `BaseDatabaseProvider` directly and override **all** abstract methods plus the 3 metadata methods:
-
-```typescript
-import { BaseDatabaseProvider } from '../../base-provider';
-
-export class RedisProvider extends BaseDatabaseProvider {
-  constructor(config: DatabaseConnection, options: ProviderOptions = {}) {
-    super(config, options);
-    this.validate();
-  }
-
-  // Must override getCapabilities() — defaults are SQL-oriented
-  public override getCapabilities(): ProviderCapabilities {
-    return {
-      queryLanguage: 'json',              // or 'sql' if Redis uses a custom CLI-like syntax
-      supportsExplain: false,
-      supportsExternalQueryLimiting: false,
-      supportsCreateTable: false,
-      supportsMaintenance: true,
-      maintenanceOperations: ['analyze'],
-      supportsConnectionString: true,
-      defaultPort: 6379,
-      schemaRefreshPattern: '"operation"\\s*:\\s*"(set|del|hset)',
-    };
-  }
-
-  // Must override getLabels()
-  public override getLabels(): ProviderLabels {
-    return {
-      entityName: 'Key Space',
-      entityNamePlural: 'Key Spaces',
-      rowName: 'key',
-      rowNamePlural: 'keys',
-      selectAction: 'Scan Keys',
-      generateAction: 'Generate Command',
-      analyzeAction: 'Inspect Key',
-      vacuumAction: 'Flush Keys',
-      searchPlaceholder: 'Search key spaces...',
-      analyzeGlobalLabel: 'Run Info',
-      analyzeGlobalTitle: 'Server Info',
-      analyzeGlobalDesc: 'Retrieves Redis server statistics and memory usage.',
-      vacuumGlobalLabel: 'Run Memory Doctor',
-      vacuumGlobalTitle: 'Memory Analysis',
-      vacuumGlobalDesc: 'Analyzes memory usage patterns and suggests optimizations.',
-    };
-  }
-
-  // Must override prepareQuery()
-  public override prepareQuery(query: string, options: QueryPrepareOptions = {}): PreparedQuery {
-    return { query, wasLimited: false, limit: options.limit || 100, offset: 0 };
-  }
-
-  // ... implement all abstract methods: connect, disconnect, query, getSchema, etc.
-}
-```
 
 ### What the base class gives you for free
 
