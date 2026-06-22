@@ -133,8 +133,9 @@ schema introspection stays bounded regardless of keyspace size.
 
 `getKeyPrefix()` ([`redis.ts:371`](../../src/lib/db/providers/keyvalue/redis.ts)) takes everything
 before the first `:` and appends `:*` — so `user:123` and `user:456` both collapse into the
-`user:*` "table". Keys without a colon are their own group. For each prefix the provider samples up
-to **3** keys' value-types (`TYPE`) to populate the synthetic column metadata. The resulting
+`user:*` "table". Keys without a colon are their own group. For each prefix the provider probes
+keys with `TYPE` until it has observed up to **3 distinct** value-types — it may inspect more than
+3 keys when they share a type — to populate the synthetic column metadata. The resulting
 `TableSchema` list is sorted by descending key count so the busiest prefixes surface first.
 
 ### 3.3 Generic command dispatch via `call()`
@@ -294,7 +295,7 @@ Redis exposes a single maintenance operation:
 
 | Type | Behaviour |
 |------|-----------|
-| `analyze` | Runs `INFO` and reports the metric count as a snapshot. Non-destructive. |
+| `analyze` | Runs `INFO` and reports the number of lines in the output as a snapshot. Non-destructive. |
 | anything else | Throws `QueryError` (`Unsupported maintenance type for Redis`) |
 
 This is reflected in `getCapabilities().maintenanceOperations = ['analyze']`. The UI relabels these
@@ -426,8 +427,10 @@ request/response contract.
 ## 13. Known limitations & future work
 
 - **TLS (`rediss://`) is parsed but not connected.** The connection-string parser recognises
-  `rediss://`, but `connect()` does not yet pass a `tls` option to `ioredis`. TLS connections will
-  currently fall back to plaintext. *Future:* thread `config.ssl` into the `ioredis` constructor.
+  `rediss://`, but it does not preserve the secure scheme, and `connect()` neither passes a `tls`
+  option to `ioredis` nor reads `config.ssl`. The provider always attempts a **plaintext**
+  connection, so a TLS-only endpoint will fail to connect rather than negotiate TLS. *Future:*
+  thread `config.ssl` into the `ioredis` constructor.
 - **No Cluster / Sentinel support.** Only a single standalone node is supported.
 - **`SCAN` is capped at 1000 keys** for schema discovery — prefixes that only appear beyond the cap
   won't show as "tables". This is a deliberate bound, not a bug.
