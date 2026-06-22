@@ -21,6 +21,10 @@ LibreDB Studio is a web-based SQL IDE for cloud-native teams. It supports Postgr
 * Helm Repo: https://libredb.org/libredb-studio/
 * Helm OCI: oci://ghcr.io/libredb/charts/libredb-studio
 
+## Branching & PRs
+
+> **Feature/work branches target `dev`, NOT `main`.** `dev` is the active integration branch — open every PR with base `dev` (`gh pr create --base dev`). `main` is the release branch and is only updated via a deliberate `dev` → `main` promotion. Targeting `main` directly causes divergence and forces re-targeting. Branch off `dev` for new work.
+
 ## Development Commands
 
 ```bash
