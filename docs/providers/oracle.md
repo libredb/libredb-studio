@@ -201,6 +201,18 @@ A query issued with a `queryId` stores its connection in a `Map`. `cancelQuery(q
 interrupting the in-flight OCI call — and returns `true` on success (it does not verify a query was
 actually running). Exposed via `POST /api/db/cancel`.
 
+### 5.3 Data-type handling (LOBs & NUMBER) ⚠️
+
+node-oracledb returns several Oracle types as non-primitive values, and the provider does **not**
+currently configure `fetchAsString`/`fetchAsBuffer`/`fetchInfo`:
+
+- **`CLOB`/`NCLOB`/`BLOB`** are returned as `Lob` **stream objects**, not strings/buffers — so a
+  result row containing a LOB column does not serialize cleanly into the JSON grid. (Contrast the
+  MySQL provider's `sanitizeRow` Buffer→hex conversion.) Oracle schemas commonly use LOBs, so this
+  is a real gap — see [Known limitations](#14-known-limitations--future-work).
+- **`NUMBER`** is returned as a JavaScript `number`; values beyond 2^53 (e.g. `NUMBER(38)` ids or
+  high-precision decimals) **lose precision**. Fetching such columns as strings would preserve them.
+
 ---
 
 ## 6. Transactions
@@ -380,8 +392,26 @@ Over the API: `POST /api/db/query`, `POST /api/db/transaction`, `POST /api/db/ca
 
 ## 14. Known limitations & future work
 
+- **CLOB/BLOB columns don't render.** No `fetchAsString`/`fetchAsBuffer` is configured, so LOB
+  columns come back as `Lob` stream objects rather than text/bytes ([§5.3](#53-data-type-handling-lobs--number)).
+  *Future:* set `oracledb.fetchAsString = [oracledb.CLOB]` / `fetchAsBuffer = [oracledb.BLOB]` (or
+  per-query `fetchInfo`), and stream genuinely large LOBs instead of buffering.
+- **Large `NUMBER` precision loss** — returned as a JS `number`; `NUMBER` values beyond 2^53 should
+  be fetched as strings to stay exact.
+- **`EXPLAIN` is advertised but not implemented for Oracle.** `getCapabilities().supportsExplain` is
+  `true`, but the UI's EXPLAIN builder only handles Postgres/MySQL — for Oracle the *Explain* action
+  runs the **unmodified** query instead of producing a plan. *Future:* build
+  `EXPLAIN PLAN FOR …` followed by `SELECT * FROM TABLE(DBMS_XPLAN.DISPLAY())`.
 - **No server-side query timeout.** `queryTimeout` is not wired into the pool; runaway queries must
-  be cancelled explicitly via `cancelQuery()` (`connection.break()`).
+  be cancelled explicitly via `cancelQuery()` (`connection.break()`). *Future:* set
+  `connection.callTimeout` (node-oracledb's per-round-trip timeout) from `queryTimeout`.
+- **`kill` and full monitoring require elevated privileges.** `ALTER SYSTEM KILL SESSION` needs the
+  `ALTER SYSTEM` privilege; the `V$` monitoring views need `SELECT` on the `V_$` views. A
+  least-privilege application user can neither kill sessions nor read most monitoring (the queries
+  degrade to `N/A`/`0`/`[]`).
+- **Module-global driver settings.** The constructor sets `oracledb.outFormat`/`autoCommit` on the
+  shared `oracledb` module singleton (not per-pool/connection) — fine for a single embedding, but a
+  process-wide side effect to be aware of if Oracle is ever used alongside another `oracledb` consumer.
 - **No transaction auto-rollback timeout** (unlike Postgres/MySQL) — an abandoned transaction holds
   its connection/locks until committed, rolled back, or pool-reclaimed.
 - **Schema is owner-scoped** to the connecting user (`OWNER = USER`); objects in other schemas the
