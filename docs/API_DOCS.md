@@ -12,6 +12,9 @@
   - [Auth API](#auth-api)
   - [Database API](#database-api)
   - [AI API](#ai-api)
+  - [Storage API](#storage-api)
+  - [Connections API](#connections-api)
+  - [Admin API](#admin-api)
 - [Data Types](#data-types)
 - [Error Handling](#error-handling)
 - [Rate Limiting](#rate-limiting)
@@ -21,12 +24,12 @@
 
 ## Overview
 
-LibreDB Studio provides a RESTful API for database management operations. The API supports multiple database types including PostgreSQL, MySQL, SQLite, MongoDB
+LibreDB Studio provides a RESTful API for database management operations. The API supports PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, and Redis.
 
 ### Key Features
 
 - **JWT Authentication** - Secure token-based authentication stored in HTTP-only cookies
-- **Multi-Database Support** - PostgreSQL, MySQL, SQLite, MongoDB
+- **Multi-Database Support** - PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, Redis
 - **AI-Powered Queries** - Natural language to SQL with streaming responses
 - **Real-time Health Monitoring** - Database metrics and performance insights
 
@@ -38,21 +41,18 @@ All API requests must include:
 
 ### Response Format
 
-All responses are JSON with the following structure:
+Responses are JSON. There is **no global envelope** — each endpoint returns its own shape (documented per-endpoint below). Common patterns:
 
 ```json
-// Success
-{
-  "data": { ... },
-  "status": "success"
-}
+// Auth endpoints
+{ "success": true, "role": "admin" }
 
-// Error
-{
-  "error": "Error message",
-  "code": "ERROR_CODE",
-  "status": 400
-}
+// Data / storage endpoints return the payload (or a bare ack) directly
+{ "rows": [], "rowCount": 0, "pagination": { } }
+{ "ok": true }
+
+// Errors
+{ "error": "Human-readable message" }   // some also include "code" and/or an HTTP "status"
 ```
 
 ---
@@ -77,9 +77,13 @@ LibreDB Studio uses JWT (JSON Web Tokens) for authentication. Tokens are stored 
 
 ### Public Endpoints (No Auth Required)
 
-- `POST /api/auth/login`
-- `POST /api/auth/logout`
-- `GET /api/db/health` (service health check only)
+Authentication is enforced centrally by the middleware (`src/proxy.ts`), not by individual route handlers: every route requires a valid `auth-token` cookie **except** the routes below. (This is why handlers like `/api/ai/*` don't call `getSession()` themselves — the middleware has already gated them.)
+
+- `/api/auth/*` — login, logout, me, and OIDC login/callback
+- `GET /api/db/health` — service health check
+- `GET /api/storage/config` — storage-mode discovery (returns mode only, no data)
+
+Unauthenticated requests to any other route are redirected to `/login`.
 
 ---
 
@@ -94,6 +98,7 @@ Authenticate user and create session.
 **Request:**
 ```json
 {
+  "email": "admin@libredb.org",
   "password": "your-password"
 }
 ```
@@ -110,12 +115,12 @@ Authenticate user and create session.
 ```json
 {
   "success": false,
-  "message": "Invalid password"
+  "message": "Invalid email or password"
 }
 ```
 
 **Notes:**
-- Password is matched against `ADMIN_PASSWORD` or `USER_PASSWORD` environment variables
+- Both `email` and `password` are required; matched against `ADMIN_EMAIL`/`ADMIN_PASSWORD` or `USER_EMAIL`/`USER_PASSWORD` environment variables
 - Sets `auth-token` HTTP-only cookie on success
 
 ---
@@ -130,6 +135,14 @@ Terminate current session.
 ```json
 {
   "success": true
+}
+```
+
+When `NEXT_PUBLIC_AUTH_PROVIDER=oidc`, the response also includes the provider's RP-initiated logout URL for the client to redirect to:
+```json
+{
+  "success": true,
+  "redirectUrl": "https://issuer.example.com/v2/logout?..."
 }
 ```
 
@@ -148,8 +161,7 @@ Get current authenticated user information.
   "authenticated": true,
   "user": {
     "role": "admin",
-    "iat": 1703345678,
-    "exp": 1703432078
+    "username": "admin@libredb.org"
   }
 }
 ```
@@ -160,6 +172,8 @@ Get current authenticated user information.
   "authenticated": false
 }
 ```
+
+> The `user` object is the JWT session payload (`role`, `username`). It is a public route in the middleware but self-checks the cookie, returning `{ "authenticated": false }` when absent/invalid.
 
 ---
 
@@ -276,9 +290,18 @@ Execute SQL query on connected database.
   ],
   "fields": ["id", "name", "email"],
   "rowCount": 2,
-  "executionTime": 12
+  "executionTime": 12,
+  "pagination": {
+    "limit": 500,
+    "offset": 0,
+    "hasMore": false,
+    "totalReturned": 2,
+    "wasLimited": false
+  }
 }
 ```
+
+The `pagination` object reports the auto-limiting applied by the server (default 500 rows). `wasLimited` is `true` when the server injected a `LIMIT` the query didn't specify; `hasMore` indicates more rows are available — re-request with a higher `offset` to page. See [`docs/editor/query-optimization.md`](editor/query-optimization.md).
 
 **Response (400 Bad Request):**
 ```json
@@ -544,6 +567,8 @@ Generate SQL queries using AI with streaming response.
 | `prompt` | string | Yes | Natural language query or question |
 | `databaseType` | string | No | Database type for syntax (default: postgres) |
 | `schemaContext` | string | No | Schema info for context-aware queries |
+| `queryLanguage` | string | No | `"sql"` (default) or `"json"` (MongoDB MQL) |
+| `conversationHistory` | array | No | Prior `{role, content}` messages for multi-turn context |
 
 **Response (200 OK - Streaming):**
 
@@ -584,9 +609,97 @@ Configure AI provider via environment variables:
 ```env
 LLM_PROVIDER=gemini          # gemini, openai, ollama, custom
 LLM_API_KEY=your-api-key
-LLM_MODEL=gemini-2.0-flash   # Model name
+LLM_MODEL=gemini-2.5-flash   # Model name
 LLM_API_URL=http://localhost:11434/v1  # For ollama/custom
 ```
+
+> The `401`/`429`/`400` responses above are surfaced from the configured **LLM provider** (bad API key, quota, safety filter), not from session auth — session auth is already enforced by the middleware before the handler runs.
+
+---
+
+#### Other AI endpoints
+
+All AI endpoints are `POST`, auth-required (via middleware), and stream `text/plain`. They share the optional `schemaContext` and `databaseType` fields; the table lists each one's distinct required input and purpose.
+
+| Endpoint | Required input | Purpose |
+|----------|----------------|---------|
+| `POST /api/ai/nl2sql` | `question` (+ optional `queryLanguage`, `conversationHistory`) | Natural language → SQL/MongoDB query (multi-turn) |
+| `POST /api/ai/explain` | `query` (+ optional `explainPlan`) | Explain an EXPLAIN plan and suggest optimizations |
+| `POST /api/ai/query-safety` | `query` | Pre-execution risk analysis; streams a JSON verdict (`riskLevel`, `warnings[]`, `recommendation`) |
+| `POST /api/ai/impact` | `query` (a DDL statement) | Predict the impact of a schema change before running it |
+| `POST /api/ai/index-advisor` | `slowQueries` / `indexStats` / `tableStats` | Recommend missing/unused/duplicate indexes |
+| `POST /api/ai/autopilot` | performance metrics (`slowQueries`, `indexStats`, `tableStats`, `performanceMetrics`, `overview`) | Full performance-optimization report |
+| `POST /api/ai/describe-schema` | `schemaContext` (+ optional `mode`: `"table"`\|`"database"`) | Auto-generate schema documentation |
+
+Each validates its required field and returns `400 { "error": "… is required" }` if missing.
+
+---
+
+### Storage API
+
+The write-through storage sync layer (see [`docs/STORAGE.md`](STORAGE.md)). Data is per-user, keyed by the session username.
+
+#### GET /api/storage/config
+
+Public. Returns the active storage mode so the client can discover whether server-side storage is enabled.
+
+```json
+{ "provider": "local" }   // "local" | "sqlite" | "postgres"
+```
+
+#### GET /api/storage
+
+Auth required. Returns all stored collections for the current user. `404` if server-side storage is not enabled.
+
+#### PUT /api/storage/{collection}
+
+Auth required. Replaces one collection's data. `collection` must be one of the known `STORAGE_COLLECTIONS`; invalid names or a missing `data` field return `400`.
+
+```json
+// Request
+{ "data": { } }
+// Response
+{ "ok": true }
+```
+
+#### POST /api/storage/migrate
+
+Auth required. Merges a client's localStorage payload into server storage on first sign-in.
+
+```json
+// Response
+{ "ok": true, "migrated": ["connections", "queryHistory"] }
+```
+
+---
+
+### Connections API
+
+#### GET /api/connections/managed
+
+Auth required. Returns seed/managed connections for the current user's role, with secrets (`password`, `connectionString`) stripped. `cacheHint` is the client cache TTL in ms (`SEED_CACHE_TTL_MS`, default 60000). See [`docs/SEED_CONNECTIONS.md`](SEED_CONNECTIONS.md).
+
+```json
+{ "connections": [], "cacheHint": 60000 }
+```
+
+---
+
+### Admin API
+
+Both require an **admin** role (enforced in-handler in addition to the middleware); non-admins get `403 { "error": "Unauthorized. Admin access required." }`.
+
+#### GET /api/admin/audit
+
+Returns audit events. Optional query params: `type` (filter by event type), `limit` (default 100). Response: `{ "events": [], "total": 0 }`. `POST /api/admin/audit` appends an event (user auto-filled from the session).
+
+#### POST /api/admin/fleet-health
+
+Body `{ "connections": [...] }`; returns per-connection health `{ "results": [{ connectionId, status, latencyMs, ... }] }`. `400` if `connections` is missing.
+
+---
+
+> **Internal routes (not part of this public reference).** The frontend also calls several internal `/api/db/*` endpoints that mirror provider internals and change with the UI: `multi-query`, `schema/list`, `schema/relations`, `transaction`, `cancel`, `disconnect`, `test-connection`, `monitoring`, `pool-stats`, `profile`, `provider-meta`, `schema-snapshot`. They're auth-gated by the middleware like everything else; consult the route handlers in `src/app/api/db/` for their shapes.
 
 ---
 
