@@ -79,9 +79,12 @@ Lightweight regex-based SQL parser that extracts table aliases without external 
 4. Extracts CTE (WITH clause) aliases
 5. Returns a Map of alias → table name
 
-#### 2. Completion Provider (`src/components/QueryEditor.tsx`)
+#### 2. Completion Provider (`src/lib/editor/sql-completions.ts`)
 
-Monaco Editor completion provider that integrates with the alias extractor.
+Monaco Editor completion provider that integrates with the alias extractor. The
+provider is implemented as `registerSQLCompletionProvider(monaco, schemaCompletionCache)`
+and registered from `src/components/QueryEditor.tsx` (in an `useEffect` that returns the
+disposable for cleanup).
 
 **Dot-triggered completion flow:**
 ```
@@ -186,5 +189,6 @@ interface AliasExtractionResult {
 |------|-------------|
 | `src/lib/sql/types.ts` | Type definitions |
 | `src/lib/sql/alias-extractor.ts` | Core parsing logic |
-| `src/lib/sql/index.ts` | Module exports |
-| `src/components/QueryEditor.tsx` | Monaco Editor integration |
+| `src/lib/sql/index.ts` | Module exports (`extractAliases`, `resolveAlias`) |
+| `src/lib/editor/sql-completions.ts` | Monaco completion provider (`registerSQLCompletionProvider`) |
+| `src/components/QueryEditor.tsx` | Registers the provider and supplies the schema cache |

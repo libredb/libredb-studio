@@ -8,7 +8,13 @@ LibreDB Studio uses a modern theming architecture built on:
 
 - **Tailwind CSS v4** - CSS-first configuration with `@theme` directive
 - **shadcn/ui** - Accessible component library with CSS variable theming
-- **CSS Custom Properties** - Dynamic theme switching (dark/light mode)
+- **CSS Custom Properties** - Light and dark variable sets defined in `globals.css`
+
+> **Note:** Studio currently ships **dark-mode only**. The `.dark` class is applied
+> statically on the `<body>` element in `src/app/layout.tsx`, so the light-mode variables
+> defined in `:root` are present but not reachable at runtime. There is no theme toggle yet
+> (see [Switching Themes](#switching-themes)). The light-mode values are documented below for
+> when runtime switching is added.
 
 ## Architecture
 
@@ -64,13 +70,13 @@ src/
 
 ### Chart Colors
 
-| Variable | Usage |
-|----------|-------|
-| `--chart-1` | Primary chart color |
-| `--chart-2` | Secondary chart color |
-| `--chart-3` | Tertiary chart color |
-| `--chart-4` | Quaternary chart color |
-| `--chart-5` | Quinary chart color |
+| Variable | Light (`:root`) | Dark (`.dark`) | Usage |
+|----------|-----------------|----------------|-------|
+| `--chart-1` | `#e76e50` | `#3b82f6` | Primary chart color |
+| `--chart-2` | `#2a9d90` | `#22c55e` | Secondary chart color |
+| `--chart-3` | `#274754` | `#f59e0b` | Tertiary chart color |
+| `--chart-4` | `#e8c468` | `#a855f7` | Quaternary chart color |
+| `--chart-5` | `#f4a462` | `#ec4899` | Quinary chart color |
 
 ## Dark Mode
 
@@ -94,9 +100,21 @@ LibreDB Studio uses a dark-first design with the following color palette (based 
 
 ### Switching Themes
 
-The application uses `next-themes` for theme switching. The `<ThemeProvider>` is configured in the root layout:
+> **Current state:** there is **no runtime theme switching**. Dark mode is forced by hardcoding
+> the `dark` class on `<body>` in `src/app/layout.tsx`:
+>
+> ```tsx
+> <body className={`${geistSans.variable} ${geistMono.variable} antialiased dark font-sans`}>
+> ```
+>
+> The `next-themes` package is present in `package.json` but is **not wired up** — there is no
+> `<ThemeProvider>` in the layout and no toggle component.
+
+To add a runtime light/dark toggle, you would wrap the app in `next-themes`' `ThemeProvider`
+(`attribute="class"`) instead of hardcoding the class, then add a toggle that flips the theme:
 
 ```tsx
+// Not yet implemented — illustrative only
 <ThemeProvider attribute="class" defaultTheme="dark">
   {children}
 </ThemeProvider>
@@ -201,9 +219,11 @@ Ensure `@theme inline` maps your variables:
 }
 ```
 
-### Step 3: Test Both Modes
+### Step 3: Test in Dark Mode
 
-Always test changes in both light and dark modes.
+Since Studio runs dark-mode only today, edit and verify the `.dark` variable set. If you also
+maintain the `:root` (light) values for a future toggle, keep them in sync — but only the
+`.dark` set is rendered at runtime.
 
 ## Component-Specific Theming
 
@@ -282,9 +302,9 @@ shadcn/ui buttons use theme variables automatically:
 
 ### Dark Mode Not Working
 
-1. Verify `ThemeProvider` is wrapping your app
-2. Check that `.dark` class is applied to `<html>` element
-3. Ensure variables are defined in `.dark {}` selector
+1. Check that the `dark` class is present on `<body>` in `src/app/layout.tsx` (it is hardcoded there)
+2. Ensure variables are defined in the `.dark {}` selector in `globals.css`
+3. Confirm `@theme inline` maps the variable to a `--color-*` utility
 
 ### Build Errors
 
@@ -323,6 +343,7 @@ shadcn/ui buttons use theme variables automatically:
 | primary | `#171717` | Near black |
 | secondary | `#f5f5f5` | Light gray |
 | muted | `#f5f5f5` | Light gray |
+| muted-foreground | `#737373` | Medium gray |
 | accent | `#f5f5f5` | Light gray |
 | border | `#e5e5e5` | Gray |
 
@@ -342,4 +363,4 @@ shadcn/ui buttons use theme variables automatically:
 
 ---
 
-*Last updated: December 2024*
+*Last updated: June 2026*
