@@ -162,7 +162,8 @@ const b = { id: 'or-1', name: 'XE', type: 'oracle',
 | `poolMax` | 10 | `ProviderOptions.pool.max` |
 | `poolTimeout` | 30 (s) | `ProviderOptions.pool.idleTimeout` ÷ 1000 |
 
-> ⚠️ `acquireTimeout` and `queryTimeout` from `DEFAULT_POOL_CONFIG` are **not** mapped — there is no
+> ⚠️ `acquireTimeout` (from `DEFAULT_POOL_CONFIG`) and `queryTimeout` (a **separate**
+> `ProviderOptions` option, defaulting to `DEFAULT_QUERY_TIMEOUT`) are **not** mapped — there is no
 > provider-driven server-side query timeout (cancellation is explicit, [§5.2](#52-query-cancellation)).
 
 `connect()` is idempotent; `getPoolStats()` ([oracle.ts:642](../../src/lib/db/providers/sql/oracle.ts))
