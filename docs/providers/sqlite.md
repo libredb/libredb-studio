@@ -34,10 +34,10 @@ SQLite shows up in this codebase in **two unrelated roles**. Don't conflate them
 2. **A target database you connect to and query** (`type: 'sqlite'`) — *this* document. Uses
    **`bun:sqlite`**.
 
-### Deployment constraint (the strategic bit) ⚠️
+### Deployment constraint (the strategic bit)
 
-SQLite is an **embedded, file-based** engine with **no network protocol**. Two hard consequences for
-a web-based editor:
+⚠️ SQLite is an **embedded, file-based** engine with **no network protocol**. Two hard consequences
+for a web-based editor:
 
 - **The database file must live on the server's filesystem.** A remote user of a hosted/SaaS
   deployment cannot point Studio at a SQLite file on *their own* machine — there is nothing to
@@ -92,7 +92,7 @@ works) and the default SQL labels (*Vacuum Table* / *Analyze Table* fit, since S
 
 `bun:sqlite` is imported lazily via `loadSQLite()` ([sqlite.ts:57](../../src/lib/db/providers/sql/sqlite.ts)),
 caching the constructor and the failure. On a non-Bun runtime the import fails and a
-`DatabaseConfigError` is thrown — see [§0](#deployment-constraint-the-strategic-bit-️).
+`DatabaseConfigError` is thrown — see [§0](#deployment-constraint-the-strategic-bit).
 
 ### Registration
 
@@ -112,8 +112,13 @@ case 'sqlite': {
 
 `getDatabasePath()` ([sqlite.ts:171](../../src/lib/db/providers/sql/sqlite.ts)) resolves the target:
 `connectionString` (stripping a `file:` prefix) → else `database` → else `:memory:`. Non-`:memory:`
-paths are `path.resolve()`-d and **rejected if they normalise differently or contain a NUL byte**
-(path-traversal / injection guard). Parent directories are created on connect.
+paths are `path.resolve()`-d to an absolute path and **rejected if they contain a NUL byte**. Parent
+directories are created on connect.
+
+> ⚠️ The accompanying `resolved !== path.normalize(resolved)` check is effectively a **no-op** —
+> `path.resolve()` already normalises its output, so the two are always equal. It therefore does
+> **not** actually block `../` traversal; only the NUL-byte check is meaningful. See
+> [Known limitations](#13-known-limitations--future-work).
 
 ### 3.2 PRAGMAs on connect
 
@@ -325,6 +330,10 @@ not apply to SQLite ([§3.4](#34-no-transactions-api-no-cancellation-no-pool)).
   `scans` is always `0`; cache-hit ratio is a fixed estimate; slow queries are unavailable.
 - **`:memory:` is ephemeral** — data is lost on disconnect; intended for trials/tests.
 - **Single schema (`main`)** — `ATTACH`ed databases are not surfaced.
+- **Path-traversal guard is ineffective.** `getDatabasePath()` intends to reject traversal but
+  compares `path.resolve(p)` against its own `normalize()` (always equal), so only NUL bytes are
+  actually rejected — the resolved absolute path is otherwise used as-is. *Future:* confine the
+  input path to an allowed base directory (or validate the raw input before resolving).
 
 ---
 
