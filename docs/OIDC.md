@@ -571,10 +571,10 @@ interface OIDCState {
 }
 
 interface OIDCClaims {
-  sub: string;             // Subject identifier
+  sub: string;                  // Subject identifier
   email?: string;
-  name?: string;
-  [key: string]: unknown;  // Provider-specific claims
+  preferred_username?: string;  // Used by Keycloak and others; username fallback
+  [claim: string]: unknown;     // Provider-specific claims
 }
 ```
 
@@ -637,7 +637,7 @@ export async function login(role: Role, username?: string) {
 }
 ```
 
-The optional `username` parameter was added for OIDC — local login passes the email, OIDC callback passes `claims.email || claims.sub`.
+The optional `username` parameter was added for OIDC — local login passes the email, while the OIDC callback resolves it through a fallback chain: `claims.email || claims.preferred_username || claims.sub || role` (so a username is always set regardless of which claims the provider returns).
 
 ### `src/proxy.ts`
 
@@ -847,26 +847,46 @@ Different OIDC providers have different logout endpoint conventions. `buildLogou
 function buildLogoutUrl(returnTo: string): string | null {
   const config = getOIDCConfig();
   const issuerUrl = new URL(config.issuer);
+  const roleClaim = config.roleClaim;
 
-  if (issuerUrl.hostname.includes('auth0.com')) {
-    // Auth0: /v2/logout?client_id=xxx&returnTo=xxx
-    return new URL('/v2/logout', config.issuer) + params;
+  // Auth0: /v2/logout?client_id=xxx&returnTo=xxx
+  if (issuerUrl.hostname === 'auth0.com' || issuerUrl.hostname.endsWith('.auth0.com')) {
+    const logoutUrl = new URL('/v2/logout', config.issuer);
+    logoutUrl.searchParams.set('client_id', config.clientId);
+    logoutUrl.searchParams.set('returnTo', returnTo);
+    return logoutUrl.toString();
   }
 
-  // Generic OIDC (Keycloak, etc.):
+  // Zitadel RP-Initiated Logout — detected via the role claim (urn:zitadel:...)
+  if (roleClaim.includes('zitadel')) {
+    const logoutUrl = new URL('/oidc/v1/end_session', config.issuer);
+    logoutUrl.searchParams.set('client_id', config.clientId);
+    logoutUrl.searchParams.set('post_logout_redirect_uri', returnTo);
+    return logoutUrl.toString();
+  }
+
+  // Generic OIDC (Keycloak, Okta, Azure AD, etc.):
   // /protocol/openid-connect/logout?client_id=xxx&post_logout_redirect_uri=xxx
-  return new URL('/protocol/openid-connect/logout', config.issuer) + params;
+  const logoutUrl = new URL('/protocol/openid-connect/logout', config.issuer);
+  logoutUrl.searchParams.set('client_id', config.clientId);
+  logoutUrl.searchParams.set('post_logout_redirect_uri', returnTo);
+  return logoutUrl.toString();
 }
 ```
 
+> **Note:** Zitadel is detected by its role-claim URN (`OIDC_ROLE_CLAIM` containing `zitadel`), not by hostname — so its `/oidc/v1/end_session` endpoint is selected automatically when you configure Zitadel roles.
+
 ### Provider Logout Endpoints
 
-| Provider | Endpoint | Return Param |
-|----------|----------|--------------|
-| **Auth0** | `{issuer}/v2/logout` | `returnTo` |
-| **Keycloak** | `{issuer}/protocol/openid-connect/logout` | `post_logout_redirect_uri` |
-| **Okta** | RP-Initiated Logout (via discovery) | `post_logout_redirect_uri` |
-| **Azure AD** | `{issuer}/oauth2/v2.0/logout` | `post_logout_redirect_uri` |
+> **What `buildLogoutUrl()` actually implements:** only **Auth0** and **Zitadel** are special-cased. Every other issuer — including Keycloak, Okta, and Azure AD — falls back to `/protocol/openid-connect/logout`. The table lists each provider's *native* logout endpoint; the "Wired?" column shows whether the code routes there today. For Okta/Azure AD the native endpoint differs from the fallback, so RP-initiated logout against those providers may need an explicit `buildLogoutUrl()` branch (see Extension Point below).
+
+| Provider | Native Endpoint | Return Param | Wired? |
+|----------|-----------------|--------------|--------|
+| **Auth0** | `{issuer}/v2/logout` | `returnTo` | ✅ special-cased |
+| **Zitadel** | `{issuer}/oidc/v1/end_session` (auto-detected via role claim) | `post_logout_redirect_uri` | ✅ special-cased |
+| **Keycloak** | `{issuer}/protocol/openid-connect/logout` | `post_logout_redirect_uri` | ✅ matches generic fallback |
+| **Okta** | RP-Initiated Logout (via discovery) | `post_logout_redirect_uri` | ⚠️ generic fallback only |
+| **Azure AD** | `{issuer}/oauth2/v2.0/logout` | `post_logout_redirect_uri` | ⚠️ generic fallback only |
 
 ### Extension Point
 

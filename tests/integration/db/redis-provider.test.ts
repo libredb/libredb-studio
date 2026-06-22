@@ -84,6 +84,10 @@ mock.module('ioredis', () => {
 
     async call(command: string) {
       const cmd = command.toUpperCase();
+      // Simulate a Redis-side error (e.g. unknown command / wrong arity)
+      if (cmd === 'BOGUS') {
+        throw new Error("ERR unknown command 'BOGUS'");
+      }
       if (cmd in mockCallResults) {
         return mockCallResults[cmd];
       }
@@ -271,6 +275,28 @@ describe('RedisProvider', () => {
       );
       // RANDOMKEY is not in mockCallResults, so call() returns null
       expect(result2.rows[0].result).toBe('(nil)');
+    });
+
+    // --- Error handling (acceptance: "clear errors for invalid commands") ---
+
+    test('malformed JSON command throws QueryError', async () => {
+      // Starts with '{' so the JSON branch is taken, but the body is invalid JSON
+      await expect(provider.query('{ command: GET }')).rejects.toThrow(/Invalid JSON command format/);
+    });
+
+    test('JSON command without "command" field throws QueryError', async () => {
+      await expect(
+        provider.query(JSON.stringify({ args: ['mykey'] }))
+      ).rejects.toThrow(/Command is required/);
+    });
+
+    test('Redis-side command error is surfaced as QueryError', async () => {
+      await expect(provider.query('BOGUS arg1')).rejects.toThrow(/Redis error: ERR unknown command/);
+    });
+
+    test('query on a disconnected provider throws', async () => {
+      const disconnected = new RedisProvider({ ...baseConfig });
+      await expect(disconnected.query('PING')).rejects.toThrow();
     });
   });
 
