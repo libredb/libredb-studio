@@ -68,7 +68,7 @@
 *   **Global Search & Filter:** Real-time, high-performance filtering across both table names and column names.
 *   **Precision Row Counts:** Optimized PostgreSQL integration using `pg_class` statistics for fast, accurate (estimated) row counts even on large datasets.
 *   **Visual Table Designer:** Create new tables directly from the explorer with a modern, column-based UI. No SQL knowledge required for basic structures.
-*   **Contextual Actions:** Quick access menus for each table including "Select Top 100", "Generate Template Query", and "Copy Name".
+*   **Contextual Actions:** Quick access menus for each table including "Select Top 50", "Generate Query", and "Copy Name". Action labels adapt per provider (e.g. "Scan Keys" for Redis, "Find Documents" for MongoDB).
 *   **DBA Quick Tools:** (Admin Only) Instant access to "Analyze Table" and "Vacuum Table" directly from the table context menu.
 *   **Visual Clarity:** Modern glassmorphic design with Framer Motion animations for smooth transitions.
 *   **Database Stats:** Integrated table counts and connection health monitoring directly in the sidebar.
