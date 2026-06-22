@@ -157,8 +157,10 @@ regression test for it).
 ### 3.5 Resilient monitoring
 
 Monitoring never hard-fails on a missing optional feature:
-- `pg_stat_statements` (slow queries) is wrapped in try/catch and falls back to a `pg_stat_activity`
-  snapshot of currently-running queries when the extension isn't installed.
+- `pg_stat_statements` is wrapped in try/catch in both slow-query paths, but they degrade
+  *differently*: `getSlowQueries()` falls back to a `pg_stat_activity` snapshot of
+  currently-running queries when the extension isn't installed, whereas `getHealth()`'s lighter
+  slow-query block returns a single placeholder row (`pg_stat_statements extension not enabled`).
 - WAL size (`getStorageStats`) and `pg_stat_bgwriter` checkpoint times are superuser/version-gated;
   failures are swallowed and the field is simply omitted or reported as `N/A`.
 
@@ -175,10 +177,12 @@ maintenance targets through `escapeIdentifier()`: a bare name defaults to the `p
 
 ### 4.1 Configuration
 
-Two mutually-exclusive forms are accepted (validated in `validate()`,
-[postgres.ts:264](../../src/lib/db/providers/sql/postgres.ts)):
+Two forms are accepted (`validate()`, [postgres.ts:264](../../src/lib/db/providers/sql/postgres.ts)).
+`validate()` requires `host` **and** `database` only when no `connectionString` is given — it does
+**not** reject supplying both. If both are present the **connection string wins**: `buildPoolConfig()`
+uses it and ignores the discrete fields.
 
-**Discrete fields** — `host` and `database` are both required:
+**Discrete fields** — `host` and `database` are both required (when no connection string):
 
 ```ts
 const connection = {
@@ -202,16 +206,18 @@ const connection = {
 ### 4.2 Connection pooling
 
 `connect()` builds a `pg.Pool` ([postgres.ts:281](../../src/lib/db/providers/sql/postgres.ts)) and
-validates it by acquiring and releasing one client. Pool sizing comes from `ProviderOptions.pool`
+validates it by acquiring and releasing one client. Pool **sizing** comes from `ProviderOptions.pool`
 merged over `DEFAULT_POOL_CONFIG`:
 
-| Setting | Default | `pg` mapping |
-|---------|---------|--------------|
+| `ProviderOptions.pool` setting | Default | `pg` mapping |
+|--------------------------------|---------|--------------|
 | `min` | 2 | `min` |
 | `max` | 10 | `max` |
 | `idleTimeout` | 30000 ms | `idleTimeoutMillis` |
 | `acquireTimeout` | 60000 ms | `connectionTimeoutMillis` |
-| `queryTimeout` | 60000 ms | `statement_timeout` |
+
+The statement timeout is **separate** from pool config: `ProviderOptions.queryTimeout` (default
+`DEFAULT_QUERY_TIMEOUT` = 60000 ms) is applied as the pool's `statement_timeout`.
 
 `connect()` is idempotent (a second call while a pool exists is a no-op). `getPoolStats()` exposes
 live `{ total, idle, active, waiting }` counts. Every query acquires a client from the pool and
@@ -226,8 +232,9 @@ this precedence:
    - `disable` → no SSL.
    - `verify-ca` / `verify-full` → `rejectUnauthorized: true`; otherwise `false`.
    - `caCert` / `clientCert` / `clientKey` map to `ca` / `cert` / `key`.
-2. **Cloud auto-detect** — `shouldEnableSSL()` enables `{ rejectUnauthorized: false }` for known
-   managed hosts.
+2. **`options.ssl === true` or cloud auto-detect** — `shouldEnableSSL()` returns true when
+   `options.ssl === true` *or* the host matches a known managed provider, enabling
+   `{ rejectUnauthorized: false }`.
 3. **`options.ssl === false`** → no SSL.
 4. Otherwise `undefined` (driver default).
 
@@ -301,7 +308,7 @@ base) fans these out in parallel.
 
 | Method | Primary source | Notes |
 |--------|----------------|-------|
-| `getHealth()` | `pg_stat_activity`, `pg_database_size`, `pg_statio_user_tables`, `pg_stat_statements` | connections, size, cache-hit %, top-5 slow queries (+fallback), 10 sessions |
+| `getHealth()` | `pg_stat_activity`, `pg_database_size`, `pg_statio_user_tables`, `pg_stat_statements` | connections, size, cache-hit %, top-5 slow queries (single placeholder row if the extension is absent), 10 sessions |
 | `getOverview()` | `version()`, `pg_postmaster_start_time()`, `pg_settings`, `pg_database_size`, `pg_tables`/`pg_indexes` | version, uptime, conns, max_conns, size, table/index counts |
 | `getPerformanceMetrics()` | `pg_statio_user_tables`, `pg_stat_database`, `pg_stat_bgwriter` | cache-hit %, buffer-pool %, deadlocks, checkpoint write time (gated) |
 | `getSlowQueries()` | `pg_stat_statements` → fallback `pg_stat_activity` | detailed per-statement stats; fallback shows live active queries |
@@ -318,8 +325,9 @@ all user schemas.
 
 ## 8. Transactions
 
-PostgreSQL exposes an explicit transaction lifecycle on a **dedicated client held outside the pool**
-(so all statements in a transaction run on the same backend). Surfaced via `POST /api/db/transaction`.
+PostgreSQL exposes an explicit transaction lifecycle on a **dedicated client checked out from the
+pool and held for the transaction's duration** — so every statement runs on the same backend, and
+the client is not returned to the pool until commit/rollback. Surfaced via `POST /api/db/transaction`.
 
 | Method | Behaviour |
 |--------|-----------|
