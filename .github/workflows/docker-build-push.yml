@@ -133,9 +133,9 @@ jobs:
         with:
           images: ${{ steps.images.outputs.list }}
           tags: |
-            type=raw,value=${{ steps.extract-version.outputs.version }},enable=${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/') || github.event_name == 'workflow_dispatch' }}
+            type=raw,value=${{ steps.extract-version.outputs.version }},enable=${{ github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' }}
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
-            type=raw,value=dev,enable=${{ github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/heads/release/') }}
+            type=raw,value=dev,enable=${{ github.ref != 'refs/heads/main' }}
             type=sha,prefix=sha-
 
       - name: Build and push Docker image
