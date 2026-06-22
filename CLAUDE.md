@@ -10,7 +10,7 @@ Web-based SQL IDE for cloud-native teams: PostgreSQL, MySQL, SQLite, Oracle, SQL
 
 ## Branching & PRs
 
-> **Feature/work branches target `dev`, NOT `main`.** Open every PR with base `dev` (`gh pr create --base dev`). `main` is release-only, updated via a deliberate `dev` → `main` promotion. Branch off `dev` for new work.
+> **Trunk-based: feature/work branches target `main` directly; releases are git tags.** Branch off `main` for new work and open every PR with base `main` (`gh pr create --base main`). `main` is the single protected integration trunk — PRs are required and the `Lint, Typecheck and Build` check must pass before merge. Cut a release by tagging `main` (`vX.Y.Z`), which triggers the npm publish workflow. There is no `dev` branch and no long-lived `release/*` branches.
 
 ## GitHub
 
