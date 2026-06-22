@@ -153,18 +153,23 @@ options ([mysql.ts:119](../../src/lib/db/providers/sql/mysql.ts)):
 | `queueLimit` | `0` (unbounded queue) | fixed |
 | `enableKeepAlive` | `true` | fixed |
 | `keepAliveInitialDelay` | `10000` ms | fixed |
-| `timezone` | `'Z'` | `ProviderOptions.timezone ?? 'Z'` |
+| `timezone` | `'Z'` | `ProviderOptions.timezone ?? 'Z'` (discrete form only — see below) |
 
 > ⚠️ Only `max` from `DEFAULT_POOL_CONFIG` is honored. `min`, `idleTimeout`, and `acquireTimeout`
 > are **not** mapped (the mysql2 pool model differs from `pg`), and `queryTimeout` is **not** applied
 > (see [§3.5](#35-no-server-side-query-timeout)).
+>
+> ⚠️ When a **`connectionString`** is supplied, `buildPoolConfig()` returns `{ ...baseConfig, uri }`
+> and takes the discrete-fields branch **not at all** — so `timezone`, `ssl`/`connection.ssl`, and
+> cloud SSL auto-detect are **ignored**; those settings must be encoded in the URI itself.
 
 `connect()` is idempotent. Unlike the PostgreSQL provider, MySQL exposes **no** `getPoolStats()`.
 
 ### 4.3 SSL
 
-`buildSSLConfig()` ([mysql.ts:147](../../src/lib/db/providers/sql/mysql.ts)) — note `disable`
-returns `undefined` (mysql2's "off"), not `false`:
+`buildSSLConfig()` ([mysql.ts:147](../../src/lib/db/providers/sql/mysql.ts)) — applied **only in the
+discrete-fields form** (the `connectionString` path bypasses it entirely). Note `disable` returns
+`undefined` (mysql2's "off"), not `false`:
 
 1. **Explicit `connection.ssl`** (`SSLConfig`): `disable` → `undefined`; `verify-ca`/`verify-full` →
    `rejectUnauthorized: true` (otherwise `false`); `caCert`/`clientCert`/`clientKey` → `ca`/`cert`/`key`.
@@ -317,12 +322,15 @@ Native `mysql2` errors are mapped by the shared `mapDatabaseError()`
 | Access denied (`ER_ACCESS_DENIED`, message contains *access denied*) | `AuthenticationError` |
 | Connection refused / DNS (`ECONNREFUSED`, `getaddrinfo`) | `ConnectionError` |
 | Killed query (*"Query execution was interrupted"*) | `QueryCancelledError` |
+| Driver message contains *timeout* / *timed out* (e.g. `Lock wait timeout exceeded`, connection-acquire timeout) | `TimeoutError` |
 | Other server errors (most `ER_*` codes) | `QueryError` / `DatabaseError` carrying the original message |
 
 > The mapper is **text-heuristic**, so MySQL `ER_*` codes that don't match a known phrase fall
-> through to a generic `QueryError`/`DatabaseError` with the driver's message preserved. There is
-> **no** provider-driven `TimeoutError` for queries, because no `statement_timeout` is configured
-> ([§3.5](#35-no-server-side-query-timeout)).
+> through to a generic `QueryError`/`DatabaseError` with the driver's message preserved. Note the
+> nuance on timeouts: a driver error whose message contains *timeout*/*timed out* **does** map to
+> `TimeoutError` (the mapping is provider-agnostic). What MySQL lacks is a **server-side query
+> timeout derived from `queryTimeout`** — the provider never configures one
+> ([§3.5](#35-no-server-side-query-timeout)), so it won't auto-kill a long-running query on its own.
 
 ---
 
