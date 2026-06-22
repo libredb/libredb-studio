@@ -396,8 +396,8 @@ the shared hierarchy:
 | Operation before `connect()` | `DatabaseConfigError` (via `ensureConnected()`) |
 | `connect()` fails | `ConnectionError` (carries host/port) |
 | SQL syntax / bad column / relation | `QueryError` (with position when available) |
-| `statement_timeout` exceeded | `TimeoutError` |
-| Cancelled statement | `QueryCancelledError` |
+| `statement_timeout` exceeded, or user cancel via `pg_cancel_backend` | `QueryCancelledError` — both emit *"canceling statement due to …"*, which `mapDatabaseError()` matches **before** its timeout check |
+| Generic timeout / connection-acquire timeout (message contains "timeout"/"timed out", not "canceling statement") | `TimeoutError` |
 | Bad password / authentication | `AuthenticationError` |
 | Pool exhausted / too many connections | `PoolExhaustedError` |
 
@@ -417,8 +417,13 @@ provider is imported — there is no live PostgreSQL in the suite. The mock's `P
 canned result sets keyed by query shape, which exercises the same provider code paths as a real
 server.
 
-> ⚠️ **Mock isolation:** `bun`'s `mock.module()` is process-wide. Run with `bun run test`
-> (isolated execution groups) — never bare `bun test` across files. See [`CLAUDE.md`](../../CLAUDE.md).
+> ⚠️ **Mock isolation:** `bun`'s `mock.module()` is process-wide, so test files that mock different
+> drivers (here `pg`, elsewhere `ioredis`, etc.) cross-contaminate when they share a process. Running
+> a **single file** is safe (one file = one process). The full `bun run test` script runs the core
+> group (`tests/unit tests/api tests/integration`) in **one process** and is therefore load-order
+> flaky — so **CI does not use it**. The deterministic runner is **`bun run test:ci`** (per-file
+> process isolation via `tests/run-core.sh`); the coverage workflow uses `bun run test:coverage`
+> (also per-file). See [`CLAUDE.md`](../../CLAUDE.md).
 
 ### 12.2 Coverage
 
@@ -426,16 +431,18 @@ The suite (60+ tests) covers: validation (incl. connection-string bypass), conne
 idempotency, **every SSL precedence branch**, query + PID tracking + error mapping, query
 cancellation, the full transaction lifecycle (incl. `expireTransaction` auto-rollback), all three
 schema methods (PK detection, non-public prefixing, negative-`reltuples` clamping, empty-column
-tables, cross-schema FK joins, null-column coercion), health (incl. `pg_stat_statements` fallback),
-maintenance (all types, identifier quoting, kill validation), overview/uptime formatting,
-performance (incl. checkpoint fallback), slow queries (extension + fallback), active sessions,
+tables, cross-schema FK joins, null-column coercion), health (incl. the `pg_stat_statements`
+placeholder path), maintenance (all types, identifier quoting, kill validation), overview/uptime
+formatting, performance (incl. checkpoint fallback), slow queries (extension + `pg_stat_activity`
+fallback), active sessions,
 table/index/storage stats, pool stats, capabilities, and `pg_stat_activity` passthrough.
 
 ### 12.3 Run it
 
 ```bash
-bun test tests/integration/db/postgres-provider.test.ts   # just this file
-bun run test                                               # full isolated suite (CI-equivalent)
+bun test tests/integration/db/postgres-provider.test.ts   # just this file (single process — safe)
+bun run test:ci                                            # CI publish gate — per-file isolation (tests/run-core.sh)
+bun run test:coverage                                      # CI coverage workflow — per-file core + components
 ```
 
 ### 12.4 Optional: verifying against a live PostgreSQL
