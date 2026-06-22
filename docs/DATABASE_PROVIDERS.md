@@ -1,6 +1,11 @@
 # Database Provider Architecture
 
-This document describes the modular database provider architecture implemented using the Strategy Pattern. It serves both as an architecture/reference guide and as a step-by-step tutorial for [adding a new database provider](#adding-a-new-database-provider).
+This document describes the modular database provider architecture implemented using the Strategy Pattern. It serves both as the **architecture overview** and as a step-by-step tutorial for [adding a new database provider](#adding-a-new-database-provider).
+
+> **Per-provider detail lives in [`docs/providers/`](./providers/README.md).** Each provider has its
+> own prime reference (`docs/providers/<type-id>.md`) covering connection, query format, schema,
+> monitoring, maintenance, capabilities, error handling, testing, and known limitations. This
+> document is the cross-cutting **architecture + authoring** companion to those per-provider docs.
 
 ## Overview
 
@@ -17,16 +22,19 @@ src/lib/db/
 ├── base-provider.ts            # Abstract base class
 ├── providers/
 │   ├── sql/                    # SQL Database Providers
-│   │   ├── index.ts            # SQL exports
 │   │   ├── sql-base.ts         # SQL-specific base class
 │   │   ├── postgres.ts         # PostgreSQL Strategy
 │   │   ├── mysql.ts            # MySQL Strategy
-│   │   └── sqlite.ts           # SQLite Strategy
+│   │   ├── sqlite.ts           # SQLite Strategy
+│   │   ├── oracle.ts           # Oracle Strategy
+│   │   └── mssql.ts            # SQL Server Strategy
 │   ├── document/               # Document Database Providers
-│   │   ├── index.ts            # Document exports
 │   │   └── mongodb.ts          # MongoDB Strategy
+│   └── keyvalue/               # Key-Value Providers
+│       └── redis.ts            # Redis Strategy
 └── utils/
-    └── pool-manager.ts         # Connection pool utilities
+    ├── pool-manager.ts         # Connection pool utilities
+    └── query-limiter.ts        # SELECT auto-LIMIT (analyzeQuery/applyQueryLimit)
 ```
 
 ## Provider Hierarchy
@@ -34,13 +42,16 @@ src/lib/db/
 ```
 BaseDatabaseProvider (abstract)
 ├── SQLBaseProvider (abstract) ─────────────┐
-│   ├── PostgresProvider                    │ SQL Databases
-│   ├── MySQLProvider                       │ (shared SQL utilities)
-│   └── SQLiteProvider                      │
-├── MongoDBProvider ────────────────────────┤ Document Databases
+│   ├── PostgresProvider                    │
+│   ├── MySQLProvider                       │ SQL Databases
+│   ├── SQLiteProvider                      │ (shared SQL utilities)
+│   ├── OracleProvider                      │
+│   └── MSSQLProvider                       │
+├── MongoDBProvider ────────────────────────┤ Document Database
+└── RedisProvider ──────────────────────────┘ Key-Value Store
 ```
 
-`SQLBaseProvider` provides SQL-specific helpers (LIMIT injection, identifier escaping, placeholder generation). Non-SQL databases like MongoDB extend `BaseDatabaseProvider` directly.
+`SQLBaseProvider` provides SQL-specific helpers (LIMIT injection, identifier escaping, placeholder generation). Non-SQL databases like MongoDB and Redis extend `BaseDatabaseProvider` directly.
 
 **Key files:**
 
@@ -79,14 +90,18 @@ QueryEditor                      /api/db/query
 
 ## Supported Databases
 
-| Category | Database   | Status | Driver           | Pooling | Notes                    |
-|----------|------------|--------|------------------|---------|--------------------------|
-| SQL      | PostgreSQL | Full   | `pg`             | Yes     | Production ready         |
-| SQL      | MySQL      | Full   | `mysql2`         | Yes     | Production ready         |
-| SQL      | SQLite     | Full   | `better-sqlite3` | No      | File-based, sync driver  |
-| Document | MongoDB    | Full   | `mongodb`        | Yes     | JSON-based queries       |
-| SQL      | Oracle     | Full   | `oracledb`       | Yes     | Production ready         |
-| SQL      | SQL Server | Full   | `mssql`          | Yes     | Production ready         |
+Seven providers are supported. For the per-provider reference (driver, pooling, query format,
+monitoring, limitations, …) see the prime docs in **[`docs/providers/`](./providers/README.md)**:
+
+| Provider | type-id | Family | Reference |
+|----------|---------|--------|-----------|
+| PostgreSQL | `postgres` | SQL | [providers/postgres.md](./providers/postgres.md) |
+| MySQL | `mysql` | SQL | [providers/mysql.md](./providers/mysql.md) |
+| Oracle | `oracle` | SQL | [providers/oracle.md](./providers/oracle.md) |
+| Microsoft SQL Server | `mssql` | SQL | [providers/mssql.md](./providers/mssql.md) |
+| SQLite | `sqlite` | SQL (embedded) | [providers/sqlite.md](./providers/sqlite.md) |
+| Redis | `redis` | Key-Value | [providers/redis.md](./providers/redis.md) |
+| MongoDB | `mongodb` | Document | [providers/mongodb.md](./providers/mongodb.md) |
 
 ## Core Interface
 
@@ -174,56 +189,15 @@ const schema = await provider.getSchema();
 await provider.disconnect();
 ```
 
-## MongoDB Query Format
+## Non-SQL Query Formats
 
-MongoDB queries are JSON-formatted with the following structure:
+The non-SQL providers take a JSON query rather than SQL. The full format, operation list, and worked
+examples live in their prime docs:
 
-```typescript
-interface MongoQuery {
-  collection: string;  // Required: collection name
-  operation: string;   // Required: find, findOne, aggregate, count, distinct,
-                       //           insertOne, insertMany, updateOne, updateMany,
-                       //           deleteOne, deleteMany
-  filter?: object;     // Optional: query filter
-  pipeline?: object[]; // Optional: aggregation pipeline
-  update?: object;     // Optional: update document
-  documents?: object[];// Optional: documents to insert
-  options?: {
-    limit?: number;
-    skip?: number;
-    sort?: object;
-    projection?: object;
-  };
-}
-```
-
-### MongoDB Query Examples
-
-```json
-// Find documents
-{"collection": "users", "operation": "find", "filter": {"status": "active"}, "options": {"limit": 50}}
-
-// Find one document
-{"collection": "users", "operation": "findOne", "filter": {"_id": "123"}}
-
-// Aggregate
-{"collection": "orders", "operation": "aggregate", "pipeline": [
-  {"$match": {"status": "completed"}},
-  {"$group": {"_id": "$customerId", "total": {"$sum": "$amount"}}}
-]}
-
-// Count documents
-{"collection": "users", "operation": "count", "filter": {"role": "admin"}}
-
-// Insert one document
-{"collection": "users", "operation": "insertOne", "documents": [{"name": "John", "email": "john@example.com"}]}
-
-// Update documents
-{"collection": "users", "operation": "updateOne", "filter": {"_id": "123"}, "update": {"$set": {"status": "inactive"}}}
-
-// Delete documents
-{"collection": "users", "operation": "deleteMany", "filter": {"status": "deleted"}}
-```
+- **MongoDB** (MQL — `{collection, operation, filter, pipeline, update, documents, options}`):
+  [providers/mongodb.md](./providers/mongodb.md) and the
+  [`API_DOCS.md` MongoDB Query Format](./API_DOCS.md) section.
+- **Redis** (plain command or `{command, args}`): [providers/redis.md](./providers/redis.md).
 
 ## Configuration
 
@@ -290,32 +264,10 @@ DatabaseError (base)
 
 ## Provider-Specific Features
 
-### PostgreSQL
-
-- Full connection pooling via `pg.Pool`
-- SSL auto-detection for cloud providers (Supabase, Render, Neon)
-- `pg_stat_statements` integration for slow query monitoring
-- VACUUM, ANALYZE, REINDEX maintenance operations
-
-### MySQL
-
-- Connection pooling via `mysql2`
-- Performance schema integration
-- ANALYZE, OPTIMIZE, CHECK table operations
-
-### SQLite
-
-- Synchronous operations (file-based)
-- WAL mode enabled by default
-- VACUUM, ANALYZE, INTEGRITY_CHECK support
-
-### MongoDB
-
-- Connection pooling via official MongoDB driver
-- JSON-based MQL queries
-- Automatic schema inference from documents
-- Compact, validate, reIndex maintenance operations
-- Profiler integration for slow query monitoring
+Provider-specific behaviour — pooling model, SSL/encryption, pagination, monitoring sources,
+maintenance operations, and known limitations — is documented per provider under
+[`docs/providers/`](./providers/README.md). Start there for anything specific to PostgreSQL, MySQL,
+Oracle, SQL Server, SQLite, Redis, or MongoDB.
 
 ## Security Considerations
 
@@ -844,42 +796,15 @@ const result = await provider.query(prepared.query);
 
 ## Reference: Existing Providers
 
-### PostgresProvider (`src/lib/db/providers/sql/postgres.ts`)
+For the authoritative, code-verified reference for each shipped provider (extends-which-base,
+driver, pooling, capabilities, labels, `prepareQuery` behaviour, and limitations), see the prime
+docs — they are the single source of truth and are kept in sync with the code:
 
-- Extends: `SQLBaseProvider`
-- Driver: `pg` (node-postgres)
-- Connection pooling: `pg.Pool`
-- Capabilities: `sql`, explain: yes, port: 5432, maintenance: vacuum/analyze/reindex/kill
-- Labels: defaults (Table, row, Select Top 100, etc.)
-- `prepareQuery`: inherited from SQLBaseProvider (auto LIMIT injection)
+**[docs/providers/](./providers/README.md)** → postgres · mysql · oracle · mssql · sqlite · redis · mongodb
 
-### MySQLProvider (`src/lib/db/providers/sql/mysql.ts`)
-
-- Extends: `SQLBaseProvider`
-- Driver: `mysql2/promise`
-- Connection pooling: `mysql2.createPool`
-- Capabilities: `sql`, explain: yes, port: 3306, maintenance: analyze/optimize/check/kill
-- Labels: defaults
-- `prepareQuery`: inherited from SQLBaseProvider
-
-### SQLiteProvider (`src/lib/db/providers/sql/sqlite.ts`)
-
-- Extends: `SQLBaseProvider`
-- Driver: `better-sqlite3`
-- No connection pooling (file-based)
-- Capabilities: `sql`, explain: no, port: null, maintenance: vacuum/analyze/reindex/check
-- Labels: defaults
-- `prepareQuery`: inherited from SQLBaseProvider
-
-### MongoDBProvider (`src/lib/db/providers/document/mongodb.ts`)
-
-- Extends: `BaseDatabaseProvider` (NOT SQLBaseProvider)
-- Driver: `mongodb`
-- Connection: `MongoClient`
-- Capabilities: `json`, explain: no, createTable: no, port: 27017, maintenance: vacuum/analyze/check
-- Labels: fully custom (Collection, document, Find Documents, etc.)
-- `prepareQuery`: pass-through (MongoDB handles its own limiting)
-- Query format: JSON `{ collection, operation, filter, options }`
+When implementing a new provider, the closest existing analogue is the best template: a pooled SQL
+provider (postgres/mysql), an embedded SQL provider (sqlite), or a non-SQL provider
+(mongodb/redis).
 
 ## Quick Reference Checklist
 
