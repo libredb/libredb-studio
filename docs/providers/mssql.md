@@ -43,7 +43,7 @@ provider — and it has a couple of distinct gaps too:
 | Encryption | opt-in | **`encrypt: true` by default** (Azure-aware `trustServerCertificate`) |
 | Schema | 1 MATERIALIZED-CTE round-trip | **5 bulk `sys.*` queries** grouped in memory |
 | Blocked-session detection | always `false` | **real** (`blocking_session_id > 0`) |
-| Index `scans` | `pg_stat_user_indexes` | **real** (`dm_db_index_usage_stats`) |
+| Index `scans` | real (`pg_stat_user_indexes.idx_scan`) | real (`dm_db_index_usage_stats`) — both real, unlike Oracle (`0`)/MySQL (`CARDINALITY`) |
 | Transaction timeout | 5-minute auto-rollback | **none** |
 | `connectionString` | passed to driver | **ignored by the provider** (UI decomposes URLs to fields) |
 | Maintenance | vacuum / analyze / reindex / kill | `analyze` / `check` / `optimize` / `kill` |
@@ -116,8 +116,8 @@ so a non-`SELECT` statement returns its real affected-row count.
 
 `buildConfig()` maps `ProviderOptions.queryTimeout` to the driver's `requestTimeout` and
 `pool.acquireTimeout` to `connectTimeout`. So — unlike MySQL and Oracle, which wire no query timeout
-at all — SQL Server **does** bound a request: `requestTimeout` is enforced **client-side by the
-`mssql`/Tedious driver** (it aborts the request and signals the server), not a server-enforced
+at all — SQL Server **does** impose a request timeout: `requestTimeout` is enforced **client-side by
+the `mssql`/Tedious driver** (it aborts the request and signals the server), not a server-enforced
 statement timeout like Postgres's `statement_timeout`. An overrunning query still surfaces as a
 `TimeoutError`.
 
@@ -211,8 +211,9 @@ Native `mssql` errors are normalised through `mapDatabaseError()` (see [§11](#1
 ### 5.2 Query cancellation
 
 A query issued with a `queryId` stores its `Request`. `cancelQuery(queryId)`
-([mssql.ts:256](../../src/lib/db/providers/sql/mssql.ts)) calls `request.cancel()` and returns `true`
-on success (no verification that a query was running). Exposed via `POST /api/db/cancel`.
+([mssql.ts:256](../../src/lib/db/providers/sql/mssql.ts)) returns `false` if no `Request` is tracked
+for that id; otherwise it calls `request.cancel()` and returns `true` as long as that call doesn't
+throw — it does **not** confirm the cancellation actually took effect. Exposed via `POST /api/db/cancel`.
 
 ### 5.3 Data-type & parameter handling ⚠️
 
@@ -278,8 +279,10 @@ in parallel. Each sub-query is independently privilege-guarded (DMVs need `VIEW 
 | `getIndexStats()` | `sys.indexes`/`allocation_units` + `dm_db_index_usage_stats` | **`scans` is real** (seeks+scans+lookups); `[]` on failure |
 | `getStorageStats()` | `sys.database_files` | per-file name/path/size; `[]` on failure |
 
-SQL Server is the only provider that reports **real blocked-session detection** and **real index
-scan counts** (Postgres reports `blocked: false`; Oracle/MySQL approximate index usage).
+SQL Server is the only provider that reports **real blocked-session detection** (`blocking_session_id`;
+Postgres/Oracle/MySQL report `blocked: false`). For **index scan counts** it joins
+`dm_db_index_usage_stats` — real usage data, the same calibre as Postgres's `pg_stat_user_indexes.idx_scan`
+(whereas Oracle reports `0` and MySQL substitutes `CARDINALITY`).
 
 ---
 
@@ -334,8 +337,9 @@ global labels. The UI display name for the database type is *"SQL Server"* (`db-
 | `connect()` fails | `ConnectionError` (carries host/port) |
 | *Login failed* (`ER`/18456) | `AuthenticationError` |
 | *Cannot open database* | `ConnectionError` |
+| Cancellation messages (*canceling statement*, *query was cancelled*, *query execution was interrupted*, *kill query*) | `QueryCancelledError` — matched **before** the timeout check |
 | `requestTimeout` exceeded (message contains *timeout*) | `TimeoutError` |
-| Cancelled request / other errors | generic `QueryError` / `DatabaseError` with the original message |
+| Other errors | generic `QueryError` / `DatabaseError` with the original message |
 
 Because `requestTimeout` *is* wired ([§3.5](#35-a-query-timeout-is-wired-driver-enforced)) — even
 though it's driver-enforced rather than server-side — an overrunning query genuinely produces a
