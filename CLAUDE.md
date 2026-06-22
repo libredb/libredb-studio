@@ -211,6 +211,18 @@ charts/
    - **Document:** MongoDB (extends `BaseDatabaseProvider`)
    - **Key-Value:** Redis (extends `BaseDatabaseProvider`)
 
+   > **⚠️ Providers are the lifeblood of this project. Keep the three artifacts in lockstep:**
+   > **code ↔ docs ↔ tests.** For every provider there is a 1:1 triad, keyed by the canonical
+   > **type-id** (`postgres`, `mysql`, `sqlite`, `oracle`, `mssql`, `mongodb`, `redis`):
+   > - **Code:** `src/lib/db/providers/<family>/<type-id>.ts`
+   > - **Docs:** `docs/providers/<type-id>.md` (filename = type-id; official name only in the title/prose)
+   > - **Tests:** `tests/integration/db/<type-id>-provider.test.ts`
+   >
+   > **Any change to one side MUST sync the others in the same PR.** Change the code → update the
+   > doc and tests to match. Touch the doc → verify it still reflects the code (every `file:line`
+   > citation, every behaviour). The doc must mirror the code, and the code must mirror what the doc
+   > promises — they are never allowed to drift.
+
 2. **LLM Abstraction:** `src/lib/llm/` module provides Strategy Pattern for AI providers (Gemini, OpenAI, Ollama, Custom)
 
 3. **Authentication Flow:** Supports two modes controlled by `NEXT_PUBLIC_AUTH_PROVIDER`:
@@ -322,3 +334,28 @@ const query = JSON.stringify({
   options: { limit: 50 }
 });
 ```
+
+### Redis
+```typescript
+const connection = {
+  type: 'redis',
+  host: 'localhost',
+  port: 6379,
+  password: 'secret',   // optional
+  database: '0',         // logical DB index (defaults to 0)
+};
+
+// Query format — two interchangeable styles:
+// 1. Plain Redis command (quoted args supported)
+const plain = 'HGETALL user:1';
+
+// 2. JSON command object
+const json = JSON.stringify({ command: 'HGETALL', args: ['user:1'] });
+```
+
+Redis is a key-value store, so it maps onto the SQL-oriented provider interface
+by convention rather than by emulation:
+- **Schema** — `getSchema()` runs a non-blocking `SCAN` (never `KEYS *`) and groups
+  keys by prefix, exposing each prefix (e.g. `user:*`) as a "table".
+- **Health / overview / metrics** — derived from the `INFO` command output.
+- **Slow queries / active sessions** — derived from `SLOWLOG GET` and `CLIENT LIST`.

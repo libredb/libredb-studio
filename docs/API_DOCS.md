@@ -319,7 +319,55 @@ For MongoDB connections, the `sql` field should contain a JSON query:
 - `deleteOne` - Delete single document
 - `deleteMany` - Delete multiple documents
 - `aggregate` - Aggregation pipeline
-- `countDocuments` - Count documents
+- `count` - Count documents matching a filter (runs `countDocuments` internally)
+- `distinct` - Distinct values for a field (the field is taken from the first key of `options.projection`)
+
+##### Redis Query Format
+
+Redis is a key-value store, so the `sql` field carries a Redis command instead of SQL. Two interchangeable formats are accepted.
+
+**1. Plain command** (whitespace-separated, single/double-quoted arguments preserved):
+
+```json
+{
+  "connection": {
+    "type": "redis",
+    "host": "localhost",
+    "port": 6379,
+    "database": "0"
+  },
+  "sql": "HGETALL user:1"
+}
+```
+
+**2. JSON command object:**
+
+```json
+{
+  "connection": {
+    "type": "redis",
+    "host": "localhost",
+    "port": 6379
+  },
+  "sql": "{\"command\":\"GET\",\"args\":[\"user:123\"]}"
+}
+```
+
+**Result shaping** — the response is normalised into the standard `rows` / `fields` / `rowCount` envelope:
+
+| Redis reply | Rendered as |
+|-------------|-------------|
+| Simple string / status (`GET`, `PING`, `SET`) | single `result` column |
+| Integer (`DEL`, `DBSIZE`, `INCR`) | `result` column as `(integer) N` |
+| `nil` / empty list | `(nil)` / `(empty list)` |
+| Array (`KEYS`, `SMEMBERS`, `LRANGE`) | `index` + `value` columns |
+| Hash (`HGETALL`) | `field` + `value` columns |
+| `INFO` | `section` + `key` + `value` columns |
+
+**Notes:**
+- Schema introspection (`/api/db/schema`) uses a non-blocking `SCAN` and groups keys by prefix, presenting each prefix (e.g. `user:*`) as a "table".
+- Monitoring/health endpoints derive their data from `INFO`, `SLOWLOG GET`, and `CLIENT LIST`.
+- Invalid JSON, a missing `command` field, or an unknown/failed Redis command returns `400 Bad Request` with code `QUERY_ERROR`.
 
 ---
 

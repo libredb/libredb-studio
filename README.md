@@ -161,11 +161,13 @@ The test instance comes with a pre-configured PostgreSQL database via [Seed Conn
 | **MySQL** | `mysql2` | Full SQL IDE, EXPLAIN plans, transactions, query cancellation (`KILL QUERY`), SSL/TLS, SSH tunnel |
 | **Oracle** | `oracledb` (Thin mode) | Full SQL IDE, `FETCH FIRST N ROWS` pagination, `V$` monitoring views, `ANALYZE TABLE`, `ALTER INDEX REBUILD`, transactions |
 | **SQL Server** | `mssql` (tedious) | Full SQL IDE, `TOP N` / `OFFSET FETCH` pagination, `sys.dm_*` DMVs, `UPDATE STATISTICS`, `DBCC CHECKDB`, transactions, Azure SQL auto-detect |
-| **SQLite** | `better-sqlite3` | Full SQL IDE, file-based or in-memory databases |
+| **SQLite** | `bun:sqlite` | Full SQL IDE, file-based or in-memory databases (server-local file) |
 | **MongoDB** | `mongodb` | JSON query editor, collection operations (find, aggregate, insert, update, delete) |
 | **Redis** | `ioredis` | Command editor, key browser, INFO-based monitoring |
 
 > All SQL databases share: schema explorer, ER diagrams, schema diff & migration, data masking, monitoring dashboard, and connection string import.
+
+> 📚 **Provider reference docs:** each database has an in-depth reference (design, connection, query format, monitoring, limitations) under [`docs/providers/`](docs/providers/README.md). For the provider architecture and a guide to adding a new database, see [`docs/DATABASE_PROVIDERS.md`](docs/DATABASE_PROVIDERS.md).
 
 ---
 

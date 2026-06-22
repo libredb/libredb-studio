@@ -1,6 +1,11 @@
 # Database Provider Architecture
 
-This document describes the modular database provider architecture implemented using the Strategy Pattern. It serves both as an architecture/reference guide and as a step-by-step tutorial for [adding a new database provider](#adding-a-new-database-provider).
+This document describes the modular database provider architecture implemented using the Strategy Pattern. It serves both as the **architecture overview** and as a step-by-step tutorial for [adding a new database provider](#adding-a-new-database-provider).
+
+> **Per-provider detail lives in [`docs/providers/`](./providers/README.md).** Each provider has its
+> own prime reference (`docs/providers/<type-id>.md`) covering connection, query format, schema,
+> monitoring, maintenance, capabilities, error handling, testing, and known limitations. This
+> document is the cross-cutting **architecture + authoring** companion to those per-provider docs.
 
 ## Overview
 
@@ -17,16 +22,19 @@ src/lib/db/
 ├── base-provider.ts            # Abstract base class
 ├── providers/
 │   ├── sql/                    # SQL Database Providers
-│   │   ├── index.ts            # SQL exports
 │   │   ├── sql-base.ts         # SQL-specific base class
 │   │   ├── postgres.ts         # PostgreSQL Strategy
 │   │   ├── mysql.ts            # MySQL Strategy
-│   │   └── sqlite.ts           # SQLite Strategy
+│   │   ├── sqlite.ts           # SQLite Strategy
+│   │   ├── oracle.ts           # Oracle Strategy
+│   │   └── mssql.ts            # SQL Server Strategy
 │   ├── document/               # Document Database Providers
-│   │   ├── index.ts            # Document exports
 │   │   └── mongodb.ts          # MongoDB Strategy
+│   └── keyvalue/               # Key-Value Providers
+│       └── redis.ts            # Redis Strategy
 └── utils/
-    └── pool-manager.ts         # Connection pool utilities
+    ├── pool-manager.ts         # Connection pool utilities
+    └── query-limiter.ts        # SELECT auto-LIMIT (analyzeQuery/applyQueryLimit)
 ```
 
 ## Provider Hierarchy
@@ -34,13 +42,16 @@ src/lib/db/
 ```
 BaseDatabaseProvider (abstract)
 ├── SQLBaseProvider (abstract) ─────────────┐
-│   ├── PostgresProvider                    │ SQL Databases
-│   ├── MySQLProvider                       │ (shared SQL utilities)
-│   └── SQLiteProvider                      │
-├── MongoDBProvider ────────────────────────┤ Document Databases
+│   ├── PostgresProvider                    │
+│   ├── MySQLProvider                       │ SQL Databases
+│   ├── SQLiteProvider                      │ (shared SQL utilities)
+│   ├── OracleProvider                      │
+│   └── MSSQLProvider                       │
+├── MongoDBProvider ────────────────────────┤ Document Database
+└── RedisProvider ──────────────────────────┘ Key-Value Store
 ```
 
-`SQLBaseProvider` provides SQL-specific helpers (LIMIT injection, identifier escaping, placeholder generation). Non-SQL databases like MongoDB extend `BaseDatabaseProvider` directly.
+`SQLBaseProvider` provides SQL-specific helpers (LIMIT injection, identifier escaping, placeholder generation). Non-SQL databases like MongoDB and Redis extend `BaseDatabaseProvider` directly.
 
 **Key files:**
 
@@ -79,14 +90,18 @@ QueryEditor                      /api/db/query
 
 ## Supported Databases
 
-| Category | Database   | Status | Driver           | Pooling | Notes                    |
-|----------|------------|--------|------------------|---------|--------------------------|
-| SQL      | PostgreSQL | Full   | `pg`             | Yes     | Production ready         |
-| SQL      | MySQL      | Full   | `mysql2`         | Yes     | Production ready         |
-| SQL      | SQLite     | Full   | `better-sqlite3` | No      | File-based, sync driver  |
-| Document | MongoDB    | Full   | `mongodb`        | Yes     | JSON-based queries       |
-| SQL      | Oracle     | Full   | `oracledb`       | Yes     | Production ready         |
-| SQL      | SQL Server | Full   | `mssql`          | Yes     | Production ready         |
+Seven providers are supported. For the per-provider reference (driver, pooling, query format,
+monitoring, limitations, …) see the prime docs in **[`docs/providers/`](./providers/README.md)**:
+
+| Provider | type-id | Family | Reference |
+|----------|---------|--------|-----------|
+| PostgreSQL | `postgres` | SQL | [providers/postgres.md](./providers/postgres.md) |
+| MySQL | `mysql` | SQL | [providers/mysql.md](./providers/mysql.md) |
+| Oracle | `oracle` | SQL | [providers/oracle.md](./providers/oracle.md) |
+| Microsoft SQL Server | `mssql` | SQL | [providers/mssql.md](./providers/mssql.md) |
+| SQLite | `sqlite` | SQL (embedded) | [providers/sqlite.md](./providers/sqlite.md) |
+| Redis | `redis` | Key-Value | [providers/redis.md](./providers/redis.md) |
+| MongoDB | `mongodb` | Document | [providers/mongodb.md](./providers/mongodb.md) |
 
 ## Core Interface
 
@@ -174,56 +189,15 @@ const schema = await provider.getSchema();
 await provider.disconnect();
 ```
 
-## MongoDB Query Format
+## Non-SQL Query Formats
 
-MongoDB queries are JSON-formatted with the following structure:
+The non-SQL providers take a JSON query rather than SQL. The full format, operation list, and worked
+examples live in their prime docs:
 
-```typescript
-interface MongoQuery {
-  collection: string;  // Required: collection name
-  operation: string;   // Required: find, findOne, aggregate, count, distinct,
-                       //           insertOne, insertMany, updateOne, updateMany,
-                       //           deleteOne, deleteMany
-  filter?: object;     // Optional: query filter
-  pipeline?: object[]; // Optional: aggregation pipeline
-  update?: object;     // Optional: update document
-  documents?: object[];// Optional: documents to insert
-  options?: {
-    limit?: number;
-    skip?: number;
-    sort?: object;
-    projection?: object;
-  };
-}
-```
-
-### MongoDB Query Examples
-
-```json
-// Find documents
-{"collection": "users", "operation": "find", "filter": {"status": "active"}, "options": {"limit": 50}}
-
-// Find one document
-{"collection": "users", "operation": "findOne", "filter": {"_id": "123"}}
-
-// Aggregate
-{"collection": "orders", "operation": "aggregate", "pipeline": [
-  {"$match": {"status": "completed"}},
-  {"$group": {"_id": "$customerId", "total": {"$sum": "$amount"}}}
-]}
-
-// Count documents
-{"collection": "users", "operation": "count", "filter": {"role": "admin"}}
-
-// Insert one document
-{"collection": "users", "operation": "insertOne", "documents": [{"name": "John", "email": "john@example.com"}]}
-
-// Update documents
-{"collection": "users", "operation": "updateOne", "filter": {"_id": "123"}, "update": {"$set": {"status": "inactive"}}}
-
-// Delete documents
-{"collection": "users", "operation": "deleteMany", "filter": {"status": "deleted"}}
-```
+- **MongoDB** (MQL — `{collection, operation, filter, pipeline, update, documents, options}`):
+  [providers/mongodb.md](./providers/mongodb.md) and the
+  [`API_DOCS.md` MongoDB Query Format](./API_DOCS.md) section.
+- **Redis** (plain command or `{command, args}`): [providers/redis.md](./providers/redis.md).
 
 ## Configuration
 
@@ -290,32 +264,10 @@ DatabaseError (base)
 
 ## Provider-Specific Features
 
-### PostgreSQL
-
-- Full connection pooling via `pg.Pool`
-- SSL auto-detection for cloud providers (Supabase, Render, Neon)
-- `pg_stat_statements` integration for slow query monitoring
-- VACUUM, ANALYZE, REINDEX maintenance operations
-
-### MySQL
-
-- Connection pooling via `mysql2`
-- Performance schema integration
-- ANALYZE, OPTIMIZE, CHECK table operations
-
-### SQLite
-
-- Synchronous operations (file-based)
-- WAL mode enabled by default
-- VACUUM, ANALYZE, INTEGRITY_CHECK support
-
-### MongoDB
-
-- Connection pooling via official MongoDB driver
-- JSON-based MQL queries
-- Automatic schema inference from documents
-- Compact, validate, reIndex maintenance operations
-- Profiler integration for slow query monitoring
+Provider-specific behaviour — pooling model, SSL/encryption, pagination, monitoring sources,
+maintenance operations, and known limitations — is documented per provider under
+[`docs/providers/`](./providers/README.md). Start there for anything specific to PostgreSQL, MySQL,
+Oracle, SQL Server, SQLite, Redis, or MongoDB.
 
 ## Security Considerations
 
@@ -386,272 +338,37 @@ For most SQL databases, the existing `'sql'` type is sufficient. You only need a
 
 ## Step 2: Create the Provider Class
 
-### For SQL databases
+Create the file under the right family folder, named by the canonical **type-id** —
+`src/lib/db/providers/sql/<type-id>.ts` for SQL, `src/lib/db/providers/<family>/<type-id>.ts`
+(e.g. `document/`, `keyvalue/`) for non-SQL.
 
-Create a file under `src/lib/db/providers/sql/`:
+**Start from the closest existing provider — it is the authoritative, code-verified template** (and
+is kept in sync with its per-provider doc). Don't copy a skeleton from this guide; copy a real file:
 
-```
-src/lib/db/providers/sql/cockroachdb.ts
-```
+| Your database is… | Extend | Copy as template | Reference |
+|-------------------|--------|------------------|-----------|
+| Pooled SQL (wire-protocol DB) | `SQLBaseProvider` | `postgres.ts` / `mysql.ts` | [postgres.md](./providers/postgres.md) · [mysql.md](./providers/mysql.md) |
+| Embedded / file SQL | `SQLBaseProvider` | `sqlite.ts` | [sqlite.md](./providers/sqlite.md) |
+| Document store | `BaseDatabaseProvider` | `mongodb.ts` | [mongodb.md](./providers/mongodb.md) |
+| Key-value store | `BaseDatabaseProvider` | `redis.ts` | [redis.md](./providers/redis.md) |
 
-```typescript
-/**
- * CockroachDB Database Provider
- * PostgreSQL-compatible distributed SQL database
- */
+**Implement the abstract methods** from the `DatabaseProvider` interface: `connect`, `disconnect`,
+`query`, `getSchema`, `getHealth`, `runMaintenance`, plus the monitoring set (`getOverview`,
+`getPerformanceMetrics`, `getSlowQueries`, `getActiveSessions`, `getTableStats`, `getIndexStats`,
+`getStorageStats`). Return `[]` from the monitoring methods that don't apply to your engine.
 
-import { Pool } from 'pg'; // CockroachDB uses the PostgreSQL wire protocol
-import { SQLBaseProvider } from './sql-base';
-import {
-  type DatabaseConnection,
-  type TableSchema,
-  type ColumnSchema,
-  type IndexSchema,
-  type QueryResult,
-  type HealthInfo,
-  type MaintenanceType,
-  type MaintenanceResult,
-  type ProviderOptions,
-  type ProviderCapabilities,
-  type DatabaseOverview,
-  type PerformanceMetrics,
-  type SlowQueryStats,
-  type ActiveSessionDetails,
-  type TableStats,
-  type IndexStats,
-  type StorageStats,
-} from '../../types';
-import {
-  DatabaseConfigError,
-  ConnectionError,
-  QueryError,
-  mapDatabaseError,
-} from '../../errors';
+**Override the metadata hooks** so the shared UI renders correctly:
 
-export class CockroachDBProvider extends SQLBaseProvider {
-  private pool: Pool | null = null;
+- `getCapabilities()` — query language (`sql` | `json`), `defaultPort`, supported `maintenanceOperations`, the `supportsExplain`/`supportsConnectionString`/`supportsCreateTable` flags, and `schemaRefreshPattern`.
+- `getLabels()` — only if the generic SQL wording ("Table" / "row" / "Select Top 50" / …) doesn't fit. Non-relational providers relabel it (Redis → "Key Pattern"/"key", MongoDB → "Collection"/"document").
+- `prepareQuery()` — only if your dialect needs non-standard pagination. SQL `LIMIT` injection is inherited from `SQLBaseProvider`; Oracle/SQL Server override it for `FETCH FIRST` / `TOP`; the non-SQL providers make it a metadata-only pass-through.
 
-  constructor(config: DatabaseConnection, options: ProviderOptions = {}) {
-    super(config, options);
-    this.validate();
-  }
+Wrap native driver errors with `mapDatabaseError(err, '<type-id>', query)` — the 3rd argument is the
+raw query string (SQL **or** JSON, per `src/lib/db/errors.ts`) — so they normalise onto the shared
+error classes. For the exact DTO shapes see [Reference: Interface Contracts](#reference-interface-contracts);
+for worked, code-verified examples see each provider's **Design decisions** section in
+[`docs/providers/`](./providers/README.md).
 
-  // ──────────────────────────────────────────────
-  // Provider Metadata (REQUIRED OVERRIDES)
-  // ──────────────────────────────────────────────
-
-  public override getCapabilities(): ProviderCapabilities {
-    return {
-      ...super.getCapabilities(),           // Inherits SQL defaults
-      defaultPort: 26257,                    // CockroachDB default port
-      supportsExplain: true,                 // Supports EXPLAIN
-      supportsConnectionString: true,        // Supports connection URI
-      maintenanceOperations: ['analyze'],     // Only ANALYZE supported
-    };
-  }
-
-  // getLabels() — SQL defaults from BaseDatabaseProvider are fine
-  //   entityName: 'Table', selectAction: 'Select Top 100', etc.
-  //   Override only if you need different labels.
-
-  // prepareQuery() — SQLBaseProvider handles LIMIT injection automatically
-  //   Override only if your SQL dialect has a different LIMIT syntax.
-
-  // ──────────────────────────────────────────────
-  // Connection Management (REQUIRED)
-  // ──────────────────────────────────────────────
-
-  public async connect(): Promise<void> {
-    try {
-      this.pool = new Pool({
-        host: this.config.host,
-        port: this.config.port || 26257,
-        database: this.config.database,
-        user: this.config.user,
-        password: this.config.password,
-        max: this.poolConfig.max,
-        idleTimeoutMillis: this.poolConfig.idleTimeout,
-        connectionTimeoutMillis: this.poolConfig.acquireTimeout,
-        ssl: this.shouldEnableSSL() ? { rejectUnauthorized: false } : undefined,
-      });
-
-      // Test connection
-      const client = await this.pool.connect();
-      client.release();
-      this.setConnected(true);
-    } catch (error) {
-      this.setError(error as Error);
-      throw new ConnectionError(
-        `Failed to connect to CockroachDB: ${(error as Error).message}`,
-        'cockroachdb'
-      );
-    }
-  }
-
-  public async disconnect(): Promise<void> {
-    if (this.pool) {
-      await this.pool.end();
-      this.pool = null;
-    }
-    this.setConnected(false);
-  }
-
-  // ──────────────────────────────────────────────
-  // Query Execution (REQUIRED)
-  // ──────────────────────────────────────────────
-
-  public async query(sql: string, params?: unknown[]): Promise<QueryResult> {
-    this.ensureConnected();
-    if (!this.pool) throw new ConnectionError('Pool not initialized', 'cockroachdb');
-
-    return this.trackQuery(async () => {
-      const { result, executionTime } = await this.measureExecution(async () => {
-        return this.pool!.query(sql, params);
-      });
-
-      return {
-        rows: result.rows || [],
-        fields: result.fields?.map(f => f.name) || [],
-        rowCount: result.rows?.length || 0,
-        executionTime,
-      };
-    });
-  }
-
-  // ──────────────────────────────────────────────
-  // Schema Introspection (REQUIRED)
-  // ──────────────────────────────────────────────
-
-  public async getSchema(): Promise<TableSchema[]> {
-    this.ensureConnected();
-    // Use information_schema (same as PostgreSQL)
-    const tablesResult = await this.query(`
-      SELECT table_name, ...
-      FROM information_schema.tables
-      WHERE table_schema = 'public'
-    `);
-    // ... build TableSchema[] from results
-    return [];
-  }
-
-  // ──────────────────────────────────────────────
-  // Health & Monitoring (REQUIRED)
-  // ──────────────────────────────────────────────
-
-  public async getHealth(): Promise<HealthInfo> { /* ... */ }
-  public async getOverview(): Promise<DatabaseOverview> { /* ... */ }
-  public async getPerformanceMetrics(): Promise<PerformanceMetrics> { /* ... */ }
-  public async getSlowQueries(): Promise<SlowQueryStats[]> { /* ... */ }
-  public async getActiveSessions(): Promise<ActiveSessionDetails[]> { /* ... */ }
-  public async getTableStats(): Promise<TableStats[]> { /* ... */ }
-  public async getIndexStats(): Promise<IndexStats[]> { /* ... */ }
-  public async getStorageStats(): Promise<StorageStats[]> { /* ... */ }
-
-  // ──────────────────────────────────────────────
-  // Maintenance (REQUIRED)
-  // ──────────────────────────────────────────────
-
-  public async runMaintenance(type: MaintenanceType, target?: string): Promise<MaintenanceResult> {
-    this.ensureConnected();
-    const { result, executionTime } = await this.measureExecution(async () => {
-      switch (type) {
-        case 'analyze':
-          if (target) {
-            await this.query(`ANALYZE ${this.escapeIdentifier(target)}`);
-          } else {
-            // CockroachDB doesn't have a global ANALYZE; iterate tables
-          }
-          return { success: true };
-        default:
-          throw new QueryError(`Unsupported maintenance operation: ${type}`, 'cockroachdb');
-      }
-    });
-    return {
-      success: true,
-      executionTime,
-      message: `${type} completed successfully`,
-    };
-  }
-
-  // ──────────────────────────────────────────────
-  // Validation
-  // ──────────────────────────────────────────────
-
-  public override validate(): void {
-    super.validate();
-    if (!this.config.connectionString && !this.config.host) {
-      throw new DatabaseConfigError('Host or connection string is required', 'cockroachdb');
-    }
-    if (!this.config.database && !this.config.connectionString) {
-      throw new DatabaseConfigError('Database name is required', 'cockroachdb');
-    }
-  }
-}
-```
-
-### For non-SQL databases
-
-Create a file under `src/lib/db/providers/` (choose an appropriate subdirectory):
-
-```
-src/lib/db/providers/keyvalue/redis.ts
-```
-
-Extend `BaseDatabaseProvider` directly and override **all** abstract methods plus the 3 metadata methods:
-
-```typescript
-import { BaseDatabaseProvider } from '../../base-provider';
-
-export class RedisProvider extends BaseDatabaseProvider {
-  constructor(config: DatabaseConnection, options: ProviderOptions = {}) {
-    super(config, options);
-    this.validate();
-  }
-
-  // Must override getCapabilities() — defaults are SQL-oriented
-  public override getCapabilities(): ProviderCapabilities {
-    return {
-      queryLanguage: 'json',              // or 'sql' if Redis uses a custom CLI-like syntax
-      supportsExplain: false,
-      supportsExternalQueryLimiting: false,
-      supportsCreateTable: false,
-      supportsMaintenance: true,
-      maintenanceOperations: ['analyze'],
-      supportsConnectionString: true,
-      defaultPort: 6379,
-      schemaRefreshPattern: '"operation"\\s*:\\s*"(set|del|hset)',
-    };
-  }
-
-  // Must override getLabels()
-  public override getLabels(): ProviderLabels {
-    return {
-      entityName: 'Key Space',
-      entityNamePlural: 'Key Spaces',
-      rowName: 'key',
-      rowNamePlural: 'keys',
-      selectAction: 'Scan Keys',
-      generateAction: 'Generate Command',
-      analyzeAction: 'Inspect Key',
-      vacuumAction: 'Flush Keys',
-      searchPlaceholder: 'Search key spaces...',
-      analyzeGlobalLabel: 'Run Info',
-      analyzeGlobalTitle: 'Server Info',
-      analyzeGlobalDesc: 'Retrieves Redis server statistics and memory usage.',
-      vacuumGlobalLabel: 'Run Memory Doctor',
-      vacuumGlobalTitle: 'Memory Analysis',
-      vacuumGlobalDesc: 'Analyzes memory usage patterns and suggests optimizations.',
-    };
-  }
-
-  // Must override prepareQuery()
-  public override prepareQuery(query: string, options: QueryPrepareOptions = {}): PreparedQuery {
-    return { query, wasLimited: false, limit: options.limit || 100, offset: 0 };
-  }
-
-  // ... implement all abstract methods: connect, disconnect, query, getSchema, etc.
-}
-```
 
 ### What the base class gives you for free
 
@@ -844,42 +561,15 @@ const result = await provider.query(prepared.query);
 
 ## Reference: Existing Providers
 
-### PostgresProvider (`src/lib/db/providers/sql/postgres.ts`)
+For the authoritative, code-verified reference for each shipped provider (extends-which-base,
+driver, pooling, capabilities, labels, `prepareQuery` behaviour, and limitations), see the prime
+docs — they are the single source of truth and are kept in sync with the code:
 
-- Extends: `SQLBaseProvider`
-- Driver: `pg` (node-postgres)
-- Connection pooling: `pg.Pool`
-- Capabilities: `sql`, explain: yes, port: 5432, maintenance: vacuum/analyze/reindex/kill
-- Labels: defaults (Table, row, Select Top 100, etc.)
-- `prepareQuery`: inherited from SQLBaseProvider (auto LIMIT injection)
+**[docs/providers/](./providers/README.md)** → postgres · mysql · oracle · mssql · sqlite · redis · mongodb
 
-### MySQLProvider (`src/lib/db/providers/sql/mysql.ts`)
-
-- Extends: `SQLBaseProvider`
-- Driver: `mysql2/promise`
-- Connection pooling: `mysql2.createPool`
-- Capabilities: `sql`, explain: yes, port: 3306, maintenance: analyze/optimize/check/kill
-- Labels: defaults
-- `prepareQuery`: inherited from SQLBaseProvider
-
-### SQLiteProvider (`src/lib/db/providers/sql/sqlite.ts`)
-
-- Extends: `SQLBaseProvider`
-- Driver: `better-sqlite3`
-- No connection pooling (file-based)
-- Capabilities: `sql`, explain: no, port: null, maintenance: vacuum/analyze/reindex/check
-- Labels: defaults
-- `prepareQuery`: inherited from SQLBaseProvider
-
-### MongoDBProvider (`src/lib/db/providers/document/mongodb.ts`)
-
-- Extends: `BaseDatabaseProvider` (NOT SQLBaseProvider)
-- Driver: `mongodb`
-- Connection: `MongoClient`
-- Capabilities: `json`, explain: no, createTable: no, port: 27017, maintenance: vacuum/analyze/check
-- Labels: fully custom (Collection, document, Find Documents, etc.)
-- `prepareQuery`: pass-through (MongoDB handles its own limiting)
-- Query format: JSON `{ collection, operation, filter, options }`
+When implementing a new provider, the closest existing analogue is the best template: a pooled SQL
+provider (postgres/mysql), an embedded SQL provider (sqlite), or a non-SQL provider
+(mongodb/redis).
 
 ## Quick Reference Checklist
 
