@@ -84,13 +84,10 @@ Lightweight regex-based SQL parser that extracts table aliases without external 
 
 #### 2. Completion Provider (`src/lib/editor/sql-completions.ts`)
 
-Monaco Editor completion provider (`registerCompletionItemProvider('sql', …)`, triggered on `.` and
-space) that integrates with the alias extractor. Registered by the editor and hosted in
-`src/components/QueryEditor.tsx`.
-Monaco Editor completion provider that integrates with the alias extractor. The
-provider is implemented as `registerSQLCompletionProvider(monaco, schemaCompletionCache)`
-and registered from `src/components/QueryEditor.tsx` (in an `useEffect` that returns the
-disposable for cleanup).
+Monaco Editor completion provider that integrates with the alias extractor. It is implemented as
+`registerSQLCompletionProvider(monaco, schemaCompletionCache)`, which calls
+`registerCompletionItemProvider('sql', …)` with trigger characters `.` and space. It is registered
+from `src/components/QueryEditor.tsx` in a `useEffect` that returns the disposable for cleanup.
 
 **Dot-triggered completion flow:**
 ```
