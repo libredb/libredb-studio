@@ -104,8 +104,10 @@ on both `query()` and `queryInTransaction()`.
 ### 3.4 Prepared statements via `execute()`
 
 Both query paths use `conn.execute(sql, params)` (mysql2 server-side prepared statements) rather than
-`query()`, so parameterized queries are bound by the server. `rowCount` is derived from
-`rows.length` (mysql2 does not return a separate affected-rows count on the `RowDataPacket[]` path).
+`query()`, so parameterized queries are bound by the server. `rowCount` is `rows.length` **only when
+the driver returns a row array** (i.e. `SELECT`); for non-`SELECT` statements (INSERT/UPDATE/DELETE)
+mysql2 returns a `ResultSetHeader` rather than an array, and the provider reports `rowCount: 0`
+(`Array.isArray(result.rows) ? result.rows.length : 0`) — affected-rows is not surfaced.
 
 ### 3.5 No server-side query timeout
 
@@ -400,8 +402,9 @@ Over the API: `POST /api/db/query`, `POST /api/db/transaction`, `POST /api/db/ca
 ## 14. Known limitations & future work
 
 - **No server-side query timeout.** The pool ignores `queryTimeout`; a runaway query is not
-  auto-killed (only explicit `cancelQuery()`/`KILL QUERY`). *Future:* set a session
-  `MAX_EXECUTION_TIME` / `wait_timeout` from `queryTimeout`.
+  auto-killed (only explicit `cancelQuery()`/`KILL QUERY`). *Future:* derive a per-statement
+  `MAX_EXECUTION_TIME` (the SELECT execution limit) from `queryTimeout`. (Note `wait_timeout` is
+  unrelated — it bounds idle connections, not query execution.)
 - **N+1 schema introspection, no two-phase loading.** `getSchema()` issues `1 + 3×tables` queries
   and there is no `getSchemaList()`/`getSchemaRelations()`, so large schemas are slower than the
   Postgres MATERIALIZED-CTE path and the tree cannot stream relationships in.
