@@ -147,7 +147,7 @@ Subchart secret name follows Bitnami convention: `<release-name>-postgresql` (no
 
 ### 6. ConfigMap / Environment Variables
 
-All non-sensitive configuration flows through a ConfigMap:
+Most non-sensitive configuration flows through a ConfigMap (the seed-connection vars are the exception — see the note below the table):
 
 | Variable | Source | Conditional |
 |----------|--------|-------------|
@@ -159,7 +159,7 @@ All non-sensitive configuration flows through a ConfigMap:
 | `NEXT_PUBLIC_AUTH_PROVIDER` | `authProvider` | Always |
 | `STORAGE_PROVIDER` | Auto-wired (see above) | Always |
 | `STORAGE_SQLITE_PATH` | `config.storageSqlitePath` | When sqlite |
-| `SEED_CONFIG_PATH` / `SEED_CACHE_TTL_MS` | `seedConnections.*` | When `seedConnections.enabled` |
+| `SEED_CONFIG_PATH` / `SEED_CACHE_TTL_MS` | `seedConnections.*` — set **directly on the Deployment** (not via the ConfigMap) | When `seedConnections.enabled` |
 | `LLM_PROVIDER/MODEL/API_URL` | `config.llm*` | When set |
 | `OIDC_*` | `config.oidc*` | When `authProvider=oidc` |
 
@@ -181,8 +181,8 @@ Any change to configuration values triggers a rolling restart automatically.
 
 When `seedConnections.enabled=true`, the chart provisions a set of pre-defined database connections at startup:
 
-- Connection definitions come from inline `seedConnections.config` (rendered into `seed-configmap.yaml`) or an `existingConfigMap`.
-- The deployment mounts the config at `/app/config/seed-connections.yaml` and sets `SEED_CONFIG_PATH` (plus `SEED_CACHE_TTL_MS` from `seedConnections.cacheTTL`).
+- You must supply the definitions via **either** inline `seedConnections.config` (rendered into `seed-configmap.yaml`) **or** an `existingConfigMap`. Enabling the feature without providing one of these provisions nothing.
+- The deployment mounts the ConfigMap at `/app/config/<key>`, where `<key>` is `seedConnections.configMapKey` (default `seed-connections.yaml`), and sets `SEED_CONFIG_PATH` to that path (plus `SEED_CACHE_TTL_MS` from `seedConnections.cacheTTL`). These two env vars are set on the Deployment directly, not through the app ConfigMap.
 - Credentials referenced by the seed config resolve from environment/secret at runtime, so secrets stay out of the ConfigMap.
 
 ## Release Pipeline
