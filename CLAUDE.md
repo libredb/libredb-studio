@@ -1,361 +1,82 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Guidance for Claude Code in this repo — conventions, rules, and gotchas only. Read the code and `docs/` for anything derivable from them.
 
-> **CRITICAL: This project is published as an npm package (`@libredb/studio`) and consumed by `libredb-platform`.**
-> Every CSS class, Tailwind utility, icon prop, and component choice MUST follow the Platform Integration Rules below.
-> Violations cause silent style/layout breakage that only appears when embedded in platform — not in standalone studio.
+> **CRITICAL: published as the npm package `@libredb/studio` and consumed by `libredb-platform`.** UI/styling work MUST follow the platform-integration rules in [`.claude/rules/platform-integration.md`](.claude/rules/platform-integration.md) — auto-loaded when you touch components / `.tsx` / `globals.css`. Violations cause silent style/layout breakage that appears only when embedded in platform.
 
 ## Project Overview
 
-LibreDB Studio is a web-based SQL IDE for cloud-native teams. It supports PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, Redis with AI-powered query assistance.
+Web-based SQL IDE for cloud-native teams: PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, Redis + AI query assistance. Runs **two ways** — a standalone Next.js app AND an embedded npm package inside libredb-platform; `build:lib` (tsup) produces the package dist. Verify any UI change in both modes.
 
-**Dual usage:** Studio runs both as a standalone Next.js app AND as an embedded npm package inside libredb-platform. The `build:lib` command (tsup) produces the package dist. Any UI change must be verified in both modes.
+## Branching & PRs
 
-## Github
-* Repository: https://github.com/libredb/libredb-studio
-* Container Registry (primary): https://github.com/libredb/libredb-studio/pkgs/container/libredb-studio
-* Docker Image (primary): ghcr.io/libredb/libredb-studio:latest — no pull rate limits, use in all copy-paste examples
-* Docker Hub (mirror): https://hub.docker.com/r/libredb/libredb-studio — `libredb/libredb-studio` (convenience/discoverability only; GHCR stays canonical)
-* Helm Chart: https://artifacthub.io/packages/helm/libredb-studio/libredb-studio
-* Helm Repo: https://libredb.org/libredb-studio/
-* Helm OCI: oci://ghcr.io/libredb/charts/libredb-studio
+> **Feature/work branches target `dev`, NOT `main`.** Open every PR with base `dev` (`gh pr create --base dev`). `main` is release-only, updated via a deliberate `dev` → `main` promotion. Branch off `dev` for new work.
+
+## GitHub
+
+* Repo: https://github.com/libredb/libredb-studio
+* Image (canonical): `ghcr.io/libredb/libredb-studio:latest` — use GHCR in all copy-paste examples (Docker Hub `libredb/libredb-studio` is a discoverability mirror only)
+* Helm: repo `https://libredb.org/libredb-studio/` · OCI `oci://ghcr.io/libredb/charts/libredb-studio` · [ArtifactHub](https://artifacthub.io/packages/helm/libredb-studio/libredb-studio)
 
 ## Development Commands
 
 ```bash
-# Install dependencies (Bun preferred)
-bun install
-
-# Development server with Turbopack
-bun dev
-
-# Production build
-bun run build
-
-# Start production server
-bun start
-
-# Lint code
-bun run lint
-
-# Run all tests (unit + API + integration + hooks + components)
-bun run test
-
-# Run individual test layers
-bun run test:unit
-bun run test:api
-bun run test:integration
-bun run test:hooks
-bun run test:components
-
-# E2E tests (Playwright, requires build)
-bun run test:e2e
-
-# Coverage report
-bun run test:coverage
-
-# Library build (tsup) — exports @libredb/studio package for platform consumption
-# IMPORTANT: After changing any component used by platform (workspace, providers, etc.),
-# you MUST run this command. `bun run build` (Next.js) does NOT update the package dist.
-bun run build:lib
-
-# Docker development
-docker-compose up -d
-
-# Helm chart
-helm lint charts/libredb-studio --strict
-helm template test charts/libredb-studio --set secrets.jwtSecret=test-secret-32-chars-minimum-here --set secrets.adminPassword=test123 --set secrets.userPassword=test123
-helm dependency build charts/libredb-studio
+bun install              # deps (Bun preferred)
+bun dev                  # dev server (Turbopack)
+bun run build            # production build
+bun run lint             # ESLint 9
+bun run typecheck        # TypeScript strict
+bun run test             # all layers: unit + api + integration + hooks + components
+bun run test:e2e         # Playwright (requires build)
+bun run test:coverage    # coverage report
+bun run build:lib        # tsup → @libredb/studio package dist (see rule below)
 ```
 
-The project uses ESLint 9 for linting and `bun:test` for testing with `@testing-library/react` + `happy-dom` for component tests and Playwright for E2E tests.
+> **`build:lib` after platform-facing changes:** after changing any component used by platform (workspace, providers, …), run `build:lib` — `bun run build` (Next.js) does NOT update the package dist.
 
-> **Important**: Always use `bun run test` instead of bare `bun test`. Component tests require isolated execution groups (handled by `tests/run-components.sh`) to prevent `mock.module()` cross-contamination between test files.
->
-> **Coverage isolation**: `bun`'s `mock.module()` is process-wide, so a test file that mocks a shared module (e.g. `@/lib/db/factory`, `@/lib/oidc`, the audit module) poisons any other file that imports the real module if they share a process — yielding nondeterministic failures like `clearProviderCache is not a function` or `Export named 'removeProvider' not found`. It passes locally by load-order luck but fails in CI. For this reason `test:coverage:core` runs every core test file in its **own `bun` process** via `tests/run-core.sh` (each writing to `coverage/core/file-N`), and `test:coverage` merges all the per-file lcov reports. Do NOT collapse this back into a single `bun test tests/unit tests/api tests/integration` invocation.
+> **Tests — always `bun run test`, never bare `bun test`.** Component tests need isolated execution groups (`tests/run-components.sh`) to avoid `mock.module()` cross-contamination.
 
-## Platform Integration Rules (npm package @libredb/studio)
-
-Studio is consumed by libredb-platform as an npm package via `build:lib` (tsup). These rules prevent silent style/layout breakage that only appears when embedded in platform.
-
-### Tailwind CSS Rules
-
-| Do | Don't | Why |
-|----|-------|-----|
-| `text-xs`, `text-sm` (standard) | `text-body`, `text-data` (custom @theme) | `tailwind-merge` strips custom tokens silently |
-| `text-[0.625rem]` (arbitrary value) | `text-label` (custom @theme) | Arbitrary values are twMerge-safe |
-| `font-medium`, `font-normal` | `font-bold` everywhere | Studio is compact IDE, lighter weights |
-| `w-3 h-3`, `w-3.5 h-3.5` (icons) | `w-4 h-4` or larger | Studio icons smaller than platform |
-
-**Never define custom text tokens in `@theme` block.** `tailwind-merge` (used in `cn()`) interprets `text-body` as a color utility, not font-size. When combined with `text-muted-foreground`, twMerge silently removes `text-body` → no font-size applied → browser default 16px. This bug is invisible in standalone studio (Tailwind generates the CSS) but breaks embedded mode.
-
-### Lucide Icon Rules
-
-Always pass `strokeWidth={1.5}` to every Lucide icon:
-```tsx
-<Lock strokeWidth={1.5} className="w-3 h-3" />
-```
-Lucide defaults to `strokeWidth=2` and emits `width="24" height="24"` HTML attributes. Custom DB icons use `strokeWidth=1.5` without HTML size attributes. Without this prop, Lucide icons appear thicker and potentially larger than custom icons.
-
-### Component Rules
-
-- **Small icon buttons:** Use plain `<button className="p-1 rounded ...">` instead of shadcn `<Button size="icon">`. Platform's Button CSS can override studio's size classes due to specificity.
-- **Responsive classes:** `md:hidden`, `hidden md:block` etc. must work. If a component is in a tsup chunk, verify platform's `@source` scans that chunk.
-
-### Platform-Side Requirements
-
-Platform's `globals.css` must scan ALL studio dist files (tsup creates chunks):
-```css
-@source "../../node_modules/@libredb/studio/dist/workspace.mjs";
-@source "../../node_modules/@libredb/studio/dist/chunk-*.mjs";
-```
-Without chunk scanning, responsive/utility classes in chunked components won't generate CSS.
-
-### Verification Workflow
-
-After any UI change in studio:
-1. `bun run build:lib` — rebuild tsup dist
-2. `cp -r dist/* ../libredb-platform/node_modules/@libredb/studio/dist/` — copy to platform
-3. `rm -rf ../libredb-platform/.next` — clear platform cache (for CSS changes)
-4. Restart platform dev server and verify at `localhost:3000/workspace`
-
-## Architecture
-
-### Tech Stack
-- **Framework:** Next.js 16 (App Router) with React 19 and TypeScript
-- **Styling:** Tailwind CSS 4 with Shadcn/UI components
-- **SQL Editor:** Monaco Editor
-- **Data Grid:** TanStack React Table with react-virtual for virtualization
-- **AI:** Multi-model support (Gemini, OpenAI, Ollama, Custom)
-- **Databases:** PostgreSQL (`pg`), MySQL (`mysql2`), SQLite (`better-sqlite3`), Oracle (`oracledb`), SQL Server (`mssql`), MongoDB (`mongodb`), Redis (`ioredis`)
-- **Auth:** JWT-based with `jose` library + OIDC SSO with `openid-client` (Auth0, Keycloak, Okta, Azure AD)
-- **Storage:** Pluggable storage layer — localStorage (default), SQLite (`better-sqlite3`), or PostgreSQL (`pg`)
-
-### Directory Structure
-
-```
-src/
-├── app/                    # Next.js App Router
-│   ├── api/
-│   │   ├── auth/           # Login/logout/me endpoints
-│   │   │   └── oidc/       # OIDC login + callback routes (PKCE, code exchange)
-│   │   ├── ai/             # AI endpoints (chat, nl2sql, explain, safety)
-│   │   ├── db/             # Query, schema, health, maintenance, transactions
-│   │   ├── storage/        # Storage sync API (config, CRUD, migrate)
-│   │   └── admin/          # Fleet health, audit endpoints
-│   ├── admin/              # Admin dashboard (RBAC protected)
-│   └── login/              # Login page
-├── components/             # React components
-│   ├── Studio.tsx          # Main application shell
-│   ├── QueryEditor.tsx     # Monaco SQL editor wrapper
-│   ├── ResultsGrid.tsx     # Virtualized data grid
-│   ├── sidebar/            # Sidebar, ConnectionsList, ConnectionItem
-│   ├── studio/             # StudioTabBar, QueryToolbar, BottomPanel
-│   ├── admin/              # AdminDashboard, tabs (Overview, Operations, etc.)
-│   ├── schema-explorer/    # SchemaExplorer component
-│   └── ui/                 # Shadcn/UI primitives
-├── hooks/                  # Custom React hooks
-└── lib/
-    ├── storage/            # Storage abstraction layer
-    │   ├── index.ts        # Barrel export
-    │   ├── types.ts        # StorageData, ServerStorageProvider interfaces
-    │   ├── storage-facade.ts # Public sync API + CustomEvent dispatch
-    │   ├── local-storage.ts  # Pure localStorage CRUD
-    │   ├── factory.ts      # Env-based provider factory (singleton)
-    │   └── providers/
-    │       ├── sqlite.ts   # better-sqlite3 backend
-    │       └── postgres.ts # pg backend
-    ├── db/                 # Database provider module (Strategy Pattern)
-    │   ├── providers/
-    │   │   ├── sql/        # SQL providers (postgres, mysql, sqlite, oracle, mssql)
-    │   │   ├── document/   # Document providers (mongodb)
-    │   │   ├── keyvalue/   # Key-value providers (redis)
-    │   ├── factory.ts      # Provider factory
-    │   ├── types.ts        # Database types
-    │   └── errors.ts       # Custom error classes
-    ├── llm/                # LLM provider module (Strategy Pattern)
-    ├── schema-diff/        # Schema diff engine + migration SQL generator
-    ├── sql/                # SQL statement splitter, alias extractor
-    ├── types.ts            # TypeScript type definitions
-    ├── auth.ts             # JWT auth utilities (login, logout, signJWT, verifyJWT)
-    ├── oidc.ts             # OIDC utilities (discovery, PKCE, token exchange, role mapping, logout)
-    └── storage.ts          # LocalStorage management
-
-tests/
-├── setup.ts               # Global test setup (env vars, localStorage mock)
-├── setup-dom.ts            # DOM environment setup (happy-dom)
-├── run-components.sh       # Component test isolation runner
-├── fixtures/               # Mock data (connections, schemas, query results)
-├── helpers/                # Test utilities (mock providers, mock Monaco, etc.)
-├── unit/                   # Pure function tests
-├── api/                    # API route handler tests
-├── integration/            # Database provider tests (mocked drivers)
-├── hooks/                  # React hook tests
-└── components/             # Component tests (happy-dom)
-
-e2e/                        # Playwright E2E tests (browser)
-
-charts/
-└── libredb-studio/         # Helm chart for Kubernetes deployment
-    ├── Chart.yaml           # Chart metadata + ArtifactHub annotations
-    ├── values.yaml          # Default configuration
-    ├── values.schema.json   # JSON Schema validation
-    └── templates/           # K8s manifests (deployment, service, ingress, etc.)
-```
-
-### Key Patterns
-
-1. **Database Abstraction:** `src/lib/db/` module provides Strategy Pattern implementation for multiple database types:
-   - **SQL:** PostgreSQL, MySQL, SQLite, Oracle, SQL Server (extend `SQLBaseProvider`)
-   - **Document:** MongoDB (extends `BaseDatabaseProvider`)
-   - **Key-Value:** Redis (extends `BaseDatabaseProvider`)
-
-   > **⚠️ Providers are the lifeblood of this project. Keep the three artifacts in lockstep:**
-   > **code ↔ docs ↔ tests.** For every provider there is a 1:1 triad, keyed by the canonical
-   > **type-id** (`postgres`, `mysql`, `sqlite`, `oracle`, `mssql`, `mongodb`, `redis`):
-   > - **Code:** `src/lib/db/providers/<family>/<type-id>.ts`
-   > - **Docs:** `docs/providers/<type-id>.md` (filename = type-id; official name only in the title/prose)
-   > - **Tests:** `tests/integration/db/<type-id>-provider.test.ts`
-   >
-   > **Any change to one side MUST sync the others in the same PR.** Change the code → update the
-   > doc and tests to match. Touch the doc → verify it still reflects the code (every `file:line`
-   > citation, every behaviour). The doc must mirror the code, and the code must mirror what the doc
-   > promises — they are never allowed to drift.
-
-2. **LLM Abstraction:** `src/lib/llm/` module provides Strategy Pattern for AI providers (Gemini, OpenAI, Ollama, Custom)
-
-3. **Authentication Flow:** Supports two modes controlled by `NEXT_PUBLIC_AUTH_PROVIDER`:
-   - **Local** (default): Email/password login → JWT session cookie
-   - **OIDC**: SSO redirect → PKCE code exchange → local JWT session cookie (same as local)
-
-   JWT tokens stored in HTTP-only cookies. Proxy (`src/proxy.ts`) protects routes and enforces RBAC (admin vs user roles). OIDC module (`src/lib/oidc.ts`) handles discovery, PKCE, token exchange, role mapping, and provider logout.
-
-4. **API Routes:** All backend logic in `src/app/api/`. Protected routes require valid JWT. Public routes: `/login`, `/api/auth`, `/api/db/health`
-
-5. **Storage Abstraction:** `src/lib/storage/` module provides pluggable persistence:
-   - **Local** (default): Browser localStorage, zero config
-   - **SQLite**: `better-sqlite3` file DB for single-node persistent storage
-   - **PostgreSQL**: `pg` for multi-node enterprise storage
-   - Write-through cache: localStorage always serves reads; `useStorageSync` hook pushes mutations to server (debounced)
-   - Controlled by `STORAGE_PROVIDER` env var (server-side only, discovered at runtime via `/api/storage/config`)
-
-6. **Multi-Tab Workspace:** Each query tab has independent state (query, results, execution status)
-
-### Environment Variables
-
-Required in `.env.local`:
-```
-# Authentication (local mode)
-ADMIN_EMAIL=admin@libredb.org   # Admin email
-ADMIN_PASSWORD=<password>       # Admin password
-USER_EMAIL=user@libredb.org     # User email
-USER_PASSWORD=<password>        # User password
-JWT_SECRET=<32+ chars>          # JWT signing secret
-
-# Auth provider: "local" (default) or "oidc"
-NEXT_PUBLIC_AUTH_PROVIDER=local
-
-# OIDC config (required when provider=oidc)
-OIDC_ISSUER=<issuer-url>        # e.g. https://dev-xxx.auth0.com
-OIDC_CLIENT_ID=<client-id>
-OIDC_CLIENT_SECRET=<secret>
-OIDC_SCOPE=openid profile email # Optional, defaults shown
-OIDC_ROLE_CLAIM=                # Claim path for role (e.g. realm_access.roles)
-OIDC_ADMIN_ROLES=admin          # Comma-separated admin role values
-
-# Optional AI config
-LLM_PROVIDER=gemini             # gemini, openai, ollama, custom
-LLM_API_KEY=<key>
-LLM_MODEL=gemini-2.5-flash
-LLM_API_URL=<url>               # For ollama/custom providers
-
-# Optional storage config (server-side only, not NEXT_PUBLIC_)
-STORAGE_PROVIDER=local                  # local (default) | sqlite | postgres
-STORAGE_SQLITE_PATH=./data/libredb-storage.db  # SQLite file path
-STORAGE_POSTGRES_URL=postgresql://...           # PostgreSQL connection URL
-```
-
-### Path Aliases
-
-TypeScript path alias `@/*` maps to `./src/*`. Use `@/components/...`, `@/lib/...`, etc.
+> **Coverage isolation:** `bun`'s `mock.module()` is process-wide — a file mocking a shared module (`@/lib/db/factory`, `@/lib/oidc`, …) poisons others sharing the process → nondeterministic CI failures (`clearProviderCache is not a function`, `Export named 'removeProvider' not found`). So `test:coverage:core` runs each core test file in its own `bun` process via `tests/run-core.sh`; `test:coverage` merges per-file lcov. Do NOT collapse this into a single `bun test tests/unit tests/api tests/integration` invocation.
 
 ## Pre-Commit Verification (MANDATORY)
 
-**After every code change, you MUST run the CI pipeline checks locally before considering the task complete.** These match `.github/workflows/ci.yml` and `docker-build-push.yml`:
+After every code change, run all four locally before claiming done — they match CI (`ci.yml`, `docker-build-push.yml`): `bun run lint` · `bun run typecheck` · `bun run test` · `bun run build`. A local pass on all four guarantees CI passes; do not skip any.
 
-```bash
-# 1. Lint (ESLint 9)
-bun run lint
+## Architecture
 
-# 2. Type check (TypeScript strict)
-bun run typecheck
+- **Stack:** Next.js 16 (App Router) + React 19 + TypeScript; Tailwind 4 + Shadcn/UI; Monaco editor; TanStack Table + react-virtual; `jose` JWT + `openid-client` OIDC.
+- **DB drivers:** `pg`, `mysql2`, **`bun:sqlite`** (the DB provider) / `better-sqlite3` (the storage layer), `oracledb`, `mssql`, `mongodb`, `ioredis`.
+- **Layout:** full tree + data flow in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). Key dirs: `src/lib/db` (DB providers, Strategy Pattern), `src/lib/llm` (LLM providers), `src/lib/storage` (pluggable persistence), `src/workspace` + `src/exports` (the npm-package embedding layer), `src/proxy.ts` (RBAC middleware).
+- **Path alias:** `@/*` → `./src/*`.
 
-# 3. Tests (unit + API + integration + hooks + components)
-bun run test
+### Rules & patterns
 
-# 4. Build (Next.js production build)
-bun run build
-```
+> **⚠️ Providers are the lifeblood of this project — keep the triad in lockstep: code ↔ docs ↔ tests**, 1:1 per canonical type-id (`postgres`, `mysql`, `sqlite`, `oracle`, `mssql`, `mongodb`, `redis`):
+> - Code: `src/lib/db/providers/<family>/<type-id>.ts` · Docs: `docs/providers/<type-id>.md` · Tests: `tests/integration/db/<type-id>-provider.test.ts`
+> - Any change to one side MUST sync the others **in the same PR**. The doc mirrors the code and the code mirrors the doc — never let them drift.
 
-**Do NOT skip any step.** If any step fails, fix the issue before proceeding. The GitHub Actions CI will run all four checks — a local pass on all four guarantees the CI will also pass.
+- **DB abstraction:** Strategy Pattern. SQL providers extend `SQLBaseProvider`; MongoDB/Redis extend `BaseDatabaseProvider`. No `=== 'mongodb'` type-checks outside provider classes — drive behaviour through capabilities/labels.
+- **Auth:** `NEXT_PUBLIC_AUTH_PROVIDER` = `local` (email/password) or `oidc` (PKCE → same JWT cookie as local). `src/proxy.ts` enforces RBAC (admin vs user). Details: [`docs/OIDC.md`](docs/OIDC.md).
+- **Storage:** write-through cache — localStorage serves reads; `useStorageSync` pushes mutations to the server (debounced). `STORAGE_PROVIDER` (server-side only) = `local` | `sqlite` | `postgres`. Details: [`docs/STORAGE.md`](docs/STORAGE.md).
+- **API routes:** all backend in `src/app/api/`; JWT-protected except `/login`, `/api/auth`, `/api/db/health`.
 
-## Docker Build
+## Configuration
 
-The Dockerfile uses multi-stage Bun build with standalone Next.js output. Build args: `JWT_SECRET_BUILD`, `ADMIN_PASSWORD_BUILD`, `USER_PASSWORD_BUILD`. Health check: `GET /api/db/health`.
+Env vars are documented with examples in [`.env.example`](.env.example). Non-obvious ones: `NEXT_PUBLIC_AUTH_PROVIDER` (`local` | `oidc`); `OIDC_*` required when `oidc`; `STORAGE_PROVIDER` / `STORAGE_SQLITE_PATH` / `STORAGE_POSTGRES_URL` are **server-side only** (not `NEXT_PUBLIC_`), discovered at runtime via `/api/storage/config`.
 
 ## Database Connections
 
-### SQL Databases (PostgreSQL, MySQL, SQLite)
+Connections are typed by `type`; per-provider fields, query formats, and behaviours are in [`docs/providers/<type-id>.md`](docs/providers/) and [`docs/API_DOCS.md`](docs/API_DOCS.md).
+
 ```typescript
-const connection = {
-  type: 'postgres', // or 'mysql', 'sqlite'
-  host: 'localhost',
-  port: 5432,
-  database: 'mydb',
-  user: 'admin',
-  password: 'secret',
-};
+const sql   = { type: 'postgres', host: 'localhost', port: 5432, database: 'mydb', user: 'admin', password: 'secret' }; // also mysql | sqlite | oracle | mssql
+const mongo = { type: 'mongodb', connectionString: 'mongodb://localhost:27017/mydb' }; // query is JSON: { collection, operation, filter, options }
+const redis = { type: 'redis', host: 'localhost', port: 6379, database: '0' };         // query: 'HGETALL user:1' or { command, args }
 ```
 
-### MongoDB
-```typescript
-const connection = {
-  type: 'mongodb',
-  connectionString: 'mongodb://localhost:27017/mydb',
-  // or host/port/database format
-};
+Redis maps onto the SQL-oriented provider interface by convention: `getSchema()` uses a non-blocking `SCAN` (never `KEYS *`), grouping key prefixes as "tables"; health/metrics from `INFO`; slow queries / sessions from `SLOWLOG GET` / `CLIENT LIST`. See [`docs/providers/redis.md`](docs/providers/redis.md).
 
-// Query format (JSON)
-const query = JSON.stringify({
-  collection: 'users',
-  operation: 'find',
-  filter: { status: 'active' },
-  options: { limit: 50 }
-});
-```
+## Docker & Helm
 
-### Redis
-```typescript
-const connection = {
-  type: 'redis',
-  host: 'localhost',
-  port: 6379,
-  password: 'secret',   // optional
-  database: '0',         // logical DB index (defaults to 0)
-};
-
-// Query format — two interchangeable styles:
-// 1. Plain Redis command (quoted args supported)
-const plain = 'HGETALL user:1';
-
-// 2. JSON command object
-const json = JSON.stringify({ command: 'HGETALL', args: ['user:1'] });
-```
-
-Redis is a key-value store, so it maps onto the SQL-oriented provider interface
-by convention rather than by emulation:
-- **Schema** — `getSchema()` runs a non-blocking `SCAN` (never `KEYS *`) and groups
-  keys by prefix, exposing each prefix (e.g. `user:*`) as a "table".
-- **Health / overview / metrics** — derived from the `INFO` command output.
-- **Slow queries / active sessions** — derived from `SLOWLOG GET` and `CLIENT LIST`.
+- **Docker:** multi-stage Bun build, standalone Next.js output. Build args `JWT_SECRET_BUILD`, `ADMIN_PASSWORD_BUILD`, `USER_PASSWORD_BUILD`. Health check `GET /api/db/health`.
+- **Helm:** lint with `helm lint charts/libredb-studio --strict`. Full values reference: `charts/libredb-studio/README.md`; chart architecture/rationale: [`docs/HELM_CHART.md`](docs/HELM_CHART.md).

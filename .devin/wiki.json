@@ -109,7 +109,7 @@
     },
     {
       "title": "Theming & UI System",
-      "purpose": "Document the UI system: Tailwind CSS 4 with @theme inline theming, CSS variables for dark/light mode (src/app/globals.css), shadcn/ui component library (src/components/ui/ with 50+ primitives), cn() utility (src/lib/utils.ts), Framer Motion animations, and the mobile-first responsive design philosophy. Reference docs/THEMING.md for the theming guide.",
+      "purpose": "Document the UI system: Tailwind CSS 4 with @theme inline theming, CSS variables for dark/light mode (src/app/globals.css), shadcn/ui component library (src/components/ui/ with 50+ primitives), cn() utility (src/lib/utils.ts), Framer Motion animations, and the mobile-first responsive design philosophy. Reference docs/ui/theming.md for the theming guide.",
       "parent": "Architecture Overview"
     },
     {

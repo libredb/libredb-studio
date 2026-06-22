@@ -177,7 +177,7 @@ The test instance comes with a pre-configured PostgreSQL database via [Seed Conn
 | :--- | :--- | :--- |
 | **Framework** | Next.js 16 (App Router), React 19 | Web, Mobile |
 | **UI Engine** | Tailwind CSS 4, Radix UI, [shadcn/ui](https://ui.shadcn.com/) | Web, Mobile |
-| **Theming** | CSS Variables + `@theme inline` ([Guide](docs/THEMING.md)) | Web, Mobile |
+| **Theming** | CSS Variables + `@theme inline` ([Guide](docs/ui/theming.md)) | Web, Mobile |
 | **Editor** | Monaco Editor (VS Code Engine) | Web |
 | **AI** | Multi-Model (Gemini, OpenAI, Ollama, Custom) | Web, Mobile |
 | **Auth** | JWT (`jose`) + OIDC (`openid-client`), PKCE, Role Mapping | Web, Mobile |
@@ -629,7 +629,9 @@ extraEnvFrom:
 | [SonarCloud](https://sonarcloud.io/project/overview?id=libredb_libredb-studio) | Code quality, security analysis, and technical debt tracking |
 | [API Docs](docs/API_DOCS.md) | Complete REST API reference |
 | [OIDC SSO](docs/OIDC.md) | SSO setup (Auth0, Keycloak, Okta, Azure AD, Zitadel, Google) + subsystem internals & security model |
-| [Theming Guide](docs/THEMING.md) | CSS theming, dark mode, and styling customization |
+| [Theming Guide](docs/ui/theming.md) | CSS theming, dark mode, and styling customization |
+| [Login Page](docs/ui/login-page.md) | Login page layout, OIDC/local modes, and design system |
+| [Editor Docs](docs/editor/) | SQL editor internals — completion, performance, query optimization |
 | [Architecture](docs/ARCHITECTURE.md) | System architecture and design patterns |
 
 ---

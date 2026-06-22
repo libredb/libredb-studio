@@ -1,0 +1,18 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "if": "Bash(git commit*)",
+            "command": "if bun run lint && bun run typecheck && bun run test && bun run build; then exit 0; else echo 'Pre-commit checks failed (lint / typecheck / test / build) — fix before committing.' >&2; exit 2; fi",
+            "timeout": 900,
+            "statusMessage": "Pre-commit checks: lint, typecheck, test, build…"
+          }
+        ]
+      }
+    ]
+  }
+}

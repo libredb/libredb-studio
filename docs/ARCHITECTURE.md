@@ -4,7 +4,9 @@ This document outlines the architectural patterns, tech stack, and system design
 
 ## System Overview
 
-LibreDB Studio is a hybrid, cloud-native database management tool that provides an IDE-like experience in the browser. It supports **8 database backends** via a Strategy Pattern abstraction: PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, Redis.
+LibreDB Studio is a hybrid, cloud-native database management tool that provides an IDE-like experience in the browser. It supports **7 database backends** via a Strategy Pattern abstraction: PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, Redis.
+
+It runs in two modes: as a **standalone Next.js app** and as an **embedded npm package** (`@libredb/studio`) consumed by libredb-platform. See [§4.6](#46-workspace-abstraction-npm-package-embedding).
 
 ## 1. Core Tech Stack
 
@@ -165,6 +167,14 @@ Multi-statement queries execute sequentially via `POST /api/db/multi-query`.
 - **React hooks** for UI state: tabs, active connection, execution status
 - **Custom hooks** extracted from Studio.tsx: `useAuth`, `useConnectionManager`, `useTabManager`, `useTransactionControl`, `useQueryExecution`, `useInlineEditing`
 
+### 4.6. Workspace Abstraction (npm package embedding)
+
+Studio ships both as a standalone app and as the `@libredb/studio` npm package consumed by libredb-platform (built with `tsup` via `build:lib`).
+
+- **`src/workspace/`** — `StudioWorkspace.tsx` is the embeddable shell. Its adapter hooks (`hooks/use-connection-adapter`, `hooks/use-query-adapter`) let the host (standalone or platform) supply connections and query execution, so the same UI runs in both contexts.
+- **`src/exports/`** — barrel modules (`components.ts`, `providers.ts`, `workspace.ts`, `types.ts`) that define the package's public surface; `package.json` `exports`/`main`/`module` point at the tsup `dist/` output.
+- Platform integration rules (Tailwind tokens, Lucide stroke widths, chunk scanning) live in `CLAUDE.md`.
+
 ## 5. Directory Structure
 
 ```
@@ -172,21 +182,27 @@ src/
 ├── app/                    # Next.js App Router
 │   ├── api/
 │   │   ├── auth/           # Login/logout/me + OIDC (PKCE, callback)
-│   │   ├── ai/             # Chat, NL2SQL, explain, safety
+│   │   ├── ai/             # chat, nl2sql, explain, query-safety, index-advisor, impact, describe-schema, autopilot
 │   │   ├── db/             # Query, schema, health, maintenance, transactions
 │   │   ├── storage/        # Storage sync API (config, CRUD, migrate)
 │   │   └── admin/          # Fleet health, audit
 │   ├── admin/              # Admin dashboard (RBAC protected)
+│   ├── monitoring/         # Monitoring dashboard page
 │   └── login/              # Login page
 ├── components/
-│   ├── Studio.tsx           # Main application shell
+│   ├── Studio.tsx           # Main application shell (standalone)
 │   ├── QueryEditor.tsx      # Monaco SQL editor wrapper
 │   ├── ResultsGrid.tsx      # Virtualized data grid
+│   ├── SchemaDiagram.tsx    # React Flow ERD viewer
 │   ├── sidebar/             # ConnectionsList, ConnectionItem
 │   ├── studio/              # StudioTabBar, QueryToolbar, BottomPanel
+│   ├── results-grid/        # ResultCard, RowDetailSheet, StatsBar
 │   ├── admin/               # AdminDashboard (5 tabs)
+│   ├── monitoring/          # MonitoringDashboard + tabs
 │   ├── schema-explorer/     # SchemaExplorer
 │   └── ui/                  # Shadcn/UI primitives
+├── workspace/               # Embeddable shell (StudioWorkspace) + host adapter hooks
+├── exports/                 # Public npm-package barrel exports (tsup build:lib)
 ├── hooks/                   # Custom React hooks
 └── lib/
     ├── db/                  # Database provider module
@@ -197,8 +213,11 @@ src/
     │   ├── factory.ts       # Provider factory
     │   └── types.ts         # Database types
     ├── llm/                 # LLM provider module
+    ├── editor/              # Monaco completions (SQL + MongoDB)
     ├── schema-diff/         # Diff engine + migration SQL generator
     ├── sql/                 # Statement splitter, alias extractor
+    ├── seed/                # Seed connections (config, filter, credential resolver)
+    ├── api/                 # API error codes + schema-route helpers
     ├── ssh/                 # SSH tunnel support
     ├── auth.ts              # JWT utilities
     ├── oidc.ts              # OIDC utilities
