@@ -235,7 +235,7 @@ services:
         condition: service_healthy
 
   db:
-    image: postgres:16-alpine
+    image: postgres:18
     environment:
       - POSTGRES_DB=libredb
       - POSTGRES_USER=libredb
@@ -938,7 +938,7 @@ services:
     depends_on:
       - db
   db:
-    image: postgres:16-alpine
+    image: postgres:18
     environment:
       POSTGRES_DB: libredb
       POSTGRES_USER: user

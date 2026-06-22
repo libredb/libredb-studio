@@ -14,7 +14,7 @@
 
 services:
   postgres:
-    image: postgres:17-alpine
+    image: postgres:18
     container_name: libredb-postgres
     restart: unless-stopped
 

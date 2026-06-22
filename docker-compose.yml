@@ -22,7 +22,7 @@ services:
       - storage-data:/app/data
 
   libredb-postgres:
-    image: postgres:17-alpine
+    image: postgres:18
     container_name: libredb-postgres
     environment:
       POSTGRES_USER: postgres

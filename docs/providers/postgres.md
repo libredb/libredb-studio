@@ -450,7 +450,7 @@ bun run test:coverage                                      # CI coverage workflo
 The committed tests are mock-based by design. To smoke-test against a real server:
 
 ```bash
-docker run --rm -e POSTGRES_PASSWORD=postgres -p 5432:5432 postgres:17-alpine
+docker run --rm -e POSTGRES_PASSWORD=postgres -p 5432:5432 postgres:18
 # then point a connection at localhost:5432 (db=postgres, user=postgres) in the Studio UI
 ```
 
