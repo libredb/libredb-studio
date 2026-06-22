@@ -94,7 +94,9 @@ Supported operations: `find`, `findOne`, `aggregate`, `count`, `distinct`, `inse
 `serializeDocument()` ([mongodb.ts:381](../../src/lib/db/providers/document/mongodb.ts)) recursively
 normalises BSON types so documents render in the JSON grid: `ObjectId` → string, `Decimal128` →
 string, `Date` → ISO-8601, `Binary` → `<Binary: N bytes>` (placeholder, not the raw bytes), and
-nested objects/arrays are walked recursively.
+nested objects/arrays are walked recursively. **Only these types are special-cased** — other BSON
+types (`Long`, `Timestamp`, `UUID`, `RegExp`, `Code`, `DBRef`) fall through as generic objects and
+may render poorly ([Known limitations](#13-known-limitations--future-work)).
 
 ### 3.3 Sampling-based, flat schema inference
 
@@ -110,9 +112,15 @@ Caveats baked into this approach:
 ### 3.4 `find` is capped at 100; `aggregate` is not
 
 A `find` with no explicit `options.limit` is capped at **100** documents
-([mongodb.ts:251](../../src/lib/db/providers/document/mongodb.ts)). **`aggregate` has no default
-limit** — a pipeline without a `$limit` stage can return an unbounded result set. `prepareQuery()`
-is a no-op for MongoDB (no automatic limit injection), so the 100-cap applies only to `find`.
+([mongodb.ts:252](../../src/lib/db/providers/document/mongodb.ts)). **`aggregate` passes none of
+`options` to the cursor** (no `limit`/`skip`) and has no default cap, so a pipeline without a
+`$limit` stage can return an unbounded result set.
+
+`prepareQuery()` does **not** modify the query (it injects no limit — the JSON is passed through
+unchanged), but it is **not** a true no-op: it returns `limit: options.limit || 100`, and the
+`/api/db/query` route uses that returned `limit`/`wasLimited` for pagination metadata
+(`hasMore = rows.length === prepared.limit`). The `unlimited` option is **not** honoured — see
+[Known limitations](#13-known-limitations--future-work).
 
 ---
 
@@ -121,7 +129,8 @@ is a no-op for MongoDB (no automatic limit injection), so the 100-cap applies on
 `connectionString` is used **directly** (this is a genuine connection-string provider, unlike
 SQL Server). `buildConnectionString()` ([mongodb.ts:183](../../src/lib/db/providers/document/mongodb.ts))
 returns `config.connectionString` if present, else assembles
-`mongodb://<url-encoded user:pass@>host:port/database`.
+`mongodb://<user>:<password>@<host>:<port>/<database>` (credentials are URL-encoded; the
+`<user>:<password>@` segment is omitted when no credentials are set).
 
 ```ts
 // Connection string (SRV or standard)
@@ -161,6 +170,19 @@ every returned document passes through `serializeDocument()`. There is no `prepa
 injection, no transactions, and no `cancelQuery`. `EXPLAIN` is not supported
 (`supportsExplain: false`).
 
+**`options` handling differs per operation** (a real source of surprise — see
+[Known limitations](#13-known-limitations--future-work)):
+
+- **`find`** honours `projection` / `sort` / `skip` / `limit`.
+- **`findOne`** honours **only `projection`** — a `sort` / `skip` / `limit` is **silently ignored**
+  (so `{ "operation": "findOne", "options": { "sort": { "_id": -1 } } }` does *not* return the
+  latest document).
+- **`aggregate`** ignores `options` entirely (bound it with a `$limit` stage in the pipeline).
+- **`distinct`** has **no dedicated field parameter**: the field is taken from the **first key of
+  `options.projection`**, e.g. `{ "collection": "users", "operation": "distinct",
+  "options": { "projection": { "country": 1 } } }` returns distinct `country` values (output shape
+  `{ "country": <value> }`). With no projection it defaults to `_id`.
+
 ---
 
 ## 6. Schema introspection
@@ -187,11 +209,11 @@ Every method is wrapped in try/catch and degrades to a sensible default on permi
 |--------|--------|-------|
 | `getHealth()` | `serverStatus`, `dbStats`, `currentOp`, `system.profile` | connections, data size, WiredTiger cache-hit %, current ops; slow queries need the profiler (placeholder row if disabled) |
 | `getOverview()` | `serverStatus`, `buildInfo`, `dbStats`, `listCollections` | version, uptime, connections, collection/index counts |
-| `getPerformanceMetrics()` | `serverStatus` (WiredTiger + opcounters) | cache-hit %, **queries/sec** (opcounters/uptime), buffer-pool % (cache bytes), `deadlocks: 0` |
-| `getSlowQueries()` | `system.profile` | per-op time/returned; **`[]` if the profiler isn't enabled** (`db.setProfilingLevel(1)`) |
-| `getActiveSessions()` | `currentOp` | opid, client, ns, lock waits, duration |
+| `getPerformanceMetrics()` | `serverStatus` (WiredTiger + opcounters) | cache-hit %, **ops/sec** (`query`+`insert`+`update`+`delete` opcounters ÷ uptime — *total operations, not just queries*), buffer-pool % (cache bytes), `deadlocks: 0` |
+| `getSlowQueries()` | `system.profile` | per-op time/returned; **`[]` if the profiler isn't enabled** (`db.setProfilingLevel(1)`); sorted by `millis` (slowest) — note `getHealth()`'s slow-query block instead sorts by `ts` (most recent) and emits a placeholder row when disabled |
+| `getActiveSessions()` | `currentOp` | opid, ns, lock waits, duration — ⚠️ the **`user` field is populated from `op.client`** (the client `host:port`), **not** an authenticated user |
 | `getTableStats()` | `collStats` per collection | row count + data/index/total sizes |
-| `getIndexStats()` | `$indexStats` + `indexes()` | **real `scans`** (`accesses.ops`); `indexSize` `N/A` |
+| `getIndexStats()` | `$indexStats` + `indexes()` | **real `scans`** (`accesses.ops`); `indexSize` `N/A`; **`indexType` only distinguishes `text` vs `btree`** — `hashed`/`2dsphere`/`2d`/wildcard/clustered are all mislabelled `btree` |
 | `getStorageStats()` | `dbStats` + WiredTiger | Data / Indexes / Storage / WiredTiger cache (with usage %) |
 
 ---
@@ -266,9 +288,11 @@ mock collection/cursor/admin returns canned documents and stats, exercising ever
 serialization, schema inference, monitoring, and maintenance.
 
 > ⚠️ **Mock isolation:** `bun`'s `mock.module()` is process-wide; files mocking different drivers
-> cross-contaminate in a shared process. Run a single file alone, or the suite via **`bun run test:ci`**
-> (per-file isolation via `tests/run-core.sh`); the coverage workflow uses `bun run test:coverage`.
-> Never use the single-process `bun run test` for the full suite. See [`CLAUDE.md`](../../CLAUDE.md).
+> cross-contaminate in a shared process. CI runs the full suite via **`bun run test:ci`** (per-file
+> process isolation via `tests/run-core.sh`) and **`bun run test:coverage`** for determinism. The
+> `bun run test` pre-commit gate (per [`CLAUDE.md`](../../CLAUDE.md)) also works — it isolates the
+> component group — but runs the core group in a single process, so prefer `test:ci` when isolation
+> matters. Running a single file alone is always safe.
 
 ### Coverage
 
@@ -330,7 +354,26 @@ Over the API: `POST /api/db/query` (JSON MQL in the `sql` field) and `POST /api/
 - **Monitoring needs privileges.** `serverStatus`/`currentOp`/`$indexStats` and the profiler require
   appropriate roles (`clusterMonitor`, etc.); without them fields degrade to `N/A`/`0`/`[]`, and slow
   queries require the profiler to be enabled.
-- **`Binary` values are shown as a placeholder** (`<Binary: N bytes>`), not the raw bytes.
+- **`Binary` values are shown as a placeholder** (`<Binary: N bytes>`), not the raw bytes, and only
+  a subset of BSON types are normalised (`Long`/`Timestamp`/`UUID`/`RegExp`/`Code`/`DBRef` render as
+  generic objects).
+- **`distinct` has no dedicated field parameter.** The field is derived from the first key of
+  `options.projection` — an overload of `projection` (which normally means field inclusion). Users
+  must know this incantation; *Future:* add an explicit `options.field`.
+- **`findOne` silently ignores `sort`/`skip`/`limit`** (only `projection` is honoured), so it cannot
+  be used to fetch "the latest" document by sort.
+- **`aggregate` ignores `options.limit`/`skip`** and has no safety cap — only an in-pipeline
+  `$limit` bounds the result set (`supportsExternalQueryLimiting: false`, so the route injects none).
+- **The active-sessions `user` column shows the client address** (`op.client`, e.g. `host:port`),
+  not an authenticated user. *Future:* map from `op.effectiveUsers`/`op.users` (MongoDB 5.0+).
+- **`getIndexStats().indexType` only distinguishes `text` vs `btree`** — `hashed`, geospatial
+  (`2dsphere`/`2d`), wildcard (`$**`), and clustered indexes are all reported as `btree`.
+- **The `unlimited` query option is ignored.** `prepareQuery()` always returns `limit:
+  options.limit || 100`; combined with the route's `hasMore = rows.length === prepared.limit`, an
+  "unlimited" request can report an incorrect `hasMore`.
+- **`getSchema()` issues serial round-trips** — up to ~4 calls (count + `collStats` + 100-doc sample
+  + `indexes()`) per collection, across up to 200 collections, with no batching/timeout; the schema
+  panel can be slow on a large or remote/loaded cluster.
 
 ---
 
