@@ -214,6 +214,21 @@ A query issued with a `queryId` stores its `Request`. `cancelQuery(queryId)`
 ([mssql.ts:256](../../src/lib/db/providers/sql/mssql.ts)) calls `request.cancel()` and returns `true`
 on success (no verification that a query was running). Exposed via `POST /api/db/cancel`.
 
+### 5.3 Data-type & parameter handling ⚠️
+
+- **Parameters are bound without an explicit SQL type.** `query()` calls
+  `request.input(\`p${i+1}\`, value)` ([mssql.ts:226](../../src/lib/db/providers/sql/mssql.ts)) and
+  lets `mssql` **infer** the TDS type from the JS value. Inference is convenient but a known
+  foot-gun: `null` params, very large integers, and `VARCHAR` vs `NVARCHAR` intent can be guessed
+  wrong. Callers needing exact typing would have to bind explicitly (not currently exposed).
+- **Numeric precision.** `BIGINT`, `DECIMAL`/`NUMERIC`, and `MONEY` are surfaced as JavaScript
+  `number`s and can **lose precision** beyond 2^53 / at high scale (the same class of issue as
+  Oracle's `NUMBER`). Fetching them as strings would preserve fidelity.
+- **Binary** (`VARBINARY`/`IMAGE`/`rowversion`) comes back as a Node `Buffer` and is **not**
+  sanitized to a hex string (contrast the MySQL provider's `sanitizeRow`).
+- **Only the first result set is returned.** `query()` reads `result.recordset` (singular), so a
+  multi-statement batch or a stored procedure returning several result sets surfaces just one.
+
 ---
 
 ## 6. Transactions
@@ -408,7 +423,19 @@ Over the API: `POST /api/db/query`, `POST /api/db/transaction`, `POST /api/db/ca
   (MITM-exposed). For verified TLS, set `connection.ssl` mode `verify-ca`/`verify-full`. (Azure hosts
   validate by default.)
 - **Binary columns aren't sanitized.** `VARBINARY`/`IMAGE`/`rowversion` come back as Node `Buffer`s
-  and serialize to the grid as `Buffer` JSON (no `0x…` hex conversion like the MySQL provider).
+  and serialize to the grid as `Buffer` JSON (no `0x…` hex conversion like the MySQL provider) — see
+  [§5.3](#53-data-type--parameter-handling).
+- **Numeric precision loss** — `BIGINT`/`DECIMAL`/`NUMERIC`/`MONEY` are returned as JS `number`s and
+  can lose precision; they would need to be fetched as strings to stay exact ([§5.3](#53-data-type--parameter-handling)).
+- **Parameters bound without explicit types** — relies on `mssql` type inference, which can mis-type
+  `null`/large-integer/`NVARCHAR` values ([§5.3](#53-data-type--parameter-handling)).
+- **No Always On / high-availability options.** `MultiSubnetFailover` (fast failover to an
+  availability-group listener) and `ApplicationIntent=ReadOnly` (read-only routing to a readable
+  secondary) are not set — both are common requirements for enterprise HA SQL Server. *Future:*
+  surface them as connection options.
+- **Azure SQL caveats.** Some server-scoped DMVs and `DBCC CHECKDB` behave differently or are
+  restricted on Azure SQL Database, so parts of monitoring/maintenance silently degrade
+  (`N/A`/`0`/`[]`) there.
 - **SQL authentication only** — Windows Integrated / Azure AD auth is not wired.
 - **No two-phase schema loading** — `/api/db/schema/list` falls back to the full `getSchema()`.
 - **DMV monitoring needs `VIEW SERVER STATE`**; a least-privilege user silently gets `N/A`/`0`/`[]`.
