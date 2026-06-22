@@ -23,9 +23,9 @@
 </p>
 
 <p align="center">
-  <a href="#-live-test"><strong>Try Live Test</strong></a> •
+  <a href="#live-test"><strong>Try Live Test</strong></a> •
   <a href="#getting-started"><strong>Documentation</strong></a> •
-  <a href="#-one-click-deploy"><strong>Deploy Your Own</strong></a>
+  <a href="#one-click-deploy"><strong>Deploy Your Own</strong></a>
 </p>
 
 <p align="center">

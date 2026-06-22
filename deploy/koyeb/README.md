@@ -6,7 +6,7 @@ LibreDB Studio Docker image directly from GHCR — no rebuild, no Dockerfile.
 There are two ways to get LibreDB Studio onto Koyeb:
 
 1. **Deploy to Koyeb button** (self-service, already live in the repo
-   [README](../../README.md#-one-click-deploy)).
+   [README](../../README.md#one-click-deploy)).
 2. **Koyeb One-Click Apps catalog** listing (curated by Koyeb — see
    [`CATALOG_SUBMISSION.md`](./CATALOG_SUBMISSION.md)).
 

@@ -42,7 +42,7 @@ a backup.
 | Port | `3000` (HTTP) |
 | Health check | `GET /api/db/health` |
 | Storage default | `local` (browser); `postgres` for persistence |
-| Existing deploy button | see repo [README](../../README.md#-one-click-deploy) |
+| Existing deploy button | see repo [README](../../README.md#one-click-deploy) |
 
 ## Outreach message (paste into the Partner Hub form / email)
 

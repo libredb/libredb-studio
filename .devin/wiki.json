@@ -88,7 +88,7 @@
     },
     {
       "title": "Authentication & Security",
-      "purpose": "Document the authentication system: JWT-based auth (src/lib/auth.ts) using the jose library with HTTP-only cookies, login/logout/me API routes (src/app/api/auth/), OIDC/SSO integration (src/lib/oidc.ts, src/app/api/auth/oidc/), middleware route protection (src/middleware.ts), RBAC with admin/user roles, audit logging (src/lib/audit.ts), and data masking (src/lib/data-masking.ts + src/components/MaskingSettings.tsx). Cover environment variables: ADMIN_PASSWORD, USER_PASSWORD, JWT_SECRET, OIDC_* settings.",
+      "purpose": "Document the authentication system: JWT-based auth (src/lib/auth.ts) using the jose library with HTTP-only cookies, login/logout/me API routes (src/app/api/auth/), OIDC/SSO integration (src/lib/oidc.ts, src/app/api/auth/oidc/), middleware route protection (src/proxy.ts), RBAC with admin/user roles, audit logging (src/lib/audit.ts), and data masking (src/lib/data-masking.ts + src/components/MaskingSettings.tsx). Cover environment variables: ADMIN_PASSWORD, USER_PASSWORD, JWT_SECRET, OIDC_* settings.",
       "parent": "Architecture Overview"
     },
     {
