@@ -12,7 +12,7 @@ Web-based SQL IDE for cloud-native teams: PostgreSQL, MySQL, SQLite, Oracle, SQL
 
 > **Feature/work branches target `dev`, NOT `main`.** Open every PR with base `dev` (`gh pr create --base dev`). `main` is release-only, updated via a deliberate `dev` → `main` promotion. Branch off `dev` for new work.
 
-## Github
+## GitHub
 
 * Repo: https://github.com/libredb/libredb-studio
 * Image (canonical): `ghcr.io/libredb/libredb-studio:latest` — use GHCR in all copy-paste examples (Docker Hub `libredb/libredb-studio` is a discoverability mirror only)

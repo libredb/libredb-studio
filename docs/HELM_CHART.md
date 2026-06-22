@@ -181,7 +181,7 @@ Any change to configuration values triggers a rolling restart automatically.
 
 When `seedConnections.enabled=true`, the chart provisions a set of pre-defined database connections at startup:
 
-- You must supply the definitions via **either** inline `seedConnections.config` (rendered into `seed-configmap.yaml`) **or** an `existingConfigMap`. Enabling the feature without providing one of these provisions nothing.
+- You **must** supply the definitions via **either** inline `seedConnections.config` (rendered into `seed-configmap.yaml`) **or** an `existingConfigMap`. Enabling the feature with neither is a misconfiguration: the Deployment still mounts the `seed-config` volume referencing `<release>-seed-connections`, but that ConfigMap is never rendered and the volume is not marked `optional`, so **the pods fail to start**.
 - The deployment mounts the ConfigMap at `/app/config/<key>`, where `<key>` is `seedConnections.configMapKey` (default `seed-connections.yaml`), and sets `SEED_CONFIG_PATH` to that path (plus `SEED_CACHE_TTL_MS` from `seedConnections.cacheTTL`). These two env vars are set on the Deployment directly, not through the app ConfigMap.
 - Credentials referenced by the seed config resolve from environment/secret at runtime, so secrets stay out of the ConfigMap.
 
