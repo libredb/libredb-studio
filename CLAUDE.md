@@ -322,3 +322,28 @@ const query = JSON.stringify({
   options: { limit: 50 }
 });
 ```
+
+### Redis
+```typescript
+const connection = {
+  type: 'redis',
+  host: 'localhost',
+  port: 6379,
+  password: 'secret',   // optional
+  database: '0',         // logical DB index (defaults to 0)
+};
+
+// Query format — two interchangeable styles:
+// 1. Plain Redis command (quoted args supported)
+const plain = 'HGETALL user:1';
+
+// 2. JSON command object
+const json = JSON.stringify({ command: 'HGETALL', args: ['user:1'] });
+```
+
+Redis is a key-value store, so it maps onto the SQL-oriented provider interface
+by convention rather than by emulation:
+- **Schema** — `getSchema()` runs a non-blocking `SCAN` (never `KEYS *`) and groups
+  keys by prefix, exposing each prefix (e.g. `user:*`) as a "table".
+- **Health / overview / metrics** — derived from the `INFO` command output.
+- **Slow queries / active sessions** — derived from `SLOWLOG GET` and `CLIENT LIST`.
