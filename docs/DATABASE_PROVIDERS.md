@@ -338,8 +338,9 @@ For most SQL databases, the existing `'sql'` type is sufficient. You only need a
 
 ## Step 2: Create the Provider Class
 
-Create the file under the right family folder — `src/lib/db/providers/sql/<name>.ts` for SQL,
-`src/lib/db/providers/<family>/<name>.ts` (e.g. `document/`, `keyvalue/`) for non-SQL.
+Create the file under the right family folder, named by the canonical **type-id** —
+`src/lib/db/providers/sql/<type-id>.ts` for SQL, `src/lib/db/providers/<family>/<type-id>.ts`
+(e.g. `document/`, `keyvalue/`) for non-SQL.
 
 **Start from the closest existing provider — it is the authoritative, code-verified template** (and
 is kept in sync with its per-provider doc). Don't copy a skeleton from this guide; copy a real file:
@@ -362,8 +363,9 @@ is kept in sync with its per-provider doc). Don't copy a skeleton from this guid
 - `getLabels()` — only if the generic SQL wording ("Table" / "row" / "Select Top 50" / …) doesn't fit. Non-relational providers relabel it (Redis → "Key Pattern"/"key", MongoDB → "Collection"/"document").
 - `prepareQuery()` — only if your dialect needs non-standard pagination. SQL `LIMIT` injection is inherited from `SQLBaseProvider`; Oracle/SQL Server override it for `FETCH FIRST` / `TOP`; the non-SQL providers make it a metadata-only pass-through.
 
-Wrap native driver errors with `mapDatabaseError(err, '<type>', sql)` so they normalise onto the
-shared error classes. For the exact DTO shapes see [Reference: Interface Contracts](#reference-interface-contracts);
+Wrap native driver errors with `mapDatabaseError(err, '<type-id>', query)` — the 3rd argument is the
+raw query string (SQL **or** JSON, per `src/lib/db/errors.ts`) — so they normalise onto the shared
+error classes. For the exact DTO shapes see [Reference: Interface Contracts](#reference-interface-contracts);
 for worked, code-verified examples see each provider's **Design decisions** section in
 [`docs/providers/`](./providers/README.md).
 
