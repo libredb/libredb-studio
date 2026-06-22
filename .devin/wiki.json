@@ -1,7 +1,11 @@
 {
   "repo_notes": [
     {
-      "content": "LibreDB Studio is a modern, AI-powered, open-source SQL IDE for cloud-native teams. It provides a zero-install, browser-based interface for managing PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, Redis databases. Built with Next.js 15 (App Router), React 19, TypeScript strict mode, Tailwind CSS 4, shadcn/ui, and Monaco Editor. The project uses Bun as its preferred runtime.",
+      "content": "LibreDB Studio is a modern, AI-powered, open-source SQL IDE for cloud-native teams. It provides a zero-install, browser-based interface for managing PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, Redis databases. Built with Next.js 16 (App Router), React 19, TypeScript strict mode, Tailwind CSS 4, shadcn/ui, and Monaco Editor. The project uses Bun as its preferred runtime.",
+      "author": "Maintainer"
+    },
+    {
+      "content": "LibreDB Studio runs two ways: as a standalone Next.js app AND as an embedded npm package (@libredb/studio) consumed by the closed-source libredb-platform. The embedding layer lives in src/workspace/ (the StudioWorkspace shell plus connection/query adapter hooks) and src/exports/ (the public package entry points). build:lib (tsup) produces the package dist, which is separate from the Next.js production build - changes to platform-facing components require running build:lib, not just the Next.js build.",
       "author": "Maintainer"
     },
     {
@@ -9,7 +13,7 @@
       "author": "Maintainer"
     },
     {
-      "content": "Authentication uses JWT tokens stored in HTTP-only cookies (jose library) with RBAC (admin/user roles). OIDC/SSO support is available via the openid-client library (src/lib/oidc.ts). Middleware at src/middleware.ts protects routes and enforces role-based access. The admin dashboard is restricted to admin role only.",
+      "content": "Authentication uses JWT tokens stored in HTTP-only cookies (jose library) with RBAC (admin/user roles). OIDC/SSO support is available via the openid-client library (src/lib/oidc.ts). Middleware at src/proxy.ts protects routes and enforces role-based access. The admin dashboard is restricted to admin role only.",
       "author": "Maintainer"
     },
     {
@@ -21,29 +25,51 @@
       "author": "Maintainer"
     },
     {
-      "content": "The project supports Docker deployment with multi-stage Bun build, standalone Next.js output, and health checks. CI/CD is configured via GitHub Actions (.github/workflows/ci.yml and docker-build-push.yml). Additional DevOps: render.yaml for Render platform deployment, docker/postgres.yml for local PostgreSQL with sample data.",
+      "content": "The project supports Docker deployment with multi-stage Bun build, standalone Next.js output, and health checks. CI/CD is configured via GitHub Actions (.github/workflows/ci.yml and docker-build-push.yml). Additional DevOps: a Helm chart for Kubernetes (charts/libredb-studio/, published to ghcr.io/libredb/charts/libredb-studio and ArtifactHub), render.yaml for Render platform deployment, and docker/postgres.yml for local PostgreSQL with sample data. The canonical container image is ghcr.io/libredb/libredb-studio.",
+      "author": "Maintainer"
+    },
+    {
+      "content": "Persistence is a pluggable storage layer in src/lib/storage/ that decides where user data (saved connections, query history, saved queries) lives. It uses a write-through cache: localStorage serves reads while mutations are pushed to the server (debounced). The server-side STORAGE_PROVIDER env var selects local | sqlite | postgres and is discovered at runtime via /api/storage/config (it is NOT a NEXT_PUBLIC_ var). See docs/STORAGE.md.",
       "author": "Maintainer"
     }
   ],
   "pages": [
     {
       "title": "Architecture Overview",
-      "purpose": "High-level system architecture including the tech stack (Next.js 15, React 19, TypeScript, Tailwind CSS 4, Monaco Editor, Bun), directory structure (src/app, src/components, src/lib, src/hooks), key architectural patterns (Strategy Pattern, App Router, Server/Client Components), and how the frontend, API layer, database providers, and AI services interact. Cover the mermaid architecture diagram from docs/ARCHITECTURE.md."
+      "purpose": "High-level system architecture including the tech stack (Next.js 16, React 19, TypeScript strict mode, Tailwind CSS 4, Monaco Editor, Bun), directory structure (src/app, src/components, src/lib, src/hooks, src/workspace, src/exports), key architectural patterns (Strategy Pattern, App Router, Server/Client Components), the dual run modes (standalone Next.js app vs embedded @libredb/studio npm package), and how the frontend, API layer, database providers, storage layer, and AI services interact. Cover the mermaid architecture diagram from docs/ARCHITECTURE.md.",
+      "page_notes": [
+        "The full directory tree and data-flow diagrams are in docs/ARCHITECTURE.md - treat that file as the source of truth for this page.",
+        "This project deliberately runs two ways; make the standalone-vs-embedded distinction explicit rather than describing only the standalone app."
+      ]
     },
     {
       "title": "Database Provider System",
-      "purpose": "Document the database abstraction layer in src/lib/db/ using the Strategy Pattern. Cover BaseDatabaseProvider (src/lib/db/base-provider.ts), SQLBaseProvider (src/lib/db/providers/sql/sql-base.ts), the factory function (src/lib/db/factory.ts), types (src/lib/db/types.ts), and custom error classes (src/lib/db/errors.ts). Explain how new providers are added.",
-      "parent": "Architecture Overview"
+      "purpose": "Document the database abstraction layer in src/lib/db/ using the Strategy Pattern. Cover BaseDatabaseProvider (src/lib/db/base-provider.ts), SQLBaseProvider (src/lib/db/providers/sql/sql-base.ts), the factory function (src/lib/db/factory.ts), types (src/lib/db/types.ts), and custom error classes (src/lib/db/errors.ts). Explain how new providers are added and the capability/label mechanism used instead of hard-coded type checks.",
+      "parent": "Architecture Overview",
+      "page_notes": [
+        "Provider logic is intentionally split across one base class plus one file per provider; do not summarize only the base class - enumerate each concrete provider and the method it overrides.",
+        "Behaviour is driven through capabilities/labels, NOT via type-checks like type === 'mongodb' outside provider classes. State this design rule explicitly.",
+        "Each provider is a 1:1 triad kept in lockstep: code at src/lib/db/providers/<family>/<type-id>.ts, docs at docs/providers/<type-id>.md, tests at tests/integration/db/<type-id>-provider.test.ts. Canonical type-ids: postgres, mysql, sqlite, oracle, mssql, mongodb, redis."
+      ]
     },
     {
       "title": "SQL Database Providers",
-      "purpose": "Document the SQL database providers: PostgreSQL (src/lib/db/providers/sql/postgres.ts), MySQL (src/lib/db/providers/sql/mysql.ts), SQLite (src/lib/db/providers/sql/sqlite.ts), Oracle (src/lib/db/providers/sql/oracle.ts), and SQL Server/MSSQL (src/lib/db/providers/sql/mssql.ts). Cover connection handling, query execution, schema introspection, and provider-specific features. Each extends SQLBaseProvider.",
-      "parent": "Database Provider System"
+      "purpose": "Document the SQL database providers: PostgreSQL (src/lib/db/providers/sql/postgres.ts), MySQL (src/lib/db/providers/sql/mysql.ts), SQLite (src/lib/db/providers/sql/sqlite.ts), Oracle (src/lib/db/providers/sql/oracle.ts), and SQL Server/MSSQL (src/lib/db/providers/sql/mssql.ts). Cover connection handling, query execution, schema introspection, and provider-specific features and limitations. Each extends SQLBaseProvider.",
+      "parent": "Database Provider System",
+      "page_notes": [
+        "SQLite has two distinct layers: bun:sqlite is the DB provider driver, while better-sqlite3 is used by the storage layer - do not conflate them.",
+        "Each provider has a dedicated reference doc under docs/providers/<type-id>.md (e.g. postgres.md, mssql.md) carrying provider-specific behaviours and Known Limitations; mirror those rather than inventing capabilities.",
+        "Note the type-id naming: the SQL Server provider's type-id is mssql (not sqlserver)."
+      ]
     },
     {
       "title": "NoSQL Database Providers",
       "purpose": "Document the MongoDB provider (src/lib/db/providers/document/mongodb.ts) and Redis provider (src/lib/db/providers/keyvalue/redis.ts). Cover JSON-based query format for MongoDB (collection, operation, filter, options), Redis command execution, and how both extend BaseDatabaseProvider.",
-      "parent": "Database Provider System"
+      "parent": "Database Provider System",
+      "page_notes": [
+        "Redis maps onto the SQL-oriented provider interface by convention: getSchema() uses a non-blocking SCAN (never KEYS *) and groups key prefixes as 'tables'; health/metrics come from INFO; slow queries / sessions from SLOWLOG GET / CLIENT LIST. See docs/providers/redis.md.",
+        "MongoDB and Redis extend BaseDatabaseProvider directly (NOT SQLBaseProvider). Reference docs/providers/mongodb.md and docs/providers/redis.md for the authoritative query formats and limitations."
+      ]
     },
     {
       "title": "Connection Pool & Query Management",
@@ -62,7 +88,7 @@
     },
     {
       "title": "Authentication & Security",
-      "purpose": "Document the authentication system: JWT-based auth (src/lib/auth.ts) using the jose library with HTTP-only cookies, login/logout/me API routes (src/app/api/auth/), OIDC/SSO integration (src/lib/oidc.ts, src/app/api/auth/oidc/), middleware route protection (src/middleware.ts), RBAC with admin/user roles, audit logging (src/lib/audit.ts), and data masking (src/lib/data-masking.ts + src/components/MaskingSettings.tsx). Cover environment variables: ADMIN_PASSWORD, USER_PASSWORD, JWT_SECRET, OIDC_* settings.",
+      "purpose": "Document the authentication system: JWT-based auth (src/lib/auth.ts) using the jose library with HTTP-only cookies, login/logout/me API routes (src/app/api/auth/), OIDC/SSO integration (src/lib/oidc.ts, src/app/api/auth/oidc/), middleware route protection (src/proxy.ts), RBAC with admin/user roles, audit logging (src/lib/audit.ts), and data masking (src/lib/data-masking.ts + src/components/MaskingSettings.tsx). Cover environment variables: ADMIN_PASSWORD, USER_PASSWORD, JWT_SECRET, OIDC_* settings.",
       "parent": "Architecture Overview"
     },
     {
@@ -113,6 +139,24 @@
       "parent": "Architecture Overview"
     },
     {
+      "title": "Storage Layer",
+      "purpose": "Document the pluggable persistence layer in src/lib/storage/ that decides where user data (saved connections, query history, saved queries) is stored. Cover the storage facade (src/lib/storage/storage-facade.ts), factory (src/lib/storage/factory.ts), types (src/lib/storage/types.ts), the localStorage implementation (src/lib/storage/local-storage.ts), and the server-side providers: PostgreSQL (src/lib/storage/providers/postgres.ts) and SQLite (src/lib/storage/providers/sqlite.ts). Explain the write-through cache model (localStorage serves reads; mutations are pushed to the server, debounced), the useStorageSync hook, the server-side-only STORAGE_PROVIDER env var (local | sqlite | postgres) discovered at runtime via /api/storage/config, and STORAGE_SQLITE_PATH / STORAGE_POSTGRES_URL. Reference docs/STORAGE.md.",
+      "parent": "Architecture Overview",
+      "page_notes": [
+        "This is the storage abstraction (where app data persists), which is distinct from the Database Provider System (the external databases the user queries). Do not merge the two.",
+        "STORAGE_PROVIDER and its companions are server-side only - they are intentionally NOT prefixed with NEXT_PUBLIC_ and are surfaced to the client via /api/storage/config."
+      ]
+    },
+    {
+      "title": "Platform Integration & npm Package",
+      "purpose": "Document how LibreDB Studio is consumed as the embedded @libredb/studio npm package by the closed-source libredb-platform, alongside running as a standalone app. Cover the embedding layer: src/workspace/ (StudioWorkspace.tsx as the embeddable shell, the use-connection-adapter and use-query-adapter hooks in src/workspace/hooks/, and src/workspace/types.ts) and src/exports/ (the package's public entry points: index.ts, components.ts, providers.ts, workspace.ts, types.ts). Explain the build:lib script (tsup) that produces the package dist - separate from the Next.js build - and why platform-facing component changes require running build:lib. Reference the platform-integration rules in .claude/rules/platform-integration.md.",
+      "parent": "Architecture Overview",
+      "page_notes": [
+        "This dual-mode design (standalone app AND embedded package) is the single most load-bearing architectural fact about the repo - foreground it.",
+        "bun run build (Next.js) does NOT update the package dist; only build:lib (tsup) does. Make this explicit so consumers of the wiki do not assume one build covers both."
+      ]
+    },
+    {
       "title": "Testing Strategy",
       "purpose": "Document the comprehensive multi-layer testing strategy. Cover: test setup files (tests/setup.ts for env/localStorage mocks, tests/setup-dom.ts for happy-dom), test helpers (tests/helpers/ with mock-monaco, mock-next, mock-navigation, mock-provider, mock-fetch, mock-sonner, render-with-providers), test fixtures (tests/fixtures/ with connections, schemas, query-results, masking-configs), and the component test isolation script (tests/run-components.sh). Explain why component tests need isolation (bun:test mock.module cross-contamination)."
     },
@@ -133,11 +177,23 @@
     },
     {
       "title": "DevOps & Deployment",
-      "purpose": "Document the deployment infrastructure: Dockerfile with multi-stage Bun build and standalone Next.js output, docker/postgres.yml for local PostgreSQL with extensions and sample data (docker/postgres-init/), GitHub Actions CI pipeline (.github/workflows/ci.yml with lint, typecheck, test, build steps), Docker build and push workflow (.github/workflows/docker-build-push.yml), Render deployment config (render.yaml), environment variable configuration (.env.example), and health check endpoint (GET /api/db/health)."
+      "purpose": "Document the Docker and CI/CD infrastructure: Dockerfile with multi-stage Bun build and standalone Next.js output (build args JWT_SECRET_BUILD, ADMIN_PASSWORD_BUILD, USER_PASSWORD_BUILD), docker/postgres.yml for local PostgreSQL with extensions and sample data (docker/postgres-init/), GitHub Actions CI pipeline (.github/workflows/ci.yml with lint, typecheck, test, build steps), Docker build and push workflow (.github/workflows/docker-build-push.yml) publishing to the canonical image ghcr.io/libredb/libredb-studio, Render deployment config (render.yaml), environment variable configuration (.env.example), and health check endpoint (GET /api/db/health).",
+      "page_notes": [
+        "The project is trunk-based: feature branches target main directly and releases are git tags (vX.Y.Z) that trigger the npm publish workflow. There is no dev branch and no long-lived release/* branches."
+      ]
+    },
+    {
+      "title": "Kubernetes & Helm Chart",
+      "purpose": "Document the Helm chart for Kubernetes deployment in charts/libredb-studio/ (Chart.yaml, values.yaml, values.schema.json, templates/). Cover the values reference, how the chart is linted (helm lint charts/libredb-studio --strict), and distribution channels: the Helm repo at https://libredb.org/libredb-studio/, the OCI registry oci://ghcr.io/libredb/charts/libredb-studio, and the ArtifactHub listing. Reference docs/HELM_CHART.md for chart architecture and rationale, and charts/libredb-studio/README.md for the full values reference.",
+      "parent": "DevOps & Deployment"
     },
     {
       "title": "Release History",
-      "purpose": "Document the project's release history from docs/releases/: v0.3.0, v0.4.0, v0.5.0, v0.5.6, v0.6.1, v0.6.7, and v0.7.0 (current). Summarize key features added in each release, the evolution from a simple PostgreSQL editor to a multi-database AI-powered IDE, and the current project version (0.7.0)."
+      "purpose": "Document the project's release history from docs/releases/: v0.3.0, v0.4.0, v0.5.0, v0.5.6, v0.6.1, v0.6.7, v0.7.0, and v0.8.0, plus the 2026-03-27 platform-integration-fixes notes. Summarize key features added in each release and the evolution from a simple PostgreSQL editor into a multi-database, AI-powered IDE that also ships as the embedded @libredb/studio npm package. The current project version is 0.9.29 (per package.json); releases beyond v0.8.0 are cut as git tags and may not all have a dedicated docs/releases/ file."
+    },
+    {
+      "title": "Glossary",
+      "purpose": "Define the project-specific terms, abbreviations, and domain concepts a new contributor needs to read the rest of the wiki. Define at least: Provider (a Strategy-Pattern adapter for a database or LLM); type-id (a provider's canonical identifier, e.g. mssql not sqlserver); the SQLBaseProvider vs BaseDatabaseProvider split; tri-sync (the invariant that code, docs, and tests for a provider stay in lockstep in the same PR); Storage Layer (where user data such as connections and history persists - distinct from the databases the user queries); the embedding layer / @libredb/studio package (src/workspace + src/exports, built via build:lib); standalone vs embedded run modes; RBAC and the src/proxy.ts middleware; write-through cache (localStorage serves reads, mutations are pushed to the server debounced); OIDC/PKCE auth; NL2SQL and the AI Autopilot/Query Safety features. Keep each definition to one or two sentences and link to the relevant wiki page."
     }
   ]
 }
