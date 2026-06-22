@@ -319,7 +319,8 @@ For MongoDB connections, the `sql` field should contain a JSON query:
 - `deleteOne` - Delete single document
 - `deleteMany` - Delete multiple documents
 - `aggregate` - Aggregation pipeline
-- `countDocuments` - Count documents
+- `count` - Count documents matching a filter (runs `countDocuments` internally)
+- `distinct` - Distinct values for a field (the field is taken from the first key of `options.projection`)
 
 ##### Redis Query Format
 
