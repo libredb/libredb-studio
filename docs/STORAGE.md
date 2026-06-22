@@ -679,7 +679,7 @@ interface ServerStorageProvider {
 |---------|--------|
 | **WAL mode** | Enabled for concurrent read performance |
 | **Auto-create** | Directory and database file created on `initialize()` |
-| **Upsert** | `INSERT OR REPLACE INTO user_storage` |
+| **Upsert** | `INSERT ... ON CONFLICT (user_id, collection) DO UPDATE` |
 | **Transactions** | `mergeData()` wraps all inserts in a single transaction |
 | **Health check** | `SELECT 1 AS ok` |
 
@@ -779,6 +779,7 @@ The hook is mounted in `Studio.tsx` after `useAuth()` and orchestrates all clien
 interface StorageSyncState {
   isServerMode: boolean;     // Server storage active?
   isSyncing: boolean;        // Currently transferring data?
+  isReady: boolean;          // Init complete (config fetched + initial pull done)?
   lastSyncedAt: Date | null; // Last successful sync timestamp
   syncError: string | null;  // Last error message (null = healthy)
 }
