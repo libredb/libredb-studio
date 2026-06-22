@@ -80,10 +80,10 @@ LibreDB Studio uses JWT (JSON Web Tokens) for authentication. Tokens are stored 
 Authentication is enforced centrally by the middleware (`src/proxy.ts`), not by individual route handlers: every route requires a valid `auth-token` cookie **except** the routes below. (This is why handlers like `/api/ai/*` don't call `getSession()` themselves — the middleware has already gated them.)
 
 - `/api/auth/*` — login, logout, me, and OIDC login/callback
-- `GET /api/db/health` — service health check
-- `GET /api/storage/config` — storage-mode discovery (returns mode only, no data)
+- `/api/db/health` — excluded from the middleware for **both** methods; `GET` is fully public, while `POST` performs its own session check and returns JSON `401` if unauthenticated
+- `GET /api/storage/config` — storage-mode discovery (returns `{ provider, serverMode }`, no user data)
 
-Unauthenticated requests to any other route are redirected to `/login`.
+Unauthenticated requests to any other (middleware-gated) route are redirected to `/login`. A few allowlisted handlers self-check instead and return JSON — e.g. `POST /api/db/health` (`401`) and `GET /api/auth/me` (`{ "authenticated": false }`).
 
 ---
 
@@ -619,19 +619,19 @@ LLM_API_URL=http://localhost:11434/v1  # For ollama/custom
 
 #### Other AI endpoints
 
-All AI endpoints are `POST`, auth-required (via middleware), and stream `text/plain`. They share the optional `schemaContext` and `databaseType` fields; the table lists each one's distinct required input and purpose.
+All AI endpoints are `POST`, auth-required (via middleware), and stream `text/plain`. They share the optional `schemaContext` and `databaseType` fields; the table lists each one's primary input and purpose.
 
-| Endpoint | Required input | Purpose |
-|----------|----------------|---------|
+| Endpoint | Key input | Purpose |
+|----------|-----------|---------|
 | `POST /api/ai/nl2sql` | `question` (+ optional `queryLanguage`, `conversationHistory`) | Natural language → SQL/MongoDB query (multi-turn) |
 | `POST /api/ai/explain` | `query` (+ optional `explainPlan`) | Explain an EXPLAIN plan and suggest optimizations |
 | `POST /api/ai/query-safety` | `query` | Pre-execution risk analysis; streams a JSON verdict (`riskLevel`, `warnings[]`, `recommendation`) |
 | `POST /api/ai/impact` | `query` (a DDL statement) | Predict the impact of a schema change before running it |
-| `POST /api/ai/index-advisor` | `slowQueries` / `indexStats` / `tableStats` | Recommend missing/unused/duplicate indexes |
-| `POST /api/ai/autopilot` | performance metrics (`slowQueries`, `indexStats`, `tableStats`, `performanceMetrics`, `overview`) | Full performance-optimization report |
+| `POST /api/ai/index-advisor` | `slowQueries` / `indexStats` / `tableStats` *(all optional)* | Recommend missing/unused/duplicate indexes |
+| `POST /api/ai/autopilot` | performance metrics — `slowQueries`, `indexStats`, `tableStats`, `performanceMetrics`, `overview` *(all optional)* | Full performance-optimization report |
 | `POST /api/ai/describe-schema` | `schemaContext` (+ optional `mode`: `"table"`\|`"database"`) | Auto-generate schema documentation |
 
-Each validates its required field and returns `400 { "error": "… is required" }` if missing.
+`nl2sql`, `explain`, `query-safety`, `impact`, and `describe-schema` validate their key field and return `400 { "error": "… is required" }` if it's missing. `index-advisor` and `autopilot` accept fully partial payloads (no required field) — they degrade to a best-effort analysis from whatever is provided.
 
 ---
 
@@ -641,11 +641,13 @@ The write-through storage sync layer (see [`docs/STORAGE.md`](STORAGE.md)). Data
 
 #### GET /api/storage/config
 
-Public. Returns the active storage mode so the client can discover whether server-side storage is enabled.
+Public. Returns the active storage configuration so the client can discover whether server-side storage is enabled.
 
 ```json
-{ "provider": "local" }   // "local" | "sqlite" | "postgres"
+{ "provider": "local", "serverMode": false }
 ```
+
+`provider` is `"local" | "sqlite" | "postgres"`; `serverMode` is `true` whenever `provider` is not `"local"`.
 
 #### GET /api/storage
 
