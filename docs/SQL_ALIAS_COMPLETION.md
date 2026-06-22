@@ -60,6 +60,9 @@ src/lib/sql/
 ├── alias-extractor.ts   # Core alias extraction logic
 ├── types.ts             # TypeScript interfaces
 └── index.ts             # Module exports
+
+src/lib/editor/
+└── sql-completions.ts   # Monaco completion provider (consumes the alias extractor)
 ```
 
 ### Key Components
@@ -79,9 +82,11 @@ Lightweight regex-based SQL parser that extracts table aliases without external 
 4. Extracts CTE (WITH clause) aliases
 5. Returns a Map of alias → table name
 
-#### 2. Completion Provider (`src/components/QueryEditor.tsx`)
+#### 2. Completion Provider (`src/lib/editor/sql-completions.ts`)
 
-Monaco Editor completion provider that integrates with the alias extractor.
+Monaco Editor completion provider (`registerCompletionItemProvider('sql', …)`, triggered on `.` and
+space) that integrates with the alias extractor. Registered by the editor and hosted in
+`src/components/QueryEditor.tsx`.
 
 **Dot-triggered completion flow:**
 ```
@@ -184,7 +189,8 @@ interface AliasExtractionResult {
 
 | File | Description |
 |------|-------------|
-| `src/lib/sql/types.ts` | Type definitions |
-| `src/lib/sql/alias-extractor.ts` | Core parsing logic |
+| `src/lib/sql/alias-extractor.ts` | Core alias parsing logic (`extractAliases`, `resolveAlias`) |
+| `src/lib/sql/types.ts` | Type definitions (`TableAlias`, `AliasExtractionResult`) |
 | `src/lib/sql/index.ts` | Module exports |
-| `src/components/QueryEditor.tsx` | Monaco Editor integration |
+| `src/lib/editor/sql-completions.ts` | Monaco completion provider (dot/space-triggered; consumes the alias extractor) |
+| `src/components/QueryEditor.tsx` | Hosts the Monaco editor and registers the provider |
