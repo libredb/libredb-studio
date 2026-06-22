@@ -16,7 +16,7 @@ LibreDB Studio is a web-based SQL IDE for cloud-native teams. It supports Postgr
 * Repository: https://github.com/libredb/libredb-studio
 * Container Registry (primary): https://github.com/libredb/libredb-studio/pkgs/container/libredb-studio
 * Docker Image (primary): ghcr.io/libredb/libredb-studio:latest — no pull rate limits, use in all copy-paste examples
-* Docker Hub (mirror): https://hub.docker.com/r/libredb/libredb-studio — `libredb/libredb-studio` (convenience/discoverability only; GHCR stays canonical)
+* Docker Hub (mirror): https://hub.docker.com/r/libredb/libredb-studio — discoverability only; GHCR stays canonical
 * Helm Chart: https://artifacthub.io/packages/helm/libredb-studio/libredb-studio
 * Helm Repo: https://libredb.org/libredb-studio/
 * Helm OCI: oci://ghcr.io/libredb/charts/libredb-studio
@@ -28,46 +28,24 @@ LibreDB Studio is a web-based SQL IDE for cloud-native teams. It supports Postgr
 ## Development Commands
 
 ```bash
-# Install dependencies (Bun preferred)
-bun install
+bun install              # deps (Bun preferred)
+bun dev                  # dev server (Turbopack)
+bun run build            # production build
+bun start                # serve production build
+bun run lint             # ESLint 9
+bun run typecheck        # TypeScript strict
+bun run test             # all layers: unit + api + integration + hooks + components
+bun run test:unit        # (also :api :integration :hooks :components)
+bun run test:e2e         # Playwright (requires build)
+bun run test:coverage    # coverage report
 
-# Development server with Turbopack
-bun dev
+# IMPORTANT: after changing any component used by platform (workspace, providers, …),
+# run build:lib — `bun run build` (Next.js) does NOT update the package dist.
+bun run build:lib        # tsup → @libredb/studio package dist
 
-# Production build
-bun run build
+docker-compose up -d     # Docker dev
 
-# Start production server
-bun start
-
-# Lint code
-bun run lint
-
-# Run all tests (unit + API + integration + hooks + components)
-bun run test
-
-# Run individual test layers
-bun run test:unit
-bun run test:api
-bun run test:integration
-bun run test:hooks
-bun run test:components
-
-# E2E tests (Playwright, requires build)
-bun run test:e2e
-
-# Coverage report
-bun run test:coverage
-
-# Library build (tsup) — exports @libredb/studio package for platform consumption
-# IMPORTANT: After changing any component used by platform (workspace, providers, etc.),
-# you MUST run this command. `bun run build` (Next.js) does NOT update the package dist.
-bun run build:lib
-
-# Docker development
-docker-compose up -d
-
-# Helm chart
+# Helm
 helm lint charts/libredb-studio --strict
 helm template test charts/libredb-studio --set secrets.jwtSecret=test-secret-32-chars-minimum-here --set secrets.adminPassword=test123 --set secrets.userPassword=test123
 helm dependency build charts/libredb-studio
@@ -77,7 +55,7 @@ The project uses ESLint 9 for linting and `bun:test` for testing with `@testing-
 
 > **Important**: Always use `bun run test` instead of bare `bun test`. Component tests require isolated execution groups (handled by `tests/run-components.sh`) to prevent `mock.module()` cross-contamination between test files.
 >
-> **Coverage isolation**: `bun`'s `mock.module()` is process-wide, so a test file that mocks a shared module (e.g. `@/lib/db/factory`, `@/lib/oidc`, the audit module) poisons any other file that imports the real module if they share a process — yielding nondeterministic failures like `clearProviderCache is not a function` or `Export named 'removeProvider' not found`. It passes locally by load-order luck but fails in CI. For this reason `test:coverage:core` runs every core test file in its **own `bun` process** via `tests/run-core.sh` (each writing to `coverage/core/file-N`), and `test:coverage` merges all the per-file lcov reports. Do NOT collapse this back into a single `bun test tests/unit tests/api tests/integration` invocation.
+> **Coverage isolation**: `bun`'s `mock.module()` is process-wide — a file mocking a shared module (e.g. `@/lib/db/factory`, `@/lib/oidc`) poisons others sharing the process, causing nondeterministic CI failures (`clearProviderCache is not a function`, `Export named 'removeProvider' not found`). So `test:coverage:core` runs each core test file in its **own `bun` process** via `tests/run-core.sh`, and `test:coverage` merges the per-file lcov reports. Do NOT collapse this into a single `bun test tests/unit tests/api tests/integration`.
 
 ## Platform Integration Rules (npm package @libredb/studio)
 
@@ -138,75 +116,26 @@ After any UI change in studio:
 
 ### Directory Structure
 
+High-level only — see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full tree and data flow.
+
 ```
 src/
-├── app/                    # Next.js App Router
-│   ├── api/
-│   │   ├── auth/           # Login/logout/me endpoints
-│   │   │   └── oidc/       # OIDC login + callback routes (PKCE, code exchange)
-│   │   ├── ai/             # AI endpoints (chat, nl2sql, explain, safety)
-│   │   ├── db/             # Query, schema, health, maintenance, transactions
-│   │   ├── storage/        # Storage sync API (config, CRUD, migrate)
-│   │   └── admin/          # Fleet health, audit endpoints
-│   ├── admin/              # Admin dashboard (RBAC protected)
-│   └── login/              # Login page
-├── components/             # React components
-│   ├── Studio.tsx          # Main application shell
-│   ├── QueryEditor.tsx     # Monaco SQL editor wrapper
-│   ├── ResultsGrid.tsx     # Virtualized data grid
-│   ├── sidebar/            # Sidebar, ConnectionsList, ConnectionItem
-│   ├── studio/             # StudioTabBar, QueryToolbar, BottomPanel
-│   ├── admin/              # AdminDashboard, tabs (Overview, Operations, etc.)
-│   ├── schema-explorer/    # SchemaExplorer component
-│   └── ui/                 # Shadcn/UI primitives
-├── hooks/                  # Custom React hooks
+├── app/          # App Router: api/{auth(+oidc), ai, db, storage, admin}, admin/, login/, monitoring/
+├── components/   # Studio.tsx (standalone shell), QueryEditor, ResultsGrid, sidebar/, studio/, admin/, schema-explorer/, ui/
+├── workspace/    # Embeddable shell (StudioWorkspace) + host adapter hooks — the npm-package entry
+├── exports/      # Public package barrel exports (tsup build:lib)
+├── hooks/        # Custom React hooks
 └── lib/
-    ├── storage/            # Storage abstraction layer
-    │   ├── index.ts        # Barrel export
-    │   ├── types.ts        # StorageData, ServerStorageProvider interfaces
-    │   ├── storage-facade.ts # Public sync API + CustomEvent dispatch
-    │   ├── local-storage.ts  # Pure localStorage CRUD
-    │   ├── factory.ts      # Env-based provider factory (singleton)
-    │   └── providers/
-    │       ├── sqlite.ts   # better-sqlite3 backend
-    │       └── postgres.ts # pg backend
-    ├── db/                 # Database provider module (Strategy Pattern)
-    │   ├── providers/
-    │   │   ├── sql/        # SQL providers (postgres, mysql, sqlite, oracle, mssql)
-    │   │   ├── document/   # Document providers (mongodb)
-    │   │   ├── keyvalue/   # Key-value providers (redis)
-    │   ├── factory.ts      # Provider factory
-    │   ├── types.ts        # Database types
-    │   └── errors.ts       # Custom error classes
-    ├── llm/                # LLM provider module (Strategy Pattern)
-    ├── schema-diff/        # Schema diff engine + migration SQL generator
-    ├── sql/                # SQL statement splitter, alias extractor
-    ├── types.ts            # TypeScript type definitions
-    ├── auth.ts             # JWT auth utilities (login, logout, signJWT, verifyJWT)
-    ├── oidc.ts             # OIDC utilities (discovery, PKCE, token exchange, role mapping, logout)
-    └── storage.ts          # LocalStorage management
-
-tests/
-├── setup.ts               # Global test setup (env vars, localStorage mock)
-├── setup-dom.ts            # DOM environment setup (happy-dom)
-├── run-components.sh       # Component test isolation runner
-├── fixtures/               # Mock data (connections, schemas, query results)
-├── helpers/                # Test utilities (mock providers, mock Monaco, etc.)
-├── unit/                   # Pure function tests
-├── api/                    # API route handler tests
-├── integration/            # Database provider tests (mocked drivers)
-├── hooks/                  # React hook tests
-└── components/             # Component tests (happy-dom)
-
-e2e/                        # Playwright E2E tests (browser)
-
-charts/
-└── libredb-studio/         # Helm chart for Kubernetes deployment
-    ├── Chart.yaml           # Chart metadata + ArtifactHub annotations
-    ├── values.yaml          # Default configuration
-    ├── values.schema.json   # JSON Schema validation
-    └── templates/           # K8s manifests (deployment, service, ingress, etc.)
+    ├── db/       # DB providers, Strategy Pattern: providers/{sql,document,keyvalue}, factory, types, errors
+    ├── llm/      # LLM providers, Strategy Pattern
+    ├── storage/  # Pluggable storage: storage-facade, local-storage, factory, providers/{sqlite,postgres}
+    ├── editor/   # Monaco completions (SQL + MongoDB)
+    ├── sql/      # Statement splitter, alias extractor
+    ├── seed/     # Seed connections (config loader + credential resolver)
+    └── auth.ts · oidc.ts   # JWT auth + OIDC utilities
 ```
+
+`tests/` mirrors `src/` by layer (`unit`, `api`, `integration`, `hooks`, `components`); component tests run isolated via `tests/run-components.sh`. `e2e/` is Playwright. `charts/libredb-studio/` is the Helm chart (`Chart.yaml`, `values.yaml`, `values.schema.json`, `templates/`).
 
 ### Key Patterns
 
@@ -310,56 +239,15 @@ The Dockerfile uses multi-stage Bun build with standalone Next.js output. Build 
 
 ## Database Connections
 
-### SQL Databases (PostgreSQL, MySQL, SQLite)
+Connections are typed by `type`; per-provider connection fields, query formats, and behaviours live in [`docs/providers/<type-id>.md`](docs/providers/) and [`docs/API_DOCS.md`](docs/API_DOCS.md).
+
 ```typescript
-const connection = {
-  type: 'postgres', // or 'mysql', 'sqlite'
-  host: 'localhost',
-  port: 5432,
-  database: 'mydb',
-  user: 'admin',
-  password: 'secret',
-};
+// SQL (postgres | mysql | sqlite | oracle | mssql)
+const sql   = { type: 'postgres', host: 'localhost', port: 5432, database: 'mydb', user: 'admin', password: 'secret' };
+// MongoDB — query is JSON: { collection, operation, filter, options }
+const mongo = { type: 'mongodb', connectionString: 'mongodb://localhost:27017/mydb' };
+// Redis — query is a plain command ('HGETALL user:1') or JSON { command, args }
+const redis = { type: 'redis', host: 'localhost', port: 6379, password: 'secret', database: '0' };
 ```
 
-### MongoDB
-```typescript
-const connection = {
-  type: 'mongodb',
-  connectionString: 'mongodb://localhost:27017/mydb',
-  // or host/port/database format
-};
-
-// Query format (JSON)
-const query = JSON.stringify({
-  collection: 'users',
-  operation: 'find',
-  filter: { status: 'active' },
-  options: { limit: 50 }
-});
-```
-
-### Redis
-```typescript
-const connection = {
-  type: 'redis',
-  host: 'localhost',
-  port: 6379,
-  password: 'secret',   // optional
-  database: '0',         // logical DB index (defaults to 0)
-};
-
-// Query format — two interchangeable styles:
-// 1. Plain Redis command (quoted args supported)
-const plain = 'HGETALL user:1';
-
-// 2. JSON command object
-const json = JSON.stringify({ command: 'HGETALL', args: ['user:1'] });
-```
-
-Redis is a key-value store, so it maps onto the SQL-oriented provider interface
-by convention rather than by emulation:
-- **Schema** — `getSchema()` runs a non-blocking `SCAN` (never `KEYS *`) and groups
-  keys by prefix, exposing each prefix (e.g. `user:*`) as a "table".
-- **Health / overview / metrics** — derived from the `INFO` command output.
-- **Slow queries / active sessions** — derived from `SLOWLOG GET` and `CLIENT LIST`.
+Redis maps onto the SQL-oriented provider interface by convention: `getSchema()` runs a non-blocking `SCAN` (never `KEYS *`) and groups keys by prefix as "tables"; health/metrics come from `INFO`; slow queries / sessions from `SLOWLOG GET` / `CLIENT LIST`. See [`docs/providers/redis.md`](docs/providers/redis.md).
