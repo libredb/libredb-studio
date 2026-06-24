@@ -19,7 +19,7 @@ export default defineConfig({
   external: [
     'react', 'react-dom', 'next',
     // Database drivers — consumers install what they need
-    'pg', 'mysql2', 'better-sqlite3', 'oracledb', 'mssql', 'mongodb', 'ioredis',
+    'pg', 'mysql2', 'better-sqlite3', 'oracledb', 'mssql', 'mongodb', 'ioredis', '@libredb/libredb',
     // SSH and crypto
     'ssh2',
     // Monaco editor

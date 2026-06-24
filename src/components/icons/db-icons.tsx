@@ -82,3 +82,14 @@ export const MSSQLIcon: React.FC<IconProps> = ({ className, ...props }) => (
     <path d="M4 15.5c0 1.66 3.58 3 8 3s8-1.34 8-3" />
   </svg>
 );
+
+/** LibreDB database cylinder with L marker */
+export const LibreDBIcon: React.FC<IconProps> = ({ className, ...props }) => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5}
+       strokeLinecap="round" strokeLinejoin="round" className={className} {...props}>
+    <ellipse cx="12" cy="5" rx="7" ry="3" />
+    <path d="M5 5v14c0 1.66 3.13 3 7 3s7-1.34 7-3V5" />
+    <path d="M5 12c0 1.66 3.13 3 7 3s7-1.34 7-3" />
+    <path d="M10 18.5h4" />
+  </svg>
+);

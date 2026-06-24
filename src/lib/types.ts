@@ -1,4 +1,4 @@
-export type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'mongodb' | 'redis' | 'oracle' | 'mssql';
+export type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'mongodb' | 'redis' | 'oracle' | 'mssql' | 'libredb';
 
 export type ConnectionEnvironment = 'production' | 'staging' | 'development' | 'local' | 'other';
 

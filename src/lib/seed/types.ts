@@ -20,7 +20,7 @@ const ConnectionEnvironmentSchema = z.enum([
 const AllowedRoleSchema = z.enum(['*', 'admin', 'user']);
 
 const SeedDatabaseType = z.enum([
-  'postgres', 'mysql', 'sqlite', 'mongodb', 'redis', 'oracle', 'mssql',
+  'postgres', 'mysql', 'sqlite', 'mongodb', 'redis', 'oracle', 'mssql', 'libredb',
 ]);
 
 export const SeedDefaultsSchema = z.object({
