@@ -150,7 +150,7 @@ export class LibreDBProvider extends BaseDatabaseProvider {
 
   public async disconnect(): Promise<void> {
     if (this.db) {
-      try { this.db.close(); } catch { /* close is idempotent; ignore */ }
+      try { this.db.close(); } catch { /* the null-guard above runs close() at most once; ignore any error */ }
       this.db = null;
       this.kv = null;
     }
