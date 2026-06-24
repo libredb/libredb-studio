@@ -1,6 +1,10 @@
 # LibreDB Studio Provider — Design Spec (Option A: embedded raw-KV browser)
 
-> Status: design spec for a future implementation session. NOT built yet.
+> **SUPERSEDED.** This precursor sketch has been superseded by:
+> - [`docs/superpowers/specs/2026-06-24-libredb-embedded-provider-design.md`](../superpowers/specs/2026-06-24-libredb-embedded-provider-design.md) — the approved design spec
+> - [`docs/providers/libredb.md`](libredb.md) — the provider reference documentation (implementation is complete)
+>
+> Original status note: design spec for a future implementation session. NOT built yet.
 > Lets LibreDB Studio connect to a local LibreDB database file (the embedded `libredb` package —
 > the open-source database in the sibling `libredb-database` repo) by importing the package and
 > opening the file IN the Studio server process — the same embedded pattern Studio uses for SQLite.
