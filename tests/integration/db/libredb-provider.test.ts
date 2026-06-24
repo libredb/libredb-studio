@@ -72,3 +72,22 @@ describe('LibreDBProvider — lifecycle & metadata', () => {
     expect(provider.getLabels().rowNamePlural).toBe('keys');
   });
 });
+
+describe('LibreDBProvider — getSchema', () => {
+  test('groups keys by colon-prefix into pseudo-tables', async () => {
+    const provider = new LibreDBProvider(makeConn(tmpFile));
+    await provider.connect();
+    const schema = await provider.getSchema();
+    await provider.disconnect();
+
+    const byName = Object.fromEntries(schema.map((t) => [t.name, t]));
+    expect(byName['user:*'].rowCount).toBe(2);
+    expect(byName['order:*'].rowCount).toBe(1);
+    expect(byName['config'].rowCount).toBe(1); // no colon -> own group
+    // columns are key (primary) + value
+    expect(byName['user:*'].columns.map((c) => c.name)).toEqual(['key', 'value']);
+    expect(byName['user:*'].columns[0].isPrimary).toBe(true);
+    // sorted by rowCount desc -> user:* first
+    expect(schema[0].name).toBe('user:*');
+  });
+});

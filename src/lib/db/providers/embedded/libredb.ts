@@ -163,7 +163,38 @@ export class LibreDBProvider extends BaseDatabaseProvider {
 
   public async getSchema(): Promise<TableSchema[]> {
     this.ensureConnected();
-    return [];
+    const groups = new Map<string, number>();
+    let scanned = 0;
+    const MAX_SCAN = 10000;
+    // Empty-string start encodes to the lowest bytes; '\u{10FFFF}' encodes above
+    // any UTF-8 text key the lenses produce, so [start, end) covers the keyspace.
+    // (kv.prefix cannot be used here — it rejects an empty prefix.)
+    for (const { key } of this.kv!.range('', '\u{10FFFF}')) {
+      if (scanned >= MAX_SCAN) break;
+      scanned++;
+      const name = this.groupName(key);
+      groups.set(name, (groups.get(name) ?? 0) + 1);
+    }
+
+    const schemas: TableSchema[] = [];
+    for (const [name, rowCount] of groups) {
+      schemas.push({
+        name,
+        columns: [
+          { name: 'key', type: 'string', nullable: false, isPrimary: true },
+          { name: 'value', type: 'string', nullable: true, isPrimary: false },
+        ],
+        indexes: [],
+        rowCount,
+      });
+    }
+    return schemas.sort((a, b) => (b.rowCount ?? 0) - (a.rowCount ?? 0));
+  }
+
+  /** Group key "user:1" under "user:*"; a key with no ":" is its own group. */
+  private groupName(key: string): string {
+    const colon = key.indexOf(':');
+    return colon > 0 ? `${key.slice(0, colon)}:*` : key;
   }
 
   public async query(_input: string): Promise<QueryResult> {
@@ -189,7 +220,7 @@ export class LibreDBProvider extends BaseDatabaseProvider {
       maxConnections: 1,
       databaseSize: this.fileSizeHuman(),
       databaseSizeBytes: this.fileSizeBytes(),
-      tableCount: 0,
+      tableCount: (await this.getSchema()).length,
       indexCount: 0,
     };
   }
