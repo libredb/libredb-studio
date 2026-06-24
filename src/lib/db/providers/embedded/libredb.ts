@@ -241,7 +241,13 @@ export class LibreDBProvider extends BaseDatabaseProvider {
     }
   }
 
-  /** Split on whitespace, honoring single/double quotes (Redis-style). */
+  /**
+   * Split on whitespace, honoring single/double quotes (Redis-style).
+   *
+   * Note: consecutive whitespace outside quotes is collapsed to a single
+   * token boundary (unquoted `put key hello  world` stores `"hello world"`).
+   * To preserve exact spacing, wrap the value in quotes: `put key "hello  world"`.
+   */
   private tokenize(input: string): string[] {
     const parts: string[] = [];
     let current = '';
@@ -260,6 +266,9 @@ export class LibreDBProvider extends BaseDatabaseProvider {
       }
     }
     if (sawToken) parts.push(current);
+    if (inQuote) {
+      throw new QueryError('Unmatched quote in command', 'libredb');
+    }
     return parts;
   }
 

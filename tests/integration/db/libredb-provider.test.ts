@@ -152,4 +152,11 @@ describe('LibreDBProvider — query commands', () => {
     await expect(provider.query('select * from users')).rejects.toThrow(/get, put, delete, prefix, range/);
     await provider.disconnect();
   });
+
+  test('an unterminated quote is rejected', async () => {
+    const provider = new LibreDBProvider(makeConn(tmpFile));
+    await provider.connect();
+    await expect(provider.query('put key "unterminated')).rejects.toThrow(/quote/i);
+    await provider.disconnect();
+  });
 });
