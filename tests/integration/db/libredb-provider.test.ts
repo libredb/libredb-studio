@@ -43,6 +43,12 @@ describe('LibreDBProvider — lifecycle & metadata', () => {
     expect(() => provider.validate()).toThrow(/path/i);
   });
 
+  test('connect() with no file path throws (no silent in-memory open)', async () => {
+    const provider = new LibreDBProvider(makeConn(undefined));
+    await expect(provider.connect()).rejects.toThrow(/path/i);
+    expect(provider.isConnected()).toBe(false);
+  });
+
   test('connect() then disconnect() against a real file', async () => {
     const provider = new LibreDBProvider(makeConn(tmpFile));
     await provider.connect();

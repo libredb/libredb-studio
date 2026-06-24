@@ -132,6 +132,7 @@ export class LibreDBProvider extends BaseDatabaseProvider {
   }
 
   public async connect(): Promise<void> {
+    this.validate(); // throws DatabaseConfigError if database path is missing
     const lib = await loadLibreDB(); // DatabaseConfigError propagates if unavailable
     try {
       this.db = lib.open({ path: this.config.database! });
@@ -194,6 +195,7 @@ export class LibreDBProvider extends BaseDatabaseProvider {
   }
 
   public async getPerformanceMetrics(): Promise<PerformanceMetrics> {
+    this.ensureConnected();
     return { cacheHitRatio: 100 };
   }
 
@@ -204,7 +206,7 @@ export class LibreDBProvider extends BaseDatabaseProvider {
 
   public async getStorageStats(): Promise<StorageStats[]> {
     this.ensureConnected();
-    return [{ name: 'File', location: this.config.database, size: this.fileSizeHuman(), sizeBytes: this.fileSizeBytes() }];
+    return [{ name: 'File', location: this.config.database ?? '', size: this.fileSizeHuman(), sizeBytes: this.fileSizeBytes() }];
   }
 
   public async runMaintenance(type: MaintenanceType): Promise<MaintenanceResult> {
