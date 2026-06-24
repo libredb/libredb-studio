@@ -197,9 +197,81 @@ export class LibreDBProvider extends BaseDatabaseProvider {
     return colon > 0 ? `${key.slice(0, colon)}:*` : key;
   }
 
-  public async query(_input: string): Promise<QueryResult> {
+  public async query(input: string): Promise<QueryResult> {
     this.ensureConnected();
-    throw new QueryError('LibreDB query support is not implemented yet', 'libredb');
+    return this.trackQuery(async () => {
+      const { result, executionTime } = await this.measureExecution(async () => this.runCommand(input));
+      return { ...result, executionTime };
+    });
+  }
+
+  private runCommand(input: string): Omit<QueryResult, 'executionTime'> {
+    const parts = this.tokenize(input.trim());
+    if (parts.length === 0) throw new QueryError('Empty command', 'libredb');
+    const kv = this.kv!;
+    const verb = parts[0].toLowerCase();
+
+    switch (verb) {
+      case 'get': {
+        if (parts.length < 2) throw new QueryError('Usage: get <key>', 'libredb');
+        const value = kv.get(parts[1]);
+        if (value === undefined) return { rows: [], fields: ['key', 'value'], rowCount: 0 };
+        return { rows: [{ key: parts[1], value: this.renderValue(value) }], fields: ['key', 'value'], rowCount: 1 };
+      }
+      case 'put': {
+        if (parts.length < 3) throw new QueryError('Usage: put <key> <value>', 'libredb');
+        const { changed } = kv.set(parts[1], parts.slice(2).join(' '));
+        return { rows: [{ changed }], fields: ['changed'], rowCount: changed };
+      }
+      case 'delete': {
+        if (parts.length < 2) throw new QueryError('Usage: delete <key>', 'libredb');
+        const { changed } = kv.delete(parts[1]);
+        return { rows: [{ changed }], fields: ['changed'], rowCount: changed };
+      }
+      case 'prefix': {
+        if (parts.length < 2) throw new QueryError('Usage: prefix <p>', 'libredb');
+        return this.toRows(kv.prefix(parts[1]));
+      }
+      case 'range': {
+        if (parts.length < 3) throw new QueryError('Usage: range <start> <end>', 'libredb');
+        return this.toRows(kv.range(parts[1], parts[2]));
+      }
+      default:
+        throw new QueryError(`Unknown command "${verb}". Supported: get, put, delete, prefix, range`, 'libredb');
+    }
+  }
+
+  /** Split on whitespace, honoring single/double quotes (Redis-style). */
+  private tokenize(input: string): string[] {
+    const parts: string[] = [];
+    let current = '';
+    let inQuote = false;
+    let quoteChar = '';
+    let sawToken = false;
+    for (const ch of input) {
+      if (!inQuote && (ch === '"' || ch === "'")) {
+        inQuote = true; quoteChar = ch; sawToken = true;
+      } else if (inQuote && ch === quoteChar) {
+        inQuote = false;
+      } else if (!inQuote && /\s/.test(ch)) {
+        if (sawToken) { parts.push(current); current = ''; sawToken = false; }
+      } else {
+        current += ch; sawToken = true;
+      }
+    }
+    if (sawToken) parts.push(current);
+    return parts;
+  }
+
+  /** Pretty-print a JSON value; leave non-JSON strings as-is. */
+  private renderValue(value: string): string {
+    try { return JSON.stringify(JSON.parse(value), null, 2); } catch { return value; }
+  }
+
+  private toRows(scan: Iterable<{ key: string; value: string }>): Omit<QueryResult, 'executionTime'> {
+    const rows: Record<string, unknown>[] = [];
+    for (const { key, value } of scan) rows.push({ key, value: this.renderValue(value) });
+    return { rows, fields: ['key', 'value'], rowCount: rows.length };
   }
 
   // --------------------------------------------------------------------------

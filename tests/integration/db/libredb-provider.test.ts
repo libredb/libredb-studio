@@ -91,3 +91,65 @@ describe('LibreDBProvider — getSchema', () => {
     expect(schema[0].name).toBe('user:*');
   });
 });
+
+describe('LibreDBProvider — query commands', () => {
+  test('get returns one row, JSON value pretty-printed', async () => {
+    const provider = new LibreDBProvider(makeConn(tmpFile));
+    await provider.connect();
+    const plain = await provider.query('get user:1');
+    expect(plain.rows).toEqual([{ key: 'user:1', value: 'Ada' }]);
+
+    const json = await provider.query('get user:2');
+    expect(json.rows[0].value).toBe(JSON.stringify({ name: 'Grace', age: 45 }, null, 2));
+    await provider.disconnect();
+  });
+
+  test('get on a missing key returns zero rows', async () => {
+    const provider = new LibreDBProvider(makeConn(tmpFile));
+    await provider.connect();
+    const res = await provider.query('get nope');
+    expect(res.rowCount).toBe(0);
+    expect(res.rows).toEqual([]);
+    await provider.disconnect();
+  });
+
+  test('prefix scans a group; range scans a half-open interval', async () => {
+    const provider = new LibreDBProvider(makeConn(tmpFile));
+    await provider.connect();
+    const pre = await provider.query('prefix user:');
+    expect(pre.rows.map((r) => r.key)).toEqual(['user:1', 'user:2']);
+
+    const rng = await provider.query('range user:1 user:2');
+    expect(rng.rows.map((r) => r.key)).toEqual(['user:1']); // end excluded
+    await provider.disconnect();
+  });
+
+  test('put then delete round-trips durably', async () => {
+    const provider = new LibreDBProvider(makeConn(tmpFile));
+    await provider.connect();
+
+    const put = await provider.query('put greeting hello');
+    expect(put.rows).toEqual([{ changed: 1 }]);
+    expect((await provider.query('get greeting')).rows[0].value).toBe('hello');
+
+    const del = await provider.query('delete greeting');
+    expect(del.rows).toEqual([{ changed: 1 }]);
+    expect((await provider.query('get greeting')).rowCount).toBe(0);
+    await provider.disconnect();
+  });
+
+  test('put preserves the rest of a multi-word value', async () => {
+    const provider = new LibreDBProvider(makeConn(tmpFile));
+    await provider.connect();
+    await provider.query('put note hello world');
+    expect((await provider.query('get note')).rows[0].value).toBe('hello world');
+    await provider.disconnect();
+  });
+
+  test('an unknown command throws QueryError listing supported verbs', async () => {
+    const provider = new LibreDBProvider(makeConn(tmpFile));
+    await provider.connect();
+    await expect(provider.query('select * from users')).rejects.toThrow(/get, put, delete, prefix, range/);
+    await provider.disconnect();
+  });
+});
