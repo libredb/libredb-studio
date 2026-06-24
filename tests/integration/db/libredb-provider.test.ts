@@ -160,3 +160,31 @@ describe('LibreDBProvider — query commands', () => {
     await provider.disconnect();
   });
 });
+
+describe('LibreDBProvider — monitoring', () => {
+  test('getOverview reports file size and group count', async () => {
+    const provider = new LibreDBProvider(makeConn(tmpFile));
+    await provider.connect();
+    const overview = await provider.getOverview();
+    expect(overview.databaseSizeBytes).toBeGreaterThan(0);
+    expect(overview.tableCount).toBe(3); // user:*, order:*, config
+    await provider.disconnect();
+  });
+
+  test('getStorageStats lists the file path', async () => {
+    const provider = new LibreDBProvider(makeConn(tmpFile));
+    await provider.connect();
+    const storage = await provider.getStorageStats();
+    expect(storage).toHaveLength(1);
+    expect(storage[0].location).toBe(tmpFile);
+    expect(storage[0].sizeBytes).toBeGreaterThan(0);
+    await provider.disconnect();
+  });
+
+  test('runMaintenance is unsupported', async () => {
+    const provider = new LibreDBProvider(makeConn(tmpFile));
+    await provider.connect();
+    await expect(provider.runMaintenance('vacuum')).rejects.toThrow(/not supported/i);
+    await provider.disconnect();
+  });
+});
