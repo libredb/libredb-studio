@@ -30,8 +30,10 @@ src/lib/db/
 │   │   └── mssql.ts            # SQL Server Strategy
 │   ├── document/               # Document Database Providers
 │   │   └── mongodb.ts          # MongoDB Strategy
-│   └── keyvalue/               # Key-Value Providers
-│       └── redis.ts            # Redis Strategy
+│   ├── keyvalue/               # Key-Value Providers
+│   │   └── redis.ts            # Redis Strategy
+│   └── embedded/               # Embedded (in-process) Providers
+│       └── libredb.ts          # LibreDB Strategy
 └── utils/
     ├── pool-manager.ts         # Connection pool utilities
     └── query-limiter.ts        # SELECT auto-LIMIT (analyzeQuery/applyQueryLimit)
@@ -48,10 +50,11 @@ BaseDatabaseProvider (abstract)
 │   ├── OracleProvider                      │
 │   └── MSSQLProvider                       │
 ├── MongoDBProvider ────────────────────────┤ Document Database
-└── RedisProvider ──────────────────────────┘ Key-Value Store
+├── RedisProvider ──────────────────────────┤ Key-Value Store
+└── LibreDBProvider ────────────────────────┘ Embedded (key-value)
 ```
 
-`SQLBaseProvider` provides SQL-specific helpers (LIMIT injection, identifier escaping, placeholder generation). Non-SQL databases like MongoDB and Redis extend `BaseDatabaseProvider` directly.
+`SQLBaseProvider` provides SQL-specific helpers (LIMIT injection, identifier escaping, placeholder generation). Non-SQL databases like MongoDB, Redis, and LibreDB extend `BaseDatabaseProvider` directly. LibreDB is embedded (opened in-process from a file, like SQLite) but, having no SQL, it is a key-value-style provider rather than a SQL one.
 
 **Key files:**
 
@@ -90,7 +93,7 @@ QueryEditor                      /api/db/query
 
 ## Supported Databases
 
-Seven providers are supported. For the per-provider reference (driver, pooling, query format,
+Eight providers are supported. For the per-provider reference (driver, pooling, query format,
 monitoring, limitations, …) see the prime docs in **[`docs/providers/`](./providers/README.md)**:
 
 | Provider | type-id | Family | Reference |
@@ -102,6 +105,7 @@ monitoring, limitations, …) see the prime docs in **[`docs/providers/`](./prov
 | SQLite | `sqlite` | SQL (embedded) | [providers/sqlite.md](./providers/sqlite.md) |
 | Redis | `redis` | Key-Value | [providers/redis.md](./providers/redis.md) |
 | MongoDB | `mongodb` | Document | [providers/mongodb.md](./providers/mongodb.md) |
+| LibreDB | `libredb` | Embedded (key-value) | [providers/libredb.md](./providers/libredb.md) |
 
 ## Core Interface
 
@@ -351,6 +355,7 @@ is kept in sync with its per-provider doc). Don't copy a skeleton from this guid
 | Embedded / file SQL | `SQLBaseProvider` | `sqlite.ts` | [sqlite.md](./providers/sqlite.md) |
 | Document store | `BaseDatabaseProvider` | `mongodb.ts` | [mongodb.md](./providers/mongodb.md) |
 | Key-value store | `BaseDatabaseProvider` | `redis.ts` | [redis.md](./providers/redis.md) |
+| Embedded (in-process, no wire protocol) | `BaseDatabaseProvider` | `embedded/libredb.ts` | [libredb.md](./providers/libredb.md) |
 
 **Implement the abstract methods** from the `DatabaseProvider` interface: `connect`, `disconnect`,
 `query`, `getSchema`, `getHealth`, `runMaintenance`, plus the monitoring set (`getOverview`,
