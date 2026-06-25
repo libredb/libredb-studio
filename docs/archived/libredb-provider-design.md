@@ -24,7 +24,7 @@ Richer per-kind views (real collections, tables, schemas) are "Option B" and are
 LibreDB has no SQL, so this is a NoSQL-style provider:
 
 - **Base class:** extends `BaseDatabaseProvider` (NOT `SQLBaseProvider`). Drive behaviour through capabilities/labels; no `=== 'libredb'` type-checks outside the provider class (per CLAUDE.md).
-- **Connection:** `{ type: 'libredb', path: '/path/to/data.libredb' }` — file-based, like SQLite's `path`. Server-side only (touches the filesystem).
+- **Connection:** `{ type: 'libredb', database: '/path/to/data.libredb' }` — file-based, reusing the `database` field like SQLite. Server-side only (touches the filesystem).
 - **`getSchema()`:** open the file (`open({ path })`), scan the ordered KV via the package's range/prefix API, and group keys by their `:`-prefix into "tables" — the same convention the Redis provider uses for key prefixes. Each group lists its keys; values are rendered as-is and JSON pretty-printed when parseable.
 - **Query model:** a structured / command form (NOT SQL) — `get`, `put`, `delete`, `range(start, end)`, `prefix(p)` — mapping onto the package's kv-level access. Reads return `{ key, value }` rows; writes go through the package (file-backed writes are durable / fsync'd).
 - **Capabilities/labels:** declare no-SQL; "tables" = key prefixes; expose read + write. The kernel's multi-key `transact` may be surfaced as an advanced affordance later (see open forks).

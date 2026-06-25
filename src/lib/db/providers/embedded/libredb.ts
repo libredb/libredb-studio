@@ -32,7 +32,6 @@ import {
   type ProviderOptions,
   type ProviderCapabilities,
   type ProviderLabels,
-  type PreparedQuery,
   type DatabaseOverview,
   type PerformanceMetrics,
   type SlowQueryStats,
@@ -122,10 +121,6 @@ export class LibreDBProvider extends BaseDatabaseProvider {
       vacuumGlobalTitle: 'Compact',
       vacuumGlobalDesc: 'Not supported for LibreDB in this version.',
     };
-  }
-
-  public override prepareQuery(query: string): PreparedQuery {
-    return { query, wasLimited: false, limit: 500, offset: 0 };
   }
 
   // --------------------------------------------------------------------------

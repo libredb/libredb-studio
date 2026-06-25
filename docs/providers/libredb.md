@@ -456,7 +456,7 @@ namespaces still group as `key`/`value` pseudo-tables.
 
 ```bash
 # Just this file
-bun test tests/integration/db/libredb-provider.test.ts
+bun run test tests/integration/db/libredb-provider.test.ts
 
 # Full isolated suite (CI-equivalent)
 bun run test

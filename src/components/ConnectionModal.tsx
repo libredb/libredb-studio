@@ -285,7 +285,7 @@ export function ConnectionModal({ isOpen, onClose, onConnect, editConnection, on
                     <div className="space-y-2">
                       <div className="flex items-center gap-2 mb-1">
                         <Database strokeWidth={1.5} className="w-3 h-3 text-zinc-500" />
-                        <Label htmlFor="database" className="text-xs font-mediumr text-zinc-500">Database File Path</Label>
+                        <Label htmlFor="database" className="text-xs font-medium text-zinc-500">Database File Path</Label>
                       </div>
                       <Input
                         id="database"
