@@ -10,7 +10,7 @@ import type * as Monaco from 'monaco-editor';
  * line comments, quoted strings, and numbers. Everything else (keys like
  * `users:1`) reads as a plain identifier.
  */
-export const LIBREDB_LANGUAGE_ID = 'libredb';
+const LIBREDB_LANGUAGE_ID = 'libredb';
 
 const LIBREDB_KEYWORDS = ['get', 'put', 'delete', 'prefix', 'range'];
 
