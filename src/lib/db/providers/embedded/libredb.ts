@@ -303,7 +303,11 @@ export class LibreDBProvider extends BaseDatabaseProvider {
   }
 
   private runCommand(input: string): Omit<QueryResult, 'executionTime'> {
-    const parts = this.tokenize(input.trim());
+    const line = this.firstCommandLine(input);
+    if (line === '') {
+      throw new QueryError('No command to run (only comments or blank lines)', 'libredb');
+    }
+    const parts = this.tokenize(line);
     if (parts.length === 0) throw new QueryError('Empty command', 'libredb');
     const kv = this.kv!;
     const verb = parts[0].toLowerCase();
@@ -336,6 +340,23 @@ export class LibreDBProvider extends BaseDatabaseProvider {
       default:
         throw new QueryError(`Unknown command "${verb}". Supported: get, put, delete, prefix, range`, 'libredb');
     }
+  }
+
+  /**
+   * Pick the first runnable command, skipping blank lines and `#` comment lines.
+   * This lets the schema-explorer "Generate Command" cheatsheet — a commented,
+   * multi-line template — run directly: a selected command line runs as-is, and
+   * running the whole buffer runs its first real command. A line is a comment
+   * only when it *starts* with `#` (after trimming), so `#` inside a key or value
+   * is never mistaken for one. Returns `''` when nothing runnable remains.
+   */
+  private firstCommandLine(input: string): string {
+    for (const raw of input.split('\n')) {
+      const line = raw.trim();
+      if (line === '' || line.startsWith('#')) continue;
+      return line;
+    }
+    return '';
   }
 
   /**

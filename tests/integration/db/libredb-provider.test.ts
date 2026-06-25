@@ -305,6 +305,46 @@ describe('LibreDBProvider — query commands', () => {
     await expect(provider.query('put key "unterminated')).rejects.toThrow(/quote/i);
     await provider.disconnect();
   });
+
+  test('a leading # comment line is skipped; the command runs', async () => {
+    const provider = new LibreDBProvider(makeConn(tmpFile));
+    await provider.connect();
+    const res = await provider.query('# read Ada\nget user:1');
+    expect(res.rows).toEqual([{ key: 'user:1', value: 'Ada' }]);
+    await provider.disconnect();
+  });
+
+  test('blank lines are skipped', async () => {
+    const provider = new LibreDBProvider(makeConn(tmpFile));
+    await provider.connect();
+    const res = await provider.query('\n  \nget user:1');
+    expect(res.rowCount).toBe(1);
+    await provider.disconnect();
+  });
+
+  test('a multi-line cheatsheet runs its first real command (the prefix scan)', async () => {
+    const provider = new LibreDBProvider(makeConn(tmpFile));
+    await provider.connect();
+    const cheatsheet = [
+      '# LibreDB commands for "user:*"',
+      '',
+      '# List every key under this prefix',
+      'prefix user:',
+      '',
+      '# Read one entry',
+      'get user:1',
+    ].join('\n');
+    const res = await provider.query(cheatsheet);
+    expect(res.rows.map((r) => r.key)).toEqual(['user:1', 'user:2']); // prefix ran, not get
+    await provider.disconnect();
+  });
+
+  test('input that is only comments/blank lines is rejected', async () => {
+    const provider = new LibreDBProvider(makeConn(tmpFile));
+    await provider.connect();
+    await expect(provider.query('# just a note\n\n')).rejects.toThrow(/only comments|no command/i);
+    await provider.disconnect();
+  });
 });
 
 describe('LibreDBProvider — monitoring', () => {

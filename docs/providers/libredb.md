@@ -278,6 +278,12 @@ Rules:
   `hello world` (one space), not `hello  world`.
 - `range` is half-open: `[start, end)` — the start key is included, the end key is excluded.
 - An empty command or an unknown verb raises `QueryError` listing the supported verbs.
+- **Comments and multi-line input:** blank lines and lines beginning with `#` (after trimming) are
+  skipped, and the **first** remaining line is executed. This makes the "Generate Command" cheatsheet
+  (a commented, multi-line template) directly runnable: selecting one command line runs it, and
+  running the whole buffer runs its first real command. A line is a comment only when it *starts*
+  with `#`, so `#` inside a key or value is never mistaken for one. Input that is only comments or
+  blank lines raises `QueryError`.
 
 ### 5.2 Result shaping
 
@@ -309,18 +315,30 @@ node, so you do not have to type the grammar from memory. The generation is driv
 
 - **Scan Keys** runs `prefix <group>:` for a `:`-prefix group (e.g. `users:*` → `prefix users:`), or
   `get <name>` for a bare single-key node.
-- **Generate Command** inserts a runnable, comment-free cheatsheet — one valid command per line —
-  scoped to that group, so you can run (or edit) any line:
+- **Generate Command** inserts an explanatory cheatsheet — a use-case comment above each command —
+  where every command line is a **concrete, directly-runnable example** (no `<placeholder>` tokens),
+  so "Run Selected" on any line works as-is. The example `put` value is shaped by the group's
+  columns: a JSON object built from a relational table's declared columns, a small JSON object for a
+  document collection, or a plain string for raw kv. For a `users:*` relational group:
 
   ```text
+  # LibreDB commands for "users:*" — select a line and Run Selected.
+
+  # List every key under this prefix
   prefix users:
-  get users:<key>
-  put users:<key> <value>
-  delete users:<key>
+
+  # Read one entry by key
+  get users:1
+
+  # Create or update an entry
+  put users:1 '{"id":"example","name":"example","age":1,"active":true}'
+
+  # Delete an entry
+  delete users:1
   ```
 
-Each line is a self-contained command (LibreDB has no comment syntax); running a single line — or a
-selection — executes just that command.
+Because the provider skips `#` comment and blank lines (see 5.1), selecting a single line runs just
+that command, and running the whole buffer runs the first real command (the prefix scan).
 
 ---
 
