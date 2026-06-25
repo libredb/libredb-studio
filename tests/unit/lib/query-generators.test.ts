@@ -57,6 +57,79 @@ describe('generateTableQuery', () => {
     const result = generateTableQuery('users', makeCaps({ defaultPort: 1433 }));
     expect(result).toBe('SELECT TOP 50 * FROM users;');
   });
+
+  test('LibreDB dialect: a ":*" prefix group scans with prefix', () => {
+    const caps = makeCaps({ queryLanguage: 'json', defaultPort: null, queryDialect: 'libredb' });
+    expect(generateTableQuery('users:*', caps)).toBe('prefix users:');
+  });
+
+  test('LibreDB dialect: a bare (no-colon) group reads with get', () => {
+    const caps = makeCaps({ queryLanguage: 'json', defaultPort: null, queryDialect: 'libredb' });
+    expect(generateTableQuery('orphan', caps)).toBe('get orphan');
+  });
+});
+
+// ============================================================================
+// generateSelectQuery — LibreDB dialect
+// ============================================================================
+
+describe('generateSelectQuery — LibreDB dialect', () => {
+  const libreCaps = makeCaps({ queryLanguage: 'json', defaultPort: null, queryDialect: 'libredb' });
+  const kvColumns: ColumnSchema[] = [
+    { name: 'key', type: 'string', nullable: false, isPrimary: true },
+    { name: 'value', type: 'string', nullable: true, isPrimary: false },
+  ];
+  const relationalColumns: ColumnSchema[] = [
+    { name: 'id', type: 'string', nullable: false, isPrimary: true },
+    { name: 'age', type: 'number', nullable: false, isPrimary: false },
+    { name: 'active', type: 'boolean', nullable: false, isPrimary: false },
+  ];
+
+  // The runnable command lines (drop the use-case comments and blank lines).
+  const commandLines = (out: string) =>
+    out.split('\n').map((l) => l.trim()).filter((l) => l !== '' && !l.startsWith('#'));
+
+  test('output carries explanatory # comments', () => {
+    const out = generateSelectQuery('users:*', kvColumns, libreCaps);
+    expect(out.split('\n').some((l) => l.trim().startsWith('#'))).toBe(true);
+  });
+
+  test('relational group: put example is a concrete JSON object from the columns', () => {
+    const out = generateSelectQuery('users:*', relationalColumns, libreCaps);
+    expect(commandLines(out)).toEqual([
+      'prefix users:',
+      'get users:1',
+      `put users:1 '{"id":"example","age":1,"active":true}'`,
+      'delete users:1',
+    ]);
+  });
+
+  test('raw kv group (key/value columns): put example uses a plain value', () => {
+    const out = generateSelectQuery('config:*', kvColumns, libreCaps);
+    expect(commandLines(out)).toEqual([
+      'prefix config:',
+      'get config:1',
+      'put config:1 example',
+      'delete config:1',
+    ]);
+  });
+
+  test('bare (no-colon) group: get/put/delete on the key itself, no prefix scan', () => {
+    const out = generateSelectQuery('orphan', kvColumns, libreCaps);
+    expect(commandLines(out)).toEqual([
+      'get orphan',
+      'put orphan example',
+      'delete orphan',
+    ]);
+  });
+
+  test('every command line is a concrete, directly-runnable verb (no placeholders)', () => {
+    const out = generateSelectQuery('people:*', kvColumns, libreCaps);
+    for (const line of commandLines(out)) {
+      expect(['prefix', 'get', 'put', 'delete']).toContain(line.split(' ')[0]);
+      expect(line).not.toContain('<'); // no <key>/<value> placeholders
+    }
+  });
 });
 
 // ============================================================================

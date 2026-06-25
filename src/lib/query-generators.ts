@@ -51,7 +51,54 @@ export function quoteQualifiedName(name: string, capabilities: ProviderCapabilit
     .join('.');
 }
 
+/**
+ * Resolve a LibreDB schema-tree node name to its command shape. A node is either
+ * a `:`-prefix group (e.g. `users:*`, whose rows live under the `users:` prefix)
+ * or a bare single key with no colon. The `*` is stripped so the base is the
+ * literal prefix used in commands (`users:*` -> `users:`).
+ */
+function libredbGroup(name: string): { isPrefixGroup: boolean; base: string } {
+  if (name.endsWith(':*')) return { isPrefixGroup: true, base: name.slice(0, -1) };
+  return { isPrefixGroup: false, base: name };
+}
+
+/** A concrete example JSON scalar for a catalog column type (LibreDB column
+ * types are `string` | `number` | `boolean` | `object`; unknowns read as text). */
+function libredbExampleForType(type: string): unknown {
+  switch (type.toLowerCase()) {
+    case 'number': return 1;
+    case 'boolean': return true;
+    case 'object': return {};
+    default: return 'example';
+  }
+}
+
+/**
+ * A concrete, runnable example VALUE for a `put` against a group, shaped by the
+ * group's columns so the generated command works as-is when selected and run:
+ *  - raw kv (`key`/`value` columns) → a plain string value
+ *  - document collection (`id`/`document`) → a small JSON object
+ *  - relational table → a JSON object built from the declared columns
+ */
+function libredbExampleValue(columns: ColumnSchema[]): string {
+  if (columns.length === 2 && columns[0]?.name === 'key' && columns[1]?.name === 'value') {
+    return 'example';
+  }
+  if (columns.length === 2 && columns[1]?.name === 'document') {
+    return `'{"name":"example"}'`;
+  }
+  const obj: Record<string, unknown> = {};
+  for (const c of columns) obj[c.name] = libredbExampleForType(c.type);
+  return `'${JSON.stringify(obj)}'`;
+}
+
 export function generateTableQuery(tableName: string, capabilities: ProviderCapabilities): string {
+  // LibreDB speaks its own command grammar (get/put/delete/prefix/range), not SQL
+  // and not MongoDB JSON. "Scan" lists everything under the group's prefix.
+  if (capabilities.queryDialect === 'libredb') {
+    const { isPrefixGroup, base } = libredbGroup(tableName);
+    return isPrefixGroup ? `prefix ${base}` : `get ${base}`;
+  }
   if (capabilities.queryLanguage === 'json') {
     return JSON.stringify(
       { collection: tableName, operation: 'find', filter: {}, options: { limit: 50 } },
@@ -76,6 +123,45 @@ export function generateSelectQuery(
   columns: ColumnSchema[],
   capabilities: ProviderCapabilities
 ): string {
+  // LibreDB: emit an explanatory cheatsheet — a use-case comment above each
+  // command — where every command line is a concrete, directly-runnable example
+  // (so "Run Selected" on any line works as-is). The provider skips `#` comment
+  // and blank lines, so running the whole buffer runs its first real command.
+  if (capabilities.queryDialect === 'libredb') {
+    const { isPrefixGroup, base } = libredbGroup(tableName);
+    const value = libredbExampleValue(columns);
+    const header = `# LibreDB commands for "${tableName}" — select a line and Run Selected.`;
+    if (isPrefixGroup) {
+      const key = `${base}1`; // a concrete example key (e.g. users:1)
+      return [
+        header,
+        '',
+        '# List every key under this prefix',
+        `prefix ${base}`,
+        '',
+        '# Read one entry by key',
+        `get ${key}`,
+        '',
+        '# Create or update an entry',
+        `put ${key} ${value}`,
+        '',
+        '# Delete an entry',
+        `delete ${key}`,
+      ].join('\n');
+    }
+    return [
+      header,
+      '',
+      '# Read the value',
+      `get ${base}`,
+      '',
+      '# Create or update it',
+      `put ${base} ${value}`,
+      '',
+      '# Delete it',
+      `delete ${base}`,
+    ].join('\n');
+  }
   if (capabilities.queryLanguage === 'json') {
     const projection: Record<string, number> = {};
     columns.forEach((c) => {

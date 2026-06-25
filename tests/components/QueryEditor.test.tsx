@@ -60,6 +60,12 @@ mock.module('@monaco-editor/react', () => ({
         editor: {
           defineTheme: mock(() => {}),
         },
+        languages: {
+          getLanguages: () => [] as { id: string }[],
+          register: mock(() => {}),
+          setMonarchTokensProvider: mock(() => {}),
+          setLanguageConfiguration: mock(() => {}),
+        },
       };
 
       const editorMock = {
@@ -1561,17 +1567,17 @@ describe('QueryEditor', () => {
   // Branch coverage: handleFormat else branch for unsupported language (line 212)
   // -----------------------------------------------------------------------
 
-  test('FORMAT is no-op for unsupported language type', () => {
+  test('Format button is hidden for languages without a formatter (e.g. libredb)', () => {
     const onChange = mock(() => {});
-    // Use type assertion to bypass TS and test the runtime else branch
     const props = createDefaultProps({
       onChange,
       value: 'some content',
-      language: 'txt' as unknown as 'sql',
+      language: 'libredb',
     });
     const { queryByText } = render(React.createElement(QueryEditor, props));
-    fireEvent.click(queryByText('Format')!);
-    // The else branch returns early, onChange should NOT be called
+    // No SQL/JSON formatter for libredb, so no Format affordance is shown
+    // (rather than a button that does nothing when clicked).
+    expect(queryByText('Format')).toBeNull();
     expect(onChange).not.toHaveBeenCalled();
   });
 

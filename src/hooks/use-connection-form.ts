@@ -289,7 +289,7 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     setTestResult({ success: true, message: 'Connection string parsed successfully. Review the fields and connect.' });
   }, [pasteInput, name]);
 
-  const selectableTypes: DatabaseType[] = ['postgres', 'mysql', 'oracle', 'mssql', 'mongodb', 'redis'];
+  const selectableTypes: DatabaseType[] = ['postgres', 'mysql', 'oracle', 'mssql', 'mongodb', 'redis', 'libredb'];
   const dbTypes = selectableTypes.map(t => {
     const cfg = getDBConfig(t);
     return { value: t, label: cfg.label, icon: cfg.icon, color: cfg.color };

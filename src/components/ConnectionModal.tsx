@@ -8,7 +8,7 @@ import { Label } from '@/components/ui/label';
 import { DatabaseConnection, ConnectionEnvironment, ENVIRONMENT_COLORS, ENVIRONMENT_LABELS, SSLMode } from '@/lib/types';
 import { Database, ShieldCheck, Zap, Globe, Key, Link, CheckCircle2, XCircle, ClipboardPaste, Lock, ChevronDown, Terminal, Settings2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { getDBConfig } from '@/lib/db-ui-config';
+import { getDBConfig, isFileBased } from '@/lib/db-ui-config';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useConnectionForm } from '@/hooks/use-connection-form';
 import { useIsMobile } from '@/hooks/use-mobile';
@@ -281,6 +281,20 @@ export function ConnectionModal({ isOpen, onClose, onConnect, editConnection, on
                         />
                       </div>
                     </>
+                  ) : isFileBased(type) ? (
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2 mb-1">
+                        <Database strokeWidth={1.5} className="w-3 h-3 text-zinc-500" />
+                        <Label htmlFor="database" className="text-xs font-medium text-zinc-500">Database File Path</Label>
+                      </div>
+                      <Input
+                        id="database"
+                        value={database}
+                        onChange={(e) => setDatabase(e.target.value)}
+                        placeholder="/path/to/database file"
+                        className="h-10 bg-zinc-900/50 border-white/5 focus:border-blue-500/50 transition-all text-xs font-mono"
+                      />
+                    </div>
                   ) : (
                     <>
                       <div className="space-y-2">
@@ -414,8 +428,8 @@ export function ConnectionModal({ isOpen, onClose, onConnect, editConnection, on
             </div>
           )}
 
-          {/* SSL/TLS & SSH Panels - only for non-sqlite */}
-          {type !== 'sqlite' && (
+          {/* SSL/TLS & SSH Panels - only for non-file-based providers */}
+          {!isFileBased(type) && (
             <div className="space-y-2">
               {/* SSL/TLS Toggle */}
               <button

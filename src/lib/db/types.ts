@@ -93,6 +93,14 @@ export interface MaintenanceResult {
 
 export interface ProviderCapabilities {
   queryLanguage: 'sql' | 'json';
+  /**
+   * Optional client-side query dialect. `queryLanguage` only says SQL vs JSON;
+   * for non-SQL providers the query generators otherwise assume MongoDB syntax.
+   * A provider sets `queryDialect` to opt its tables into a custom client-side
+   * generator (see `query-generators.ts`). Left undefined by SQL/Mongo/Redis,
+   * so their generation is unchanged.
+   */
+  queryDialect?: 'libredb';
   supportsExplain: boolean;
   supportsExternalQueryLimiting: boolean;
   supportsCreateTable: boolean;

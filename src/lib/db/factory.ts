@@ -100,9 +100,15 @@ export async function createDatabaseProvider(
       return new RedisProvider(connection, options);
     }
 
+    // Embedded databases - dynamically imported
+    case 'libredb': {
+      const { LibreDBProvider } = await import('./providers/embedded/libredb');
+      return new LibreDBProvider(connection, options);
+    }
+
     default:
       throw new DatabaseConfigError(
-        `Unknown database type: ${connection.type}. Supported types: postgres, mysql, sqlite, oracle, mssql, mongodb, redis`,
+        `Unknown database type: ${connection.type}. Supported types: postgres, mysql, sqlite, oracle, mssql, mongodb, redis, libredb`,
         connection.type
       );
   }

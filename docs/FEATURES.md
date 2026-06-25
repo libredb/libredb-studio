@@ -1,6 +1,6 @@
 # LibreDB Studio Expert Features
 
-## 🚀 Implemented Features
+## Implemented Features
 
 ### 1. Monaco SQL IDE Experience
 *   **VS Code Engine:** Integrated Monaco Editor for a professional coding environment.
@@ -122,6 +122,6 @@
 *   **Search & Filter:** Locate tables by name, with compact and detailed view modes.
 *   **Export:** Save diagrams as SVG or PNG for documentation.
 
-## 🛠 Roadmap
+## Roadmap
 
 Upcoming "expert" features are tracked under [`docs/backlogs/`](backlogs/).

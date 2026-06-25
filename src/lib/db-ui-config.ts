@@ -1,5 +1,5 @@
 import { type LucideIcon } from 'lucide-react';
-import { PostgreSQLIcon, MySQLIcon, SQLiteIcon, MongoDBIcon, RedisIcon, OracleIcon, MSSQLIcon } from '@/components/icons/db-icons';
+import { PostgreSQLIcon, MySQLIcon, SQLiteIcon, MongoDBIcon, RedisIcon, OracleIcon, MSSQLIcon, LibreDBIcon } from '@/components/icons/db-icons';
 import type { DatabaseType } from '@/lib/types';
 
 // DB brand icons share the same interface as LucideIcon (className + SVG props)
@@ -71,6 +71,14 @@ const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
     showConnectionStringToggle: false,
     connectionFields: ['host', 'port', 'user', 'password', 'database', 'instanceName'],
   },
+  libredb: {
+    icon: LibreDBIcon,
+    color: 'text-violet-400',
+    label: 'LibreDB',
+    defaultPort: '',
+    showConnectionStringToggle: false,
+    connectionFields: ['database'],
+  },
 };
 
 export function getDBConfig(type: DatabaseType): DatabaseUIConfig {
@@ -83,4 +91,13 @@ export function getDBIcon(type: DatabaseType): DBIcon {
 
 export function getDBColor(type: DatabaseType): string {
   return DB_UI_CONFIG[type].color;
+}
+
+/**
+ * A file-based provider carries only a filesystem path (no host/port/credentials).
+ * Derived from connectionFields so callers never hard-code provider type ids.
+ */
+export function isFileBased(type: DatabaseType): boolean {
+  const fields = DB_UI_CONFIG[type].connectionFields;
+  return fields.length === 1 && fields[0] === 'database';
 }
