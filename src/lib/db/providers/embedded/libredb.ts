@@ -8,6 +8,15 @@
  * `:`-prefix as pseudo-"tables" (the Redis pattern) and exposes a small
  * get/put/delete/prefix/range command grammar over the kv lens.
  *
+ * Since `@libredb/libredb` 0.0.2 the file also carries a persisted CATALOG: the
+ * lenses record, under a reserved key prefix, which lens (`document` /
+ * `relational`) each namespace belongs to and — for a relational table — its
+ * column schema. `getSchema()` reads `catalog(db)` to present faithful per-kind
+ * views (real columns for relational tables, a document view for collections)
+ * while uncataloged namespaces fall back to the raw key-prefix grouping. The
+ * reserved catalog keys are themselves internal metadata and are excluded from
+ * every user-facing view.
+ *
  * The package API is synchronous; calls are wrapped to satisfy the async
  * provider contract. The import is lazy and dynamic so the package never enters
  * a client bundle and `build:lib` (tsup) can externalize it.
@@ -43,6 +52,8 @@ import * as fs from 'fs';
 type LibreDBModule = typeof import('@libredb/libredb');
 type LibreDatabase = import('@libredb/libredb').Database;
 type LibreKv = import('@libredb/libredb').Kv;
+type LibreCatalogEntry = import('@libredb/libredb').CatalogEntry;
+type LibreCatalogRegistry = import('@libredb/libredb').CatalogRegistry;
 
 let libredbModule: LibreDBModule | null = null;
 let libredbLoadError: Error | null = null;
@@ -163,7 +174,15 @@ export class LibreDBProvider extends BaseDatabaseProvider {
 
   public async getSchema(): Promise<TableSchema[]> {
     this.ensureConnected();
-    const groups = new Map<string, number>();
+    const lib = await loadLibreDB();
+    // The catalog (since 0.0.2) tells us which namespaces are real document
+    // collections / relational tables and, for tables, their column schema. Raw
+    // kv keys are not cataloged, so anything outside the catalog falls back to
+    // key-prefix grouping below.
+    const registry: LibreCatalogRegistry = lib.catalog(this.db!);
+
+    // Count keys per scanned group, excluding the reserved catalog namespace.
+    const groupCounts = new Map<string, number>();
     let scanned = 0;
     const MAX_SCAN = 10000;
     // Empty-string start encodes to the lowest bytes; '\u{10FFFF}' encodes above
@@ -171,23 +190,31 @@ export class LibreDBProvider extends BaseDatabaseProvider {
     // (kv.prefix cannot be used here — it rejects an empty prefix.)
     for (const { key } of this.kv!.range('', '\u{10FFFF}')) {
       if (scanned >= MAX_SCAN) break;
+      // Skip the database's reserved internal namespace — it is not user data.
+      if (this.isReserved(key)) continue;
       scanned++;
       const name = this.groupName(key);
-      groups.set(name, (groups.get(name) ?? 0) + 1);
+      groupCounts.set(name, (groupCounts.get(name) ?? 0) + 1);
     }
 
+    // A cataloged namespace owns keys "<name>:..." (its rows live under that
+    // colon-prefix), so it is the scanned group "<name>:*". Reconcile the two so
+    // a cataloged table/collection always appears even if its group name differs
+    // and is rendered with the richer catalog-aware columns.
     const schemas: TableSchema[] = [];
-    for (const [name, rowCount] of groups) {
-      schemas.push({
-        name,
-        columns: [
-          { name: 'key', type: 'string', nullable: false, isPrimary: true },
-          { name: 'value', type: 'string', nullable: true, isPrimary: false },
-        ],
-        indexes: [],
-        rowCount,
-      });
+    for (const [name, rowCount] of groupCounts) {
+      const entry = this.catalogEntryFor(name, registry);
+      schemas.push(this.schemaForGroup(name, rowCount, entry));
     }
+    // Surface cataloged namespaces that exist but have no scanned rows yet (an
+    // empty table/collection), so the catalog view is complete.
+    for (const [catalogName, entry] of registry) {
+      if (entry.kind === 'kv') continue; // kv is the raw layer, never cataloged as a table
+      const groupName = `${catalogName}:*`;
+      if (groupCounts.has(groupName)) continue;
+      schemas.push(this.schemaForGroup(groupName, 0, entry));
+    }
+
     return schemas.sort((a, b) => (b.rowCount ?? 0) - (a.rowCount ?? 0));
   }
 
@@ -195,6 +222,80 @@ export class LibreDBProvider extends BaseDatabaseProvider {
   private groupName(key: string): string {
     const colon = key.indexOf(':');
     return colon > 0 ? `${key.slice(0, colon)}:*` : key;
+  }
+
+  /**
+   * True if `key` is in the database's reserved internal namespace (catalog
+   * metadata and any future reserved sub-namespace). Uses the package's pinned
+   * `isReservedKey` predicate — which tests the U+0000 marker, not a specific
+   * prefix — instead of a hardcoded string, so the database can evolve its
+   * internal key layout without Studio silently leaking it. Safe to hide: the
+   * database forbids user namespace names from starting with the marker
+   * (assertUserName), so the predicate can never hide user data. The package
+   * module is loaded by connect() before any scan, so the cache is populated.
+   */
+  private isReserved(key: string): boolean {
+    return libredbModule!.isReservedKey(key);
+  }
+
+  /** The catalog entry that owns a scanned group, if any. A catalog entry named
+   * "users" owns the keys "users:..." which group as "users:*", so strip the
+   * trailing ":*" to recover the namespace name and look it up. */
+  private catalogEntryFor(
+    groupName: string,
+    registry: LibreCatalogRegistry
+  ): LibreCatalogEntry | undefined {
+    const namespace = groupName.endsWith(':*') ? groupName.slice(0, -2) : groupName;
+    return registry.get(namespace);
+  }
+
+  /**
+   * Build the TableSchema for a group, made catalog-aware:
+   * - relational: the table's real columns + types (primary key marked), so the
+   *   view reflects the declared schema rather than raw key/value.
+   * - document: a generic id + document column pair (documents are schemaless).
+   * - uncataloged (raw kv): the historical key (primary) + value columns.
+   *
+   * Studio's TableSchema has no dedicated "kind" field, so the kind is signalled
+   * by the columns themselves (real columns => relational; id/document =>
+   * document; key/value => raw kv).
+   */
+  private schemaForGroup(
+    name: string,
+    rowCount: number,
+    entry: LibreCatalogEntry | undefined
+  ): TableSchema {
+    if (entry?.kind === 'relational' && entry.schema) {
+      const { primaryKey, columns } = entry.schema;
+      const cols = Object.entries(columns).map(([colName, colType]) => ({
+        name: colName,
+        type: colType, // string | number | boolean | object (database ColumnType)
+        nullable: false, // v1 relational columns are all required
+        isPrimary: colName === primaryKey,
+      }));
+      return { name, columns: cols, indexes: [], rowCount };
+    }
+    if (entry?.kind === 'document') {
+      return {
+        name,
+        columns: [
+          { name: 'id', type: 'string', nullable: false, isPrimary: true },
+          { name: 'document', type: 'object', nullable: true, isPrimary: false },
+        ],
+        indexes: [],
+        rowCount,
+      };
+    }
+    // Uncataloged raw kv namespace — keep the historical key/value view.
+    return {
+      name,
+      columns: [
+        { name: 'key', type: 'string', nullable: false, isPrimary: true },
+        { name: 'value', type: 'string', nullable: true, isPrimary: false },
+      ],
+      indexes: [],
+      rowCount,
+    };
   }
 
   public async query(input: string): Promise<QueryResult> {
@@ -279,7 +380,11 @@ export class LibreDBProvider extends BaseDatabaseProvider {
 
   private toRows(scan: Iterable<{ key: string; value: string }>): Omit<QueryResult, 'executionTime'> {
     const rows: Record<string, unknown>[] = [];
-    for (const { key, value } of scan) rows.push({ key, value: this.renderValue(value) });
+    for (const { key, value } of scan) {
+      // Never surface the database's reserved internal namespace in query results.
+      if (this.isReserved(key)) continue;
+      rows.push({ key, value: this.renderValue(value) });
+    }
     return { rows, fields: ['key', 'value'], rowCount: rows.length };
   }
 

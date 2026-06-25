@@ -41,7 +41,7 @@ generic components render LibreDB-appropriate wording.
 
 | `DatabaseProvider` slot | LibreDB realisation | Mechanism |
 |-------------------------|---------------------|-----------|
-| "Table" (`TableSchema`) | A **key prefix** (e.g. `user:*`) | `kv.range` scan + prefix grouping |
+| "Table" (`TableSchema`) | A **cataloged namespace** (relational table / document collection) or, for uncataloged keys, a **key prefix** (e.g. `user:*`) | `catalog(db)` for cataloged kinds; `kv.range` scan + prefix grouping for raw kv |
 | "Row" | A **key** | — |
 | `query(input)` | A command (`get`/`put`/`delete`/`prefix`/`range`) | `kv` lens methods |
 | `getHealth()` / `getOverview()` | File stats | `fs.statSync` + prefix count |
@@ -140,17 +140,57 @@ file path — the same pattern used by the SQLite provider. A missing `database`
 closes. This offers no durable value for a GUI tool, so the provider explicitly requires a file
 path and throws rather than silently opening an in-memory database.
 
-### 3.3 Key-prefix grouping as "tables"
+### 3.3 Catalog-aware schema, with key-prefix grouping as the raw-kv fallback
 
-`groupName()` ([`libredb.ts:195`](../../src/lib/db/providers/embedded/libredb.ts)) takes
-everything before the first `:` and appends `:*` — so `user:1` and `user:2` both collapse into
-the `user:*` group. A key with no colon (e.g. `config`) becomes its own single-key group named
+Since `@libredb/libredb` 0.0.2 a `.libredb` file carries a persisted **catalog**: the lenses
+record, under a reserved key prefix, which lens (`document` / `relational`) each namespace belongs
+to and — for a relational table — its declared column schema. `getSchema()` reads `catalog(db)`
+and renders a faithful per-kind view:
+
+- **Relational** namespace: the table's **real columns** and types from the catalog schema, with
+  the `primaryKey` column marked `isPrimary`. The database `ColumnType`
+  (`string | number | boolean | object`) maps straight onto the studio column descriptor's `type`
+  string; v1 relational columns are all required, so `nullable` is `false`.
+- **Document** namespace: generic `id` (string, primary) + `document` (object) columns —
+  documents are schemaless, so there are no declared per-field columns.
+- **Uncataloged** (raw kv) namespace: the historical `key` (string, primary) + `value` (string,
+  nullable) columns.
+
+Studio's `TableSchema` has no dedicated "kind" field, so the kind is signalled by the columns
+themselves: real columns ⇒ relational, `id`/`document` ⇒ document, `key`/`value` ⇒ raw kv.
+
+`groupName()` ([`libredb.ts`](../../src/lib/db/providers/embedded/libredb.ts)) still drives the raw
+grouping: everything before the first `:` plus `:*`, so `user:1` and `user:2` both collapse into
+the `user:*` group, and a key with no colon (e.g. `config`) becomes its own single-key group named
 `config`. This is the same convention as the Redis provider.
 
-`getSchema()` scans up to `MAX_SCAN = 10000` keys via `kv.range('', '\u{10FFFF}')` — a
-half-open interval that covers the entire keyspace. The resulting `TableSchema` list is sorted by
-descending row count so the largest groups appear first. Each synthetic table has two columns:
-`key` (string, primary) and `value` (string, nullable).
+**Reconciling catalog names with scanned key groups.** A catalog entry named `N` owns the keys
+`N:...` (a relational table stores rows under `<table>:<pk>`; a document collection under
+`<collection>:<id>`), which the scan groups as `N:*`. The provider therefore strips a trailing
+`:*` from a scanned group name to recover the namespace and looks it up in the registry; a match
+upgrades the group to its catalog-aware columns. Cataloged namespaces with no scanned rows yet
+(an empty table/collection) are still emitted, with `rowCount: 0`.
+
+`getSchema()` scans up to `MAX_SCAN = 10000` keys via `kv.range('', '\u{10FFFF}')` — a half-open
+interval that covers the entire keyspace. The resulting `TableSchema` list is sorted by descending
+row count so the largest groups appear first.
+
+### 3.3.1 Reserved namespace is excluded from every user-facing view
+
+The database stores internal metadata (the catalog, and any future internal sub-namespace) under a
+reserved key prefix — `RESERVED_MARKER` (U+0000, the lowest byte). Because U+0000 sorts below all
+user data, those keys fall inside the provider's full-keyspace scan. They are internal, so the
+provider filters them out in **both** `getSchema()` grouping **and** the `range`/`prefix` query
+result rendering (`toRows`). Without the filter, a file written via `doc()`/`table()` would leak a
+junk `\x00libredb:*` pseudo-table and catalog rows into results.
+
+The filter uses the package's pinned **`isReservedKey`** predicate (exported since
+`@libredb/libredb` 0.0.3), accessed via the lazily-loaded module — not a hardcoded prefix.
+`isReservedKey` tests the U+0000 **marker**, not the specific `catalog:` tail, so it hides the
+*entire* reserved namespace, not just catalog entries. This is the robust boundary: the database
+forbids user namespace names from starting with the marker (`assertUserName`), so the predicate can
+never hide user data, and the database can evolve its internal key layout without Studio silently
+leaking it.
 
 ### 3.4 Synchronous package, async provider contract
 
@@ -253,29 +293,50 @@ Rules:
 JSON values in the `value` column are pretty-printed with two-space indentation when they parse
 successfully. Non-JSON strings are left as-is.
 
+The command grammar is **unchanged** by the catalog work — only the schema *view* (`getSchema()`)
+became catalog-aware. `get`/`put`/`delete`/`prefix`/`range` still operate on the raw kv keyspace
+exactly as before. The one behavioural refinement: `prefix` and `range` results filter out any key in the reserved
+namespace (via the package's `isReservedKey` predicate), so a full-keyspace `range` no longer leaks
+internal metadata.
+
 ---
 
 ## 6. Schema introspection
 
-`getSchema()` returns one `TableSchema` per key-prefix group:
+`getSchema()` returns one `TableSchema` per namespace, made catalog-aware:
 
 ```
-1. Iterate kv.range('', '\u{10FFFF}')     <- covers the entire keyspace
-2. For each key:
+1. registry = catalog(db)                  <- which namespaces are relational / document, + schemas
+2. Iterate kv.range('', '\u{10FFFF}')      <- covers the entire keyspace
+3. For each key:
+     if isReservedKey(key) -> skip (the whole reserved internal namespace)
      prefix = substring before first ':'   -> append ':*'  (or the key itself if no colon)
      increment prefix.count
    Stop after 10 000 keys (MAX_SCAN)
-3. Emit TableSchema per prefix, sorted by rowCount desc
+4. For each scanned group:
+     reconcile its name with the catalog (strip a trailing ':*' to get the namespace)
+     relational  -> real columns + types from the catalog schema (primary key marked)
+     document    -> generic id (primary) + document columns
+     uncataloged -> key (primary) + value columns
+5. Also emit any cataloged relational/document namespace with no scanned rows (rowCount 0)
+6. Sort by rowCount desc
 ```
 
-Each synthetic `TableSchema` has two columns: `key` (string, primary, not null) and `value`
-(string, nullable). `indexes` is always `[]`. `rowCount` is the number of keys observed in that
-prefix group (up to the scan cap).
+Column shape per kind:
 
-A `.libredb` file has no on-disk schema — the lens and any relational table definitions live in
-application code. `getSchema()` therefore reflects the honest raw-KV view, not a reconstructed
-relational schema. Faithful per-kind catalog views are deferred to a future database-side catalog
-(see [Limitations](#9-known-limitations--future-work)).
+| Kind | Columns | `indexes` |
+|------|---------|-----------|
+| Relational (cataloged) | the table's declared columns; `type` is the database `ColumnType` (`string`/`number`/`boolean`/`object`); `primaryKey` column has `isPrimary: true`; `nullable: false` (v1 columns are required) | `[]` |
+| Document (cataloged) | `id` (string, primary) + `document` (object, nullable) | `[]` |
+| Raw kv (uncataloged) | `key` (string, primary, not null) + `value` (string, nullable) | `[]` |
+
+`rowCount` is the number of keys observed in that namespace's `:*` group (up to the scan cap); a
+cataloged-but-empty namespace reports `0`.
+
+The catalog lets the provider show faithful per-kind views without emulating SQL. Namespaces that
+were written through the raw `kv` lens are never cataloged, so they keep the honest raw-KV
+`key`/`value` view. The reserved-namespace keys are excluded from the schema (see
+[§3.3.1](#331-reserved-namespace-is-excluded-from-every-user-facing-view)).
 
 ---
 
@@ -384,6 +445,13 @@ all five query commands (`get` found, `get` missing, `prefix`, `range`, `put`, `
 multi-word values, error paths (unknown verb, unmatched quote), and monitoring (`getOverview` file
 size + group count, `getStorageStats` path + size, `runMaintenance` unsupported).
 
+A dedicated **catalog-aware schema** suite seeds a file with a relational table (`table()`) and a
+document collection (`doc()`) alongside the raw kv keys, then asserts: (a) `getSchema()` and
+`range`/`prefix` queries never surface the reserved catalog prefix; (b) the relational table shows
+its real declared columns with the primary key marked (the relational signal); (c) the document
+collection shows the generic `id`/`document` columns (the document signal); and (d) raw kv
+namespaces still group as `key`/`value` pseudo-tables.
+
 ### 11.3 Run it
 
 ```bash
@@ -471,11 +539,12 @@ await provider.disconnect();
   command grammar in v1. Deferred to a future release.
 - **No in-memory connections.** A missing `database` path throws rather than silently opening an
   ephemeral in-memory store, which would be discarded on disconnect and offer no durable value.
-- **Faithful per-kind catalog views are deferred.** A `.libredb` file is raw ordered KV bytes;
-  the lens (kv / document / relational) and any relational table schema live in application code,
-  not on disk. `getSchema()` therefore shows the honest raw-prefix view. When the database-side
-  catalog ships (see design spec §9), this provider can read `catalog(db)` and present real
-  document collections and relational tables.
+- **Catalog-aware views are now live (since `@libredb/libredb` 0.0.2).** `getSchema()` reads
+  `catalog(db)` and presents real relational tables (with their declared columns) and document
+  collections; only namespaces written through the raw `kv` lens fall back to the prefix-grouped
+  `key`/`value` view. Studio's `TableSchema` has no dedicated "kind" field, so the kind is
+  signalled by the columns rather than a label. The reserved catalog namespace is excluded from
+  all user-facing views (schema and query results).
 - **Schema scan capped at 10 000 keys.** Prefix groups that only appear beyond the cap won't show
   as "tables". This is a deliberate bound, not a bug.
 - **File must be on the Studio server's filesystem.** There is no remote LibreDB connection model.

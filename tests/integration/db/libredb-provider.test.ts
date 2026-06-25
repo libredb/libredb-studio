@@ -7,7 +7,7 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { LibreDBProvider } from '@/lib/db/providers/embedded/libredb';
 import type { DatabaseConnection } from '@/lib/types';
-import { open, kv } from '@libredb/libredb';
+import { open, kv, doc, table } from '@libredb/libredb';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -25,6 +25,38 @@ function seed(file: string): void {
   store.set('user:2', JSON.stringify({ name: 'Grace', age: 45 }));
   store.set('order:1', '42');
   store.set('config', 'on');
+  db.close();
+}
+
+/**
+ * Seed that, in addition to raw kv keys, creates a catalog-backed relational
+ * table ("employees") and a document collection ("articles"). This populates the
+ * database's reserved catalog so the provider's catalog-aware schema view can be
+ * exercised. The raw kv keys mirror the plain `seed()` so its assertions still
+ * hold (user:*, order:*, config).
+ */
+function seedWithCatalog(file: string): void {
+  const db = open({ path: file });
+
+  // Raw kv keys (uncataloged namespaces).
+  const store = kv(db);
+  store.set('user:1', 'Ada');
+  store.set('user:2', JSON.stringify({ name: 'Grace', age: 45 }));
+  store.set('order:1', '42');
+  store.set('config', 'on');
+
+  // A relational table — records a relational catalog entry with a schema.
+  const employees = table(db, 'employees', {
+    primaryKey: 'id',
+    columns: { id: 'string', name: 'string', salary: 'number', active: 'boolean' },
+  });
+  employees.insert({ id: '1', name: 'Ada', salary: 100, active: true });
+  employees.insert({ id: '2', name: 'Grace', salary: 120, active: false });
+
+  // A document collection — records a document catalog entry on first put.
+  const articles = doc(db, 'articles');
+  articles.put('a1', { title: 'Hello', body: 'world' });
+
   db.close();
 }
 
@@ -89,6 +121,119 @@ describe('LibreDBProvider — getSchema', () => {
     expect(byName['user:*'].columns[0].isPrimary).toBe(true);
     // sorted by rowCount desc -> user:* first
     expect(schema[0].name).toBe('user:*');
+  });
+});
+
+describe('LibreDBProvider — catalog-aware schema', () => {
+  let catalogFile: string;
+
+  beforeEach(() => {
+    catalogFile = path.join(os.tmpdir(), `libredb-cat-${Math.random().toString(36).slice(2)}.libredb`);
+    seedWithCatalog(catalogFile);
+  });
+
+  afterEach(() => {
+    try { fs.unlinkSync(catalogFile); } catch { /* ignore */ }
+  });
+
+  test('getSchema never surfaces the reserved catalog prefix', async () => {
+    const provider = new LibreDBProvider(makeConn(catalogFile));
+    await provider.connect();
+    const schema = await provider.getSchema();
+    await provider.disconnect();
+
+    for (const t of schema) {
+      expect(t.name.startsWith('\x00')).toBe(false);
+      expect(t.name).not.toContain('libredb:catalog:');
+    }
+    // No pseudo-table for the reserved namespace leaks in.
+    expect(schema.some((t) => t.name.includes('catalog'))).toBe(false);
+  });
+
+  test('range/prefix queries never surface the reserved catalog keys', async () => {
+    const provider = new LibreDBProvider(makeConn(catalogFile));
+    await provider.connect();
+
+    // Full-keyspace range — the reserved keys sort first (U+0000) but must be filtered.
+    const rng = await provider.query('range \x00 \u{10FFFF}');
+    expect(rng.rows.every((r) => !String(r.key).startsWith('\x00'))).toBe(true);
+    expect(rng.rows.some((r) => String(r.key).includes('libredb:catalog:'))).toBe(false);
+
+    // A prefix scan over the reserved marker returns nothing user-facing.
+    const pre = await provider.query('prefix \x00');
+    expect(pre.rowCount).toBe(0);
+
+    await provider.disconnect();
+  });
+
+  test('hides the whole reserved namespace, not just the catalog prefix (isReservedKey widening)', async () => {
+    // A raw kv key under the U+0000 marker but OUTSIDE the "catalog:" tail. The
+    // previous hardcoded `\x00libredb:catalog:` filter would have leaked this;
+    // isReservedKey is marker-based, so it hides the entire reserved namespace.
+    const reservedKey = '\x00zzz-reserved-not-catalog';
+    const writer = open({ path: catalogFile });
+    kv(writer).set(reservedKey, 'internal');
+    writer.close();
+
+    const provider = new LibreDBProvider(makeConn(catalogFile));
+    await provider.connect();
+    const schema = await provider.getSchema();
+    const rng = await provider.query('range \x00 \u{10FFFF}');
+    await provider.disconnect();
+
+    expect(schema.some((t) => t.name.startsWith('\x00'))).toBe(false);
+    expect(rng.rows.some((r) => String(r.key) === reservedKey)).toBe(false);
+
+    // Sanity: the key really is in the file (so the provider hid it, not absence).
+    const verify = open({ path: catalogFile });
+    expect(kv(verify).get(reservedKey)).toBe('internal');
+    verify.close();
+  });
+
+  test('a relational table shows its real columns and is labeled relational', async () => {
+    const provider = new LibreDBProvider(makeConn(catalogFile));
+    await provider.connect();
+    const schema = await provider.getSchema();
+    await provider.disconnect();
+
+    const employees = schema.find((t) => t.name === 'employees:*');
+    expect(employees).toBeDefined();
+    // Real declared columns from the catalog schema (not raw key/value).
+    const cols = Object.fromEntries(employees!.columns.map((c) => [c.name, c]));
+    expect(Object.keys(cols).sort()).toEqual(['active', 'id', 'name', 'salary']);
+    expect(cols.id.isPrimary).toBe(true);
+    expect(cols.name.isPrimary).toBe(false);
+    expect(cols.salary.type).toBe('number');
+    expect(cols.active.type).toBe('boolean');
+    // Relational signal: columns are NOT the raw key/value pair.
+    expect(employees!.columns.map((c) => c.name)).not.toEqual(['key', 'value']);
+    expect(employees!.rowCount).toBe(2);
+  });
+
+  test('a document collection is labeled document (generic id + document columns)', async () => {
+    const provider = new LibreDBProvider(makeConn(catalogFile));
+    await provider.connect();
+    const schema = await provider.getSchema();
+    await provider.disconnect();
+
+    const articles = schema.find((t) => t.name === 'articles:*');
+    expect(articles).toBeDefined();
+    expect(articles!.columns.map((c) => c.name)).toEqual(['id', 'document']);
+    expect(articles!.columns[0].isPrimary).toBe(true);
+    expect(articles!.columns[1].type).toBe('object');
+  });
+
+  test('raw kv namespaces still group as key/value pseudo-tables', async () => {
+    const provider = new LibreDBProvider(makeConn(catalogFile));
+    await provider.connect();
+    const schema = await provider.getSchema();
+    await provider.disconnect();
+
+    const byName = Object.fromEntries(schema.map((t) => [t.name, t]));
+    expect(byName['user:*'].rowCount).toBe(2);
+    expect(byName['user:*'].columns.map((c) => c.name)).toEqual(['key', 'value']);
+    expect(byName['order:*'].rowCount).toBe(1);
+    expect(byName['config'].columns.map((c) => c.name)).toEqual(['key', 'value']);
   });
 });
 
