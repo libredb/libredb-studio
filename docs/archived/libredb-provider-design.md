@@ -2,7 +2,7 @@
 
 > **SUPERSEDED.** This precursor sketch has been superseded by:
 > - [`docs/superpowers/specs/2026-06-24-libredb-embedded-provider-design.md`](../superpowers/specs/2026-06-24-libredb-embedded-provider-design.md) — the approved design spec
-> - [`docs/providers/libredb.md`](libredb.md) — the provider reference documentation (implementation is complete)
+> - [`docs/providers/libredb.md`](../providers/libredb.md) — the provider reference documentation (implementation is complete)
 >
 > Original status note: design spec for a future implementation session. NOT built yet.
 > Lets LibreDB Studio connect to a local LibreDB database file (the embedded `libredb` package —

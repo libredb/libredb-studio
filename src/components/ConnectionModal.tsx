@@ -291,7 +291,7 @@ export function ConnectionModal({ isOpen, onClose, onConnect, editConnection, on
                         id="database"
                         value={database}
                         onChange={(e) => setDatabase(e.target.value)}
-                        placeholder="/data/app.libredb"
+                        placeholder="/path/to/database file"
                         className="h-10 bg-zinc-900/50 border-white/5 focus:border-blue-500/50 transition-all text-xs font-mono"
                       />
                     </div>
