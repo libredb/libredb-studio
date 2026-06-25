@@ -81,6 +81,12 @@ describe('LibreDBProvider — lifecycle & metadata', () => {
     expect(provider.isConnected()).toBe(false);
   });
 
+  test('connect() rejects a path containing a null byte (traversal guard)', async () => {
+    const provider = new LibreDBProvider(makeConn('/tmp/bad' + String.fromCharCode(0) + '.libredb'));
+    await expect(provider.connect()).rejects.toThrow(/traversal|invalid/i);
+    expect(provider.isConnected()).toBe(false);
+  });
+
   test('connect() then disconnect() against a real file', async () => {
     const provider = new LibreDBProvider(makeConn(tmpFile));
     await provider.connect();
@@ -135,6 +141,33 @@ describe('LibreDBProvider — catalog-aware schema', () => {
 
   afterEach(() => {
     try { fs.unlinkSync(catalogFile); } catch { /* ignore */ }
+  });
+
+  test('a bare key is NOT catalog-upgraded even if its name matches a namespace', async () => {
+    // A document collection "shadow" (keys shadow:*) AND a separate bare raw key
+    // "shadow" (no colon). The bare key must stay raw key/value; only the
+    // "shadow:*" prefix group may take the document view.
+    const file = path.join(os.tmpdir(), `libredb-bare-${Math.random().toString(36).slice(2)}.libredb`);
+    const db = open({ path: file });
+    doc(db, 'shadow').put('1', { theme: 'dark' });
+    kv(db).set('shadow', 'on');
+    db.close();
+
+    try {
+      const provider = new LibreDBProvider(makeConn(file));
+      await provider.connect();
+      const schema = await provider.getSchema();
+      await provider.disconnect();
+
+      const prefixGroup = schema.find((t) => t.name === 'shadow:*');
+      const bareGroup = schema.find((t) => t.name === 'shadow');
+      // The cataloged collection renders as a document view...
+      expect(prefixGroup?.columns.map((c) => c.name)).toEqual(['id', 'document']);
+      // ...but the bare key stays raw key/value, not upgraded.
+      expect(bareGroup?.columns.map((c) => c.name)).toEqual(['key', 'value']);
+    } finally {
+      try { fs.unlinkSync(file); } catch { /* ignore */ }
+    }
   });
 
   test('getSchema never surfaces the reserved catalog prefix', async () => {

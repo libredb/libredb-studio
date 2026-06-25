@@ -36,7 +36,10 @@ export function registerLibreDBLanguage(monaco: typeof Monaco): void {
         [/"([^"\\]|\\.)*"/, 'string'],
         [/'([^'\\]|\\.)*'/, 'string'],
         [/\b\d+(\.\d+)?\b/, 'number'],
-        [/[a-zA-Z_]\w*/, { cases: { '@keywords': 'keyword', '@default': 'identifier' } }],
+        // A key like `users:1` is one identifier token: a letter/underscore start
+        // followed by word chars and key punctuation (`:` `.` `-` `*` `/`). Exact
+        // verb matches map to `keyword` via cases; everything else is identifier.
+        [/[a-zA-Z_][\w:.*/-]*/, { cases: { '@keywords': 'keyword', '@default': 'identifier' } }],
       ],
     },
   });

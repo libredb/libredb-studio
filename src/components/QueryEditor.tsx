@@ -505,15 +505,17 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
           </Button>
         )}
 
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-7 text-xs font-medium text-zinc-500 hover:text-white gap-2"
-          onClick={handleFormat}
-          title={language === 'json' ? "Format JSON (Shift+Alt+F)" : "Format SQL (Shift+Alt+F)"}
-        >
-          <AlignLeft strokeWidth={1.5} className="w-3 h-3" /> Format
-        </Button>
+        {(language === 'sql' || language === 'json') && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 text-xs font-medium text-zinc-500 hover:text-white gap-2"
+            onClick={handleFormat}
+            title={language === 'json' ? "Format JSON (Shift+Alt+F)" : "Format SQL (Shift+Alt+F)"}
+          >
+            <AlignLeft strokeWidth={1.5} className="w-3 h-3" /> Format
+          </Button>
+        )}
 
         <Button
           variant="ghost"

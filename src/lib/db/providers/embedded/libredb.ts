@@ -43,6 +43,7 @@ import {
 import { DatabaseConfigError, ConnectionError, QueryError } from '../../errors';
 import { formatBytes } from '../../utils/pool-manager';
 import * as fs from 'fs';
+import * as path from 'path';
 
 // ============================================================================
 // Lazy package loader (mirrors sqlite.ts loading bun:sqlite)
@@ -80,6 +81,8 @@ export class LibreDBProvider extends BaseDatabaseProvider {
   protected db: LibreDatabase | null = null;
   protected kv: LibreKv | null = null;
   protected dbVersion = 'unknown';
+  /** The resolved, validated absolute file path, set on connect(). */
+  protected dbPath: string | null = null;
 
   constructor(config: DatabaseConnection, options: ProviderOptions = {}) {
     super(config, options);
@@ -138,13 +141,37 @@ export class LibreDBProvider extends BaseDatabaseProvider {
     }
   }
 
+  /**
+   * Validate and resolve the configured file path, mirroring the SQLite provider
+   * (sql/sqlite.ts): resolve to an absolute, normalized path and reject
+   * traversal / null-byte inputs. Centralizing this guards every filesystem use
+   * (open, statSync) behind one barrier, so an untrusted connection config
+   * cannot open unexpected locations.
+   */
+  private resolveDatabasePath(): string {
+    const configured = this.config.database;
+    if (!configured) {
+      throw new DatabaseConfigError(
+        'LibreDB requires a file path (use the "database" field, e.g. /data/app.libredb)',
+        'libredb'
+      );
+    }
+    const resolved = path.resolve(configured);
+    if (resolved !== path.normalize(resolved) || configured.includes('\0')) {
+      throw new DatabaseConfigError('Invalid database path: path traversal is not allowed', 'libredb');
+    }
+    return resolved;
+  }
+
   public async connect(): Promise<void> {
     this.validate(); // throws DatabaseConfigError if database path is missing
+    const dbPath = this.resolveDatabasePath(); // resolves + rejects traversal/null-byte
     const lib = await loadLibreDB(); // DatabaseConfigError propagates if unavailable
     try {
-      this.db = lib.open({ path: this.config.database! });
+      this.db = lib.open({ path: dbPath });
       this.kv = lib.kv(this.db);
       this.dbVersion = lib.version;
+      this.dbPath = dbPath;
       this.setConnected(true);
     } catch (error) {
       this.setError(error instanceof Error ? error : new Error(String(error)));
@@ -160,6 +187,7 @@ export class LibreDBProvider extends BaseDatabaseProvider {
       try { this.db.close(); } catch { /* the null-guard above runs close() at most once; ignore any error */ }
       this.db = null;
       this.kv = null;
+      this.dbPath = null;
     }
     this.setConnected(false);
   }
@@ -241,8 +269,11 @@ export class LibreDBProvider extends BaseDatabaseProvider {
     groupName: string,
     registry: LibreCatalogRegistry
   ): LibreCatalogEntry | undefined {
-    const namespace = groupName.endsWith(':*') ? groupName.slice(0, -2) : groupName;
-    return registry.get(namespace);
+    // Only prefix groups ("<ns>:*") own a cataloged namespace. A bare single-key
+    // group (no colon) is raw kv and must never be "upgraded" to relational /
+    // document columns, even if its name happens to match a catalog namespace.
+    if (!groupName.endsWith(':*')) return undefined;
+    return registry.get(groupName.slice(0, -2));
   }
 
   /**
@@ -440,7 +471,7 @@ export class LibreDBProvider extends BaseDatabaseProvider {
 
   public async getStorageStats(): Promise<StorageStats[]> {
     this.ensureConnected();
-    return [{ name: 'File', location: this.config.database ?? '', size: this.fileSizeHuman(), sizeBytes: this.fileSizeBytes() }];
+    return [{ name: 'File', location: this.dbPath ?? this.config.database ?? '', size: this.fileSizeHuman(), sizeBytes: this.fileSizeBytes() }];
   }
 
   public async runMaintenance(type: MaintenanceType): Promise<MaintenanceResult> {
@@ -452,7 +483,7 @@ export class LibreDBProvider extends BaseDatabaseProvider {
   // --------------------------------------------------------------------------
 
   private fileSizeBytes(): number {
-    try { return fs.statSync(this.config.database!).size; } catch { return 0; }
+    try { return this.dbPath ? fs.statSync(this.dbPath).size : 0; } catch { return 0; }
   }
 
   private fileSizeHuman(): string {
