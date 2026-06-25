@@ -422,7 +422,7 @@ export function StudioWorkspace({
                             ref={queryEditorRef}
                             value={tabMgr.currentTab.query}
                             onContentChange={(val) => tabMgr.updateTabById(tabMgr.currentTab.id, { query: val })}
-                            language={tabMgr.currentTab.type === 'mongodb' ? 'json' : 'sql'}
+                            language={tabMgr.currentTab.type === 'libredb' ? 'libredb' : tabMgr.currentTab.type === 'mongodb' ? 'json' : 'sql'}
                             tables={conn.tableNames}
                             databaseType={conn.activeConnection?.type}
                             schemaContext={conn.schemaContext}

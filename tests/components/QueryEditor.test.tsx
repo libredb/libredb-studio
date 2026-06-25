@@ -60,6 +60,12 @@ mock.module('@monaco-editor/react', () => ({
         editor: {
           defineTheme: mock(() => {}),
         },
+        languages: {
+          getLanguages: () => [] as { id: string }[],
+          register: mock(() => {}),
+          setMonarchTokensProvider: mock(() => {}),
+          setLanguageConfiguration: mock(() => {}),
+        },
       };
 
       const editorMock = {

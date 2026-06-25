@@ -141,13 +141,14 @@ export function useTabManager({
   const addTab = useCallback(() => {
     const newId = Math.random().toString(36).substring(7);
     const queryLanguage = metadata?.capabilities.queryLanguage;
+    const queryDialect = metadata?.capabilities.queryDialect;
     setTabs(prev => [...prev, {
       id: newId,
       name: `Query ${prev.length + 1}`,
       query: '',
       result: null,
       isExecuting: false,
-      type: queryLanguage === 'json' ? 'mongodb' : 'sql'
+      type: queryDialect === 'libredb' ? 'libredb' : queryLanguage === 'json' ? 'mongodb' : 'sql'
     }]);
     setActiveTabId(newId);
   }, [activeConnection, metadata]);
@@ -181,7 +182,7 @@ export function useTabManager({
       query: newQuery,
       result: null,
       isExecuting: false,
-      type: capabilities?.queryLanguage === 'json' ? 'mongodb' : 'sql'
+      type: capabilities?.queryDialect === 'libredb' ? 'libredb' : capabilities?.queryLanguage === 'json' ? 'mongodb' : 'sql'
     };
     setTabs(prev => [...prev, newTab]);
     setActiveTabId(newId);
@@ -197,7 +198,9 @@ export function useTabManager({
       ? generateSelectQuery(tableName, columns, capabilities)
       : `SELECT\n${columns.map(c => `  ${c.name}`).join(',\n') || '  *'}\nFROM ${tableName}\nWHERE 1=1\nLIMIT 100;`;
 
-    const tabType: 'sql' | 'mongodb' | 'redis' = capabilities?.queryLanguage === 'json' ? 'mongodb' : 'sql';
+    const tabType: 'sql' | 'mongodb' | 'redis' | 'libredb' = capabilities?.queryDialect === 'libredb'
+      ? 'libredb'
+      : capabilities?.queryLanguage === 'json' ? 'mongodb' : 'sql';
 
     const newId = Math.random().toString(36).substring(7);
     setTabs(prev => [...prev, {

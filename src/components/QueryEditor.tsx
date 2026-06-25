@@ -11,6 +11,7 @@ import { format } from 'sql-formatter';
 import { registerSQLCompletionProvider } from '@/lib/editor/sql-completions';
 import type { SchemaCompletionCache, SchemaColumnItem } from '@/lib/editor/sql-completions';
 import { registerMongoDBCompletionProvider } from '@/lib/editor/mongodb-completions';
+import { registerLibreDBLanguage } from '@/lib/editor/libredb-language';
 import { useAiChat } from '@/hooks/use-ai-chat';
 
 export interface QueryEditorRef {
@@ -31,7 +32,7 @@ interface QueryEditorProps {
   /** Called when content changes in real-time. Use sparingly as it triggers on every keystroke. */
   onContentChange?: (val: string) => void;
   onExplain?: () => void;
-  language?: 'sql' | 'json';
+  language?: 'sql' | 'json' | 'libredb';
   tables?: string[];
   databaseType?: string;
   schemaContext?: string;
@@ -398,6 +399,10 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
   }, []);
 
   const handleBeforeMount = (monacoInstance: typeof Monaco) => {
+    // Register the LibreDB command language (idempotent) so its tabs highlight
+    // correctly instead of being treated as JSON.
+    registerLibreDBLanguage(monacoInstance);
+
     // Suppress Monaco's "Canceled" errors in console (with cleanup tracking)
     if (!originalConsoleErrorRef.current) {
       originalConsoleErrorRef.current = console.error;

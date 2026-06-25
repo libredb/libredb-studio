@@ -125,7 +125,7 @@ export interface QueryTab {
   query: string;
   result: QueryResult | null;
   isExecuting: boolean;
-  type: 'sql' | 'mongodb' | 'redis';
+  type: 'sql' | 'mongodb' | 'redis' | 'libredb';
   viewMode?: 'results' | 'explain' | 'history' | 'saved';
   explainPlan?: unknown;
   // Pagination state

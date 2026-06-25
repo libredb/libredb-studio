@@ -112,7 +112,8 @@ export default function Studio() {
       editing.setEditingEnabled(false);
       editing.handleDiscardChanges();
       conn.fetchSchema(conn.activeConnection);
-      const tabType = metadata?.capabilities.queryLanguage === 'json' ? 'mongodb' :
+      const tabType = metadata?.capabilities.queryDialect === 'libredb' ? 'libredb' :
+                      metadata?.capabilities.queryLanguage === 'json' ? 'mongodb' :
                       conn.activeConnection.type === 'redis' ? 'redis' : 'sql';
       tabMgr.setTabs(prev => prev.map((t) => {
         return {
@@ -445,7 +446,7 @@ export default function Studio() {
                             value={tabMgr.currentTab.query}
                             onContentChange={(val) => tabMgr.updateTabById(tabMgr.currentTab.id, { query: val })}
                             onExplain={metadata?.capabilities.supportsExplain ? () => queryExec.executeQuery(undefined, undefined, true) : undefined}
-                            language={tabMgr.currentTab.type === 'mongodb' ? 'json' : 'sql'}
+                            language={tabMgr.currentTab.type === 'libredb' ? 'libredb' : tabMgr.currentTab.type === 'mongodb' ? 'json' : 'sql'}
                             tables={conn.tableNames}
                             databaseType={conn.activeConnection?.type}
                             schemaContext={conn.schemaContext}
