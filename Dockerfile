@@ -60,6 +60,12 @@ COPY --from=builder /usr/src/app/node_modules/bindings ./node_modules/bindings
 COPY --from=builder /usr/src/app/node_modules/file-uri-to-path ./node_modules/file-uri-to-path
 # prebuild-install is only needed at build time, not runtime
 
+# Copy the embedded LibreDB database package. The libredb provider lazy-imports
+# it (await import('@libredb/libredb')) so it stays out of client bundles, but
+# that also means Next.js output-file-tracing does not include it in the
+# standalone server bundle — copy it explicitly so the provider works at runtime.
+COPY --from=builder /usr/src/app/node_modules/@libredb/libredb ./node_modules/@libredb/libredb
+
 # Create non-root user for security
 RUN addgroup --system --gid 1001 nodejs && \
     adduser --system --uid 1001 nextjs && \
