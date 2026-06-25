@@ -57,6 +57,51 @@ describe('generateTableQuery', () => {
     const result = generateTableQuery('users', makeCaps({ defaultPort: 1433 }));
     expect(result).toBe('SELECT TOP 50 * FROM users;');
   });
+
+  test('LibreDB dialect: a ":*" prefix group scans with prefix', () => {
+    const caps = makeCaps({ queryLanguage: 'json', defaultPort: null, queryDialect: 'libredb' });
+    expect(generateTableQuery('users:*', caps)).toBe('prefix users:');
+  });
+
+  test('LibreDB dialect: a bare (no-colon) group reads with get', () => {
+    const caps = makeCaps({ queryLanguage: 'json', defaultPort: null, queryDialect: 'libredb' });
+    expect(generateTableQuery('orphan', caps)).toBe('get orphan');
+  });
+});
+
+// ============================================================================
+// generateSelectQuery — LibreDB dialect
+// ============================================================================
+
+describe('generateSelectQuery — LibreDB dialect', () => {
+  const libreCaps = makeCaps({ queryLanguage: 'json', defaultPort: null, queryDialect: 'libredb' });
+
+  test('a ":*" prefix group emits a runnable command cheatsheet (prefix/get/put/delete)', () => {
+    const result = generateSelectQuery('users:*', sampleColumns, libreCaps);
+    expect(result.split('\n')).toEqual([
+      'prefix users:',
+      'get users:<key>',
+      'put users:<key> <value>',
+      'delete users:<key>',
+    ]);
+  });
+
+  test('a bare (no-colon) group emits get/put/delete on the key itself', () => {
+    const result = generateSelectQuery('orphan', sampleColumns, libreCaps);
+    expect(result.split('\n')).toEqual([
+      'get orphan',
+      'put orphan <value>',
+      'delete orphan',
+    ]);
+  });
+
+  test('every generated line is a self-contained command (no comment syntax)', () => {
+    const result = generateSelectQuery('people:*', sampleColumns, libreCaps);
+    for (const line of result.split('\n')) {
+      expect(line.startsWith('#')).toBe(false);
+      expect(['prefix', 'get', 'put', 'delete']).toContain(line.split(' ')[0]);
+    }
+  });
 });
 
 // ============================================================================

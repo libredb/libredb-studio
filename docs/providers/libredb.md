@@ -299,6 +299,29 @@ exactly as before. The one behavioural refinement: `prefix` and `range` results 
 namespace (via the package's `isReservedKey` predicate), so a full-keyspace `range` no longer leaks
 internal metadata.
 
+### 5.3 Schema-explorer menu actions
+
+Right-clicking a node in the schema tree (or its `⋮` menu) offers commands generated for that
+node, so you do not have to type the grammar from memory. The generation is driven by the
+`queryDialect: 'libredb'` capability, which routes the shared client-side query generators
+(`src/lib/query-generators.ts`) to LibreDB output instead of the default MongoDB-JSON used by other
+`queryLanguage: 'json'` providers:
+
+- **Scan Keys** runs `prefix <group>:` for a `:`-prefix group (e.g. `users:*` → `prefix users:`), or
+  `get <name>` for a bare single-key node.
+- **Generate Command** inserts a runnable, comment-free cheatsheet — one valid command per line —
+  scoped to that group, so you can run (or edit) any line:
+
+  ```text
+  prefix users:
+  get users:<key>
+  put users:<key> <value>
+  delete users:<key>
+  ```
+
+Each line is a self-contained command (LibreDB has no comment syntax); running a single line — or a
+selection — executes just that command.
+
 ---
 
 ## 6. Schema introspection
@@ -381,6 +404,7 @@ This is reflected in `getCapabilities().supportsMaintenance = false` and
 | Capability | Value |
 |------------|-------|
 | `queryLanguage` | `json` |
+| `queryDialect` | `libredb` (routes the client query generators to LibreDB command output; see 5.3) |
 | `supportsExplain` | `false` |
 | `supportsExternalQueryLimiting` | `false` |
 | `supportsCreateTable` | `false` |

@@ -94,6 +94,7 @@ describe('LibreDBProvider — lifecycle & metadata', () => {
     const provider = new LibreDBProvider(makeConn(tmpFile));
     const caps = provider.getCapabilities();
     expect(caps.queryLanguage).toBe('json');
+    expect(caps.queryDialect).toBe('libredb');
     expect(caps.supportsCreateTable).toBe(false);
     expect(caps.supportsExplain).toBe(false);
     expect(caps.defaultPort).toBeNull();

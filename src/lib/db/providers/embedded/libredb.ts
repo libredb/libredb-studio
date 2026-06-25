@@ -92,6 +92,7 @@ export class LibreDBProvider extends BaseDatabaseProvider {
   public override getCapabilities(): ProviderCapabilities {
     return {
       queryLanguage: 'json',
+      queryDialect: 'libredb',
       supportsExplain: false,
       supportsExternalQueryLimiting: false,
       supportsCreateTable: false,

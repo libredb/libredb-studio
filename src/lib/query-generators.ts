@@ -51,7 +51,24 @@ export function quoteQualifiedName(name: string, capabilities: ProviderCapabilit
     .join('.');
 }
 
+/**
+ * Resolve a LibreDB schema-tree node name to its command shape. A node is either
+ * a `:`-prefix group (e.g. `users:*`, whose rows live under the `users:` prefix)
+ * or a bare single key with no colon. The `*` is stripped so the base is the
+ * literal prefix used in commands (`users:*` -> `users:`).
+ */
+function libredbGroup(name: string): { isPrefixGroup: boolean; base: string } {
+  if (name.endsWith(':*')) return { isPrefixGroup: true, base: name.slice(0, -1) };
+  return { isPrefixGroup: false, base: name };
+}
+
 export function generateTableQuery(tableName: string, capabilities: ProviderCapabilities): string {
+  // LibreDB speaks its own command grammar (get/put/delete/prefix/range), not SQL
+  // and not MongoDB JSON. "Scan" lists everything under the group's prefix.
+  if (capabilities.queryDialect === 'libredb') {
+    const { isPrefixGroup, base } = libredbGroup(tableName);
+    return isPrefixGroup ? `prefix ${base}` : `get ${base}`;
+  }
   if (capabilities.queryLanguage === 'json') {
     return JSON.stringify(
       { collection: tableName, operation: 'find', filter: {}, options: { limit: 50 } },
@@ -76,6 +93,17 @@ export function generateSelectQuery(
   columns: ColumnSchema[],
   capabilities: ProviderCapabilities
 ): string {
+  // LibreDB: emit a runnable, comment-free cheatsheet — one valid command per
+  // line — covering list/get/create-update/delete for this group, so the user
+  // can run a line (or edit it) instead of memorizing the grammar.
+  if (capabilities.queryDialect === 'libredb') {
+    const { isPrefixGroup, base } = libredbGroup(tableName);
+    if (isPrefixGroup) {
+      const key = `${base}<key>`;
+      return [`prefix ${base}`, `get ${key}`, `put ${key} <value>`, `delete ${key}`].join('\n');
+    }
+    return [`get ${base}`, `put ${base} <value>`, `delete ${base}`].join('\n');
+  }
   if (capabilities.queryLanguage === 'json') {
     const projection: Record<string, number> = {};
     columns.forEach((c) => {
