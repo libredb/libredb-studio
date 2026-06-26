@@ -66,7 +66,16 @@ export async function seedSampleFile(filePath: string): Promise<void> {
     } finally {
       db.close();
     }
-    fs.renameSync(tempPath, filePath);
+    try {
+      fs.renameSync(tempPath, filePath);
+    } catch (renameError) {
+      // Another worker won the race and created filePath first. POSIX rename
+      // overwrites, but Windows throws if the destination exists — treat a
+      // present destination as success (the sample is seeded), and only rethrow
+      // if filePath still does not exist.
+      fs.rmSync(tempPath, { force: true });
+      if (!fs.existsSync(filePath)) throw renameError;
+    }
   } catch (error) {
     fs.rmSync(tempPath, { force: true }); // never leave a partial temp behind
     throw error;
