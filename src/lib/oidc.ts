@@ -1,6 +1,6 @@
-import * as client from 'openid-client';
-import { SignJWT, jwtVerify } from 'jose';
-import { logger } from '@/lib/logger';
+import * as client from "openid-client";
+import { SignJWT, jwtVerify } from "jose";
+import { logger } from "@/lib/logger";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -27,19 +27,17 @@ export function getOIDCConfig(): OIDCConfig {
   const clientSecret = process.env.OIDC_CLIENT_SECRET;
 
   if (!issuer || !clientId || !clientSecret) {
-    throw new Error(
-      'OIDC_ISSUER, OIDC_CLIENT_ID, and OIDC_CLIENT_SECRET are required when using OIDC authentication'
-    );
+    throw new Error("OIDC_ISSUER, OIDC_CLIENT_ID, and OIDC_CLIENT_SECRET are required when using OIDC authentication");
   }
 
   return {
     issuer,
     clientId,
     clientSecret,
-    scope: process.env.OIDC_SCOPE || 'openid profile email',
-    roleClaim: process.env.OIDC_ROLE_CLAIM || '',
-    adminRoles: (process.env.OIDC_ADMIN_ROLES || 'admin')
-      .split(',')
+    scope: process.env.OIDC_SCOPE || "openid profile email",
+    roleClaim: process.env.OIDC_ROLE_CLAIM || "",
+    adminRoles: (process.env.OIDC_ADMIN_ROLES || "admin")
+      .split(",")
       .map((r) => r.trim())
       .filter(Boolean),
   };
@@ -51,9 +49,7 @@ let cachedConfig: client.Configuration | null = null;
 let cacheExpiry = 0;
 const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
-export async function discoverProvider(
-  oidcConfig?: OIDCConfig
-): Promise<client.Configuration> {
+export async function discoverProvider(oidcConfig?: OIDCConfig): Promise<client.Configuration> {
   const now = Date.now();
   if (cachedConfig && now < cacheExpiry) {
     return cachedConfig;
@@ -64,7 +60,7 @@ export async function discoverProvider(
     new URL(config.issuer),
     config.clientId,
     config.clientSecret,
-    client.ClientSecretPost(config.clientSecret)
+    client.ClientSecretPost(config.clientSecret),
   );
 
   cachedConfig = discovered;
@@ -83,7 +79,7 @@ export function resetDiscoveryCache(): void {
 export async function generateAuthUrl(
   config: client.Configuration,
   redirectUri: string,
-  scope: string
+  scope: string,
 ): Promise<{ url: URL; state: OIDCState }> {
   const code_verifier = client.randomPKCECodeVerifier();
   const code_challenge = await client.calculatePKCECodeChallenge(code_verifier);
@@ -94,10 +90,10 @@ export async function generateAuthUrl(
     redirect_uri: redirectUri,
     scope,
     code_challenge,
-    code_challenge_method: 'S256',
+    code_challenge_method: "S256",
     state,
     nonce,
-    prompt: 'login',
+    prompt: "login",
   };
 
   const url = client.buildAuthorizationUrl(config, parameters);
@@ -122,7 +118,7 @@ export async function exchangeCode(
   callbackUrl: URL,
   codeVerifier: string,
   expectedState: string,
-  expectedNonce: string
+  expectedNonce: string,
 ): Promise<OIDCClaims | null> {
   const tokens = await client.authorizationCodeGrant(config, callbackUrl, {
     pkceCodeVerifier: codeVerifier,
@@ -133,7 +129,7 @@ export async function exchangeCode(
 
   const claims = tokens.claims();
   if (!claims) {
-    logger.warn('OIDC token exchange succeeded but claims are empty', { route: 'oidc' });
+    logger.warn("OIDC token exchange succeeded but claims are empty", { route: "oidc" });
     return null;
   }
 
@@ -150,31 +146,27 @@ export async function exchangeCode(
 export function mapOIDCRole(
   claims: Record<string, unknown>,
   roleClaim: string,
-  adminRoles: string[]
-): 'admin' | 'user' {
-  if (!roleClaim) return 'user';
+  adminRoles: string[],
+): "admin" | "user" {
+  if (!roleClaim) return "user";
 
   // Navigate dot-notation path
-  const parts = roleClaim.split('.');
+  const parts = roleClaim.split(".");
   let value: unknown = claims;
   for (const part of parts) {
-    if (value == null || typeof value !== 'object') return 'user';
+    if (value == null || typeof value !== "object") return "user";
     value = (value as Record<string, unknown>)[part];
   }
 
-  if (value == null) return 'user';
+  if (value == null) return "user";
 
   // Normalize to array of strings
-  const values: string[] = Array.isArray(value)
-    ? value.map(String)
-    : [String(value)];
+  const values: string[] = Array.isArray(value) ? value.map(String) : [String(value)];
 
   // Check if any value matches admin roles
-  const isAdmin = values.some((v) =>
-    adminRoles.some((ar) => v.toLowerCase() === ar.toLowerCase())
-  );
+  const isAdmin = values.some((v) => adminRoles.some((ar) => v.toLowerCase() === ar.toLowerCase()));
 
-  return isAdmin ? 'admin' : 'user';
+  return isAdmin ? "admin" : "user";
 }
 
 // ─── State Cookie Encryption ───────────────────────────────────────────────
@@ -182,16 +174,16 @@ export function mapOIDCRole(
 function getStateSecret(): Uint8Array {
   const secret = process.env.JWT_SECRET;
   if (!secret) {
-    throw new Error('JWT_SECRET is required for OIDC state encryption');
+    throw new Error("JWT_SECRET is required for OIDC state encryption");
   }
   return new TextEncoder().encode(secret);
 }
 
 export async function encryptState(data: OIDCState): Promise<string> {
   return await new SignJWT({ ...data })
-    .setProtectedHeader({ alg: 'HS256' })
+    .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
-    .setExpirationTime('5m')
+    .setExpirationTime("5m")
     .sign(getStateSecret());
 }
 
@@ -212,9 +204,9 @@ export async function decryptState(token: string): Promise<OIDCState> {
  * but the actual public URL comes from x-forwarded-host/x-forwarded-proto.
  */
 export function getPublicOrigin(request: Request): string {
-  const forwardedHost = request.headers.get('x-forwarded-host');
-  const forwardedProto = request.headers.get('x-forwarded-proto') || 'https';
-  const host = forwardedHost || request.headers.get('host');
+  const forwardedHost = request.headers.get("x-forwarded-host");
+  const forwardedProto = request.headers.get("x-forwarded-proto") || "https";
+  const host = forwardedHost || request.headers.get("host");
   if (host) {
     return `${forwardedProto}://${host}`;
   }
@@ -235,28 +227,31 @@ export function buildLogoutUrl(returnTo: string): string | null {
     const roleClaim = config.roleClaim;
 
     // Auth0 uses /v2/logout
-    if (issuerUrl.hostname === 'auth0.com' || issuerUrl.hostname.endsWith('.auth0.com')) {
-      const logoutUrl = new URL('/v2/logout', config.issuer);
-      logoutUrl.searchParams.set('client_id', config.clientId);
-      logoutUrl.searchParams.set('returnTo', returnTo);
+    if (issuerUrl.hostname === "auth0.com" || issuerUrl.hostname.endsWith(".auth0.com")) {
+      const logoutUrl = new URL("/v2/logout", config.issuer);
+      logoutUrl.searchParams.set("client_id", config.clientId);
+      logoutUrl.searchParams.set("returnTo", returnTo);
       return logoutUrl.toString();
     }
 
     // Zitadel RP-Initiated Logout
-    if (roleClaim.includes('zitadel')) {
-      const logoutUrl = new URL('/oidc/v1/end_session', config.issuer);
-      logoutUrl.searchParams.set('client_id', config.clientId);
-      logoutUrl.searchParams.set('post_logout_redirect_uri', returnTo);
+    if (roleClaim.includes("zitadel")) {
+      const logoutUrl = new URL("/oidc/v1/end_session", config.issuer);
+      logoutUrl.searchParams.set("client_id", config.clientId);
+      logoutUrl.searchParams.set("post_logout_redirect_uri", returnTo);
       return logoutUrl.toString();
     }
 
     // Generic OIDC (Keycloak, Okta, Azure AD, etc.) — RP-Initiated Logout
-    const logoutUrl = new URL('/protocol/openid-connect/logout', config.issuer);
-    logoutUrl.searchParams.set('client_id', config.clientId);
-    logoutUrl.searchParams.set('post_logout_redirect_uri', returnTo);
+    const logoutUrl = new URL("/protocol/openid-connect/logout", config.issuer);
+    logoutUrl.searchParams.set("client_id", config.clientId);
+    logoutUrl.searchParams.set("post_logout_redirect_uri", returnTo);
     return logoutUrl.toString();
   } catch (error) {
-    logger.warn('Failed to build OIDC logout URL', { route: 'oidc', error: error instanceof Error ? error.message : String(error) });
+    logger.warn("Failed to build OIDC logout URL", {
+      route: "oidc",
+      error: error instanceof Error ? error.message : String(error),
+    });
     return null;
   }
 }

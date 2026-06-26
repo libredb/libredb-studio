@@ -1,15 +1,15 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { createLLMProvider } from '@/lib/llm';
-import { createErrorResponse } from '@/lib/api/errors';
+import { NextRequest, NextResponse } from "next/server";
+import { createLLMProvider } from "@/lib/llm";
+import { createErrorResponse } from "@/lib/api/errors";
 
 function buildNL2SQLPrompt(databaseType: string, schemaContext: string, queryLanguage?: string): string {
-  if (queryLanguage === 'json') {
+  if (queryLanguage === "json") {
     return `You are an NL-to-MongoDB translator. Convert natural language questions into MongoDB JSON queries for LibreDB Studio.
 
 DATABASE: MongoDB
 
 COLLECTIONS:
-${schemaContext || 'No schema available.'}
+${schemaContext || "No schema available."}
 
 QUERY FORMAT:
 {
@@ -29,12 +29,12 @@ RULES:
 `;
   }
 
-  return `You are an NL-to-SQL translator. Convert natural language questions into ${databaseType || 'PostgreSQL'} SQL queries.
+  return `You are an NL-to-SQL translator. Convert natural language questions into ${databaseType || "PostgreSQL"} SQL queries.
 
-DATABASE TYPE: ${databaseType || 'PostgreSQL'}
+DATABASE TYPE: ${databaseType || "PostgreSQL"}
 
 SCHEMA:
-${schemaContext || 'No schema available.'}
+${schemaContext || "No schema available."}
 
 RULES:
 1. Return ONLY a SQL code block with the query
@@ -44,7 +44,7 @@ RULES:
 5. Handle aggregations (COUNT, SUM, AVG) when asked about totals or averages
 6. After the SQL block, add a brief one-line explanation starting with "-- "
 7. If the question is ambiguous, make your best guess and explain your interpretation
-8. Use standard ${databaseType || 'PostgreSQL'} syntax
+8. Use standard ${databaseType || "PostgreSQL"} syntax
 `;
 }
 
@@ -53,15 +53,15 @@ export async function POST(req: NextRequest) {
     const { question, schemaContext, databaseType, queryLanguage, conversationHistory } = await req.json();
 
     if (!question) {
-      return NextResponse.json({ error: 'Question is required' }, { status: 400 });
+      return NextResponse.json({ error: "Question is required" }, { status: 400 });
     }
 
     const provider = await createLLMProvider();
     const systemPrompt = buildNL2SQLPrompt(databaseType, schemaContext, queryLanguage);
 
     // Build messages with optional conversation history for multi-turn
-    const messages: { role: 'system' | 'user' | 'assistant'; content: string }[] = [
-      { role: 'system', content: systemPrompt },
+    const messages: { role: "system" | "user" | "assistant"; content: string }[] = [
+      { role: "system", content: systemPrompt },
     ];
 
     // Add conversation history if provided
@@ -71,17 +71,17 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    messages.push({ role: 'user', content: question });
+    messages.push({ role: "user", content: question });
 
     const stream = await provider.stream({ messages });
 
     return new Response(stream, {
       headers: {
-        'Content-Type': 'text/plain; charset=utf-8',
-        'Transfer-Encoding': 'chunked',
+        "Content-Type": "text/plain; charset=utf-8",
+        "Transfer-Encoding": "chunked",
       },
     });
   } catch (error) {
-    return createErrorResponse(error, { route: 'api/ai/nl2sql' });
+    return createErrorResponse(error, { route: "api/ai/nl2sql" });
   }
 }

@@ -1,11 +1,11 @@
-'use client';
+"use client";
 
-import React from 'react';
-import type { DatabaseConnection } from '@/lib/types';
-import type { ProviderMetadata } from '@/hooks/use-provider-metadata';
-import { cn } from '@/lib/utils';
-import { FlaskConical, Pencil, Play, Save, Square, Terminal, Upload } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import React from "react";
+import type { DatabaseConnection } from "@/lib/types";
+import type { ProviderMetadata } from "@/hooks/use-provider-metadata";
+import { cn } from "@/lib/utils";
+import { FlaskConical, Pencil, Play, Save, Square, Terminal, Upload } from "lucide-react";
+import { Button } from "@/components/ui/button";
 
 interface QueryToolbarProps {
   activeConnection: DatabaseConnection | null;
@@ -48,9 +48,7 @@ export function QueryToolbar({
       {playgroundMode && (
         <div className="hidden md:flex items-center justify-center gap-2 px-4 py-1 bg-emerald-500/10 border-b border-emerald-500/20 text-emerald-400">
           <FlaskConical strokeWidth={1.5} className="w-3 h-3" />
-          <span className="text-xs font-mediumr">
-            Sandbox Mode — All changes will be auto-rolled back
-          </span>
+          <span className="text-xs font-mediumr">Sandbox Mode — All changes will be auto-rolled back</span>
         </div>
       )}
 
@@ -93,7 +91,7 @@ export function QueryToolbar({
         )}
 
         {/* Transaction Controls + Playground + Import + Edit */}
-        {activeConnection && metadata?.capabilities.queryLanguage === 'sql' && (
+        {activeConnection && metadata?.capabilities.queryLanguage === "sql" && (
           <div className="flex items-center gap-1 ml-2 pl-2 border-l border-white/10">
             {transactionActive ? (
               <>
@@ -136,7 +134,7 @@ export function QueryToolbar({
                 "h-7 text-xs font-medium gap-1",
                 playgroundMode
                   ? "text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20"
-                  : "text-zinc-500 hover:text-white"
+                  : "text-zinc-500 hover:text-white",
               )}
               onClick={onTogglePlayground}
               disabled={transactionActive}
@@ -153,7 +151,7 @@ export function QueryToolbar({
                 "h-7 text-xs font-medium gap-1",
                 editingEnabled
                   ? "text-amber-400 bg-amber-500/10 hover:bg-amber-500/20"
-                  : "text-zinc-500 hover:text-white"
+                  : "text-zinc-500 hover:text-white",
               )}
               onClick={onToggleEditing}
               title="Enable inline data editing"

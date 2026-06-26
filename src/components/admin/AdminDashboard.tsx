@@ -1,25 +1,17 @@
-'use client';
+"use client";
 
-import { useEffect, useState } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
-import { Button } from '@/components/ui/button';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import {
-  LogOut,
-  ArrowLeft,
-  LayoutDashboard,
-  Wrench,
-  Activity,
-  Shield,
-  FileText,
-} from 'lucide-react';
-import { toast } from 'sonner';
+import { useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Button } from "@/components/ui/button";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { LogOut, ArrowLeft, LayoutDashboard, Wrench, Activity, Shield, FileText } from "lucide-react";
+import { toast } from "sonner";
 
-import { OverviewTab } from './tabs/OverviewTab';
-import { OperationsTab } from './tabs/OperationsTab';
-import { MonitoringEmbed } from './tabs/MonitoringEmbed';
-import { SecurityTab } from './tabs/SecurityTab';
-import { AuditTab } from './tabs/AuditTab';
+import { OverviewTab } from "./tabs/OverviewTab";
+import { OperationsTab } from "./tabs/OperationsTab";
+import { MonitoringEmbed } from "./tabs/MonitoringEmbed";
+import { SecurityTab } from "./tabs/SecurityTab";
+import { AuditTab } from "./tabs/AuditTab";
 
 interface User {
   username: string;
@@ -30,10 +22,10 @@ export default function AdminDashboard() {
   const [user, setUser] = useState<User | null>(null);
   const router = useRouter();
   const searchParams = useSearchParams();
-  const defaultTab = searchParams.get('tab') || 'overview';
+  const defaultTab = searchParams.get("tab") || "overview";
 
   useEffect(() => {
-    fetch('/api/auth/me')
+    fetch("/api/auth/me")
       .then((res) => res.json())
       .then((data) => {
         if (data.authenticated && data.user) {
@@ -41,14 +33,14 @@ export default function AdminDashboard() {
         }
       })
       .catch((error) => {
-        console.error('Failed to fetch user:', error);
+        console.error("Failed to fetch user:", error);
       });
   }, []);
 
   const handleLogout = async () => {
-    await fetch('/api/auth/logout', { method: 'POST' });
-    toast.success('Logged out successfully');
-    router.push('/login');
+    await fetch("/api/auth/logout", { method: "POST" });
+    toast.success("Logged out successfully");
+    router.push("/login");
     router.refresh();
   };
 
@@ -58,19 +50,15 @@ export default function AdminDashboard() {
       <header className="border-b border-white/5 bg-zinc-950">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 py-3 flex items-center justify-between">
           <div className="space-y-0.5">
-            <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-zinc-100">
-              Admin Dashboard
-            </h1>
-            <p className="text-xs text-zinc-500">
-              Manage your application and infrastructure.
-            </p>
+            <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-zinc-100">Admin Dashboard</h1>
+            <p className="text-xs text-zinc-500">Manage your application and infrastructure.</p>
           </div>
           <div className="flex gap-2">
             <Button
               variant="outline"
               size="sm"
               className="border-white/10 text-zinc-400 hover:text-zinc-100"
-              onClick={() => router.push('/')}
+              onClick={() => router.push("/")}
             >
               <ArrowLeft className="mr-2 h-3.5 w-3.5" />
               <span className="hidden sm:inline">Editor</span>

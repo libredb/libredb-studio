@@ -3,7 +3,7 @@
  * Mocks provider modules to test getStorageProvider() and closeStorageProvider()
  * without real database connections.
  */
-import { describe, test, expect, beforeEach, mock } from 'bun:test';
+import { describe, test, expect, beforeEach, mock } from "bun:test";
 
 // ── Mock providers ──────────────────────────────────────────────────────────
 
@@ -26,24 +26,20 @@ function makeMockProvider() {
 const mockSQLiteInstance = makeMockProvider();
 const mockPostgresInstance = makeMockProvider();
 
-mock.module('@/lib/storage/providers/sqlite', () => ({
+mock.module("@/lib/storage/providers/sqlite", () => ({
   SQLiteStorageProvider: mock(() => mockSQLiteInstance),
 }));
 
-mock.module('@/lib/storage/providers/postgres', () => ({
+mock.module("@/lib/storage/providers/postgres", () => ({
   PostgresStorageProvider: mock(() => mockPostgresInstance),
 }));
 
 // Import factory AFTER mocking providers
-import {
-  getStorageProvider,
-  closeStorageProvider,
-  getStorageProviderType,
-} from '@/lib/storage/factory';
+import { getStorageProvider, closeStorageProvider, getStorageProviderType } from "@/lib/storage/factory";
 
 // ── Tests ───────────────────────────────────────────────────────────────────
 
-describe('factory: getStorageProvider', () => {
+describe("factory: getStorageProvider", () => {
   beforeEach(async () => {
     // Reset singleton state between tests
     await closeStorageProvider();
@@ -52,35 +48,35 @@ describe('factory: getStorageProvider', () => {
     delete process.env.STORAGE_PROVIDER;
   });
 
-  test('returns null when STORAGE_PROVIDER is local', async () => {
-    process.env.STORAGE_PROVIDER = 'local';
+  test("returns null when STORAGE_PROVIDER is local", async () => {
+    process.env.STORAGE_PROVIDER = "local";
     const provider = await getStorageProvider();
     expect(provider).toBeNull();
   });
 
-  test('returns null when STORAGE_PROVIDER is not set', async () => {
+  test("returns null when STORAGE_PROVIDER is not set", async () => {
     const provider = await getStorageProvider();
     expect(provider).toBeNull();
   });
 
-  test('creates SQLite provider when STORAGE_PROVIDER=sqlite', async () => {
-    process.env.STORAGE_PROVIDER = 'sqlite';
+  test("creates SQLite provider when STORAGE_PROVIDER=sqlite", async () => {
+    process.env.STORAGE_PROVIDER = "sqlite";
     const provider = await getStorageProvider();
 
     expect(provider).not.toBeNull();
     expect(mockInitialize).toHaveBeenCalledTimes(1);
   });
 
-  test('creates Postgres provider when STORAGE_PROVIDER=postgres', async () => {
-    process.env.STORAGE_PROVIDER = 'postgres';
+  test("creates Postgres provider when STORAGE_PROVIDER=postgres", async () => {
+    process.env.STORAGE_PROVIDER = "postgres";
     const provider = await getStorageProvider();
 
     expect(provider).not.toBeNull();
     expect(mockInitialize).toHaveBeenCalledTimes(1);
   });
 
-  test('returns same instance on second call (singleton)', async () => {
-    process.env.STORAGE_PROVIDER = 'sqlite';
+  test("returns same instance on second call (singleton)", async () => {
+    process.env.STORAGE_PROVIDER = "sqlite";
     const first = await getStorageProvider();
     const second = await getStorageProvider();
 
@@ -89,22 +85,22 @@ describe('factory: getStorageProvider', () => {
     expect(mockInitialize).toHaveBeenCalledTimes(1);
   });
 
-  test('calls initialize() on first creation', async () => {
-    process.env.STORAGE_PROVIDER = 'sqlite';
+  test("calls initialize() on first creation", async () => {
+    process.env.STORAGE_PROVIDER = "sqlite";
     await getStorageProvider();
 
     expect(mockInitialize).toHaveBeenCalledTimes(1);
   });
 
-  test('propagates error when initialize() throws', async () => {
-    process.env.STORAGE_PROVIDER = 'sqlite';
-    mockInitialize.mockRejectedValueOnce(new Error('DB init failed'));
+  test("propagates error when initialize() throws", async () => {
+    process.env.STORAGE_PROVIDER = "sqlite";
+    mockInitialize.mockRejectedValueOnce(new Error("DB init failed"));
 
-    await expect(getStorageProvider()).rejects.toThrow('DB init failed');
+    await expect(getStorageProvider()).rejects.toThrow("DB init failed");
   });
 });
 
-describe('factory: closeStorageProvider', () => {
+describe("factory: closeStorageProvider", () => {
   beforeEach(async () => {
     await closeStorageProvider();
     mockInitialize.mockClear();
@@ -112,16 +108,16 @@ describe('factory: closeStorageProvider', () => {
     delete process.env.STORAGE_PROVIDER;
   });
 
-  test('closes and resets singleton', async () => {
-    process.env.STORAGE_PROVIDER = 'sqlite';
+  test("closes and resets singleton", async () => {
+    process.env.STORAGE_PROVIDER = "sqlite";
     await getStorageProvider();
 
     await closeStorageProvider();
     expect(mockClose).toHaveBeenCalledTimes(1);
   });
 
-  test('creates new instance after close + re-get', async () => {
-    process.env.STORAGE_PROVIDER = 'sqlite';
+  test("creates new instance after close + re-get", async () => {
+    process.env.STORAGE_PROVIDER = "sqlite";
     await getStorageProvider();
     await closeStorageProvider();
 
@@ -133,13 +129,13 @@ describe('factory: closeStorageProvider', () => {
     expect(mockInitialize).toHaveBeenCalledTimes(1);
   });
 
-  test('does not throw when called without active provider', async () => {
+  test("does not throw when called without active provider", async () => {
     await expect(closeStorageProvider()).resolves.toBeUndefined();
     expect(mockClose).not.toHaveBeenCalled();
   });
 
-  test('double close does not throw', async () => {
-    process.env.STORAGE_PROVIDER = 'sqlite';
+  test("double close does not throw", async () => {
+    process.env.STORAGE_PROVIDER = "sqlite";
     await getStorageProvider();
 
     await closeStorageProvider();

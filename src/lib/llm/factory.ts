@@ -4,8 +4,8 @@
  * Uses dynamic imports to reduce memory footprint - providers are loaded on demand
  */
 
-import { type LLMConfig, type LLMProvider, LLMConfigError } from './types';
-import { resolveConfig, getSafeConfigForLogging } from './utils/config';
+import { type LLMConfig, type LLMProvider, LLMConfigError } from "./types";
+import { resolveConfig, getSafeConfigForLogging } from "./utils/config";
 
 // ============================================================================
 // Provider Factory
@@ -40,30 +40,30 @@ export async function createLLMProvider(config?: Partial<LLMConfig>): Promise<LL
 
   try {
     switch (resolvedConfig.provider) {
-      case 'gemini': {
-        const { GeminiProvider } = await import('./providers/gemini');
+      case "gemini": {
+        const { GeminiProvider } = await import("./providers/gemini");
         return new GeminiProvider(resolvedConfig);
       }
 
-      case 'openai': {
-        const { OpenAIProvider } = await import('./providers/openai');
+      case "openai": {
+        const { OpenAIProvider } = await import("./providers/openai");
         return new OpenAIProvider(resolvedConfig);
       }
 
-      case 'ollama': {
-        const { OllamaProvider } = await import('./providers/ollama');
+      case "ollama": {
+        const { OllamaProvider } = await import("./providers/ollama");
         return new OllamaProvider(resolvedConfig);
       }
 
-      case 'custom': {
-        const { CustomProvider } = await import('./providers/custom');
+      case "custom": {
+        const { CustomProvider } = await import("./providers/custom");
         return new CustomProvider(resolvedConfig);
       }
 
       default:
         throw new LLMConfigError(
           `Unknown provider: ${resolvedConfig.provider}. Valid options: gemini, openai, ollama, custom`,
-          resolvedConfig.provider
+          resolvedConfig.provider,
         );
     }
   } catch (error) {
@@ -72,7 +72,7 @@ export async function createLLMProvider(config?: Partial<LLMConfig>): Promise<LL
     }
     throw new LLMConfigError(
       `Failed to load ${resolvedConfig.provider} provider: ${error instanceof Error ? error.message : String(error)}`,
-      resolvedConfig.provider
+      resolvedConfig.provider,
     );
   }
 }

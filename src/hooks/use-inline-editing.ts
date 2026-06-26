@@ -1,9 +1,9 @@
-'use client';
+"use client";
 
-import { useState, useCallback } from 'react';
-import type { DatabaseConnection, QueryTab } from '@/lib/types';
-import type { CellChange } from '@/components/ResultsGrid';
-import { useToast } from '@/hooks/use-toast';
+import { useState, useCallback } from "react";
+import type { DatabaseConnection, QueryTab } from "@/lib/types";
+import type { CellChange } from "@/components/ResultsGrid";
+import { useToast } from "@/hooks/use-toast";
 
 interface UseInlineEditingParams {
   activeConnection: DatabaseConnection | null;
@@ -11,22 +11,18 @@ interface UseInlineEditingParams {
   executeQuery: (sql: string) => void;
 }
 
-export function useInlineEditing({
-  activeConnection,
-  currentTab,
-  executeQuery,
-}: UseInlineEditingParams) {
+export function useInlineEditing({ activeConnection, currentTab, executeQuery }: UseInlineEditingParams) {
   const [editingEnabled, setEditingEnabled] = useState(false);
   const [pendingChanges, setPendingChanges] = useState<CellChange[]>([]);
   const { toast } = useToast();
 
   const handleCellChange = useCallback((change: CellChange) => {
-    setPendingChanges(prev => {
+    setPendingChanges((prev) => {
       // Replace existing change for same cell, or add new
-      const existing = prev.findIndex(c => c.rowIndex === change.rowIndex && c.columnId === change.columnId);
+      const existing = prev.findIndex((c) => c.rowIndex === change.rowIndex && c.columnId === change.columnId);
       if (existing >= 0) {
         // If reverting to original value, remove the change
-        if (String(change.originalValue ?? '') === change.newValue) {
+        if (String(change.originalValue ?? "") === change.newValue) {
           return prev.filter((_, i) => i !== existing);
         }
         const updated = [...prev];
@@ -34,7 +30,7 @@ export function useInlineEditing({
         return updated;
       }
       // Don't add if no actual change
-      if (String(change.originalValue ?? '') === change.newValue) return prev;
+      if (String(change.originalValue ?? "") === change.newValue) return prev;
       return [...prev, change];
     });
   }, []);
@@ -43,9 +39,7 @@ export function useInlineEditing({
     if (!activeConnection || !currentTab.result || pendingChanges.length === 0) return;
 
     // Detect primary key column
-    const pkColumn = currentTab.result.fields.find(f =>
-      f.toLowerCase() === 'id' || f.toLowerCase().endsWith('_id')
-    );
+    const pkColumn = currentTab.result.fields.find((f) => f.toLowerCase() === "id" || f.toLowerCase().endsWith("_id"));
 
     if (!pkColumn) {
       toast({
@@ -65,25 +59,24 @@ export function useInlineEditing({
     }
 
     // Detect table name from current tab or query
-    const tableName = currentTab.name.replace(/^Query[:  ]*/, '') ||
-      currentTab.query.match(/FROM\s+(\S+)/i)?.[1] || 'table_name';
+    const tableName =
+      currentTab.name.replace(/^Query[:  ]*/, "") || currentTab.query.match(/FROM\s+(\S+)/i)?.[1] || "table_name";
 
     // Generate UPDATE statements
     const statements: string[] = [];
     for (const [rowIndex, changes] of changesByRow) {
       const row = currentTab.result.rows[rowIndex];
       const pkValue = row[pkColumn];
-      const setClauses = changes.map(c => {
-        const val = c.newValue === '' || c.newValue.toUpperCase() === 'NULL'
-          ? 'NULL'
-          : `'${c.newValue.replace(/'/g, "''")}'`;
+      const setClauses = changes.map((c) => {
+        const val =
+          c.newValue === "" || c.newValue.toUpperCase() === "NULL" ? "NULL" : `'${c.newValue.replace(/'/g, "''")}'`;
         return `${c.columnId} = ${val}`;
       });
-      const pkVal = typeof pkValue === 'number' ? pkValue : `'${pkValue}'`;
-      statements.push(`UPDATE ${tableName} SET ${setClauses.join(', ')} WHERE ${pkColumn} = ${pkVal};`);
+      const pkVal = typeof pkValue === "number" ? pkValue : `'${pkValue}'`;
+      statements.push(`UPDATE ${tableName} SET ${setClauses.join(", ")} WHERE ${pkColumn} = ${pkVal};`);
     }
 
-    const sql = statements.join('\n');
+    const sql = statements.join("\n");
     // Execute the UPDATE(s)
     executeQuery(sql);
     setPendingChanges([]);

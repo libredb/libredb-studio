@@ -1,8 +1,8 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { createDatabaseProvider } from '@/lib/db/factory';
-import { createErrorResponse } from '@/lib/api/errors';
-import { resolveConnection } from '@/lib/seed/resolve-connection';
-import { getSession } from '@/lib/auth';
+import { NextRequest, NextResponse } from "next/server";
+import { createDatabaseProvider } from "@/lib/db/factory";
+import { createErrorResponse } from "@/lib/api/errors";
+import { resolveConnection } from "@/lib/seed/resolve-connection";
+import { getSession } from "@/lib/auth";
 
 export async function POST(request: NextRequest) {
   let provider = null;
@@ -12,7 +12,7 @@ export async function POST(request: NextRequest) {
 
     const session = await getSession();
     if (!session) {
-      return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
+      return NextResponse.json({ error: "Authentication required" }, { status: 401 });
     }
 
     const connection = await resolveConnection(body, session);
@@ -34,9 +34,13 @@ export async function POST(request: NextRequest) {
     });
   } catch (error) {
     if (provider) {
-      try { await provider.disconnect(); } catch { /* ignore */ }
+      try {
+        await provider.disconnect();
+      } catch {
+        /* ignore */
+      }
     }
 
-    return createErrorResponse(error, { route: 'api/db/schema-snapshot' });
+    return createErrorResponse(error, { route: "api/db/schema-snapshot" });
   }
 }

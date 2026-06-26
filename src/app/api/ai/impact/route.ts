@@ -1,14 +1,14 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { createLLMProvider } from '@/lib/llm';
-import { createErrorResponse } from '@/lib/api/errors';
+import { NextRequest, NextResponse } from "next/server";
+import { createLLMProvider } from "@/lib/llm";
+import { createErrorResponse } from "@/lib/api/errors";
 
 function buildImpactSystemPrompt(databaseType: string, schemaContext: string): string {
-  return `You are a Schema Change Impact Analyst for ${databaseType || 'PostgreSQL'}. You analyze DDL statements BEFORE they are executed and predict their impact.
+  return `You are a Schema Change Impact Analyst for ${databaseType || "PostgreSQL"}. You analyze DDL statements BEFORE they are executed and predict their impact.
 
-DATABASE TYPE: ${databaseType || 'PostgreSQL'}
+DATABASE TYPE: ${databaseType || "PostgreSQL"}
 
 SCHEMA CONTEXT:
-${schemaContext || 'No schema available.'}
+${schemaContext || "No schema available."}
 
 ANALYSIS SCOPE:
 1. **Lock Impact**: Will this statement acquire table locks? For how long? What queries will be blocked?
@@ -64,7 +64,7 @@ export async function POST(req: NextRequest) {
     const { query, schemaContext, databaseType } = await req.json();
 
     if (!query) {
-      return NextResponse.json({ error: 'Query is required' }, { status: 400 });
+      return NextResponse.json({ error: "Query is required" }, { status: 400 });
     }
 
     const provider = await createLLMProvider();
@@ -80,18 +80,18 @@ Provide a comprehensive impact analysis.`;
 
     const stream = await provider.stream({
       messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userMessage },
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userMessage },
       ],
     });
 
     return new Response(stream, {
       headers: {
-        'Content-Type': 'text/plain; charset=utf-8',
-        'Transfer-Encoding': 'chunked',
+        "Content-Type": "text/plain; charset=utf-8",
+        "Transfer-Encoding": "chunked",
       },
     });
   } catch (error) {
-    return createErrorResponse(error, { route: 'api/ai/impact' });
+    return createErrorResponse(error, { route: "api/ai/impact" });
   }
 }

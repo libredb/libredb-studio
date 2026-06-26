@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach, afterEach, spyOn } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach, spyOn } from "bun:test";
 import {
   LLMAuthError,
   LLMRateLimitError,
@@ -6,13 +6,13 @@ import {
   LLMConfigError,
   type LLMConfig,
   type LLMStreamOptions,
-} from '@/lib/llm/types';
+} from "@/lib/llm/types";
 
 // ============================================================================
 // Import module under test (no mock.module needed — OpenAI uses globalThis.fetch)
 // ============================================================================
 
-const { OpenAIProvider } = await import('@/lib/llm/providers/openai');
+const { OpenAIProvider } = await import("@/lib/llm/providers/openai");
 
 // ============================================================================
 // Helpers
@@ -33,21 +33,21 @@ function createSSEResponse(chunks: string[], status = 200): Response {
   });
   return new Response(body, {
     status,
-    headers: { 'Content-Type': 'text/event-stream' },
+    headers: { "Content-Type": "text/event-stream" },
   });
 }
 
 function createJsonResponse(body: unknown, status: number): Response {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { 'Content-Type': 'application/json' },
+    headers: { "Content-Type": "application/json" },
   });
 }
 
 async function readStream(stream: ReadableStream<Uint8Array>): Promise<string> {
   const reader = stream.getReader();
   const decoder = new TextDecoder();
-  let result = '';
+  let result = "";
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
@@ -58,16 +58,16 @@ async function readStream(stream: ReadableStream<Uint8Array>): Promise<string> {
 
 function makeConfig(overrides?: Partial<LLMConfig>): LLMConfig {
   return {
-    provider: 'openai',
-    apiKey: 'sk-test-openai-key',
-    model: 'gpt-4o',
+    provider: "openai",
+    apiKey: "sk-test-openai-key",
+    model: "gpt-4o",
     ...overrides,
   };
 }
 
 function makeStreamOptions(overrides?: Partial<LLMStreamOptions>): LLMStreamOptions {
   return {
-    messages: [{ role: 'user', content: 'Hello' }],
+    messages: [{ role: "user", content: "Hello" }],
     ...overrides,
   };
 }
@@ -76,11 +76,11 @@ function makeStreamOptions(overrides?: Partial<LLMStreamOptions>): LLMStreamOpti
 // Tests
 // ============================================================================
 
-describe('OpenAIProvider', () => {
+describe("OpenAIProvider", () => {
   let fetchSpy: ReturnType<typeof spyOn>;
 
   beforeEach(() => {
-    fetchSpy = spyOn(globalThis, 'fetch');
+    fetchSpy = spyOn(globalThis, "fetch");
   });
 
   afterEach(() => {
@@ -91,29 +91,25 @@ describe('OpenAIProvider', () => {
   // constructor
   // --------------------------------------------------------------------------
 
-  describe('constructor', () => {
-    test('creates with valid config', () => {
+  describe("constructor", () => {
+    test("creates with valid config", () => {
       const provider = new OpenAIProvider(makeConfig());
-      expect(provider.name).toBe('openai');
-      expect(provider.config.model).toBe('gpt-4o');
+      expect(provider.name).toBe("openai");
+      expect(provider.config.model).toBe("gpt-4o");
     });
 
-    test('uses default OpenAI URL', () => {
+    test("uses default OpenAI URL", () => {
       const provider = new OpenAIProvider(makeConfig());
       expect(provider.config.apiUrl).toBeUndefined();
     });
 
-    test('uses custom apiUrl when provided', () => {
-      const provider = new OpenAIProvider(
-        makeConfig({ apiUrl: 'https://custom.openai.com/v1' })
-      );
-      expect(provider.config.apiUrl).toBe('https://custom.openai.com/v1');
+    test("uses custom apiUrl when provided", () => {
+      const provider = new OpenAIProvider(makeConfig({ apiUrl: "https://custom.openai.com/v1" }));
+      expect(provider.config.apiUrl).toBe("https://custom.openai.com/v1");
     });
 
-    test('throws without apiKey', () => {
-      expect(() => new OpenAIProvider(makeConfig({ apiKey: undefined }))).toThrow(
-        LLMConfigError
-      );
+    test("throws without apiKey", () => {
+      expect(() => new OpenAIProvider(makeConfig({ apiKey: undefined }))).toThrow(LLMConfigError);
     });
   });
 
@@ -121,9 +117,9 @@ describe('OpenAIProvider', () => {
   // stream()
   // --------------------------------------------------------------------------
 
-  describe('stream()', () => {
-    test('sends correct request to /chat/completions', async () => {
-      const sseData = [makeSSEChunk('Hi'), 'data: [DONE]\n\n'];
+  describe("stream()", () => {
+    test("sends correct request to /chat/completions", async () => {
+      const sseData = [makeSSEChunk("Hi"), "data: [DONE]\n\n"];
       fetchSpy.mockResolvedValueOnce(createSSEResponse(sseData));
 
       const provider = new OpenAIProvider(makeConfig());
@@ -131,22 +127,22 @@ describe('OpenAIProvider', () => {
 
       expect(fetchSpy).toHaveBeenCalledTimes(1);
       const [url, opts] = fetchSpy.mock.calls[0] as [string, RequestInit];
-      expect(url).toContain('/chat/completions');
-      expect(opts.method).toBe('POST');
+      expect(url).toContain("/chat/completions");
+      expect(opts.method).toBe("POST");
 
       const headers = opts.headers as Record<string, string>;
-      expect(headers['Content-Type']).toBe('application/json');
-      expect(headers.Authorization).toBe('Bearer sk-test-openai-key');
+      expect(headers["Content-Type"]).toBe("application/json");
+      expect(headers.Authorization).toBe("Bearer sk-test-openai-key");
 
       const body = JSON.parse(opts.body as string);
-      expect(body.model).toBe('gpt-4o');
+      expect(body.model).toBe("gpt-4o");
       expect(body.stream).toBe(true);
       expect(body.messages).toHaveLength(1);
-      expect(body.messages[0].role).toBe('user');
+      expect(body.messages[0].role).toBe("user");
     });
 
-    test('returns ReadableStream with SSE parsed content', async () => {
-      const sseData = [makeSSEChunk('Hello'), makeSSEChunk(' World'), 'data: [DONE]\n\n'];
+    test("returns ReadableStream with SSE parsed content", async () => {
+      const sseData = [makeSSEChunk("Hello"), makeSSEChunk(" World"), "data: [DONE]\n\n"];
       fetchSpy.mockResolvedValueOnce(createSSEResponse(sseData));
 
       const provider = new OpenAIProvider(makeConfig());
@@ -154,32 +150,30 @@ describe('OpenAIProvider', () => {
 
       expect(stream).toBeInstanceOf(ReadableStream);
       const text = await readStream(stream);
-      expect(text).toBe('Hello World');
+      expect(text).toBe("Hello World");
     });
 
-    test('passes temperature and maxTokens', async () => {
-      const sseData = [makeSSEChunk('ok'), 'data: [DONE]\n\n'];
+    test("passes temperature and maxTokens", async () => {
+      const sseData = [makeSSEChunk("ok"), "data: [DONE]\n\n"];
       fetchSpy.mockResolvedValueOnce(createSSEResponse(sseData));
 
       const provider = new OpenAIProvider(makeConfig());
-      await provider.stream(
-        makeStreamOptions({ temperature: 0.7, maxTokens: 1000 })
-      );
+      await provider.stream(makeStreamOptions({ temperature: 0.7, maxTokens: 1000 }));
 
       const body = JSON.parse(fetchSpy.mock.calls[0][1]!.body as string);
       expect(body.temperature).toBe(0.7);
       expect(body.max_tokens).toBe(1000);
     });
 
-    test('uses model from options over config', async () => {
-      const sseData = [makeSSEChunk('ok'), 'data: [DONE]\n\n'];
+    test("uses model from options over config", async () => {
+      const sseData = [makeSSEChunk("ok"), "data: [DONE]\n\n"];
       fetchSpy.mockResolvedValueOnce(createSSEResponse(sseData));
 
       const provider = new OpenAIProvider(makeConfig());
-      await provider.stream(makeStreamOptions({ model: 'gpt-3.5-turbo' }));
+      await provider.stream(makeStreamOptions({ model: "gpt-3.5-turbo" }));
 
       const body = JSON.parse(fetchSpy.mock.calls[0][1]!.body as string);
-      expect(body.model).toBe('gpt-3.5-turbo');
+      expect(body.model).toBe("gpt-3.5-turbo");
     });
   });
 
@@ -187,56 +181,38 @@ describe('OpenAIProvider', () => {
   // validateResponse()
   // --------------------------------------------------------------------------
 
-  describe('validateResponse()', () => {
-    test('401 throws LLMAuthError', async () => {
+  describe("validateResponse()", () => {
+    test("401 throws LLMAuthError", async () => {
       // Use mockImplementation so every retry also gets 401
-      fetchSpy.mockImplementation(async () =>
-        createJsonResponse({ error: { message: 'Invalid key' } }, 401)
-      );
+      fetchSpy.mockImplementation(async () => createJsonResponse({ error: { message: "Invalid key" } }, 401));
 
       const provider = new OpenAIProvider(makeConfig());
-      await expect(provider.stream(makeStreamOptions())).rejects.toBeInstanceOf(
-        LLMAuthError
-      );
+      await expect(provider.stream(makeStreamOptions())).rejects.toBeInstanceOf(LLMAuthError);
     });
 
-    test('403 throws LLMAuthError', async () => {
-      fetchSpy.mockImplementation(async () =>
-        createJsonResponse({ error: { message: 'Forbidden' } }, 403)
-      );
+    test("403 throws LLMAuthError", async () => {
+      fetchSpy.mockImplementation(async () => createJsonResponse({ error: { message: "Forbidden" } }, 403));
 
       const provider = new OpenAIProvider(makeConfig());
-      await expect(provider.stream(makeStreamOptions())).rejects.toBeInstanceOf(
-        LLMAuthError
-      );
+      await expect(provider.stream(makeStreamOptions())).rejects.toBeInstanceOf(LLMAuthError);
     });
 
-    test('429 throws LLMRateLimitError', async () => {
-      fetchSpy.mockImplementation(async () =>
-        createJsonResponse({ error: { message: 'Rate limit' } }, 429)
-      );
+    test("429 throws LLMRateLimitError", async () => {
+      fetchSpy.mockImplementation(async () => createJsonResponse({ error: { message: "Rate limit" } }, 429));
 
       const provider = new OpenAIProvider(makeConfig());
-      await expect(provider.stream(makeStreamOptions())).rejects.toBeInstanceOf(
-        LLMRateLimitError
-      );
+      await expect(provider.stream(makeStreamOptions())).rejects.toBeInstanceOf(LLMRateLimitError);
     });
 
-    test('500 throws LLMStreamError', async () => {
-      fetchSpy.mockImplementation(async () =>
-        createJsonResponse({ error: { message: 'Internal Server Error' } }, 500)
-      );
+    test("500 throws LLMStreamError", async () => {
+      fetchSpy.mockImplementation(async () => createJsonResponse({ error: { message: "Internal Server Error" } }, 500));
 
       const provider = new OpenAIProvider(makeConfig());
-      await expect(provider.stream(makeStreamOptions())).rejects.toBeInstanceOf(
-        LLMStreamError
-      );
+      await expect(provider.stream(makeStreamOptions())).rejects.toBeInstanceOf(LLMStreamError);
     });
 
-    test('error body parsed as JSON', async () => {
-      fetchSpy.mockImplementation(async () =>
-        createJsonResponse({ error: { message: 'Custom error detail' } }, 500)
-      );
+    test("error body parsed as JSON", async () => {
+      fetchSpy.mockImplementation(async () => createJsonResponse({ error: { message: "Custom error detail" } }, 500));
 
       const provider = new OpenAIProvider(makeConfig());
       try {
@@ -244,7 +220,7 @@ describe('OpenAIProvider', () => {
         expect(true).toBe(false); // should not reach here
       } catch (err) {
         expect(err).toBeInstanceOf(LLMStreamError);
-        expect((err as Error).message).toContain('Custom error detail');
+        expect((err as Error).message).toContain("Custom error detail");
       }
     });
   });
@@ -253,10 +229,10 @@ describe('OpenAIProvider', () => {
   // error mapping
   // --------------------------------------------------------------------------
 
-  describe('error mapping', () => {
-    test('fetch error maps to network error', async () => {
+  describe("error mapping", () => {
+    test("fetch error maps to network error", async () => {
       fetchSpy.mockImplementation(async () => {
-        throw new TypeError('fetch failed');
+        throw new TypeError("fetch failed");
       });
 
       const provider = new OpenAIProvider(makeConfig());
@@ -265,30 +241,26 @@ describe('OpenAIProvider', () => {
         expect(true).toBe(false);
       } catch (err) {
         expect(err).toBeInstanceOf(LLMStreamError);
-        expect((err as Error).message).toContain('Network error');
+        expect((err as Error).message).toContain("Network error");
       }
     });
 
-    test('generic Error maps to LLMStreamError', async () => {
+    test("generic Error maps to LLMStreamError", async () => {
       fetchSpy.mockImplementation(async () => {
-        throw new Error('Something unexpected');
+        throw new Error("Something unexpected");
       });
 
       const provider = new OpenAIProvider(makeConfig());
-      await expect(provider.stream(makeStreamOptions())).rejects.toBeInstanceOf(
-        LLMStreamError
-      );
+      await expect(provider.stream(makeStreamOptions())).rejects.toBeInstanceOf(LLMStreamError);
     });
 
-    test('non-Error maps to LLMStreamError', async () => {
+    test("non-Error maps to LLMStreamError", async () => {
       fetchSpy.mockImplementation(async () => {
-        throw 'string error';
+        throw "string error";
       });
 
       const provider = new OpenAIProvider(makeConfig());
-      await expect(provider.stream(makeStreamOptions())).rejects.toBeInstanceOf(
-        LLMStreamError
-      );
+      await expect(provider.stream(makeStreamOptions())).rejects.toBeInstanceOf(LLMStreamError);
     });
   });
 
@@ -296,29 +268,29 @@ describe('OpenAIProvider', () => {
   // buildMessages()
   // --------------------------------------------------------------------------
 
-  describe('buildMessages()', () => {
-    test('maps messages to role/content format', async () => {
-      const sseData = [makeSSEChunk('ok'), 'data: [DONE]\n\n'];
+  describe("buildMessages()", () => {
+    test("maps messages to role/content format", async () => {
+      const sseData = [makeSSEChunk("ok"), "data: [DONE]\n\n"];
       fetchSpy.mockResolvedValueOnce(createSSEResponse(sseData));
 
       const provider = new OpenAIProvider(makeConfig());
       await provider.stream(
         makeStreamOptions({
           messages: [
-            { role: 'system', content: 'Be helpful' },
-            { role: 'user', content: 'Hello' },
-            { role: 'assistant', content: 'Hi there!' },
-            { role: 'user', content: 'How are you?' },
+            { role: "system", content: "Be helpful" },
+            { role: "user", content: "Hello" },
+            { role: "assistant", content: "Hi there!" },
+            { role: "user", content: "How are you?" },
           ],
-        })
+        }),
       );
 
       const body = JSON.parse(fetchSpy.mock.calls[0][1]!.body as string);
       expect(body.messages).toHaveLength(4);
-      expect(body.messages[0]).toEqual({ role: 'system', content: 'Be helpful' });
-      expect(body.messages[1]).toEqual({ role: 'user', content: 'Hello' });
-      expect(body.messages[2]).toEqual({ role: 'assistant', content: 'Hi there!' });
-      expect(body.messages[3]).toEqual({ role: 'user', content: 'How are you?' });
+      expect(body.messages[0]).toEqual({ role: "system", content: "Be helpful" });
+      expect(body.messages[1]).toEqual({ role: "user", content: "Hello" });
+      expect(body.messages[2]).toEqual({ role: "assistant", content: "Hi there!" });
+      expect(body.messages[3]).toEqual({ role: "user", content: "How are you?" });
     });
   });
 });

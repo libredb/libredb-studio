@@ -1,18 +1,15 @@
-'use client';
+"use client";
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
-import type { DatabaseConnection, TableSchema } from '@/lib/types';
-import type { WorkspaceConnection } from '@/workspace/types';
+import { useState, useEffect, useCallback, useMemo } from "react";
+import type { DatabaseConnection, TableSchema } from "@/lib/types";
+import type { WorkspaceConnection } from "@/workspace/types";
 
 interface UseConnectionAdapterParams {
   connections: WorkspaceConnection[];
   onSchemaFetch: (connectionId: string) => Promise<TableSchema[]>;
 }
 
-export function useConnectionAdapter({
-  connections: externalConnections,
-  onSchemaFetch,
-}: UseConnectionAdapterParams) {
+export function useConnectionAdapter({ connections: externalConnections, onSchemaFetch }: UseConnectionAdapterParams) {
   const connections: DatabaseConnection[] = useMemo(
     () =>
       externalConnections.map((c) => ({
@@ -22,12 +19,10 @@ export function useConnectionAdapter({
         createdAt: new Date(),
         managed: true,
       })),
-    [externalConnections]
+    [externalConnections],
   );
 
-  const [activeConnection, setActiveConnection] = useState<DatabaseConnection | null>(
-    connections[0] ?? null
-  );
+  const [activeConnection, setActiveConnection] = useState<DatabaseConnection | null>(connections[0] ?? null);
   const [schema, setSchema] = useState<TableSchema[]>([]);
   const [isLoadingSchema, setIsLoadingSchema] = useState(false);
 
@@ -54,7 +49,7 @@ export function useConnectionAdapter({
         setIsLoadingSchema(false);
       }
     },
-    [onSchemaFetch]
+    [onSchemaFetch],
   );
 
   const tableNames = useMemo(() => schema.map((s) => s.name), [schema]);
@@ -68,7 +63,7 @@ export function useConnectionAdapter({
     schema,
     setSchema,
     isLoadingSchema,
-    connectionPulse: null as 'healthy' | 'degraded' | 'error' | null,
+    connectionPulse: null as "healthy" | "degraded" | "error" | null,
     fetchSchema,
     tableNames,
     schemaContext,

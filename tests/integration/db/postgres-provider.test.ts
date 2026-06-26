@@ -3,15 +3,18 @@
  * Uses mock.module() to intercept pg before provider import.
  */
 
-import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
-import type { DatabaseConnection } from '@/lib/types';
-import { DatabaseConfigError } from '@/lib/db/errors';
+import { describe, test, expect, beforeEach, afterEach, mock } from "bun:test";
+import type { DatabaseConnection } from "@/lib/types";
+import { DatabaseConfigError } from "@/lib/db/errors";
 
 // ============================================================================
 // Mock pg BEFORE importing the provider
 // ============================================================================
 
-let mockQueryFn: (sql: string, params?: unknown[]) => Promise<{
+let mockQueryFn: (
+  sql: string,
+  params?: unknown[],
+) => Promise<{
   rows: unknown[];
   fields?: { name: string }[];
   rowCount?: number;
@@ -30,14 +33,14 @@ const mockPool = {
   waitingCount: 0,
 };
 
-mock.module('pg', () => ({
+mock.module("pg", () => ({
   Pool: function () {
     return mockPool;
   },
 }));
 
 // Dynamic import AFTER mock is installed
-const { PostgresProvider } = await import('@/lib/db/providers/sql/postgres');
+const { PostgresProvider } = await import("@/lib/db/providers/sql/postgres");
 
 // ============================================================================
 // Helpers
@@ -45,14 +48,14 @@ const { PostgresProvider } = await import('@/lib/db/providers/sql/postgres');
 
 function makePgConfig(overrides: Partial<DatabaseConnection> = {}): DatabaseConnection {
   return {
-    id: 'test-pg',
-    name: 'Test Postgres',
-    type: 'postgres',
-    host: 'localhost',
+    id: "test-pg",
+    name: "Test Postgres",
+    type: "postgres",
+    host: "localhost",
     port: 5432,
-    database: 'testdb',
-    user: 'postgres',
-    password: 'secret',
+    database: "testdb",
+    user: "postgres",
+    password: "secret",
     createdAt: new Date(),
     ...overrides,
   };
@@ -61,148 +64,164 @@ function makePgConfig(overrides: Partial<DatabaseConnection> = {}): DatabaseConn
 /**
  * Default mock query that matches SQL patterns and returns appropriate mock data.
  */
-function defaultMockQuery(
-  sql: string
-): Promise<{ rows: unknown[]; fields?: { name: string }[]; rowCount?: number }> {
+function defaultMockQuery(sql: string): Promise<{ rows: unknown[]; fields?: { name: string }[]; rowCount?: number }> {
   const normalized = sql.trim().toLowerCase();
 
   // pg_backend_pid — PID tracking for query cancellation
-  if (normalized.includes('pg_backend_pid()') && normalized.includes('select') && !normalized.includes('pg_stat_activity')) {
-    return Promise.resolve({ rows: [{ pid: 12345 }], fields: [{ name: 'pid' }], rowCount: 1 });
+  if (
+    normalized.includes("pg_backend_pid()") &&
+    normalized.includes("select") &&
+    !normalized.includes("pg_stat_activity")
+  ) {
+    return Promise.resolve({ rows: [{ pid: 12345 }], fields: [{ name: "pid" }], rowCount: 1 });
   }
 
   // pg_cancel_backend — cancel a running query
-  if (normalized.includes('pg_cancel_backend')) {
-    return Promise.resolve({ rows: [{ cancelled: true }], fields: [{ name: 'cancelled' }], rowCount: 1 });
+  if (normalized.includes("pg_cancel_backend")) {
+    return Promise.resolve({ rows: [{ cancelled: true }], fields: [{ name: "cancelled" }], rowCount: 1 });
   }
 
   // pg_terminate_backend — kill session
-  if (normalized.includes('pg_terminate_backend')) {
+  if (normalized.includes("pg_terminate_backend")) {
     return Promise.resolve({
       rows: [{ pg_terminate_backend: true }],
-      fields: [{ name: 'pg_terminate_backend' }],
+      fields: [{ name: "pg_terminate_backend" }],
       rowCount: 1,
     });
   }
 
   // BEGIN / COMMIT / ROLLBACK — transaction control
-  if (normalized === 'begin' || normalized === 'commit' || normalized === 'rollback') {
+  if (normalized === "begin" || normalized === "commit" || normalized === "rollback") {
     return Promise.resolve({ rows: [], fields: [], rowCount: 0 });
   }
 
   // VACUUM ANALYZE
-  if (normalized.includes('vacuum analyze') || normalized === 'vacuum analyze') {
+  if (normalized.includes("vacuum analyze") || normalized === "vacuum analyze") {
     return Promise.resolve({ rows: [], fields: [], rowCount: 0 });
   }
 
   // ANALYZE (without vacuum)
-  if (normalized.startsWith('analyze')) {
+  if (normalized.startsWith("analyze")) {
     return Promise.resolve({ rows: [], fields: [], rowCount: 0 });
   }
 
   // REINDEX
-  if (normalized.startsWith('reindex')) {
+  if (normalized.startsWith("reindex")) {
     return Promise.resolve({ rows: [], fields: [], rowCount: 0 });
   }
 
   // SELECT * FROM pg_stat_activity (exact, getPgStatActivity)
-  if (normalized.includes('select * from pg_stat_activity')) {
+  if (normalized.includes("select * from pg_stat_activity")) {
     return Promise.resolve({
       rows: [
         {
-          datname: 'testdb',
+          datname: "testdb",
           pid: 123,
-          usename: 'testuser',
-          application_name: 'testapp',
-          client_addr: '127.0.0.1',
+          usename: "testuser",
+          application_name: "testapp",
+          client_addr: "127.0.0.1",
           backend_start: new Date().toISOString(),
-          state: 'active',
-          query: 'SELECT * FROM test_table',
+          state: "active",
+          query: "SELECT * FROM test_table",
         },
       ],
       fields: [
-        { name: 'datname' },
-        { name: 'pid' },
-        { name: 'usename' },
-        { name: 'application_name' },
-        { name: 'client_addr' },
-        { name: 'backend_start' },
-        { name: 'state' },
-        { name: 'query' },
+        { name: "datname" },
+        { name: "pid" },
+        { name: "usename" },
+        { name: "application_name" },
+        { name: "client_addr" },
+        { name: "backend_start" },
+        { name: "state" },
+        { name: "query" },
       ],
       rowCount: 1,
     });
   }
 
   // getHealth: count(*) from pg_stat_activity
-  if (normalized.includes('count(*)') && normalized.includes('pg_stat_activity') && !normalized.includes('max_connections')) {
-    return Promise.resolve({ rows: [{ count: '5' }], fields: [{ name: 'count' }], rowCount: 1 });
+  if (
+    normalized.includes("count(*)") &&
+    normalized.includes("pg_stat_activity") &&
+    !normalized.includes("max_connections")
+  ) {
+    return Promise.resolve({ rows: [{ count: "5" }], fields: [{ name: "count" }], rowCount: 1 });
   }
 
   // getHealth: pg_size_pretty(pg_database_size(...))
-  if (normalized.includes('pg_size_pretty') && normalized.includes('pg_database_size') && !normalized.includes('pg_tablespace')) {
+  if (
+    normalized.includes("pg_size_pretty") &&
+    normalized.includes("pg_database_size") &&
+    !normalized.includes("pg_tablespace")
+  ) {
     return Promise.resolve({
-      rows: [{ pg_size_pretty: '256 MB', database_size: '256 MB', database_size_bytes: '268435456' }],
-      fields: [{ name: 'pg_size_pretty' }],
+      rows: [{ pg_size_pretty: "256 MB", database_size: "256 MB", database_size_bytes: "268435456" }],
+      fields: [{ name: "pg_size_pretty" }],
       rowCount: 1,
     });
   }
 
   // pg_stat_statements with total_exec_time (getHealth slow queries)
-  if (normalized.includes('pg_stat_statements') && normalized.includes('total_exec_time desc') && normalized.includes('left(query, 100)')) {
+  if (
+    normalized.includes("pg_stat_statements") &&
+    normalized.includes("total_exec_time desc") &&
+    normalized.includes("left(query, 100)")
+  ) {
     return Promise.resolve({
-      rows: [
-        { query: 'SELECT * FROM users', calls: 100, avgtime: '12.5ms' },
-      ],
-      fields: [{ name: 'query' }, { name: 'calls' }, { name: 'avgtime' }],
+      rows: [{ query: "SELECT * FROM users", calls: 100, avgtime: "12.5ms" }],
+      fields: [{ name: "query" }, { name: "calls" }, { name: "avgtime" }],
       rowCount: 1,
     });
   }
 
   // pg_stat_statements (getSlowQueries — detailed fields)
-  if (normalized.includes('pg_stat_statements') && normalized.includes('total_exec_time desc')) {
+  if (normalized.includes("pg_stat_statements") && normalized.includes("total_exec_time desc")) {
     return Promise.resolve({
       rows: [
         {
-          query_id: '12345',
-          query: 'SELECT * FROM users WHERE id = $1',
-          calls: '200',
-          total_time: '5000.00',
-          avg_time: '25.00',
-          min_time: '1.00',
-          max_time: '150.00',
-          rows: '200',
-          shared_blks_hit: '8000',
-          shared_blks_read: '50',
+          query_id: "12345",
+          query: "SELECT * FROM users WHERE id = $1",
+          calls: "200",
+          total_time: "5000.00",
+          avg_time: "25.00",
+          min_time: "1.00",
+          max_time: "150.00",
+          rows: "200",
+          shared_blks_hit: "8000",
+          shared_blks_read: "50",
         },
       ],
       fields: [
-        { name: 'query_id' },
-        { name: 'query' },
-        { name: 'calls' },
-        { name: 'total_time' },
-        { name: 'avg_time' },
-        { name: 'min_time' },
-        { name: 'max_time' },
-        { name: 'rows' },
-        { name: 'shared_blks_hit' },
-        { name: 'shared_blks_read' },
+        { name: "query_id" },
+        { name: "query" },
+        { name: "calls" },
+        { name: "total_time" },
+        { name: "avg_time" },
+        { name: "min_time" },
+        { name: "max_time" },
+        { name: "rows" },
+        { name: "shared_blks_hit" },
+        { name: "shared_blks_read" },
       ],
       rowCount: 1,
     });
   }
 
   // pg_stat_activity fallback slow queries (state = 'active')
-  if (normalized.includes('pg_stat_activity') && normalized.includes("state = 'active'") && normalized.includes('query_start asc')) {
+  if (
+    normalized.includes("pg_stat_activity") &&
+    normalized.includes("state = 'active'") &&
+    normalized.includes("query_start asc")
+  ) {
     return Promise.resolve({
       rows: [
         {
-          query_id: '999',
-          query: 'SELECT * FROM slow_table',
-          calls: '1',
-          total_time: '3000',
-          avg_time: '3000',
-          rows: '0',
+          query_id: "999",
+          query: "SELECT * FROM slow_table",
+          calls: "1",
+          total_time: "3000",
+          avg_time: "3000",
+          rows: "0",
         },
       ],
       fields: [],
@@ -212,20 +231,20 @@ function defaultMockQuery(
 
   // getHealth sessions: pg_stat_activity with pid != pg_backend_pid and datname = $1
   if (
-    normalized.includes('pg_stat_activity') &&
-    normalized.includes('pid != pg_backend_pid()') &&
-    normalized.includes('xact_start desc') &&
-    !normalized.includes('application_name')
+    normalized.includes("pg_stat_activity") &&
+    normalized.includes("pid != pg_backend_pid()") &&
+    normalized.includes("xact_start desc") &&
+    !normalized.includes("application_name")
   ) {
     return Promise.resolve({
       rows: [
         {
           pid: 101,
-          user: 'app_user',
-          database: 'testdb',
-          state: 'active',
-          query: 'SELECT 1',
-          duration: '2.5s',
+          user: "app_user",
+          database: "testdb",
+          state: "active",
+          query: "SELECT 1",
+          duration: "2.5s",
         },
       ],
       fields: [],
@@ -235,26 +254,26 @@ function defaultMockQuery(
 
   // getActiveSessions: pg_stat_activity with detailed fields
   if (
-    normalized.includes('pg_stat_activity') &&
-    normalized.includes('application_name') &&
-    normalized.includes('wait_event_type') &&
-    normalized.includes('pid != pg_backend_pid()')
+    normalized.includes("pg_stat_activity") &&
+    normalized.includes("application_name") &&
+    normalized.includes("wait_event_type") &&
+    normalized.includes("pid != pg_backend_pid()")
   ) {
     return Promise.resolve({
       rows: [
         {
           pid: 201,
-          user: 'db_user',
-          database: 'testdb',
-          application_name: 'myapp',
-          client_addr: '10.0.0.1',
-          state: 'active',
-          query: 'SELECT * FROM orders',
+          user: "db_user",
+          database: "testdb",
+          application_name: "myapp",
+          client_addr: "10.0.0.1",
+          state: "active",
+          query: "SELECT * FROM orders",
           query_start: new Date().toISOString(),
           wait_event_type: null,
           wait_event: null,
-          duration: '1.2s',
-          duration_ms: '1200',
+          duration: "1.2s",
+          duration_ms: "1200",
         },
       ],
       fields: [],
@@ -263,66 +282,64 @@ function defaultMockQuery(
   }
 
   // getHealth: pg_statio_user_tables (cache ratio with heap_read + heap_hit)
-  if (normalized.includes('pg_statio_user_tables') && normalized.includes('heap_blks_read')) {
+  if (normalized.includes("pg_statio_user_tables") && normalized.includes("heap_blks_read")) {
     return Promise.resolve({
-      rows: [{ ratio: 99.5, heap_read: '100', heap_hit: '9900' }],
-      fields: [{ name: 'ratio' }, { name: 'heap_read' }, { name: 'heap_hit' }],
+      rows: [{ ratio: 99.5, heap_read: "100", heap_hit: "9900" }],
+      fields: [{ name: "ratio" }, { name: "heap_read" }, { name: "heap_hit" }],
       rowCount: 1,
     });
   }
 
   // getPerformanceMetrics: pg_statio_user_tables (cache_hit_ratio only)
-  if (normalized.includes('pg_statio_user_tables') && normalized.includes('cache_hit_ratio')) {
+  if (normalized.includes("pg_statio_user_tables") && normalized.includes("cache_hit_ratio")) {
     return Promise.resolve({
-      rows: [{ cache_hit_ratio: '98.75' }],
-      fields: [{ name: 'cache_hit_ratio' }],
+      rows: [{ cache_hit_ratio: "98.75" }],
+      fields: [{ name: "cache_hit_ratio" }],
       rowCount: 1,
     });
   }
 
   // Schema CTE query: information_schema + table_type = 'base table'
-  if (normalized.includes('information_schema') && normalized.includes("table_type = 'base table'")) {
+  if (normalized.includes("information_schema") && normalized.includes("table_type = 'base table'")) {
     return Promise.resolve({
       rows: [
         {
-          table_schema: 'public',
-          table_name: 'users',
-          row_count: '1000',
-          total_size: '81920',
+          table_schema: "public",
+          table_name: "users",
+          row_count: "1000",
+          total_size: "81920",
           columns: [
-            { name: 'id', type: 'integer', nullable: false, defaultValue: "nextval('users_id_seq')" },
-            { name: 'name', type: 'character varying', nullable: true, defaultValue: null },
-            { name: 'email', type: 'character varying', nullable: false, defaultValue: null },
+            { name: "id", type: "integer", nullable: false, defaultValue: "nextval('users_id_seq')" },
+            { name: "name", type: "character varying", nullable: true, defaultValue: null },
+            { name: "email", type: "character varying", nullable: false, defaultValue: null },
           ],
-          pk_columns: ['id'],
+          pk_columns: ["id"],
           foreign_keys: [],
           indexes: [
-            { name: 'users_pkey', columns: ['id'], unique: true },
-            { name: 'idx_users_email', columns: ['email'], unique: true },
+            { name: "users_pkey", columns: ["id"], unique: true },
+            { name: "idx_users_email", columns: ["email"], unique: true },
           ],
         },
         {
-          table_schema: 'analytics',
-          table_name: 'events',
-          row_count: '50000',
-          total_size: '4194304',
+          table_schema: "analytics",
+          table_name: "events",
+          row_count: "50000",
+          total_size: "4194304",
           columns: [
-            { name: 'id', type: 'integer', nullable: false, defaultValue: null },
-            { name: 'user_id', type: 'integer', nullable: false, defaultValue: null },
-            { name: 'event_type', type: 'character varying', nullable: false, defaultValue: null },
+            { name: "id", type: "integer", nullable: false, defaultValue: null },
+            { name: "user_id", type: "integer", nullable: false, defaultValue: null },
+            { name: "event_type", type: "character varying", nullable: false, defaultValue: null },
           ],
-          pk_columns: ['id'],
+          pk_columns: ["id"],
           foreign_keys: [
             {
-              columnName: 'user_id',
-              referencedSchema: 'public',
-              referencedTable: 'users',
-              referencedColumn: 'id',
+              columnName: "user_id",
+              referencedSchema: "public",
+              referencedTable: "users",
+              referencedColumn: "id",
             },
           ],
-          indexes: [
-            { name: 'events_pkey', columns: ['id'], unique: true },
-          ],
+          indexes: [{ name: "events_pkey", columns: ["id"], unique: true }],
         },
       ],
       fields: [],
@@ -331,13 +348,13 @@ function defaultMockQuery(
   }
 
   // getOverview: version() + pg_postmaster_start_time()
-  if (normalized.includes('version()') && normalized.includes('pg_postmaster_start_time()')) {
+  if (normalized.includes("version()") && normalized.includes("pg_postmaster_start_time()")) {
     return Promise.resolve({
       rows: [
         {
-          version: 'PostgreSQL 16.2, compiled by Visual C++ build 1941, 64-bit',
+          version: "PostgreSQL 16.2, compiled by Visual C++ build 1941, 64-bit",
           start_time: new Date(Date.now() - 90061000).toISOString(),
-          uptime_seconds: '90061',
+          uptime_seconds: "90061",
         },
       ],
       fields: [],
@@ -346,42 +363,42 @@ function defaultMockQuery(
   }
 
   // getOverview: connection counts (max_connections + pg_stat_activity)
-  if (normalized.includes('max_connections') && normalized.includes('pg_stat_activity')) {
+  if (normalized.includes("max_connections") && normalized.includes("pg_stat_activity")) {
     return Promise.resolve({
-      rows: [{ active_connections: '12', max_connections: '200' }],
+      rows: [{ active_connections: "12", max_connections: "200" }],
       fields: [],
       rowCount: 1,
     });
   }
 
   // getOverview: database size (pg_database_size with pretty + bytes)
-  if (normalized.includes('pg_database_size') && normalized.includes('database_size_bytes')) {
+  if (normalized.includes("pg_database_size") && normalized.includes("database_size_bytes")) {
     return Promise.resolve({
-      rows: [{ database_size: '512 MB', database_size_bytes: '536870912' }],
+      rows: [{ database_size: "512 MB", database_size_bytes: "536870912" }],
       fields: [],
       rowCount: 1,
     });
   }
 
   // getOverview: table + index counts
-  if (normalized.includes('pg_tables') && normalized.includes('pg_indexes')) {
+  if (normalized.includes("pg_tables") && normalized.includes("pg_indexes")) {
     return Promise.resolve({
-      rows: [{ table_count: '15', index_count: '30' }],
+      rows: [{ table_count: "15", index_count: "30" }],
       fields: [],
       rowCount: 1,
     });
   }
 
   // getPerformanceMetrics: pg_stat_database (transaction stats)
-  if (normalized.includes('pg_stat_database') && normalized.includes('xact_commit')) {
+  if (normalized.includes("pg_stat_database") && normalized.includes("xact_commit")) {
     return Promise.resolve({
       rows: [
         {
-          xact_commit: '50000',
-          xact_rollback: '150',
-          deadlocks: '3',
-          blks_read: '2000',
-          blks_hit: '98000',
+          xact_commit: "50000",
+          xact_rollback: "150",
+          deadlocks: "3",
+          blks_read: "2000",
+          blks_hit: "98000",
         },
       ],
       fields: [],
@@ -390,12 +407,12 @@ function defaultMockQuery(
   }
 
   // getPerformanceMetrics: pg_stat_bgwriter (checkpoint stats)
-  if (normalized.includes('pg_stat_bgwriter')) {
+  if (normalized.includes("pg_stat_bgwriter")) {
     return Promise.resolve({
       rows: [
         {
-          checkpoint_write_time: '12500',
-          checkpoint_sync_time: '3200',
+          checkpoint_write_time: "12500",
+          checkpoint_sync_time: "3200",
         },
       ],
       fields: [],
@@ -404,44 +421,44 @@ function defaultMockQuery(
   }
 
   // getTableStats: pg_stat_user_tables
-  if (normalized.includes('pg_stat_user_tables') && normalized.includes('n_live_tup')) {
+  if (normalized.includes("pg_stat_user_tables") && normalized.includes("n_live_tup")) {
     return Promise.resolve({
       rows: [
         {
-          schema_name: 'public',
-          table_name: 'users',
-          live_row_count: '1000',
-          dead_row_count: '50',
-          row_count: '1050',
-          table_size: '64 kB',
-          table_size_bytes: '65536',
-          index_size: '32 kB',
-          index_size_bytes: '32768',
-          total_size: '96 kB',
-          total_size_bytes: '98304',
+          schema_name: "public",
+          table_name: "users",
+          live_row_count: "1000",
+          dead_row_count: "50",
+          row_count: "1050",
+          table_size: "64 kB",
+          table_size_bytes: "65536",
+          index_size: "32 kB",
+          index_size_bytes: "32768",
+          total_size: "96 kB",
+          total_size_bytes: "98304",
           last_vacuum: null,
           last_autovacuum: new Date().toISOString(),
           last_analyze: null,
           last_autoanalyze: new Date().toISOString(),
-          bloat_ratio: '4.76',
+          bloat_ratio: "4.76",
         },
         {
-          schema_name: 'public',
-          table_name: 'orders',
-          live_row_count: '5000',
-          dead_row_count: '200',
-          row_count: '5200',
-          table_size: '256 kB',
-          table_size_bytes: '262144',
-          index_size: '128 kB',
-          index_size_bytes: '131072',
-          total_size: '384 kB',
-          total_size_bytes: '393216',
+          schema_name: "public",
+          table_name: "orders",
+          live_row_count: "5000",
+          dead_row_count: "200",
+          row_count: "5200",
+          table_size: "256 kB",
+          table_size_bytes: "262144",
+          index_size: "128 kB",
+          index_size_bytes: "131072",
+          total_size: "384 kB",
+          total_size_bytes: "393216",
           last_vacuum: new Date().toISOString(),
           last_autovacuum: null,
           last_analyze: new Date().toISOString(),
           last_autoanalyze: null,
-          bloat_ratio: '3.85',
+          bloat_ratio: "3.85",
         },
       ],
       fields: [],
@@ -450,38 +467,38 @@ function defaultMockQuery(
   }
 
   // getIndexStats: pg_stat_user_indexes
-  if (normalized.includes('pg_stat_user_indexes')) {
+  if (normalized.includes("pg_stat_user_indexes")) {
     return Promise.resolve({
       rows: [
         {
-          schema_name: 'public',
-          table_name: 'users',
-          index_name: 'users_pkey',
-          index_type: 'btree',
-          index_size: '16 kB',
-          index_size_bytes: '16384',
-          scans: '5000',
-          tuples_read: '5000',
-          tuples_fetched: '5000',
+          schema_name: "public",
+          table_name: "users",
+          index_name: "users_pkey",
+          index_type: "btree",
+          index_size: "16 kB",
+          index_size_bytes: "16384",
+          scans: "5000",
+          tuples_read: "5000",
+          tuples_fetched: "5000",
           is_unique: true,
           is_primary: true,
-          columns: ['id'],
-          usage_ratio: '85.50',
+          columns: ["id"],
+          usage_ratio: "85.50",
         },
         {
-          schema_name: 'public',
-          table_name: 'users',
-          index_name: 'idx_users_email',
-          index_type: 'btree',
-          index_size: '32 kB',
-          index_size_bytes: '32768',
-          scans: '3000',
-          tuples_read: '3000',
-          tuples_fetched: '3000',
+          schema_name: "public",
+          table_name: "users",
+          index_name: "idx_users_email",
+          index_type: "btree",
+          index_size: "32 kB",
+          index_size_bytes: "32768",
+          scans: "3000",
+          tuples_read: "3000",
+          tuples_fetched: "3000",
           is_unique: true,
           is_primary: false,
-          columns: ['email'],
-          usage_ratio: '52.17',
+          columns: ["email"],
+          usage_ratio: "52.17",
         },
       ],
       fields: [],
@@ -490,14 +507,14 @@ function defaultMockQuery(
   }
 
   // getStorageStats: pg_tablespace
-  if (normalized.includes('pg_tablespace') && normalized.includes('pg_tablespace_size')) {
+  if (normalized.includes("pg_tablespace") && normalized.includes("pg_tablespace_size")) {
     return Promise.resolve({
       rows: [
         {
-          name: 'pg_default',
-          location: '',
-          size: '1.2 GB',
-          size_bytes: '1288490188',
+          name: "pg_default",
+          location: "",
+          size: "1.2 GB",
+          size_bytes: "1288490188",
           is_default: true,
         },
       ],
@@ -507,9 +524,9 @@ function defaultMockQuery(
   }
 
   // getStorageStats: pg_wal_lsn_diff (WAL info)
-  if (normalized.includes('pg_wal_lsn_diff')) {
+  if (normalized.includes("pg_wal_lsn_diff")) {
     return Promise.resolve({
-      rows: [{ wal_size: '128 MB', wal_size_bytes: '134217728' }],
+      rows: [{ wal_size: "128 MB", wal_size_bytes: "134217728" }],
       fields: [],
       rowCount: 1,
     });
@@ -517,8 +534,8 @@ function defaultMockQuery(
 
   // Default: generic SELECT result
   return Promise.resolve({
-    rows: [{ id: 1, name: 'test' }],
-    fields: [{ name: 'id' }, { name: 'name' }],
+    rows: [{ id: 1, name: "test" }],
+    fields: [{ name: "id" }, { name: "name" }],
     rowCount: 1,
   });
 }
@@ -527,7 +544,7 @@ function defaultMockQuery(
 // Tests
 // ============================================================================
 
-describe('PostgresProvider', () => {
+describe("PostgresProvider", () => {
   let provider: InstanceType<typeof PostgresProvider>;
 
   beforeEach(() => {
@@ -548,33 +565,33 @@ describe('PostgresProvider', () => {
   // Validation
   // --------------------------------------------------------------------------
 
-  describe('validate()', () => {
-    test('missing host throws DatabaseConfigError', () => {
+  describe("validate()", () => {
+    test("missing host throws DatabaseConfigError", () => {
       expect(() => {
         new PostgresProvider(makePgConfig({ host: undefined }));
       }).toThrow(DatabaseConfigError);
     });
 
-    test('missing database throws DatabaseConfigError', () => {
+    test("missing database throws DatabaseConfigError", () => {
       expect(() => {
         new PostgresProvider(makePgConfig({ database: undefined }));
       }).toThrow(DatabaseConfigError);
     });
 
-    test('valid config passes validation', () => {
+    test("valid config passes validation", () => {
       expect(() => {
         new PostgresProvider(makePgConfig());
       }).not.toThrow();
     });
 
-    test('connectionString bypasses host/database requirement', () => {
+    test("connectionString bypasses host/database requirement", () => {
       expect(() => {
         new PostgresProvider(
           makePgConfig({
             host: undefined,
             database: undefined,
-            connectionString: 'postgresql://user:pass@localhost:5432/mydb',
-          })
+            connectionString: "postgresql://user:pass@localhost:5432/mydb",
+          }),
         );
       }).not.toThrow();
     });
@@ -584,26 +601,26 @@ describe('PostgresProvider', () => {
   // Connection lifecycle
   // --------------------------------------------------------------------------
 
-  describe('connect / disconnect', () => {
-    test('isConnected() is false before connect', () => {
+  describe("connect / disconnect", () => {
+    test("isConnected() is false before connect", () => {
       provider = new PostgresProvider(makePgConfig());
       expect(provider.isConnected()).toBe(false);
     });
 
-    test('connect() sets connected to true', async () => {
+    test("connect() sets connected to true", async () => {
       provider = new PostgresProvider(makePgConfig());
       await provider.connect();
       expect(provider.isConnected()).toBe(true);
     });
 
-    test('disconnect() sets connected to false', async () => {
+    test("disconnect() sets connected to false", async () => {
       provider = new PostgresProvider(makePgConfig());
       await provider.connect();
       await provider.disconnect();
       expect(provider.isConnected()).toBe(false);
     });
 
-    test('double connect is idempotent', async () => {
+    test("double connect is idempotent", async () => {
       provider = new PostgresProvider(makePgConfig());
       await provider.connect();
       await provider.connect();
@@ -615,60 +632,60 @@ describe('PostgresProvider', () => {
   // buildSSLConfig()
   // --------------------------------------------------------------------------
 
-  describe('buildSSLConfig()', () => {
-    test('ssl mode disable returns false (no SSL)', async () => {
+  describe("buildSSLConfig()", () => {
+    test("ssl mode disable returns false (no SSL)", async () => {
       provider = new PostgresProvider(
         makePgConfig({
-          ssl: { mode: 'disable' },
-        })
+          ssl: { mode: "disable" },
+        }),
       );
       await provider.connect();
       // If we get here without error, connect succeeded with ssl=false
       expect(provider.isConnected()).toBe(true);
     });
 
-    test('ssl mode verify-ca sets rejectUnauthorized to true', async () => {
+    test("ssl mode verify-ca sets rejectUnauthorized to true", async () => {
       provider = new PostgresProvider(
         makePgConfig({
-          ssl: { mode: 'verify-ca' },
-        })
+          ssl: { mode: "verify-ca" },
+        }),
       );
       await provider.connect();
       expect(provider.isConnected()).toBe(true);
     });
 
-    test('ssl mode verify-full with certs includes ca, cert, key', async () => {
+    test("ssl mode verify-full with certs includes ca, cert, key", async () => {
       provider = new PostgresProvider(
         makePgConfig({
           ssl: {
-            mode: 'verify-full',
-            caCert: '-----BEGIN CERTIFICATE-----\nCA\n-----END CERTIFICATE-----',
-            clientCert: '-----BEGIN CERTIFICATE-----\nCLIENT\n-----END CERTIFICATE-----',
-            clientKey: '-----BEGIN RSA PRIVATE KEY-----\nKEY\n-----END RSA PRIVATE KEY-----',
+            mode: "verify-full",
+            caCert: "-----BEGIN CERTIFICATE-----\nCA\n-----END CERTIFICATE-----",
+            clientCert: "-----BEGIN CERTIFICATE-----\nCLIENT\n-----END CERTIFICATE-----",
+            clientKey: "-----BEGIN RSA PRIVATE KEY-----\nKEY\n-----END RSA PRIVATE KEY-----",
           },
-        })
+        }),
       );
       await provider.connect();
       expect(provider.isConnected()).toBe(true);
     });
 
-    test('auto-detect cloud provider enables SSL', async () => {
+    test("auto-detect cloud provider enables SSL", async () => {
       provider = new PostgresProvider(
         makePgConfig({
-          host: 'my-db.supabase.co',
-        })
+          host: "my-db.supabase.co",
+        }),
       );
       await provider.connect();
       expect(provider.isConnected()).toBe(true);
     });
 
-    test('options.ssl=false returns false', async () => {
+    test("options.ssl=false returns false", async () => {
       provider = new PostgresProvider(makePgConfig(), { ssl: false });
       await provider.connect();
       expect(provider.isConnected()).toBe(true);
     });
 
-    test('no SSL config returns undefined (default)', async () => {
+    test("no SSL config returns undefined (default)", async () => {
       provider = new PostgresProvider(makePgConfig());
       await provider.connect();
       expect(provider.isConnected()).toBe(true);
@@ -679,25 +696,25 @@ describe('PostgresProvider', () => {
   // Query execution
   // --------------------------------------------------------------------------
 
-  describe('query()', () => {
-    test('SELECT returns rows, fields, and executionTime', async () => {
+  describe("query()", () => {
+    test("SELECT returns rows, fields, and executionTime", async () => {
       provider = new PostgresProvider(makePgConfig());
       await provider.connect();
-      const result = await provider.query('SELECT * FROM users');
+      const result = await provider.query("SELECT * FROM users");
       expect(result.rows.length).toBeGreaterThan(0);
       expect(Array.isArray(result.fields)).toBe(true);
-      expect(typeof result.executionTime).toBe('number');
-      expect(typeof result.rowCount).toBe('number');
+      expect(typeof result.executionTime).toBe("number");
+      expect(typeof result.rowCount).toBe("number");
     });
 
-    test('PID is tracked when queryId is provided', async () => {
+    test("PID is tracked when queryId is provided", async () => {
       provider = new PostgresProvider(makePgConfig());
       await provider.connect();
-      const result = await provider.query('SELECT 1', undefined, 'test-query-id');
+      const result = await provider.query("SELECT 1", undefined, "test-query-id");
       expect(result.rows.length).toBeGreaterThan(0);
     });
 
-    test('query error is mapped to database error', async () => {
+    test("query error is mapped to database error", async () => {
       provider = new PostgresProvider(makePgConfig());
       await provider.connect();
 
@@ -706,7 +723,7 @@ describe('PostgresProvider', () => {
         throw new Error('syntax error at or near "SELEC"');
       };
 
-      await expect(provider.query('SELEC * FROM users')).rejects.toThrow();
+      await expect(provider.query("SELEC * FROM users")).rejects.toThrow();
     });
   });
 
@@ -714,8 +731,8 @@ describe('PostgresProvider', () => {
   // Cancel query
   // --------------------------------------------------------------------------
 
-  describe('cancelQuery()', () => {
-    test('cancels known PID and returns true', async () => {
+  describe("cancelQuery()", () => {
+    test("cancels known PID and returns true", async () => {
       provider = new PostgresProvider(makePgConfig());
       await provider.connect();
 
@@ -724,36 +741,36 @@ describe('PostgresProvider', () => {
       // Since our mock is synchronous, we'll manually set the PID map.
       // Access the private runningQueryPids map via casting.
       const providerAny = provider as unknown as { runningQueryPids: Map<string, number> };
-      providerAny.runningQueryPids.set('cancel-test', 12345);
+      providerAny.runningQueryPids.set("cancel-test", 12345);
 
-      const cancelled = await provider.cancelQuery('cancel-test');
+      const cancelled = await provider.cancelQuery("cancel-test");
       expect(cancelled).toBe(true);
     });
 
-    test('returns false for unknown queryId', async () => {
+    test("returns false for unknown queryId", async () => {
       provider = new PostgresProvider(makePgConfig());
       await provider.connect();
-      const result = await provider.cancelQuery('nonexistent-query-id');
+      const result = await provider.cancelQuery("nonexistent-query-id");
       expect(result).toBe(false);
     });
 
-    test('handles cancel error gracefully and returns false', async () => {
+    test("handles cancel error gracefully and returns false", async () => {
       provider = new PostgresProvider(makePgConfig());
       await provider.connect();
 
       const providerAny = provider as unknown as { runningQueryPids: Map<string, number> };
-      providerAny.runningQueryPids.set('error-cancel', 99999);
+      providerAny.runningQueryPids.set("error-cancel", 99999);
 
       // Override mock to throw on pg_cancel_backend
       const originalMock = mockQueryFn;
       mockQueryFn = async (sql: string, params?: unknown[]) => {
-        if (sql.includes('pg_cancel_backend')) {
-          throw new Error('Connection lost');
+        if (sql.includes("pg_cancel_backend")) {
+          throw new Error("Connection lost");
         }
         return originalMock(sql, params);
       };
 
-      const result = await provider.cancelQuery('error-cancel');
+      const result = await provider.cancelQuery("error-cancel");
       expect(result).toBe(false);
     });
   });
@@ -762,8 +779,8 @@ describe('PostgresProvider', () => {
   // Transaction lifecycle
   // --------------------------------------------------------------------------
 
-  describe('Transaction lifecycle', () => {
-    test('beginTransaction / commitTransaction works', async () => {
+  describe("Transaction lifecycle", () => {
+    test("beginTransaction / commitTransaction works", async () => {
       provider = new PostgresProvider(makePgConfig());
       await provider.connect();
 
@@ -774,7 +791,7 @@ describe('PostgresProvider', () => {
       expect(provider.isInTransaction()).toBe(false);
     });
 
-    test('beginTransaction / rollbackTransaction works', async () => {
+    test("beginTransaction / rollbackTransaction works", async () => {
       provider = new PostgresProvider(makePgConfig());
       await provider.connect();
 
@@ -784,49 +801,49 @@ describe('PostgresProvider', () => {
       expect(provider.isInTransaction()).toBe(false);
     });
 
-    test('double beginTransaction throws', async () => {
+    test("double beginTransaction throws", async () => {
       provider = new PostgresProvider(makePgConfig());
       await provider.connect();
 
       await provider.beginTransaction();
-      await expect(provider.beginTransaction()).rejects.toThrow('Transaction already active');
+      await expect(provider.beginTransaction()).rejects.toThrow("Transaction already active");
       // Clean up
       await provider.rollbackTransaction();
     });
 
-    test('commitTransaction without begin throws', async () => {
+    test("commitTransaction without begin throws", async () => {
       provider = new PostgresProvider(makePgConfig());
       await provider.connect();
 
-      await expect(provider.commitTransaction()).rejects.toThrow('No active transaction');
+      await expect(provider.commitTransaction()).rejects.toThrow("No active transaction");
     });
 
-    test('rollbackTransaction without begin throws', async () => {
+    test("rollbackTransaction without begin throws", async () => {
       provider = new PostgresProvider(makePgConfig());
       await provider.connect();
 
-      await expect(provider.rollbackTransaction()).rejects.toThrow('No active transaction');
+      await expect(provider.rollbackTransaction()).rejects.toThrow("No active transaction");
     });
 
-    test('queryInTransaction executes within active transaction', async () => {
+    test("queryInTransaction executes within active transaction", async () => {
       provider = new PostgresProvider(makePgConfig());
       await provider.connect();
 
       await provider.beginTransaction();
-      const result = await provider.queryInTransaction('SELECT 1');
+      const result = await provider.queryInTransaction("SELECT 1");
       expect(result.rows).toBeDefined();
-      expect(typeof result.executionTime).toBe('number');
+      expect(typeof result.executionTime).toBe("number");
       await provider.commitTransaction();
     });
 
-    test('queryInTransaction without begin throws', async () => {
+    test("queryInTransaction without begin throws", async () => {
       provider = new PostgresProvider(makePgConfig());
       await provider.connect();
 
-      await expect(provider.queryInTransaction('SELECT 1')).rejects.toThrow('No active transaction');
+      await expect(provider.queryInTransaction("SELECT 1")).rejects.toThrow("No active transaction");
     });
 
-    test('expireTransaction auto-rollbacks an active transaction', async () => {
+    test("expireTransaction auto-rollbacks an active transaction", async () => {
       provider = new PostgresProvider(makePgConfig());
       await provider.connect();
 
@@ -837,7 +854,7 @@ describe('PostgresProvider', () => {
       expect(provider.isInTransaction()).toBe(false);
     });
 
-    test('expireTransaction is no-op when no active transaction', async () => {
+    test("expireTransaction is no-op when no active transaction", async () => {
       provider = new PostgresProvider(makePgConfig());
       await provider.connect();
 
@@ -851,8 +868,8 @@ describe('PostgresProvider', () => {
   // Schema
   // --------------------------------------------------------------------------
 
-  describe('getSchema()', () => {
-    test('returns TableSchema array with columns, indexes, foreignKeys', async () => {
+  describe("getSchema()", () => {
+    test("returns TableSchema array with columns, indexes, foreignKeys", async () => {
       provider = new PostgresProvider(makePgConfig());
       await provider.connect();
       const schema = await provider.getSchema();
@@ -860,7 +877,7 @@ describe('PostgresProvider', () => {
       expect(schema.length).toBe(2);
 
       for (const table of schema) {
-        expect(typeof table.name).toBe('string');
+        expect(typeof table.name).toBe("string");
         expect(Array.isArray(table.columns)).toBe(true);
         expect(table.columns.length).toBeGreaterThan(0);
         expect(Array.isArray(table.indexes)).toBe(true);
@@ -868,35 +885,35 @@ describe('PostgresProvider', () => {
       }
     });
 
-    test('primary key columns are detected via isPrimary flag', async () => {
+    test("primary key columns are detected via isPrimary flag", async () => {
       provider = new PostgresProvider(makePgConfig());
       await provider.connect();
       const schema = await provider.getSchema();
 
-      const usersTable = schema.find((t) => t.name === 'users');
+      const usersTable = schema.find((t) => t.name === "users");
       expect(usersTable).toBeDefined();
 
-      const idCol = usersTable!.columns.find((c) => c.name === 'id');
+      const idCol = usersTable!.columns.find((c) => c.name === "id");
       expect(idCol).toBeDefined();
       expect(idCol!.isPrimary).toBe(true);
 
-      const nameCol = usersTable!.columns.find((c) => c.name === 'name');
+      const nameCol = usersTable!.columns.find((c) => c.name === "name");
       expect(nameCol).toBeDefined();
       expect(nameCol!.isPrimary).toBe(false);
     });
 
-    test('non-public schema tables get schema prefix in name', async () => {
+    test("non-public schema tables get schema prefix in name", async () => {
       provider = new PostgresProvider(makePgConfig());
       await provider.connect();
       const schema = await provider.getSchema();
 
-      const eventsTable = schema.find((t) => t.name === 'analytics.events');
+      const eventsTable = schema.find((t) => t.name === "analytics.events");
       expect(eventsTable).toBeDefined();
-      expect(eventsTable!.name).toBe('analytics.events');
+      expect(eventsTable!.name).toBe("analytics.events");
 
       // Foreign key from analytics.events.user_id -> public.users.id should have no prefix
       expect(eventsTable!.foreignKeys!.length).toBe(1);
-      expect(eventsTable!.foreignKeys![0].referencedTable).toBe('users');
+      expect(eventsTable!.foreignKeys![0].referencedTable).toBe("users");
     });
   });
 
@@ -904,19 +921,19 @@ describe('PostgresProvider', () => {
   // getSchemaList() — fast structural path (tables + columns + PKs only)
   // --------------------------------------------------------------------------
 
-  describe('getSchemaList()', () => {
+  describe("getSchemaList()", () => {
     // The fast path shares the tables/columns/pk CTE shape with getSchema(), so
     // the default mock (information_schema + table_type = 'base table') applies.
     // What it must NOT do is populate indexes/foreignKeys — those are deferred
     // to getSchemaRelations() so a slow stats query can't block the table list.
-    test('returns tables with columns and PKs but empty indexes/foreignKeys', async () => {
+    test("returns tables with columns and PKs but empty indexes/foreignKeys", async () => {
       provider = new PostgresProvider(makePgConfig());
       await provider.connect();
       const schema = await provider.getSchemaList();
 
       expect(schema.length).toBe(2);
       for (const table of schema) {
-        expect(typeof table.name).toBe('string');
+        expect(typeof table.name).toBe("string");
         expect(table.columns.length).toBeGreaterThan(0);
         // The whole point of the split: relations are intentionally absent here.
         expect(table.indexes).toEqual([]);
@@ -924,39 +941,39 @@ describe('PostgresProvider', () => {
       }
     });
 
-    test('primary key columns are detected via isPrimary flag', async () => {
+    test("primary key columns are detected via isPrimary flag", async () => {
       provider = new PostgresProvider(makePgConfig());
       await provider.connect();
       const schema = await provider.getSchemaList();
 
-      const usersTable = schema.find((t) => t.name === 'users');
+      const usersTable = schema.find((t) => t.name === "users");
       expect(usersTable).toBeDefined();
-      expect(usersTable!.columns.find((c) => c.name === 'id')!.isPrimary).toBe(true);
-      expect(usersTable!.columns.find((c) => c.name === 'name')!.isPrimary).toBe(false);
+      expect(usersTable!.columns.find((c) => c.name === "id")!.isPrimary).toBe(true);
+      expect(usersTable!.columns.find((c) => c.name === "name")!.isPrimary).toBe(false);
     });
 
-    test('non-public schema tables get schema prefix in name', async () => {
+    test("non-public schema tables get schema prefix in name", async () => {
       provider = new PostgresProvider(makePgConfig());
       await provider.connect();
       const schema = await provider.getSchemaList();
 
-      expect(schema.find((t) => t.name === 'analytics.events')).toBeDefined();
-      expect(schema.find((t) => t.name === 'users')).toBeDefined();
+      expect(schema.find((t) => t.name === "analytics.events")).toBeDefined();
+      expect(schema.find((t) => t.name === "users")).toBeDefined();
     });
 
-    test('negative reltuples row_count is clamped to zero', async () => {
+    test("negative reltuples row_count is clamped to zero", async () => {
       // Never-analyzed tables report reltuples = -1; the UI must never show -1.
       mockQueryFn = (sql: string) => {
         if (sql.toLowerCase().includes("table_type = 'base table'")) {
           return Promise.resolve({
             rows: [
               {
-                table_schema: 'public',
-                table_name: 'fresh',
-                row_count: '-1',
-                total_size: '0',
-                columns: [{ name: 'id', type: 'integer', nullable: false, defaultValue: null }],
-                pk_columns: ['id'],
+                table_schema: "public",
+                table_name: "fresh",
+                row_count: "-1",
+                total_size: "0",
+                columns: [{ name: "id", type: "integer", nullable: false, defaultValue: null }],
+                pk_columns: ["id"],
               },
             ],
             fields: [],
@@ -972,16 +989,16 @@ describe('PostgresProvider', () => {
       expect(schema[0].rowCount).toBe(0);
     });
 
-    test('table with no columns yields an empty columns array (not a crash)', async () => {
+    test("table with no columns yields an empty columns array (not a crash)", async () => {
       mockQueryFn = (sql: string) => {
         if (sql.toLowerCase().includes("table_type = 'base table'")) {
           return Promise.resolve({
             rows: [
               {
-                table_schema: 'public',
-                table_name: 'empty_table',
-                row_count: '0',
-                total_size: '0',
+                table_schema: "public",
+                table_name: "empty_table",
+                row_count: "0",
+                total_size: "0",
                 columns: null,
                 pk_columns: null,
               },
@@ -996,7 +1013,7 @@ describe('PostgresProvider', () => {
       await provider.connect();
       const schema = await provider.getSchemaList();
 
-      expect(schema[0].name).toBe('empty_table');
+      expect(schema[0].name).toBe("empty_table");
       expect(schema[0].columns).toEqual([]);
     });
   });
@@ -1005,33 +1022,33 @@ describe('PostgresProvider', () => {
   // getSchemaRelations() — heavy FK/index path, keyed by table display name
   // --------------------------------------------------------------------------
 
-  describe('getSchemaRelations()', () => {
+  describe("getSchemaRelations()", () => {
     // The relations query (fk_info + index_info, FULL OUTER JOIN) does not match
     // the default schema mock, so each test supplies its own relation rows.
     function withRelationRows(rows: unknown[]) {
       mockQueryFn = (sql: string) => {
         const normalized = sql.toLowerCase();
-        if (normalized.includes('fk_info') || normalized.includes('full outer join')) {
+        if (normalized.includes("fk_info") || normalized.includes("full outer join")) {
           return Promise.resolve({ rows, fields: [], rowCount: rows.length });
         }
         return defaultMockQuery(sql);
       };
     }
 
-    test('returns foreignKeys and indexes keyed by table display name', async () => {
+    test("returns foreignKeys and indexes keyed by table display name", async () => {
       withRelationRows([
         {
-          table_schema: 'public',
-          table_name: 'orders',
+          table_schema: "public",
+          table_name: "orders",
           foreign_keys: [
             {
-              columnName: 'user_id',
-              referencedSchema: 'public',
-              referencedTable: 'users',
-              referencedColumn: 'id',
+              columnName: "user_id",
+              referencedSchema: "public",
+              referencedTable: "users",
+              referencedColumn: "id",
             },
           ],
-          indexes: [{ name: 'orders_pkey', columns: ['id'], unique: true }],
+          indexes: [{ name: "orders_pkey", columns: ["id"], unique: true }],
         },
       ]);
       provider = new PostgresProvider(makePgConfig());
@@ -1039,26 +1056,26 @@ describe('PostgresProvider', () => {
       const relations = await provider.getSchemaRelations();
 
       expect(relations.length).toBe(1);
-      const orders = relations.find((r) => r.name === 'orders');
+      const orders = relations.find((r) => r.name === "orders");
       expect(orders).toBeDefined();
       expect(orders!.foreignKeys.length).toBe(1);
-      expect(orders!.foreignKeys[0].columnName).toBe('user_id');
-      expect(orders!.foreignKeys[0].referencedColumn).toBe('id');
+      expect(orders!.foreignKeys[0].columnName).toBe("user_id");
+      expect(orders!.foreignKeys[0].referencedColumn).toBe("id");
       expect(orders!.indexes.length).toBe(1);
       expect(orders!.indexes[0].unique).toBe(true);
     });
 
-    test('non-public schema is prefixed on both table name and referenced table', async () => {
+    test("non-public schema is prefixed on both table name and referenced table", async () => {
       withRelationRows([
         {
-          table_schema: 'analytics',
-          table_name: 'events',
+          table_schema: "analytics",
+          table_name: "events",
           foreign_keys: [
             {
-              columnName: 'account_id',
-              referencedSchema: 'billing',
-              referencedTable: 'accounts',
-              referencedColumn: 'id',
+              columnName: "account_id",
+              referencedSchema: "billing",
+              referencedTable: "accounts",
+              referencedColumn: "id",
             },
           ],
           indexes: [],
@@ -1068,22 +1085,22 @@ describe('PostgresProvider', () => {
       await provider.connect();
       const relations = await provider.getSchemaRelations();
 
-      const events = relations.find((r) => r.name === 'analytics.events');
+      const events = relations.find((r) => r.name === "analytics.events");
       expect(events).toBeDefined();
-      expect(events!.foreignKeys[0].referencedTable).toBe('billing.accounts');
+      expect(events!.foreignKeys[0].referencedTable).toBe("billing.accounts");
     });
 
-    test('public referenced table keeps its bare name (no prefix)', async () => {
+    test("public referenced table keeps its bare name (no prefix)", async () => {
       withRelationRows([
         {
-          table_schema: 'analytics',
-          table_name: 'events',
+          table_schema: "analytics",
+          table_name: "events",
           foreign_keys: [
             {
-              columnName: 'user_id',
-              referencedSchema: 'public',
-              referencedTable: 'users',
-              referencedColumn: 'id',
+              columnName: "user_id",
+              referencedSchema: "public",
+              referencedTable: "users",
+              referencedColumn: "id",
             },
           ],
           indexes: [],
@@ -1093,40 +1110,40 @@ describe('PostgresProvider', () => {
       await provider.connect();
       const relations = await provider.getSchemaRelations();
 
-      expect(relations[0].foreignKeys[0].referencedTable).toBe('users');
+      expect(relations[0].foreignKeys[0].referencedTable).toBe("users");
     });
 
-    test('empty fk/index arrays are tolerated (index-only or fk-only tables)', async () => {
+    test("empty fk/index arrays are tolerated (index-only or fk-only tables)", async () => {
       withRelationRows([
-        { table_schema: 'public', table_name: 'logs', foreign_keys: [], indexes: [] },
+        { table_schema: "public", table_name: "logs", foreign_keys: [], indexes: [] },
         {
-          table_schema: 'public',
-          table_name: 'metrics',
+          table_schema: "public",
+          table_name: "metrics",
           foreign_keys: null,
-          indexes: [{ name: 'metrics_ts_idx', columns: ['ts'], unique: false }],
+          indexes: [{ name: "metrics_ts_idx", columns: ["ts"], unique: false }],
         },
       ]);
       provider = new PostgresProvider(makePgConfig());
       await provider.connect();
       const relations = await provider.getSchemaRelations();
 
-      const logs = relations.find((r) => r.name === 'logs')!;
+      const logs = relations.find((r) => r.name === "logs")!;
       expect(logs.foreignKeys).toEqual([]);
       expect(logs.indexes).toEqual([]);
 
-      const metrics = relations.find((r) => r.name === 'metrics')!;
+      const metrics = relations.find((r) => r.name === "metrics")!;
       expect(metrics.foreignKeys).toEqual([]);
-      expect(metrics.indexes[0].columns).toEqual(['ts']);
+      expect(metrics.indexes[0].columns).toEqual(["ts"]);
       expect(metrics.indexes[0].unique).toBe(false);
     });
 
-    test('null index columns coerce to an empty array', async () => {
+    test("null index columns coerce to an empty array", async () => {
       withRelationRows([
         {
-          table_schema: 'public',
-          table_name: 'weird',
+          table_schema: "public",
+          table_name: "weird",
           foreign_keys: [],
-          indexes: [{ name: 'broken_idx', columns: null, unique: false }],
+          indexes: [{ name: "broken_idx", columns: null, unique: false }],
         },
       ]);
       provider = new PostgresProvider(makePgConfig());
@@ -1140,8 +1157,8 @@ describe('PostgresProvider', () => {
     // schema in ccu.table_schema, so joining it to tc.table_schema drops every
     // cross-schema foreign key. The join must be on the constraint's own schema.
     // The query result is mocked, so this asserts the SQL itself.
-    test('FK introspection joins constraint_column_usage on constraint_schema', async () => {
-      let capturedSql = '';
+    test("FK introspection joins constraint_column_usage on constraint_schema", async () => {
+      let capturedSql = "";
       mockQueryFn = (sql: string) => {
         capturedSql = sql;
         return Promise.resolve({ rows: [], fields: [], rowCount: 0 });
@@ -1150,8 +1167,8 @@ describe('PostgresProvider', () => {
       await provider.connect();
       await provider.getSchemaRelations();
 
-      expect(capturedSql).toContain('ccu.constraint_schema = tc.constraint_schema');
-      expect(capturedSql).not.toContain('ccu.table_schema = tc.table_schema');
+      expect(capturedSql).toContain("ccu.constraint_schema = tc.constraint_schema");
+      expect(capturedSql).not.toContain("ccu.table_schema = tc.table_schema");
     });
   });
 
@@ -1159,23 +1176,23 @@ describe('PostgresProvider', () => {
   // Health
   // --------------------------------------------------------------------------
 
-  describe('getHealth()', () => {
-    test('returns all health fields', async () => {
+  describe("getHealth()", () => {
+    test("returns all health fields", async () => {
       provider = new PostgresProvider(makePgConfig());
       await provider.connect();
       const health = await provider.getHealth();
 
-      expect(typeof health.activeConnections).toBe('number');
+      expect(typeof health.activeConnections).toBe("number");
       expect(health.activeConnections).toBe(5);
-      expect(typeof health.databaseSize).toBe('string');
-      expect(health.databaseSize).toBe('256 MB');
-      expect(typeof health.cacheHitRatio).toBe('string');
-      expect(health.cacheHitRatio).toContain('99.5');
+      expect(typeof health.databaseSize).toBe("string");
+      expect(health.databaseSize).toBe("256 MB");
+      expect(typeof health.cacheHitRatio).toBe("string");
+      expect(health.cacheHitRatio).toContain("99.5");
       expect(Array.isArray(health.slowQueries)).toBe(true);
       expect(Array.isArray(health.activeSessions)).toBe(true);
     });
 
-    test('pg_stat_statements fallback when extension is not enabled', async () => {
+    test("pg_stat_statements fallback when extension is not enabled", async () => {
       provider = new PostgresProvider(makePgConfig());
       await provider.connect();
 
@@ -1183,7 +1200,7 @@ describe('PostgresProvider', () => {
       const originalMock = mockQueryFn;
       mockQueryFn = async (sql: string, params?: unknown[]) => {
         const normalized = sql.trim().toLowerCase();
-        if (normalized.includes('pg_stat_statements') && normalized.includes('total_exec_time desc')) {
+        if (normalized.includes("pg_stat_statements") && normalized.includes("total_exec_time desc")) {
           throw new Error('relation "pg_stat_statements" does not exist');
         }
         return originalMock(sql, params);
@@ -1192,19 +1209,19 @@ describe('PostgresProvider', () => {
       const health = await provider.getHealth();
       expect(Array.isArray(health.slowQueries)).toBe(true);
       expect(health.slowQueries.length).toBe(1);
-      expect(health.slowQueries[0].query).toContain('pg_stat_statements extension not enabled');
+      expect(health.slowQueries[0].query).toContain("pg_stat_statements extension not enabled");
     });
 
-    test('sessions data is populated', async () => {
+    test("sessions data is populated", async () => {
       provider = new PostgresProvider(makePgConfig());
       await provider.connect();
       const health = await provider.getHealth();
 
       expect(health.activeSessions.length).toBeGreaterThan(0);
       const session = health.activeSessions[0];
-      expect(typeof session.pid).toBe('number');
-      expect(typeof session.user).toBe('string');
-      expect(typeof session.state).toBe('string');
+      expect(typeof session.pid).toBe("number");
+      expect(typeof session.user).toBe("string");
+      expect(typeof session.state).toBe("string");
     });
   });
 
@@ -1212,111 +1229,107 @@ describe('PostgresProvider', () => {
   // Maintenance
   // --------------------------------------------------------------------------
 
-  describe('runMaintenance()', () => {
-    test('vacuum with target returns success', async () => {
+  describe("runMaintenance()", () => {
+    test("vacuum with target returns success", async () => {
       provider = new PostgresProvider(makePgConfig());
       await provider.connect();
-      const result = await provider.runMaintenance('vacuum', 'users');
+      const result = await provider.runMaintenance("vacuum", "users");
       expect(result.success).toBe(true);
-      expect(typeof result.executionTime).toBe('number');
-      expect(result.message).toContain('VACUUM');
+      expect(typeof result.executionTime).toBe("number");
+      expect(result.message).toContain("VACUUM");
     });
 
-    test('vacuum without target returns success', async () => {
+    test("vacuum without target returns success", async () => {
       provider = new PostgresProvider(makePgConfig());
       await provider.connect();
-      const result = await provider.runMaintenance('vacuum');
+      const result = await provider.runMaintenance("vacuum");
       expect(result.success).toBe(true);
-      expect(result.message).toContain('VACUUM');
+      expect(result.message).toContain("VACUUM");
     });
 
-    test('analyze with target returns success', async () => {
+    test("analyze with target returns success", async () => {
       provider = new PostgresProvider(makePgConfig());
       await provider.connect();
-      const result = await provider.runMaintenance('analyze', 'users');
+      const result = await provider.runMaintenance("analyze", "users");
       expect(result.success).toBe(true);
-      expect(result.message).toContain('ANALYZE');
+      expect(result.message).toContain("ANALYZE");
     });
 
-    test('analyze without target returns success', async () => {
+    test("analyze without target returns success", async () => {
       provider = new PostgresProvider(makePgConfig());
       await provider.connect();
-      const result = await provider.runMaintenance('analyze');
+      const result = await provider.runMaintenance("analyze");
       expect(result.success).toBe(true);
-      expect(result.message).toContain('ANALYZE');
+      expect(result.message).toContain("ANALYZE");
     });
 
-    test('reindex with target returns success', async () => {
+    test("reindex with target returns success", async () => {
       provider = new PostgresProvider(makePgConfig());
       await provider.connect();
-      const result = await provider.runMaintenance('reindex', 'users');
+      const result = await provider.runMaintenance("reindex", "users");
       expect(result.success).toBe(true);
-      expect(result.message).toContain('REINDEX');
+      expect(result.message).toContain("REINDEX");
     });
 
-    test('reindex without target returns success (database-level)', async () => {
+    test("reindex without target returns success (database-level)", async () => {
       provider = new PostgresProvider(makePgConfig());
       await provider.connect();
-      const result = await provider.runMaintenance('reindex');
+      const result = await provider.runMaintenance("reindex");
       expect(result.success).toBe(true);
-      expect(result.message).toContain('REINDEX');
+      expect(result.message).toContain("REINDEX");
     });
 
-    test('quotes a mixed-case target (defaults to public schema)', async () => {
+    test("quotes a mixed-case target (defaults to public schema)", async () => {
       provider = new PostgresProvider(makePgConfig());
       await provider.connect();
-      let capturedSql = '';
+      let capturedSql = "";
       mockQueryFn = (sql: string) => {
         capturedSql = sql;
         return defaultMockQuery(sql);
       };
-      await provider.runMaintenance('vacuum', 'MyTable');
+      await provider.runMaintenance("vacuum", "MyTable");
       expect(capturedSql).toContain('public."MyTable"');
     });
 
-    test('quotes a schema-qualified target per part (not forced to public)', async () => {
+    test("quotes a schema-qualified target per part (not forced to public)", async () => {
       provider = new PostgresProvider(makePgConfig());
       await provider.connect();
-      let capturedSql = '';
+      let capturedSql = "";
       mockQueryFn = (sql: string) => {
         capturedSql = sql;
         return defaultMockQuery(sql);
       };
-      await provider.runMaintenance('reindex', 'reporting.MonthlySummary');
+      await provider.runMaintenance("reindex", "reporting.MonthlySummary");
       expect(capturedSql).toContain('"reporting"."MonthlySummary"');
-      expect(capturedSql).not.toContain('public.');
+      expect(capturedSql).not.toContain("public.");
     });
 
-    test('kill with valid PID returns success', async () => {
+    test("kill with valid PID returns success", async () => {
       provider = new PostgresProvider(makePgConfig());
       await provider.connect();
-      const result = await provider.runMaintenance('kill', '12345');
+      const result = await provider.runMaintenance("kill", "12345");
       expect(result.success).toBe(true);
-      expect(result.message).toContain('KILL');
+      expect(result.message).toContain("KILL");
     });
 
-    test('kill without target throws QueryError', async () => {
+    test("kill without target throws QueryError", async () => {
       provider = new PostgresProvider(makePgConfig());
       await provider.connect();
-      await expect(provider.runMaintenance('kill')).rejects.toThrow(
-        'Target PID is required for kill operation'
+      await expect(provider.runMaintenance("kill")).rejects.toThrow("Target PID is required for kill operation");
+    });
+
+    test("kill with invalid (non-numeric) PID throws QueryError", async () => {
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      await expect(provider.runMaintenance("kill", "abc")).rejects.toThrow("Invalid PID for kill operation");
+    });
+
+    test("unsupported maintenance type throws QueryError", async () => {
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      await expect(provider.runMaintenance("optimize" as unknown as "vacuum", "users")).rejects.toThrow(
+        "Unsupported maintenance type",
       );
-    });
-
-    test('kill with invalid (non-numeric) PID throws QueryError', async () => {
-      provider = new PostgresProvider(makePgConfig());
-      await provider.connect();
-      await expect(provider.runMaintenance('kill', 'abc')).rejects.toThrow(
-        'Invalid PID for kill operation'
-      );
-    });
-
-    test('unsupported maintenance type throws QueryError', async () => {
-      provider = new PostgresProvider(makePgConfig());
-      await provider.connect();
-      await expect(
-        provider.runMaintenance('optimize' as unknown as 'vacuum', 'users')
-      ).rejects.toThrow('Unsupported maintenance type');
     });
   });
 
@@ -1324,34 +1337,34 @@ describe('PostgresProvider', () => {
   // Overview
   // --------------------------------------------------------------------------
 
-  describe('getOverview()', () => {
-    test('returns all overview fields', async () => {
+  describe("getOverview()", () => {
+    test("returns all overview fields", async () => {
       provider = new PostgresProvider(makePgConfig());
       await provider.connect();
       const overview = await provider.getOverview();
 
-      expect(typeof overview.version).toBe('string');
-      expect(overview.version).toContain('PostgreSQL');
-      expect(typeof overview.uptime).toBe('string');
-      expect(typeof overview.activeConnections).toBe('number');
+      expect(typeof overview.version).toBe("string");
+      expect(overview.version).toContain("PostgreSQL");
+      expect(typeof overview.uptime).toBe("string");
+      expect(typeof overview.activeConnections).toBe("number");
       expect(overview.activeConnections).toBe(12);
-      expect(typeof overview.maxConnections).toBe('number');
+      expect(typeof overview.maxConnections).toBe("number");
       expect(overview.maxConnections).toBe(200);
-      expect(typeof overview.databaseSize).toBe('string');
-      expect(typeof overview.databaseSizeBytes).toBe('number');
-      expect(typeof overview.tableCount).toBe('number');
+      expect(typeof overview.databaseSize).toBe("string");
+      expect(typeof overview.databaseSizeBytes).toBe("number");
+      expect(typeof overview.tableCount).toBe("number");
       expect(overview.tableCount).toBe(15);
-      expect(typeof overview.indexCount).toBe('number');
+      expect(typeof overview.indexCount).toBe("number");
       expect(overview.indexCount).toBe(30);
     });
 
-    test('uptime is formatted with days, hours, minutes', async () => {
+    test("uptime is formatted with days, hours, minutes", async () => {
       provider = new PostgresProvider(makePgConfig());
       await provider.connect();
       const overview = await provider.getOverview();
 
       // 90061 seconds = 1d 1h 1m
-      expect(overview.uptime).toBe('1d 1h 1m');
+      expect(overview.uptime).toBe("1d 1h 1m");
     });
   });
 
@@ -1359,35 +1372,35 @@ describe('PostgresProvider', () => {
   // Performance Metrics
   // --------------------------------------------------------------------------
 
-  describe('getPerformanceMetrics()', () => {
-    test('returns all performance metrics', async () => {
+  describe("getPerformanceMetrics()", () => {
+    test("returns all performance metrics", async () => {
       provider = new PostgresProvider(makePgConfig());
       await provider.connect();
       const metrics = await provider.getPerformanceMetrics();
 
-      expect(typeof metrics.cacheHitRatio).toBe('number');
-      expect(typeof metrics.bufferPoolUsage).toBe('number');
-      expect(typeof metrics.deadlocks).toBe('number');
+      expect(typeof metrics.cacheHitRatio).toBe("number");
+      expect(typeof metrics.bufferPoolUsage).toBe("number");
+      expect(typeof metrics.deadlocks).toBe("number");
       expect(metrics.deadlocks).toBe(3);
-      expect(typeof metrics.checkpointWriteTime).toBe('string');
-      expect(metrics.checkpointWriteTime).not.toBe('N/A');
+      expect(typeof metrics.checkpointWriteTime).toBe("string");
+      expect(metrics.checkpointWriteTime).not.toBe("N/A");
     });
 
-    test('handles checkpoint fallback gracefully', async () => {
+    test("handles checkpoint fallback gracefully", async () => {
       provider = new PostgresProvider(makePgConfig());
       await provider.connect();
 
       const originalMock = mockQueryFn;
       mockQueryFn = async (sql: string, params?: unknown[]) => {
         const normalized = sql.trim().toLowerCase();
-        if (normalized.includes('pg_stat_bgwriter')) {
-          throw new Error('permission denied for pg_stat_bgwriter');
+        if (normalized.includes("pg_stat_bgwriter")) {
+          throw new Error("permission denied for pg_stat_bgwriter");
         }
         return originalMock(sql, params);
       };
 
       const metrics = await provider.getPerformanceMetrics();
-      expect(metrics.checkpointWriteTime).toBe('N/A');
+      expect(metrics.checkpointWriteTime).toBe("N/A");
     });
   });
 
@@ -1395,27 +1408,27 @@ describe('PostgresProvider', () => {
   // Slow Queries
   // --------------------------------------------------------------------------
 
-  describe('getSlowQueries()', () => {
-    test('pg_stat_statements returns detailed slow query stats', async () => {
+  describe("getSlowQueries()", () => {
+    test("pg_stat_statements returns detailed slow query stats", async () => {
       provider = new PostgresProvider(makePgConfig());
       await provider.connect();
       const slowQueries = await provider.getSlowQueries();
 
       expect(slowQueries.length).toBe(1);
       const sq = slowQueries[0];
-      expect(typeof sq.queryId).toBe('string');
-      expect(typeof sq.query).toBe('string');
-      expect(typeof sq.calls).toBe('number');
-      expect(typeof sq.totalTime).toBe('number');
-      expect(typeof sq.avgTime).toBe('number');
-      expect(typeof sq.minTime).toBe('number');
-      expect(typeof sq.maxTime).toBe('number');
-      expect(typeof sq.rows).toBe('number');
-      expect(typeof sq.sharedBlksHit).toBe('number');
-      expect(typeof sq.sharedBlksRead).toBe('number');
+      expect(typeof sq.queryId).toBe("string");
+      expect(typeof sq.query).toBe("string");
+      expect(typeof sq.calls).toBe("number");
+      expect(typeof sq.totalTime).toBe("number");
+      expect(typeof sq.avgTime).toBe("number");
+      expect(typeof sq.minTime).toBe("number");
+      expect(typeof sq.maxTime).toBe("number");
+      expect(typeof sq.rows).toBe("number");
+      expect(typeof sq.sharedBlksHit).toBe("number");
+      expect(typeof sq.sharedBlksRead).toBe("number");
     });
 
-    test('fallback to pg_stat_activity when pg_stat_statements is unavailable', async () => {
+    test("fallback to pg_stat_activity when pg_stat_statements is unavailable", async () => {
       provider = new PostgresProvider(makePgConfig());
       await provider.connect();
 
@@ -1423,7 +1436,7 @@ describe('PostgresProvider', () => {
       mockQueryFn = async (sql: string, params?: unknown[]) => {
         const normalized = sql.trim().toLowerCase();
         // Make pg_stat_statements queries fail
-        if (normalized.includes('pg_stat_statements')) {
+        if (normalized.includes("pg_stat_statements")) {
           throw new Error('relation "pg_stat_statements" does not exist');
         }
         return originalMock(sql, params);
@@ -1437,7 +1450,7 @@ describe('PostgresProvider', () => {
       expect(slowQueries[0].maxTime).toBeUndefined();
     });
 
-    test('respects limit option', async () => {
+    test("respects limit option", async () => {
       provider = new PostgresProvider(makePgConfig());
       await provider.connect();
 
@@ -1451,8 +1464,8 @@ describe('PostgresProvider', () => {
   // Active Sessions
   // --------------------------------------------------------------------------
 
-  describe('getActiveSessions()', () => {
-    test('returns session details', async () => {
+  describe("getActiveSessions()", () => {
+    test("returns session details", async () => {
       provider = new PostgresProvider(makePgConfig());
       await provider.connect();
       const sessions = await provider.getActiveSessions();
@@ -1460,17 +1473,17 @@ describe('PostgresProvider', () => {
       expect(sessions.length).toBe(1);
       const session = sessions[0];
       expect(session.pid).toBe(201);
-      expect(session.user).toBe('db_user');
-      expect(session.database).toBe('testdb');
-      expect(session.applicationName).toBe('myapp');
-      expect(session.state).toBe('active');
-      expect(typeof session.query).toBe('string');
-      expect(typeof session.duration).toBe('string');
-      expect(typeof session.durationMs).toBe('number');
+      expect(session.user).toBe("db_user");
+      expect(session.database).toBe("testdb");
+      expect(session.applicationName).toBe("myapp");
+      expect(session.state).toBe("active");
+      expect(typeof session.query).toBe("string");
+      expect(typeof session.duration).toBe("string");
+      expect(typeof session.durationMs).toBe("number");
       expect(session.blocked).toBe(false);
     });
 
-    test('respects limit option', async () => {
+    test("respects limit option", async () => {
       provider = new PostgresProvider(makePgConfig());
       await provider.connect();
       const sessions = await provider.getActiveSessions({ limit: 10 });
@@ -1482,45 +1495,45 @@ describe('PostgresProvider', () => {
   // Table Stats
   // --------------------------------------------------------------------------
 
-  describe('getTableStats()', () => {
-    test('returns table stats for all schemas', async () => {
+  describe("getTableStats()", () => {
+    test("returns table stats for all schemas", async () => {
       provider = new PostgresProvider(makePgConfig());
       await provider.connect();
       const stats = await provider.getTableStats();
 
       expect(stats.length).toBe(2);
 
-      const usersStats = stats.find((s) => s.tableName === 'users');
+      const usersStats = stats.find((s) => s.tableName === "users");
       expect(usersStats).toBeDefined();
-      expect(usersStats!.schemaName).toBe('public');
-      expect(typeof usersStats!.rowCount).toBe('number');
-      expect(typeof usersStats!.liveRowCount).toBe('number');
-      expect(typeof usersStats!.deadRowCount).toBe('number');
-      expect(typeof usersStats!.tableSize).toBe('string');
-      expect(typeof usersStats!.tableSizeBytes).toBe('number');
-      expect(typeof usersStats!.indexSize).toBe('string');
-      expect(typeof usersStats!.totalSize).toBe('string');
-      expect(typeof usersStats!.bloatRatio).toBe('number');
+      expect(usersStats!.schemaName).toBe("public");
+      expect(typeof usersStats!.rowCount).toBe("number");
+      expect(typeof usersStats!.liveRowCount).toBe("number");
+      expect(typeof usersStats!.deadRowCount).toBe("number");
+      expect(typeof usersStats!.tableSize).toBe("string");
+      expect(typeof usersStats!.tableSizeBytes).toBe("number");
+      expect(typeof usersStats!.indexSize).toBe("string");
+      expect(typeof usersStats!.totalSize).toBe("string");
+      expect(typeof usersStats!.bloatRatio).toBe("number");
     });
 
-    test('filters by schema when option is provided', async () => {
+    test("filters by schema when option is provided", async () => {
       provider = new PostgresProvider(makePgConfig());
       await provider.connect();
-      const stats = await provider.getTableStats({ schema: 'public' });
+      const stats = await provider.getTableStats({ schema: "public" });
       expect(Array.isArray(stats)).toBe(true);
     });
 
-    test('quotes identifiers in the stats query for mixed-case safety', async () => {
+    test("quotes identifiers in the stats query for mixed-case safety", async () => {
       provider = new PostgresProvider(makePgConfig());
       await provider.connect();
-      let capturedSql = '';
+      let capturedSql = "";
       mockQueryFn = (sql: string) => {
         capturedSql = sql;
         return defaultMockQuery(sql);
       };
       await provider.getTableStats();
-      expect(capturedSql).toContain('quote_ident(schemaname)');
-      expect(capturedSql).toContain('quote_ident(relname)');
+      expect(capturedSql).toContain("quote_ident(schemaname)");
+      expect(capturedSql).toContain("quote_ident(relname)");
     });
   });
 
@@ -1528,32 +1541,32 @@ describe('PostgresProvider', () => {
   // Index Stats
   // --------------------------------------------------------------------------
 
-  describe('getIndexStats()', () => {
-    test('returns index stats for all schemas', async () => {
+  describe("getIndexStats()", () => {
+    test("returns index stats for all schemas", async () => {
       provider = new PostgresProvider(makePgConfig());
       await provider.connect();
       const stats = await provider.getIndexStats();
 
       expect(stats.length).toBe(2);
 
-      const pkeyStats = stats.find((s) => s.indexName === 'users_pkey');
+      const pkeyStats = stats.find((s) => s.indexName === "users_pkey");
       expect(pkeyStats).toBeDefined();
-      expect(pkeyStats!.schemaName).toBe('public');
-      expect(pkeyStats!.tableName).toBe('users');
-      expect(pkeyStats!.indexType).toBe('btree');
+      expect(pkeyStats!.schemaName).toBe("public");
+      expect(pkeyStats!.tableName).toBe("users");
+      expect(pkeyStats!.indexType).toBe("btree");
       expect(pkeyStats!.isUnique).toBe(true);
       expect(pkeyStats!.isPrimary).toBe(true);
       expect(Array.isArray(pkeyStats!.columns)).toBe(true);
-      expect(typeof pkeyStats!.indexSize).toBe('string');
-      expect(typeof pkeyStats!.indexSizeBytes).toBe('number');
-      expect(typeof pkeyStats!.scans).toBe('number');
-      expect(typeof pkeyStats!.usageRatio).toBe('number');
+      expect(typeof pkeyStats!.indexSize).toBe("string");
+      expect(typeof pkeyStats!.indexSizeBytes).toBe("number");
+      expect(typeof pkeyStats!.scans).toBe("number");
+      expect(typeof pkeyStats!.usageRatio).toBe("number");
     });
 
-    test('filters by schema when option is provided', async () => {
+    test("filters by schema when option is provided", async () => {
       provider = new PostgresProvider(makePgConfig());
       await provider.connect();
-      const stats = await provider.getIndexStats({ schema: 'public' });
+      const stats = await provider.getIndexStats({ schema: "public" });
       expect(Array.isArray(stats)).toBe(true);
     });
   });
@@ -1562,8 +1575,8 @@ describe('PostgresProvider', () => {
   // Storage Stats
   // --------------------------------------------------------------------------
 
-  describe('getStorageStats()', () => {
-    test('returns tablespaces and WAL info', async () => {
+  describe("getStorageStats()", () => {
+    test("returns tablespaces and WAL info", async () => {
       provider = new PostgresProvider(makePgConfig());
       await provider.connect();
       const stats = await provider.getStorageStats();
@@ -1571,27 +1584,27 @@ describe('PostgresProvider', () => {
       // Should have tablespace(s) + WAL entry
       expect(stats.length).toBeGreaterThanOrEqual(2);
 
-      const defaultTs = stats.find((s) => s.name === 'pg_default');
+      const defaultTs = stats.find((s) => s.name === "pg_default");
       expect(defaultTs).toBeDefined();
-      expect(typeof defaultTs!.size).toBe('string');
-      expect(typeof defaultTs!.sizeBytes).toBe('number');
+      expect(typeof defaultTs!.size).toBe("string");
+      expect(typeof defaultTs!.sizeBytes).toBe("number");
 
-      const walEntry = stats.find((s) => s.name === 'WAL');
+      const walEntry = stats.find((s) => s.name === "WAL");
       expect(walEntry).toBeDefined();
-      expect(walEntry!.location).toBe('pg_wal');
-      expect(typeof walEntry!.walSize).toBe('string');
-      expect(typeof walEntry!.walSizeBytes).toBe('number');
+      expect(walEntry!.location).toBe("pg_wal");
+      expect(typeof walEntry!.walSize).toBe("string");
+      expect(typeof walEntry!.walSizeBytes).toBe("number");
     });
 
-    test('WAL permission denied handled gracefully', async () => {
+    test("WAL permission denied handled gracefully", async () => {
       provider = new PostgresProvider(makePgConfig());
       await provider.connect();
 
       const originalMock = mockQueryFn;
       mockQueryFn = async (sql: string, params?: unknown[]) => {
         const normalized = sql.trim().toLowerCase();
-        if (normalized.includes('pg_wal_lsn_diff')) {
-          throw new Error('permission denied for function pg_current_wal_lsn');
+        if (normalized.includes("pg_wal_lsn_diff")) {
+          throw new Error("permission denied for function pg_current_wal_lsn");
         }
         return originalMock(sql, params);
       };
@@ -1599,7 +1612,7 @@ describe('PostgresProvider', () => {
       const stats = await provider.getStorageStats();
       // Should still have tablespace info, but no WAL entry
       expect(stats.length).toBeGreaterThanOrEqual(1);
-      const walEntry = stats.find((s) => s.name === 'WAL');
+      const walEntry = stats.find((s) => s.name === "WAL");
       expect(walEntry).toBeUndefined();
     });
   });
@@ -1608,8 +1621,8 @@ describe('PostgresProvider', () => {
   // Pool Stats
   // --------------------------------------------------------------------------
 
-  describe('getPoolStats()', () => {
-    test('connected provider returns pool stats', async () => {
+  describe("getPoolStats()", () => {
+    test("connected provider returns pool stats", async () => {
       provider = new PostgresProvider(makePgConfig());
       await provider.connect();
       const stats = provider.getPoolStats();
@@ -1620,7 +1633,7 @@ describe('PostgresProvider', () => {
       expect(stats.waiting).toBe(0);
     });
 
-    test('not connected returns zeros', () => {
+    test("not connected returns zeros", () => {
       provider = new PostgresProvider(makePgConfig());
       const stats = provider.getPoolStats();
 
@@ -1635,19 +1648,19 @@ describe('PostgresProvider', () => {
   // Capabilities
   // --------------------------------------------------------------------------
 
-  describe('getCapabilities()', () => {
-    test('returns correct PostgreSQL capabilities', () => {
+  describe("getCapabilities()", () => {
+    test("returns correct PostgreSQL capabilities", () => {
       provider = new PostgresProvider(makePgConfig());
       const caps = provider.getCapabilities();
 
       expect(caps.defaultPort).toBe(5432);
-      expect(caps.queryLanguage).toBe('sql');
+      expect(caps.queryLanguage).toBe("sql");
       expect(caps.supportsExplain).toBe(true);
       expect(caps.supportsConnectionString).toBe(true);
-      expect(caps.maintenanceOperations).toContain('vacuum');
-      expect(caps.maintenanceOperations).toContain('analyze');
-      expect(caps.maintenanceOperations).toContain('reindex');
-      expect(caps.maintenanceOperations).toContain('kill');
+      expect(caps.maintenanceOperations).toContain("vacuum");
+      expect(caps.maintenanceOperations).toContain("analyze");
+      expect(caps.maintenanceOperations).toContain("reindex");
+      expect(caps.maintenanceOperations).toContain("kill");
     });
   });
 
@@ -1655,21 +1668,21 @@ describe('PostgresProvider', () => {
   // getPgStatActivity
   // --------------------------------------------------------------------------
 
-  describe('getPgStatActivity()', () => {
-    test('returns activity rows from pg_stat_activity', async () => {
+  describe("getPgStatActivity()", () => {
+    test("returns activity rows from pg_stat_activity", async () => {
       provider = new PostgresProvider(makePgConfig());
       await provider.connect();
       const activity = await provider.getPgStatActivity();
 
       expect(activity).toBeArray();
       expect(activity.length).toBe(1);
-      expect(activity[0].datname).toBe('testdb');
+      expect(activity[0].datname).toBe("testdb");
       expect(activity[0].pid).toBe(123);
-      expect(activity[0].usename).toBe('testuser');
-      expect(activity[0].application_name).toBe('testapp');
-      expect(activity[0].client_addr).toBe('127.0.0.1');
-      expect(activity[0].state).toBe('active');
-      expect(activity[0].query).toBe('SELECT * FROM test_table');
+      expect(activity[0].usename).toBe("testuser");
+      expect(activity[0].application_name).toBe("testapp");
+      expect(activity[0].client_addr).toBe("127.0.0.1");
+      expect(activity[0].state).toBe("active");
+      expect(activity[0].query).toBe("SELECT * FROM test_table");
     });
   });
 });

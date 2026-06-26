@@ -1,5 +1,5 @@
-import { describe, test, expect, mock, beforeEach } from 'bun:test';
-import { createMockRequest, parseResponseJSON } from '../../helpers/mock-next';
+import { describe, test, expect, mock, beforeEach } from "bun:test";
+import { createMockRequest, parseResponseJSON } from "../../helpers/mock-next";
 import {
   QueryError,
   TimeoutError,
@@ -15,11 +15,11 @@ import {
   isAuthenticationError,
   isRetryableError,
   mapDatabaseError,
-} from '@/lib/db/errors';
+} from "@/lib/db/errors";
 
 const mockRemoveProvider = mock(async () => {});
 
-mock.module('@/lib/db/factory', () => ({
+mock.module("@/lib/db/factory", () => ({
   createDatabaseProvider: mock(async () => ({})),
   getOrCreateProvider: mock(async () => ({})),
   removeProvider: mockRemoveProvider,
@@ -28,7 +28,7 @@ mock.module('@/lib/db/factory', () => ({
   registerShutdownHandlers: mock(() => {}),
 }));
 
-mock.module('@/lib/db', () => ({
+mock.module("@/lib/db", () => ({
   createDatabaseProvider: mock(async () => ({})),
   getOrCreateProvider: mock(async () => ({})),
   removeProvider: mockRemoveProvider,
@@ -51,7 +51,7 @@ mock.module('@/lib/db', () => ({
   mapDatabaseError,
 }));
 
-mock.module('@/lib/logger', () => ({
+mock.module("@/lib/logger", () => ({
   logger: {
     info: mock(() => {}),
     warn: mock(() => {}),
@@ -60,16 +60,16 @@ mock.module('@/lib/logger', () => ({
   },
 }));
 
-const { POST } = await import('@/app/api/db/disconnect/route');
+const { POST } = await import("@/app/api/db/disconnect/route");
 
 beforeEach(() => {
   mockRemoveProvider.mockClear();
 });
 
-describe('POST /api/db/disconnect', () => {
-  test('returns 400 when connectionId is missing', async () => {
-    const req = createMockRequest('/api/db/disconnect', {
-      method: 'POST',
+describe("POST /api/db/disconnect", () => {
+  test("returns 400 when connectionId is missing", async () => {
+    const req = createMockRequest("/api/db/disconnect", {
+      method: "POST",
       body: {},
     });
 
@@ -78,12 +78,12 @@ describe('POST /api/db/disconnect', () => {
 
     expect(res.status).toBe(400);
     expect(data.success).toBe(false);
-    expect(data.error).toBe('connectionId is required');
+    expect(data.error).toBe("connectionId is required");
   });
 
-  test('returns 400 when connectionId is not a string', async () => {
-    const req = createMockRequest('/api/db/disconnect', {
-      method: 'POST',
+  test("returns 400 when connectionId is not a string", async () => {
+    const req = createMockRequest("/api/db/disconnect", {
+      method: "POST",
       body: { connectionId: 123 },
     });
 
@@ -91,10 +91,10 @@ describe('POST /api/db/disconnect', () => {
     expect(res.status).toBe(400);
   });
 
-  test('calls removeProvider and returns success', async () => {
-    const req = createMockRequest('/api/db/disconnect', {
-      method: 'POST',
-      body: { connectionId: 'conn-123' },
+  test("calls removeProvider and returns success", async () => {
+    const req = createMockRequest("/api/db/disconnect", {
+      method: "POST",
+      body: { connectionId: "conn-123" },
     });
 
     const res = await POST(req as never);
@@ -102,17 +102,17 @@ describe('POST /api/db/disconnect', () => {
 
     expect(res.status).toBe(200);
     expect(data.success).toBe(true);
-    expect(mockRemoveProvider).toHaveBeenCalledWith('conn-123');
+    expect(mockRemoveProvider).toHaveBeenCalledWith("conn-123");
   });
 
-  test('returns 500 when removeProvider throws', async () => {
+  test("returns 500 when removeProvider throws", async () => {
     mockRemoveProvider.mockImplementationOnce(async () => {
-      throw new Error('disconnect failed');
+      throw new Error("disconnect failed");
     });
 
-    const req = createMockRequest('/api/db/disconnect', {
-      method: 'POST',
-      body: { connectionId: 'conn-fail' },
+    const req = createMockRequest("/api/db/disconnect", {
+      method: "POST",
+      body: { connectionId: "conn-fail" },
     });
 
     const res = await POST(req as never);

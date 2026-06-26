@@ -190,7 +190,10 @@ function serializeRecords(records) {
     }
 
     const fnf = sortedFunctions.length;
-    const fnh = sortedFunctions.reduce((acc, [fnName]) => acc + ((record.functionHits.get(fnName) || 0) > 0 ? 1 : 0), 0);
+    const fnh = sortedFunctions.reduce(
+      (acc, [fnName]) => acc + ((record.functionHits.get(fnName) || 0) > 0 ? 1 : 0),
+      0,
+    );
     lines.push(`FNF:${fnf}`);
     lines.push(`FNH:${fnh}`);
 

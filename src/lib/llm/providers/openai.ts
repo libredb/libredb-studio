@@ -3,17 +3,11 @@
  * OpenAI Chat Completions API with SSE streaming
  */
 
-import { BaseLLMProvider } from '../base-provider';
-import {
-  type LLMConfig,
-  type LLMStreamOptions,
-  LLMAuthError,
-  LLMRateLimitError,
-  LLMStreamError,
-} from '../types';
-import { createStreamFromSSEResponse } from '../utils/streaming';
-import { DEFAULT_API_URLS } from '../utils/config';
-import { logger } from '@/lib/logger';
+import { BaseLLMProvider } from "../base-provider";
+import { type LLMConfig, type LLMStreamOptions, LLMAuthError, LLMRateLimitError, LLMStreamError } from "../types";
+import { createStreamFromSSEResponse } from "../utils/streaming";
+import { DEFAULT_API_URLS } from "../utils/config";
+import { logger } from "@/lib/logger";
 
 // ============================================================================
 // OpenAI Provider
@@ -66,14 +60,14 @@ export class OpenAIProvider extends BaseLLMProvider {
   protected async fetchStream(
     model: string,
     messages: Array<{ role: string; content: string }>,
-    options: LLMStreamOptions
+    options: LLMStreamOptions,
   ): Promise<Response> {
     const apiKey = this.ensureApiKey();
 
     const response = await fetch(`${this.baseUrl}/chat/completions`, {
-      method: 'POST',
+      method: "POST",
       headers: {
-        'Content-Type': 'application/json',
+        "Content-Type": "application/json",
         Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
@@ -103,24 +97,18 @@ export class OpenAIProvider extends BaseLLMProvider {
       const errorJson = JSON.parse(errorBody);
       errorMessage = errorJson.error?.message ?? errorBody;
     } catch {
-      logger.debug('Could not parse error response body as JSON', { provider: 'openai' });
+      logger.debug("Could not parse error response body as JSON", { provider: "openai" });
     }
 
     if (response.status === 401 || response.status === 403) {
-      throw new LLMAuthError(
-        'Invalid API Key. Please check your OpenAI API configuration.',
-        'openai'
-      );
+      throw new LLMAuthError("Invalid API Key. Please check your OpenAI API configuration.", "openai");
     }
 
     if (response.status === 429) {
-      throw new LLMRateLimitError(
-        'Rate limit exceeded. Please try again later or upgrade your plan.',
-        'openai'
-      );
+      throw new LLMRateLimitError("Rate limit exceeded. Please try again later or upgrade your plan.", "openai");
     }
 
-    throw new LLMStreamError(`OpenAI API error: ${errorMessage}`, 'openai');
+    throw new LLMStreamError(`OpenAI API error: ${errorMessage}`, "openai");
   }
 
   /**
@@ -128,19 +116,16 @@ export class OpenAIProvider extends BaseLLMProvider {
    */
   protected mapError(error: unknown): Error {
     if (!(error instanceof Error)) {
-      return new LLMStreamError(String(error), 'openai');
+      return new LLMStreamError(String(error), "openai");
     }
 
     const message = error.message.toLowerCase();
 
     // Network errors
-    if (message.includes('fetch') || message.includes('network')) {
-      return new LLMStreamError(
-        'Network error. Please check your connection.',
-        'openai'
-      );
+    if (message.includes("fetch") || message.includes("network")) {
+      return new LLMStreamError("Network error. Please check your connection.", "openai");
     }
 
-    return new LLMStreamError(error.message, 'openai');
+    return new LLMStreamError(error.message, "openai");
   }
 }

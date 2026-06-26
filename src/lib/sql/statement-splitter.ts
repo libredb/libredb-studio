@@ -12,7 +12,7 @@ export interface SplitStatement {
 
 export function splitStatements(input: string): SplitStatement[] {
   const statements: SplitStatement[] = [];
-  let current = '';
+  let current = "";
   let i = 0;
   let statementStartLine = 0;
   let currentLine = 0;
@@ -22,13 +22,13 @@ export function splitStatements(input: string): SplitStatement[] {
     const next = input[i + 1];
 
     // Track line numbers
-    if (ch === '\n') {
+    if (ch === "\n") {
       currentLine++;
     }
 
     // Single-line comment: -- ...
-    if (ch === '-' && next === '-') {
-      const lineEnd = input.indexOf('\n', i);
+    if (ch === "-" && next === "-") {
+      const lineEnd = input.indexOf("\n", i);
       if (lineEnd === -1) {
         current += input.slice(i);
         i = input.length;
@@ -41,8 +41,8 @@ export function splitStatements(input: string): SplitStatement[] {
     }
 
     // Multi-line comment: /* ... */
-    if (ch === '/' && next === '*') {
-      const commentEnd = input.indexOf('*/', i + 2);
+    if (ch === "/" && next === "*") {
+      const commentEnd = input.indexOf("*/", i + 2);
       if (commentEnd === -1) {
         current += input.slice(i);
         i = input.length;
@@ -50,7 +50,7 @@ export function splitStatements(input: string): SplitStatement[] {
         const commentBlock = input.slice(i, commentEnd + 2);
         // Count newlines in comment
         for (const c of commentBlock) {
-          if (c === '\n') currentLine++;
+          if (c === "\n") currentLine++;
         }
         current += commentBlock;
         i = commentEnd + 2;
@@ -63,7 +63,7 @@ export function splitStatements(input: string): SplitStatement[] {
       let j = i + 1;
       current += "'";
       while (j < input.length) {
-        if (input[j] === '\n') currentLine++;
+        if (input[j] === "\n") currentLine++;
         if (input[j] === "'" && input[j + 1] === "'") {
           current += "''";
           j += 2;
@@ -85,7 +85,7 @@ export function splitStatements(input: string): SplitStatement[] {
       let j = i + 1;
       current += '"';
       while (j < input.length) {
-        if (input[j] === '\n') currentLine++;
+        if (input[j] === "\n") currentLine++;
         if (input[j] === '"' && input[j + 1] === '"') {
           current += '""';
           j += 2;
@@ -103,7 +103,7 @@ export function splitStatements(input: string): SplitStatement[] {
     }
 
     // PostgreSQL dollar-quoted string: $tag$...$tag$
-    if (ch === '$') {
+    if (ch === "$") {
       const dollarMatch = input.slice(i).match(/^\$([A-Za-z_]*)\$/);
       if (dollarMatch) {
         const tag = dollarMatch[0]; // e.g. $$ or $func$
@@ -112,14 +112,14 @@ export function splitStatements(input: string): SplitStatement[] {
           // No closing tag — consume rest
           const rest = input.slice(i);
           for (const c of rest) {
-            if (c === '\n') currentLine++;
+            if (c === "\n") currentLine++;
           }
           current += rest;
           i = input.length;
         } else {
           const block = input.slice(i, endIdx + tag.length);
           for (const c of block) {
-            if (c === '\n') currentLine++;
+            if (c === "\n") currentLine++;
           }
           current += block;
           i = endIdx + tag.length;
@@ -129,16 +129,16 @@ export function splitStatements(input: string): SplitStatement[] {
     }
 
     // Semicolon — statement boundary
-    if (ch === ';') {
+    if (ch === ";") {
       const trimmed = current.trim();
       if (trimmed.length > 0) {
         statements.push({ sql: trimmed, startLine: statementStartLine });
       }
-      current = '';
+      current = "";
       i++;
       // Skip whitespace to find next statement start
       while (i < input.length && /\s/.test(input[i])) {
-        if (input[i] === '\n') currentLine++;
+        if (input[i] === "\n") currentLine++;
         i++;
       }
       statementStartLine = currentLine;

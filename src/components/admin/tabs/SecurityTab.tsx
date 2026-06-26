@@ -1,26 +1,16 @@
-'use client';
+"use client";
 
-import { useState, useEffect } from 'react';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
-import { Separator } from '@/components/ui/separator';
-import { Slider } from '@/components/ui/slider';
-import {
-  EyeOff,
-  Lock,
-  Activity,
-  KeyRound,
-  Save,
-  RotateCcw,
-} from 'lucide-react';
-import { MaskingSettings } from '@/components/MaskingSettings';
-import {
-  DEFAULT_THRESHOLDS,
-  type ThresholdConfig,
-} from '@/lib/monitoring-thresholds';
-import { storage } from '@/lib/storage';
-import { toast } from 'sonner';
+import { useState, useEffect } from "react";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Separator } from "@/components/ui/separator";
+import { Slider } from "@/components/ui/slider";
+import { EyeOff, Lock, Activity, KeyRound, Save, RotateCcw } from "lucide-react";
+import { MaskingSettings } from "@/components/MaskingSettings";
+import { DEFAULT_THRESHOLDS, type ThresholdConfig } from "@/lib/monitoring-thresholds";
+import { storage } from "@/lib/storage";
+import { toast } from "sonner";
 
 export function SecurityTab() {
   return (
@@ -90,15 +80,11 @@ function AccessSummary() {
           <Separator className="bg-white/5" />
           <div className="flex items-center justify-between">
             <span className="text-zinc-500">Admin Access</span>
-            <Badge className="bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-xs">
-              ENABLED
-            </Badge>
+            <Badge className="bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-xs">ENABLED</Badge>
           </div>
           <div className="flex items-center justify-between">
             <span className="text-zinc-500">User Access</span>
-            <Badge className="bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-xs">
-              ENABLED
-            </Badge>
+            <Badge className="bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-xs">ENABLED</Badge>
           </div>
         </div>
       </div>
@@ -140,11 +126,7 @@ function ThresholdSettings() {
     setThresholds(storage.getThresholdConfig());
   }, []);
 
-  const updateThreshold = (
-    index: number,
-    field: 'warning' | 'critical',
-    value: number
-  ) => {
+  const updateThreshold = (index: number, field: "warning" | "critical", value: number) => {
     setThresholds((prev) => {
       const updated = [...prev];
       updated[index] = { ...updated[index], [field]: value };
@@ -156,21 +138,21 @@ function ThresholdSettings() {
   const handleSave = () => {
     storage.saveThresholdConfig(thresholds);
     setHasChanges(false);
-    toast.success('Threshold configuration saved');
+    toast.success("Threshold configuration saved");
   };
 
   const handleReset = () => {
     setThresholds(DEFAULT_THRESHOLDS);
     storage.saveThresholdConfig(DEFAULT_THRESHOLDS);
     setHasChanges(false);
-    toast.success('Thresholds reset to defaults');
+    toast.success("Thresholds reset to defaults");
   };
 
   const getSliderColors = (threshold: ThresholdConfig) => {
-    if (threshold.direction === 'above') {
-      return { warn: 'text-amber-400', crit: 'text-red-400' };
+    if (threshold.direction === "above") {
+      return { warn: "text-amber-400", crit: "text-red-400" };
     }
-    return { warn: 'text-amber-400', crit: 'text-red-400' };
+    return { warn: "text-amber-400", crit: "text-red-400" };
   };
 
   return (
@@ -181,26 +163,22 @@ function ThresholdSettings() {
           Monitoring Thresholds
         </h3>
         <p className="text-xs text-zinc-500 mb-6">
-          Configure warning and critical thresholds for monitoring alerts. These
-          values are used by the monitoring dashboard to trigger visual alerts.
+          Configure warning and critical thresholds for monitoring alerts. These values are used by the monitoring
+          dashboard to trigger visual alerts.
         </p>
 
         <div className="space-y-6">
           {thresholds.map((threshold, index) => {
             const colors = getSliderColors(threshold);
-            const isPercent = threshold.metric !== 'deadlocks';
+            const isPercent = threshold.metric !== "deadlocks";
             const max = isPercent ? 100 : 20;
 
             return (
               <div key={threshold.metric} className="space-y-3">
                 <div className="flex items-center justify-between">
-                  <span className="text-sm font-medium text-zinc-300">
-                    {threshold.label}
-                  </span>
+                  <span className="text-sm font-medium text-zinc-300">{threshold.label}</span>
                   <span className="text-xs text-zinc-600 uppercase font-bold">
-                    {threshold.direction === 'above'
-                      ? 'Alert when above'
-                      : 'Alert when below'}
+                    {threshold.direction === "above" ? "Alert when above" : "Alert when below"}
                   </span>
                 </div>
 
@@ -208,19 +186,15 @@ function ThresholdSettings() {
                   {/* Warning */}
                   <div className="space-y-2">
                     <div className="flex items-center justify-between">
-                      <span className={`text-xs font-bold ${colors.warn}`}>
-                        Warning
-                      </span>
+                      <span className={`text-xs font-bold ${colors.warn}`}>Warning</span>
                       <span className="text-xs font-mono text-zinc-400">
                         {threshold.warning}
-                        {isPercent ? '%' : ''}
+                        {isPercent ? "%" : ""}
                       </span>
                     </div>
                     <Slider
                       value={[threshold.warning]}
-                      onValueChange={(v) =>
-                        updateThreshold(index, 'warning', v[0])
-                      }
+                      onValueChange={(v) => updateThreshold(index, "warning", v[0])}
                       max={max}
                       step={1}
                       className="[&_[role=slider]]:bg-amber-500 [&_[role=slider]]:border-amber-500"
@@ -230,19 +204,15 @@ function ThresholdSettings() {
                   {/* Critical */}
                   <div className="space-y-2">
                     <div className="flex items-center justify-between">
-                      <span className={`text-xs font-bold ${colors.crit}`}>
-                        Critical
-                      </span>
+                      <span className={`text-xs font-bold ${colors.crit}`}>Critical</span>
                       <span className="text-xs font-mono text-zinc-400">
                         {threshold.critical}
-                        {isPercent ? '%' : ''}
+                        {isPercent ? "%" : ""}
                       </span>
                     </div>
                     <Slider
                       value={[threshold.critical]}
-                      onValueChange={(v) =>
-                        updateThreshold(index, 'critical', v[0])
-                      }
+                      onValueChange={(v) => updateThreshold(index, "critical", v[0])}
                       max={max}
                       step={1}
                       className="[&_[role=slider]]:bg-red-500 [&_[role=slider]]:border-red-500"
@@ -250,21 +220,14 @@ function ThresholdSettings() {
                   </div>
                 </div>
 
-                {index < thresholds.length - 1 && (
-                  <Separator className="bg-white/5" />
-                )}
+                {index < thresholds.length - 1 && <Separator className="bg-white/5" />}
               </div>
             );
           })}
         </div>
 
         <div className="flex items-center justify-end gap-2 mt-6 pt-4 border-t border-white/5">
-          <Button
-            variant="ghost"
-            size="sm"
-            className="text-zinc-500 hover:text-zinc-300"
-            onClick={handleReset}
-          >
+          <Button variant="ghost" size="sm" className="text-zinc-500 hover:text-zinc-300" onClick={handleReset}>
             <RotateCcw className="w-3.5 h-3.5 mr-1.5" />
             Reset Defaults
           </Button>

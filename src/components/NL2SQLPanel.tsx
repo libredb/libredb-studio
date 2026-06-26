@@ -1,11 +1,11 @@
 "use client";
 
-import { useState, useRef, useEffect, type FormEvent } from 'react';
-import { Send, Loader2, Sparkles, X, Play, MessageSquare, Trash2 } from 'lucide-react';
-import { cn } from '@/lib/utils';
+import { useState, useRef, useEffect, type FormEvent } from "react";
+import { Send, Loader2, Sparkles, X, Play, MessageSquare, Trash2 } from "lucide-react";
+import { cn } from "@/lib/utils";
 
 interface ConversationMessage {
-  role: 'user' | 'assistant';
+  role: "user" | "assistant";
   content: string;
   query?: string; // Extracted SQL/JSON query from assistant response
 }
@@ -19,7 +19,11 @@ interface NL2SQLPanelProps {
   databaseType?: string;
   queryLanguage?: string;
   /** Optional API adapter: when provided, bypasses the built-in /api/ai/nl2sql fetch. */
-  onNL2SQL?: (params: { prompt: string; schemaContext: string; conversationHistory?: { role: string; content: string }[] }) => Promise<string>;
+  onNL2SQL?: (params: {
+    prompt: string;
+    schemaContext: string;
+    conversationHistory?: { role: string; content: string }[];
+  }) => Promise<string>;
 }
 
 function extractCodeBlock(text: string): string | null {
@@ -38,7 +42,7 @@ export function NL2SQLPanel({
   queryLanguage,
   onNL2SQL,
 }: NL2SQLPanelProps) {
-  const [question, setQuestion] = useState('');
+  const [question, setQuestion] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [messages, setMessages] = useState<ConversationMessage[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -46,7 +50,7 @@ export function NL2SQLPanel({
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
   useEffect(() => {
@@ -57,34 +61,46 @@ export function NL2SQLPanel({
     if (e) e.preventDefault();
     if (!question.trim() || isLoading) return;
 
-    const userMsg: ConversationMessage = { role: 'user', content: question.trim() };
-    setMessages(prev => [...prev, userMsg]);
-    setQuestion('');
+    const userMsg: ConversationMessage = { role: "user", content: question.trim() };
+    setMessages((prev) => [...prev, userMsg]);
+    setQuestion("");
     setIsLoading(true);
     setError(null);
 
     try {
       // Build filtered schema context (top 100 tables)
-      let filteredSchema = '';
+      let filteredSchema = "";
       if (schemaContext) {
         try {
           const tables = JSON.parse(schemaContext);
           const sorted = [...tables]
             .sort((a: { rowCount?: number }, b: { rowCount?: number }) => (b.rowCount || 0) - (a.rowCount || 0))
             .slice(0, 100);
-          filteredSchema = sorted.map((t: { name: string; rowCount?: number; columns?: { name: string; type: string; isPrimary?: boolean }[] }) => {
-            const cols = t.columns?.slice(0, 10).map(c => `${c.name} (${c.type}${c.isPrimary ? ', PK' : ''})`).join(', ') || '';
-            return `Table: ${t.name} (${t.rowCount || 0} rows)\nColumns: ${cols}`;
-          }).join('\n\n');
+          filteredSchema = sorted
+            .map(
+              (t: {
+                name: string;
+                rowCount?: number;
+                columns?: { name: string; type: string; isPrimary?: boolean }[];
+              }) => {
+                const cols =
+                  t.columns
+                    ?.slice(0, 10)
+                    .map((c) => `${c.name} (${c.type}${c.isPrimary ? ", PK" : ""})`)
+                    .join(", ") || "";
+                return `Table: ${t.name} (${t.rowCount || 0} rows)\nColumns: ${cols}`;
+              },
+            )
+            .join("\n\n");
         } catch {
           filteredSchema = schemaContext.substring(0, 3000);
         }
       }
 
       // Build conversation history (exclude current question)
-      const history = messages.map(m => ({ role: m.role, content: m.content }));
+      const history = messages.map((m) => ({ role: m.role, content: m.content }));
 
-      let fullResponse = '';
+      let fullResponse = "";
 
       if (onNL2SQL) {
         // Platform adapter: use callback instead of fetch
@@ -95,9 +111,9 @@ export function NL2SQLPanel({
         });
       } else {
         // Default: existing fetch behavior
-        const response = await fetch('/api/ai/nl2sql', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+        const response = await fetch("/api/ai/nl2sql", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             question: question.trim(),
             schemaContext: filteredSchema,
@@ -109,11 +125,11 @@ export function NL2SQLPanel({
 
         if (!response.ok) {
           const errData = await response.json();
-          throw new Error(errData.error || 'Request failed');
+          throw new Error(errData.error || "Request failed");
         }
 
         const reader = response.body?.getReader();
-        if (!reader) throw new Error('No reader');
+        if (!reader) throw new Error("No reader");
 
         while (true) {
           const { done, value } = await reader.read();
@@ -124,13 +140,13 @@ export function NL2SQLPanel({
 
       const extractedQuery = extractCodeBlock(fullResponse);
       const assistantMsg: ConversationMessage = {
-        role: 'assistant',
+        role: "assistant",
         content: fullResponse,
         query: extractedQuery || undefined,
       };
-      setMessages(prev => [...prev, assistantMsg]);
+      setMessages((prev) => [...prev, assistantMsg]);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Unknown error';
+      const msg = err instanceof Error ? err.message : "Unknown error";
       setError(msg);
     } finally {
       setIsLoading(false);
@@ -152,12 +168,10 @@ export function NL2SQLPanel({
           <div className="p-1 rounded bg-violet-500/10">
             <MessageSquare strokeWidth={1.5} className="w-3 h-3 text-violet-400" />
           </div>
-          <span className="text-xs font-medium text-violet-400">
-            Natural Language Query
-          </span>
+          <span className="text-xs font-medium text-violet-400">Natural Language Query</span>
           {messages.length > 0 && (
             <span className="text-[0.625rem] text-zinc-500 font-mono">
-              {messages.filter(m => m.role === 'user').length} questions
+              {messages.filter((m) => m.role === "user").length} questions
             </span>
           )}
         </div>
@@ -186,21 +200,21 @@ export function NL2SQLPanel({
           <div className="flex flex-col items-center justify-center h-full opacity-40">
             <Sparkles strokeWidth={1.5} className="w-8 h-8 mb-3" />
             <p className="text-xs font-medium">Ask a question in plain English</p>
-            <p className="text-xs text-zinc-500 mt-1">
-              e.g. &quot;Show me the top 10 employees by salary&quot;
-            </p>
+            <p className="text-xs text-zinc-500 mt-1">e.g. &quot;Show me the top 10 employees by salary&quot;</p>
           </div>
         )}
 
         {messages.map((msg, i) => (
-          <div key={i} className={cn("flex gap-2", msg.role === 'user' ? "justify-end" : "justify-start")}>
-            <div className={cn(
-              "max-w-[85%] rounded-lg px-3 py-2 text-xs",
-              msg.role === 'user'
-                ? "bg-violet-600/20 border border-violet-500/20 text-zinc-200"
-                : "bg-[#111] border border-white/5 text-zinc-300"
-            )}>
-              {msg.role === 'user' ? (
+          <div key={i} className={cn("flex gap-2", msg.role === "user" ? "justify-end" : "justify-start")}>
+            <div
+              className={cn(
+                "max-w-[85%] rounded-lg px-3 py-2 text-xs",
+                msg.role === "user"
+                  ? "bg-violet-600/20 border border-violet-500/20 text-zinc-200"
+                  : "bg-[#111] border border-white/5 text-zinc-300",
+              )}
+            >
+              {msg.role === "user" ? (
                 <p>{msg.content}</p>
               ) : (
                 <div>
@@ -227,9 +241,9 @@ export function NL2SQLPanel({
                     </div>
                   )}
                   {/* Show explanation text (non-code parts) */}
-                  {msg.content.replace(/```[\s\S]*?```/g, '').trim() && (
+                  {msg.content.replace(/```[\s\S]*?```/g, "").trim() && (
                     <p className="text-zinc-400 text-xs leading-relaxed whitespace-pre-wrap">
-                      {msg.content.replace(/```[\s\S]*?```/g, '').trim()}
+                      {msg.content.replace(/```[\s\S]*?```/g, "").trim()}
                     </p>
                   )}
                 </div>
@@ -272,7 +286,11 @@ export function NL2SQLPanel({
             disabled={isLoading || !question.trim()}
             className="bg-violet-600 hover:bg-violet-500 disabled:opacity-50 px-3 py-2 rounded-lg text-white text-xs font-medium transition-colors flex items-center gap-1.5"
           >
-            {isLoading ? <Loader2 strokeWidth={1.5} className="w-3 h-3 animate-spin" /> : <Send strokeWidth={1.5} className="w-3 h-3" />}
+            {isLoading ? (
+              <Loader2 strokeWidth={1.5} className="w-3 h-3 animate-spin" />
+            ) : (
+              <Send strokeWidth={1.5} className="w-3 h-3" />
+            )}
           </button>
         </div>
       </form>

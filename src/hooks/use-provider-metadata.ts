@@ -1,8 +1,8 @@
-'use client';
+"use client";
 
-import { useState, useEffect, useRef } from 'react';
-import type { DatabaseConnection } from '@/lib/types';
-import type { ProviderCapabilities, ProviderLabels } from '@/lib/db/types';
+import { useState, useEffect, useRef } from "react";
+import type { DatabaseConnection } from "@/lib/types";
+import type { ProviderCapabilities, ProviderLabels } from "@/lib/db/types";
 
 export interface ProviderMetadata {
   capabilities: ProviderCapabilities;
@@ -35,21 +35,21 @@ export function useProviderMetadata(connection: DatabaseConnection | null): {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 10000);
 
-    fetch('/api/db/provider-meta', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+    fetch("/api/db/provider-meta", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(connection),
       signal: controller.signal,
     })
       .then((res) => {
-        if (!res.ok) throw new Error('Failed to fetch provider metadata');
+        if (!res.ok) throw new Error("Failed to fetch provider metadata");
         return res.json();
       })
       .then((data: ProviderMetadata) => {
         setMetadata(data);
       })
       .catch((err) => {
-        console.error('[useProviderMetadata]', err);
+        console.error("[useProviderMetadata]", err);
         setMetadata(null);
       })
       .finally(() => {

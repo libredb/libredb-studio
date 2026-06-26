@@ -1,38 +1,38 @@
-'use client';
+"use client";
 
-import { Suspense, useState } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
-import { Button } from '@/components/ui/button';
-import { Label } from '@/components/ui/label';
-import { ExternalLink, Lock, Mail, ShieldCheck, Zap, Globe, Shield, Layers } from 'lucide-react';
-import { toast } from 'sonner';
-import LibreDBLogo from '@/components/libredb-logo';
-import { CommunitySection } from '@/components/community-section';
+import { Suspense, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
+import { ExternalLink, Lock, Mail, ShieldCheck, Zap, Globe, Shield, Layers } from "lucide-react";
+import { toast } from "sonner";
+import LibreDBLogo from "@/components/libredb-logo";
+import { CommunitySection } from "@/components/community-section";
 
 function LoginFormInner({ authProvider }: { authProvider: string }) {
-  const isOIDC = authProvider === 'oidc';
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
+  const isOIDC = authProvider === "oidc";
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const router = useRouter();
   const searchParams = useSearchParams();
-  const oidcError = searchParams.get('error');
+  const oidcError = searchParams.get("error");
 
   const handleLogin = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
 
     if (!email || !password) {
-      toast.error('Please enter email and password');
+      toast.error("Please enter email and password");
       return;
     }
 
     setIsLoading(true);
     try {
-      const response = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+      const response = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, password }),
       });
 
@@ -40,23 +40,23 @@ function LoginFormInner({ authProvider }: { authProvider: string }) {
 
       if (data.success) {
         toast.success(`Welcome back, ${data.role}!`);
-        router.push(data.role === 'admin' ? '/admin' : '/');
+        router.push(data.role === "admin" ? "/admin" : "/");
         router.refresh();
       } else {
-        toast.error(data.message || 'Invalid email or password');
+        toast.error(data.message || "Invalid email or password");
       }
     } catch {
-      toast.error('An error occurred. Please try again.');
+      toast.error("An error occurred. Please try again.");
     } finally {
       setIsLoading(false);
     }
   };
 
   const features = [
-    { icon: Globe, title: '7+ Database Engines', desc: 'PostgreSQL, MySQL, MongoDB, Oracle, SQL Server' },
-    { icon: Zap, title: 'AI-Native Queries', desc: 'Natural language to SQL with multi-model LLM support' },
-    { icon: Shield, title: 'Zero Install', desc: 'Browser-based — deploy anywhere with Docker in seconds' },
-    { icon: Layers, title: 'Real-Time Monitoring', desc: 'Live metrics, schema explorer, and visual ERD diagrams' },
+    { icon: Globe, title: "7+ Database Engines", desc: "PostgreSQL, MySQL, MongoDB, Oracle, SQL Server" },
+    { icon: Zap, title: "AI-Native Queries", desc: "Natural language to SQL with multi-model LLM support" },
+    { icon: Shield, title: "Zero Install", desc: "Browser-based — deploy anywhere with Docker in seconds" },
+    { icon: Layers, title: "Real-Time Monitoring", desc: "Live metrics, schema explorer, and visual ERD diagrams" },
   ];
 
   return (
@@ -71,8 +71,8 @@ function LoginFormInner({ authProvider }: { authProvider: string }) {
         <div
           className="absolute inset-0 opacity-[0.04]"
           style={{
-            backgroundImage: 'radial-gradient(circle at 1px 1px, white 1px, transparent 0)',
-            backgroundSize: '32px 32px',
+            backgroundImage: "radial-gradient(circle at 1px 1px, white 1px, transparent 0)",
+            backgroundSize: "32px 32px",
           }}
         />
 
@@ -86,11 +86,18 @@ function LoginFormInner({ authProvider }: { authProvider: string }) {
         {/* Content */}
         <div className="relative z-10 flex flex-col p-12 xl:p-16 w-full overflow-y-auto">
           {/* Top: Logo */}
-          <a href="https://libredb.org" target="_blank" rel="noopener noreferrer" className="flex items-center gap-3 group w-fit">
+          <a
+            href="https://libredb.org"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-3 group w-fit"
+          >
             <div className="flex h-14 w-14 items-center justify-center rounded-xl bg-white/[0.06] border border-white/[0.08] group-hover:bg-white/[0.10] group-hover:border-white/[0.12] transition-all duration-200">
               <LibreDBLogo className="h-9 w-9 text-blue-400" />
             </div>
-            <span className="text-xl font-semibold text-white tracking-tight group-hover:text-blue-400 transition-colors duration-200">LibreDB Studio</span>
+            <span className="text-xl font-semibold text-white tracking-tight group-hover:text-blue-400 transition-colors duration-200">
+              LibreDB Studio
+            </span>
           </a>
 
           {/* Middle: Hero text + Features */}
@@ -98,10 +105,14 @@ function LoginFormInner({ authProvider }: { authProvider: string }) {
             <div className="space-y-4 max-w-lg">
               <h1 className="text-4xl xl:text-5xl font-bold text-white tracking-tight leading-[1.1]">
                 The open-source SQL IDE for
-                <span className="bg-gradient-to-r from-blue-400 to-cyan-400 bg-clip-text text-transparent"> cloud-native teams</span>
+                <span className="bg-gradient-to-r from-blue-400 to-cyan-400 bg-clip-text text-transparent">
+                  {" "}
+                  cloud-native teams
+                </span>
               </h1>
               <p className="text-lg text-zinc-400 leading-relaxed">
-                Query, explore, and manage all your databases from a single AI-powered interface. Zero install — deploy with Docker in seconds.
+                Query, explore, and manage all your databases from a single AI-powered interface. Zero install — deploy
+                with Docker in seconds.
               </p>
             </div>
 
@@ -128,7 +139,7 @@ function LoginFormInner({ authProvider }: { authProvider: string }) {
             <div className="space-y-3">
               <p className="text-xs text-zinc-600 uppercase tracking-widest font-medium">Supported Databases</p>
               <div className="flex flex-wrap gap-2">
-                {['PostgreSQL', 'MySQL', 'MongoDB', 'Oracle', 'SQL Server'].map((db) => (
+                {["PostgreSQL", "MySQL", "MongoDB", "Oracle", "SQL Server"].map((db) => (
                   <span
                     key={db}
                     className="text-xs px-3 py-1.5 rounded-full bg-white/[0.04] text-zinc-500 border border-white/[0.05] font-medium"
@@ -147,7 +158,12 @@ function LoginFormInner({ authProvider }: { authProvider: string }) {
       <div className="flex w-full lg:w-1/2 xl:w-[45%] items-center justify-center p-4 sm:p-6 lg:p-8">
         <div className="w-full max-w-md space-y-8">
           {/* Mobile branding (visible only on mobile) */}
-          <a href="https://libredb.org" target="_blank" rel="noopener noreferrer" className="flex flex-col items-center gap-4 lg:hidden group">
+          <a
+            href="https://libredb.org"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex flex-col items-center gap-4 lg:hidden group"
+          >
             <div className="relative">
               <div className="absolute -inset-2 rounded-full bg-blue-500/20 blur-lg" />
               <div className="relative flex h-20 w-20 items-center justify-center rounded-2xl bg-zinc-900 border border-white/[0.08] shadow-lg shadow-blue-500/10 group-hover:border-blue-500/20 transition-all duration-200">
@@ -155,7 +171,9 @@ function LoginFormInner({ authProvider }: { authProvider: string }) {
               </div>
             </div>
             <div className="text-center space-y-1">
-              <h2 className="text-2xl font-bold tracking-tight group-hover:text-blue-400 transition-colors duration-200">LibreDB Studio</h2>
+              <h2 className="text-2xl font-bold tracking-tight group-hover:text-blue-400 transition-colors duration-200">
+                LibreDB Studio
+              </h2>
               <p className="text-sm text-muted-foreground">Open-source SQL IDE for cloud-native teams</p>
             </div>
           </a>
@@ -198,12 +216,12 @@ function LoginFormInner({ authProvider }: { authProvider: string }) {
                     className="w-full h-11 text-base font-medium shadow-lg shadow-primary/20 active:scale-[0.98] transition-all gap-2"
                     onClick={() => {
                       setIsLoading(true);
-                      window.location.href = '/api/auth/oidc/login';
+                      window.location.href = "/api/auth/oidc/login";
                     }}
                     disabled={isLoading}
                   >
                     <ExternalLink className="h-4 w-4" />
-                    {isLoading ? 'Redirecting...' : 'Login with SSO'}
+                    {isLoading ? "Redirecting..." : "Login with SSO"}
                   </Button>
 
                   <div className="flex items-center justify-center gap-4 pt-2">
@@ -255,7 +273,7 @@ function LoginFormInner({ authProvider }: { authProvider: string }) {
                       type="submit"
                       disabled={isLoading}
                     >
-                      {isLoading ? 'Authenticating...' : 'Sign In'}
+                      {isLoading ? "Authenticating..." : "Sign In"}
                     </Button>
                   </form>
                 </>
@@ -276,7 +294,7 @@ function LoginFormInner({ authProvider }: { authProvider: string }) {
           <div className="lg:hidden space-y-4">
             <CommunitySection variant="mobile" />
             <div className="flex flex-wrap justify-center gap-2">
-              {['PostgreSQL', 'MySQL', 'MongoDB', 'Oracle', 'SQL Server'].map((db) => (
+              {["PostgreSQL", "MySQL", "MongoDB", "Oracle", "SQL Server"].map((db) => (
                 <span
                   key={db}
                   className="text-[10px] px-2.5 py-1 rounded-full bg-muted text-muted-foreground font-medium"

@@ -4,27 +4,27 @@
  * Uses the REAL @libredb/libredb package against a temp file — no mock.module(),
  * so this suite is exempt from the mock-isolation hazard in CLAUDE.md.
  */
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { LibreDBProvider } from '@/lib/db/providers/embedded/libredb';
-import type { DatabaseConnection } from '@/lib/types';
-import { open, kv, doc, table } from '@libredb/libredb';
-import * as fs from 'fs';
-import * as os from 'os';
-import * as path from 'path';
+import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+import { LibreDBProvider } from "@/lib/db/providers/embedded/libredb";
+import type { DatabaseConnection } from "@/lib/types";
+import { open, kv, doc, table } from "@libredb/libredb";
+import * as fs from "fs";
+import * as os from "os";
+import * as path from "path";
 
 let tmpFile: string;
 
 function makeConn(database: string | undefined): DatabaseConnection {
-  return { id: 'libredb-test', name: 'LibreDB Test', type: 'libredb', database, createdAt: new Date() };
+  return { id: "libredb-test", name: "LibreDB Test", type: "libredb", database, createdAt: new Date() };
 }
 
 function seed(file: string): void {
   const db = open({ path: file });
   const store = kv(db);
-  store.set('user:1', 'Ada');
-  store.set('user:2', JSON.stringify({ name: 'Grace', age: 45 }));
-  store.set('order:1', '42');
-  store.set('config', 'on');
+  store.set("user:1", "Ada");
+  store.set("user:2", JSON.stringify({ name: "Grace", age: 45 }));
+  store.set("order:1", "42");
+  store.set("config", "on");
   db.close();
 }
 
@@ -40,22 +40,22 @@ function seedWithCatalog(file: string): void {
 
   // Raw kv keys (uncataloged namespaces).
   const store = kv(db);
-  store.set('user:1', 'Ada');
-  store.set('user:2', JSON.stringify({ name: 'Grace', age: 45 }));
-  store.set('order:1', '42');
-  store.set('config', 'on');
+  store.set("user:1", "Ada");
+  store.set("user:2", JSON.stringify({ name: "Grace", age: 45 }));
+  store.set("order:1", "42");
+  store.set("config", "on");
 
   // A relational table — records a relational catalog entry with a schema.
-  const employees = table(db, 'employees', {
-    primaryKey: 'id',
-    columns: { id: 'string', name: 'string', salary: 'number', active: 'boolean' },
+  const employees = table(db, "employees", {
+    primaryKey: "id",
+    columns: { id: "string", name: "string", salary: "number", active: "boolean" },
   });
-  employees.insert({ id: '1', name: 'Ada', salary: 100, active: true });
-  employees.insert({ id: '2', name: 'Grace', salary: 120, active: false });
+  employees.insert({ id: "1", name: "Ada", salary: 100, active: true });
+  employees.insert({ id: "2", name: "Grace", salary: 120, active: false });
 
   // A document collection — records a document catalog entry on first put.
-  const articles = doc(db, 'articles');
-  articles.put('a1', { title: 'Hello', body: 'world' });
+  const articles = doc(db, "articles");
+  articles.put("a1", { title: "Hello", body: "world" });
 
   db.close();
 }
@@ -66,28 +66,32 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  try { fs.unlinkSync(tmpFile); } catch { /* ignore */ }
+  try {
+    fs.unlinkSync(tmpFile);
+  } catch {
+    /* ignore */
+  }
 });
 
-describe('LibreDBProvider — lifecycle & metadata', () => {
-  test('validate() rejects a connection with no file path', () => {
+describe("LibreDBProvider — lifecycle & metadata", () => {
+  test("validate() rejects a connection with no file path", () => {
     const provider = new LibreDBProvider(makeConn(undefined));
     expect(() => provider.validate()).toThrow(/path/i);
   });
 
-  test('connect() with no file path throws (no silent in-memory open)', async () => {
+  test("connect() with no file path throws (no silent in-memory open)", async () => {
     const provider = new LibreDBProvider(makeConn(undefined));
     await expect(provider.connect()).rejects.toThrow(/path/i);
     expect(provider.isConnected()).toBe(false);
   });
 
-  test('connect() rejects a path containing a null byte (traversal guard)', async () => {
-    const provider = new LibreDBProvider(makeConn('/tmp/bad' + String.fromCharCode(0) + '.libredb'));
+  test("connect() rejects a path containing a null byte (traversal guard)", async () => {
+    const provider = new LibreDBProvider(makeConn("/tmp/bad" + String.fromCharCode(0) + ".libredb"));
     await expect(provider.connect()).rejects.toThrow(/traversal|invalid/i);
     expect(provider.isConnected()).toBe(false);
   });
 
-  test('connect() then disconnect() against a real file', async () => {
+  test("connect() then disconnect() against a real file", async () => {
     const provider = new LibreDBProvider(makeConn(tmpFile));
     await provider.connect();
     expect(provider.isConnected()).toBe(true);
@@ -96,42 +100,42 @@ describe('LibreDBProvider — lifecycle & metadata', () => {
     await provider.disconnect(); // idempotent
   });
 
-  test('getCapabilities() declares a non-SQL, read/write provider', () => {
+  test("getCapabilities() declares a non-SQL, read/write provider", () => {
     const provider = new LibreDBProvider(makeConn(tmpFile));
     const caps = provider.getCapabilities();
-    expect(caps.queryLanguage).toBe('json');
-    expect(caps.queryDialect).toBe('libredb');
+    expect(caps.queryLanguage).toBe("json");
+    expect(caps.queryDialect).toBe("libredb");
     expect(caps.supportsCreateTable).toBe(false);
     expect(caps.supportsExplain).toBe(false);
     expect(caps.defaultPort).toBeNull();
   });
 
-  test('getLabels() uses key-oriented labels', () => {
+  test("getLabels() uses key-oriented labels", () => {
     const provider = new LibreDBProvider(makeConn(tmpFile));
-    expect(provider.getLabels().rowNamePlural).toBe('keys');
+    expect(provider.getLabels().rowNamePlural).toBe("keys");
   });
 });
 
-describe('LibreDBProvider — getSchema', () => {
-  test('groups keys by colon-prefix into pseudo-tables', async () => {
+describe("LibreDBProvider — getSchema", () => {
+  test("groups keys by colon-prefix into pseudo-tables", async () => {
     const provider = new LibreDBProvider(makeConn(tmpFile));
     await provider.connect();
     const schema = await provider.getSchema();
     await provider.disconnect();
 
     const byName = Object.fromEntries(schema.map((t) => [t.name, t]));
-    expect(byName['user:*'].rowCount).toBe(2);
-    expect(byName['order:*'].rowCount).toBe(1);
-    expect(byName['config'].rowCount).toBe(1); // no colon -> own group
+    expect(byName["user:*"].rowCount).toBe(2);
+    expect(byName["order:*"].rowCount).toBe(1);
+    expect(byName["config"].rowCount).toBe(1); // no colon -> own group
     // columns are key (primary) + value
-    expect(byName['user:*'].columns.map((c) => c.name)).toEqual(['key', 'value']);
-    expect(byName['user:*'].columns[0].isPrimary).toBe(true);
+    expect(byName["user:*"].columns.map((c) => c.name)).toEqual(["key", "value"]);
+    expect(byName["user:*"].columns[0].isPrimary).toBe(true);
     // sorted by rowCount desc -> user:* first
-    expect(schema[0].name).toBe('user:*');
+    expect(schema[0].name).toBe("user:*");
   });
 });
 
-describe('LibreDBProvider — catalog-aware schema', () => {
+describe("LibreDBProvider — catalog-aware schema", () => {
   let catalogFile: string;
 
   beforeEach(() => {
@@ -140,17 +144,21 @@ describe('LibreDBProvider — catalog-aware schema', () => {
   });
 
   afterEach(() => {
-    try { fs.unlinkSync(catalogFile); } catch { /* ignore */ }
+    try {
+      fs.unlinkSync(catalogFile);
+    } catch {
+      /* ignore */
+    }
   });
 
-  test('a bare key is NOT catalog-upgraded even if its name matches a namespace', async () => {
+  test("a bare key is NOT catalog-upgraded even if its name matches a namespace", async () => {
     // A document collection "shadow" (keys shadow:*) AND a separate bare raw key
     // "shadow" (no colon). The bare key must stay raw key/value; only the
     // "shadow:*" prefix group may take the document view.
     const file = path.join(os.tmpdir(), `libredb-bare-${Math.random().toString(36).slice(2)}.libredb`);
     const db = open({ path: file });
-    doc(db, 'shadow').put('1', { theme: 'dark' });
-    kv(db).set('shadow', 'on');
+    doc(db, "shadow").put("1", { theme: "dark" });
+    kv(db).set("shadow", "on");
     db.close();
 
     try {
@@ -159,229 +167,233 @@ describe('LibreDBProvider — catalog-aware schema', () => {
       const schema = await provider.getSchema();
       await provider.disconnect();
 
-      const prefixGroup = schema.find((t) => t.name === 'shadow:*');
-      const bareGroup = schema.find((t) => t.name === 'shadow');
+      const prefixGroup = schema.find((t) => t.name === "shadow:*");
+      const bareGroup = schema.find((t) => t.name === "shadow");
       // The cataloged collection renders as a document view...
-      expect(prefixGroup?.columns.map((c) => c.name)).toEqual(['id', 'document']);
+      expect(prefixGroup?.columns.map((c) => c.name)).toEqual(["id", "document"]);
       // ...but the bare key stays raw key/value, not upgraded.
-      expect(bareGroup?.columns.map((c) => c.name)).toEqual(['key', 'value']);
+      expect(bareGroup?.columns.map((c) => c.name)).toEqual(["key", "value"]);
     } finally {
-      try { fs.unlinkSync(file); } catch { /* ignore */ }
+      try {
+        fs.unlinkSync(file);
+      } catch {
+        /* ignore */
+      }
     }
   });
 
-  test('getSchema never surfaces the reserved catalog prefix', async () => {
+  test("getSchema never surfaces the reserved catalog prefix", async () => {
     const provider = new LibreDBProvider(makeConn(catalogFile));
     await provider.connect();
     const schema = await provider.getSchema();
     await provider.disconnect();
 
     for (const t of schema) {
-      expect(t.name.startsWith('\x00')).toBe(false);
-      expect(t.name).not.toContain('libredb:catalog:');
+      expect(t.name.startsWith("\x00")).toBe(false);
+      expect(t.name).not.toContain("libredb:catalog:");
     }
     // No pseudo-table for the reserved namespace leaks in.
-    expect(schema.some((t) => t.name.includes('catalog'))).toBe(false);
+    expect(schema.some((t) => t.name.includes("catalog"))).toBe(false);
   });
 
-  test('range/prefix queries never surface the reserved catalog keys', async () => {
+  test("range/prefix queries never surface the reserved catalog keys", async () => {
     const provider = new LibreDBProvider(makeConn(catalogFile));
     await provider.connect();
 
     // Full-keyspace range — the reserved keys sort first (U+0000) but must be filtered.
-    const rng = await provider.query('range \x00 \u{10FFFF}');
-    expect(rng.rows.every((r) => !String(r.key).startsWith('\x00'))).toBe(true);
-    expect(rng.rows.some((r) => String(r.key).includes('libredb:catalog:'))).toBe(false);
+    const rng = await provider.query("range \x00 \u{10FFFF}");
+    expect(rng.rows.every((r) => !String(r.key).startsWith("\x00"))).toBe(true);
+    expect(rng.rows.some((r) => String(r.key).includes("libredb:catalog:"))).toBe(false);
 
     // A prefix scan over the reserved marker returns nothing user-facing.
-    const pre = await provider.query('prefix \x00');
+    const pre = await provider.query("prefix \x00");
     expect(pre.rowCount).toBe(0);
 
     await provider.disconnect();
   });
 
-  test('hides the whole reserved namespace, not just the catalog prefix (isReservedKey widening)', async () => {
+  test("hides the whole reserved namespace, not just the catalog prefix (isReservedKey widening)", async () => {
     // A raw kv key under the U+0000 marker but OUTSIDE the "catalog:" tail. The
     // previous hardcoded `\x00libredb:catalog:` filter would have leaked this;
     // isReservedKey is marker-based, so it hides the entire reserved namespace.
-    const reservedKey = '\x00zzz-reserved-not-catalog';
+    const reservedKey = "\x00zzz-reserved-not-catalog";
     const writer = open({ path: catalogFile });
-    kv(writer).set(reservedKey, 'internal');
+    kv(writer).set(reservedKey, "internal");
     writer.close();
 
     const provider = new LibreDBProvider(makeConn(catalogFile));
     await provider.connect();
     const schema = await provider.getSchema();
-    const rng = await provider.query('range \x00 \u{10FFFF}');
+    const rng = await provider.query("range \x00 \u{10FFFF}");
     await provider.disconnect();
 
-    expect(schema.some((t) => t.name.startsWith('\x00'))).toBe(false);
+    expect(schema.some((t) => t.name.startsWith("\x00"))).toBe(false);
     expect(rng.rows.some((r) => String(r.key) === reservedKey)).toBe(false);
 
     // Sanity: the key really is in the file (so the provider hid it, not absence).
     const verify = open({ path: catalogFile });
-    expect(kv(verify).get(reservedKey)).toBe('internal');
+    expect(kv(verify).get(reservedKey)).toBe("internal");
     verify.close();
   });
 
-  test('a relational table shows its real columns and is labeled relational', async () => {
+  test("a relational table shows its real columns and is labeled relational", async () => {
     const provider = new LibreDBProvider(makeConn(catalogFile));
     await provider.connect();
     const schema = await provider.getSchema();
     await provider.disconnect();
 
-    const employees = schema.find((t) => t.name === 'employees:*');
+    const employees = schema.find((t) => t.name === "employees:*");
     expect(employees).toBeDefined();
     // Real declared columns from the catalog schema (not raw key/value).
     const cols = Object.fromEntries(employees!.columns.map((c) => [c.name, c]));
-    expect(Object.keys(cols).sort()).toEqual(['active', 'id', 'name', 'salary']);
+    expect(Object.keys(cols).sort()).toEqual(["active", "id", "name", "salary"]);
     expect(cols.id.isPrimary).toBe(true);
     expect(cols.name.isPrimary).toBe(false);
-    expect(cols.salary.type).toBe('number');
-    expect(cols.active.type).toBe('boolean');
+    expect(cols.salary.type).toBe("number");
+    expect(cols.active.type).toBe("boolean");
     // Relational signal: columns are NOT the raw key/value pair.
-    expect(employees!.columns.map((c) => c.name)).not.toEqual(['key', 'value']);
+    expect(employees!.columns.map((c) => c.name)).not.toEqual(["key", "value"]);
     expect(employees!.rowCount).toBe(2);
   });
 
-  test('a document collection is labeled document (generic id + document columns)', async () => {
+  test("a document collection is labeled document (generic id + document columns)", async () => {
     const provider = new LibreDBProvider(makeConn(catalogFile));
     await provider.connect();
     const schema = await provider.getSchema();
     await provider.disconnect();
 
-    const articles = schema.find((t) => t.name === 'articles:*');
+    const articles = schema.find((t) => t.name === "articles:*");
     expect(articles).toBeDefined();
-    expect(articles!.columns.map((c) => c.name)).toEqual(['id', 'document']);
+    expect(articles!.columns.map((c) => c.name)).toEqual(["id", "document"]);
     expect(articles!.columns[0].isPrimary).toBe(true);
-    expect(articles!.columns[1].type).toBe('object');
+    expect(articles!.columns[1].type).toBe("object");
   });
 
-  test('raw kv namespaces still group as key/value pseudo-tables', async () => {
+  test("raw kv namespaces still group as key/value pseudo-tables", async () => {
     const provider = new LibreDBProvider(makeConn(catalogFile));
     await provider.connect();
     const schema = await provider.getSchema();
     await provider.disconnect();
 
     const byName = Object.fromEntries(schema.map((t) => [t.name, t]));
-    expect(byName['user:*'].rowCount).toBe(2);
-    expect(byName['user:*'].columns.map((c) => c.name)).toEqual(['key', 'value']);
-    expect(byName['order:*'].rowCount).toBe(1);
-    expect(byName['config'].columns.map((c) => c.name)).toEqual(['key', 'value']);
+    expect(byName["user:*"].rowCount).toBe(2);
+    expect(byName["user:*"].columns.map((c) => c.name)).toEqual(["key", "value"]);
+    expect(byName["order:*"].rowCount).toBe(1);
+    expect(byName["config"].columns.map((c) => c.name)).toEqual(["key", "value"]);
   });
 });
 
-describe('LibreDBProvider — query commands', () => {
-  test('get returns one row, JSON value pretty-printed', async () => {
+describe("LibreDBProvider — query commands", () => {
+  test("get returns one row, JSON value pretty-printed", async () => {
     const provider = new LibreDBProvider(makeConn(tmpFile));
     await provider.connect();
-    const plain = await provider.query('get user:1');
-    expect(plain.rows).toEqual([{ key: 'user:1', value: 'Ada' }]);
+    const plain = await provider.query("get user:1");
+    expect(plain.rows).toEqual([{ key: "user:1", value: "Ada" }]);
 
-    const json = await provider.query('get user:2');
-    expect(json.rows[0].value).toBe(JSON.stringify({ name: 'Grace', age: 45 }, null, 2));
+    const json = await provider.query("get user:2");
+    expect(json.rows[0].value).toBe(JSON.stringify({ name: "Grace", age: 45 }, null, 2));
     await provider.disconnect();
   });
 
-  test('get on a missing key returns zero rows', async () => {
+  test("get on a missing key returns zero rows", async () => {
     const provider = new LibreDBProvider(makeConn(tmpFile));
     await provider.connect();
-    const res = await provider.query('get nope');
+    const res = await provider.query("get nope");
     expect(res.rowCount).toBe(0);
     expect(res.rows).toEqual([]);
     await provider.disconnect();
   });
 
-  test('prefix scans a group; range scans a half-open interval', async () => {
+  test("prefix scans a group; range scans a half-open interval", async () => {
     const provider = new LibreDBProvider(makeConn(tmpFile));
     await provider.connect();
-    const pre = await provider.query('prefix user:');
-    expect(pre.rows.map((r) => r.key)).toEqual(['user:1', 'user:2']);
+    const pre = await provider.query("prefix user:");
+    expect(pre.rows.map((r) => r.key)).toEqual(["user:1", "user:2"]);
 
-    const rng = await provider.query('range user:1 user:2');
-    expect(rng.rows.map((r) => r.key)).toEqual(['user:1']); // end excluded
+    const rng = await provider.query("range user:1 user:2");
+    expect(rng.rows.map((r) => r.key)).toEqual(["user:1"]); // end excluded
     await provider.disconnect();
   });
 
-  test('put then delete round-trips durably', async () => {
+  test("put then delete round-trips durably", async () => {
     const provider = new LibreDBProvider(makeConn(tmpFile));
     await provider.connect();
 
-    const put = await provider.query('put greeting hello');
+    const put = await provider.query("put greeting hello");
     expect(put.rows).toEqual([{ changed: 1 }]);
-    expect((await provider.query('get greeting')).rows[0].value).toBe('hello');
+    expect((await provider.query("get greeting")).rows[0].value).toBe("hello");
 
-    const del = await provider.query('delete greeting');
+    const del = await provider.query("delete greeting");
     expect(del.rows).toEqual([{ changed: 1 }]);
-    expect((await provider.query('get greeting')).rowCount).toBe(0);
+    expect((await provider.query("get greeting")).rowCount).toBe(0);
     await provider.disconnect();
   });
 
-  test('put preserves the rest of a multi-word value', async () => {
+  test("put preserves the rest of a multi-word value", async () => {
     const provider = new LibreDBProvider(makeConn(tmpFile));
     await provider.connect();
-    await provider.query('put note hello world');
-    expect((await provider.query('get note')).rows[0].value).toBe('hello world');
+    await provider.query("put note hello world");
+    expect((await provider.query("get note")).rows[0].value).toBe("hello world");
     await provider.disconnect();
   });
 
-  test('an unknown command throws QueryError listing supported verbs', async () => {
+  test("an unknown command throws QueryError listing supported verbs", async () => {
     const provider = new LibreDBProvider(makeConn(tmpFile));
     await provider.connect();
-    await expect(provider.query('select * from users')).rejects.toThrow(/get, put, delete, prefix, range/);
+    await expect(provider.query("select * from users")).rejects.toThrow(/get, put, delete, prefix, range/);
     await provider.disconnect();
   });
 
-  test('an unterminated quote is rejected', async () => {
+  test("an unterminated quote is rejected", async () => {
     const provider = new LibreDBProvider(makeConn(tmpFile));
     await provider.connect();
     await expect(provider.query('put key "unterminated')).rejects.toThrow(/quote/i);
     await provider.disconnect();
   });
 
-  test('a leading # comment line is skipped; the command runs', async () => {
+  test("a leading # comment line is skipped; the command runs", async () => {
     const provider = new LibreDBProvider(makeConn(tmpFile));
     await provider.connect();
-    const res = await provider.query('# read Ada\nget user:1');
-    expect(res.rows).toEqual([{ key: 'user:1', value: 'Ada' }]);
+    const res = await provider.query("# read Ada\nget user:1");
+    expect(res.rows).toEqual([{ key: "user:1", value: "Ada" }]);
     await provider.disconnect();
   });
 
-  test('blank lines are skipped', async () => {
+  test("blank lines are skipped", async () => {
     const provider = new LibreDBProvider(makeConn(tmpFile));
     await provider.connect();
-    const res = await provider.query('\n  \nget user:1');
+    const res = await provider.query("\n  \nget user:1");
     expect(res.rowCount).toBe(1);
     await provider.disconnect();
   });
 
-  test('a multi-line cheatsheet runs its first real command (the prefix scan)', async () => {
+  test("a multi-line cheatsheet runs its first real command (the prefix scan)", async () => {
     const provider = new LibreDBProvider(makeConn(tmpFile));
     await provider.connect();
     const cheatsheet = [
       '# LibreDB commands for "user:*"',
-      '',
-      '# List every key under this prefix',
-      'prefix user:',
-      '',
-      '# Read one entry',
-      'get user:1',
-    ].join('\n');
+      "",
+      "# List every key under this prefix",
+      "prefix user:",
+      "",
+      "# Read one entry",
+      "get user:1",
+    ].join("\n");
     const res = await provider.query(cheatsheet);
-    expect(res.rows.map((r) => r.key)).toEqual(['user:1', 'user:2']); // prefix ran, not get
+    expect(res.rows.map((r) => r.key)).toEqual(["user:1", "user:2"]); // prefix ran, not get
     await provider.disconnect();
   });
 
-  test('input that is only comments/blank lines is rejected', async () => {
+  test("input that is only comments/blank lines is rejected", async () => {
     const provider = new LibreDBProvider(makeConn(tmpFile));
     await provider.connect();
-    await expect(provider.query('# just a note\n\n')).rejects.toThrow(/only comments|no command/i);
+    await expect(provider.query("# just a note\n\n")).rejects.toThrow(/only comments|no command/i);
     await provider.disconnect();
   });
 });
 
-describe('LibreDBProvider — monitoring', () => {
-  test('getOverview reports file size and group count', async () => {
+describe("LibreDBProvider — monitoring", () => {
+  test("getOverview reports file size and group count", async () => {
     const provider = new LibreDBProvider(makeConn(tmpFile));
     await provider.connect();
     const overview = await provider.getOverview();
@@ -390,7 +402,7 @@ describe('LibreDBProvider — monitoring', () => {
     await provider.disconnect();
   });
 
-  test('getStorageStats lists the file path', async () => {
+  test("getStorageStats lists the file path", async () => {
     const provider = new LibreDBProvider(makeConn(tmpFile));
     await provider.connect();
     const storage = await provider.getStorageStats();
@@ -400,10 +412,10 @@ describe('LibreDBProvider — monitoring', () => {
     await provider.disconnect();
   });
 
-  test('runMaintenance is unsupported', async () => {
+  test("runMaintenance is unsupported", async () => {
     const provider = new LibreDBProvider(makeConn(tmpFile));
     await provider.connect();
-    await expect(provider.runMaintenance('vacuum')).rejects.toThrow(/not supported/i);
+    await expect(provider.runMaintenance("vacuum")).rejects.toThrow(/not supported/i);
     await provider.disconnect();
   });
 });

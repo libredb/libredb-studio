@@ -4,12 +4,12 @@
  * Uses singleton pattern — one provider instance per process.
  */
 
-import type { ServerStorageProvider, StorageConfigResponse } from './types';
+import type { ServerStorageProvider, StorageConfigResponse } from "./types";
 
 let _provider: ServerStorageProvider | null = null;
 let _initialized = false;
 
-export type StorageProviderType = 'local' | 'sqlite' | 'postgres';
+export type StorageProviderType = "local" | "sqlite" | "postgres";
 
 /**
  * Get the configured storage provider type from environment.
@@ -17,15 +17,15 @@ export type StorageProviderType = 'local' | 'sqlite' | 'postgres';
  */
 export function getStorageProviderType(): StorageProviderType {
   const env = process.env.STORAGE_PROVIDER?.toLowerCase();
-  if (env === 'sqlite' || env === 'postgres') return env;
-  return 'local';
+  if (env === "sqlite" || env === "postgres") return env;
+  return "local";
 }
 
 /**
  * Check if server-side storage is enabled.
  */
 export function isServerStorageEnabled(): boolean {
-  return getStorageProviderType() !== 'local';
+  return getStorageProviderType() !== "local";
 }
 
 /**
@@ -35,7 +35,7 @@ export function getStorageConfig(): StorageConfigResponse {
   const provider = getStorageProviderType();
   return {
     provider,
-    serverMode: provider !== 'local',
+    serverMode: provider !== "local",
   };
 }
 
@@ -47,18 +47,18 @@ export function getStorageConfig(): StorageConfigResponse {
 export async function getStorageProvider(): Promise<ServerStorageProvider | null> {
   const providerType = getStorageProviderType();
 
-  if (providerType === 'local') return null;
+  if (providerType === "local") return null;
 
   if (_provider && _initialized) return _provider;
 
   switch (providerType) {
-    case 'sqlite': {
-      const { SQLiteStorageProvider } = await import('./providers/sqlite');
+    case "sqlite": {
+      const { SQLiteStorageProvider } = await import("./providers/sqlite");
       _provider = new SQLiteStorageProvider();
       break;
     }
-    case 'postgres': {
-      const { PostgresStorageProvider } = await import('./providers/postgres');
+    case "postgres": {
+      const { PostgresStorageProvider } = await import("./providers/postgres");
       _provider = new PostgresStorageProvider();
       break;
     }

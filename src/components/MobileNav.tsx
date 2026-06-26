@@ -1,20 +1,20 @@
 "use client";
 
-import React from 'react';
-import { Database, Terminal, Table as TableIcon } from 'lucide-react';
-import { cn } from '@/lib/utils';
+import React from "react";
+import { Database, Terminal, Table as TableIcon } from "lucide-react";
+import { cn } from "@/lib/utils";
 
 interface MobileNavProps {
-  activeTab: 'database' | 'schema' | 'editor';
-  onTabChange: (tab: 'database' | 'schema' | 'editor') => void;
+  activeTab: "database" | "schema" | "editor";
+  onTabChange: (tab: "database" | "schema" | "editor") => void;
   hasResult?: boolean;
 }
 
 export function MobileNav({ activeTab, onTabChange }: MobileNavProps) {
   const tabs = [
-    { id: 'database', label: 'DB', icon: Database },
-    { id: 'schema', label: 'Schema', icon: TableIcon },
-    { id: 'editor', label: 'SQL', icon: Terminal },
+    { id: "database", label: "DB", icon: Database },
+    { id: "schema", label: "Schema", icon: TableIcon },
+    { id: "editor", label: "SQL", icon: Terminal },
   ] as const;
 
   return (
@@ -29,19 +29,19 @@ export function MobileNav({ activeTab, onTabChange }: MobileNavProps) {
             onClick={() => onTabChange(tab.id)}
             className={cn(
               "flex flex-col items-center gap-1 transition-all duration-200 relative",
-              isActive ? "text-blue-400" : "text-zinc-500"
+              isActive ? "text-blue-400" : "text-zinc-500",
             )}
           >
-            <div className={cn(
-              "p-2 rounded-xl transition-all",
-              isActive ? "bg-blue-500/10 scale-110" : "hover:bg-white/5"
-            )}>
+            <div
+              className={cn(
+                "p-2 rounded-xl transition-all",
+                isActive ? "bg-blue-500/10 scale-110" : "hover:bg-white/5",
+              )}
+            >
               <Icon className="w-5 h-5" />
             </div>
             <span className="text-xs font-mediumr">{tab.label}</span>
-            {isActive && (
-              <div className="absolute -top-1 w-1 h-1 bg-blue-400 rounded-full" />
-            )}
+            {isActive && <div className="absolute -top-1 w-1 h-1 bg-blue-400 rounded-full" />}
           </button>
         );
       })}

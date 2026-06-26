@@ -4,14 +4,10 @@
  * Uses dynamic imports to reduce memory footprint - providers are loaded on demand
  */
 
-import {
-  type DatabaseProvider,
-  type DatabaseConnection,
-  type ProviderOptions,
-} from './types';
-import { DatabaseConfigError } from './errors';
-import { createSSHTunnel, closeSSHTunnel } from '@/lib/ssh/tunnel';
-import { logger } from '@/lib/logger';
+import { type DatabaseProvider, type DatabaseConnection, type ProviderOptions } from "./types";
+import { DatabaseConfigError } from "./errors";
+import { createSSHTunnel, closeSSHTunnel } from "@/lib/ssh/tunnel";
+import { logger } from "@/lib/logger";
 
 // ============================================================================
 // Provider Factory
@@ -55,61 +51,61 @@ import { logger } from '@/lib/logger';
  */
 export async function createDatabaseProvider(
   connection: DatabaseConnection,
-  options: ProviderOptions = {}
+  options: ProviderOptions = {},
 ): Promise<DatabaseProvider> {
   // Sanitize user-controlled values to prevent log injection
-  const sanitize = (v: string) => v.replace(/[\r\n]/g, ' ').replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, '');
-  console.log(`[DB] Creating ${sanitize(connection.type)} provider for "${sanitize(connection.name || '')}"`);
+  const sanitize = (v: string) => v.replace(/[\r\n]/g, " ").replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, "");
+  console.log(`[DB] Creating ${sanitize(connection.type)} provider for "${sanitize(connection.name || "")}"`);
 
   switch (connection.type) {
     // SQL Databases - dynamically imported to reduce memory
-    case 'postgres': {
-      const { PostgresProvider } = await import('./providers/sql/postgres');
+    case "postgres": {
+      const { PostgresProvider } = await import("./providers/sql/postgres");
       return new PostgresProvider(connection, options);
     }
 
-    case 'mysql': {
-      const { MySQLProvider } = await import('./providers/sql/mysql');
+    case "mysql": {
+      const { MySQLProvider } = await import("./providers/sql/mysql");
       return new MySQLProvider(connection, options);
     }
 
-    case 'sqlite': {
-      const { SQLiteProvider } = await import('./providers/sql/sqlite');
+    case "sqlite": {
+      const { SQLiteProvider } = await import("./providers/sql/sqlite");
       return new SQLiteProvider(connection, options);
     }
 
-    case 'oracle': {
-      const { OracleProvider } = await import('./providers/sql/oracle');
+    case "oracle": {
+      const { OracleProvider } = await import("./providers/sql/oracle");
       return new OracleProvider(connection, options);
     }
 
-    case 'mssql': {
-      const { MSSQLProvider } = await import('./providers/sql/mssql');
+    case "mssql": {
+      const { MSSQLProvider } = await import("./providers/sql/mssql");
       return new MSSQLProvider(connection, options);
     }
 
     // Document Databases - dynamically imported
-    case 'mongodb': {
-      const { MongoDBProvider } = await import('./providers/document/mongodb');
+    case "mongodb": {
+      const { MongoDBProvider } = await import("./providers/document/mongodb");
       return new MongoDBProvider(connection, options);
     }
 
     // Key-Value Stores - dynamically imported
-    case 'redis': {
-      const { RedisProvider } = await import('./providers/keyvalue/redis');
+    case "redis": {
+      const { RedisProvider } = await import("./providers/keyvalue/redis");
       return new RedisProvider(connection, options);
     }
 
     // Embedded databases - dynamically imported
-    case 'libredb': {
-      const { LibreDBProvider } = await import('./providers/embedded/libredb');
+    case "libredb": {
+      const { LibreDBProvider } = await import("./providers/embedded/libredb");
       return new LibreDBProvider(connection, options);
     }
 
     default:
       throw new DatabaseConfigError(
         `Unknown database type: ${connection.type}. Supported types: postgres, mysql, sqlite, oracle, mssql, mongodb, redis, libredb`,
-        connection.type
+        connection.type,
       );
   }
 }
@@ -154,7 +150,9 @@ export async function evictIdleProviders(maxIdleMs: number = IDLE_TIMEOUT_MS): P
       // Also close SSH tunnel
       try {
         await closeSSHTunnel(id);
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
       evicted++;
     }
   }
@@ -170,9 +168,11 @@ export async function evictIdleProviders(maxIdleMs: number = IDLE_TIMEOUT_MS): P
 
 function startIdleSweep(): void {
   if (sweepTimer) return;
-  sweepTimer = setInterval(() => { evictIdleProviders(); }, SWEEP_INTERVAL_MS);
+  sweepTimer = setInterval(() => {
+    evictIdleProviders();
+  }, SWEEP_INTERVAL_MS);
   // Allow process to exit even if timer is running
-  if (sweepTimer && typeof sweepTimer === 'object' && 'unref' in sweepTimer) {
+  if (sweepTimer && typeof sweepTimer === "object" && "unref" in sweepTimer) {
     sweepTimer.unref();
   }
 }
@@ -187,7 +187,7 @@ function startIdleSweep(): void {
  */
 export async function getOrCreateProvider(
   connection: DatabaseConnection,
-  options: ProviderOptions = {}
+  options: ProviderOptions = {},
 ): Promise<DatabaseProvider> {
   const cacheKey = connection.id;
 
@@ -203,12 +203,7 @@ export async function getOrCreateProvider(
   let effectiveConnection = connection;
   let tunnel: Awaited<ReturnType<typeof createSSHTunnel>> | null = null;
   if (connection.sshTunnel?.enabled && connection.host && connection.port) {
-    tunnel = await createSSHTunnel(
-      connection.id,
-      connection.sshTunnel,
-      connection.host,
-      connection.port
-    );
+    tunnel = await createSSHTunnel(connection.id, connection.sshTunnel, connection.host, connection.port);
     // Rewrite connection to point to local tunnel endpoint
     effectiveConnection = {
       ...connection,
@@ -277,7 +272,7 @@ export async function clearProviderCache(): Promise<void> {
     disconnectPromises.push(
       entry.provider.disconnect().catch((error) => {
         console.error(`[DB] Error disconnecting provider ${id}:`, error);
-      })
+      }),
     );
   }
 
@@ -313,18 +308,18 @@ export function registerShutdownHandlers(): void {
     logger.info(`[DB] Received ${signal}, closing all database connections...`);
     try {
       await clearProviderCache();
-      logger.info('[DB] All database connections closed gracefully');
+      logger.info("[DB] All database connections closed gracefully");
     } catch (error) {
-      logger.error('[DB] Error during graceful shutdown', { error: String(error) });
+      logger.error("[DB] Error during graceful shutdown", { error: String(error) });
     }
     process.exit(0);
   };
 
-  process.on('SIGTERM', () => shutdown('SIGTERM'));
-  process.on('SIGINT', () => shutdown('SIGINT'));
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
+  process.on("SIGINT", () => shutdown("SIGINT"));
 }
 
 // Auto-register on server-side (not during tests)
-if (typeof process !== 'undefined' && process.env.NODE_ENV !== 'test') {
+if (typeof process !== "undefined" && process.env.NODE_ENV !== "test") {
   registerShutdownHandlers();
 }

@@ -3,8 +3,8 @@
  * SSE parsing and stream transformation helpers
  */
 
-import { LLMStreamError, type LLMProviderType } from '../types';
-import { logger } from '@/lib/logger';
+import { LLMStreamError, type LLMProviderType } from "../types";
+import { logger } from "@/lib/logger";
 
 // ============================================================================
 // Text Encoding/Decoding
@@ -30,30 +30,30 @@ export function decodeText(bytes: Uint8Array): string {
  * Handles chunked responses and extracts content from delta objects
  */
 export function createSSEParser(): TransformStream<Uint8Array, Uint8Array> {
-  let buffer = '';
+  let buffer = "";
 
   return new TransformStream<Uint8Array, Uint8Array>({
     transform(chunk, controller) {
       buffer += decodeText(chunk);
 
       // Process complete lines
-      const lines = buffer.split('\n');
-      buffer = lines.pop() ?? ''; // Keep incomplete line in buffer
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? ""; // Keep incomplete line in buffer
 
       for (const line of lines) {
         const trimmed = line.trim();
 
         // Skip empty lines and comments
-        if (!trimmed || trimmed.startsWith(':')) {
+        if (!trimmed || trimmed.startsWith(":")) {
           continue;
         }
 
         // Handle data lines
-        if (trimmed.startsWith('data: ')) {
+        if (trimmed.startsWith("data: ")) {
           const data = trimmed.slice(6);
 
           // Handle stream end marker
-          if (data === '[DONE]') {
+          if (data === "[DONE]") {
             return;
           }
 
@@ -65,7 +65,7 @@ export function createSSEParser(): TransformStream<Uint8Array, Uint8Array> {
               controller.enqueue(encodeText(content));
             }
           } catch {
-            logger.debug('Skipping malformed JSON chunk in SSE stream');
+            logger.debug("Skipping malformed JSON chunk in SSE stream");
           }
         }
       }
@@ -75,7 +75,7 @@ export function createSSEParser(): TransformStream<Uint8Array, Uint8Array> {
       // Process any remaining data in buffer
       if (buffer.trim()) {
         const trimmed = buffer.trim();
-        if (trimmed.startsWith('data: ') && trimmed.slice(6) !== '[DONE]') {
+        if (trimmed.startsWith("data: ") && trimmed.slice(6) !== "[DONE]") {
           try {
             const parsed = JSON.parse(trimmed.slice(6));
             const content = extractContent(parsed);
@@ -83,7 +83,7 @@ export function createSSEParser(): TransformStream<Uint8Array, Uint8Array> {
               controller.enqueue(encodeText(content));
             }
           } catch {
-            logger.debug('Skipping malformed JSON chunk in SSE stream flush');
+            logger.debug("Skipping malformed JSON chunk in SSE stream flush");
           }
         }
       }
@@ -95,7 +95,7 @@ export function createSSEParser(): TransformStream<Uint8Array, Uint8Array> {
  * Extract content from parsed SSE data based on provider format
  */
 function extractContent(data: unknown): string | null {
-  if (!data || typeof data !== 'object') {
+  if (!data || typeof data !== "object") {
     return null;
   }
 
@@ -106,7 +106,7 @@ function extractContent(data: unknown): string | null {
     const choice = obj.choices[0] as Record<string, unknown>;
     const delta = choice.delta as Record<string, unknown> | undefined;
 
-    if (delta && typeof delta.content === 'string') {
+    if (delta && typeof delta.content === "string") {
       return delta.content;
     }
   }
@@ -123,7 +123,7 @@ function extractContent(data: unknown): string | null {
  */
 export function streamFromAsyncIterable<T>(
   iterable: AsyncIterable<T>,
-  transform: (item: T) => Uint8Array | null
+  transform: (item: T) => Uint8Array | null,
 ): ReadableStream<Uint8Array> {
   return new ReadableStream<Uint8Array>({
     async start(controller) {
@@ -145,14 +145,11 @@ export function streamFromAsyncIterable<T>(
 /**
  * Create a ReadableStream from a fetch Response with SSE parsing
  */
-export function createStreamFromSSEResponse(
-  response: Response,
-  provider: LLMProviderType
-): ReadableStream<Uint8Array> {
+export function createStreamFromSSEResponse(response: Response, provider: LLMProviderType): ReadableStream<Uint8Array> {
   const body = response.body;
 
   if (!body) {
-    throw new LLMStreamError('Response body is empty', provider);
+    throw new LLMStreamError("Response body is empty", provider);
   }
 
   return body.pipeThrough(createSSEParser());
@@ -161,9 +158,7 @@ export function createStreamFromSSEResponse(
 /**
  * Merge multiple streams into one (useful for multi-part responses)
  */
-export function mergeStreams(
-  streams: ReadableStream<Uint8Array>[]
-): ReadableStream<Uint8Array> {
+export function mergeStreams(streams: ReadableStream<Uint8Array>[]): ReadableStream<Uint8Array> {
   return new ReadableStream<Uint8Array>({
     async start(controller) {
       for (const stream of streams) {

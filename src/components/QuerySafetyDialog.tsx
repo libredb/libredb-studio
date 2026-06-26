@@ -1,11 +1,11 @@
 "use client";
 
-import React, { useState, useEffect } from 'react';
-import { ShieldAlert, ShieldCheck, AlertTriangle, Loader2, Play, X } from 'lucide-react';
-import { cn } from '@/lib/utils';
+import React, { useState, useEffect } from "react";
+import { ShieldAlert, ShieldCheck, AlertTriangle, Loader2, Play, X } from "lucide-react";
+import { cn } from "@/lib/utils";
 
 interface SafetyAnalysis {
-  riskLevel: 'safe' | 'low' | 'medium' | 'high' | 'critical';
+  riskLevel: "safe" | "low" | "medium" | "high" | "critical";
   summary: string;
   warnings: {
     type: string;
@@ -43,11 +43,41 @@ function parseSafetyResponse(text: string): SafetyAnalysis | null {
 }
 
 const RISK_CONFIG = {
-  safe: { color: 'text-emerald-400', bg: 'bg-emerald-500/10', border: 'border-emerald-500/20', icon: ShieldCheck, label: 'Safe' },
-  low: { color: 'text-blue-400', bg: 'bg-blue-500/10', border: 'border-blue-500/20', icon: ShieldCheck, label: 'Low Risk' },
-  medium: { color: 'text-amber-400', bg: 'bg-amber-500/10', border: 'border-amber-500/20', icon: AlertTriangle, label: 'Medium Risk' },
-  high: { color: 'text-orange-400', bg: 'bg-orange-500/10', border: 'border-orange-500/20', icon: ShieldAlert, label: 'High Risk' },
-  critical: { color: 'text-red-400', bg: 'bg-red-500/10', border: 'border-red-500/20', icon: ShieldAlert, label: 'Critical Risk' },
+  safe: {
+    color: "text-emerald-400",
+    bg: "bg-emerald-500/10",
+    border: "border-emerald-500/20",
+    icon: ShieldCheck,
+    label: "Safe",
+  },
+  low: {
+    color: "text-blue-400",
+    bg: "bg-blue-500/10",
+    border: "border-blue-500/20",
+    icon: ShieldCheck,
+    label: "Low Risk",
+  },
+  medium: {
+    color: "text-amber-400",
+    bg: "bg-amber-500/10",
+    border: "border-amber-500/20",
+    icon: AlertTriangle,
+    label: "Medium Risk",
+  },
+  high: {
+    color: "text-orange-400",
+    bg: "bg-orange-500/10",
+    border: "border-orange-500/20",
+    icon: ShieldAlert,
+    label: "High Risk",
+  },
+  critical: {
+    color: "text-red-400",
+    bg: "bg-red-500/10",
+    border: "border-red-500/20",
+    icon: ShieldAlert,
+    label: "Critical Risk",
+  },
 };
 
 export function QuerySafetyDialog({
@@ -61,7 +91,7 @@ export function QuerySafetyDialog({
 }: QuerySafetyDialogProps) {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysis, setAnalysis] = useState<SafetyAnalysis | null>(null);
-  const [rawResponse, setRawResponse] = useState('');
+  const [rawResponse, setRawResponse] = useState("");
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -70,10 +100,10 @@ export function QuerySafetyDialog({
     }
     return () => {
       setAnalysis(null);
-      setRawResponse('');
+      setRawResponse("");
       setError(null);
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, query]);
 
   const analyzeQuery = async () => {
@@ -81,14 +111,21 @@ export function QuerySafetyDialog({
     setError(null);
 
     try {
-      let filteredSchema = '';
+      let filteredSchema = "";
       if (schemaContext) {
         try {
           const tables = JSON.parse(schemaContext);
-          filteredSchema = tables.slice(0, 30).map((t: { name: string; rowCount?: number; columns?: { name: string; type: string }[] }) => {
-            const cols = t.columns?.slice(0, 8).map(c => `${c.name} (${c.type})`).join(', ') || '';
-            return `${t.name} (${t.rowCount || 0} rows): ${cols}`;
-          }).join('\n');
+          filteredSchema = tables
+            .slice(0, 30)
+            .map((t: { name: string; rowCount?: number; columns?: { name: string; type: string }[] }) => {
+              const cols =
+                t.columns
+                  ?.slice(0, 8)
+                  .map((c) => `${c.name} (${c.type})`)
+                  .join(", ") || "";
+              return `${t.name} (${t.rowCount || 0} rows): ${cols}`;
+            })
+            .join("\n");
         } catch {
           filteredSchema = schemaContext.substring(0, 2000);
         }
@@ -100,21 +137,21 @@ export function QuerySafetyDialog({
         setAnalysis(result);
       } else {
         // Default: existing fetch behavior
-        const response = await fetch('/api/ai/query-safety', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+        const response = await fetch("/api/ai/query-safety", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ query, schemaContext: filteredSchema, databaseType }),
         });
 
         if (!response.ok) {
           const errData = await response.json();
-          throw new Error(errData.error || 'Analysis failed');
+          throw new Error(errData.error || "Analysis failed");
         }
 
         const reader = response.body?.getReader();
-        if (!reader) throw new Error('No reader');
+        if (!reader) throw new Error("No reader");
 
-        let fullResponse = '';
+        let fullResponse = "";
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
@@ -128,7 +165,7 @@ export function QuerySafetyDialog({
         }
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unknown error');
+      setError(err instanceof Error ? err.message : "Unknown error");
     } finally {
       setIsAnalyzing(false);
     }
@@ -156,7 +193,7 @@ export function QuerySafetyDialog({
         {/* Query Preview */}
         <div className="px-5 py-3 bg-[#0a0a0a] border-b border-white/5">
           <pre className="text-xs font-mono text-zinc-400 whitespace-pre-wrap max-h-24 overflow-auto">
-            {query.length > 300 ? query.substring(0, 300) + '...' : query}
+            {query.length > 300 ? query.substring(0, 300) + "..." : query}
           </pre>
         </div>
 
@@ -170,9 +207,7 @@ export function QuerySafetyDialog({
           )}
 
           {error && (
-            <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-3 text-xs text-red-400">
-              {error}
-            </div>
+            <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-3 text-xs text-red-400">{error}</div>
           )}
 
           {analysis && risk && (
@@ -190,12 +225,17 @@ export function QuerySafetyDialog({
               {analysis.warnings?.length > 0 && (
                 <div className="space-y-2">
                   {analysis.warnings.map((w, i) => (
-                    <div key={i} className={cn(
-                      "px-3 py-2 rounded-lg border text-xs",
-                      w.severity === 'critical' ? 'bg-red-500/5 border-red-500/20' :
-                      w.severity === 'warning' ? 'bg-amber-500/5 border-amber-500/20' :
-                      'bg-blue-500/5 border-blue-500/20'
-                    )}>
+                    <div
+                      key={i}
+                      className={cn(
+                        "px-3 py-2 rounded-lg border text-xs",
+                        w.severity === "critical"
+                          ? "bg-red-500/5 border-red-500/20"
+                          : w.severity === "warning"
+                            ? "bg-amber-500/5 border-amber-500/20"
+                            : "bg-blue-500/5 border-blue-500/20",
+                      )}
+                    >
                       <p className="font-medium text-zinc-300">{w.message}</p>
                       <p className="text-zinc-500 mt-0.5">{w.detail}</p>
                     </div>
@@ -204,7 +244,7 @@ export function QuerySafetyDialog({
               )}
 
               {/* Affected Rows */}
-              {analysis.affectedRows && analysis.affectedRows !== 'none' && (
+              {analysis.affectedRows && analysis.affectedRows !== "none" && (
                 <div className="text-xs">
                   <span className="text-zinc-500">Affected rows: </span>
                   <span className="text-zinc-300 font-mono">{analysis.affectedRows}</span>
@@ -212,7 +252,7 @@ export function QuerySafetyDialog({
               )}
 
               {/* Cascade */}
-              {analysis.cascadeEffects && analysis.cascadeEffects !== 'none' && (
+              {analysis.cascadeEffects && analysis.cascadeEffects !== "none" && (
                 <div className="text-xs">
                   <span className="text-zinc-500">Cascade effects: </span>
                   <span className="text-zinc-300">{analysis.cascadeEffects}</span>
@@ -248,16 +288,18 @@ export function QuerySafetyDialog({
             disabled={isAnalyzing}
             className={cn(
               "px-4 py-2 rounded-lg text-white text-xs font-medium transition-colors flex items-center gap-1.5",
-              analysis?.riskLevel === 'critical' || analysis?.riskLevel === 'high'
+              analysis?.riskLevel === "critical" || analysis?.riskLevel === "high"
                 ? "bg-red-600 hover:bg-red-500"
                 : "bg-blue-600 hover:bg-blue-500",
-              isAnalyzing && "opacity-50 cursor-not-allowed"
+              isAnalyzing && "opacity-50 cursor-not-allowed",
             )}
           >
             <Play strokeWidth={1.5} className="w-3 h-3 fill-current" />
-            {analysis?.riskLevel === 'critical' ? 'Execute Anyway' :
-             analysis?.riskLevel === 'high' ? 'Proceed with Caution' :
-             'Execute Query'}
+            {analysis?.riskLevel === "critical"
+              ? "Execute Anyway"
+              : analysis?.riskLevel === "high"
+                ? "Proceed with Caution"
+                : "Execute Query"}
           </button>
         </div>
       </div>
@@ -286,5 +328,5 @@ export function isDangerousQuery(query: string): boolean {
   if (/^\s*DELETE\b/i.test(normalized) && !/\bWHERE\b/.test(normalized)) return true;
   if (/\bUPDATE\b[\s\S]*?\bSET\b/i.test(normalized) && !/\bWHERE\b/.test(normalized)) return true;
 
-  return patterns.some(p => p.test(query));
+  return patterns.some((p) => p.test(query));
 }

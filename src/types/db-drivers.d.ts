@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-declare module 'mssql' {
+declare module "mssql" {
   const mssql: any;
   namespace mssql {
     type ConnectionPool = any;
@@ -12,7 +12,7 @@ declare module 'mssql' {
   export = mssql;
 }
 
-declare module 'oracledb' {
+declare module "oracledb" {
   const oracledb: any;
   namespace oracledb {
     type Pool = any;

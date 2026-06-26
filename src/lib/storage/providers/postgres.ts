@@ -3,31 +3,28 @@
  * Uses the existing `pg` package (already a project dependency).
  */
 
-import type { ServerStorageProvider, StorageCollection, StorageData } from '../types';
-import { STORAGE_COLLECTIONS } from '../types';
-import { logger } from '@/lib/logger';
+import type { ServerStorageProvider, StorageCollection, StorageData } from "../types";
+import { STORAGE_COLLECTIONS } from "../types";
+import { logger } from "@/lib/logger";
 
-let Pool: typeof import('pg').Pool;
+let Pool: typeof import("pg").Pool;
 
 export class PostgresStorageProvider implements ServerStorageProvider {
-  private pool: InstanceType<typeof import('pg').Pool> | null = null;
+  private pool: InstanceType<typeof import("pg").Pool> | null = null;
   private connectionString: string;
 
   constructor(connectionString?: string) {
-    this.connectionString =
-      connectionString || process.env.STORAGE_POSTGRES_URL || '';
+    this.connectionString = connectionString || process.env.STORAGE_POSTGRES_URL || "";
   }
 
   async initialize(): Promise<void> {
     if (!this.connectionString) {
-      throw new Error(
-        'STORAGE_POSTGRES_URL is required when STORAGE_PROVIDER=postgres'
-      );
+      throw new Error("STORAGE_POSTGRES_URL is required when STORAGE_PROVIDER=postgres");
     }
 
     // Dynamic import to avoid requiring pg when not needed
     if (!Pool) {
-      const pg = await import('pg');
+      const pg = await import("pg");
       Pool = pg.Pool;
     }
 
@@ -50,67 +47,55 @@ export class PostgresStorageProvider implements ServerStorageProvider {
         )
       `);
     } catch (error) {
-      if (error instanceof Error && error.message.includes('does not support SSL')) {
+      if (error instanceof Error && error.message.includes("does not support SSL")) {
         throw new Error(
-          'PostgreSQL storage connection failed: server does not support SSL. Add ?sslmode=disable to STORAGE_POSTGRES_URL for local PostgreSQL.',
-          { cause: error }
+          "PostgreSQL storage connection failed: server does not support SSL. Add ?sslmode=disable to STORAGE_POSTGRES_URL for local PostgreSQL.",
+          { cause: error },
         );
       }
-      logger.error('PostgreSQL storage initialization failed', error, { provider: 'postgres' });
+      logger.error("PostgreSQL storage initialization failed", error, { provider: "postgres" });
       throw error;
     }
   }
 
   async getAllData(userId: string): Promise<Partial<StorageData>> {
     this.ensurePool();
-    const { rows } = await this.pool!.query(
-      'SELECT collection, data FROM user_storage WHERE user_id = $1',
-      [userId]
-    );
+    const { rows } = await this.pool!.query("SELECT collection, data FROM user_storage WHERE user_id = $1", [userId]);
 
     const result: Partial<StorageData> = {};
     for (const row of rows) {
       try {
-        (result as Record<string, unknown>)[row.collection] = JSON.parse(
-          row.data
-        );
+        (result as Record<string, unknown>)[row.collection] = JSON.parse(row.data);
       } catch {
-        logger.warn('Skipping corrupted storage data', { provider: 'postgres', collection: row.collection });
+        logger.warn("Skipping corrupted storage data", { provider: "postgres", collection: row.collection });
       }
     }
     return result;
   }
 
-  async getCollection<K extends StorageCollection>(
-    userId: string,
-    collection: K
-  ): Promise<StorageData[K] | null> {
+  async getCollection<K extends StorageCollection>(userId: string, collection: K): Promise<StorageData[K] | null> {
     this.ensurePool();
-    const { rows } = await this.pool!.query(
-      'SELECT data FROM user_storage WHERE user_id = $1 AND collection = $2',
-      [userId, collection]
-    );
+    const { rows } = await this.pool!.query("SELECT data FROM user_storage WHERE user_id = $1 AND collection = $2", [
+      userId,
+      collection,
+    ]);
     if (rows.length === 0) return null;
     try {
       return JSON.parse(rows[0].data) as StorageData[K];
     } catch {
-      logger.warn('Corrupted data in storage collection', { provider: 'postgres', collection });
+      logger.warn("Corrupted data in storage collection", { provider: "postgres", collection });
       return null;
     }
   }
 
-  async setCollection<K extends StorageCollection>(
-    userId: string,
-    collection: K,
-    data: StorageData[K]
-  ): Promise<void> {
+  async setCollection<K extends StorageCollection>(userId: string, collection: K, data: StorageData[K]): Promise<void> {
     this.ensurePool();
     await this.pool!.query(
       `INSERT INTO user_storage (user_id, collection, data, updated_at)
        VALUES ($1, $2, $3, NOW())
        ON CONFLICT (user_id, collection)
        DO UPDATE SET data = EXCLUDED.data, updated_at = NOW()`,
-      [userId, collection, JSON.stringify(data)]
+      [userId, collection, JSON.stringify(data)],
     );
   }
 
@@ -118,7 +103,7 @@ export class PostgresStorageProvider implements ServerStorageProvider {
     this.ensurePool();
     const client = await this.pool!.connect();
     try {
-      await client.query('BEGIN');
+      await client.query("BEGIN");
       for (const collection of STORAGE_COLLECTIONS) {
         const collectionData = (data as Record<string, unknown>)[collection];
         if (collectionData !== undefined) {
@@ -127,13 +112,13 @@ export class PostgresStorageProvider implements ServerStorageProvider {
              VALUES ($1, $2, $3, NOW())
              ON CONFLICT (user_id, collection)
              DO UPDATE SET data = EXCLUDED.data, updated_at = NOW()`,
-            [userId, collection, JSON.stringify(collectionData)]
+            [userId, collection, JSON.stringify(collectionData)],
           );
         }
       }
-      await client.query('COMMIT');
+      await client.query("COMMIT");
     } catch (err) {
-      await client.query('ROLLBACK');
+      await client.query("ROLLBACK");
       throw err;
     } finally {
       client.release();
@@ -143,7 +128,7 @@ export class PostgresStorageProvider implements ServerStorageProvider {
   async isHealthy(): Promise<boolean> {
     try {
       this.ensurePool();
-      const { rows } = await this.pool!.query('SELECT 1 as ok');
+      const { rows } = await this.pool!.query("SELECT 1 as ok");
       return rows[0]?.ok === 1;
     } catch {
       return false;
@@ -159,31 +144,24 @@ export class PostgresStorageProvider implements ServerStorageProvider {
 
   private ensurePool(): void {
     if (!this.pool) {
-      throw new Error(
-        'PostgreSQL storage not initialized. Call initialize() first.'
-      );
+      throw new Error("PostgreSQL storage not initialized. Call initialize() first.");
     }
   }
 
   private buildSSLConfig(): boolean | { rejectUnauthorized: boolean } {
     const { host, searchParams } = this.parseConnectionString(this.connectionString);
 
-    const sslMode = searchParams.get('sslmode')?.toLowerCase();
-    if (sslMode === 'disable') return false;
-    if (
-      sslMode === 'require' ||
-      sslMode === 'prefer' ||
-      sslMode === 'verify-ca' ||
-      sslMode === 'verify-full'
-    ) {
+    const sslMode = searchParams.get("sslmode")?.toLowerCase();
+    if (sslMode === "disable") return false;
+    if (sslMode === "require" || sslMode === "prefer" || sslMode === "verify-ca" || sslMode === "verify-full") {
       return { rejectUnauthorized: false };
     }
 
-    const sslParam = searchParams.get('ssl')?.toLowerCase();
-    if (sslParam === 'false' || sslParam === '0' || sslParam === 'no') {
+    const sslParam = searchParams.get("ssl")?.toLowerCase();
+    if (sslParam === "false" || sslParam === "0" || sslParam === "no") {
       return false;
     }
-    if (sslParam === 'true' || sslParam === '1' || sslParam === 'yes') {
+    if (sslParam === "true" || sslParam === "1" || sslParam === "yes") {
       return { rejectUnauthorized: false };
     }
 
@@ -203,7 +181,7 @@ export class PostgresStorageProvider implements ServerStorageProvider {
       };
     } catch {
       return {
-        host: '',
+        host: "",
         searchParams: new URLSearchParams(),
       };
     }
@@ -211,15 +189,15 @@ export class PostgresStorageProvider implements ServerStorageProvider {
 
   private isLocalHost(host: string): boolean {
     const localHosts = new Set([
-      'localhost',
-      '::1',
-      'host.docker.internal',
-      'docker.for.mac.localhost',
-      'docker.for.win.localhost',
-      'gateway.docker.internal',
+      "localhost",
+      "::1",
+      "host.docker.internal",
+      "docker.for.mac.localhost",
+      "docker.for.win.localhost",
+      "gateway.docker.internal",
     ]);
     if (localHosts.has(host)) return true;
-    if (host.startsWith('127.')) return true;
+    if (host.startsWith("127.")) return true;
     return false;
   }
 }

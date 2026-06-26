@@ -1,9 +1,9 @@
-import { NextRequest } from 'next/server';
-import { createLLMProvider } from '@/lib/llm';
-import { createErrorResponse } from '@/lib/api/errors';
+import { NextRequest } from "next/server";
+import { createLLMProvider } from "@/lib/llm";
+import { createErrorResponse } from "@/lib/api/errors";
 
 function buildAutopilotPrompt(databaseType: string): string {
-  return `You are a Database Performance Autopilot for ${databaseType || 'PostgreSQL'}. You combine slow query analysis, execution plans, table statistics, and index usage into a comprehensive optimization report.
+  return `You are a Database Performance Autopilot for ${databaseType || "PostgreSQL"}. You combine slow query analysis, execution plans, table statistics, and index usage into a comprehensive optimization report.
 
 OUTPUT FORMAT (markdown):
 
@@ -45,15 +45,8 @@ GUIDELINES:
 
 export async function POST(req: NextRequest) {
   try {
-    const {
-      slowQueries,
-      indexStats,
-      tableStats,
-      performanceMetrics,
-      overview,
-      schemaContext,
-      databaseType
-    } = await req.json();
+    const { slowQueries, indexStats, tableStats, performanceMetrics, overview, schemaContext, databaseType } =
+      await req.json();
 
     const provider = await createLLMProvider();
     const systemPrompt = buildAutopilotPrompt(databaseType);
@@ -61,45 +54,45 @@ export async function POST(req: NextRequest) {
     const parts: string[] = [];
 
     if (overview) {
-      parts.push('## Database Overview\n' + JSON.stringify(overview, null, 2));
+      parts.push("## Database Overview\n" + JSON.stringify(overview, null, 2));
     }
 
     if (performanceMetrics) {
-      parts.push('## Performance Metrics\n' + JSON.stringify(performanceMetrics, null, 2));
+      parts.push("## Performance Metrics\n" + JSON.stringify(performanceMetrics, null, 2));
     }
 
     if (slowQueries?.length) {
-      parts.push('## Slow Queries (Top 20)\n' + JSON.stringify(slowQueries.slice(0, 20), null, 2));
+      parts.push("## Slow Queries (Top 20)\n" + JSON.stringify(slowQueries.slice(0, 20), null, 2));
     }
 
     if (indexStats?.length) {
-      parts.push('## Index Statistics\n' + JSON.stringify(indexStats.slice(0, 50), null, 2));
+      parts.push("## Index Statistics\n" + JSON.stringify(indexStats.slice(0, 50), null, 2));
     }
 
     if (tableStats?.length) {
-      parts.push('## Table Statistics\n' + JSON.stringify(tableStats.slice(0, 30), null, 2));
+      parts.push("## Table Statistics\n" + JSON.stringify(tableStats.slice(0, 30), null, 2));
     }
 
     if (schemaContext) {
-      parts.push('## Schema\n' + schemaContext.substring(0, 3000));
+      parts.push("## Schema\n" + schemaContext.substring(0, 3000));
     }
 
-    const userMessage = `Analyze the following database metrics and provide a comprehensive performance optimization report:\n\n${parts.join('\n\n')}`;
+    const userMessage = `Analyze the following database metrics and provide a comprehensive performance optimization report:\n\n${parts.join("\n\n")}`;
 
     const stream = await provider.stream({
       messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userMessage },
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userMessage },
       ],
     });
 
     return new Response(stream, {
       headers: {
-        'Content-Type': 'text/plain; charset=utf-8',
-        'Transfer-Encoding': 'chunked',
+        "Content-Type": "text/plain; charset=utf-8",
+        "Transfer-Encoding": "chunked",
       },
     });
   } catch (error) {
-    return createErrorResponse(error, { route: 'api/ai/autopilot' });
+    return createErrorResponse(error, { route: "api/ai/autopilot" });
   }
 }

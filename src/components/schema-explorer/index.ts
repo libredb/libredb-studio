@@ -1,1 +1,1 @@
-export { SchemaExplorer } from './SchemaExplorer';
+export { SchemaExplorer } from "./SchemaExplorer";

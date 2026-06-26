@@ -1,27 +1,25 @@
-import { z } from 'zod';
-import type { DatabaseConnection } from '@/lib/types';
+import { z } from "zod";
+import type { DatabaseConnection } from "@/lib/types";
 
 // SSLMode matches src/lib/types.ts line 21 — NO 'prefer'
-const SSLModeSchema = z.enum(['disable', 'require', 'verify-ca', 'verify-full']);
+const SSLModeSchema = z.enum(["disable", "require", "verify-ca", "verify-full"]);
 
-const SSLConfigSchema = z.object({
-  mode: SSLModeSchema.optional(),
-  rejectUnauthorized: z.boolean().optional(),
-  caCert: z.string().optional(),
-  clientCert: z.string().optional(),
-  clientKey: z.string().optional(),
-}).optional();
+const SSLConfigSchema = z
+  .object({
+    mode: SSLModeSchema.optional(),
+    rejectUnauthorized: z.boolean().optional(),
+    caCert: z.string().optional(),
+    clientCert: z.string().optional(),
+    clientKey: z.string().optional(),
+  })
+  .optional();
 
-const ConnectionEnvironmentSchema = z.enum([
-  'production', 'staging', 'development', 'local', 'other',
-]);
+const ConnectionEnvironmentSchema = z.enum(["production", "staging", "development", "local", "other"]);
 
 // Allowed roles in current iteration (matches JWT role: 'admin' | 'user' + wildcard)
-const AllowedRoleSchema = z.enum(['*', 'admin', 'user']);
+const AllowedRoleSchema = z.enum(["*", "admin", "user"]);
 
-const SeedDatabaseType = z.enum([
-  'postgres', 'mysql', 'sqlite', 'mongodb', 'redis', 'oracle', 'mssql', 'libredb',
-]);
+const SeedDatabaseType = z.enum(["postgres", "mysql", "sqlite", "mongodb", "redis", "oracle", "mssql", "libredb"]);
 
 export const SeedDefaultsSchema = z.object({
   managed: z.boolean().optional(),
@@ -30,7 +28,11 @@ export const SeedDefaultsSchema = z.object({
 });
 
 export const SeedConnectionSchema = z.object({
-  id: z.string().min(1).max(64).regex(/^[a-z0-9-]+$/, 'ID must be lowercase alphanumeric with hyphens'),
+  id: z
+    .string()
+    .min(1)
+    .max(64)
+    .regex(/^[a-z0-9-]+$/, "ID must be lowercase alphanumeric with hyphens"),
   name: z.string().min(1).max(128),
   type: SeedDatabaseType,
   host: z.string().optional(),
@@ -41,22 +43,26 @@ export const SeedConnectionSchema = z.object({
   connectionString: z.string().optional(),
   environment: ConnectionEnvironmentSchema.optional(),
   group: z.string().max(64).optional(),
-  color: z.string().regex(/^#[0-9A-Fa-f]{6}$/).optional(),
-  roles: z.array(AllowedRoleSchema).min(1, 'At least one role is required'),
+  color: z
+    .string()
+    .regex(/^#[0-9A-Fa-f]{6}$/)
+    .optional(),
+  roles: z.array(AllowedRoleSchema).min(1, "At least one role is required"),
   managed: z.boolean().optional(),
   ssl: SSLConfigSchema,
   serviceName: z.string().optional(),
   instanceName: z.string().optional(),
 });
 
-export const SeedConfigSchema = z.object({
-  version: z.literal('1'),
-  defaults: SeedDefaultsSchema.optional(),
-  connections: z.array(SeedConnectionSchema).min(1, 'At least one connection is required'),
-}).refine(
-  (cfg) => new Set(cfg.connections.map((c) => c.id)).size === cfg.connections.length,
-  { message: 'Connection IDs must be unique' },
-);
+export const SeedConfigSchema = z
+  .object({
+    version: z.literal("1"),
+    defaults: SeedDefaultsSchema.optional(),
+    connections: z.array(SeedConnectionSchema).min(1, "At least one connection is required"),
+  })
+  .refine((cfg) => new Set(cfg.connections.map((c) => c.id)).size === cfg.connections.length, {
+    message: "Connection IDs must be unique",
+  });
 
 export type SeedConnection = z.infer<typeof SeedConnectionSchema>;
 export type SeedDefaults = z.infer<typeof SeedDefaultsSchema>;

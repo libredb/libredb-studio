@@ -1,14 +1,14 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { createLLMProvider } from '@/lib/llm';
-import { createErrorResponse } from '@/lib/api/errors';
+import { NextRequest, NextResponse } from "next/server";
+import { createLLMProvider } from "@/lib/llm";
+import { createErrorResponse } from "@/lib/api/errors";
 
 function buildExplainSystemPrompt(databaseType: string, schemaContext: string): string {
-  return `You are an Expert Database Performance Analyst specializing in query optimization for ${databaseType || 'PostgreSQL'}.
+  return `You are an Expert Database Performance Analyst specializing in query optimization for ${databaseType || "PostgreSQL"}.
 
 ROLE: Analyze EXPLAIN plans and provide actionable, plain-language explanations.
 
 SCHEMA CONTEXT:
-${schemaContext || 'No schema context available.'}
+${schemaContext || "No schema context available."}
 
 OUTPUT FORMAT (always follow this structure):
 
@@ -44,10 +44,7 @@ export async function POST(req: NextRequest) {
     const { query, explainPlan, schemaContext, databaseType } = await req.json();
 
     if (!query) {
-      return NextResponse.json(
-        { error: 'Query is required' },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Query is required" }, { status: 400 });
     }
 
     const provider = await createLLMProvider();
@@ -69,18 +66,18 @@ Provide a plain-language explanation, identify performance issues, give specific
 
     const stream = await provider.stream({
       messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userMessage },
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userMessage },
       ],
     });
 
     return new Response(stream, {
       headers: {
-        'Content-Type': 'text/plain; charset=utf-8',
-        'Transfer-Encoding': 'chunked',
+        "Content-Type": "text/plain; charset=utf-8",
+        "Transfer-Encoding": "chunked",
       },
     });
   } catch (error) {
-    return createErrorResponse(error, { route: 'api/ai/explain' });
+    return createErrorResponse(error, { route: "api/ai/explain" });
   }
 }

@@ -1,10 +1,10 @@
-import React from 'react';
-import { DatabaseConnection, ENVIRONMENT_LABELS } from '@/lib/types';
-import { Lock, Trash2, Pencil } from 'lucide-react';
-import { getDBIcon } from '@/lib/db-ui-config';
-import { Button } from '@/components/ui/button';
-import { cn } from '@/lib/utils';
-import { motion } from 'framer-motion';
+import React from "react";
+import { DatabaseConnection, ENVIRONMENT_LABELS } from "@/lib/types";
+import { Lock, Trash2, Pencil } from "lucide-react";
+import { getDBIcon } from "@/lib/db-ui-config";
+import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
+import { motion } from "framer-motion";
 
 interface ConnectionItemProps {
   connection: DatabaseConnection;
@@ -25,10 +25,8 @@ export const ConnectionItem = React.memo(function ConnectionItem({
     <motion.div
       initial={false}
       className={cn(
-        'group flex items-center gap-2.5 px-3 py-2 rounded-lg cursor-pointer transition-all duration-200 text-xs relative overflow-hidden',
-        isActive
-          ? 'bg-blue-600/10 text-blue-400'
-          : 'hover:bg-accent/50 text-muted-foreground hover:text-foreground'
+        "group flex items-center gap-2.5 px-3 py-2 rounded-lg cursor-pointer transition-all duration-200 text-xs relative overflow-hidden",
+        isActive ? "bg-blue-600/10 text-blue-400" : "hover:bg-accent/50 text-muted-foreground hover:text-foreground",
       )}
       onClick={() => onSelect(conn)}
     >
@@ -36,26 +34,23 @@ export const ConnectionItem = React.memo(function ConnectionItem({
         <motion.div
           layoutId="active-indicator"
           className="absolute left-0 w-1 h-4 rounded-r-full"
-          style={{ backgroundColor: conn.color || '#3b82f6' }}
+          style={{ backgroundColor: conn.color || "#3b82f6" }}
         />
       )}
       <div
-        className={cn(
-          'p-1 rounded transition-colors',
-          isActive ? 'bg-blue-500/20' : 'bg-muted group-hover:bg-accent'
-        )}
+        className={cn("p-1 rounded transition-colors", isActive ? "bg-blue-500/20" : "bg-muted group-hover:bg-accent")}
       >
-        {React.createElement(getDBIcon(conn.type), { className: 'w-3 h-3' })}
+        {React.createElement(getDBIcon(conn.type), { className: "w-3 h-3" })}
       </div>
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-1.5">
           <span className="truncate block font-medium text-xs">{conn.name}</span>
-          {conn.environment && conn.environment !== 'other' && (
+          {conn.environment && conn.environment !== "other" && (
             <span
               className="text-[0.5rem] font-medium px-1.5 py-0.5 rounded-sm shrink-0"
               style={{
-                color: conn.color || '#6b7280',
-                backgroundColor: `${conn.color || '#6b7280'}15`,
+                color: conn.color || "#6b7280",
+                backgroundColor: `${conn.color || "#6b7280"}15`,
               }}
             >
               {ENVIRONMENT_LABELS[conn.environment]}
@@ -64,38 +59,38 @@ export const ConnectionItem = React.memo(function ConnectionItem({
         </div>
       </div>
       <div className="flex items-center gap-0.5">
-          {conn.managed && (
-            <div
-              data-testid={`managed-lock-${conn.seedId || conn.id}`}
-              className="flex items-center justify-center text-amber-500/60"
-              title="Managed by administrator"
-            >
-              <Lock strokeWidth={1.5} className="w-3 h-3" />
-            </div>
-          )}
-          {!conn.managed && onEdit && (
-            <button
-              className="p-1 rounded opacity-0 group-hover:opacity-100 transition-opacity hover:bg-blue-500/20 hover:text-blue-400"
-              onClick={(e) => {
-                e.stopPropagation();
-                onEdit(conn);
-              }}
-            >
-              <Pencil strokeWidth={1.5} className="w-3 h-3" />
-            </button>
-          )}
-          {!conn.managed && (
-            <button
-              className="p-1 rounded opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-500/20 hover:text-red-400"
-              onClick={(e) => {
-                e.stopPropagation();
-                onDelete(conn.id);
-              }}
-            >
-              <Trash2 strokeWidth={1.5} className="w-3 h-3" />
-            </button>
-          )}
-        </div>
+        {conn.managed && (
+          <div
+            data-testid={`managed-lock-${conn.seedId || conn.id}`}
+            className="flex items-center justify-center text-amber-500/60"
+            title="Managed by administrator"
+          >
+            <Lock strokeWidth={1.5} className="w-3 h-3" />
+          </div>
+        )}
+        {!conn.managed && onEdit && (
+          <button
+            className="p-1 rounded opacity-0 group-hover:opacity-100 transition-opacity hover:bg-blue-500/20 hover:text-blue-400"
+            onClick={(e) => {
+              e.stopPropagation();
+              onEdit(conn);
+            }}
+          >
+            <Pencil strokeWidth={1.5} className="w-3 h-3" />
+          </button>
+        )}
+        {!conn.managed && (
+          <button
+            className="p-1 rounded opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-500/20 hover:text-red-400"
+            onClick={(e) => {
+              e.stopPropagation();
+              onDelete(conn.id);
+            }}
+          >
+            <Trash2 strokeWidth={1.5} className="w-3 h-3" />
+          </button>
+        )}
+      </div>
     </motion.div>
   );
 });

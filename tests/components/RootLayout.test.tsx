@@ -1,84 +1,84 @@
-import '../setup-dom';
-import { mock } from 'bun:test';
-import React from 'react';
-import ReactDOMServer from 'react-dom/server';
+import "../setup-dom";
+import { mock } from "bun:test";
+import React from "react";
+import ReactDOMServer from "react-dom/server";
 
 // Mock next/font/google
-mock.module('next/font/google', () => ({
-  Geist: () => ({ variable: 'mock-geist-sans', className: 'mock-geist-sans' }),
-  Geist_Mono: () => ({ variable: 'mock-geist-mono', className: 'mock-geist-mono' }),
+mock.module("next/font/google", () => ({
+  Geist: () => ({ variable: "mock-geist-sans", className: "mock-geist-sans" }),
+  Geist_Mono: () => ({ variable: "mock-geist-mono", className: "mock-geist-mono" }),
 }));
 
 // Mock @/components/ui/sonner directly to avoid sonner/next-themes/lucide-react chain
-mock.module('@/components/ui/sonner', () => ({
+mock.module("@/components/ui/sonner", () => ({
   Toaster: (props: Record<string, unknown>) =>
-    React.createElement('div', {
-      'data-testid': 'toaster',
-      'data-position': props.position,
-      'data-theme': props.theme,
+    React.createElement("div", {
+      "data-testid": "toaster",
+      "data-position": props.position,
+      "data-theme": props.theme,
     }),
 }));
 
 // Dynamic import so mocks are registered first
-const { default: RootLayout, metadata } = await import('@/app/layout');
+const { default: RootLayout, metadata } = await import("@/app/layout");
 
-import { afterEach, describe, expect, test } from 'bun:test';
-import { cleanup, render } from '@testing-library/react';
+import { afterEach, describe, expect, test } from "bun:test";
+import { cleanup, render } from "@testing-library/react";
 
-describe('RootLayout', () => {
-  afterEach(() => { cleanup(); });
-
-  test('exports correct metadata title', () => {
-    expect(metadata.title).toBe('LibreDB Studio | Universal Database Editor');
+describe("RootLayout", () => {
+  afterEach(() => {
+    cleanup();
   });
 
-  test('exports correct metadata description', () => {
-    expect(metadata.description).toBe(
-      'Manage PostgreSQL, MySQL, MongoDB, and Redis in one web-based interface.'
-    );
+  test("exports correct metadata title", () => {
+    expect(metadata.title).toBe("LibreDB Studio | Universal Database Editor");
   });
 
-  test('renders children', () => {
+  test("exports correct metadata description", () => {
+    expect(metadata.description).toBe("Manage PostgreSQL, MySQL, MongoDB, and Redis in one web-based interface.");
+  });
+
+  test("renders children", () => {
     const { getByText } = render(
       <RootLayout>
         <div>Test Child</div>
-      </RootLayout>
+      </RootLayout>,
     );
-    expect(getByText('Test Child')).not.toBeNull();
+    expect(getByText("Test Child")).not.toBeNull();
   });
 
-  test('renders Toaster with correct props', () => {
+  test("renders Toaster with correct props", () => {
     const { getByTestId } = render(
       <RootLayout>
         <span>content</span>
-      </RootLayout>
+      </RootLayout>,
     );
-    const toaster = getByTestId('toaster');
+    const toaster = getByTestId("toaster");
     expect(toaster).not.toBeNull();
-    expect(toaster.getAttribute('data-position')).toBe('bottom-right');
-    expect(toaster.getAttribute('data-theme')).toBe('dark');
+    expect(toaster.getAttribute("data-position")).toBe("bottom-right");
+    expect(toaster.getAttribute("data-theme")).toBe("dark");
   });
 
-  test('renders html with lang=en and body with correct classes via SSR', () => {
+  test("renders html with lang=en and body with correct classes via SSR", () => {
     const html = ReactDOMServer.renderToString(
       <RootLayout>
         <span>content</span>
-      </RootLayout>
+      </RootLayout>,
     );
     expect(html).toContain('lang="en"');
-    expect(html).toContain('mock-geist-sans');
-    expect(html).toContain('antialiased');
-    expect(html).toContain('dark');
+    expect(html).toContain("mock-geist-sans");
+    expect(html).toContain("antialiased");
+    expect(html).toContain("dark");
   });
 
-  test('renders multiple children correctly', () => {
+  test("renders multiple children correctly", () => {
     const { getByText } = render(
       <RootLayout>
         <div>First</div>
         <div>Second</div>
-      </RootLayout>
+      </RootLayout>,
     );
-    expect(getByText('First')).not.toBeNull();
-    expect(getByText('Second')).not.toBeNull();
+    expect(getByText("First")).not.toBeNull();
+    expect(getByText("Second")).not.toBeNull();
   });
 });

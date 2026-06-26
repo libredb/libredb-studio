@@ -3,15 +3,9 @@
  * Abstract class implementing common provider functionality
  */
 
-import {
-  type LLMConfig,
-  type LLMProvider,
-  type LLMProviderType,
-  type LLMStreamOptions,
-  LLMConfigError,
-} from './types';
-import { validateConfig, getSafeConfigForLogging } from './utils/config';
-import { withRetry, type RetryOptions } from './utils/retry';
+import { type LLMConfig, type LLMProvider, type LLMProviderType, type LLMStreamOptions, LLMConfigError } from "./types";
+import { validateConfig, getSafeConfigForLogging } from "./utils/config";
+import { withRetry, type RetryOptions } from "./utils/retry";
 
 // ============================================================================
 // Base Provider Class
@@ -44,11 +38,11 @@ export abstract class BaseLLMProvider implements LLMProvider {
    */
   protected async streamWithRetry(
     streamFn: () => Promise<ReadableStream<Uint8Array>>,
-    retryOptions?: RetryOptions
+    retryOptions?: RetryOptions,
   ): Promise<ReadableStream<Uint8Array>> {
     return withRetry(streamFn, {
       provider: this.name,
-      operation: 'stream',
+      operation: "stream",
       ...retryOptions,
     });
   }
@@ -64,18 +58,18 @@ export abstract class BaseLLMProvider implements LLMProvider {
    * Build system message from messages array
    */
   protected getSystemMessage(options: LLMStreamOptions): string | undefined {
-    const systemMessage = options.messages.find((m) => m.role === 'system');
+    const systemMessage = options.messages.find((m) => m.role === "system");
     return systemMessage?.content;
   }
 
   /**
    * Build user/assistant messages (excluding system)
    */
-  protected getNonSystemMessages(options: LLMStreamOptions): Array<{ role: 'user' | 'assistant'; content: string }> {
+  protected getNonSystemMessages(options: LLMStreamOptions): Array<{ role: "user" | "assistant"; content: string }> {
     return options.messages
-      .filter((m) => m.role !== 'system')
+      .filter((m) => m.role !== "system")
       .map((m) => ({
-        role: m.role as 'user' | 'assistant',
+        role: m.role as "user" | "assistant",
         content: m.content,
       }));
   }
@@ -94,10 +88,7 @@ export abstract class BaseLLMProvider implements LLMProvider {
    */
   protected ensureApiKey(): string {
     if (!this.config.apiKey) {
-      throw new LLMConfigError(
-        `API key is required for ${this.name} provider`,
-        this.name
-      );
+      throw new LLMConfigError(`API key is required for ${this.name} provider`, this.name);
     }
     return this.config.apiKey;
   }
@@ -107,10 +98,7 @@ export abstract class BaseLLMProvider implements LLMProvider {
    */
   protected ensureApiUrl(): string {
     if (!this.config.apiUrl) {
-      throw new LLMConfigError(
-        `API URL is required for ${this.name} provider`,
-        this.name
-      );
+      throw new LLMConfigError(`API URL is required for ${this.name} provider`, this.name);
     }
     return this.config.apiUrl;
   }

@@ -1,4 +1,4 @@
-import type { DatabaseConnection } from '@/lib/types';
+import type { DatabaseConnection } from "@/lib/types";
 
 /**
  * Builds the connection portion of an API request body.

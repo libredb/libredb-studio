@@ -1,23 +1,23 @@
-import '../setup-dom';
-import '../helpers/mock-sonner';
-import '../helpers/mock-navigation';
+import "../setup-dom";
+import "../helpers/mock-sonner";
+import "../helpers/mock-navigation";
 
-import { describe, test, expect, mock, beforeEach, afterEach } from 'bun:test';
-import { renderHook, waitFor } from '@testing-library/react';
-import { mockGlobalFetch, restoreGlobalFetch } from '../helpers/mock-fetch';
+import { describe, test, expect, mock, beforeEach, afterEach } from "bun:test";
+import { renderHook, waitFor } from "@testing-library/react";
+import { mockGlobalFetch, restoreGlobalFetch } from "../helpers/mock-fetch";
 
-import { useProviderMetadata } from '@/hooks/use-provider-metadata';
-import type { ProviderMetadata } from '@/hooks/use-provider-metadata';
-import type { DatabaseConnection } from '@/lib/types';
+import { useProviderMetadata } from "@/hooks/use-provider-metadata";
+import type { ProviderMetadata } from "@/hooks/use-provider-metadata";
+import type { DatabaseConnection } from "@/lib/types";
 
 function makeConnection(overrides: Partial<DatabaseConnection> = {}): DatabaseConnection {
   return {
-    id: 'conn-1',
-    name: 'Test DB',
-    type: 'postgres',
-    host: 'localhost',
+    id: "conn-1",
+    name: "Test DB",
+    type: "postgres",
+    host: "localhost",
     port: 5432,
-    database: 'testdb',
+    database: "testdb",
     createdAt: new Date(),
     ...overrides,
   };
@@ -25,39 +25,39 @@ function makeConnection(overrides: Partial<DatabaseConnection> = {}): DatabaseCo
 
 const mockMetadata: ProviderMetadata = {
   capabilities: {
-    queryLanguage: 'sql',
+    queryLanguage: "sql",
     supportsExplain: true,
     supportsExternalQueryLimiting: true,
     supportsCreateTable: true,
     supportsMaintenance: true,
     maintenanceOperations: [],
     supportsConnectionString: true,
-    schemaRefreshPattern: 'CREATE|ALTER|DROP',
+    schemaRefreshPattern: "CREATE|ALTER|DROP",
     defaultPort: 5432,
   },
   labels: {
-    entityName: 'Table',
-    entityNamePlural: 'Tables',
-    rowName: 'Row',
-    rowNamePlural: 'Rows',
-    selectAction: 'SELECT',
-    generateAction: 'Generate SELECT',
-    analyzeAction: 'Analyze',
-    vacuumAction: 'Vacuum',
-    searchPlaceholder: 'Search tables...',
-    analyzeGlobalLabel: 'Analyze All',
-    analyzeGlobalTitle: 'Analyze All Tables',
-    analyzeGlobalDesc: 'Analyze all tables in the database',
-    vacuumGlobalLabel: 'Vacuum All',
-    vacuumGlobalTitle: 'Vacuum All Tables',
-    vacuumGlobalDesc: 'Vacuum all tables in the database',
+    entityName: "Table",
+    entityNamePlural: "Tables",
+    rowName: "Row",
+    rowNamePlural: "Rows",
+    selectAction: "SELECT",
+    generateAction: "Generate SELECT",
+    analyzeAction: "Analyze",
+    vacuumAction: "Vacuum",
+    searchPlaceholder: "Search tables...",
+    analyzeGlobalLabel: "Analyze All",
+    analyzeGlobalTitle: "Analyze All Tables",
+    analyzeGlobalDesc: "Analyze all tables in the database",
+    vacuumGlobalLabel: "Vacuum All",
+    vacuumGlobalTitle: "Vacuum All Tables",
+    vacuumGlobalDesc: "Vacuum all tables in the database",
   },
 };
 
-describe('useProviderMetadata', () => {
+describe("useProviderMetadata", () => {
   beforeEach(() => {
     // Suppress console.error from the hook's catch block
-    mock.module('console', () => ({
+    mock.module("console", () => ({
       ...console,
     }));
   });
@@ -66,17 +66,17 @@ describe('useProviderMetadata', () => {
     restoreGlobalFetch();
   });
 
-  test('returns null metadata when connection is null', () => {
+  test("returns null metadata when connection is null", () => {
     const { result } = renderHook(() => useProviderMetadata(null));
 
     expect(result.current.metadata).toBeNull();
     expect(result.current.isLoading).toBe(false);
   });
 
-  test('fetches metadata on connection change', async () => {
+  test("fetches metadata on connection change", async () => {
     const connection = makeConnection();
     const fetchMock = mockGlobalFetch({
-      '/api/db/provider-meta': { ok: true, status: 200, json: mockMetadata },
+      "/api/db/provider-meta": { ok: true, status: 200, json: mockMetadata },
     });
 
     const { result } = renderHook(() => useProviderMetadata(connection));
@@ -87,13 +87,13 @@ describe('useProviderMetadata', () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, options] = fetchMock.mock.calls[0];
-    expect(url).toBe('/api/db/provider-meta');
-    expect(options?.method).toBe('POST');
+    expect(url).toBe("/api/db/provider-meta");
+    expect(options?.method).toBe("POST");
     const body = JSON.parse(options?.body as string);
-    expect(body.id).toBe('conn-1');
+    expect(body.id).toBe("conn-1");
   });
 
-  test('sets isLoading true during fetch', async () => {
+  test("sets isLoading true during fetch", async () => {
     const connection = makeConnection();
 
     // Use a delayed response to observe isLoading
@@ -112,10 +112,12 @@ describe('useProviderMetadata', () => {
     });
 
     // Now resolve the fetch
-    resolveResponse(new Response(JSON.stringify(mockMetadata), {
-      status: 200,
-      headers: { 'content-type': 'application/json' },
-    }));
+    resolveResponse(
+      new Response(JSON.stringify(mockMetadata), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
 
     // isLoading should become false after resolution
     await waitFor(() => {
@@ -123,10 +125,10 @@ describe('useProviderMetadata', () => {
     });
   });
 
-  test('sets isLoading false after fetch completes', async () => {
+  test("sets isLoading false after fetch completes", async () => {
     const connection = makeConnection();
     mockGlobalFetch({
-      '/api/db/provider-meta': { ok: true, status: 200, json: mockMetadata },
+      "/api/db/provider-meta": { ok: true, status: 200, json: mockMetadata },
     });
 
     const { result } = renderHook(() => useProviderMetadata(connection));
@@ -139,10 +141,10 @@ describe('useProviderMetadata', () => {
     expect(result.current.isLoading).toBe(false);
   });
 
-  test('sets metadata from successful response', async () => {
+  test("sets metadata from successful response", async () => {
     const connection = makeConnection();
     mockGlobalFetch({
-      '/api/db/provider-meta': { ok: true, status: 200, json: mockMetadata },
+      "/api/db/provider-meta": { ok: true, status: 200, json: mockMetadata },
     });
 
     const { result } = renderHook(() => useProviderMetadata(connection));
@@ -151,15 +153,15 @@ describe('useProviderMetadata', () => {
       expect(result.current.metadata).not.toBeNull();
     });
 
-    expect(result.current.metadata!.capabilities.queryLanguage).toBe('sql');
+    expect(result.current.metadata!.capabilities.queryLanguage).toBe("sql");
     expect(result.current.metadata!.capabilities.supportsExplain).toBe(true);
-    expect(result.current.metadata!.labels.entityName).toBe('Table');
+    expect(result.current.metadata!.labels.entityName).toBe("Table");
   });
 
-  test('sets metadata to null on fetch error', async () => {
+  test("sets metadata to null on fetch error", async () => {
     const connection = makeConnection();
     mockGlobalFetch({
-      '/api/db/provider-meta': { ok: false, status: 500, json: { error: 'Internal error' } },
+      "/api/db/provider-meta": { ok: false, status: 500, json: { error: "Internal error" } },
     });
 
     const { result } = renderHook(() => useProviderMetadata(connection));
@@ -172,16 +174,15 @@ describe('useProviderMetadata', () => {
     expect(result.current.metadata).toBeNull();
   });
 
-  test('does not refetch for same connection ID', async () => {
+  test("does not refetch for same connection ID", async () => {
     const connection = makeConnection();
     const fetchMock = mockGlobalFetch({
-      '/api/db/provider-meta': { ok: true, status: 200, json: mockMetadata },
+      "/api/db/provider-meta": { ok: true, status: 200, json: mockMetadata },
     });
 
-    const { result, rerender } = renderHook(
-      ({ conn }) => useProviderMetadata(conn),
-      { initialProps: { conn: connection } }
-    );
+    const { result, rerender } = renderHook(({ conn }) => useProviderMetadata(conn), {
+      initialProps: { conn: connection },
+    });
 
     // Wait for first fetch
     await waitFor(() => {
@@ -190,7 +191,7 @@ describe('useProviderMetadata', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
 
     // Re-render with the same connection (same id)
-    const sameConnection = makeConnection({ name: 'Different Name But Same ID' });
+    const sameConnection = makeConnection({ name: "Different Name But Same ID" });
     rerender({ conn: sameConnection });
 
     // Give it time to potentially refetch
@@ -202,16 +203,15 @@ describe('useProviderMetadata', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  test('resets metadata when connection becomes null', async () => {
+  test("resets metadata when connection becomes null", async () => {
     const connection = makeConnection();
     mockGlobalFetch({
-      '/api/db/provider-meta': { ok: true, status: 200, json: mockMetadata },
+      "/api/db/provider-meta": { ok: true, status: 200, json: mockMetadata },
     });
 
-    const { result, rerender } = renderHook(
-      ({ conn }) => useProviderMetadata(conn),
-      { initialProps: { conn: connection as DatabaseConnection | null } }
-    );
+    const { result, rerender } = renderHook(({ conn }) => useProviderMetadata(conn), {
+      initialProps: { conn: connection as DatabaseConnection | null },
+    });
 
     // Wait for metadata to load
     await waitFor(() => {

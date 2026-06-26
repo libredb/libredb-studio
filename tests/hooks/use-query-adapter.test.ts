@@ -1,38 +1,41 @@
-import '../setup-dom';
-import '../helpers/mock-sonner';
+import "../setup-dom";
+import "../helpers/mock-sonner";
 
-import { describe, test, expect, mock, beforeEach } from 'bun:test';
-import { renderHook, act } from '@testing-library/react';
+import { describe, test, expect, mock, beforeEach } from "bun:test";
+import { renderHook, act } from "@testing-library/react";
 
-import { useQueryAdapter } from '@/workspace/hooks/use-query-adapter';
-import type { DatabaseConnection, QueryTab } from '@/lib/types';
-import type { WorkspaceQueryResult, WorkspaceFeatures } from '@/workspace/types';
-import { mockToastSuccess, mockToastError } from '../helpers/mock-sonner';
+import { useQueryAdapter } from "@/workspace/hooks/use-query-adapter";
+import type { DatabaseConnection, QueryTab } from "@/lib/types";
+import type { WorkspaceQueryResult, WorkspaceFeatures } from "@/workspace/types";
+import { mockToastSuccess, mockToastError } from "../helpers/mock-sonner";
 
 // ── Test Data ───────────────────────────────────────────────────────────────
 
 const makeConnection = (overrides: Partial<DatabaseConnection> = {}): DatabaseConnection => ({
-  id: 'conn-1',
-  name: 'Test DB',
-  type: 'postgres',
+  id: "conn-1",
+  name: "Test DB",
+  type: "postgres",
   createdAt: new Date(),
   managed: true,
   ...overrides,
 });
 
 const makeTab = (overrides: Partial<QueryTab> = {}): QueryTab => ({
-  id: 'tab-1',
-  name: 'Query 1',
-  query: 'SELECT * FROM users',
+  id: "tab-1",
+  name: "Query 1",
+  query: "SELECT * FROM users",
   result: null,
   isExecuting: false,
-  type: 'sql',
+  type: "sql",
   ...overrides,
 });
 
 const makeQueryResult = (overrides: Partial<WorkspaceQueryResult> = {}): WorkspaceQueryResult => ({
-  rows: [{ id: 1, name: 'Alice' }, { id: 2, name: 'Bob' }],
-  fields: ['id', 'name'],
+  rows: [
+    { id: 1, name: "Alice" },
+    { id: 2, name: "Bob" },
+  ],
+  fields: ["id", "name"],
   rowCount: 2,
   executionTime: 42,
   pagination: {
@@ -68,7 +71,7 @@ function makeHookParams(overrides: Record<string, unknown> = {}) {
     activeConnection: makeConnection(),
     onQueryExecute,
     tabs,
-    activeTabId: 'tab-1',
+    activeTabId: "tab-1",
     currentTab: defaultTab,
     setTabs,
     fetchSchema,
@@ -80,7 +83,7 @@ function makeHookParams(overrides: Record<string, unknown> = {}) {
 // =============================================================================
 // useQueryAdapter Tests
 // =============================================================================
-describe('useQueryAdapter', () => {
+describe("useQueryAdapter", () => {
   beforeEach(() => {
     mockToastSuccess.mockClear();
     mockToastError.mockClear();
@@ -88,22 +91,22 @@ describe('useQueryAdapter', () => {
 
   // ── executeQuery calls onQueryExecute with correct connectionId and sql ────
 
-  test('executeQuery calls onQueryExecute with correct connectionId and sql', async () => {
+  test("executeQuery calls onQueryExecute with correct connectionId and sql", async () => {
     const params = makeHookParams();
 
     const { result } = renderHook(() => useQueryAdapter(params));
 
     await act(async () => {
-      await result.current.executeQuery('SELECT 1');
+      await result.current.executeQuery("SELECT 1");
     });
 
     expect(params.onQueryExecute).toHaveBeenCalledTimes(1);
-    expect(params.onQueryExecute).toHaveBeenCalledWith('conn-1', 'SELECT 1');
+    expect(params.onQueryExecute).toHaveBeenCalledWith("conn-1", "SELECT 1");
   });
 
   // ── executeQuery uses tab query when no override provided ──────────────────
 
-  test('executeQuery uses tab query when no override provided', async () => {
+  test("executeQuery uses tab query when no override provided", async () => {
     const params = makeHookParams();
 
     const { result } = renderHook(() => useQueryAdapter(params));
@@ -113,15 +116,15 @@ describe('useQueryAdapter', () => {
     });
 
     expect(params.onQueryExecute).toHaveBeenCalledTimes(1);
-    expect(params.onQueryExecute).toHaveBeenCalledWith('conn-1', 'SELECT * FROM users');
+    expect(params.onQueryExecute).toHaveBeenCalledWith("conn-1", "SELECT * FROM users");
   });
 
   // ── Returns error state when onQueryExecute throws ─────────────────────────
 
-  test('returns error state when onQueryExecute throws (tab not stuck in executing)', async () => {
+  test("returns error state when onQueryExecute throws (tab not stuck in executing)", async () => {
     const defaultTab = makeTab();
     const { tabs, setTabs } = createMutableTabs([defaultTab]);
-    const onQueryExecute = mock(() => Promise.reject(new Error('Connection refused')));
+    const onQueryExecute = mock(() => Promise.reject(new Error("Connection refused")));
 
     const params = makeHookParams({
       onQueryExecute,
@@ -133,7 +136,7 @@ describe('useQueryAdapter', () => {
     const { result } = renderHook(() => useQueryAdapter(params));
 
     await act(async () => {
-      await result.current.executeQuery('SELECT 1');
+      await result.current.executeQuery("SELECT 1");
     });
 
     // Tab should NOT be stuck in isExecuting
@@ -145,7 +148,7 @@ describe('useQueryAdapter', () => {
 
   // ── cancelQuery sets executing to false ────────────────────────────────────
 
-  test('cancelQuery sets executing to false', () => {
+  test("cancelQuery sets executing to false", () => {
     const defaultTab = makeTab({ isExecuting: true });
     const { tabs, setTabs } = createMutableTabs([defaultTab]);
 
@@ -169,17 +172,17 @@ describe('useQueryAdapter', () => {
 
   // ── bottomPanelMode defaults to 'results' ──────────────────────────────────
 
-  test('bottomPanelMode defaults to results', () => {
+  test("bottomPanelMode defaults to results", () => {
     const params = makeHookParams();
 
     const { result } = renderHook(() => useQueryAdapter(params));
 
-    expect(result.current.bottomPanelMode).toBe('results');
+    expect(result.current.bottomPanelMode).toBe("results");
   });
 
   // ── historyKey increments after successful query ───────────────────────────
 
-  test('historyKey increments after successful query', async () => {
+  test("historyKey increments after successful query", async () => {
     const params = makeHookParams();
 
     const { result } = renderHook(() => useQueryAdapter(params));
@@ -187,13 +190,13 @@ describe('useQueryAdapter', () => {
     expect(result.current.historyKey).toBe(0);
 
     await act(async () => {
-      await result.current.executeQuery('SELECT 1');
+      await result.current.executeQuery("SELECT 1");
     });
 
     expect(result.current.historyKey).toBe(1);
 
     await act(async () => {
-      await result.current.executeQuery('SELECT 2');
+      await result.current.executeQuery("SELECT 2");
     });
 
     expect(result.current.historyKey).toBe(2);
@@ -201,7 +204,7 @@ describe('useQueryAdapter', () => {
 
   // ── executeQuery toasts error when no connection ───────────────────────────
 
-  test('executeQuery toasts error when no connection', async () => {
+  test("executeQuery toasts error when no connection", async () => {
     const params = makeHookParams({
       activeConnection: null,
     });
@@ -209,7 +212,7 @@ describe('useQueryAdapter', () => {
     const { result } = renderHook(() => useQueryAdapter(params));
 
     await act(async () => {
-      await result.current.executeQuery('SELECT 1');
+      await result.current.executeQuery("SELECT 1");
     });
 
     // onQueryExecute should NOT be called
@@ -221,8 +224,8 @@ describe('useQueryAdapter', () => {
 
   // ── executeQuery toasts error when query is empty ──────────────────────────
 
-  test('executeQuery toasts error when query is empty', async () => {
-    const defaultTab = makeTab({ query: '' });
+  test("executeQuery toasts error when query is empty", async () => {
+    const defaultTab = makeTab({ query: "" });
     const params = makeHookParams({
       currentTab: defaultTab,
       tabs: [defaultTab],
@@ -240,7 +243,7 @@ describe('useQueryAdapter', () => {
 
   // ── executeQuery updates tab with result data ──────────────────────────────
 
-  test('executeQuery updates tab with result data', async () => {
+  test("executeQuery updates tab with result data", async () => {
     const defaultTab = makeTab();
     const { tabs, setTabs } = createMutableTabs([defaultTab]);
     const queryResult = makeQueryResult();
@@ -256,7 +259,7 @@ describe('useQueryAdapter', () => {
     const { result } = renderHook(() => useQueryAdapter(params));
 
     await act(async () => {
-      await result.current.executeQuery('SELECT * FROM users');
+      await result.current.executeQuery("SELECT * FROM users");
     });
 
     expect(tabs[0].result).not.toBeNull();
@@ -268,21 +271,21 @@ describe('useQueryAdapter', () => {
 
   // ── setBottomPanelMode updates correctly ───────────────────────────────────
 
-  test('setBottomPanelMode updates correctly', () => {
+  test("setBottomPanelMode updates correctly", () => {
     const params = makeHookParams();
 
     const { result } = renderHook(() => useQueryAdapter(params));
 
     act(() => {
-      result.current.setBottomPanelMode('history');
+      result.current.setBottomPanelMode("history");
     });
 
-    expect(result.current.bottomPanelMode).toBe('history');
+    expect(result.current.bottomPanelMode).toBe("history");
   });
 
   // ── safetyCheckQuery and setter work ───────────────────────────────────────
 
-  test('safetyCheckQuery defaults to null and can be set', () => {
+  test("safetyCheckQuery defaults to null and can be set", () => {
     const params = makeHookParams();
 
     const { result } = renderHook(() => useQueryAdapter(params));
@@ -290,26 +293,26 @@ describe('useQueryAdapter', () => {
     expect(result.current.safetyCheckQuery).toBeNull();
 
     act(() => {
-      result.current.setSafetyCheckQuery('DROP TABLE users');
+      result.current.setSafetyCheckQuery("DROP TABLE users");
     });
 
-    expect(result.current.safetyCheckQuery).toBe('DROP TABLE users');
+    expect(result.current.safetyCheckQuery).toBe("DROP TABLE users");
   });
 
   // ── forceExecuteQuery calls onQueryExecute bypassing safety ────────────────
 
-  test('forceExecuteQuery calls onQueryExecute for dangerous queries', async () => {
+  test("forceExecuteQuery calls onQueryExecute for dangerous queries", async () => {
     const params = makeHookParams();
 
     const { result } = renderHook(() => useQueryAdapter(params));
 
     // forceExecuteQuery should bypass safety check
     await act(async () => {
-      result.current.forceExecuteQuery('DROP TABLE users');
+      result.current.forceExecuteQuery("DROP TABLE users");
       // Allow promise chain to resolve
-      await new Promise(r => setTimeout(r, 10));
+      await new Promise((r) => setTimeout(r, 10));
     });
 
-    expect(params.onQueryExecute).toHaveBeenCalledWith('conn-1', 'DROP TABLE users');
+    expect(params.onQueryExecute).toHaveBeenCalledWith("conn-1", "DROP TABLE users");
   });
 });

@@ -1,10 +1,7 @@
-import type { SSLConfig } from '@/lib/types';
-import type { SeedConnection, SeedDefaults, ManagedConnection } from './types';
+import type { SSLConfig } from "@/lib/types";
+import type { SeedConnection, SeedDefaults, ManagedConnection } from "./types";
 
-export function mergeDefaults(
-  conn: SeedConnection,
-  defaults: SeedDefaults | undefined,
-): SeedConnection {
+export function mergeDefaults(conn: SeedConnection, defaults: SeedDefaults | undefined): SeedConnection {
   if (!defaults) return conn;
   return {
     ...conn,
@@ -15,14 +12,11 @@ export function mergeDefaults(
 }
 
 function rolesMatch(connectionRoles: string[], userRoles: string[]): boolean {
-  if (connectionRoles.includes('*')) return true;
+  if (connectionRoles.includes("*")) return true;
   return connectionRoles.some((r) => userRoles.includes(r));
 }
 
-export function filterByRoles(
-  connections: SeedConnection[],
-  userRoles: string[],
-): ManagedConnection[] {
+export function filterByRoles(connections: SeedConnection[], userRoles: string[]): ManagedConnection[] {
   return connections
     .filter((conn) => rolesMatch(conn.roles, userRoles))
     .map((conn) => ({

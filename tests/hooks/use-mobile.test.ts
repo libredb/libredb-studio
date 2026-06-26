@@ -1,9 +1,9 @@
-import '../setup-dom';
+import "../setup-dom";
 
-import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
-import { renderHook, act, waitFor } from '@testing-library/react';
+import { describe, test, expect, beforeEach, afterEach, mock } from "bun:test";
+import { renderHook, act, waitFor } from "@testing-library/react";
 
-import { useIsMobile } from '@/hooks/use-mobile';
+import { useIsMobile } from "@/hooks/use-mobile";
 
 // =============================================================================
 // matchMedia mock helpers
@@ -35,12 +35,12 @@ function createMockMatchMedia(initialMatches: boolean) {
       addListener: mock(() => {}),
       removeListener: mock(() => {}),
       addEventListener: mock((event: string, listener: (event: { matches: boolean }) => void) => {
-        if (event === 'change') {
+        if (event === "change") {
           listeners.push(listener);
         }
       }),
       removeEventListener: mock((event: string, listener: (event: { matches: boolean }) => void) => {
-        if (event === 'change') {
+        if (event === "change") {
           const index = listeners.indexOf(listener);
           if (index > -1) listeners.splice(index, 1);
         }
@@ -67,7 +67,7 @@ function createMockMatchMedia(initialMatches: boolean) {
 // =============================================================================
 // useIsMobile Tests
 // =============================================================================
-describe('useIsMobile', () => {
+describe("useIsMobile", () => {
   let originalMatchMedia: typeof window.matchMedia;
 
   beforeEach(() => {
@@ -76,21 +76,21 @@ describe('useIsMobile', () => {
 
   afterEach(() => {
     // Restore original matchMedia
-    Object.defineProperty(window, 'matchMedia', {
+    Object.defineProperty(window, "matchMedia", {
       value: originalMatchMedia,
       writable: true,
       configurable: true,
     });
-    Object.defineProperty(globalThis, 'matchMedia', {
+    Object.defineProperty(globalThis, "matchMedia", {
       value: originalMatchMedia,
       writable: true,
       configurable: true,
     });
   });
 
-  test('initially returns false when matchMedia does not match', () => {
+  test("initially returns false when matchMedia does not match", () => {
     const { mockMatchMedia } = createMockMatchMedia(false);
-    Object.defineProperty(window, 'matchMedia', {
+    Object.defineProperty(window, "matchMedia", {
       value: mockMatchMedia,
       writable: true,
       configurable: true,
@@ -102,9 +102,9 @@ describe('useIsMobile', () => {
     expect(result.current).toBe(false);
   });
 
-  test('returns true when matchMedia matches (viewport below breakpoint)', async () => {
+  test("returns true when matchMedia matches (viewport below breakpoint)", async () => {
     const { mockMatchMedia } = createMockMatchMedia(true);
-    Object.defineProperty(window, 'matchMedia', {
+    Object.defineProperty(window, "matchMedia", {
       value: mockMatchMedia,
       writable: true,
       configurable: true,
@@ -117,12 +117,12 @@ describe('useIsMobile', () => {
     });
 
     // Verify matchMedia was called with the correct query
-    expect(mockMatchMedia).toHaveBeenCalledWith('(max-width: 767px)');
+    expect(mockMatchMedia).toHaveBeenCalledWith("(max-width: 767px)");
   });
 
-  test('responds to matchMedia change events', async () => {
+  test("responds to matchMedia change events", async () => {
     const { mockMatchMedia, getMql } = createMockMatchMedia(false);
-    Object.defineProperty(window, 'matchMedia', {
+    Object.defineProperty(window, "matchMedia", {
       value: mockMatchMedia,
       writable: true,
       configurable: true,
@@ -152,9 +152,9 @@ describe('useIsMobile', () => {
     });
   });
 
-  test('cleans up event listener on unmount', () => {
+  test("cleans up event listener on unmount", () => {
     const { mockMatchMedia, getMql } = createMockMatchMedia(false);
-    Object.defineProperty(window, 'matchMedia', {
+    Object.defineProperty(window, "matchMedia", {
       value: mockMatchMedia,
       writable: true,
       configurable: true,
@@ -163,11 +163,11 @@ describe('useIsMobile', () => {
     const { unmount } = renderHook(() => useIsMobile());
 
     const mql = getMql();
-    expect(mql.addEventListener).toHaveBeenCalledWith('change', expect.any(Function));
+    expect(mql.addEventListener).toHaveBeenCalledWith("change", expect.any(Function));
 
     unmount();
 
-    expect(mql.removeEventListener).toHaveBeenCalledWith('change', expect.any(Function));
+    expect(mql.removeEventListener).toHaveBeenCalledWith("change", expect.any(Function));
 
     // Verify the same listener function was added and removed
     const addedListener = mql.addEventListener.mock.calls[0][1];

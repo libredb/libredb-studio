@@ -1,14 +1,11 @@
-'use client';
+"use client";
 
-import { useState, useEffect, useCallback, useRef } from 'react';
-import type { DatabaseConnection } from '@/lib/types';
-import { buildConnectionPayload } from './use-connection-payload';
-import type {
-  MonitoringData,
-  MonitoringOptions,
-} from '@/lib/db/types';
-import { toast } from 'sonner';
-import { TimeSeriesBuffer, type TimeSeriesPoint } from '@/lib/time-series-buffer';
+import { useState, useEffect, useCallback, useRef } from "react";
+import type { DatabaseConnection } from "@/lib/types";
+import { buildConnectionPayload } from "./use-connection-payload";
+import type { MonitoringData, MonitoringOptions } from "@/lib/db/types";
+import { toast } from "sonner";
+import { TimeSeriesBuffer, type TimeSeriesPoint } from "@/lib/time-series-buffer";
 
 interface UseMonitoringDataReturn {
   data: MonitoringData | null;
@@ -29,7 +26,7 @@ const DEFAULT_REFRESH_INTERVAL = 30000; // 30 seconds
 
 export function useMonitoringData(
   connection: DatabaseConnection | null,
-  options?: MonitoringOptions
+  options?: MonitoringOptions,
 ): UseMonitoringDataReturn {
   const [data, setData] = useState<MonitoringData | null>(null);
   const [loading, setLoading] = useState(false);
@@ -85,12 +82,12 @@ export function useMonitoringData(
     setError(null);
 
     try {
-      const res = await fetch('/api/db/monitoring', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+      const res = await fetch("/api/db/monitoring", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           ...buildConnectionPayload(currentConnection),
-          options: optionsRef.current
+          options: optionsRef.current,
         }),
         signal: abortControllerRef.current.signal,
       });
@@ -98,7 +95,7 @@ export function useMonitoringData(
       const result = await res.json();
 
       if (!res.ok) {
-        throw new Error(result.error || 'Failed to fetch monitoring data');
+        throw new Error(result.error || "Failed to fetch monitoring data");
       }
 
       // Only update state if component is still mounted
@@ -120,12 +117,12 @@ export function useMonitoringData(
       historyRef.current.push(result);
       setHistory(historyRef.current.getAll());
     } catch (err) {
-      if (err instanceof Error && err.name === 'AbortError') {
+      if (err instanceof Error && err.name === "AbortError") {
         return; // Request was cancelled, ignore
       }
       if (!isMountedRef.current) return;
 
-      const errorMessage = err instanceof Error ? err.message : 'Unknown error';
+      const errorMessage = err instanceof Error ? err.message : "Unknown error";
       setError(errorMessage);
       // Don't clear existing data on error, show stale data
     } finally {
@@ -185,73 +182,79 @@ export function useMonitoringData(
     await fetchData();
   }, [fetchData]);
 
-  const killSession = useCallback(async (pid: number | string): Promise<boolean> => {
-    const currentConnection = connectionRef.current;
-    if (!currentConnection) return false;
+  const killSession = useCallback(
+    async (pid: number | string): Promise<boolean> => {
+      const currentConnection = connectionRef.current;
+      if (!currentConnection) return false;
 
-    try {
-      const res = await fetch('/api/db/maintenance', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          type: 'kill',
-          target: String(pid),
-          ...buildConnectionPayload(currentConnection),
-        }),
-      });
+      try {
+        const res = await fetch("/api/db/maintenance", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            type: "kill",
+            target: String(pid),
+            ...buildConnectionPayload(currentConnection),
+          }),
+        });
 
-      const result = await res.json();
+        const result = await res.json();
 
-      if (!res.ok) {
-        throw new Error(result.error || 'Failed to kill session');
+        if (!res.ok) {
+          throw new Error(result.error || "Failed to kill session");
+        }
+
+        toast.success(`Session ${pid} terminated successfully`);
+
+        // Refresh data after killing session
+        await fetchData();
+
+        return true;
+      } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : "Failed to kill session";
+        toast.error(errorMessage);
+        return false;
       }
+    },
+    [fetchData],
+  );
 
-      toast.success(`Session ${pid} terminated successfully`);
+  const runMaintenance = useCallback(
+    async (type: string, target?: string): Promise<boolean> => {
+      const currentConnection = connectionRef.current;
+      if (!currentConnection) return false;
 
-      // Refresh data after killing session
-      await fetchData();
+      try {
+        const res = await fetch("/api/db/maintenance", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            type,
+            target,
+            ...buildConnectionPayload(currentConnection),
+          }),
+        });
 
-      return true;
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Failed to kill session';
-      toast.error(errorMessage);
-      return false;
-    }
-  }, [fetchData]);
+        const result = await res.json();
 
-  const runMaintenance = useCallback(async (type: string, target?: string): Promise<boolean> => {
-    const currentConnection = connectionRef.current;
-    if (!currentConnection) return false;
+        if (!res.ok) {
+          throw new Error(result.error || `Failed to run ${type}`);
+        }
 
-    try {
-      const res = await fetch('/api/db/maintenance', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          type,
-          target,
-          ...buildConnectionPayload(currentConnection),
-        }),
-      });
+        toast.success(result.message || `${type} completed successfully`);
 
-      const result = await res.json();
+        // Refresh data after maintenance
+        await fetchData();
 
-      if (!res.ok) {
-        throw new Error(result.error || `Failed to run ${type}`);
+        return true;
+      } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : `Failed to run ${type}`;
+        toast.error(errorMessage);
+        return false;
       }
-
-      toast.success(result.message || `${type} completed successfully`);
-
-      // Refresh data after maintenance
-      await fetchData();
-
-      return true;
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : `Failed to run ${type}`;
-      toast.error(errorMessage);
-      return false;
-    }
-  }, [fetchData]);
+    },
+    [fetchData],
+  );
 
   return {
     data,

@@ -1,11 +1,14 @@
-import type { DatabaseConnection } from '@/lib/types';
-import { getSeedConnectionById, getSeedConnectionByIdUnfiltered } from './index';
-import { logger } from '@/lib/logger';
+import type { DatabaseConnection } from "@/lib/types";
+import { getSeedConnectionById, getSeedConnectionByIdUnfiltered } from "./index";
+import { logger } from "@/lib/logger";
 
 export class SeedConnectionError extends Error {
-  constructor(message: string, public statusCode: number) {
+  constructor(
+    message: string,
+    public statusCode: number,
+  ) {
     super(message);
-    this.name = 'SeedConnectionError';
+    this.name = "SeedConnectionError";
   }
 }
 
@@ -20,8 +23,8 @@ export async function resolveConnection(
   }
 
   if (connectionId) {
-    if (!connectionId.startsWith('seed:')) {
-      throw new SeedConnectionError('Invalid connection ID format', 400);
+    if (!connectionId.startsWith("seed:")) {
+      throw new SeedConnectionError("Invalid connection ID format", 400);
     }
 
     const seedId = connectionId.slice(5);
@@ -30,8 +33,8 @@ export async function resolveConnection(
     if (!seedConn) {
       const exists = await getSeedConnectionByIdUnfiltered(seedId);
       if (exists) {
-        logger.warn('Seed connection access denied', {
-          route: 'seed/resolve-connection',
+        logger.warn("Seed connection access denied", {
+          route: "seed/resolve-connection",
           connectionId: seedId,
           user: session.username,
           role: session.role,
@@ -44,8 +47,8 @@ export async function resolveConnection(
       throw new SeedConnectionError(`Seed connection "${seedId}" not found`, 404);
     }
 
-    logger.debug('Resolved seed connection', {
-      route: 'seed/resolve-connection',
+    logger.debug("Resolved seed connection", {
+      route: "seed/resolve-connection",
       connectionId: seedId,
       user: session.username,
     });
@@ -53,5 +56,5 @@ export async function resolveConnection(
     return seedConn;
   }
 
-  throw new SeedConnectionError('Either connection or connectionId is required', 400);
+  throw new SeedConnectionError("Either connection or connectionId is required", 400);
 }

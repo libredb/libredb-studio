@@ -1,24 +1,27 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { getOrCreateProvider } from '@/lib/db';
-import { createErrorResponse } from '@/lib/api/errors';
-import { resolveConnection } from '@/lib/seed/resolve-connection';
-import { getSession } from '@/lib/auth';
+import { NextRequest, NextResponse } from "next/server";
+import { getOrCreateProvider } from "@/lib/db";
+import { createErrorResponse } from "@/lib/api/errors";
+import { resolveConnection } from "@/lib/seed/resolve-connection";
+import { getSession } from "@/lib/auth";
 
 interface TransactionProvider {
   beginTransaction(): Promise<void>;
   commitTransaction(): Promise<void>;
   rollbackTransaction(): Promise<void>;
   isInTransaction(): boolean;
-  queryInTransaction(sql: string, params?: unknown[]): Promise<{ rows: Record<string, unknown>[]; fields: string[]; rowCount: number; executionTime: number }>;
+  queryInTransaction(
+    sql: string,
+    params?: unknown[],
+  ): Promise<{ rows: Record<string, unknown>[]; fields: string[]; rowCount: number; executionTime: number }>;
 }
 
 function isTransactionProvider(provider: unknown): provider is TransactionProvider {
   return (
-    typeof provider === 'object' &&
+    typeof provider === "object" &&
     provider !== null &&
-    'beginTransaction' in provider &&
-    'commitTransaction' in provider &&
-    'rollbackTransaction' in provider
+    "beginTransaction" in provider &&
+    "commitTransaction" in provider &&
+    "rollbackTransaction" in provider
   );
 }
 
@@ -29,49 +32,43 @@ export async function POST(req: NextRequest) {
 
     const session = await getSession();
     if (!session) {
-      return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
+      return NextResponse.json({ error: "Authentication required" }, { status: 401 });
     }
 
     const connection = await resolveConnection(body, session);
 
     if (!action) {
-      return NextResponse.json(
-        { error: 'Connection and action are required' },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Connection and action are required" }, { status: 400 });
     }
 
     const provider = await getOrCreateProvider(connection);
 
     if (!isTransactionProvider(provider)) {
       return NextResponse.json(
-        { error: 'Transaction control is not supported for this database type' },
-        { status: 400 }
+        { error: "Transaction control is not supported for this database type" },
+        { status: 400 },
       );
     }
 
     switch (action) {
-      case 'begin': {
+      case "begin": {
         await provider.beginTransaction();
-        return NextResponse.json({ status: 'active', message: 'Transaction started' });
+        return NextResponse.json({ status: "active", message: "Transaction started" });
       }
 
-      case 'commit': {
+      case "commit": {
         await provider.commitTransaction();
-        return NextResponse.json({ status: 'committed', message: 'Transaction committed' });
+        return NextResponse.json({ status: "committed", message: "Transaction committed" });
       }
 
-      case 'rollback': {
+      case "rollback": {
         await provider.rollbackTransaction();
-        return NextResponse.json({ status: 'rolled_back', message: 'Transaction rolled back' });
+        return NextResponse.json({ status: "rolled_back", message: "Transaction rolled back" });
       }
 
-      case 'query': {
+      case "query": {
         if (!sql) {
-          return NextResponse.json(
-            { error: 'SQL query is required for transaction query' },
-            { status: 400 }
-          );
+          return NextResponse.json({ error: "SQL query is required for transaction query" }, { status: 400 });
         }
 
         // Apply limit for SELECT queries within transaction
@@ -93,7 +90,7 @@ export async function POST(req: NextRequest) {
         });
       }
 
-      case 'status': {
+      case "status": {
         return NextResponse.json({
           inTransaction: provider.isInTransaction(),
         });
@@ -102,10 +99,10 @@ export async function POST(req: NextRequest) {
       default:
         return NextResponse.json(
           { error: `Unknown transaction action: ${action}. Valid: begin, commit, rollback, query, status` },
-          { status: 400 }
+          { status: 400 },
         );
     }
   } catch (error) {
-    return createErrorResponse(error, { route: 'api/db/transaction' });
+    return createErrorResponse(error, { route: "api/db/transaction" });
   }
 }

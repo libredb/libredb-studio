@@ -1,6 +1,6 @@
-import { describe, test, expect, mock, beforeEach } from 'bun:test';
-import { createMockRequest, parseResponseJSON } from '../../helpers/mock-next';
-import { createMockProvider } from '../../helpers/mock-provider';
+import { describe, test, expect, mock, beforeEach } from "bun:test";
+import { createMockRequest, parseResponseJSON } from "../../helpers/mock-next";
+import { createMockProvider } from "../../helpers/mock-provider";
 import {
   QueryError,
   DatabaseError,
@@ -16,46 +16,51 @@ import {
   isAuthenticationError,
   isRetryableError,
   mapDatabaseError,
-} from '@/lib/db/errors';
+} from "@/lib/db/errors";
 
 // ─── Create mock objects ────────────────────────────────────────────────────
 const mockProvider = createMockProvider();
 const mockGetOrCreateProvider = mock(async () => mockProvider as never);
 
 // ─── Mock getSession for auth ───────────────────────────────────────────────
-const mockGetSession = mock(async (): Promise<{ role: string; username: string } | null> => ({ role: 'admin', username: 'admin' }));
+const mockGetSession = mock(
+  async (): Promise<{ role: string; username: string } | null> => ({ role: "admin", username: "admin" }),
+);
 
 // ─── Mock audit buffer ──────────────────────────────────────────────────────
 const mockAuditPush = mock(() => ({
-  id: '1',
+  id: "1",
   timestamp: new Date().toISOString(),
-  type: 'maintenance',
-  action: 'VACUUM',
-  target: 'all',
-  user: 'admin',
-  result: 'success' as const,
+  type: "maintenance",
+  action: "VACUUM",
+  target: "all",
+  user: "admin",
+  result: "success" as const,
 }));
 
 // ─── Mock dependencies BEFORE importing route ───────────────────────────────
-mock.module('@/lib/auth', () => ({
+mock.module("@/lib/auth", () => ({
   getSession: mockGetSession,
-  signJWT: mock(async () => 'mock-token'),
+  signJWT: mock(async () => "mock-token"),
   verifyJWT: mock(async () => null),
   login: mock(async () => {}),
   logout: mock(async () => {}),
 }));
 
-mock.module('@/lib/seed/resolve-connection', () => {
+mock.module("@/lib/seed/resolve-connection", () => {
   class SeedConnectionError extends Error {
-    constructor(message: string, public statusCode: number) {
+    constructor(
+      message: string,
+      public statusCode: number,
+    ) {
       super(message);
-      this.name = 'SeedConnectionError';
+      this.name = "SeedConnectionError";
     }
   }
   return {
     resolveConnection: mock(async (body: Record<string, unknown>) => {
       if (!body.connection && !body.connectionId) {
-        throw new SeedConnectionError('Either connection or connectionId is required', 400);
+        throw new SeedConnectionError("Either connection or connectionId is required", 400);
       }
       return body.connection;
     }),
@@ -63,14 +68,14 @@ mock.module('@/lib/seed/resolve-connection', () => {
   };
 });
 
-mock.module('@/lib/audit', () => ({
+mock.module("@/lib/audit", () => ({
   getServerAuditBuffer: () => ({ push: mockAuditPush }),
   AuditRingBuffer: class {},
   loadAuditFromStorage: () => [],
   saveAuditToStorage: () => {},
 }));
 
-mock.module('@/lib/db', () => ({
+mock.module("@/lib/db", () => ({
   getOrCreateProvider: mockGetOrCreateProvider,
   createDatabaseProvider: mock(async () => mockProvider),
   removeProvider: mock(async () => {}),
@@ -93,20 +98,20 @@ mock.module('@/lib/db', () => ({
 }));
 
 // ─── Import route handler AFTER mocking ─────────────────────────────────────
-const { POST } = await import('@/app/api/db/maintenance/route');
+const { POST } = await import("@/app/api/db/maintenance/route");
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 const validConnection = {
-  id: 'test-1',
-  name: 'Test DB',
-  type: 'postgres',
-  host: 'localhost',
+  id: "test-1",
+  name: "Test DB",
+  type: "postgres",
+  host: "localhost",
   port: 5432,
-  database: 'testdb',
+  database: "testdb",
 };
 
 // ─── Tests ──────────────────────────────────────────────────────────────────
-describe('POST /api/db/maintenance', () => {
+describe("POST /api/db/maintenance", () => {
   beforeEach(() => {
     mockGetSession.mockClear();
     mockGetOrCreateProvider.mockClear();
@@ -115,30 +120,32 @@ describe('POST /api/db/maintenance', () => {
     (mockProvider.getCapabilities as ReturnType<typeof mock>).mockClear();
 
     // Reset implementations
-    mockGetSession.mockImplementation(async (): Promise<{ role: string; username: string } | null> => ({ role: 'admin', username: 'admin' }));
+    mockGetSession.mockImplementation(
+      async (): Promise<{ role: string; username: string } | null> => ({ role: "admin", username: "admin" }),
+    );
     mockGetOrCreateProvider.mockImplementation(async () => mockProvider as never);
     (mockProvider.runMaintenance as ReturnType<typeof mock>).mockImplementation(async () => ({
       success: true,
       executionTime: 100,
-      message: 'OK',
+      message: "OK",
     }));
     (mockProvider.getCapabilities as ReturnType<typeof mock>).mockImplementation(() => ({
-      queryLanguage: 'sql',
+      queryLanguage: "sql",
       supportsExplain: true,
       supportsExternalQueryLimiting: true,
       supportsCreateTable: true,
       supportsMaintenance: true,
-      maintenanceOperations: ['vacuum', 'analyze', 'reindex'],
+      maintenanceOperations: ["vacuum", "analyze", "reindex"],
       supportsConnectionString: true,
       defaultPort: 5432,
-      schemaRefreshPattern: '(?:CREATE|ALTER|DROP|TRUNCATE)\\s',
+      schemaRefreshPattern: "(?:CREATE|ALTER|DROP|TRUNCATE)\\s",
     }));
   });
 
-  test('admin with valid params returns maintenance result', async () => {
-    const req = createMockRequest('/api/db/maintenance', {
-      method: 'POST',
-      body: { type: 'vacuum', target: 'users', connection: validConnection },
+  test("admin with valid params returns maintenance result", async () => {
+    const req = createMockRequest("/api/db/maintenance", {
+      method: "POST",
+      body: { type: "vacuum", target: "users", connection: validConnection },
     });
 
     const res = await POST(req as never);
@@ -147,68 +154,70 @@ describe('POST /api/db/maintenance', () => {
     expect(res.status).toBe(200);
     expect(data.success).toBe(true);
     expect(data.executionTime).toBe(100);
-    expect(data.message).toBe('OK');
+    expect(data.message).toBe("OK");
   });
 
-  test('non-admin user returns 403', async () => {
-    mockGetSession.mockImplementation(async (): Promise<{ role: string; username: string } | null> => ({ role: 'user', username: 'user' }));
+  test("non-admin user returns 403", async () => {
+    mockGetSession.mockImplementation(
+      async (): Promise<{ role: string; username: string } | null> => ({ role: "user", username: "user" }),
+    );
 
-    const req = createMockRequest('/api/db/maintenance', {
-      method: 'POST',
-      body: { type: 'vacuum', target: 'users', connection: validConnection },
+    const req = createMockRequest("/api/db/maintenance", {
+      method: "POST",
+      body: { type: "vacuum", target: "users", connection: validConnection },
     });
 
     const res = await POST(req as never);
     const data = await parseResponseJSON<{ error: string }>(res);
 
     expect(res.status).toBe(403);
-    expect(data.error).toContain('Unauthorized');
+    expect(data.error).toContain("Unauthorized");
   });
 
-  test('no session returns 403', async () => {
+  test("no session returns 403", async () => {
     mockGetSession.mockImplementation(async () => null);
 
-    const req = createMockRequest('/api/db/maintenance', {
-      method: 'POST',
-      body: { type: 'vacuum', target: 'users', connection: validConnection },
+    const req = createMockRequest("/api/db/maintenance", {
+      method: "POST",
+      body: { type: "vacuum", target: "users", connection: validConnection },
     });
 
     const res = await POST(req as never);
     const data = await parseResponseJSON<{ error: string }>(res);
 
     expect(res.status).toBe(403);
-    expect(data.error).toContain('Unauthorized');
+    expect(data.error).toContain("Unauthorized");
   });
 
-  test('missing connection returns 400', async () => {
-    const req = createMockRequest('/api/db/maintenance', {
-      method: 'POST',
-      body: { type: 'vacuum', target: 'users' },
+  test("missing connection returns 400", async () => {
+    const req = createMockRequest("/api/db/maintenance", {
+      method: "POST",
+      body: { type: "vacuum", target: "users" },
     });
 
     const res = await POST(req as never);
     const data = await parseResponseJSON<{ error: string }>(res);
 
     expect(res.status).toBe(400);
-    expect(data.error).toContain('required');
+    expect(data.error).toContain("required");
   });
 
-  test('missing type returns 400', async () => {
-    const req = createMockRequest('/api/db/maintenance', {
-      method: 'POST',
-      body: { target: 'users', connection: validConnection },
+  test("missing type returns 400", async () => {
+    const req = createMockRequest("/api/db/maintenance", {
+      method: "POST",
+      body: { target: "users", connection: validConnection },
     });
 
     const res = await POST(req as never);
     const data = await parseResponseJSON<{ error: string }>(res);
 
     expect(res.status).toBe(400);
-    expect(data.error).toContain('Maintenance type is required');
+    expect(data.error).toContain("Maintenance type is required");
   });
 
-  test('provider without maintenance support returns 400', async () => {
+  test("provider without maintenance support returns 400", async () => {
     (mockProvider.getCapabilities as ReturnType<typeof mock>).mockImplementation(() => ({
-      queryLanguage: 'sql',
+      queryLanguage: "sql",
       supportsExplain: false,
       supportsExternalQueryLimiting: true,
       supportsCreateTable: false,
@@ -216,48 +225,48 @@ describe('POST /api/db/maintenance', () => {
       maintenanceOperations: [],
       supportsConnectionString: false,
       defaultPort: 0,
-      schemaRefreshPattern: '',
+      schemaRefreshPattern: "",
     }));
 
-    const req = createMockRequest('/api/db/maintenance', {
-      method: 'POST',
-      body: { type: 'vacuum', target: 'users', connection: validConnection },
+    const req = createMockRequest("/api/db/maintenance", {
+      method: "POST",
+      body: { type: "vacuum", target: "users", connection: validConnection },
     });
 
     const res = await POST(req as never);
     const data = await parseResponseJSON<{ error: string }>(res);
 
     expect(res.status).toBe(400);
-    expect(data.error).toContain('not supported');
+    expect(data.error).toContain("not supported");
   });
 
-  test('unsupported operation type returns 400', async () => {
-    const req = createMockRequest('/api/db/maintenance', {
-      method: 'POST',
-      body: { type: 'optimize', target: 'users', connection: validConnection },
+  test("unsupported operation type returns 400", async () => {
+    const req = createMockRequest("/api/db/maintenance", {
+      method: "POST",
+      body: { type: "optimize", target: "users", connection: validConnection },
     });
 
     const res = await POST(req as never);
     const data = await parseResponseJSON<{ error: string }>(res);
 
     expect(res.status).toBe(400);
-    expect(data.error).toContain('not supported');
+    expect(data.error).toContain("not supported");
   });
 
-  test('DatabaseError from runMaintenance returns 500', async () => {
+  test("DatabaseError from runMaintenance returns 500", async () => {
     (mockProvider.runMaintenance as ReturnType<typeof mock>).mockImplementation(async () => {
-      throw new DatabaseError('Internal maintenance failure', 'postgres', 'DATABASE_ERROR');
+      throw new DatabaseError("Internal maintenance failure", "postgres", "DATABASE_ERROR");
     });
 
-    const req = createMockRequest('/api/db/maintenance', {
-      method: 'POST',
-      body: { type: 'vacuum', target: 'users', connection: validConnection },
+    const req = createMockRequest("/api/db/maintenance", {
+      method: "POST",
+      body: { type: "vacuum", target: "users", connection: validConnection },
     });
 
     const res = await POST(req as never);
     const data = await parseResponseJSON<{ error: string }>(res);
 
     expect(res.status).toBe(500);
-    expect(data.error).toContain('Internal maintenance failure');
+    expect(data.error).toContain("Internal maintenance failure");
   });
 });

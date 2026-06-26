@@ -5,37 +5,128 @@
  * and schema-aware column/table completions.
  */
 
-import type * as Monaco from 'monaco-editor';
-import { extractAliases, resolveAlias } from '@/lib/sql';
+import type * as Monaco from "monaco-editor";
+import { extractAliases, resolveAlias } from "@/lib/sql";
 
 // ---------------------------------------------------------------------------
 // Static constants
 // ---------------------------------------------------------------------------
 
 export const SQL_KEYWORDS = [
-  'SELECT', 'FROM', 'WHERE', 'AND', 'OR', 'NOT', 'IN', 'BETWEEN', 'LIKE', 'IS NULL', 'IS NOT NULL',
-  'GROUP BY', 'HAVING', 'ORDER BY', 'LIMIT', 'OFFSET', 'UNION', 'ALL', 'EXISTS', 'DISTINCT',
-  'INNER JOIN', 'LEFT JOIN', 'RIGHT JOIN', 'FULL JOIN', 'CROSS JOIN', 'NATURAL JOIN', 'ON', 'USING',
-  'INSERT INTO', 'VALUES', 'UPDATE', 'SET', 'DELETE', 'TRUNCATE', 'CREATE', 'ALTER', 'DROP',
-  'TABLE', 'VIEW', 'INDEX', 'SCHEMA', 'DATABASE', 'FUNCTION', 'TRIGGER', 'PROCEDURE',
-  'AS', 'WITH', 'CASE', 'WHEN', 'THEN', 'ELSE', 'END', 'CAST', 'COALESCE', 'NULLIF',
-  'WINDOW', 'OVER', 'PARTITION BY', 'ROWS', 'RANGE', 'PRECEDING', 'FOLLOWING', 'UNBOUNDED'
+  "SELECT",
+  "FROM",
+  "WHERE",
+  "AND",
+  "OR",
+  "NOT",
+  "IN",
+  "BETWEEN",
+  "LIKE",
+  "IS NULL",
+  "IS NOT NULL",
+  "GROUP BY",
+  "HAVING",
+  "ORDER BY",
+  "LIMIT",
+  "OFFSET",
+  "UNION",
+  "ALL",
+  "EXISTS",
+  "DISTINCT",
+  "INNER JOIN",
+  "LEFT JOIN",
+  "RIGHT JOIN",
+  "FULL JOIN",
+  "CROSS JOIN",
+  "NATURAL JOIN",
+  "ON",
+  "USING",
+  "INSERT INTO",
+  "VALUES",
+  "UPDATE",
+  "SET",
+  "DELETE",
+  "TRUNCATE",
+  "CREATE",
+  "ALTER",
+  "DROP",
+  "TABLE",
+  "VIEW",
+  "INDEX",
+  "SCHEMA",
+  "DATABASE",
+  "FUNCTION",
+  "TRIGGER",
+  "PROCEDURE",
+  "AS",
+  "WITH",
+  "CASE",
+  "WHEN",
+  "THEN",
+  "ELSE",
+  "END",
+  "CAST",
+  "COALESCE",
+  "NULLIF",
+  "WINDOW",
+  "OVER",
+  "PARTITION BY",
+  "ROWS",
+  "RANGE",
+  "PRECEDING",
+  "FOLLOWING",
+  "UNBOUNDED",
 ];
 
 export const SQL_FUNCTIONS = [
-  'COUNT', 'SUM', 'AVG', 'MIN', 'MAX', 'FIRST_VALUE', 'LAST_VALUE', 'LEAD', 'LAG',
-  'ROW_NUMBER', 'RANK', 'DENSE_RANK', 'NTILE', 'CONCAT', 'SUBSTR', 'LENGTH', 'LOWER', 'UPPER',
-  'TRIM', 'LTRIM', 'RTRIM', 'REPLACE', 'ROUND', 'TRUNC', 'ABS', 'NOW', 'CURRENT_TIMESTAMP',
-  'DATE_PART', 'DATE_TRUNC', 'EXTRACT', 'AGE', 'TO_CHAR', 'TO_DATE', 'TO_NUMBER', 'JSON_AGG', 'JSON_BUILD_OBJECT'
+  "COUNT",
+  "SUM",
+  "AVG",
+  "MIN",
+  "MAX",
+  "FIRST_VALUE",
+  "LAST_VALUE",
+  "LEAD",
+  "LAG",
+  "ROW_NUMBER",
+  "RANK",
+  "DENSE_RANK",
+  "NTILE",
+  "CONCAT",
+  "SUBSTR",
+  "LENGTH",
+  "LOWER",
+  "UPPER",
+  "TRIM",
+  "LTRIM",
+  "RTRIM",
+  "REPLACE",
+  "ROUND",
+  "TRUNC",
+  "ABS",
+  "NOW",
+  "CURRENT_TIMESTAMP",
+  "DATE_PART",
+  "DATE_TRUNC",
+  "EXTRACT",
+  "AGE",
+  "TO_CHAR",
+  "TO_DATE",
+  "TO_NUMBER",
+  "JSON_AGG",
+  "JSON_BUILD_OBJECT",
 ];
 
 export const SQL_SNIPPETS = [
-  { label: 'SELECT', value: 'SELECT * FROM ${1:table_name} LIMIT 10;' },
-  { label: 'INSERT', value: 'INSERT INTO ${1:table_name} (${2:columns})\nVALUES (${3:values});' },
-  { label: 'UPDATE', value: 'UPDATE ${1:table_name}\nSET ${2:column} = ${3:value}\nWHERE ${4:condition};' },
-  { label: 'DELETE', value: 'DELETE FROM ${1:table_name}\nWHERE ${2:condition};' },
-  { label: 'JOIN', value: 'SELECT ${1:*}\nFROM ${2:table1} t1\nJOIN ${3:table2} t2 ON t1.${4:id} = t2.${5:t1_id};' },
-  { label: 'WITH', value: 'WITH ${1:cte_name} AS (\n  SELECT ${2:*}\n  FROM ${3:table_name}\n)\nSELECT * FROM ${1:cte_name};' },
+  { label: "SELECT", value: "SELECT * FROM ${1:table_name} LIMIT 10;" },
+  { label: "INSERT", value: "INSERT INTO ${1:table_name} (${2:columns})\nVALUES (${3:values});" },
+  { label: "UPDATE", value: "UPDATE ${1:table_name}\nSET ${2:column} = ${3:value}\nWHERE ${4:condition};" },
+  { label: "DELETE", value: "DELETE FROM ${1:table_name}\nWHERE ${2:condition};" },
+  { label: "JOIN", value: "SELECT ${1:*}\nFROM ${2:table1} t1\nJOIN ${3:table2} t2 ON t1.${4:id} = t2.${5:t1_id};" },
+  {
+    label: "WITH",
+    value: "WITH ${1:cte_name} AS (\n  SELECT ${2:*}\n  FROM ${3:table_name}\n)\nSELECT * FROM ${1:cte_name};",
+  },
 ];
 
 // ---------------------------------------------------------------------------
@@ -51,30 +142,30 @@ export interface PrecomputedItem {
   detail: string;
 }
 
-export const KEYWORD_ITEMS: PrecomputedItem[] = SQL_KEYWORDS.map(kw => ({
+export const KEYWORD_ITEMS: PrecomputedItem[] = SQL_KEYWORDS.map((kw) => ({
   label: kw,
   labelLower: kw.toLowerCase(),
   kind: 17, // CompletionItemKind.Keyword
   insertText: kw,
-  detail: 'SQL Keyword'
+  detail: "SQL Keyword",
 }));
 
-export const FUNCTION_ITEMS: PrecomputedItem[] = SQL_FUNCTIONS.map(f => ({
+export const FUNCTION_ITEMS: PrecomputedItem[] = SQL_FUNCTIONS.map((f) => ({
   label: f,
   labelLower: f.toLowerCase(),
   kind: 1, // CompletionItemKind.Function
-  insertText: f + '($1)',
+  insertText: f + "($1)",
   insertTextRules: 4, // InsertAsSnippet
-  detail: 'SQL Function'
+  detail: "SQL Function",
 }));
 
-export const SNIPPET_ITEMS: PrecomputedItem[] = SQL_SNIPPETS.map(s => ({
+export const SNIPPET_ITEMS: PrecomputedItem[] = SQL_SNIPPETS.map((s) => ({
   label: s.label,
   labelLower: s.label.toLowerCase(),
   kind: 27, // CompletionItemKind.Snippet
   insertText: s.value,
   insertTextRules: 4, // InsertAsSnippet
-  detail: 'SQL Snippet'
+  detail: "SQL Snippet",
 }));
 
 // ---------------------------------------------------------------------------
@@ -117,8 +208,8 @@ export function registerSQLCompletionProvider(
   monaco: typeof Monaco,
   schemaCompletionCache: SchemaCompletionCache,
 ): Monaco.IDisposable {
-  return monaco.languages.registerCompletionItemProvider('sql', {
-    triggerCharacters: ['.', ' '],
+  return monaco.languages.registerCompletionItemProvider("sql", {
+    triggerCharacters: [".", " "],
     provideCompletionItems: (model: Monaco.editor.ITextModel, position: Monaco.Position) => {
       const word = model.getWordUntilPosition(position);
       const range = {
@@ -135,7 +226,7 @@ export function registerSQLCompletionProvider(
       const suggestions: Monaco.languages.CompletionItem[] = [];
 
       // Dot-triggered: Show columns for specific table or alias
-      if (lastChar === '.') {
+      if (lastChar === ".") {
         const matches = line.substring(0, position.column - 1).match(/(\w+)\.$/);
         if (matches) {
           const identifier = matches[1].toLowerCase();
@@ -149,7 +240,7 @@ export function registerSQLCompletionProvider(
 
             // 2. Try matching table name with any schema prefix
             for (const [key, value] of schemaCompletionCache.columnMap.entries()) {
-              const parts = key.split('.');
+              const parts = key.split(".");
               const justTableName = parts[parts.length - 1];
               if (justTableName === tableNameLower) {
                 return value;
@@ -167,7 +258,7 @@ export function registerSQLCompletionProvider(
               startLineNumber: 1,
               startColumn: 1,
               endLineNumber: position.lineNumber,
-              endColumn: position.column - 1
+              endColumn: position.column - 1,
             });
 
             const { aliases } = extractAliases(textToCursor);
@@ -177,14 +268,14 @@ export function registerSQLCompletionProvider(
 
           // 3. Provide column suggestions
           if (columns) {
-            columns.forEach(col => {
+            columns.forEach((col) => {
               suggestions.push({
                 label: col.label,
                 kind: monaco.languages.CompletionItemKind.Field,
                 insertText: col.label,
                 range,
-                detail: `${col.type}${col.isPrimary ? ' (PK)' : ''}`,
-                documentation: `Column of ${col.tableName}`
+                detail: `${col.type}${col.isPrimary ? " (PK)" : ""}`,
+                documentation: `Column of ${col.tableName}`,
               });
             });
           }
@@ -197,10 +288,12 @@ export function registerSQLCompletionProvider(
 
       // Detect context: Are we in a position where columns make sense?
       const textBeforeCursor = line.substring(0, position.column - 1).toUpperCase();
-      const isColumnContext = /\b(SELECT|WHERE|AND|OR|ON|SET|HAVING|ORDER\s+BY|GROUP\s+BY|,)\s*\w*$/i.test(textBeforeCursor);
+      const isColumnContext = /\b(SELECT|WHERE|AND|OR|ON|SET|HAVING|ORDER\s+BY|GROUP\s+BY|,)\s*\w*$/i.test(
+        textBeforeCursor,
+      );
 
       // Keywords
-      KEYWORD_ITEMS.forEach(item => {
+      KEYWORD_ITEMS.forEach((item) => {
         if (!shouldFilter || item.labelLower.startsWith(prefix)) {
           suggestions.push({
             label: item.label,
@@ -208,13 +301,13 @@ export function registerSQLCompletionProvider(
             insertText: item.insertText,
             range,
             detail: item.detail,
-            sortText: '0' + item.label
+            sortText: "0" + item.label,
           });
         }
       });
 
       // Functions
-      FUNCTION_ITEMS.forEach(item => {
+      FUNCTION_ITEMS.forEach((item) => {
         if (!shouldFilter || item.labelLower.startsWith(prefix)) {
           suggestions.push({
             label: item.label,
@@ -223,13 +316,13 @@ export function registerSQLCompletionProvider(
             insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
             range,
             detail: item.detail,
-            sortText: '1' + item.label
+            sortText: "1" + item.label,
           });
         }
       });
 
       // Tables
-      schemaCompletionCache.tableItems.forEach(table => {
+      schemaCompletionCache.tableItems.forEach((table) => {
         if (!shouldFilter || table.labelLower.startsWith(prefix)) {
           suggestions.push({
             label: table.label,
@@ -238,7 +331,7 @@ export function registerSQLCompletionProvider(
             range,
             detail: `Table (${table.rowCount} rows)`,
             documentation: table.columnNames,
-            sortText: '2' + table.label
+            sortText: "2" + table.label,
           });
         }
       });
@@ -253,14 +346,14 @@ export function registerSQLCompletionProvider(
               insertText: colName,
               range,
               detail: `Column (${col.type})`,
-              sortText: '4' + colName
+              sortText: "4" + colName,
             });
           }
         });
       }
 
       // Snippets
-      SNIPPET_ITEMS.forEach(item => {
+      SNIPPET_ITEMS.forEach((item) => {
         if (!shouldFilter || item.labelLower.startsWith(prefix)) {
           suggestions.push({
             label: item.label,
@@ -269,7 +362,7 @@ export function registerSQLCompletionProvider(
             insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
             range,
             detail: item.detail,
-            sortText: '3' + item.label
+            sortText: "3" + item.label,
           });
         }
       });

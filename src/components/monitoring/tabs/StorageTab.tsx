@@ -1,20 +1,13 @@
-'use client';
+"use client";
 
-import React from 'react';
-import { HardDrive, Database, Archive, FolderOpen } from 'lucide-react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import { Skeleton } from '@/components/ui/skeleton';
-import { Progress } from '@/components/ui/progress';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
-import type { MonitoringData } from '@/lib/db/types';
+import React from "react";
+import { HardDrive, Database, Archive, FolderOpen } from "lucide-react";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Progress } from "@/components/ui/progress";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import type { MonitoringData } from "@/lib/db/types";
 
 interface StorageTabProps {
   data: MonitoringData | null;
@@ -34,7 +27,7 @@ export function StorageTab({ data, loading }: StorageTabProps) {
   // Calculate totals
   const totalTableSize = tables.reduce((sum, t) => sum + t.tableSizeBytes, 0);
   const totalIndexSize = indexes.reduce((sum, i) => sum + i.indexSizeBytes, 0);
-  const walStorage = storage.find((s) => s.name === 'WAL');
+  const walStorage = storage.find((s) => s.name === "WAL");
 
   const formatBytes = (bytes: number) => {
     if (bytes >= 1073741824) return `${(bytes / 1073741824).toFixed(2)} GB`;
@@ -55,58 +48,44 @@ export function StorageTab({ data, loading }: StorageTabProps) {
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-4">
         <Card className="p-0">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 p-2 sm:p-4 pb-1 sm:pb-2">
-            <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">
-              DB Size
-            </CardTitle>
+            <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">DB Size</CardTitle>
             <Database strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4 text-blue-500" />
           </CardHeader>
           <CardContent className="p-2 sm:p-4 pt-0">
-            <div className="text-lg sm:text-2xl font-medium truncate">
-              {overview?.databaseSize || 'N/A'}
-            </div>
+            <div className="text-lg sm:text-2xl font-medium truncate">{overview?.databaseSize || "N/A"}</div>
           </CardContent>
         </Card>
 
         <Card className="p-0">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 p-2 sm:p-4 pb-1 sm:pb-2">
-            <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">
-              Tables
-            </CardTitle>
+            <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">Tables</CardTitle>
             <HardDrive strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4 text-green-500" />
           </CardHeader>
           <CardContent className="p-2 sm:p-4 pt-0">
             <div className="text-lg sm:text-2xl font-medium truncate">{formatBytes(totalTableSize)}</div>
-            <p className="text-xs sm:text-xs text-muted-foreground mt-1">
-              {tablePercent.toFixed(1)}%
-            </p>
+            <p className="text-xs sm:text-xs text-muted-foreground mt-1">{tablePercent.toFixed(1)}%</p>
           </CardContent>
         </Card>
 
         <Card className="p-0">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 p-2 sm:p-4 pb-1 sm:pb-2">
-            <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">
-              Indexes
-            </CardTitle>
+            <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">Indexes</CardTitle>
             <Archive strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4 text-purple-500" />
           </CardHeader>
           <CardContent className="p-2 sm:p-4 pt-0">
             <div className="text-lg sm:text-2xl font-medium truncate">{formatBytes(totalIndexSize)}</div>
-            <p className="text-xs sm:text-xs text-muted-foreground mt-1">
-              {indexPercent.toFixed(1)}%
-            </p>
+            <p className="text-xs sm:text-xs text-muted-foreground mt-1">{indexPercent.toFixed(1)}%</p>
           </CardContent>
         </Card>
 
         <Card className="p-0">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 p-2 sm:p-4 pb-1 sm:pb-2">
-            <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">
-              WAL
-            </CardTitle>
+            <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">WAL</CardTitle>
             <FolderOpen strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4 text-orange-500" />
           </CardHeader>
           <CardContent className="p-2 sm:p-4 pt-0">
             <div className="text-lg sm:text-2xl font-medium truncate">
-              {walStorage?.walSize || walStorage?.size || 'N/A'}
+              {walStorage?.walSize || walStorage?.size || "N/A"}
             </div>
           </CardContent>
         </Card>
@@ -151,9 +130,7 @@ export function StorageTab({ data, loading }: StorageTabProps) {
                   <span className="hidden sm:inline">Other (TOAST, FSM)</span>
                   <span className="sm:hidden">Other</span>
                 </span>
-                <span className="font-medium">
-                  {formatBytes(totalSize - totalTableSize - totalIndexSize)}
-                </span>
+                <span className="font-medium">{formatBytes(totalSize - totalTableSize - totalIndexSize)}</span>
               </div>
               <Progress value={otherPercent} className="h-1.5 sm:h-2 [&>div]:bg-muted-foreground" />
             </div>
@@ -191,33 +168,37 @@ export function StorageTab({ data, loading }: StorageTabProps) {
                     <TableRow key={ts.name}>
                       <TableCell className="py-2">
                         <div className="flex items-center gap-1 sm:gap-2">
-                          <FolderOpen strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4 text-muted-foreground flex-shrink-0" />
-                          <span className="font-medium text-xs sm:text-xs truncate max-w-[80px] sm:max-w-none">{ts.name}</span>
-                          {ts.name === 'pg_default' && (
-                            <Badge variant="secondary" className="text-xs sm:text-xs hidden sm:inline-flex">Default</Badge>
+                          <FolderOpen
+                            strokeWidth={1.5}
+                            className="h-3 w-3 sm:h-4 sm:w-4 text-muted-foreground flex-shrink-0"
+                          />
+                          <span className="font-medium text-xs sm:text-xs truncate max-w-[80px] sm:max-w-none">
+                            {ts.name}
+                          </span>
+                          {ts.name === "pg_default" && (
+                            <Badge variant="secondary" className="text-xs sm:text-xs hidden sm:inline-flex">
+                              Default
+                            </Badge>
                           )}
-                          {ts.name === 'WAL' && (
-                            <Badge variant="outline" className="text-xs sm:text-xs hidden sm:inline-flex">WAL</Badge>
+                          {ts.name === "WAL" && (
+                            <Badge variant="outline" className="text-xs sm:text-xs hidden sm:inline-flex">
+                              WAL
+                            </Badge>
                           )}
                         </div>
                       </TableCell>
                       <TableCell className="font-mono text-xs sm:text-xs text-muted-foreground hidden md:table-cell py-2">
-                        {ts.location || 'default'}
+                        {ts.location || "default"}
                       </TableCell>
                       <TableCell className="text-right text-xs py-2">{ts.size}</TableCell>
                       <TableCell className="text-right hidden sm:table-cell py-2">
                         {ts.usagePercent !== undefined ? (
                           <div className="flex items-center justify-end gap-1 sm:gap-2">
-                            <Progress
-                              value={ts.usagePercent}
-                              className="w-12 sm:w-16 h-1.5 sm:h-2"
-                            />
-                            <span className="text-xs w-10 sm:w-12">
-                              {ts.usagePercent.toFixed(0)}%
-                            </span>
+                            <Progress value={ts.usagePercent} className="w-12 sm:w-16 h-1.5 sm:h-2" />
+                            <span className="text-xs w-10 sm:w-12">{ts.usagePercent.toFixed(0)}%</span>
                           </div>
                         ) : (
-                          '-'
+                          "-"
                         )}
                       </TableCell>
                     </TableRow>
@@ -259,32 +240,22 @@ export function StorageTab({ data, loading }: StorageTabProps) {
                     .sort((a, b) => b.totalSizeBytes - a.totalSizeBytes)
                     .slice(0, 10)
                     .map((table) => {
-                      const percent =
-                        totalSize > 0
-                          ? (table.totalSizeBytes / totalSize) * 100
-                          : 0;
+                      const percent = totalSize > 0 ? (table.totalSizeBytes / totalSize) * 100 : 0;
                       return (
                         <TableRow key={`${table.schemaName}.${table.tableName}`}>
                           <TableCell className="py-2">
                             <div className="flex flex-col">
-                              <span className="font-medium text-xs sm:text-xs truncate max-w-[100px] sm:max-w-[200px]">{table.tableName}</span>
-                              <span className="text-xs sm:text-xs text-muted-foreground">
-                                {table.schemaName}
+                              <span className="font-medium text-xs sm:text-xs truncate max-w-[100px] sm:max-w-[200px]">
+                                {table.tableName}
                               </span>
+                              <span className="text-xs sm:text-xs text-muted-foreground">{table.schemaName}</span>
                             </div>
                           </TableCell>
-                          <TableCell className="text-right text-xs py-2">
-                            {table.totalSize}
-                          </TableCell>
+                          <TableCell className="text-right text-xs py-2">{table.totalSize}</TableCell>
                           <TableCell className="text-right hidden sm:table-cell py-2">
                             <div className="flex items-center justify-end gap-1 sm:gap-2">
-                              <Progress
-                                value={percent}
-                                className="w-12 sm:w-16 h-1.5 sm:h-2"
-                              />
-                              <span className="text-xs w-10 sm:w-12">
-                                {percent.toFixed(1)}%
-                              </span>
+                              <Progress value={percent} className="w-12 sm:w-16 h-1.5 sm:h-2" />
+                              <span className="text-xs w-10 sm:w-12">{percent.toFixed(1)}%</span>
                             </div>
                           </TableCell>
                         </TableRow>

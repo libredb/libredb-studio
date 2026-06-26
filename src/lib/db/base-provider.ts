@@ -29,9 +29,9 @@ import {
   type PreparedQuery,
   type QueryPrepareOptions,
   DEFAULT_QUERY_TIMEOUT,
-} from './types';
-import { DatabaseConfigError, mapDatabaseError } from './errors';
-import { mergePoolConfig, formatDuration } from './utils/pool-manager';
+} from "./types";
+import { DatabaseConfigError, mapDatabaseError } from "./errors";
+import { mergePoolConfig, formatDuration } from "./utils/pool-manager";
 
 // ============================================================================
 // Base Provider Class
@@ -46,10 +46,7 @@ export abstract class BaseDatabaseProvider implements DatabaseProvider {
   protected readonly options: ProviderOptions;
   protected state: ConnectionState;
 
-  protected constructor(
-    config: DatabaseConnection,
-    options: ProviderOptions = {}
-  ) {
+  protected constructor(config: DatabaseConnection, options: ProviderOptions = {}) {
     this.type = config.type;
     this.config = config;
     this.options = options;
@@ -132,7 +129,7 @@ export abstract class BaseDatabaseProvider implements DatabaseProvider {
       optionalPromises.push(
         this.getTableStats({ schema: schemaFilter }).then((tables) => {
           result.tables = tables;
-        })
+        }),
       );
     }
 
@@ -140,7 +137,7 @@ export abstract class BaseDatabaseProvider implements DatabaseProvider {
       optionalPromises.push(
         this.getIndexStats({ schema: schemaFilter }).then((indexes) => {
           result.indexes = indexes;
-        })
+        }),
       );
     }
 
@@ -148,7 +145,7 @@ export abstract class BaseDatabaseProvider implements DatabaseProvider {
       optionalPromises.push(
         this.getStorageStats().then((storage) => {
           result.storage = storage;
-        })
+        }),
       );
     }
 
@@ -159,11 +156,11 @@ export abstract class BaseDatabaseProvider implements DatabaseProvider {
 
   public validate(): void {
     if (!this.config.id) {
-      throw new DatabaseConfigError('Connection ID is required', this.type);
+      throw new DatabaseConfigError("Connection ID is required", this.type);
     }
 
     if (!this.config.type) {
-      throw new DatabaseConfigError('Database type is required', this.type);
+      throw new DatabaseConfigError("Database type is required", this.type);
     }
 
     // Subclasses should override for provider-specific validation
@@ -175,35 +172,36 @@ export abstract class BaseDatabaseProvider implements DatabaseProvider {
 
   public getCapabilities(): ProviderCapabilities {
     return {
-      queryLanguage: 'sql',
+      queryLanguage: "sql",
       supportsExplain: true,
       supportsExternalQueryLimiting: true,
       supportsCreateTable: true,
       supportsMaintenance: true,
-      maintenanceOperations: ['vacuum', 'analyze', 'reindex', 'kill', 'optimize', 'check'],
+      maintenanceOperations: ["vacuum", "analyze", "reindex", "kill", "optimize", "check"],
       supportsConnectionString: false,
       defaultPort: null,
-      schemaRefreshPattern: '(CREATE|DROP|ALTER|TRUNCATE)\\b',
+      schemaRefreshPattern: "(CREATE|DROP|ALTER|TRUNCATE)\\b",
     };
   }
 
   public getLabels(): ProviderLabels {
     return {
-      entityName: 'Table',
-      entityNamePlural: 'Tables',
-      rowName: 'row',
-      rowNamePlural: 'rows',
-      selectAction: 'Select Top 50',
-      generateAction: 'Generate Query',
-      analyzeAction: 'Analyze Table',
-      vacuumAction: 'Vacuum Table',
-      searchPlaceholder: 'Search tables or columns...',
-      analyzeGlobalLabel: 'Run Analyze',
-      analyzeGlobalTitle: 'Update Statistics',
-      analyzeGlobalDesc: "Updates the planner's statistics for all tables in the database to improve query optimization.",
-      vacuumGlobalLabel: 'Run Vacuum',
-      vacuumGlobalTitle: 'Reclaim Space',
-      vacuumGlobalDesc: 'Removes dead rows from tables and returns space to the operating system.',
+      entityName: "Table",
+      entityNamePlural: "Tables",
+      rowName: "row",
+      rowNamePlural: "rows",
+      selectAction: "Select Top 50",
+      generateAction: "Generate Query",
+      analyzeAction: "Analyze Table",
+      vacuumAction: "Vacuum Table",
+      searchPlaceholder: "Search tables or columns...",
+      analyzeGlobalLabel: "Run Analyze",
+      analyzeGlobalTitle: "Update Statistics",
+      analyzeGlobalDesc:
+        "Updates the planner's statistics for all tables in the database to improve query optimization.",
+      vacuumGlobalLabel: "Run Vacuum",
+      vacuumGlobalTitle: "Reclaim Space",
+      vacuumGlobalDesc: "Removes dead rows from tables and returns space to the operating system.",
     };
   }
 
@@ -220,10 +218,7 @@ export abstract class BaseDatabaseProvider implements DatabaseProvider {
    */
   protected ensureConnected(): void {
     if (!this.state.connected) {
-      throw new DatabaseConfigError(
-        'Provider is not connected. Call connect() first.',
-        this.type
-      );
+      throw new DatabaseConfigError("Provider is not connected. Call connect() first.", this.type);
     }
   }
 
@@ -242,9 +237,7 @@ export abstract class BaseDatabaseProvider implements DatabaseProvider {
   /**
    * Measure query execution time
    */
-  protected async measureExecution<T>(
-    fn: () => Promise<T>
-  ): Promise<{ result: T; executionTime: number }> {
+  protected async measureExecution<T>(fn: () => Promise<T>): Promise<{ result: T; executionTime: number }> {
     const startTime = performance.now();
     const result = await fn();
     const executionTime = Math.round(performance.now() - startTime);
@@ -264,10 +257,8 @@ export abstract class BaseDatabaseProvider implements DatabaseProvider {
   protected logError(operation: string, error: unknown): void {
     const errorMessage = error instanceof Error ? error.message : String(error);
     // Sanitize to prevent log injection via newlines/control chars
-    const sanitize = (v: string) => v.replace(/[\r\n]/g, ' ').replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, '');
-    console.error(
-      `[DB:${sanitize(this.type)}] ${sanitize(operation)} failed: ${sanitize(errorMessage)}`
-    );
+    const sanitize = (v: string) => v.replace(/[\r\n]/g, " ").replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, "");
+    console.error(`[DB:${sanitize(this.type)}] ${sanitize(operation)} failed: ${sanitize(errorMessage)}`);
   }
 
   /**
@@ -292,7 +283,7 @@ export abstract class BaseDatabaseProvider implements DatabaseProvider {
   protected getConnectionInfo(): string {
     if (this.config.connectionString) {
       // Mask password in connection string
-      return this.config.connectionString.replace(/:([^:@]+)@/, ':***@');
+      return this.config.connectionString.replace(/:([^:@]+)@/, ":***@");
     }
     return `${this.config.host}:${this.config.port}/${this.config.database}`;
   }

@@ -1,45 +1,45 @@
-import type { MaskingConfig } from '@/lib/data-masking';
+import type { MaskingConfig } from "@/lib/data-masking";
 
 export const mockMaskingConfigEnabled: MaskingConfig = {
   enabled: true,
   patterns: [
     {
-      id: 'builtin-email',
-      name: 'Email',
-      columnPatterns: ['email', 'e_mail', 'user_email'],
-      maskType: 'email',
+      id: "builtin-email",
+      name: "Email",
+      columnPatterns: ["email", "e_mail", "user_email"],
+      maskType: "email",
       enabled: true,
       isBuiltin: true,
     },
     {
-      id: 'builtin-ssn',
-      name: 'SSN',
-      columnPatterns: ['ssn', 'social_security'],
-      maskType: 'ssn',
+      id: "builtin-ssn",
+      name: "SSN",
+      columnPatterns: ["ssn", "social_security"],
+      maskType: "ssn",
       enabled: true,
       isBuiltin: true,
     },
     {
-      id: 'builtin-card',
-      name: 'Credit Card',
-      columnPatterns: ['credit_card', 'card_number'],
-      maskType: 'card',
+      id: "builtin-card",
+      name: "Credit Card",
+      columnPatterns: ["credit_card", "card_number"],
+      maskType: "card",
       enabled: true,
       isBuiltin: true,
     },
     {
-      id: 'builtin-phone',
-      name: 'Phone',
-      columnPatterns: ['phone', 'mobile'],
-      maskType: 'phone',
+      id: "builtin-phone",
+      name: "Phone",
+      columnPatterns: ["phone", "mobile"],
+      maskType: "phone",
       enabled: true,
       isBuiltin: true,
     },
     {
-      id: 'builtin-financial',
-      name: 'Financial',
-      columnPatterns: ['salary', 'income', 'balance'],
-      maskType: 'financial',
+      id: "builtin-financial",
+      name: "Financial",
+      columnPatterns: ["salary", "income", "balance"],
+      maskType: "financial",
       enabled: true,
       isBuiltin: true,
     },
@@ -65,7 +65,7 @@ export const mockMaskingConfigUserCanToggle: MaskingConfig = {
 
 export const mockMaskingConfigAllDisabledPatterns: MaskingConfig = {
   enabled: true,
-  patterns: mockMaskingConfigEnabled.patterns.map(p => ({ ...p, enabled: false })),
+  patterns: mockMaskingConfigEnabled.patterns.map((p) => ({ ...p, enabled: false })),
   roleSettings: mockMaskingConfigEnabled.roleSettings,
 };
 
@@ -74,13 +74,13 @@ export const mockMaskingConfigWithCustom: MaskingConfig = {
   patterns: [
     ...mockMaskingConfigEnabled.patterns,
     {
-      id: 'custom-1',
-      name: 'Custom Secret',
-      columnPatterns: ['secret_field', 'internal_.*'],
-      maskType: 'custom',
+      id: "custom-1",
+      name: "Custom Secret",
+      columnPatterns: ["secret_field", "internal_.*"],
+      maskType: "custom",
       enabled: true,
       isBuiltin: false,
-      customMask: '[REDACTED]',
+      customMask: "[REDACTED]",
     },
   ],
 };

@@ -3,8 +3,8 @@
  * Custom error types for database operations
  */
 
-import type { DatabaseType } from './types';
-import { ApiErrorCode } from '@/lib/api/error-codes';
+import type { DatabaseType } from "./types";
+import { ApiErrorCode } from "@/lib/api/error-codes";
 
 // ============================================================================
 // Base Database Error
@@ -18,10 +18,10 @@ export class DatabaseError extends Error {
     message: string,
     public readonly provider?: DatabaseType,
     public readonly code?: ApiErrorCode,
-    public readonly query?: string
+    public readonly query?: string,
   ) {
     super(message);
-    this.name = 'DatabaseError';
+    this.name = "DatabaseError";
     Object.setPrototypeOf(this, DatabaseError.prototype);
   }
 
@@ -32,7 +32,7 @@ export class DatabaseError extends Error {
       provider: this.provider,
       code: this.code,
       // Don't expose full query in production for security
-      query: this.query ? this.query.substring(0, 100) + '...' : undefined,
+      query: this.query ? this.query.substring(0, 100) + "..." : undefined,
     };
   }
 }
@@ -47,7 +47,7 @@ export class DatabaseError extends Error {
 export class DatabaseConfigError extends DatabaseError {
   constructor(message: string, provider?: DatabaseType) {
     super(message, provider, ApiErrorCode.CONFIG_ERROR);
-    this.name = 'DatabaseConfigError';
+    this.name = "DatabaseConfigError";
     Object.setPrototypeOf(this, DatabaseConfigError.prototype);
   }
 }
@@ -64,10 +64,10 @@ export class ConnectionError extends DatabaseError {
     message: string,
     provider?: DatabaseType,
     public readonly host?: string,
-    public readonly port?: number
+    public readonly port?: number,
   ) {
     super(message, provider, ApiErrorCode.CONNECTION_ERROR);
-    this.name = 'ConnectionError';
+    this.name = "ConnectionError";
     Object.setPrototypeOf(this, ConnectionError.prototype);
   }
 }
@@ -78,7 +78,7 @@ export class ConnectionError extends DatabaseError {
 export class AuthenticationError extends DatabaseError {
   constructor(message: string, provider?: DatabaseType) {
     super(message, provider, ApiErrorCode.AUTH_ERROR);
-    this.name = 'AuthenticationError';
+    this.name = "AuthenticationError";
     Object.setPrototypeOf(this, AuthenticationError.prototype);
   }
 }
@@ -90,10 +90,10 @@ export class PoolExhaustedError extends DatabaseError {
   constructor(
     message: string,
     provider?: DatabaseType,
-    public readonly poolSize?: number
+    public readonly poolSize?: number,
   ) {
     super(message, provider, ApiErrorCode.POOL_EXHAUSTED);
-    this.name = 'PoolExhaustedError';
+    this.name = "PoolExhaustedError";
     Object.setPrototypeOf(this, PoolExhaustedError.prototype);
   }
 }
@@ -111,10 +111,10 @@ export class QueryError extends DatabaseError {
     provider?: DatabaseType,
     query?: string,
     public readonly position?: number,
-    public readonly detail?: string
+    public readonly detail?: string,
   ) {
     super(message, provider, ApiErrorCode.QUERY_ERROR, query);
-    this.name = 'QueryError';
+    this.name = "QueryError";
     Object.setPrototypeOf(this, QueryError.prototype);
   }
 }
@@ -127,10 +127,10 @@ export class TimeoutError extends DatabaseError {
     message: string,
     provider?: DatabaseType,
     public readonly timeout?: number,
-    query?: string
+    query?: string,
   ) {
     super(message, provider, ApiErrorCode.TIMEOUT_ERROR, query);
-    this.name = 'TimeoutError';
+    this.name = "TimeoutError";
     Object.setPrototypeOf(this, TimeoutError.prototype);
   }
 }
@@ -141,7 +141,7 @@ export class TimeoutError extends DatabaseError {
 export class QueryCancelledError extends DatabaseError {
   constructor(message: string, provider?: DatabaseType, query?: string) {
     super(message, provider, ApiErrorCode.QUERY_CANCELLED, query);
-    this.name = 'QueryCancelledError';
+    this.name = "QueryCancelledError";
     Object.setPrototypeOf(this, QueryCancelledError.prototype);
   }
 }
@@ -184,7 +184,7 @@ export function isQueryCancelledError(error: unknown): error is QueryCancelledEr
 export function isRetryableError(error: unknown): boolean {
   if (!isDatabaseError(error)) {
     // Network errors are typically retryable
-    if (error instanceof TypeError && error.message.includes('fetch')) {
+    if (error instanceof TypeError && error.message.includes("fetch")) {
       return true;
     }
     return false;
@@ -207,11 +207,7 @@ export function isRetryableError(error: unknown): boolean {
 /**
  * Map native database errors to our error types
  */
-export function mapDatabaseError(
-  error: unknown,
-  provider: DatabaseType,
-  query?: string
-): DatabaseError {
+export function mapDatabaseError(error: unknown, provider: DatabaseType, query?: string): DatabaseError {
   if (isDatabaseError(error)) {
     return error;
   }
@@ -224,92 +220,66 @@ export function mapDatabaseError(
 
   // Connection errors
   if (
-    message.includes('econnrefused') ||
-    message.includes('connection refused') ||
-    message.includes('connect etimedout') ||
-    message.includes('getaddrinfo')
+    message.includes("econnrefused") ||
+    message.includes("connection refused") ||
+    message.includes("connect etimedout") ||
+    message.includes("getaddrinfo")
   ) {
-    return new ConnectionError(
-      `Failed to connect to ${provider} database: ${error.message}`,
-      provider
-    );
+    return new ConnectionError(`Failed to connect to ${provider} database: ${error.message}`, provider);
   }
 
   // Authentication errors
   if (
-    message.includes('password') ||
-    message.includes('authentication') ||
-    message.includes('access denied') ||
-    message.includes('permission denied')
+    message.includes("password") ||
+    message.includes("authentication") ||
+    message.includes("access denied") ||
+    message.includes("permission denied")
   ) {
-    return new AuthenticationError(
-      `Authentication failed: ${error.message}`,
-      provider
-    );
+    return new AuthenticationError(`Authentication failed: ${error.message}`, provider);
   }
 
   // Query cancellation (must check before timeout — 'canceling statement' is cancellation, not timeout)
   if (
-    message.includes('canceling statement') ||
-    message.includes('query execution was interrupted') ||
-    message.includes('query was cancelled') ||
-    message.includes('kill query')
+    message.includes("canceling statement") ||
+    message.includes("query execution was interrupted") ||
+    message.includes("query was cancelled") ||
+    message.includes("kill query")
   ) {
-    return new QueryCancelledError(
-      'Query was cancelled',
-      provider,
-      query
-    );
+    return new QueryCancelledError("Query was cancelled", provider, query);
   }
 
   // Timeout errors
-  if (
-    message.includes('timeout') ||
-    message.includes('timed out')
-  ) {
-    return new TimeoutError(
-      `Query timeout: ${error.message}`,
-      provider,
-      undefined,
-      query
-    );
+  if (message.includes("timeout") || message.includes("timed out")) {
+    return new TimeoutError(`Query timeout: ${error.message}`, provider, undefined, query);
   }
 
   // Oracle errors
-  if (message.includes('ora-01017') || message.includes('invalid username/password')) {
+  if (message.includes("ora-01017") || message.includes("invalid username/password")) {
     return new AuthenticationError(`Authentication failed: ${error.message}`, provider);
   }
-  if (message.includes('ora-12541') || message.includes('ora-12154') || message.includes('tns:')) {
+  if (message.includes("ora-12541") || message.includes("ora-12154") || message.includes("tns:")) {
     return new ConnectionError(`Failed to connect to Oracle: ${error.message}`, provider);
   }
-  if (message.includes('ora-00942')) {
+  if (message.includes("ora-00942")) {
     return new QueryError(`Table or view does not exist: ${error.message}`, provider, query);
   }
 
   // MSSQL errors
-  if (message.includes('login failed')) {
+  if (message.includes("login failed")) {
     return new AuthenticationError(`Authentication failed: ${error.message}`, provider);
   }
-  if (message.includes('cannot open database')) {
+  if (message.includes("cannot open database")) {
     return new ConnectionError(`Database not found: ${error.message}`, provider);
   }
 
   // Query errors (PostgreSQL specific)
-  if (message.includes('syntax error') || message.includes('column') || message.includes('relation')) {
-    return new QueryError(
-      error.message,
-      provider,
-      query,
-      (error as { position?: number }).position
-    );
+  if (message.includes("syntax error") || message.includes("column") || message.includes("relation")) {
+    return new QueryError(error.message, provider, query, (error as { position?: number }).position);
   }
 
   // Pool errors
-  if (message.includes('pool') || message.includes('too many connections')) {
-    return new PoolExhaustedError(
-      `Connection pool error: ${error.message}`,
-      provider
-    );
+  if (message.includes("pool") || message.includes("too many connections")) {
+    return new PoolExhaustedError(`Connection pool error: ${error.message}`, provider);
   }
 
   // Generic database error

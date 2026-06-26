@@ -4,10 +4,10 @@
  * Uses ssh2 library for tunnel creation.
  */
 
-import { Client } from 'ssh2';
-import net from 'net';
-import type { SSHTunnelConfig } from '@/lib/types';
-import { logger } from '@/lib/logger';
+import { Client } from "ssh2";
+import net from "net";
+import type { SSHTunnelConfig } from "@/lib/types";
+import { logger } from "@/lib/logger";
 
 export interface TunnelInfo {
   localHost: string;
@@ -26,7 +26,7 @@ export async function createSSHTunnel(
   connectionId: string,
   sshConfig: SSHTunnelConfig,
   remoteHost: string,
-  remotePort: number
+  remotePort: number,
 ): Promise<TunnelInfo> {
   // Return existing tunnel if already active
   // Note: cached tunnel may be stale if the SSH connection dropped silently.
@@ -49,48 +49,48 @@ export async function createSSHTunnel(
       sshClient.end();
     };
 
-    sshClient.on('ready', () => {
+    sshClient.on("ready", () => {
       // Create a local TCP server that forwards to the remote host through SSH
       localServer = net.createServer((socket) => {
-        sshClient.forwardOut(
-          '127.0.0.1',
-          0,
-          remoteHost,
-          remotePort,
-          (err, stream) => {
-            if (err) {
-              socket.end();
-              return;
-            }
-            // Prevent unhandled stream errors from crashing the process
-            stream.on('error', () => { socket.destroy(); });
-            socket.on('error', () => { stream.close(); });
-            socket.pipe(stream).pipe(socket);
+        sshClient.forwardOut("127.0.0.1", 0, remoteHost, remotePort, (err, stream) => {
+          if (err) {
+            socket.end();
+            return;
           }
-        );
+          // Prevent unhandled stream errors from crashing the process
+          stream.on("error", () => {
+            socket.destroy();
+          });
+          socket.on("error", () => {
+            stream.close();
+          });
+          socket.pipe(stream).pipe(socket);
+        });
       });
 
       // Attach error handler before listen to catch bind/listen errors
-      localServer.on('error', (err) => {
+      localServer.on("error", (err) => {
         cleanup();
         reject(new Error(`SSH tunnel local server error: ${err.message}`));
       });
 
       // Listen on a random available port
-      localServer.listen(0, '127.0.0.1', () => {
+      localServer.listen(0, "127.0.0.1", () => {
         const address = localServer!.address() as net.AddressInfo;
         const tunnelInfo: TunnelInfo = {
-          localHost: '127.0.0.1',
+          localHost: "127.0.0.1",
           localPort: address.port,
           close: cleanup,
         };
         activeTunnels.set(connectionId, tunnelInfo);
-        logger.info(`Tunnel created for ${connectionId}: 127.0.0.1:${address.port} -> ${remoteHost}:${remotePort}`, { connectionId });
+        logger.info(`Tunnel created for ${connectionId}: 127.0.0.1:${address.port} -> ${remoteHost}:${remotePort}`, {
+          connectionId,
+        });
         resolve(tunnelInfo);
       });
     });
 
-    sshClient.on('error', (err) => {
+    sshClient.on("error", (err) => {
       // Ensure SSH file descriptors are released before rejecting
       sshClient.end();
       cleanup();
@@ -98,15 +98,15 @@ export async function createSSHTunnel(
     });
 
     // Build SSH connection options
-    const connectOptions: Parameters<Client['connect']>[0] = {
+    const connectOptions: Parameters<Client["connect"]>[0] = {
       host: sshConfig.host,
       port: sshConfig.port || 22,
       username: sshConfig.username,
     };
 
-    if (sshConfig.authMethod === 'password') {
+    if (sshConfig.authMethod === "password") {
       connectOptions.password = sshConfig.password;
-    } else if (sshConfig.authMethod === 'privateKey') {
+    } else if (sshConfig.authMethod === "privateKey") {
       connectOptions.privateKey = sshConfig.privateKey;
       if (sshConfig.passphrase) {
         connectOptions.passphrase = sshConfig.passphrase;

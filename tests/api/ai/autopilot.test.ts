@@ -1,9 +1,9 @@
-import { describe, test, expect, mock, beforeEach } from 'bun:test';
-import { createMockRequest, readStreamResponse, parseResponseJSON } from '../../helpers/mock-next';
+import { describe, test, expect, mock, beforeEach } from "bun:test";
+import { createMockRequest, readStreamResponse, parseResponseJSON } from "../../helpers/mock-next";
 
 // ─── Mock helpers ───────────────────────────────────────────────────────────
 
-function createMockStream(text = 'mock response') {
+function createMockStream(text = "mock response") {
   return new ReadableStream({
     start(controller) {
       controller.enqueue(new TextEncoder().encode(text));
@@ -16,24 +16,39 @@ class MockLLMError extends Error {
   statusCode?: number;
   constructor(msg: string, _provider?: string, code?: number) {
     super(msg);
-    this.name = 'LLMError';
+    this.name = "LLMError";
     this.statusCode = code;
   }
 }
 class MockLLMConfigError extends MockLLMError {
-  constructor(msg: string) { super(msg); this.name = 'LLMConfigError'; }
+  constructor(msg: string) {
+    super(msg);
+    this.name = "LLMConfigError";
+  }
 }
 class MockLLMAuthError extends MockLLMError {
-  constructor(msg: string) { super(msg, undefined, 401); this.name = 'LLMAuthError'; }
+  constructor(msg: string) {
+    super(msg, undefined, 401);
+    this.name = "LLMAuthError";
+  }
 }
 class MockLLMRateLimitError extends MockLLMError {
-  constructor(msg: string) { super(msg, undefined, 429); this.name = 'LLMRateLimitError'; }
+  constructor(msg: string) {
+    super(msg, undefined, 429);
+    this.name = "LLMRateLimitError";
+  }
 }
 class MockLLMSafetyError extends MockLLMError {
-  constructor(msg: string) { super(msg, undefined, 400); this.name = 'LLMSafetyError'; }
+  constructor(msg: string) {
+    super(msg, undefined, 400);
+    this.name = "LLMSafetyError";
+  }
 }
 class MockLLMStreamError extends MockLLMError {
-  constructor(msg: string) { super(msg); this.name = 'LLMStreamError'; }
+  constructor(msg: string) {
+    super(msg);
+    this.name = "LLMStreamError";
+  }
 }
 
 // ─── Mock @/lib/llm BEFORE importing the route ─────────────────────────────
@@ -42,7 +57,7 @@ const mockStream = mock(async () => createMockStream());
 const mockProvider = { stream: mockStream };
 const mockCreateLLMProvider = mock(async () => mockProvider);
 
-mock.module('@/lib/llm', () => ({
+mock.module("@/lib/llm", () => ({
   createLLMProvider: mockCreateLLMProvider,
   LLMError: MockLLMError,
   LLMConfigError: MockLLMConfigError,
@@ -51,7 +66,7 @@ mock.module('@/lib/llm', () => ({
   LLMSafetyError: MockLLMSafetyError,
 }));
 
-mock.module('@/lib/llm/types', () => ({
+mock.module("@/lib/llm/types", () => ({
   LLMError: MockLLMError,
   LLMConfigError: MockLLMConfigError,
   LLMAuthError: MockLLMAuthError,
@@ -62,11 +77,11 @@ mock.module('@/lib/llm/types', () => ({
 
 // ─── Import route handler AFTER mocking ─────────────────────────────────────
 
-const { POST } = await import('@/app/api/ai/autopilot/route');
+const { POST } = await import("@/app/api/ai/autopilot/route");
 
 // ─── Tests ──────────────────────────────────────────────────────────────────
 
-describe('POST /api/ai/autopilot', () => {
+describe("POST /api/ai/autopilot", () => {
   beforeEach(() => {
     mockCreateLLMProvider.mockClear();
     mockStream.mockClear();
@@ -74,36 +89,36 @@ describe('POST /api/ai/autopilot', () => {
     mockStream.mockImplementation(async () => createMockStream());
   });
 
-  test('returns streaming response with all metrics', async () => {
-    const req = createMockRequest('/api/ai/autopilot', {
-      method: 'POST',
+  test("returns streaming response with all metrics", async () => {
+    const req = createMockRequest("/api/ai/autopilot", {
+      method: "POST",
       body: {
-        slowQueries: [{ query: 'SELECT * FROM users', avgTime: 200, calls: 50 }],
-        indexStats: [{ name: 'idx_users_email', scans: 100 }],
-        tableStats: [{ name: 'users', rows: 10000, size: '5 MB' }],
+        slowQueries: [{ query: "SELECT * FROM users", avgTime: 200, calls: 50 }],
+        indexStats: [{ name: "idx_users_email", scans: 100 }],
+        tableStats: [{ name: "users", rows: 10000, size: "5 MB" }],
         performanceMetrics: { cacheHitRatio: 0.95 },
-        overview: { version: '15.2', uptime: '2 days' },
-        schemaContext: 'users(id, name, email)',
-        databaseType: 'postgres',
+        overview: { version: "15.2", uptime: "2 days" },
+        schemaContext: "users(id, name, email)",
+        databaseType: "postgres",
       },
     });
 
     const res = await POST(req as never);
     expect(res.status).toBe(200);
-    expect(res.headers.get('content-type')).toBe('text/plain; charset=utf-8');
+    expect(res.headers.get("content-type")).toBe("text/plain; charset=utf-8");
 
     const text = await readStreamResponse(res);
-    expect(text).toBe('mock response');
+    expect(text).toBe("mock response");
     expect(mockCreateLLMProvider).toHaveBeenCalledTimes(1);
     expect(mockStream).toHaveBeenCalledTimes(1);
   });
 
-  test('returns streaming response with partial data', async () => {
-    const req = createMockRequest('/api/ai/autopilot', {
-      method: 'POST',
+  test("returns streaming response with partial data", async () => {
+    const req = createMockRequest("/api/ai/autopilot", {
+      method: "POST",
       body: {
-        slowQueries: [{ query: 'SELECT 1', avgTime: 10 }],
-        databaseType: 'postgres',
+        slowQueries: [{ query: "SELECT 1", avgTime: 10 }],
+        databaseType: "postgres",
       },
     });
 
@@ -111,12 +126,12 @@ describe('POST /api/ai/autopilot', () => {
     expect(res.status).toBe(200);
 
     const text = await readStreamResponse(res);
-    expect(text).toBe('mock response');
+    expect(text).toBe("mock response");
   });
 
-  test('returns streaming response with empty body (no validation)', async () => {
-    const req = createMockRequest('/api/ai/autopilot', {
-      method: 'POST',
+  test("returns streaming response with empty body (no validation)", async () => {
+    const req = createMockRequest("/api/ai/autopilot", {
+      method: "POST",
       body: {},
     });
 
@@ -124,16 +139,16 @@ describe('POST /api/ai/autopilot', () => {
     expect(res.status).toBe(200);
 
     const text = await readStreamResponse(res);
-    expect(text).toBe('mock response');
+    expect(text).toBe("mock response");
   });
 
-  test('returns 503 on LLMConfigError', async () => {
+  test("returns 503 on LLMConfigError", async () => {
     mockCreateLLMProvider.mockImplementation(async () => {
-      throw new MockLLMConfigError('LLM not configured');
+      throw new MockLLMConfigError("LLM not configured");
     });
 
-    const req = createMockRequest('/api/ai/autopilot', {
-      method: 'POST',
+    const req = createMockRequest("/api/ai/autopilot", {
+      method: "POST",
       body: {},
     });
 
@@ -141,13 +156,13 @@ describe('POST /api/ai/autopilot', () => {
     expect(res.status).toBe(503);
   });
 
-  test('returns 401 on LLMAuthError', async () => {
+  test("returns 401 on LLMAuthError", async () => {
     mockCreateLLMProvider.mockImplementation(async () => {
-      throw new MockLLMAuthError('Invalid API key');
+      throw new MockLLMAuthError("Invalid API key");
     });
 
-    const req = createMockRequest('/api/ai/autopilot', {
-      method: 'POST',
+    const req = createMockRequest("/api/ai/autopilot", {
+      method: "POST",
       body: {},
     });
 
@@ -155,13 +170,13 @@ describe('POST /api/ai/autopilot', () => {
     expect(res.status).toBe(401);
   });
 
-  test('returns 500 on generic error', async () => {
+  test("returns 500 on generic error", async () => {
     mockStream.mockImplementation(async () => {
-      throw new Error('Something broke');
+      throw new Error("Something broke");
     });
 
-    const req = createMockRequest('/api/ai/autopilot', {
-      method: 'POST',
+    const req = createMockRequest("/api/ai/autopilot", {
+      method: "POST",
       body: {},
     });
 
@@ -169,6 +184,6 @@ describe('POST /api/ai/autopilot', () => {
     expect(res.status).toBe(500);
 
     const data = await parseResponseJSON<{ error: string }>(res);
-    expect(data.error).toBe('Something broke');
+    expect(data.error).toBe("Something broke");
   });
 });

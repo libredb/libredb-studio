@@ -1,26 +1,26 @@
-'use client';
+"use client";
 
-import { useState, useCallback, useEffect, useMemo } from 'react';
-import type { DatabaseConnection, TableSchema, QueryTab } from '@/lib/types';
-import type { ProviderMetadata } from '@/hooks/use-provider-metadata';
-import { generateTableQuery, generateSelectQuery } from '@/lib/query-generators';
+import { useState, useCallback, useEffect, useMemo } from "react";
+import type { DatabaseConnection, TableSchema, QueryTab } from "@/lib/types";
+import type { ProviderMetadata } from "@/hooks/use-provider-metadata";
+import { generateTableQuery, generateSelectQuery } from "@/lib/query-generators";
 
 const DEFAULT_TAB: QueryTab = {
-  id: 'default',
-  name: 'Query 1',
-  query: '',
+  id: "default",
+  name: "Query 1",
+  query: "",
   result: null,
   isExecuting: false,
-  type: 'sql'
+  type: "sql",
 };
 
-const WORKSPACE_STORAGE_PREFIX = 'libredb_workspace_tabs_v1';
+const WORKSPACE_STORAGE_PREFIX = "libredb_workspace_tabs_v1";
 
 interface PersistedTabState {
   id: string;
   name: string;
   query: string;
-  type: QueryTab['type'];
+  type: QueryTab["type"];
 }
 
 interface PersistedWorkspaceState {
@@ -35,34 +35,27 @@ interface UseTabManagerParams {
   persistWorkspace?: boolean;
 }
 
-export function useTabManager({
-  activeConnection,
-  metadata,
-  schema,
-  persistWorkspace,
-}: UseTabManagerParams) {
+export function useTabManager({ activeConnection, metadata, schema, persistWorkspace }: UseTabManagerParams) {
   const [tabs, setTabs] = useState<QueryTab[]>([DEFAULT_TAB]);
-  const [activeTabId, setActiveTabId] = useState<string>('default');
+  const [activeTabId, setActiveTabId] = useState<string>("default");
   const [editingTabId, setEditingTabId] = useState<string | null>(null);
-  const [editingTabName, setEditingTabName] = useState('');
+  const [editingTabName, setEditingTabName] = useState("");
   const [isWorkspaceHydrated, setIsWorkspaceHydrated] = useState(false);
 
   const workspaceKey = useMemo(
-    () => `${WORKSPACE_STORAGE_PREFIX}:${activeConnection?.id ?? 'default'}`,
-    [activeConnection?.id]
+    () => `${WORKSPACE_STORAGE_PREFIX}:${activeConnection?.id ?? "default"}`,
+    [activeConnection?.id],
   );
-  const shouldPersistWorkspace = persistWorkspace ?? process.env.NODE_ENV !== 'test';
+  const shouldPersistWorkspace = persistWorkspace ?? process.env.NODE_ENV !== "test";
 
-  const currentTab = tabs.find(t => t.id === activeTabId) || tabs[0];
+  const currentTab = tabs.find((t) => t.id === activeTabId) || tabs[0];
 
   // LOAD EFFECT — restore tabs from localStorage on connection switch
   useEffect(() => {
     setIsWorkspaceHydrated(false);
     if (!shouldPersistWorkspace) return;
 
-    const storage = typeof globalThis !== 'undefined' && 'localStorage' in globalThis
-      ? globalThis.localStorage
-      : null;
+    const storage = typeof globalThis !== "undefined" && "localStorage" in globalThis ? globalThis.localStorage : null;
     if (!storage) return;
 
     try {
@@ -80,7 +73,7 @@ export function useTabManager({
         return;
       }
 
-      const restoredTabs: QueryTab[] = parsed.tabs.map(tab => ({
+      const restoredTabs: QueryTab[] = parsed.tabs.map((tab) => ({
         id: tab.id,
         name: tab.name,
         query: tab.query,
@@ -89,11 +82,11 @@ export function useTabManager({
         isExecuting: false,
       }));
 
-      const hasActiveTab = restoredTabs.some(tab => tab.id === parsed.activeTabId);
+      const hasActiveTab = restoredTabs.some((tab) => tab.id === parsed.activeTabId);
       setTabs(restoredTabs);
       setActiveTabId(hasActiveTab ? parsed.activeTabId : restoredTabs[0].id);
     } catch (error) {
-      console.error('[useTabManager] Failed to restore workspace tabs:', error);
+      console.error("[useTabManager] Failed to restore workspace tabs:", error);
       setTabs([DEFAULT_TAB]);
       setActiveTabId(DEFAULT_TAB.id);
     }
@@ -109,15 +102,13 @@ export function useTabManager({
   // SAVE EFFECT — debounced write to localStorage (500ms)
   useEffect(() => {
     if (!shouldPersistWorkspace) return;
-    const storage = typeof globalThis !== 'undefined' && 'localStorage' in globalThis
-      ? globalThis.localStorage
-      : null;
+    const storage = typeof globalThis !== "undefined" && "localStorage" in globalThis ? globalThis.localStorage : null;
     if (!isWorkspaceHydrated || !storage) return;
 
     const timer = setTimeout(() => {
       const serialized: PersistedWorkspaceState = {
         activeTabId,
-        tabs: tabs.map(tab => ({
+        tabs: tabs.map((tab) => ({
           id: tab.id,
           name: tab.name,
           query: tab.query,
@@ -131,88 +122,111 @@ export function useTabManager({
   }, [tabs, activeTabId, workspaceKey, shouldPersistWorkspace, isWorkspaceHydrated]);
 
   const updateTabById = useCallback((tabId: string, updates: Partial<QueryTab>) => {
-    setTabs(prev => prev.map(t => t.id === tabId ? { ...t, ...updates } : t));
+    setTabs((prev) => prev.map((t) => (t.id === tabId ? { ...t, ...updates } : t)));
   }, []);
 
-  const updateCurrentTab = useCallback((updates: Partial<QueryTab>) => {
-    updateTabById(activeTabId, updates);
-  }, [activeTabId, updateTabById]);
+  const updateCurrentTab = useCallback(
+    (updates: Partial<QueryTab>) => {
+      updateTabById(activeTabId, updates);
+    },
+    [activeTabId, updateTabById],
+  );
 
   const addTab = useCallback(() => {
     const newId = Math.random().toString(36).substring(7);
     const queryLanguage = metadata?.capabilities.queryLanguage;
     const queryDialect = metadata?.capabilities.queryDialect;
-    setTabs(prev => [...prev, {
-      id: newId,
-      name: `Query ${prev.length + 1}`,
-      query: '',
-      result: null,
-      isExecuting: false,
-      type: queryDialect === 'libredb' ? 'libredb' : queryLanguage === 'json' ? 'mongodb' : 'sql'
-    }]);
+    setTabs((prev) => [
+      ...prev,
+      {
+        id: newId,
+        name: `Query ${prev.length + 1}`,
+        query: "",
+        result: null,
+        isExecuting: false,
+        type: queryDialect === "libredb" ? "libredb" : queryLanguage === "json" ? "mongodb" : "sql",
+      },
+    ]);
     setActiveTabId(newId);
   }, [activeConnection, metadata]);
 
-  const closeTab = useCallback((id: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    setTabs(prev => {
-      if (prev.length === 1) return prev;
-      const newTabs = prev.filter(t => t.id !== id);
-      if (activeTabId === id && newTabs.length > 0) {
-        setActiveTabId(newTabs[newTabs.length - 1].id);
-      }
-      return newTabs;
-    });
-  }, [activeTabId]);
+  const closeTab = useCallback(
+    (id: string, e: React.MouseEvent) => {
+      e.stopPropagation();
+      setTabs((prev) => {
+        if (prev.length === 1) return prev;
+        const newTabs = prev.filter((t) => t.id !== id);
+        if (activeTabId === id && newTabs.length > 0) {
+          setActiveTabId(newTabs[newTabs.length - 1].id);
+        }
+        return newTabs;
+      });
+    },
+    [activeTabId],
+  );
 
   // handleTableClick takes executeQuery as callback param to avoid circular dependency
-  const handleTableClick = useCallback((
-    tableName: string,
-    executeQueryFn: (query: string, tabId: string) => void
-  ) => {
-    const capabilities = metadata?.capabilities;
-    const newQuery = capabilities
-      ? generateTableQuery(tableName, capabilities)
-      : `SELECT * FROM ${tableName} LIMIT 50;`;
+  const handleTableClick = useCallback(
+    (tableName: string, executeQueryFn: (query: string, tabId: string) => void) => {
+      const capabilities = metadata?.capabilities;
+      const newQuery = capabilities
+        ? generateTableQuery(tableName, capabilities)
+        : `SELECT * FROM ${tableName} LIMIT 50;`;
 
-    const newId = Math.random().toString(36).substring(7);
-    const newTab: QueryTab = {
-      id: newId,
-      name: tableName,
-      query: newQuery,
-      result: null,
-      isExecuting: false,
-      type: capabilities?.queryDialect === 'libredb' ? 'libredb' : capabilities?.queryLanguage === 'json' ? 'mongodb' : 'sql'
-    };
-    setTabs(prev => [...prev, newTab]);
-    setActiveTabId(newId);
-    setTimeout(() => executeQueryFn(newQuery, newId), 100);
-  }, [metadata]);
+      const newId = Math.random().toString(36).substring(7);
+      const newTab: QueryTab = {
+        id: newId,
+        name: tableName,
+        query: newQuery,
+        result: null,
+        isExecuting: false,
+        type:
+          capabilities?.queryDialect === "libredb"
+            ? "libredb"
+            : capabilities?.queryLanguage === "json"
+              ? "mongodb"
+              : "sql",
+      };
+      setTabs((prev) => [...prev, newTab]);
+      setActiveTabId(newId);
+      setTimeout(() => executeQueryFn(newQuery, newId), 100);
+    },
+    [metadata],
+  );
 
-  const handleGenerateSelect = useCallback((tableName: string) => {
-    const capabilities = metadata?.capabilities;
-    const table = schema.find(t => t.name === tableName);
-    const columns = table?.columns || [];
+  const handleGenerateSelect = useCallback(
+    (tableName: string) => {
+      const capabilities = metadata?.capabilities;
+      const table = schema.find((t) => t.name === tableName);
+      const columns = table?.columns || [];
 
-    const newQuery = capabilities
-      ? generateSelectQuery(tableName, columns, capabilities)
-      : `SELECT\n${columns.map(c => `  ${c.name}`).join(',\n') || '  *'}\nFROM ${tableName}\nWHERE 1=1\nLIMIT 100;`;
+      const newQuery = capabilities
+        ? generateSelectQuery(tableName, columns, capabilities)
+        : `SELECT\n${columns.map((c) => `  ${c.name}`).join(",\n") || "  *"}\nFROM ${tableName}\nWHERE 1=1\nLIMIT 100;`;
 
-    const tabType: 'sql' | 'mongodb' | 'redis' | 'libredb' = capabilities?.queryDialect === 'libredb'
-      ? 'libredb'
-      : capabilities?.queryLanguage === 'json' ? 'mongodb' : 'sql';
+      const tabType: "sql" | "mongodb" | "redis" | "libredb" =
+        capabilities?.queryDialect === "libredb"
+          ? "libredb"
+          : capabilities?.queryLanguage === "json"
+            ? "mongodb"
+            : "sql";
 
-    const newId = Math.random().toString(36).substring(7);
-    setTabs(prev => [...prev, {
-      id: newId,
-      name: `Query: ${tableName}`,
-      query: newQuery,
-      result: null,
-      isExecuting: false,
-      type: tabType
-    }]);
-    setActiveTabId(newId);
-  }, [metadata, schema]);
+      const newId = Math.random().toString(36).substring(7);
+      setTabs((prev) => [
+        ...prev,
+        {
+          id: newId,
+          name: `Query: ${tableName}`,
+          query: newQuery,
+          result: null,
+          isExecuting: false,
+          type: tabType,
+        },
+      ]);
+      setActiveTabId(newId);
+    },
+    [metadata, schema],
+  );
 
   return {
     tabs,

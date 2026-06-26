@@ -5,13 +5,7 @@ import nextTypescript from "eslint-config-next/typescript";
 const eslintConfig = defineConfig([
   ...nextCoreWebVitals,
   ...nextTypescript,
-  globalIgnores([
-    ".next/**",
-    "out/**",
-    "build/**",
-    "dist/**",
-    "next-env.d.ts",
-  ]),
+  globalIgnores([".next/**", "out/**", "build/**", "dist/**", "next-env.d.ts"]),
   {
     rules: {
       "@typescript-eslint/no-explicit-any": "warn",

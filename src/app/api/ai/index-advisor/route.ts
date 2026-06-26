@@ -1,9 +1,9 @@
-import { NextRequest } from 'next/server';
-import { createLLMProvider } from '@/lib/llm';
-import { createErrorResponse } from '@/lib/api/errors';
+import { NextRequest } from "next/server";
+import { createLLMProvider } from "@/lib/llm";
+import { createErrorResponse } from "@/lib/api/errors";
 
 function buildIndexAdvisorPrompt(databaseType: string): string {
-  return `You are a Database Index Optimization Expert for ${databaseType || 'PostgreSQL'}.
+  return `You are a Database Index Optimization Expert for ${databaseType || "PostgreSQL"}.
 
 You will be given:
 1. Slow queries with execution statistics
@@ -62,37 +62,37 @@ export async function POST(req: NextRequest) {
     const parts: string[] = [];
 
     if (slowQueries?.length) {
-      parts.push('## Slow Queries\n' + JSON.stringify(slowQueries.slice(0, 20), null, 2));
+      parts.push("## Slow Queries\n" + JSON.stringify(slowQueries.slice(0, 20), null, 2));
     }
 
     if (indexStats?.length) {
-      parts.push('## Current Indexes\n' + JSON.stringify(indexStats.slice(0, 50), null, 2));
+      parts.push("## Current Indexes\n" + JSON.stringify(indexStats.slice(0, 50), null, 2));
     }
 
     if (tableStats?.length) {
-      parts.push('## Table Statistics\n' + JSON.stringify(tableStats.slice(0, 30), null, 2));
+      parts.push("## Table Statistics\n" + JSON.stringify(tableStats.slice(0, 30), null, 2));
     }
 
     if (schemaContext) {
-      parts.push('## Schema\n' + schemaContext.substring(0, 4000));
+      parts.push("## Schema\n" + schemaContext.substring(0, 4000));
     }
 
-    const userMessage = `Analyze the following database statistics and provide index recommendations:\n\n${parts.join('\n\n')}`;
+    const userMessage = `Analyze the following database statistics and provide index recommendations:\n\n${parts.join("\n\n")}`;
 
     const stream = await provider.stream({
       messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userMessage },
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userMessage },
       ],
     });
 
     return new Response(stream, {
       headers: {
-        'Content-Type': 'text/plain; charset=utf-8',
-        'Transfer-Encoding': 'chunked',
+        "Content-Type": "text/plain; charset=utf-8",
+        "Transfer-Encoding": "chunked",
       },
     });
   } catch (error) {
-    return createErrorResponse(error, { route: 'api/ai/index-advisor' });
+    return createErrorResponse(error, { route: "api/ai/index-advisor" });
   }
 }

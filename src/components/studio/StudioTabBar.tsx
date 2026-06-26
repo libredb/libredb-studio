@@ -1,9 +1,9 @@
-'use client';
+"use client";
 
-import React, { type Dispatch, type SetStateAction } from 'react';
-import type { QueryTab } from '@/lib/types';
-import { cn } from '@/lib/utils';
-import { FileJson, Hash, Plus, X } from 'lucide-react';
+import React, { type Dispatch, type SetStateAction } from "react";
+import type { QueryTab } from "@/lib/types";
+import { cn } from "@/lib/utils";
+import { FileJson, Hash, Plus, X } from "lucide-react";
 
 interface StudioTabBarProps {
   tabs: QueryTab[];
@@ -32,7 +32,7 @@ export function StudioTabBar({
 }: StudioTabBarProps) {
   return (
     <div className="hidden md:flex h-10 bg-[#0d0d0d] border-b border-white/5 items-center px-2 gap-1 overflow-x-auto no-scrollbar">
-      {tabs.map(tab => (
+      {tabs.map((tab) => (
         <div
           key={tab.id}
           onClick={() => onSetActiveTabId(tab.id)}
@@ -42,10 +42,16 @@ export function StudioTabBar({
           }}
           className={cn(
             "h-8 flex items-center px-3 gap-2 rounded-t-md transition-all cursor-pointer min-w-[120px] max-w-[200px] group relative border-t-2",
-            activeTabId === tab.id ? "bg-[#141414] text-zinc-100 border-blue-500" : "text-zinc-500 hover:bg-white/5 border-transparent"
+            activeTabId === tab.id
+              ? "bg-[#141414] text-zinc-100 border-blue-500"
+              : "text-zinc-500 hover:bg-white/5 border-transparent",
           )}
         >
-          {tab.type === 'sql' ? <Hash strokeWidth={1.5} className="w-3 h-3" /> : <FileJson strokeWidth={1.5} className="w-3 h-3" />}
+          {tab.type === "sql" ? (
+            <Hash strokeWidth={1.5} className="w-3 h-3" />
+          ) : (
+            <FileJson strokeWidth={1.5} className="w-3 h-3" />
+          )}
           {editingTabId === tab.id ? (
             <input
               autoFocus
@@ -53,17 +59,17 @@ export function StudioTabBar({
               onChange={(e) => onSetEditingTabName(e.target.value)}
               onBlur={() => {
                 if (editingTabName.trim()) {
-                  onSetTabs(prev => prev.map(t => t.id === tab.id ? { ...t, name: editingTabName.trim() } : t));
+                  onSetTabs((prev) => prev.map((t) => (t.id === tab.id ? { ...t, name: editingTabName.trim() } : t)));
                 }
                 onSetEditingTabId(null);
               }}
               onKeyDown={(e) => {
-                if (e.key === 'Enter') {
+                if (e.key === "Enter") {
                   if (editingTabName.trim()) {
-                    onSetTabs(prev => prev.map(t => t.id === tab.id ? { ...t, name: editingTabName.trim() } : t));
+                    onSetTabs((prev) => prev.map((t) => (t.id === tab.id ? { ...t, name: editingTabName.trim() } : t)));
                   }
                   onSetEditingTabId(null);
-                } else if (e.key === 'Escape') {
+                } else if (e.key === "Escape") {
                   onSetEditingTabId(null);
                 }
               }}
@@ -73,10 +79,20 @@ export function StudioTabBar({
           ) : (
             <span className="text-xs truncate font-medium">{tab.name}</span>
           )}
-          {tabs.length > 1 && <X strokeWidth={1.5} className="w-3 h-3 ml-auto opacity-0 group-hover:opacity-100 hover:text-white shrink-0" onClick={(e) => onCloseTab(tab.id, e)} />}
+          {tabs.length > 1 && (
+            <X
+              strokeWidth={1.5}
+              className="w-3 h-3 ml-auto opacity-0 group-hover:opacity-100 hover:text-white shrink-0"
+              onClick={(e) => onCloseTab(tab.id, e)}
+            />
+          )}
         </div>
       ))}
-      <Plus strokeWidth={1.5} className="w-3.5 h-3.5 text-zinc-500 cursor-pointer hover:text-white mx-2" onClick={onAddTab} />
+      <Plus
+        strokeWidth={1.5}
+        className="w-3.5 h-3.5 text-zinc-500 cursor-pointer hover:text-white mx-2"
+        onClick={onAddTab}
+      />
     </div>
   );
 }

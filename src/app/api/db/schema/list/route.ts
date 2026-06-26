@@ -1,7 +1,7 @@
-import { NextRequest } from 'next/server';
-import { handleSchemaRequest } from '@/lib/api/schema-route';
+import { NextRequest } from "next/server";
+import { handleSchemaRequest } from "@/lib/api/schema-route";
 
-export const dynamic = 'force-dynamic';
+export const dynamic = "force-dynamic";
 
 /**
  * Fast structural schema (tables + columns + PKs), excluding the expensive
@@ -13,7 +13,7 @@ export const dynamic = 'force-dynamic';
  * fast path, so non-postgres databases keep working unchanged.
  */
 export async function POST(req: NextRequest) {
-  return handleSchemaRequest(req, 'api/db/schema/list', (provider) =>
+  return handleSchemaRequest(req, "api/db/schema/list", (provider) =>
     provider.getSchemaList ? provider.getSchemaList() : provider.getSchema(),
   );
 }

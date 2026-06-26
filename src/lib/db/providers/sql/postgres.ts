@@ -3,8 +3,8 @@
  * Full PostgreSQL support with connection pooling
  */
 
-import { Pool, type PoolClient, type PoolConfig as PgPoolConfig } from 'pg';
-import { SQLBaseProvider } from './sql-base';
+import { Pool, type PoolClient, type PoolConfig as PgPoolConfig } from "pg";
+import { SQLBaseProvider } from "./sql-base";
 import {
   type DatabaseConnection,
   type TableSchema,
@@ -24,14 +24,9 @@ import {
   type TableStats,
   type IndexStats,
   type StorageStats,
-} from '../../types';
-import {
-  DatabaseConfigError,
-  ConnectionError,
-  QueryError,
-  mapDatabaseError,
-} from '../../errors';
-import { formatBytes } from '../../utils/pool-manager';
+} from "../../types";
+import { DatabaseConfigError, ConnectionError, QueryError, mapDatabaseError } from "../../errors";
+import { formatBytes } from "../../utils/pool-manager";
 
 // ============================================================================
 // Type Definitions
@@ -58,11 +53,16 @@ interface SchemaRow {
   pk_columns: string[];
   columns?: Array<{ name: string; type: string; nullable: boolean; defaultValue?: string | null }>;
   indexes?: Array<{ name: string; columns: string[]; unique: boolean }>;
-  foreign_keys?: Array<{ columnName: string; referencedSchema: string; referencedTable: string; referencedColumn: string }>;
+  foreign_keys?: Array<{
+    columnName: string;
+    referencedSchema: string;
+    referencedTable: string;
+    referencedColumn: string;
+  }>;
 }
 
-type SchemaListRow = Omit<SchemaRow, 'indexes' | 'foreign_keys'>;
-type SchemaRelationRow = Pick<SchemaRow, 'table_schema' | 'table_name' | 'foreign_keys' | 'indexes'>;
+type SchemaListRow = Omit<SchemaRow, "indexes" | "foreign_keys">;
+type SchemaRelationRow = Pick<SchemaRow, "table_schema" | "table_name" | "foreign_keys" | "indexes">;
 
 // ============================================================================
 // Schema introspection SQL
@@ -253,7 +253,7 @@ export class PostgresProvider extends SQLBaseProvider {
       defaultPort: 5432,
       supportsExplain: true,
       supportsConnectionString: true,
-      maintenanceOperations: ['vacuum', 'analyze', 'reindex', 'kill'],
+      maintenanceOperations: ["vacuum", "analyze", "reindex", "kill"],
     };
   }
 
@@ -266,10 +266,10 @@ export class PostgresProvider extends SQLBaseProvider {
 
     if (!this.config.connectionString) {
       if (!this.config.host) {
-        throw new DatabaseConfigError('Host is required for PostgreSQL', 'postgres');
+        throw new DatabaseConfigError("Host is required for PostgreSQL", "postgres");
       }
       if (!this.config.database) {
-        throw new DatabaseConfigError('Database name is required for PostgreSQL', 'postgres');
+        throw new DatabaseConfigError("Database name is required for PostgreSQL", "postgres");
       }
     }
   }
@@ -295,9 +295,9 @@ export class PostgresProvider extends SQLBaseProvider {
       this.setError(error instanceof Error ? error : new Error(String(error)));
       throw new ConnectionError(
         `Failed to connect to PostgreSQL: ${error instanceof Error ? error.message : error}`,
-        'postgres',
+        "postgres",
         this.config.host,
-        this.config.port
+        this.config.port,
       );
     }
   }
@@ -339,22 +339,22 @@ export class PostgresProvider extends SQLBaseProvider {
     };
   }
 
-  private buildSSLConfig(): PgPoolConfig['ssl'] {
+  private buildSSLConfig(): PgPoolConfig["ssl"] {
     const connSSL = this.config.ssl;
 
     // Explicit SSL config from connection takes priority
     if (connSSL) {
-      if (connSSL.mode === 'disable') return false;
+      if (connSSL.mode === "disable") return false;
 
       const ssl: Record<string, unknown> = {
-        rejectUnauthorized: connSSL.mode === 'verify-ca' || connSSL.mode === 'verify-full',
+        rejectUnauthorized: connSSL.mode === "verify-ca" || connSSL.mode === "verify-full",
       };
 
       if (connSSL.caCert) ssl.ca = connSSL.caCert;
       if (connSSL.clientCert) ssl.cert = connSSL.clientCert;
       if (connSSL.clientKey) ssl.key = connSSL.clientKey;
 
-      return ssl as PgPoolConfig['ssl'];
+      return ssl as PgPoolConfig["ssl"];
     }
 
     // Auto-detect for cloud providers
@@ -385,7 +385,7 @@ export class PostgresProvider extends SQLBaseProvider {
           try {
             // Track PID for cancellation support
             if (queryId) {
-              const pidRes = await client.query('SELECT pg_backend_pid() as pid');
+              const pidRes = await client.query("SELECT pg_backend_pid() as pid");
               this.runningQueryPids.set(queryId, pidRes.rows[0].pid);
             }
             const res = await client.query(sql, params);
@@ -396,7 +396,7 @@ export class PostgresProvider extends SQLBaseProvider {
           }
         } catch (error) {
           if (queryId) this.runningQueryPids.delete(queryId);
-          throw mapDatabaseError(error, 'postgres', sql);
+          throw mapDatabaseError(error, "postgres", sql);
         }
       });
 
@@ -416,13 +416,13 @@ export class PostgresProvider extends SQLBaseProvider {
     try {
       const client = await this.pool!.connect();
       try {
-        const res = await client.query('SELECT pg_cancel_backend($1) as cancelled', [pid]);
+        const res = await client.query("SELECT pg_cancel_backend($1) as cancelled", [pid]);
         return res.rows[0]?.cancelled === true;
       } finally {
         client.release();
       }
     } catch (error) {
-      console.error('[Postgres] Failed to cancel query:', error);
+      console.error("[Postgres] Failed to cancel query:", error);
       return false;
     }
   }
@@ -444,10 +444,12 @@ export class PostgresProvider extends SQLBaseProvider {
    */
   public async expireTransaction(): Promise<void> {
     if (this.txActive && this.txClient) {
-      console.warn('[Postgres] Transaction timed out, auto-rolling back');
+      console.warn("[Postgres] Transaction timed out, auto-rolling back");
       try {
-        await this.txClient.query('ROLLBACK');
-      } catch { /* ignore */ } finally {
+        await this.txClient.query("ROLLBACK");
+      } catch {
+        /* ignore */
+      } finally {
         this.txClient.release();
         this.txClient = null;
         this.txActive = false;
@@ -458,20 +460,22 @@ export class PostgresProvider extends SQLBaseProvider {
 
   public async beginTransaction(): Promise<void> {
     this.ensureConnected();
-    if (this.txActive) throw new QueryError('Transaction already active', 'postgres');
+    if (this.txActive) throw new QueryError("Transaction already active", "postgres");
     this.txClient = await this.pool!.connect();
-    await this.txClient.query('BEGIN');
+    await this.txClient.query("BEGIN");
     this.txActive = true;
 
     // Auto-rollback after timeout to prevent leaked locks
-    this.txTimeout = setTimeout(() => { this.expireTransaction(); }, PostgresProvider.TX_TIMEOUT_MS);
+    this.txTimeout = setTimeout(() => {
+      this.expireTransaction();
+    }, PostgresProvider.TX_TIMEOUT_MS);
   }
 
   public async commitTransaction(): Promise<void> {
-    if (!this.txClient || !this.txActive) throw new QueryError('No active transaction', 'postgres');
+    if (!this.txClient || !this.txActive) throw new QueryError("No active transaction", "postgres");
     this.clearTxTimeout();
     try {
-      await this.txClient.query('COMMIT');
+      await this.txClient.query("COMMIT");
     } finally {
       this.txClient.release();
       this.txClient = null;
@@ -480,10 +484,10 @@ export class PostgresProvider extends SQLBaseProvider {
   }
 
   public async rollbackTransaction(): Promise<void> {
-    if (!this.txClient || !this.txActive) throw new QueryError('No active transaction', 'postgres');
+    if (!this.txClient || !this.txActive) throw new QueryError("No active transaction", "postgres");
     this.clearTxTimeout();
     try {
-      await this.txClient.query('ROLLBACK');
+      await this.txClient.query("ROLLBACK");
     } finally {
       this.txClient.release();
       this.txClient = null;
@@ -496,14 +500,14 @@ export class PostgresProvider extends SQLBaseProvider {
   }
 
   public async queryInTransaction(sql: string, params?: unknown[]): Promise<QueryResult> {
-    if (!this.txClient || !this.txActive) throw new QueryError('No active transaction', 'postgres');
+    if (!this.txClient || !this.txActive) throw new QueryError("No active transaction", "postgres");
 
     return this.trackQuery(async () => {
       const { result, executionTime } = await this.measureExecution(async () => {
         try {
           return await this.txClient!.query(sql, params);
         } catch (error) {
-          throw mapDatabaseError(error, 'postgres', sql);
+          throw mapDatabaseError(error, "postgres", sql);
         }
       });
 
@@ -532,9 +536,9 @@ export class PostgresProvider extends SQLBaseProvider {
       return result.rows.map((row: SchemaRow) => {
         const schemaName = row.table_schema;
         const tableName = row.table_name;
-        const displayName = schemaName === 'public' ? tableName : `${schemaName}.${tableName}`;
-        const rowCount = Math.max(0, parseInt(row.row_count || '0'));
-        const sizeBytes = parseInt(row.total_size || '0');
+        const displayName = schemaName === "public" ? tableName : `${schemaName}.${tableName}`;
+        const rowCount = Math.max(0, parseInt(row.row_count || "0"));
+        const sizeBytes = parseInt(row.total_size || "0");
         const pkColumns: string[] = row.pk_columns || [];
 
         // Parse columns and add isPrimary flag
@@ -556,9 +560,8 @@ export class PostgresProvider extends SQLBaseProvider {
         // Parse foreign keys
         const foreignKeys = (row.foreign_keys || []).map((fk) => ({
           columnName: fk.columnName,
-          referencedTable: fk.referencedSchema === 'public'
-            ? fk.referencedTable
-            : `${fk.referencedSchema}.${fk.referencedTable}`,
+          referencedTable:
+            fk.referencedSchema === "public" ? fk.referencedTable : `${fk.referencedSchema}.${fk.referencedTable}`,
           referencedColumn: fk.referencedColumn,
         }));
 
@@ -591,7 +594,7 @@ export class PostgresProvider extends SQLBaseProvider {
       const result = await client.query(SCHEMA_LIST_SQL);
 
       return result.rows.map((row: SchemaListRow) => {
-        const displayName = row.table_schema === 'public' ? row.table_name : `${row.table_schema}.${row.table_name}`;
+        const displayName = row.table_schema === "public" ? row.table_name : `${row.table_schema}.${row.table_name}`;
         const pkColumns: string[] = row.pk_columns || [];
         const columns = (row.columns || []).map((col) => ({
           name: col.name,
@@ -602,8 +605,8 @@ export class PostgresProvider extends SQLBaseProvider {
         }));
         return {
           name: displayName,
-          rowCount: Math.max(0, parseInt(row.row_count || '0')),
-          size: formatBytes(parseInt(row.total_size || '0')),
+          rowCount: Math.max(0, parseInt(row.row_count || "0")),
+          size: formatBytes(parseInt(row.total_size || "0")),
           columns,
           indexes: [],
           foreignKeys: [],
@@ -627,12 +630,13 @@ export class PostgresProvider extends SQLBaseProvider {
       const result = await client.query(SCHEMA_RELATIONS_SQL);
 
       return result.rows.map((row: SchemaRelationRow) => {
-        const displayName = row.table_schema === 'public' ? row.table_name : `${row.table_schema}.${row.table_name}`;
+        const displayName = row.table_schema === "public" ? row.table_name : `${row.table_schema}.${row.table_name}`;
         return {
           name: displayName,
           foreignKeys: (row.foreign_keys || []).map((fk) => ({
             columnName: fk.columnName,
-            referencedTable: fk.referencedSchema === 'public' ? fk.referencedTable : `${fk.referencedSchema}.${fk.referencedTable}`,
+            referencedTable:
+              fk.referencedSchema === "public" ? fk.referencedTable : `${fk.referencedSchema}.${fk.referencedTable}`,
             referencedColumn: fk.referencedColumn,
           })),
           indexes: (row.indexes || []).map((idx) => ({
@@ -656,11 +660,9 @@ export class PostgresProvider extends SQLBaseProvider {
 
     const client = await this.pool!.connect();
     try {
-      const connRes = await client.query('SELECT count(*) FROM pg_stat_activity');
+      const connRes = await client.query("SELECT count(*) FROM pg_stat_activity");
 
-      const sizeRes = await client.query('SELECT pg_size_pretty(pg_database_size($1))', [
-        this.config.database,
-      ]);
+      const sizeRes = await client.query("SELECT pg_size_pretty(pg_database_size($1))", [this.config.database]);
 
       const cacheRes = await client.query(`
         SELECT
@@ -691,12 +693,11 @@ export class PostgresProvider extends SQLBaseProvider {
           avgTime: r.avgtime,
         }));
       } catch {
-        slowQueries = [
-          { query: 'pg_stat_statements extension not enabled', calls: 0, avgTime: 'N/A' },
-        ];
+        slowQueries = [{ query: "pg_stat_statements extension not enabled", calls: 0, avgTime: "N/A" }];
       }
 
-      const sessionsRes = await client.query(`
+      const sessionsRes = await client.query(
+        `
         SELECT
           pid,
           usename as user,
@@ -713,14 +714,16 @@ export class PostgresProvider extends SQLBaseProvider {
         AND pid != pg_backend_pid()
         ORDER BY xact_start DESC NULLS LAST
         LIMIT 10;
-      `, [this.config.database]);
+      `,
+        [this.config.database],
+      );
 
       const activeSessions: ActiveSession[] = sessionsRes.rows.map((r) => ({
         pid: r.pid,
-        user: r.user || 'unknown',
-        database: r.database || '',
+        user: r.user || "unknown",
+        database: r.database || "",
         state: r.state,
-        query: r.query || '',
+        query: r.query || "",
         duration: r.duration,
       }));
 
@@ -746,55 +749,51 @@ export class PostgresProvider extends SQLBaseProvider {
    * per-part. Returns an empty string when no target is given.
    */
   private qualifyMaintenanceTarget(target?: string): string {
-    if (!target) return '';
-    if (target.includes('.')) {
-      return target.split('.').map((p) => this.escapeIdentifier(p)).join('.');
+    if (!target) return "";
+    if (target.includes(".")) {
+      return target
+        .split(".")
+        .map((p) => this.escapeIdentifier(p))
+        .join(".");
     }
-    return 'public.' + this.escapeIdentifier(target);
+    return "public." + this.escapeIdentifier(target);
   }
 
-  public async runMaintenance(
-    type: MaintenanceType,
-    target?: string
-  ): Promise<MaintenanceResult> {
+  public async runMaintenance(type: MaintenanceType, target?: string): Promise<MaintenanceResult> {
     this.ensureConnected();
 
     const { result, executionTime } = await this.measureExecution(async () => {
       const client = await this.pool!.connect();
       try {
-        let sql = '';
+        let sql = "";
         // Resolve target into a schema-qualified, quoted identifier (defaults to
         // the public schema for bare names; "schema.table" is also supported).
         const qualifiedTarget = this.qualifyMaintenanceTarget(target);
 
         switch (type) {
-          case 'vacuum':
-            sql = target
-              ? `VACUUM ANALYZE ${qualifiedTarget}`
-              : 'VACUUM ANALYZE';
+          case "vacuum":
+            sql = target ? `VACUUM ANALYZE ${qualifiedTarget}` : "VACUUM ANALYZE";
             break;
-          case 'analyze':
-            sql = target
-              ? `ANALYZE ${qualifiedTarget}`
-              : 'ANALYZE';
+          case "analyze":
+            sql = target ? `ANALYZE ${qualifiedTarget}` : "ANALYZE";
             break;
-          case 'reindex':
+          case "reindex":
             sql = target
               ? `REINDEX TABLE ${qualifiedTarget}`
-              : `REINDEX DATABASE ${this.escapeIdentifier(this.config.database || '')}`;
+              : `REINDEX DATABASE ${this.escapeIdentifier(this.config.database || "")}`;
             break;
-          case 'kill':
+          case "kill":
             if (!target) {
-              throw new QueryError('Target PID is required for kill operation', 'postgres');
+              throw new QueryError("Target PID is required for kill operation", "postgres");
             }
             const pid = parseInt(target, 10);
             if (isNaN(pid)) {
-              throw new QueryError('Invalid PID for kill operation', 'postgres');
+              throw new QueryError("Invalid PID for kill operation", "postgres");
             }
             sql = `SELECT pg_terminate_backend(${pid})`;
             break;
           default:
-            throw new QueryError(`Unsupported maintenance type: ${type}`, 'postgres');
+            throw new QueryError(`Unsupported maintenance type: ${type}`, "postgres");
         }
 
         await client.query(sql);
@@ -849,20 +848,26 @@ export class PostgresProvider extends SQLBaseProvider {
       `);
 
       // Get connection counts
-      const connRes = await client.query(`
+      const connRes = await client.query(
+        `
         SELECT
           count(*) as active_connections,
           (SELECT setting::int FROM pg_settings WHERE name = 'max_connections') as max_connections
         FROM pg_stat_activity
         WHERE datname = $1
-      `, [this.config.database]);
+      `,
+        [this.config.database],
+      );
 
       // Get database size
-      const sizeRes = await client.query(`
+      const sizeRes = await client.query(
+        `
         SELECT
           pg_size_pretty(pg_database_size($1)) as database_size,
           pg_database_size($1) as database_size_bytes
-      `, [this.config.database]);
+      `,
+        [this.config.database],
+      );
 
       // Get table and index counts (all user schemas)
       const countRes = await client.query(`
@@ -871,26 +876,22 @@ export class PostgresProvider extends SQLBaseProvider {
           (SELECT count(*) FROM pg_indexes WHERE schemaname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')) as index_count
       `);
 
-      const uptimeSeconds = parseInt(infoRes.rows[0].uptime_seconds || '0');
+      const uptimeSeconds = parseInt(infoRes.rows[0].uptime_seconds || "0");
       const days = Math.floor(uptimeSeconds / 86400);
       const hours = Math.floor((uptimeSeconds % 86400) / 3600);
       const minutes = Math.floor((uptimeSeconds % 3600) / 60);
-      const uptime = days > 0
-        ? `${days}d ${hours}h ${minutes}m`
-        : hours > 0
-          ? `${hours}h ${minutes}m`
-          : `${minutes}m`;
+      const uptime = days > 0 ? `${days}d ${hours}h ${minutes}m` : hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
 
       return {
-        version: infoRes.rows[0].version?.split(',')[0] || 'PostgreSQL',
+        version: infoRes.rows[0].version?.split(",")[0] || "PostgreSQL",
         uptime,
         startTime: infoRes.rows[0].start_time ? new Date(infoRes.rows[0].start_time) : undefined,
-        activeConnections: parseInt(connRes.rows[0].active_connections || '0'),
-        maxConnections: parseInt(connRes.rows[0].max_connections || '100'),
-        databaseSize: sizeRes.rows[0].database_size || '0 bytes',
-        databaseSizeBytes: parseInt(sizeRes.rows[0].database_size_bytes || '0'),
-        tableCount: parseInt(countRes.rows[0].table_count || '0'),
-        indexCount: parseInt(countRes.rows[0].index_count || '0'),
+        activeConnections: parseInt(connRes.rows[0].active_connections || "0"),
+        maxConnections: parseInt(connRes.rows[0].max_connections || "100"),
+        databaseSize: sizeRes.rows[0].database_size || "0 bytes",
+        databaseSizeBytes: parseInt(sizeRes.rows[0].database_size_bytes || "0"),
+        tableCount: parseInt(countRes.rows[0].table_count || "0"),
+        indexCount: parseInt(countRes.rows[0].index_count || "0"),
       };
     } finally {
       client.release();
@@ -916,7 +917,8 @@ export class PostgresProvider extends SQLBaseProvider {
       `);
 
       // Get transaction stats
-      const txRes = await client.query(`
+      const txRes = await client.query(
+        `
         SELECT
           xact_commit,
           xact_rollback,
@@ -925,10 +927,12 @@ export class PostgresProvider extends SQLBaseProvider {
           blks_hit
         FROM pg_stat_database
         WHERE datname = $1
-      `, [this.config.database]);
+      `,
+        [this.config.database],
+      );
 
       // Get checkpoint stats (optional - columns may not exist in older PG versions)
-      let checkpointWriteTime = '0';
+      let checkpointWriteTime = "0";
       try {
         const checkpointRes = await client.query(`
           SELECT
@@ -937,27 +941,25 @@ export class PostgresProvider extends SQLBaseProvider {
           FROM pg_stat_bgwriter
         `);
         const checkpointRow = checkpointRes.rows[0] || {};
-        const writeTime = parseFloat(checkpointRow.checkpoint_write_time || '0');
-        const syncTime = parseFloat(checkpointRow.checkpoint_sync_time || '0');
+        const writeTime = parseFloat(checkpointRow.checkpoint_write_time || "0");
+        const syncTime = parseFloat(checkpointRow.checkpoint_sync_time || "0");
         checkpointWriteTime = `${((writeTime + syncTime) / 1000).toFixed(1)}s`;
       } catch {
         // checkpoint_write_time doesn't exist in older PostgreSQL versions
-        checkpointWriteTime = 'N/A';
+        checkpointWriteTime = "N/A";
       }
 
       const txRow = txRes.rows[0] || {};
-      const blksHit = parseInt(txRow.blks_hit || '0');
-      const blksRead = parseInt(txRow.blks_read || '0');
-      const bufferPoolUsage = blksHit + blksRead > 0
-        ? Math.round((blksHit / (blksHit + blksRead)) * 100)
-        : 100;
+      const blksHit = parseInt(txRow.blks_hit || "0");
+      const blksRead = parseInt(txRow.blks_read || "0");
+      const bufferPoolUsage = blksHit + blksRead > 0 ? Math.round((blksHit / (blksHit + blksRead)) * 100) : 100;
 
       return {
-        cacheHitRatio: parseFloat(cacheRes.rows[0].cache_hit_ratio || '100'),
+        cacheHitRatio: parseFloat(cacheRes.rows[0].cache_hit_ratio || "100"),
         transactionsPerSecond: undefined, // Would need time-based sampling
         queriesPerSecond: undefined, // Would need time-based sampling
         bufferPoolUsage,
-        deadlocks: parseInt(txRow.deadlocks || '0'),
+        deadlocks: parseInt(txRow.deadlocks || "0"),
         checkpointWriteTime,
       };
     } finally {
@@ -976,7 +978,8 @@ export class PostgresProvider extends SQLBaseProvider {
     try {
       // Try pg_stat_statements first (requires extension)
       try {
-        const res = await client.query(`
+        const res = await client.query(
+          `
           SELECT
             queryid::text as query_id,
             LEFT(query, 500) as query,
@@ -993,24 +996,27 @@ export class PostgresProvider extends SQLBaseProvider {
             AND dbid = (SELECT oid FROM pg_database WHERE datname = $1)
           ORDER BY total_exec_time DESC
           LIMIT $2
-        `, [this.config.database, limit]);
+        `,
+          [this.config.database, limit],
+        );
 
         return res.rows.map((r) => ({
           queryId: r.query_id,
-          query: r.query || '',
-          calls: parseInt(r.calls || '0'),
-          totalTime: parseFloat(r.total_time || '0'),
-          avgTime: parseFloat(r.avg_time || '0'),
-          minTime: parseFloat(r.min_time || '0'),
-          maxTime: parseFloat(r.max_time || '0'),
-          rows: parseInt(r.rows || '0'),
-          sharedBlksHit: parseInt(r.shared_blks_hit || '0'),
-          sharedBlksRead: parseInt(r.shared_blks_read || '0'),
+          query: r.query || "",
+          calls: parseInt(r.calls || "0"),
+          totalTime: parseFloat(r.total_time || "0"),
+          avgTime: parseFloat(r.avg_time || "0"),
+          minTime: parseFloat(r.min_time || "0"),
+          maxTime: parseFloat(r.max_time || "0"),
+          rows: parseInt(r.rows || "0"),
+          sharedBlksHit: parseInt(r.shared_blks_hit || "0"),
+          sharedBlksRead: parseInt(r.shared_blks_read || "0"),
         }));
       } catch {
         // Fallback: use pg_stat_activity for currently running queries
         // This doesn't provide historical stats, but shows active queries
-        const fallbackRes = await client.query(`
+        const fallbackRes = await client.query(
+          `
           SELECT
             pid::text as query_id,
             LEFT(COALESCE(query, ''), 500) as query,
@@ -1027,17 +1033,19 @@ export class PostgresProvider extends SQLBaseProvider {
             AND query NOT LIKE '%pg_stat_activity%'
           ORDER BY query_start ASC NULLS LAST
           LIMIT $2
-        `, [this.config.database, limit]);
+        `,
+          [this.config.database, limit],
+        );
 
         return fallbackRes.rows.map((r) => ({
           queryId: r.query_id,
-          query: r.query || '',
-          calls: parseInt(r.calls || '1'),
-          totalTime: parseFloat(r.total_time || '0'),
-          avgTime: parseFloat(r.avg_time || '0'),
+          query: r.query || "",
+          calls: parseInt(r.calls || "1"),
+          totalTime: parseFloat(r.total_time || "0"),
+          avgTime: parseFloat(r.avg_time || "0"),
           minTime: undefined,
           maxTime: undefined,
-          rows: parseInt(r.rows || '0'),
+          rows: parseInt(r.rows || "0"),
           sharedBlksHit: undefined,
           sharedBlksRead: undefined,
         }));
@@ -1056,7 +1064,8 @@ export class PostgresProvider extends SQLBaseProvider {
 
     const client = await this.pool!.connect();
     try {
-      const res = await client.query(`
+      const res = await client.query(
+        `
         SELECT
           pid,
           usename as user,
@@ -1089,19 +1098,21 @@ export class PostgresProvider extends SQLBaseProvider {
           CASE state WHEN 'active' THEN 0 ELSE 1 END,
           query_start DESC NULLS LAST
         LIMIT $2
-      `, [this.config.database, limit]);
+      `,
+        [this.config.database, limit],
+      );
 
       return res.rows.map((r) => ({
         pid: r.pid,
-        user: r.user || 'unknown',
-        database: r.database || '',
+        user: r.user || "unknown",
+        database: r.database || "",
         applicationName: r.application_name || undefined,
         clientAddr: r.client_addr || undefined,
         state: r.state,
-        query: r.query || '',
+        query: r.query || "",
         queryStart: r.query_start ? new Date(r.query_start) : undefined,
         duration: r.duration,
-        durationMs: parseFloat(r.duration_ms || '0'),
+        durationMs: parseFloat(r.duration_ms || "0"),
         waitEventType: r.wait_event_type || undefined,
         waitEvent: r.wait_event || undefined,
         blocked: false, // Could be enhanced with pg_locks query
@@ -1126,7 +1137,8 @@ export class PostgresProvider extends SQLBaseProvider {
         : `WHERE schemaname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')`;
       const params = schema ? [schema] : [];
 
-      const res = await client.query(`
+      const res = await client.query(
+        `
         SELECT
           schemaname as schema_name,
           relname as table_name,
@@ -1151,27 +1163,25 @@ export class PostgresProvider extends SQLBaseProvider {
         FROM pg_stat_user_tables
         ${whereClause}
         ORDER BY pg_total_relation_size(quote_ident(schemaname) || '.' || quote_ident(relname)) DESC
-      `, params);
+      `,
+        params,
+      );
 
       return res.rows.map((r) => ({
         schemaName: r.schema_name,
         tableName: r.table_name,
-        rowCount: parseInt(r.row_count || '0'),
-        liveRowCount: parseInt(r.live_row_count || '0'),
-        deadRowCount: parseInt(r.dead_row_count || '0'),
-        tableSize: r.table_size || '0 bytes',
-        tableSizeBytes: parseInt(r.table_size_bytes || '0'),
-        indexSize: r.index_size || '0 bytes',
-        indexSizeBytes: parseInt(r.index_size_bytes || '0'),
-        totalSize: r.total_size || '0 bytes',
-        totalSizeBytes: parseInt(r.total_size_bytes || '0'),
-        lastVacuum: r.last_vacuum || r.last_autovacuum
-          ? new Date(r.last_vacuum || r.last_autovacuum)
-          : undefined,
-        lastAnalyze: r.last_analyze || r.last_autoanalyze
-          ? new Date(r.last_analyze || r.last_autoanalyze)
-          : undefined,
-        bloatRatio: parseFloat(r.bloat_ratio || '0'),
+        rowCount: parseInt(r.row_count || "0"),
+        liveRowCount: parseInt(r.live_row_count || "0"),
+        deadRowCount: parseInt(r.dead_row_count || "0"),
+        tableSize: r.table_size || "0 bytes",
+        tableSizeBytes: parseInt(r.table_size_bytes || "0"),
+        indexSize: r.index_size || "0 bytes",
+        indexSizeBytes: parseInt(r.index_size_bytes || "0"),
+        totalSize: r.total_size || "0 bytes",
+        totalSizeBytes: parseInt(r.total_size_bytes || "0"),
+        lastVacuum: r.last_vacuum || r.last_autovacuum ? new Date(r.last_vacuum || r.last_autovacuum) : undefined,
+        lastAnalyze: r.last_analyze || r.last_autoanalyze ? new Date(r.last_analyze || r.last_autoanalyze) : undefined,
+        bloatRatio: parseFloat(r.bloat_ratio || "0"),
       }));
     } finally {
       client.release();
@@ -1193,7 +1203,8 @@ export class PostgresProvider extends SQLBaseProvider {
         : `WHERE s.schemaname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')`;
       const params = schema ? [schema] : [];
 
-      const res = await client.query(`
+      const res = await client.query(
+        `
         SELECT
           s.schemaname as schema_name,
           s.relname as table_name,
@@ -1226,7 +1237,9 @@ export class PostgresProvider extends SQLBaseProvider {
                  s.indexrelid, s.idx_scan, s.idx_tup_read, s.idx_tup_fetch,
                  ix.indisunique, ix.indisprimary, s.relid
         ORDER BY s.idx_scan DESC
-      `, params);
+      `,
+        params,
+      );
 
       return res.rows.map((r) => ({
         schemaName: r.schema_name,
@@ -1236,10 +1249,10 @@ export class PostgresProvider extends SQLBaseProvider {
         columns: Array.isArray(r.columns) ? r.columns : [],
         isUnique: r.is_unique || false,
         isPrimary: r.is_primary || false,
-        indexSize: r.index_size || '0 bytes',
-        indexSizeBytes: parseInt(r.index_size_bytes || '0'),
-        scans: parseInt(r.scans || '0'),
-        usageRatio: parseFloat(r.usage_ratio || '0'),
+        indexSize: r.index_size || "0 bytes",
+        indexSizeBytes: parseInt(r.index_size_bytes || "0"),
+        scans: parseInt(r.scans || "0"),
+        usageRatio: parseFloat(r.usage_ratio || "0"),
       }));
     } finally {
       client.release();
@@ -1271,9 +1284,9 @@ export class PostgresProvider extends SQLBaseProvider {
       for (const row of tsRes.rows) {
         results.push({
           name: row.name,
-          location: row.location || 'default',
-          size: row.size || '0 bytes',
-          sizeBytes: parseInt(row.size_bytes || '0'),
+          location: row.location || "default",
+          size: row.size || "0 bytes",
+          sizeBytes: parseInt(row.size_bytes || "0"),
           usagePercent: undefined, // Would need disk space info
         });
       }
@@ -1288,12 +1301,12 @@ export class PostgresProvider extends SQLBaseProvider {
 
         if (walRes.rows.length > 0) {
           results.push({
-            name: 'WAL',
-            location: 'pg_wal',
-            size: walRes.rows[0].wal_size || '0 bytes',
-            sizeBytes: parseInt(walRes.rows[0].wal_size_bytes || '0'),
-            walSize: walRes.rows[0].wal_size || '0 bytes',
-            walSizeBytes: parseInt(walRes.rows[0].wal_size_bytes || '0'),
+            name: "WAL",
+            location: "pg_wal",
+            size: walRes.rows[0].wal_size || "0 bytes",
+            sizeBytes: parseInt(walRes.rows[0].wal_size_bytes || "0"),
+            walSize: walRes.rows[0].wal_size || "0 bytes",
+            walSizeBytes: parseInt(walRes.rows[0].wal_size_bytes || "0"),
           });
         }
       } catch {
@@ -1310,7 +1323,7 @@ export class PostgresProvider extends SQLBaseProvider {
     this.ensureConnected();
     const client = await this.pool!.connect();
     try {
-      const res = await client.query('SELECT * FROM pg_stat_activity');
+      const res = await client.query("SELECT * FROM pg_stat_activity");
       return res.rows as PgStatActivityRow[];
     } finally {
       client.release();

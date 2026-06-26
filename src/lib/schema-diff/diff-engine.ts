@@ -1,16 +1,16 @@
-import type { TableSchema, ColumnSchema, IndexSchema, ForeignKeySchema } from '@/lib/types';
-import type { SchemaDiff, TableDiff, ColumnDiff, IndexDiff, ForeignKeyDiff } from './types';
+import type { TableSchema, ColumnSchema, IndexSchema, ForeignKeySchema } from "@/lib/types";
+import type { SchemaDiff, TableDiff, ColumnDiff, IndexDiff, ForeignKeyDiff } from "./types";
 
 function diffColumns(sourceCols: ColumnSchema[], targetCols: ColumnSchema[]): ColumnDiff[] {
   const diffs: ColumnDiff[] = [];
-  const sourceMap = new Map(sourceCols.map(c => [c.name, c]));
-  const targetMap = new Map(targetCols.map(c => [c.name, c]));
+  const sourceMap = new Map(sourceCols.map((c) => [c.name, c]));
+  const targetMap = new Map(targetCols.map((c) => [c.name, c]));
 
   // Added columns (in target but not in source)
   for (const [name, col] of targetMap) {
     if (!sourceMap.has(name)) {
       diffs.push({
-        action: 'added',
+        action: "added",
         columnName: name,
         targetType: col.type,
         targetNullable: col.nullable,
@@ -25,7 +25,7 @@ function diffColumns(sourceCols: ColumnSchema[], targetCols: ColumnSchema[]): Co
   for (const [name, col] of sourceMap) {
     if (!targetMap.has(name)) {
       diffs.push({
-        action: 'removed',
+        action: "removed",
         columnName: name,
         sourceType: col.type,
         sourceNullable: col.nullable,
@@ -49,8 +49,8 @@ function diffColumns(sourceCols: ColumnSchema[], targetCols: ColumnSchema[]): Co
     if (sourceCol.nullable !== targetCol.nullable) {
       changes.push(`Nullable changed: ${sourceCol.nullable} → ${targetCol.nullable}`);
     }
-    if ((sourceCol.defaultValue || '') !== (targetCol.defaultValue || '')) {
-      changes.push(`Default changed: ${sourceCol.defaultValue || 'none'} → ${targetCol.defaultValue || 'none'}`);
+    if ((sourceCol.defaultValue || "") !== (targetCol.defaultValue || "")) {
+      changes.push(`Default changed: ${sourceCol.defaultValue || "none"} → ${targetCol.defaultValue || "none"}`);
     }
     if (sourceCol.isPrimary !== targetCol.isPrimary) {
       changes.push(`Primary key changed: ${sourceCol.isPrimary} → ${targetCol.isPrimary}`);
@@ -58,7 +58,7 @@ function diffColumns(sourceCols: ColumnSchema[], targetCols: ColumnSchema[]): Co
 
     if (changes.length > 0) {
       diffs.push({
-        action: 'modified',
+        action: "modified",
         columnName: name,
         sourceType: sourceCol.type,
         targetType: targetCol.type,
@@ -80,25 +80,25 @@ function diffIndexes(sourceIndexes: IndexSchema[], targetIndexes: IndexSchema[])
   const diffs: IndexDiff[] = [];
 
   const sourceMap = new Map<string, IndexSchema>();
-  sourceIndexes.forEach(idx => {
-    const key = idx.name || idx.columns.sort().join(',');
+  sourceIndexes.forEach((idx) => {
+    const key = idx.name || idx.columns.sort().join(",");
     sourceMap.set(key, idx);
   });
 
   const targetMap = new Map<string, IndexSchema>();
-  targetIndexes.forEach(idx => {
-    const key = idx.name || idx.columns.sort().join(',');
+  targetIndexes.forEach((idx) => {
+    const key = idx.name || idx.columns.sort().join(",");
     targetMap.set(key, idx);
   });
 
   for (const [key, idx] of targetMap) {
     if (!sourceMap.has(key)) {
       diffs.push({
-        action: 'added',
+        action: "added",
         indexName: idx.name || key,
         targetColumns: idx.columns,
         targetUnique: idx.unique,
-        changes: [`Added index "${idx.name || key}" on (${idx.columns.join(', ')})`],
+        changes: [`Added index "${idx.name || key}" on (${idx.columns.join(", ")})`],
       });
     }
   }
@@ -106,7 +106,7 @@ function diffIndexes(sourceIndexes: IndexSchema[], targetIndexes: IndexSchema[])
   for (const [key, idx] of sourceMap) {
     if (!targetMap.has(key)) {
       diffs.push({
-        action: 'removed',
+        action: "removed",
         indexName: idx.name || key,
         sourceColumns: idx.columns,
         sourceUnique: idx.unique,
@@ -120,11 +120,11 @@ function diffIndexes(sourceIndexes: IndexSchema[], targetIndexes: IndexSchema[])
     if (!targetIdx) continue;
 
     const changes: string[] = [];
-    const sourceColStr = sourceIdx.columns.sort().join(',');
-    const targetColStr = targetIdx.columns.sort().join(',');
+    const sourceColStr = sourceIdx.columns.sort().join(",");
+    const targetColStr = targetIdx.columns.sort().join(",");
 
     if (sourceColStr !== targetColStr) {
-      changes.push(`Columns changed: (${sourceIdx.columns.join(', ')}) → (${targetIdx.columns.join(', ')})`);
+      changes.push(`Columns changed: (${sourceIdx.columns.join(", ")}) → (${targetIdx.columns.join(", ")})`);
     }
     if (sourceIdx.unique !== targetIdx.unique) {
       changes.push(`Unique changed: ${sourceIdx.unique} → ${targetIdx.unique}`);
@@ -132,7 +132,7 @@ function diffIndexes(sourceIndexes: IndexSchema[], targetIndexes: IndexSchema[])
 
     if (changes.length > 0) {
       diffs.push({
-        action: 'modified',
+        action: "modified",
         indexName: sourceIdx.name || key,
         sourceColumns: sourceIdx.columns,
         targetColumns: targetIdx.columns,
@@ -151,13 +151,13 @@ function diffForeignKeys(sourceFKs: ForeignKeySchema[], targetFKs: ForeignKeySch
 
   const makeKey = (fk: ForeignKeySchema) => `${fk.columnName}→${fk.referencedTable}.${fk.referencedColumn}`;
 
-  const sourceMap = new Map(sourceFKs.map(fk => [makeKey(fk), fk]));
-  const targetMap = new Map(targetFKs.map(fk => [makeKey(fk), fk]));
+  const sourceMap = new Map(sourceFKs.map((fk) => [makeKey(fk), fk]));
+  const targetMap = new Map(targetFKs.map((fk) => [makeKey(fk), fk]));
 
   for (const [key, fk] of targetMap) {
     if (!sourceMap.has(key)) {
       diffs.push({
-        action: 'added',
+        action: "added",
         columnName: fk.columnName,
         targetReferencedTable: fk.referencedTable,
         targetReferencedColumn: fk.referencedColumn,
@@ -169,7 +169,7 @@ function diffForeignKeys(sourceFKs: ForeignKeySchema[], targetFKs: ForeignKeySch
   for (const [key, fk] of sourceMap) {
     if (!targetMap.has(key)) {
       diffs.push({
-        action: 'removed',
+        action: "removed",
         columnName: fk.columnName,
         sourceReferencedTable: fk.referencedTable,
         sourceReferencedColumn: fk.referencedColumn,
@@ -182,20 +182,22 @@ function diffForeignKeys(sourceFKs: ForeignKeySchema[], targetFKs: ForeignKeySch
 }
 
 export function diffSchemas(source: TableSchema[], target: TableSchema[]): SchemaDiff {
-  const sourceMap = new Map(source.map(t => [t.name, t]));
-  const targetMap = new Map(target.map(t => [t.name, t]));
+  const sourceMap = new Map(source.map((t) => [t.name, t]));
+  const targetMap = new Map(target.map((t) => [t.name, t]));
 
   const tables: TableDiff[] = [];
-  let added = 0, removed = 0, modified = 0;
+  let added = 0,
+    removed = 0,
+    modified = 0;
 
   // Added tables
   for (const [name, table] of targetMap) {
     if (!sourceMap.has(name)) {
       tables.push({
-        action: 'added',
+        action: "added",
         tableName: name,
-        columns: table.columns.map(c => ({
-          action: 'added' as const,
+        columns: table.columns.map((c) => ({
+          action: "added" as const,
           columnName: c.name,
           targetType: c.type,
           targetNullable: c.nullable,
@@ -203,15 +205,15 @@ export function diffSchemas(source: TableSchema[], target: TableSchema[]): Schem
           targetIsPrimary: c.isPrimary,
           changes: [`Added column "${c.name}" (${c.type})`],
         })),
-        indexes: table.indexes.map(idx => ({
-          action: 'added' as const,
+        indexes: table.indexes.map((idx) => ({
+          action: "added" as const,
           indexName: idx.name,
           targetColumns: idx.columns,
           targetUnique: idx.unique,
           changes: [`Added index "${idx.name}"`],
         })),
-        foreignKeys: (table.foreignKeys || []).map(fk => ({
-          action: 'added' as const,
+        foreignKeys: (table.foreignKeys || []).map((fk) => ({
+          action: "added" as const,
           columnName: fk.columnName,
           targetReferencedTable: fk.referencedTable,
           targetReferencedColumn: fk.referencedColumn,
@@ -226,10 +228,10 @@ export function diffSchemas(source: TableSchema[], target: TableSchema[]): Schem
   for (const [name, table] of sourceMap) {
     if (!targetMap.has(name)) {
       tables.push({
-        action: 'removed',
+        action: "removed",
         tableName: name,
-        columns: table.columns.map(c => ({
-          action: 'removed' as const,
+        columns: table.columns.map((c) => ({
+          action: "removed" as const,
           columnName: c.name,
           sourceType: c.type,
           sourceNullable: c.nullable,
@@ -255,7 +257,7 @@ export function diffSchemas(source: TableSchema[], target: TableSchema[]): Schem
 
     if (columns.length > 0 || indexes.length > 0 || foreignKeys.length > 0) {
       tables.push({
-        action: 'modified',
+        action: "modified",
         tableName: name,
         columns,
         indexes,

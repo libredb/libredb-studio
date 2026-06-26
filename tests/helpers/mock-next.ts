@@ -10,18 +10,18 @@ export function createMockRequest(
     body?: unknown;
     headers?: Record<string, string>;
     cookies?: Record<string, string>;
-  } = {}
+  } = {},
 ): Request {
-  const { method = 'GET', body, headers = {}, cookies = {} } = options;
+  const { method = "GET", body, headers = {}, cookies = {} } = options;
 
   const cookieHeader = Object.entries(cookies)
     .map(([k, v]) => `${k}=${v}`)
-    .join('; ');
+    .join("; ");
 
   const allHeaders: Record<string, string> = {
     ...headers,
     ...(cookieHeader ? { cookie: cookieHeader } : {}),
-    ...(body ? { 'content-type': 'application/json' } : {}),
+    ...(body ? { "content-type": "application/json" } : {}),
   };
 
   const init: RequestInit = {
@@ -65,10 +65,10 @@ export async function parseResponseJSON<T = unknown>(response: Response): Promis
  */
 export async function readStreamResponse(response: Response): Promise<string> {
   const reader = response.body?.getReader();
-  if (!reader) return '';
+  if (!reader) return "";
 
   const decoder = new TextDecoder();
-  let result = '';
+  let result = "";
 
   while (true) {
     const { done, value } = await reader.read();

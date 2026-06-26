@@ -81,6 +81,8 @@
     "build:lib": "tsup",
     "prepublishOnly": "tsup",
     "start": "next start",
+    "format": "biome format .",
+    "format:fix": "biome format --write .",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "bun test tests/unit tests/api tests/integration && bun test tests/hooks && bun run test:components",
@@ -167,6 +169,7 @@
     "zod": "^4.1.12"
   },
   "devDependencies": {
+    "@biomejs/biome": "^2.5",
     "@playwright/test": "^1.58.2",
     "@tailwindcss/postcss": "^4",
     "@testing-library/react": "^16.3.2",

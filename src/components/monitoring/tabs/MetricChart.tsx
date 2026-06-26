@@ -1,14 +1,7 @@
-'use client';
+"use client";
 
-import React from 'react';
-import {
-  AreaChart,
-  Area,
-  XAxis,
-  YAxis,
-  ResponsiveContainer,
-  Tooltip,
-} from 'recharts';
+import React from "react";
+import { AreaChart, Area, XAxis, YAxis, ResponsiveContainer, Tooltip } from "recharts";
 
 interface MetricChartProps {
   data: { timestamp: number; value: number }[];
@@ -17,7 +10,7 @@ interface MetricChartProps {
   unit?: string;
 }
 
-export function MetricChart({ data, color, title, unit = '' }: MetricChartProps) {
+export function MetricChart({ data, color, title, unit = "" }: MetricChartProps) {
   if (data.length < 2) {
     return (
       <div className="h-[120px] flex items-center justify-center text-xs text-muted-foreground">
@@ -28,7 +21,7 @@ export function MetricChart({ data, color, title, unit = '' }: MetricChartProps)
 
   const formatTime = (ts: number) => {
     const d = new Date(ts);
-    return `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}:${d.getSeconds().toString().padStart(2, '0')}`;
+    return `${d.getHours().toString().padStart(2, "0")}:${d.getMinutes().toString().padStart(2, "0")}:${d.getSeconds().toString().padStart(2, "0")}`;
   };
 
   return (
@@ -44,13 +37,13 @@ export function MetricChart({ data, color, title, unit = '' }: MetricChartProps)
           <XAxis
             dataKey="timestamp"
             tickFormatter={formatTime}
-            tick={{ fill: '#666', fontSize: 9 }}
+            tick={{ fill: "#666", fontSize: 9 }}
             axisLine={false}
             tickLine={false}
             minTickGap={40}
           />
           <YAxis
-            tick={{ fill: '#666', fontSize: 9 }}
+            tick={{ fill: "#666", fontSize: 9 }}
             axisLine={false}
             tickLine={false}
             width={35}
@@ -60,8 +53,8 @@ export function MetricChart({ data, color, title, unit = '' }: MetricChartProps)
             labelFormatter={formatTime}
             formatter={(value: number) => [`${value.toFixed(1)}${unit}`, title]}
             contentStyle={{
-              backgroundColor: '#111',
-              border: '1px solid rgba(255,255,255,0.1)',
+              backgroundColor: "#111",
+              border: "1px solid rgba(255,255,255,0.1)",
               borderRadius: 8,
               fontSize: 11,
             }}

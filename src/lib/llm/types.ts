@@ -7,7 +7,7 @@
 // Provider Types
 // ============================================================================
 
-export type LLMProviderType = 'gemini' | 'openai' | 'ollama' | 'custom';
+export type LLMProviderType = "gemini" | "openai" | "ollama" | "custom";
 
 // ============================================================================
 // Configuration
@@ -24,7 +24,7 @@ export interface LLMConfig {
 // Messages
 // ============================================================================
 
-export type LLMMessageRole = 'system' | 'user' | 'assistant';
+export type LLMMessageRole = "system" | "user" | "assistant";
 
 export interface LLMMessage {
   role: LLMMessageRole;
@@ -78,10 +78,10 @@ export class LLMError extends Error {
   constructor(
     message: string,
     public readonly provider?: LLMProviderType,
-    public readonly statusCode?: number
+    public readonly statusCode?: number,
   ) {
     super(message);
-    this.name = 'LLMError';
+    this.name = "LLMError";
     Object.setPrototypeOf(this, LLMError.prototype);
   }
 }
@@ -92,7 +92,7 @@ export class LLMError extends Error {
 export class LLMConfigError extends LLMError {
   constructor(message: string, provider?: LLMProviderType) {
     super(message, provider);
-    this.name = 'LLMConfigError';
+    this.name = "LLMConfigError";
     Object.setPrototypeOf(this, LLMConfigError.prototype);
   }
 }
@@ -103,7 +103,7 @@ export class LLMConfigError extends LLMError {
 export class LLMAuthError extends LLMError {
   constructor(message: string, provider?: LLMProviderType) {
     super(message, provider, 401);
-    this.name = 'LLMAuthError';
+    this.name = "LLMAuthError";
     Object.setPrototypeOf(this, LLMAuthError.prototype);
   }
 }
@@ -114,7 +114,7 @@ export class LLMAuthError extends LLMError {
 export class LLMRateLimitError extends LLMError {
   constructor(message: string, provider?: LLMProviderType) {
     super(message, provider, 429);
-    this.name = 'LLMRateLimitError';
+    this.name = "LLMRateLimitError";
     Object.setPrototypeOf(this, LLMRateLimitError.prototype);
   }
 }
@@ -125,7 +125,7 @@ export class LLMRateLimitError extends LLMError {
 export class LLMSafetyError extends LLMError {
   constructor(message: string, provider?: LLMProviderType) {
     super(message, provider, 400);
-    this.name = 'LLMSafetyError';
+    this.name = "LLMSafetyError";
     Object.setPrototypeOf(this, LLMSafetyError.prototype);
   }
 }
@@ -136,7 +136,7 @@ export class LLMSafetyError extends LLMError {
 export class LLMStreamError extends LLMError {
   constructor(message: string, provider?: LLMProviderType) {
     super(message, provider);
-    this.name = 'LLMStreamError';
+    this.name = "LLMStreamError";
     Object.setPrototypeOf(this, LLMStreamError.prototype);
   }
 }
@@ -152,7 +152,7 @@ function isLLMError(error: unknown): error is LLMError {
 export function isRetryableError(error: unknown): boolean {
   if (!isLLMError(error)) {
     // Network errors are retryable
-    if (error instanceof TypeError && error.message.includes('fetch')) {
+    if (error instanceof TypeError && error.message.includes("fetch")) {
       return true;
     }
     return false;

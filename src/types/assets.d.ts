@@ -3,4 +3,4 @@
 // longer auto-includes every `node_modules/@types` package for ambient globals.
 // CSS module declarations that bun-types previously provided implicitly must now
 // be declared explicitly here.
-declare module '*.css';
+declare module "*.css";

@@ -1,19 +1,22 @@
-import '../setup-dom';
-import '../helpers/mock-sonner';
-import '../helpers/mock-navigation';
+import "../setup-dom";
+import "../helpers/mock-sonner";
+import "../helpers/mock-navigation";
 
-import { mock } from 'bun:test';
-import React from 'react';
+import { mock } from "bun:test";
+import React from "react";
 
 // ── Mock framer-motion before component imports ─────────────────────────────
-mock.module('framer-motion', () => {
+mock.module("framer-motion", () => {
   const passthrough = ({ children, ...props }: Record<string, unknown>) =>
-    React.createElement('div', props, children as React.ReactNode);
+    React.createElement("div", props, children as React.ReactNode);
 
   return {
-    motion: new Proxy({}, {
-      get: () => passthrough,
-    }),
+    motion: new Proxy(
+      {},
+      {
+        get: () => passthrough,
+      },
+    ),
     AnimatePresence: ({ children }: { children: React.ReactNode }) => children,
     useAnimation: () => ({ start: mock(() => {}), stop: mock(() => {}) }),
     useInView: () => true,
@@ -21,65 +24,71 @@ mock.module('framer-motion', () => {
 });
 
 // ── Mock Drawer (vaul) ──────────────────────────────────────────────────────
-mock.module('@/components/ui/drawer', () => ({
+mock.module("@/components/ui/drawer", () => ({
   Drawer: ({ open, children }: { open?: boolean; children: React.ReactNode }) => {
     if (!open) return null;
-    return React.createElement('div', { 'data-testid': 'drawer' }, children);
+    return React.createElement("div", { "data-testid": "drawer" }, children);
   },
   DrawerContent: ({ children, className }: { children: React.ReactNode; className?: string }) =>
-    React.createElement('div', { 'data-testid': 'drawer-content', className }, children),
+    React.createElement("div", { "data-testid": "drawer-content", className }, children),
   DrawerHeader: ({ children, className }: { children: React.ReactNode; className?: string }) =>
-    React.createElement('div', { 'data-testid': 'drawer-header', className }, children),
-  DrawerTitle: ({ children }: { children: React.ReactNode }) =>
-    React.createElement('h2', null, children),
-  DrawerDescription: ({ children }: { children: React.ReactNode }) =>
-    React.createElement('p', null, children),
+    React.createElement("div", { "data-testid": "drawer-header", className }, children),
+  DrawerTitle: ({ children }: { children: React.ReactNode }) => React.createElement("h2", null, children),
+  DrawerDescription: ({ children }: { children: React.ReactNode }) => React.createElement("p", null, children),
   DrawerFooter: ({ children, className }: { children: React.ReactNode; className?: string }) =>
-    React.createElement('div', { 'data-testid': 'drawer-footer', className }, children),
+    React.createElement("div", { "data-testid": "drawer-footer", className }, children),
 }));
 
 // ── Mock useIsMobile — tests always use Dialog (desktop) path ───────────────
-mock.module('@/hooks/use-mobile', () => ({
+mock.module("@/hooks/use-mobile", () => ({
   useIsMobile: () => false,
 }));
 
 // ── Mock Radix Dialog via @/components/ui/dialog ────────────────────────────
-mock.module('@/components/ui/dialog', () => ({
-  Dialog: ({ open, children }: { open?: boolean; children: React.ReactNode; onOpenChange?: (open: boolean) => void }) => {
+mock.module("@/components/ui/dialog", () => ({
+  Dialog: ({
+    open,
+    children,
+  }: {
+    open?: boolean;
+    children: React.ReactNode;
+    onOpenChange?: (open: boolean) => void;
+  }) => {
     if (!open) return null;
-    return React.createElement('div', { 'data-testid': 'dialog', 'data-open': open }, children);
+    return React.createElement("div", { "data-testid": "dialog", "data-open": open }, children);
   },
   DialogContent: ({ children, className }: { children: React.ReactNode; className?: string }) =>
-    React.createElement('div', { 'data-testid': 'dialog-content', className }, children),
+    React.createElement("div", { "data-testid": "dialog-content", className }, children),
   DialogHeader: ({ children, className }: { children: React.ReactNode; className?: string }) =>
-    React.createElement('div', { 'data-testid': 'dialog-header', className }, children),
+    React.createElement("div", { "data-testid": "dialog-header", className }, children),
   DialogTitle: ({ children, className }: { children: React.ReactNode; className?: string }) =>
-    React.createElement('h2', { 'data-testid': 'dialog-title', className }, children),
+    React.createElement("h2", { "data-testid": "dialog-title", className }, children),
   DialogFooter: ({ children, className }: { children: React.ReactNode; className?: string }) =>
-    React.createElement('div', { 'data-testid': 'dialog-footer', className }, children),
-  DialogDescription: ({ children }: { children: React.ReactNode }) =>
-    React.createElement('p', null, children),
-  DialogClose: ({ children }: { children: React.ReactNode }) =>
-    React.createElement('button', null, children),
+    React.createElement("div", { "data-testid": "dialog-footer", className }, children),
+  DialogDescription: ({ children }: { children: React.ReactNode }) => React.createElement("p", null, children),
+  DialogClose: ({ children }: { children: React.ReactNode }) => React.createElement("button", null, children),
   DialogTrigger: ({ children }: { children: React.ReactNode }) => children,
   DialogPortal: ({ children }: { children: React.ReactNode }) => children,
   DialogOverlay: () => null,
 }));
 
 // ── Mock Shadcn UI primitives ───────────────────────────────────────────────
-mock.module('@/components/ui/button', () => ({
+mock.module("@/components/ui/button", () => ({
   Button: ({ children, onClick, className, disabled, ...rest }: Record<string, unknown>) =>
-    React.createElement('button', { onClick: onClick as (() => void), className, disabled, ...rest }, children as React.ReactNode),
+    React.createElement(
+      "button",
+      { onClick: onClick as () => void, className, disabled, ...rest },
+      children as React.ReactNode,
+    ),
 }));
 
-mock.module('@/components/ui/input', () => ({
-  Input: (props: Record<string, unknown>) =>
-    React.createElement('input', props),
+mock.module("@/components/ui/input", () => ({
+  Input: (props: Record<string, unknown>) => React.createElement("input", props),
 }));
 
-mock.module('@/components/ui/label', () => ({
+mock.module("@/components/ui/label", () => ({
   Label: ({ children, className, htmlFor }: Record<string, unknown>) =>
-    React.createElement('label', { className, htmlFor }, children as React.ReactNode),
+    React.createElement("label", { className, htmlFor }, children as React.ReactNode),
 }));
 
 // ── Mock useConnectionForm hook ─────────────────────────────────────────────
@@ -121,116 +130,129 @@ let mockFormOverrides: Record<string, unknown> = {};
 
 function getDefaultForm() {
   return {
-    type: 'postgres' as const,
+    type: "postgres" as const,
     setType: mockSetType,
-    name: '',
+    name: "",
     setName: mockSetName,
-    host: 'localhost',
+    host: "localhost",
     setHost: mockSetHost,
-    port: '5432',
+    port: "5432",
     setPort: mockSetPort,
-    user: '',
+    user: "",
     setUser: mockSetUser,
-    password: '',
+    password: "",
     setPassword: mockSetPassword,
-    database: '',
+    database: "",
     setDatabase: mockSetDatabase,
-    connectionString: '',
+    connectionString: "",
     setConnectionString: mockSetConnectionString,
-    mongoConnectionMode: 'host' as const,
+    mongoConnectionMode: "host" as const,
     setMongoConnectionMode: mockSetMongoConnectionMode,
-    environment: 'local' as const,
+    environment: "local" as const,
     setEnvironment: mockSetEnvironment,
     isTesting: false,
     testResult: null,
     setTestResult: mockSetTestResult,
-    pasteInput: '',
+    pasteInput: "",
     setPasteInput: mockSetPasteInput,
     showPasteInput: false,
     setShowPasteInput: mockSetShowPasteInput,
     isEditMode: false,
     showSSL: false,
     setShowSSL: mockSetShowSSL,
-    sslMode: 'disable' as const,
+    sslMode: "disable" as const,
     setSSLMode: mockSetSSLMode,
-    caCert: '',
+    caCert: "",
     setCaCert: mockSetCaCert,
-    clientCert: '',
+    clientCert: "",
     setClientCert: mockSetClientCert,
-    clientKey: '',
+    clientKey: "",
     setClientKey: mockSetClientKey,
     showAdvanced: false,
     setShowAdvanced: mockSetShowAdvanced,
-    serviceName: '',
+    serviceName: "",
     setServiceName: mockSetServiceName,
-    instanceName: '',
+    instanceName: "",
     setInstanceName: mockSetInstanceName,
     showSSH: false,
     setShowSSH: mockSetShowSSH,
     sshEnabled: false,
     setSSHEnabled: mockSetSSHEnabled,
-    sshHost: '',
+    sshHost: "",
     setSSHHost: mockSetSSHHost,
-    sshPort: '22',
+    sshPort: "22",
     setSSHPort: mockSetSSHPort,
-    sshUsername: '',
+    sshUsername: "",
     setSSHUsername: mockSetSSHUsername,
-    sshAuthMethod: 'password' as const,
+    sshAuthMethod: "password" as const,
     setSSHAuthMethod: mockSetSSHAuthMethod,
-    sshPassword: '',
+    sshPassword: "",
     setSSHPassword: mockSetSSHPassword,
-    sshPrivateKey: '',
+    sshPrivateKey: "",
     setSSHPrivateKey: mockSetSSHPrivateKey,
-    sshPassphrase: '',
+    sshPassphrase: "",
     setSSHPassphrase: mockSetSSHPassphrase,
     handleTestConnection: mockHandleTestConnection,
     handleConnect: mockHandleConnect,
     handlePasteConnectionString: mockHandlePasteConnectionString,
     dbTypes: [
-      { value: 'postgres', label: 'PostgreSQL', icon: () => React.createElement('span', null, 'PG'), color: 'text-blue-400' },
-      { value: 'mysql', label: 'MySQL', icon: () => React.createElement('span', null, 'MY'), color: 'text-amber-400' },
-      { value: 'sqlite', label: 'SQLite', icon: () => React.createElement('span', null, 'SL'), color: 'text-cyan-400' },
-      { value: 'mongodb', label: 'MongoDB', icon: () => React.createElement('span', null, 'MG'), color: 'text-emerald-400' },
-      { value: 'redis', label: 'Redis', icon: () => React.createElement('span', null, 'RD'), color: 'text-red-400' },
+      {
+        value: "postgres",
+        label: "PostgreSQL",
+        icon: () => React.createElement("span", null, "PG"),
+        color: "text-blue-400",
+      },
+      { value: "mysql", label: "MySQL", icon: () => React.createElement("span", null, "MY"), color: "text-amber-400" },
+      { value: "sqlite", label: "SQLite", icon: () => React.createElement("span", null, "SL"), color: "text-cyan-400" },
+      {
+        value: "mongodb",
+        label: "MongoDB",
+        icon: () => React.createElement("span", null, "MG"),
+        color: "text-emerald-400",
+      },
+      { value: "redis", label: "Redis", icon: () => React.createElement("span", null, "RD"), color: "text-red-400" },
     ],
     ...mockFormOverrides,
   };
 }
 
-mock.module('@/hooks/use-connection-form', () => ({
+mock.module("@/hooks/use-connection-form", () => ({
   useConnectionForm: mock(() => getDefaultForm()),
 }));
 
 // ── Mock @/lib/db-ui-config ─────────────────────────────────────────────────
-mock.module('@/lib/db-ui-config', () => ({
+mock.module("@/lib/db-ui-config", () => ({
   getDBConfig: (type: string) => ({
     icon: () => null,
-    color: 'text-blue-400',
+    color: "text-blue-400",
     label: type,
-    defaultPort: type === 'mysql' ? '3306' : type === 'mongodb' ? '27017' : '5432',
-    showConnectionStringToggle: type === 'mongodb',
-    connectionFields: ['host', 'port', 'user', 'password', 'database'],
+    defaultPort: type === "mysql" ? "3306" : type === "mongodb" ? "27017" : "5432",
+    showConnectionStringToggle: type === "mongodb",
+    connectionFields: ["host", "port", "user", "password", "database"],
   }),
   getDBIcon: () => () => null,
-  getDBColor: () => 'text-blue-400',
+  getDBColor: () => "text-blue-400",
   DB_UI_CONFIG: {},
 }));
 
 // ── Mock lucide-react icons as simple spans ─────────────────────────────────
-mock.module('lucide-react', () => {
-  return new Proxy({}, {
-    get: (_target, prop) => {
-      if (prop === '__esModule') return true;
-      return (props: Record<string, unknown>) =>
-        React.createElement('span', { 'data-icon': prop, className: props.className as string });
+mock.module("lucide-react", () => {
+  return new Proxy(
+    {},
+    {
+      get: (_target, prop) => {
+        if (prop === "__esModule") return true;
+        return (props: Record<string, unknown>) =>
+          React.createElement("span", { "data-icon": prop, className: props.className as string });
+      },
     },
-  });
+  );
 });
 
 // ── Imports AFTER mocks ─────────────────────────────────────────────────────
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { render, fireEvent, cleanup } from '@testing-library/react';
-import { ConnectionModal } from '@/components/ConnectionModal';
+import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+import { render, fireEvent, cleanup } from "@testing-library/react";
+import { ConnectionModal } from "@/components/ConnectionModal";
 
 // =============================================================================
 // ConnectionModal Tests
@@ -246,7 +268,7 @@ function createDefaultProps(overrides: Partial<Parameters<typeof ConnectionModal
   };
 }
 
-describe('ConnectionModal', () => {
+describe("ConnectionModal", () => {
   afterEach(() => {
     cleanup();
   });
@@ -265,21 +287,21 @@ describe('ConnectionModal', () => {
 
   // ── 1. Does not render when isOpen=false ────────────────────────────────────
 
-  test('does not render dialog content when isOpen is false', () => {
+  test("does not render dialog content when isOpen is false", () => {
     const props = createDefaultProps({ isOpen: false });
     const { queryByText } = render(React.createElement(ConnectionModal, props));
 
-    expect(queryByText('New Connection')).toBeNull();
-    expect(queryByText('Establish Connection')).toBeNull();
+    expect(queryByText("New Connection")).toBeNull();
+    expect(queryByText("Establish Connection")).toBeNull();
   });
 
   // ── 2. Renders dialog when isOpen=true ──────────────────────────────────────
 
-  test('renders dialog content when isOpen is true', () => {
+  test("renders dialog content when isOpen is true", () => {
     const props = createDefaultProps({ isOpen: true });
     const { queryAllByText } = render(React.createElement(ConnectionModal, props));
 
-    expect(queryAllByText('New Connection').length).toBeGreaterThan(0);
+    expect(queryAllByText("New Connection").length).toBeGreaterThan(0);
   });
 
   // ── 3. Shows "New Connection" title for new connection ──────────────────────
@@ -288,7 +310,7 @@ describe('ConnectionModal', () => {
     const props = createDefaultProps({ editConnection: null });
     const { queryAllByText } = render(React.createElement(ConnectionModal, props));
 
-    expect(queryAllByText('New Connection').length).toBeGreaterThan(0);
+    expect(queryAllByText("New Connection").length).toBeGreaterThan(0);
   });
 
   // ── 4. Shows "Edit Connection" title when editConnection provided ───────────
@@ -297,100 +319,100 @@ describe('ConnectionModal', () => {
     mockFormOverrides = { isEditMode: true };
 
     const editConn = {
-      id: 'e1',
-      name: 'My PG',
-      type: 'postgres' as const,
-      host: 'localhost',
+      id: "e1",
+      name: "My PG",
+      type: "postgres" as const,
+      host: "localhost",
       port: 5432,
       createdAt: new Date(),
     };
     const props = createDefaultProps({ editConnection: editConn });
     const { queryAllByText } = render(React.createElement(ConnectionModal, props));
 
-    expect(queryAllByText('Edit Connection').length).toBeGreaterThan(0);
+    expect(queryAllByText("Edit Connection").length).toBeGreaterThan(0);
   });
 
   // ── 5. Database type buttons render ─────────────────────────────────────────
 
-  test('database type buttons render', () => {
+  test("database type buttons render", () => {
     const props = createDefaultProps();
     const { queryByText } = render(React.createElement(ConnectionModal, props));
 
-    expect(queryByText('PostgreSQL')).not.toBeNull();
-    expect(queryByText('MySQL')).not.toBeNull();
-    expect(queryByText('SQLite')).not.toBeNull();
-    expect(queryByText('MongoDB')).not.toBeNull();
-    expect(queryByText('Redis')).not.toBeNull();
+    expect(queryByText("PostgreSQL")).not.toBeNull();
+    expect(queryByText("MySQL")).not.toBeNull();
+    expect(queryByText("SQLite")).not.toBeNull();
+    expect(queryByText("MongoDB")).not.toBeNull();
+    expect(queryByText("Redis")).not.toBeNull();
   });
 
   // ── 6. Name input renders ──────────────────────────────────────────────────
 
-  test('connection name input renders', () => {
+  test("connection name input renders", () => {
     const props = createDefaultProps();
     const { queryByText, container } = render(React.createElement(ConnectionModal, props));
 
-    expect(queryByText('Connection Name')).not.toBeNull();
-    const nameInput = container.querySelector('#name');
+    expect(queryByText("Connection Name")).not.toBeNull();
+    const nameInput = container.querySelector("#name");
     expect(nameInput).not.toBeNull();
   });
 
   // ── 7. Host/Port inputs render ─────────────────────────────────────────────
 
-  test('host and port inputs render', () => {
+  test("host and port inputs render", () => {
     const props = createDefaultProps();
     const { queryByText, container } = render(React.createElement(ConnectionModal, props));
 
-    expect(queryByText('Host & Instance')).not.toBeNull();
-    const hostInput = container.querySelector('#host');
-    const portInput = container.querySelector('#port');
+    expect(queryByText("Host & Instance")).not.toBeNull();
+    const hostInput = container.querySelector("#host");
+    const portInput = container.querySelector("#port");
     expect(hostInput).not.toBeNull();
     expect(portInput).not.toBeNull();
   });
 
   // ── 8. Test Connection button renders ──────────────────────────────────────
 
-  test('Test Connection button renders', () => {
+  test("Test Connection button renders", () => {
     const props = createDefaultProps();
     const { queryByText } = render(React.createElement(ConnectionModal, props));
 
-    expect(queryByText('Test Connection')).not.toBeNull();
+    expect(queryByText("Test Connection")).not.toBeNull();
   });
 
   // ── 9. Connect button renders ──────────────────────────────────────────────
 
-  test('Establish Connection button renders', () => {
+  test("Establish Connection button renders", () => {
     const props = createDefaultProps();
     const { queryByText } = render(React.createElement(ConnectionModal, props));
 
-    expect(queryByText('Establish Connection')).not.toBeNull();
+    expect(queryByText("Establish Connection")).not.toBeNull();
   });
 
   // ── 10. Save Changes button renders in edit mode ───────────────────────────
 
-  test('shows Save Changes button in edit mode', () => {
+  test("shows Save Changes button in edit mode", () => {
     mockFormOverrides = { isEditMode: true };
     const editConn = {
-      id: 'e1',
-      name: 'My PG',
-      type: 'postgres' as const,
-      host: 'localhost',
+      id: "e1",
+      name: "My PG",
+      type: "postgres" as const,
+      host: "localhost",
       port: 5432,
       createdAt: new Date(),
     };
     const props = createDefaultProps({ editConnection: editConn });
     const { queryByText } = render(React.createElement(ConnectionModal, props));
 
-    expect(queryByText('Save Changes')).not.toBeNull();
+    expect(queryByText("Save Changes")).not.toBeNull();
   });
 
   // ── 11. onClose fires when Cancel clicked ──────────────────────────────────
 
-  test('onClose fires when Cancel button clicked', () => {
+  test("onClose fires when Cancel button clicked", () => {
     const onClose = mock(() => {});
     const props = createDefaultProps({ onClose });
     const { getByText } = render(React.createElement(ConnectionModal, props));
 
-    const cancelBtn = getByText('Cancel');
+    const cancelBtn = getByText("Cancel");
     fireEvent.click(cancelBtn);
 
     expect(onClose).toHaveBeenCalledTimes(1);
@@ -398,161 +420,165 @@ describe('ConnectionModal', () => {
 
   // ── 12. SSL section expandable ─────────────────────────────────────────────
 
-  test('SSL / TLS section toggle button renders', () => {
+  test("SSL / TLS section toggle button renders", () => {
     const props = createDefaultProps();
     const { queryByText } = render(React.createElement(ConnectionModal, props));
 
-    expect(queryByText('SSL / TLS')).not.toBeNull();
+    expect(queryByText("SSL / TLS")).not.toBeNull();
   });
 
   // ── 13. SSH Tunnel section renders ─────────────────────────────────────────
 
-  test('SSH Tunnel section toggle button renders', () => {
+  test("SSH Tunnel section toggle button renders", () => {
     const props = createDefaultProps();
     const { queryByText } = render(React.createElement(ConnectionModal, props));
 
-    expect(queryByText('SSH Tunnel')).not.toBeNull();
+    expect(queryByText("SSH Tunnel")).not.toBeNull();
   });
 
   // ── 14. Paste URL button renders for new connection ────────────────────────
 
-  test('Paste URL button renders for new connection', () => {
+  test("Paste URL button renders for new connection", () => {
     const props = createDefaultProps();
     const { queryByText } = render(React.createElement(ConnectionModal, props));
 
-    expect(queryByText('Paste URL')).not.toBeNull();
+    expect(queryByText("Paste URL")).not.toBeNull();
   });
 
   // ── 15. Environment selector renders ───────────────────────────────────────
 
-  test('Environment selector renders with environment options', () => {
+  test("Environment selector renders with environment options", () => {
     const props = createDefaultProps();
     const { queryByText } = render(React.createElement(ConnectionModal, props));
 
-    expect(queryByText('Environment')).not.toBeNull();
-    expect(queryByText('PROD')).not.toBeNull();
-    expect(queryByText('STAGING')).not.toBeNull();
-    expect(queryByText('DEV')).not.toBeNull();
-    expect(queryByText('LOCAL')).not.toBeNull();
+    expect(queryByText("Environment")).not.toBeNull();
+    expect(queryByText("PROD")).not.toBeNull();
+    expect(queryByText("STAGING")).not.toBeNull();
+    expect(queryByText("DEV")).not.toBeNull();
+    expect(queryByText("LOCAL")).not.toBeNull();
   });
 
   // ── 16. Paste URL shows input area when clicked ─────────────────────────
 
-  test('Paste URL shows paste input area when showPasteInput is true', () => {
+  test("Paste URL shows paste input area when showPasteInput is true", () => {
     mockFormOverrides = { showPasteInput: true };
     const props = createDefaultProps();
     const { queryByText } = render(React.createElement(ConnectionModal, props));
-    expect(queryByText('Paste Connection URL')).not.toBeNull();
-    expect(queryByText('Parse')).not.toBeNull();
+    expect(queryByText("Paste Connection URL")).not.toBeNull();
+    expect(queryByText("Parse")).not.toBeNull();
   });
 
   // ── 17. SSL expanded shows SSL fields ───────────────────────────────────
 
-  test('SSL section shows fields when expanded', () => {
+  test("SSL section shows fields when expanded", () => {
     mockFormOverrides = { showSSL: true };
     const props = createDefaultProps();
     const { queryByText } = render(React.createElement(ConnectionModal, props));
-    expect(queryByText('SSL Mode')).not.toBeNull();
+    expect(queryByText("SSL Mode")).not.toBeNull();
   });
 
   // ── 18. SSH expanded shows SSH fields ───────────────────────────────────
 
-  test('SSH section shows fields when expanded', () => {
+  test("SSH section shows fields when expanded", () => {
     mockFormOverrides = { showSSH: true };
     const props = createDefaultProps();
     const { queryByText } = render(React.createElement(ConnectionModal, props));
-    expect(queryByText('Enable SSH Tunnel')).not.toBeNull();
+    expect(queryByText("Enable SSH Tunnel")).not.toBeNull();
   });
 
   // ── 19. SSH enabled shows all SSH fields ─────────────────────────────────
 
-  test('SSH enabled shows SSH connection fields', () => {
+  test("SSH enabled shows SSH connection fields", () => {
     mockFormOverrides = { showSSH: true, sshEnabled: true };
     const props = createDefaultProps();
     const { queryByText } = render(React.createElement(ConnectionModal, props));
-    expect(queryByText('Enable SSH Tunnel')).not.toBeNull();
+    expect(queryByText("Enable SSH Tunnel")).not.toBeNull();
   });
 
   // ── 20. Test result success displayed ──────────────────────────────────
 
-  test('test result success message displayed', () => {
-    mockFormOverrides = { testResult: { success: true, message: 'Connection successful' } };
+  test("test result success message displayed", () => {
+    mockFormOverrides = { testResult: { success: true, message: "Connection successful" } };
     const props = createDefaultProps();
     const { queryByText } = render(React.createElement(ConnectionModal, props));
-    expect(queryByText('Connection successful')).not.toBeNull();
+    expect(queryByText("Connection successful")).not.toBeNull();
   });
 
   // ── 21. Test result failure displayed ──────────────────────────────────
 
-  test('test result failure message displayed', () => {
-    mockFormOverrides = { testResult: { success: false, message: 'Connection failed: timeout' } };
+  test("test result failure message displayed", () => {
+    mockFormOverrides = { testResult: { success: false, message: "Connection failed: timeout" } };
     const props = createDefaultProps();
     const { queryByText } = render(React.createElement(ConnectionModal, props));
-    expect(queryByText('Connection failed: timeout')).not.toBeNull();
+    expect(queryByText("Connection failed: timeout")).not.toBeNull();
   });
 
   // ── 22. isTesting shows spinner state ─────────────────────────────────
 
-  test('Test Connection button shows testing state', () => {
+  test("Test Connection button shows testing state", () => {
     mockFormOverrides = { isTesting: true };
     const props = createDefaultProps();
     const { queryByText } = render(React.createElement(ConnectionModal, props));
-    expect(queryByText('Testing...')).not.toBeNull();
+    expect(queryByText("Testing...")).not.toBeNull();
   });
 
   // ── 24. MongoDB connection string mode ──────────────────────────────────
 
-  test('MongoDB shows connection mode toggle', () => {
-    mockFormOverrides = { type: 'mongodb' };
+  test("MongoDB shows connection mode toggle", () => {
+    mockFormOverrides = { type: "mongodb" };
     const props = createDefaultProps();
     const { queryByText } = render(React.createElement(ConnectionModal, props));
-    expect(queryByText('Host / Port')).not.toBeNull();
-    expect(queryByText('Connection String')).not.toBeNull();
+    expect(queryByText("Host / Port")).not.toBeNull();
+    expect(queryByText("Connection String")).not.toBeNull();
   });
 
   // ── 25. MongoDB connection string mode shows URI field ─────────────────
 
-  test('MongoDB connection string mode shows URI field', () => {
-    mockFormOverrides = { type: 'mongodb', mongoConnectionMode: 'connectionString' };
+  test("MongoDB connection string mode shows URI field", () => {
+    mockFormOverrides = { type: "mongodb", mongoConnectionMode: "connectionString" };
     const props = createDefaultProps();
     const { queryByText } = render(React.createElement(ConnectionModal, props));
-    expect(queryByText('Connection URI')).not.toBeNull();
+    expect(queryByText("Connection URI")).not.toBeNull();
   });
 
   // ── 26. Advanced section for Oracle ────────────────────────────────────
 
-  test('Oracle type shows advanced section', () => {
-    mockFormOverrides = { type: 'oracle', showAdvanced: true };
+  test("Oracle type shows advanced section", () => {
+    mockFormOverrides = { type: "oracle", showAdvanced: true };
     const props = createDefaultProps();
     const { queryByText } = render(React.createElement(ConnectionModal, props));
-    expect(queryByText('Service Name')).not.toBeNull();
+    expect(queryByText("Service Name")).not.toBeNull();
   });
 
   // ── 27. Advanced section for MSSQL ─────────────────────────────────────
 
-  test('MSSQL type shows instance name in advanced section', () => {
-    mockFormOverrides = { type: 'mssql', showAdvanced: true };
+  test("MSSQL type shows instance name in advanced section", () => {
+    mockFormOverrides = { type: "mssql", showAdvanced: true };
     const props = createDefaultProps();
     const { queryByText } = render(React.createElement(ConnectionModal, props));
-    expect(queryByText('Instance Name')).not.toBeNull();
+    expect(queryByText("Instance Name")).not.toBeNull();
   });
 
   // ── 28. Paste URL hidden in edit mode ────────────────────────────────
 
-  test('Paste URL button hidden in edit mode', () => {
+  test("Paste URL button hidden in edit mode", () => {
     mockFormOverrides = { isEditMode: true };
     const editConn = {
-      id: 'e1', name: 'My PG', type: 'postgres' as const,
-      host: 'localhost', port: 5432, createdAt: new Date(),
+      id: "e1",
+      name: "My PG",
+      type: "postgres" as const,
+      host: "localhost",
+      port: 5432,
+      createdAt: new Date(),
     };
     const props = createDefaultProps({ editConnection: editConn });
     const { queryByText } = render(React.createElement(ConnectionModal, props));
-    expect(queryByText('Paste URL')).toBeNull();
+    expect(queryByText("Paste URL")).toBeNull();
   });
 
   // ── 29. Supports URL text shown in paste area ────────────────────────
 
-  test('paste area shows supported URL protocols', () => {
+  test("paste area shows supported URL protocols", () => {
     mockFormOverrides = { showPasteInput: true };
     const props = createDefaultProps();
     const { queryByText } = render(React.createElement(ConnectionModal, props));
@@ -561,10 +587,10 @@ describe('ConnectionModal', () => {
 
   // ── 30. SSL section for verify-ca shows client cert fields ─────────────
 
-  test('SSL verify-ca mode renders SSL section', () => {
-    mockFormOverrides = { showSSL: true, sslMode: 'verify-ca' };
+  test("SSL verify-ca mode renders SSL section", () => {
+    mockFormOverrides = { showSSL: true, sslMode: "verify-ca" };
     const props = createDefaultProps();
     const { queryByText } = render(React.createElement(ConnectionModal, props));
-    expect(queryByText('SSL Mode')).not.toBeNull();
+    expect(queryByText("SSL Mode")).not.toBeNull();
   });
 });

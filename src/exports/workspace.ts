@@ -1,5 +1,5 @@
 // src/exports/workspace.ts
-export { StudioWorkspace } from '../workspace/StudioWorkspace'
+export { StudioWorkspace } from "../workspace/StudioWorkspace";
 export type {
   StudioWorkspaceProps,
   WorkspaceConnection,
@@ -7,5 +7,5 @@ export type {
   WorkspaceQueryResult,
   WorkspaceFeatures,
   SavedQueryInput,
-} from '../workspace/types'
-export { DEFAULT_WORKSPACE_FEATURES } from '../workspace/types'
+} from "../workspace/types";
+export { DEFAULT_WORKSPACE_FEATURES } from "../workspace/types";

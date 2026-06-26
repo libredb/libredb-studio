@@ -7,20 +7,20 @@ const nextConfig: NextConfig = {
   },
   // Use standalone output for Docker/Kubernetes deployments
   // For Vercel, this is automatically handled
-  output: process.env.DOCKER_BUILD === 'true' ? 'standalone' : undefined,
+  output: process.env.DOCKER_BUILD === "true" ? "standalone" : undefined,
 
   // Externalize native modules to reduce bundle size and memory usage
   // These packages will be loaded from node_modules at runtime
-  serverExternalPackages: ['pg', 'mysql2', 'mongodb', 'better-sqlite3', 'ssh2'],
+  serverExternalPackages: ["pg", "mysql2", "mongodb", "better-sqlite3", "ssh2"],
   images: {
     remotePatterns: [
       {
-        protocol: 'https',
-        hostname: '**',
+        protocol: "https",
+        hostname: "**",
       },
       {
-        protocol: 'http',
-        hostname: '**',
+        protocol: "http",
+        hostname: "**",
       },
     ],
   },

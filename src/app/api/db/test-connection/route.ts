@@ -1,8 +1,8 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { createDatabaseProvider } from '@/lib/db/factory';
-import { createErrorResponse } from '@/lib/api/errors';
-import { resolveConnection } from '@/lib/seed/resolve-connection';
-import { getSession } from '@/lib/auth';
+import { NextRequest, NextResponse } from "next/server";
+import { createDatabaseProvider } from "@/lib/db/factory";
+import { createErrorResponse } from "@/lib/api/errors";
+import { resolveConnection } from "@/lib/seed/resolve-connection";
+import { getSession } from "@/lib/auth";
 
 export async function POST(req: NextRequest) {
   let provider = null;
@@ -12,20 +12,17 @@ export async function POST(req: NextRequest) {
 
     const session = await getSession();
     if (!session) {
-      return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
+      return NextResponse.json({ error: "Authentication required" }, { status: 401 });
     }
 
     // Support both formats: { connectionId: "seed:X" }, { connection: {...} }, or bare connection object
     const connection = await resolveConnection(
-      body.connectionId ? body : (body.connection ? body : { connection: body }),
+      body.connectionId ? body : body.connection ? body : { connection: body },
       session,
     );
 
     if (!connection.type) {
-      return NextResponse.json(
-        { success: false, error: 'Connection configuration is required' },
-        { status: 400 }
-      );
+      return NextResponse.json({ success: false, error: "Connection configuration is required" }, { status: 400 });
     }
 
     provider = await createDatabaseProvider(connection, { queryTimeout: 10000 });
@@ -41,15 +38,19 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      message: 'Connection successful',
+      message: "Connection successful",
       latency,
     });
   } catch (error) {
     // Ensure we disconnect on error
     if (provider) {
-      try { await provider.disconnect(); } catch { /* ignore */ }
+      try {
+        await provider.disconnect();
+      } catch {
+        /* ignore */
+      }
     }
 
-    return createErrorResponse(error, { route: 'api/db/test-connection' });
+    return createErrorResponse(error, { route: "api/db/test-connection" });
   }
 }

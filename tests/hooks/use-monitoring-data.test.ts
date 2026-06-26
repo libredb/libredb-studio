@@ -1,38 +1,38 @@
-import '../setup-dom';
-import { mockToastSuccess, mockToastError } from '../helpers/mock-sonner';
-import '../helpers/mock-navigation';
+import "../setup-dom";
+import { mockToastSuccess, mockToastError } from "../helpers/mock-sonner";
+import "../helpers/mock-navigation";
 
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { renderHook, act, waitFor } from '@testing-library/react';
-import { mockGlobalFetch, restoreGlobalFetch } from '../helpers/mock-fetch';
+import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+import { renderHook, act, waitFor } from "@testing-library/react";
+import { mockGlobalFetch, restoreGlobalFetch } from "../helpers/mock-fetch";
 
-import { useMonitoringData } from '@/hooks/use-monitoring-data';
-import type { DatabaseConnection } from '@/lib/types';
+import { useMonitoringData } from "@/hooks/use-monitoring-data";
+import type { DatabaseConnection } from "@/lib/types";
 
 // =============================================================================
 // Test Data
 // =============================================================================
 const mockConnection: DatabaseConnection = {
-  id: 'mon-pg-1',
-  name: 'Test PostgreSQL',
-  type: 'postgres',
-  host: 'localhost',
+  id: "mon-pg-1",
+  name: "Test PostgreSQL",
+  type: "postgres",
+  host: "localhost",
   port: 5432,
-  user: 'testuser',
-  password: 'testpass',
-  database: 'testdb',
-  createdAt: new Date('2025-01-01T00:00:00Z'),
-  environment: 'development',
+  user: "testuser",
+  password: "testpass",
+  database: "testdb",
+  createdAt: new Date("2025-01-01T00:00:00Z"),
+  environment: "development",
 };
 
 const mockMonitoringResponse = {
   timestamp: new Date().toISOString(),
   overview: {
-    version: '15.4',
+    version: "15.4",
     uptime: 86400,
     startTime: new Date().toISOString(),
     connections: { active: 5, idle: 10, total: 15, max: 100 },
-    databaseSize: '256 MB',
+    databaseSize: "256 MB",
   },
   performance: {
     queriesPerSecond: 150,
@@ -47,7 +47,7 @@ const mockMonitoringResponse = {
 // =============================================================================
 // useMonitoringData Tests
 // =============================================================================
-describe('useMonitoringData', () => {
+describe("useMonitoringData", () => {
   beforeEach(() => {
     mockToastSuccess.mockClear();
     mockToastError.mockClear();
@@ -59,7 +59,7 @@ describe('useMonitoringData', () => {
 
   // ── Returns null data when connection is null ──────────────────────────────
 
-  test('returns null data when connection is null', () => {
+  test("returns null data when connection is null", () => {
     mockGlobalFetch({});
 
     const { result } = renderHook(() => useMonitoringData(null));
@@ -71,9 +71,9 @@ describe('useMonitoringData', () => {
 
   // ── Fetches monitoring data on connection change ───────────────────────────
 
-  test('fetches monitoring data on connection change', async () => {
+  test("fetches monitoring data on connection change", async () => {
     const fetchMock = mockGlobalFetch({
-      '/api/db/monitoring': { ok: true, json: mockMonitoringResponse },
+      "/api/db/monitoring": { ok: true, json: mockMonitoringResponse },
     });
 
     const { result } = renderHook(() => useMonitoringData(mockConnection));
@@ -83,17 +83,17 @@ describe('useMonitoringData', () => {
     });
 
     const monCall = fetchMock.mock.calls.find(
-      (call) => typeof call[0] === 'string' && call[0].includes('/api/db/monitoring')
+      (call) => typeof call[0] === "string" && call[0].includes("/api/db/monitoring"),
     );
     expect(monCall).toBeDefined();
-    expect(monCall![1]).toMatchObject({ method: 'POST' });
+    expect(monCall![1]).toMatchObject({ method: "POST" });
   });
 
   // ── Sets loading true during fetch, false after ────────────────────────────
 
-  test('sets loading true during fetch, false after', async () => {
+  test("sets loading true during fetch, false after", async () => {
     mockGlobalFetch({
-      '/api/db/monitoring': { ok: true, json: mockMonitoringResponse },
+      "/api/db/monitoring": { ok: true, json: mockMonitoringResponse },
     });
 
     const { result } = renderHook(() => useMonitoringData(mockConnection));
@@ -109,9 +109,9 @@ describe('useMonitoringData', () => {
 
   // ── Sets data from successful response ─────────────────────────────────────
 
-  test('sets data from successful response', async () => {
+  test("sets data from successful response", async () => {
     mockGlobalFetch({
-      '/api/db/monitoring': { ok: true, json: mockMonitoringResponse },
+      "/api/db/monitoring": { ok: true, json: mockMonitoringResponse },
     });
 
     const { result } = renderHook(() => useMonitoringData(mockConnection));
@@ -128,9 +128,9 @@ describe('useMonitoringData', () => {
 
   // ── Sets error from failed response ────────────────────────────────────────
 
-  test('sets error from failed response', async () => {
+  test("sets error from failed response", async () => {
     mockGlobalFetch({
-      '/api/db/monitoring': { ok: false, status: 500, json: { error: 'Database unreachable' } },
+      "/api/db/monitoring": { ok: false, status: 500, json: { error: "Database unreachable" } },
     });
 
     const { result } = renderHook(() => useMonitoringData(mockConnection));
@@ -139,16 +139,16 @@ describe('useMonitoringData', () => {
       expect(result.current.error).not.toBeNull();
     });
 
-    expect(result.current.error).toBe('Database unreachable');
+    expect(result.current.error).toBe("Database unreachable");
     expect(result.current.loading).toBe(false);
   });
 
   // ── Does not clear existing data on error ──────────────────────────────────
 
-  test('does not clear existing data on error', async () => {
+  test("does not clear existing data on error", async () => {
     // First, load data successfully
     mockGlobalFetch({
-      '/api/db/monitoring': { ok: true, json: mockMonitoringResponse },
+      "/api/db/monitoring": { ok: true, json: mockMonitoringResponse },
     });
 
     const { result } = renderHook(() => useMonitoringData(mockConnection));
@@ -160,7 +160,7 @@ describe('useMonitoringData', () => {
     // Now make fetch fail
     restoreGlobalFetch();
     mockGlobalFetch({
-      '/api/db/monitoring': { ok: false, status: 500, json: { error: 'Temporary failure' } },
+      "/api/db/monitoring": { ok: false, status: 500, json: { error: "Temporary failure" } },
     });
 
     await act(async () => {
@@ -177,9 +177,9 @@ describe('useMonitoringData', () => {
 
   // ── refresh triggers a new fetch ───────────────────────────────────────────
 
-  test('refresh triggers a new fetch', async () => {
+  test("refresh triggers a new fetch", async () => {
     const fetchMock = mockGlobalFetch({
-      '/api/db/monitoring': { ok: true, json: mockMonitoringResponse },
+      "/api/db/monitoring": { ok: true, json: mockMonitoringResponse },
     });
 
     const { result } = renderHook(() => useMonitoringData(mockConnection));
@@ -189,7 +189,7 @@ describe('useMonitoringData', () => {
     });
 
     const callCountBefore = fetchMock.mock.calls.filter(
-      (call) => typeof call[0] === 'string' && call[0].includes('/api/db/monitoring')
+      (call) => typeof call[0] === "string" && call[0].includes("/api/db/monitoring"),
     ).length;
 
     await act(async () => {
@@ -197,7 +197,7 @@ describe('useMonitoringData', () => {
     });
 
     const callCountAfter = fetchMock.mock.calls.filter(
-      (call) => typeof call[0] === 'string' && call[0].includes('/api/db/monitoring')
+      (call) => typeof call[0] === "string" && call[0].includes("/api/db/monitoring"),
     ).length;
 
     expect(callCountAfter).toBeGreaterThan(callCountBefore);
@@ -205,10 +205,10 @@ describe('useMonitoringData', () => {
 
   // ── killSession calls /api/db/maintenance with type 'kill' ─────────────────
 
-  test('killSession calls /api/db/maintenance with type kill', async () => {
+  test("killSession calls /api/db/maintenance with type kill", async () => {
     const fetchMock = mockGlobalFetch({
-      '/api/db/monitoring': { ok: true, json: mockMonitoringResponse },
-      '/api/db/maintenance': { ok: true, json: { success: true, message: 'Session killed' } },
+      "/api/db/monitoring": { ok: true, json: mockMonitoringResponse },
+      "/api/db/maintenance": { ok: true, json: { success: true, message: "Session killed" } },
     });
 
     const { result } = renderHook(() => useMonitoringData(mockConnection));
@@ -222,22 +222,22 @@ describe('useMonitoringData', () => {
     });
 
     const maintenanceCall = fetchMock.mock.calls.find(
-      (call) => typeof call[0] === 'string' && call[0].includes('/api/db/maintenance')
+      (call) => typeof call[0] === "string" && call[0].includes("/api/db/maintenance"),
     );
     expect(maintenanceCall).toBeDefined();
 
     const body = JSON.parse(maintenanceCall![1]!.body as string);
-    expect(body.type).toBe('kill');
-    expect(body.target).toBe('12345');
+    expect(body.type).toBe("kill");
+    expect(body.target).toBe("12345");
     expect(body.connection).toBeDefined();
   });
 
   // ── killSession returns true on success ────────────────────────────────────
 
-  test('killSession returns true on success', async () => {
+  test("killSession returns true on success", async () => {
     mockGlobalFetch({
-      '/api/db/monitoring': { ok: true, json: mockMonitoringResponse },
-      '/api/db/maintenance': { ok: true, json: { success: true, message: 'Session killed' } },
+      "/api/db/monitoring": { ok: true, json: mockMonitoringResponse },
+      "/api/db/maintenance": { ok: true, json: { success: true, message: "Session killed" } },
     });
 
     const { result } = renderHook(() => useMonitoringData(mockConnection));
@@ -257,10 +257,10 @@ describe('useMonitoringData', () => {
 
   // ── killSession returns false on failure ───────────────────────────────────
 
-  test('killSession returns false on failure', async () => {
+  test("killSession returns false on failure", async () => {
     mockGlobalFetch({
-      '/api/db/monitoring': { ok: true, json: mockMonitoringResponse },
-      '/api/db/maintenance': { ok: false, status: 500, json: { error: 'Permission denied' } },
+      "/api/db/monitoring": { ok: true, json: mockMonitoringResponse },
+      "/api/db/maintenance": { ok: false, status: 500, json: { error: "Permission denied" } },
     });
 
     const { result } = renderHook(() => useMonitoringData(mockConnection));
@@ -280,10 +280,10 @@ describe('useMonitoringData', () => {
 
   // ── runMaintenance calls correct endpoint ──────────────────────────────────
 
-  test('runMaintenance calls correct endpoint', async () => {
+  test("runMaintenance calls correct endpoint", async () => {
     const fetchMock = mockGlobalFetch({
-      '/api/db/monitoring': { ok: true, json: mockMonitoringResponse },
-      '/api/db/maintenance': { ok: true, json: { success: true, message: 'VACUUM completed' } },
+      "/api/db/monitoring": { ok: true, json: mockMonitoringResponse },
+      "/api/db/maintenance": { ok: true, json: { success: true, message: "VACUUM completed" } },
     });
 
     const { result } = renderHook(() => useMonitoringData(mockConnection));
@@ -294,25 +294,25 @@ describe('useMonitoringData', () => {
 
     let maintenanceResult = false;
     await act(async () => {
-      maintenanceResult = await result.current.runMaintenance('vacuum', 'public.users');
+      maintenanceResult = await result.current.runMaintenance("vacuum", "public.users");
     });
 
     expect(maintenanceResult).toBe(true);
 
     const maintenanceCall = fetchMock.mock.calls.find(
-      (call) => typeof call[0] === 'string' && call[0].includes('/api/db/maintenance')
+      (call) => typeof call[0] === "string" && call[0].includes("/api/db/maintenance"),
     );
     expect(maintenanceCall).toBeDefined();
 
     const body = JSON.parse(maintenanceCall![1]!.body as string);
-    expect(body.type).toBe('vacuum');
-    expect(body.target).toBe('public.users');
+    expect(body.type).toBe("vacuum");
+    expect(body.target).toBe("public.users");
     expect(mockToastSuccess).toHaveBeenCalled();
   });
 
   // ── history is empty initially ─────────────────────────────────────────────
 
-  test('history is empty initially', () => {
+  test("history is empty initially", () => {
     mockGlobalFetch({});
 
     const { result } = renderHook(() => useMonitoringData(null));
@@ -322,9 +322,9 @@ describe('useMonitoringData', () => {
 
   // ── history grows after successful fetch ───────────────────────────────────
 
-  test('history grows after successful fetch', async () => {
+  test("history grows after successful fetch", async () => {
     mockGlobalFetch({
-      '/api/db/monitoring': { ok: true, json: mockMonitoringResponse },
+      "/api/db/monitoring": { ok: true, json: mockMonitoringResponse },
     });
 
     const { result } = renderHook(() => useMonitoringData(mockConnection));
@@ -334,16 +334,16 @@ describe('useMonitoringData', () => {
     });
 
     expect(result.current.history.length).toBeGreaterThan(0);
-    expect(result.current.history[0]).toHaveProperty('timestamp');
-    expect(result.current.history[0]).toHaveProperty('data');
+    expect(result.current.history[0]).toHaveProperty("timestamp");
+    expect(result.current.history[0]).toHaveProperty("data");
   });
 
   // ── runMaintenance returns false on failure ────────────────────────────
 
-  test('runMaintenance returns false on failure', async () => {
+  test("runMaintenance returns false on failure", async () => {
     mockGlobalFetch({
-      '/api/db/monitoring': { ok: true, json: mockMonitoringResponse },
-      '/api/db/maintenance': { ok: false, status: 500, json: { error: 'Permission denied' } },
+      "/api/db/monitoring": { ok: true, json: mockMonitoringResponse },
+      "/api/db/maintenance": { ok: false, status: 500, json: { error: "Permission denied" } },
     });
 
     const { result } = renderHook(() => useMonitoringData(mockConnection));
@@ -354,7 +354,7 @@ describe('useMonitoringData', () => {
 
     let maintenanceResult = true;
     await act(async () => {
-      maintenanceResult = await result.current.runMaintenance('vacuum', 'public.users');
+      maintenanceResult = await result.current.runMaintenance("vacuum", "public.users");
     });
 
     expect(maintenanceResult).toBe(false);
@@ -363,7 +363,7 @@ describe('useMonitoringData', () => {
 
   // ── killSession returns false when connection is null ──────────────────
 
-  test('killSession returns false when connection is null', async () => {
+  test("killSession returns false when connection is null", async () => {
     mockGlobalFetch({});
 
     const { result } = renderHook(() => useMonitoringData(null));
@@ -378,14 +378,14 @@ describe('useMonitoringData', () => {
 
   // ── runMaintenance returns false when connection is null ────────────────
 
-  test('runMaintenance returns false when connection is null', async () => {
+  test("runMaintenance returns false when connection is null", async () => {
     mockGlobalFetch({});
 
     const { result } = renderHook(() => useMonitoringData(null));
 
     let maintenanceResult = true;
     await act(async () => {
-      maintenanceResult = await result.current.runMaintenance('vacuum');
+      maintenanceResult = await result.current.runMaintenance("vacuum");
     });
 
     expect(maintenanceResult).toBe(false);
@@ -393,9 +393,9 @@ describe('useMonitoringData', () => {
 
   // ── setAutoRefresh enables/disables auto-refresh ───────────────────────
 
-  test('setAutoRefresh enables auto-refresh', async () => {
+  test("setAutoRefresh enables auto-refresh", async () => {
     mockGlobalFetch({
-      '/api/db/monitoring': { ok: true, json: mockMonitoringResponse },
+      "/api/db/monitoring": { ok: true, json: mockMonitoringResponse },
     });
 
     const { result } = renderHook(() => useMonitoringData(mockConnection));
@@ -421,9 +421,9 @@ describe('useMonitoringData', () => {
 
   // ── setRefreshInterval changes interval ────────────────────────────────
 
-  test('setRefreshInterval changes the refresh interval', async () => {
+  test("setRefreshInterval changes the refresh interval", async () => {
     mockGlobalFetch({
-      '/api/db/monitoring': { ok: true, json: mockMonitoringResponse },
+      "/api/db/monitoring": { ok: true, json: mockMonitoringResponse },
     });
 
     const { result } = renderHook(() => useMonitoringData(mockConnection));
@@ -443,15 +443,14 @@ describe('useMonitoringData', () => {
 
   // ── clears history on connection change ────────────────────────────────
 
-  test('clears history when connection changes to null', async () => {
+  test("clears history when connection changes to null", async () => {
     mockGlobalFetch({
-      '/api/db/monitoring': { ok: true, json: mockMonitoringResponse },
+      "/api/db/monitoring": { ok: true, json: mockMonitoringResponse },
     });
 
-    const { result, rerender } = renderHook(
-      ({ conn }) => useMonitoringData(conn),
-      { initialProps: { conn: mockConnection as DatabaseConnection | null } }
-    );
+    const { result, rerender } = renderHook(({ conn }) => useMonitoringData(conn), {
+      initialProps: { conn: mockConnection as DatabaseConnection | null },
+    });
 
     await waitFor(() => {
       expect(result.current.data).not.toBeNull();
@@ -471,10 +470,10 @@ describe('useMonitoringData', () => {
 
   // ── handles fetch exception (non-Error) ────────────────────────────────
 
-  test('handles fetch rejection with non-Error', async () => {
+  test("handles fetch rejection with non-Error", async () => {
     const originalFetch = globalThis.fetch;
     globalThis.fetch = (async () => {
-      throw 'string error';
+      throw "string error";
     }) as unknown as typeof fetch;
 
     const { result } = renderHook(() => useMonitoringData(mockConnection));
@@ -483,16 +482,16 @@ describe('useMonitoringData', () => {
       expect(result.current.error).not.toBeNull();
     });
 
-    expect(result.current.error).toBe('Unknown error');
+    expect(result.current.error).toBe("Unknown error");
 
     globalThis.fetch = originalFetch;
   });
 
   // ── killSession handles fetch exception ────────────────────────────────
 
-  test('killSession handles fetch exception', async () => {
+  test("killSession handles fetch exception", async () => {
     mockGlobalFetch({
-      '/api/db/monitoring': { ok: true, json: mockMonitoringResponse },
+      "/api/db/monitoring": { ok: true, json: mockMonitoringResponse },
     });
 
     const { result } = renderHook(() => useMonitoringData(mockConnection));
@@ -504,13 +503,13 @@ describe('useMonitoringData', () => {
     // Now make maintenance endpoint throw
     restoreGlobalFetch();
     globalThis.fetch = (async (input: RequestInfo | URL) => {
-      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
-      if (url.includes('/api/db/maintenance')) {
-        throw new Error('Network failure');
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      if (url.includes("/api/db/maintenance")) {
+        throw new Error("Network failure");
       }
       return new Response(JSON.stringify(mockMonitoringResponse), {
         status: 200,
-        headers: { 'content-type': 'application/json' },
+        headers: { "content-type": "application/json" },
       });
     }) as typeof fetch;
 
@@ -525,9 +524,9 @@ describe('useMonitoringData', () => {
 
   // ── runMaintenance handles fetch exception ─────────────────────────────
 
-  test('runMaintenance handles fetch exception', async () => {
+  test("runMaintenance handles fetch exception", async () => {
     mockGlobalFetch({
-      '/api/db/monitoring': { ok: true, json: mockMonitoringResponse },
+      "/api/db/monitoring": { ok: true, json: mockMonitoringResponse },
     });
 
     const { result } = renderHook(() => useMonitoringData(mockConnection));
@@ -538,19 +537,19 @@ describe('useMonitoringData', () => {
 
     restoreGlobalFetch();
     globalThis.fetch = (async (input: RequestInfo | URL) => {
-      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
-      if (url.includes('/api/db/maintenance')) {
-        throw new Error('Connection refused');
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      if (url.includes("/api/db/maintenance")) {
+        throw new Error("Connection refused");
       }
       return new Response(JSON.stringify(mockMonitoringResponse), {
         status: 200,
-        headers: { 'content-type': 'application/json' },
+        headers: { "content-type": "application/json" },
       });
     }) as typeof fetch;
 
     let maintenanceResult = true;
     await act(async () => {
-      maintenanceResult = await result.current.runMaintenance('analyze');
+      maintenanceResult = await result.current.runMaintenance("analyze");
     });
 
     expect(maintenanceResult).toBe(false);
@@ -559,15 +558,15 @@ describe('useMonitoringData', () => {
 
   // ── Timestamp string → Date conversion ─────────────────────────────────
 
-  test('converts timestamp string to Date object', async () => {
-    const isoTimestamp = '2026-01-15T10:30:00.000Z';
+  test("converts timestamp string to Date object", async () => {
+    const isoTimestamp = "2026-01-15T10:30:00.000Z";
     const responseWithTimestamp = {
       ...mockMonitoringResponse,
       timestamp: isoTimestamp,
     };
 
     mockGlobalFetch({
-      '/api/db/monitoring': { ok: true, json: responseWithTimestamp },
+      "/api/db/monitoring": { ok: true, json: responseWithTimestamp },
     });
 
     const { result } = renderHook(() => useMonitoringData(mockConnection));
@@ -582,15 +581,15 @@ describe('useMonitoringData', () => {
 
   // ── overview.startTime → Date conversion ───────────────────────────────
 
-  test('converts overview.startTime string to Date object', async () => {
-    const isoStart = '2026-01-15T08:00:00.000Z';
+  test("converts overview.startTime string to Date object", async () => {
+    const isoStart = "2026-01-15T08:00:00.000Z";
     const responseWithStartTime = {
       ...mockMonitoringResponse,
       overview: { ...mockMonitoringResponse.overview, startTime: isoStart },
     };
 
     mockGlobalFetch({
-      '/api/db/monitoring': { ok: true, json: responseWithStartTime },
+      "/api/db/monitoring": { ok: true, json: responseWithStartTime },
     });
 
     const { result } = renderHook(() => useMonitoringData(mockConnection));
@@ -604,7 +603,7 @@ describe('useMonitoringData', () => {
 
   // ── Response without overview.startTime (no crash) ─────────────────────
 
-  test('handles response without overview.startTime', async () => {
+  test("handles response without overview.startTime", async () => {
     const noStartResponse = {
       ...mockMonitoringResponse,
       overview: {
@@ -614,7 +613,7 @@ describe('useMonitoringData', () => {
     };
 
     mockGlobalFetch({
-      '/api/db/monitoring': { ok: true, json: noStartResponse },
+      "/api/db/monitoring": { ok: true, json: noStartResponse },
     });
 
     const { result } = renderHook(() => useMonitoringData(mockConnection));
@@ -629,10 +628,10 @@ describe('useMonitoringData', () => {
 
   // ── runMaintenance uses result.message ─────────────────────────────────
 
-  test('runMaintenance uses result.message when provided', async () => {
+  test("runMaintenance uses result.message when provided", async () => {
     mockGlobalFetch({
-      '/api/db/monitoring': { ok: true, json: mockMonitoringResponse },
-      '/api/db/maintenance': { ok: true, json: { success: true, message: 'VACUUM completed on public.users' } },
+      "/api/db/monitoring": { ok: true, json: mockMonitoringResponse },
+      "/api/db/maintenance": { ok: true, json: { success: true, message: "VACUUM completed on public.users" } },
     });
 
     const { result } = renderHook(() => useMonitoringData(mockConnection));
@@ -642,18 +641,18 @@ describe('useMonitoringData', () => {
     });
 
     await act(async () => {
-      await result.current.runMaintenance('vacuum', 'public.users');
+      await result.current.runMaintenance("vacuum", "public.users");
     });
 
-    expect(mockToastSuccess).toHaveBeenCalledWith('VACUUM completed on public.users');
+    expect(mockToastSuccess).toHaveBeenCalledWith("VACUUM completed on public.users");
   });
 
   // ── runMaintenance uses fallback when result.message empty ─────────────
 
-  test('runMaintenance uses fallback when result.message is empty', async () => {
+  test("runMaintenance uses fallback when result.message is empty", async () => {
     mockGlobalFetch({
-      '/api/db/monitoring': { ok: true, json: mockMonitoringResponse },
-      '/api/db/maintenance': { ok: true, json: { success: true, message: '' } },
+      "/api/db/monitoring": { ok: true, json: mockMonitoringResponse },
+      "/api/db/maintenance": { ok: true, json: { success: true, message: "" } },
     });
 
     const { result } = renderHook(() => useMonitoringData(mockConnection));
@@ -663,17 +662,17 @@ describe('useMonitoringData', () => {
     });
 
     await act(async () => {
-      await result.current.runMaintenance('analyze');
+      await result.current.runMaintenance("analyze");
     });
 
-    expect(mockToastSuccess).toHaveBeenCalledWith('analyze completed successfully');
+    expect(mockToastSuccess).toHaveBeenCalledWith("analyze completed successfully");
   });
 
   // ── killSession with non-Error throw ──────────────────────────────────
 
-  test('killSession with non-Error throw shows fallback message', async () => {
+  test("killSession with non-Error throw shows fallback message", async () => {
     mockGlobalFetch({
-      '/api/db/monitoring': { ok: true, json: mockMonitoringResponse },
+      "/api/db/monitoring": { ok: true, json: mockMonitoringResponse },
     });
 
     const { result } = renderHook(() => useMonitoringData(mockConnection));
@@ -685,13 +684,13 @@ describe('useMonitoringData', () => {
     // Override fetch to throw a non-Error
     restoreGlobalFetch();
     globalThis.fetch = (async (input: RequestInfo | URL) => {
-      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
-      if (url.includes('/api/db/maintenance')) {
-        throw 'non-error string';
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      if (url.includes("/api/db/maintenance")) {
+        throw "non-error string";
       }
       return new Response(JSON.stringify(mockMonitoringResponse), {
         status: 200,
-        headers: { 'content-type': 'application/json' },
+        headers: { "content-type": "application/json" },
       });
     }) as typeof fetch;
 
@@ -701,26 +700,25 @@ describe('useMonitoringData', () => {
     });
 
     expect(killResult).toBe(false);
-    expect(mockToastError).toHaveBeenCalledWith('Failed to kill session');
+    expect(mockToastError).toHaveBeenCalledWith("Failed to kill session");
   });
 
   // ── Connection change clears data and aborts ──────────────────────────
 
-  test('connection change to different connection resets history and fetches', async () => {
+  test("connection change to different connection resets history and fetches", async () => {
     const secondConnection: DatabaseConnection = {
       ...mockConnection,
-      id: 'mon-pg-2',
-      name: 'Second DB',
+      id: "mon-pg-2",
+      name: "Second DB",
     };
 
     mockGlobalFetch({
-      '/api/db/monitoring': { ok: true, json: mockMonitoringResponse },
+      "/api/db/monitoring": { ok: true, json: mockMonitoringResponse },
     });
 
-    const { result, rerender } = renderHook(
-      ({ conn }) => useMonitoringData(conn),
-      { initialProps: { conn: mockConnection as DatabaseConnection | null } }
-    );
+    const { result, rerender } = renderHook(({ conn }) => useMonitoringData(conn), {
+      initialProps: { conn: mockConnection as DatabaseConnection | null },
+    });
 
     await waitFor(() => {
       expect(result.current.data).not.toBeNull();
@@ -740,9 +738,9 @@ describe('useMonitoringData', () => {
 
   // ── Auto-refresh interval fires ───────────────────────────────────────
 
-  test('auto-refresh interval fires and triggers fetch', async () => {
+  test("auto-refresh interval fires and triggers fetch", async () => {
     const fetchMock = mockGlobalFetch({
-      '/api/db/monitoring': { ok: true, json: mockMonitoringResponse },
+      "/api/db/monitoring": { ok: true, json: mockMonitoringResponse },
     });
 
     const { result } = renderHook(() => useMonitoringData(mockConnection));
@@ -752,7 +750,7 @@ describe('useMonitoringData', () => {
     });
 
     const callsBefore = fetchMock.mock.calls.filter(
-      (call) => typeof call[0] === 'string' && call[0].includes('/api/db/monitoring')
+      (call) => typeof call[0] === "string" && call[0].includes("/api/db/monitoring"),
     ).length;
 
     // Enable auto-refresh with very short interval
@@ -763,11 +761,11 @@ describe('useMonitoringData', () => {
 
     // Wait for interval to fire
     await act(async () => {
-      await new Promise(resolve => setTimeout(resolve, 200));
+      await new Promise((resolve) => setTimeout(resolve, 200));
     });
 
     const callsAfter = fetchMock.mock.calls.filter(
-      (call) => typeof call[0] === 'string' && call[0].includes('/api/db/monitoring')
+      (call) => typeof call[0] === "string" && call[0].includes("/api/db/monitoring"),
     ).length;
 
     expect(callsAfter).toBeGreaterThan(callsBefore);
@@ -780,9 +778,9 @@ describe('useMonitoringData', () => {
 
   // ── Auto-refresh cleared when disabled ────────────────────────────────
 
-  test('auto-refresh stops when disabled', async () => {
+  test("auto-refresh stops when disabled", async () => {
     const fetchMock = mockGlobalFetch({
-      '/api/db/monitoring': { ok: true, json: mockMonitoringResponse },
+      "/api/db/monitoring": { ok: true, json: mockMonitoringResponse },
     });
 
     const { result } = renderHook(() => useMonitoringData(mockConnection));
@@ -802,16 +800,16 @@ describe('useMonitoringData', () => {
     });
 
     const callsAfterDisable = fetchMock.mock.calls.filter(
-      (call) => typeof call[0] === 'string' && call[0].includes('/api/db/monitoring')
+      (call) => typeof call[0] === "string" && call[0].includes("/api/db/monitoring"),
     ).length;
 
     // Wait and verify no more calls
     await act(async () => {
-      await new Promise(resolve => setTimeout(resolve, 200));
+      await new Promise((resolve) => setTimeout(resolve, 200));
     });
 
     const callsLater = fetchMock.mock.calls.filter(
-      (call) => typeof call[0] === 'string' && call[0].includes('/api/db/monitoring')
+      (call) => typeof call[0] === "string" && call[0].includes("/api/db/monitoring"),
     ).length;
 
     expect(callsLater).toBe(callsAfterDisable);

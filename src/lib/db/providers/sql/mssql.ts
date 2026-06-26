@@ -3,8 +3,8 @@
  * Full MSSQL support with connection pooling (SQL Authentication)
  */
 
-import mssql from 'mssql';
-import { SQLBaseProvider } from './sql-base';
+import mssql from "mssql";
+import { SQLBaseProvider } from "./sql-base";
 import {
   type DatabaseConnection,
   type TableSchema,
@@ -26,19 +26,10 @@ import {
   type StorageStats,
   type PreparedQuery,
   type QueryPrepareOptions,
-} from '../../types';
-import {
-  DatabaseConfigError,
-  ConnectionError,
-  QueryError,
-  mapDatabaseError,
-} from '../../errors';
-import { formatBytes } from '../../utils/pool-manager';
-import {
-  analyzeQuery,
-  DEFAULT_QUERY_LIMIT,
-  MAX_UNLIMITED_ROWS,
-} from '../../utils/query-limiter';
+} from "../../types";
+import { DatabaseConfigError, ConnectionError, QueryError, mapDatabaseError } from "../../errors";
+import { formatBytes } from "../../utils/pool-manager";
+import { analyzeQuery, DEFAULT_QUERY_LIMIT, MAX_UNLIMITED_ROWS } from "../../utils/query-limiter";
 
 // ============================================================================
 // MSSQL Provider
@@ -69,21 +60,21 @@ export class MSSQLProvider extends SQLBaseProvider {
       defaultPort: 1433,
       supportsExplain: true,
       supportsConnectionString: true,
-      maintenanceOperations: ['analyze', 'check', 'optimize', 'kill'],
+      maintenanceOperations: ["analyze", "check", "optimize", "kill"],
     };
   }
 
   public override getLabels(): ProviderLabels {
     return {
       ...super.getLabels(),
-      analyzeAction: 'Update Statistics',
-      vacuumAction: 'Rebuild Indexes',
-      analyzeGlobalLabel: 'Update Stats',
-      analyzeGlobalTitle: 'Update Statistics',
-      analyzeGlobalDesc: 'Updates query optimizer statistics for all tables to improve query performance.',
-      vacuumGlobalLabel: 'Rebuild Indexes',
-      vacuumGlobalTitle: 'Rebuild All Indexes',
-      vacuumGlobalDesc: 'Rebuilds all indexes to reclaim space and reduce fragmentation.',
+      analyzeAction: "Update Statistics",
+      vacuumAction: "Rebuild Indexes",
+      analyzeGlobalLabel: "Update Stats",
+      analyzeGlobalTitle: "Update Statistics",
+      analyzeGlobalDesc: "Updates query optimizer statistics for all tables to improve query performance.",
+      vacuumGlobalLabel: "Rebuild Indexes",
+      vacuumGlobalTitle: "Rebuild All Indexes",
+      vacuumGlobalDesc: "Rebuilds all indexes to reclaim space and reduce fragmentation.",
     };
   }
 
@@ -92,7 +83,7 @@ export class MSSQLProvider extends SQLBaseProvider {
   // ============================================================================
 
   protected override escapeIdentifier(identifier: string): string {
-    const escaped = identifier.replace(/\]/g, ']]');
+    const escaped = identifier.replace(/\]/g, "]]");
     return `[${escaped}]`;
   }
 
@@ -105,10 +96,10 @@ export class MSSQLProvider extends SQLBaseProvider {
 
     if (!this.config.connectionString) {
       if (!this.config.host) {
-        throw new DatabaseConfigError('Host is required for SQL Server', 'mssql');
+        throw new DatabaseConfigError("Host is required for SQL Server", "mssql");
       }
       if (!this.config.database) {
-        throw new DatabaseConfigError('Database name is required for SQL Server', 'mssql');
+        throw new DatabaseConfigError("Database name is required for SQL Server", "mssql");
       }
     }
   }
@@ -118,9 +109,9 @@ export class MSSQLProvider extends SQLBaseProvider {
   // ============================================================================
 
   private buildConfig(): mssql.config {
-    const host = this.config.host || 'localhost';
+    const host = this.config.host || "localhost";
     const port = this.config.port || 1433;
-    const isAzure = host.endsWith('.database.windows.net');
+    const isAzure = host.endsWith(".database.windows.net");
 
     const sslConfig = this.config.ssl;
     // SQL Server 2022+ enforces encryption by default; always encrypt and trust self-signed certs for non-Azure
@@ -128,11 +119,11 @@ export class MSSQLProvider extends SQLBaseProvider {
     let trustServerCertificate = !isAzure;
 
     if (sslConfig) {
-      if (sslConfig.mode === 'disable') {
+      if (sslConfig.mode === "disable") {
         encrypt = false;
       } else {
         encrypt = true;
-        trustServerCertificate = sslConfig.mode === 'require';
+        trustServerCertificate = sslConfig.mode === "require";
       }
     }
 
@@ -179,16 +170,16 @@ export class MSSQLProvider extends SQLBaseProvider {
       await this.pool.connect();
 
       // Test the connection
-      await this.pool.request().query('SELECT 1 AS test');
+      await this.pool.request().query("SELECT 1 AS test");
 
       this.setConnected(true);
     } catch (error) {
       this.setError(error instanceof Error ? error : new Error(String(error)));
       throw new ConnectionError(
         `Failed to connect to SQL Server: ${error instanceof Error ? error.message : error}`,
-        'mssql',
+        "mssql",
         this.config.host,
-        this.config.port
+        this.config.port,
       );
     }
   }
@@ -231,7 +222,7 @@ export class MSSQLProvider extends SQLBaseProvider {
           const res = await request.query(sql);
           return res;
         } catch (error) {
-          throw mapDatabaseError(error, 'mssql', sql);
+          throw mapDatabaseError(error, "mssql", sql);
         } finally {
           if (queryId) this.runningRequests.delete(queryId);
         }
@@ -261,7 +252,7 @@ export class MSSQLProvider extends SQLBaseProvider {
       request.cancel();
       return true;
     } catch (error) {
-      console.error('[MSSQL] Failed to cancel query:', error);
+      console.error("[MSSQL] Failed to cancel query:", error);
       return false;
     }
   }
@@ -275,9 +266,9 @@ export class MSSQLProvider extends SQLBaseProvider {
     const effectiveLimit = unlimited ? MAX_UNLIMITED_ROWS : limit;
     const queryInfo = analyzeQuery(query);
 
-    if (queryInfo.type === 'SELECT' && !queryInfo.hasLimit) {
+    if (queryInfo.type === "SELECT" && !queryInfo.hasLimit) {
       let modifiedSql = query.trim();
-      const hasSemicolon = modifiedSql.endsWith(';');
+      const hasSemicolon = modifiedSql.endsWith(";");
       if (hasSemicolon) modifiedSql = modifiedSql.slice(0, -1).trim();
 
       if (offset > 0) {
@@ -289,13 +280,10 @@ export class MSSQLProvider extends SQLBaseProvider {
         modifiedSql = `${modifiedSql} OFFSET ${offset} ROWS FETCH NEXT ${effectiveLimit} ROWS ONLY`;
       } else {
         // Inject TOP N after SELECT
-        modifiedSql = modifiedSql.replace(
-          /^(\s*SELECT\s+)(DISTINCT\s+)?/i,
-          `$1$2TOP ${effectiveLimit} `
-        );
+        modifiedSql = modifiedSql.replace(/^(\s*SELECT\s+)(DISTINCT\s+)?/i, `$1$2TOP ${effectiveLimit} `);
       }
 
-      if (hasSemicolon) modifiedSql += ';';
+      if (hasSemicolon) modifiedSql += ";";
 
       return {
         query: modifiedSql,
@@ -314,14 +302,14 @@ export class MSSQLProvider extends SQLBaseProvider {
 
   public async beginTransaction(): Promise<void> {
     this.ensureConnected();
-    if (this.txActive) throw new QueryError('Transaction already active', 'mssql');
+    if (this.txActive) throw new QueryError("Transaction already active", "mssql");
     this.txTransaction = new mssql.Transaction(this.pool!);
     await this.txTransaction.begin();
     this.txActive = true;
   }
 
   public async commitTransaction(): Promise<void> {
-    if (!this.txTransaction || !this.txActive) throw new QueryError('No active transaction', 'mssql');
+    if (!this.txTransaction || !this.txActive) throw new QueryError("No active transaction", "mssql");
     try {
       await this.txTransaction.commit();
     } finally {
@@ -331,7 +319,7 @@ export class MSSQLProvider extends SQLBaseProvider {
   }
 
   public async rollbackTransaction(): Promise<void> {
-    if (!this.txTransaction || !this.txActive) throw new QueryError('No active transaction', 'mssql');
+    if (!this.txTransaction || !this.txActive) throw new QueryError("No active transaction", "mssql");
     try {
       await this.txTransaction.rollback();
     } finally {
@@ -345,7 +333,7 @@ export class MSSQLProvider extends SQLBaseProvider {
   }
 
   public async queryInTransaction(sql: string, params?: unknown[]): Promise<QueryResult> {
-    if (!this.txTransaction || !this.txActive) throw new QueryError('No active transaction', 'mssql');
+    if (!this.txTransaction || !this.txActive) throw new QueryError("No active transaction", "mssql");
 
     return this.trackQuery(async () => {
       const { result, executionTime } = await this.measureExecution(async () => {
@@ -358,7 +346,7 @@ export class MSSQLProvider extends SQLBaseProvider {
           }
           return await request.query(sql);
         } catch (error) {
-          throw mapDatabaseError(error, 'mssql', sql);
+          throw mapDatabaseError(error, "mssql", sql);
         }
       });
 
@@ -438,7 +426,10 @@ export class MSSQLProvider extends SQLBaseProvider {
         FROM sys.foreign_keys fk
         JOIN sys.foreign_key_columns fkc ON fk.object_id = fkc.constraint_object_id
       `);
-      const fksByTable = new Map<string, Array<{ columnName: string; referencedTable: string; referencedColumn: string }>>();
+      const fksByTable = new Map<
+        string,
+        Array<{ columnName: string; referencedTable: string; referencedColumn: string }>
+      >();
       for (const row of fkRes.recordset || []) {
         const key = `${row.schema_name}.${row.table_name}`;
         if (!fksByTable.has(key)) fksByTable.set(key, []);
@@ -487,17 +478,17 @@ export class MSSQLProvider extends SQLBaseProvider {
       }
 
       return tables.map((t: Record<string, unknown>) => {
-        const schemaName = String(t.schema_name || 'dbo');
-        const tableName = String(t.table_name || '');
+        const schemaName = String(t.schema_name || "dbo");
+        const tableName = String(t.table_name || "");
         const key = `${schemaName}.${tableName}`;
-        const displayName = schemaName === 'dbo' ? tableName : `${schemaName}.${tableName}`;
+        const displayName = schemaName === "dbo" ? tableName : `${schemaName}.${tableName}`;
         const pks = pkMap.get(key) || new Set();
 
         const columns = (colsByTable.get(key) || []).map((c: Record<string, unknown>) => ({
-          name: String(c.COLUMN_NAME || ''),
-          type: String(c.DATA_TYPE || ''),
-          nullable: String(c.IS_NULLABLE || '') === 'YES',
-          isPrimary: pks.has(String(c.COLUMN_NAME || '')),
+          name: String(c.COLUMN_NAME || ""),
+          type: String(c.DATA_TYPE || ""),
+          nullable: String(c.IS_NULLABLE || "") === "YES",
+          isPrimary: pks.has(String(c.COLUMN_NAME || "")),
           defaultValue: c.COLUMN_DEFAULT ? String(c.COLUMN_DEFAULT) : undefined,
         }));
 
@@ -519,7 +510,7 @@ export class MSSQLProvider extends SQLBaseProvider {
         };
       });
     } catch (error) {
-      throw mapDatabaseError(error, 'mssql');
+      throw mapDatabaseError(error, "mssql");
     }
   }
 
@@ -532,18 +523,20 @@ export class MSSQLProvider extends SQLBaseProvider {
 
     try {
       let activeConnections = 0;
-      let databaseSize = 'N/A';
-      let cacheHitRatio = 'N/A';
+      let databaseSize = "N/A";
+      let cacheHitRatio = "N/A";
       const slowQueries: SlowQuery[] = [];
       const activeSessions: ActiveSession[] = [];
 
       // Active connections
       try {
         const connRes = await this.pool!.request().query(
-          `SELECT COUNT(*) AS cnt FROM sys.dm_exec_sessions WHERE is_user_process = 1`
+          `SELECT COUNT(*) AS cnt FROM sys.dm_exec_sessions WHERE is_user_process = 1`,
         );
         activeConnections = connRes.recordset[0]?.cnt || 0;
-      } catch { /* DMV may require permissions */ }
+      } catch {
+        /* DMV may require permissions */
+      }
 
       // Database size
       try {
@@ -554,7 +547,9 @@ export class MSSQLProvider extends SQLBaseProvider {
         `);
         const mb = Number(sizeRes.recordset[0]?.size_mb || 0);
         databaseSize = mb > 1024 ? `${(mb / 1024).toFixed(2)} GB` : `${mb} MB`;
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
 
       // Cache hit ratio
       try {
@@ -572,7 +567,9 @@ export class MSSQLProvider extends SQLBaseProvider {
             AND b.object_name LIKE '%Buffer Manager%'
         `);
         cacheHitRatio = `${cacheRes.recordset[0]?.hit_ratio || 0}%`;
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
 
       // Slow queries
       try {
@@ -588,12 +585,14 @@ export class MSSQLProvider extends SQLBaseProvider {
         `);
         for (const row of slowRes.recordset || []) {
           slowQueries.push({
-            query: String(row.query || ''),
+            query: String(row.query || ""),
             calls: Number(row.calls || 0),
             avgTime: `${row.avg_time_ms}ms`,
           });
         }
-      } catch { /* DMV permissions */ }
+      } catch {
+        /* DMV permissions */
+      }
 
       // Active sessions
       try {
@@ -614,18 +613,20 @@ export class MSSQLProvider extends SQLBaseProvider {
         for (const row of sessRes.recordset || []) {
           activeSessions.push({
             pid: Number(row.pid || 0),
-            user: String(row.user || 'unknown'),
-            database: String(row.database || ''),
-            state: String(row.state || 'unknown'),
-            query: String(row.query || ''),
-            duration: String(row.duration || 'N/A'),
+            user: String(row.user || "unknown"),
+            database: String(row.database || ""),
+            state: String(row.state || "unknown"),
+            query: String(row.query || ""),
+            duration: String(row.duration || "N/A"),
           });
         }
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
 
       return { activeConnections, databaseSize, cacheHitRatio, slowQueries, activeSessions };
     } catch (error) {
-      throw mapDatabaseError(error, 'mssql');
+      throw mapDatabaseError(error, "mssql");
     }
   }
 
@@ -638,22 +639,22 @@ export class MSSQLProvider extends SQLBaseProvider {
 
     const { result, executionTime } = await this.measureExecution(async () => {
       try {
-        let sql = '';
+        let sql = "";
 
         switch (type) {
-          case 'analyze':
+          case "analyze":
             if (target) {
-              sql = `UPDATE STATISTICS [${target.replace(/\]/g, ']]')}]`;
+              sql = `UPDATE STATISTICS [${target.replace(/\]/g, "]]")}]`;
             } else {
               sql = `EXEC sp_updatestats`;
             }
             break;
-          case 'check':
+          case "check":
             sql = `DBCC CHECKDB WITH NO_INFOMSGS`;
             break;
-          case 'optimize':
+          case "optimize":
             if (target) {
-              sql = `ALTER INDEX ALL ON [${target.replace(/\]/g, ']]')}] REBUILD`;
+              sql = `ALTER INDEX ALL ON [${target.replace(/\]/g, "]]")}] REBUILD`;
             } else {
               // Rebuild all indexes on all tables
               sql = `
@@ -666,24 +667,24 @@ export class MSSQLProvider extends SQLBaseProvider {
               `;
             }
             break;
-          case 'kill':
+          case "kill":
             if (!target) {
-              throw new QueryError('Target SPID is required for kill operation', 'mssql');
+              throw new QueryError("Target SPID is required for kill operation", "mssql");
             }
             const spid = parseInt(target, 10);
             if (isNaN(spid)) {
-              throw new QueryError('Invalid SPID for kill operation', 'mssql');
+              throw new QueryError("Invalid SPID for kill operation", "mssql");
             }
             sql = `KILL ${spid}`;
             break;
           default:
-            throw new QueryError(`Unsupported maintenance type: ${type}`, 'mssql');
+            throw new QueryError(`Unsupported maintenance type: ${type}`, "mssql");
         }
 
         await this.pool!.request().query(sql);
         return { success: true };
       } catch (error) {
-        throw mapDatabaseError(error, 'mssql');
+        throw mapDatabaseError(error, "mssql");
       }
     });
 
@@ -719,12 +720,12 @@ export class MSSQLProvider extends SQLBaseProvider {
     this.ensureConnected();
 
     try {
-      let version = 'SQL Server';
-      let uptime = 'N/A';
+      let version = "SQL Server";
+      let uptime = "N/A";
       let startTime: Date | undefined;
       let activeConnections = 0;
       let maxConnections = 0;
-      let databaseSize = '0 bytes';
+      let databaseSize = "0 bytes";
       let databaseSizeBytes = 0;
       let tableCount = 0;
       let indexCount = 0;
@@ -732,8 +733,10 @@ export class MSSQLProvider extends SQLBaseProvider {
       // Version
       try {
         const vRes = await this.pool!.request().query(`SELECT @@VERSION AS version`);
-        version = String(vRes.recordset[0]?.version || '').split('\n')[0];
-      } catch { /* ignore */ }
+        version = String(vRes.recordset[0]?.version || "").split("\n")[0];
+      } catch {
+        /* ignore */
+      }
 
       // Uptime
       try {
@@ -750,7 +753,9 @@ export class MSSQLProvider extends SQLBaseProvider {
           uptime = days > 0 ? `${days}d ${hours}h ${minutes}m` : hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
           startTime = new Date(upRes.recordset[0].sqlserver_start_time);
         }
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
 
       // Connections
       try {
@@ -764,7 +769,9 @@ export class MSSQLProvider extends SQLBaseProvider {
         activeConnections = Number(connRes.recordset[0]?.active_connections || 0);
         maxConnections = Number(connRes.recordset[0]?.max_connections || 32767);
         if (maxConnections === 0) maxConnections = 32767; // 0 means unlimited
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
 
       // Database size
       try {
@@ -773,7 +780,9 @@ export class MSSQLProvider extends SQLBaseProvider {
         `);
         databaseSizeBytes = Number(sizeRes.recordset[0]?.size_bytes || 0);
         databaseSize = formatBytes(databaseSizeBytes);
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
 
       // Table/index counts
       try {
@@ -784,14 +793,23 @@ export class MSSQLProvider extends SQLBaseProvider {
         `);
         tableCount = Number(cntRes.recordset[0]?.table_count || 0);
         indexCount = Number(cntRes.recordset[0]?.index_count || 0);
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
 
       return {
-        version, uptime, startTime, activeConnections, maxConnections,
-        databaseSize, databaseSizeBytes, tableCount, indexCount,
+        version,
+        uptime,
+        startTime,
+        activeConnections,
+        maxConnections,
+        databaseSize,
+        databaseSizeBytes,
+        tableCount,
+        indexCount,
       };
     } catch (error) {
-      throw mapDatabaseError(error, 'mssql');
+      throw mapDatabaseError(error, "mssql");
     }
   }
 
@@ -818,14 +836,16 @@ export class MSSQLProvider extends SQLBaseProvider {
         `);
         cacheHitRatio = Number(cacheRes.recordset[0]?.hit_ratio || 100);
         bufferPoolUsage = cacheHitRatio;
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
 
       return {
         cacheHitRatio,
         bufferPoolUsage,
       };
     } catch (error) {
-      throw mapDatabaseError(error, 'mssql');
+      throw mapDatabaseError(error, "mssql");
     }
   }
 
@@ -853,8 +873,8 @@ export class MSSQLProvider extends SQLBaseProvider {
       `);
 
       return (res.recordset || []).map((r: Record<string, unknown>) => ({
-        queryId: String(r.query_id || ''),
-        query: String(r.query || ''),
+        queryId: String(r.query_id || ""),
+        query: String(r.query || ""),
         calls: Number(r.calls || 0),
         totalTime: Number(r.total_time || 0),
         avgTime: Number(r.avg_time || 0),
@@ -900,14 +920,14 @@ export class MSSQLProvider extends SQLBaseProvider {
 
       return (res.recordset || []).map((r: Record<string, unknown>) => ({
         pid: Number(r.pid || 0),
-        user: String(r.user || 'unknown'),
-        database: String(r.database || ''),
+        user: String(r.user || "unknown"),
+        database: String(r.database || ""),
         applicationName: r.application_name ? String(r.application_name) : undefined,
         clientAddr: r.client_addr ? String(r.client_addr) : undefined,
-        state: String(r.state || 'unknown'),
-        query: String(r.query || ''),
+        state: String(r.state || "unknown"),
+        query: String(r.query || ""),
         queryStart: r.query_start ? new Date(String(r.query_start)) : undefined,
-        duration: String(r.duration || 'N/A'),
+        duration: String(r.duration || "N/A"),
         durationMs: Number(r.duration_ms || 0),
         waitEventType: r.wait_type ? String(r.wait_type) : undefined,
         waitEvent: r.last_wait_type ? String(r.last_wait_type) : undefined,
@@ -947,8 +967,8 @@ export class MSSQLProvider extends SQLBaseProvider {
         const indexSizeBytes = Number(r.index_size_bytes || 0);
         const totalSizeBytes = Number(r.total_size_bytes || 0);
         return {
-          schemaName: String(r.schema_name || 'dbo'),
-          tableName: String(r.table_name || ''),
+          schemaName: String(r.schema_name || "dbo"),
+          tableName: String(r.table_name || ""),
           rowCount: Number(r.row_count || 0),
           tableSize: formatBytes(tableSizeBytes),
           tableSizeBytes,
@@ -1018,10 +1038,10 @@ export class MSSQLProvider extends SQLBaseProvider {
         const key = `${r.schema_name}.${r.table_name}.${r.index_name}`;
         const idxSizeBytes = Number(r.index_size_bytes || 0);
         return {
-          schemaName: String(r.schema_name || 'dbo'),
-          tableName: String(r.table_name || ''),
-          indexName: String(r.index_name || ''),
-          indexType: String(r.index_type || ''),
+          schemaName: String(r.schema_name || "dbo"),
+          tableName: String(r.table_name || ""),
+          indexName: String(r.index_name || ""),
+          indexType: String(r.index_type || ""),
           columns: colMap.get(key) || [],
           isUnique: Boolean(r.is_unique),
           isPrimary: Boolean(r.is_primary_key),
@@ -1052,8 +1072,8 @@ export class MSSQLProvider extends SQLBaseProvider {
       return (res.recordset || []).map((r: Record<string, unknown>) => {
         const sizeBytes = Number(r.size_bytes || 0);
         return {
-          name: String(r.name || ''),
-          location: String(r.location || ''),
+          name: String(r.name || ""),
+          location: String(r.location || ""),
           size: formatBytes(sizeBytes),
           sizeBytes,
         };

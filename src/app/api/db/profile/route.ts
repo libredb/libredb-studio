@@ -1,9 +1,9 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { getOrCreateProvider } from '@/lib/db/factory';
-import { createErrorResponse } from '@/lib/api/errors';
-import { resolveConnection } from '@/lib/seed/resolve-connection';
-import { getSession } from '@/lib/auth';
-import { quoteIdentifier, quoteQualifiedName } from '@/lib/query-generators';
+import { NextRequest, NextResponse } from "next/server";
+import { getOrCreateProvider } from "@/lib/db/factory";
+import { createErrorResponse } from "@/lib/api/errors";
+import { resolveConnection } from "@/lib/seed/resolve-connection";
+import { getSession } from "@/lib/auth";
+import { quoteIdentifier, quoteQualifiedName } from "@/lib/query-generators";
 
 export async function POST(req: NextRequest) {
   try {
@@ -12,52 +12,54 @@ export async function POST(req: NextRequest) {
 
     const session = await getSession();
     if (!session) {
-      return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
+      return NextResponse.json({ error: "Authentication required" }, { status: 401 });
     }
 
     const connection = await resolveConnection(body, session);
 
     if (!tableName) {
-      return NextResponse.json({ error: 'tableName is required' }, { status: 400 });
+      return NextResponse.json({ error: "tableName is required" }, { status: 400 });
     }
 
     const provider = await getOrCreateProvider(connection);
 
     {
       const capabilities = provider.getCapabilities();
-      const isSQL = capabilities.queryLanguage === 'sql';
+      const isSQL = capabilities.queryLanguage === "sql";
 
       if (!isSQL) {
         // MongoDB profiling
         const profileQuery = JSON.stringify({
           collection: tableName,
-          operation: 'aggregate',
+          operation: "aggregate",
           pipeline: [
             { $sample: { size: 1000 } },
             { $project: Object.fromEntries((columns || []).map((c: string) => [c, 1])) },
           ],
         });
         const sampleResult = await provider.query(profileQuery);
-        const totalCountResult = await provider.query(JSON.stringify({
-          collection: tableName,
-          operation: 'countDocuments',
-          filter: {},
-        }));
+        const totalCountResult = await provider.query(
+          JSON.stringify({
+            collection: tableName,
+            operation: "countDocuments",
+            filter: {},
+          }),
+        );
 
         const totalRows = totalCountResult.rows[0]?.count || sampleResult.rows.length;
         const columnProfiles = (columns || []).map((col: string) => {
-          const values = sampleResult.rows.map(r => r[col]).filter(v => v !== undefined);
+          const values = sampleResult.rows.map((r) => r[col]).filter((v) => v !== undefined);
           const nullCount = sampleResult.rows.length - values.length;
-          const distinctValues = new Set(values.map(v => JSON.stringify(v)));
+          const distinctValues = new Set(values.map((v) => JSON.stringify(v)));
 
           return {
             name: col,
-            type: typeof values[0] || 'unknown',
+            type: typeof values[0] || "unknown",
             totalRows,
             nullCount,
             nullPercent: sampleResult.rows.length > 0 ? Math.round((nullCount / sampleResult.rows.length) * 100) : 0,
             distinctCount: distinctValues.size,
-            sampleValues: values.slice(0, 5).map(v => String(v)),
+            sampleValues: values.slice(0, 5).map((v) => String(v)),
           };
         });
 
@@ -67,7 +69,7 @@ export async function POST(req: NextRequest) {
       // SQL profiling
       const colList = (columns || []) as string[];
       if (colList.length === 0) {
-        return NextResponse.json({ error: 'No columns to profile' }, { status: 400 });
+        return NextResponse.json({ error: "No columns to profile" }, { status: 400 });
       }
 
       // Quote the table once for the target dialect (mixed-case / special names)
@@ -93,7 +95,17 @@ export async function POST(req: NextRequest) {
         `;
       });
 
-      const columnProfiles: { name: string; totalRows: number; nullCount: number; nullPercent: number; distinctCount: number; minValue?: unknown; maxValue?: unknown; error?: string; sampleValues?: string[] }[] = [];
+      const columnProfiles: {
+        name: string;
+        totalRows: number;
+        nullCount: number;
+        nullPercent: number;
+        distinctCount: number;
+        minValue?: unknown;
+        maxValue?: unknown;
+        error?: string;
+        sampleValues?: string[];
+      }[] = [];
 
       for (const sql of profileParts) {
         try {
@@ -121,28 +133,28 @@ export async function POST(req: NextRequest) {
             nullCount: 0,
             nullPercent: 0,
             distinctCount: 0,
-            error: 'Could not profile this column',
+            error: "Could not profile this column",
           });
         }
       }
 
       // Get sample values for top 5 columns
       const topCols = colList.slice(0, 5);
-      const safeCols = topCols.map(c => quoteIdentifier(c, capabilities)).join(', ');
+      const safeCols = topCols.map((c) => quoteIdentifier(c, capabilities)).join(", ");
       try {
-        const sampleResult = await provider.query(
-          `SELECT ${safeCols} FROM ${safeTable} LIMIT 5`
-        );
+        const sampleResult = await provider.query(`SELECT ${safeCols} FROM ${safeTable} LIMIT 5`);
         for (const profile of columnProfiles) {
           if (topCols.includes(profile.name)) {
-            profile.sampleValues = sampleResult.rows.map(r => String(r[profile.name] ?? 'NULL')).slice(0, 5);
+            profile.sampleValues = sampleResult.rows.map((r) => String(r[profile.name] ?? "NULL")).slice(0, 5);
           }
         }
-      } catch { /* skip sample values on error */ }
+      } catch {
+        /* skip sample values on error */
+      }
 
       return NextResponse.json({ tableName, totalRows, columns: columnProfiles });
     }
   } catch (error) {
-    return createErrorResponse(error, { route: 'api/db/profile' });
+    return createErrorResponse(error, { route: "api/db/profile" });
   }
 }

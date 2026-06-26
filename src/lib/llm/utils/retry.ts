@@ -3,7 +3,7 @@
  * Handles transient failures in LLM API calls
  */
 
-import { isRetryableError, LLMError, type LLMProviderType } from '../types';
+import { isRetryableError, LLMError, type LLMProviderType } from "../types";
 
 // ============================================================================
 // Types
@@ -44,17 +44,14 @@ const DEFAULT_MAX_DELAY = 10000;
  * @returns Result of the function
  * @throws Last error if all retries fail
  */
-export async function withRetry<T>(
-  fn: () => Promise<T>,
-  options: RetryOptions = {}
-): Promise<T> {
+export async function withRetry<T>(fn: () => Promise<T>, options: RetryOptions = {}): Promise<T> {
   const {
     maxAttempts = DEFAULT_MAX_ATTEMPTS,
     initialDelay = DEFAULT_INITIAL_DELAY,
     backoffMultiplier = DEFAULT_BACKOFF_MULTIPLIER,
     maxDelay = DEFAULT_MAX_DELAY,
     provider,
-    operation = 'LLM request',
+    operation = "LLM request",
   } = options;
 
   let lastError: Error | undefined;
@@ -78,7 +75,7 @@ export async function withRetry<T>(
 
       // Log retry attempt
       console.error(
-        `[LLM${provider ? `:${provider}` : ''}] ${operation} failed (attempt ${attempt}/${maxAttempts}): ${lastError.message}. Retrying in ${delay}ms...`
+        `[LLM${provider ? `:${provider}` : ""}] ${operation} failed (attempt ${attempt}/${maxAttempts}): ${lastError.message}. Retrying in ${delay}ms...`,
       );
 
       // Wait before retrying
@@ -91,10 +88,10 @@ export async function withRetry<T>(
 
   // All retries exhausted
   console.error(
-    `[LLM${provider ? `:${provider}` : ''}] ${operation} failed after ${maxAttempts} attempts: ${lastError?.message}`
+    `[LLM${provider ? `:${provider}` : ""}] ${operation} failed after ${maxAttempts} attempts: ${lastError?.message}`,
   );
 
-  throw lastError ?? new LLMError('Unknown error during retry', provider);
+  throw lastError ?? new LLMError("Unknown error during retry", provider);
 }
 
 /**
@@ -113,7 +110,7 @@ function sleep(ms: number): Promise<void> {
  */
 export function makeRetryable<T extends unknown[], R>(
   fn: (...args: T) => Promise<R>,
-  options: RetryOptions = {}
+  options: RetryOptions = {},
 ): (...args: T) => Promise<R> {
   return (...args: T) => withRetry(() => fn(...args), options);
 }

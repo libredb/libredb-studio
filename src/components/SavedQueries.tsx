@@ -1,15 +1,12 @@
 "use client";
 
-import React, { useState, useEffect } from 'react';
-import { storage } from '@/lib/storage';
-import { SavedQuery } from '@/lib/types';
-import { 
-  Bookmark, Search, Trash2, Edit3, 
-  Tag, Calendar
-} from 'lucide-react';
-import { Button } from './ui/button';
-import { Input } from './ui/input';
-import { format } from 'date-fns';
+import React, { useState, useEffect } from "react";
+import { storage } from "@/lib/storage";
+import { SavedQuery } from "@/lib/types";
+import { Bookmark, Search, Trash2, Edit3, Tag, Calendar } from "lucide-react";
+import { Button } from "./ui/button";
+import { Input } from "./ui/input";
+import { format } from "date-fns";
 
 interface SavedQueriesProps {
   onSelectQuery: (query: string) => void;
@@ -19,23 +16,23 @@ interface SavedQueriesProps {
 
 export function SavedQueries({ onSelectQuery, connectionType, refreshTrigger }: SavedQueriesProps) {
   const [queries, setQueries] = useState<SavedQuery[]>([]);
-  const [search, setSearch] = useState('');
+  const [search, setSearch] = useState("");
 
   // Refresh queries when refreshTrigger changes (replaces key-based re-mount)
   useEffect(() => {
     setQueries(storage.getSavedQueries());
   }, [refreshTrigger]);
 
-  const filteredQueries = queries.filter(q => {
-    const matchesSearch = q.name.toLowerCase().includes(search.toLowerCase()) || 
-                         q.query.toLowerCase().includes(search.toLowerCase());
+  const filteredQueries = queries.filter((q) => {
+    const matchesSearch =
+      q.name.toLowerCase().includes(search.toLowerCase()) || q.query.toLowerCase().includes(search.toLowerCase());
     const matchesType = !connectionType || q.connectionType === connectionType;
     return matchesSearch && matchesType;
   });
 
   const handleDelete = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (confirm('Are you sure you want to delete this saved query?')) {
+    if (confirm("Are you sure you want to delete this saved query?")) {
       storage.deleteSavedQuery(id);
       setQueries(storage.getSavedQueries());
     }
@@ -47,11 +44,11 @@ export function SavedQueries({ onSelectQuery, connectionType, refreshTrigger }: 
         <h3 className="text-xs font-medium text-zinc-400 flex items-center gap-2">
           <Bookmark strokeWidth={1.5} className="w-3.5 h-3.5" /> Saved Queries
         </h3>
-        
+
         <div className="relative">
           <Search strokeWidth={1.5} className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3 h-3 text-zinc-500" />
-          <Input 
-            placeholder="Search saved queries..." 
+          <Input
+            placeholder="Search saved queries..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="pl-8 h-8 bg-white/5 border-white/10 text-xs focus:ring-blue-500/20"
@@ -68,7 +65,7 @@ export function SavedQueries({ onSelectQuery, connectionType, refreshTrigger }: 
         ) : (
           <div className="grid grid-cols-1 gap-px bg-white/5">
             {filteredQueries.map((q) => (
-              <div 
+              <div
                 key={q.id}
                 className="bg-[#0a0a0a] p-4 hover:bg-white/[0.02] transition-colors group cursor-pointer"
                 onClick={() => onSelectQuery(q.query)}
@@ -78,17 +75,15 @@ export function SavedQueries({ onSelectQuery, connectionType, refreshTrigger }: 
                     <h4 className="text-xs font-medium text-blue-400 mb-1 group-hover:text-blue-300 transition-colors">
                       {q.name}
                     </h4>
-                    {q.description && (
-                      <p className="text-xs text-zinc-500 line-clamp-1">{q.description}</p>
-                    )}
+                    {q.description && <p className="text-xs text-zinc-500 line-clamp-1">{q.description}</p>}
                   </div>
                   <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                     <Button variant="ghost" size="icon" className="h-6 w-6 text-zinc-500 hover:text-white">
                       <Edit3 strokeWidth={1.5} className="w-3 h-3" />
                     </Button>
-                    <Button 
-                      variant="ghost" 
-                      size="icon" 
+                    <Button
+                      variant="ghost"
+                      size="icon"
                       className="h-6 w-6 text-zinc-500 hover:text-red-400"
                       onClick={(e) => handleDelete(q.id, e)}
                     >
@@ -98,9 +93,7 @@ export function SavedQueries({ onSelectQuery, connectionType, refreshTrigger }: 
                 </div>
 
                 <div className="bg-[#050505] border border-white/5 rounded-md p-2 mb-3">
-                  <pre className="text-xs font-mono text-zinc-400 line-clamp-3">
-                    {q.query}
-                  </pre>
+                  <pre className="text-xs font-mono text-zinc-400 line-clamp-3">{q.query}</pre>
                 </div>
 
                 <div className="flex items-center justify-between">
@@ -108,14 +101,14 @@ export function SavedQueries({ onSelectQuery, connectionType, refreshTrigger }: 
                     <span className="px-1.5 py-0.5 rounded bg-blue-500/10 border border-blue-500/20 text-[0.625rem] font-medium text-blue-400er">
                       {q.connectionType}
                     </span>
-                    {q.tags?.map(tag => (
+                    {q.tags?.map((tag) => (
                       <span key={tag} className="flex items-center gap-1 text-[0.625rem] text-zinc-500">
                         <Tag strokeWidth={1.5} className="w-2.5 h-2.5" /> {tag}
                       </span>
                     ))}
                   </div>
                   <span className="text-[0.625rem] text-zinc-600 flex items-center gap-1 font-mono">
-                    <Calendar className="w-2.5 h-2.5" /> {format(q.updatedAt, 'MMM d, yyyy')}
+                    <Calendar className="w-2.5 h-2.5" /> {format(q.updatedAt, "MMM d, yyyy")}
                   </span>
                 </div>
               </div>

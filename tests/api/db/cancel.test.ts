@@ -1,6 +1,6 @@
-import { describe, test, expect, mock, beforeEach } from 'bun:test';
-import { createMockRequest, parseResponseJSON } from '../../helpers/mock-next';
-import { createMockProvider } from '../../helpers/mock-provider';
+import { describe, test, expect, mock, beforeEach } from "bun:test";
+import { createMockRequest, parseResponseJSON } from "../../helpers/mock-next";
+import { createMockProvider } from "../../helpers/mock-provider";
 import {
   QueryError,
   TimeoutError,
@@ -16,7 +16,7 @@ import {
   isAuthenticationError,
   isRetryableError,
   mapDatabaseError,
-} from '@/lib/db/errors';
+} from "@/lib/db/errors";
 
 // ─── Create mock objects ────────────────────────────────────────────────────
 const baseMockProvider = createMockProvider();
@@ -33,25 +33,28 @@ const mockNoCancelProvider = createMockProvider();
 const mockGetOrCreateProvider = mock(async () => mockCancelProvider as never);
 
 // ─── Mock auth + seed resolution BEFORE importing route ─────────────────────
-mock.module('@/lib/auth', () => ({
-  getSession: mock(async () => ({ role: 'admin', username: 'admin' })),
-  signJWT: mock(async () => 'mock-token'),
+mock.module("@/lib/auth", () => ({
+  getSession: mock(async () => ({ role: "admin", username: "admin" })),
+  signJWT: mock(async () => "mock-token"),
   verifyJWT: mock(async () => null),
   login: mock(async () => {}),
   logout: mock(async () => {}),
 }));
 
-mock.module('@/lib/seed/resolve-connection', () => {
+mock.module("@/lib/seed/resolve-connection", () => {
   class SeedConnectionError extends Error {
-    constructor(message: string, public statusCode: number) {
+    constructor(
+      message: string,
+      public statusCode: number,
+    ) {
       super(message);
-      this.name = 'SeedConnectionError';
+      this.name = "SeedConnectionError";
     }
   }
   return {
     resolveConnection: mock(async (body: Record<string, unknown>) => {
       if (!body.connection && !body.connectionId) {
-        throw new SeedConnectionError('Either connection or connectionId is required', 400);
+        throw new SeedConnectionError("Either connection or connectionId is required", 400);
       }
       return body.connection;
     }),
@@ -60,7 +63,7 @@ mock.module('@/lib/seed/resolve-connection', () => {
 });
 
 // ─── Mock dependencies BEFORE importing route ───────────────────────────────
-mock.module('@/lib/db', () => ({
+mock.module("@/lib/db", () => ({
   getOrCreateProvider: mockGetOrCreateProvider,
   createDatabaseProvider: mock(async () => mockCancelProvider),
   removeProvider: mock(async () => {}),
@@ -84,20 +87,20 @@ mock.module('@/lib/db', () => ({
 }));
 
 // ─── Import route handler AFTER mocking ─────────────────────────────────────
-const { POST } = await import('@/app/api/db/cancel/route');
+const { POST } = await import("@/app/api/db/cancel/route");
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 const validConnection = {
-  id: 'test-1',
-  name: 'Test DB',
-  type: 'postgres',
-  host: 'localhost',
+  id: "test-1",
+  name: "Test DB",
+  type: "postgres",
+  host: "localhost",
   port: 5432,
-  database: 'testdb',
+  database: "testdb",
 };
 
 // ─── Tests ──────────────────────────────────────────────────────────────────
-describe('POST /api/db/cancel', () => {
+describe("POST /api/db/cancel", () => {
   beforeEach(() => {
     mockGetOrCreateProvider.mockClear();
     mockCancelProvider.cancelQuery.mockClear();
@@ -107,10 +110,10 @@ describe('POST /api/db/cancel', () => {
     mockCancelProvider.cancelQuery.mockImplementation(async () => true);
   });
 
-  test('returns cancelled:true with valid connection and queryId', async () => {
-    const req = createMockRequest('/api/db/cancel', {
-      method: 'POST',
-      body: { connection: validConnection, queryId: 'query-123' },
+  test("returns cancelled:true with valid connection and queryId", async () => {
+    const req = createMockRequest("/api/db/cancel", {
+      method: "POST",
+      body: { connection: validConnection, queryId: "query-123" },
     });
 
     const res = await POST(req as never);
@@ -118,25 +121,25 @@ describe('POST /api/db/cancel', () => {
 
     expect(res.status).toBe(200);
     expect(data.cancelled).toBe(true);
-    expect(mockCancelProvider.cancelQuery).toHaveBeenCalledWith('query-123');
+    expect(mockCancelProvider.cancelQuery).toHaveBeenCalledWith("query-123");
   });
 
-  test('missing connection returns 400', async () => {
-    const req = createMockRequest('/api/db/cancel', {
-      method: 'POST',
-      body: { queryId: 'query-123' },
+  test("missing connection returns 400", async () => {
+    const req = createMockRequest("/api/db/cancel", {
+      method: "POST",
+      body: { queryId: "query-123" },
     });
 
     const res = await POST(req as never);
     const data = await parseResponseJSON<{ error: string }>(res);
 
     expect(res.status).toBe(400);
-    expect(data.error).toContain('required');
+    expect(data.error).toContain("required");
   });
 
-  test('missing queryId returns 400', async () => {
-    const req = createMockRequest('/api/db/cancel', {
-      method: 'POST',
+  test("missing queryId returns 400", async () => {
+    const req = createMockRequest("/api/db/cancel", {
+      method: "POST",
       body: { connection: validConnection },
     });
 
@@ -144,15 +147,15 @@ describe('POST /api/db/cancel', () => {
     const data = await parseResponseJSON<{ error: string }>(res);
 
     expect(res.status).toBe(400);
-    expect(data.error).toContain('Connection and queryId are required');
+    expect(data.error).toContain("Connection and queryId are required");
   });
 
-  test('provider without cancelQuery returns 400', async () => {
+  test("provider without cancelQuery returns 400", async () => {
     mockGetOrCreateProvider.mockImplementation(async () => mockNoCancelProvider as never);
 
-    const req = createMockRequest('/api/db/cancel', {
-      method: 'POST',
-      body: { connection: validConnection, queryId: 'query-123' },
+    const req = createMockRequest("/api/db/cancel", {
+      method: "POST",
+      body: { connection: validConnection, queryId: "query-123" },
     });
 
     const res = await POST(req as never);
@@ -160,15 +163,15 @@ describe('POST /api/db/cancel', () => {
 
     expect(res.status).toBe(400);
     expect(data.cancelled).toBe(false);
-    expect(data.error).toContain('not supported');
+    expect(data.error).toContain("not supported");
   });
 
-  test('cancelQuery returning false returns cancelled:false', async () => {
+  test("cancelQuery returning false returns cancelled:false", async () => {
     mockCancelProvider.cancelQuery.mockImplementation(async () => false);
 
-    const req = createMockRequest('/api/db/cancel', {
-      method: 'POST',
-      body: { connection: validConnection, queryId: 'query-999' },
+    const req = createMockRequest("/api/db/cancel", {
+      method: "POST",
+      body: { connection: validConnection, queryId: "query-999" },
     });
 
     const res = await POST(req as never);
@@ -178,21 +181,21 @@ describe('POST /api/db/cancel', () => {
     expect(data.cancelled).toBe(false);
   });
 
-  test('error in cancelQuery returns 500', async () => {
+  test("error in cancelQuery returns 500", async () => {
     mockCancelProvider.cancelQuery.mockImplementation(async () => {
-      throw new Error('Failed to cancel query');
+      throw new Error("Failed to cancel query");
     });
 
-    const req = createMockRequest('/api/db/cancel', {
-      method: 'POST',
-      body: { connection: validConnection, queryId: 'query-123' },
+    const req = createMockRequest("/api/db/cancel", {
+      method: "POST",
+      body: { connection: validConnection, queryId: "query-123" },
     });
 
     const res = await POST(req as never);
     const data = await parseResponseJSON<{ error: string; code: string }>(res);
 
     expect(res.status).toBe(500);
-    expect(data.error).toContain('Failed to cancel query');
-    expect(data.code).toBe('INTERNAL_ERROR');
+    expect(data.error).toContain("Failed to cancel query");
+    expect(data.code).toBe("INTERNAL_ERROR");
   });
 });

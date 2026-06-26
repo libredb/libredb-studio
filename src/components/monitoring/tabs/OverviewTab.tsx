@@ -1,23 +1,15 @@
-'use client';
+"use client";
 
-import React from 'react';
-import {
-  Database,
-  Zap,
-  Activity,
-  Clock,
-  Table2,
-  Hash,
-  Server,
-} from 'lucide-react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import { Progress } from '@/components/ui/progress';
-import { Skeleton } from '@/components/ui/skeleton';
-import type { MonitoringData } from '@/lib/db/types';
-import type { TimeSeriesPoint } from '@/lib/time-series-buffer';
-import { evaluateThreshold, getThresholdColor, DEFAULT_THRESHOLDS } from '@/lib/monitoring-thresholds';
-import { MetricChart } from './MetricChart';
+import React from "react";
+import { Database, Zap, Activity, Clock, Table2, Hash, Server } from "lucide-react";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Progress } from "@/components/ui/progress";
+import { Skeleton } from "@/components/ui/skeleton";
+import type { MonitoringData } from "@/lib/db/types";
+import type { TimeSeriesPoint } from "@/lib/time-series-buffer";
+import { evaluateThreshold, getThresholdColor, DEFAULT_THRESHOLDS } from "@/lib/monitoring-thresholds";
+import { MetricChart } from "./MetricChart";
 
 interface OverviewTabProps {
   data: MonitoringData | null;
@@ -33,16 +25,20 @@ export function OverviewTab({ data, loading, history = [] }: OverviewTabProps) {
   const overview = data?.overview;
   const performance = data?.performance;
 
-  const connectionPercent = overview
-    ? Math.round((overview.activeConnections / overview.maxConnections) * 100)
-    : 0;
+  const connectionPercent = overview ? Math.round((overview.activeConnections / overview.maxConnections) * 100) : 0;
 
   // Evaluate thresholds
-  const connThreshold = evaluateThreshold(connectionPercent, DEFAULT_THRESHOLDS.find(t => t.metric === 'connectionPercent')!);
-  const cacheThreshold = evaluateThreshold(performance?.cacheHitRatio ?? 100, DEFAULT_THRESHOLDS.find(t => t.metric === 'cacheHitRatio')!);
+  const connThreshold = evaluateThreshold(
+    connectionPercent,
+    DEFAULT_THRESHOLDS.find((t) => t.metric === "connectionPercent")!,
+  );
+  const cacheThreshold = evaluateThreshold(
+    performance?.cacheHitRatio ?? 100,
+    DEFAULT_THRESHOLDS.find((t) => t.metric === "cacheHitRatio")!,
+  );
 
   // Build chart data from history
-  const connectionHistory = history.map(h => ({
+  const connectionHistory = history.map((h) => ({
     timestamp: h.timestamp,
     value: h.data.overview?.activeConnections ?? 0,
   }));
@@ -53,11 +49,11 @@ export function OverviewTab({ data, loading, history = [] }: OverviewTabProps) {
       <div className="flex items-center gap-2 sm:gap-4 flex-wrap">
         <Badge variant="outline" className="gap-1.5 sm:gap-2 py-1 sm:py-1.5 px-2 sm:px-3 text-xs">
           <Server strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4" />
-          <span className="truncate max-w-[120px] sm:max-w-none">{overview?.version || 'Unknown'}</span>
+          <span className="truncate max-w-[120px] sm:max-w-none">{overview?.version || "Unknown"}</span>
         </Badge>
         <Badge variant="secondary" className="gap-1.5 sm:gap-2 py-1 sm:py-1.5 px-2 sm:px-3 text-xs">
           <Clock strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4" />
-          {overview?.uptime || 'N/A'}
+          {overview?.uptime || "N/A"}
         </Badge>
         {data?.timestamp && (
           <span className="text-xs sm:text-xs text-muted-foreground">
@@ -71,9 +67,7 @@ export function OverviewTab({ data, loading, history = [] }: OverviewTabProps) {
         {/* Active Connections */}
         <Card className={`p-0 border-2 transition-colors ${getThresholdColor(connThreshold)}`}>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 p-3 sm:p-4 pb-1 sm:pb-2">
-            <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">
-              Connections
-            </CardTitle>
+            <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">Connections</CardTitle>
             <Zap strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4 text-yellow-500" />
           </CardHeader>
           <CardContent className="p-3 sm:p-4 pt-0">
@@ -84,50 +78,37 @@ export function OverviewTab({ data, loading, history = [] }: OverviewTabProps) {
               </span>
             </div>
             <Progress value={connectionPercent} className="h-1 mt-1 sm:mt-2" />
-            <p className="text-xs sm:text-xs text-muted-foreground mt-1">
-              {connectionPercent}% used
-            </p>
+            <p className="text-xs sm:text-xs text-muted-foreground mt-1">{connectionPercent}% used</p>
           </CardContent>
         </Card>
 
         {/* Database Size */}
         <Card className="p-0">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 p-3 sm:p-4 pb-1 sm:pb-2">
-            <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">
-              DB Size
-            </CardTitle>
+            <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">DB Size</CardTitle>
             <Database strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4 text-blue-500" />
           </CardHeader>
           <CardContent className="p-3 sm:p-4 pt-0">
-            <div className="text-lg sm:text-2xl font-medium">{overview?.databaseSize || 'N/A'}</div>
-            <p className="text-xs sm:text-xs text-muted-foreground mt-1">
-              Total storage
-            </p>
+            <div className="text-lg sm:text-2xl font-medium">{overview?.databaseSize || "N/A"}</div>
+            <p className="text-xs sm:text-xs text-muted-foreground mt-1">Total storage</p>
           </CardContent>
         </Card>
 
         {/* Cache Hit Ratio */}
         <Card className={`p-0 border-2 transition-colors ${getThresholdColor(cacheThreshold)}`}>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 p-3 sm:p-4 pb-1 sm:pb-2">
-            <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">
-              Cache Hit
-            </CardTitle>
+            <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">Cache Hit</CardTitle>
             <Activity strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4 text-green-500" />
           </CardHeader>
           <CardContent className="p-3 sm:p-4 pt-0">
-            <div className="text-lg sm:text-2xl font-medium">
-              {performance?.cacheHitRatio?.toFixed(1) ?? 0}%
-            </div>
-            <Progress
-              value={performance?.cacheHitRatio ?? 0}
-              className="h-1 mt-1 sm:mt-2"
-            />
+            <div className="text-lg sm:text-2xl font-medium">{performance?.cacheHitRatio?.toFixed(1) ?? 0}%</div>
+            <Progress value={performance?.cacheHitRatio ?? 0} className="h-1 mt-1 sm:mt-2" />
             <p className="text-xs sm:text-xs text-muted-foreground mt-1 truncate">
               {(performance?.cacheHitRatio ?? 0) >= 90
-                ? 'Excellent'
+                ? "Excellent"
                 : (performance?.cacheHitRatio ?? 0) >= 80
-                  ? 'Good'
-                  : 'Needs tuning'}
+                  ? "Good"
+                  : "Needs tuning"}
             </p>
           </CardContent>
         </Card>
@@ -135,18 +116,12 @@ export function OverviewTab({ data, loading, history = [] }: OverviewTabProps) {
         {/* Tables & Indexes */}
         <Card className="p-0">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 p-3 sm:p-4 pb-1 sm:pb-2">
-            <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">
-              Tables
-            </CardTitle>
+            <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">Tables</CardTitle>
             <Table2 strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4 text-purple-500" />
           </CardHeader>
           <CardContent className="p-3 sm:p-4 pt-0">
-            <div className="text-lg sm:text-2xl font-medium">
-              {overview?.tableCount ?? 0}
-            </div>
-            <p className="text-xs sm:text-xs text-muted-foreground mt-1">
-              {overview?.indexCount ?? 0} indexes
-            </p>
+            <div className="text-lg sm:text-2xl font-medium">{overview?.tableCount ?? 0}</div>
+            <p className="text-xs sm:text-xs text-muted-foreground mt-1">{overview?.indexCount ?? 0} indexes</p>
           </CardContent>
         </Card>
       </div>
@@ -180,10 +155,7 @@ export function OverviewTab({ data, loading, history = [] }: OverviewTabProps) {
             <div className="flex justify-between items-center gap-2">
               <span className="text-xs sm:text-xs text-muted-foreground">Buffer Pool</span>
               <div className="flex items-center gap-1 sm:gap-2">
-                <Progress
-                  value={performance?.bufferPoolUsage ?? 0}
-                  className="w-16 sm:w-24 h-1.5 sm:h-2"
-                />
+                <Progress value={performance?.bufferPoolUsage ?? 0} className="w-16 sm:w-24 h-1.5 sm:h-2" />
                 <span className="text-xs sm:text-xs font-medium w-8 sm:w-12 text-right">
                   {performance?.bufferPoolUsage?.toFixed(0) ?? 0}%
                 </span>
@@ -191,14 +163,14 @@ export function OverviewTab({ data, loading, history = [] }: OverviewTabProps) {
             </div>
             <div className="flex justify-between items-center">
               <span className="text-xs sm:text-xs text-muted-foreground">Deadlocks</span>
-              <Badge variant={performance?.deadlocks ? 'destructive' : 'secondary'} className="text-xs">
+              <Badge variant={performance?.deadlocks ? "destructive" : "secondary"} className="text-xs">
                 {performance?.deadlocks ?? 0}
               </Badge>
             </div>
             <div className="flex justify-between items-center">
               <span className="text-xs sm:text-xs text-muted-foreground">Checkpoint</span>
               <span className="text-xs sm:text-xs font-mono truncate max-w-[100px] sm:max-w-none">
-                {performance?.checkpointWriteTime || 'N/A'}
+                {performance?.checkpointWriteTime || "N/A"}
               </span>
             </div>
           </CardContent>
@@ -215,20 +187,20 @@ export function OverviewTab({ data, loading, history = [] }: OverviewTabProps) {
           <CardContent className="p-3 sm:p-4 pt-0 space-y-2 sm:space-y-3">
             <div className="flex justify-between items-center">
               <span className="text-xs sm:text-xs text-muted-foreground">Slow Queries</span>
-              <Badge variant={data?.slowQueries?.length ? 'outline' : 'secondary'} className="text-xs">
+              <Badge variant={data?.slowQueries?.length ? "outline" : "secondary"} className="text-xs">
                 {data?.slowQueries?.length ?? 0}
               </Badge>
             </div>
             <div className="flex justify-between items-center">
               <span className="text-xs sm:text-xs text-muted-foreground">Active</span>
               <Badge variant="secondary" className="text-xs">
-                {data?.activeSessions?.filter((s) => s.state === 'active').length ?? 0}
+                {data?.activeSessions?.filter((s) => s.state === "active").length ?? 0}
               </Badge>
             </div>
             <div className="flex justify-between items-center">
               <span className="text-xs sm:text-xs text-muted-foreground">Idle</span>
               <Badge variant="secondary" className="text-xs">
-                {data?.activeSessions?.filter((s) => s.state === 'idle').length ?? 0}
+                {data?.activeSessions?.filter((s) => s.state === "idle").length ?? 0}
               </Badge>
             </div>
           </CardContent>

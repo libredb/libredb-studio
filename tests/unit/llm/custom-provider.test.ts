@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach, afterEach, spyOn } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach, spyOn } from "bun:test";
 import {
   LLMAuthError,
   LLMRateLimitError,
@@ -6,13 +6,13 @@ import {
   LLMConfigError,
   type LLMConfig,
   type LLMStreamOptions,
-} from '@/lib/llm/types';
+} from "@/lib/llm/types";
 
 // ============================================================================
 // Import module under test (no mock.module needed — Custom uses globalThis.fetch)
 // ============================================================================
 
-const { CustomProvider } = await import('@/lib/llm/providers/custom');
+const { CustomProvider } = await import("@/lib/llm/providers/custom");
 
 // ============================================================================
 // Helpers
@@ -33,21 +33,21 @@ function createSSEResponse(chunks: string[], status = 200): Response {
   });
   return new Response(body, {
     status,
-    headers: { 'Content-Type': 'text/event-stream' },
+    headers: { "Content-Type": "text/event-stream" },
   });
 }
 
 function createJsonResponse(body: unknown, status: number): Response {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { 'Content-Type': 'application/json' },
+    headers: { "Content-Type": "application/json" },
   });
 }
 
 async function readStream(stream: ReadableStream<Uint8Array>): Promise<string> {
   const reader = stream.getReader();
   const decoder = new TextDecoder();
-  let result = '';
+  let result = "";
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
@@ -58,17 +58,17 @@ async function readStream(stream: ReadableStream<Uint8Array>): Promise<string> {
 
 function makeConfig(overrides?: Partial<LLMConfig>): LLMConfig {
   return {
-    provider: 'custom',
-    apiKey: 'custom-api-key',
-    apiUrl: 'https://my-llm-proxy.example.com/v1',
-    model: 'my-custom-model',
+    provider: "custom",
+    apiKey: "custom-api-key",
+    apiUrl: "https://my-llm-proxy.example.com/v1",
+    model: "my-custom-model",
     ...overrides,
   };
 }
 
 function makeStreamOptions(overrides?: Partial<LLMStreamOptions>): LLMStreamOptions {
   return {
-    messages: [{ role: 'user', content: 'Hello' }],
+    messages: [{ role: "user", content: "Hello" }],
     ...overrides,
   };
 }
@@ -77,11 +77,11 @@ function makeStreamOptions(overrides?: Partial<LLMStreamOptions>): LLMStreamOpti
 // Tests
 // ============================================================================
 
-describe('CustomProvider', () => {
+describe("CustomProvider", () => {
   let fetchSpy: ReturnType<typeof spyOn>;
 
   beforeEach(() => {
-    fetchSpy = spyOn(globalThis, 'fetch');
+    fetchSpy = spyOn(globalThis, "fetch");
   });
 
   afterEach(() => {
@@ -92,27 +92,20 @@ describe('CustomProvider', () => {
   // constructor
   // --------------------------------------------------------------------------
 
-  describe('constructor', () => {
-    test('creates with valid config including apiUrl', () => {
+  describe("constructor", () => {
+    test("creates with valid config including apiUrl", () => {
       const provider = new CustomProvider(makeConfig());
-      expect(provider.name).toBe('custom');
-      expect(provider.config.model).toBe('my-custom-model');
-      expect(provider.config.apiUrl).toBe('https://my-llm-proxy.example.com/v1');
+      expect(provider.name).toBe("custom");
+      expect(provider.config.model).toBe("my-custom-model");
+      expect(provider.config.apiUrl).toBe("https://my-llm-proxy.example.com/v1");
     });
 
-    test('throws LLMConfigError without apiUrl', () => {
-      expect(
-        () => new CustomProvider(makeConfig({ apiUrl: undefined }))
-      ).toThrow(LLMConfigError);
+    test("throws LLMConfigError without apiUrl", () => {
+      expect(() => new CustomProvider(makeConfig({ apiUrl: undefined }))).toThrow(LLMConfigError);
     });
 
-    test('throws LLMConfigError without model', () => {
-      expect(
-        () =>
-          new CustomProvider(
-            makeConfig({ model: undefined as unknown as string })
-          )
-      ).toThrow(LLMConfigError);
+    test("throws LLMConfigError without model", () => {
+      expect(() => new CustomProvider(makeConfig({ model: undefined as unknown as string }))).toThrow(LLMConfigError);
     });
   });
 
@@ -120,22 +113,22 @@ describe('CustomProvider', () => {
   // stream()
   // --------------------------------------------------------------------------
 
-  describe('stream()', () => {
-    test('sends Bearer token when apiKey provided', async () => {
-      const sseData = [makeSSEChunk('Hi'), 'data: [DONE]\n\n'];
+  describe("stream()", () => {
+    test("sends Bearer token when apiKey provided", async () => {
+      const sseData = [makeSSEChunk("Hi"), "data: [DONE]\n\n"];
       fetchSpy.mockResolvedValueOnce(createSSEResponse(sseData));
 
-      const provider = new CustomProvider(makeConfig({ apiKey: 'my-secret-key' }));
+      const provider = new CustomProvider(makeConfig({ apiKey: "my-secret-key" }));
       await provider.stream(makeStreamOptions());
 
       expect(fetchSpy).toHaveBeenCalledTimes(1);
       const [, opts] = fetchSpy.mock.calls[0] as [string, RequestInit];
       const headers = opts.headers as Record<string, string>;
-      expect(headers.Authorization).toBe('Bearer my-secret-key');
+      expect(headers.Authorization).toBe("Bearer my-secret-key");
     });
 
-    test('omits Authorization when no apiKey', async () => {
-      const sseData = [makeSSEChunk('Hi'), 'data: [DONE]\n\n'];
+    test("omits Authorization when no apiKey", async () => {
+      const sseData = [makeSSEChunk("Hi"), "data: [DONE]\n\n"];
       fetchSpy.mockResolvedValueOnce(createSSEResponse(sseData));
 
       const provider = new CustomProvider(makeConfig({ apiKey: undefined }));
@@ -147,12 +140,8 @@ describe('CustomProvider', () => {
       expect(headers.Authorization).toBeUndefined();
     });
 
-    test('returns parsed stream content', async () => {
-      const sseData = [
-        makeSSEChunk('Custom'),
-        makeSSEChunk(' response'),
-        'data: [DONE]\n\n',
-      ];
+    test("returns parsed stream content", async () => {
+      const sseData = [makeSSEChunk("Custom"), makeSSEChunk(" response"), "data: [DONE]\n\n"];
       fetchSpy.mockResolvedValueOnce(createSSEResponse(sseData));
 
       const provider = new CustomProvider(makeConfig());
@@ -160,7 +149,7 @@ describe('CustomProvider', () => {
 
       expect(stream).toBeInstanceOf(ReadableStream);
       const text = await readStream(stream);
-      expect(text).toBe('Custom response');
+      expect(text).toBe("Custom response");
     });
   });
 
@@ -168,49 +157,33 @@ describe('CustomProvider', () => {
   // validateResponse()
   // --------------------------------------------------------------------------
 
-  describe('validateResponse()', () => {
-    test('401 throws LLMAuthError', async () => {
-      fetchSpy.mockImplementation(async () =>
-        createJsonResponse({ error: { message: 'Unauthorized' } }, 401)
-      );
+  describe("validateResponse()", () => {
+    test("401 throws LLMAuthError", async () => {
+      fetchSpy.mockImplementation(async () => createJsonResponse({ error: { message: "Unauthorized" } }, 401));
 
       const provider = new CustomProvider(makeConfig());
-      await expect(provider.stream(makeStreamOptions())).rejects.toBeInstanceOf(
-        LLMAuthError
-      );
+      await expect(provider.stream(makeStreamOptions())).rejects.toBeInstanceOf(LLMAuthError);
     });
 
-    test('403 throws LLMAuthError', async () => {
-      fetchSpy.mockImplementation(async () =>
-        createJsonResponse({ error: { message: 'Forbidden' } }, 403)
-      );
+    test("403 throws LLMAuthError", async () => {
+      fetchSpy.mockImplementation(async () => createJsonResponse({ error: { message: "Forbidden" } }, 403));
 
       const provider = new CustomProvider(makeConfig());
-      await expect(provider.stream(makeStreamOptions())).rejects.toBeInstanceOf(
-        LLMAuthError
-      );
+      await expect(provider.stream(makeStreamOptions())).rejects.toBeInstanceOf(LLMAuthError);
     });
 
-    test('429 throws LLMRateLimitError', async () => {
-      fetchSpy.mockImplementation(async () =>
-        createJsonResponse({ error: { message: 'Rate limited' } }, 429)
-      );
+    test("429 throws LLMRateLimitError", async () => {
+      fetchSpy.mockImplementation(async () => createJsonResponse({ error: { message: "Rate limited" } }, 429));
 
       const provider = new CustomProvider(makeConfig());
-      await expect(provider.stream(makeStreamOptions())).rejects.toBeInstanceOf(
-        LLMRateLimitError
-      );
+      await expect(provider.stream(makeStreamOptions())).rejects.toBeInstanceOf(LLMRateLimitError);
     });
 
-    test('500 throws LLMStreamError', async () => {
-      fetchSpy.mockImplementation(async () =>
-        createJsonResponse({ error: { message: 'Server error' } }, 500)
-      );
+    test("500 throws LLMStreamError", async () => {
+      fetchSpy.mockImplementation(async () => createJsonResponse({ error: { message: "Server error" } }, 500));
 
       const provider = new CustomProvider(makeConfig());
-      await expect(provider.stream(makeStreamOptions())).rejects.toBeInstanceOf(
-        LLMStreamError
-      );
+      await expect(provider.stream(makeStreamOptions())).rejects.toBeInstanceOf(LLMStreamError);
     });
   });
 
@@ -218,10 +191,10 @@ describe('CustomProvider', () => {
   // error mapping
   // --------------------------------------------------------------------------
 
-  describe('error mapping', () => {
-    test('ECONNREFUSED maps to connection error', async () => {
+  describe("error mapping", () => {
+    test("ECONNREFUSED maps to connection error", async () => {
       fetchSpy.mockImplementation(async () => {
-        throw new Error('connect ECONNREFUSED 127.0.0.1:8080');
+        throw new Error("connect ECONNREFUSED 127.0.0.1:8080");
       });
 
       const provider = new CustomProvider(makeConfig());
@@ -230,52 +203,40 @@ describe('CustomProvider', () => {
         expect(true).toBe(false);
       } catch (err) {
         expect(err).toBeInstanceOf(LLMStreamError);
-        expect((err as Error).message).toContain('Cannot connect to custom endpoint');
+        expect((err as Error).message).toContain("Cannot connect to custom endpoint");
       }
     });
 
-    test('LLMStreamError passes through', async () => {
-      fetchSpy.mockImplementation(async () =>
-        createJsonResponse({ error: { message: 'stream broken' } }, 500)
-      );
+    test("LLMStreamError passes through", async () => {
+      fetchSpy.mockImplementation(async () => createJsonResponse({ error: { message: "stream broken" } }, 500));
 
       const provider = new CustomProvider(makeConfig());
-      await expect(provider.stream(makeStreamOptions())).rejects.toBeInstanceOf(
-        LLMStreamError
-      );
+      await expect(provider.stream(makeStreamOptions())).rejects.toBeInstanceOf(LLMStreamError);
     });
 
-    test('generic error maps to LLMStreamError', async () => {
+    test("generic error maps to LLMStreamError", async () => {
       fetchSpy.mockImplementation(async () => {
-        throw new Error('Something unexpected');
+        throw new Error("Something unexpected");
       });
 
       const provider = new CustomProvider(makeConfig());
-      await expect(provider.stream(makeStreamOptions())).rejects.toBeInstanceOf(
-        LLMStreamError
-      );
+      await expect(provider.stream(makeStreamOptions())).rejects.toBeInstanceOf(LLMStreamError);
     });
 
-    test('non-Error maps to LLMStreamError', async () => {
+    test("non-Error maps to LLMStreamError", async () => {
       fetchSpy.mockImplementation(async () => {
-        throw 'string error';
+        throw "string error";
       });
 
       const provider = new CustomProvider(makeConfig());
-      await expect(provider.stream(makeStreamOptions())).rejects.toBeInstanceOf(
-        LLMStreamError
-      );
+      await expect(provider.stream(makeStreamOptions())).rejects.toBeInstanceOf(LLMStreamError);
     });
 
-    test('LLMAuthError passes through in stream()', async () => {
-      fetchSpy.mockImplementation(async () =>
-        createJsonResponse({ error: { message: 'bad key' } }, 401)
-      );
+    test("LLMAuthError passes through in stream()", async () => {
+      fetchSpy.mockImplementation(async () => createJsonResponse({ error: { message: "bad key" } }, 401));
 
       const provider = new CustomProvider(makeConfig());
-      await expect(provider.stream(makeStreamOptions())).rejects.toBeInstanceOf(
-        LLMAuthError
-      );
+      await expect(provider.stream(makeStreamOptions())).rejects.toBeInstanceOf(LLMAuthError);
     });
   });
 });
