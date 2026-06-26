@@ -1,0 +1,98 @@
+name: Update Sponsors
+
+on:
+  schedule:
+    - cron: '0 6 * * 1' # Every Monday at 06:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  update-sponsors:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch sponsors and update README
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.SPONSORS_TOKEN }}
+          script: |
+            const fs = require('fs');
+
+            const result = await github.graphql(`
+              query {
+                organization(login: "libredb") {
+                  sponsorshipsAsMaintainer(first: 100, activeOnly: true) {
+                    nodes {
+                      sponsorEntity {
+                        ... on User { login, name, avatarUrl(size: 64), url }
+                        ... on Organization { login, name, avatarUrl(size: 64), url }
+                      }
+                      tier { monthlyPriceInDollars }
+                    }
+                  }
+                }
+              }
+            `);
+
+            const sponsors = result.organization.sponsorshipsAsMaintainer.nodes;
+
+            const orgSponsors     = sponsors.filter(s => s.tier.monthlyPriceInDollars >= 500);
+            const logoSponsors    = sponsors.filter(s => s.tier.monthlyPriceInDollars >= 100 && s.tier.monthlyPriceInDollars < 500);
+            const backers         = sponsors.filter(s => s.tier.monthlyPriceInDollars >= 20  && s.tier.monthlyPriceInDollars < 100);
+            const supporters      = sponsors.filter(s => s.tier.monthlyPriceInDollars > 0    && s.tier.monthlyPriceInDollars < 20);
+
+            const avatar = (entity, size) =>
+              `<a href="${entity.url}"><img src="${entity.avatarUrl}" width="${size}" alt="${entity.login}" title="${entity.name || entity.login}"/></a>`;
+
+            const nameLink = entity =>
+              `[${entity.name || entity.login}](${entity.url})`;
+
+            let section = '';
+
+            if (orgSponsors.length > 0) {
+              section += '### Org Sponsors\n\n';
+              section += orgSponsors.map(s => avatar(s.sponsorEntity, 80)).join(' ') + '\n\n';
+            }
+
+            if (logoSponsors.length > 0) {
+              section += '### Sponsors\n\n';
+              section += logoSponsors.map(s => avatar(s.sponsorEntity, 56)).join(' ') + '\n\n';
+            }
+
+            if (backers.length > 0) {
+              section += '### Backers\n\n';
+              section += backers.map(s => nameLink(s.sponsorEntity)).join(' · ') + '\n\n';
+            }
+
+            if (supporters.length > 0) {
+              section += '### Supporters\n\n';
+              section += supporters.map(s => nameLink(s.sponsorEntity)).join(' · ') + '\n\n';
+            }
+
+            if (!section) {
+              section = '_Be the first to sponsor libredb-studio!_\n';
+            }
+
+            const readme = fs.readFileSync('README.md', 'utf8');
+            const updated = readme.replace(
+              /<!-- sponsors-start -->[\s\S]*?<!-- sponsors-end -->/,
+              `<!-- sponsors-start -->\n${section}<!-- sponsors-end -->`
+            );
+
+            if (readme !== updated) {
+              fs.writeFileSync('README.md', updated);
+              console.log('README updated');
+            } else {
+              console.log('No changes');
+            }
+
+      - name: Commit if changed
+        run: |
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          git add README.md
+          git diff --staged --quiet || git commit -m "chore: update sponsors list [skip ci]"
+          git diff HEAD~1..HEAD --quiet || git push

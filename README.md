@@ -647,6 +647,14 @@ development of the open-source edition.
 
 ---
 
+## Sponsors
+
+<!-- sponsors-start -->
+_Be the first to sponsor libredb-studio!_
+<!-- sponsors-end -->
+
+---
+
 ## Contributing
 
 We welcome contributions from the community! Whether it's a bug fix, a new feature, or documentation improvements:
