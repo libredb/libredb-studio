@@ -98,16 +98,34 @@ generally:
   deletes a connection that carries a `seedId`, **add that `seedId` to
   `dismissedSeeds`**. So a deleted sample (or any future editable seed) stays gone.
 
-## 4. Why platform/embedded is safe by construction
+## 4. Why platform/embedded is safe by construction (verified)
 
-- `instrumentation.ts` `register()` runs only when this app boots its own Next.js
-  server. Platform has its own Next.js instance and imports `@libredb/studio` as a
-  component library; our `instrumentation.ts` never executes there → no sample file
-  is seeded into platform.
-- Platform renders `StudioWorkspace` and passes connections in as props; it does not
-  call `GET /api/connections/managed` → the built-in sample connection is never
-  surfaced there.
-No `LIBREDB_STANDALONE`-style flag is needed.
+Removing the env default is **not** required: the sample-provisioning code is not
+shipped to, and cannot run in, libredb-platform. Verified against both the package's
+published surface and platform's actual consumption:
+
+1. **`instrumentation.ts` is never published.** It is a project-root file, not one of
+   the five `tsup` entries (`src/exports/{index,providers,types,components,workspace}`),
+   and `package.json` ships only `dist/`. Next.js runs `register()` only for the app
+   that owns the file; platform's own Next.js never sees it → the sample file is never
+   seeded in platform.
+2. **The seed/managed code and `GET /api/connections/managed` are not in the published
+   surface.** No `src/exports/*` barrel imports `seed/index`, the managed route, or the
+   connection-manager hooks, and the `exports` map exposes only
+   `.`/`./providers`/`./types`/`./components`/`./workspace` (deep imports are blocked).
+   → the built-in sample connection cannot be surfaced in platform.
+3. **Platform supplies its own connections as props.** It imports only `StudioWorkspace`
+   + `WorkspaceConnection` from `@libredb/studio/workspace` (and `@libredb/studio/providers`
+   server-side for query execution). `StudioWorkspace` takes `connections={externalConnections}`
+   and does not run `useConnectionManager`/`useAllConnections`, so the `dismissedSeeds`
+   change (which lives in those hooks) is not even in the package bundle. Platform has
+   zero references to `connections/managed`, `LIBREDB_EMBEDDED_SAMPLE`,
+   `getManagedConnections`, or `instrumentation`.
+
+Therefore `LIBREDB_EMBEDDED_SAMPLE=true` (default) affects only the standalone Studio,
+regardless of its value in a platform deployment. No `LIBREDB_STANDALONE`-style flag is
+needed. (The env flag remains useful for operators who want to disable the sample in a
+standalone deployment.)
 
 ## 5. Sample dataset (all three lenses + catalog)
 
