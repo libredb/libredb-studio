@@ -467,7 +467,7 @@ export class PostgresProvider extends SQLBaseProvider {
 
     // Auto-rollback after timeout to prevent leaked locks
     this.txTimeout = setTimeout(() => {
-      this.expireTransaction();
+      void this.expireTransaction();
     }, PostgresProvider.TX_TIMEOUT_MS);
   }
 

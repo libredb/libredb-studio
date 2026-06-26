@@ -189,6 +189,7 @@
     "oxlint": "^1.71",
     "tailwindcss": "^4",
     "tsup": "^8.5.1",
-    "typescript": "^6.0.3"
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.62"
   }
 }

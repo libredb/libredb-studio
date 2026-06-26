@@ -265,7 +265,7 @@ export class MySQLProvider extends SQLBaseProvider {
 
     // Auto-rollback after timeout to prevent leaked locks
     this.txTimeout = setTimeout(() => {
-      this.expireTransaction();
+      void this.expireTransaction();
     }, MySQLProvider.TX_TIMEOUT_MS);
   }
 

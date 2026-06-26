@@ -169,7 +169,7 @@ export async function evictIdleProviders(maxIdleMs: number = IDLE_TIMEOUT_MS): P
 function startIdleSweep(): void {
   if (sweepTimer) return;
   sweepTimer = setInterval(() => {
-    evictIdleProviders();
+    void evictIdleProviders();
   }, SWEEP_INTERVAL_MS);
   // Allow process to exit even if timer is running
   if (sweepTimer && typeof sweepTimer === "object" && "unref" in sweepTimer) {
@@ -315,8 +315,12 @@ export function registerShutdownHandlers(): void {
     process.exit(0);
   };
 
-  process.on("SIGTERM", () => shutdown("SIGTERM"));
-  process.on("SIGINT", () => shutdown("SIGINT"));
+  process.on("SIGTERM", () => {
+    void shutdown("SIGTERM");
+  });
+  process.on("SIGINT", () => {
+    void shutdown("SIGINT");
+  });
 }
 
 // Auto-register on server-side (not during tests)
