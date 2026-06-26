@@ -20,6 +20,7 @@ export function useAllConnections() {
 
     async function load() {
       const userConns = storage.getConnections();
+      const dismissed = new Set(storage.getDismissedSeeds());
 
       try {
         const res = await fetch('/api/connections/managed');
@@ -31,6 +32,7 @@ export function useAllConnections() {
 
             // Managed connections first
             for (const mc of managedConns) {
+              if (mc.managed === false && mc.seedId && dismissed.has(mc.seedId)) continue;
               merged.push({ ...mc, createdAt: new Date(mc.createdAt) });
               addedIds.add(mc.id);
               if (mc.seedId) addedIds.add(`seed:${mc.seedId}`);

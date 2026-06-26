@@ -70,6 +70,7 @@ mock.module('@/lib/storage', () => ({
   storage: {
     getConnections: mock(() => mockConnectionsList),
     getActiveConnectionId: mock(() => mockActiveConnectionId),
+    getDismissedSeeds: mock(() => []),
   },
 }));
 

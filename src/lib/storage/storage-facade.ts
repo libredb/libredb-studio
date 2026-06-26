@@ -69,8 +69,21 @@ export const storage = {
     dispatchChange('connections', connections);
   },
 
+  getDismissedSeeds: (): string[] => {
+    return readJSON<string[]>('dismissed_seeds') ?? [];
+  },
+
   deleteConnection: (id: string) => {
     const connections = storage.getConnections();
+    const target = connections.find((c) => c.id === id);
+    if (target?.seedId) {
+      const dismissed = storage.getDismissedSeeds();
+      if (!dismissed.includes(target.seedId)) {
+        const next = [...dismissed, target.seedId];
+        writeJSON('dismissed_seeds', next);
+        dispatchChange('dismissed_seeds', next);
+      }
+    }
     const filtered = connections.filter((c) => c.id !== id);
     writeJSON('connections', filtered);
     dispatchChange('connections', filtered);
