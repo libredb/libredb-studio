@@ -636,6 +636,17 @@ extraEnvFrom:
 
 ---
 
+## Support
+
+libredb-studio is free and open source. If it helps you or your team, consider
+[sponsoring the project](https://github.com/sponsors/libredb) — your support
+funds maintenance, bug fixes, new database providers, and the ongoing
+development of the open-source edition.
+
+[![Sponsor](https://img.shields.io/badge/Sponsor-libredb-ea4aaa?logo=githubsponsors&logoColor=white)](https://github.com/sponsors/libredb)
+
+---
+
 ## Contributing
 
 We welcome contributions from the community! Whether it's a bug fix, a new feature, or documentation improvements:
