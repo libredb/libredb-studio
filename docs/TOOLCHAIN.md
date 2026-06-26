@@ -1,10 +1,11 @@
-# LibreDB Studio Toolchain - 2026 Adoption Plan
+# LibreDB Studio Toolchain - 2026 Adoption Record
 
-> Status: PLANNED (no code changes yet). This is a per-tool adoption plan for five tools, ported from the
-> researched-then-adversarially-verified decision record in `libredb-database/docs/TOOLCHAIN.md` and adapted to
-> Studio's reality: a Next.js 16 + React 19 + TSX application that ALSO ships as the dual-format npm package
-> `@libredb/studio` (consumed by `libredb-platform`). The database record is the rationale source of truth;
-> this document records only what changes for Studio and why.
+> Status: IMPLEMENTED (PR #98, phased; each phase green through CI before the next). A per-tool adoption
+> record for five tools, ported from the researched-then-adversarially-verified decision record in
+> `libredb-database/docs/TOOLCHAIN.md` and adapted to Studio's reality: a Next.js 16 + React 19 + TSX
+> application that ALSO ships as the dual-format npm package `@libredb/studio` (consumed by
+> `libredb-platform`). The database record is the rationale source of truth; this document records only what
+> changes for Studio and why. Deviations surfaced during implementation are marked "as implemented".
 
 ## Scope
 
@@ -98,24 +99,40 @@ Notes:
 
 Sub-second syntactic linter; a fail-fast layer in front of ESLint.
 
-`.oxlintrc.json`:
+`.oxlintrc.json` (plugins + categories; the rule tuning below is the as-implemented set):
 
 ```jsonc
 {
-  "$schema": "https://raw.githubusercontent.com/oxc-project/oxc/main/npm/oxlint/configuration_schema.json",
   "plugins": ["typescript", "oxc", "react", "react-hooks", "jsx-a11y", "nextjs", "import"],
-  "categories": { "correctness": "error", "suspicious": "error", "perf": "warn", "pedantic": "off", "style": "off" },
-  "rules": {},
-  "ignorePatterns": ["dist/**", ".next/**", "out/**", "build/**", "coverage/**", "node_modules/**", "next-env.d.ts"]
+  "categories": { "correctness": "error", "suspicious": "error", "perf": "warn", "pedantic": "off", "style": "off" }
 }
 ```
 
-Notes:
+As implemented (the first run surfaced ~1300 findings; the breakdown drove these decisions):
 
-- The `unicorn` plugin is NOT added (taste noise, same call as database).
-- The first run on a React codebase may surface noise; reaching green may require turning off one or two
-  rules. Any disabled rule gets a justifying comment (as `no-shadow` / `approx-constant` do in database).
-- Scripts: add `"lint:oxc": "oxlint"`, and make `lint` run oxlint first: `"lint": "oxlint && eslint ."`.
+- Disabled as false-positives / eslint-config-next-owned duplicates / idioms:
+  - `react/react-in-jsx-scope` (936) - the project uses the automatic JSX runtime (`jsx: react-jsx`), so React
+    need not be in scope. This is correct, not a workaround; eslint-config-next disables it too.
+  - `import/no-unassigned-import` (202) - intentional side-effect imports (setup/registration).
+  - `no-underscore-dangle` (64) - the `_`-prefix is the codebase's deliberate intentionally-unused marker.
+  - `no-unused-vars` (25) and `react-hooks/exhaustive-deps` (2) - eslint-config-next already owns these as
+    warnings; disabling in oxlint avoids duplicate/contradictory reporting.
+  - `no-shadow` (17) - same call as database; shadcn/ui vendored components shadow idiomatically.
+  - `no-control-regex` (4) - intentional control-char matching in `logger.ts` log-injection sanitization.
+  - `react/no-unstable-nested-components` - the shadcn calendar + TanStack cell-renderer idiom.
+  - `import/no-named-as-default` - the monaco default+named export.
+- Scoped to tests via `overrides` (test idioms): `typescript/no-extraneous-class`, `no-useless-constructor`,
+  `no-new` (constructor-throws assertions), `no-constant-binary-expression` (intentional falsy-class test data).
+- `jsx-a11y` rules that fired (8) are downgraded to `warn`, not disabled: accessibility matters, but fixing
+  ~60 a11y findings (many in vendored shadcn/ui, several needing markup/behaviour changes) belongs in a
+  dedicated accessibility pass, not a tooling-adoption PR. They remain a visible, non-blocking backlog signal.
+- Three genuine bugs oxlint surfaced were FIXED, not silenced (see the Phase 2 commit): a dead
+  `typeof ... || "unknown"` fallback in `profile/route.ts`, a dropped error cause in `seed/config-loader.ts`,
+  and a useless regex escape in `merge-lcov.mjs`.
+- The `unicorn` plugin is NOT added (taste noise, same call as database). NOTE: an unknown rule key is a HARD
+  error in oxlint (it exits 1), not a warning - `react/jsx-uses-react` does not exist and had to be removed;
+  only `react/react-in-jsx-scope` is needed for the automatic runtime.
+- Scripts: `"lint:oxc": "oxlint"`, and `lint` runs oxlint first: `"lint": "oxlint && eslint ."`.
 
 ## Phase 3 - typescript-eslint + ESLint (Strategy A: keep Next, layer oxlint)
 
@@ -123,10 +140,12 @@ Notes:
 config, and the react-hooks rules). Oxlint is layered on top for fast syntactic feedback; ESLint remains the
 curated Next/React safety net.
 
-Optional follow-up (recommended, can be a later phase): add a narrow type-aware layer scoped to the
-async-heavy code (`src/app/api/**`, `src/lib/db/**`) - `@typescript-eslint/no-floating-promises`,
-`no-misused-promises`, `await-thenable`. These pay off more in Studio than in database (synchronous core).
-Cost: enabling `parserOptions.projectService: true` makes that scope's lint slower.
+As implemented, the narrow type-aware layer WAS added (it earned its place): a `typescript-eslint` flat-config
+block scoped to the async-heavy code (`src/app/api/**`, `src/lib/db/**`) via `parserOptions.projectService`,
+enabling `@typescript-eslint/no-floating-promises`, `no-misused-promises`, `await-thenable` as errors. It
+immediately caught five genuine fire-and-forget bugs (async functions invoked in setInterval/setTimeout/process
+signal handlers without handling the promise, in `factory.ts`, `mysql.ts`, `postgres.ts`), fixed with the
+`void` operator. Scoping keeps lint fast; eslint-config-next still owns everything else.
 
 Rejected for Studio: the database-style reduction of ESLint to type-aware-only with React/Next rules moved
 to oxlint. For a shipping Next app the risk of losing `eslint-config-next`'s curated coverage outweighs the
@@ -139,37 +158,41 @@ exact surface where types-resolution and CJS/ESM-masquerading bugs hide.
 
 ```jsonc
 // scripts
-"attw": "rm -rf .attw && bun pm pack --quiet --destination .attw && attw .attw/*.tgz",
+"attw": "rm -rf .attw && bun pm pack --quiet --destination .attw && attw .attw/*.tgz --profile node16",
 "prepublishOnly": "tsup && bun run attw"
 ```
 
 Notes:
 
-- DEFAULT profile (no `--profile esm-only`): the package is intentionally dual-format, so CJS resolution
-  must be checked.
+- `--profile node16` (as implemented, a deviation from the planned default profile). The first run was green
+  for the main `.` entry under all modes, but the four subpath exports (`/providers`, `/types`, `/components`,
+  `/workspace`) failed ONLY on the legacy `node10` resolution algorithm (node16 CJS+ESM and bundler were all
+  green). node10 cannot resolve subpath exports without redirect stubs, and the package requires Node >=24 and
+  is consumed by modern bundlers (Next.js/platform), so supporting node10 is moot. `--profile node16` scopes
+  the check to node16 CJS+ESM (the real consumer scenarios) and is more honest and precise than the broad
+  `--ignore-rules no-resolution`, which could mask a real node16 failure.
 - `rm -rf .attw` runs FIRST (not trailing): a trailing `&& rm` would mask attw's exit code, and pre-cleaning
   drops a stale tarball from a previous version bump.
 - attw needs `dist/` from `build:lib` (tsup), so `prepublishOnly` runs `tsup` before `attw`. In CI use
   `build:lib`, never `next build`, before attw.
 - Git-ignore `.attw/` and `*.tgz` (packaging scratch).
-- Expectation: the `exports` map already orders `types` first within each `import`/`require` condition, so
-  attw is likely green - but verifying that across all 5 entries is exactly the point.
+- CI: the `lint-and-build` job runs `build:lib` then `attw` (plus a Biome format check) so the package
+  surface is gated on every PR.
 
 ## Phase 5 - knip (keep, verify)
 
-Each new tool (`biome`, `oxlint`, `attw`) gets a real package.json script, so knip resolves their binaries to
-their packages and counts them as used - no `knip.json` change is expected (database's finding: scripts
-suffice, even for `attw` whose binary name differs from `@arethetypeswrong/cli`). After adoption, run
-`bun run knip`; if anything is flagged, add a single justified `ignoreBinaries` / `ignoreDependencies` entry.
+Each new tool (`biome`, `oxlint`, `attw`, `typescript-eslint`) gets a real package.json script or a config
+import, so knip resolves them and counts them as used. As implemented, `bun run knip` was green with NO
+`knip.json` change needed (database's finding held: scripts suffice, even for `attw` whose binary name differs
+from `@arethetypeswrong/cli`, and `typescript-eslint` is seen via the `eslint.config.mjs` import).
 
 ## CI and pre-commit integration
 
-- `.github/workflows/ci.yml`, the "Lint, Typecheck and Build" job: add two steps before the existing ESLint
-  step - Format check (`bun run format`) and oxlint (`bun run lint:oxc`).
-- attw belongs in a packaging step/job that runs `bun run build:lib && bun run attw` (not `next build`).
-  Natural homes: `npm-publish.yml` and/or a small dedicated package-check job.
-- Update `libredb-studio/CLAUDE.md`: the mandatory pre-commit four (lint, typecheck, test, build) becomes six
-  with `format` and `oxlint`.
+As implemented in `.github/workflows/ci.yml`, the "Lint, Typecheck and Build" job runs, in order: Biome format
+check (`bun run format`), linters (`bun run lint`, i.e. oxlint then ESLint), typecheck, knip, `next build`,
+`build:lib`, then `attw`. oxlint is folded into `bun run lint` rather than a separate step. The pre-commit git
+hook (`.claude/settings.json`) runs `lint && typecheck && test && build` and now transitively enforces oxlint
+and the type-aware layer via `bun run lint`.
 
 ## Rollout order and per-phase gate
 
