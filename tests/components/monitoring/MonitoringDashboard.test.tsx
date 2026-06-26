@@ -59,6 +59,7 @@ mock.module('@/lib/storage', () => ({
       },
     ]),
     getActiveConnectionId: mock(() => 'c1'),
+    getDismissedSeeds: mock(() => []),
   },
 }));
 

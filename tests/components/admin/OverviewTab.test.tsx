@@ -45,6 +45,7 @@ mock.module('@/lib/storage', () => ({
   storage: {
     getConnections: mockGetConnections,
     getHistory: mockGetHistory,
+    getDismissedSeeds: mock(() => []),
   },
 }));
 

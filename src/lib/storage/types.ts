@@ -23,6 +23,8 @@ export interface StorageData {
   audit_log: AuditEvent[];
   masking_config: MaskingConfig;
   threshold_config: ThresholdConfig[];
+  /** seedIds the user dismissed (deleted a managed:false seed copy) so it is not re-added. */
+  dismissed_seeds: string[];
 }
 
 /** Collection names that can be synced to server storage */
@@ -39,6 +41,7 @@ export const STORAGE_COLLECTIONS: StorageCollection[] = [
   'audit_log',
   'masking_config',
   'threshold_config',
+  'dismissed_seeds',
 ];
 
 /**

@@ -89,6 +89,7 @@ export function useConnectionManager(storageReady = false) {
           const { connections: managedConns } = await managedRes.json();
           if (managedConns?.length > 0) {
             const userConns = storage.getConnections();
+            const dismissed = new Set(storage.getDismissedSeeds());
             const merged: DatabaseConnection[] = [];
 
             // Add managed:true connections (always from server)
@@ -96,7 +97,8 @@ export function useConnectionManager(storageReady = false) {
               if (mc.managed) {
                 merged.push({ ...mc, createdAt: new Date(mc.createdAt) });
               } else {
-                // managed:false — check if already copied (by seedId)
+                // managed:false — editable user copy
+                if (mc.seedId && dismissed.has(mc.seedId)) continue; // user deleted it; do not re-add
                 const existingCopy = userConns.find((uc: DatabaseConnection) => uc.seedId === mc.seedId);
                 if (existingCopy) {
                   merged.push(existingCopy);
