@@ -29,7 +29,10 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Run ESLint
+      - name: Check formatting (Biome)
+        run: bun run format
+
+      - name: Run linters (oxlint + ESLint)
         run: bun run lint
 
       - name: Run TypeScript type check
@@ -47,6 +50,12 @@ jobs:
           ADMIN_PASSWORD: test-admin
           USER_EMAIL: user@libredb.org
           USER_PASSWORD: test-user
+
+      - name: Build library package (tsup)
+        run: bun run build:lib
+
+      - name: Check package types resolution (attw)
+        run: bun run attw
 
   test:
     name: Unit & Integration Tests

@@ -79,7 +79,8 @@
     "dev": "next dev",
     "build": "next build",
     "build:lib": "tsup",
-    "prepublishOnly": "tsup",
+    "attw": "rm -rf .attw && bun pm pack --quiet --destination .attw && attw .attw/*.tgz --profile node16",
+    "prepublishOnly": "tsup && bun run attw",
     "start": "next start",
     "format": "biome format .",
     "format:fix": "biome format --write .",
@@ -170,6 +171,7 @@
     "zod": "^4.1.12"
   },
   "devDependencies": {
+    "@arethetypeswrong/cli": "^0.18.4",
     "@biomejs/biome": "^2.5",
     "@playwright/test": "^1.58.2",
     "@tailwindcss/postcss": "^4",
