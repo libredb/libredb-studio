@@ -11,15 +11,17 @@ import {
   SAMPLE_SEED_ID,
 } from '@/lib/seed/libredb-sample';
 
-const tmp: string[] = [];
+const tmpDirs: string[] = [];
 function tmpPath(): string {
-  const p = path.join(os.tmpdir(), `libredb-sample-${Math.random().toString(36).slice(2)}.libredb`);
-  tmp.push(p);
-  return p;
+  // mkdtempSync atomically creates a unique 0700 dir — the secure-temp pattern
+  // (avoids the predictable-name race CodeQL flags for os.tmpdir + Math.random).
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'libredb-sample-'));
+  tmpDirs.push(dir);
+  return path.join(dir, 'sample.libredb');
 }
 afterEach(() => {
-  for (const p of tmp) { try { fs.unlinkSync(p); } catch { /* ignore */ } }
-  tmp.length = 0;
+  for (const d of tmpDirs) { try { fs.rmSync(d, { recursive: true, force: true }); } catch { /* ignore */ } }
+  tmpDirs.length = 0;
   delete process.env.LIBREDB_EMBEDDED_SAMPLE;
   delete process.env.LIBREDB_EMBEDDED_SAMPLE_PATH;
 });

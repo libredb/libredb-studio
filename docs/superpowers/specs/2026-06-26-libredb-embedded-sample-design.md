@@ -44,7 +44,7 @@ out of platform.
 
 ### 3.1 File seeding at boot
 
-- **`instrumentation.ts`** (new, project root): Next.js calls `register()` exactly
+- **`src/instrumentation.ts`** (new): Next.js calls `register()` exactly
   once per worker at server boot, and only when *this* app boots its own Next.js
   server — never when `@libredb/studio` is imported by platform. `register()`
   invokes the seed module guarded by the enabled flag.
@@ -104,7 +104,7 @@ Removing the env default is **not** required: the sample-provisioning code is no
 shipped to, and cannot run in, libredb-platform. Verified against both the package's
 published surface and platform's actual consumption:
 
-1. **`instrumentation.ts` is never published.** It is a project-root file, not one of
+1. **`src/instrumentation.ts` is never published.** It is an app-source file, not one of
    the five `tsup` entries (`src/exports/{index,providers,types,components,workspace}`),
    and `package.json` ships only `dist/`. Next.js runs `register()` only for the app
    that owns the file; platform's own Next.js never sees it → the sample file is never
@@ -181,7 +181,7 @@ directly).
 
 ## 9. File structure
 
-- Create: `instrumentation.ts` (root) — `register()` → seed-on-boot wire.
+- Create: `src/instrumentation.ts` — `register()` → seed-on-boot wire.
 - Create: `src/lib/seed/libredb-sample.ts` — enabled/path/seed/connection logic.
 - Modify: `src/lib/seed/index.ts` — include the sample in `getManagedConnections`.
 - Modify: `src/hooks/use-connection-manager.ts` and `src/hooks/use-all-connections.ts`

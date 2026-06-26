@@ -6,14 +6,19 @@ import { getManagedConnections } from '@/lib/seed';
 import { SAMPLE_SEED_ID } from '@/lib/seed/libredb-sample';
 
 let file: string;
+let tmpDir: string | undefined;
 afterEach(() => {
-  try { if (file) fs.unlinkSync(file); } catch { /* ignore */ }
+  try { if (tmpDir) fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore */ }
+  tmpDir = undefined;
   delete process.env.LIBREDB_EMBEDDED_SAMPLE;
   delete process.env.LIBREDB_EMBEDDED_SAMPLE_PATH;
 });
 
 function useTempSamplePath(): void {
-  file = path.join(os.tmpdir(), `libredb-mc-${Math.random().toString(36).slice(2)}.libredb`);
+  // mkdtempSync atomically creates a unique 0700 dir — the secure-temp pattern
+  // (avoids the predictable-name race CodeQL flags for os.tmpdir + Math.random).
+  tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'libredb-mc-'));
+  file = path.join(tmpDir, 'sample.libredb');
   process.env.LIBREDB_EMBEDDED_SAMPLE_PATH = file;
 }
 

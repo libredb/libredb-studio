@@ -108,3 +108,6 @@ data/
 # Local Docker test volumes and any stray embedded-db files
 .docker-data*/
 *.libredb
+
+docs/superpowers/
+

@@ -4,7 +4,7 @@
 
 **Goal:** On first standalone startup, auto-provide an editable, dismissable `libredb` connection named "Sample (LibreDB)" backed by a `.libredb` file pre-seeded with one example per lens (relational/document/kv), gated by `LIBREDB_EMBEDDED_SAMPLE` (default on).
 
-**Architecture:** A boot-once `instrumentation.ts` seeds the sample file (idempotent, graceful). The sample is exposed as a built-in `managed:false` seed connection appended by `getManagedConnections`, so the existing connection-merge machinery copies it into the user's storage. A general `dismissed_seeds` storage collection makes a deleted seed stay gone. Platform is unaffected by construction (none of this code is in the published package surface).
+**Architecture:** A boot-once `src/instrumentation.ts` seeds the sample file (idempotent, graceful). The sample is exposed as a built-in `managed:false` seed connection appended by `getManagedConnections`, so the existing connection-merge machinery copies it into the user's storage. A general `dismissed_seeds` storage collection makes a deleted seed stay gone. Platform is unaffected by construction (none of this code is in the published package surface).
 
 **Tech Stack:** Next.js 16 (App Router) + React 19 + TypeScript; `@libredb/libredb@^0.0.3` (`open`/`kv`/`doc`/`table`/`catalog`); Bun test runner.
 
@@ -326,10 +326,10 @@ git commit -m "feat(seed): advertise the libredb sample via getManagedConnection
 
 ---
 
-### Task 3: Seed the file at server boot (instrumentation.ts)
+### Task 3: Seed the file at server boot (src/instrumentation.ts)
 
 **Files:**
-- Create: `instrumentation.ts` (project root)
+- Create: `src/instrumentation.ts` (this project uses a src/ dir, so Next.js only honors the hook here, not at the repo root)
 
 **Interfaces:**
 - Consumes: `isSampleEnabled`, `resolveSamplePath`, `seedSampleFile` (Task 1); `logger` from `@/lib/logger`.
@@ -337,7 +337,7 @@ git commit -m "feat(seed): advertise the libredb sample via getManagedConnection
 
 - [ ] **Step 1: Create the instrumentation hook**
 
-Create `instrumentation.ts` at the project root:
+Create `src/instrumentation.ts` (Next.js requires the hook under src/ when a src/ directory is used):
 ```ts
 /**
  * Next.js boot hook. register() runs once per server worker, ONLY when this app
@@ -382,7 +382,7 @@ Expected: the file exists after the dev server boots. Stop the dev server.
 - [ ] **Step 4: Commit**
 
 ```bash
-git add instrumentation.ts
+git add src/instrumentation.ts
 git commit -m "feat(boot): seed the libredb embedded sample file on standalone startup"
 ```
 
