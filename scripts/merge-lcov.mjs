@@ -151,7 +151,7 @@ function isNonExecutableLine(src) {
   if (t.startsWith("//")) return true; // line comment
   if (t.startsWith("/*")) return true; // block comment opener
   if (t === "*/" || /^\*( |$|\/)/.test(t)) return true; // JSDoc / block comment body
-  if (/^[{}()\[\];,]+$/.test(t)) return true; // bare structural punctuation
+  if (/^[{}()[\];,]+$/.test(t)) return true; // bare structural punctuation
   return false;
 }
 

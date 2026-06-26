@@ -83,7 +83,8 @@
     "start": "next start",
     "format": "biome format .",
     "format:fix": "biome format --write .",
-    "lint": "eslint .",
+    "lint": "oxlint && eslint .",
+    "lint:oxc": "oxlint",
     "typecheck": "tsc --noEmit",
     "test": "bun test tests/unit tests/api tests/integration && bun test tests/hooks && bun run test:components",
     "test:ci": "bash tests/run-core.sh && bun run test:components",
@@ -185,6 +186,7 @@
     "eslint-config-next": "^16.1.6",
     "happy-dom": "^20.6.1",
     "knip": "^6.17.1",
+    "oxlint": "^1.71",
     "tailwindcss": "^4",
     "tsup": "^8.5.1",
     "typescript": "^6.0.3"

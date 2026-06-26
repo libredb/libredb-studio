@@ -57,7 +57,7 @@ export async function loadConfig(): Promise<SeedConfig | null> {
   try {
     parsed = isJSON ? JSON.parse(raw) : parseYAML(raw);
   } catch (err) {
-    throw new Error(`Failed to parse seed config at ${configPath}: ${err}`);
+    throw new Error(`Failed to parse seed config at ${configPath}: ${err}`, { cause: err });
   }
 
   const result = SeedConfigSchema.safeParse(parsed);

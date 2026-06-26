@@ -54,7 +54,7 @@ export async function POST(req: NextRequest) {
 
           return {
             name: col,
-            type: typeof values[0] || "unknown",
+            type: values.length > 0 ? typeof values[0] : "unknown",
             totalRows,
             nullCount,
             nullPercent: sampleResult.rows.length > 0 ? Math.round((nullCount / sampleResult.rows.length) * 100) : 0,
