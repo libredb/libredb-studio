@@ -25,12 +25,18 @@ export async function getManagedConnections(roles: string[]): Promise<ManagedCon
       )
     : [];
 
-  if (isSampleEnabled()) {
+  // In a test run, only consider the sample when an explicit path override is set,
+  // so an uncontrolled real ./data/sample.libredb cannot perturb unrelated suites.
+  // (NODE_ENV==='test' guard mirrors the existing pattern in src/lib/db/factory.ts.)
+  const sampleConsideredHere =
+    process.env.NODE_ENV !== 'test' || !!process.env.LIBREDB_EMBEDDED_SAMPLE_PATH;
+
+  if (isSampleEnabled() && sampleConsideredHere) {
     try {
       if (fs.existsSync(resolveSamplePath())) {
         return [...fromConfig, buildSampleConnection()];
       }
-    } catch { /* fs error -> just omit the sample */ }
+    } catch { /* fs error -> omit the sample */ }
   }
   return fromConfig;
 }

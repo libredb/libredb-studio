@@ -12,13 +12,12 @@ export async function register(): Promise<void> {
   if (!isSampleEnabled()) return;
 
   const { logger } = await import('@/lib/logger');
-  const filePath = resolveSamplePath();
   try {
+    const filePath = resolveSamplePath();
     await seedSampleFile(filePath);
   } catch (error) {
     logger.warn('LibreDB embedded sample seeding skipped', {
       route: 'instrumentation',
-      path: filePath,
       error: error instanceof Error ? error.message : String(error),
     });
   }
