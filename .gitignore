@@ -105,3 +105,6 @@ npmjs-token
 .token
 .sonar-token
 data/
+# Local Docker test volumes and any stray embedded-db files
+.docker-data*/
+*.libredb
