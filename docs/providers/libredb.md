@@ -252,6 +252,24 @@ file does not exist at `connect()` time, the `@libredb/libredb` package will cre
 ordered-KV store). If the path is missing entirely, `connect()` throws `DatabaseConfigError`
 before attempting to open anything.
 
+### 4.3 Sample connection (standalone mode)
+
+On the first startup of a **standalone** Studio instance (i.e. not embedded inside
+libredb-platform), Studio automatically creates a connection named **"Sample (LibreDB)"** seeded
+with example data covering each lens (relational table, document collection, raw kv). This gives
+new users a working LibreDB file to explore immediately.
+
+The sample connection is fully editable and deletable. Once deleted it stays gone — Studio tracks
+dismissed seeds and will not recreate it. It is never injected when Studio runs as an embedded
+package inside libredb-platform.
+
+**Env vars:**
+
+| Variable | Default | Notes |
+|----------|---------|-------|
+| `LIBREDB_EMBEDDED_SAMPLE` | `true` | Set to `"false"` to disable the sample connection entirely. |
+| `LIBREDB_EMBEDDED_SAMPLE_PATH` | `<data dir>/sample.libredb` | Optional override for the path of the generated sample file. |
+
 ---
 
 ## 5. Query interface
