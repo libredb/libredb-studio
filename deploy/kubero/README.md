@@ -4,7 +4,8 @@
 "Heroku alternative for Kubernetes" — that deploys 12-factor apps onto a cluster
 from a built-in template catalog.
 
-LibreDB Studio is published in the official Kubero template catalog
+LibreDB Studio is listed in the official
+[Kubero template catalog](https://www.kubero.dev/templates)
 (merged in [kubero-dev/kubero#754](https://github.com/kubero-dev/kubero/pull/754)).
 The canonical template lives in the Kubero repo at
 [`services/libredb-studio/app.yaml`](https://github.com/kubero-dev/kubero/blob/main/services/libredb-studio/app.yaml)
