@@ -368,7 +368,7 @@ Deploy your own instance of LibreDB Studio with a single click on Koyeb, Render,
 >
 > **Koyeb:** set a strong `JWT_SECRET` and credentials before deploying (Koyeb cannot auto-generate secrets). The button uses `STORAGE_PROVIDER=local` — connection metadata lives in the browser, which suits Koyeb's ephemeral filesystem. For persistence across redeploys, switch to `STORAGE_PROVIDER=postgres` and point `STORAGE_POSTGRES_URL` at a Koyeb managed Postgres or Neon database. See [`deploy/koyeb/`](deploy/koyeb/).
 >
-> **Cosmos:** install in one click from the [Cosmos](https://cosmos-cloud.io) Market Place — search for **LibreDB Studio**. Cosmos auto-generates secrets, provisions a persistent SQLite volume, and serves the app behind its SmartShield reverse proxy. See [`deploy/cosmos/`](deploy/cosmos/).
+> **Cosmos:** install in one click from the [Cosmos](https://cosmos-cloud.io) Marketplace — search for **LibreDB Studio**. Cosmos auto-generates secrets, provisions a persistent SQLite volume, and serves the app behind its SmartShield reverse proxy. See [`deploy/cosmos/`](deploy/cosmos/).
 
 
 ### Environment Variables
@@ -446,7 +446,7 @@ each release.
 LibreDB Studio is listed in the official
 [Cosmos servapp marketplace](https://github.com/azukaar/cosmos-servapps-official)
 ([Cosmos](https://cosmos-cloud.io) is a self-hosted server manager and secure
-reverse proxy). From your Cosmos dashboard, open **Market Place**, search
+reverse proxy). From your Cosmos dashboard, open **Marketplace**, search
 **LibreDB Studio**, and install. Cosmos auto-generates the credentials and
 `JWT_SECRET`, provisions a persistent SQLite volume at `/app/data`, and serves
 the app behind a SmartShield-protected route. See

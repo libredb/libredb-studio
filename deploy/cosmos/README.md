@@ -18,7 +18,7 @@ this folder is a documentation mirror, not the source of truth.
 From a running Cosmos instance (see the
 [Cosmos install docs](https://cosmos-cloud.io/doc/1%20index/) to set one up):
 
-1. **Open your Cosmos dashboard** → **Market Place**.
+1. **Open your Cosmos dashboard** → **Marketplace**.
 2. **Search** for **LibreDB Studio**.
 3. **Install.** Cosmos auto-generates the admin/user passwords and `JWT_SECRET`,
    provisions a persistent volume, and wires up a SmartShield-protected route.
