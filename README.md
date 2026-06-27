@@ -427,6 +427,10 @@ LibreDB Studio is published in the official [CapRover One-Click Apps](https://gi
 
 The app runs the prebuilt `ghcr.io/libredb/libredb-studio` image. As with Railway, Docker-image templates require a manual version bump on each release.
 
+### Kubero
+
+LibreDB Studio is published in the official [Kubero](https://www.kubero.dev) template catalog (a self-hosted "Heroku alternative for Kubernetes"). From your Kubero dashboard, browse **Templates**, search **LibreDB Studio**, fill in the credentials / `JWT_SECRET`, and deploy. The template runs the prebuilt `ghcr.io/libredb/libredb-studio` image with SQLite persistence on a 5Gi volume at `/app/data`. See [`deploy/kubero/`](deploy/kubero/) for install and post-install details. As with Railway and CapRover, Docker-image templates require a manual version bump on each release.
+
 ### Render (Recommended for cloud deployment)
 
 LibreDB Studio includes a `render.yaml` Blueprint for one-click deployment:
