@@ -14,8 +14,9 @@ source of truth.
 
 ## Install
 
-From a running Kubero instance (install Kubero itself with
-`curl -L https://get.kubero.dev | bash`):
+From a running Kubero instance (see the
+[Kubero install docs](https://docs.kubero.dev/docs/Getting-Started/Installation/)
+to set one up):
 
 1. **Open your Kubero dashboard** → create or pick a pipeline/app, then browse
    **Templates**.

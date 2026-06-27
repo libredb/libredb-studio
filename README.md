@@ -429,7 +429,15 @@ The app runs the prebuilt `ghcr.io/libredb/libredb-studio` image. As with Railwa
 
 ### Kubero
 
-LibreDB Studio is listed in the official [Kubero template catalog](https://www.kubero.dev/templates) (a self-hosted "Heroku alternative for Kubernetes"). From your Kubero dashboard, browse **Templates**, search **LibreDB Studio**, fill in the credentials / `JWT_SECRET`, and deploy. The template runs the prebuilt `ghcr.io/libredb/libredb-studio` image with SQLite persistence on a 5Gi volume at `/app/data`. See [`deploy/kubero/`](deploy/kubero/) for install and post-install details. As with Railway and CapRover, Docker-image templates require a manual version bump on each release.
+LibreDB Studio is listed in the official
+[Kubero template catalog](https://www.kubero.dev/templates) (a self-hosted
+"Heroku alternative for Kubernetes"). From your Kubero dashboard, browse
+**Templates**, search **LibreDB Studio**, fill in the credentials / `JWT_SECRET`,
+and deploy. The template runs the prebuilt `ghcr.io/libredb/libredb-studio` image
+with SQLite persistence on a 5Gi volume at `/app/data`. See
+[`deploy/kubero/`](deploy/kubero/) for install and post-install details. As with
+Railway and CapRover, Docker-image templates require a manual version bump on
+each release.
 
 ### Render (Recommended for cloud deployment)
 
