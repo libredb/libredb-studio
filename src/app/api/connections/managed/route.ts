@@ -1,15 +1,15 @@
-import { NextResponse } from 'next/server';
-import { getSession } from '@/lib/auth';
-import { getManagedConnections } from '@/lib/seed';
-import { logger } from '@/lib/logger';
+import { NextResponse } from "next/server";
+import { getSession } from "@/lib/auth";
+import { getManagedConnections } from "@/lib/seed";
+import { logger } from "@/lib/logger";
 
-export const dynamic = 'force-dynamic';
+export const dynamic = "force-dynamic";
 
 export async function GET() {
   try {
     const session = await getSession();
     if (!session) {
-      return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
+      return NextResponse.json({ error: "Authentication required" }, { status: 401 });
     }
 
     const connections = await getManagedConnections([session.role]);
@@ -27,9 +27,9 @@ export async function GET() {
 
     return NextResponse.json({ connections: sanitized, cacheHint: cacheTTL });
   } catch (error) {
-    logger.error('Failed to load managed connections', error, {
-      route: 'GET /api/connections/managed',
+    logger.error("Failed to load managed connections", error, {
+      route: "GET /api/connections/managed",
     });
-    return NextResponse.json({ error: 'Failed to load managed connections' }, { status: 500 });
+    return NextResponse.json({ error: "Failed to load managed connections" }, { status: 500 });
   }
 }

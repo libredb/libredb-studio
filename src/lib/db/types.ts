@@ -13,15 +13,9 @@ export type {
   IndexSchema,
   ForeignKeySchema,
   QueryResult,
-} from '../types';
+} from "../types";
 
-import type {
-  DatabaseType,
-  DatabaseConnection,
-  TableSchema,
-  TableRelations,
-  QueryResult,
-} from '../types';
+import type { DatabaseType, DatabaseConnection, TableSchema, TableRelations, QueryResult } from "../types";
 
 // ============================================================================
 // Pool Configuration
@@ -79,7 +73,7 @@ export interface HealthInfo {
 // Maintenance Operations
 // ============================================================================
 
-export type MaintenanceType = 'vacuum' | 'analyze' | 'reindex' | 'kill' | 'optimize' | 'check';
+export type MaintenanceType = "vacuum" | "analyze" | "reindex" | "kill" | "optimize" | "check";
 
 export interface MaintenanceResult {
   success: boolean;
@@ -92,7 +86,7 @@ export interface MaintenanceResult {
 // ============================================================================
 
 export interface ProviderCapabilities {
-  queryLanguage: 'sql' | 'json';
+  queryLanguage: "sql" | "json";
   /**
    * Optional client-side query dialect. `queryLanguage` only says SQL vs JSON;
    * for non-SQL providers the query generators otherwise assume MongoDB syntax.
@@ -100,7 +94,7 @@ export interface ProviderCapabilities {
    * generator (see `query-generators.ts`). Left undefined by SQL/Mongo/Redis,
    * so their generation is unchanged.
    */
-  queryDialect?: 'libredb';
+  queryDialect?: "libredb";
   supportsExplain: boolean;
   supportsExternalQueryLimiting: boolean;
   supportsCreateTable: boolean;

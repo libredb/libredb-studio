@@ -11,23 +11,98 @@
  * // result.aliases.get('o') => { alias: 'o', tableName: 'orders', source: 'join' }
  */
 
-import type { TableAlias, AliasExtractionResult, AliasExtractorOptions } from './types';
+import type { TableAlias, AliasExtractionResult, AliasExtractorOptions } from "./types";
 
 /**
  * SQL keywords that should not be treated as aliases
  */
 const SQL_KEYWORDS = new Set([
-  'on', 'where', 'and', 'or', 'not', 'in', 'is', 'null', 'like', 'between',
-  'set', 'values', 'select', 'from', 'join', 'using', 'as',
-  'left', 'right', 'inner', 'outer', 'cross', 'full', 'natural', 'lateral',
-  'group', 'order', 'by', 'having', 'limit', 'offset', 'fetch', 'first', 'next',
-  'union', 'except', 'intersect', 'all', 'distinct', 'with', 'recursive',
-  'case', 'when', 'then', 'else', 'end', 'cast', 'over', 'partition',
-  'asc', 'desc', 'nulls', 'rows', 'range', 'preceding', 'following', 'current',
-  'into', 'insert', 'update', 'delete', 'truncate', 'create', 'alter', 'drop',
-  'table', 'view', 'index', 'schema', 'database', 'function', 'trigger', 'procedure',
-  'primary', 'key', 'foreign', 'references', 'unique', 'check', 'default', 'constraint',
-  'true', 'false', 'exists', 'any', 'some'
+  "on",
+  "where",
+  "and",
+  "or",
+  "not",
+  "in",
+  "is",
+  "null",
+  "like",
+  "between",
+  "set",
+  "values",
+  "select",
+  "from",
+  "join",
+  "using",
+  "as",
+  "left",
+  "right",
+  "inner",
+  "outer",
+  "cross",
+  "full",
+  "natural",
+  "lateral",
+  "group",
+  "order",
+  "by",
+  "having",
+  "limit",
+  "offset",
+  "fetch",
+  "first",
+  "next",
+  "union",
+  "except",
+  "intersect",
+  "all",
+  "distinct",
+  "with",
+  "recursive",
+  "case",
+  "when",
+  "then",
+  "else",
+  "end",
+  "cast",
+  "over",
+  "partition",
+  "asc",
+  "desc",
+  "nulls",
+  "rows",
+  "range",
+  "preceding",
+  "following",
+  "current",
+  "into",
+  "insert",
+  "update",
+  "delete",
+  "truncate",
+  "create",
+  "alter",
+  "drop",
+  "table",
+  "view",
+  "index",
+  "schema",
+  "database",
+  "function",
+  "trigger",
+  "procedure",
+  "primary",
+  "key",
+  "foreign",
+  "references",
+  "unique",
+  "check",
+  "default",
+  "constraint",
+  "true",
+  "false",
+  "exists",
+  "any",
+  "some",
 ]);
 
 /**
@@ -42,32 +117,30 @@ function isSqlKeyword(identifier: string): boolean {
  */
 function hasTableKeywords(sql: string): boolean {
   const upper = sql.toUpperCase();
-  return upper.includes('FROM') || upper.includes('JOIN') || upper.includes('WITH');
+  return upper.includes("FROM") || upper.includes("JOIN") || upper.includes("WITH");
 }
 
 /**
  * Remove SQL comments and string literals to prevent false matches
  */
 function preprocessSql(sql: string): string {
-  return sql
-    // Remove multi-line comments /* ... */
-    .replace(/\/\*[\s\S]*?\*\//g, ' ')
-    // Remove single-line comments -- ...
-    .replace(/--[^\n]*/g, ' ')
-    // Replace string literals with placeholder to preserve structure
-    .replace(/'(?:[^'\\]|\\.)*'/g, "''")
-    .replace(/"(?:[^"\\]|\\.)*"/g, '""');
+  return (
+    sql
+      // Remove multi-line comments /* ... */
+      .replace(/\/\*[\s\S]*?\*\//g, " ")
+      // Remove single-line comments -- ...
+      .replace(/--[^\n]*/g, " ")
+      // Replace string literals with placeholder to preserve structure
+      .replace(/'(?:[^'\\]|\\.)*'/g, "''")
+      .replace(/"(?:[^"\\]|\\.)*"/g, '""')
+  );
 }
 
 /**
  * Extract aliases from WITH clause (CTEs)
  * Pattern: WITH cte_name AS (...)
  */
-function extractCTEAliases(
-  sql: string,
-  aliases: Map<string, TableAlias>,
-  caseInsensitive: boolean
-): void {
+function extractCTEAliases(sql: string, aliases: Map<string, TableAlias>, caseInsensitive: boolean): void {
   // First, check if there's a WITH clause
   const withMatch = sql.match(/\bWITH\s+(?:RECURSIVE\s+)?/i);
   if (!withMatch) return;
@@ -91,7 +164,7 @@ function extractCTEAliases(
       aliases.set(key, {
         alias: cteName,
         tableName: cteName, // CTE name is both alias and "table"
-        source: 'cte'
+        source: "cte",
       });
     }
   }
@@ -105,11 +178,7 @@ function extractCTEAliases(
  *   FROM schema.table AS alias
  *   FROM schema.table alias
  */
-function extractFromAliases(
-  sql: string,
-  aliases: Map<string, TableAlias>,
-  caseInsensitive: boolean
-): void {
+function extractFromAliases(sql: string, aliases: Map<string, TableAlias>, caseInsensitive: boolean): void {
   // Pattern explanation:
   // \bFROM\s+ - FROM keyword followed by whitespace
   // (?:(\w+)\.)? - Optional schema prefix (captured group 1)
@@ -138,7 +207,7 @@ function extractFromAliases(
         alias,
         tableName,
         schema,
-        source: 'from'
+        source: "from",
       });
     }
   }
@@ -151,14 +220,11 @@ function extractFromAliases(
  *   LEFT JOIN table alias
  *   INNER JOIN schema.table AS alias
  */
-function extractJoinAliases(
-  sql: string,
-  aliases: Map<string, TableAlias>,
-  caseInsensitive: boolean
-): void {
+function extractJoinAliases(sql: string, aliases: Map<string, TableAlias>, caseInsensitive: boolean): void {
   // Pattern for all JOIN types
   // Optional join type prefix: LEFT, RIGHT, INNER, OUTER, CROSS, FULL, NATURAL
-  const joinPattern = /\b(?:LEFT|RIGHT|INNER|OUTER|CROSS|FULL|NATURAL)?\s*JOIN\s+(?:(\w+)\.)?(\w+)\s+(?:AS\s+)?(\w+)(?=\s|$)/gi;
+  const joinPattern =
+    /\b(?:LEFT|RIGHT|INNER|OUTER|CROSS|FULL|NATURAL)?\s*JOIN\s+(?:(\w+)\.)?(\w+)\s+(?:AS\s+)?(\w+)(?=\s|$)/gi;
 
   let match;
   while ((match = joinPattern.exec(sql)) !== null) {
@@ -178,7 +244,7 @@ function extractJoinAliases(
         alias,
         tableName,
         schema,
-        source: 'join'
+        source: "join",
       });
     }
   }
@@ -195,10 +261,7 @@ function extractJoinAliases(
  * const { aliases } = extractAliases('SELECT * FROM customer c WHERE c.id = 1');
  * aliases.get('c'); // { alias: 'c', tableName: 'customer', source: 'from' }
  */
-export function extractAliases(
-  sql: string,
-  options: AliasExtractorOptions = {}
-): AliasExtractionResult {
+export function extractAliases(sql: string, options: AliasExtractorOptions = {}): AliasExtractionResult {
   const { includeCTEs = true, caseInsensitive = true } = options;
 
   const aliases = new Map<string, TableAlias>();
@@ -242,10 +305,7 @@ export function extractAliases(
  * resolveAlias('customer', aliases); // 'customer' (passthrough)
  * resolveAlias('unknown', aliases);  // 'unknown' (passthrough)
  */
-export function resolveAlias(
-  aliasOrTable: string,
-  aliases: Map<string, TableAlias>
-): string {
+export function resolveAlias(aliasOrTable: string, aliases: Map<string, TableAlias>): string {
   const key = aliasOrTable.toLowerCase();
   const tableAlias = aliases.get(key);
   return tableAlias?.tableName ?? aliasOrTable;
@@ -258,10 +318,7 @@ export function resolveAlias(
  * @param aliases - The alias map from extractAliases()
  * @returns The schema name or undefined
  */
-export function getAliasSchema(
-  aliasOrTable: string,
-  aliases: Map<string, TableAlias>
-): string | undefined {
+export function getAliasSchema(aliasOrTable: string, aliases: Map<string, TableAlias>): string | undefined {
   const key = aliasOrTable.toLowerCase();
   return aliases.get(key)?.schema;
 }

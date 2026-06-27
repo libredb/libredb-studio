@@ -1,27 +1,14 @@
-'use client';
+"use client";
 
-import { useEffect, useMemo, useState, useCallback } from 'react';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Progress } from '@/components/ui/progress';
-import { Skeleton } from '@/components/ui/skeleton';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
+import { useEffect, useMemo, useState, useCallback } from "react";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Progress } from "@/components/ui/progress";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import {
   Wrench,
   Search as SearchIcon,
@@ -31,19 +18,12 @@ import {
   RefreshCw,
   Clock,
   Activity,
-} from 'lucide-react';
-import type { AuditEvent } from '@/lib/audit';
-import { storage } from '@/lib/storage';
-import type { QueryHistoryItem } from '@/lib/types';
-import {
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  Tooltip,
-  ResponsiveContainer,
-} from 'recharts';
-import { format, subDays, startOfDay } from 'date-fns';
+} from "lucide-react";
+import type { AuditEvent } from "@/lib/audit";
+import { storage } from "@/lib/storage";
+import type { QueryHistoryItem } from "@/lib/types";
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
+import { format, subDays, startOfDay } from "date-fns";
 
 export function AuditTab() {
   return (
@@ -90,14 +70,14 @@ export function AuditTab() {
 function OperationsAudit() {
   const [events, setEvents] = useState<AuditEvent[]>([]);
   const [loading, setLoading] = useState(true);
-  const [typeFilter, setTypeFilter] = useState<string>('all');
-  const [searchQuery, setSearchQuery] = useState('');
+  const [typeFilter, setTypeFilter] = useState<string>("all");
+  const [searchQuery, setSearchQuery] = useState("");
 
   const fetchEvents = useCallback(async () => {
     setLoading(true);
     try {
-      const params = new URLSearchParams({ limit: '200' });
-      if (typeFilter !== 'all') params.set('type', typeFilter);
+      const params = new URLSearchParams({ limit: "200" });
+      if (typeFilter !== "all") params.set("type", typeFilter);
       const res = await fetch(`/api/admin/audit?${params}`);
       const data = await res.json();
       setEvents(data.events || []);
@@ -119,11 +99,11 @@ function OperationsAudit() {
       (e) =>
         e.action.toLowerCase().includes(q) ||
         e.target.toLowerCase().includes(q) ||
-        (e.connectionName || '').toLowerCase().includes(q)
+        (e.connectionName || "").toLowerCase().includes(q),
     );
   }, [events, searchQuery]);
 
-  const successCount = events.filter((e) => e.result === 'success').length;
+  const successCount = events.filter((e) => e.result === "success").length;
   const successRate = events.length > 0 ? Math.round((successCount / events.length) * 100) : 0;
 
   return (
@@ -155,7 +135,7 @@ function OperationsAudit() {
           onClick={fetchEvents}
           disabled={loading}
         >
-          <RefreshCw className={`w-3 h-3 mr-1.5 ${loading ? 'animate-spin' : ''}`} />
+          <RefreshCw className={`w-3 h-3 mr-1.5 ${loading ? "animate-spin" : ""}`} />
           Refresh
         </Button>
       </div>
@@ -166,8 +146,7 @@ function OperationsAudit() {
           Total: <span className="font-bold text-zinc-300">{events.length}</span> ops
         </span>
         <span>
-          Success:{' '}
-          <span className="font-bold text-emerald-400">{successRate}%</span>
+          Success: <span className="font-bold text-emerald-400">{successRate}%</span>
         </span>
       </div>
 
@@ -183,9 +162,7 @@ function OperationsAudit() {
           <div className="p-8 text-center text-zinc-600 text-sm">
             <Wrench className="h-8 w-8 mx-auto mb-2 opacity-30" />
             <p>No audit events found.</p>
-            <p className="text-xs mt-1 text-zinc-700">
-              Operations will appear here when maintenance tasks are run.
-            </p>
+            <p className="text-xs mt-1 text-zinc-700">Operations will appear here when maintenance tasks are run.</p>
           </div>
         ) : (
           <Table>
@@ -195,7 +172,9 @@ function OperationsAudit() {
                 <TableHead className="text-xs text-zinc-500 font-bold uppercase">Time</TableHead>
                 <TableHead className="text-xs text-zinc-500 font-bold uppercase">Action</TableHead>
                 <TableHead className="text-xs text-zinc-500 font-bold uppercase">Target</TableHead>
-                <TableHead className="text-xs text-zinc-500 font-bold uppercase hidden md:table-cell">Connection</TableHead>
+                <TableHead className="text-xs text-zinc-500 font-bold uppercase hidden md:table-cell">
+                  Connection
+                </TableHead>
                 <TableHead className="text-xs text-zinc-500 font-bold uppercase hidden lg:table-cell">User</TableHead>
                 <TableHead className="text-right text-xs text-zinc-500 font-bold uppercase">Duration</TableHead>
               </TableRow>
@@ -204,7 +183,7 @@ function OperationsAudit() {
               {filteredEvents.map((event) => (
                 <TableRow key={event.id} className="border-white/5 hover:bg-white/[0.03]">
                   <TableCell className="py-2">
-                    {event.result === 'success' ? (
+                    {event.result === "success" ? (
                       <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
                     ) : (
                       <XCircle className="w-3.5 h-3.5 text-red-500" />
@@ -212,17 +191,14 @@ function OperationsAudit() {
                   </TableCell>
                   <TableCell className="py-2 font-mono text-xs text-zinc-500">
                     {new Date(event.timestamp).toLocaleString([], {
-                      month: 'short',
-                      day: 'numeric',
-                      hour: '2-digit',
-                      minute: '2-digit',
+                      month: "short",
+                      day: "numeric",
+                      hour: "2-digit",
+                      minute: "2-digit",
                     })}
                   </TableCell>
                   <TableCell className="py-2">
-                    <Badge
-                      variant="outline"
-                      className="text-[0.625rem] font-bold border-white/10"
-                    >
+                    <Badge variant="outline" className="text-[0.625rem] font-bold border-white/10">
                       {event.action}
                     </Badge>
                   </TableCell>
@@ -230,13 +206,11 @@ function OperationsAudit() {
                     {event.target}
                   </TableCell>
                   <TableCell className="py-2 text-xs text-zinc-500 hidden md:table-cell truncate max-w-[100px]">
-                    {event.connectionName || '-'}
+                    {event.connectionName || "-"}
                   </TableCell>
-                  <TableCell className="py-2 text-xs text-zinc-500 hidden lg:table-cell">
-                    {event.user}
-                  </TableCell>
+                  <TableCell className="py-2 text-xs text-zinc-500 hidden lg:table-cell">{event.user}</TableCell>
                   <TableCell className="py-2 text-right font-mono text-xs text-zinc-500">
-                    {event.duration ? `${event.duration}ms` : '-'}
+                    {event.duration ? `${event.duration}ms` : "-"}
                   </TableCell>
                 </TableRow>
               ))}
@@ -250,8 +224,8 @@ function OperationsAudit() {
 
 function QueryAudit() {
   const [history, setHistory] = useState<QueryHistoryItem[]>([]);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [searchQuery, setSearchQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState<string>("all");
 
   useEffect(() => {
     setHistory(storage.getHistory());
@@ -259,21 +233,19 @@ function QueryAudit() {
 
   const filteredHistory = useMemo(() => {
     let items = history;
-    if (statusFilter !== 'all') {
+    if (statusFilter !== "all") {
       items = items.filter((h) => h.status === statusFilter);
     }
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
       items = items.filter(
-        (h) =>
-          h.query.toLowerCase().includes(q) ||
-          (h.connectionName || '').toLowerCase().includes(q)
+        (h) => h.query.toLowerCase().includes(q) || (h.connectionName || "").toLowerCase().includes(q),
       );
     }
     return items.slice(0, 200);
   }, [history, searchQuery, statusFilter]);
 
-  const successCount = history.filter((h) => h.status === 'success').length;
+  const successCount = history.filter((h) => h.status === "success").length;
   const successRate = history.length > 0 ? Math.round((successCount / history.length) * 100) : 0;
 
   return (
@@ -317,16 +289,20 @@ function QueryAudit() {
                 <TableHead className="text-xs text-zinc-500 font-bold uppercase w-[30px]" />
                 <TableHead className="text-xs text-zinc-500 font-bold uppercase">Time</TableHead>
                 <TableHead className="text-xs text-zinc-500 font-bold uppercase">Query</TableHead>
-                <TableHead className="text-xs text-zinc-500 font-bold uppercase hidden md:table-cell">Connection</TableHead>
+                <TableHead className="text-xs text-zinc-500 font-bold uppercase hidden md:table-cell">
+                  Connection
+                </TableHead>
                 <TableHead className="text-right text-xs text-zinc-500 font-bold uppercase">Duration</TableHead>
-                <TableHead className="text-right text-xs text-zinc-500 font-bold uppercase hidden sm:table-cell">Rows</TableHead>
+                <TableHead className="text-right text-xs text-zinc-500 font-bold uppercase hidden sm:table-cell">
+                  Rows
+                </TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {filteredHistory.map((item, idx) => (
                 <TableRow key={idx} className="border-white/5 hover:bg-white/[0.03]">
                   <TableCell className="py-2">
-                    {item.status === 'success' ? (
+                    {item.status === "success" ? (
                       <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
                     ) : (
                       <XCircle className="w-3.5 h-3.5 text-red-500" />
@@ -334,10 +310,10 @@ function QueryAudit() {
                   </TableCell>
                   <TableCell className="py-2 font-mono text-xs text-zinc-500 whitespace-nowrap">
                     {new Date(item.executedAt).toLocaleString([], {
-                      month: 'short',
-                      day: 'numeric',
-                      hour: '2-digit',
-                      minute: '2-digit',
+                      month: "short",
+                      day: "numeric",
+                      hour: "2-digit",
+                      minute: "2-digit",
                     })}
                   </TableCell>
                   <TableCell className="py-2">
@@ -346,13 +322,13 @@ function QueryAudit() {
                     </div>
                   </TableCell>
                   <TableCell className="py-2 text-xs text-zinc-500 hidden md:table-cell truncate max-w-[100px]">
-                    {item.connectionName || '-'}
+                    {item.connectionName || "-"}
                   </TableCell>
                   <TableCell className="py-2 text-right font-mono text-xs text-zinc-500">
                     {item.executionTime}ms
                   </TableCell>
                   <TableCell className="py-2 text-right font-mono text-xs text-zinc-500 hidden sm:table-cell">
-                    {item.rowCount ?? '-'}
+                    {item.rowCount ?? "-"}
                   </TableCell>
                 </TableRow>
               ))}
@@ -373,14 +349,9 @@ function AuditStats() {
 
   const stats = useMemo(() => {
     const total = history.length;
-    const successful = history.filter((h) => h.status === 'success').length;
+    const successful = history.filter((h) => h.status === "success").length;
     const successRate = total > 0 ? Math.round((successful / total) * 100) : 0;
-    const avgTime =
-      total > 0
-        ? Math.round(
-            history.reduce((sum, h) => sum + h.executionTime, 0) / total
-          )
-        : 0;
+    const avgTime = total > 0 ? Math.round(history.reduce((sum, h) => sum + h.executionTime, 0) / total) : 0;
 
     const now = new Date();
     const byDay: { day: string; count: number }[] = [];
@@ -391,7 +362,7 @@ function AuditStats() {
         const t = new Date(h.executedAt).getTime();
         return t >= dayStart.getTime() && t < dayEnd.getTime();
       }).length;
-      byDay.push({ day: format(dayStart, 'EEE'), count });
+      byDay.push({ day: format(dayStart, "EEE"), count });
     }
 
     // Most active connections
@@ -416,15 +387,11 @@ function AuditStats() {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <div className="rounded-xl border border-white/5 bg-zinc-900/50 p-4">
           <div className="text-xs text-zinc-500 mb-1">Total Queries</div>
-          <div className="text-2xl font-bold text-zinc-100 tabular-nums">
-            {stats.total}
-          </div>
+          <div className="text-2xl font-bold text-zinc-100 tabular-nums">{stats.total}</div>
         </div>
         <div className="rounded-xl border border-white/5 bg-zinc-900/50 p-4">
           <div className="text-xs text-zinc-500 mb-1">Success Rate</div>
-          <div className="text-2xl font-bold text-emerald-400 tabular-nums">
-            {stats.successRate}%
-          </div>
+          <div className="text-2xl font-bold text-emerald-400 tabular-nums">{stats.successRate}%</div>
           <Progress value={stats.successRate} className="h-1 mt-2" />
         </div>
         <div className="rounded-xl border border-white/5 bg-zinc-900/50 p-4">
@@ -436,9 +403,7 @@ function AuditStats() {
         </div>
         <div className="rounded-xl border border-white/5 bg-zinc-900/50 p-4">
           <div className="text-xs text-zinc-500 mb-1">Failed</div>
-          <div className="text-2xl font-bold text-red-400 tabular-nums">
-            {stats.total - stats.successful}
-          </div>
+          <div className="text-2xl font-bold text-red-400 tabular-nums">{stats.total - stats.successful}</div>
         </div>
       </div>
 
@@ -450,41 +415,29 @@ function AuditStats() {
             Query Activity (7 days)
           </h3>
           {stats.total === 0 ? (
-            <div className="flex items-center justify-center py-8 text-sm text-zinc-600">
-              No query history yet.
-            </div>
+            <div className="flex items-center justify-center py-8 text-sm text-zinc-600">No query history yet.</div>
           ) : (
             <div className="h-[200px]">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={stats.byDay}>
-                  <XAxis
-                    dataKey="day"
-                    tick={{ fontSize: 11, fill: '#71717a' }}
-                    axisLine={false}
-                    tickLine={false}
-                  />
+                  <XAxis dataKey="day" tick={{ fontSize: 11, fill: "#71717a" }} axisLine={false} tickLine={false} />
                   <YAxis
                     allowDecimals={false}
-                    tick={{ fontSize: 11, fill: '#71717a' }}
+                    tick={{ fontSize: 11, fill: "#71717a" }}
                     axisLine={false}
                     tickLine={false}
                     width={30}
                   />
                   <Tooltip
                     contentStyle={{
-                      backgroundColor: '#18181b',
-                      border: '1px solid rgba(255,255,255,0.1)',
-                      borderRadius: '8px',
+                      backgroundColor: "#18181b",
+                      border: "1px solid rgba(255,255,255,0.1)",
+                      borderRadius: "8px",
                       fontSize: 12,
-                      color: '#a1a1aa',
+                      color: "#a1a1aa",
                     }}
                   />
-                  <Bar
-                    dataKey="count"
-                    name="Queries"
-                    fill="#3b82f6"
-                    radius={[4, 4, 0, 0]}
-                  />
+                  <Bar dataKey="count" name="Queries" fill="#3b82f6" radius={[4, 4, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -498,22 +451,15 @@ function AuditStats() {
             Most Active Connections
           </h3>
           {stats.topConnections.length === 0 ? (
-            <div className="flex items-center justify-center py-8 text-sm text-zinc-600">
-              No data yet.
-            </div>
+            <div className="flex items-center justify-center py-8 text-sm text-zinc-600">No data yet.</div>
           ) : (
             <div className="space-y-3">
               {stats.topConnections.map((tc) => {
-                const pct =
-                  stats.total > 0
-                    ? Math.round((tc.count / stats.total) * 100)
-                    : 0;
+                const pct = stats.total > 0 ? Math.round((tc.count / stats.total) * 100) : 0;
                 return (
                   <div key={tc.name} className="space-y-1">
                     <div className="flex items-center justify-between text-xs">
-                      <span className="truncate max-w-[160px] text-zinc-400">
-                        {tc.name}
-                      </span>
+                      <span className="truncate max-w-[160px] text-zinc-400">{tc.name}</span>
                       <span className="text-zinc-500">
                         {tc.count} ({pct}%)
                       </span>

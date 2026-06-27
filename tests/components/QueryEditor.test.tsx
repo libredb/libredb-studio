@@ -1,9 +1,9 @@
-import '../setup-dom';
-import '../helpers/mock-sonner';
-import '../helpers/mock-navigation';
+import "../setup-dom";
+import "../helpers/mock-sonner";
+import "../helpers/mock-navigation";
 
-import { mock } from 'bun:test';
-import React from 'react';
+import { mock } from "bun:test";
+import React from "react";
 
 // ─── Module-level capture variables for mock editor callbacks ─────────────────
 let capturedBlurCb: (() => void) | null = null;
@@ -11,16 +11,16 @@ let capturedSelectionCb: (() => void) | null = null;
 let capturedCommands: Array<{ keybinding: number; handler: () => void }> = [];
 let capturedActions: Array<{ id: string; run: () => void }> = [];
 let mockSelectionReturn: { isEmpty: () => boolean } | null = null;
-let mockSelectedText = '';
+let mockSelectedText = "";
 let mockUseMonacoReturn: unknown = null;
 let mockCursorOffset = 0;
 let mockGetModelReturn: (() => unknown) | null = null;
-let mockDeltaDecorations = mock((..._a: unknown[]) => ['deco-1']);
+let mockDeltaDecorations = mock((..._a: unknown[]) => ["deco-1"]);
 let mockUpdateOptions = mock((..._a: unknown[]) => {});
 let capturedAiChatDeps: Record<string, unknown> | null = null;
 
 // ── Mock Monaco Editor with React.createElement (not plain objects) ─────────
-mock.module('@monaco-editor/react', () => ({
+mock.module("@monaco-editor/react", () => ({
   default: function MockEditor(props: {
     value?: string;
     onChange?: (value: string | undefined) => void;
@@ -33,13 +33,13 @@ mock.module('@monaco-editor/react', () => ({
     options?: Record<string, unknown>;
   }) {
     const { value, onChange, language, onMount, beforeMount } = props;
-    const valueRef = React.useRef(value ?? '');
-    const [textValue, setTextValue] = React.useState(value ?? '');
+    const valueRef = React.useRef(value ?? "");
+    const [textValue, setTextValue] = React.useState(value ?? "");
     const mountedRef = React.useRef(false);
 
     React.useEffect(() => {
       // Only update display state, not valueRef — simulates real Monaco requiring explicit setValue()
-      setTextValue(value ?? '');
+      setTextValue(value ?? "");
     }, [value]);
 
     React.useEffect(() => {
@@ -54,7 +54,7 @@ mock.module('@monaco-editor/react', () => ({
             public startLineNumber: number,
             public startColumn: number,
             public endLineNumber: number,
-            public endColumn: number
+            public endColumn: number,
           ) {}
         },
         editor: {
@@ -75,18 +75,29 @@ mock.module('@monaco-editor/react', () => ({
           setTextValue(next);
         },
         getSelection: () => mockSelectionReturn,
-        getModel: () => mockGetModelReturn !== null ? mockGetModelReturn() : ({
-          getValueInRange: () => mockSelectedText,
-          getValue: () => valueRef.current,
-          getOffsetAt: () => mockCursorOffset,
-          getPositionAt: (offset: number) => ({ lineNumber: 1, column: offset + 1 }),
-        }),
+        getModel: () =>
+          mockGetModelReturn !== null
+            ? mockGetModelReturn()
+            : {
+                getValueInRange: () => mockSelectedText,
+                getValue: () => valueRef.current,
+                getOffsetAt: () => mockCursorOffset,
+                getPositionAt: (offset: number) => ({ lineNumber: 1, column: offset + 1 }),
+              },
         getPosition: () => ({ lineNumber: 1, column: mockCursorOffset + 1 }),
         deltaDecorations: (...args: unknown[]) => mockDeltaDecorations(...args),
-        onDidBlurEditorText: (cb: () => void) => { capturedBlurCb = cb; },
-        onDidChangeCursorSelection: (cb: () => void) => { capturedSelectionCb = cb; },
-        addCommand: (_keybinding: number, handler: () => void) => { capturedCommands.push({ keybinding: _keybinding, handler }); },
-        addAction: (action: { id: string; run: () => void }) => { capturedActions.push(action); },
+        onDidBlurEditorText: (cb: () => void) => {
+          capturedBlurCb = cb;
+        },
+        onDidChangeCursorSelection: (cb: () => void) => {
+          capturedSelectionCb = cb;
+        },
+        addCommand: (_keybinding: number, handler: () => void) => {
+          capturedCommands.push({ keybinding: _keybinding, handler });
+        },
+        addAction: (action: { id: string; run: () => void }) => {
+          capturedActions.push(action);
+        },
         focus: mock(() => {}),
         updateOptions: (...args: unknown[]) => mockUpdateOptions(...args),
       };
@@ -95,15 +106,15 @@ mock.module('@monaco-editor/react', () => ({
       onMount?.(editorMock, monacoMock);
     }, [beforeMount, onMount]);
 
-    return React.createElement('textarea', {
-      'data-testid': 'mock-monaco-editor',
+    return React.createElement("textarea", {
+      "data-testid": "mock-monaco-editor",
       value: textValue,
       onChange: (e: React.ChangeEvent<HTMLTextAreaElement>) => {
         valueRef.current = e.target.value;
         setTextValue(e.target.value);
         onChange?.(e.target.value);
       },
-      'aria-label': `${language ?? 'sql'} editor`,
+      "aria-label": `${language ?? "sql"} editor`,
     });
   },
   Editor: function MockEditor(props: {
@@ -111,9 +122,9 @@ mock.module('@monaco-editor/react', () => ({
     onChange?: (value: string | undefined) => void;
     language?: string;
   }) {
-    return React.createElement('textarea', {
-      'data-testid': 'mock-monaco-editor',
-      value: props.value ?? '',
+    return React.createElement("textarea", {
+      "data-testid": "mock-monaco-editor",
+      value: props.value ?? "",
       onChange: (e: React.ChangeEvent<HTMLTextAreaElement>) => props.onChange?.(e.target.value),
     });
   },
@@ -125,14 +136,17 @@ mock.module('@monaco-editor/react', () => ({
 }));
 
 // ── Mock framer-motion ──────────────────────────────────────────────────────
-mock.module('framer-motion', () => {
+mock.module("framer-motion", () => {
   const passthrough = ({ children, ...props }: Record<string, unknown>) =>
-    React.createElement('div', props, children as React.ReactNode);
+    React.createElement("div", props, children as React.ReactNode);
 
   return {
-    motion: new Proxy({}, {
-      get: () => passthrough,
-    }),
+    motion: new Proxy(
+      {},
+      {
+        get: () => passthrough,
+      },
+    ),
     AnimatePresence: ({ children }: { children: React.ReactNode }) => children,
     useAnimation: () => ({ start: mock(() => {}), stop: mock(() => {}) }),
     useInView: () => true,
@@ -154,13 +168,13 @@ let mockClipboardWriteText = mock((data: string) => {
   return Promise.resolve();
 });
 
-mock.module('@/hooks/use-ai-chat', () => ({
+mock.module("@/hooks/use-ai-chat", () => ({
   useAiChat: mock((deps: Record<string, unknown>) => {
     capturedAiChatDeps = deps;
     return {
       showAi: mockShowAi,
       setShowAi: mockSetShowAi,
-      aiPrompt: '',
+      aiPrompt: "",
       setAiPrompt: mockSetAiPrompt,
       isAiLoading: mockIsAiLoading,
       aiError: mockAiError,
@@ -173,43 +187,46 @@ mock.module('@/hooks/use-ai-chat', () => ({
 }));
 
 // ── Mock sql-formatter ──────────────────────────────────────────────────────
-mock.module('sql-formatter', () => ({
+mock.module("sql-formatter", () => ({
   format: mock((sql: string) => sql),
 }));
 
 // ── Mock editor/sql-completions ─────────────────────────────────────────────
-mock.module('@/lib/editor/sql-completions', () => ({
+mock.module("@/lib/editor/sql-completions", () => ({
   registerSQLCompletionProvider: mock(() => ({ dispose: mock(() => {}) })),
 }));
 
 // ── Mock editor/mongodb-completions ─────────────────────────────────────────
-mock.module('@/lib/editor/mongodb-completions', () => ({
+mock.module("@/lib/editor/mongodb-completions", () => ({
   registerMongoDBCompletionProvider: mock(() => ({ dispose: mock(() => {}) })),
 }));
 
 // ── Mock lucide-react icons ─────────────────────────────────────────────────
-mock.module('lucide-react', () => {
-  return new Proxy({}, {
-    get: (_target, prop) => {
-      if (prop === '__esModule') return true;
-      return (props: Record<string, unknown>) =>
-        React.createElement('span', { 'data-icon': prop, className: props.className as string });
+mock.module("lucide-react", () => {
+  return new Proxy(
+    {},
+    {
+      get: (_target, prop) => {
+        if (prop === "__esModule") return true;
+        return (props: Record<string, unknown>) =>
+          React.createElement("span", { "data-icon": prop, className: props.className as string });
+      },
     },
-  });
+  );
 });
 
 // ── Imports AFTER mocks ─────────────────────────────────────────────────────
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { render, cleanup, fireEvent, act } from '@testing-library/react';
-import { QueryEditor } from '@/components/QueryEditor';
-import type { MaintenanceType } from '@/lib/db/types';
+import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+import { render, cleanup, fireEvent, act } from "@testing-library/react";
+import { QueryEditor } from "@/components/QueryEditor";
+import type { MaintenanceType } from "@/lib/db/types";
 
 // =============================================================================
 // QueryEditor Tests
 // =============================================================================
 
 const defaultCapabilities = {
-  queryLanguage: 'sql' as const,
+  queryLanguage: "sql" as const,
   supportsExplain: true,
   supportsExternalQueryLimiting: true,
   supportsCreateTable: true,
@@ -217,25 +234,39 @@ const defaultCapabilities = {
   maintenanceOperations: [] as MaintenanceType[],
   supportsConnectionString: false,
   defaultPort: 5432,
-  schemaRefreshPattern: '',
+  schemaRefreshPattern: "",
 };
 
 function createDefaultProps(overrides: Partial<Parameters<typeof QueryEditor>[0]> = {}) {
   return {
-    value: 'SELECT * FROM users',
+    value: "SELECT * FROM users",
     onChange: mock(() => {}),
-    language: 'sql' as const,
-    tables: ['users', 'orders', 'products'],
-    databaseType: 'postgres',
+    language: "sql" as const,
+    tables: ["users", "orders", "products"],
+    databaseType: "postgres",
     schemaContext: JSON.stringify([
-      { name: 'users', rowCount: 100, columns: [{ name: 'id', type: 'integer', isPrimary: true }, { name: 'name', type: 'varchar' }] },
-      { name: 'orders', rowCount: 500, columns: [{ name: 'id', type: 'integer', isPrimary: true }, { name: 'amount', type: 'numeric' }] },
+      {
+        name: "users",
+        rowCount: 100,
+        columns: [
+          { name: "id", type: "integer", isPrimary: true },
+          { name: "name", type: "varchar" },
+        ],
+      },
+      {
+        name: "orders",
+        rowCount: 500,
+        columns: [
+          { name: "id", type: "integer", isPrimary: true },
+          { name: "amount", type: "numeric" },
+        ],
+      },
     ]),
     ...overrides,
   };
 }
 
-describe('QueryEditor', () => {
+describe("QueryEditor", () => {
   afterEach(() => {
     cleanup();
   });
@@ -246,7 +277,7 @@ describe('QueryEditor', () => {
     capturedCommands = [];
     capturedActions = [];
     mockSelectionReturn = null;
-    mockSelectedText = '';
+    mockSelectedText = "";
     mockUseMonacoReturn = null;
     mockIsAiLoading = false;
     mockShowAi = false;
@@ -259,7 +290,7 @@ describe('QueryEditor', () => {
     mockAiConversationHistory = [];
     mockCursorOffset = 0;
     mockGetModelReturn = null;
-    mockDeltaDecorations = mock((..._a: unknown[]) => ['deco-1']);
+    mockDeltaDecorations = mock((..._a: unknown[]) => ["deco-1"]);
     mockUpdateOptions = mock((..._a: unknown[]) => {});
     capturedAiChatDeps = null;
     mockClipboardWriteText = mock((data: string) => {
@@ -270,12 +301,18 @@ describe('QueryEditor', () => {
     // Mock localStorage for line numbers toggle (only if not already defined)
     if (!globalThis.localStorage) {
       const localStorageMock: Record<string, string> = {};
-      Object.defineProperty(globalThis, 'localStorage', {
+      Object.defineProperty(globalThis, "localStorage", {
         value: {
           getItem: (key: string) => localStorageMock[key] || null,
-          setItem: (key: string, value: string) => { localStorageMock[key] = value; },
-          removeItem: (key: string) => { delete localStorageMock[key]; },
-          clear: () => { Object.keys(localStorageMock).forEach(k => delete localStorageMock[k]); },
+          setItem: (key: string, value: string) => {
+            localStorageMock[key] = value;
+          },
+          removeItem: (key: string) => {
+            delete localStorageMock[key];
+          },
+          clear: () => {
+            Object.keys(localStorageMock).forEach((k) => delete localStorageMock[k]);
+          },
         },
         writable: true,
         configurable: true,
@@ -285,12 +322,10 @@ describe('QueryEditor', () => {
       globalThis.localStorage.clear();
     }
 
-
     const nav = globalThis.navigator as Navigator & { clipboard?: Clipboard };
-    const clipboardWriteText: Clipboard['writeText'] = (data: string) =>
-      mockClipboardWriteText(data) as Promise<void>;
+    const clipboardWriteText: Clipboard["writeText"] = (data: string) => mockClipboardWriteText(data) as Promise<void>;
     if (!nav.clipboard) {
-      Object.defineProperty(nav, 'clipboard', {
+      Object.defineProperty(nav, "clipboard", {
         value: { writeText: clipboardWriteText } as Clipboard,
         configurable: true,
       });
@@ -303,104 +338,104 @@ describe('QueryEditor', () => {
   // Basic rendering
   // -----------------------------------------------------------------------
 
-  test('renders editor area', () => {
+  test("renders editor area", () => {
     const { queryByTestId } = render(React.createElement(QueryEditor, createDefaultProps()));
-    expect(queryByTestId('mock-monaco-editor')).not.toBeNull();
+    expect(queryByTestId("mock-monaco-editor")).not.toBeNull();
   });
 
-  test('renders with initial value prop', () => {
-    const { queryByTestId } = render(React.createElement(QueryEditor, createDefaultProps({ value: 'SELECT 1' })));
-    const editor = queryByTestId('mock-monaco-editor') as HTMLTextAreaElement;
-    expect(editor.value).toBe('SELECT 1');
+  test("renders with initial value prop", () => {
+    const { queryByTestId } = render(React.createElement(QueryEditor, createDefaultProps({ value: "SELECT 1" })));
+    const editor = queryByTestId("mock-monaco-editor") as HTMLTextAreaElement;
+    expect(editor.value).toBe("SELECT 1");
   });
 
-  test('does not show language badge (removed)', () => {
-    const { queryByText } = render(React.createElement(QueryEditor, createDefaultProps({ language: 'sql' })));
-    expect(queryByText('sql Engine')).toBeNull();
+  test("does not show language badge (removed)", () => {
+    const { queryByText } = render(React.createElement(QueryEditor, createDefaultProps({ language: "sql" })));
+    expect(queryByText("sql Engine")).toBeNull();
   });
 
   // -----------------------------------------------------------------------
   // Toolbar buttons rendering
   // -----------------------------------------------------------------------
 
-  test('Format button renders', () => {
+  test("Format button renders", () => {
     const { queryByText } = render(React.createElement(QueryEditor, createDefaultProps()));
-    expect(queryByText('Format')).not.toBeNull();
+    expect(queryByText("Format")).not.toBeNull();
   });
 
-  test('Copy button renders', () => {
+  test("Copy button renders", () => {
     const { queryByText } = render(React.createElement(QueryEditor, createDefaultProps()));
-    expect(queryByText('Copy')).not.toBeNull();
+    expect(queryByText("Copy")).not.toBeNull();
   });
 
-  test('Clear button renders', () => {
+  test("Clear button renders", () => {
     const { queryByText } = render(React.createElement(QueryEditor, createDefaultProps()));
-    expect(queryByText('Clear')).not.toBeNull();
+    expect(queryByText("Clear")).not.toBeNull();
   });
 
-  test('Lines button renders', () => {
+  test("Lines button renders", () => {
     const { queryByText } = render(React.createElement(QueryEditor, createDefaultProps()));
-    expect(queryByText('Lines')).not.toBeNull();
+    expect(queryByText("Lines")).not.toBeNull();
   });
 
-  test('AI toggle button renders', () => {
+  test("AI toggle button renders", () => {
     const { queryByText } = render(React.createElement(QueryEditor, createDefaultProps()));
-    expect(queryByText('AI')).not.toBeNull();
+    expect(queryByText("AI")).not.toBeNull();
   });
 
-  test('keyboard shortcut hint renders', () => {
+  test("keyboard shortcut hint renders", () => {
     const { container } = render(React.createElement(QueryEditor, createDefaultProps()));
-    expect(container.textContent).toContain('⌘+Enter');
+    expect(container.textContent).toContain("⌘+Enter");
   });
 
   // -----------------------------------------------------------------------
   // EXPLAIN button
   // -----------------------------------------------------------------------
 
-  test('Explain button appears when onExplain and supportsExplain provided', () => {
+  test("Explain button appears when onExplain and supportsExplain provided", () => {
     const props = createDefaultProps({
       onExplain: mock(() => {}),
       capabilities: defaultCapabilities,
     });
     const { queryByText } = render(React.createElement(QueryEditor, props));
-    expect(queryByText('Explain')).not.toBeNull();
+    expect(queryByText("Explain")).not.toBeNull();
   });
 
-  test('Explain button hidden without onExplain', () => {
+  test("Explain button hidden without onExplain", () => {
     const props = createDefaultProps({
       onExplain: undefined,
       capabilities: defaultCapabilities,
     });
     const { queryByText } = render(React.createElement(QueryEditor, props));
-    expect(queryByText('Explain')).toBeNull();
+    expect(queryByText("Explain")).toBeNull();
   });
 
-  test('Explain button hidden when supportsExplain is false', () => {
+  test("Explain button hidden when supportsExplain is false", () => {
     const props = createDefaultProps({
       onExplain: mock(() => {}),
       capabilities: { ...defaultCapabilities, supportsExplain: false },
     });
     const { queryByText } = render(React.createElement(QueryEditor, props));
-    expect(queryByText('Explain')).toBeNull();
+    expect(queryByText("Explain")).toBeNull();
   });
 
-  test('Explain button hidden when no capabilities', () => {
+  test("Explain button hidden when no capabilities", () => {
     const props = createDefaultProps({
       onExplain: mock(() => {}),
       capabilities: undefined,
     });
     const { queryByText } = render(React.createElement(QueryEditor, props));
-    expect(queryByText('Explain')).toBeNull();
+    expect(queryByText("Explain")).toBeNull();
   });
 
-  test('Explain click calls onExplain handler', () => {
+  test("Explain click calls onExplain handler", () => {
     const onExplain = mock(() => {});
     const props = createDefaultProps({
       onExplain,
       capabilities: defaultCapabilities,
     });
     const { queryByText } = render(React.createElement(QueryEditor, props));
-    fireEvent.click(queryByText('Explain')!);
+    fireEvent.click(queryByText("Explain")!);
     expect(onExplain).toHaveBeenCalled();
   });
 
@@ -408,166 +443,180 @@ describe('QueryEditor', () => {
   // CLEAR button
   // -----------------------------------------------------------------------
 
-  test('CLEAR button empties editor and syncs via onChange', () => {
+  test("CLEAR button empties editor and syncs via onChange", () => {
     const onChange = mock(() => {});
-    const { queryByText } = render(React.createElement(QueryEditor, createDefaultProps({ onChange, value: 'SELECT 123' })));
-    fireEvent.click(queryByText('Clear')!);
-    expect(onChange).toHaveBeenCalledWith('');
+    const { queryByText } = render(
+      React.createElement(QueryEditor, createDefaultProps({ onChange, value: "SELECT 123" })),
+    );
+    fireEvent.click(queryByText("Clear")!);
+    expect(onChange).toHaveBeenCalledWith("");
   });
 
-  test('CLEAR button sets editor textarea to empty', () => {
-    const { queryByText, queryByTestId } = render(React.createElement(QueryEditor, createDefaultProps({ value: 'SELECT 1' })));
-    fireEvent.click(queryByText('Clear')!);
-    const editor = queryByTestId('mock-monaco-editor') as HTMLTextAreaElement;
-    expect(editor.value).toBe('');
+  test("CLEAR button sets editor textarea to empty", () => {
+    const { queryByText, queryByTestId } = render(
+      React.createElement(QueryEditor, createDefaultProps({ value: "SELECT 1" })),
+    );
+    fireEvent.click(queryByText("Clear")!);
+    const editor = queryByTestId("mock-monaco-editor") as HTMLTextAreaElement;
+    expect(editor.value).toBe("");
   });
 
   // -----------------------------------------------------------------------
   // LINES button (Line Numbers Toggle)
   // -----------------------------------------------------------------------
 
-  test('LINES button toggles line numbers state', () => {
+  test("LINES button toggles line numbers state", () => {
     const { queryByText } = render(React.createElement(QueryEditor, createDefaultProps()));
-    const linesButton = queryByText('Lines');
+    const linesButton = queryByText("Lines");
     expect(linesButton).not.toBeNull();
 
     // Click to toggle
     fireEvent.click(linesButton!);
     // State should change (we can't directly test state, but button should still be there)
-    expect(queryByText('Lines')).not.toBeNull();
+    expect(queryByText("Lines")).not.toBeNull();
   });
 
-  test('Lines button defaults to enabled (line numbers shown)', () => {
+  test("Lines button defaults to enabled (line numbers shown)", () => {
     localStorage.clear();
     const { queryByText } = render(React.createElement(QueryEditor, createDefaultProps()));
-    const linesButton = queryByText('Lines')!.closest('button');
+    const linesButton = queryByText("Lines")!.closest("button");
     // Default state should have line numbers enabled (text-zinc-300 class)
-    expect(linesButton?.className).toContain('text-zinc-300');
+    expect(linesButton?.className).toContain("text-zinc-300");
   });
 
-  test('Lines button reads initial state from localStorage', () => {
-    localStorage.setItem('editor-line-numbers', 'false');
+  test("Lines button reads initial state from localStorage", () => {
+    localStorage.setItem("editor-line-numbers", "false");
     const { queryByText } = render(React.createElement(QueryEditor, createDefaultProps()));
-    const linesButton = queryByText('Lines')!.closest('button');
+    const linesButton = queryByText("Lines")!.closest("button");
     // Should read false from localStorage and show disabled state (text-zinc-500)
-    expect(linesButton?.className).toContain('text-zinc-500');
+    expect(linesButton?.className).toContain("text-zinc-500");
   });
 
-  test('LINES button saves state to localStorage when toggled', () => {
+  test("LINES button saves state to localStorage when toggled", () => {
     localStorage.clear();
     const { queryByText } = render(React.createElement(QueryEditor, createDefaultProps()));
-    const linesButton = queryByText('Lines');
-    
+    const linesButton = queryByText("Lines");
+
     // Initial state should be 'true' (default)
-    expect(localStorage.getItem('editor-line-numbers')).toBe('true');
-    
+    expect(localStorage.getItem("editor-line-numbers")).toBe("true");
+
     // Toggle to false
     fireEvent.click(linesButton!);
-    expect(localStorage.getItem('editor-line-numbers')).toBe('false');
-    
+    expect(localStorage.getItem("editor-line-numbers")).toBe("false");
+
     // Toggle back to true
     fireEvent.click(linesButton!);
-    expect(localStorage.getItem('editor-line-numbers')).toBe('true');
+    expect(localStorage.getItem("editor-line-numbers")).toBe("true");
   });
 
-  test('LINES button updates editor options when toggled', () => {
+  test("LINES button updates editor options when toggled", () => {
     mockUseMonacoReturn = { Range: class {} };
     const { queryByText } = render(React.createElement(QueryEditor, createDefaultProps()));
-    const linesButton = queryByText('Lines');
-    
+    const linesButton = queryByText("Lines");
+
     // Toggle line numbers - should trigger editor.updateOptions
     fireEvent.click(linesButton!);
     // The editor mock doesn't track updateOptions calls, but we verify no crash occurs
     expect(linesButton).not.toBeNull();
   });
 
-  test('Lines button shows correct visual state when enabled', () => {
-    localStorage.setItem('editor-line-numbers', 'true');
+  test("Lines button shows correct visual state when enabled", () => {
+    localStorage.setItem("editor-line-numbers", "true");
     const { queryByText } = render(React.createElement(QueryEditor, createDefaultProps()));
-    const linesButton = queryByText('Lines')!.closest('button');
+    const linesButton = queryByText("Lines")!.closest("button");
 
     // Enabled state should have text-zinc-300
-    expect(linesButton?.className).toContain('text-zinc-300');
+    expect(linesButton?.className).toContain("text-zinc-300");
   });
 
-  test('Lines button shows correct visual state when disabled', () => {
-    localStorage.setItem('editor-line-numbers', 'false');
+  test("Lines button shows correct visual state when disabled", () => {
+    localStorage.setItem("editor-line-numbers", "false");
     const { queryByText } = render(React.createElement(QueryEditor, createDefaultProps()));
-    const linesButton = queryByText('Lines')!.closest('button');
+    const linesButton = queryByText("Lines")!.closest("button");
 
     // Disabled state should have text-zinc-500
-    expect(linesButton?.className).toContain('text-zinc-500');
+    expect(linesButton?.className).toContain("text-zinc-500");
   });
 
-  test('LINES button has correct tooltip', () => {
-    localStorage.setItem('editor-line-numbers', 'true');
+  test("LINES button has correct tooltip", () => {
+    localStorage.setItem("editor-line-numbers", "true");
     const { queryByText } = render(React.createElement(QueryEditor, createDefaultProps()));
-    const linesButton = queryByText('Lines')!.closest('button');
-    expect(linesButton?.getAttribute('title')).toBe('Hide line numbers');
-    
+    const linesButton = queryByText("Lines")!.closest("button");
+    expect(linesButton?.getAttribute("title")).toBe("Hide line numbers");
+
     // Toggle and check tooltip changes
     fireEvent.click(linesButton!);
-    expect(linesButton?.getAttribute('title')).toBe('Show line numbers');
+    expect(linesButton?.getAttribute("title")).toBe("Show line numbers");
   });
 
   // -----------------------------------------------------------------------
   // COPY button
   // -----------------------------------------------------------------------
 
-  test('COPY button writes current query to clipboard', () => {
-    const { queryByText } = render(React.createElement(QueryEditor, createDefaultProps({ value: 'SELECT copied_value' })));
-    fireEvent.click(queryByText('Copy')!);
-    expect(mockClipboardWriteText).toHaveBeenCalledWith('SELECT copied_value');
+  test("COPY button writes current query to clipboard", () => {
+    const { queryByText } = render(
+      React.createElement(QueryEditor, createDefaultProps({ value: "SELECT copied_value" })),
+    );
+    fireEvent.click(queryByText("Copy")!);
+    expect(mockClipboardWriteText).toHaveBeenCalledWith("SELECT copied_value");
   });
 
   // -----------------------------------------------------------------------
   // FORMAT button
   // -----------------------------------------------------------------------
 
-  test('FORMAT click formats SQL content via sql-formatter', () => {
+  test("FORMAT click formats SQL content via sql-formatter", () => {
     const onChange = mock(() => {});
-    const { queryByText } = render(React.createElement(QueryEditor, createDefaultProps({ onChange, value: 'select * from users' })));
-    fireEvent.click(queryByText('Format')!);
+    const { queryByText } = render(
+      React.createElement(QueryEditor, createDefaultProps({ onChange, value: "select * from users" })),
+    );
+    fireEvent.click(queryByText("Format")!);
     // Our mock sql-formatter returns input as-is, but onChange should be called
     expect(onChange).toHaveBeenCalled();
   });
 
-  test('FORMAT click formats JSON content', () => {
+  test("FORMAT click formats JSON content", () => {
     const onChange = mock(() => {});
     const { queryByText, queryByTestId } = render(
-      React.createElement(QueryEditor, createDefaultProps({
-        onChange,
-        value: '{"collection":"users","operation":"find"}',
-        language: 'json',
-      }))
+      React.createElement(
+        QueryEditor,
+        createDefaultProps({
+          onChange,
+          value: '{"collection":"users","operation":"find"}',
+          language: "json",
+        }),
+      ),
     );
-    fireEvent.click(queryByText('Format')!);
+    fireEvent.click(queryByText("Format")!);
     // JSON.stringify(parsed, null, 2) should format it
-    const editor = queryByTestId('mock-monaco-editor') as HTMLTextAreaElement;
+    const editor = queryByTestId("mock-monaco-editor") as HTMLTextAreaElement;
     expect(editor.value).toContain('"collection"');
     expect(onChange).toHaveBeenCalled();
   });
 
-  test('FORMAT with invalid JSON does not crash', () => {
+  test("FORMAT with invalid JSON does not crash", () => {
     const onChange = mock(() => {});
     const { queryByText, queryByTestId } = render(
-      React.createElement(QueryEditor, createDefaultProps({
-        onChange,
-        value: '{invalid json!!!}',
-        language: 'json',
-      }))
+      React.createElement(
+        QueryEditor,
+        createDefaultProps({
+          onChange,
+          value: "{invalid json!!!}",
+          language: "json",
+        }),
+      ),
     );
     // Should not throw
-    fireEvent.click(queryByText('Format')!);
+    fireEvent.click(queryByText("Format")!);
     // Editor value should remain unchanged since format failed
-    const editor = queryByTestId('mock-monaco-editor') as HTMLTextAreaElement;
-    expect(editor.value).toBe('{invalid json!!!}');
+    const editor = queryByTestId("mock-monaco-editor") as HTMLTextAreaElement;
+    expect(editor.value).toBe("{invalid json!!!}");
   });
 
-  test('FORMAT with empty editor is a no-op', () => {
+  test("FORMAT with empty editor is a no-op", () => {
     const onChange = mock(() => {});
-    const { queryByText } = render(React.createElement(QueryEditor, createDefaultProps({ onChange, value: '' })));
-    fireEvent.click(queryByText('Format')!);
+    const { queryByText } = render(React.createElement(QueryEditor, createDefaultProps({ onChange, value: "" })));
+    fireEvent.click(queryByText("Format")!);
     expect(onChange).not.toHaveBeenCalled();
   });
 
@@ -575,73 +624,71 @@ describe('QueryEditor', () => {
   // Editor content change
   // -----------------------------------------------------------------------
 
-  test('component renders with onContentChange prop without error', () => {
+  test("component renders with onContentChange prop without error", () => {
     const onContentChange = mock(() => {});
-    const { queryByTestId } = render(
-      React.createElement(QueryEditor, createDefaultProps({ onContentChange }))
-    );
-    expect(queryByTestId('mock-monaco-editor')).not.toBeNull();
+    const { queryByTestId } = render(React.createElement(QueryEditor, createDefaultProps({ onContentChange })));
+    expect(queryByTestId("mock-monaco-editor")).not.toBeNull();
   });
 
   // -----------------------------------------------------------------------
   // External value prop update
   // -----------------------------------------------------------------------
 
-  test('updates editor when value prop changes externally', () => {
-    const props = createDefaultProps({ value: 'SELECT 1' });
+  test("updates editor when value prop changes externally", () => {
+    const props = createDefaultProps({ value: "SELECT 1" });
     const { queryByTestId, rerender } = render(React.createElement(QueryEditor, props));
 
-    const editor = queryByTestId('mock-monaco-editor') as HTMLTextAreaElement;
-    expect(editor.value).toBe('SELECT 1');
+    const editor = queryByTestId("mock-monaco-editor") as HTMLTextAreaElement;
+    expect(editor.value).toBe("SELECT 1");
 
-    rerender(React.createElement(QueryEditor, { ...props, value: 'SELECT 2' }));
-    const updatedEditor = queryByTestId('mock-monaco-editor') as HTMLTextAreaElement;
-    expect(updatedEditor.value).toBe('SELECT 2');
+    rerender(React.createElement(QueryEditor, { ...props, value: "SELECT 2" }));
+    const updatedEditor = queryByTestId("mock-monaco-editor") as HTMLTextAreaElement;
+    expect(updatedEditor.value).toBe("SELECT 2");
   });
 
   // -----------------------------------------------------------------------
   // AI panel
   // -----------------------------------------------------------------------
 
-  test('AI ASSISTANT toggle calls setShowAi', () => {
+  test("AI ASSISTANT toggle calls setShowAi", () => {
     const { queryByText } = render(React.createElement(QueryEditor, createDefaultProps()));
-    fireEvent.click(queryByText('AI')!);
+    fireEvent.click(queryByText("AI")!);
     expect(mockSetShowAi).toHaveBeenCalled();
   });
 
-  test('AI panel shows input and Generate button when showAi is true', () => {
+  test("AI panel shows input and Generate button when showAi is true", () => {
     mockShowAi = true;
     const { queryByPlaceholderText, queryByText } = render(React.createElement(QueryEditor, createDefaultProps()));
     expect(queryByPlaceholderText(/Describe the data you need/)).not.toBeNull();
-    expect(queryByText('Generate')).not.toBeNull();
+    expect(queryByText("Generate")).not.toBeNull();
   });
 
-  test('AI panel hidden when showAi is false', () => {
+  test("AI panel hidden when showAi is false", () => {
     mockShowAi = false;
     const { queryByPlaceholderText } = render(React.createElement(QueryEditor, createDefaultProps()));
     expect(queryByPlaceholderText(/Describe the data you need/)).toBeNull();
   });
 
-  test('AI panel shows Expert DBA Mode header', () => {
+  test("AI panel shows Expert DBA Mode header", () => {
     mockShowAi = true;
     const { queryByText } = render(React.createElement(QueryEditor, createDefaultProps()));
-    expect(queryByText('Expert DBA Mode')).not.toBeNull();
+    expect(queryByText("Expert DBA Mode")).not.toBeNull();
   });
 
-  test('AI panel shows table context count', () => {
+  test("AI panel shows table context count", () => {
     mockShowAi = true;
-    const { queryByText } = render(React.createElement(QueryEditor, createDefaultProps({ tables: ['a', 'b', 'c'] })));
-    expect(queryByText('Context: 3 tables')).not.toBeNull();
+    const { queryByText } = render(React.createElement(QueryEditor, createDefaultProps({ tables: ["a", "b", "c"] })));
+    expect(queryByText("Context: 3 tables")).not.toBeNull();
   });
 
-  test('AI panel X dismiss button calls setShowAi(false)', () => {
+  test("AI panel X dismiss button calls setShowAi(false)", () => {
     mockShowAi = true;
     const { container } = render(React.createElement(QueryEditor, createDefaultProps()));
     // Find the dismiss button (the X button that isn't the error X)
     const buttons = container.querySelectorAll('button[type="button"]');
     // The dismiss button is the one next to the Generate button
-    const dismissBtn = Array.from(buttons as NodeListOf<HTMLButtonElement>).find(btn => {
-      const svg = btn.querySelector('.lucide-x');
+    const dismissBtn = Array.from(buttons as NodeListOf<HTMLButtonElement>).find((btn) => {
+      const svg = btn.querySelector(".lucide-x");
       return svg !== null;
     });
     expect(dismissBtn).not.toBeNull();
@@ -649,58 +696,58 @@ describe('QueryEditor', () => {
     expect(mockSetShowAi).toHaveBeenCalledWith(false);
   });
 
-  test('AI error panel renders when aiError exists', () => {
+  test("AI error panel renders when aiError exists", () => {
     mockShowAi = true;
-    mockAiError = 'AI request failed';
+    mockAiError = "AI request failed";
     const { queryByText } = render(React.createElement(QueryEditor, createDefaultProps()));
-    expect(queryByText('AI Error')).not.toBeNull();
-    expect(queryByText('AI request failed')).not.toBeNull();
+    expect(queryByText("AI Error")).not.toBeNull();
+    expect(queryByText("AI request failed")).not.toBeNull();
   });
 
-  test('AI error dismiss button clears error', () => {
+  test("AI error dismiss button clears error", () => {
     mockShowAi = true;
-    mockAiError = 'Some error';
+    mockAiError = "Some error";
     const { container } = render(React.createElement(QueryEditor, createDefaultProps()));
     // Find the error dismiss button (inside the error panel)
-    const errorPanel = container.querySelector('.bg-red-500\\/10');
+    const errorPanel = container.querySelector(".bg-red-500\\/10");
     expect(errorPanel).not.toBeNull();
-    const dismissBtn = errorPanel!.querySelector('button');
+    const dismissBtn = errorPanel!.querySelector("button");
     expect(dismissBtn).not.toBeNull();
     fireEvent.click(dismissBtn!);
     expect(mockSetAiError).toHaveBeenCalledWith(null);
   });
 
-  test('AI conversation history summary when history exists', () => {
+  test("AI conversation history summary when history exists", () => {
     mockShowAi = true;
     mockAiConversationHistory = [
-      { role: 'user', content: 'hello' },
-      { role: 'assistant', content: 'world' },
+      { role: "user", content: "hello" },
+      { role: "assistant", content: "world" },
     ];
     const { queryByText } = render(React.createElement(QueryEditor, createDefaultProps()));
-    expect(queryByText('1 turns - Clear')).not.toBeNull();
+    expect(queryByText("1 turns - Clear")).not.toBeNull();
   });
 
-  test('AI clear conversation button calls setAiConversationHistory', () => {
+  test("AI clear conversation button calls setAiConversationHistory", () => {
     mockShowAi = true;
     mockAiConversationHistory = [
-      { role: 'user', content: 'hello' },
-      { role: 'assistant', content: 'world' },
+      { role: "user", content: "hello" },
+      { role: "assistant", content: "world" },
     ];
     const { queryByText } = render(React.createElement(QueryEditor, createDefaultProps()));
-    const clearBtn = queryByText('1 turns - Clear');
+    const clearBtn = queryByText("1 turns - Clear");
     expect(clearBtn).not.toBeNull();
     fireEvent.click(clearBtn!);
     expect(mockSetAiConversationHistory).toHaveBeenCalledWith([]);
   });
 
-  test('AI conversation history hidden when empty', () => {
+  test("AI conversation history hidden when empty", () => {
     mockShowAi = true;
     mockAiConversationHistory = [];
     const { queryByText } = render(React.createElement(QueryEditor, createDefaultProps()));
     expect(queryByText(/turns - Clear/)).toBeNull();
   });
 
-  test('AI Generate button is disabled when prompt is empty', () => {
+  test("AI Generate button is disabled when prompt is empty", () => {
     mockShowAi = true;
     const { container } = render(React.createElement(QueryEditor, createDefaultProps()));
     const submitBtn = container.querySelector('button[type="submit"]') as HTMLButtonElement;
@@ -708,10 +755,10 @@ describe('QueryEditor', () => {
     expect(submitBtn.disabled).toBe(true);
   });
 
-  test('AI form submit calls handleAiSubmit', () => {
+  test("AI form submit calls handleAiSubmit", () => {
     mockShowAi = true;
     const { container } = render(React.createElement(QueryEditor, createDefaultProps()));
-    const form = container.querySelector('form');
+    const form = container.querySelector("form");
     expect(form).not.toBeNull();
     fireEvent.submit(form!);
     expect(mockHandleAiSubmit).toHaveBeenCalled();
@@ -721,198 +768,232 @@ describe('QueryEditor', () => {
   // Execute / custom event dispatch
   // -----------------------------------------------------------------------
 
-  test('RUN SELECTION button not shown when no selection', () => {
+  test("RUN SELECTION button not shown when no selection", () => {
     const { queryByText } = render(React.createElement(QueryEditor, createDefaultProps()));
-    expect(queryByText('Run Sel')).toBeNull();
+    expect(queryByText("Run Sel")).toBeNull();
   });
 
   // -----------------------------------------------------------------------
   // Schema context parsing
   // -----------------------------------------------------------------------
 
-  test('handles invalid schemaContext JSON gracefully', () => {
+  test("handles invalid schemaContext JSON gracefully", () => {
     // Should not crash
     const { queryByTestId } = render(
-      React.createElement(QueryEditor, createDefaultProps({ schemaContext: 'invalid json!' }))
+      React.createElement(QueryEditor, createDefaultProps({ schemaContext: "invalid json!" })),
     );
-    expect(queryByTestId('mock-monaco-editor')).not.toBeNull();
+    expect(queryByTestId("mock-monaco-editor")).not.toBeNull();
   });
 
-  test('handles empty schemaContext', () => {
-    const { queryByTestId } = render(
-      React.createElement(QueryEditor, createDefaultProps({ schemaContext: '' }))
-    );
-    expect(queryByTestId('mock-monaco-editor')).not.toBeNull();
+  test("handles empty schemaContext", () => {
+    const { queryByTestId } = render(React.createElement(QueryEditor, createDefaultProps({ schemaContext: "" })));
+    expect(queryByTestId("mock-monaco-editor")).not.toBeNull();
   });
 
-  test('handles undefined schemaContext', () => {
+  test("handles undefined schemaContext", () => {
     const { queryByTestId } = render(
-      React.createElement(QueryEditor, createDefaultProps({ schemaContext: undefined }))
+      React.createElement(QueryEditor, createDefaultProps({ schemaContext: undefined })),
     );
-    expect(queryByTestId('mock-monaco-editor')).not.toBeNull();
+    expect(queryByTestId("mock-monaco-editor")).not.toBeNull();
   });
 
   // -----------------------------------------------------------------------
   // Format tooltip text
   // -----------------------------------------------------------------------
 
-  test('FORMAT button has SQL tooltip in sql mode', () => {
-    const { queryByText } = render(React.createElement(QueryEditor, createDefaultProps({ language: 'sql' })));
-    const formatBtn = queryByText('Format')!.closest('button');
-    expect(formatBtn?.getAttribute('title')).toContain('Format SQL');
+  test("FORMAT button has SQL tooltip in sql mode", () => {
+    const { queryByText } = render(React.createElement(QueryEditor, createDefaultProps({ language: "sql" })));
+    const formatBtn = queryByText("Format")!.closest("button");
+    expect(formatBtn?.getAttribute("title")).toContain("Format SQL");
   });
 
-  test('FORMAT button has JSON tooltip in json mode', () => {
-    const { queryByText } = render(React.createElement(QueryEditor, createDefaultProps({ language: 'json' })));
-    const formatBtn = queryByText('Format')!.closest('button');
-    expect(formatBtn?.getAttribute('title')).toContain('Format JSON');
+  test("FORMAT button has JSON tooltip in json mode", () => {
+    const { queryByText } = render(React.createElement(QueryEditor, createDefaultProps({ language: "json" })));
+    const formatBtn = queryByText("Format")!.closest("button");
+    expect(formatBtn?.getAttribute("title")).toContain("Format JSON");
   });
 
   // -----------------------------------------------------------------------
   // handleEditorChange — onContentChange callback
   // -----------------------------------------------------------------------
 
-  test('onContentChange called when editor textarea changes', () => {
+  test("onContentChange called when editor textarea changes", () => {
     const onContentChange = mock(() => {});
-    const { queryByTestId } = render(
-      React.createElement(QueryEditor, createDefaultProps({ onContentChange }))
-    );
-    const editor = queryByTestId('mock-monaco-editor') as HTMLTextAreaElement;
-    fireEvent.change(editor, { target: { value: 'SELECT 42' } });
-    expect(onContentChange).toHaveBeenCalledWith('SELECT 42');
+    const { queryByTestId } = render(React.createElement(QueryEditor, createDefaultProps({ onContentChange })));
+    const editor = queryByTestId("mock-monaco-editor") as HTMLTextAreaElement;
+    fireEvent.change(editor, { target: { value: "SELECT 42" } });
+    expect(onContentChange).toHaveBeenCalledWith("SELECT 42");
   });
 
-  test('handleEditorChange with undefined value calls onContentChange with empty string', () => {
+  test("handleEditorChange with undefined value calls onContentChange with empty string", () => {
     const onContentChange = mock(() => {});
-    const { queryByTestId } = render(
-      React.createElement(QueryEditor, createDefaultProps({ onContentChange }))
-    );
-    const editor = queryByTestId('mock-monaco-editor') as HTMLTextAreaElement;
-    fireEvent.change(editor, { target: { value: '' } });
-    expect(onContentChange).toHaveBeenCalledWith('');
+    const { queryByTestId } = render(React.createElement(QueryEditor, createDefaultProps({ onContentChange })));
+    const editor = queryByTestId("mock-monaco-editor") as HTMLTextAreaElement;
+    fireEvent.change(editor, { target: { value: "" } });
+    expect(onContentChange).toHaveBeenCalledWith("");
   });
 
   // -----------------------------------------------------------------------
   // handleEditorBlur — onChange on blur
   // -----------------------------------------------------------------------
 
-  test('blur handler syncs current value to parent via onChange', () => {
+  test("blur handler syncs current value to parent via onChange", () => {
     const onChange = mock(() => {});
-    render(React.createElement(QueryEditor, createDefaultProps({ onChange, value: 'SELECT 1' })));
+    render(React.createElement(QueryEditor, createDefaultProps({ onChange, value: "SELECT 1" })));
     expect(capturedBlurCb).not.toBeNull();
-    act(() => { capturedBlurCb!(); });
-    expect(onChange).toHaveBeenCalledWith('SELECT 1');
+    act(() => {
+      capturedBlurCb!();
+    });
+    expect(onChange).toHaveBeenCalledWith("SELECT 1");
   });
 
   // -----------------------------------------------------------------------
   // handleExecute — Ctrl+Enter command & custom event
   // -----------------------------------------------------------------------
 
-  test('Ctrl+Enter command registered on mount', () => {
+  test("Ctrl+Enter command registered on mount", () => {
     render(React.createElement(QueryEditor, createDefaultProps()));
     expect(capturedCommands.length).toBeGreaterThanOrEqual(1);
   });
 
-  test('execute command dispatches execute-query custom event', () => {
+  test("execute command dispatches execute-query custom event", () => {
     const onChange = mock(() => {});
     const listener = mock((() => {}) as EventListener);
-    window.addEventListener('execute-query', listener);
+    window.addEventListener("execute-query", listener);
 
-    render(React.createElement(QueryEditor, createDefaultProps({ onChange, value: 'SELECT 1' })));
+    render(React.createElement(QueryEditor, createDefaultProps({ onChange, value: "SELECT 1" })));
 
-    act(() => { capturedCommands[0].handler(); });
+    act(() => {
+      capturedCommands[0].handler();
+    });
 
     expect(listener).toHaveBeenCalled();
-    expect(onChange).toHaveBeenCalledWith('SELECT 1');
-    window.removeEventListener('execute-query', listener);
+    expect(onChange).toHaveBeenCalledWith("SELECT 1");
+    window.removeEventListener("execute-query", listener);
   });
 
-  test('execute-query event detail contains the query', () => {
+  test("execute-query event detail contains the query", () => {
     let eventDetail: { query: string } | null = null;
-    const handler = ((e: CustomEvent) => { eventDetail = e.detail; }) as EventListener;
-    window.addEventListener('execute-query', handler);
+    const handler = ((e: CustomEvent) => {
+      eventDetail = e.detail;
+    }) as EventListener;
+    window.addEventListener("execute-query", handler);
 
-    render(React.createElement(QueryEditor, createDefaultProps({ value: 'SELECT 99' })));
-    act(() => { capturedCommands[0].handler(); });
+    render(React.createElement(QueryEditor, createDefaultProps({ value: "SELECT 99" })));
+    act(() => {
+      capturedCommands[0].handler();
+    });
 
     expect(eventDetail).not.toBeNull();
-    expect(eventDetail!.query).toBe('SELECT 99');
-    window.removeEventListener('execute-query', handler);
+    expect(eventDetail!.query).toBe("SELECT 99");
+    window.removeEventListener("execute-query", handler);
   });
 
   // -----------------------------------------------------------------------
   // getEffectiveQuery — SQL statement finder
   // -----------------------------------------------------------------------
 
-  test('getEffectiveQuery finds current SQL statement via semicolons', () => {
+  test("getEffectiveQuery finds current SQL statement via semicolons", () => {
     mockUseMonacoReturn = {
       Range: class {
-        constructor(public startLineNumber: number, public startColumn: number, public endLineNumber: number, public endColumn: number) {}
+        constructor(
+          public startLineNumber: number,
+          public startColumn: number,
+          public endLineNumber: number,
+          public endColumn: number,
+        ) {}
       },
     };
 
     let eventDetail: { query: string } | null = null;
-    const handler = ((e: CustomEvent) => { eventDetail = e.detail; }) as EventListener;
-    window.addEventListener('execute-query', handler);
+    const handler = ((e: CustomEvent) => {
+      eventDetail = e.detail;
+    }) as EventListener;
+    window.addEventListener("execute-query", handler);
 
-    render(React.createElement(QueryEditor, createDefaultProps({ value: 'SELECT 1; SELECT 2' })));
-    act(() => { capturedCommands[0].handler(); });
+    render(React.createElement(QueryEditor, createDefaultProps({ value: "SELECT 1; SELECT 2" })));
+    act(() => {
+      capturedCommands[0].handler();
+    });
 
     // With cursor at position 0, the first statement 'SELECT 1' should be extracted
     expect(eventDetail).not.toBeNull();
-    expect(eventDetail!.query).toBe('SELECT 1');
-    window.removeEventListener('execute-query', handler);
+    expect(eventDetail!.query).toBe("SELECT 1");
+    window.removeEventListener("execute-query", handler);
   });
 
-  test('getEffectiveQuery returns selected text when selection exists', () => {
+  test("getEffectiveQuery returns selected text when selection exists", () => {
     mockUseMonacoReturn = {
       Range: class {
-        constructor(public startLineNumber: number, public startColumn: number, public endLineNumber: number, public endColumn: number) {}
+        constructor(
+          public startLineNumber: number,
+          public startColumn: number,
+          public endLineNumber: number,
+          public endColumn: number,
+        ) {}
       },
     };
     mockSelectionReturn = { isEmpty: () => false };
-    mockSelectedText = 'SELECT selected';
+    mockSelectedText = "SELECT selected";
 
     let eventDetail: { query: string } | null = null;
-    const handler = ((e: CustomEvent) => { eventDetail = e.detail; }) as EventListener;
-    window.addEventListener('execute-query', handler);
+    const handler = ((e: CustomEvent) => {
+      eventDetail = e.detail;
+    }) as EventListener;
+    window.addEventListener("execute-query", handler);
 
-    render(React.createElement(QueryEditor, createDefaultProps({ value: 'SELECT full' })));
-    act(() => { capturedCommands[0].handler(); });
+    render(React.createElement(QueryEditor, createDefaultProps({ value: "SELECT full" })));
+    act(() => {
+      capturedCommands[0].handler();
+    });
 
-    expect(eventDetail!.query).toBe('SELECT selected');
-    window.removeEventListener('execute-query', handler);
+    expect(eventDetail!.query).toBe("SELECT selected");
+    window.removeEventListener("execute-query", handler);
   });
 
   // -----------------------------------------------------------------------
   // flashHighlight — decoration creation and cleanup
   // -----------------------------------------------------------------------
 
-  test('execute with monaco triggers flash highlight decorations', () => {
+  test("execute with monaco triggers flash highlight decorations", () => {
     mockUseMonacoReturn = {
       Range: class {
-        constructor(public startLineNumber: number, public startColumn: number, public endLineNumber: number, public endColumn: number) {}
+        constructor(
+          public startLineNumber: number,
+          public startColumn: number,
+          public endLineNumber: number,
+          public endColumn: number,
+        ) {}
       },
     };
 
-    render(React.createElement(QueryEditor, createDefaultProps({ value: 'SELECT 1' })));
-    act(() => { capturedCommands[0].handler(); });
+    render(React.createElement(QueryEditor, createDefaultProps({ value: "SELECT 1" })));
+    act(() => {
+      capturedCommands[0].handler();
+    });
 
     // flashHighlight was called — no crash means decorations were created
     // The highlight timeout cleanup is tested on unmount below
   });
 
-  test('highlight cleanup on unmount clears timeout', () => {
+  test("highlight cleanup on unmount clears timeout", () => {
     mockUseMonacoReturn = {
       Range: class {
-        constructor(public startLineNumber: number, public startColumn: number, public endLineNumber: number, public endColumn: number) {}
+        constructor(
+          public startLineNumber: number,
+          public startColumn: number,
+          public endLineNumber: number,
+          public endColumn: number,
+        ) {}
       },
     };
 
-    const { unmount } = render(React.createElement(QueryEditor, createDefaultProps({ value: 'SELECT 1' })));
+    const { unmount } = render(React.createElement(QueryEditor, createDefaultProps({ value: "SELECT 1" })));
 
     // Trigger execute which sets a highlight timeout
-    act(() => { capturedCommands[0].handler(); });
+    act(() => {
+      capturedCommands[0].handler();
+    });
 
     // Unmount should clear the timeout without errors
     unmount();
@@ -922,77 +1003,91 @@ describe('QueryEditor', () => {
   // onDidChangeCursorSelection — hasSelection & RUN SELECTION
   // -----------------------------------------------------------------------
 
-  test('selection change shows RUN SELECTION button', () => {
+  test("selection change shows RUN SELECTION button", () => {
     const { queryByText } = render(React.createElement(QueryEditor, createDefaultProps()));
 
-    expect(queryByText('Run Sel')).toBeNull();
+    expect(queryByText("Run Sel")).toBeNull();
 
     mockSelectionReturn = { isEmpty: () => false };
-    act(() => { capturedSelectionCb?.(); });
+    act(() => {
+      capturedSelectionCb?.();
+    });
 
-    expect(queryByText('Run Sel')).not.toBeNull();
+    expect(queryByText("Run Sel")).not.toBeNull();
   });
 
-  test('COPY shows COPY SELECTION when text is selected', () => {
+  test("COPY shows COPY SELECTION when text is selected", () => {
     const { queryByText } = render(React.createElement(QueryEditor, createDefaultProps()));
 
-    expect(queryByText('Copy Sel')).toBeNull();
+    expect(queryByText("Copy Sel")).toBeNull();
 
     mockSelectionReturn = { isEmpty: () => false };
-    act(() => { capturedSelectionCb?.(); });
+    act(() => {
+      capturedSelectionCb?.();
+    });
 
-    expect(queryByText('Copy Sel')).not.toBeNull();
+    expect(queryByText("Copy Sel")).not.toBeNull();
   });
 
-  test('clearing selection hides RUN SELECTION button', () => {
+  test("clearing selection hides RUN SELECTION button", () => {
     const { queryByText } = render(React.createElement(QueryEditor, createDefaultProps()));
 
     mockSelectionReturn = { isEmpty: () => false };
-    act(() => { capturedSelectionCb?.(); });
-    expect(queryByText('Run Sel')).not.toBeNull();
+    act(() => {
+      capturedSelectionCb?.();
+    });
+    expect(queryByText("Run Sel")).not.toBeNull();
 
     mockSelectionReturn = { isEmpty: () => true };
-    act(() => { capturedSelectionCb?.(); });
-    expect(queryByText('Run Sel')).toBeNull();
+    act(() => {
+      capturedSelectionCb?.();
+    });
+    expect(queryByText("Run Sel")).toBeNull();
   });
 
   // -----------------------------------------------------------------------
   // useImperativeHandle — ref methods
   // -----------------------------------------------------------------------
 
-  test('ref getValue returns editor content', () => {
-    const editorRef = React.createRef<import('@/components/QueryEditor').QueryEditorRef>();
-    render(React.createElement(QueryEditor, { ...createDefaultProps({ value: 'SELECT ref_test' }), ref: editorRef }));
-    expect(editorRef.current?.getValue()).toBe('SELECT ref_test');
+  test("ref getValue returns editor content", () => {
+    const editorRef = React.createRef<import("@/components/QueryEditor").QueryEditorRef>();
+    render(React.createElement(QueryEditor, { ...createDefaultProps({ value: "SELECT ref_test" }), ref: editorRef }));
+    expect(editorRef.current?.getValue()).toBe("SELECT ref_test");
   });
 
-  test('ref setValue updates editor content', () => {
-    const editorRef = React.createRef<import('@/components/QueryEditor').QueryEditorRef>();
+  test("ref setValue updates editor content", () => {
+    const editorRef = React.createRef<import("@/components/QueryEditor").QueryEditorRef>();
     const { queryByTestId } = render(
-      React.createElement(QueryEditor, { ...createDefaultProps({ value: 'old' }), ref: editorRef })
+      React.createElement(QueryEditor, { ...createDefaultProps({ value: "old" }), ref: editorRef }),
     );
-    act(() => { editorRef.current?.setValue('new value'); });
-    const editor = queryByTestId('mock-monaco-editor') as HTMLTextAreaElement;
-    expect(editor.value).toBe('new value');
+    act(() => {
+      editorRef.current?.setValue("new value");
+    });
+    const editor = queryByTestId("mock-monaco-editor") as HTMLTextAreaElement;
+    expect(editor.value).toBe("new value");
   });
 
-  test('ref getSelectedText returns empty when no selection', () => {
-    const editorRef = React.createRef<import('@/components/QueryEditor').QueryEditorRef>();
+  test("ref getSelectedText returns empty when no selection", () => {
+    const editorRef = React.createRef<import("@/components/QueryEditor").QueryEditorRef>();
     render(React.createElement(QueryEditor, { ...createDefaultProps(), ref: editorRef }));
-    expect(editorRef.current?.getSelectedText()).toBe('');
+    expect(editorRef.current?.getSelectedText()).toBe("");
   });
 
-  test('ref getEffectiveQuery returns full query', () => {
-    const editorRef = React.createRef<import('@/components/QueryEditor').QueryEditorRef>();
-    render(React.createElement(QueryEditor, { ...createDefaultProps({ value: 'SELECT 1' }), ref: editorRef }));
-    expect(editorRef.current?.getEffectiveQuery()).toBe('SELECT 1');
+  test("ref getEffectiveQuery returns full query", () => {
+    const editorRef = React.createRef<import("@/components/QueryEditor").QueryEditorRef>();
+    render(React.createElement(QueryEditor, { ...createDefaultProps({ value: "SELECT 1" }), ref: editorRef }));
+    expect(editorRef.current?.getEffectiveQuery()).toBe("SELECT 1");
   });
 
-  test('ref format triggers formatting', () => {
+  test("ref format triggers formatting", () => {
     const onChange = mock(() => {});
-    const editorRef = React.createRef<import('@/components/QueryEditor').QueryEditorRef>();
-    render(React.createElement(QueryEditor, { ...createDefaultProps({ onChange, value: 'select 1' }), ref: editorRef }));
-    act(() => { editorRef.current?.format(); });
+    const editorRef = React.createRef<import("@/components/QueryEditor").QueryEditorRef>();
+    render(
+      React.createElement(QueryEditor, { ...createDefaultProps({ onChange, value: "select 1" }), ref: editorRef }),
+    );
+    act(() => {
+      editorRef.current?.format();
+    });
     expect(onChange).toHaveBeenCalled();
   });
 
@@ -1000,32 +1095,32 @@ describe('QueryEditor', () => {
   // Value sync effect — external prop change updates editor
   // -----------------------------------------------------------------------
 
-  test('value sync effect calls setValue when value prop differs from editor content', () => {
-    const props = createDefaultProps({ value: 'FIRST' });
+  test("value sync effect calls setValue when value prop differs from editor content", () => {
+    const props = createDefaultProps({ value: "FIRST" });
     const { queryByTestId, rerender } = render(React.createElement(QueryEditor, props));
 
-    const editor = queryByTestId('mock-monaco-editor') as HTMLTextAreaElement;
-    expect(editor.value).toBe('FIRST');
+    const editor = queryByTestId("mock-monaco-editor") as HTMLTextAreaElement;
+    expect(editor.value).toBe("FIRST");
 
     // Rerender with new value — the component's sync effect should call setValue
-    rerender(React.createElement(QueryEditor, { ...props, value: 'SECOND' }));
-    expect(editor.value).toBe('SECOND');
+    rerender(React.createElement(QueryEditor, { ...props, value: "SECOND" }));
+    expect(editor.value).toBe("SECOND");
   });
 
   // -----------------------------------------------------------------------
   // Completion provider registration
   // -----------------------------------------------------------------------
 
-  test('SQL completion provider registered when monaco is available', () => {
+  test("SQL completion provider registered when monaco is available", () => {
     mockUseMonacoReturn = { Range: class {} };
-    const { unmount } = render(React.createElement(QueryEditor, createDefaultProps({ language: 'sql' })));
+    const { unmount } = render(React.createElement(QueryEditor, createDefaultProps({ language: "sql" })));
     // Lines 413-415 covered during mount, cleanup dispose on unmount
     unmount();
   });
 
-  test('MongoDB completion provider registered for json language', () => {
+  test("MongoDB completion provider registered for json language", () => {
     mockUseMonacoReturn = { Range: class {} };
-    const { unmount } = render(React.createElement(QueryEditor, createDefaultProps({ language: 'json' })));
+    const { unmount } = render(React.createElement(QueryEditor, createDefaultProps({ language: "json" })));
     unmount();
   });
 
@@ -1033,39 +1128,48 @@ describe('QueryEditor', () => {
   // Context menu actions
   // -----------------------------------------------------------------------
 
-  test('context menu actions registered on mount', () => {
+  test("context menu actions registered on mount", () => {
     render(React.createElement(QueryEditor, createDefaultProps()));
-    const actionIds = capturedActions.map(a => a.id);
-    expect(actionIds).toContain('run-query');
-    expect(actionIds).toContain('format-sql');
+    const actionIds = capturedActions.map((a) => a.id);
+    expect(actionIds).toContain("run-query");
+    expect(actionIds).toContain("format-sql");
   });
 
-  test('explain action registered when onExplain provided', () => {
-    render(React.createElement(QueryEditor, createDefaultProps({
-      onExplain: mock(() => {}),
-      capabilities: defaultCapabilities,
-    })));
-    const actionIds = capturedActions.map(a => a.id);
-    expect(actionIds).toContain('explain-query');
+  test("explain action registered when onExplain provided", () => {
+    render(
+      React.createElement(
+        QueryEditor,
+        createDefaultProps({
+          onExplain: mock(() => {}),
+          capabilities: defaultCapabilities,
+        }),
+      ),
+    );
+    const actionIds = capturedActions.map((a) => a.id);
+    expect(actionIds).toContain("explain-query");
   });
 
-  test('run-query context action dispatches execute event', () => {
+  test("run-query context action dispatches execute event", () => {
     const listener = mock((() => {}) as EventListener);
-    window.addEventListener('execute-query', listener);
+    window.addEventListener("execute-query", listener);
 
     render(React.createElement(QueryEditor, createDefaultProps()));
-    const runAction = capturedActions.find(a => a.id === 'run-query');
-    act(() => { runAction!.run(); });
+    const runAction = capturedActions.find((a) => a.id === "run-query");
+    act(() => {
+      runAction!.run();
+    });
 
     expect(listener).toHaveBeenCalled();
-    window.removeEventListener('execute-query', listener);
+    window.removeEventListener("execute-query", listener);
   });
 
-  test('format-sql context action formats the query', () => {
+  test("format-sql context action formats the query", () => {
     const onChange = mock(() => {});
-    render(React.createElement(QueryEditor, createDefaultProps({ onChange, value: 'select 1' })));
-    const formatAction = capturedActions.find(a => a.id === 'format-sql');
-    act(() => { formatAction!.run(); });
+    render(React.createElement(QueryEditor, createDefaultProps({ onChange, value: "select 1" })));
+    const formatAction = capturedActions.find((a) => a.id === "format-sql");
+    act(() => {
+      formatAction!.run();
+    });
     expect(onChange).toHaveBeenCalled();
   });
 
@@ -1073,34 +1177,41 @@ describe('QueryEditor', () => {
   // AI loading state
   // -----------------------------------------------------------------------
 
-  test('AI panel shows Thinking text when loading', () => {
+  test("AI panel shows Thinking text when loading", () => {
     mockShowAi = true;
     mockIsAiLoading = true;
     const { queryByText } = render(React.createElement(QueryEditor, createDefaultProps()));
-    expect(queryByText('Thinking...')).not.toBeNull();
+    expect(queryByText("Thinking...")).not.toBeNull();
   });
 
-  test('AI panel shows Generate text when not loading', () => {
+  test("AI panel shows Generate text when not loading", () => {
     mockShowAi = true;
     mockIsAiLoading = false;
     const { queryByText } = render(React.createElement(QueryEditor, createDefaultProps()));
-    expect(queryByText('Generate')).not.toBeNull();
-    expect(queryByText('Thinking...')).toBeNull();
+    expect(queryByText("Generate")).not.toBeNull();
+    expect(queryByText("Thinking...")).toBeNull();
   });
 
   // -----------------------------------------------------------------------
   // onExplain callback from context menu action
   // -----------------------------------------------------------------------
 
-  test('explain-query context action calls onExplain callback', () => {
+  test("explain-query context action calls onExplain callback", () => {
     const onExplain = mock(() => {});
-    render(React.createElement(QueryEditor, createDefaultProps({
-      onExplain,
-      capabilities: defaultCapabilities,
-    })));
-    const explainAction = capturedActions.find(a => a.id === 'explain-query');
+    render(
+      React.createElement(
+        QueryEditor,
+        createDefaultProps({
+          onExplain,
+          capabilities: defaultCapabilities,
+        }),
+      ),
+    );
+    const explainAction = capturedActions.find((a) => a.id === "explain-query");
     expect(explainAction).not.toBeUndefined();
-    act(() => { explainAction!.run(); });
+    act(() => {
+      explainAction!.run();
+    });
     expect(onExplain).toHaveBeenCalledTimes(1);
   });
 
@@ -1108,23 +1219,23 @@ describe('QueryEditor', () => {
   // onContentChange not called when prop undefined
   // -----------------------------------------------------------------------
 
-  test('onContentChange not called when prop is undefined', () => {
+  test("onContentChange not called when prop is undefined", () => {
     const onChange = mock(() => {});
     const { queryByTestId } = render(
-      React.createElement(QueryEditor, createDefaultProps({ onChange, onContentChange: undefined }))
+      React.createElement(QueryEditor, createDefaultProps({ onChange, onContentChange: undefined })),
     );
-    const editor = queryByTestId('mock-monaco-editor') as HTMLTextAreaElement;
+    const editor = queryByTestId("mock-monaco-editor") as HTMLTextAreaElement;
     // Trigger a change — should not throw even though onContentChange is undefined
-    fireEvent.change(editor, { target: { value: 'SELECT 42' } });
+    fireEvent.change(editor, { target: { value: "SELECT 42" } });
     // onChange is NOT called on keystroke (only on blur/execute), so no error and no crash
-    expect(editor.value).toBe('SELECT 42');
+    expect(editor.value).toBe("SELECT 42");
   });
 
   // -----------------------------------------------------------------------
   // Console.error suppression filters "Canceled" messages
   // -----------------------------------------------------------------------
 
-  test('console.error suppression filters Canceled messages', () => {
+  test("console.error suppression filters Canceled messages", () => {
     const originalError = console.error;
 
     render(React.createElement(QueryEditor, createDefaultProps()));
@@ -1141,22 +1252,22 @@ describe('QueryEditor', () => {
     const origRef = originalError;
     // Temporarily set up tracking
     console.error = (...args: unknown[]) => {
-      const message = args[0]?.toString?.() || '';
-      if (message.includes('Canceled') || message.includes('ERR Canceled')) {
+      const message = args[0]?.toString?.() || "";
+      if (message.includes("Canceled") || message.includes("ERR Canceled")) {
         return;
       }
       passedThrough.push(message);
     };
 
     // Call with Canceled — should be suppressed
-    console.error('Canceled');
-    console.error('ERR Canceled: operation aborted');
+    console.error("Canceled");
+    console.error("ERR Canceled: operation aborted");
     // Call with normal message — should pass through
-    console.error('Normal error message');
+    console.error("Normal error message");
 
-    expect(passedThrough).not.toContain('Canceled');
-    expect(passedThrough).not.toContain('ERR Canceled: operation aborted');
-    expect(passedThrough).toContain('Normal error message');
+    expect(passedThrough).not.toContain("Canceled");
+    expect(passedThrough).not.toContain("ERR Canceled: operation aborted");
+    expect(passedThrough).toContain("Normal error message");
 
     // Restore original
     console.error = origRef;
@@ -1166,32 +1277,38 @@ describe('QueryEditor', () => {
   // COPY SELECTION copies selected text
   // -----------------------------------------------------------------------
 
-  test('COPY SELECTION copies only selected text to clipboard', () => {
+  test("COPY SELECTION copies only selected text to clipboard", () => {
     mockSelectionReturn = { isEmpty: () => false };
-    mockSelectedText = 'SELECT selected_only';
+    mockSelectedText = "SELECT selected_only";
 
-    const { queryByText } = render(React.createElement(QueryEditor, createDefaultProps({ value: 'SELECT full_query' })));
+    const { queryByText } = render(
+      React.createElement(QueryEditor, createDefaultProps({ value: "SELECT full_query" })),
+    );
 
     // Trigger selection change so COPY SELECTION button appears
-    act(() => { capturedSelectionCb?.(); });
+    act(() => {
+      capturedSelectionCb?.();
+    });
 
-    const copyBtn = queryByText('Copy Sel');
+    const copyBtn = queryByText("Copy Sel");
     expect(copyBtn).not.toBeNull();
     fireEvent.click(copyBtn!);
 
-    expect(mockClipboardWriteText).toHaveBeenCalledWith('SELECT selected_only');
+    expect(mockClipboardWriteText).toHaveBeenCalledWith("SELECT selected_only");
   });
 
   // -----------------------------------------------------------------------
   // Ref focus() method
   // -----------------------------------------------------------------------
 
-  test('ref focus() delegates to editor focus', () => {
-    const editorRef = React.createRef<import('@/components/QueryEditor').QueryEditorRef>();
+  test("ref focus() delegates to editor focus", () => {
+    const editorRef = React.createRef<import("@/components/QueryEditor").QueryEditorRef>();
     render(React.createElement(QueryEditor, { ...createDefaultProps(), ref: editorRef }));
     expect(editorRef.current).not.toBeNull();
     // Call focus via ref — should not throw
-    act(() => { editorRef.current?.focus(); });
+    act(() => {
+      editorRef.current?.focus();
+    });
     // The mock editor's focus is mock(() => {}), verifying it was called
     // Since editorRef.current.focus() delegates to editorMock.focus(), the call succeeds without error
   });
@@ -1200,180 +1317,252 @@ describe('QueryEditor', () => {
   // getEffectiveQuery — edge cases
   // -----------------------------------------------------------------------
 
-  test('getEffectiveQuery: JSON language returns full value without semicolon splitting', () => {
+  test("getEffectiveQuery: JSON language returns full value without semicolon splitting", () => {
     mockUseMonacoReturn = {
       Range: class {
-        constructor(public startLineNumber: number, public startColumn: number, public endLineNumber: number, public endColumn: number) {}
+        constructor(
+          public startLineNumber: number,
+          public startColumn: number,
+          public endLineNumber: number,
+          public endColumn: number,
+        ) {}
       },
     };
 
     let eventDetail: { query: string } | null = null;
-    const handler = ((e: CustomEvent) => { eventDetail = e.detail; }) as EventListener;
-    window.addEventListener('execute-query', handler);
+    const handler = ((e: CustomEvent) => {
+      eventDetail = e.detail;
+    }) as EventListener;
+    window.addEventListener("execute-query", handler);
 
-    render(React.createElement(QueryEditor, createDefaultProps({
-      value: '{"collection":"users","operation":"find"}',
-      language: 'json',
-    })));
-    act(() => { capturedCommands[0].handler(); });
+    render(
+      React.createElement(
+        QueryEditor,
+        createDefaultProps({
+          value: '{"collection":"users","operation":"find"}',
+          language: "json",
+        }),
+      ),
+    );
+    act(() => {
+      capturedCommands[0].handler();
+    });
 
     expect(eventDetail!.query).toBe('{"collection":"users","operation":"find"}');
-    window.removeEventListener('execute-query', handler);
+    window.removeEventListener("execute-query", handler);
   });
 
-  test('getEffectiveQuery: whitespace-only selection falls through to full value', () => {
+  test("getEffectiveQuery: whitespace-only selection falls through to full value", () => {
     mockUseMonacoReturn = {
       Range: class {
-        constructor(public startLineNumber: number, public startColumn: number, public endLineNumber: number, public endColumn: number) {}
+        constructor(
+          public startLineNumber: number,
+          public startColumn: number,
+          public endLineNumber: number,
+          public endColumn: number,
+        ) {}
       },
     };
     mockSelectionReturn = { isEmpty: () => false };
-    mockSelectedText = '   \n  ';
+    mockSelectedText = "   \n  ";
 
     let eventDetail: { query: string } | null = null;
-    const handler = ((e: CustomEvent) => { eventDetail = e.detail; }) as EventListener;
-    window.addEventListener('execute-query', handler);
+    const handler = ((e: CustomEvent) => {
+      eventDetail = e.detail;
+    }) as EventListener;
+    window.addEventListener("execute-query", handler);
 
-    render(React.createElement(QueryEditor, createDefaultProps({ value: 'SELECT whitespace_test' })));
-    act(() => { capturedCommands[0].handler(); });
+    render(React.createElement(QueryEditor, createDefaultProps({ value: "SELECT whitespace_test" })));
+    act(() => {
+      capturedCommands[0].handler();
+    });
 
     // Should NOT be the whitespace selection — falls through to statement finder
-    expect(eventDetail!.query).not.toBe('   \n  ');
-    expect(eventDetail!.query).toBe('SELECT whitespace_test');
-    window.removeEventListener('execute-query', handler);
+    expect(eventDetail!.query).not.toBe("   \n  ");
+    expect(eventDetail!.query).toBe("SELECT whitespace_test");
+    window.removeEventListener("execute-query", handler);
   });
 
-  test('getEffectiveQuery: cursor after last semicolon extracts trailing statement', () => {
+  test("getEffectiveQuery: cursor after last semicolon extracts trailing statement", () => {
     mockUseMonacoReturn = {
       Range: class {
-        constructor(public startLineNumber: number, public startColumn: number, public endLineNumber: number, public endColumn: number) {}
+        constructor(
+          public startLineNumber: number,
+          public startColumn: number,
+          public endLineNumber: number,
+          public endColumn: number,
+        ) {}
       },
     };
     mockCursorOffset = 12; // Inside 'SELECT 2' portion
 
     let eventDetail: { query: string } | null = null;
-    const handler = ((e: CustomEvent) => { eventDetail = e.detail; }) as EventListener;
-    window.addEventListener('execute-query', handler);
+    const handler = ((e: CustomEvent) => {
+      eventDetail = e.detail;
+    }) as EventListener;
+    window.addEventListener("execute-query", handler);
 
-    render(React.createElement(QueryEditor, createDefaultProps({ value: 'SELECT 1; SELECT 2' })));
-    act(() => { capturedCommands[0].handler(); });
+    render(React.createElement(QueryEditor, createDefaultProps({ value: "SELECT 1; SELECT 2" })));
+    act(() => {
+      capturedCommands[0].handler();
+    });
 
     // Cursor at offset 12, no semicolon after → endOffset = fullText.length
-    expect(eventDetail!.query).toBe('SELECT 2');
-    window.removeEventListener('execute-query', handler);
+    expect(eventDetail!.query).toBe("SELECT 2");
+    window.removeEventListener("execute-query", handler);
   });
 
-  test('getEffectiveQuery: empty statement between semicolons falls through to full value', () => {
+  test("getEffectiveQuery: empty statement between semicolons falls through to full value", () => {
     mockUseMonacoReturn = {
       Range: class {
-        constructor(public startLineNumber: number, public startColumn: number, public endLineNumber: number, public endColumn: number) {}
+        constructor(
+          public startLineNumber: number,
+          public startColumn: number,
+          public endLineNumber: number,
+          public endColumn: number,
+        ) {}
       },
     };
     mockCursorOffset = 9; // Between the two semicolons
 
     let eventDetail: { query: string } | null = null;
-    const handler = ((e: CustomEvent) => { eventDetail = e.detail; }) as EventListener;
-    window.addEventListener('execute-query', handler);
+    const handler = ((e: CustomEvent) => {
+      eventDetail = e.detail;
+    }) as EventListener;
+    window.addEventListener("execute-query", handler);
 
-    render(React.createElement(QueryEditor, createDefaultProps({ value: 'SELECT 1;;SELECT 2' })));
-    act(() => { capturedCommands[0].handler(); });
+    render(React.createElement(QueryEditor, createDefaultProps({ value: "SELECT 1;;SELECT 2" })));
+    act(() => {
+      capturedCommands[0].handler();
+    });
 
     // Empty statement between ;; → falls through to full editor value
-    expect(eventDetail!.query).toBe('SELECT 1;;SELECT 2');
-    window.removeEventListener('execute-query', handler);
+    expect(eventDetail!.query).toBe("SELECT 1;;SELECT 2");
+    window.removeEventListener("execute-query", handler);
   });
 
-  test('getEffectiveQuery: null model returns full editor value', () => {
+  test("getEffectiveQuery: null model returns full editor value", () => {
     mockUseMonacoReturn = {
       Range: class {
-        constructor(public startLineNumber: number, public startColumn: number, public endLineNumber: number, public endColumn: number) {}
+        constructor(
+          public startLineNumber: number,
+          public startColumn: number,
+          public endLineNumber: number,
+          public endColumn: number,
+        ) {}
       },
     };
     mockGetModelReturn = () => null;
 
     let eventDetail: { query: string } | null = null;
-    const handler = ((e: CustomEvent) => { eventDetail = e.detail; }) as EventListener;
-    window.addEventListener('execute-query', handler);
+    const handler = ((e: CustomEvent) => {
+      eventDetail = e.detail;
+    }) as EventListener;
+    window.addEventListener("execute-query", handler);
 
-    render(React.createElement(QueryEditor, createDefaultProps({ value: 'SELECT null_model' })));
-    act(() => { capturedCommands[0].handler(); });
+    render(React.createElement(QueryEditor, createDefaultProps({ value: "SELECT null_model" })));
+    act(() => {
+      capturedCommands[0].handler();
+    });
 
-    expect(eventDetail!.query).toBe('SELECT null_model');
-    window.removeEventListener('execute-query', handler);
+    expect(eventDetail!.query).toBe("SELECT null_model");
+    window.removeEventListener("execute-query", handler);
   });
 
-  test('getEffectiveQuery: null monaco returns full editor value', () => {
+  test("getEffectiveQuery: null monaco returns full editor value", () => {
     mockUseMonacoReturn = null;
 
     let eventDetail: { query: string } | null = null;
-    const handler = ((e: CustomEvent) => { eventDetail = e.detail; }) as EventListener;
-    window.addEventListener('execute-query', handler);
+    const handler = ((e: CustomEvent) => {
+      eventDetail = e.detail;
+    }) as EventListener;
+    window.addEventListener("execute-query", handler);
 
-    render(React.createElement(QueryEditor, createDefaultProps({ value: 'SELECT no_monaco' })));
-    act(() => { capturedCommands[0].handler(); });
+    render(React.createElement(QueryEditor, createDefaultProps({ value: "SELECT no_monaco" })));
+    act(() => {
+      capturedCommands[0].handler();
+    });
 
-    expect(eventDetail!.query).toBe('SELECT no_monaco');
-    window.removeEventListener('execute-query', handler);
+    expect(eventDetail!.query).toBe("SELECT no_monaco");
+    window.removeEventListener("execute-query", handler);
   });
 
   // -----------------------------------------------------------------------
   // flashHighlight — edge cases
   // -----------------------------------------------------------------------
 
-  test('rapid double-execute clears existing highlight before creating new one', () => {
+  test("rapid double-execute clears existing highlight before creating new one", () => {
     mockUseMonacoReturn = {
       Range: class {
-        constructor(public startLineNumber: number, public startColumn: number, public endLineNumber: number, public endColumn: number) {}
+        constructor(
+          public startLineNumber: number,
+          public startColumn: number,
+          public endLineNumber: number,
+          public endColumn: number,
+        ) {}
       },
     };
 
-    render(React.createElement(QueryEditor, createDefaultProps({ value: 'SELECT 1' })));
+    render(React.createElement(QueryEditor, createDefaultProps({ value: "SELECT 1" })));
 
-    act(() => { capturedCommands[0].handler(); });
-    act(() => { capturedCommands[0].handler(); });
+    act(() => {
+      capturedCommands[0].handler();
+    });
+    act(() => {
+      capturedCommands[0].handler();
+    });
 
     // First execute: create (1 call)
     // Second execute: clear existing + create new (2 calls)
     // Total: 3+ calls
     expect(mockDeltaDecorations.mock.calls.length).toBeGreaterThanOrEqual(3);
     // Second call should be clearing existing decorations
-    expect(mockDeltaDecorations.mock.calls[1][0]).toEqual(['deco-1']);
+    expect(mockDeltaDecorations.mock.calls[1][0]).toEqual(["deco-1"]);
     expect(mockDeltaDecorations.mock.calls[1][1]).toEqual([]);
   });
 
-  test('highlight timeout removes decorations after 1 second', async () => {
+  test("highlight timeout removes decorations after 1 second", async () => {
     mockUseMonacoReturn = {
       Range: class {
-        constructor(public startLineNumber: number, public startColumn: number, public endLineNumber: number, public endColumn: number) {}
+        constructor(
+          public startLineNumber: number,
+          public startColumn: number,
+          public endLineNumber: number,
+          public endColumn: number,
+        ) {}
       },
     };
 
-    render(React.createElement(QueryEditor, createDefaultProps({ value: 'SELECT 1' })));
-    act(() => { capturedCommands[0].handler(); });
+    render(React.createElement(QueryEditor, createDefaultProps({ value: "SELECT 1" })));
+    act(() => {
+      capturedCommands[0].handler();
+    });
 
     const callCountAfterExecute = mockDeltaDecorations.mock.calls.length;
 
     await act(async () => {
-      await new Promise(r => setTimeout(r, 1100));
+      await new Promise((r) => setTimeout(r, 1100));
     });
 
     // After timeout, deltaDecorations should have been called to clear
     expect(mockDeltaDecorations.mock.calls.length).toBeGreaterThan(callCountAfterExecute);
     // Last call should clear decorations
     const lastCall = mockDeltaDecorations.mock.calls[mockDeltaDecorations.mock.calls.length - 1];
-    expect(lastCall[0]).toEqual(['deco-1']);
+    expect(lastCall[0]).toEqual(["deco-1"]);
     expect(lastCall[1]).toEqual([]);
   });
 
-  test('flashHighlight with null range is a no-op', () => {
+  test("flashHighlight with null range is a no-op", () => {
     // When monaco is null, getEffectiveQuery returns range: null
     // flashHighlight(null) should not call deltaDecorations
     mockUseMonacoReturn = null;
 
-    render(React.createElement(QueryEditor, createDefaultProps({ value: 'SELECT 1' })));
+    render(React.createElement(QueryEditor, createDefaultProps({ value: "SELECT 1" })));
 
     mockDeltaDecorations.mockClear();
-    act(() => { capturedCommands[0].handler(); });
+    act(() => {
+      capturedCommands[0].handler();
+    });
 
     // deltaDecorations should NOT be called since range is null
     expect(mockDeltaDecorations.mock.calls.length).toBe(0);
@@ -1383,22 +1572,24 @@ describe('QueryEditor', () => {
   // setEditorValueForAi callback
   // -----------------------------------------------------------------------
 
-  test('setEditorValueForAi callback updates editor value', () => {
-    const { queryByTestId } = render(React.createElement(QueryEditor, createDefaultProps({ value: 'SELECT old' })));
+  test("setEditorValueForAi callback updates editor value", () => {
+    const { queryByTestId } = render(React.createElement(QueryEditor, createDefaultProps({ value: "SELECT old" })));
 
     expect(capturedAiChatDeps).not.toBeNull();
     const setEditorValue = capturedAiChatDeps!.setEditorValue as (val: string) => void;
-    act(() => { setEditorValue('AI generated SQL'); });
+    act(() => {
+      setEditorValue("AI generated SQL");
+    });
 
-    const editor = queryByTestId('mock-monaco-editor') as HTMLTextAreaElement;
-    expect(editor.value).toBe('AI generated SQL');
+    const editor = queryByTestId("mock-monaco-editor") as HTMLTextAreaElement;
+    expect(editor.value).toBe("AI generated SQL");
   });
 
   // -----------------------------------------------------------------------
   // Console.error cleanup on unmount
   // -----------------------------------------------------------------------
 
-  test('unmount restores original console.error', () => {
+  test("unmount restores original console.error", () => {
     const originalError = console.error;
     const { unmount } = render(React.createElement(QueryEditor, createDefaultProps()));
 
@@ -1414,100 +1605,100 @@ describe('QueryEditor', () => {
   // Value sync short-circuits
   // -----------------------------------------------------------------------
 
-  test('rerender with same value does not crash', () => {
-    const props = createDefaultProps({ value: 'SELECT 1' });
+  test("rerender with same value does not crash", () => {
+    const props = createDefaultProps({ value: "SELECT 1" });
     const { queryByTestId, rerender } = render(React.createElement(QueryEditor, props));
 
     // Rerender with same value — should be a no-op
-    rerender(React.createElement(QueryEditor, { ...props, value: 'SELECT 1' }));
-    const editor = queryByTestId('mock-monaco-editor') as HTMLTextAreaElement;
-    expect(editor.value).toBe('SELECT 1');
+    rerender(React.createElement(QueryEditor, { ...props, value: "SELECT 1" }));
+    const editor = queryByTestId("mock-monaco-editor") as HTMLTextAreaElement;
+    expect(editor.value).toBe("SELECT 1");
   });
 
-  test('rerender when editor already has the new value skips extra setValue', () => {
-    const props = createDefaultProps({ value: 'SELECT 1' });
+  test("rerender when editor already has the new value skips extra setValue", () => {
+    const props = createDefaultProps({ value: "SELECT 1" });
     const { queryByTestId, rerender } = render(React.createElement(QueryEditor, props));
 
     // First change to a different value
-    rerender(React.createElement(QueryEditor, { ...props, value: 'SELECT 2' }));
-    const editor = queryByTestId('mock-monaco-editor') as HTMLTextAreaElement;
-    expect(editor.value).toBe('SELECT 2');
+    rerender(React.createElement(QueryEditor, { ...props, value: "SELECT 2" }));
+    const editor = queryByTestId("mock-monaco-editor") as HTMLTextAreaElement;
+    expect(editor.value).toBe("SELECT 2");
 
     // Rerender again with same value — short-circuits
-    rerender(React.createElement(QueryEditor, { ...props, value: 'SELECT 2' }));
-    expect(editor.value).toBe('SELECT 2');
+    rerender(React.createElement(QueryEditor, { ...props, value: "SELECT 2" }));
+    expect(editor.value).toBe("SELECT 2");
   });
 
   // -----------------------------------------------------------------------
   // Additional edge cases
   // -----------------------------------------------------------------------
 
-  test('ref toggleAi() calls setShowAi', () => {
-    const editorRef = React.createRef<import('@/components/QueryEditor').QueryEditorRef>();
+  test("ref toggleAi() calls setShowAi", () => {
+    const editorRef = React.createRef<import("@/components/QueryEditor").QueryEditorRef>();
     render(React.createElement(QueryEditor, { ...createDefaultProps(), ref: editorRef }));
-    act(() => { editorRef.current?.toggleAi(); });
+    act(() => {
+      editorRef.current?.toggleAi();
+    });
     expect(mockSetShowAi).toHaveBeenCalled();
   });
 
-  test('LINES toggle calls updateOptions with correct line numbers setting', () => {
+  test("LINES toggle calls updateOptions with correct line numbers setting", () => {
     const { queryByText } = render(React.createElement(QueryEditor, createDefaultProps()));
 
     // Default is showLineNumbers=true, toggle to false
-    fireEvent.click(queryByText('Lines')!);
-    expect(mockUpdateOptions).toHaveBeenCalledWith({ lineNumbers: 'off' });
+    fireEvent.click(queryByText("Lines")!);
+    expect(mockUpdateOptions).toHaveBeenCalledWith({ lineNumbers: "off" });
 
     // Toggle back to true
     mockUpdateOptions.mockClear();
-    fireEvent.click(queryByText('Lines')!);
-    expect(mockUpdateOptions).toHaveBeenCalledWith({ lineNumbers: 'on' });
+    fireEvent.click(queryByText("Lines")!);
+    expect(mockUpdateOptions).toHaveBeenCalledWith({ lineNumbers: "on" });
   });
 
-  test('COPY with empty editor copies empty string', () => {
-    const { queryByText } = render(React.createElement(QueryEditor, createDefaultProps({ value: '' })));
-    fireEvent.click(queryByText('Copy')!);
-    expect(mockClipboardWriteText).toHaveBeenCalledWith('');
+  test("COPY with empty editor copies empty string", () => {
+    const { queryByText } = render(React.createElement(QueryEditor, createDefaultProps({ value: "" })));
+    fireEvent.click(queryByText("Copy")!);
+    expect(mockClipboardWriteText).toHaveBeenCalledWith("");
   });
 
-  test('schema with table having no columns does not crash', () => {
+  test("schema with table having no columns does not crash", () => {
+    const schema = JSON.stringify([{ name: "empty_table", rowCount: 0 }]);
+    const { queryByTestId } = render(React.createElement(QueryEditor, createDefaultProps({ schemaContext: schema })));
+    expect(queryByTestId("mock-monaco-editor")).not.toBeNull();
+  });
+
+  test("schema with duplicate column names across tables does not crash", () => {
     const schema = JSON.stringify([
-      { name: 'empty_table', rowCount: 0 },
+      { name: "users", rowCount: 100, columns: [{ name: "id", type: "integer", isPrimary: true }] },
+      { name: "orders", rowCount: 200, columns: [{ name: "id", type: "integer", isPrimary: true }] },
     ]);
-    const { queryByTestId } = render(
-      React.createElement(QueryEditor, createDefaultProps({ schemaContext: schema }))
-    );
-    expect(queryByTestId('mock-monaco-editor')).not.toBeNull();
+    const { queryByTestId } = render(React.createElement(QueryEditor, createDefaultProps({ schemaContext: schema })));
+    expect(queryByTestId("mock-monaco-editor")).not.toBeNull();
   });
 
-  test('schema with duplicate column names across tables does not crash', () => {
-    const schema = JSON.stringify([
-      { name: 'users', rowCount: 100, columns: [{ name: 'id', type: 'integer', isPrimary: true }] },
-      { name: 'orders', rowCount: 200, columns: [{ name: 'id', type: 'integer', isPrimary: true }] },
-    ]);
-    const { queryByTestId } = render(
-      React.createElement(QueryEditor, createDefaultProps({ schemaContext: schema }))
-    );
-    expect(queryByTestId('mock-monaco-editor')).not.toBeNull();
-  });
-
-  test('selection callback with null selection hides RUN SELECTION', () => {
+  test("selection callback with null selection hides RUN SELECTION", () => {
     const { queryByText } = render(React.createElement(QueryEditor, createDefaultProps()));
 
     // First, create a non-empty selection
     mockSelectionReturn = { isEmpty: () => false };
-    act(() => { capturedSelectionCb?.(); });
-    expect(queryByText('Run Sel')).not.toBeNull();
+    act(() => {
+      capturedSelectionCb?.();
+    });
+    expect(queryByText("Run Sel")).not.toBeNull();
 
     // Now set null selection
     mockSelectionReturn = null;
-    act(() => { capturedSelectionCb?.(); });
-    expect(queryByText('Run Sel')).toBeNull();
+    act(() => {
+      capturedSelectionCb?.();
+    });
+    expect(queryByText("Run Sel")).toBeNull();
   });
 
   // -----------------------------------------------------------------------
   // Branch coverage: console.error "Canceled" suppression (line 403)
   // -----------------------------------------------------------------------
 
-  test('console.error suppression returns early for Canceled messages', () => {
+  test("console.error suppression returns early for Canceled messages", () => {
     const originalError = console.error;
     const spy = mock((..._a: unknown[]) => {});
 
@@ -1530,11 +1721,11 @@ describe('QueryEditor', () => {
     };
 
     // These should be suppressed by the component's filter
-    componentFilter('Canceled');
-    componentFilter('ERR Canceled: operation aborted');
+    componentFilter("Canceled");
+    componentFilter("ERR Canceled: operation aborted");
 
     // This should pass through
-    componentFilter('Real error message');
+    componentFilter("Real error message");
 
     // The "Canceled" messages should NOT have reached our tracker
     // (they were caught by the return on line 403)
@@ -1552,14 +1743,16 @@ describe('QueryEditor', () => {
   // Branch coverage: format keyboard shortcut handler (line 706)
   // -----------------------------------------------------------------------
 
-  test('Alt+Shift+F keyboard shortcut triggers format', () => {
+  test("Alt+Shift+F keyboard shortcut triggers format", () => {
     const onChange = mock(() => {});
-    render(React.createElement(QueryEditor, createDefaultProps({ onChange, value: 'select 1' })));
+    render(React.createElement(QueryEditor, createDefaultProps({ onChange, value: "select 1" })));
 
     // capturedCommands[0] = Ctrl+Enter (execute)
     // capturedCommands[1] = Alt+Shift+F (format)
     expect(capturedCommands.length).toBeGreaterThanOrEqual(2);
-    act(() => { capturedCommands[1].handler(); });
+    act(() => {
+      capturedCommands[1].handler();
+    });
     expect(onChange).toHaveBeenCalled();
   });
 
@@ -1567,17 +1760,17 @@ describe('QueryEditor', () => {
   // Branch coverage: handleFormat else branch for unsupported language (line 212)
   // -----------------------------------------------------------------------
 
-  test('Format button is hidden for languages without a formatter (e.g. libredb)', () => {
+  test("Format button is hidden for languages without a formatter (e.g. libredb)", () => {
     const onChange = mock(() => {});
     const props = createDefaultProps({
       onChange,
-      value: 'some content',
-      language: 'libredb',
+      value: "some content",
+      language: "libredb",
     });
     const { queryByText } = render(React.createElement(QueryEditor, props));
     // No SQL/JSON formatter for libredb, so no Format affordance is shown
     // (rather than a button that does nothing when clicked).
-    expect(queryByText('Format')).toBeNull();
+    expect(queryByText("Format")).toBeNull();
     expect(onChange).not.toHaveBeenCalled();
   });
 
@@ -1585,137 +1778,141 @@ describe('QueryEditor', () => {
   // Branch coverage: onChange optional chaining (false path)
   // -----------------------------------------------------------------------
 
-  test('blur without onChange prop does not crash', () => {
+  test("blur without onChange prop does not crash", () => {
     render(React.createElement(QueryEditor, createDefaultProps({ onChange: undefined })));
     expect(capturedBlurCb).not.toBeNull();
     // Should not throw — onChange?.() gracefully handles undefined
-    act(() => { capturedBlurCb!(); });
+    act(() => {
+      capturedBlurCb!();
+    });
   });
 
-  test('execute without onChange prop does not crash', () => {
+  test("execute without onChange prop does not crash", () => {
     const listener = mock((() => {}) as EventListener);
-    window.addEventListener('execute-query', listener);
+    window.addEventListener("execute-query", listener);
 
     render(React.createElement(QueryEditor, createDefaultProps({ onChange: undefined })));
     // Should not throw — onChange?.() handles undefined
-    act(() => { capturedCommands[0].handler(); });
+    act(() => {
+      capturedCommands[0].handler();
+    });
     expect(listener).toHaveBeenCalled();
-    window.removeEventListener('execute-query', listener);
+    window.removeEventListener("execute-query", listener);
   });
 
-  test('CLEAR without onChange prop does not crash', () => {
+  test("CLEAR without onChange prop does not crash", () => {
     const { queryByText, queryByTestId } = render(
-      React.createElement(QueryEditor, createDefaultProps({ onChange: undefined, value: 'SELECT 1' }))
+      React.createElement(QueryEditor, createDefaultProps({ onChange: undefined, value: "SELECT 1" })),
     );
-    fireEvent.click(queryByText('Clear')!);
-    const editor = queryByTestId('mock-monaco-editor') as HTMLTextAreaElement;
-    expect(editor.value).toBe('');
+    fireEvent.click(queryByText("Clear")!);
+    const editor = queryByTestId("mock-monaco-editor") as HTMLTextAreaElement;
+    expect(editor.value).toBe("");
   });
 
-  test('FORMAT without onChange prop does not crash', () => {
+  test("FORMAT without onChange prop does not crash", () => {
     const { queryByText } = render(
-      React.createElement(QueryEditor, createDefaultProps({ onChange: undefined, value: 'select 1' }))
+      React.createElement(QueryEditor, createDefaultProps({ onChange: undefined, value: "select 1" })),
     );
     // Should not throw — onChange?.() handles undefined
-    fireEvent.click(queryByText('Format')!);
+    fireEvent.click(queryByText("Format")!);
   });
 
   // -----------------------------------------------------------------------
   // Branch coverage: getSelectedText null guards
   // -----------------------------------------------------------------------
 
-  test('getSelectedText returns empty when model is null', () => {
+  test("getSelectedText returns empty when model is null", () => {
     mockGetModelReturn = () => null;
-    const editorRef = React.createRef<import('@/components/QueryEditor').QueryEditorRef>();
+    const editorRef = React.createRef<import("@/components/QueryEditor").QueryEditorRef>();
     render(React.createElement(QueryEditor, { ...createDefaultProps(), ref: editorRef }));
-    expect(editorRef.current?.getSelectedText()).toBe('');
+    expect(editorRef.current?.getSelectedText()).toBe("");
   });
 
-  test('getSelectedText returns empty when selection is null', () => {
+  test("getSelectedText returns empty when selection is null", () => {
     mockSelectionReturn = null;
-    const editorRef = React.createRef<import('@/components/QueryEditor').QueryEditorRef>();
+    const editorRef = React.createRef<import("@/components/QueryEditor").QueryEditorRef>();
     render(React.createElement(QueryEditor, { ...createDefaultProps(), ref: editorRef }));
-    expect(editorRef.current?.getSelectedText()).toBe('');
+    expect(editorRef.current?.getSelectedText()).toBe("");
   });
 
   // -----------------------------------------------------------------------
   // Branch coverage: getEditorValue callback (line 326)
   // -----------------------------------------------------------------------
 
-  test('getEditorValue callback returns current editor value', () => {
-    render(React.createElement(QueryEditor, createDefaultProps({ value: 'SELECT test_val' })));
+  test("getEditorValue callback returns current editor value", () => {
+    render(React.createElement(QueryEditor, createDefaultProps({ value: "SELECT test_val" })));
     expect(capturedAiChatDeps).not.toBeNull();
     const getEditorValue = capturedAiChatDeps!.getEditorValue as () => string;
-    expect(getEditorValue()).toBe('SELECT test_val');
+    expect(getEditorValue()).toBe("SELECT test_val");
   });
 
   // -----------------------------------------------------------------------
   // Branch coverage: onContentChange undefined/defined paths
   // -----------------------------------------------------------------------
 
-  test('editor change without onContentChange is safe', () => {
+  test("editor change without onContentChange is safe", () => {
     const { queryByTestId } = render(
-      React.createElement(QueryEditor, createDefaultProps({ onContentChange: undefined }))
+      React.createElement(QueryEditor, createDefaultProps({ onContentChange: undefined })),
     );
-    const editor = queryByTestId('mock-monaco-editor') as HTMLTextAreaElement;
+    const editor = queryByTestId("mock-monaco-editor") as HTMLTextAreaElement;
     // Should not throw
-    fireEvent.change(editor, { target: { value: 'SELECT changed' } });
-    expect(editor.value).toBe('SELECT changed');
+    fireEvent.change(editor, { target: { value: "SELECT changed" } });
+    expect(editor.value).toBe("SELECT changed");
   });
 
   // -----------------------------------------------------------------------
   // Branch coverage: handleExecute syncs before execute
   // -----------------------------------------------------------------------
 
-  test('execute syncs current editor value via onChange before dispatching event', () => {
+  test("execute syncs current editor value via onChange before dispatching event", () => {
     const onChange = mock(() => {});
     const { queryByTestId } = render(
-      React.createElement(QueryEditor, createDefaultProps({ onChange, value: 'SELECT original' }))
+      React.createElement(QueryEditor, createDefaultProps({ onChange, value: "SELECT original" })),
     );
 
     // Modify editor content directly
-    const editor = queryByTestId('mock-monaco-editor') as HTMLTextAreaElement;
-    fireEvent.change(editor, { target: { value: 'SELECT modified' } });
+    const editor = queryByTestId("mock-monaco-editor") as HTMLTextAreaElement;
+    fireEvent.change(editor, { target: { value: "SELECT modified" } });
 
     // Execute — should sync the modified value first
-    act(() => { capturedCommands[0].handler(); });
-    expect(onChange).toHaveBeenCalledWith('SELECT modified');
+    act(() => {
+      capturedCommands[0].handler();
+    });
+    expect(onChange).toHaveBeenCalledWith("SELECT modified");
   });
 
   // -----------------------------------------------------------------------
   // Branch coverage: ref getValue when editor has no value
   // -----------------------------------------------------------------------
 
-  test('ref getValue returns empty string for empty editor', () => {
-    const editorRef = React.createRef<import('@/components/QueryEditor').QueryEditorRef>();
-    render(React.createElement(QueryEditor, { ...createDefaultProps({ value: '' }), ref: editorRef }));
-    expect(editorRef.current?.getValue()).toBe('');
+  test("ref getValue returns empty string for empty editor", () => {
+    const editorRef = React.createRef<import("@/components/QueryEditor").QueryEditorRef>();
+    render(React.createElement(QueryEditor, { ...createDefaultProps({ value: "" }), ref: editorRef }));
+    expect(editorRef.current?.getValue()).toBe("");
   });
 
   // -----------------------------------------------------------------------
   // Branch coverage: schemaCompletionCache with various schemas
   // -----------------------------------------------------------------------
 
-  test('schemaCompletionCache handles table with isPrimary false', () => {
+  test("schemaCompletionCache handles table with isPrimary false", () => {
     const schema = JSON.stringify([
-      { name: 'products', rowCount: 50, columns: [
-        { name: 'sku', type: 'varchar', isPrimary: false },
-        { name: 'price', type: 'numeric' },
-      ]},
+      {
+        name: "products",
+        rowCount: 50,
+        columns: [
+          { name: "sku", type: "varchar", isPrimary: false },
+          { name: "price", type: "numeric" },
+        ],
+      },
     ]);
-    const { queryByTestId } = render(
-      React.createElement(QueryEditor, createDefaultProps({ schemaContext: schema }))
-    );
-    expect(queryByTestId('mock-monaco-editor')).not.toBeNull();
+    const { queryByTestId } = render(React.createElement(QueryEditor, createDefaultProps({ schemaContext: schema })));
+    expect(queryByTestId("mock-monaco-editor")).not.toBeNull();
   });
 
-  test('schemaCompletionCache handles table with zero rowCount', () => {
-    const schema = JSON.stringify([
-      { name: 'empty', columns: [{ name: 'id', type: 'int', isPrimary: true }] },
-    ]);
-    const { queryByTestId } = render(
-      React.createElement(QueryEditor, createDefaultProps({ schemaContext: schema }))
-    );
-    expect(queryByTestId('mock-monaco-editor')).not.toBeNull();
+  test("schemaCompletionCache handles table with zero rowCount", () => {
+    const schema = JSON.stringify([{ name: "empty", columns: [{ name: "id", type: "int", isPrimary: true }] }]);
+    const { queryByTestId } = render(React.createElement(QueryEditor, createDefaultProps({ schemaContext: schema })));
+    expect(queryByTestId("mock-monaco-editor")).not.toBeNull();
   });
 });

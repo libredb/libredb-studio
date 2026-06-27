@@ -1,22 +1,22 @@
-import '../../setup-dom';
-import '../../helpers/mock-sonner';
-import '../../helpers/mock-navigation';
+import "../../setup-dom";
+import "../../helpers/mock-sonner";
+import "../../helpers/mock-navigation";
 
-import React from 'react';
-import { describe, test, expect, afterEach } from 'bun:test';
-import { cleanup, render } from '@testing-library/react';
-import { StorageTab } from '@/components/monitoring/tabs/StorageTab';
-import type { MonitoringData } from '@/lib/db/types';
+import React from "react";
+import { describe, test, expect, afterEach } from "bun:test";
+import { cleanup, render } from "@testing-library/react";
+import { StorageTab } from "@/components/monitoring/tabs/StorageTab";
+import type { MonitoringData } from "@/lib/db/types";
 
 function makeMonitoringData(): MonitoringData {
   return {
-    timestamp: new Date('2026-02-15T12:00:00Z'),
+    timestamp: new Date("2026-02-15T12:00:00Z"),
     overview: {
-      version: '16.3',
-      uptime: '1000s',
+      version: "16.3",
+      uptime: "1000s",
       activeConnections: 4,
       maxConnections: 100,
-      databaseSize: '2.00 GB',
+      databaseSize: "2.00 GB",
       databaseSizeBytes: 2 * 1024 * 1024 * 1024,
       tableCount: 2,
       indexCount: 1,
@@ -47,38 +47,46 @@ function makeMonitoringData(): MonitoringData {
     slowQueries: [],
     activeSessions: [],
     storage: [
-      { name: 'pg_default', location: '/var/lib/postgres', size: '1.20 GB', sizeBytes: 1288490188, usagePercent: 60 },
-      { name: 'WAL', location: '/var/lib/postgres/pg_wal', size: '300 MB', sizeBytes: 314572800, usagePercent: 15, walSize: '300 MB', walSizeBytes: 314572800 },
+      { name: "pg_default", location: "/var/lib/postgres", size: "1.20 GB", sizeBytes: 1288490188, usagePercent: 60 },
+      {
+        name: "WAL",
+        location: "/var/lib/postgres/pg_wal",
+        size: "300 MB",
+        sizeBytes: 314572800,
+        usagePercent: 15,
+        walSize: "300 MB",
+        walSizeBytes: 314572800,
+      },
     ],
     tables: [
       {
-        schemaName: 'public',
-        tableName: 'orders',
+        schemaName: "public",
+        tableName: "orders",
         rowCount: 10000,
-        tableSize: '500 MB',
+        tableSize: "500 MB",
         tableSizeBytes: 524288000,
-        totalSize: '700 MB',
+        totalSize: "700 MB",
         totalSizeBytes: 734003200,
       },
       {
-        schemaName: 'public',
-        tableName: 'users',
+        schemaName: "public",
+        tableName: "users",
         rowCount: 2500,
-        tableSize: '200 MB',
+        tableSize: "200 MB",
         tableSizeBytes: 209715200,
-        totalSize: '300 MB',
+        totalSize: "300 MB",
         totalSizeBytes: 314572800,
       },
     ],
     indexes: [
       {
-        schemaName: 'public',
-        tableName: 'orders',
-        indexName: 'idx_orders_created_at',
-        columns: ['created_at'],
+        schemaName: "public",
+        tableName: "orders",
+        indexName: "idx_orders_created_at",
+        columns: ["created_at"],
         isUnique: false,
         isPrimary: false,
-        indexSize: '120 MB',
+        indexSize: "120 MB",
         indexSizeBytes: 125829120,
         scans: 100,
       },
@@ -86,17 +94,17 @@ function makeMonitoringData(): MonitoringData {
   } as unknown as MonitoringData;
 }
 
-describe('StorageTab', () => {
+describe("StorageTab", () => {
   afterEach(() => {
     cleanup();
   });
 
-  test('renders skeleton when loading without data', () => {
+  test("renders skeleton when loading without data", () => {
     const { queryByText } = render(<StorageTab data={null} loading />);
-    expect(queryByText('Storage Breakdown')).toBeNull();
+    expect(queryByText("Storage Breakdown")).toBeNull();
   });
 
-  test('shows empty states when storage and table lists are missing', () => {
+  test("shows empty states when storage and table lists are missing", () => {
     const emptyData = {
       ...makeMonitoringData(),
       storage: [],
@@ -105,23 +113,23 @@ describe('StorageTab', () => {
     } as MonitoringData;
     const { queryByText } = render(<StorageTab data={emptyData} loading={false} />);
 
-    expect(queryByText('No tablespace information available.')).not.toBeNull();
-    expect(queryByText('No table information available.')).not.toBeNull();
+    expect(queryByText("No tablespace information available.")).not.toBeNull();
+    expect(queryByText("No table information available.")).not.toBeNull();
   });
 
-  test('renders storage cards, breakdown, badges and largest tables', () => {
+  test("renders storage cards, breakdown, badges and largest tables", () => {
     const { queryByText, queryAllByText } = render(<StorageTab data={makeMonitoringData()} loading={false} />);
 
-    expect(queryByText('Storage Breakdown')).not.toBeNull();
-    expect(queryByText('Tablespaces')).not.toBeNull();
-    expect(queryByText('Largest Tables')).not.toBeNull();
-    expect(queryByText('2.00 GB')).not.toBeNull();
-    expect(queryAllByText('300 MB').length).toBeGreaterThan(0); // WAL card
-    expect(queryByText('Default')).not.toBeNull();
-    expect(queryAllByText('WAL').length).toBeGreaterThan(0);
+    expect(queryByText("Storage Breakdown")).not.toBeNull();
+    expect(queryByText("Tablespaces")).not.toBeNull();
+    expect(queryByText("Largest Tables")).not.toBeNull();
+    expect(queryByText("2.00 GB")).not.toBeNull();
+    expect(queryAllByText("300 MB").length).toBeGreaterThan(0); // WAL card
+    expect(queryByText("Default")).not.toBeNull();
+    expect(queryAllByText("WAL").length).toBeGreaterThan(0);
 
     // largest tables are sorted by total size descending
-    expect(queryByText('orders')).not.toBeNull();
-    expect(queryByText('users')).not.toBeNull();
+    expect(queryByText("orders")).not.toBeNull();
+    expect(queryByText("users")).not.toBeNull();
   });
 });

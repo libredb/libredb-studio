@@ -14,8 +14,8 @@
  * HGETALL user:1
  */
 
-import Redis from 'ioredis';
-import { BaseDatabaseProvider } from '../../base-provider';
+import Redis from "ioredis";
+import { BaseDatabaseProvider } from "../../base-provider";
 import {
   type DatabaseConnection,
   type TableSchema,
@@ -34,8 +34,8 @@ import {
   type TableStats,
   type IndexStats,
   type StorageStats,
-} from '../../types';
-import { DatabaseConfigError, QueryError, ConnectionError } from '../../errors';
+} from "../../types";
+import { DatabaseConfigError, QueryError, ConnectionError } from "../../errors";
 
 // ============================================================================
 // Redis Provider
@@ -55,35 +55,35 @@ export class RedisProvider extends BaseDatabaseProvider {
 
   public override getCapabilities(): ProviderCapabilities {
     return {
-      queryLanguage: 'json',
+      queryLanguage: "json",
       supportsExplain: false,
       supportsExternalQueryLimiting: false,
       supportsCreateTable: false,
       supportsMaintenance: true,
-      maintenanceOperations: ['analyze'],
+      maintenanceOperations: ["analyze"],
       supportsConnectionString: false,
       defaultPort: 6379,
-      schemaRefreshPattern: '(DEL|FLUSHDB|FLUSHALL|RENAME)\\b',
+      schemaRefreshPattern: "(DEL|FLUSHDB|FLUSHALL|RENAME)\\b",
     };
   }
 
   public override getLabels(): ProviderLabels {
     return {
-      entityName: 'Key Pattern',
-      entityNamePlural: 'Key Patterns',
-      rowName: 'key',
-      rowNamePlural: 'keys',
-      selectAction: 'Scan Keys',
-      generateAction: 'Generate Command',
-      analyzeAction: 'Key Info',
-      vacuumAction: 'Memory Doctor',
-      searchPlaceholder: 'Search keys...',
-      analyzeGlobalLabel: 'Run Info',
-      analyzeGlobalTitle: 'Server Info',
-      analyzeGlobalDesc: 'Get Redis server information and statistics.',
-      vacuumGlobalLabel: 'Memory Doctor',
-      vacuumGlobalTitle: 'Memory Analysis',
-      vacuumGlobalDesc: 'Analyze memory usage and provide optimization suggestions.',
+      entityName: "Key Pattern",
+      entityNamePlural: "Key Patterns",
+      rowName: "key",
+      rowNamePlural: "keys",
+      selectAction: "Scan Keys",
+      generateAction: "Generate Command",
+      analyzeAction: "Key Info",
+      vacuumAction: "Memory Doctor",
+      searchPlaceholder: "Search keys...",
+      analyzeGlobalLabel: "Run Info",
+      analyzeGlobalTitle: "Server Info",
+      analyzeGlobalDesc: "Get Redis server information and statistics.",
+      vacuumGlobalLabel: "Memory Doctor",
+      vacuumGlobalTitle: "Memory Analysis",
+      vacuumGlobalDesc: "Analyze memory usage and provide optimization suggestions.",
     };
   }
 
@@ -98,7 +98,7 @@ export class RedisProvider extends BaseDatabaseProvider {
   public override validate(): void {
     super.validate();
     if (!this.config.host) {
-      throw new DatabaseConfigError('Redis host is required', 'redis');
+      throw new DatabaseConfigError("Redis host is required", "redis");
     }
   }
 
@@ -119,7 +119,7 @@ export class RedisProvider extends BaseDatabaseProvider {
       this.setError(error instanceof Error ? error : new Error(String(error)));
       throw new ConnectionError(
         `Failed to connect to Redis: ${error instanceof Error ? error.message : String(error)}`,
-        'redis'
+        "redis",
       );
     }
   }
@@ -130,7 +130,11 @@ export class RedisProvider extends BaseDatabaseProvider {
         await this.client.quit();
       } catch {
         // quit() may fail if already disconnected; force disconnect
-        try { this.client.disconnect(); } catch { /* ignore */ }
+        try {
+          this.client.disconnect();
+        } catch {
+          /* ignore */
+        }
       } finally {
         this.client = null;
       }
@@ -154,16 +158,16 @@ export class RedisProvider extends BaseDatabaseProvider {
     });
   }
 
-  private async executeRedisCommand(input: string): Promise<Omit<QueryResult, 'executionTime'>> {
+  private async executeRedisCommand(input: string): Promise<Omit<QueryResult, "executionTime">> {
     const trimmed = input.trim();
 
     // Try JSON format first
-    if (trimmed.startsWith('{')) {
+    if (trimmed.startsWith("{")) {
       try {
         const parsed = JSON.parse(trimmed);
         return this.executeJsonCommand(parsed);
       } catch {
-        throw new QueryError('Invalid JSON command format', 'redis');
+        throw new QueryError("Invalid JSON command format", "redis");
       }
     }
 
@@ -171,9 +175,12 @@ export class RedisProvider extends BaseDatabaseProvider {
     return this.executePlainCommand(trimmed);
   }
 
-  private async executeJsonCommand(cmd: { command: string; args?: string[] }): Promise<Omit<QueryResult, 'executionTime'>> {
+  private async executeJsonCommand(cmd: {
+    command: string;
+    args?: string[];
+  }): Promise<Omit<QueryResult, "executionTime">> {
     if (!cmd.command) {
-      throw new QueryError('Command is required in JSON format: { "command": "GET", "args": ["key"] }', 'redis');
+      throw new QueryError('Command is required in JSON format: { "command": "GET", "args": ["key"] }', "redis");
     }
 
     const command = cmd.command.toUpperCase();
@@ -182,12 +189,12 @@ export class RedisProvider extends BaseDatabaseProvider {
     return this.runCommand(command, args);
   }
 
-  private async executePlainCommand(input: string): Promise<Omit<QueryResult, 'executionTime'>> {
+  private async executePlainCommand(input: string): Promise<Omit<QueryResult, "executionTime">> {
     // Parse plain text command, respecting quoted strings
     const parts: string[] = [];
-    let current = '';
+    let current = "";
     let inQuote = false;
-    let quoteChar = '';
+    let quoteChar = "";
 
     for (let i = 0; i < input.length; i++) {
       const ch = input[i];
@@ -199,7 +206,7 @@ export class RedisProvider extends BaseDatabaseProvider {
       } else if (!inQuote && /\s/.test(ch)) {
         if (current) {
           parts.push(current);
-          current = '';
+          current = "";
         }
       } else {
         current += ch;
@@ -208,7 +215,7 @@ export class RedisProvider extends BaseDatabaseProvider {
     if (current) parts.push(current);
 
     if (parts.length === 0) {
-      throw new QueryError('Empty command', 'redis');
+      throw new QueryError("Empty command", "redis");
     }
 
     const command = parts[0].toUpperCase();
@@ -217,82 +224,79 @@ export class RedisProvider extends BaseDatabaseProvider {
     return this.runCommand(command, args);
   }
 
-  private async runCommand(command: string, args: string[]): Promise<Omit<QueryResult, 'executionTime'>> {
+  private async runCommand(command: string, args: string[]): Promise<Omit<QueryResult, "executionTime">> {
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const result = await (this.client as any).call(command, ...args);
       return this.formatResult(command, result);
     } catch (error) {
-      throw new QueryError(
-        `Redis error: ${error instanceof Error ? error.message : String(error)}`,
-        'redis'
-      );
+      throw new QueryError(`Redis error: ${error instanceof Error ? error.message : String(error)}`, "redis");
     }
   }
 
-  private formatResult(command: string, result: unknown): Omit<QueryResult, 'executionTime'> {
+  private formatResult(command: string, result: unknown): Omit<QueryResult, "executionTime"> {
     // Handle null/nil
     if (result === null || result === undefined) {
-      return { rows: [{ result: '(nil)' }], fields: ['result'], rowCount: 0 };
+      return { rows: [{ result: "(nil)" }], fields: ["result"], rowCount: 0 };
     }
 
     // Handle arrays (KEYS, SMEMBERS, LRANGE, etc.)
     if (Array.isArray(result)) {
       if (result.length === 0) {
-        return { rows: [{ result: '(empty list)' }], fields: ['result'], rowCount: 0 };
+        return { rows: [{ result: "(empty list)" }], fields: ["result"], rowCount: 0 };
       }
 
       // HGETALL returns flat [key, val, key, val...]
-      if (command === 'HGETALL' && result.length % 2 === 0) {
+      if (command === "HGETALL" && result.length % 2 === 0) {
         const rows: Record<string, unknown>[] = [];
         for (let i = 0; i < result.length; i += 2) {
           rows.push({ field: String(result[i]), value: String(result[i + 1]) });
         }
-        return { rows, fields: ['field', 'value'], rowCount: rows.length };
+        return { rows, fields: ["field", "value"], rowCount: rows.length };
       }
 
       // Regular array result
       const rows = result.map((item, index) => ({
         index: index + 1,
-        value: typeof item === 'object' ? JSON.stringify(item) : String(item),
+        value: typeof item === "object" ? JSON.stringify(item) : String(item),
       }));
-      return { rows, fields: ['index', 'value'], rowCount: rows.length };
+      return { rows, fields: ["index", "value"], rowCount: rows.length };
     }
 
     // Handle integers
-    if (typeof result === 'number') {
-      return { rows: [{ result: `(integer) ${result}` }], fields: ['result'], rowCount: 1 };
+    if (typeof result === "number") {
+      return { rows: [{ result: `(integer) ${result}` }], fields: ["result"], rowCount: 1 };
     }
 
     // Handle strings
-    if (typeof result === 'string') {
+    if (typeof result === "string") {
       // INFO command — parse into structured output
-      if (command === 'INFO') {
+      if (command === "INFO") {
         return this.parseInfoResult(result);
       }
-      return { rows: [{ result }], fields: ['result'], rowCount: 1 };
+      return { rows: [{ result }], fields: ["result"], rowCount: 1 };
     }
 
     // Fallback
     return {
       rows: [{ result: JSON.stringify(result) }],
-      fields: ['result'],
+      fields: ["result"],
       rowCount: 1,
     };
   }
 
-  private parseInfoResult(info: string): Omit<QueryResult, 'executionTime'> {
+  private parseInfoResult(info: string): Omit<QueryResult, "executionTime"> {
     const rows: Record<string, unknown>[] = [];
-    let currentSection = '';
+    let currentSection = "";
 
-    for (const line of info.split('\n')) {
+    for (const line of info.split("\n")) {
       const trimmed = line.trim();
       if (!trimmed) continue;
-      if (trimmed.startsWith('#')) {
-        currentSection = trimmed.replace('# ', '');
+      if (trimmed.startsWith("#")) {
+        currentSection = trimmed.replace("# ", "");
         continue;
       }
-      const colonIdx = trimmed.indexOf(':');
+      const colonIdx = trimmed.indexOf(":");
       if (colonIdx > 0) {
         rows.push({
           section: currentSection,
@@ -302,7 +306,7 @@ export class RedisProvider extends BaseDatabaseProvider {
       }
     }
 
-    return { rows, fields: ['section', 'key', 'value'], rowCount: rows.length };
+    return { rows, fields: ["section", "key", "value"], rowCount: rows.length };
   }
 
   // ============================================================================
@@ -315,12 +319,12 @@ export class RedisProvider extends BaseDatabaseProvider {
     try {
       // Use SCAN to sample keys and group by prefix pattern
       const keyPatterns = new Map<string, { count: number; types: Set<string> }>();
-      let cursor = '0';
+      let cursor = "0";
       let totalScanned = 0;
       const maxScan = 1000;
 
       do {
-        const [nextCursor, keys] = await this.client!.scan(cursor, 'COUNT', 100);
+        const [nextCursor, keys] = await this.client!.scan(cursor, "COUNT", 100);
         cursor = nextCursor;
 
         for (const key of keys) {
@@ -341,7 +345,7 @@ export class RedisProvider extends BaseDatabaseProvider {
             }
           }
         }
-      } while (cursor !== '0' && totalScanned < maxScan);
+      } while (cursor !== "0" && totalScanned < maxScan);
 
       // Convert patterns to TableSchema
       const schemas: TableSchema[] = [];
@@ -350,9 +354,9 @@ export class RedisProvider extends BaseDatabaseProvider {
         schemas.push({
           name: pattern,
           columns: [
-            { name: 'key', type: 'string', nullable: false, isPrimary: true },
-            { name: 'value', type: types.join('/'), nullable: true, isPrimary: false },
-            { name: 'type', type: types.join(', '), nullable: false, isPrimary: false },
+            { name: "key", type: "string", nullable: false, isPrimary: true },
+            { name: "value", type: types.join("/"), nullable: true, isPrimary: false },
+            { name: "type", type: types.join(", "), nullable: false, isPrimary: false },
           ],
           indexes: [],
           rowCount: info.count,
@@ -363,16 +367,16 @@ export class RedisProvider extends BaseDatabaseProvider {
     } catch (error) {
       throw new QueryError(
         `Failed to scan Redis keys: ${error instanceof Error ? error.message : String(error)}`,
-        'redis'
+        "redis",
       );
     }
   }
 
   private getKeyPrefix(key: string): string {
     // Extract prefix: "user:123" -> "user:*", "session:abc:data" -> "session:*"
-    const colonIdx = key.indexOf(':');
+    const colonIdx = key.indexOf(":");
     if (colonIdx > 0) {
-      return key.substring(0, colonIdx) + ':*';
+      return key.substring(0, colonIdx) + ":*";
     }
     return key;
   }
@@ -389,14 +393,17 @@ export class RedisProvider extends BaseDatabaseProvider {
       const parsed = this.parseRedisInfo(info);
 
       return {
-        activeConnections: parseInt(parsed.connected_clients || '0'),
-        databaseSize: parsed.used_memory_human || '0B',
+        activeConnections: parseInt(parsed.connected_clients || "0"),
+        databaseSize: parsed.used_memory_human || "0B",
         cacheHitRatio: this.calculateHitRatio(parsed),
         slowQueries: [],
         activeSessions: [],
       };
     } catch (error) {
-      throw new QueryError(`Failed to get Redis health: ${error instanceof Error ? error.message : String(error)}`, 'redis');
+      throw new QueryError(
+        `Failed to get Redis health: ${error instanceof Error ? error.message : String(error)}`,
+        "redis",
+      );
     }
   }
 
@@ -407,12 +414,12 @@ export class RedisProvider extends BaseDatabaseProvider {
     const dbsize = await this.client!.dbsize();
 
     return {
-      version: parsed.redis_version || 'unknown',
-      uptime: this.formatDuration(parseInt(parsed.uptime_in_seconds || '0') * 1000),
-      activeConnections: parseInt(parsed.connected_clients || '0'),
-      maxConnections: parseInt(parsed.maxclients || '0'),
-      databaseSize: parsed.used_memory_human || '0B',
-      databaseSizeBytes: parseInt(parsed.used_memory || '0'),
+      version: parsed.redis_version || "unknown",
+      uptime: this.formatDuration(parseInt(parsed.uptime_in_seconds || "0") * 1000),
+      activeConnections: parseInt(parsed.connected_clients || "0"),
+      maxConnections: parseInt(parsed.maxclients || "0"),
+      databaseSize: parsed.used_memory_human || "0B",
+      databaseSizeBytes: parseInt(parsed.used_memory || "0"),
       tableCount: dbsize,
       indexCount: 0,
     };
@@ -425,7 +432,7 @@ export class RedisProvider extends BaseDatabaseProvider {
 
     return {
       cacheHitRatio: parseFloat(this.calculateHitRatio(parsed)),
-      queriesPerSecond: parseFloat(parsed.instantaneous_ops_per_sec || '0'),
+      queriesPerSecond: parseFloat(parsed.instantaneous_ops_per_sec || "0"),
     };
   }
 
@@ -433,12 +440,12 @@ export class RedisProvider extends BaseDatabaseProvider {
     this.ensureConnected();
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const slowlog = await (this.client as any).call('SLOWLOG', 'GET', '10') as unknown[][];
+      const slowlog = (await (this.client as any).call("SLOWLOG", "GET", "10")) as unknown[][];
       if (!Array.isArray(slowlog)) return [];
 
       return slowlog.map((entry) => ({
         queryId: String(entry[0]),
-        query: Array.isArray(entry[3]) ? (entry[3] as string[]).join(' ') : String(entry[3]),
+        query: Array.isArray(entry[3]) ? (entry[3] as string[]).join(" ") : String(entry[3]),
         calls: 1,
         totalTime: Number(entry[2]) / 1000, // microseconds to ms
         avgTime: Number(entry[2]) / 1000,
@@ -452,27 +459,27 @@ export class RedisProvider extends BaseDatabaseProvider {
   public async getActiveSessions(): Promise<ActiveSessionDetails[]> {
     this.ensureConnected();
     try {
-      const clientList = await this.client!.client('LIST') as string;
+      const clientList = (await this.client!.client("LIST")) as string;
       const sessions: ActiveSessionDetails[] = [];
 
-      for (const line of clientList.split('\n')) {
+      for (const line of clientList.split("\n")) {
         if (!line.trim()) continue;
         const fields = Object.fromEntries(
-          line.split(' ').map(pair => {
-            const eq = pair.indexOf('=');
-            return eq > 0 ? [pair.substring(0, eq), pair.substring(eq + 1)] : [pair, ''];
-          })
+          line.split(" ").map((pair) => {
+            const eq = pair.indexOf("=");
+            return eq > 0 ? [pair.substring(0, eq), pair.substring(eq + 1)] : [pair, ""];
+          }),
         );
 
         sessions.push({
-          pid: fields.id || '0',
-          user: fields.name || 'default',
-          database: fields.db || '0',
-          state: fields.flags || 'N',
-          query: fields.cmd || 'idle',
-          duration: `${Math.round(parseInt(fields.idle || '0'))}s`,
-          durationMs: parseInt(fields.idle || '0') * 1000,
-          clientAddr: fields.addr || '',
+          pid: fields.id || "0",
+          user: fields.name || "default",
+          database: fields.db || "0",
+          state: fields.flags || "N",
+          query: fields.cmd || "idle",
+          duration: `${Math.round(parseInt(fields.idle || "0"))}s`,
+          durationMs: parseInt(fields.idle || "0") * 1000,
+          clientAddr: fields.addr || "",
         });
       }
 
@@ -492,17 +499,20 @@ export class RedisProvider extends BaseDatabaseProvider {
 
   public async getStorageStats(): Promise<StorageStats[]> {
     this.ensureConnected();
-    const info = await this.client!.info('memory');
+    const info = await this.client!.info("memory");
     const parsed = this.parseRedisInfo(info);
 
-    return [{
-      name: 'Memory',
-      size: parsed.used_memory_human || '0B',
-      sizeBytes: parseInt(parsed.used_memory || '0'),
-      usagePercent: parsed.maxmemory && parsed.maxmemory !== '0'
-        ? (parseInt(parsed.used_memory || '0') / parseInt(parsed.maxmemory)) * 100
-        : undefined,
-    }];
+    return [
+      {
+        name: "Memory",
+        size: parsed.used_memory_human || "0B",
+        sizeBytes: parseInt(parsed.used_memory || "0"),
+        usagePercent:
+          parsed.maxmemory && parsed.maxmemory !== "0"
+            ? (parseInt(parsed.used_memory || "0") / parseInt(parsed.maxmemory)) * 100
+            : undefined,
+      },
+    ];
   }
 
   public async runMaintenance(type: MaintenanceType): Promise<MaintenanceResult> {
@@ -511,14 +521,14 @@ export class RedisProvider extends BaseDatabaseProvider {
 
     try {
       switch (type) {
-        case 'analyze': {
+        case "analyze": {
           const info = await this.client!.info();
           const executionTime = Math.round(performance.now() - startTime);
-          const lines = info.split('\n').length;
+          const lines = info.split("\n").length;
           return { success: true, executionTime, message: `Server info retrieved (${lines} metrics)` };
         }
         default:
-          throw new QueryError(`Unsupported maintenance type for Redis: ${type}`, 'redis');
+          throw new QueryError(`Unsupported maintenance type for Redis: ${type}`, "redis");
       }
     } catch (error) {
       if (error instanceof QueryError) throw error;
@@ -533,10 +543,10 @@ export class RedisProvider extends BaseDatabaseProvider {
 
   private parseRedisInfo(info: string): Record<string, string> {
     const result: Record<string, string> = {};
-    for (const line of info.split('\n')) {
+    for (const line of info.split("\n")) {
       const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith('#')) continue;
-      const colonIdx = trimmed.indexOf(':');
+      if (!trimmed || trimmed.startsWith("#")) continue;
+      const colonIdx = trimmed.indexOf(":");
       if (colonIdx > 0) {
         result[trimmed.substring(0, colonIdx)] = trimmed.substring(colonIdx + 1);
       }
@@ -545,10 +555,10 @@ export class RedisProvider extends BaseDatabaseProvider {
   }
 
   private calculateHitRatio(info: Record<string, string>): string {
-    const hits = parseInt(info.keyspace_hits || '0');
-    const misses = parseInt(info.keyspace_misses || '0');
+    const hits = parseInt(info.keyspace_hits || "0");
+    const misses = parseInt(info.keyspace_misses || "0");
     const total = hits + misses;
-    if (total === 0) return '100.0';
+    if (total === 0) return "100.0";
     return ((hits / total) * 100).toFixed(1);
   }
 }

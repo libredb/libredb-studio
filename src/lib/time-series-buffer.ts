@@ -38,7 +38,7 @@ export class TimeSeriesBuffer<T> {
   }
 
   getRange(from: number, to: number): TimeSeriesPoint<T>[] {
-    return this.getAll().filter(p => p.timestamp >= from && p.timestamp <= to);
+    return this.getAll().filter((p) => p.timestamp >= from && p.timestamp <= to);
   }
 
   getLast(n: number): TimeSeriesPoint<T>[] {

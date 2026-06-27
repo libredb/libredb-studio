@@ -1,6 +1,6 @@
 {
   "name": "@libredb/studio",
-  "version": "0.9.32",
+  "version": "0.9.33",
   "private": false,
   "publishConfig": {
     "access": "public"
@@ -79,9 +79,13 @@
     "dev": "next dev",
     "build": "next build",
     "build:lib": "tsup",
-    "prepublishOnly": "tsup",
+    "attw": "rm -rf .attw && bun pm pack --quiet --destination .attw && attw .attw/*.tgz --profile node16",
+    "prepublishOnly": "tsup && bun run attw",
     "start": "next start",
-    "lint": "eslint .",
+    "format": "biome format .",
+    "format:fix": "biome format --write .",
+    "lint": "oxlint && eslint .",
+    "lint:oxc": "oxlint",
     "typecheck": "tsc --noEmit",
     "test": "bun test tests/unit tests/api tests/integration && bun test tests/hooks && bun run test:components",
     "test:ci": "bash tests/run-core.sh && bun run test:components",
@@ -167,6 +171,8 @@
     "zod": "^4.1.12"
   },
   "devDependencies": {
+    "@arethetypeswrong/cli": "^0.18.4",
+    "@biomejs/biome": "^2.5",
     "@playwright/test": "^1.58.2",
     "@tailwindcss/postcss": "^4",
     "@testing-library/react": "^16.3.2",
@@ -182,8 +188,10 @@
     "eslint-config-next": "^16.1.6",
     "happy-dom": "^20.6.1",
     "knip": "^6.17.1",
+    "oxlint": "^1.71",
     "tailwindcss": "^4",
     "tsup": "^8.5.1",
-    "typescript": "^6.0.3"
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.62"
   }
 }

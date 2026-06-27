@@ -1,13 +1,13 @@
-import { NextRequest } from 'next/server';
-import { createLLMProvider } from '@/lib/llm';
-import { createErrorResponse } from '@/lib/api/errors';
+import { NextRequest } from "next/server";
+import { createLLMProvider } from "@/lib/llm";
+import { createErrorResponse } from "@/lib/api/errors";
 
 // ============================================================================
 // System Prompt Builder
 // ============================================================================
 
 function buildSystemInstruction(databaseType: string, schemaContext: string, queryLanguage?: string): string {
-  if (queryLanguage === 'json') {
+  if (queryLanguage === "json") {
     return `You are an Expert Generative AI Engineer and Senior MongoDB Database Administrator specializing in MQL queries, aggregation pipelines, and document database design.
 
 ROLE:
@@ -24,7 +24,7 @@ DATABASE CONTEXT:
 Type: MongoDB
 
 COLLECTION INFORMATION (TOP 100 COLLECTIONS BY DOCUMENT COUNT):
-${schemaContext || 'No specific schema provided. Ask the user for collection details if needed for precise queries.'}
+${schemaContext || "No specific schema provided. Ask the user for collection details if needed for precise queries."}
 
 QUERY FORMAT:
 LibreDB Studio uses JSON-based queries with this structure:
@@ -71,15 +71,15 @@ CAPABILITIES:
 - Ensure security best practices (e.g., avoiding dangerous operations unless explicitly confirmed).
 
 DATABASE CONTEXT:
-Type: ${databaseType || 'Postgres'}
+Type: ${databaseType || "Postgres"}
 
 SCHEMA INFORMATION (TOP 100 TABLES BY ROW COUNT):
-${schemaContext || 'No specific schema provided. Ask the user for table details if needed for precise queries.'}
+${schemaContext || "No specific schema provided. Ask the user for table details if needed for precise queries."}
 
 GUIDELINES:
 1. Return ONLY pure SQL code unless the user asks for an explanation or advice.
 2. If generating SQL, wrap it in markdown code blocks: \`\`\`sql ... \`\`\`.
-3. Use standard naming conventions and ensure compatibility with ${databaseType || 'Postgres'}.
+3. Use standard naming conventions and ensure compatibility with ${databaseType || "Postgres"}.
 4. Always prioritize query performance and readability.
 5. If the schema context is provided, use exact table and column names.
 6. If you notice potential schema improvements (indexes, normalization), mention them briefly if relevant.
@@ -101,32 +101,32 @@ export async function POST(req: NextRequest) {
     const systemInstruction = buildSystemInstruction(databaseType, schemaContext, queryLanguage);
 
     // Build message array with optional conversation history for multi-turn
-    const messages: { role: 'system' | 'user' | 'assistant'; content: string }[] = [
-      { role: 'system', content: systemInstruction },
+    const messages: { role: "system" | "user" | "assistant"; content: string }[] = [
+      { role: "system", content: systemInstruction },
     ];
 
     // Add conversation history if provided (multi-turn support)
     if (conversationHistory?.length) {
       for (const msg of conversationHistory) {
-        if (msg.role === 'user' || msg.role === 'assistant') {
+        if (msg.role === "user" || msg.role === "assistant") {
           messages.push({ role: msg.role, content: msg.content });
         }
       }
     }
 
     // Add the current prompt
-    messages.push({ role: 'user', content: prompt });
+    messages.push({ role: "user", content: prompt });
 
     // Stream completion
     const stream = await provider.stream({ messages });
 
     return new Response(stream, {
       headers: {
-        'Content-Type': 'text/plain; charset=utf-8',
-        'Transfer-Encoding': 'chunked',
+        "Content-Type": "text/plain; charset=utf-8",
+        "Transfer-Encoding": "chunked",
       },
     });
   } catch (error) {
-    return createErrorResponse(error, { route: 'api/ai/chat' });
+    return createErrorResponse(error, { route: "api/ai/chat" });
   }
 }

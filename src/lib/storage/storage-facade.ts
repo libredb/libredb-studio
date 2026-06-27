@@ -4,18 +4,12 @@
  * Dispatches CustomEvent on every mutation for the sync hook.
  */
 
-import {
-  DatabaseConnection,
-  QueryHistoryItem,
-  SavedQuery,
-  SchemaSnapshot,
-  SavedChartConfig,
-} from '../types';
-import { type AuditEvent } from '../audit';
-import { DEFAULT_MASKING_CONFIG, type MaskingConfig } from '../data-masking';
-import { DEFAULT_THRESHOLDS, type ThresholdConfig } from '../monitoring-thresholds';
-import { readJSON, writeJSON, readString, writeString, remove } from './local-storage';
-import type { StorageCollection } from './types';
+import { DatabaseConnection, QueryHistoryItem, SavedQuery, SchemaSnapshot, SavedChartConfig } from "../types";
+import { type AuditEvent } from "../audit";
+import { DEFAULT_MASKING_CONFIG, type MaskingConfig } from "../data-masking";
+import { DEFAULT_THRESHOLDS, type ThresholdConfig } from "../monitoring-thresholds";
+import { readJSON, writeJSON, readString, writeString, remove } from "./local-storage";
+import type { StorageCollection } from "./types";
 
 const MAX_HISTORY_ITEMS = 500;
 const MAX_SNAPSHOTS = 50;
@@ -23,11 +17,11 @@ const MAX_AUDIT_EVENTS = 1000;
 
 /** Dispatch a custom event to notify the sync hook of a mutation */
 function dispatchChange(collection: StorageCollection, data: unknown): void {
-  if (typeof window === 'undefined') return;
+  if (typeof window === "undefined") return;
   window.dispatchEvent(
-    new CustomEvent('libredb-storage-change', {
+    new CustomEvent("libredb-storage-change", {
       detail: { collection, data },
-    })
+    }),
   );
 }
 
@@ -50,9 +44,9 @@ export const storage = {
   // ═══════════════════════════════════════════════════════════════════════════
 
   getConnections: (): DatabaseConnection[] => {
-    const data = readJSON<DatabaseConnection[]>('connections');
+    const data = readJSON<DatabaseConnection[]>("connections");
     if (!data) return [];
-    return reviveDates(data, 'createdAt');
+    return reviveDates(data, "createdAt");
   },
 
   saveConnection: (connection: DatabaseConnection) => {
@@ -65,12 +59,12 @@ export const storage = {
       connections.push(connection);
     }
 
-    writeJSON('connections', connections);
-    dispatchChange('connections', connections);
+    writeJSON("connections", connections);
+    dispatchChange("connections", connections);
   },
 
   getDismissedSeeds: (): string[] => {
-    return readJSON<string[]>('dismissed_seeds') ?? [];
+    return readJSON<string[]>("dismissed_seeds") ?? [];
   },
 
   deleteConnection: (id: string) => {
@@ -80,13 +74,13 @@ export const storage = {
       const dismissed = storage.getDismissedSeeds();
       if (!dismissed.includes(target.seedId)) {
         const next = [...dismissed, target.seedId];
-        writeJSON('dismissed_seeds', next);
-        dispatchChange('dismissed_seeds', next);
+        writeJSON("dismissed_seeds", next);
+        dispatchChange("dismissed_seeds", next);
       }
     }
     const filtered = connections.filter((c) => c.id !== id);
-    writeJSON('connections', filtered);
-    dispatchChange('connections', filtered);
+    writeJSON("connections", filtered);
+    dispatchChange("connections", filtered);
   },
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -94,21 +88,21 @@ export const storage = {
   // ═══════════════════════════════════════════════════════════════════════════
 
   getHistory: (): QueryHistoryItem[] => {
-    const data = readJSON<QueryHistoryItem[]>('history');
+    const data = readJSON<QueryHistoryItem[]>("history");
     if (!data) return [];
-    return reviveDates(data, 'executedAt');
+    return reviveDates(data, "executedAt");
   },
 
   addToHistory: (item: QueryHistoryItem) => {
     const history = storage.getHistory();
     const newHistory = [item, ...history].slice(0, MAX_HISTORY_ITEMS);
-    writeJSON('history', newHistory);
-    dispatchChange('history', newHistory);
+    writeJSON("history", newHistory);
+    dispatchChange("history", newHistory);
   },
 
   clearHistory: () => {
-    writeJSON('history', []);
-    dispatchChange('history', []);
+    writeJSON("history", []);
+    dispatchChange("history", []);
   },
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -116,9 +110,9 @@ export const storage = {
   // ═══════════════════════════════════════════════════════════════════════════
 
   getSavedQueries: (): SavedQuery[] => {
-    const data = readJSON<SavedQuery[]>('saved_queries');
+    const data = readJSON<SavedQuery[]>("saved_queries");
     if (!data) return [];
-    return reviveDates(data, 'createdAt', 'updatedAt');
+    return reviveDates(data, "createdAt", "updatedAt");
   },
 
   saveQuery: (query: SavedQuery) => {
@@ -131,15 +125,15 @@ export const storage = {
       queries.push({ ...query, createdAt: new Date(), updatedAt: new Date() });
     }
 
-    writeJSON('saved_queries', queries);
-    dispatchChange('saved_queries', queries);
+    writeJSON("saved_queries", queries);
+    dispatchChange("saved_queries", queries);
   },
 
   deleteSavedQuery: (id: string) => {
     const queries = storage.getSavedQueries();
     const filtered = queries.filter((q) => q.id !== id);
-    writeJSON('saved_queries', filtered);
-    dispatchChange('saved_queries', filtered);
+    writeJSON("saved_queries", filtered);
+    dispatchChange("saved_queries", filtered);
   },
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -147,9 +141,9 @@ export const storage = {
   // ═══════════════════════════════════════════════════════════════════════════
 
   getSchemaSnapshots: (connectionId?: string): SchemaSnapshot[] => {
-    const data = readJSON<SchemaSnapshot[]>('schema_snapshots');
+    const data = readJSON<SchemaSnapshot[]>("schema_snapshots");
     if (!data) return [];
-    const snapshots = reviveDates(data, 'createdAt');
+    const snapshots = reviveDates(data, "createdAt");
     if (connectionId) {
       return snapshots.filter((s) => s.connectionId === connectionId);
     }
@@ -160,15 +154,15 @@ export const storage = {
     const snapshots = storage.getSchemaSnapshots();
     snapshots.push({ ...snapshot, createdAt: new Date() });
     const trimmed = snapshots.slice(-MAX_SNAPSHOTS);
-    writeJSON('schema_snapshots', trimmed);
-    dispatchChange('schema_snapshots', trimmed);
+    writeJSON("schema_snapshots", trimmed);
+    dispatchChange("schema_snapshots", trimmed);
   },
 
   deleteSchemaSnapshot: (id: string) => {
     const snapshots = storage.getSchemaSnapshots();
     const filtered = snapshots.filter((s) => s.id !== id);
-    writeJSON('schema_snapshots', filtered);
-    dispatchChange('schema_snapshots', filtered);
+    writeJSON("schema_snapshots", filtered);
+    dispatchChange("schema_snapshots", filtered);
   },
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -176,9 +170,9 @@ export const storage = {
   // ═══════════════════════════════════════════════════════════════════════════
 
   getSavedCharts: (): SavedChartConfig[] => {
-    const data = readJSON<SavedChartConfig[]>('saved_charts');
+    const data = readJSON<SavedChartConfig[]>("saved_charts");
     if (!data) return [];
-    return reviveDates(data, 'createdAt');
+    return reviveDates(data, "createdAt");
   },
 
   saveChart: (chart: SavedChartConfig) => {
@@ -189,15 +183,15 @@ export const storage = {
     } else {
       charts.push({ ...chart, createdAt: new Date() });
     }
-    writeJSON('saved_charts', charts);
-    dispatchChange('saved_charts', charts);
+    writeJSON("saved_charts", charts);
+    dispatchChange("saved_charts", charts);
   },
 
   deleteChart: (id: string) => {
     const charts = storage.getSavedCharts();
     const filtered = charts.filter((c) => c.id !== id);
-    writeJSON('saved_charts', filtered);
-    dispatchChange('saved_charts', filtered);
+    writeJSON("saved_charts", filtered);
+    dispatchChange("saved_charts", filtered);
   },
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -205,17 +199,17 @@ export const storage = {
   // ═══════════════════════════════════════════════════════════════════════════
 
   getActiveConnectionId: (): string | null => {
-    return readString('active_connection_id');
+    return readString("active_connection_id");
   },
 
   setActiveConnectionId: (id: string | null) => {
-    if (typeof window === 'undefined') return;
+    if (typeof window === "undefined") return;
     if (id) {
-      writeString('active_connection_id', id);
+      writeString("active_connection_id", id);
     } else {
-      remove('active_connection_id');
+      remove("active_connection_id");
     }
-    dispatchChange('active_connection_id', id);
+    dispatchChange("active_connection_id", id);
   },
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -223,14 +217,14 @@ export const storage = {
   // ═══════════════════════════════════════════════════════════════════════════
 
   getAuditLog: (): AuditEvent[] => {
-    const data = readJSON<AuditEvent[]>('audit_log');
+    const data = readJSON<AuditEvent[]>("audit_log");
     return data ?? [];
   },
 
   saveAuditLog: (events: AuditEvent[]) => {
     const trimmed = events.slice(-MAX_AUDIT_EVENTS);
-    writeJSON('audit_log', trimmed);
-    dispatchChange('audit_log', trimmed);
+    writeJSON("audit_log", trimmed);
+    dispatchChange("audit_log", trimmed);
   },
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -238,13 +232,11 @@ export const storage = {
   // ═══════════════════════════════════════════════════════════════════════════
 
   getMaskingConfig: (): MaskingConfig => {
-    const data = readJSON<MaskingConfig>('masking_config');
+    const data = readJSON<MaskingConfig>("masking_config");
     if (!data) return DEFAULT_MASKING_CONFIG;
 
     // Merge with defaults to ensure new builtin patterns are included
-    const builtinIds = new Set(
-      DEFAULT_MASKING_CONFIG.patterns.filter((p) => p.isBuiltin).map((p) => p.id)
-    );
+    const builtinIds = new Set(DEFAULT_MASKING_CONFIG.patterns.filter((p) => p.isBuiltin).map((p) => p.id));
     const storedIds = new Set(data.patterns.map((p) => p.id));
 
     for (const defaultPattern of DEFAULT_MASKING_CONFIG.patterns) {
@@ -257,16 +249,14 @@ export const storage = {
       data.roleSettings = DEFAULT_MASKING_CONFIG.roleSettings;
     }
 
-    data.patterns = data.patterns.filter(
-      (p) => !p.isBuiltin || builtinIds.has(p.id) || !p.id.startsWith('builtin-')
-    );
+    data.patterns = data.patterns.filter((p) => !p.isBuiltin || builtinIds.has(p.id) || !p.id.startsWith("builtin-"));
 
     return data;
   },
 
   saveMaskingConfig: (config: MaskingConfig) => {
-    writeJSON('masking_config', config);
-    dispatchChange('masking_config', config);
+    writeJSON("masking_config", config);
+    dispatchChange("masking_config", config);
   },
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -274,12 +264,12 @@ export const storage = {
   // ═══════════════════════════════════════════════════════════════════════════
 
   getThresholdConfig: (): ThresholdConfig[] => {
-    const data = readJSON<ThresholdConfig[]>('threshold_config');
+    const data = readJSON<ThresholdConfig[]>("threshold_config");
     return data ?? DEFAULT_THRESHOLDS;
   },
 
   saveThresholdConfig: (thresholds: ThresholdConfig[]) => {
-    writeJSON('threshold_config', thresholds);
-    dispatchChange('threshold_config', thresholds);
+    writeJSON("threshold_config", thresholds);
+    dispatchChange("threshold_config", thresholds);
   },
 };

@@ -1,15 +1,12 @@
 "use client";
 
-import React, { useState } from 'react';
-import { 
-  Dialog, DialogContent, DialogHeader, 
-  DialogTitle, DialogFooter, DialogDescription 
-} from './ui/dialog';
-import { Button } from './ui/button';
-import { Input } from './ui/input';
-import { Label } from './ui/label';
-import { Textarea } from './ui/textarea';
-import { Bookmark, Tag } from 'lucide-react';
+import React, { useState } from "react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "./ui/dialog";
+import { Button } from "./ui/button";
+import { Input } from "./ui/input";
+import { Label } from "./ui/label";
+import { Textarea } from "./ui/textarea";
+import { Bookmark, Tag } from "lucide-react";
 
 interface SaveQueryModalProps {
   isOpen: boolean;
@@ -19,17 +16,20 @@ interface SaveQueryModalProps {
 }
 
 export function SaveQueryModal({ isOpen, onClose, onSave, defaultQuery }: SaveQueryModalProps) {
-  const [name, setName] = useState('');
-  const [description, setDescription] = useState('');
-  const [tagsInput, setTagsInput] = useState('');
+  const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
+  const [tagsInput, setTagsInput] = useState("");
 
   const handleSave = () => {
     if (!name) return;
-    const tags = tagsInput.split(',').map(t => t.trim()).filter(t => t);
+    const tags = tagsInput
+      .split(",")
+      .map((t) => t.trim())
+      .filter((t) => t);
     onSave(name, description, tags);
-    setName('');
-    setDescription('');
-    setTagsInput('');
+    setName("");
+    setDescription("");
+    setTagsInput("");
     onClose();
   };
 
@@ -44,10 +44,12 @@ export function SaveQueryModal({ isOpen, onClose, onSave, defaultQuery }: SaveQu
             Give your query a name and description to find it easily later.
           </DialogDescription>
         </DialogHeader>
-        
+
         <div className="grid gap-4 py-4">
           <div className="grid gap-2">
-            <Label htmlFor="name" className="text-xs font-medium text-zinc-500">Name</Label>
+            <Label htmlFor="name" className="text-xs font-medium text-zinc-500">
+              Name
+            </Label>
             <Input
               id="name"
               value={name}
@@ -57,7 +59,9 @@ export function SaveQueryModal({ isOpen, onClose, onSave, defaultQuery }: SaveQu
             />
           </div>
           <div className="grid gap-2">
-            <Label htmlFor="description" className="text-xs font-medium text-zinc-500">Description</Label>
+            <Label htmlFor="description" className="text-xs font-medium text-zinc-500">
+              Description
+            </Label>
             <Textarea
               id="description"
               value={description}
@@ -89,9 +93,11 @@ export function SaveQueryModal({ isOpen, onClose, onSave, defaultQuery }: SaveQu
         </div>
 
         <DialogFooter>
-          <Button variant="ghost" onClick={onClose} className="text-zinc-400">Cancel</Button>
-          <Button 
-            onClick={handleSave} 
+          <Button variant="ghost" onClick={onClose} className="text-zinc-400">
+            Cancel
+          </Button>
+          <Button
+            onClick={handleSave}
             disabled={!name}
             className="bg-blue-600 hover:bg-blue-500 text-white font-medium"
           >

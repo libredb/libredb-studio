@@ -1,13 +1,7 @@
-import type {
-  DatabaseConnection,
-  QueryHistoryItem,
-  SavedQuery,
-  SchemaSnapshot,
-  SavedChartConfig,
-} from '../types';
-import type { AuditEvent } from '../audit';
-import type { MaskingConfig } from '../data-masking';
-import type { ThresholdConfig } from '../monitoring-thresholds';
+import type { DatabaseConnection, QueryHistoryItem, SavedQuery, SchemaSnapshot, SavedChartConfig } from "../types";
+import type { AuditEvent } from "../audit";
+import type { MaskingConfig } from "../data-masking";
+import type { ThresholdConfig } from "../monitoring-thresholds";
 
 /**
  * All persistable collections and their data types.
@@ -32,16 +26,16 @@ export type StorageCollection = keyof StorageData;
 
 /** All persistable collection names */
 export const STORAGE_COLLECTIONS: StorageCollection[] = [
-  'connections',
-  'history',
-  'saved_queries',
-  'schema_snapshots',
-  'saved_charts',
-  'active_connection_id',
-  'audit_log',
-  'masking_config',
-  'threshold_config',
-  'dismissed_seeds',
+  "connections",
+  "history",
+  "saved_queries",
+  "schema_snapshots",
+  "saved_charts",
+  "active_connection_id",
+  "audit_log",
+  "masking_config",
+  "threshold_config",
+  "dismissed_seeds",
 ];
 
 /**
@@ -67,7 +61,7 @@ export interface ServerStorageProvider {
 
 /** Storage config returned by /api/storage/config */
 export interface StorageConfigResponse {
-  provider: 'local' | 'sqlite' | 'postgres';
+  provider: "local" | "sqlite" | "postgres";
   serverMode: boolean;
 }
 

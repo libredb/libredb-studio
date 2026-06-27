@@ -1,4 +1,4 @@
-import { describe, test, expect, mock, beforeEach } from 'bun:test';
+import { describe, test, expect, mock, beforeEach } from "bun:test";
 
 // ============================================================================
 // Mock State — only mock next/headers (cookies), NOT jose
@@ -13,7 +13,7 @@ let mockDeleteCalls: string[] = [];
 // Module Mocks — only next/headers
 // ============================================================================
 
-mock.module('next/headers', () => ({
+mock.module("next/headers", () => ({
   cookies: async () => ({
     get: (name: string) => mockCookieStore[name],
     set: (name: string, value: string, opts: unknown) => {
@@ -31,13 +31,13 @@ mock.module('next/headers', () => ({
 // Import module under test (after mocks)
 // ============================================================================
 
-const { signJWT, verifyJWT, getSession, login, logout } = await import('@/lib/auth');
+const { signJWT, verifyJWT, getSession, login, logout } = await import("@/lib/auth");
 
 // ============================================================================
 // Tests — use real jose sign/verify with JWT_SECRET from tests/setup.ts
 // ============================================================================
 
-describe('auth', () => {
+describe("auth", () => {
   beforeEach(() => {
     mockCookieStore = {};
     mockSetCalls = [];
@@ -48,23 +48,23 @@ describe('auth', () => {
   // signJWT()
   // --------------------------------------------------------------------------
 
-  describe('signJWT()', () => {
-    test('returns a token string', async () => {
-      const token = await signJWT({ role: 'admin', username: 'admin' });
-      expect(typeof token).toBe('string');
+  describe("signJWT()", () => {
+    test("returns a token string", async () => {
+      const token = await signJWT({ role: "admin", username: "admin" });
+      expect(typeof token).toBe("string");
       expect(token.length).toBeGreaterThan(0);
       // Real JWT has 3 dot-separated parts
-      expect(token.split('.').length).toBe(3);
+      expect(token.split(".").length).toBe(3);
     });
 
-    test('accepts admin role', async () => {
-      const token = await signJWT({ role: 'admin', username: 'admin' });
-      expect(typeof token).toBe('string');
+    test("accepts admin role", async () => {
+      const token = await signJWT({ role: "admin", username: "admin" });
+      expect(typeof token).toBe("string");
     });
 
-    test('accepts user role', async () => {
-      const token = await signJWT({ role: 'user', username: 'user' });
-      expect(typeof token).toBe('string');
+    test("accepts user role", async () => {
+      const token = await signJWT({ role: "user", username: "user" });
+      expect(typeof token).toBe("string");
     });
   });
 
@@ -72,17 +72,17 @@ describe('auth', () => {
   // verifyJWT()
   // --------------------------------------------------------------------------
 
-  describe('verifyJWT()', () => {
-    test('valid token returns UserPayload', async () => {
-      const token = await signJWT({ role: 'admin', username: 'admin' });
+  describe("verifyJWT()", () => {
+    test("valid token returns UserPayload", async () => {
+      const token = await signJWT({ role: "admin", username: "admin" });
       const payload = await verifyJWT(token);
       expect(payload).not.toBeNull();
-      expect(payload!.role).toBe('admin');
-      expect(payload!.username).toBe('admin');
+      expect(payload!.role).toBe("admin");
+      expect(payload!.username).toBe("admin");
     });
 
-    test('invalid token returns null', async () => {
-      const payload = await verifyJWT('invalid-token-string');
+    test("invalid token returns null", async () => {
+      const payload = await verifyJWT("invalid-token-string");
       expect(payload).toBeNull();
     });
   });
@@ -91,18 +91,18 @@ describe('auth', () => {
   // getSession()
   // --------------------------------------------------------------------------
 
-  describe('getSession()', () => {
-    test('returns payload when auth-token cookie exists', async () => {
-      const token = await signJWT({ role: 'user', username: 'user' });
-      mockCookieStore['auth-token'] = { value: token };
+  describe("getSession()", () => {
+    test("returns payload when auth-token cookie exists", async () => {
+      const token = await signJWT({ role: "user", username: "user" });
+      mockCookieStore["auth-token"] = { value: token };
 
       const session = await getSession();
       expect(session).not.toBeNull();
-      expect(session!.role).toBe('user');
-      expect(session!.username).toBe('user');
+      expect(session!.role).toBe("user");
+      expect(session!.username).toBe("user");
     });
 
-    test('returns null when no cookie', async () => {
+    test("returns null when no cookie", async () => {
       const session = await getSession();
       expect(session).toBeNull();
     });
@@ -112,24 +112,24 @@ describe('auth', () => {
   // login()
   // --------------------------------------------------------------------------
 
-  describe('login()', () => {
-    test('sets auth-token cookie with admin role', async () => {
-      await login('admin', 'admin');
+  describe("login()", () => {
+    test("sets auth-token cookie with admin role", async () => {
+      await login("admin", "admin");
       expect(mockSetCalls.length).toBeGreaterThan(0);
-      expect(mockSetCalls[0].name).toBe('auth-token');
+      expect(mockSetCalls[0].name).toBe("auth-token");
       // Verify the token is valid
       const token = mockSetCalls[0].value;
       const payload = await verifyJWT(token);
       expect(payload).not.toBeNull();
-      expect(payload!.role).toBe('admin');
+      expect(payload!.role).toBe("admin");
     });
 
-    test('sets auth-token cookie with user role', async () => {
-      await login('user', 'user');
+    test("sets auth-token cookie with user role", async () => {
+      await login("user", "user");
       expect(mockSetCalls.length).toBeGreaterThan(0);
       const token = mockSetCalls[0].value;
       const payload = await verifyJWT(token);
-      expect(payload!.role).toBe('user');
+      expect(payload!.role).toBe("user");
     });
   });
 
@@ -137,10 +137,10 @@ describe('auth', () => {
   // logout()
   // --------------------------------------------------------------------------
 
-  describe('logout()', () => {
-    test('deletes auth-token cookie', async () => {
+  describe("logout()", () => {
+    test("deletes auth-token cookie", async () => {
       await logout();
-      expect(mockDeleteCalls).toContain('auth-token');
+      expect(mockDeleteCalls).toContain("auth-token");
     });
   });
 });

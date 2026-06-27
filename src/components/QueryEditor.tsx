@@ -1,18 +1,18 @@
 "use client";
 
-import React, { useRef, useEffect, useState, useMemo, forwardRef, useImperativeHandle, useCallback } from 'react';
-import Editor, { useMonaco } from '@monaco-editor/react';
-import type * as Monaco from 'monaco-editor';
-import { Zap, Sparkles, Send, X, Loader2, AlignLeft, Trash2, Copy, Play, Hash } from 'lucide-react';
-import { cn } from '@/lib/utils';
-import { Button } from '@/components/ui/button';
-import { motion, AnimatePresence } from 'framer-motion';
-import { format } from 'sql-formatter';
-import { registerSQLCompletionProvider } from '@/lib/editor/sql-completions';
-import type { SchemaCompletionCache, SchemaColumnItem } from '@/lib/editor/sql-completions';
-import { registerMongoDBCompletionProvider } from '@/lib/editor/mongodb-completions';
-import { registerLibreDBLanguage } from '@/lib/editor/libredb-language';
-import { useAiChat } from '@/hooks/use-ai-chat';
+import React, { useRef, useEffect, useState, useMemo, forwardRef, useImperativeHandle, useCallback } from "react";
+import Editor, { useMonaco } from "@monaco-editor/react";
+import type * as Monaco from "monaco-editor";
+import { Zap, Sparkles, Send, X, Loader2, AlignLeft, Trash2, Copy, Play, Hash } from "lucide-react";
+import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
+import { motion, AnimatePresence } from "framer-motion";
+import { format } from "sql-formatter";
+import { registerSQLCompletionProvider } from "@/lib/editor/sql-completions";
+import type { SchemaCompletionCache, SchemaColumnItem } from "@/lib/editor/sql-completions";
+import { registerMongoDBCompletionProvider } from "@/lib/editor/mongodb-completions";
+import { registerLibreDBLanguage } from "@/lib/editor/libredb-language";
+import { useAiChat } from "@/hooks/use-ai-chat";
 
 export interface QueryEditorRef {
   getSelectedText: () => string;
@@ -32,13 +32,17 @@ interface QueryEditorProps {
   /** Called when content changes in real-time. Use sparingly as it triggers on every keystroke. */
   onContentChange?: (val: string) => void;
   onExplain?: () => void;
-  language?: 'sql' | 'json' | 'libredb';
+  language?: "sql" | "json" | "libredb";
   tables?: string[];
   databaseType?: string;
   schemaContext?: string;
-  capabilities?: import('@/lib/db/types').ProviderCapabilities;
+  capabilities?: import("@/lib/db/types").ProviderCapabilities;
   /** Optional API adapter: when provided, bypasses the built-in /api/ai/chat fetch. */
-  onAiChat?: (params: { prompt: string; schemaContext: string; history: { role: string; content: string }[] }) => Promise<string>;
+  onAiChat?: (params: {
+    prompt: string;
+    schemaContext: string;
+    history: { role: string; content: string }[];
+  }) => Promise<string>;
 }
 
 interface ParsedTable {
@@ -56,22 +60,22 @@ const getEditorOptions = (showLineNumbers: boolean) => ({
   minimap: { enabled: false },
   fontSize: 13,
   fontFamily: '"JetBrains Mono", "Fira Code", Menlo, Monaco, Consolas, monospace',
-  lineNumbers: showLineNumbers ? ('on' as const) : ('off' as const),
+  lineNumbers: showLineNumbers ? ("on" as const) : ("off" as const),
   roundedSelection: true,
   scrollBeyondLastLine: false,
   readOnly: false,
   automaticLayout: true,
   padding: { top: 12 },
-  cursorSmoothCaretAnimation: 'on' as const,
-  cursorBlinking: 'smooth' as const,
+  cursorSmoothCaretAnimation: "on" as const,
+  cursorBlinking: "smooth" as const,
   smoothScrolling: true,
   contextmenu: true,
-  renderLineHighlight: 'all' as const,
+  renderLineHighlight: "all" as const,
   bracketPairColorization: { enabled: true },
   guides: { indentation: true },
   scrollbar: {
-    vertical: 'visible' as const,
-    horizontal: 'visible' as const,
+    vertical: "visible" as const,
+    horizontal: "visible" as const,
     verticalScrollbarSize: 8,
     horizontalScrollbarSize: 8,
   },
@@ -80,491 +84,497 @@ const getEditorOptions = (showLineNumbers: boolean) => ({
   quickSuggestions: {
     other: true,
     comments: false,
-    strings: true
+    strings: true,
   },
   parameterHints: {
-    enabled: true
-  }
+    enabled: true,
+  },
 });
 
-export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
-  value,
-  onChange,
-  onContentChange,
-  onExplain,
-  language = 'sql',
-  tables = [],
-  databaseType,
-  schemaContext,
-  capabilities,
-  onAiChat,
-}, ref) => {
-  const monaco = useMonaco();
-  const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
-  const [hasSelection, setHasSelection] = useState(false);
-  
-  // Line numbers toggle state (persisted in localStorage)
-  const [showLineNumbers, setShowLineNumbers] = useState<boolean>(() => {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('editor-line-numbers');
-      return saved !== null ? saved === 'true' : true; // default: true
-    }
-    return true;
-  });
+export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
+  (
+    {
+      value,
+      onChange,
+      onContentChange,
+      onExplain,
+      language = "sql",
+      tables = [],
+      databaseType,
+      schemaContext,
+      capabilities,
+      onAiChat,
+    },
+    ref,
+  ) => {
+    const monaco = useMonaco();
+    const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
+    const [hasSelection, setHasSelection] = useState(false);
 
-  // Track last synced value to detect external changes
-  const lastSyncedValueRef = useRef<string>(value);
-  const isInternalChangeRef = useRef<boolean>(false);
-
-  // Sync editor content when value prop changes externally (e.g., tab switch)
-  useEffect(() => {
-    if (editorRef.current && value !== lastSyncedValueRef.current) {
-      const currentEditorValue = editorRef.current.getValue();
-      // Only update if the new value is different from current editor content
-      // This prevents unnecessary updates when we're the source of the change
-      if (value !== currentEditorValue) {
-        isInternalChangeRef.current = true;
-        editorRef.current.setValue(value);
-        lastSyncedValueRef.current = value;
-        isInternalChangeRef.current = false;
+    // Line numbers toggle state (persisted in localStorage)
+    const [showLineNumbers, setShowLineNumbers] = useState<boolean>(() => {
+      if (typeof window !== "undefined") {
+        const saved = localStorage.getItem("editor-line-numbers");
+        return saved !== null ? saved === "true" : true; // default: true
       }
-    }
-  }, [value]);
-
-  // Update editor options when line numbers toggle changes
-  useEffect(() => {
-    if (editorRef.current) {
-      editorRef.current.updateOptions({ lineNumbers: showLineNumbers ? 'on' : 'off' });
-    }
-  }, [showLineNumbers]);
-
-  // Persist line numbers preference to localStorage
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('editor-line-numbers', String(showLineNumbers));
-    }
-  }, [showLineNumbers]);
-
-  const parsedSchema = useMemo((): ParsedTable[] => {
-    if (!schemaContext) return [];
-    try {
-      return JSON.parse(schemaContext);
-    } catch (e) {
-      console.error('Failed to parse schema context for editor:', e);
-      return [];
-    }
-  }, [schemaContext]);
-
-  // Pre-compute schema-based completion items for faster lookups
-  const schemaCompletionCache = useMemo((): SchemaCompletionCache => {
-    const tableItems: SchemaCompletionCache['tableItems'] = [];
-    const columnMap = new Map<string, SchemaColumnItem[]>();
-    const allColumns = new Map<string, SchemaColumnItem>();
-
-    parsedSchema.forEach((table) => {
-      const tableLower = table.name.toLowerCase();
-      tableItems.push({
-        label: table.name,
-        labelLower: tableLower,
-        rowCount: table.rowCount || 0,
-        columnNames: table.columns?.map((c) => c.name).join(', ') || ''
-      });
-
-      const tableColumns: SchemaColumnItem[] = [];
-      table.columns?.forEach((col) => {
-        const colItem: SchemaColumnItem = {
-          label: col.name,
-          labelLower: col.name.toLowerCase(),
-          type: col.type,
-          isPrimary: col.isPrimary || false,
-          tableName: table.name
-        };
-        tableColumns.push(colItem);
-
-        // Only store first occurrence for global column suggestions
-        if (!allColumns.has(col.name)) {
-          allColumns.set(col.name, colItem);
-        }
-      });
-      columnMap.set(tableLower, tableColumns);
+      return true;
     });
 
-    return { tableItems, columnMap, allColumns };
-  }, [parsedSchema]);
+    // Track last synced value to detect external changes
+    const lastSyncedValueRef = useRef<string>(value);
+    const isInternalChangeRef = useRef<boolean>(false);
 
-  const handleFormat = () => {
-    if (!editorRef.current) return;
-    const currentValue = editorRef.current.getValue();
-    if (!currentValue) return;
+    // Sync editor content when value prop changes externally (e.g., tab switch)
+    useEffect(() => {
+      if (editorRef.current && value !== lastSyncedValueRef.current) {
+        const currentEditorValue = editorRef.current.getValue();
+        // Only update if the new value is different from current editor content
+        // This prevents unnecessary updates when we're the source of the change
+        if (value !== currentEditorValue) {
+          isInternalChangeRef.current = true;
+          editorRef.current.setValue(value);
+          lastSyncedValueRef.current = value;
+          isInternalChangeRef.current = false;
+        }
+      }
+    }, [value]);
 
-    try {
-      let formatted: string;
-      if (language === 'json') {
-        // JSON formatting for MongoDB queries
-        const parsed = JSON.parse(currentValue);
-        formatted = JSON.stringify(parsed, null, 2);
-      } else if (language === 'sql') {
-        formatted = format(currentValue, {
-          language: 'postgresql',
-          keywordCase: 'upper',
-          dataTypeCase: 'upper',
-          indentStyle: 'tabularLeft',
-          logicalOperatorNewline: 'before',
-          expressionWidth: 100,
-          tabWidth: 2,
-          linesBetweenQueries: 2,
+    // Update editor options when line numbers toggle changes
+    useEffect(() => {
+      if (editorRef.current) {
+        editorRef.current.updateOptions({ lineNumbers: showLineNumbers ? "on" : "off" });
+      }
+    }, [showLineNumbers]);
+
+    // Persist line numbers preference to localStorage
+    useEffect(() => {
+      if (typeof window !== "undefined") {
+        localStorage.setItem("editor-line-numbers", String(showLineNumbers));
+      }
+    }, [showLineNumbers]);
+
+    const parsedSchema = useMemo((): ParsedTable[] => {
+      if (!schemaContext) return [];
+      try {
+        return JSON.parse(schemaContext);
+      } catch (e) {
+        console.error("Failed to parse schema context for editor:", e);
+        return [];
+      }
+    }, [schemaContext]);
+
+    // Pre-compute schema-based completion items for faster lookups
+    const schemaCompletionCache = useMemo((): SchemaCompletionCache => {
+      const tableItems: SchemaCompletionCache["tableItems"] = [];
+      const columnMap = new Map<string, SchemaColumnItem[]>();
+      const allColumns = new Map<string, SchemaColumnItem>();
+
+      parsedSchema.forEach((table) => {
+        const tableLower = table.name.toLowerCase();
+        tableItems.push({
+          label: table.name,
+          labelLower: tableLower,
+          rowCount: table.rowCount || 0,
+          columnNames: table.columns?.map((c) => c.name).join(", ") || "",
         });
-      } else {
-        return;
+
+        const tableColumns: SchemaColumnItem[] = [];
+        table.columns?.forEach((col) => {
+          const colItem: SchemaColumnItem = {
+            label: col.name,
+            labelLower: col.name.toLowerCase(),
+            type: col.type,
+            isPrimary: col.isPrimary || false,
+            tableName: table.name,
+          };
+          tableColumns.push(colItem);
+
+          // Only store first occurrence for global column suggestions
+          if (!allColumns.has(col.name)) {
+            allColumns.set(col.name, colItem);
+          }
+        });
+        columnMap.set(tableLower, tableColumns);
+      });
+
+      return { tableItems, columnMap, allColumns };
+    }, [parsedSchema]);
+
+    const handleFormat = () => {
+      if (!editorRef.current) return;
+      const currentValue = editorRef.current.getValue();
+      if (!currentValue) return;
+
+      try {
+        let formatted: string;
+        if (language === "json") {
+          // JSON formatting for MongoDB queries
+          const parsed = JSON.parse(currentValue);
+          formatted = JSON.stringify(parsed, null, 2);
+        } else if (language === "sql") {
+          formatted = format(currentValue, {
+            language: "postgresql",
+            keywordCase: "upper",
+            dataTypeCase: "upper",
+            indentStyle: "tabularLeft",
+            logicalOperatorNewline: "before",
+            expressionWidth: 100,
+            tabWidth: 2,
+            linesBetweenQueries: 2,
+          });
+        } else {
+          return;
+        }
+        editorRef.current.setValue(formatted);
+        lastSyncedValueRef.current = formatted;
+        onChange?.(formatted);
+      } catch (e) {
+        console.error("Formatting failed:", e);
       }
-      editorRef.current.setValue(formatted);
-      lastSyncedValueRef.current = formatted;
-      onChange?.(formatted);
-    } catch (e) {
-      console.error('Formatting failed:', e);
-    }
-  };
+    };
 
-  const getSelectedText = () => {
-    if (!editorRef.current) return '';
-    const selection = editorRef.current.getSelection();
-    const model = editorRef.current.getModel();
-    if (!selection || !model) return '';
-    return model.getValueInRange(selection);
-  };
+    const getSelectedText = () => {
+      if (!editorRef.current) return "";
+      const selection = editorRef.current.getSelection();
+      const model = editorRef.current.getModel();
+      if (!selection || !model) return "";
+      return model.getValueInRange(selection);
+    };
 
-  const getEffectiveQuery = () => {
-    const editorValue = editorRef.current?.getValue() || '';
-    if (!editorRef.current || !monaco) return { query: editorValue, range: null };
+    const getEffectiveQuery = () => {
+      const editorValue = editorRef.current?.getValue() || "";
+      if (!editorRef.current || !monaco) return { query: editorValue, range: null };
 
-    const model = editorRef.current.getModel();
-    if (!model) return { query: editorValue, range: null };
+      const model = editorRef.current.getModel();
+      if (!model) return { query: editorValue, range: null };
 
-    // 1. Check for explicit selection
-    const selection = editorRef.current.getSelection();
-    if (selection) {
-      const selectedText = model.getValueInRange(selection);
-      if (selectedText && selectedText.trim().length > 0) {
-        return { query: selectedText, range: selection };
-      }
-    }
-
-    // 2. If no selection, try to find the current statement (between semicolons)
-    if (language === 'sql') {
-      const position = editorRef.current.getPosition();
-      if (position) {
-        const fullText = model.getValue();
-        const cursorOffset = model.getOffsetAt(position);
-
-        // Find boundaries of the current statement
-        let startOffset = fullText.lastIndexOf(';', cursorOffset - 1);
-        let endOffset = fullText.indexOf(';', cursorOffset);
-
-        if (startOffset === -1) startOffset = 0;
-        else startOffset += 1; // skip the semicolon
-
-        if (endOffset === -1) endOffset = fullText.length;
-
-        const statement = fullText.substring(startOffset, endOffset).trim();
-        if (statement.length > 0) {
-          const startPos = model.getPositionAt(startOffset);
-          const endPos = model.getPositionAt(endOffset);
-          const range = new monaco.Range(startPos.lineNumber, startPos.column, endPos.lineNumber, endPos.column);
-          return { query: statement, range };
+      // 1. Check for explicit selection
+      const selection = editorRef.current.getSelection();
+      if (selection) {
+        const selectedText = model.getValueInRange(selection);
+        if (selectedText && selectedText.trim().length > 0) {
+          return { query: selectedText, range: selection };
         }
       }
-    }
 
-    return { query: editorValue, range: null };
-  };
+      // 2. If no selection, try to find the current statement (between semicolons)
+      if (language === "sql") {
+        const position = editorRef.current.getPosition();
+        if (position) {
+          const fullText = model.getValue();
+          const cursorOffset = model.getOffsetAt(position);
 
-  // Track active highlight timeout to prevent race conditions
-  const highlightTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const activeDecorationsRef = useRef<string[]>([]);
+          // Find boundaries of the current statement
+          let startOffset = fullText.lastIndexOf(";", cursorOffset - 1);
+          let endOffset = fullText.indexOf(";", cursorOffset);
 
-  const flashHighlight = (range: Monaco.Range | null) => {
-    if (!editorRef.current || !monaco || !range) return;
+          if (startOffset === -1) startOffset = 0;
+          else startOffset += 1; // skip the semicolon
 
-    // Clear any existing highlight first
-    if (highlightTimeoutRef.current) {
-      clearTimeout(highlightTimeoutRef.current);
-      highlightTimeoutRef.current = null;
-    }
-    if (activeDecorationsRef.current.length > 0 && editorRef.current) {
-      editorRef.current.deltaDecorations(activeDecorationsRef.current, []);
-      activeDecorationsRef.current = [];
-    }
+          if (endOffset === -1) endOffset = fullText.length;
 
-    // Create new decoration
-    const decorations = editorRef.current.deltaDecorations([], [
-      {
-        range: range,
-        options: {
-          isWholeLine: false,
-          className: 'executed-query-highlight',
-          inlineClassName: 'executed-query-inline-highlight'
+          const statement = fullText.substring(startOffset, endOffset).trim();
+          if (statement.length > 0) {
+            const startPos = model.getPositionAt(startOffset);
+            const endPos = model.getPositionAt(endOffset);
+            const range = new monaco.Range(startPos.lineNumber, startPos.column, endPos.lineNumber, endPos.column);
+            return { query: statement, range };
+          }
         }
       }
-    ]);
-    activeDecorationsRef.current = decorations;
 
-    // Schedule removal with ref tracking for safe cleanup
-    highlightTimeoutRef.current = setTimeout(() => {
-      if (editorRef.current && activeDecorationsRef.current.length > 0) {
+      return { query: editorValue, range: null };
+    };
+
+    // Track active highlight timeout to prevent race conditions
+    const highlightTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+    const activeDecorationsRef = useRef<string[]>([]);
+
+    const flashHighlight = (range: Monaco.Range | null) => {
+      if (!editorRef.current || !monaco || !range) return;
+
+      // Clear any existing highlight first
+      if (highlightTimeoutRef.current) {
+        clearTimeout(highlightTimeoutRef.current);
+        highlightTimeoutRef.current = null;
+      }
+      if (activeDecorationsRef.current.length > 0 && editorRef.current) {
         editorRef.current.deltaDecorations(activeDecorationsRef.current, []);
         activeDecorationsRef.current = [];
       }
-      highlightTimeoutRef.current = null;
-    }, 1000);
-  };
 
-  // Cleanup highlight timeout on unmount
-  useEffect(() => {
-    return () => {
-      if (highlightTimeoutRef.current) {
-        clearTimeout(highlightTimeoutRef.current);
-      }
-    };
-  }, []);
+      // Create new decoration
+      const decorations = editorRef.current.deltaDecorations(
+        [],
+        [
+          {
+            range: range,
+            options: {
+              isWholeLine: false,
+              className: "executed-query-highlight",
+              inlineClassName: "executed-query-inline-highlight",
+            },
+          },
+        ],
+      );
+      activeDecorationsRef.current = decorations;
 
-  // AI Chat hook (must be before useImperativeHandle that references showAi/setShowAi)
-  const getEditorValue = useCallback(() => editorRef.current?.getValue() || '', []);
-  const setEditorValueForAi = useCallback((val: string) => {
-    if (editorRef.current) {
-      editorRef.current.setValue(val);
-      lastSyncedValueRef.current = val;
-    }
-  }, []);
-
-  const {
-    showAi,
-    setShowAi,
-    aiPrompt,
-    setAiPrompt,
-    isAiLoading,
-    aiError,
-    setAiError,
-    aiConversationHistory,
-    setAiConversationHistory,
-    handleAiSubmit,
-  } = useAiChat({
-    parsedSchema,
-    schemaContext,
-    databaseType,
-    getEditorValue,
-    setEditorValue: setEditorValueForAi,
-    onChange,
-    onAiChat,
-  });
-
-  useImperativeHandle(ref, () => ({
-    getSelectedText,
-    getEffectiveQuery: () => getEffectiveQuery().query,
-    getValue: () => editorRef.current?.getValue() || '',
-    setValue: (newValue: string) => {
-      if (editorRef.current) {
-        editorRef.current.setValue(newValue);
-        lastSyncedValueRef.current = newValue;
-      }
-    },
-    focus: () => editorRef.current?.focus(),
-    format: handleFormat,
-    toggleAi: () => setShowAi(!showAi),
-  }));
-
-  const handleCopy = () => {
-    const textToCopy = getSelectedText() || editorRef.current?.getValue() || '';
-    navigator.clipboard.writeText(textToCopy);
-  };
-
-  const handleClear = () => {
-    if (editorRef.current) {
-      editorRef.current.setValue('');
-      lastSyncedValueRef.current = '';
-      onChange?.('');
-    }
-  };
-
-  // Store original console.error for cleanup
-  const originalConsoleErrorRef = useRef<typeof console.error | null>(null);
-
-  // Cleanup console.error override on unmount
-  useEffect(() => {
-    return () => {
-      if (originalConsoleErrorRef.current) {
-        console.error = originalConsoleErrorRef.current;
-        originalConsoleErrorRef.current = null;
-      }
-    };
-  }, []);
-
-  const handleBeforeMount = (monacoInstance: typeof Monaco) => {
-    // Register the LibreDB command language (idempotent) so its tabs highlight
-    // correctly instead of being treated as JSON.
-    registerLibreDBLanguage(monacoInstance);
-
-    // Suppress Monaco's "Canceled" errors in console (with cleanup tracking)
-    if (!originalConsoleErrorRef.current) {
-      originalConsoleErrorRef.current = console.error;
-      const originalConsoleError = console.error;
-      console.error = (...args: unknown[]) => {
-        const message = args[0]?.toString?.() || '';
-        if (message.includes('Canceled') || message.includes('ERR Canceled')) {
-          return; // Suppress Monaco cancellation errors
+      // Schedule removal with ref tracking for safe cleanup
+      highlightTimeoutRef.current = setTimeout(() => {
+        if (editorRef.current && activeDecorationsRef.current.length > 0) {
+          editorRef.current.deltaDecorations(activeDecorationsRef.current, []);
+          activeDecorationsRef.current = [];
         }
-        originalConsoleError.apply(console, args as Parameters<typeof console.error>);
+        highlightTimeoutRef.current = null;
+      }, 1000);
+    };
+
+    // Cleanup highlight timeout on unmount
+    useEffect(() => {
+      return () => {
+        if (highlightTimeoutRef.current) {
+          clearTimeout(highlightTimeoutRef.current);
+        }
       };
-    }
+    }, []);
 
-    monacoInstance.editor.defineTheme('db-dark', {
-      base: 'vs-dark',
-      inherit: true,
-      rules: [
-        { token: 'keyword', foreground: '569cd6', fontStyle: 'bold' },
-        { token: 'function', foreground: 'dcdcaa' },
-        { token: 'string', foreground: 'ce9178' },
-        { token: 'number', foreground: 'b5cea8' },
-        { token: 'comment', foreground: '6a9955' },
-        { token: 'operator', foreground: 'd4d4d4' },
-        { token: 'identifier', foreground: '9cdcfe' },
-      ],
-      colors: {
-        'editor.background': '#050505',
-        'editor.foreground': '#d4d4d4',
-        'editorCursor.foreground': '#569cd6',
-        'editor.lineHighlightBackground': '#111111',
-        'editorLineNumber.foreground': '#333333',
-        'editorLineNumber.activeForeground': '#666666',
-        'editor.selectionBackground': '#264f78',
-        'editor.inactiveSelectionBackground': '#3a3d41',
-        'editorIndentGuide.background': '#1a1a1a',
-        'editorIndentGuide.activeBackground': '#333333',
+    // AI Chat hook (must be before useImperativeHandle that references showAi/setShowAi)
+    const getEditorValue = useCallback(() => editorRef.current?.getValue() || "", []);
+    const setEditorValueForAi = useCallback((val: string) => {
+      if (editorRef.current) {
+        editorRef.current.setValue(val);
+        lastSyncedValueRef.current = val;
       }
+    }, []);
+
+    const {
+      showAi,
+      setShowAi,
+      aiPrompt,
+      setAiPrompt,
+      isAiLoading,
+      aiError,
+      setAiError,
+      aiConversationHistory,
+      setAiConversationHistory,
+      handleAiSubmit,
+    } = useAiChat({
+      parsedSchema,
+      schemaContext,
+      databaseType,
+      getEditorValue,
+      setEditorValue: setEditorValueForAi,
+      onChange,
+      onAiChat,
     });
-  };
 
-  // SQL completion provider
-  useEffect(() => {
-    if (monaco && language === 'sql') {
-      const disposable = registerSQLCompletionProvider(monaco, schemaCompletionCache);
-      return () => disposable.dispose();
-    }
-  }, [monaco, language, schemaCompletionCache]);
+    useImperativeHandle(ref, () => ({
+      getSelectedText,
+      getEffectiveQuery: () => getEffectiveQuery().query,
+      getValue: () => editorRef.current?.getValue() || "",
+      setValue: (newValue: string) => {
+        if (editorRef.current) {
+          editorRef.current.setValue(newValue);
+          lastSyncedValueRef.current = newValue;
+        }
+      },
+      focus: () => editorRef.current?.focus(),
+      format: handleFormat,
+      toggleAi: () => setShowAi(!showAi),
+    }));
 
-  // MongoDB JSON completion provider
-  useEffect(() => {
-    if (monaco && language === 'json') {
-      const disposable = registerMongoDBCompletionProvider(monaco, schemaCompletionCache);
-      return () => disposable.dispose();
-    }
-  }, [monaco, language, schemaCompletionCache]);
+    const handleCopy = () => {
+      const textToCopy = getSelectedText() || editorRef.current?.getValue() || "";
+      navigator.clipboard.writeText(textToCopy);
+    };
 
-  const handleEditorChange = (val: string | undefined) => {
-    const newValue = val || '';
-    // Only call onContentChange if provided (for real-time sync scenarios)
-    // This avoids the performance hit of updating parent state on every keystroke
-    onContentChange?.(newValue);
-  };
+    const handleClear = () => {
+      if (editorRef.current) {
+        editorRef.current.setValue("");
+        lastSyncedValueRef.current = "";
+        onChange?.("");
+      }
+    };
 
-  // Sync to parent on blur (when user leaves the editor)
-  const handleEditorBlur = () => {
-    if (editorRef.current) {
-      const currentValue = editorRef.current.getValue();
-      lastSyncedValueRef.current = currentValue;
-      onChange?.(currentValue);
-    }
-  };
+    // Store original console.error for cleanup
+    const originalConsoleErrorRef = useRef<typeof console.error | null>(null);
 
-  const handleExecute = () => {
-    // Sync current content to parent before executing
-    if (editorRef.current) {
-      const currentValue = editorRef.current.getValue();
-      lastSyncedValueRef.current = currentValue;
-      onChange?.(currentValue);
-    }
+    // Cleanup console.error override on unmount
+    useEffect(() => {
+      return () => {
+        if (originalConsoleErrorRef.current) {
+          console.error = originalConsoleErrorRef.current;
+          originalConsoleErrorRef.current = null;
+        }
+      };
+    }, []);
 
-    const { query, range } = getEffectiveQuery();
-    flashHighlight(range);
-    const event = new CustomEvent('execute-query', { detail: { query } });
-    window.dispatchEvent(event);
-  };
+    const handleBeforeMount = (monacoInstance: typeof Monaco) => {
+      // Register the LibreDB command language (idempotent) so its tabs highlight
+      // correctly instead of being treated as JSON.
+      registerLibreDBLanguage(monacoInstance);
 
+      // Suppress Monaco's "Canceled" errors in console (with cleanup tracking)
+      if (!originalConsoleErrorRef.current) {
+        originalConsoleErrorRef.current = console.error;
+        const originalConsoleError = console.error;
+        console.error = (...args: unknown[]) => {
+          const message = args[0]?.toString?.() || "";
+          if (message.includes("Canceled") || message.includes("ERR Canceled")) {
+            return; // Suppress Monaco cancellation errors
+          }
+          originalConsoleError.apply(console, args as Parameters<typeof console.error>);
+        };
+      }
 
-  return (
-    <div className="h-full w-full flex flex-col bg-[#050505] relative overflow-hidden group">
-      {/* Dynamic Pro Toolbar - Hidden on mobile */}
-      <div className="hidden md:flex items-center gap-1 px-4 py-1.5 bg-[#0a0a0a] border-b border-white/5 overflow-x-auto no-scrollbar scroll-smooth">
-        {hasSelection && (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-7 text-xs font-medium text-white bg-blue-600 hover:bg-blue-500 hover:text-white gap-2 shadow-[0_0_10px_rgba(37,99,235,0.3)] animate-in fade-in zoom-in duration-200"
-            onClick={handleExecute}
-          >
-            <Play strokeWidth={1.5} className="w-3 h-3 fill-current" /> Run Sel
-          </Button>
-        )}
+      monacoInstance.editor.defineTheme("db-dark", {
+        base: "vs-dark",
+        inherit: true,
+        rules: [
+          { token: "keyword", foreground: "569cd6", fontStyle: "bold" },
+          { token: "function", foreground: "dcdcaa" },
+          { token: "string", foreground: "ce9178" },
+          { token: "number", foreground: "b5cea8" },
+          { token: "comment", foreground: "6a9955" },
+          { token: "operator", foreground: "d4d4d4" },
+          { token: "identifier", foreground: "9cdcfe" },
+        ],
+        colors: {
+          "editor.background": "#050505",
+          "editor.foreground": "#d4d4d4",
+          "editorCursor.foreground": "#569cd6",
+          "editor.lineHighlightBackground": "#111111",
+          "editorLineNumber.foreground": "#333333",
+          "editorLineNumber.activeForeground": "#666666",
+          "editor.selectionBackground": "#264f78",
+          "editor.inactiveSelectionBackground": "#3a3d41",
+          "editorIndentGuide.background": "#1a1a1a",
+          "editorIndentGuide.activeBackground": "#333333",
+        },
+      });
+    };
 
-        {(language === 'sql' || language === 'json') && (
+    // SQL completion provider
+    useEffect(() => {
+      if (monaco && language === "sql") {
+        const disposable = registerSQLCompletionProvider(monaco, schemaCompletionCache);
+        return () => disposable.dispose();
+      }
+    }, [monaco, language, schemaCompletionCache]);
+
+    // MongoDB JSON completion provider
+    useEffect(() => {
+      if (monaco && language === "json") {
+        const disposable = registerMongoDBCompletionProvider(monaco, schemaCompletionCache);
+        return () => disposable.dispose();
+      }
+    }, [monaco, language, schemaCompletionCache]);
+
+    const handleEditorChange = (val: string | undefined) => {
+      const newValue = val || "";
+      // Only call onContentChange if provided (for real-time sync scenarios)
+      // This avoids the performance hit of updating parent state on every keystroke
+      onContentChange?.(newValue);
+    };
+
+    // Sync to parent on blur (when user leaves the editor)
+    const handleEditorBlur = () => {
+      if (editorRef.current) {
+        const currentValue = editorRef.current.getValue();
+        lastSyncedValueRef.current = currentValue;
+        onChange?.(currentValue);
+      }
+    };
+
+    const handleExecute = () => {
+      // Sync current content to parent before executing
+      if (editorRef.current) {
+        const currentValue = editorRef.current.getValue();
+        lastSyncedValueRef.current = currentValue;
+        onChange?.(currentValue);
+      }
+
+      const { query, range } = getEffectiveQuery();
+      flashHighlight(range);
+      const event = new CustomEvent("execute-query", { detail: { query } });
+      window.dispatchEvent(event);
+    };
+
+    return (
+      <div className="h-full w-full flex flex-col bg-[#050505] relative overflow-hidden group">
+        {/* Dynamic Pro Toolbar - Hidden on mobile */}
+        <div className="hidden md:flex items-center gap-1 px-4 py-1.5 bg-[#0a0a0a] border-b border-white/5 overflow-x-auto no-scrollbar scroll-smooth">
+          {hasSelection && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 text-xs font-medium text-white bg-blue-600 hover:bg-blue-500 hover:text-white gap-2 shadow-[0_0_10px_rgba(37,99,235,0.3)] animate-in fade-in zoom-in duration-200"
+              onClick={handleExecute}
+            >
+              <Play strokeWidth={1.5} className="w-3 h-3 fill-current" /> Run Sel
+            </Button>
+          )}
+
+          {(language === "sql" || language === "json") && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 text-xs font-medium text-zinc-500 hover:text-white gap-2"
+              onClick={handleFormat}
+              title={language === "json" ? "Format JSON (Shift+Alt+F)" : "Format SQL (Shift+Alt+F)"}
+            >
+              <AlignLeft strokeWidth={1.5} className="w-3 h-3" /> Format
+            </Button>
+          )}
+
           <Button
             variant="ghost"
             size="sm"
             className="h-7 text-xs font-medium text-zinc-500 hover:text-white gap-2"
-            onClick={handleFormat}
-            title={language === 'json' ? "Format JSON (Shift+Alt+F)" : "Format SQL (Shift+Alt+F)"}
+            onClick={handleCopy}
           >
-            <AlignLeft strokeWidth={1.5} className="w-3 h-3" /> Format
+            <Copy strokeWidth={1.5} className="w-3 h-3" /> {hasSelection ? "Copy Sel" : "Copy"}
           </Button>
-        )}
 
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-7 text-xs font-medium text-zinc-500 hover:text-white gap-2"
-          onClick={handleCopy}
-        >
-          <Copy strokeWidth={1.5} className="w-3 h-3" /> {hasSelection ? 'Copy Sel' : 'Copy'}
-        </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 text-xs font-medium text-zinc-500 hover:text-red-400 gap-2"
+            onClick={handleClear}
+          >
+            <Trash2 strokeWidth={1.5} className="w-3 h-3" /> Clear
+          </Button>
 
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-7 text-xs font-medium text-zinc-500 hover:text-red-400 gap-2"
-          onClick={handleClear}
-        >
-          <Trash2 strokeWidth={1.5} className="w-3 h-3" /> Clear
-        </Button>
+          <div className="h-4 w-px bg-white/5" />
 
-        <div className="h-4 w-px bg-white/5" />
+          <Button
+            variant="ghost"
+            size="sm"
+            className={cn(
+              "h-7 text-xs font-medium gap-2",
+              showLineNumbers ? "text-zinc-300" : "text-zinc-500 hover:text-white",
+            )}
+            onClick={() => setShowLineNumbers(!showLineNumbers)}
+            title={showLineNumbers ? "Hide line numbers" : "Show line numbers"}
+          >
+            <Hash strokeWidth={1.5} className="w-3 h-3" /> Lines
+          </Button>
 
-        <Button
-          variant="ghost"
-          size="sm"
-          className={cn(
-            "h-7 text-xs font-medium gap-2",
-            showLineNumbers ? "text-zinc-300" : "text-zinc-500 hover:text-white"
-          )}
-          onClick={() => setShowLineNumbers(!showLineNumbers)}
-          title={showLineNumbers ? "Hide line numbers" : "Show line numbers"}
-        >
-          <Hash strokeWidth={1.5} className="w-3 h-3" /> Lines
-        </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            className={cn(
+              "h-7 text-xs font-medium gap-2",
+              showAi
+                ? "text-white bg-blue-600 hover:bg-blue-500 hover:text-white shadow-[0_0_10px_rgba(37,99,235,0.4)]"
+                : "text-zinc-500 hover:text-blue-400",
+            )}
+            onClick={() => setShowAi(!showAi)}
+          >
+            <Sparkles className={cn("w-3 h-3", showAi && "animate-pulse")} /> AI
+          </Button>
 
-        <Button
-          variant="ghost"
-          size="sm"
-          className={cn(
-            "h-7 text-xs font-medium gap-2",
-            showAi
-              ? "text-white bg-blue-600 hover:bg-blue-500 hover:text-white shadow-[0_0_10px_rgba(37,99,235,0.4)]"
-              : "text-zinc-500 hover:text-blue-400"
-          )}
-          onClick={() => setShowAi(!showAi)}
-        >
-          <Sparkles className={cn("w-3 h-3", showAi && "animate-pulse")} /> AI
-        </Button>
-
-        <div className="flex-1" />
+          <div className="flex-1" />
 
           <div className="flex items-center gap-2 opacity-50 hover:opacity-100 transition-opacity">
             {onExplain && capabilities?.supportsExplain && (
@@ -583,9 +593,9 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
           </div>
         </div>
 
-      {/* Floating AI Input */}
-      <AnimatePresence>
-        {showAi && (
+        {/* Floating AI Input */}
+        <AnimatePresence>
+          {showAi && (
             <motion.div
               initial={{ opacity: 0, y: -10, scale: 0.95 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
@@ -617,38 +627,37 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
                     <span className="text-[0.625rem] text-zinc-500 font-medium">Context: {tables.length} tables</span>
                     <div className="w-1 h-1 rounded-full bg-emerald-500 animate-pulse" />
                   </div>
-                  </div>
+                </div>
 
-                  <AnimatePresence>
-                    {aiError && (
-                      <motion.div
-                        initial={{ height: 0, opacity: 0 }}
-                        animate={{ height: 'auto', opacity: 1 }}
-                        exit={{ height: 0, opacity: 0 }}
-                        className="px-3 pb-2"
-                      >
-                        <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-2.5 flex items-start gap-2.5">
-                          <div className="p-1 rounded bg-red-500/20 mt-0.5">
-                            <X strokeWidth={1.5} className="w-3 h-3 text-red-400" />
-                          </div>
-                          <div className="flex-1">
-                            <p className="text-xs font-medium text-red-400 mb-0.5">AI Error</p>
-                            <p className="text-xs text-red-300/90 leading-relaxed">{aiError}</p>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => setAiError(null)}
-                            className="text-red-400/50 hover:text-red-400 transition-colors"
-                          >
-                            <X strokeWidth={1.5} className="w-3 h-3" />
-                          </button>
+                <AnimatePresence>
+                  {aiError && (
+                    <motion.div
+                      initial={{ height: 0, opacity: 0 }}
+                      animate={{ height: "auto", opacity: 1 }}
+                      exit={{ height: 0, opacity: 0 }}
+                      className="px-3 pb-2"
+                    >
+                      <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-2.5 flex items-start gap-2.5">
+                        <div className="p-1 rounded bg-red-500/20 mt-0.5">
+                          <X strokeWidth={1.5} className="w-3 h-3 text-red-400" />
                         </div>
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
+                        <div className="flex-1">
+                          <p className="text-xs font-medium text-red-400 mb-0.5">AI Error</p>
+                          <p className="text-xs text-red-300/90 leading-relaxed">{aiError}</p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setAiError(null)}
+                          className="text-red-400/50 hover:text-red-400 transition-colors"
+                        >
+                          <X strokeWidth={1.5} className="w-3 h-3" />
+                        </button>
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
 
-                  <div className="flex items-center gap-2 px-3 pb-1.5">
-
+                <div className="flex items-center gap-2 px-3 pb-1.5">
                   <input
                     autoFocus
                     value={aiPrompt}
@@ -685,76 +694,80 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
                 </div>
               </form>
             </motion.div>
-        )}
-      </AnimatePresence>
+          )}
+        </AnimatePresence>
 
-      <div className="flex-1 relative">
-        <Editor
-          height="100%"
-          language={language}
-          theme="db-dark"
-          value={value}
-          beforeMount={handleBeforeMount}
-          onChange={handleEditorChange}
-          loading={<div className="h-full w-full bg-[#050505] flex items-center justify-center"><Loader2 strokeWidth={1.5} className="w-6 h-6 animate-spin text-zinc-800" /></div>}
-          onMount={(editor, monaco) => {
-            editorRef.current = editor;
-
-            // Sync to parent when editor loses focus
-            editor.onDidBlurEditorText(() => {
-              handleEditorBlur();
-            });
-
-            editor.onDidChangeCursorSelection(() => {
-              const selection = editor.getSelection();
-              setHasSelection(selection ? !selection.isEmpty() : false);
-            });
-
-            // Add custom keyboard shortcut
-            editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => {
-              handleExecute();
-            });
-
-            // Add format shortcut
-            editor.addCommand(monaco.KeyMod.Alt | monaco.KeyMod.Shift | monaco.KeyCode.KeyF, () => {
-              handleFormat();
-            });
-
-            // Context Menu Actions
-            editor.addAction({
-              id: 'run-query',
-              label: 'Run Query',
-              keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter],
-              contextMenuGroupId: 'navigation',
-              contextMenuOrder: 1,
-              run: () => handleExecute()
-            });
-
-            if (onExplain) {
-              editor.addAction({
-                id: 'explain-query',
-                label: 'Explain Plan',
-                contextMenuGroupId: 'navigation',
-                contextMenuOrder: 2,
-                run: () => onExplain()
-              });
+        <div className="flex-1 relative">
+          <Editor
+            height="100%"
+            language={language}
+            theme="db-dark"
+            value={value}
+            beforeMount={handleBeforeMount}
+            onChange={handleEditorChange}
+            loading={
+              <div className="h-full w-full bg-[#050505] flex items-center justify-center">
+                <Loader2 strokeWidth={1.5} className="w-6 h-6 animate-spin text-zinc-800" />
+              </div>
             }
+            onMount={(editor, monaco) => {
+              editorRef.current = editor;
 
-            editor.addAction({
-              id: 'format-sql',
-              label: 'Format SQL',
-              keybindings: [monaco.KeyMod.Alt | monaco.KeyMod.Shift | monaco.KeyCode.KeyF],
-              contextMenuGroupId: 'modification',
-              contextMenuOrder: 1,
-              run: () => handleFormat()
-            });
-          }}
-          options={getEditorOptions(showLineNumbers)}
-        />
+              // Sync to parent when editor loses focus
+              editor.onDidBlurEditorText(() => {
+                handleEditorBlur();
+              });
 
+              editor.onDidChangeCursorSelection(() => {
+                const selection = editor.getSelection();
+                setHasSelection(selection ? !selection.isEmpty() : false);
+              });
+
+              // Add custom keyboard shortcut
+              editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => {
+                handleExecute();
+              });
+
+              // Add format shortcut
+              editor.addCommand(monaco.KeyMod.Alt | monaco.KeyMod.Shift | monaco.KeyCode.KeyF, () => {
+                handleFormat();
+              });
+
+              // Context Menu Actions
+              editor.addAction({
+                id: "run-query",
+                label: "Run Query",
+                keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter],
+                contextMenuGroupId: "navigation",
+                contextMenuOrder: 1,
+                run: () => handleExecute(),
+              });
+
+              if (onExplain) {
+                editor.addAction({
+                  id: "explain-query",
+                  label: "Explain Plan",
+                  contextMenuGroupId: "navigation",
+                  contextMenuOrder: 2,
+                  run: () => onExplain(),
+                });
+              }
+
+              editor.addAction({
+                id: "format-sql",
+                label: "Format SQL",
+                keybindings: [monaco.KeyMod.Alt | monaco.KeyMod.Shift | monaco.KeyCode.KeyF],
+                contextMenuGroupId: "modification",
+                contextMenuOrder: 1,
+                run: () => handleFormat(),
+              });
+            }}
+            options={getEditorOptions(showLineNumbers)}
+          />
+        </div>
       </div>
-    </div>
-  );
-});
+    );
+  },
+);
 
-QueryEditor.displayName = 'QueryEditor';
+QueryEditor.displayName = "QueryEditor";

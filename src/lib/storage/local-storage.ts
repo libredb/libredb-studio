@@ -4,9 +4,9 @@
  * No event dispatching — that's the facade's responsibility.
  */
 
-import { logger } from '@/lib/logger';
+import { logger } from "@/lib/logger";
 
-const KEY_PREFIX = 'libredb_';
+const KEY_PREFIX = "libredb_";
 
 /** Map collection names to localStorage keys */
 const COLLECTION_KEYS: Record<string, string> = {
@@ -22,7 +22,7 @@ const COLLECTION_KEYS: Record<string, string> = {
 };
 
 function isClient(): boolean {
-  return typeof window !== 'undefined';
+  return typeof window !== "undefined";
 }
 
 export function getKey(collection: string): string {
@@ -41,7 +41,7 @@ export function readJSON<T>(collection: string): T | null {
     if (raw === null) return null;
     return JSON.parse(raw) as T;
   } catch {
-    logger.warn('Failed to parse JSON from localStorage', { key: getKey(collection) });
+    logger.warn("Failed to parse JSON from localStorage", { key: getKey(collection) });
     return null;
   }
 }
@@ -64,7 +64,7 @@ export function writeJSON(collection: string, data: unknown): boolean {
     localStorage.setItem(getKey(collection), JSON.stringify(data));
     return true;
   } catch (error) {
-    logger.warn('Failed to write to localStorage', {
+    logger.warn("Failed to write to localStorage", {
       key: getKey(collection),
       error: error instanceof Error ? error.message : String(error),
     });
@@ -82,7 +82,7 @@ export function writeString(collection: string, value: string): boolean {
     localStorage.setItem(getKey(collection), value);
     return true;
   } catch (error) {
-    logger.warn('Failed to write to localStorage', {
+    logger.warn("Failed to write to localStorage", {
       key: getKey(collection),
       error: error instanceof Error ? error.message : String(error),
     });

@@ -9,20 +9,20 @@
  *   import { mockRouterPush, mockRouterRefresh } from '../helpers/mock-navigation';
  *   beforeEach(() => { mockRouterPush.mockClear(); mockRouterRefresh.mockClear(); });
  */
-import { mock } from 'bun:test';
+import { mock } from "bun:test";
 
 export const mockRouterPush = mock(() => {});
 export const mockRouterRefresh = mock(() => {});
 export const mockRouterBack = mock(() => {});
 export const mockRouterForward = mock(() => {});
 
-mock.module('next/navigation', () => ({
+mock.module("next/navigation", () => ({
   useRouter: () => ({
     push: mockRouterPush,
     refresh: mockRouterRefresh,
     back: mockRouterBack,
     forward: mockRouterForward,
   }),
-  usePathname: () => '/',
+  usePathname: () => "/",
   useSearchParams: () => new URLSearchParams(),
 }));

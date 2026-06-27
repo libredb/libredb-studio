@@ -1,28 +1,14 @@
-'use client';
+"use client";
 
-import React, { useState } from 'react';
-import {
-  Table2,
-  Search,
-  AlertTriangle,
-  Loader2,
-  RefreshCw,
-  Zap,
-} from 'lucide-react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
-import { Skeleton } from '@/components/ui/skeleton';
-import { Input } from '@/components/ui/input';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
-import type { MonitoringData } from '@/lib/db/types';
+import React, { useState } from "react";
+import { Table2, Search, AlertTriangle, Loader2, RefreshCw, Zap } from "lucide-react";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Input } from "@/components/ui/input";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import type { MonitoringData } from "@/lib/db/types";
 
 interface TablesTabProps {
   data: MonitoringData | null;
@@ -32,7 +18,7 @@ interface TablesTabProps {
 }
 
 export function TablesTab({ data, loading, onRunMaintenance, isAdmin = true }: TablesTabProps) {
-  const [searchQuery, setSearchQuery] = useState('');
+  const [searchQuery, setSearchQuery] = useState("");
   const [actionLoading, setActionLoading] = useState<string | null>(null);
 
   if (loading && !data) {
@@ -41,9 +27,7 @@ export function TablesTab({ data, loading, onRunMaintenance, isAdmin = true }: T
 
   const tables = data?.tables ?? [];
 
-  const filteredTables = tables.filter((t) =>
-    t.tableName.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  const filteredTables = tables.filter((t) => t.tableName.toLowerCase().includes(searchQuery.toLowerCase()));
 
   // Calculate totals
   const totalRows = tables.reduce((sum, t) => sum + t.rowCount, 0);
@@ -64,7 +48,7 @@ export function TablesTab({ data, loading, onRunMaintenance, isAdmin = true }: T
   };
 
   const formatDate = (date?: Date) => {
-    if (!date) return 'Never';
+    if (!date) return "Never";
     return new Date(date).toLocaleDateString();
   };
 
@@ -80,48 +64,36 @@ export function TablesTab({ data, loading, onRunMaintenance, isAdmin = true }: T
       <div className="grid grid-cols-3 gap-2 sm:gap-4">
         <Card className="p-0">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 p-2 sm:p-4 pb-1 sm:pb-2">
-            <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">
-              Tables
-            </CardTitle>
+            <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">Tables</CardTitle>
             <Table2 strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent className="p-2 sm:p-4 pt-0">
             <div className="text-lg sm:text-2xl font-medium">{tables.length}</div>
-            <p className="text-xs sm:text-xs text-muted-foreground mt-1">
-              {formatNumber(totalRows)} rows
-            </p>
+            <p className="text-xs sm:text-xs text-muted-foreground mt-1">{formatNumber(totalRows)} rows</p>
           </CardContent>
         </Card>
 
         <Card className="p-0">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 p-2 sm:p-4 pb-1 sm:pb-2">
-            <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">
-              Size
-            </CardTitle>
+            <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">Size</CardTitle>
             <Search strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent className="p-2 sm:p-4 pt-0">
             <div className="text-lg sm:text-2xl font-medium">{formatBytes(totalSize)}</div>
-            <p className="text-xs sm:text-xs text-muted-foreground mt-1">
-              Total
-            </p>
+            <p className="text-xs sm:text-xs text-muted-foreground mt-1">Total</p>
           </CardContent>
         </Card>
 
         <Card className="p-0">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 p-2 sm:p-4 pb-1 sm:pb-2">
-            <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">
-              Vacuum
-            </CardTitle>
+            <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">Vacuum</CardTitle>
             <AlertTriangle
-              className={`h-3 w-3 sm:h-4 sm:w-4 ${tablesNeedingVacuum > 0 ? 'text-yellow-500' : 'text-green-500'}`}
+              className={`h-3 w-3 sm:h-4 sm:w-4 ${tablesNeedingVacuum > 0 ? "text-yellow-500" : "text-green-500"}`}
             />
           </CardHeader>
           <CardContent className="p-2 sm:p-4 pt-0">
             <div className="text-lg sm:text-2xl font-medium">{tablesNeedingVacuum}</div>
-            <p className="text-xs sm:text-xs text-muted-foreground mt-1">
-              {tablesNeedingVacuum > 0 ? 'Need' : 'OK'}
-            </p>
+            <p className="text-xs sm:text-xs text-muted-foreground mt-1">{tablesNeedingVacuum > 0 ? "Need" : "OK"}</p>
           </CardContent>
         </Card>
       </div>
@@ -170,9 +142,7 @@ export function TablesTab({ data, loading, onRunMaintenance, isAdmin = true }: T
                           <span className="font-medium text-xs sm:text-xs truncate max-w-[100px] sm:max-w-[200px]">
                             {table.tableName}
                           </span>
-                          <span className="text-xs sm:text-xs text-muted-foreground">
-                            {table.schemaName}
-                          </span>
+                          <span className="text-xs sm:text-xs text-muted-foreground">{table.schemaName}</span>
                         </div>
                       </TableCell>
                       <TableCell className="text-right font-mono text-xs py-2">
@@ -183,20 +153,18 @@ export function TablesTab({ data, loading, onRunMaintenance, isAdmin = true }: T
                           </span>
                         ) : null}
                       </TableCell>
-                      <TableCell className="text-right text-xs py-2">
-                        {table.tableSize}
-                      </TableCell>
+                      <TableCell className="text-right text-xs py-2">{table.tableSize}</TableCell>
                       <TableCell className="text-right text-xs hidden md:table-cell py-2">
-                        {table.indexSize || '-'}
+                        {table.indexSize || "-"}
                       </TableCell>
                       <TableCell className="text-right hidden sm:table-cell py-2">
                         <Badge
                           variant={
                             (table.bloatRatio ?? 0) > 20
-                              ? 'destructive'
+                              ? "destructive"
                               : (table.bloatRatio ?? 0) > 10
-                                ? 'outline'
-                                : 'secondary'
+                                ? "outline"
+                                : "secondary"
                           }
                           className="text-xs sm:text-xs"
                         >
@@ -213,7 +181,7 @@ export function TablesTab({ data, loading, onRunMaintenance, isAdmin = true }: T
                               variant="ghost"
                               size="icon"
                               className="h-6 w-6 sm:h-8 sm:w-8"
-                              onClick={() => handleMaintenance('analyze', table.tableName)}
+                              onClick={() => handleMaintenance("analyze", table.tableName)}
                               disabled={!!actionLoading}
                               title="Analyze"
                             >
@@ -227,7 +195,7 @@ export function TablesTab({ data, loading, onRunMaintenance, isAdmin = true }: T
                               variant="ghost"
                               size="icon"
                               className="h-6 w-6 sm:h-8 sm:w-8"
-                              onClick={() => handleMaintenance('vacuum', table.tableName)}
+                              onClick={() => handleMaintenance("vacuum", table.tableName)}
                               disabled={!!actionLoading}
                               title="Vacuum"
                             >
@@ -241,7 +209,7 @@ export function TablesTab({ data, loading, onRunMaintenance, isAdmin = true }: T
                               variant="ghost"
                               size="icon"
                               className="h-6 w-6 sm:h-8 sm:w-8 hidden sm:inline-flex"
-                              onClick={() => handleMaintenance('reindex', table.tableName)}
+                              onClick={() => handleMaintenance("reindex", table.tableName)}
                               disabled={!!actionLoading}
                               title="Reindex"
                             >

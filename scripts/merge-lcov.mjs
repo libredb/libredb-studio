@@ -151,7 +151,7 @@ function isNonExecutableLine(src) {
   if (t.startsWith("//")) return true; // line comment
   if (t.startsWith("/*")) return true; // block comment opener
   if (t === "*/" || /^\*( |$|\/)/.test(t)) return true; // JSDoc / block comment body
-  if (/^[{}()\[\];,]+$/.test(t)) return true; // bare structural punctuation
+  if (/^[{}()[\];,]+$/.test(t)) return true; // bare structural punctuation
   return false;
 }
 
@@ -190,7 +190,10 @@ function serializeRecords(records) {
     }
 
     const fnf = sortedFunctions.length;
-    const fnh = sortedFunctions.reduce((acc, [fnName]) => acc + ((record.functionHits.get(fnName) || 0) > 0 ? 1 : 0), 0);
+    const fnh = sortedFunctions.reduce(
+      (acc, [fnName]) => acc + ((record.functionHits.get(fnName) || 0) > 0 ? 1 : 0),
+      0,
+    );
     lines.push(`FNF:${fnf}`);
     lines.push(`FNH:${fnh}`);
 

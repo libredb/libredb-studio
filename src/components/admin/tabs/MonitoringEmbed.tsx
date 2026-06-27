@@ -1,6 +1,6 @@
-'use client';
+"use client";
 
-import { MonitoringDashboard } from '@/components/monitoring/MonitoringDashboard';
+import { MonitoringDashboard } from "@/components/monitoring/MonitoringDashboard";
 
 export function MonitoringEmbed() {
   return (

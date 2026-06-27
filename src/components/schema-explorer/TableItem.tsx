@@ -1,6 +1,6 @@
-import React from 'react';
-import { TableSchema } from '@/lib/types';
-import type { ProviderMetadata } from '@/hooks/use-provider-metadata';
+import React from "react";
+import { TableSchema } from "@/lib/types";
+import type { ProviderMetadata } from "@/hooks/use-provider-metadata";
 import {
   Search,
   Table as TableIcon,
@@ -13,44 +13,44 @@ import {
   Code,
   BarChart3,
   Wand2,
-} from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { cn } from '@/lib/utils';
-import { motion, AnimatePresence } from 'framer-motion';
+} from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
+import { motion, AnimatePresence } from "framer-motion";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
   DropdownMenuSeparator,
-} from '@/components/ui/dropdown-menu';
+} from "@/components/ui/dropdown-menu";
 import {
   ContextMenu,
   ContextMenuTrigger,
   ContextMenuContent,
   ContextMenuItem,
   ContextMenuSeparator,
-} from '@/components/ui/context-menu';
-import { toast } from 'sonner';
-import { ColumnList } from './ColumnList';
+} from "@/components/ui/context-menu";
+import { toast } from "sonner";
+import { ColumnList } from "./ColumnList";
 
 interface TableItemProps {
   table: TableSchema;
   isExpanded: boolean;
   onToggle: () => void;
-  labels?: ProviderMetadata['labels'];
+  labels?: ProviderMetadata["labels"];
   isAdmin: boolean;
   onTableClick?: (tableName: string) => void;
   onGenerateSelect?: (tableName: string) => void;
   onProfileTable?: (tableName: string) => void;
   onGenerateCode?: (tableName: string) => void;
   onGenerateTestData?: (tableName: string) => void;
-  onOpenMaintenance?: (tab?: 'global' | 'tables' | 'sessions', table?: string) => void;
+  onOpenMaintenance?: (tab?: "global" | "tables" | "sessions", table?: string) => void;
 }
 
 function renderMenuItems(
   table: TableSchema,
-  labels: TableItemProps['labels'],
+  labels: TableItemProps["labels"],
   isAdmin: boolean,
   callbacks: {
     onTableClick?: (tableName: string) => void;
@@ -58,7 +58,7 @@ function renderMenuItems(
     onProfileTable?: (tableName: string) => void;
     onGenerateCode?: (tableName: string) => void;
     onGenerateTestData?: (tableName: string) => void;
-    onOpenMaintenance?: (tab?: 'global' | 'tables' | 'sessions', table?: string) => void;
+    onOpenMaintenance?: (tab?: "global" | "tables" | "sessions", table?: string) => void;
   },
   copyToClipboard: (text: string, label: string) => void,
   Item: React.ComponentType<{ onClick?: () => void; children: React.ReactNode }>,
@@ -68,13 +68,13 @@ function renderMenuItems(
     <>
       <Item onClick={() => callbacks.onTableClick?.(table.name)}>
         <Play strokeWidth={1.5} className="w-3.5 h-3.5 mr-2 text-green-500" />
-        {labels?.selectAction || 'Select Top 50'}
+        {labels?.selectAction || "Select Top 50"}
       </Item>
       <Item onClick={() => callbacks.onGenerateSelect?.(table.name)}>
         <Filter strokeWidth={1.5} className="w-3.5 h-3.5 mr-2 text-blue-500" />
-        {labels?.generateAction || 'Generate Query'}
+        {labels?.generateAction || "Generate Query"}
       </Item>
-      <Item onClick={() => copyToClipboard(table.name, `${labels?.entityName || 'Table'} name`)}>
+      <Item onClick={() => copyToClipboard(table.name, `${labels?.entityName || "Table"} name`)}>
         <Copy strokeWidth={1.5} className="w-3.5 h-3.5 mr-2 text-muted-foreground" />
         Copy Name
       </Item>
@@ -94,13 +94,13 @@ function renderMenuItems(
       {isAdmin && (
         <>
           <Separator />
-          <Item onClick={() => callbacks.onOpenMaintenance?.('tables', table.name)}>
+          <Item onClick={() => callbacks.onOpenMaintenance?.("tables", table.name)}>
             <Search strokeWidth={1.5} className="w-3.5 h-3.5 mr-2 text-amber-500" />
-            {labels?.analyzeAction || 'Analyze Table'}
+            {labels?.analyzeAction || "Analyze Table"}
           </Item>
-          <Item onClick={() => callbacks.onOpenMaintenance?.('tables', table.name)}>
+          <Item onClick={() => callbacks.onOpenMaintenance?.("tables", table.name)}>
             <Trash2 strokeWidth={1.5} className="w-3.5 h-3.5 mr-2 text-blue-400" />
-            {labels?.vacuumAction || 'Vacuum Table'}
+            {labels?.vacuumAction || "Vacuum Table"}
           </Item>
         </>
       )}
@@ -126,7 +126,14 @@ export const TableItem = React.memo(function TableItem({
     toast.success(`${label} copied to clipboard`);
   };
 
-  const callbacks = { onTableClick, onGenerateSelect, onProfileTable, onGenerateCode, onGenerateTestData, onOpenMaintenance };
+  const callbacks = {
+    onTableClick,
+    onGenerateSelect,
+    onProfileTable,
+    onGenerateCode,
+    onGenerateTestData,
+    onOpenMaintenance,
+  };
 
   return (
     <div className="group flex flex-col">
@@ -134,30 +141,26 @@ export const TableItem = React.memo(function TableItem({
         <ContextMenuTrigger asChild>
           <div
             className={cn(
-              'flex items-center gap-1.5 px-2 py-1.5 rounded-md cursor-pointer transition-all',
-              isExpanded ? 'bg-accent/50' : 'hover:bg-accent/30'
+              "flex items-center gap-1.5 px-2 py-1.5 rounded-md cursor-pointer transition-all",
+              isExpanded ? "bg-accent/50" : "hover:bg-accent/30",
             )}
             onClick={onToggle}
           >
-            <motion.div
-              animate={{ rotate: isExpanded ? 90 : 0 }}
-              transition={{ duration: 0.2 }}
-              className="shrink-0"
-            >
+            <motion.div animate={{ rotate: isExpanded ? 90 : 0 }} transition={{ duration: 0.2 }} className="shrink-0">
               <ChevronRight strokeWidth={1.5} className="w-3.5 h-3.5 text-muted-foreground" />
             </motion.div>
 
             <TableIcon
               className={cn(
-                'w-3.5 h-3.5 shrink-0 transition-colors',
-                isExpanded ? 'text-blue-400' : 'text-muted-foreground group-hover:text-foreground'
+                "w-3.5 h-3.5 shrink-0 transition-colors",
+                isExpanded ? "text-blue-400" : "text-muted-foreground group-hover:text-foreground",
               )}
             />
 
             <span
               className={cn(
-                'truncate min-w-0 flex-1 text-xs font-medium transition-colors',
-                isExpanded ? 'text-foreground' : 'text-muted-foreground group-hover:text-foreground'
+                "truncate min-w-0 flex-1 text-xs font-medium transition-colors",
+                isExpanded ? "text-foreground" : "text-muted-foreground group-hover:text-foreground",
               )}
             >
               {table.name}
@@ -175,11 +178,22 @@ export const TableItem = React.memo(function TableItem({
                     className="absolute inset-0 w-full h-full opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100 focus-within:opacity-100 transition-opacity hover:bg-accent flex items-center justify-center"
                     onClick={(e) => e.stopPropagation()}
                   >
-                    <MoreVertical strokeWidth={1.5} className="w-3.5 h-3.5 text-muted-foreground group-hover:text-foreground" />
+                    <MoreVertical
+                      strokeWidth={1.5}
+                      className="w-3.5 h-3.5 text-muted-foreground group-hover:text-foreground"
+                    />
                   </button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="w-48">
-                  {renderMenuItems(table, labels, isAdmin, callbacks, copyToClipboard, DropdownMenuItem, DropdownMenuSeparator)}
+                  {renderMenuItems(
+                    table,
+                    labels,
+                    isAdmin,
+                    callbacks,
+                    copyToClipboard,
+                    DropdownMenuItem,
+                    DropdownMenuSeparator,
+                  )}
                 </DropdownMenuContent>
               </DropdownMenu>
             </div>
@@ -194,7 +208,7 @@ export const TableItem = React.memo(function TableItem({
         {isExpanded && (
           <motion.div
             initial={{ height: 0, opacity: 0 }}
-            animate={{ height: 'auto', opacity: 1 }}
+            animate={{ height: "auto", opacity: 1 }}
             exit={{ height: 0, opacity: 0 }}
             transition={{ duration: 0.2 }}
             className="overflow-hidden"

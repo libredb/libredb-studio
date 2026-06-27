@@ -3,8 +3,8 @@
  * Full MySQL support with connection pooling using mysql2
  */
 
-import mysql, { type Pool, type PoolConnection, type RowDataPacket, type FieldPacket } from 'mysql2/promise';
-import { SQLBaseProvider } from './sql-base';
+import mysql, { type Pool, type PoolConnection, type RowDataPacket, type FieldPacket } from "mysql2/promise";
+import { SQLBaseProvider } from "./sql-base";
 import {
   type DatabaseConnection,
   type TableSchema,
@@ -23,14 +23,9 @@ import {
   type TableStats,
   type IndexStats,
   type StorageStats,
-} from '../../types';
-import {
-  DatabaseConfigError,
-  ConnectionError,
-  QueryError,
-  mapDatabaseError,
-} from '../../errors';
-import { formatBytes } from '../../utils/pool-manager';
+} from "../../types";
+import { DatabaseConfigError, ConnectionError, QueryError, mapDatabaseError } from "../../errors";
+import { formatBytes } from "../../utils/pool-manager";
 
 // ============================================================================
 // MySQL Provider
@@ -60,7 +55,7 @@ export class MySQLProvider extends SQLBaseProvider {
       defaultPort: 3306,
       supportsExplain: true,
       supportsConnectionString: true,
-      maintenanceOperations: ['analyze', 'optimize', 'check', 'kill'],
+      maintenanceOperations: ["analyze", "optimize", "check", "kill"],
     };
   }
 
@@ -73,10 +68,10 @@ export class MySQLProvider extends SQLBaseProvider {
 
     if (!this.config.connectionString) {
       if (!this.config.host) {
-        throw new DatabaseConfigError('Host is required for MySQL', 'mysql');
+        throw new DatabaseConfigError("Host is required for MySQL", "mysql");
       }
       if (!this.config.database) {
-        throw new DatabaseConfigError('Database name is required for MySQL', 'mysql');
+        throw new DatabaseConfigError("Database name is required for MySQL", "mysql");
       }
     }
   }
@@ -101,9 +96,9 @@ export class MySQLProvider extends SQLBaseProvider {
       this.setError(error instanceof Error ? error : new Error(String(error)));
       throw new ConnectionError(
         `Failed to connect to MySQL: ${error instanceof Error ? error.message : error}`,
-        'mysql',
+        "mysql",
         this.config.host,
-        this.config.port
+        this.config.port,
       );
     }
   }
@@ -140,7 +135,7 @@ export class MySQLProvider extends SQLBaseProvider {
       password: this.config.password,
       database: this.config.database,
       ssl: this.buildSSLConfig(),
-      timezone: this.options.timezone ?? 'Z',
+      timezone: this.options.timezone ?? "Z",
     };
   }
 
@@ -148,10 +143,10 @@ export class MySQLProvider extends SQLBaseProvider {
     const connSSL = this.config.ssl;
 
     if (connSSL) {
-      if (connSSL.mode === 'disable') return undefined;
+      if (connSSL.mode === "disable") return undefined;
 
       const ssl: mysql.SslOptions = {
-        rejectUnauthorized: connSSL.mode === 'verify-ca' || connSSL.mode === 'verify-full',
+        rejectUnauthorized: connSSL.mode === "verify-ca" || connSSL.mode === "verify-full",
       };
 
       if (connSSL.caCert) ssl.ca = connSSL.caCert;
@@ -176,7 +171,7 @@ export class MySQLProvider extends SQLBaseProvider {
     const sanitized: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(row)) {
       if (Buffer.isBuffer(value)) {
-        sanitized[key] = value.length === 0 ? '' : `0x${value.toString('hex')}`;
+        sanitized[key] = value.length === 0 ? "" : `0x${value.toString("hex")}`;
       } else {
         sanitized[key] = value;
       }
@@ -201,7 +196,7 @@ export class MySQLProvider extends SQLBaseProvider {
           const [rows, fields] = await conn.execute<RowDataPacket[]>(sql, params);
           return { rows, fields };
         } catch (error) {
-          throw mapDatabaseError(error, 'mysql', sql);
+          throw mapDatabaseError(error, "mysql", sql);
         } finally {
           if (queryId) this.runningQueryThreadIds.delete(queryId);
           conn.release();
@@ -209,7 +204,7 @@ export class MySQLProvider extends SQLBaseProvider {
       });
 
       return {
-        rows: (result.rows as unknown[]).map(row => this.sanitizeRow(row as Record<string, unknown>)),
+        rows: (result.rows as unknown[]).map((row) => this.sanitizeRow(row as Record<string, unknown>)),
         fields: result.fields?.map((f: FieldPacket) => f.name) ?? [],
         rowCount: Array.isArray(result.rows) ? result.rows.length : 0,
         executionTime,
@@ -225,7 +220,7 @@ export class MySQLProvider extends SQLBaseProvider {
       await this.pool!.execute(`KILL QUERY ${threadId}`);
       return true;
     } catch (error) {
-      console.error('[MySQL] Failed to cancel query:', error);
+      console.error("[MySQL] Failed to cancel query:", error);
       return false;
     }
   }
@@ -247,10 +242,12 @@ export class MySQLProvider extends SQLBaseProvider {
    */
   public async expireTransaction(): Promise<void> {
     if (this.txActive && this.txConn) {
-      console.warn('[MySQL] Transaction timed out, auto-rolling back');
+      console.warn("[MySQL] Transaction timed out, auto-rolling back");
       try {
         await this.txConn.rollback();
-      } catch { /* ignore */ } finally {
+      } catch {
+        /* ignore */
+      } finally {
         this.txConn.release();
         this.txConn = null;
         this.txActive = false;
@@ -261,17 +258,19 @@ export class MySQLProvider extends SQLBaseProvider {
 
   public async beginTransaction(): Promise<void> {
     this.ensureConnected();
-    if (this.txActive) throw new QueryError('Transaction already active', 'mysql');
+    if (this.txActive) throw new QueryError("Transaction already active", "mysql");
     this.txConn = await this.pool!.getConnection();
     await this.txConn.beginTransaction();
     this.txActive = true;
 
     // Auto-rollback after timeout to prevent leaked locks
-    this.txTimeout = setTimeout(() => { this.expireTransaction(); }, MySQLProvider.TX_TIMEOUT_MS);
+    this.txTimeout = setTimeout(() => {
+      void this.expireTransaction();
+    }, MySQLProvider.TX_TIMEOUT_MS);
   }
 
   public async commitTransaction(): Promise<void> {
-    if (!this.txConn || !this.txActive) throw new QueryError('No active transaction', 'mysql');
+    if (!this.txConn || !this.txActive) throw new QueryError("No active transaction", "mysql");
     this.clearTxTimeout();
     try {
       await this.txConn.commit();
@@ -283,7 +282,7 @@ export class MySQLProvider extends SQLBaseProvider {
   }
 
   public async rollbackTransaction(): Promise<void> {
-    if (!this.txConn || !this.txActive) throw new QueryError('No active transaction', 'mysql');
+    if (!this.txConn || !this.txActive) throw new QueryError("No active transaction", "mysql");
     this.clearTxTimeout();
     try {
       await this.txConn.rollback();
@@ -299,7 +298,7 @@ export class MySQLProvider extends SQLBaseProvider {
   }
 
   public async queryInTransaction(sql: string, params?: unknown[]): Promise<QueryResult> {
-    if (!this.txConn || !this.txActive) throw new QueryError('No active transaction', 'mysql');
+    if (!this.txConn || !this.txActive) throw new QueryError("No active transaction", "mysql");
 
     return this.trackQuery(async () => {
       const { result, executionTime } = await this.measureExecution(async () => {
@@ -307,12 +306,12 @@ export class MySQLProvider extends SQLBaseProvider {
           const [rows, fields] = await this.txConn!.execute<RowDataPacket[]>(sql, params);
           return { rows, fields };
         } catch (error) {
-          throw mapDatabaseError(error, 'mysql', sql);
+          throw mapDatabaseError(error, "mysql", sql);
         }
       });
 
       return {
-        rows: (result.rows as unknown[]).map(row => this.sanitizeRow(row as Record<string, unknown>)),
+        rows: (result.rows as unknown[]).map((row) => this.sanitizeRow(row as Record<string, unknown>)),
         fields: result.fields?.map((f: FieldPacket) => f.name) ?? [],
         rowCount: Array.isArray(result.rows) ? result.rows.length : 0,
         executionTime,
@@ -329,7 +328,8 @@ export class MySQLProvider extends SQLBaseProvider {
 
     const conn = await this.pool!.getConnection();
     try {
-      const [tablesRows] = await conn.execute<RowDataPacket[]>(`
+      const [tablesRows] = await conn.execute<RowDataPacket[]>(
+        `
         SELECT
           TABLE_NAME as table_name,
           TABLE_ROWS as row_count,
@@ -338,16 +338,19 @@ export class MySQLProvider extends SQLBaseProvider {
         WHERE TABLE_SCHEMA = ?
         AND TABLE_TYPE = 'BASE TABLE'
         ORDER BY TABLE_NAME ASC;
-      `, [this.config.database]);
+      `,
+        [this.config.database],
+      );
 
       const schemas: TableSchema[] = [];
 
       for (const row of tablesRows) {
         const tableName = row.table_name;
-        const rowCount = parseInt(row.row_count || '0');
-        const sizeBytes = parseInt(row.total_size || '0');
+        const rowCount = parseInt(row.row_count || "0");
+        const sizeBytes = parseInt(row.total_size || "0");
 
-        const [columnsRows] = await conn.execute<RowDataPacket[]>(`
+        const [columnsRows] = await conn.execute<RowDataPacket[]>(
+          `
           SELECT
             COLUMN_NAME as column_name,
             DATA_TYPE as data_type,
@@ -359,9 +362,12 @@ export class MySQLProvider extends SQLBaseProvider {
           AND TABLE_NAME = ?
           ORDER BY ORDINAL_POSITION
           LIMIT 100;
-        `, [this.config.database, tableName]);
+        `,
+          [this.config.database, tableName],
+        );
 
-        const [fkRows] = await conn.execute<RowDataPacket[]>(`
+        const [fkRows] = await conn.execute<RowDataPacket[]>(
+          `
           SELECT
             COLUMN_NAME as column_name,
             REFERENCED_TABLE_NAME as referenced_table,
@@ -370,9 +376,12 @@ export class MySQLProvider extends SQLBaseProvider {
           WHERE TABLE_SCHEMA = ?
           AND TABLE_NAME = ?
           AND REFERENCED_TABLE_NAME IS NOT NULL;
-        `, [this.config.database, tableName]);
+        `,
+          [this.config.database, tableName],
+        );
 
-        const [indexRows] = await conn.execute<RowDataPacket[]>(`
+        const [indexRows] = await conn.execute<RowDataPacket[]>(
+          `
           SELECT
             INDEX_NAME as index_name,
             GROUP_CONCAT(COLUMN_NAME ORDER BY SEQ_IN_INDEX) as columns,
@@ -381,7 +390,9 @@ export class MySQLProvider extends SQLBaseProvider {
           WHERE TABLE_SCHEMA = ?
           AND TABLE_NAME = ?
           GROUP BY INDEX_NAME, NON_UNIQUE;
-        `, [this.config.database, tableName]);
+        `,
+          [this.config.database, tableName],
+        );
 
         schemas.push({
           name: tableName,
@@ -390,13 +401,13 @@ export class MySQLProvider extends SQLBaseProvider {
           columns: columnsRows.map((col) => ({
             name: col.column_name,
             type: col.data_type,
-            nullable: col.is_nullable === 'YES',
-            isPrimary: col.column_key === 'PRI',
+            nullable: col.is_nullable === "YES",
+            isPrimary: col.column_key === "PRI",
             defaultValue: col.column_default ?? undefined,
           })),
           indexes: indexRows.map((idx) => ({
             name: idx.index_name,
-            columns: idx.columns?.split(',') ?? [],
+            columns: idx.columns?.split(",") ?? [],
             unique: Boolean(idx.is_unique),
           })),
           foreignKeys: fkRows.map((fk) => ({
@@ -422,17 +433,18 @@ export class MySQLProvider extends SQLBaseProvider {
 
     const conn = await this.pool!.getConnection();
     try {
-      const [connRows] = await conn.execute<RowDataPacket[]>(
-        "SHOW STATUS LIKE 'Threads_connected'"
-      );
-      const activeConnections = parseInt(connRows[0]?.Value || '0');
+      const [connRows] = await conn.execute<RowDataPacket[]>("SHOW STATUS LIKE 'Threads_connected'");
+      const activeConnections = parseInt(connRows[0]?.Value || "0");
 
-      const [sizeRows] = await conn.execute<RowDataPacket[]>(`
+      const [sizeRows] = await conn.execute<RowDataPacket[]>(
+        `
         SELECT
           ROUND(SUM(DATA_LENGTH + INDEX_LENGTH) / 1024 / 1024, 2) as size_mb
         FROM information_schema.TABLES
         WHERE TABLE_SCHEMA = ?;
-      `, [this.config.database]);
+      `,
+        [this.config.database],
+      );
       const databaseSize = `${sizeRows[0]?.size_mb || 0} MB`;
 
       const [hitRows] = await conn.execute<RowDataPacket[]>(`
@@ -446,7 +458,8 @@ export class MySQLProvider extends SQLBaseProvider {
 
       let slowQueries: SlowQuery[] = [];
       try {
-        const [slowRows] = await conn.execute<RowDataPacket[]>(`
+        const [slowRows] = await conn.execute<RowDataPacket[]>(
+          `
           SELECT
             LEFT(sql_text, 100) as query,
             count_star as calls,
@@ -455,17 +468,20 @@ export class MySQLProvider extends SQLBaseProvider {
           WHERE schema_name = ?
           ORDER BY sum_timer_wait DESC
           LIMIT 5;
-        `, [this.config.database]);
+        `,
+          [this.config.database],
+        );
         slowQueries = slowRows.map((r) => ({
-          query: r.query || '',
-          calls: parseInt(r.calls || '0'),
-          avgTime: r.avgTime || 'N/A',
+          query: r.query || "",
+          calls: parseInt(r.calls || "0"),
+          avgTime: r.avgTime || "N/A",
         }));
       } catch {
-        slowQueries = [{ query: 'Performance schema not available', calls: 0, avgTime: 'N/A' }];
+        slowQueries = [{ query: "Performance schema not available", calls: 0, avgTime: "N/A" }];
       }
 
-      const [sessionRows] = await conn.execute<RowDataPacket[]>(`
+      const [sessionRows] = await conn.execute<RowDataPacket[]>(
+        `
         SELECT
           ID as pid,
           USER as user,
@@ -477,15 +493,17 @@ export class MySQLProvider extends SQLBaseProvider {
         WHERE DB = ?
         ORDER BY TIME DESC
         LIMIT 10;
-      `, [this.config.database]);
+      `,
+        [this.config.database],
+      );
 
       const activeSessions: ActiveSession[] = sessionRows.map((r) => ({
         pid: r.pid,
-        user: r.user || 'unknown',
-        database: r.database || '',
-        state: r.state || 'unknown',
-        query: r.query || '',
-        duration: r.duration || 'N/A',
+        user: r.user || "unknown",
+        database: r.database || "",
+        state: r.state || "unknown",
+        query: r.query || "",
+        duration: r.duration || "N/A",
       }));
 
       return {
@@ -504,45 +522,42 @@ export class MySQLProvider extends SQLBaseProvider {
   // Maintenance Operations
   // ============================================================================
 
-  public async runMaintenance(
-    type: MaintenanceType,
-    target?: string
-  ): Promise<MaintenanceResult> {
+  public async runMaintenance(type: MaintenanceType, target?: string): Promise<MaintenanceResult> {
     this.ensureConnected();
 
     const { result, executionTime } = await this.measureExecution(async () => {
       const conn = await this.pool!.getConnection();
       try {
-        let sql = '';
+        let sql = "";
 
         switch (type) {
-          case 'analyze':
+          case "analyze":
             sql = target
               ? `ANALYZE TABLE ${this.escapeIdentifier(target)}`
               : `ANALYZE TABLE ${await this.getAllTablesForMaintenance(conn)}`;
             break;
-          case 'optimize':
+          case "optimize":
             sql = target
               ? `OPTIMIZE TABLE ${this.escapeIdentifier(target)}`
               : `OPTIMIZE TABLE ${await this.getAllTablesForMaintenance(conn)}`;
             break;
-          case 'check':
+          case "check":
             sql = target
               ? `CHECK TABLE ${this.escapeIdentifier(target)}`
               : `CHECK TABLE ${await this.getAllTablesForMaintenance(conn)}`;
             break;
-          case 'kill':
+          case "kill":
             if (!target) {
-              throw new QueryError('Target connection ID is required for kill operation', 'mysql');
+              throw new QueryError("Target connection ID is required for kill operation", "mysql");
             }
             const connId = parseInt(target, 10);
             if (isNaN(connId)) {
-              throw new QueryError('Invalid connection ID for kill operation', 'mysql');
+              throw new QueryError("Invalid connection ID for kill operation", "mysql");
             }
             sql = `KILL ${connId}`;
             break;
           default:
-            throw new QueryError(`Unsupported maintenance type for MySQL: ${type}`, 'mysql');
+            throw new QueryError(`Unsupported maintenance type for MySQL: ${type}`, "mysql");
         }
 
         await conn.execute(sql);
@@ -560,15 +575,18 @@ export class MySQLProvider extends SQLBaseProvider {
   }
 
   private async getAllTablesForMaintenance(conn: PoolConnection): Promise<string> {
-    const [rows] = await conn.execute<RowDataPacket[]>(`
+    const [rows] = await conn.execute<RowDataPacket[]>(
+      `
       SELECT TABLE_NAME
       FROM information_schema.TABLES
       WHERE TABLE_SCHEMA = ?
       AND TABLE_TYPE = 'BASE TABLE'
       LIMIT 50;
-    `, [this.config.database]);
+    `,
+      [this.config.database],
+    );
 
-    return rows.map((r) => this.escapeIdentifier(r.TABLE_NAME)).join(', ');
+    return rows.map((r) => this.escapeIdentifier(r.TABLE_NAME)).join(", ");
   }
 
   // ============================================================================
@@ -581,49 +599,52 @@ export class MySQLProvider extends SQLBaseProvider {
     const conn = await this.pool!.getConnection();
     try {
       // Get version
-      const [versionRows] = await conn.execute<RowDataPacket[]>('SELECT VERSION() as version');
-      const version = versionRows[0]?.version || 'Unknown';
+      const [versionRows] = await conn.execute<RowDataPacket[]>("SELECT VERSION() as version");
+      const version = versionRows[0]?.version || "Unknown";
 
       // Get uptime
-      const [uptimeRows] = await conn.execute<RowDataPacket[]>(
-        "SHOW STATUS LIKE 'Uptime'"
-      );
-      const uptimeSeconds = parseInt(uptimeRows[0]?.Value || '0');
+      const [uptimeRows] = await conn.execute<RowDataPacket[]>("SHOW STATUS LIKE 'Uptime'");
+      const uptimeSeconds = parseInt(uptimeRows[0]?.Value || "0");
       const uptime = this.formatUptimeString(uptimeSeconds);
 
       // Get active connections
-      const [connRows] = await conn.execute<RowDataPacket[]>(
-        "SHOW STATUS LIKE 'Threads_connected'"
-      );
-      const activeConnections = parseInt(connRows[0]?.Value || '0');
+      const [connRows] = await conn.execute<RowDataPacket[]>("SHOW STATUS LIKE 'Threads_connected'");
+      const activeConnections = parseInt(connRows[0]?.Value || "0");
 
       // Get max connections
-      const [maxConnRows] = await conn.execute<RowDataPacket[]>(
-        "SHOW VARIABLES LIKE 'max_connections'"
-      );
-      const maxConnections = parseInt(maxConnRows[0]?.Value || '151');
+      const [maxConnRows] = await conn.execute<RowDataPacket[]>("SHOW VARIABLES LIKE 'max_connections'");
+      const maxConnections = parseInt(maxConnRows[0]?.Value || "151");
 
       // Get database size
-      const [sizeRows] = await conn.execute<RowDataPacket[]>(`
+      const [sizeRows] = await conn.execute<RowDataPacket[]>(
+        `
         SELECT SUM(DATA_LENGTH + INDEX_LENGTH) as size_bytes
         FROM information_schema.TABLES
         WHERE TABLE_SCHEMA = ?;
-      `, [this.config.database]);
-      const databaseSizeBytes = parseInt(sizeRows[0]?.size_bytes || '0');
+      `,
+        [this.config.database],
+      );
+      const databaseSizeBytes = parseInt(sizeRows[0]?.size_bytes || "0");
 
       // Get table and index count
-      const [countRows] = await conn.execute<RowDataPacket[]>(`
+      const [countRows] = await conn.execute<RowDataPacket[]>(
+        `
         SELECT
           COUNT(DISTINCT TABLE_NAME) as table_count,
           COUNT(DISTINCT INDEX_NAME) as index_count
         FROM information_schema.STATISTICS
         WHERE TABLE_SCHEMA = ?;
-      `, [this.config.database]);
+      `,
+        [this.config.database],
+      );
 
-      const [tableCountRows] = await conn.execute<RowDataPacket[]>(`
+      const [tableCountRows] = await conn.execute<RowDataPacket[]>(
+        `
         SELECT COUNT(*) as cnt FROM information_schema.TABLES
         WHERE TABLE_SCHEMA = ? AND TABLE_TYPE = 'BASE TABLE';
-      `, [this.config.database]);
+      `,
+        [this.config.database],
+      );
 
       return {
         version: `MySQL ${version}`,
@@ -633,8 +654,8 @@ export class MySQLProvider extends SQLBaseProvider {
         maxConnections,
         databaseSize: formatBytes(databaseSizeBytes),
         databaseSizeBytes,
-        tableCount: parseInt(tableCountRows[0]?.cnt || '0'),
-        indexCount: parseInt(countRows[0]?.index_count || '0'),
+        tableCount: parseInt(tableCountRows[0]?.cnt || "0"),
+        indexCount: parseInt(countRows[0]?.index_count || "0"),
       };
     } finally {
       conn.release();
@@ -654,7 +675,7 @@ export class MySQLProvider extends SQLBaseProvider {
             NULLIF((SELECT VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME = 'Innodb_buffer_pool_read_requests'), 0)
           )) * 100 as hit_ratio;
       `);
-      const cacheHitRatio = parseFloat(hitRows[0]?.hit_ratio || '99');
+      const cacheHitRatio = parseFloat(hitRows[0]?.hit_ratio || "99");
 
       // Get buffer pool usage
       const [poolRows] = await conn.execute<RowDataPacket[]>(`
@@ -662,8 +683,8 @@ export class MySQLProvider extends SQLBaseProvider {
           (SELECT VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME = 'Innodb_buffer_pool_pages_data') as data_pages,
           (SELECT VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME = 'Innodb_buffer_pool_pages_total') as total_pages;
       `);
-      const dataPages = parseInt(poolRows[0]?.data_pages || '0');
-      const totalPages = parseInt(poolRows[0]?.total_pages || '1');
+      const dataPages = parseInt(poolRows[0]?.data_pages || "0");
+      const totalPages = parseInt(poolRows[0]?.total_pages || "1");
       const bufferPoolUsage = (dataPages / totalPages) * 100;
 
       // Get queries per second
@@ -672,15 +693,13 @@ export class MySQLProvider extends SQLBaseProvider {
           (SELECT VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME = 'Queries') as queries,
           (SELECT VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME = 'Uptime') as uptime;
       `);
-      const queries = parseInt(qpsRows[0]?.queries || '0');
-      const uptime = parseInt(qpsRows[0]?.uptime || '1');
+      const queries = parseInt(qpsRows[0]?.queries || "0");
+      const uptime = parseInt(qpsRows[0]?.uptime || "1");
       const queriesPerSecond = queries / uptime;
 
       // Get deadlocks
-      const [deadlockRows] = await conn.execute<RowDataPacket[]>(
-        "SHOW STATUS LIKE 'Innodb_deadlocks'"
-      );
-      const deadlocks = parseInt(deadlockRows[0]?.Value || '0');
+      const [deadlockRows] = await conn.execute<RowDataPacket[]>("SHOW STATUS LIKE 'Innodb_deadlocks'");
+      const deadlocks = parseInt(deadlockRows[0]?.Value || "0");
 
       return {
         cacheHitRatio: Math.min(100, Math.max(0, cacheHitRatio)),
@@ -707,7 +726,8 @@ export class MySQLProvider extends SQLBaseProvider {
 
     const conn = await this.pool!.getConnection();
     try {
-      const [rows] = await conn.execute<RowDataPacket[]>(`
+      const [rows] = await conn.execute<RowDataPacket[]>(
+        `
         SELECT
           DIGEST as query_id,
           LEFT(DIGEST_TEXT, 500) as query,
@@ -721,17 +741,19 @@ export class MySQLProvider extends SQLBaseProvider {
         WHERE SCHEMA_NAME = ?
         ORDER BY SUM_TIMER_WAIT DESC
         LIMIT ${Number(limit)};
-      `, [this.config.database]);
+      `,
+        [this.config.database],
+      );
 
       return rows.map((r) => ({
         queryId: r.query_id || undefined,
-        query: r.query || '',
-        calls: parseInt(r.calls || '0'),
-        totalTime: parseFloat(r.total_time_ms || '0'),
-        avgTime: parseFloat(r.avg_time_ms || '0'),
-        minTime: parseFloat(r.min_time_ms || '0'),
-        maxTime: parseFloat(r.max_time_ms || '0'),
-        rows: parseInt(r.rows_examined || '0'),
+        query: r.query || "",
+        calls: parseInt(r.calls || "0"),
+        totalTime: parseFloat(r.total_time_ms || "0"),
+        avgTime: parseFloat(r.avg_time_ms || "0"),
+        minTime: parseFloat(r.min_time_ms || "0"),
+        maxTime: parseFloat(r.max_time_ms || "0"),
+        rows: parseInt(r.rows_examined || "0"),
       }));
     } catch {
       // Performance schema not available
@@ -747,7 +769,8 @@ export class MySQLProvider extends SQLBaseProvider {
 
     const conn = await this.pool!.getConnection();
     try {
-      const [rows] = await conn.execute<RowDataPacket[]>(`
+      const [rows] = await conn.execute<RowDataPacket[]>(
+        `
         SELECT
           ID as pid,
           USER as user,
@@ -760,17 +783,19 @@ export class MySQLProvider extends SQLBaseProvider {
         WHERE DB = ? OR DB IS NULL
         ORDER BY TIME DESC
         LIMIT ${Number(limit)};
-      `, [this.config.database]);
+      `,
+        [this.config.database],
+      );
 
       return rows.map((r) => {
-        const durationSeconds = parseInt(r.duration_seconds || '0');
+        const durationSeconds = parseInt(r.duration_seconds || "0");
         return {
           pid: r.pid,
-          user: r.user || 'unknown',
-          database: r.database_name || '',
-          clientAddr: r.client_addr?.split(':')[0] || undefined,
-          state: r.state || 'unknown',
-          query: r.query || '',
+          user: r.user || "unknown",
+          database: r.database_name || "",
+          clientAddr: r.client_addr?.split(":")[0] || undefined,
+          state: r.state || "unknown",
+          query: r.query || "",
           duration: this.formatDurationString(durationSeconds * 1000),
           durationMs: durationSeconds * 1000,
         };
@@ -786,7 +811,8 @@ export class MySQLProvider extends SQLBaseProvider {
 
     const conn = await this.pool!.getConnection();
     try {
-      const [rows] = await conn.execute<RowDataPacket[]>(`
+      const [rows] = await conn.execute<RowDataPacket[]>(
+        `
         SELECT
           TABLE_SCHEMA as schema_name,
           TABLE_NAME as table_name,
@@ -800,21 +826,23 @@ export class MySQLProvider extends SQLBaseProvider {
         AND TABLE_TYPE = 'BASE TABLE'
         ORDER BY DATA_LENGTH + INDEX_LENGTH DESC
         LIMIT 100;
-      `, [schema]);
+      `,
+        [schema],
+      );
 
       return rows.map((r) => {
-        const tableSizeBytes = parseInt(r.table_size_bytes || '0');
-        const indexSizeBytes = parseInt(r.index_size_bytes || '0');
-        const totalSizeBytes = parseInt(r.total_size_bytes || '0');
-        const freeSpaceBytes = parseInt(r.free_space_bytes || '0');
+        const tableSizeBytes = parseInt(r.table_size_bytes || "0");
+        const indexSizeBytes = parseInt(r.index_size_bytes || "0");
+        const totalSizeBytes = parseInt(r.total_size_bytes || "0");
+        const freeSpaceBytes = parseInt(r.free_space_bytes || "0");
 
         // Estimate bloat ratio from free space
         const bloatRatio = totalSizeBytes > 0 ? (freeSpaceBytes / totalSizeBytes) * 100 : 0;
 
         return {
-          schemaName: r.schema_name || schema || '',
-          tableName: r.table_name || '',
-          rowCount: parseInt(r.row_count || '0'),
+          schemaName: r.schema_name || schema || "",
+          tableName: r.table_name || "",
+          rowCount: parseInt(r.row_count || "0"),
           tableSize: formatBytes(tableSizeBytes),
           tableSizeBytes,
           indexSize: formatBytes(indexSizeBytes),
@@ -834,7 +862,8 @@ export class MySQLProvider extends SQLBaseProvider {
 
     const conn = await this.pool!.getConnection();
     try {
-      const [rows] = await conn.execute<RowDataPacket[]>(`
+      const [rows] = await conn.execute<RowDataPacket[]>(
+        `
         SELECT
           TABLE_SCHEMA as schema_name,
           TABLE_NAME as table_name,
@@ -849,12 +878,15 @@ export class MySQLProvider extends SQLBaseProvider {
         GROUP BY TABLE_SCHEMA, TABLE_NAME, INDEX_NAME, INDEX_TYPE, NON_UNIQUE
         ORDER BY TABLE_NAME, INDEX_NAME
         LIMIT 200;
-      `, [schema]);
+      `,
+        [schema],
+      );
 
       // Get index sizes from INNODB_SYS_INDEXES if available
       const indexSizes: Record<string, number> = {};
       try {
-        const [sizeRows] = await conn.execute<RowDataPacket[]>(`
+        const [sizeRows] = await conn.execute<RowDataPacket[]>(
+          `
           SELECT
             CONCAT(t.NAME) as full_name,
             SUM(s.INDEX_SIZE * @@innodb_page_size) as size_bytes
@@ -863,10 +895,12 @@ export class MySQLProvider extends SQLBaseProvider {
           JOIN information_schema.INNODB_TABLESPACES s ON t.SPACE = s.SPACE
           WHERE t.NAME LIKE ?
           GROUP BY t.NAME, i.NAME;
-        `, [`${schema}/%`]);
+        `,
+          [`${schema}/%`],
+        );
 
         for (const row of sizeRows) {
-          indexSizes[row.full_name] = parseInt(row.size_bytes || '0');
+          indexSizes[row.full_name] = parseInt(row.size_bytes || "0");
         }
       } catch {
         // INNODB_SYS tables not available
@@ -877,16 +911,16 @@ export class MySQLProvider extends SQLBaseProvider {
         const indexSizeBytes = indexSizes[indexKey] || 0;
 
         return {
-          schemaName: r.schema_name || schema || '',
-          tableName: r.table_name || '',
-          indexName: r.index_name || '',
-          indexType: r.index_type || 'BTREE',
-          columns: r.columns?.split(',') || [],
+          schemaName: r.schema_name || schema || "",
+          tableName: r.table_name || "",
+          indexName: r.index_name || "",
+          indexType: r.index_type || "BTREE",
+          columns: r.columns?.split(",") || [],
           isUnique: Boolean(r.is_unique),
           isPrimary: Boolean(r.is_primary),
           indexSize: formatBytes(indexSizeBytes),
           indexSizeBytes,
-          scans: parseInt(r.cardinality || '0'),
+          scans: parseInt(r.cardinality || "0"),
         };
       });
     } finally {
@@ -902,20 +936,23 @@ export class MySQLProvider extends SQLBaseProvider {
       const stats: StorageStats[] = [];
 
       // Get database size
-      const [dbRows] = await conn.execute<RowDataPacket[]>(`
+      const [dbRows] = await conn.execute<RowDataPacket[]>(
+        `
         SELECT
           TABLE_SCHEMA as name,
           SUM(DATA_LENGTH + INDEX_LENGTH) as size_bytes
         FROM information_schema.TABLES
         WHERE TABLE_SCHEMA = ?
         GROUP BY TABLE_SCHEMA;
-      `, [this.config.database]);
+      `,
+        [this.config.database],
+      );
 
       if (dbRows.length > 0) {
-        const sizeBytes = parseInt(dbRows[0].size_bytes || '0');
+        const sizeBytes = parseInt(dbRows[0].size_bytes || "0");
         stats.push({
-          name: 'Data',
-          location: this.config.database || 'default',
+          name: "Data",
+          location: this.config.database || "default",
           size: formatBytes(sizeBytes),
           sizeBytes,
         });
@@ -923,11 +960,11 @@ export class MySQLProvider extends SQLBaseProvider {
 
       // Get binary log size if available
       try {
-        const [binlogRows] = await conn.execute<RowDataPacket[]>('SHOW BINARY LOGS');
-        const binlogSize = binlogRows.reduce((sum, r) => sum + parseInt(r.File_size || '0'), 0);
+        const [binlogRows] = await conn.execute<RowDataPacket[]>("SHOW BINARY LOGS");
+        const binlogSize = binlogRows.reduce((sum, r) => sum + parseInt(r.File_size || "0"), 0);
         if (binlogSize > 0) {
           stats.push({
-            name: 'Binary Logs',
+            name: "Binary Logs",
             size: formatBytes(binlogSize),
             sizeBytes: binlogSize,
           });
@@ -938,14 +975,12 @@ export class MySQLProvider extends SQLBaseProvider {
 
       // Get InnoDB data file size
       try {
-        const [innodbRows] = await conn.execute<RowDataPacket[]>(
-          "SHOW VARIABLES LIKE 'innodb_data_file_path'"
-        );
+        const [innodbRows] = await conn.execute<RowDataPacket[]>("SHOW VARIABLES LIKE 'innodb_data_file_path'");
         if (innodbRows.length > 0) {
           stats.push({
-            name: 'InnoDB',
-            location: innodbRows[0].Value || 'ibdata1',
-            size: 'N/A',
+            name: "InnoDB",
+            location: innodbRows[0].Value || "ibdata1",
+            size: "N/A",
             sizeBytes: 0,
           });
         }

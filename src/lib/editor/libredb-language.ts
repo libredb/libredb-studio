@@ -1,4 +1,4 @@
-import type * as Monaco from 'monaco-editor';
+import type * as Monaco from "monaco-editor";
 
 /**
  * Monaco language for the LibreDB command grammar.
@@ -10,9 +10,9 @@ import type * as Monaco from 'monaco-editor';
  * line comments, quoted strings, and numbers. Everything else (keys like
  * `users:1`) reads as a plain identifier.
  */
-const LIBREDB_LANGUAGE_ID = 'libredb';
+const LIBREDB_LANGUAGE_ID = "libredb";
 
-const LIBREDB_KEYWORDS = ['get', 'put', 'delete', 'prefix', 'range'];
+const LIBREDB_KEYWORDS = ["get", "put", "delete", "prefix", "range"];
 
 /**
  * Register the LibreDB language on a Monaco instance. Idempotent — safe to call
@@ -32,25 +32,25 @@ export function registerLibreDBLanguage(monaco: typeof Monaco): void {
       root: [
         // A line is a comment only when it STARTS with `#` (after whitespace),
         // matching the provider's parser — `#` inside a key/value stays data.
-        [/^\s*#.*$/, 'comment'],
-        [/"([^"\\]|\\.)*"/, 'string'],
-        [/'([^'\\]|\\.)*'/, 'string'],
-        [/\b\d+(\.\d+)?\b/, 'number'],
+        [/^\s*#.*$/, "comment"],
+        [/"([^"\\]|\\.)*"/, "string"],
+        [/'([^'\\]|\\.)*'/, "string"],
+        [/\b\d+(\.\d+)?\b/, "number"],
         // A key like `users:1` is one identifier token: a letter/underscore start
         // followed by word chars and key punctuation (`:` `.` `-` `*` `/`). Exact
         // verb matches map to `keyword` via cases; everything else is identifier.
-        [/[a-zA-Z_][\w:.*/-]*/, { cases: { '@keywords': 'keyword', '@default': 'identifier' } }],
+        [/[a-zA-Z_][\w:.*/-]*/, { cases: { "@keywords": "keyword", "@default": "identifier" } }],
       ],
     },
   });
 
   monaco.languages.setLanguageConfiguration(LIBREDB_LANGUAGE_ID, {
-    comments: { lineComment: '#' },
+    comments: { lineComment: "#" },
     autoClosingPairs: [
       { open: '"', close: '"' },
       { open: "'", close: "'" },
-      { open: '{', close: '}' },
-      { open: '[', close: ']' },
+      { open: "{", close: "}" },
+      { open: "[", close: "]" },
     ],
   });
 }

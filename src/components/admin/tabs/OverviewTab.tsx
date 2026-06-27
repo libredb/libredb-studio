@@ -1,30 +1,21 @@
-'use client';
+"use client";
 
-import { useEffect, useMemo, useState, useCallback, useRef } from 'react';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
-import { Skeleton } from '@/components/ui/skeleton';
-import { storage } from '@/lib/storage';
-import { useAllConnections } from '@/hooks/use-all-connections';
-import { getDBIcon, getDBColor } from '@/lib/db-ui-config';
+import { useEffect, useMemo, useState, useCallback, useRef } from "react";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
+import { storage } from "@/lib/storage";
+import { useAllConnections } from "@/hooks/use-all-connections";
+import { getDBIcon, getDBColor } from "@/lib/db-ui-config";
 import {
   type DatabaseType,
   type DatabaseConnection,
   type QueryHistoryItem,
   ENVIRONMENT_COLORS,
   ENVIRONMENT_LABELS,
-} from '@/lib/types';
-import {
-  AreaChart,
-  Area,
-  XAxis,
-  YAxis,
-  Tooltip,
-  ResponsiveContainer,
-  RadialBarChart,
-  RadialBar,
-} from 'recharts';
-import { format, subDays, startOfDay } from 'date-fns';
+} from "@/lib/types";
+import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, RadialBarChart, RadialBar } from "recharts";
+import { format, subDays, startOfDay } from "date-fns";
 import {
   Activity,
   RefreshCw,
@@ -43,11 +34,11 @@ import {
   Sparkles,
   Radio,
   Gauge,
-} from 'lucide-react';
-import { motion, AnimatePresence, type Variants } from 'framer-motion';
-import Link from 'next/link';
-import type { FleetHealthItem } from '@/app/api/admin/fleet-health/route';
-import type { AuditEvent } from '@/lib/audit';
+} from "lucide-react";
+import { motion, AnimatePresence, type Variants } from "framer-motion";
+import Link from "next/link";
+import type { FleetHealthItem } from "@/app/api/admin/fleet-health/route";
+import type { AuditEvent } from "@/lib/audit";
 
 // ─── Animation Variants ─────────────────────────────────────────────────────
 
@@ -65,7 +56,7 @@ const itemVariants = {
     opacity: 1,
     y: 0,
     scale: 1,
-    transition: { type: 'spring' as const, stiffness: 300, damping: 24 },
+    transition: { type: "spring" as const, stiffness: 300, damping: 24 },
   },
 };
 
@@ -74,7 +65,7 @@ const heroVariants = {
   visible: {
     opacity: 1,
     y: 0,
-    transition: { type: 'spring' as const, stiffness: 200, damping: 20 },
+    transition: { type: "spring" as const, stiffness: 200, damping: 20 },
   },
 };
 
@@ -83,25 +74,25 @@ const feedItemVariants: Variants = {
   visible: (i: number) => ({
     opacity: 1,
     x: 0,
-    transition: { delay: i * 0.05, type: 'spring' as const, stiffness: 300, damping: 24 },
+    transition: { delay: i * 0.05, type: "spring" as const, stiffness: 300, damping: 24 },
   }),
 };
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
 const DARK_TOOLTIP_STYLE = {
-  backgroundColor: '#18181b',
-  border: '1px solid rgba(255,255,255,0.1)',
-  borderRadius: '8px',
+  backgroundColor: "#18181b",
+  border: "1px solid rgba(255,255,255,0.1)",
+  borderRadius: "8px",
   fontSize: 12,
-  color: '#a1a1aa',
+  color: "#a1a1aa",
 };
 
 const GAUGE_COLORS = {
-  excellent: '#10b981',
-  good: '#3b82f6',
-  warning: '#f59e0b',
-  critical: '#ef4444',
+  excellent: "#10b981",
+  good: "#3b82f6",
+  warning: "#f59e0b",
+  critical: "#ef4444",
 };
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -125,7 +116,7 @@ function formatRelativeTime(date: Date | string) {
   const then = new Date(date).getTime();
   const diff = Math.max(0, now - then);
   const secs = Math.floor(diff / 1000);
-  if (secs < 60) return 'just now';
+  if (secs < 60) return "just now";
   const mins = Math.floor(secs / 60);
   if (mins < 60) return `${mins}m ago`;
   const hours = Math.floor(mins / 60);
@@ -144,9 +135,9 @@ function formatNumber(n: number) {
 
 interface ActivityFeedItem {
   id: string;
-  type: 'audit' | 'query';
+  type: "audit" | "query";
   text: string;
-  status: 'success' | 'failure';
+  status: "success" | "failure";
   time: string | Date;
   connectionName?: string;
 }
@@ -207,7 +198,7 @@ export function OverviewTab({ user }: OverviewTabProps) {
 
   // Fetch audit events for activity feed
   useEffect(() => {
-    fetch('/api/admin/audit?limit=10')
+    fetch("/api/admin/audit?limit=10")
       .then((r) => r.json())
       .then((d) => setAuditEvents(d.events || []))
       .catch(() => {});
@@ -217,9 +208,9 @@ export function OverviewTab({ user }: OverviewTabProps) {
     if (connections.length === 0) return;
     setFleetLoading(true);
     try {
-      const res = await fetch('/api/admin/fleet-health', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+      const res = await fetch("/api/admin/fleet-health", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ connections }),
       });
       const data = await res.json();
@@ -244,15 +235,10 @@ export function OverviewTab({ user }: OverviewTabProps) {
 
   const queryStats = useMemo(() => {
     const total = history.length;
-    const successful = history.filter((h) => h.status === 'success').length;
+    const successful = history.filter((h) => h.status === "success").length;
     const failed = total - successful;
     const successRate = total > 0 ? Math.round((successful / total) * 100) : 0;
-    const avgTime =
-      total > 0
-        ? Math.round(
-            history.reduce((sum, h) => sum + h.executionTime, 0) / total
-          )
-        : 0;
+    const avgTime = total > 0 ? Math.round(history.reduce((sum, h) => sum + h.executionTime, 0) / total) : 0;
 
     const now = new Date();
     const byDay: { day: string; success: number; fail: number }[] = [];
@@ -264,9 +250,9 @@ export function OverviewTab({ user }: OverviewTabProps) {
         return t >= dayStart.getTime() && t < dayEnd.getTime();
       });
       byDay.push({
-        day: format(dayStart, 'EEE'),
-        success: dayItems.filter((h) => h.status === 'success').length,
-        fail: dayItems.filter((h) => h.status !== 'success').length,
+        day: format(dayStart, "EEE"),
+        success: dayItems.filter((h) => h.status === "success").length,
+        fail: dayItems.filter((h) => h.status !== "success").length,
       });
     }
 
@@ -275,7 +261,7 @@ export function OverviewTab({ user }: OverviewTabProps) {
 
   const healthScore = useMemo(() => {
     if (fleetHealth.length === 0) return 0;
-    const healthy = fleetHealth.filter((h) => h.status === 'healthy').length;
+    const healthy = fleetHealth.filter((h) => h.status === "healthy").length;
     return Math.round((healthy / fleetHealth.length) * 100);
   }, [fleetHealth]);
 
@@ -295,11 +281,9 @@ export function OverviewTab({ user }: OverviewTabProps) {
   }, [history]);
 
   const avgLatency = useMemo(() => {
-    const healthy = fleetHealth.filter((h) => h.status !== 'error');
+    const healthy = fleetHealth.filter((h) => h.status !== "error");
     if (healthy.length === 0) return 0;
-    return Math.round(
-      healthy.reduce((sum, h) => sum + h.latencyMs, 0) / healthy.length
-    );
+    return Math.round(healthy.reduce((sum, h) => sum + h.latencyMs, 0) / healthy.length);
   }, [fleetHealth]);
 
   const totalDBSize = useMemo(() => {
@@ -309,12 +293,12 @@ export function OverviewTab({ user }: OverviewTabProps) {
       const s = item.databaseSize.toLowerCase();
       const num = parseFloat(s);
       if (isNaN(num)) continue;
-      if (s.includes('gb')) totalBytes += num * 1024 * 1024 * 1024;
-      else if (s.includes('mb')) totalBytes += num * 1024 * 1024;
-      else if (s.includes('kb')) totalBytes += num * 1024;
+      if (s.includes("gb")) totalBytes += num * 1024 * 1024 * 1024;
+      else if (s.includes("mb")) totalBytes += num * 1024 * 1024;
+      else if (s.includes("kb")) totalBytes += num * 1024;
       else totalBytes += num;
     }
-    if (totalBytes === 0) return '0';
+    if (totalBytes === 0) return "0";
     if (totalBytes >= 1024 * 1024 * 1024) return `${(totalBytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
     if (totalBytes >= 1024 * 1024) return `${(totalBytes / (1024 * 1024)).toFixed(0)} MB`;
     return `${(totalBytes / 1024).toFixed(0)} KB`;
@@ -327,7 +311,7 @@ export function OverviewTab({ user }: OverviewTabProps) {
     for (const e of auditEvents) {
       items.push({
         id: e.id,
-        type: 'audit',
+        type: "audit",
         text: `${e.action} ${e.target}`,
         status: e.result,
         time: e.timestamp,
@@ -338,9 +322,9 @@ export function OverviewTab({ user }: OverviewTabProps) {
     for (const h of history.slice(0, 10)) {
       items.push({
         id: `q-${h.executedAt}-${Math.random().toString(36).slice(2, 6)}`,
-        type: 'query',
-        text: h.query.length > 60 ? h.query.slice(0, 60) + '...' : h.query,
-        status: h.status === 'success' ? 'success' : 'failure',
+        type: "query",
+        text: h.query.length > 60 ? h.query.slice(0, 60) + "..." : h.query,
+        status: h.status === "success" ? "success" : "failure",
         time: h.executedAt,
         connectionName: h.connectionName,
       });
@@ -357,12 +341,7 @@ export function OverviewTab({ user }: OverviewTabProps) {
   }
 
   return (
-    <motion.div
-      className="space-y-6"
-      variants={containerVariants}
-      initial="hidden"
-      animate="visible"
-    >
+    <motion.div className="space-y-6" variants={containerVariants} initial="hidden" animate="visible">
       {/* SECTION 1: Hero Status Banner */}
       <HeroStatusBanner
         healthScore={healthScore}
@@ -378,11 +357,7 @@ export function OverviewTab({ user }: OverviewTabProps) {
       />
 
       {/* SECTION 2: Fleet Health Grid */}
-      <FleetHealthSection
-        fleetHealth={fleetHealth}
-        fleetLoading={fleetLoading}
-        connections={connections}
-      />
+      <FleetHealthSection fleetHealth={fleetHealth} fleetLoading={fleetLoading} connections={connections} />
 
       {/* SECTION 3: Key Metrics */}
       <KeyMetricsSection
@@ -394,10 +369,7 @@ export function OverviewTab({ user }: OverviewTabProps) {
       />
 
       {/* SECTION 4: Analytics */}
-      <AnalyticsSection
-        queryStats={queryStats}
-        activityFeed={activityFeed}
-      />
+      <AnalyticsSection queryStats={queryStats} activityFeed={activityFeed} />
 
       {/* SECTION 5: Quick Actions */}
       <QuickActionsSection />
@@ -438,30 +410,21 @@ function HeroStatusBanner({
   const gaugeColor = getGaugeColor(healthScore);
   const gaugeData = [{ value: healthScore, fill: gaugeColor }];
 
-  const healthyCount = fleetHealth.filter((h) => h.status === 'healthy').length;
-  const degradedCount = fleetHealth.filter((h) => h.status === 'degraded').length;
-  const errorCount = fleetHealth.filter((h) => h.status === 'error').length;
+  const healthyCount = fleetHealth.filter((h) => h.status === "healthy").length;
+  const degradedCount = fleetHealth.filter((h) => h.status === "degraded").length;
+  const errorCount = fleetHealth.filter((h) => h.status === "error").length;
 
   const statusText =
-    errorCount > 0
-      ? 'Attention Required'
-      : degradedCount > 0
-        ? 'Degraded Performance'
-        : 'All Systems Operational';
+    errorCount > 0 ? "Attention Required" : degradedCount > 0 ? "Degraded Performance" : "All Systems Operational";
 
-  const statusColor =
-    errorCount > 0
-      ? 'text-red-400'
-      : degradedCount > 0
-        ? 'text-amber-400'
-        : 'text-emerald-400';
+  const statusColor = errorCount > 0 ? "text-red-400" : degradedCount > 0 ? "text-amber-400" : "text-emerald-400";
 
   const statusGlow =
     errorCount > 0
-      ? 'shadow-[0_0_20px_rgba(239,68,68,0.15)]'
+      ? "shadow-[0_0_20px_rgba(239,68,68,0.15)]"
       : degradedCount > 0
-        ? 'shadow-[0_0_20px_rgba(245,158,11,0.15)]'
-        : 'shadow-[0_0_20px_rgba(16,185,129,0.1)]';
+        ? "shadow-[0_0_20px_rgba(245,158,11,0.15)]"
+        : "shadow-[0_0_20px_rgba(16,185,129,0.1)]";
 
   const queryTrend = todayQueries - yesterdayQueries;
 
@@ -487,36 +450,25 @@ function HeroStatusBanner({
                   startAngle={90}
                   endAngle={-270}
                 >
-                  <RadialBar
-                    dataKey="value"
-                    cornerRadius={6}
-                    background={{ fill: 'rgba(255,255,255,0.04)' }}
-                  />
+                  <RadialBar dataKey="value" cornerRadius={6} background={{ fill: "rgba(255,255,255,0.04)" }} />
                 </RadialBarChart>
               </ResponsiveContainer>
             </div>
             {/* Center overlay */}
             <div className="absolute inset-0 flex flex-col items-center justify-center">
-              <span
-                className="text-3xl font-bold tabular-nums"
-                style={{ color: gaugeColor }}
-              >
+              <span className="text-3xl font-bold tabular-nums" style={{ color: gaugeColor }}>
                 {animatedScore}%
               </span>
-              <span className="text-xs text-zinc-500 uppercase tracking-wider">
-                Health
-              </span>
+              <span className="text-xs text-zinc-500 uppercase tracking-wider">Health</span>
             </div>
             {/* LIVE badge */}
             <div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex items-center gap-1.5">
               <motion.div
                 className="w-2 h-2 rounded-full bg-emerald-500"
                 animate={{ scale: [1, 1.05, 1], opacity: [0.7, 1, 0.7] }}
-                transition={{ duration: 2, repeat: Infinity, ease: 'easeInOut' }}
+                transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
               />
-              <span className="text-[0.625rem] font-bold text-emerald-400 uppercase tracking-widest">
-                Live
-              </span>
+              <span className="text-[0.625rem] font-bold text-emerald-400 uppercase tracking-widest">Live</span>
             </div>
           </div>
 
@@ -525,31 +477,20 @@ function HeroStatusBanner({
             {/* Status Line */}
             <div className="flex items-center justify-between gap-3 flex-wrap">
               <div className="flex items-center gap-3">
-                <span className={`text-sm font-bold ${statusColor}`}>
-                  {statusText}
-                </span>
+                <span className={`text-sm font-bold ${statusColor}`}>{statusText}</span>
                 <div className="flex gap-1.5 text-xs">
                   {healthyCount > 0 && (
-                    <Badge
-                      variant="outline"
-                      className="border-emerald-500/30 text-emerald-400 h-5 text-[0.625rem]"
-                    >
+                    <Badge variant="outline" className="border-emerald-500/30 text-emerald-400 h-5 text-[0.625rem]">
                       {healthyCount} healthy
                     </Badge>
                   )}
                   {degradedCount > 0 && (
-                    <Badge
-                      variant="outline"
-                      className="border-amber-500/30 text-amber-400 h-5 text-[0.625rem]"
-                    >
+                    <Badge variant="outline" className="border-amber-500/30 text-amber-400 h-5 text-[0.625rem]">
                       {degradedCount} degraded
                     </Badge>
                   )}
                   {errorCount > 0 && (
-                    <Badge
-                      variant="outline"
-                      className="border-red-500/30 text-red-400 h-5 text-[0.625rem]"
-                    >
+                    <Badge variant="outline" className="border-red-500/30 text-red-400 h-5 text-[0.625rem]">
                       {errorCount} error
                     </Badge>
                   )}
@@ -557,10 +498,7 @@ function HeroStatusBanner({
               </div>
               <div className="flex items-center gap-2">
                 {user && (
-                  <Badge
-                    variant="outline"
-                    className="border-white/10 text-zinc-500 h-5 text-[0.625rem]"
-                  >
+                  <Badge variant="outline" className="border-white/10 text-zinc-500 h-5 text-[0.625rem]">
                     {user.username} ({user.role})
                   </Badge>
                 )}
@@ -571,9 +509,7 @@ function HeroStatusBanner({
                   onClick={onRefresh}
                   disabled={fleetLoading}
                 >
-                  <RefreshCw
-                    className={`w-3 h-3 mr-1 ${fleetLoading ? 'animate-spin' : ''}`}
-                  />
+                  <RefreshCw className={`w-3 h-3 mr-1 ${fleetLoading ? "animate-spin" : ""}`} />
                   Refresh
                 </Button>
               </div>
@@ -581,13 +517,7 @@ function HeroStatusBanner({
 
             {/* Counter Cards */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              <CounterCard
-                icon={Link2}
-                label="Connections"
-                value={animatedConns}
-                suffix=""
-                color="text-blue-400"
-              />
+              <CounterCard icon={Link2} label="Connections" value={animatedConns} suffix="" color="text-blue-400" />
               <CounterCard
                 icon={Zap}
                 label="Total Queries"
@@ -639,41 +569,23 @@ function CounterCard({
   isString?: boolean;
   formatValue?: (n: number) => string;
 }) {
-  const displayValue = isString
-    ? value
-    : formatValue
-      ? formatValue(value as number)
-      : value;
+  const displayValue = isString ? value : formatValue ? formatValue(value as number) : value;
 
   return (
     <div className="rounded-xl border border-white/5 bg-white/[0.02] p-3">
       <div className="flex items-center gap-1.5 mb-1.5">
         <Icon className={`w-3.5 h-3.5 ${color}`} />
-        <span className="text-xs text-zinc-500 uppercase tracking-wider">
-          {label}
-        </span>
+        <span className="text-xs text-zinc-500 uppercase tracking-wider">{label}</span>
       </div>
       <div className="flex items-baseline gap-1">
-        <span className="text-2xl font-bold text-zinc-100 tabular-nums">
-          {displayValue}
-        </span>
-        {suffix && (
-          <span className="text-xs text-zinc-500">{suffix}</span>
-        )}
+        <span className="text-2xl font-bold text-zinc-100 tabular-nums">{displayValue}</span>
+        {suffix && <span className="text-xs text-zinc-500">{suffix}</span>}
       </div>
       {trend !== undefined && trend !== 0 && (
-        <div
-          className={`flex items-center gap-0.5 mt-1 text-xs ${
-            trend > 0 ? 'text-emerald-400' : 'text-red-400'
-          }`}
-        >
-          {trend > 0 ? (
-            <TrendingUp className="w-3 h-3" />
-          ) : (
-            <TrendingDown className="w-3 h-3" />
-          )}
+        <div className={`flex items-center gap-0.5 mt-1 text-xs ${trend > 0 ? "text-emerald-400" : "text-red-400"}`}>
+          {trend > 0 ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
           <span>
-            {trend > 0 ? '+' : ''}
+            {trend > 0 ? "+" : ""}
             {trend} vs yesterday
           </span>
         </div>
@@ -697,29 +609,29 @@ function FleetHealthSection({
 
   const getStatusColor = (status: string) => {
     switch (status) {
-      case 'healthy':
+      case "healthy":
         return {
-          dot: 'bg-emerald-500',
-          border: 'border-emerald-500/20 hover:border-emerald-500/40',
-          glow: 'hover:shadow-[0_0_30px_rgba(16,185,129,0.08)]',
-          gradient: 'from-emerald-500/60 via-emerald-400/40',
-          latencyColor: '#10b981',
+          dot: "bg-emerald-500",
+          border: "border-emerald-500/20 hover:border-emerald-500/40",
+          glow: "hover:shadow-[0_0_30px_rgba(16,185,129,0.08)]",
+          gradient: "from-emerald-500/60 via-emerald-400/40",
+          latencyColor: "#10b981",
         };
-      case 'degraded':
+      case "degraded":
         return {
-          dot: 'bg-amber-500',
-          border: 'border-amber-500/20 hover:border-amber-500/40',
-          glow: 'hover:shadow-[0_0_30px_rgba(245,158,11,0.08)]',
-          gradient: 'from-amber-500/60 via-amber-400/40',
-          latencyColor: '#f59e0b',
+          dot: "bg-amber-500",
+          border: "border-amber-500/20 hover:border-amber-500/40",
+          glow: "hover:shadow-[0_0_30px_rgba(245,158,11,0.08)]",
+          gradient: "from-amber-500/60 via-amber-400/40",
+          latencyColor: "#f59e0b",
         };
       default:
         return {
-          dot: 'bg-red-500',
-          border: 'border-red-500/20 hover:border-red-500/40',
-          glow: 'hover:shadow-[0_0_30px_rgba(239,68,68,0.08)]',
-          gradient: 'from-red-500/60 via-red-400/40',
-          latencyColor: '#ef4444',
+          dot: "bg-red-500",
+          border: "border-red-500/20 hover:border-red-500/40",
+          glow: "hover:shadow-[0_0_30px_rgba(239,68,68,0.08)]",
+          gradient: "from-red-500/60 via-red-400/40",
+          latencyColor: "#ef4444",
         };
     }
   };
@@ -730,17 +642,14 @@ function FleetHealthSection({
         <Radio className="h-4 w-4 text-blue-400" />
         <h2 className="text-sm font-bold text-zinc-300">Fleet Status</h2>
         <span className="text-xs text-zinc-600">
-          {fleetHealth.length} endpoint{fleetHealth.length !== 1 ? 's' : ''}
+          {fleetHealth.length} endpoint{fleetHealth.length !== 1 ? "s" : ""}
         </span>
       </div>
 
       {fleetLoading && fleetHealth.length === 0 ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {[...Array(3)].map((_, i) => (
-            <div
-              key={i}
-              className="rounded-xl border border-white/5 bg-zinc-900/50 p-4"
-            >
+            <div key={i} className="rounded-xl border border-white/5 bg-zinc-900/50 p-4">
               <Skeleton className="h-4 w-24 mb-3 bg-zinc-800" />
               <Skeleton className="h-3 w-32 mb-2 bg-zinc-800" />
               <Skeleton className="h-2 w-full bg-zinc-800" />
@@ -776,7 +685,7 @@ function FleetHealthSection({
                 <div className="flex items-center justify-between mb-3">
                   <div className="flex items-center gap-2">
                     <div
-                      className={`w-2 h-2 rounded-full ${colors.dot} ${item.status === 'healthy' ? 'animate-pulse' : ''}`}
+                      className={`w-2 h-2 rounded-full ${colors.dot} ${item.status === "healthy" ? "animate-pulse" : ""}`}
                     />
                     <span className="text-sm font-medium text-zinc-200 truncate max-w-[150px]">
                       {item.connectionName}
@@ -788,25 +697,15 @@ function FleetHealthSection({
                         variant="outline"
                         className="text-[0.625rem] h-4"
                         style={{
-                          borderColor:
-                            ENVIRONMENT_COLORS[
-                              item.environment as keyof typeof ENVIRONMENT_COLORS
-                            ],
-                          color:
-                            ENVIRONMENT_COLORS[
-                              item.environment as keyof typeof ENVIRONMENT_COLORS
-                            ],
+                          borderColor: ENVIRONMENT_COLORS[item.environment as keyof typeof ENVIRONMENT_COLORS],
+                          color: ENVIRONMENT_COLORS[item.environment as keyof typeof ENVIRONMENT_COLORS],
                         }}
                       >
-                        {ENVIRONMENT_LABELS[
-                          item.environment as keyof typeof ENVIRONMENT_LABELS
-                        ] || item.environment}
+                        {ENVIRONMENT_LABELS[item.environment as keyof typeof ENVIRONMENT_LABELS] || item.environment}
                       </Badge>
                     )}
                     <div className="p-1 rounded bg-white/[0.04]">
-                      <Icon
-                        className={`w-3.5 h-3.5 ${getDBColor(item.type as DatabaseType)}`}
-                      />
+                      <Icon className={`w-3.5 h-3.5 ${getDBColor(item.type as DatabaseType)}`} />
                     </div>
                   </div>
                 </div>
@@ -826,31 +725,23 @@ function FleetHealthSection({
 
                 <div className="flex items-center gap-3 text-xs text-zinc-500">
                   <span className="font-mono text-zinc-400">
-                    {item.status === 'error' ? 'timeout' : `${item.latencyMs}ms`}
+                    {item.status === "error" ? "timeout" : `${item.latencyMs}ms`}
                   </span>
                   {item.databaseSize && (
                     <>
                       <span className="text-zinc-700">&middot;</span>
-                      <span className="font-mono text-zinc-400">
-                        {item.databaseSize}
-                      </span>
+                      <span className="font-mono text-zinc-400">{item.databaseSize}</span>
                     </>
                   )}
                   {item.activeConnections !== undefined && (
                     <>
                       <span className="text-zinc-700">&middot;</span>
-                      <span className="font-mono text-zinc-400">
-                        {item.activeConnections} conn
-                      </span>
+                      <span className="font-mono text-zinc-400">{item.activeConnections} conn</span>
                     </>
                   )}
                 </div>
 
-                {item.error && (
-                  <div className="text-red-400 text-xs truncate mt-1.5">
-                    {item.error}
-                  </div>
-                )}
+                {item.error && <div className="text-red-400 text-xs truncate mt-1.5">{item.error}</div>}
               </motion.a>
             );
           })}
@@ -888,12 +779,7 @@ function KeyMetricsSection({
           unit="%"
           color={getGaugeColor(queryStats.successRate)}
         />
-        <MetricGauge
-          label="Fleet Health"
-          value={healthScore}
-          unit="%"
-          color={getGaugeColor(healthScore)}
-        />
+        <MetricGauge label="Fleet Health" value={healthScore} unit="%" color={getGaugeColor(healthScore)} />
         <MetricGauge
           label="Avg Response"
           value={Math.min(avgLatency, 500)}
@@ -944,26 +830,17 @@ function MetricGauge({
             startAngle={90}
             endAngle={-270}
           >
-            <RadialBar
-              dataKey="value"
-              cornerRadius={4}
-              background={{ fill: 'rgba(255,255,255,0.03)' }}
-            />
+            <RadialBar dataKey="value" cornerRadius={4} background={{ fill: "rgba(255,255,255,0.03)" }} />
           </RadialBarChart>
         </ResponsiveContainer>
         <div className="absolute inset-0 flex flex-col items-center justify-center">
-          <span
-            className="text-xl font-bold tabular-nums"
-            style={{ color }}
-          >
+          <span className="text-xl font-bold tabular-nums" style={{ color }}>
             {displayValue ?? animatedValue}
           </span>
           <span className="text-[0.625rem] text-zinc-500">{unit}</span>
         </div>
       </div>
-      <span className="text-xs text-zinc-500 mt-1 uppercase tracking-wider">
-        {label}
-      </span>
+      <span className="text-xs text-zinc-500 mt-1 uppercase tracking-wider">{label}</span>
     </div>
   );
 }
@@ -986,25 +863,13 @@ function MetricBigNumber({
       <div className="p-2 rounded-lg bg-purple-500/10 mb-2">
         <Icon className="w-5 h-5 text-purple-400" />
       </div>
-      <span className="text-3xl font-bold text-zinc-100 tabular-nums">
-        {formatNumber(animatedValue)}
-      </span>
-      <span className="text-xs text-zinc-500 mt-1 uppercase tracking-wider">
-        {label}
-      </span>
+      <span className="text-3xl font-bold text-zinc-100 tabular-nums">{formatNumber(animatedValue)}</span>
+      <span className="text-xs text-zinc-500 mt-1 uppercase tracking-wider">{label}</span>
       {trend !== 0 && (
-        <div
-          className={`flex items-center gap-0.5 mt-1.5 text-xs ${
-            trend > 0 ? 'text-emerald-400' : 'text-red-400'
-          }`}
-        >
-          {trend > 0 ? (
-            <TrendingUp className="w-3 h-3" />
-          ) : (
-            <TrendingDown className="w-3 h-3" />
-          )}
+        <div className={`flex items-center gap-0.5 mt-1.5 text-xs ${trend > 0 ? "text-emerald-400" : "text-red-400"}`}>
+          {trend > 0 ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
           <span>
-            {trend > 0 ? '+' : ''}
+            {trend > 0 ? "+" : ""}
             {trend} today
           </span>
         </div>
@@ -1032,9 +897,7 @@ function AnalyticsSection({
             Query Volume (7 days)
           </h3>
           {queryStats.total === 0 ? (
-            <div className="flex items-center justify-center py-8 text-sm text-zinc-600">
-              No query history yet.
-            </div>
+            <div className="flex items-center justify-center py-8 text-sm text-zinc-600">No query history yet.</div>
           ) : (
             <div className="h-[200px]">
               <ResponsiveContainer width="100%" height="100%">
@@ -1049,15 +912,10 @@ function AnalyticsSection({
                       <stop offset="95%" stopColor="#ef4444" stopOpacity={0} />
                     </linearGradient>
                   </defs>
-                  <XAxis
-                    dataKey="day"
-                    tick={{ fontSize: 11, fill: '#71717a' }}
-                    axisLine={false}
-                    tickLine={false}
-                  />
+                  <XAxis dataKey="day" tick={{ fontSize: 11, fill: "#71717a" }} axisLine={false} tickLine={false} />
                   <YAxis
                     allowDecimals={false}
-                    tick={{ fontSize: 11, fill: '#71717a' }}
+                    tick={{ fontSize: 11, fill: "#71717a" }}
                     axisLine={false}
                     tickLine={false}
                     width={30}
@@ -1096,9 +954,7 @@ function AnalyticsSection({
             Recent Activity
           </h3>
           {activityFeed.length === 0 ? (
-            <div className="flex items-center justify-center py-8 text-sm text-zinc-600">
-              No recent activity.
-            </div>
+            <div className="flex items-center justify-center py-8 text-sm text-zinc-600">No recent activity.</div>
           ) : (
             <div className="max-h-[260px] overflow-y-auto editor-scrollbar space-y-1">
               <AnimatePresence>
@@ -1111,30 +967,24 @@ function AnalyticsSection({
                     animate="visible"
                     className="flex items-center gap-2.5 py-1.5 px-2 rounded-lg hover:bg-white/[0.03] transition-colors"
                   >
-                    {item.type === 'audit' ? (
+                    {item.type === "audit" ? (
                       <Wrench className="w-3.5 h-3.5 text-zinc-600 flex-shrink-0" />
                     ) : (
                       <Zap className="w-3.5 h-3.5 text-zinc-600 flex-shrink-0" />
                     )}
                     <div className="flex-1 min-w-0">
-                      <div className="text-xs text-zinc-400 truncate">
-                        {item.text}
-                      </div>
+                      <div className="text-xs text-zinc-400 truncate">{item.text}</div>
                       {item.connectionName && (
-                        <div className="text-xs text-zinc-600 truncate">
-                          {item.connectionName}
-                        </div>
+                        <div className="text-xs text-zinc-600 truncate">{item.connectionName}</div>
                       )}
                     </div>
                     <div className="flex items-center gap-1.5 flex-shrink-0">
-                      {item.status === 'success' ? (
+                      {item.status === "success" ? (
                         <CheckCircle2 className="w-3 h-3 text-emerald-500" />
                       ) : (
                         <XCircle className="w-3 h-3 text-red-500" />
                       )}
-                      <span className="text-xs text-zinc-600 whitespace-nowrap">
-                        {formatRelativeTime(item.time)}
-                      </span>
+                      <span className="text-xs text-zinc-600 whitespace-nowrap">{formatRelativeTime(item.time)}</span>
                     </div>
                   </motion.div>
                 ))}
@@ -1152,31 +1002,31 @@ function AnalyticsSection({
 function QuickActionsSection() {
   const actions = [
     {
-      label: 'Maintenance',
-      description: 'VACUUM, ANALYZE, and optimize your databases',
+      label: "Maintenance",
+      description: "VACUUM, ANALYZE, and optimize your databases",
       icon: Wrench,
-      href: '/admin?tab=operations',
-      gradient: 'from-blue-500/20 to-cyan-500/20',
-      iconColor: 'text-blue-400',
-      borderColor: 'hover:border-blue-500/30',
+      href: "/admin?tab=operations",
+      gradient: "from-blue-500/20 to-cyan-500/20",
+      iconColor: "text-blue-400",
+      borderColor: "hover:border-blue-500/30",
     },
     {
-      label: 'Security & Masking',
-      description: 'Configure data masking rules and access control',
+      label: "Security & Masking",
+      description: "Configure data masking rules and access control",
       icon: Shield,
-      href: '/admin?tab=security',
-      gradient: 'from-emerald-500/20 to-teal-500/20',
-      iconColor: 'text-emerald-400',
-      borderColor: 'hover:border-emerald-500/30',
+      href: "/admin?tab=security",
+      gradient: "from-emerald-500/20 to-teal-500/20",
+      iconColor: "text-emerald-400",
+      borderColor: "hover:border-emerald-500/30",
     },
     {
-      label: 'Real-time Monitoring',
-      description: 'Live metrics, connection pools, and alert thresholds',
+      label: "Real-time Monitoring",
+      description: "Live metrics, connection pools, and alert thresholds",
       icon: Activity,
-      href: '/admin?tab=monitoring',
-      gradient: 'from-purple-500/20 to-pink-500/20',
-      iconColor: 'text-purple-400',
-      borderColor: 'hover:border-purple-500/30',
+      href: "/admin?tab=monitoring",
+      gradient: "from-purple-500/20 to-pink-500/20",
+      iconColor: "text-purple-400",
+      borderColor: "hover:border-purple-500/30",
     },
   ];
 
@@ -1203,12 +1053,8 @@ function QuickActionsSection() {
               <div className={`p-2 rounded-lg bg-white/[0.04] w-fit mb-3`}>
                 <action.icon className={`w-5 h-5 ${action.iconColor}`} />
               </div>
-              <h3 className="text-sm font-bold text-zinc-200 mb-1">
-                {action.label}
-              </h3>
-              <p className="text-xs text-zinc-500 mb-3">
-                {action.description}
-              </p>
+              <h3 className="text-sm font-bold text-zinc-200 mb-1">{action.label}</h3>
+              <p className="text-xs text-zinc-500 mb-3">{action.description}</p>
               <div className="flex items-center gap-1 text-xs text-zinc-600 group-hover:text-zinc-400 transition-colors">
                 <span>Open</span>
                 <ArrowRight className="w-3 h-3 group-hover:translate-x-1 transition-transform" />
@@ -1227,18 +1073,18 @@ function EmptyState() {
   const features = [
     {
       icon: Database,
-      label: '7 DB Types',
-      description: 'PostgreSQL, MySQL, SQLite, MongoDB, Redis, Oracle, MSSQL',
+      label: "7 DB Types",
+      description: "PostgreSQL, MySQL, SQLite, MongoDB, Redis, Oracle, MSSQL",
     },
     {
       icon: Sparkles,
-      label: 'AI Queries',
-      description: 'Natural language to SQL with multi-model AI support',
+      label: "AI Queries",
+      description: "Natural language to SQL with multi-model AI support",
     },
     {
       icon: Activity,
-      label: 'Real-time Monitor',
-      description: 'Live metrics, alerts, and connection pool monitoring',
+      label: "Real-time Monitor",
+      description: "Live metrics, alerts, and connection pool monitoring",
     },
   ];
 
@@ -1248,12 +1094,12 @@ function EmptyState() {
       <motion.div
         className="absolute top-1/4 left-1/3 w-72 h-72 bg-blue-500/5 rounded-full blur-3xl pointer-events-none"
         animate={{ scale: [1, 1.2, 1], opacity: [0.3, 0.5, 0.3] }}
-        transition={{ duration: 8, repeat: Infinity, ease: 'easeInOut' }}
+        transition={{ duration: 8, repeat: Infinity, ease: "easeInOut" }}
       />
       <motion.div
         className="absolute bottom-1/4 right-1/3 w-56 h-56 bg-emerald-500/5 rounded-full blur-3xl pointer-events-none"
         animate={{ scale: [1.2, 1, 1.2], opacity: [0.3, 0.5, 0.3] }}
-        transition={{ duration: 8, repeat: Infinity, ease: 'easeInOut', delay: 2 }}
+        transition={{ duration: 8, repeat: Infinity, ease: "easeInOut", delay: 2 }}
       />
 
       <motion.div
@@ -1263,32 +1109,28 @@ function EmptyState() {
         animate="visible"
       >
         {/* Database icon with pulse glow */}
-        <motion.div
-          variants={itemVariants}
-          className="relative mb-6"
-        >
+        <motion.div variants={itemVariants} className="relative mb-6">
           <div className="absolute inset-0 w-20 h-20 bg-blue-500/20 rounded-full blur-xl" />
           <motion.div
             className="relative p-5 rounded-2xl border border-white/10 bg-zinc-900/80"
-            animate={{ boxShadow: ['0 0 20px rgba(59,130,246,0.1)', '0 0 40px rgba(59,130,246,0.2)', '0 0 20px rgba(59,130,246,0.1)'] }}
-            transition={{ duration: 3, repeat: Infinity, ease: 'easeInOut' }}
+            animate={{
+              boxShadow: [
+                "0 0 20px rgba(59,130,246,0.1)",
+                "0 0 40px rgba(59,130,246,0.2)",
+                "0 0 20px rgba(59,130,246,0.1)",
+              ],
+            }}
+            transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }}
           >
             <Database className="w-10 h-10 text-blue-400" />
           </motion.div>
         </motion.div>
 
-        <motion.h2
-          variants={itemVariants}
-          className="text-2xl font-bold text-zinc-100 mb-2"
-        >
+        <motion.h2 variants={itemVariants} className="text-2xl font-bold text-zinc-100 mb-2">
           Welcome to Command Center
         </motion.h2>
-        <motion.p
-          variants={itemVariants}
-          className="text-sm text-zinc-500 max-w-md mb-8"
-        >
-          Connect your first database to unlock real-time fleet monitoring,
-          analytics, and intelligent query assistance.
+        <motion.p variants={itemVariants} className="text-sm text-zinc-500 max-w-md mb-8">
+          Connect your first database to unlock real-time fleet monitoring, analytics, and intelligent query assistance.
         </motion.p>
 
         {/* Feature cards */}
@@ -1305,9 +1147,7 @@ function EmptyState() {
               <div className="p-2 rounded-lg bg-blue-500/10 w-fit mx-auto mb-2">
                 <f.icon className="w-5 h-5 text-blue-400" />
               </div>
-              <div className="text-sm font-bold text-zinc-200 mb-1">
-                {f.label}
-              </div>
+              <div className="text-sm font-bold text-zinc-200 mb-1">{f.label}</div>
               <div className="text-xs text-zinc-500">{f.description}</div>
             </motion.div>
           ))}

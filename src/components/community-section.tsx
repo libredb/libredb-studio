@@ -1,29 +1,29 @@
-import { Star, Bug, MessageCircle, Code, Languages, Heart } from 'lucide-react';
+import { Star, Bug, MessageCircle, Code, Languages, Heart } from "lucide-react";
 
 const communityUrls = {
-  repo: 'https://github.com/libredb/libredb-studio',
-  issues: 'https://github.com/libredb/libredb-studio/issues',
-  discussions: 'https://github.com/libredb/libredb-studio/discussions',
-  contributing: 'https://github.com/libredb/libredb-studio/blob/main/CONTRIBUTING.md',
-  translate: 'https://github.com/libredb/libredb-studio/tree/main/src/lib',
-  sponsor: 'https://github.com/sponsors/cevheri',
+  repo: "https://github.com/libredb/libredb-studio",
+  issues: "https://github.com/libredb/libredb-studio/issues",
+  discussions: "https://github.com/libredb/libredb-studio/discussions",
+  contributing: "https://github.com/libredb/libredb-studio/blob/main/CONTRIBUTING.md",
+  translate: "https://github.com/libredb/libredb-studio/tree/main/src/lib",
+  sponsor: "https://github.com/sponsors/cevheri",
 } as const;
 
 const communityActions = [
-  { label: 'Star & Fork', icon: Star, url: communityUrls.repo, color: 'bg-blue-500/15 text-blue-400' },
-  { label: 'Open an Issue', icon: Bug, url: communityUrls.issues, color: 'bg-red-500/15 text-red-400' },
-  { label: 'Discussions', icon: MessageCircle, url: communityUrls.discussions, color: 'bg-cyan-500/15 text-cyan-400' },
-  { label: 'Contribute', icon: Code, url: communityUrls.contributing, color: 'bg-violet-500/15 text-violet-400' },
-  { label: 'Translate', icon: Languages, url: communityUrls.translate, color: 'bg-emerald-500/15 text-emerald-400' },
-  { label: 'Sponsor', icon: Heart, url: communityUrls.sponsor, color: 'bg-pink-500/15 text-pink-400' },
+  { label: "Star & Fork", icon: Star, url: communityUrls.repo, color: "bg-blue-500/15 text-blue-400" },
+  { label: "Open an Issue", icon: Bug, url: communityUrls.issues, color: "bg-red-500/15 text-red-400" },
+  { label: "Discussions", icon: MessageCircle, url: communityUrls.discussions, color: "bg-cyan-500/15 text-cyan-400" },
+  { label: "Contribute", icon: Code, url: communityUrls.contributing, color: "bg-violet-500/15 text-violet-400" },
+  { label: "Translate", icon: Languages, url: communityUrls.translate, color: "bg-emerald-500/15 text-emerald-400" },
+  { label: "Sponsor", icon: Heart, url: communityUrls.sponsor, color: "bg-pink-500/15 text-pink-400" },
 ] as const;
 
 interface CommunitySectionProps {
-  variant: 'desktop' | 'mobile';
+  variant: "desktop" | "mobile";
 }
 
 export function CommunitySection({ variant }: CommunitySectionProps) {
-  if (variant === 'desktop') {
+  if (variant === "desktop") {
     return <DesktopCommunity />;
   }
   return <MobileCommunity />;

@@ -14,7 +14,7 @@
 // Factory (Primary API)
 // ============================================================================
 
-export { getOrCreateProvider } from './factory';
+export { getOrCreateProvider } from "./factory";
 
 // ============================================================================
 // Types & Interfaces
@@ -41,10 +41,10 @@ export type {
   ProviderLabels,
   PreparedQuery,
   QueryPrepareOptions,
-} from './types';
+} from "./types";
 
 // ============================================================================
 // Utilities
 // ============================================================================
 
-export { type RetryOptions } from './utils/pool-manager';
+export { type RetryOptions } from "./utils/pool-manager";

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo } from "react";
 import {
   CommandDialog,
   CommandInput,
@@ -9,7 +9,7 @@ import {
   CommandGroup,
   CommandItem,
   CommandShortcut,
-} from '@/components/ui/command';
+} from "@/components/ui/command";
 import {
   Table2,
   Play,
@@ -23,10 +23,10 @@ import {
   Sparkles,
   AlignLeft,
   Save,
-} from 'lucide-react';
-import { DatabaseConnection, TableSchema, SavedQuery, QueryHistoryItem } from '@/lib/types';
-import { storage } from '@/lib/storage';
-import { getDBIcon } from '@/lib/db-ui-config';
+} from "lucide-react";
+import { DatabaseConnection, TableSchema, SavedQuery, QueryHistoryItem } from "@/lib/types";
+import { storage } from "@/lib/storage";
+import { getDBIcon } from "@/lib/db-ui-config";
 
 interface CommandPaletteProps {
   connections: DatabaseConnection[];
@@ -70,13 +70,13 @@ export function CommandPalette({
   // Register Cmd+K / Ctrl+K keyboard shortcut
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
         e.preventDefault();
-        setOpen(prev => !prev);
+        setOpen((prev) => !prev);
       }
     };
-    document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
   }, []);
 
   // Load saved queries and history
@@ -98,10 +98,7 @@ export function CommandPalette({
       className="sm:max-w-[560px] bg-[#0a0a0a] border-white/10"
       showCloseButton={false}
     >
-      <CommandInput
-        placeholder="Search tables, connections, queries, actions..."
-        className="text-zinc-200"
-      />
+      <CommandInput placeholder="Search tables, connections, queries, actions..." className="text-zinc-200" />
       <CommandList className="max-h-[400px]">
         <CommandEmpty className="text-zinc-500">No results found.</CommandEmpty>
 
@@ -154,10 +151,7 @@ export function CommandPalette({
             {connections.map((conn) => {
               const Icon = getDBIcon(conn.type);
               return (
-                <CommandItem
-                  key={conn.id}
-                  onSelect={() => runAction(() => onSelectConnection(conn))}
-                >
+                <CommandItem key={conn.id} onSelect={() => runAction(() => onSelectConnection(conn))}>
                   <Icon className="w-3.5 h-3.5" />
                   <span>{conn.name}</span>
                   {activeConnection?.id === conn.id && (
@@ -173,10 +167,7 @@ export function CommandPalette({
         {schema.length > 0 && (
           <CommandGroup heading="Tables">
             {schema.map((table) => (
-              <CommandItem
-                key={table.name}
-                onSelect={() => runAction(() => onTableClick(table.name))}
-              >
+              <CommandItem key={table.name} onSelect={() => runAction(() => onTableClick(table.name))}>
                 <Table2 strokeWidth={1.5} className="w-3.5 h-3.5 text-zinc-500" />
                 <span>{table.name}</span>
                 <span className="ml-auto text-xs text-zinc-600">
@@ -192,10 +183,7 @@ export function CommandPalette({
         {savedQueries.length > 0 && (
           <CommandGroup heading="Saved Queries">
             {savedQueries.map((sq: SavedQuery) => (
-              <CommandItem
-                key={sq.id}
-                onSelect={() => runAction(() => onLoadSavedQuery(sq.query))}
-              >
+              <CommandItem key={sq.id} onSelect={() => runAction(() => onLoadSavedQuery(sq.query))}>
                 <Bookmark strokeWidth={1.5} className="w-3.5 h-3.5 text-purple-400" />
                 <span>{sq.name}</span>
                 <span className="ml-auto text-xs text-zinc-600 truncate max-w-[150px]">
@@ -210,10 +198,7 @@ export function CommandPalette({
         {historyItems.length > 0 && (
           <CommandGroup heading="Recent Queries">
             {historyItems.map((item: QueryHistoryItem) => (
-              <CommandItem
-                key={item.id}
-                onSelect={() => runAction(() => onLoadHistoryQuery(item.query))}
-              >
+              <CommandItem key={item.id} onSelect={() => runAction(() => onLoadHistoryQuery(item.query))}>
                 <Clock strokeWidth={1.5} className="w-3.5 h-3.5 text-zinc-500" />
                 <span className="truncate max-w-[350px] text-zinc-400">{item.query.substring(0, 60)}</span>
                 <span className="ml-auto text-xs text-zinc-600">{item.executionTime}ms</span>

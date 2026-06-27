@@ -1,10 +1,10 @@
 "use client";
 
-import { useState, useEffect, useMemo } from 'react';
-import { Loader2, BarChart3, X, Hash, AlertCircle, Sparkles, Lock } from 'lucide-react';
-import { cn } from '@/lib/utils';
-import { TableSchema, DatabaseConnection } from '@/lib/types';
-import { detectSensitiveColumns, maskValue } from '@/lib/data-masking';
+import { useState, useEffect, useMemo } from "react";
+import { Loader2, BarChart3, X, Hash, AlertCircle, Sparkles, Lock } from "lucide-react";
+import { cn } from "@/lib/utils";
+import { TableSchema, DatabaseConnection } from "@/lib/types";
+import { detectSensitiveColumns, maskValue } from "@/lib/data-masking";
 
 interface ColumnProfile {
   name: string;
@@ -52,14 +52,14 @@ export function DataProfiler({
 }: DataProfilerProps) {
   const [isLoading, setIsLoading] = useState(false);
   const [profile, setProfile] = useState<ProfileData | null>(null);
-  const [aiSummary, setAiSummary] = useState('');
+  const [aiSummary, setAiSummary] = useState("");
   const [isAiLoading, setIsAiLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // Detect sensitive columns for masking sample values in profiler
   const sensitiveColumnNames = useMemo(() => {
     if (!tableSchema?.columns) return new Map();
-    return detectSensitiveColumns(tableSchema.columns.map(c => c.name));
+    return detectSensitiveColumns(tableSchema.columns.map((c) => c.name));
   }, [tableSchema]);
 
   useEffect(() => {
@@ -68,10 +68,10 @@ export function DataProfiler({
     }
     return () => {
       setProfile(null);
-      setAiSummary('');
+      setAiSummary("");
       setError(null);
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, tableName]);
 
   const fetchProfile = async () => {
@@ -87,16 +87,16 @@ export function DataProfiler({
         data = await onProfile({ connectionId: connection.id, tableName });
       } else {
         // Default: existing fetch behavior
-        const columns = tableSchema.columns?.map(c => c.name) || [];
-        const response = await fetch('/api/db/profile', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+        const columns = tableSchema.columns?.map((c) => c.name) || [];
+        const response = await fetch("/api/db/profile", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ connection, tableName, columns }),
         });
 
         if (!response.ok) {
           const err = await response.json();
-          throw new Error(err.error || 'Profile failed');
+          throw new Error(err.error || "Profile failed");
         }
 
         data = await response.json();
@@ -107,7 +107,7 @@ export function DataProfiler({
       // Trigger AI summary
       fetchAiSummary(data);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unknown error');
+      setError(err instanceof Error ? err.message : "Unknown error");
     } finally {
       setIsLoading(false);
     }
@@ -116,11 +116,14 @@ export function DataProfiler({
   const fetchAiSummary = async (data: ProfileData) => {
     setIsAiLoading(true);
     try {
-      const profileSummary = data.columns.map(c =>
-        `${c.name}: ${c.nullPercent}% null, ${c.distinctCount} distinct, min=${c.minValue || 'N/A'}, max=${c.maxValue || 'N/A'}`
-      ).join('\n');
+      const profileSummary = data.columns
+        .map(
+          (c) =>
+            `${c.name}: ${c.nullPercent}% null, ${c.distinctCount} distinct, min=${c.minValue || "N/A"}, max=${c.maxValue || "N/A"}`,
+        )
+        .join("\n");
 
-      const fullSchemaContext = `Table: ${tableName} (${data.totalRows} rows)\n\nColumn Profiles:\n${profileSummary}\n\nSchema:\n${schemaContext || ''}`;
+      const fullSchemaContext = `Table: ${tableName} (${data.totalRows} rows)\n\nColumn Profiles:\n${profileSummary}\n\nSchema:\n${schemaContext || ""}`;
 
       if (onDescribeSchema) {
         // Platform adapter: use callback instead of fetch
@@ -128,13 +131,13 @@ export function DataProfiler({
         setAiSummary(result);
       } else {
         // Default: existing fetch behavior
-        const response = await fetch('/api/ai/describe-schema', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+        const response = await fetch("/api/ai/describe-schema", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             schemaContext: fullSchemaContext,
             databaseType,
-            mode: 'table',
+            mode: "table",
           }),
         });
 
@@ -143,7 +146,7 @@ export function DataProfiler({
         const reader = response.body?.getReader();
         if (!reader) return;
 
-        let full = '';
+        let full = "";
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
@@ -208,7 +211,8 @@ export function DataProfiler({
                   <p className="text-xs font-medium text-zinc-200 mt-1">
                     {profile.columns.length > 0
                       ? Math.round(profile.columns.reduce((sum, c) => sum + c.nullPercent, 0) / profile.columns.length)
-                      : 0}%
+                      : 0}
+                    %
                   </p>
                 </div>
               </div>
@@ -222,16 +226,14 @@ export function DataProfiler({
                       <div className="flex items-center gap-2">
                         <Hash strokeWidth={1.5} className="w-3 h-3 text-blue-400" />
                         <span className="text-xs font-medium text-zinc-200">{col.name}</span>
-                        {col.type && (
-                          <span className="text-xs text-zinc-500 font-mono">{col.type}</span>
-                        )}
+                        {col.type && <span className="text-xs text-zinc-500 font-mono">{col.type}</span>}
                         {sensitiveColumnNames.has(col.name) && (
-                          <span title="Sensitive column - values masked"><Lock strokeWidth={1.5} className="w-3 h-3 text-purple-400" /></span>
+                          <span title="Sensitive column - values masked">
+                            <Lock strokeWidth={1.5} className="w-3 h-3 text-purple-400" />
+                          </span>
                         )}
                       </div>
-                      <span className="text-xs text-zinc-500">
-                        {col.distinctCount.toLocaleString()} distinct
-                      </span>
+                      <span className="text-xs text-zinc-500">{col.distinctCount.toLocaleString()} distinct</span>
                     </div>
 
                     {col.error ? (
@@ -244,47 +246,57 @@ export function DataProfiler({
                             <div
                               className={cn(
                                 "h-full rounded-full transition-all",
-                                col.nullPercent > 50 ? "bg-red-500" :
-                                col.nullPercent > 20 ? "bg-amber-500" :
-                                "bg-emerald-500"
+                                col.nullPercent > 50
+                                  ? "bg-red-500"
+                                  : col.nullPercent > 20
+                                    ? "bg-amber-500"
+                                    : "bg-emerald-500",
                               )}
                               style={{ width: `${100 - col.nullPercent}%` }}
                             />
                           </div>
-                          <span className={cn(
-                            "text-xs font-mono w-10 text-right",
-                            col.nullPercent > 50 ? "text-red-400" :
-                            col.nullPercent > 20 ? "text-amber-400" :
-                            "text-emerald-400"
-                          )}>
+                          <span
+                            className={cn(
+                              "text-xs font-mono w-10 text-right",
+                              col.nullPercent > 50
+                                ? "text-red-400"
+                                : col.nullPercent > 20
+                                  ? "text-amber-400"
+                                  : "text-emerald-400",
+                            )}
+                          >
                             {col.nullPercent}% null
                           </span>
                         </div>
 
                         {/* Min/Max */}
                         <div className="flex gap-4 text-xs">
-                          {col.minValue && (() => {
-                            const rule = sensitiveColumnNames.get(col.name);
-                            const display = rule
-                              ? maskValue(col.minValue, rule)
-                              : col.minValue.substring(0, 30);
-                            return (
-                              <span className="text-zinc-500">
-                                min: <span className={cn("font-mono", rule ? "text-zinc-500 italic" : "text-zinc-400")}>{display}</span>
-                              </span>
-                            );
-                          })()}
-                          {col.maxValue && (() => {
-                            const rule = sensitiveColumnNames.get(col.name);
-                            const display = rule
-                              ? maskValue(col.maxValue, rule)
-                              : col.maxValue.substring(0, 30);
-                            return (
-                              <span className="text-zinc-500">
-                                max: <span className={cn("font-mono", rule ? "text-zinc-500 italic" : "text-zinc-400")}>{display}</span>
-                              </span>
-                            );
-                          })()}
+                          {col.minValue &&
+                            (() => {
+                              const rule = sensitiveColumnNames.get(col.name);
+                              const display = rule ? maskValue(col.minValue, rule) : col.minValue.substring(0, 30);
+                              return (
+                                <span className="text-zinc-500">
+                                  min:{" "}
+                                  <span className={cn("font-mono", rule ? "text-zinc-500 italic" : "text-zinc-400")}>
+                                    {display}
+                                  </span>
+                                </span>
+                              );
+                            })()}
+                          {col.maxValue &&
+                            (() => {
+                              const rule = sensitiveColumnNames.get(col.name);
+                              const display = rule ? maskValue(col.maxValue, rule) : col.maxValue.substring(0, 30);
+                              return (
+                                <span className="text-zinc-500">
+                                  max:{" "}
+                                  <span className={cn("font-mono", rule ? "text-zinc-500 italic" : "text-zinc-400")}>
+                                    {display}
+                                  </span>
+                                </span>
+                              );
+                            })()}
                         </div>
 
                         {/* Sample Values */}
@@ -292,11 +304,15 @@ export function DataProfiler({
                           <div className="flex flex-wrap gap-1 mt-1.5">
                             {col.sampleValues.map((val, i) => {
                               const rule = sensitiveColumnNames.get(col.name);
-                              const display = rule
-                                ? maskValue(val, rule)
-                                : val.substring(0, 20);
+                              const display = rule ? maskValue(val, rule) : val.substring(0, 20);
                               return (
-                                <span key={i} className={cn("text-xs px-1.5 py-0.5 bg-zinc-800 rounded font-mono", rule ? "text-zinc-500 italic" : "text-zinc-400")}>
+                                <span
+                                  key={i}
+                                  className={cn(
+                                    "text-xs px-1.5 py-0.5 bg-zinc-800 rounded font-mono",
+                                    rule ? "text-zinc-500 italic" : "text-zinc-400",
+                                  )}
+                                >
                                   {display}
                                 </span>
                               );
@@ -314,15 +330,11 @@ export function DataProfiler({
                 <div className="bg-cyan-500/5 border border-cyan-500/10 rounded-lg p-4">
                   <div className="flex items-center gap-2 mb-2">
                     <Sparkles strokeWidth={1.5} className="w-3.5 h-3.5 text-cyan-400" />
-                    <span className="text-xs font-medium text-cyan-400r">
-                      AI Analysis
-                    </span>
+                    <span className="text-xs font-medium text-cyan-400r">AI Analysis</span>
                     {isAiLoading && <Loader2 strokeWidth={1.5} className="w-3 h-3 animate-spin text-cyan-400" />}
                   </div>
                   {aiSummary && (
-                    <div className="text-xs text-zinc-400 leading-relaxed whitespace-pre-wrap">
-                      {aiSummary}
-                    </div>
+                    <div className="text-xs text-zinc-400 leading-relaxed whitespace-pre-wrap">{aiSummary}</div>
                   )}
                 </div>
               )}

@@ -1,16 +1,16 @@
-import { getSession } from '@/lib/auth';
-import { NextResponse } from 'next/server';
-import { getOrCreateProvider } from '@/lib/db';
-import type { DatabaseConnection } from '@/lib/types';
-import { createErrorResponse } from '@/lib/api/errors';
-import { resolveConnection } from '@/lib/seed/resolve-connection';
+import { getSession } from "@/lib/auth";
+import { NextResponse } from "next/server";
+import { getOrCreateProvider } from "@/lib/db";
+import type { DatabaseConnection } from "@/lib/types";
+import { createErrorResponse } from "@/lib/api/errors";
+import { resolveConnection } from "@/lib/seed/resolve-connection";
 
 export interface FleetHealthItem {
   connectionId: string;
   connectionName: string;
   type: string;
   environment?: string;
-  status: 'healthy' | 'degraded' | 'error';
+  status: "healthy" | "degraded" | "error";
   latencyMs: number;
   activeConnections?: number;
   databaseSize?: string;
@@ -19,11 +19,8 @@ export interface FleetHealthItem {
 
 export async function POST(request: Request) {
   const session = await getSession();
-  if (!session || session.role !== 'admin') {
-    return NextResponse.json(
-      { error: 'Unauthorized. Admin access required.' },
-      { status: 403 }
-    );
+  if (!session || session.role !== "admin") {
+    return NextResponse.json({ error: "Unauthorized. Admin access required." }, { status: 403 });
   }
 
   try {
@@ -32,10 +29,7 @@ export async function POST(request: Request) {
     };
 
     if (!connections || !Array.isArray(connections)) {
-      return NextResponse.json(
-        { error: 'connections array is required' },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "connections array is required" }, { status: 400 });
     }
 
     const results: FleetHealthItem[] = await Promise.all(
@@ -43,9 +37,10 @@ export async function POST(request: Request) {
         const start = Date.now();
         try {
           // Resolve managed seed connections (server-side credential injection)
-          const resolved = conn.managed && conn.seedId
-            ? await resolveConnection({ connectionId: `seed:${conn.seedId}` }, session!)
-            : conn;
+          const resolved =
+            conn.managed && conn.seedId
+              ? await resolveConnection({ connectionId: `seed:${conn.seedId}` }, session!)
+              : conn;
           const provider = await getOrCreateProvider(resolved);
           const health = await provider.getHealth();
           const latencyMs = Date.now() - start;
@@ -55,7 +50,7 @@ export async function POST(request: Request) {
             connectionName: conn.name,
             type: conn.type,
             environment: conn.environment,
-            status: latencyMs > 5000 ? 'degraded' : 'healthy',
+            status: latencyMs > 5000 ? "degraded" : "healthy",
             latencyMs,
             activeConnections: health.activeConnections,
             databaseSize: health.databaseSize,
@@ -66,16 +61,16 @@ export async function POST(request: Request) {
             connectionName: conn.name,
             type: conn.type,
             environment: conn.environment,
-            status: 'error',
+            status: "error",
             latencyMs: Date.now() - start,
-            error: err instanceof Error ? err.message : 'Connection failed',
+            error: err instanceof Error ? err.message : "Connection failed",
           };
         }
-      })
+      }),
     );
 
     return NextResponse.json({ results });
   } catch (error) {
-    return createErrorResponse(error, { route: 'POST /api/admin/fleet-health' });
+    return createErrorResponse(error, { route: "POST /api/admin/fleet-health" });
   }
 }

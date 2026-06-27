@@ -22,7 +22,7 @@ export interface QueryLimitOptions {
 }
 
 export interface ParsedQueryInfo {
-  type: 'SELECT' | 'INSERT' | 'UPDATE' | 'DELETE' | 'DDL' | 'OTHER';
+  type: "SELECT" | "INSERT" | "UPDATE" | "DELETE" | "DDL" | "OTHER";
   hasLimit: boolean;
   existingLimit?: number;
   hasOffset: boolean;
@@ -50,34 +50,32 @@ export interface LimitedQueryResult {
 /** Strip trailing semicolons and whitespace without regex to avoid ReDoS */
 function stripTrailingSemicolon(s: string): string {
   let end = s.length;
-  while (end > 0 && (s[end - 1] === ' ' || s[end - 1] === '\t' || s[end - 1] === '\n' || s[end - 1] === '\r')) end--;
-  while (end > 0 && s[end - 1] === ';') end--;
-  while (end > 0 && (s[end - 1] === ' ' || s[end - 1] === '\t' || s[end - 1] === '\n' || s[end - 1] === '\r')) end--;
+  while (end > 0 && (s[end - 1] === " " || s[end - 1] === "\t" || s[end - 1] === "\n" || s[end - 1] === "\r")) end--;
+  while (end > 0 && s[end - 1] === ";") end--;
+  while (end > 0 && (s[end - 1] === " " || s[end - 1] === "\t" || s[end - 1] === "\n" || s[end - 1] === "\r")) end--;
   return s.slice(0, end);
 }
 
 export function analyzeQuery(sql: string): ParsedQueryInfo {
   // Strip trailing whitespace and semicolons upfront to avoid ReDoS-prone patterns
   const trimmed = stripTrailingSemicolon(sql.trim());
-  const normalized = trimmed.replace(/\s+/g, ' ').toUpperCase();
+  const normalized = trimmed.replace(/\s+/g, " ").toUpperCase();
 
   // Query type detection
-  let type: ParsedQueryInfo['type'] = 'OTHER';
-  if (/^\s*SELECT\b/i.test(trimmed)) type = 'SELECT';
-  else if (/^\s*INSERT\b/i.test(trimmed)) type = 'INSERT';
-  else if (/^\s*UPDATE\b/i.test(trimmed)) type = 'UPDATE';
-  else if (/^\s*DELETE\b/i.test(trimmed)) type = 'DELETE';
-  else if (/^\s*(CREATE|ALTER|DROP|TRUNCATE)\b/i.test(trimmed)) type = 'DDL';
+  let type: ParsedQueryInfo["type"] = "OTHER";
+  if (/^\s*SELECT\b/i.test(trimmed)) type = "SELECT";
+  else if (/^\s*INSERT\b/i.test(trimmed)) type = "INSERT";
+  else if (/^\s*UPDATE\b/i.test(trimmed)) type = "UPDATE";
+  else if (/^\s*DELETE\b/i.test(trimmed)) type = "DELETE";
+  else if (/^\s*(CREATE|ALTER|DROP|TRUNCATE)\b/i.test(trimmed)) type = "DDL";
   // CTE (WITH clause) that leads to SELECT
   else if (/^\s*WITH\b/i.test(trimmed) && /\bSELECT\b/i.test(trimmed)) {
-    type = 'SELECT';
+    type = "SELECT";
   }
 
   // LIMIT/OFFSET detection - en dıştaki sorgunun LIMIT'ini bul
   // Regex: Sorgunun sonundaki LIMIT [sayı] [OFFSET sayı] pattern'i
-  const limitMatch = trimmed.match(
-    /\bLIMIT\s+(\d+)(?:\s*,\s*(\d+)|\s+OFFSET\s+(\d+))?\s*$/i
-  );
+  const limitMatch = trimmed.match(/\bLIMIT\s+(\d+)(?:\s*,\s*(\d+)|\s+OFFSET\s+(\d+))?\s*$/i);
 
   let hasLimit = false;
   let existingLimit: number | undefined;
@@ -160,13 +158,13 @@ export function applyQueryLimit(
   sql: string,
   limit: number,
   offset: number = 0,
-  options: Partial<QueryLimitOptions> = {}
+  options: Partial<QueryLimitOptions> = {},
 ): LimitedQueryResult {
   const { forceLimit = false } = options;
   const info = analyzeQuery(sql);
 
   // SELECT değilse, limit ekleme
-  if (info.type !== 'SELECT') {
+  if (info.type !== "SELECT") {
     return {
       sql,
       wasLimited: false,
@@ -189,28 +187,23 @@ export function applyQueryLimit(
   // Check for trailing semicolon before stripping (string-based to avoid ReDoS)
   const trimmedInput = sql.trim();
   let modifiedSql = stripTrailingSemicolon(trimmedInput);
-  const hasSemicolon = modifiedSql.length < trimmedInput.length && trimmedInput.includes(';');
+  const hasSemicolon = modifiedSql.length < trimmedInput.length && trimmedInput.includes(";");
 
   // Mevcut LIMIT/OFFSET'i kaldır (eğer forceLimit true ise)
   if (info.hasLimit && forceLimit) {
     // MySQL style: LIMIT offset, count
-    modifiedSql = modifiedSql
-      .replace(/\bLIMIT\s+\d+\s*,\s*\d+\s*$/i, '')
-      .trim();
+    modifiedSql = modifiedSql.replace(/\bLIMIT\s+\d+\s*,\s*\d+\s*$/i, "").trim();
     // Standard style: LIMIT count OFFSET offset
-    modifiedSql = modifiedSql
-      .replace(/\bLIMIT\s+\d+(?:\s+OFFSET\s+\d+)?\s*$/i, '')
-      .trim();
+    modifiedSql = modifiedSql.replace(/\bLIMIT\s+\d+(?:\s+OFFSET\s+\d+)?\s*$/i, "").trim();
   }
 
   // LIMIT OFFSET clause'u ekle
-  const limitClause =
-    offset > 0 ? `LIMIT ${limit} OFFSET ${offset}` : `LIMIT ${limit}`;
+  const limitClause = offset > 0 ? `LIMIT ${limit} OFFSET ${offset}` : `LIMIT ${limit}`;
 
   modifiedSql = `${modifiedSql} ${limitClause}`;
 
   if (hasSemicolon) {
-    modifiedSql += ';';
+    modifiedSql += ";";
   }
 
   return {
@@ -235,5 +228,5 @@ export function hasQueryLimit(sql: string): boolean {
  */
 export function isSelectQuery(sql: string): boolean {
   const info = analyzeQuery(sql);
-  return info.type === 'SELECT';
+  return info.type === "SELECT";
 }

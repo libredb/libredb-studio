@@ -3,8 +3,8 @@
  * Abstract pool management utilities for database providers
  */
 
-import { type PoolConfig, DEFAULT_POOL_CONFIG, type DatabaseType } from '../types';
-import { TimeoutError } from '../errors';
+import { type PoolConfig, DEFAULT_POOL_CONFIG, type DatabaseType } from "../types";
+import { TimeoutError } from "../errors";
 
 // ============================================================================
 // Pool Configuration Utilities
@@ -25,19 +25,19 @@ export function mergePoolConfig(config?: Partial<PoolConfig>): PoolConfig {
  */
 export function validatePoolConfig(config: PoolConfig): void {
   if (config.min < 0) {
-    throw new Error('Pool min must be non-negative');
+    throw new Error("Pool min must be non-negative");
   }
   if (config.max < 1) {
-    throw new Error('Pool max must be at least 1');
+    throw new Error("Pool max must be at least 1");
   }
   if (config.min > config.max) {
-    throw new Error('Pool min cannot be greater than max');
+    throw new Error("Pool min cannot be greater than max");
   }
   if (config.idleTimeout < 0) {
-    throw new Error('Pool idleTimeout must be non-negative');
+    throw new Error("Pool idleTimeout must be non-negative");
   }
   if (config.acquireTimeout < 0) {
-    throw new Error('Pool acquireTimeout must be non-negative');
+    throw new Error("Pool acquireTimeout must be non-negative");
   }
 }
 
@@ -52,17 +52,13 @@ export async function withTimeout<T>(
   promise: Promise<T>,
   timeout: number,
   provider: DatabaseType,
-  operation: string
+  operation: string,
 ): Promise<T> {
   let timeoutId: NodeJS.Timeout;
 
   const timeoutPromise = new Promise<never>((_, reject) => {
     timeoutId = setTimeout(() => {
-      reject(new TimeoutError(
-        `${operation} timed out after ${timeout}ms`,
-        provider,
-        timeout
-      ));
+      reject(new TimeoutError(`${operation} timed out after ${timeout}ms`, provider, timeout));
     }, timeout);
   });
 
@@ -82,7 +78,7 @@ export async function withTimeout<T>(
 export function createCancellableQuery<T>(
   queryFn: (signal?: AbortSignal) => Promise<T>,
   timeout: number,
-  provider: DatabaseType
+  provider: DatabaseType,
 ): { promise: Promise<T>; cancel: () => void } {
   const controller = new AbortController();
   let timeoutId: NodeJS.Timeout;
@@ -90,11 +86,7 @@ export function createCancellableQuery<T>(
   const promise = new Promise<T>((resolve, reject) => {
     timeoutId = setTimeout(() => {
       controller.abort();
-      reject(new TimeoutError(
-        `Query timed out after ${timeout}ms`,
-        provider,
-        timeout
-      ));
+      reject(new TimeoutError(`Query timed out after ${timeout}ms`, provider, timeout));
     }, timeout);
 
     queryFn(controller.signal)
@@ -124,23 +116,13 @@ export async function checkConnectionHealth<T>(
   releaseFn: (conn: T) => void,
   pingFn: (conn: T) => Promise<void>,
   timeout: number,
-  provider: DatabaseType
+  provider: DatabaseType,
 ): Promise<boolean> {
   try {
-    const conn = await withTimeout(
-      acquireFn(),
-      timeout,
-      provider,
-      'Connection acquire'
-    );
+    const conn = await withTimeout(acquireFn(), timeout, provider, "Connection acquire");
 
     try {
-      await withTimeout(
-        pingFn(conn),
-        timeout,
-        provider,
-        'Connection ping'
-      );
+      await withTimeout(pingFn(conn), timeout, provider, "Connection ping");
       return true;
     } finally {
       releaseFn(conn);
@@ -175,7 +157,7 @@ export async function withRetry<T>(
   fn: () => Promise<T>,
   options: RetryOptions = {},
   isRetryable: (error: unknown) => boolean = () => true,
-  provider?: DatabaseType
+  provider?: DatabaseType,
 ): Promise<T> {
   const opts = { ...DEFAULT_RETRY_OPTIONS, ...options };
   let lastError: Error | undefined;
@@ -192,7 +174,7 @@ export async function withRetry<T>(
       }
 
       console.error(
-        `[DB${provider ? `:${provider}` : ''}] Operation failed (attempt ${attempt}/${opts.maxAttempts}): ${lastError.message}. Retrying in ${delay}ms...`
+        `[DB${provider ? `:${provider}` : ""}] Operation failed (attempt ${attempt}/${opts.maxAttempts}): ${lastError.message}. Retrying in ${delay}ms...`,
       );
 
       await sleep(delay);
@@ -217,14 +199,14 @@ function sleep(ms: number): Promise<void> {
  */
 export function escapeIdentifier(identifier: string, provider: DatabaseType): string {
   // Remove any existing quotes and escape internal quotes
-  const cleaned = identifier.replace(/["'`]/g, '');
+  const cleaned = identifier.replace(/["'`]/g, "");
 
   switch (provider) {
-    case 'postgres':
+    case "postgres":
       return `"${cleaned}"`;
-    case 'mysql':
+    case "mysql":
       return `\`${cleaned}\``;
-    case 'sqlite':
+    case "sqlite":
       return `"${cleaned}"`;
     default:
       return `"${cleaned}"`;
@@ -235,10 +217,10 @@ export function escapeIdentifier(identifier: string, provider: DatabaseType): st
  * Format bytes to human readable size
  */
 export function formatBytes(bytes: number): string {
-  if (bytes === 0) return '0 B';
+  if (bytes === 0) return "0 B";
 
   const k = 1024;
-  const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const sizes = ["B", "KB", "MB", "GB", "TB"];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
 
   return `${parseFloat((bytes / Math.pow(k, i)).toFixed(2))} ${sizes[i]}`;

@@ -6,15 +6,15 @@
  * advertises an editable, dismissable connection pointing at it. None of this
  * is in the published @libredb/studio surface, so platform is unaffected.
  */
-import * as fs from 'fs';
-import * as path from 'path';
-import type { ManagedConnection } from './types';
+import * as fs from "fs";
+import * as path from "path";
+import type { ManagedConnection } from "./types";
 
-export const SAMPLE_SEED_ID = 'libredb-embedded-sample';
+export const SAMPLE_SEED_ID = "libredb-embedded-sample";
 
 /** Default on; only the literal "false" disables. Server-side env. */
 export function isSampleEnabled(): boolean {
-  return process.env.LIBREDB_EMBEDDED_SAMPLE !== 'false';
+  return process.env.LIBREDB_EMBEDDED_SAMPLE !== "false";
 }
 
 /** Override via LIBREDB_EMBEDDED_SAMPLE_PATH, else `<data dir>/sample.libredb`,
@@ -22,8 +22,8 @@ export function isSampleEnabled(): boolean {
 export function resolveSamplePath(): string {
   const override = process.env.LIBREDB_EMBEDDED_SAMPLE_PATH;
   if (override) return override;
-  const storageDb = process.env.STORAGE_SQLITE_PATH || './data/libredb-storage.db';
-  return path.join(path.dirname(storageDb), 'sample.libredb');
+  const storageDb = process.env.STORAGE_SQLITE_PATH || "./data/libredb-storage.db";
+  return path.join(path.dirname(storageDb), "sample.libredb");
 }
 
 /**
@@ -44,25 +44,25 @@ export async function seedSampleFile(filePath: string): Promise<void> {
   const tempPath = `${filePath}.${process.pid}.seeding`;
   fs.rmSync(tempPath, { force: true }); // discard any stale temp from a crashed boot
 
-  const { open, kv, doc, table } = await import('@libredb/libredb');
+  const { open, kv, doc, table } = await import("@libredb/libredb");
   try {
     const db = open({ path: tempPath });
     try {
-      const users = table(db, 'users', {
-        primaryKey: 'id',
-        columns: { id: 'string', name: 'string', age: 'number', active: 'boolean' },
+      const users = table(db, "users", {
+        primaryKey: "id",
+        columns: { id: "string", name: "string", age: "number", active: "boolean" },
       });
-      users.insert({ id: '1', name: 'Ada', age: 36, active: true });
-      users.insert({ id: '2', name: 'Grace', age: 45, active: false });
-      users.insert({ id: '3', name: 'Edsger', age: 40, active: true });
+      users.insert({ id: "1", name: "Ada", age: 36, active: true });
+      users.insert({ id: "2", name: "Grace", age: 45, active: false });
+      users.insert({ id: "3", name: "Edsger", age: 40, active: true });
 
-      const articles = doc(db, 'articles');
-      articles.put('a1', { title: 'Welcome to LibreDB', body: 'One core, three lenses.', tags: ['intro'] });
-      articles.put('a2', { title: 'Embedded by design', body: 'No server, no wire protocol.', tags: ['design'] });
+      const articles = doc(db, "articles");
+      articles.put("a1", { title: "Welcome to LibreDB", body: "One core, three lenses.", tags: ["intro"] });
+      articles.put("a2", { title: "Embedded by design", body: "No server, no wire protocol.", tags: ["design"] });
 
       const store = kv(db);
-      store.set('config:theme', 'dark');
-      store.set('config:locale', 'en');
+      store.set("config:theme", "dark");
+      store.set("config:locale", "en");
     } finally {
       db.close();
     }
@@ -87,11 +87,11 @@ export function buildSampleConnection(): ManagedConnection {
   return {
     id: `seed:${SAMPLE_SEED_ID}`,
     seedId: SAMPLE_SEED_ID,
-    name: 'Sample (LibreDB)',
-    type: 'libredb',
+    name: "Sample (LibreDB)",
+    type: "libredb",
     database: resolveSamplePath(),
     managed: false,
-    roles: ['*'],
+    roles: ["*"],
     createdAt: new Date(0),
   };
 }

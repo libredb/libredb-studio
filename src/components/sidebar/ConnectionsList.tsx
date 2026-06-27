@@ -1,7 +1,7 @@
-import React from 'react';
-import { DatabaseConnection } from '@/lib/types';
-import { Button } from '@/components/ui/button';
-import { ConnectionItem } from './ConnectionItem';
+import React from "react";
+import { DatabaseConnection } from "@/lib/types";
+import { Button } from "@/components/ui/button";
+import { ConnectionItem } from "./ConnectionItem";
 
 interface ConnectionsListProps {
   connections: DatabaseConnection[];
@@ -23,9 +23,7 @@ export function ConnectionsList({
   return (
     <section>
       <div className="px-3 mb-2 flex items-center justify-between">
-        <span className="text-xs font-medium text-muted-foreground">
-          Connections
-        </span>
+        <span className="text-xs font-medium text-muted-foreground">Connections</span>
         <div className="h-[1px] flex-1 bg-border/30 ml-3" />
       </div>
 
@@ -35,12 +33,7 @@ export function ConnectionsList({
             <p className="text-xs text-muted-foreground mb-3 leading-relaxed">
               No database connections established yet.
             </p>
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-7 text-xs"
-              onClick={onAddConnection}
-            >
+            <Button variant="outline" size="sm" className="h-7 text-xs" onClick={onAddConnection}>
               Add Connection
             </Button>
           </div>

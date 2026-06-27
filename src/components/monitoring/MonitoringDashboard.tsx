@@ -1,7 +1,7 @@
-'use client';
+"use client";
 
-import React, { useState, useEffect, useMemo } from 'react';
-import { useRouter } from 'next/navigation';
+import React, { useState, useEffect, useMemo } from "react";
+import { useRouter } from "next/navigation";
 import {
   Activity,
   LayoutDashboard,
@@ -14,28 +14,22 @@ import {
   Play,
   Pause,
   Database,
-} from 'lucide-react';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Button } from '@/components/ui/button';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import { useMonitoringData } from '@/hooks/use-monitoring-data';
-import { storage } from '@/lib/storage';
-import { useAllConnections } from '@/hooks/use-all-connections';
-import type { DatabaseConnection } from '@/lib/types';
+} from "lucide-react";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Button } from "@/components/ui/button";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { useMonitoringData } from "@/hooks/use-monitoring-data";
+import { storage } from "@/lib/storage";
+import { useAllConnections } from "@/hooks/use-all-connections";
+import type { DatabaseConnection } from "@/lib/types";
 
-import { OverviewTab } from './tabs/OverviewTab';
-import { PerformanceTab } from './tabs/PerformanceTab';
-import { QueriesTab } from './tabs/QueriesTab';
-import { SessionsTab } from './tabs/SessionsTab';
-import { TablesTab } from './tabs/TablesTab';
-import { StorageTab } from './tabs/StorageTab';
-import { PoolTab } from './tabs/PoolTab';
+import { OverviewTab } from "./tabs/OverviewTab";
+import { PerformanceTab } from "./tabs/PerformanceTab";
+import { QueriesTab } from "./tabs/QueriesTab";
+import { SessionsTab } from "./tabs/SessionsTab";
+import { TablesTab } from "./tabs/TablesTab";
+import { StorageTab } from "./tabs/StorageTab";
+import { PoolTab } from "./tabs/PoolTab";
 
 interface MonitoringDashboardProps {
   isEmbedded?: boolean;
@@ -45,14 +39,17 @@ export function MonitoringDashboard({ isEmbedded = false }: MonitoringDashboardP
   const router = useRouter();
   const [connections, setConnections] = useState<DatabaseConnection[]>([]);
   const [selectedConnection, setSelectedConnection] = useState<DatabaseConnection | null>(null);
-  const [activeTab, setActiveTab] = useState('overview');
+  const [activeTab, setActiveTab] = useState("overview");
 
   // Memoize options to prevent infinite re-renders
-  const monitoringOptions = useMemo(() => ({
-    includeTables: true,
-    includeIndexes: true,
-    includeStorage: true,
-  }), []);
+  const monitoringOptions = useMemo(
+    () => ({
+      includeTables: true,
+      includeIndexes: true,
+      includeStorage: true,
+    }),
+    [],
+  );
 
   const {
     data,
@@ -78,7 +75,7 @@ export function MonitoringDashboard({ isEmbedded = false }: MonitoringDashboardP
     setSelectedConnection((prev) => {
       if (prev) return prev;
       const savedId = storage.getActiveConnectionId();
-      const saved = savedId ? allConns.find(c => c.id === savedId) : null;
+      const saved = savedId ? allConns.find((c) => c.id === savedId) : null;
       return saved ?? allConns[0];
     });
   }, [allConns]);
@@ -89,7 +86,7 @@ export function MonitoringDashboard({ isEmbedded = false }: MonitoringDashboardP
   };
 
   const formatLastUpdated = (date: Date | null) => {
-    if (!date) return 'Never';
+    if (!date) return "Never";
     return date.toLocaleTimeString();
   };
 
@@ -104,7 +101,7 @@ export function MonitoringDashboard({ isEmbedded = false }: MonitoringDashboardP
               <Button
                 variant="ghost"
                 size="icon"
-                onClick={() => router.push('/')}
+                onClick={() => router.push("/")}
                 className="h-8 w-8 sm:h-9 sm:w-auto sm:px-3"
               >
                 <ArrowLeft className="h-4 w-4" />
@@ -122,22 +119,13 @@ export function MonitoringDashboard({ isEmbedded = false }: MonitoringDashboardP
           {/* Refresh Controls */}
           <div className="flex items-center gap-1 sm:gap-2">
             <div className="hidden sm:flex items-center gap-2 text-xs text-muted-foreground mr-2">
-              <div
-                className={`h-2 w-2 rounded-full ${autoRefresh ? 'bg-green-500 animate-pulse' : 'bg-muted'}`}
-              />
-              <span className="hidden md:inline">
-                {autoRefresh ? 'Auto' : 'Manual'}
-              </span>
-              <span className="hidden lg:inline text-xs">
-                Last: {formatLastUpdated(lastUpdated)}
-              </span>
+              <div className={`h-2 w-2 rounded-full ${autoRefresh ? "bg-green-500 animate-pulse" : "bg-muted"}`} />
+              <span className="hidden md:inline">{autoRefresh ? "Auto" : "Manual"}</span>
+              <span className="hidden lg:inline text-xs">Last: {formatLastUpdated(lastUpdated)}</span>
             </div>
 
             {/* Interval selector */}
-            <Select
-              value={String(refreshInterval)}
-              onValueChange={(v) => setRefreshInterval(Number(v))}
-            >
+            <Select value={String(refreshInterval)} onValueChange={(v) => setRefreshInterval(Number(v))}>
               <SelectTrigger className="h-8 w-[80px] text-xs">
                 <SelectValue />
               </SelectTrigger>
@@ -155,13 +143,9 @@ export function MonitoringDashboard({ isEmbedded = false }: MonitoringDashboardP
               size="icon"
               className="h-8 w-8"
               onClick={() => setAutoRefresh(!autoRefresh)}
-              title={autoRefresh ? 'Pause auto-refresh' : 'Start auto-refresh'}
+              title={autoRefresh ? "Pause auto-refresh" : "Start auto-refresh"}
             >
-              {autoRefresh ? (
-                <Pause className="h-4 w-4" />
-              ) : (
-                <Play strokeWidth={1.5} className="h-4 w-4" />
-              )}
+              {autoRefresh ? <Pause className="h-4 w-4" /> : <Play strokeWidth={1.5} className="h-4 w-4" />}
             </Button>
 
             <Button
@@ -172,29 +156,24 @@ export function MonitoringDashboard({ isEmbedded = false }: MonitoringDashboardP
               disabled={loading}
               title="Refresh now"
             >
-              <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+              <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
             </Button>
           </div>
         </div>
 
         {/* Bottom row: Connection selector (mobile-friendly) */}
         <div className="px-3 pb-2 sm:px-4 sm:pb-3">
-          <Select
-            value={selectedConnection?.id || ''}
-            onValueChange={handleConnectionChange}
-          >
+          <Select value={selectedConnection?.id || ""} onValueChange={handleConnectionChange}>
             <SelectTrigger className="w-full sm:w-[280px]">
               <SelectValue placeholder="Select connection">
                 {selectedConnection ? (
                   <div className="flex items-center gap-2">
                     <Database strokeWidth={1.5} className="h-4 w-4 flex-shrink-0" />
                     <span className="truncate">{selectedConnection.name}</span>
-                    <span className="text-xs text-muted-foreground hidden sm:inline">
-                      ({selectedConnection.type})
-                    </span>
+                    <span className="text-xs text-muted-foreground hidden sm:inline">({selectedConnection.type})</span>
                   </div>
                 ) : (
-                  'Select connection'
+                  "Select connection"
                 )}
               </SelectValue>
             </SelectTrigger>
@@ -209,9 +188,7 @@ export function MonitoringDashboard({ isEmbedded = false }: MonitoringDashboardP
                 </SelectItem>
               ))}
               {connections.length === 0 && (
-                <div className="px-2 py-1 text-xs text-muted-foreground">
-                  No connections available
-                </div>
+                <div className="px-2 py-1 text-xs text-muted-foreground">No connections available</div>
               )}
             </SelectContent>
           </Select>
@@ -224,7 +201,7 @@ export function MonitoringDashboard({ isEmbedded = false }: MonitoringDashboardP
           <Database strokeWidth={1.5} className="h-12 w-12" />
           <h2 className="text-lg font-medium">No Connection Selected</h2>
           <p className="text-xs">Select a database connection to view monitoring data.</p>
-          <Button variant="outline" onClick={() => router.push('/')}>
+          <Button variant="outline" onClick={() => router.push("/")}>
             Manage Connections
           </Button>
         </div>
@@ -239,11 +216,7 @@ export function MonitoringDashboard({ isEmbedded = false }: MonitoringDashboardP
         </div>
       ) : (
         <div className="flex-1 overflow-hidden">
-          <Tabs
-            value={activeTab}
-            onValueChange={setActiveTab}
-            className="flex flex-col h-full"
-          >
+          <Tabs value={activeTab} onValueChange={setActiveTab} className="flex flex-col h-full">
             {/* Tab Bar - Icon only on mobile, Icon + Text on desktop */}
             <div className="border-b bg-muted/30">
               <TabsList className="h-12 w-full justify-between sm:justify-start rounded-none bg-transparent p-0">
@@ -317,18 +290,10 @@ export function MonitoringDashboard({ isEmbedded = false }: MonitoringDashboardP
                 <QueriesTab data={data} loading={loading} />
               </TabsContent>
               <TabsContent value="sessions" className="h-full m-0 p-0">
-                <SessionsTab
-                  data={data}
-                  loading={loading}
-                  onKillSession={killSession}
-                />
+                <SessionsTab data={data} loading={loading} onKillSession={killSession} />
               </TabsContent>
               <TabsContent value="tables" className="h-full m-0 p-0">
-                <TablesTab
-                  data={data}
-                  loading={loading}
-                  onRunMaintenance={runMaintenance}
-                />
+                <TablesTab data={data} loading={loading} onRunMaintenance={runMaintenance} />
               </TabsContent>
               <TabsContent value="storage" className="h-full m-0 p-0">
                 <StorageTab data={data} loading={loading} />

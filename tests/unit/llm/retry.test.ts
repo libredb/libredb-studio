@@ -1,6 +1,6 @@
-import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
-import { withRetry, makeRetryable } from '@/lib/llm/utils/retry';
-import { LLMConfigError, LLMRateLimitError } from '@/lib/llm/types';
+import { describe, test, expect, beforeEach, afterEach, mock } from "bun:test";
+import { withRetry, makeRetryable } from "@/lib/llm/utils/retry";
+import { LLMConfigError, LLMRateLimitError } from "@/lib/llm/types";
 
 // Suppress console.error output during retry tests
 let originalConsoleError: typeof console.error;
@@ -18,9 +18,9 @@ afterEach(() => {
 // withRetry
 // ============================================================================
 
-describe('withRetry', () => {
-  test('returns result on first successful attempt', async () => {
-    const fn = mock(() => Promise.resolve('success'));
+describe("withRetry", () => {
+  test("returns result on first successful attempt", async () => {
+    const fn = mock(() => Promise.resolve("success"));
 
     const result = await withRetry(fn, {
       maxAttempts: 3,
@@ -28,18 +28,18 @@ describe('withRetry', () => {
       maxDelay: 5,
     });
 
-    expect(result).toBe('success');
+    expect(result).toBe("success");
     expect(fn).toHaveBeenCalledTimes(1);
   });
 
-  test('retries on retryable error and succeeds on second attempt', async () => {
+  test("retries on retryable error and succeeds on second attempt", async () => {
     let attempts = 0;
     const fn = mock(async () => {
       attempts++;
       if (attempts === 1) {
-        throw new LLMRateLimitError('rate limited', 'openai');
+        throw new LLMRateLimitError("rate limited", "openai");
       }
-      return 'success after retry';
+      return "success after retry";
     });
 
     const result = await withRetry(fn, {
@@ -48,13 +48,13 @@ describe('withRetry', () => {
       maxDelay: 5,
     });
 
-    expect(result).toBe('success after retry');
+    expect(result).toBe("success after retry");
     expect(fn).toHaveBeenCalledTimes(2);
   });
 
-  test('throws last error after all retries exhausted', async () => {
+  test("throws last error after all retries exhausted", async () => {
     const fn = mock(async () => {
-      throw new LLMRateLimitError('rate limited', 'openai');
+      throw new LLMRateLimitError("rate limited", "openai");
     });
 
     try {
@@ -70,9 +70,9 @@ describe('withRetry', () => {
     }
   });
 
-  test('throws immediately for non-retryable error without retrying', async () => {
+  test("throws immediately for non-retryable error without retrying", async () => {
     const fn = mock(async () => {
-      throw new LLMConfigError('invalid config', 'gemini');
+      throw new LLMConfigError("invalid config", "gemini");
     });
 
     try {
@@ -89,9 +89,9 @@ describe('withRetry', () => {
     }
   });
 
-  test('maxAttempts=1 means no retry', async () => {
+  test("maxAttempts=1 means no retry", async () => {
     const fn = mock(async () => {
-      throw new LLMRateLimitError('rate limited', 'openai');
+      throw new LLMRateLimitError("rate limited", "openai");
     });
 
     try {
@@ -107,9 +107,9 @@ describe('withRetry', () => {
     }
   });
 
-  test('plain Error (non-LLM) is not retried', async () => {
+  test("plain Error (non-LLM) is not retried", async () => {
     const fn = mock(async () => {
-      throw new Error('generic error');
+      throw new Error("generic error");
     });
 
     try {
@@ -120,7 +120,7 @@ describe('withRetry', () => {
       });
       expect(true).toBe(false);
     } catch (error) {
-      expect((error as Error).message).toBe('generic error');
+      expect((error as Error).message).toBe("generic error");
       expect(fn).toHaveBeenCalledTimes(1);
     }
   });
@@ -130,8 +130,8 @@ describe('withRetry', () => {
 // makeRetryable
 // ============================================================================
 
-describe('makeRetryable', () => {
-  test('wraps function with retry and passes arguments through', async () => {
+describe("makeRetryable", () => {
+  test("wraps function with retry and passes arguments through", async () => {
     const fn = mock(async (a: number, b: string) => `${b}-${a}`);
 
     const retryable = makeRetryable(fn, {
@@ -140,17 +140,17 @@ describe('makeRetryable', () => {
       maxDelay: 5,
     });
 
-    const result = await retryable(42, 'hello');
-    expect(result).toBe('hello-42');
+    const result = await retryable(42, "hello");
+    expect(result).toBe("hello-42");
     expect(fn).toHaveBeenCalledTimes(1);
   });
 
-  test('retries the wrapped function on retryable failure', async () => {
+  test("retries the wrapped function on retryable failure", async () => {
     let attempts = 0;
     const fn = async (value: string): Promise<string> => {
       attempts++;
       if (attempts === 1) {
-        throw new LLMRateLimitError('rate limited');
+        throw new LLMRateLimitError("rate limited");
       }
       return `result-${value}`;
     };
@@ -161,12 +161,12 @@ describe('makeRetryable', () => {
       maxDelay: 5,
     });
 
-    const result = await retryable('test');
-    expect(result).toBe('result-test');
+    const result = await retryable("test");
+    expect(result).toBe("result-test");
     expect(attempts).toBe(2);
   });
 
-  test('returns a function with the same argument types', async () => {
+  test("returns a function with the same argument types", async () => {
     const fn = async (x: number, y: number): Promise<number> => x + y;
 
     const retryable = makeRetryable(fn, {

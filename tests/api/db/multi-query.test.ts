@@ -1,6 +1,6 @@
-import { describe, test, expect, mock, beforeEach } from 'bun:test';
-import { createMockRequest, parseResponseJSON } from '../../helpers/mock-next';
-import { createMockProvider } from '../../helpers/mock-provider';
+import { describe, test, expect, mock, beforeEach } from "bun:test";
+import { createMockRequest, parseResponseJSON } from "../../helpers/mock-next";
+import { createMockProvider } from "../../helpers/mock-provider";
 import {
   QueryError,
   TimeoutError,
@@ -16,32 +16,35 @@ import {
   isAuthenticationError,
   isRetryableError,
   mapDatabaseError,
-} from '@/lib/db/errors';
+} from "@/lib/db/errors";
 
 // ─── Create mock objects ────────────────────────────────────────────────────
 const mockProvider = createMockProvider();
 const mockGetOrCreateProvider = mock(async () => mockProvider as never);
 
 // ─── Mock auth + seed resolution BEFORE importing route ─────────────────────
-mock.module('@/lib/auth', () => ({
-  getSession: mock(async () => ({ role: 'admin', username: 'admin' })),
-  signJWT: mock(async () => 'mock-token'),
+mock.module("@/lib/auth", () => ({
+  getSession: mock(async () => ({ role: "admin", username: "admin" })),
+  signJWT: mock(async () => "mock-token"),
   verifyJWT: mock(async () => null),
   login: mock(async () => {}),
   logout: mock(async () => {}),
 }));
 
-mock.module('@/lib/seed/resolve-connection', () => {
+mock.module("@/lib/seed/resolve-connection", () => {
   class SeedConnectionError extends Error {
-    constructor(message: string, public statusCode: number) {
+    constructor(
+      message: string,
+      public statusCode: number,
+    ) {
       super(message);
-      this.name = 'SeedConnectionError';
+      this.name = "SeedConnectionError";
     }
   }
   return {
     resolveConnection: mock(async (body: Record<string, unknown>) => {
       if (!body.connection && !body.connectionId) {
-        throw new SeedConnectionError('Either connection or connectionId is required', 400);
+        throw new SeedConnectionError("Either connection or connectionId is required", 400);
       }
       return body.connection;
     }),
@@ -50,7 +53,7 @@ mock.module('@/lib/seed/resolve-connection', () => {
 });
 
 // ─── Mock dependencies BEFORE importing route ───────────────────────────────
-mock.module('@/lib/db', () => ({
+mock.module("@/lib/db", () => ({
   getOrCreateProvider: mockGetOrCreateProvider,
   createDatabaseProvider: mock(async () => mockProvider),
   removeProvider: mock(async () => {}),
@@ -73,20 +76,20 @@ mock.module('@/lib/db', () => ({
 }));
 
 // ─── Import route handler AFTER mocking ─────────────────────────────────────
-const { POST } = await import('@/app/api/db/multi-query/route');
+const { POST } = await import("@/app/api/db/multi-query/route");
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 const validConnection = {
-  id: 'test-1',
-  name: 'Test DB',
-  type: 'postgres',
-  host: 'localhost',
+  id: "test-1",
+  name: "Test DB",
+  type: "postgres",
+  host: "localhost",
   port: 5432,
-  database: 'testdb',
+  database: "testdb",
 };
 
 // ─── Tests ──────────────────────────────────────────────────────────────────
-describe('POST /api/db/multi-query', () => {
+describe("POST /api/db/multi-query", () => {
   beforeEach(() => {
     mockGetOrCreateProvider.mockClear();
     (mockProvider.query as ReturnType<typeof mock>).mockClear();
@@ -95,8 +98,8 @@ describe('POST /api/db/multi-query', () => {
     // Reset to default implementations
     mockGetOrCreateProvider.mockImplementation(async () => mockProvider as never);
     (mockProvider.query as ReturnType<typeof mock>).mockImplementation(async () => ({
-      rows: [{ id: 1, name: 'Alice' }],
-      fields: ['id', 'name'],
+      rows: [{ id: 1, name: "Alice" }],
+      fields: ["id", "name"],
       rowCount: 1,
       executionTime: 10,
     }));
@@ -108,10 +111,10 @@ describe('POST /api/db/multi-query', () => {
     }));
   });
 
-  test('single statement returns multiStatement results', async () => {
-    const req = createMockRequest('/api/db/multi-query', {
-      method: 'POST',
-      body: { connection: validConnection, sql: 'SELECT * FROM users' },
+  test("single statement returns multiStatement results", async () => {
+    const req = createMockRequest("/api/db/multi-query", {
+      method: "POST",
+      body: { connection: validConnection, sql: "SELECT * FROM users" },
     });
 
     const res = await POST(req as never);
@@ -135,23 +138,23 @@ describe('POST /api/db/multi-query', () => {
     expect(data.fields).toBeDefined();
   });
 
-  test('multiple statements are all executed', async () => {
+  test("multiple statements are all executed", async () => {
     let callCount = 0;
     (mockProvider.query as ReturnType<typeof mock>).mockImplementation(async () => {
       callCount++;
       return {
         rows: [{ result: callCount }],
-        fields: ['result'],
+        fields: ["result"],
         rowCount: 1,
         executionTime: 5,
       };
     });
 
-    const req = createMockRequest('/api/db/multi-query', {
-      method: 'POST',
+    const req = createMockRequest("/api/db/multi-query", {
+      method: "POST",
       body: {
         connection: validConnection,
-        sql: 'INSERT INTO users (name) VALUES (\'Alice\'); INSERT INTO users (name) VALUES (\'Bob\'); SELECT * FROM users',
+        sql: "INSERT INTO users (name) VALUES ('Alice'); INSERT INTO users (name) VALUES ('Bob'); SELECT * FROM users",
       },
     });
 
@@ -168,15 +171,15 @@ describe('POST /api/db/multi-query', () => {
     expect(data.statementCount).toBe(3);
     expect(data.executedCount).toBe(3);
     expect(data.hasError).toBe(false);
-    expect(data.statements.every((s) => s.status === 'success')).toBe(true);
+    expect(data.statements.every((s) => s.status === "success")).toBe(true);
   });
 
-  test('error in second statement stops execution and sets hasError', async () => {
+  test("error in second statement stops execution and sets hasError", async () => {
     let callCount = 0;
     (mockProvider.query as ReturnType<typeof mock>).mockImplementation(async () => {
       callCount++;
       if (callCount === 2) {
-        throw new Error('Syntax error in statement 2');
+        throw new Error("Syntax error in statement 2");
       }
       return {
         rows: [],
@@ -186,11 +189,11 @@ describe('POST /api/db/multi-query', () => {
       };
     });
 
-    const req = createMockRequest('/api/db/multi-query', {
-      method: 'POST',
+    const req = createMockRequest("/api/db/multi-query", {
+      method: "POST",
       body: {
         connection: validConnection,
-        sql: 'INSERT INTO a VALUES (1); BAD SQL HERE; SELECT * FROM b',
+        sql: "INSERT INTO a VALUES (1); BAD SQL HERE; SELECT * FROM b",
       },
     });
 
@@ -206,27 +209,27 @@ describe('POST /api/db/multi-query', () => {
     expect(data.statementCount).toBe(3);
     expect(data.executedCount).toBe(2); // Stopped after error on 2nd
     expect(data.hasError).toBe(true);
-    expect(data.statements[0].status).toBe('success');
-    expect(data.statements[1].status).toBe('error');
-    expect(data.statements[1].error).toContain('Syntax error');
+    expect(data.statements[0].status).toBe("success");
+    expect(data.statements[1].status).toBe("error");
+    expect(data.statements[1].error).toContain("Syntax error");
   });
 
-  test('missing connection returns 400', async () => {
-    const req = createMockRequest('/api/db/multi-query', {
-      method: 'POST',
-      body: { sql: 'SELECT 1' },
+  test("missing connection returns 400", async () => {
+    const req = createMockRequest("/api/db/multi-query", {
+      method: "POST",
+      body: { sql: "SELECT 1" },
     });
 
     const res = await POST(req as never);
     const data = await parseResponseJSON<{ error: string }>(res);
 
     expect(res.status).toBe(400);
-    expect(data.error).toContain('required');
+    expect(data.error).toContain("required");
   });
 
-  test('missing sql returns 400', async () => {
-    const req = createMockRequest('/api/db/multi-query', {
-      method: 'POST',
+  test("missing sql returns 400", async () => {
+    const req = createMockRequest("/api/db/multi-query", {
+      method: "POST",
       body: { connection: validConnection },
     });
 
@@ -234,28 +237,28 @@ describe('POST /api/db/multi-query', () => {
     const data = await parseResponseJSON<{ error: string }>(res);
 
     expect(res.status).toBe(400);
-    expect(data.error).toContain('Connection and query are required');
+    expect(data.error).toContain("Connection and query are required");
   });
 
-  test('only semicolons returns 400 (no valid statements)', async () => {
-    const req = createMockRequest('/api/db/multi-query', {
-      method: 'POST',
-      body: { connection: validConnection, sql: ';;;' },
+  test("only semicolons returns 400 (no valid statements)", async () => {
+    const req = createMockRequest("/api/db/multi-query", {
+      method: "POST",
+      body: { connection: validConnection, sql: ";;;" },
     });
 
     const res = await POST(req as never);
     const data = await parseResponseJSON<{ error: string }>(res);
 
     expect(res.status).toBe(400);
-    expect(data.error).toContain('No valid SQL statements found');
+    expect(data.error).toContain("No valid SQL statements found");
   });
 
-  test('last SELECT gets prepareQuery applied', async () => {
-    const req = createMockRequest('/api/db/multi-query', {
-      method: 'POST',
+  test("last SELECT gets prepareQuery applied", async () => {
+    const req = createMockRequest("/api/db/multi-query", {
+      method: "POST",
       body: {
         connection: validConnection,
-        sql: 'INSERT INTO users (name) VALUES (\'test\'); SELECT * FROM users',
+        sql: "INSERT INTO users (name) VALUES ('test'); SELECT * FROM users",
       },
     });
 
@@ -265,12 +268,12 @@ describe('POST /api/db/multi-query', () => {
     expect(mockProvider.prepareQuery).toHaveBeenCalled();
   });
 
-  test('non-SELECT statements do not get prepareQuery applied', async () => {
-    const req = createMockRequest('/api/db/multi-query', {
-      method: 'POST',
+  test("non-SELECT statements do not get prepareQuery applied", async () => {
+    const req = createMockRequest("/api/db/multi-query", {
+      method: "POST",
       body: {
         connection: validConnection,
-        sql: 'INSERT INTO users (name) VALUES (\'test\')',
+        sql: "INSERT INTO users (name) VALUES ('test')",
       },
     });
 
@@ -280,37 +283,37 @@ describe('POST /api/db/multi-query', () => {
     expect(mockProvider.prepareQuery).not.toHaveBeenCalled();
   });
 
-  test('QueryError from getOrCreateProvider returns 400', async () => {
+  test("QueryError from getOrCreateProvider returns 400", async () => {
     mockGetOrCreateProvider.mockImplementation(async () => {
-      throw new QueryError('Bad query', 'postgres');
+      throw new QueryError("Bad query", "postgres");
     });
 
-    const req = createMockRequest('/api/db/multi-query', {
-      method: 'POST',
-      body: { connection: validConnection, sql: 'SELECT 1' },
+    const req = createMockRequest("/api/db/multi-query", {
+      method: "POST",
+      body: { connection: validConnection, sql: "SELECT 1" },
     });
 
     const res = await POST(req as never);
     const data = await parseResponseJSON<{ error: string }>(res);
 
     expect(res.status).toBe(400);
-    expect(data.error).toContain('Bad query');
+    expect(data.error).toContain("Bad query");
   });
 
-  test('TimeoutError from getOrCreateProvider returns 408', async () => {
+  test("TimeoutError from getOrCreateProvider returns 408", async () => {
     mockGetOrCreateProvider.mockImplementation(async () => {
-      throw new TimeoutError('Query timed out', 'postgres', 30000);
+      throw new TimeoutError("Query timed out", "postgres", 30000);
     });
 
-    const req = createMockRequest('/api/db/multi-query', {
-      method: 'POST',
-      body: { connection: validConnection, sql: 'SELECT 1' },
+    const req = createMockRequest("/api/db/multi-query", {
+      method: "POST",
+      body: { connection: validConnection, sql: "SELECT 1" },
     });
 
     const res = await POST(req as never);
     const data = await parseResponseJSON<{ error: string }>(res);
 
     expect(res.status).toBe(408);
-    expect(data.error).toContain('timed out');
+    expect(data.error).toContain("timed out");
   });
 });

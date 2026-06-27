@@ -1,8 +1,8 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { getOrCreateProvider } from '@/lib/db';
-import { createErrorResponse } from '@/lib/api/errors';
-import { resolveConnection } from '@/lib/seed/resolve-connection';
-import { getSession } from '@/lib/auth';
+import { NextRequest, NextResponse } from "next/server";
+import { getOrCreateProvider } from "@/lib/db";
+import { createErrorResponse } from "@/lib/api/errors";
+import { resolveConnection } from "@/lib/seed/resolve-connection";
+import { getSession } from "@/lib/auth";
 
 /**
  * GET /api/db/health
@@ -11,9 +11,9 @@ import { getSession } from '@/lib/auth';
  */
 export async function GET() {
   return NextResponse.json({
-    status: 'healthy',
+    status: "healthy",
     timestamp: new Date().toISOString(),
-    service: 'libredb-studio',
+    service: "libredb-studio",
   });
 }
 
@@ -27,16 +27,13 @@ export async function POST(req: NextRequest) {
 
     const session = await getSession();
     if (!session) {
-      return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
+      return NextResponse.json({ error: "Authentication required" }, { status: 401 });
     }
 
     const connection = await resolveConnection(body, session);
 
     if (!connection.type) {
-      return NextResponse.json(
-        { error: 'Valid connection configuration is required' },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Valid connection configuration is required" }, { status: 400 });
     }
 
     const provider = await getOrCreateProvider(connection);
@@ -44,6 +41,6 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json(health);
   } catch (error) {
-    return createErrorResponse(error, { route: 'api/db/health' });
+    return createErrorResponse(error, { route: "api/db/health" });
   }
 }

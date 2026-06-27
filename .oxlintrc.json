@@ -1,0 +1,42 @@
+{
+  "$schema": "https://raw.githubusercontent.com/oxc-project/oxc/main/npm/oxlint/configuration_schema.json",
+  "plugins": ["typescript", "oxc", "react", "react-hooks", "jsx-a11y", "nextjs", "import"],
+  "categories": {
+    "correctness": "error",
+    "suspicious": "error",
+    "perf": "warn",
+    "pedantic": "off",
+    "style": "off"
+  },
+  "rules": {
+    "react/react-in-jsx-scope": "off",
+    "react/no-unstable-nested-components": "off",
+    "import/no-unassigned-import": "off",
+    "import/no-named-as-default": "off",
+    "react-hooks/exhaustive-deps": "off",
+    "no-unused-vars": "off",
+    "no-underscore-dangle": "off",
+    "no-shadow": "off",
+    "no-control-regex": "off",
+    "jsx-a11y/no-static-element-interactions": "warn",
+    "jsx-a11y/click-events-have-key-events": "warn",
+    "jsx-a11y/label-has-associated-control": "warn",
+    "jsx-a11y/prefer-tag-over-role": "warn",
+    "jsx-a11y/no-autofocus": "warn",
+    "jsx-a11y/control-has-associated-label": "warn",
+    "jsx-a11y/no-noninteractive-element-interactions": "warn",
+    "jsx-a11y/anchor-has-content": "warn"
+  },
+  "overrides": [
+    {
+      "files": ["tests/**", "**/*.test.ts", "**/*.test.tsx"],
+      "rules": {
+        "typescript/no-extraneous-class": "off",
+        "no-useless-constructor": "off",
+        "no-new": "off",
+        "no-constant-binary-expression": "off"
+      }
+    }
+  ],
+  "ignorePatterns": ["dist/**", ".next/**", "out/**", "build/**", "coverage/**", "node_modules/**", "next-env.d.ts"]
+}

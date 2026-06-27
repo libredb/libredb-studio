@@ -1,38 +1,38 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from 'react';
-import { Sidebar, ConnectionsList } from '@/components/sidebar';
-import { MobileNav } from '@/components/MobileNav';
-import { SchemaExplorer } from '@/components/schema-explorer';
-import { ConnectionModal } from '@/components/ConnectionModal';
-import { CommandPalette } from '@/components/CommandPalette';
-import { QueryEditor, QueryEditorRef } from '@/components/QueryEditor';
-import { DataImportModal } from '@/components/DataImportModal';
-import { QuerySafetyDialog } from '@/components/QuerySafetyDialog';
-import { DataProfiler } from '@/components/DataProfiler';
-import { CodeGenerator } from '@/components/CodeGenerator';
-import { TestDataGenerator } from '@/components/TestDataGenerator';
-import { CreateTableModal } from '@/components/CreateTableModal';
-import { SchemaDiagram } from '@/components/SchemaDiagram';
-import { SaveQueryModal } from '@/components/SaveQueryModal';
+import React, { useState, useEffect, useRef } from "react";
+import { Sidebar, ConnectionsList } from "@/components/sidebar";
+import { MobileNav } from "@/components/MobileNav";
+import { SchemaExplorer } from "@/components/schema-explorer";
+import { ConnectionModal } from "@/components/ConnectionModal";
+import { CommandPalette } from "@/components/CommandPalette";
+import { QueryEditor, QueryEditorRef } from "@/components/QueryEditor";
+import { DataImportModal } from "@/components/DataImportModal";
+import { QuerySafetyDialog } from "@/components/QuerySafetyDialog";
+import { DataProfiler } from "@/components/DataProfiler";
+import { CodeGenerator } from "@/components/CodeGenerator";
+import { TestDataGenerator } from "@/components/TestDataGenerator";
+import { CreateTableModal } from "@/components/CreateTableModal";
+import { SchemaDiagram } from "@/components/SchemaDiagram";
+import { SaveQueryModal } from "@/components/SaveQueryModal";
 import {
   StudioMobileHeader,
   StudioDesktopHeader,
   StudioTabBar,
   QueryToolbar,
   BottomPanel,
-} from '@/components/studio/index';
-import { DatabaseConnection, SavedQuery } from '@/lib/types';
-import { useToast } from '@/hooks/use-toast';
-import { useProviderMetadata } from '@/hooks/use-provider-metadata';
-import { useAuth } from '@/hooks/use-auth';
-import { useConnectionManager } from '@/hooks/use-connection-manager';
-import { useTabManager } from '@/hooks/use-tab-manager';
-import { useTransactionControl } from '@/hooks/use-transaction-control';
-import { useQueryExecution } from '@/hooks/use-query-execution';
-import { useInlineEditing } from '@/hooks/use-inline-editing';
-import { useStorageSync } from '@/hooks/use-storage-sync';
-import { storage } from '@/lib/storage';
+} from "@/components/studio/index";
+import { DatabaseConnection, SavedQuery } from "@/lib/types";
+import { useToast } from "@/hooks/use-toast";
+import { useProviderMetadata } from "@/hooks/use-provider-metadata";
+import { useAuth } from "@/hooks/use-auth";
+import { useConnectionManager } from "@/hooks/use-connection-manager";
+import { useTabManager } from "@/hooks/use-tab-manager";
+import { useTransactionControl } from "@/hooks/use-transaction-control";
+import { useQueryExecution } from "@/hooks/use-query-execution";
+import { useInlineEditing } from "@/hooks/use-inline-editing";
+import { useStorageSync } from "@/hooks/use-storage-sync";
+import { storage } from "@/lib/storage";
 import {
   type MaskingConfig,
   loadMaskingConfig,
@@ -41,13 +41,13 @@ import {
   canToggleMasking,
   detectSensitiveColumnsFromConfig,
   applyMaskingToRows,
-} from '@/lib/data-masking';
-import { useRouter } from 'next/navigation';
-import { cn } from '@/lib/utils';
-import { AlertTriangle, Database, Plus } from 'lucide-react';
-import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from '@/components/ui/resizable';
-import { AnimatePresence } from 'framer-motion';
-import { Button } from '@/components/ui/button';
+} from "@/lib/data-masking";
+import { useRouter } from "next/navigation";
+import { cn } from "@/lib/utils";
+import { AlertTriangle, Database, Plus } from "lucide-react";
+import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/components/ui/resizable";
+import { AnimatePresence } from "framer-motion";
+import { Button } from "@/components/ui/button";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -112,19 +112,26 @@ export default function Studio() {
       editing.setEditingEnabled(false);
       editing.handleDiscardChanges();
       conn.fetchSchema(conn.activeConnection);
-      const tabType = metadata?.capabilities.queryDialect === 'libredb' ? 'libredb' :
-                      metadata?.capabilities.queryLanguage === 'json' ? 'mongodb' :
-                      conn.activeConnection.type === 'redis' ? 'redis' : 'sql';
-      tabMgr.setTabs(prev => prev.map((t) => {
-        return {
-          ...t,
-          type: tabType,
-        };
-      }));
+      const tabType =
+        metadata?.capabilities.queryDialect === "libredb"
+          ? "libredb"
+          : metadata?.capabilities.queryLanguage === "json"
+            ? "mongodb"
+            : conn.activeConnection.type === "redis"
+              ? "redis"
+              : "sql";
+      tabMgr.setTabs((prev) =>
+        prev.map((t) => {
+          return {
+            ...t,
+            type: tabType,
+          };
+        }),
+      );
     } else {
       conn.setSchema([]);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [conn.activeConnection, metadata]);
 
   // === Modal state ===
@@ -134,7 +141,7 @@ export default function Studio() {
   const [showDiagram, setShowDiagram] = useState(false);
   const [isSaveQueryModalOpen, setIsSaveQueryModalOpen] = useState(false);
   const [savedKey, setSavedKey] = useState(0);
-  const [activeMobileTab, setActiveMobileTab] = useState<'database' | 'schema' | 'editor'>('editor');
+  const [activeMobileTab, setActiveMobileTab] = useState<"database" | "schema" | "editor">("editor");
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [isNL2SQLOpen, setIsNL2SQLOpen] = useState(false);
   const [profilerTable, setProfilerTable] = useState<string | null>(null);
@@ -148,9 +155,9 @@ export default function Studio() {
 
   const openMaintenance = () => {
     if (isAdmin) {
-      router.push('/admin?tab=operations');
+      router.push("/admin?tab=operations");
     } else {
-      router.push('/monitoring');
+      router.push("/monitoring");
     }
   };
 
@@ -164,73 +171,79 @@ export default function Studio() {
       connectionType: conn.activeConnection.type,
       tags,
       createdAt: new Date(),
-      updatedAt: new Date()
+      updatedAt: new Date(),
     };
     storage.saveQuery(newSavedQuery);
-    setSavedKey(prev => prev + 1);
+    setSavedKey((prev) => prev + 1);
     toast({ title: "Query Saved", description: `"${name}" has been added to your saved queries.` });
   };
 
-  const exportResults = (format: 'csv' | 'json' | 'sql-insert' | 'sql-ddl') => {
+  const exportResults = (format: "csv" | "json" | "sql-insert" | "sql-ddl") => {
     if (!tabMgr.currentTab.result) return;
     const rawData = tabMgr.currentTab.result.rows;
     const sensitiveColumns = detectSensitiveColumnsFromConfig(tabMgr.currentTab.result.fields, maskingConfig);
     const data = effectiveMasking
       ? applyMaskingToRows(rawData, tabMgr.currentTab.result.fields, sensitiveColumns)
       : rawData;
-    let content = '';
-    let mimeType = 'text/plain';
+    let content = "";
+    let mimeType = "text/plain";
     let ext: string = format;
 
-    if (format === 'csv') {
-      const headers = Object.keys(data[0] || {}).join(',');
-      const rows = data.map(row => Object.values(row).map(val => `"${val}"`).join(',')).join('\n');
+    if (format === "csv") {
+      const headers = Object.keys(data[0] || {}).join(",");
+      const rows = data
+        .map((row) =>
+          Object.values(row)
+            .map((val) => `"${val}"`)
+            .join(","),
+        )
+        .join("\n");
       content = `${headers}\n${rows}`;
-      mimeType = 'text/csv';
-      ext = 'csv';
-    } else if (format === 'json') {
+      mimeType = "text/csv";
+      ext = "csv";
+    } else if (format === "json") {
       content = JSON.stringify(data, null, 2);
-      mimeType = 'application/json';
-      ext = 'json';
-    } else if (format === 'sql-insert') {
-      const tableName = tabMgr.currentTab.name.replace(/^Query[:  ]*/, '') || 'table_name';
+      mimeType = "application/json";
+      ext = "json";
+    } else if (format === "sql-insert") {
+      const tableName = tabMgr.currentTab.name.replace(/^Query[:  ]*/, "") || "table_name";
       const columns = Object.keys(data[0] || {});
-      const lines = data.map(row => {
-        const values = columns.map(col => {
+      const lines = data.map((row) => {
+        const values = columns.map((col) => {
           const val = row[col];
-          if (val === null || val === undefined) return 'NULL';
-          if (typeof val === 'number' || typeof val === 'boolean') return String(val);
+          if (val === null || val === undefined) return "NULL";
+          if (typeof val === "number" || typeof val === "boolean") return String(val);
           return `'${String(val).replace(/'/g, "''")}'`;
         });
-        return `INSERT INTO ${tableName} (${columns.join(', ')}) VALUES (${values.join(', ')});`;
+        return `INSERT INTO ${tableName} (${columns.join(", ")}) VALUES (${values.join(", ")});`;
       });
-      content = lines.join('\n');
-      mimeType = 'text/sql';
-      ext = 'sql';
-    } else if (format === 'sql-ddl') {
-      const tableName = tabMgr.currentTab.name.replace(/^Query[:  ]*/, '') || 'table_name';
+      content = lines.join("\n");
+      mimeType = "text/sql";
+      ext = "sql";
+    } else if (format === "sql-ddl") {
+      const tableName = tabMgr.currentTab.name.replace(/^Query[:  ]*/, "") || "table_name";
       const columns = Object.keys(data[0] || {});
-      const colDefs = columns.map(col => {
+      const colDefs = columns.map((col) => {
         const sampleVal = data[0]?.[col];
-        let sqlType = 'TEXT';
-        if (typeof sampleVal === 'number') {
-          sqlType = Number.isInteger(sampleVal) ? 'INTEGER' : 'NUMERIC';
-        } else if (typeof sampleVal === 'boolean') {
-          sqlType = 'BOOLEAN';
+        let sqlType = "TEXT";
+        if (typeof sampleVal === "number") {
+          sqlType = Number.isInteger(sampleVal) ? "INTEGER" : "NUMERIC";
+        } else if (typeof sampleVal === "boolean") {
+          sqlType = "BOOLEAN";
         } else if (sampleVal instanceof Date) {
-          sqlType = 'TIMESTAMP';
+          sqlType = "TIMESTAMP";
         }
         return `  ${col} ${sqlType}`;
       });
-      content = `CREATE TABLE ${tableName} (\n${colDefs.join(',\n')}\n);`;
-      mimeType = 'text/sql';
-      ext = 'sql';
+      content = `CREATE TABLE ${tableName} (\n${colDefs.join(",\n")}\n);`;
+      mimeType = "text/sql";
+      ext = "sql";
     }
 
     const fileName = `query_result_export.${ext}`;
     const blob = new Blob([content], { type: mimeType });
     const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
+    const link = document.createElement("a");
     link.href = url;
     link.download = fileName;
     link.click();
@@ -243,11 +256,13 @@ export default function Studio() {
 
   const handleDeleteConnection = (id: string) => {
     // Clean up server-side provider cache and close connections/tunnels
-    fetch('/api/db/disconnect', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+    fetch("/api/db/disconnect", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ connectionId: id }),
-    }).catch(() => { /* best-effort cleanup */ });
+    }).catch(() => {
+      /* best-effort cleanup */
+    });
 
     storage.deleteConnection(id);
     // Preserve managed (seed) connections that aren't in localStorage
@@ -307,19 +322,23 @@ export default function Studio() {
               onAddConnection={() => setIsConnectionModalOpen(true)}
               onLogout={handleLogout}
               onSaveQuery={() => setIsSaveQueryModalOpen(true)}
-              onClearQuery={() => tabMgr.updateCurrentTab({ query: '' })}
+              onClearQuery={() => tabMgr.updateCurrentTab({ query: "" })}
               onExecuteQuery={() => queryExec.executeQuery()}
               onCancelQuery={queryExec.cancelQuery}
-              onBeginTransaction={() => txn.handleTransaction('begin')}
-              onCommitTransaction={() => txn.handleTransaction('commit')}
-              onRollbackTransaction={() => txn.handleTransaction('rollback')}
+              onBeginTransaction={() => txn.handleTransaction("begin")}
+              onCommitTransaction={() => txn.handleTransaction("commit")}
+              onRollbackTransaction={() => txn.handleTransaction("rollback")}
               onTogglePlayground={() => txn.setPlaygroundMode(!txn.playgroundMode)}
               onToggleEditing={() => {
                 editing.setEditingEnabled(!editing.editingEnabled);
                 if (editing.editingEnabled) editing.handleDiscardChanges();
               }}
               onImport={() => setIsImportModalOpen(true)}
-              onExplain={metadata?.capabilities.supportsExplain ? () => queryExec.executeQuery(undefined, undefined, true) : undefined}
+              onExplain={
+                metadata?.capabilities.supportsExplain
+                  ? () => queryExec.executeQuery(undefined, undefined, true)
+                  : undefined
+              }
             />
 
             <StudioDesktopHeader
@@ -345,13 +364,11 @@ export default function Studio() {
 
             <main className="flex-1 overflow-hidden relative">
               <AnimatePresence>
-                {showDiagram && (
-                  <SchemaDiagram schema={conn.schema} onClose={() => setShowDiagram(false)} />
-                )}
+                {showDiagram && <SchemaDiagram schema={conn.schema} onClose={() => setShowDiagram(false)} />}
               </AnimatePresence>
 
               {/* Mobile: Database Tab */}
-              {activeMobileTab === 'database' && (
+              {activeMobileTab === "database" && (
                 <div className="md:hidden h-full bg-[#080808] overflow-auto p-4">
                   <div className="mb-4 flex items-center justify-between">
                     <h2 className="text-xs font-medium text-zinc-300">Connections</h2>
@@ -369,7 +386,7 @@ export default function Studio() {
                     activeConnection={conn.activeConnection}
                     onSelectConnection={(c) => {
                       conn.setActiveConnection(c);
-                      setActiveMobileTab('editor');
+                      setActiveMobileTab("editor");
                     }}
                     onDeleteConnection={handleDeleteConnection}
                     onAddConnection={() => setIsConnectionModalOpen(true)}
@@ -378,7 +395,7 @@ export default function Studio() {
               )}
 
               {/* Mobile: Schema Tab */}
-              {activeMobileTab === 'schema' && (
+              {activeMobileTab === "schema" && (
                 <div className="md:hidden h-full bg-[#080808] overflow-auto p-4">
                   {conn.activeConnection ? (
                     <SchemaExplorer
@@ -386,11 +403,11 @@ export default function Studio() {
                       isLoadingSchema={conn.isLoadingSchema}
                       onTableClick={(tableName) => {
                         onTableClick(tableName);
-                        setActiveMobileTab('editor');
+                        setActiveMobileTab("editor");
                       }}
                       onGenerateSelect={(tableName) => {
                         tabMgr.handleGenerateSelect(tableName);
-                        setActiveMobileTab('editor');
+                        setActiveMobileTab("editor");
                       }}
                       onCreateTableClick={() => setIsCreateTableModalOpen(true)}
                       isAdmin={isAdmin}
@@ -411,10 +428,7 @@ export default function Studio() {
               )}
 
               {/* Desktop & Mobile Editor Tab */}
-              <div className={cn(
-                "h-full",
-                activeMobileTab !== 'editor' && "hidden md:block"
-              )}>
+              <div className={cn("h-full", activeMobileTab !== "editor" && "hidden md:block")}>
                 <div className="h-full">
                   <ResizablePanelGroup id="studio-editor" direction="vertical">
                     <ResizablePanel defaultSize={40} minSize={20}>
@@ -429,9 +443,9 @@ export default function Studio() {
                           onSaveQuery={() => setIsSaveQueryModalOpen(true)}
                           onExecuteQuery={() => queryExec.executeQuery()}
                           onCancelQuery={queryExec.cancelQuery}
-                          onBeginTransaction={() => txn.handleTransaction('begin')}
-                          onCommitTransaction={() => txn.handleTransaction('commit')}
-                          onRollbackTransaction={() => txn.handleTransaction('rollback')}
+                          onBeginTransaction={() => txn.handleTransaction("begin")}
+                          onCommitTransaction={() => txn.handleTransaction("commit")}
+                          onRollbackTransaction={() => txn.handleTransaction("rollback")}
                           onTogglePlayground={() => txn.setPlaygroundMode(!txn.playgroundMode)}
                           onToggleEditing={() => {
                             editing.setEditingEnabled(!editing.editingEnabled);
@@ -445,8 +459,18 @@ export default function Studio() {
                             ref={queryEditorRef}
                             value={tabMgr.currentTab.query}
                             onContentChange={(val) => tabMgr.updateTabById(tabMgr.currentTab.id, { query: val })}
-                            onExplain={metadata?.capabilities.supportsExplain ? () => queryExec.executeQuery(undefined, undefined, true) : undefined}
-                            language={tabMgr.currentTab.type === 'libredb' ? 'libredb' : tabMgr.currentTab.type === 'mongodb' ? 'json' : 'sql'}
+                            onExplain={
+                              metadata?.capabilities.supportsExplain
+                                ? () => queryExec.executeQuery(undefined, undefined, true)
+                                : undefined
+                            }
+                            language={
+                              tabMgr.currentTab.type === "libredb"
+                                ? "libredb"
+                                : tabMgr.currentTab.type === "mongodb"
+                                  ? "json"
+                                  : "sql"
+                            }
                             tables={conn.tableNames}
                             databaseType={conn.activeConnection?.type}
                             schemaContext={conn.schemaContext}
@@ -470,13 +494,17 @@ export default function Studio() {
                         isNL2SQLOpen={isNL2SQLOpen}
                         onSetIsNL2SQLOpen={setIsNL2SQLOpen}
                         maskingEnabled={effectiveMasking}
-                        onToggleMasking={userCanToggle ? () => {
-                          setMaskingConfig(prev => {
-                            const updated = { ...prev, enabled: !prev.enabled };
-                            saveMaskingConfig(updated);
-                            return updated;
-                          });
-                        } : undefined}
+                        onToggleMasking={
+                          userCanToggle
+                            ? () => {
+                                setMaskingConfig((prev) => {
+                                  const updated = { ...prev, enabled: !prev.enabled };
+                                  saveMaskingConfig(updated);
+                                  return updated;
+                                });
+                              }
+                            : undefined
+                        }
                         userRole={user?.role}
                         maskingConfig={maskingConfig}
                         editingEnabled={editing.editingEnabled}
@@ -487,9 +515,7 @@ export default function Studio() {
                         onExecuteQuery={(q) => queryExec.executeQuery(q)}
                         onLoadQuery={(q) => tabMgr.updateCurrentTab({ query: q })}
                         onLoadMore={
-                          tabMgr.currentTab.result?.pagination?.hasMore
-                            ? queryExec.handleLoadMore
-                            : undefined
+                          tabMgr.currentTab.result?.pagination?.hasMore ? queryExec.handleLoadMore : undefined
                         }
                         isLoadingMore={tabMgr.currentTab.isLoadingMore}
                         onExportResults={exportResults}
@@ -506,7 +532,10 @@ export default function Studio() {
       {/* Modals */}
       <ConnectionModal
         isOpen={isConnectionModalOpen}
-        onClose={() => { setIsConnectionModalOpen(false); setEditingConnection(null); }}
+        onClose={() => {
+          setIsConnectionModalOpen(false);
+          setEditingConnection(null);
+        }}
         onConnect={(c) => {
           storage.saveConnection(c);
           const userConns = storage.getConnections();
@@ -539,7 +568,7 @@ export default function Studio() {
       />
       <QuerySafetyDialog
         isOpen={!!queryExec.safetyCheckQuery}
-        query={queryExec.safetyCheckQuery || ''}
+        query={queryExec.safetyCheckQuery || ""}
         schemaContext={conn.schemaContext}
         databaseType={conn.activeConnection?.type}
         onClose={() => queryExec.setSafetyCheckQuery(null)}
@@ -550,8 +579,8 @@ export default function Studio() {
       <DataProfiler
         isOpen={!!profilerTable}
         onClose={() => setProfilerTable(null)}
-        tableName={profilerTable || ''}
-        tableSchema={conn.schema.find(t => t.name === profilerTable) || null}
+        tableName={profilerTable || ""}
+        tableSchema={conn.schema.find((t) => t.name === profilerTable) || null}
         connection={conn.activeConnection}
         schemaContext={conn.schemaContext}
         databaseType={conn.activeConnection?.type}
@@ -559,15 +588,15 @@ export default function Studio() {
       <CodeGenerator
         isOpen={!!codeGenTable}
         onClose={() => setCodeGenTable(null)}
-        tableName={codeGenTable || ''}
-        tableSchema={conn.schema.find(t => t.name === codeGenTable) || null}
+        tableName={codeGenTable || ""}
+        tableSchema={conn.schema.find((t) => t.name === codeGenTable) || null}
         databaseType={conn.activeConnection?.type}
       />
       <TestDataGenerator
         isOpen={!!testDataTable}
         onClose={() => setTestDataTable(null)}
-        tableName={testDataTable || ''}
-        tableSchema={conn.schema.find(t => t.name === testDataTable) || null}
+        tableName={testDataTable || ""}
+        tableSchema={conn.schema.find((t) => t.name === testDataTable) || null}
         databaseType={conn.activeConnection?.type}
         queryLanguage={metadata?.capabilities.queryLanguage}
         onExecuteQuery={(q) => queryExec.executeQuery(q)}
@@ -615,14 +644,14 @@ export default function Studio() {
         onExecuteQuery={() => queryExec.executeQuery()}
         onLoadSavedQuery={(q) => {
           tabMgr.updateCurrentTab({ query: q });
-          queryExec.setBottomPanelMode('results');
+          queryExec.setBottomPanelMode("results");
         }}
         onLoadHistoryQuery={(q) => {
           tabMgr.updateCurrentTab({ query: q });
-          queryExec.setBottomPanelMode('results');
+          queryExec.setBottomPanelMode("results");
         }}
-        onNavigateHealth={() => router.push('/monitoring')}
-        onNavigateMonitoring={() => router.push('/monitoring')}
+        onNavigateHealth={() => router.push("/monitoring")}
+        onNavigateMonitoring={() => router.push("/monitoring")}
         onShowDiagram={() => setShowDiagram(true)}
         onFormatQuery={() => queryEditorRef.current?.format()}
         onSaveQuery={() => setIsSaveQueryModalOpen(true)}
@@ -630,11 +659,7 @@ export default function Studio() {
         onLogout={handleLogout}
       />
 
-      <MobileNav
-        activeTab={activeMobileTab}
-        onTabChange={setActiveMobileTab}
-        hasResult={!!tabMgr.currentTab.result}
-      />
+      <MobileNav activeTab={activeMobileTab} onTabChange={setActiveMobileTab} hasResult={!!tabMgr.currentTab.result} />
     </div>
   );
 }

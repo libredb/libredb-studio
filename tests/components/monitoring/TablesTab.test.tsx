@@ -1,22 +1,22 @@
-import '../../setup-dom';
-import '../../helpers/mock-sonner';
-import '../../helpers/mock-navigation';
+import "../../setup-dom";
+import "../../helpers/mock-sonner";
+import "../../helpers/mock-navigation";
 
-import React from 'react';
-import { describe, test, expect, mock, afterEach } from 'bun:test';
-import { cleanup, fireEvent, render, waitFor } from '@testing-library/react';
-import { TablesTab } from '@/components/monitoring/tabs/TablesTab';
-import type { MonitoringData } from '@/lib/db/types';
+import React from "react";
+import { describe, test, expect, mock, afterEach } from "bun:test";
+import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
+import { TablesTab } from "@/components/monitoring/tabs/TablesTab";
+import type { MonitoringData } from "@/lib/db/types";
 
 function makeData(): MonitoringData {
   return {
-    timestamp: new Date('2026-02-15T12:00:00Z'),
+    timestamp: new Date("2026-02-15T12:00:00Z"),
     overview: {
-      version: '16.3',
-      uptime: '1s',
+      version: "16.3",
+      uptime: "1s",
       activeConnections: 3,
       maxConnections: 100,
-      databaseSize: '1 GB',
+      databaseSize: "1 GB",
       databaseSizeBytes: 1024 * 1024 * 1024,
       tableCount: 2,
       indexCount: 2,
@@ -48,29 +48,29 @@ function makeData(): MonitoringData {
     activeSessions: [],
     tables: [
       {
-        schemaName: 'public',
-        tableName: 'users',
+        schemaName: "public",
+        tableName: "users",
         rowCount: 1200,
         deadRowCount: 10,
-        tableSize: '100 MB',
+        tableSize: "100 MB",
         tableSizeBytes: 104857600,
-        indexSize: '20 MB',
+        indexSize: "20 MB",
         indexSizeBytes: 20971520,
-        totalSize: '120 MB',
+        totalSize: "120 MB",
         totalSizeBytes: 125829120,
         bloatRatio: 5,
-        lastVacuum: new Date('2026-02-01T00:00:00Z'),
+        lastVacuum: new Date("2026-02-01T00:00:00Z"),
       },
       {
-        schemaName: 'public',
-        tableName: 'events',
+        schemaName: "public",
+        tableName: "events",
         rowCount: 500000,
         deadRowCount: 30000,
-        tableSize: '600 MB',
+        tableSize: "600 MB",
         tableSizeBytes: 629145600,
-        indexSize: '100 MB',
+        indexSize: "100 MB",
         indexSizeBytes: 104857600,
-        totalSize: '700 MB',
+        totalSize: "700 MB",
         totalSizeBytes: 734003200,
         bloatRatio: 25,
       },
@@ -78,46 +78,44 @@ function makeData(): MonitoringData {
   } as unknown as MonitoringData;
 }
 
-describe('TablesTab', () => {
+describe("TablesTab", () => {
   afterEach(() => {
     cleanup();
   });
 
-  test('renders skeleton when loading and data is null', () => {
-    const { queryByText } = render(
-      <TablesTab data={null} loading onRunMaintenance={mock(async () => true)} />
-    );
-    expect(queryByText('Table Statistics')).toBeNull();
+  test("renders skeleton when loading and data is null", () => {
+    const { queryByText } = render(<TablesTab data={null} loading onRunMaintenance={mock(async () => true)} />);
+    expect(queryByText("Table Statistics")).toBeNull();
   });
 
-  test('shows empty state when no tables match', () => {
+  test("shows empty state when no tables match", () => {
     const { queryByText } = render(
       <TablesTab
         data={{ ...makeData(), tables: [] } as MonitoringData}
         loading={false}
         onRunMaintenance={mock(async () => true)}
-      />
+      />,
     );
-    expect(queryByText('No tables found.')).not.toBeNull();
+    expect(queryByText("No tables found.")).not.toBeNull();
   });
 
-  test('updates search query input value', () => {
+  test("updates search query input value", () => {
     const { queryByText, getByPlaceholderText } = render(
-      <TablesTab data={makeData()} loading={false} onRunMaintenance={mock(async () => true)} />
+      <TablesTab data={makeData()} loading={false} onRunMaintenance={mock(async () => true)} />,
     );
 
-    expect(queryByText('users')).not.toBeNull();
-    expect(queryByText('events')).not.toBeNull();
+    expect(queryByText("users")).not.toBeNull();
+    expect(queryByText("events")).not.toBeNull();
 
-    const input = getByPlaceholderText('Search...');
-    fireEvent.change(input, { target: { value: 'event' } });
-    expect((input as HTMLInputElement).value).toBe('event');
+    const input = getByPlaceholderText("Search...");
+    fireEvent.change(input, { target: { value: "event" } });
+    expect((input as HTMLInputElement).value).toBe("event");
   });
 
-  test('runs maintenance actions when admin clicks action buttons', async () => {
+  test("runs maintenance actions when admin clicks action buttons", async () => {
     const onRunMaintenance = mock(async () => true);
     const { container } = render(
-      <TablesTab data={makeData()} loading={false} onRunMaintenance={onRunMaintenance} isAdmin />
+      <TablesTab data={makeData()} loading={false} onRunMaintenance={onRunMaintenance} isAdmin />,
     );
 
     const analyzeButton = container.querySelector('button[title="Analyze"]');
@@ -130,24 +128,24 @@ describe('TablesTab', () => {
 
     fireEvent.click(analyzeButton!);
     await waitFor(() => {
-      expect(onRunMaintenance).toHaveBeenCalledWith('analyze', 'users');
+      expect(onRunMaintenance).toHaveBeenCalledWith("analyze", "users");
     });
 
     fireEvent.click(vacuumButton!);
     await waitFor(() => {
-      expect(onRunMaintenance).toHaveBeenCalledWith('vacuum', 'users');
+      expect(onRunMaintenance).toHaveBeenCalledWith("vacuum", "users");
     });
 
     fireEvent.click(reindexButton!);
     await waitFor(() => {
-      expect(onRunMaintenance).toHaveBeenCalledWith('reindex', 'users');
+      expect(onRunMaintenance).toHaveBeenCalledWith("reindex", "users");
     });
   });
 
-  test('shows non-admin placeholder for actions', () => {
+  test("shows non-admin placeholder for actions", () => {
     const { queryAllByText } = render(
-      <TablesTab data={makeData()} loading={false} onRunMaintenance={mock(async () => true)} isAdmin={false} />
+      <TablesTab data={makeData()} loading={false} onRunMaintenance={mock(async () => true)} isAdmin={false} />,
     );
-    expect(queryAllByText('-').length).toBeGreaterThan(0);
+    expect(queryAllByText("-").length).toBeGreaterThan(0);
   });
 });

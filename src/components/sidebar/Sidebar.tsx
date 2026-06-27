@@ -1,13 +1,13 @@
 "use client";
 
-import React from 'react';
-import { DatabaseConnection, TableSchema } from '@/lib/types';
-import type { ProviderMetadata } from '@/hooks/use-provider-metadata';
-import { Plus, Zap, Layers } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { ScrollArea } from '@/components/ui/scroll-area';
-import { SchemaExplorer } from '@/components/schema-explorer';
-import { ConnectionsList } from './ConnectionsList';
+import React from "react";
+import { DatabaseConnection, TableSchema } from "@/lib/types";
+import type { ProviderMetadata } from "@/hooks/use-provider-metadata";
+import { Plus, Zap, Layers } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { SchemaExplorer } from "@/components/schema-explorer";
+import { ConnectionsList } from "./ConnectionsList";
 
 interface SidebarProps {
   connections: DatabaseConnection[];
@@ -23,7 +23,7 @@ interface SidebarProps {
   onCreateTableClick?: () => void;
   onShowDiagram?: () => void;
   isAdmin?: boolean;
-  onOpenMaintenance?: (tab?: 'global' | 'tables' | 'sessions', table?: string) => void;
+  onOpenMaintenance?: (tab?: "global" | "tables" | "sessions", table?: string) => void;
   databaseType?: string;
   metadata?: ProviderMetadata | null;
   onProfileTable?: (tableName: string) => void;

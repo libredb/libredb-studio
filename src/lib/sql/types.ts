@@ -16,7 +16,7 @@ export interface TableAlias {
   /** Optional schema prefix (e.g., 'public' in 'public.customer') */
   schema?: string;
   /** Source of the alias definition */
-  source: 'from' | 'join' | 'cte';
+  source: "from" | "join" | "cte";
 }
 
 /**

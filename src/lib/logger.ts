@@ -3,7 +3,7 @@
  * Isomorphic logger with level filtering and context support
  */
 
-type LogLevel = 'debug' | 'info' | 'warn' | 'error';
+type LogLevel = "debug" | "info" | "warn" | "error";
 
 export interface LogContext {
   route?: string;
@@ -21,14 +21,12 @@ const LEVEL_ORDER: Record<LogLevel, number> = {
 };
 
 function getMinLevel(): LogLevel {
-  if (typeof process !== 'undefined' && process.env?.LOG_LEVEL) {
+  if (typeof process !== "undefined" && process.env?.LOG_LEVEL) {
     const env = process.env.LOG_LEVEL.toLowerCase();
     if (env in LEVEL_ORDER) return env as LogLevel;
   }
-  const isDev =
-    typeof process !== 'undefined' &&
-    process.env?.NODE_ENV !== 'production';
-  return isDev ? 'debug' : 'info';
+  const isDev = typeof process !== "undefined" && process.env?.NODE_ENV !== "production";
+  return isDev ? "debug" : "info";
 }
 
 function shouldLog(level: LogLevel): boolean {
@@ -36,7 +34,7 @@ function shouldLog(level: LogLevel): boolean {
 }
 
 function formatContext(ctx?: LogContext): string {
-  if (!ctx) return '';
+  if (!ctx) return "";
   const parts: string[] = [];
   if (ctx.route) parts.push(`route=${ctx.route}`);
   if (ctx.provider) parts.push(`provider=${ctx.provider}`);
@@ -44,30 +42,28 @@ function formatContext(ctx?: LogContext): string {
   if (ctx.duration !== undefined) parts.push(`duration=${ctx.duration}ms`);
   // Extra keys
   for (const [k, v] of Object.entries(ctx)) {
-    if (['route', 'provider', 'connectionId', 'duration'].includes(k)) continue;
-    if (v !== undefined) parts.push(`${k}=${typeof v === 'object' ? JSON.stringify(v) : v}`);
+    if (["route", "provider", "connectionId", "duration"].includes(k)) continue;
+    if (v !== undefined) parts.push(`${k}=${typeof v === "object" ? JSON.stringify(v) : v}`);
   }
-  return parts.length ? ` {${parts.join(', ')}}` : '';
+  return parts.length ? ` {${parts.join(", ")}}` : "";
 }
 
 function extractError(error: unknown): { name: string; message: string; stack?: string } | undefined {
   if (!error) return undefined;
   if (error instanceof Error) {
-    const isDev =
-      typeof process !== 'undefined' &&
-      process.env?.NODE_ENV !== 'production';
+    const isDev = typeof process !== "undefined" && process.env?.NODE_ENV !== "production";
     return {
       name: error.name,
       message: error.message,
       stack: isDev ? error.stack : undefined,
     };
   }
-  return { name: 'Unknown', message: String(error) };
+  return { name: "Unknown", message: String(error) };
 }
 
 /** Sanitize log message to prevent log injection (newlines, control chars) */
 function sanitizeLogValue(value: string): string {
-  return value.replace(/[\r\n]/g, ' ').replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, '');
+  return value.replace(/[\r\n]/g, " ").replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, "");
 }
 
 function log(level: LogLevel, message: string, error?: unknown, context?: LogContext): void {
@@ -76,7 +72,7 @@ function log(level: LogLevel, message: string, error?: unknown, context?: LogCon
   const timestamp = new Date().toISOString();
   const tag = level.toUpperCase().padEnd(5);
   const ctx = formatContext(context);
-  const errInfo = level === 'error' ? extractError(error) : undefined;
+  const errInfo = level === "error" ? extractError(error) : undefined;
 
   const line = `[${tag}] [${timestamp}]${sanitizeLogValue(ctx)} ${sanitizeLogValue(message)}`;
 
@@ -85,8 +81,8 @@ function log(level: LogLevel, message: string, error?: unknown, context?: LogCon
     const full = line + errLine;
     if (errInfo.stack) {
       // Stack traces contain intentional newlines — sanitize control chars only
-      const safeStack = errInfo.stack.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, '');
-      console.error(full, '\n', safeStack);
+      const safeStack = errInfo.stack.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, "");
+      console.error(full, "\n", safeStack);
     } else {
       console.error(full);
     }
@@ -96,16 +92,16 @@ function log(level: LogLevel, message: string, error?: unknown, context?: LogCon
   // All values in `line` are already sanitized via sanitizeLogValue
   const safeLine = line;
   switch (level) {
-    case 'debug':
+    case "debug":
       console.debug(safeLine);
       break;
-    case 'info':
+    case "info":
       console.info(safeLine);
       break;
-    case 'warn':
+    case "warn":
       console.warn(safeLine);
       break;
-    case 'error':
+    case "error":
       console.error(safeLine);
       break;
   }
@@ -113,15 +109,15 @@ function log(level: LogLevel, message: string, error?: unknown, context?: LogCon
 
 export const logger = {
   debug(message: string, context?: LogContext): void {
-    log('debug', message, undefined, context);
+    log("debug", message, undefined, context);
   },
   info(message: string, context?: LogContext): void {
-    log('info', message, undefined, context);
+    log("info", message, undefined, context);
   },
   warn(message: string, context?: LogContext): void {
-    log('warn', message, undefined, context);
+    log("warn", message, undefined, context);
   },
   error(message: string, error?: unknown, context?: LogContext): void {
-    log('error', message, error, context);
+    log("error", message, error, context);
   },
 };

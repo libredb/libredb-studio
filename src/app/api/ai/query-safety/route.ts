@@ -1,14 +1,14 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { createLLMProvider } from '@/lib/llm';
-import { createErrorResponse } from '@/lib/api/errors';
+import { NextRequest, NextResponse } from "next/server";
+import { createLLMProvider } from "@/lib/llm";
+import { createErrorResponse } from "@/lib/api/errors";
 
 function buildSafetySystemPrompt(databaseType: string, schemaContext: string): string {
   return `You are a Database Safety Analyst. Your job is to analyze SQL queries BEFORE they are executed and warn the user about potential dangers.
 
-DATABASE TYPE: ${databaseType || 'PostgreSQL'}
+DATABASE TYPE: ${databaseType || "PostgreSQL"}
 
 SCHEMA CONTEXT:
-${schemaContext || 'No schema available.'}
+${schemaContext || "No schema available."}
 
 ANALYSIS RULES:
 1. Check for destructive operations: DROP, TRUNCATE, DELETE without WHERE, UPDATE without WHERE
@@ -54,7 +54,7 @@ export async function POST(req: NextRequest) {
     const { query, schemaContext, databaseType } = await req.json();
 
     if (!query) {
-      return NextResponse.json({ error: 'Query is required' }, { status: 400 });
+      return NextResponse.json({ error: "Query is required" }, { status: 400 });
     }
 
     const provider = await createLLMProvider();
@@ -70,18 +70,18 @@ Return your analysis as a JSON code block.`;
 
     const stream = await provider.stream({
       messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userMessage },
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userMessage },
       ],
     });
 
     return new Response(stream, {
       headers: {
-        'Content-Type': 'text/plain; charset=utf-8',
-        'Transfer-Encoding': 'chunked',
+        "Content-Type": "text/plain; charset=utf-8",
+        "Transfer-Encoding": "chunked",
       },
     });
   } catch (error) {
-    return createErrorResponse(error, { route: 'api/ai/query-safety' });
+    return createErrorResponse(error, { route: "api/ai/query-safety" });
   }
 }

@@ -24,13 +24,18 @@ Web-based SQL IDE for cloud-native teams: PostgreSQL, MySQL, SQLite, Oracle, SQL
 bun install              # deps (Bun preferred)
 bun dev                  # dev server (Turbopack)
 bun run build            # production build
-bun run lint             # ESLint 9
+bun run format           # Biome formatter check (format:fix to write); CSS/JSON excluded
+bun run lint             # oxlint (fast, syntactic) then ESLint 9 (eslint-config-next + narrow type-aware layer)
+bun run lint:oxc         # oxlint only
 bun run typecheck        # TypeScript strict
 bun run test             # all layers: unit + api + integration + hooks + components
 bun run test:e2e         # Playwright (requires build)
 bun run test:coverage    # coverage report
 bun run build:lib        # tsup → @libredb/studio package dist (see rule below)
+bun run attw             # validate published type-resolution against the packed tarball (needs build:lib first)
 ```
+
+> **Toolchain rationale (Biome formatter, oxlint, type-aware ESLint layer, attw) lives in [`docs/TOOLCHAIN.md`](docs/TOOLCHAIN.md).** Biome is formatter-only (lineWidth 120); oxlint is the fast syntactic layer in front of ESLint; `eslint-config-next` still owns React/Next/hooks; a narrow `typescript-eslint` type-aware layer guards `src/app/api` + `src/lib/db` against floating promises; attw uses `--profile node16` (the package targets Node >=24 + modern bundlers, so node10 is ignored).
 
 > **`build:lib` after platform-facing changes:** after changing any component used by platform (workspace, providers, …), run `build:lib` — `bun run build` (Next.js) does NOT update the package dist.
 
@@ -40,7 +45,7 @@ bun run build:lib        # tsup → @libredb/studio package dist (see rule below
 
 ## Pre-Commit Verification (MANDATORY)
 
-After every code change, run all four locally before claiming done — they match CI (`ci.yml`, `docker-build-push.yml`): `bun run lint` · `bun run typecheck` · `bun run test` · `bun run build`. A local pass on all four guarantees CI passes; do not skip any.
+After every code change, run all five locally before claiming done — they match CI (`ci.yml`, `docker-build-push.yml`): `bun run format` · `bun run lint` · `bun run typecheck` · `bun run test` · `bun run build`. A local pass guarantees CI passes; do not skip any. (`bun run lint` runs oxlint then ESLint; the CI `lint-and-build` job additionally runs `build:lib` + `attw`.)
 
 ## Architecture
 

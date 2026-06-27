@@ -1,16 +1,10 @@
-'use client';
+"use client";
 
-import { useEffect } from 'react';
+import { useEffect } from "react";
 
-export default function ErrorPage({
-  error,
-  reset,
-}: {
-  error: Error & { digest?: string };
-  reset: () => void;
-}) {
+export default function ErrorPage({ error, reset }: { error: Error & { digest?: string }; reset: () => void }) {
   useEffect(() => {
-    console.error('[ErrorBoundary]', error.message, error.digest);
+    console.error("[ErrorBoundary]", error.message, error.digest);
   }, [error]);
 
   return (
@@ -19,14 +13,9 @@ export default function ErrorPage({
         <div className="mb-4 text-5xl">!</div>
         <h1 className="text-xl font-semibold mb-2">Something went wrong</h1>
         <p className="text-zinc-400 mb-6 text-sm">
-          LibreDB Studio encountered an unexpected error. You can try again or
-          report this issue.
+          LibreDB Studio encountered an unexpected error. You can try again or report this issue.
         </p>
-        {error.digest && (
-          <p className="text-zinc-600 text-xs mb-4">
-            Error ID: {error.digest}
-          </p>
-        )}
+        {error.digest && <p className="text-zinc-600 text-xs mb-4">Error ID: {error.digest}</p>}
         <div className="flex gap-3 justify-center">
           <button
             onClick={reset}

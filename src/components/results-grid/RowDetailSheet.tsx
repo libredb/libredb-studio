@@ -1,27 +1,13 @@
 "use client";
 
-import React, { useState, useCallback } from 'react';
-import { cn } from '@/lib/utils';
-import {
-  Copy,
-  FileJson,
-  Check,
-  Eye,
-  Lock,
-} from 'lucide-react';
-import {
-  Sheet,
-  SheetContent,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet";
-import { Button } from '@/components/ui/button';
-import { ScrollArea } from '@/components/ui/scroll-area';
-import {
-  type MaskingPattern,
-  maskValueByPattern,
-} from '@/lib/data-masking';
-import { formatCellValue } from './utils';
+import React, { useState, useCallback } from "react";
+import { cn } from "@/lib/utils";
+import { Copy, FileJson, Check, Eye, Lock } from "lucide-react";
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Button } from "@/components/ui/button";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { type MaskingPattern, maskValueByPattern } from "@/lib/data-masking";
+import { formatCellValue } from "./utils";
 
 export interface RowDetailSheetProps {
   row: Record<string, unknown>;
@@ -49,9 +35,9 @@ export function RowDetailSheet({
 
   // Auto-hide revealed fields after 10s
   const revealField = useCallback((field: string) => {
-    setRevealedFields(prev => new Set(prev).add(field));
+    setRevealedFields((prev) => new Set(prev).add(field));
     setTimeout(() => {
-      setRevealedFields(prev => {
+      setRevealedFields((prev) => {
         const next = new Set(prev);
         next.delete(field);
         return next;
@@ -59,13 +45,16 @@ export function RowDetailSheet({
     }, 10000);
   }, []);
 
-  const getDisplayValue = useCallback((field: string, value: unknown): { text: string; isMasked: boolean } => {
-    const pattern = sensitiveColumns?.get(field);
-    if (maskingActive && pattern && value != null && value !== undefined && !revealedFields.has(field)) {
-      return { text: maskValueByPattern(value, pattern), isMasked: true };
-    }
-    return { text: typeof value === 'object' ? JSON.stringify(value) : String(value ?? 'NULL'), isMasked: false };
-  }, [maskingActive, sensitiveColumns, revealedFields]);
+  const getDisplayValue = useCallback(
+    (field: string, value: unknown): { text: string; isMasked: boolean } => {
+      const pattern = sensitiveColumns?.get(field);
+      if (maskingActive && pattern && value != null && value !== undefined && !revealedFields.has(field)) {
+        return { text: maskValueByPattern(value, pattern), isMasked: true };
+      }
+      return { text: typeof value === "object" ? JSON.stringify(value) : String(value ?? "NULL"), isMasked: false };
+    },
+    [maskingActive, sensitiveColumns, revealedFields],
+  );
 
   const copyValue = (field: string, value: unknown) => {
     const { text } = getDisplayValue(field, value);
@@ -86,7 +75,7 @@ export function RowDetailSheet({
     } else {
       navigator.clipboard.writeText(JSON.stringify(row, null, 2));
     }
-    setCopiedField('__all__');
+    setCopiedField("__all__");
     setTimeout(() => setCopiedField(null), 1500);
   };
 
@@ -107,10 +96,14 @@ export function RowDetailSheet({
               className="h-8 text-xs border-white/10 hover:bg-white/5"
               onClick={copyAllAsJson}
             >
-              {copiedField === '__all__' ? (
-                <><Check strokeWidth={1.5} className="w-3 h-3 mr-1 text-emerald-400" /> Copied</>
+              {copiedField === "__all__" ? (
+                <>
+                  <Check strokeWidth={1.5} className="w-3 h-3 mr-1 text-emerald-400" /> Copied
+                </>
               ) : (
-                <><Copy strokeWidth={1.5} className="w-3 h-3 mr-1" /> Copy JSON</>
+                <>
+                  <Copy strokeWidth={1.5} className="w-3 h-3 mr-1" /> Copy JSON
+                </>
               )}
             </Button>
           </div>
@@ -118,26 +111,25 @@ export function RowDetailSheet({
 
         <ScrollArea className="h-[calc(85vh-100px)] mt-4">
           <div className="space-y-1 pr-4">
-            {fields.map(field => {
+            {fields.map((field) => {
               const { text, isMasked } = getDisplayValue(field, row[field]);
               const isLongValue = text.length > 50;
 
               return (
-                <div
-                  key={field}
-                  className="group p-3 rounded-lg hover:bg-white/5 transition-colors"
-                >
+                <div key={field} className="group p-3 rounded-lg hover:bg-white/5 transition-colors">
                   <div className="flex items-start justify-between gap-4">
                     <div className="flex-1 min-w-0">
                       <p className="text-xs text-zinc-500 mb-1 font-mono flex items-center gap-1">
                         {field}
                         {isMasked && <Lock strokeWidth={1.5} className="w-2.5 h-2.5 text-purple-400" />}
                       </p>
-                      <p className={cn(
-                        "font-mono text-xs break-all",
-                        isMasked ? "text-zinc-500 italic" : formatCellValue(row[field]).className,
-                        isLongValue && "text-xs"
-                      )}>
+                      <p
+                        className={cn(
+                          "font-mono text-xs break-all",
+                          isMasked ? "text-zinc-500 italic" : formatCellValue(row[field]).className,
+                          isLongValue && "text-xs",
+                        )}
+                      >
                         {text}
                       </p>
                     </div>

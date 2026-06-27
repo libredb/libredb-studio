@@ -1,6 +1,6 @@
-'use client';
+"use client";
 
-import React, { useState, useMemo, useCallback } from 'react';
+import React, { useState, useMemo, useCallback } from "react";
 import {
   GitCompare,
   Plus,
@@ -13,24 +13,18 @@ import {
   Clock,
   Database,
   AlertTriangle,
-} from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import { Badge } from '@/components/ui/badge';
-import { cn } from '@/lib/utils';
-import type { TableSchema, SchemaSnapshot, DatabaseType, DatabaseConnection } from '@/lib/types';
-import { storage } from '@/lib/storage';
-import { useAllConnections } from '@/hooks/use-all-connections';
-import { diffSchemas } from '@/lib/schema-diff/diff-engine';
-import { generateMigrationSQL } from '@/lib/schema-diff/migration-generator';
-import type { SchemaDiff as SchemaDiffType, TableDiff } from '@/lib/schema-diff/types';
-import { SnapshotTimeline } from '@/components/SnapshotTimeline';
+} from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Badge } from "@/components/ui/badge";
+import { cn } from "@/lib/utils";
+import type { TableSchema, SchemaSnapshot, DatabaseType, DatabaseConnection } from "@/lib/types";
+import { storage } from "@/lib/storage";
+import { useAllConnections } from "@/hooks/use-all-connections";
+import { diffSchemas } from "@/lib/schema-diff/diff-engine";
+import { generateMigrationSQL } from "@/lib/schema-diff/migration-generator";
+import type { SchemaDiff as SchemaDiffType, TableDiff } from "@/lib/schema-diff/types";
+import { SnapshotTimeline } from "@/components/SnapshotTimeline";
 
 interface SchemaDiffProps {
   schema: TableSchema[];
@@ -38,14 +32,12 @@ interface SchemaDiffProps {
 }
 
 export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
-  const [snapshots, setSnapshots] = useState<SchemaSnapshot[]>(() =>
-    storage.getSchemaSnapshots()
-  );
-  const [sourceId, setSourceId] = useState<string>('current');
-  const [targetId, setTargetId] = useState<string>('');
+  const [snapshots, setSnapshots] = useState<SchemaSnapshot[]>(() => storage.getSchemaSnapshots());
+  const [sourceId, setSourceId] = useState<string>("current");
+  const [targetId, setTargetId] = useState<string>("");
   const [selectedTable, setSelectedTable] = useState<string | null>(null);
   const [showMigration, setShowMigration] = useState(false);
-  const [snapshotLabel, setSnapshotLabel] = useState('');
+  const [snapshotLabel, setSnapshotLabel] = useState("");
   const [showLabelInput, setShowLabelInput] = useState(false);
 
   // Take snapshot of current schema
@@ -62,29 +54,28 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
     };
     storage.saveSchemaSnapshot(snapshot);
     setSnapshots(storage.getSchemaSnapshots());
-    setSnapshotLabel('');
+    setSnapshotLabel("");
     setShowLabelInput(false);
   }, [schema, connection, snapshotLabel]);
 
   // Delete snapshot
-  const deleteSnapshot = useCallback((id: string) => {
-    storage.deleteSchemaSnapshot(id);
-    setSnapshots(storage.getSchemaSnapshots());
-    if (sourceId === id) setSourceId('current');
-    if (targetId === id) setTargetId('');
-  }, [sourceId, targetId]);
+  const deleteSnapshot = useCallback(
+    (id: string) => {
+      storage.deleteSchemaSnapshot(id);
+      setSnapshots(storage.getSchemaSnapshots());
+      if (sourceId === id) setSourceId("current");
+      if (targetId === id) setTargetId("");
+    },
+    [sourceId, targetId],
+  );
 
   // Compute diff
   const diff = useMemo<SchemaDiffType | null>(() => {
     if (!targetId) return null;
 
-    const sourceSchema = sourceId === 'current'
-      ? schema
-      : snapshots.find(s => s.id === sourceId)?.schema || [];
+    const sourceSchema = sourceId === "current" ? schema : snapshots.find((s) => s.id === sourceId)?.schema || [];
 
-    const targetSchema = targetId === 'current'
-      ? schema
-      : snapshots.find(s => s.id === targetId)?.schema || [];
+    const targetSchema = targetId === "current" ? schema : snapshots.find((s) => s.id === targetId)?.schema || [];
 
     if (sourceId === targetId) return null;
 
@@ -93,8 +84,8 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
 
   // Generate migration SQL
   const migrationSQL = useMemo(() => {
-    if (!diff || !diff.hasChanges) return '';
-    const dialect = connection?.type || 'postgres';
+    if (!diff || !diff.hasChanges) return "";
+    const dialect = connection?.type || "postgres";
     return generateMigrationSQL(diff, dialect as DatabaseType);
   }, [diff, connection]);
 
@@ -103,50 +94,70 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
   const [fetchingRemote, setFetchingRemote] = useState(false);
 
   // Fetch schema from a remote connection
-  const fetchRemoteSchema = useCallback(async (connId: string) => {
-    const conn = allConnections.find(c => c.id === connId);
-    if (!conn) return;
+  const fetchRemoteSchema = useCallback(
+    async (connId: string) => {
+      const conn = allConnections.find((c) => c.id === connId);
+      if (!conn) return;
 
-    setFetchingRemote(true);
-    try {
-      const res = await fetch('/api/db/schema-snapshot', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(
-          conn.managed && conn.seedId
-            ? { connectionId: `seed:${conn.seedId}` }
-            : { connection: conn }
-        ),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
+      setFetchingRemote(true);
+      try {
+        const res = await fetch("/api/db/schema-snapshot", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(
+            conn.managed && conn.seedId ? { connectionId: `seed:${conn.seedId}` } : { connection: conn },
+          ),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error);
 
-      // Auto-save as snapshot
-      const snapshot: SchemaSnapshot = {
-        id: `remote-${Date.now()}`,
-        connectionId: conn.id,
-        connectionName: conn.name,
-        databaseType: conn.type,
-        schema: data.schema,
-        createdAt: new Date(),
-        label: `Live: ${conn.name}`,
-      };
-      storage.saveSchemaSnapshot(snapshot);
-      setSnapshots(storage.getSchemaSnapshots());
-      setTargetId(snapshot.id);
-    } catch (err) {
-      console.error('Failed to fetch remote schema:', err);
-    } finally {
-      setFetchingRemote(false);
-    }
-  }, [allConnections]);
+        // Auto-save as snapshot
+        const snapshot: SchemaSnapshot = {
+          id: `remote-${Date.now()}`,
+          connectionId: conn.id,
+          connectionName: conn.name,
+          databaseType: conn.type,
+          schema: data.schema,
+          createdAt: new Date(),
+          label: `Live: ${conn.name}`,
+        };
+        storage.saveSchemaSnapshot(snapshot);
+        setSnapshots(storage.getSchemaSnapshots());
+        setTargetId(snapshot.id);
+      } catch (err) {
+        console.error("Failed to fetch remote schema:", err);
+      } finally {
+        setFetchingRemote(false);
+      }
+    },
+    [allConnections],
+  );
 
   const getActionBadge = (action: string) => {
     switch (action) {
-      case 'added': return <Badge className="bg-green-500/20 text-green-400 border-green-500/30 text-xs"><Plus strokeWidth={1.5} className="w-2.5 h-2.5 mr-0.5" />Added</Badge>;
-      case 'removed': return <Badge className="bg-red-500/20 text-red-400 border-red-500/30 text-xs"><Minus className="w-2.5 h-2.5 mr-0.5" />Removed</Badge>;
-      case 'modified': return <Badge className="bg-yellow-500/20 text-yellow-400 border-yellow-500/30 text-xs"><Edit3 strokeWidth={1.5} className="w-2.5 h-2.5 mr-0.5" />Modified</Badge>;
-      default: return null;
+      case "added":
+        return (
+          <Badge className="bg-green-500/20 text-green-400 border-green-500/30 text-xs">
+            <Plus strokeWidth={1.5} className="w-2.5 h-2.5 mr-0.5" />
+            Added
+          </Badge>
+        );
+      case "removed":
+        return (
+          <Badge className="bg-red-500/20 text-red-400 border-red-500/30 text-xs">
+            <Minus className="w-2.5 h-2.5 mr-0.5" />
+            Removed
+          </Badge>
+        );
+      case "modified":
+        return (
+          <Badge className="bg-yellow-500/20 text-yellow-400 border-yellow-500/30 text-xs">
+            <Edit3 strokeWidth={1.5} className="w-2.5 h-2.5 mr-0.5" />
+            Modified
+          </Badge>
+        );
+      default:
+        return null;
     }
   };
 
@@ -177,7 +188,7 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
                   <Database strokeWidth={1.5} className="w-3 h-3" /> Current Schema
                 </div>
               </SelectItem>
-              {snapshots.map(s => (
+              {snapshots.map((s) => (
                 <SelectItem key={s.id} value={s.id} className="text-xs">
                   <div className="flex items-center gap-1">
                     <Clock strokeWidth={1.5} className="w-3 h-3" /> {formatSnapshotLabel(s)}
@@ -193,13 +204,16 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
         {/* Target selector */}
         <div className="flex items-center gap-1">
           <span className="text-xs text-zinc-600">Target</span>
-          <Select value={targetId} onValueChange={(v) => {
-            if (v.startsWith('conn:')) {
-              fetchRemoteSchema(v.replace('conn:', ''));
-            } else {
-              setTargetId(v);
-            }
-          }}>
+          <Select
+            value={targetId}
+            onValueChange={(v) => {
+              if (v.startsWith("conn:")) {
+                fetchRemoteSchema(v.replace("conn:", ""));
+              } else {
+                setTargetId(v);
+              }
+            }}
+          >
             <SelectTrigger className="h-7 w-[180px] text-xs bg-white/5 border-white/10">
               <SelectValue placeholder="Select target" />
             </SelectTrigger>
@@ -209,28 +223,30 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
                   <Database strokeWidth={1.5} className="w-3 h-3" /> Current Schema
                 </div>
               </SelectItem>
-              {snapshots.map(s => (
+              {snapshots.map((s) => (
                 <SelectItem key={s.id} value={s.id} className="text-xs">
                   <div className="flex items-center gap-1">
                     <Clock strokeWidth={1.5} className="w-3 h-3" /> {formatSnapshotLabel(s)}
                   </div>
                 </SelectItem>
               ))}
-              {allConnections.filter(c => c.id !== connection?.id).length > 0 && (
+              {allConnections.filter((c) => c.id !== connection?.id).length > 0 && (
                 <>
                   <div className="px-2 py-1 text-[0.625rem] text-zinc-600 border-t border-white/5 mt-1">
                     Fetch from connection
                   </div>
-                  {allConnections.filter(c => c.id !== connection?.id).map(c => (
-                    <SelectItem key={`conn:${c.id}`} value={`conn:${c.id}`} className="text-xs">
-                      <div className="flex items-center gap-1">
-                        <Database strokeWidth={1.5} className="w-3 h-3 text-blue-400" /> {c.name}
-                        {c.environment === 'production' && (
-                          <AlertTriangle strokeWidth={1.5} className="w-3 h-3 text-red-400" />
-                        )}
-                      </div>
-                    </SelectItem>
-                  ))}
+                  {allConnections
+                    .filter((c) => c.id !== connection?.id)
+                    .map((c) => (
+                      <SelectItem key={`conn:${c.id}`} value={`conn:${c.id}`} className="text-xs">
+                        <div className="flex items-center gap-1">
+                          <Database strokeWidth={1.5} className="w-3 h-3 text-blue-400" /> {c.name}
+                          {c.environment === "production" && (
+                            <AlertTriangle strokeWidth={1.5} className="w-3 h-3 text-red-400" />
+                          )}
+                        </div>
+                      </SelectItem>
+                    ))}
                 </>
               )}
             </SelectContent>
@@ -248,14 +264,19 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
               placeholder="Label (optional)..."
               value={snapshotLabel}
               onChange={(e) => setSnapshotLabel(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && takeSnapshot()}
+              onKeyDown={(e) => e.key === "Enter" && takeSnapshot()}
               className="h-7 px-2 text-xs bg-white/5 border border-white/10 rounded text-zinc-300 focus:outline-none focus:border-blue-500 w-32"
               autoFocus
             />
             <Button variant="ghost" size="sm" className="h-7 text-xs text-blue-400" onClick={takeSnapshot}>
               Save
             </Button>
-            <Button variant="ghost" size="sm" className="h-7 text-xs text-zinc-500" onClick={() => setShowLabelInput(false)}>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 text-xs text-zinc-500"
+              onClick={() => setShowLabelInput(false)}
+            >
               Cancel
             </Button>
           </div>
@@ -278,7 +299,7 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
             className="h-7 text-xs font-medium text-zinc-500 hover:text-white gap-1"
             onClick={() => setShowMigration(!showMigration)}
           >
-            <FileCode className="w-3 h-3" /> {showMigration ? 'Diff View' : 'SQL Migration'}
+            <FileCode className="w-3 h-3" /> {showMigration ? "Diff View" : "SQL Migration"}
           </Button>
         )}
       </div>
@@ -320,13 +341,13 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
                   {diff.summary.added} added, {diff.summary.removed} removed, {diff.summary.modified} modified
                 </div>
               </div>
-              {diff.tables.map(table => (
+              {diff.tables.map((table) => (
                 <button
                   key={table.tableName}
                   onClick={() => setSelectedTable(table.tableName)}
                   className={cn(
                     "w-full text-left px-3 py-2 text-xs flex items-center gap-2 hover:bg-white/5 transition-colors",
-                    selectedTable === table.tableName && "bg-white/10"
+                    selectedTable === table.tableName && "bg-white/10",
                   )}
                 >
                   {selectedTable === table.tableName ? (
@@ -343,7 +364,7 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
             {/* Table Detail */}
             <div className="flex-1 overflow-auto p-4">
               {selectedTable ? (
-                <TableDiffDetail diff={diff.tables.find(t => t.tableName === selectedTable)!} />
+                <TableDiffDetail diff={diff.tables.find((t) => t.tableName === selectedTable)!} />
               ) : (
                 <div className="h-full flex items-center justify-center text-zinc-600 text-xs">
                   Select a table to view diff details
@@ -372,12 +393,14 @@ function TableDiffDetail({ diff }: { diff: TableDiff }) {
       <div className="flex items-center gap-2">
         <Database strokeWidth={1.5} className="w-3.5 h-3.5 text-zinc-400" />
         <h3 className="text-xs font-medium text-zinc-200">{diff.tableName}</h3>
-        <Badge className={cn(
-          "text-xs",
-          diff.action === 'added' && "bg-green-500/20 text-green-400",
-          diff.action === 'removed' && "bg-red-500/20 text-red-400",
-          diff.action === 'modified' && "bg-yellow-500/20 text-yellow-400",
-        )}>
+        <Badge
+          className={cn(
+            "text-xs",
+            diff.action === "added" && "bg-green-500/20 text-green-400",
+            diff.action === "removed" && "bg-red-500/20 text-red-400",
+            diff.action === "modified" && "bg-yellow-500/20 text-yellow-400",
+          )}
+        >
           {diff.action}
         </Badge>
       </div>
@@ -388,26 +411,27 @@ function TableDiffDetail({ diff }: { diff: TableDiff }) {
           <h4 className="text-xs text-zinc-500 mb-2 font-medium">Columns</h4>
           <div className="space-y-1">
             {diff.columns.map((col, i) => (
-              <div key={i} className={cn(
-                "px-3 py-2 rounded text-xs flex items-center gap-2",
-                col.action === 'added' && "bg-green-500/5 border border-green-500/10",
-                col.action === 'removed' && "bg-red-500/5 border border-red-500/10",
-                col.action === 'modified' && "bg-yellow-500/5 border border-yellow-500/10",
-              )}>
+              <div
+                key={i}
+                className={cn(
+                  "px-3 py-2 rounded text-xs flex items-center gap-2",
+                  col.action === "added" && "bg-green-500/5 border border-green-500/10",
+                  col.action === "removed" && "bg-red-500/5 border border-red-500/10",
+                  col.action === "modified" && "bg-yellow-500/5 border border-yellow-500/10",
+                )}
+              >
                 <span className="font-mono text-zinc-300 min-w-[120px]">{col.columnName}</span>
-                {col.action === 'modified' && (
+                {col.action === "modified" && (
                   <div className="flex flex-col gap-0.5">
                     {col.changes.map((change, j) => (
-                      <span key={j} className="text-xs text-zinc-500">{change}</span>
+                      <span key={j} className="text-xs text-zinc-500">
+                        {change}
+                      </span>
                     ))}
                   </div>
                 )}
-                {col.action === 'added' && (
-                  <span className="text-xs text-green-400 font-mono">{col.targetType}</span>
-                )}
-                {col.action === 'removed' && (
-                  <span className="text-xs text-red-400 font-mono">{col.sourceType}</span>
-                )}
+                {col.action === "added" && <span className="text-xs text-green-400 font-mono">{col.targetType}</span>}
+                {col.action === "removed" && <span className="text-xs text-red-400 font-mono">{col.sourceType}</span>}
                 <span className="ml-auto">{getActionIcon(col.action)}</span>
               </div>
             ))}
@@ -421,15 +445,20 @@ function TableDiffDetail({ diff }: { diff: TableDiff }) {
           <h4 className="text-xs text-zinc-500 mb-2 font-medium">Indexes</h4>
           <div className="space-y-1">
             {diff.indexes.map((idx, i) => (
-              <div key={i} className={cn(
-                "px-3 py-2 rounded text-xs flex items-center gap-2",
-                idx.action === 'added' && "bg-green-500/5 border border-green-500/10",
-                idx.action === 'removed' && "bg-red-500/5 border border-red-500/10",
-                idx.action === 'modified' && "bg-yellow-500/5 border border-yellow-500/10",
-              )}>
+              <div
+                key={i}
+                className={cn(
+                  "px-3 py-2 rounded text-xs flex items-center gap-2",
+                  idx.action === "added" && "bg-green-500/5 border border-green-500/10",
+                  idx.action === "removed" && "bg-red-500/5 border border-red-500/10",
+                  idx.action === "modified" && "bg-yellow-500/5 border border-yellow-500/10",
+                )}
+              >
                 <span className="font-mono text-zinc-300">{idx.indexName}</span>
                 {idx.changes.map((change, j) => (
-                  <span key={j} className="text-xs text-zinc-500">{change}</span>
+                  <span key={j} className="text-xs text-zinc-500">
+                    {change}
+                  </span>
                 ))}
                 <span className="ml-auto">{getActionIcon(idx.action)}</span>
               </div>
@@ -444,14 +473,19 @@ function TableDiffDetail({ diff }: { diff: TableDiff }) {
           <h4 className="text-xs text-zinc-500 mb-2 font-medium">Foreign Keys</h4>
           <div className="space-y-1">
             {diff.foreignKeys.map((fk, i) => (
-              <div key={i} className={cn(
-                "px-3 py-2 rounded text-xs flex items-center gap-2",
-                fk.action === 'added' && "bg-green-500/5 border border-green-500/10",
-                fk.action === 'removed' && "bg-red-500/5 border border-red-500/10",
-              )}>
+              <div
+                key={i}
+                className={cn(
+                  "px-3 py-2 rounded text-xs flex items-center gap-2",
+                  fk.action === "added" && "bg-green-500/5 border border-green-500/10",
+                  fk.action === "removed" && "bg-red-500/5 border border-red-500/10",
+                )}
+              >
                 <span className="font-mono text-zinc-300">{fk.columnName}</span>
                 {fk.changes.map((change, j) => (
-                  <span key={j} className="text-xs text-zinc-500">{change}</span>
+                  <span key={j} className="text-xs text-zinc-500">
+                    {change}
+                  </span>
                 ))}
                 <span className="ml-auto">{getActionIcon(fk.action)}</span>
               </div>
@@ -465,9 +499,13 @@ function TableDiffDetail({ diff }: { diff: TableDiff }) {
 
 function getActionIcon(action: string) {
   switch (action) {
-    case 'added': return <Plus strokeWidth={1.5} className="w-3 h-3 text-green-400" />;
-    case 'removed': return <Minus className="w-3 h-3 text-red-400" />;
-    case 'modified': return <Edit3 strokeWidth={1.5} className="w-3 h-3 text-yellow-400" />;
-    default: return null;
+    case "added":
+      return <Plus strokeWidth={1.5} className="w-3 h-3 text-green-400" />;
+    case "removed":
+      return <Minus className="w-3 h-3 text-red-400" />;
+    case "modified":
+      return <Edit3 strokeWidth={1.5} className="w-3 h-3 text-yellow-400" />;
+    default:
+      return null;
   }
 }

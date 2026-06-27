@@ -1,30 +1,19 @@
 "use client";
 
-import React from 'react';
-import { QueryResult } from '@/lib/types';
-import { cn } from '@/lib/utils';
-import {
-  ChevronDown,
-  LayoutGrid,
-  Table2,
-  Loader2,
-  EyeOff,
-  Eye,
-  Save,
-  X,
-  Filter,
-  Lock,
-} from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import type { CellChange } from '@/components/ResultsGrid';
+import React from "react";
+import { QueryResult } from "@/lib/types";
+import { cn } from "@/lib/utils";
+import { ChevronDown, LayoutGrid, Table2, Loader2, EyeOff, Eye, Save, X, Filter, Lock } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import type { CellChange } from "@/components/ResultsGrid";
 
 export interface StatsBarProps {
   result: QueryResult;
   filteredRowCount: number;
   activeFilterCount: number;
   onClearFilters: () => void;
-  viewMode: 'card' | 'table';
-  onSetViewMode: (mode: 'card' | 'table') => void;
+  viewMode: "card" | "table";
+  onSetViewMode: (mode: "card" | "table") => void;
   // Masking props
   hasSensitive: boolean;
   effectiveMaskingEnabled: boolean;
@@ -62,9 +51,7 @@ export function StatsBar({
         <span className="flex items-center gap-1.5">
           <span className="w-1.5 h-1.5 rounded-full bg-emerald-500/50" />
           {result.rows.length} rows
-          {result.pagination?.hasMore && (
-            <span className="text-amber-400 ml-1">(more available)</span>
-          )}
+          {result.pagination?.hasMore && <span className="text-amber-400 ml-1">(more available)</span>}
         </span>
         <span className="hidden sm:inline">{result.fields.length} columns</span>
         {activeFilterCount > 0 && (
@@ -74,47 +61,44 @@ export function StatsBar({
             title="Clear all filters"
           >
             <Filter strokeWidth={1.5} className="w-3 h-3" />
-            {activeFilterCount} filter{activeFilterCount > 1 ? 's' : ''} &bull; {filteredRowCount} shown
+            {activeFilterCount} filter{activeFilterCount > 1 ? "s" : ""} &bull; {filteredRowCount} shown
             <X strokeWidth={1.5} className="w-3 h-3" />
           </button>
         )}
         {result.pagination?.wasLimited && (
-          <span className="text-blue-400 text-xs bg-blue-500/10 px-2 py-0.5 rounded">
-            AUTO-LIMITED
-          </span>
+          <span className="text-blue-400 text-xs bg-blue-500/10 px-2 py-0.5 rounded">AUTO-LIMITED</span>
         )}
       </div>
 
       <div className="flex items-center gap-2">
         {/* Data Masking Toggle */}
-        {hasSensitive && (
-          userCanToggle && onToggleMasking ? (
+        {hasSensitive &&
+          (userCanToggle && onToggleMasking ? (
             <Button
               variant="ghost"
               size="sm"
               className={cn(
                 "h-6 px-2 text-xs font-medium gap-1",
-                effectiveMaskingEnabled ? "text-purple-400 bg-purple-500/10" : "text-zinc-500"
+                effectiveMaskingEnabled ? "text-purple-400 bg-purple-500/10" : "text-zinc-500",
               )}
               onClick={onToggleMasking}
-              title={effectiveMaskingEnabled ? 'Show sensitive data' : 'Mask sensitive data'}
+              title={effectiveMaskingEnabled ? "Show sensitive data" : "Mask sensitive data"}
             >
               {effectiveMaskingEnabled ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
-              {effectiveMaskingEnabled ? 'MASKED' : 'MASK'}
+              {effectiveMaskingEnabled ? "MASKED" : "MASK"}
             </Button>
           ) : effectiveMaskingEnabled ? (
             <span className="h-6 px-2 text-xs font-medium text-purple-400 bg-purple-500/10 rounded flex items-center gap-1">
               <Lock strokeWidth={1.5} className="w-3 h-3" />
               MASKED
             </span>
-          ) : null
-        )}
+          ) : null)}
 
         {/* Pending Changes Indicator */}
         {editingEnabled && pendingChanges && pendingChanges.length > 0 && (
           <div className="flex items-center gap-1">
             <span className="text-xs text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded">
-              {pendingChanges.length} change{pendingChanges.length > 1 ? 's' : ''}
+              {pendingChanges.length} change{pendingChanges.length > 1 ? "s" : ""}
             </span>
             <Button
               variant="ghost"
@@ -137,25 +121,25 @@ export function StatsBar({
 
         {/* Execution Time - Hidden on mobile */}
         <span className="hidden sm:flex px-2 py-0.5 rounded bg-white/5 border border-white/5">
-          EXEC TIME: {result.executionTime || '0ms'}
+          EXEC TIME: {result.executionTime || "0ms"}
         </span>
 
         {/* View Toggle - Mobile only */}
         <div className="flex md:hidden items-center bg-white/5 rounded-lg p-0.5">
           <button
-            onClick={() => onSetViewMode('card')}
+            onClick={() => onSetViewMode("card")}
             className={cn(
               "p-1.5 rounded transition-all",
-              viewMode === 'card' ? "bg-blue-600 text-white" : "text-zinc-500"
+              viewMode === "card" ? "bg-blue-600 text-white" : "text-zinc-500",
             )}
           >
             <LayoutGrid strokeWidth={1.5} className="w-3.5 h-3.5" />
           </button>
           <button
-            onClick={() => onSetViewMode('table')}
+            onClick={() => onSetViewMode("table")}
             className={cn(
               "p-1.5 rounded transition-all",
-              viewMode === 'table' ? "bg-blue-600 text-white" : "text-zinc-500"
+              viewMode === "table" ? "bg-blue-600 text-white" : "text-zinc-500",
             )}
           >
             <Table2 strokeWidth={1.5} className="w-3.5 h-3.5" />

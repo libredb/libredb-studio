@@ -1,12 +1,12 @@
-import { describe, test, expect, mock, beforeEach, afterEach } from 'bun:test';
-import { parseResponseJSON } from '../../helpers/mock-next';
+import { describe, test, expect, mock, beforeEach, afterEach } from "bun:test";
+import { parseResponseJSON } from "../../helpers/mock-next";
 
 // ─── Mock @/lib/auth BEFORE importing the route ─────────────────────────────
 const mockLogout = mock(async () => {});
 
-mock.module('@/lib/auth', () => ({
+mock.module("@/lib/auth", () => ({
   login: mock(async () => {}),
-  signJWT: mock(async () => 'mock-token'),
+  signJWT: mock(async () => "mock-token"),
   verifyJWT: mock(async () => null),
   getSession: mock(async () => null),
   logout: mockLogout,
@@ -15,39 +15,37 @@ mock.module('@/lib/auth', () => ({
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 const mockBuildLogoutUrl = mock((_returnTo: string) => null as string | null);
 
-const mockGetPublicOrigin = mock(
-  (req: Request) => new URL(req.url).origin
-);
+const mockGetPublicOrigin = mock((req: Request) => new URL(req.url).origin);
 
-mock.module('@/lib/oidc', () => ({
+mock.module("@/lib/oidc", () => ({
   buildLogoutUrl: mockBuildLogoutUrl,
   getPublicOrigin: mockGetPublicOrigin,
   getOIDCConfig: mock(() => ({})),
   discoverProvider: mock(async () => ({})),
   generateAuthUrl: mock(async () => ({})),
-  encryptState: mock(async () => ''),
+  encryptState: mock(async () => ""),
   decryptState: mock(async () => ({})),
   exchangeCode: mock(async () => ({})),
-  mapOIDCRole: mock(() => 'user'),
+  mapOIDCRole: mock(() => "user"),
   resetDiscoveryCache: mock(() => {}),
 }));
 
 // ─── Import route handler AFTER mocking ─────────────────────────────────────
-const { POST } = await import('@/app/api/auth/logout/route');
+const { POST } = await import("@/app/api/auth/logout/route");
 
-function makeRequest(url = 'http://localhost:3000/api/auth/logout') {
-  return new Request(url, { method: 'POST' });
+function makeRequest(url = "http://localhost:3000/api/auth/logout") {
+  return new Request(url, { method: "POST" });
 }
 
 // ─── Tests (local auth mode) ────────────────────────────────────────────────
-describe('POST /api/auth/logout (local)', () => {
+describe("POST /api/auth/logout (local)", () => {
   beforeEach(() => {
     mockLogout.mockClear();
     mockBuildLogoutUrl.mockClear();
-    process.env.NEXT_PUBLIC_AUTH_PROVIDER = 'local';
+    process.env.NEXT_PUBLIC_AUTH_PROVIDER = "local";
   });
 
-  test('returns 200 with success true', async () => {
+  test("returns 200 with success true", async () => {
     const res = await POST(makeRequest() as never);
     const data = await parseResponseJSON<{ success: boolean }>(res);
 
@@ -55,20 +53,20 @@ describe('POST /api/auth/logout (local)', () => {
     expect(data.success).toBe(true);
   });
 
-  test('calls logout() once', async () => {
+  test("calls logout() once", async () => {
     await POST(makeRequest() as never);
 
     expect(mockLogout).toHaveBeenCalledTimes(1);
   });
 
-  test('does not return redirectUrl in local mode', async () => {
+  test("does not return redirectUrl in local mode", async () => {
     const res = await POST(makeRequest() as never);
     const data = await parseResponseJSON<{ success: boolean; redirectUrl?: string }>(res);
 
     expect(data.redirectUrl).toBeUndefined();
   });
 
-  test('multiple logouts all succeed', async () => {
+  test("multiple logouts all succeed", async () => {
     const res1 = await POST(makeRequest() as never);
     const res2 = await POST(makeRequest() as never);
     const res3 = await POST(makeRequest() as never);
@@ -85,20 +83,20 @@ describe('POST /api/auth/logout (local)', () => {
 });
 
 // ─── Tests (OIDC auth mode) ─────────────────────────────────────────────────
-describe('POST /api/auth/logout (oidc)', () => {
+describe("POST /api/auth/logout (oidc)", () => {
   beforeEach(() => {
     mockLogout.mockClear();
     mockBuildLogoutUrl.mockClear();
-    process.env.NEXT_PUBLIC_AUTH_PROVIDER = 'oidc';
+    process.env.NEXT_PUBLIC_AUTH_PROVIDER = "oidc";
   });
 
   afterEach(() => {
-    process.env.NEXT_PUBLIC_AUTH_PROVIDER = 'local';
+    process.env.NEXT_PUBLIC_AUTH_PROVIDER = "local";
   });
 
-  test('returns redirectUrl when OIDC logout URL is available', async () => {
+  test("returns redirectUrl when OIDC logout URL is available", async () => {
     mockBuildLogoutUrl.mockReturnValue(
-      'https://auth0.com/v2/logout?client_id=abc&returnTo=http://localhost:3000/login'
+      "https://auth0.com/v2/logout?client_id=abc&returnTo=http://localhost:3000/login",
     );
 
     const res = await POST(makeRequest() as never);
@@ -106,20 +104,18 @@ describe('POST /api/auth/logout (oidc)', () => {
 
     expect(res.status).toBe(200);
     expect(data.success).toBe(true);
-    expect(data.redirectUrl).toBe(
-      'https://auth0.com/v2/logout?client_id=abc&returnTo=http://localhost:3000/login'
-    );
+    expect(data.redirectUrl).toBe("https://auth0.com/v2/logout?client_id=abc&returnTo=http://localhost:3000/login");
   });
 
-  test('calls buildLogoutUrl with correct returnTo', async () => {
-    mockBuildLogoutUrl.mockReturnValue('https://auth0.com/v2/logout');
+  test("calls buildLogoutUrl with correct returnTo", async () => {
+    mockBuildLogoutUrl.mockReturnValue("https://auth0.com/v2/logout");
 
-    await POST(makeRequest('http://localhost:3000/api/auth/logout') as never);
+    await POST(makeRequest("http://localhost:3000/api/auth/logout") as never);
 
-    expect(mockBuildLogoutUrl).toHaveBeenCalledWith('http://localhost:3000/login');
+    expect(mockBuildLogoutUrl).toHaveBeenCalledWith("http://localhost:3000/login");
   });
 
-  test('returns success without redirectUrl when buildLogoutUrl returns null', async () => {
+  test("returns success without redirectUrl when buildLogoutUrl returns null", async () => {
     mockBuildLogoutUrl.mockReturnValue(null);
 
     const res = await POST(makeRequest() as never);
@@ -130,8 +126,8 @@ describe('POST /api/auth/logout (oidc)', () => {
     expect(data.redirectUrl).toBeUndefined();
   });
 
-  test('calls logout() even in OIDC mode', async () => {
-    mockBuildLogoutUrl.mockReturnValue('https://auth0.com/v2/logout');
+  test("calls logout() even in OIDC mode", async () => {
+    mockBuildLogoutUrl.mockReturnValue("https://auth0.com/v2/logout");
 
     await POST(makeRequest() as never);
 

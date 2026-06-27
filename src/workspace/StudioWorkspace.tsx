@@ -1,33 +1,26 @@
-'use client';
+"use client";
 
-import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { Sidebar, ConnectionsList } from '@/components/sidebar';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
+import { Sidebar, ConnectionsList } from "@/components/sidebar";
 // MobileNav excluded in embedded mode — platform provides its own navigation
-import { SchemaExplorer } from '@/components/schema-explorer';
-import { QueryEditor, QueryEditorRef } from '@/components/QueryEditor';
-import { DataImportModal } from '@/components/DataImportModal';
-import { QuerySafetyDialog } from '@/components/QuerySafetyDialog';
-import { DataProfiler } from '@/components/DataProfiler';
-import { CodeGenerator } from '@/components/CodeGenerator';
-import { TestDataGenerator } from '@/components/TestDataGenerator';
-import { SchemaDiagram } from '@/components/SchemaDiagram';
-import { SaveQueryModal } from '@/components/SaveQueryModal';
-import {
-  StudioTabBar,
-  QueryToolbar,
-  BottomPanel,
-} from '@/components/studio/index';
-import type { DatabaseConnection } from '@/lib/types';
-import type { MaskingConfig } from '@/lib/data-masking';
-import { useToast } from '@/hooks/use-toast';
-import { useTabManager } from '@/hooks/use-tab-manager';
-import { useConnectionAdapter } from '@/workspace/hooks/use-connection-adapter';
-import { useQueryAdapter } from '@/workspace/hooks/use-query-adapter';
-import {
-  type StudioWorkspaceProps,
-  DEFAULT_WORKSPACE_FEATURES,
-} from '@/workspace/types';
-import { cn } from '@/lib/utils';
+import { SchemaExplorer } from "@/components/schema-explorer";
+import { QueryEditor, QueryEditorRef } from "@/components/QueryEditor";
+import { DataImportModal } from "@/components/DataImportModal";
+import { QuerySafetyDialog } from "@/components/QuerySafetyDialog";
+import { DataProfiler } from "@/components/DataProfiler";
+import { CodeGenerator } from "@/components/CodeGenerator";
+import { TestDataGenerator } from "@/components/TestDataGenerator";
+import { SchemaDiagram } from "@/components/SchemaDiagram";
+import { SaveQueryModal } from "@/components/SaveQueryModal";
+import { StudioTabBar, QueryToolbar, BottomPanel } from "@/components/studio/index";
+import type { DatabaseConnection } from "@/lib/types";
+import type { MaskingConfig } from "@/lib/data-masking";
+import { useToast } from "@/hooks/use-toast";
+import { useTabManager } from "@/hooks/use-tab-manager";
+import { useConnectionAdapter } from "@/workspace/hooks/use-connection-adapter";
+import { useQueryAdapter } from "@/workspace/hooks/use-query-adapter";
+import { type StudioWorkspaceProps, DEFAULT_WORKSPACE_FEATURES } from "@/workspace/types";
+import { cn } from "@/lib/utils";
 
 /**
  * Scoped CSS for studio's dark theme.
@@ -87,9 +80,9 @@ const STUDIO_SCOPED_CSS = `
 
 function useStudioTheme() {
   useEffect(() => {
-    const id = 'studio-workspace-theme';
+    const id = "studio-workspace-theme";
     if (document.getElementById(id)) return;
-    const style = document.createElement('style');
+    const style = document.createElement("style");
     style.id = id;
     style.textContent = STUDIO_SCOPED_CSS;
     document.head.appendChild(style);
@@ -98,9 +91,9 @@ function useStudioTheme() {
     };
   }, []);
 }
-import { AlertTriangle, Database } from 'lucide-react';
-import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from '@/components/ui/resizable';
-import { AnimatePresence } from 'framer-motion';
+import { AlertTriangle, Database } from "lucide-react";
+import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/components/ui/resizable";
+import { AnimatePresence } from "framer-motion";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -108,7 +101,7 @@ import {
   AlertDialogContent,
   AlertDialogDescription,
   AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
+} from "@/components/ui/alert-dialog";
 
 // No-op masking config for embedded mode (masking disabled)
 const NOOP_MASKING_CONFIG: MaskingConfig = {
@@ -134,10 +127,7 @@ export function StudioWorkspace({
   const { toast } = useToast();
 
   // Merge feature flags with defaults
-  const features = useMemo(
-    () => ({ ...DEFAULT_WORKSPACE_FEATURES, ...featuresProp }),
-    [featuresProp],
-  );
+  const features = useMemo(() => ({ ...DEFAULT_WORKSPACE_FEATURES, ...featuresProp }), [featuresProp]);
 
   // 1. Connection Adapter (platform-managed connections)
   const conn = useConnectionAdapter({
@@ -174,14 +164,14 @@ export function StudioWorkspace({
     } else {
       conn.setSchema([]);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [conn.activeConnection]);
 
   // === Modal / overlay state ===
   const [showDiagram, setShowDiagram] = useState(false);
   const [isSaveQueryModalOpen, setIsSaveQueryModalOpen] = useState(false);
   const [savedKey, setSavedKey] = useState(0);
-  const [activeMobileTab, setActiveMobileTab] = useState<'database' | 'schema' | 'editor'>('editor');
+  const [activeMobileTab, setActiveMobileTab] = useState<"database" | "schema" | "editor">("editor");
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [isNL2SQLOpen, setIsNL2SQLOpen] = useState(false);
   const [profilerTable, setProfilerTable] = useState<string | null>(null);
@@ -189,94 +179,109 @@ export function StudioWorkspace({
   const [testDataTable, setTestDataTable] = useState<string | null>(null);
 
   // === Save query handler ===
-  const handleSaveQuery = useCallback(async (name: string, description: string, tags: string[]) => {
-    if (!conn.activeConnection) return;
+  const handleSaveQuery = useCallback(
+    async (name: string, description: string, tags: string[]) => {
+      if (!conn.activeConnection) return;
 
-    if (onSaveQueryProp) {
-      try {
-        await onSaveQueryProp({
-          name,
-          query: tabMgr.currentTab.query,
-          description,
-          connectionType: conn.activeConnection.type,
-          tags,
-        });
-        setSavedKey(prev => prev + 1);
-        toast({ title: 'Query Saved', description: `"${name}" has been added to your saved queries.` });
-      } catch (error) {
-        const msg = error instanceof Error ? error.message : 'Failed to save query';
-        toast({ title: 'Save Failed', description: msg, variant: 'destructive' });
+      if (onSaveQueryProp) {
+        try {
+          await onSaveQueryProp({
+            name,
+            query: tabMgr.currentTab.query,
+            description,
+            connectionType: conn.activeConnection.type,
+            tags,
+          });
+          setSavedKey((prev) => prev + 1);
+          toast({ title: "Query Saved", description: `"${name}" has been added to your saved queries.` });
+        } catch (error) {
+          const msg = error instanceof Error ? error.message : "Failed to save query";
+          toast({ title: "Save Failed", description: msg, variant: "destructive" });
+        }
       }
-    }
-  }, [conn.activeConnection, tabMgr.currentTab.query, onSaveQueryProp, toast]);
+    },
+    [conn.activeConnection, tabMgr.currentTab.query, onSaveQueryProp, toast],
+  );
 
   // === Export results (simplified, no masking) ===
-  const exportResults = useCallback((format: 'csv' | 'json' | 'sql-insert' | 'sql-ddl') => {
-    if (!tabMgr.currentTab.result) return;
-    const data = tabMgr.currentTab.result.rows;
-    let content = '';
-    let mimeType = 'text/plain';
-    let ext: string = format;
+  const exportResults = useCallback(
+    (format: "csv" | "json" | "sql-insert" | "sql-ddl") => {
+      if (!tabMgr.currentTab.result) return;
+      const data = tabMgr.currentTab.result.rows;
+      let content = "";
+      let mimeType = "text/plain";
+      let ext: string = format;
 
-    if (format === 'csv') {
-      const headers = Object.keys(data[0] || {}).join(',');
-      const rows = data.map(row => Object.values(row).map(val => `"${val}"`).join(',')).join('\n');
-      content = `${headers}\n${rows}`;
-      mimeType = 'text/csv';
-      ext = 'csv';
-    } else if (format === 'json') {
-      content = JSON.stringify(data, null, 2);
-      mimeType = 'application/json';
-      ext = 'json';
-    } else if (format === 'sql-insert') {
-      const tableName = tabMgr.currentTab.name.replace(/^Query[: ]*/, '') || 'table_name';
-      const columns = Object.keys(data[0] || {});
-      const lines = data.map(row => {
-        const values = columns.map(col => {
-          const val = row[col];
-          if (val === null || val === undefined) return 'NULL';
-          if (typeof val === 'number' || typeof val === 'boolean') return String(val);
-          return `'${String(val).replace(/'/g, "''")}'`;
+      if (format === "csv") {
+        const headers = Object.keys(data[0] || {}).join(",");
+        const rows = data
+          .map((row) =>
+            Object.values(row)
+              .map((val) => `"${val}"`)
+              .join(","),
+          )
+          .join("\n");
+        content = `${headers}\n${rows}`;
+        mimeType = "text/csv";
+        ext = "csv";
+      } else if (format === "json") {
+        content = JSON.stringify(data, null, 2);
+        mimeType = "application/json";
+        ext = "json";
+      } else if (format === "sql-insert") {
+        const tableName = tabMgr.currentTab.name.replace(/^Query[: ]*/, "") || "table_name";
+        const columns = Object.keys(data[0] || {});
+        const lines = data.map((row) => {
+          const values = columns.map((col) => {
+            const val = row[col];
+            if (val === null || val === undefined) return "NULL";
+            if (typeof val === "number" || typeof val === "boolean") return String(val);
+            return `'${String(val).replace(/'/g, "''")}'`;
+          });
+          return `INSERT INTO ${tableName} (${columns.join(", ")}) VALUES (${values.join(", ")});`;
         });
-        return `INSERT INTO ${tableName} (${columns.join(', ')}) VALUES (${values.join(', ')});`;
-      });
-      content = lines.join('\n');
-      mimeType = 'text/sql';
-      ext = 'sql';
-    } else if (format === 'sql-ddl') {
-      const tableName = tabMgr.currentTab.name.replace(/^Query[: ]*/, '') || 'table_name';
-      const columns = Object.keys(data[0] || {});
-      const colDefs = columns.map(col => {
-        const sampleVal = data[0]?.[col];
-        let sqlType = 'TEXT';
-        if (typeof sampleVal === 'number') {
-          sqlType = Number.isInteger(sampleVal) ? 'INTEGER' : 'NUMERIC';
-        } else if (typeof sampleVal === 'boolean') {
-          sqlType = 'BOOLEAN';
-        } else if (sampleVal instanceof Date) {
-          sqlType = 'TIMESTAMP';
-        }
-        return `  ${col} ${sqlType}`;
-      });
-      content = `CREATE TABLE ${tableName} (\n${colDefs.join(',\n')}\n);`;
-      mimeType = 'text/sql';
-      ext = 'sql';
-    }
+        content = lines.join("\n");
+        mimeType = "text/sql";
+        ext = "sql";
+      } else if (format === "sql-ddl") {
+        const tableName = tabMgr.currentTab.name.replace(/^Query[: ]*/, "") || "table_name";
+        const columns = Object.keys(data[0] || {});
+        const colDefs = columns.map((col) => {
+          const sampleVal = data[0]?.[col];
+          let sqlType = "TEXT";
+          if (typeof sampleVal === "number") {
+            sqlType = Number.isInteger(sampleVal) ? "INTEGER" : "NUMERIC";
+          } else if (typeof sampleVal === "boolean") {
+            sqlType = "BOOLEAN";
+          } else if (sampleVal instanceof Date) {
+            sqlType = "TIMESTAMP";
+          }
+          return `  ${col} ${sqlType}`;
+        });
+        content = `CREATE TABLE ${tableName} (\n${colDefs.join(",\n")}\n);`;
+        mimeType = "text/sql";
+        ext = "sql";
+      }
 
-    const fileName = `query_result_export.${ext}`;
-    const blob = new Blob([content], { type: mimeType });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = fileName;
-    link.click();
-    URL.revokeObjectURL(url);
-  }, [tabMgr.currentTab]);
+      const fileName = `query_result_export.${ext}`;
+      const blob = new Blob([content], { type: mimeType });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = fileName;
+      link.click();
+      URL.revokeObjectURL(url);
+    },
+    [tabMgr.currentTab],
+  );
 
   // === Table click handler ===
-  const onTableClick = useCallback((tableName: string) => {
-    tabMgr.handleTableClick(tableName, queryExec.executeQuery);
-  }, [tabMgr, queryExec.executeQuery]);
+  const onTableClick = useCallback(
+    (tableName: string) => {
+      tabMgr.handleTableClick(tableName, queryExec.executeQuery);
+    },
+    [tabMgr, queryExec.executeQuery],
+  );
 
   // === No-op callbacks for disabled features ===
   const noop = useCallback(() => {}, []);
@@ -284,7 +289,10 @@ export function StudioWorkspace({
   return (
     <div
       data-studio-workspace=""
-      className={cn('dark flex h-full w-full bg-[#050505] text-zinc-100 overflow-hidden font-sans select-none', className)}
+      className={cn(
+        "dark flex h-full w-full bg-[#050505] text-zinc-100 overflow-hidden font-sans select-none",
+        className,
+      )}
     >
       <ResizablePanelGroup id="workspace-main" direction="horizontal" className="h-full">
         <ResizablePanel defaultSize={22} minSize={15} maxSize={35} className="hidden md:block">
@@ -332,14 +340,12 @@ export function StudioWorkspace({
               {/* Schema Diagram overlay */}
               {features.schemaDiagram && (
                 <AnimatePresence>
-                  {showDiagram && (
-                    <SchemaDiagram schema={conn.schema} onClose={() => setShowDiagram(false)} />
-                  )}
+                  {showDiagram && <SchemaDiagram schema={conn.schema} onClose={() => setShowDiagram(false)} />}
                 </AnimatePresence>
               )}
 
               {/* Mobile: Database Tab */}
-              {activeMobileTab === 'database' && (
+              {activeMobileTab === "database" && (
                 <div className="md:hidden h-full bg-[#080808] overflow-auto p-4">
                   <div className="mb-4 flex items-center justify-between">
                     <h2 className="text-xs font-medium text-zinc-300">Connections</h2>
@@ -349,7 +355,7 @@ export function StudioWorkspace({
                     activeConnection={conn.activeConnection}
                     onSelectConnection={(c: DatabaseConnection) => {
                       conn.setActiveConnection(c);
-                      setActiveMobileTab('editor');
+                      setActiveMobileTab("editor");
                     }}
                     onDeleteConnection={noop}
                     onAddConnection={noop}
@@ -358,7 +364,7 @@ export function StudioWorkspace({
               )}
 
               {/* Mobile: Schema Tab */}
-              {activeMobileTab === 'schema' && (
+              {activeMobileTab === "schema" && (
                 <div className="md:hidden h-full bg-[#080808] overflow-auto p-4">
                   {conn.activeConnection ? (
                     <SchemaExplorer
@@ -366,11 +372,11 @@ export function StudioWorkspace({
                       isLoadingSchema={conn.isLoadingSchema}
                       onTableClick={(tableName: string) => {
                         onTableClick(tableName);
-                        setActiveMobileTab('editor');
+                        setActiveMobileTab("editor");
                       }}
                       onGenerateSelect={(tableName: string) => {
                         tabMgr.handleGenerateSelect(tableName);
-                        setActiveMobileTab('editor');
+                        setActiveMobileTab("editor");
                       }}
                       onCreateTableClick={undefined}
                       isAdmin={false}
@@ -379,7 +385,9 @@ export function StudioWorkspace({
                       metadata={null}
                       onProfileTable={features.codeGenerator ? (name: string) => setProfilerTable(name) : undefined}
                       onGenerateCode={features.codeGenerator ? (name: string) => setCodeGenTable(name) : undefined}
-                      onGenerateTestData={features.testDataGenerator ? (name: string) => setTestDataTable(name) : undefined}
+                      onGenerateTestData={
+                        features.testDataGenerator ? (name: string) => setTestDataTable(name) : undefined
+                      }
                     />
                   ) : (
                     <div className="flex flex-col items-center justify-center h-full text-zinc-500">
@@ -391,10 +399,7 @@ export function StudioWorkspace({
               )}
 
               {/* Desktop & Mobile Editor Tab */}
-              <div className={cn(
-                'h-full',
-                activeMobileTab !== 'editor' && 'hidden md:block',
-              )}>
+              <div className={cn("h-full", activeMobileTab !== "editor" && "hidden md:block")}>
                 <div className="h-full">
                   <ResizablePanelGroup id="workspace-editor" direction="vertical">
                     <ResizablePanel defaultSize={40} minSize={20}>
@@ -422,7 +427,13 @@ export function StudioWorkspace({
                             ref={queryEditorRef}
                             value={tabMgr.currentTab.query}
                             onContentChange={(val) => tabMgr.updateTabById(tabMgr.currentTab.id, { query: val })}
-                            language={tabMgr.currentTab.type === 'libredb' ? 'libredb' : tabMgr.currentTab.type === 'mongodb' ? 'json' : 'sql'}
+                            language={
+                              tabMgr.currentTab.type === "libredb"
+                                ? "libredb"
+                                : tabMgr.currentTab.type === "mongodb"
+                                  ? "json"
+                                  : "sql"
+                            }
                             tables={conn.tableNames}
                             databaseType={conn.activeConnection?.type}
                             schemaContext={conn.schemaContext}
@@ -457,9 +468,7 @@ export function StudioWorkspace({
                         onExecuteQuery={(q) => queryExec.executeQuery(q)}
                         onLoadQuery={(q) => tabMgr.updateCurrentTab({ query: q })}
                         onLoadMore={
-                          tabMgr.currentTab.result?.pagination?.hasMore
-                            ? queryExec.handleLoadMore
-                            : undefined
+                          tabMgr.currentTab.result?.pagination?.hasMore ? queryExec.handleLoadMore : undefined
                         }
                         isLoadingMore={tabMgr.currentTab.isLoadingMore}
                         onExportResults={exportResults}
@@ -497,7 +506,7 @@ export function StudioWorkspace({
       {/* Safety dialog — stub AI analysis to prevent internal fetch */}
       <QuerySafetyDialog
         isOpen={!!queryExec.safetyCheckQuery}
-        query={queryExec.safetyCheckQuery || ''}
+        query={queryExec.safetyCheckQuery || ""}
         schemaContext={conn.schemaContext}
         databaseType={conn.activeConnection?.type}
         onClose={() => queryExec.setSafetyCheckQuery(null)}
@@ -505,17 +514,19 @@ export function StudioWorkspace({
           if (queryExec.safetyCheckQuery) queryExec.forceExecuteQuery(queryExec.safetyCheckQuery);
         }}
         onAnalyzeSafety={async () => ({
-          riskLevel: 'high' as const,
-          summary: 'Potentially dangerous query detected',
-          warnings: [{
-            type: 'destructive',
-            severity: 'high',
-            message: 'This query may modify or delete data',
-            detail: 'Review carefully before proceeding.',
-          }],
-          affectedRows: 'unknown',
-          cascadeEffects: 'unknown',
-          recommendation: 'Review this query carefully before proceeding.',
+          riskLevel: "high" as const,
+          summary: "Potentially dangerous query detected",
+          warnings: [
+            {
+              type: "destructive",
+              severity: "high",
+              message: "This query may modify or delete data",
+              detail: "Review carefully before proceeding.",
+            },
+          ],
+          affectedRows: "unknown",
+          cascadeEffects: "unknown",
+          recommendation: "Review this query carefully before proceeding.",
         })}
       />
 
@@ -524,8 +535,8 @@ export function StudioWorkspace({
         <DataProfiler
           isOpen={!!profilerTable}
           onClose={() => setProfilerTable(null)}
-          tableName={profilerTable || ''}
-          tableSchema={conn.schema.find(t => t.name === profilerTable) || null}
+          tableName={profilerTable || ""}
+          tableSchema={conn.schema.find((t) => t.name === profilerTable) || null}
           connection={conn.activeConnection}
           schemaContext={conn.schemaContext}
           databaseType={conn.activeConnection?.type}
@@ -537,8 +548,8 @@ export function StudioWorkspace({
         <CodeGenerator
           isOpen={!!codeGenTable}
           onClose={() => setCodeGenTable(null)}
-          tableName={codeGenTable || ''}
-          tableSchema={conn.schema.find(t => t.name === codeGenTable) || null}
+          tableName={codeGenTable || ""}
+          tableSchema={conn.schema.find((t) => t.name === codeGenTable) || null}
           databaseType={conn.activeConnection?.type}
         />
       )}
@@ -548,8 +559,8 @@ export function StudioWorkspace({
         <TestDataGenerator
           isOpen={!!testDataTable}
           onClose={() => setTestDataTable(null)}
-          tableName={testDataTable || ''}
-          tableSchema={conn.schema.find(t => t.name === testDataTable) || null}
+          tableName={testDataTable || ""}
+          tableSchema={conn.schema.find((t) => t.name === testDataTable) || null}
           databaseType={conn.activeConnection?.type}
           queryLanguage={undefined}
           onExecuteQuery={(q) => queryExec.executeQuery(q)}

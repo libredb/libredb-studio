@@ -1,17 +1,11 @@
-'use client';
+"use client";
 
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Input } from '@/components/ui/input';
-import { Skeleton } from '@/components/ui/skeleton';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import React, { useState, useEffect, useMemo, useCallback } from "react";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -21,21 +15,9 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from '@/components/ui/tooltip';
+} from "@/components/ui/alert-dialog";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   RefreshCw,
   Zap,
@@ -50,19 +32,19 @@ import {
   CheckCircle2,
   XCircle,
   Table2,
-} from 'lucide-react';
-import { useMonitoringData } from '@/hooks/use-monitoring-data';
-import { storage } from '@/lib/storage';
-import { useAllConnections } from '@/hooks/use-all-connections';
-import type { DatabaseConnection } from '@/lib/types';
-import type { ActiveSessionDetails } from '@/lib/db/types';
+} from "lucide-react";
+import { useMonitoringData } from "@/hooks/use-monitoring-data";
+import { storage } from "@/lib/storage";
+import { useAllConnections } from "@/hooks/use-all-connections";
+import type { DatabaseConnection } from "@/lib/types";
+import type { ActiveSessionDetails } from "@/lib/db/types";
 
 interface OperationLogEntry {
   id: string;
   timestamp: Date;
   type: string;
   target: string;
-  result: 'success' | 'failure';
+  result: "success" | "failure";
   duration: number;
   error?: string;
 }
@@ -75,19 +57,12 @@ export function OperationsTab() {
   const [killingPid, setKillingPid] = useState<number | string | null>(null);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
 
-  const monitoringOptions = useMemo(
-    () => ({ includeTables: true, includeIndexes: false, includeStorage: false }),
-    []
-  );
+  const monitoringOptions = useMemo(() => ({ includeTables: true, includeIndexes: false, includeStorage: false }), []);
 
-  const {
-    data,
-    loading,
-    error,
-    refresh,
-    killSession,
-    runMaintenance,
-  } = useMonitoringData(selectedConnection, monitoringOptions);
+  const { data, loading, error, refresh, killSession, runMaintenance } = useMonitoringData(
+    selectedConnection,
+    monitoringOptions,
+  );
 
   const { connections: allConns } = useAllConnections();
   useEffect(() => {
@@ -103,32 +78,37 @@ export function OperationsTab() {
     if (conn) setSelectedConnection(conn);
   };
 
-  const addLogEntry = useCallback((type: string, target: string, result: 'success' | 'failure', duration: number, error?: string) => {
-    setOperationLog((prev) => [
-      {
-        id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-        timestamp: new Date(),
-        type,
-        target,
-        result,
-        duration,
-        error,
-      },
-      ...prev,
-    ].slice(0, 50));
-  }, []);
+  const addLogEntry = useCallback(
+    (type: string, target: string, result: "success" | "failure", duration: number, error?: string) => {
+      setOperationLog((prev) =>
+        [
+          {
+            id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+            timestamp: new Date(),
+            type,
+            target,
+            result,
+            duration,
+            error,
+          },
+          ...prev,
+        ].slice(0, 50),
+      );
+    },
+    [],
+  );
 
   const handleRunMaintenance = async (type: string, target?: string) => {
-    const actionId = `${type}-${target || 'global'}`;
+    const actionId = `${type}-${target || "global"}`;
     setActionLoading(actionId);
     const start = Date.now();
     try {
       const success = await runMaintenance(type, target);
       const duration = Date.now() - start;
-      addLogEntry(type.toUpperCase(), target || 'all', success ? 'success' : 'failure', duration);
+      addLogEntry(type.toUpperCase(), target || "all", success ? "success" : "failure", duration);
     } catch {
       const duration = Date.now() - start;
-      addLogEntry(type.toUpperCase(), target || 'all', 'failure', duration);
+      addLogEntry(type.toUpperCase(), target || "all", "failure", duration);
     } finally {
       setActionLoading(null);
     }
@@ -145,34 +125,46 @@ export function OperationsTab() {
     const start = Date.now();
     const success = await killSession(confirmKill.pid);
     const duration = Date.now() - start;
-    addLogEntry('KILL', `PID:${confirmKill.pid}`, success ? 'success' : 'failure', duration);
+    addLogEntry("KILL", `PID:${confirmKill.pid}`, success ? "success" : "failure", duration);
     setKillingPid(null);
   };
 
   const sessions = data?.activeSessions ?? [];
   const tables = data?.tables ?? [];
-  const [tableSearch, setTableSearch] = useState('');
-  const filteredTables = tables.filter((t) =>
-    t.tableName.toLowerCase().includes(tableSearch.toLowerCase())
-  );
+  const [tableSearch, setTableSearch] = useState("");
+  const filteredTables = tables.filter((t) => t.tableName.toLowerCase().includes(tableSearch.toLowerCase()));
 
-  const activeCount = sessions.filter((s) => s.state === 'active').length;
-  const idleCount = sessions.filter((s) => s.state === 'idle').length;
-  const idleInTxCount = sessions.filter((s) => s.state?.includes('idle in transaction')).length;
+  const activeCount = sessions.filter((s) => s.state === "active").length;
+  const idleCount = sessions.filter((s) => s.state === "idle").length;
+  const idleInTxCount = sessions.filter((s) => s.state?.includes("idle in transaction")).length;
   const waitingCount = sessions.filter((s) => s.waitEventType).length;
 
   const getStateBadge = (state: string) => {
     switch (state) {
-      case 'active':
-        return <Badge className="bg-green-500/10 text-green-400 border border-green-500/20 text-[0.625rem]">Active</Badge>;
-      case 'idle':
-        return <Badge variant="secondary" className="text-[0.625rem]">Idle</Badge>;
-      case 'idle in transaction':
-        return <Badge className="bg-yellow-500/10 text-yellow-400 border border-yellow-500/20 text-[0.625rem]">Idle TX</Badge>;
-      case 'idle in transaction (aborted)':
+      case "active":
+        return (
+          <Badge className="bg-green-500/10 text-green-400 border border-green-500/20 text-[0.625rem]">Active</Badge>
+        );
+      case "idle":
+        return (
+          <Badge variant="secondary" className="text-[0.625rem]">
+            Idle
+          </Badge>
+        );
+      case "idle in transaction":
+        return (
+          <Badge className="bg-yellow-500/10 text-yellow-400 border border-yellow-500/20 text-[0.625rem]">
+            Idle TX
+          </Badge>
+        );
+      case "idle in transaction (aborted)":
         return <Badge className="bg-red-500/10 text-red-400 border border-red-500/20 text-[0.625rem]">Abort</Badge>;
       default:
-        return <Badge variant="outline" className="text-[0.625rem]">{state}</Badge>;
+        return (
+          <Badge variant="outline" className="text-[0.625rem]">
+            {state}
+          </Badge>
+        );
     }
   };
 
@@ -180,12 +172,8 @@ export function OperationsTab() {
     return (
       <div className="flex flex-col items-center justify-center p-12 text-center">
         <Database className="h-12 w-12 text-zinc-700 mb-4" />
-        <h3 className="text-lg font-semibold text-zinc-300 mb-2">
-          No Database Connections
-        </h3>
-        <p className="text-zinc-500 text-sm">
-          Please add a database connection from the editor first.
-        </p>
+        <h3 className="text-lg font-semibold text-zinc-300 mb-2">No Database Connections</h3>
+        <p className="text-zinc-500 text-sm">Please add a database connection from the editor first.</p>
       </div>
     );
   }
@@ -194,22 +182,17 @@ export function OperationsTab() {
     <div className="space-y-6">
       {/* Connection Selector */}
       <div className="flex items-center justify-between">
-        <Select
-          value={selectedConnection?.id || ''}
-          onValueChange={handleConnectionChange}
-        >
+        <Select value={selectedConnection?.id || ""} onValueChange={handleConnectionChange}>
           <SelectTrigger className="w-full sm:w-[280px] bg-zinc-900/50 border-white/10 text-zinc-300">
             <SelectValue placeholder="Select connection">
               {selectedConnection ? (
                 <div className="flex items-center gap-2">
                   <Database className="h-4 w-4 flex-shrink-0" />
                   <span className="truncate">{selectedConnection.name}</span>
-                  <span className="text-xs text-zinc-500 hidden sm:inline">
-                    ({selectedConnection.type})
-                  </span>
+                  <span className="text-xs text-zinc-500 hidden sm:inline">({selectedConnection.type})</span>
                 </div>
               ) : (
-                'Select connection'
+                "Select connection"
               )}
             </SelectValue>
           </SelectTrigger>
@@ -219,9 +202,7 @@ export function OperationsTab() {
                 <div className="flex items-center gap-2">
                   <Database className="h-4 w-4" />
                   <span>{conn.name}</span>
-                  <span className="text-xs text-muted-foreground">
-                    ({conn.type})
-                  </span>
+                  <span className="text-xs text-muted-foreground">({conn.type})</span>
                 </div>
               </SelectItem>
             ))}
@@ -234,24 +215,20 @@ export function OperationsTab() {
           onClick={refresh}
           disabled={loading}
         >
-          <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${loading ? 'animate-spin' : ''}`} />
+          <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${loading ? "animate-spin" : ""}`} />
           Refresh
         </Button>
       </div>
 
       {error && !data && (
-        <div className="rounded-xl border border-red-500/20 bg-red-500/5 p-4 text-red-400 text-sm">
-          {error}
-        </div>
+        <div className="rounded-xl border border-red-500/20 bg-red-500/5 p-4 text-red-400 text-sm">{error}</div>
       )}
 
       {/* Global Operations */}
       <div>
         <div className="flex items-center gap-2 mb-3">
           <ShieldAlert className="h-4 w-4 text-blue-400" />
-          <h3 className="text-sm font-bold text-zinc-300">
-            Global Operations
-          </h3>
+          <h3 className="text-sm font-bold text-zinc-300">Global Operations</h3>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           {/* Analyze */}
@@ -264,19 +241,15 @@ export function OperationsTab() {
                 size="sm"
                 variant="outline"
                 className="h-7 text-xs border-white/10 hover:bg-yellow-500/10 hover:text-yellow-500"
-                onClick={() => handleRunMaintenance('analyze')}
+                onClick={() => handleRunMaintenance("analyze")}
                 disabled={!!actionLoading || !selectedConnection}
               >
-                {actionLoading === 'analyze-global' ? (
-                  <RefreshCw className="w-3 h-3 animate-spin mr-1" />
-                ) : null}
+                {actionLoading === "analyze-global" ? <RefreshCw className="w-3 h-3 animate-spin mr-1" /> : null}
                 Run Analyze
               </Button>
             </div>
             <h4 className="text-sm font-bold text-zinc-200 mb-1">Update Statistics</h4>
-            <p className="text-xs text-zinc-500 leading-relaxed">
-              Updates query planner statistics for all tables.
-            </p>
+            <p className="text-xs text-zinc-500 leading-relaxed">Updates query planner statistics for all tables.</p>
           </div>
 
           {/* Vacuum */}
@@ -289,19 +262,15 @@ export function OperationsTab() {
                 size="sm"
                 variant="outline"
                 className="h-7 text-xs border-white/10 hover:bg-blue-500/10 hover:text-blue-500"
-                onClick={() => handleRunMaintenance('vacuum')}
+                onClick={() => handleRunMaintenance("vacuum")}
                 disabled={!!actionLoading || !selectedConnection}
               >
-                {actionLoading === 'vacuum-global' ? (
-                  <RefreshCw className="w-3 h-3 animate-spin mr-1" />
-                ) : null}
+                {actionLoading === "vacuum-global" ? <RefreshCw className="w-3 h-3 animate-spin mr-1" /> : null}
                 Run Vacuum
               </Button>
             </div>
             <h4 className="text-sm font-bold text-zinc-200 mb-1">Reclaim Space</h4>
-            <p className="text-xs text-zinc-500 leading-relaxed">
-              Removes dead rows and returns space to the OS.
-            </p>
+            <p className="text-xs text-zinc-500 leading-relaxed">Removes dead rows and returns space to the OS.</p>
           </div>
 
           {/* Reindex */}
@@ -314,32 +283,25 @@ export function OperationsTab() {
                 size="sm"
                 variant="outline"
                 className="h-7 text-xs border-white/10 hover:bg-purple-500/10 hover:text-purple-500"
-                onClick={() => handleRunMaintenance('reindex')}
+                onClick={() => handleRunMaintenance("reindex")}
                 disabled={!!actionLoading || !selectedConnection}
               >
-                {actionLoading === 'reindex-global' ? (
-                  <RefreshCw className="w-3 h-3 animate-spin mr-1" />
-                ) : null}
+                {actionLoading === "reindex-global" ? <RefreshCw className="w-3 h-3 animate-spin mr-1" /> : null}
                 Run Reindex
               </Button>
             </div>
             <h4 className="text-sm font-bold text-zinc-200 mb-1">Rebuild Indexes</h4>
-            <p className="text-xs text-zinc-500 leading-relaxed">
-              Reconstructs all indexes in the database.
-            </p>
+            <p className="text-xs text-zinc-500 leading-relaxed">Reconstructs all indexes in the database.</p>
           </div>
 
           {/* Warning Card */}
           <div className="p-4 rounded-xl border border-red-500/10 bg-red-500/5 flex flex-col justify-center">
             <div className="flex items-center gap-2 text-red-400 mb-2">
               <ShieldAlert className="w-4 h-4" />
-              <span className="text-xs font-bold uppercase tracking-wider">
-                Warning
-              </span>
+              <span className="text-xs font-bold uppercase tracking-wider">Warning</span>
             </div>
             <p className="text-xs text-red-400/70 leading-relaxed italic">
-              These operations can be resource-intensive. Avoid running them
-              during peak traffic hours.
+              These operations can be resource-intensive. Avoid running them during peak traffic hours.
             </p>
           </div>
         </div>
@@ -352,9 +314,7 @@ export function OperationsTab() {
           <div className="p-4 border-b border-white/5 flex items-center justify-between">
             <div className="flex items-center gap-2">
               <Table2 className="w-4 h-4 text-blue-400" />
-              <span className="text-xs font-bold text-zinc-300">
-                Tables ({tables.length})
-              </span>
+              <span className="text-xs font-bold text-zinc-300">Tables ({tables.length})</span>
             </div>
             <Input
               placeholder="Filter..."
@@ -371,9 +331,7 @@ export function OperationsTab() {
                 ))}
               </div>
             ) : filteredTables.length === 0 ? (
-              <div className="p-8 text-center text-zinc-600 text-sm">
-                No tables found.
-              </div>
+              <div className="p-8 text-center text-zinc-600 text-sm">No tables found.</div>
             ) : (
               <div className="divide-y divide-white/5">
                 {filteredTables.map((table) => (
@@ -382,13 +340,9 @@ export function OperationsTab() {
                     className="group flex items-center justify-between px-4 py-2 hover:bg-white/[0.03] transition-colors"
                   >
                     <div className="min-w-0">
-                      <div className="text-sm font-medium text-zinc-300 truncate max-w-[160px]">
-                        {table.tableName}
-                      </div>
+                      <div className="text-sm font-medium text-zinc-300 truncate max-w-[160px]">{table.tableName}</div>
                       <div className="flex items-center gap-2 text-xs text-zinc-500">
-                        <span className="font-mono">
-                          {table.rowCount.toLocaleString()} rows
-                        </span>
+                        <span className="font-mono">{table.rowCount.toLocaleString()} rows</span>
                         <span>-</span>
                         <span className="font-mono">{table.tableSize}</span>
                         {(table.bloatRatio ?? 0) > 10 && (
@@ -404,7 +358,7 @@ export function OperationsTab() {
                         variant="ghost"
                         className="w-7 h-7 text-zinc-500 hover:text-yellow-500"
                         title="Analyze"
-                        onClick={() => handleRunMaintenance('analyze', table.tableName)}
+                        onClick={() => handleRunMaintenance("analyze", table.tableName)}
                         disabled={!!actionLoading}
                       >
                         {actionLoading === `analyze-${table.tableName}` ? (
@@ -418,7 +372,7 @@ export function OperationsTab() {
                         variant="ghost"
                         className="w-7 h-7 text-zinc-500 hover:text-blue-500"
                         title="Vacuum"
-                        onClick={() => handleRunMaintenance('vacuum', table.tableName)}
+                        onClick={() => handleRunMaintenance("vacuum", table.tableName)}
                         disabled={!!actionLoading}
                       >
                         {actionLoading === `vacuum-${table.tableName}` ? (
@@ -440,9 +394,7 @@ export function OperationsTab() {
           <div className="p-4 border-b border-white/5">
             <div className="flex items-center gap-2 mb-3">
               <Users className="w-4 h-4 text-green-400" />
-              <span className="text-xs font-bold text-zinc-300">
-                Sessions ({sessions.length})
-              </span>
+              <span className="text-xs font-bold text-zinc-300">Sessions ({sessions.length})</span>
             </div>
             <div className="grid grid-cols-4 gap-2">
               <div className="rounded-lg bg-white/[0.03] p-2 text-center">
@@ -454,11 +406,19 @@ export function OperationsTab() {
                 <div className="text-[0.625rem] text-zinc-500 uppercase font-bold">Idle</div>
               </div>
               <div className="rounded-lg bg-white/[0.03] p-2 text-center">
-                <div className={`text-lg font-bold tabular-nums ${idleInTxCount > 0 ? 'text-yellow-400' : 'text-zinc-200'}`}>{idleInTxCount}</div>
+                <div
+                  className={`text-lg font-bold tabular-nums ${idleInTxCount > 0 ? "text-yellow-400" : "text-zinc-200"}`}
+                >
+                  {idleInTxCount}
+                </div>
                 <div className="text-[0.625rem] text-zinc-500 uppercase font-bold">In TX</div>
               </div>
               <div className="rounded-lg bg-white/[0.03] p-2 text-center">
-                <div className={`text-lg font-bold tabular-nums ${waitingCount > 0 ? 'text-orange-400' : 'text-zinc-200'}`}>{waitingCount}</div>
+                <div
+                  className={`text-lg font-bold tabular-nums ${waitingCount > 0 ? "text-orange-400" : "text-zinc-200"}`}
+                >
+                  {waitingCount}
+                </div>
                 <div className="text-[0.625rem] text-zinc-500 uppercase font-bold">Wait</div>
               </div>
             </div>
@@ -471,9 +431,7 @@ export function OperationsTab() {
                 ))}
               </div>
             ) : sessions.length === 0 ? (
-              <div className="p-8 text-center text-zinc-600 text-sm">
-                No active sessions found.
-              </div>
+              <div className="p-8 text-center text-zinc-600 text-sm">No active sessions found.</div>
             ) : (
               <Table>
                 <TableHeader>
@@ -481,7 +439,9 @@ export function OperationsTab() {
                     <TableHead className="text-xs text-zinc-500 font-bold uppercase w-[60px]">PID</TableHead>
                     <TableHead className="text-xs text-zinc-500 font-bold uppercase">User</TableHead>
                     <TableHead className="text-xs text-zinc-500 font-bold uppercase">State</TableHead>
-                    <TableHead className="text-xs text-zinc-500 font-bold uppercase hidden md:table-cell">Query</TableHead>
+                    <TableHead className="text-xs text-zinc-500 font-bold uppercase hidden md:table-cell">
+                      Query
+                    </TableHead>
                     <TableHead className="text-xs text-zinc-500 font-bold uppercase">Time</TableHead>
                     <TableHead className="text-right text-xs text-zinc-500 font-bold uppercase w-10">Act</TableHead>
                   </TableRow>
@@ -489,27 +449,19 @@ export function OperationsTab() {
                 <TableBody>
                   {sessions.map((session) => (
                     <TableRow key={session.pid} className="group border-white/5 hover:bg-white/[0.03]">
-                      <TableCell className="font-mono text-xs text-zinc-400 py-2">
-                        {session.pid}
-                      </TableCell>
+                      <TableCell className="font-mono text-xs text-zinc-400 py-2">{session.pid}</TableCell>
                       <TableCell className="py-2">
-                        <span className="text-xs text-zinc-300 truncate max-w-[80px] block">
-                          {session.user}
-                        </span>
+                        <span className="text-xs text-zinc-300 truncate max-w-[80px] block">{session.user}</span>
                       </TableCell>
                       <TableCell className="py-2">{getStateBadge(session.state)}</TableCell>
                       <TableCell className="font-mono text-xs text-zinc-500 hidden md:table-cell py-2">
                         <TooltipProvider>
                           <Tooltip>
                             <TooltipTrigger asChild>
-                              <div className="max-w-[120px] truncate cursor-help">
-                                {session.query || '-'}
-                              </div>
+                              <div className="max-w-[120px] truncate cursor-help">{session.query || "-"}</div>
                             </TooltipTrigger>
                             <TooltipContent side="bottom" className="max-w-lg">
-                              <pre className="text-xs whitespace-pre-wrap">
-                                {session.query || 'No query'}
-                              </pre>
+                              <pre className="text-xs whitespace-pre-wrap">{session.query || "No query"}</pre>
                             </TooltipContent>
                           </Tooltip>
                         </TooltipProvider>
@@ -518,10 +470,10 @@ export function OperationsTab() {
                         <Badge
                           variant={
                             session.durationMs > 60000
-                              ? 'destructive'
+                              ? "destructive"
                               : session.durationMs > 10000
-                                ? 'outline'
-                                : 'secondary'
+                                ? "outline"
+                                : "secondary"
                           }
                           className="text-[0.625rem]"
                         >
@@ -557,9 +509,7 @@ export function OperationsTab() {
         <div className="rounded-xl border border-white/5 bg-zinc-900/50">
           <div className="p-4 border-b border-white/5 flex items-center gap-2">
             <Clock className="w-4 h-4 text-zinc-500" />
-            <span className="text-xs font-bold text-zinc-300">
-              Operation Log (this session)
-            </span>
+            <span className="text-xs font-bold text-zinc-300">Operation Log (this session)</span>
           </div>
           <div className="max-h-[200px] overflow-y-auto divide-y divide-white/5">
             {operationLog.map((entry) => (
@@ -569,8 +519,8 @@ export function OperationsTab() {
               >
                 <span className="text-zinc-600 font-mono text-xs w-[50px] shrink-0">
                   {entry.timestamp.toLocaleTimeString([], {
-                    hour: '2-digit',
-                    minute: '2-digit',
+                    hour: "2-digit",
+                    minute: "2-digit",
                   })}
                 </span>
                 <Badge
@@ -579,18 +529,14 @@ export function OperationsTab() {
                 >
                   {entry.type}
                 </Badge>
-                <span className="text-zinc-400 font-mono truncate">
-                  {entry.target}
-                </span>
+                <span className="text-zinc-400 font-mono truncate">{entry.target}</span>
                 <div className="ml-auto flex items-center gap-2 shrink-0">
-                  {entry.result === 'success' ? (
+                  {entry.result === "success" ? (
                     <CheckCircle2 className="w-3 h-3 text-emerald-500" />
                   ) : (
                     <XCircle className="w-3 h-3 text-red-500" />
                   )}
-                  <span className="text-zinc-600 font-mono text-xs">
-                    {entry.duration}ms
-                  </span>
+                  <span className="text-zinc-600 font-mono text-xs">{entry.duration}ms</span>
                 </div>
               </div>
             ))}
@@ -602,40 +548,25 @@ export function OperationsTab() {
       <AlertDialog open={!!confirmKill} onOpenChange={() => setConfirmKill(null)}>
         <AlertDialogContent className="bg-zinc-950 border-white/10">
           <AlertDialogHeader>
-            <AlertDialogTitle className="text-zinc-100">
-              Terminate Session?
-            </AlertDialogTitle>
+            <AlertDialogTitle className="text-zinc-100">Terminate Session?</AlertDialogTitle>
             <AlertDialogDescription className="text-zinc-400">
-              Are you sure you want to terminate session{' '}
-              <span className="font-mono font-bold text-zinc-200">
-                {confirmKill?.pid}
-              </span>
+              Are you sure you want to terminate session{" "}
+              <span className="font-mono font-bold text-zinc-200">{confirmKill?.pid}</span>
               ?
               <br />
               <br />
-              User:{' '}
-              <span className="font-medium text-zinc-300">
-                {confirmKill?.user}
-              </span>
+              User: <span className="font-medium text-zinc-300">{confirmKill?.user}</span>
               <br />
-              State:{' '}
-              <span className="font-medium text-zinc-300">
-                {confirmKill?.state}
-              </span>
+              State: <span className="font-medium text-zinc-300">{confirmKill?.state}</span>
               <br />
               <br />
-              This action will forcefully end the connection and may cause data
-              loss if the session has uncommitted transactions.
+              This action will forcefully end the connection and may cause data loss if the session has uncommitted
+              transactions.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel className="border-white/10 text-zinc-400">
-              Cancel
-            </AlertDialogCancel>
-            <AlertDialogAction
-              onClick={handleConfirmKill}
-              className="bg-red-600 text-white hover:bg-red-500"
-            >
+            <AlertDialogCancel className="border-white/10 text-zinc-400">Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={handleConfirmKill} className="bg-red-600 text-white hover:bg-red-500">
               Terminate
             </AlertDialogAction>
           </AlertDialogFooter>

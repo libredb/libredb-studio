@@ -6,7 +6,7 @@
  * typically use PostgreSQL or MySQL instead.
  */
 
-import { SQLBaseProvider } from './sql-base';
+import { SQLBaseProvider } from "./sql-base";
 import {
   type DatabaseConnection,
   type TableSchema,
@@ -23,16 +23,11 @@ import {
   type TableStats,
   type IndexStats,
   type StorageStats,
-} from '../../types';
-import {
-  DatabaseConfigError,
-  ConnectionError,
-  QueryError,
-  mapDatabaseError,
-} from '../../errors';
-import { formatBytes } from '../../utils/pool-manager';
-import * as fs from 'fs';
-import * as path from 'path';
+} from "../../types";
+import { DatabaseConfigError, ConnectionError, QueryError, mapDatabaseError } from "../../errors";
+import { formatBytes } from "../../utils/pool-manager";
+import * as fs from "fs";
+import * as path from "path";
 
 // ============================================================================
 // Dynamic SQLite Import (for Bun runtime compatibility)
@@ -60,13 +55,13 @@ async function loadSQLite(): Promise<SQLiteConstructor> {
 
   try {
     // Dynamic import for bun:sqlite
-    const sqlite = await import('bun:sqlite');
+    const sqlite = await import("bun:sqlite");
     Database = sqlite.Database as unknown as SQLiteConstructor;
     return Database;
   } catch {
     sqliteLoadError = new DatabaseConfigError(
-      'SQLite is not available in this environment. SQLite requires Bun runtime. For cloud deployments, use PostgreSQL or MySQL instead.',
-      'sqlite'
+      "SQLite is not available in this environment. SQLite requires Bun runtime. For cloud deployments, use PostgreSQL or MySQL instead.",
+      "sqlite",
     );
     throw sqliteLoadError;
   }
@@ -94,7 +89,7 @@ export class SQLiteProvider extends SQLBaseProvider {
       defaultPort: null,
       supportsExplain: false,
       supportsConnectionString: false,
-      maintenanceOperations: ['vacuum', 'analyze', 'reindex', 'check'],
+      maintenanceOperations: ["vacuum", "analyze", "reindex", "check"],
     };
   }
 
@@ -108,7 +103,7 @@ export class SQLiteProvider extends SQLBaseProvider {
     if (!this.config.database && !this.config.connectionString) {
       throw new DatabaseConfigError(
         'Database file path is required for SQLite (use "database" field or ":memory:" for in-memory)',
-        'sqlite'
+        "sqlite",
       );
     }
   }
@@ -128,7 +123,7 @@ export class SQLiteProvider extends SQLBaseProvider {
 
       const dbPath = this.getDatabasePath();
 
-      if (dbPath !== ':memory:') {
+      if (dbPath !== ":memory:") {
         const dir = path.dirname(dbPath);
         if (!fs.existsSync(dir)) {
           fs.mkdirSync(dir, { recursive: true });
@@ -141,9 +136,9 @@ export class SQLiteProvider extends SQLBaseProvider {
       });
 
       // Enable WAL mode and foreign keys
-      this.db.exec('PRAGMA foreign_keys = ON');
-      this.db.exec('PRAGMA journal_mode = WAL');
-      this.db.exec('PRAGMA synchronous = NORMAL');
+      this.db.exec("PRAGMA foreign_keys = ON");
+      this.db.exec("PRAGMA journal_mode = WAL");
+      this.db.exec("PRAGMA synchronous = NORMAL");
 
       this.setConnected(true);
     } catch (error) {
@@ -155,7 +150,7 @@ export class SQLiteProvider extends SQLBaseProvider {
 
       throw new ConnectionError(
         `Failed to open SQLite database: ${error instanceof Error ? error.message : error}`,
-        'sqlite'
+        "sqlite",
       );
     }
   }
@@ -171,23 +166,20 @@ export class SQLiteProvider extends SQLBaseProvider {
   private getDatabasePath(): string {
     let dbPath: string;
     if (this.config.connectionString) {
-      dbPath = this.config.connectionString.startsWith('file:')
-        ? this.config.connectionString.replace('file:', '')
+      dbPath = this.config.connectionString.startsWith("file:")
+        ? this.config.connectionString.replace("file:", "")
         : this.config.connectionString;
     } else {
-      dbPath = this.config.database || ':memory:';
+      dbPath = this.config.database || ":memory:";
     }
 
     // Allow :memory: without path validation
-    if (dbPath === ':memory:') return dbPath;
+    if (dbPath === ":memory:") return dbPath;
 
     // Resolve to absolute path and reject path traversal attempts
     const resolved = path.resolve(dbPath);
-    if (resolved !== path.normalize(resolved) || dbPath.includes('\0')) {
-      throw new DatabaseConfigError(
-        'Invalid database path: path traversal is not allowed',
-        'sqlite'
-      );
+    if (resolved !== path.normalize(resolved) || dbPath.includes("\0")) {
+      throw new DatabaseConfigError("Invalid database path: path traversal is not allowed", "sqlite");
     }
 
     return resolved;
@@ -210,7 +202,7 @@ export class SQLiteProvider extends SQLBaseProvider {
             const rows = params ? stmt.all(...params) : stmt.all();
             const fields = rows.length > 0 ? Object.keys(rows[0] as object) : [];
             return {
-              rows: (rows as unknown[]).map(row => row as Record<string, unknown>) as Record<string, unknown>[],
+              rows: (rows as unknown[]).map((row) => row as Record<string, unknown>) as Record<string, unknown>[],
               fields,
               changes: 0,
             };
@@ -224,7 +216,7 @@ export class SQLiteProvider extends SQLBaseProvider {
             };
           }
         } catch (error) {
-          throw mapDatabaseError(error, 'sqlite', sql);
+          throw mapDatabaseError(error, "sqlite", sql);
         }
       });
 
@@ -287,7 +279,7 @@ export class SQLiteProvider extends SQLBaseProvider {
 
       const indexes = [];
       for (const idx of indexList) {
-        if (idx.name.startsWith('sqlite_')) continue;
+        if (idx.name.startsWith("sqlite_")) continue;
 
         const indexInfoStmt = this.db!.prepare(`PRAGMA index_info("${idx.name}")`);
         const indexCols = indexInfoStmt.all() as Array<{ seqno: number; cid: number; name: string }>;
@@ -317,7 +309,7 @@ export class SQLiteProvider extends SQLBaseProvider {
         size: formatBytes(sizeBytes),
         columns: columns.map((col) => ({
           name: col.name,
-          type: col.type || 'TEXT',
+          type: col.type || "TEXT",
           nullable: col.notnull === 0,
           isPrimary: col.pk === 1,
           defaultValue: col.dflt_value ?? undefined,
@@ -343,13 +335,13 @@ export class SQLiteProvider extends SQLBaseProvider {
 
     const dbPath = this.getDatabasePath();
 
-    let databaseSize = 'N/A';
-    if (dbPath !== ':memory:') {
+    let databaseSize = "N/A";
+    if (dbPath !== ":memory:") {
       try {
         const stats = fs.statSync(dbPath);
         databaseSize = formatBytes(stats.size);
       } catch {
-        databaseSize = 'Unknown';
+        databaseSize = "Unknown";
       }
     } else {
       try {
@@ -360,24 +352,24 @@ export class SQLiteProvider extends SQLBaseProvider {
         const result = sizeStmt.get() as { size: number };
         databaseSize = formatBytes(result?.size || 0);
       } catch {
-        databaseSize = 'N/A';
+        databaseSize = "N/A";
       }
     }
 
     let isHealthy = true;
     try {
-      const integrityStmt = this.db!.prepare('PRAGMA integrity_check');
+      const integrityStmt = this.db!.prepare("PRAGMA integrity_check");
       const integrityResult = integrityStmt.get() as { integrity_check: string };
-      isHealthy = integrityResult?.integrity_check === 'ok';
+      isHealthy = integrityResult?.integrity_check === "ok";
     } catch {
       isHealthy = false;
     }
 
-    let journalMode = 'unknown';
+    let journalMode = "unknown";
     try {
-      const journalStmt = this.db!.prepare('PRAGMA journal_mode');
+      const journalStmt = this.db!.prepare("PRAGMA journal_mode");
       const journalResult = journalStmt.get() as { journal_mode: string };
-      journalMode = journalResult?.journal_mode || 'unknown';
+      journalMode = journalResult?.journal_mode || "unknown";
     } catch {
       // Ignore
     }
@@ -385,27 +377,27 @@ export class SQLiteProvider extends SQLBaseProvider {
     return {
       activeConnections: 1,
       databaseSize,
-      cacheHitRatio: 'N/A',
+      cacheHitRatio: "N/A",
       slowQueries: [
         {
-          query: `Integrity: ${isHealthy ? 'OK' : 'FAILED'}`,
+          query: `Integrity: ${isHealthy ? "OK" : "FAILED"}`,
           calls: 0,
-          avgTime: 'N/A',
+          avgTime: "N/A",
         },
         {
           query: `Journal Mode: ${journalMode}`,
           calls: 0,
-          avgTime: 'N/A',
+          avgTime: "N/A",
         },
       ],
       activeSessions: [
         {
           pid: process.pid,
-          user: 'sqlite',
+          user: "sqlite",
           database: path.basename(dbPath),
-          state: 'active',
-          query: '',
-          duration: 'N/A',
+          state: "active",
+          query: "",
+          duration: "N/A",
         },
       ],
     };
@@ -415,34 +407,31 @@ export class SQLiteProvider extends SQLBaseProvider {
   // Maintenance Operations
   // ============================================================================
 
-  public async runMaintenance(
-    type: MaintenanceType,
-    target?: string
-  ): Promise<MaintenanceResult> {
+  public async runMaintenance(type: MaintenanceType, target?: string): Promise<MaintenanceResult> {
     this.ensureConnected();
 
     const { result, executionTime } = await this.measureExecution(async () => {
-      let sql = '';
+      let sql = "";
 
       switch (type) {
-        case 'vacuum':
-          sql = 'VACUUM';
+        case "vacuum":
+          sql = "VACUUM";
           break;
-        case 'analyze':
-          sql = target ? `ANALYZE "${target}"` : 'ANALYZE';
+        case "analyze":
+          sql = target ? `ANALYZE "${target}"` : "ANALYZE";
           break;
-        case 'reindex':
-          sql = target ? `REINDEX "${target}"` : 'REINDEX';
+        case "reindex":
+          sql = target ? `REINDEX "${target}"` : "REINDEX";
           break;
-        case 'check':
-          const checkStmt = this.db!.prepare('PRAGMA integrity_check');
+        case "check":
+          const checkStmt = this.db!.prepare("PRAGMA integrity_check");
           const checkResult = checkStmt.get() as { integrity_check: string };
           return {
-            success: checkResult?.integrity_check === 'ok',
-            message: checkResult?.integrity_check || 'Unknown',
+            success: checkResult?.integrity_check === "ok",
+            message: checkResult?.integrity_check || "Unknown",
           };
         default:
-          throw new QueryError(`Unsupported maintenance type for SQLite: ${type}`, 'sqlite');
+          throw new QueryError(`Unsupported maintenance type for SQLite: ${type}`, "sqlite");
       }
 
       this.db!.exec(sql);
@@ -464,15 +453,15 @@ export class SQLiteProvider extends SQLBaseProvider {
     this.ensureConnected();
 
     // Get SQLite version
-    const versionStmt = this.db!.prepare('SELECT sqlite_version() as version');
+    const versionStmt = this.db!.prepare("SELECT sqlite_version() as version");
     const versionResult = versionStmt.get() as { version: string };
-    const version = `SQLite ${versionResult?.version || 'Unknown'}`;
+    const version = `SQLite ${versionResult?.version || "Unknown"}`;
 
     // Get database size
     const dbPath = this.getDatabasePath();
     let databaseSizeBytes = 0;
 
-    if (dbPath !== ':memory:') {
+    if (dbPath !== ":memory:") {
       try {
         const stats = fs.statSync(dbPath);
         databaseSizeBytes = stats.size;
@@ -510,7 +499,7 @@ export class SQLiteProvider extends SQLBaseProvider {
 
     return {
       version,
-      uptime: 'N/A',
+      uptime: "N/A",
       activeConnections: 1,
       maxConnections: 1,
       databaseSize: formatBytes(databaseSizeBytes),
@@ -527,7 +516,7 @@ export class SQLiteProvider extends SQLBaseProvider {
 
     try {
       // Get cache stats
-      const cacheStmt = this.db!.prepare('PRAGMA cache_size');
+      const cacheStmt = this.db!.prepare("PRAGMA cache_size");
       const cacheResult = cacheStmt.get() as { cache_size: number };
 
       // SQLite doesn't provide detailed cache hit stats, estimate high ratio
@@ -558,15 +547,17 @@ export class SQLiteProvider extends SQLBaseProvider {
     const dbPath = this.getDatabasePath();
 
     // SQLite is single-connection, return current session
-    return [{
-      pid: process.pid,
-      user: 'sqlite',
-      database: path.basename(dbPath),
-      state: 'active',
-      query: '',
-      duration: 'N/A',
-      durationMs: 0,
-    }];
+    return [
+      {
+        pid: process.pid,
+        user: "sqlite",
+        database: path.basename(dbPath),
+        state: "active",
+        query: "",
+        duration: "N/A",
+        durationMs: 0,
+      },
+    ];
   }
 
   public async getTableStats(): Promise<TableStats[]> {
@@ -598,7 +589,7 @@ export class SQLiteProvider extends SQLBaseProvider {
       }
 
       stats.push({
-        schemaName: 'main',
+        schemaName: "main",
         tableName,
         rowCount,
         tableSize: formatBytes(tableSizeBytes),
@@ -634,13 +625,13 @@ export class SQLiteProvider extends SQLBaseProvider {
       const indexMeta = indexList.find((i) => i.name === indexName);
 
       stats.push({
-        schemaName: 'main',
+        schemaName: "main",
         tableName,
         indexName,
         columns: indexCols.map((c) => c.name),
         isUnique: indexMeta?.unique === 1,
         isPrimary: false, // SQLite auto-creates rowid, explicit PKs are shown differently
-        indexSize: 'N/A',
+        indexSize: "N/A",
         indexSizeBytes: 0,
         scans: 0, // SQLite doesn't track index usage
       });
@@ -657,7 +648,7 @@ export class SQLiteProvider extends SQLBaseProvider {
 
     // Main database file
     let mainSizeBytes = 0;
-    if (dbPath !== ':memory:') {
+    if (dbPath !== ":memory:") {
       try {
         const fileStats = fs.statSync(dbPath);
         mainSizeBytes = fileStats.size;
@@ -678,19 +669,19 @@ export class SQLiteProvider extends SQLBaseProvider {
     }
 
     stats.push({
-      name: 'Main Database',
-      location: dbPath === ':memory:' ? ':memory:' : path.basename(dbPath),
+      name: "Main Database",
+      location: dbPath === ":memory:" ? ":memory:" : path.basename(dbPath),
       size: formatBytes(mainSizeBytes),
       sizeBytes: mainSizeBytes,
     });
 
     // WAL file (if exists)
-    if (dbPath !== ':memory:') {
+    if (dbPath !== ":memory:") {
       const walPath = `${dbPath}-wal`;
       try {
         const walStats = fs.statSync(walPath);
         stats.push({
-          name: 'WAL',
+          name: "WAL",
           location: path.basename(walPath),
           size: formatBytes(walStats.size),
           sizeBytes: walStats.size,
@@ -706,7 +697,7 @@ export class SQLiteProvider extends SQLBaseProvider {
       try {
         const shmStats = fs.statSync(shmPath);
         stats.push({
-          name: 'Shared Memory',
+          name: "Shared Memory",
           location: path.basename(shmPath),
           size: formatBytes(shmStats.size),
           sizeBytes: shmStats.size,

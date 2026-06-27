@@ -1,8 +1,8 @@
-'use client';
+"use client";
 
-import { useState, useEffect } from 'react';
-import type { DatabaseConnection } from '@/lib/types';
-import { storage } from '@/lib/storage';
+import { useState, useEffect } from "react";
+import type { DatabaseConnection } from "@/lib/types";
+import { storage } from "@/lib/storage";
 
 /**
  * Returns all connections: user connections from localStorage + managed seed connections from server.
@@ -23,7 +23,7 @@ export function useAllConnections() {
       const dismissed = new Set(storage.getDismissedSeeds());
 
       try {
-        const res = await fetch('/api/connections/managed');
+        const res = await fetch("/api/connections/managed");
         if (res.ok) {
           const { connections: managedConns } = await res.json();
           if (managedConns?.length > 0 && !cancelled) {
@@ -61,7 +61,9 @@ export function useAllConnections() {
     }
 
     load();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   return { connections, loading };

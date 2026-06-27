@@ -1,6 +1,6 @@
-import { describe, test, expect, mock, beforeEach } from 'bun:test';
-import { createMockRequest, parseResponseJSON } from '../../helpers/mock-next';
-import { createMockProvider } from '../../helpers/mock-provider';
+import { describe, test, expect, mock, beforeEach } from "bun:test";
+import { createMockRequest, parseResponseJSON } from "../../helpers/mock-next";
+import { createMockProvider } from "../../helpers/mock-provider";
 import {
   QueryError,
   DatabaseError,
@@ -16,7 +16,7 @@ import {
   isAuthenticationError,
   isRetryableError,
   mapDatabaseError,
-} from '@/lib/db/errors';
+} from "@/lib/db/errors";
 
 // ─── Create mock provider with transaction methods ──────────────────────────
 const baseMockProvider = createMockProvider();
@@ -28,8 +28,8 @@ const mockTxProvider = {
   rollbackTransaction: mock(async () => {}),
   isInTransaction: mock(() => true),
   queryInTransaction: mock(async () => ({
-    rows: [{ id: 1, name: 'Alice' }],
-    fields: ['id', 'name'],
+    rows: [{ id: 1, name: "Alice" }],
+    fields: ["id", "name"],
     rowCount: 1,
     executionTime: 10,
   })),
@@ -41,25 +41,28 @@ const mockNonTxProvider = createMockProvider();
 const mockGetOrCreateProvider = mock(async () => mockTxProvider as never);
 
 // ─── Mock auth + seed resolution BEFORE importing route ─────────────────────
-mock.module('@/lib/auth', () => ({
-  getSession: mock(async () => ({ role: 'admin', username: 'admin' })),
-  signJWT: mock(async () => 'mock-token'),
+mock.module("@/lib/auth", () => ({
+  getSession: mock(async () => ({ role: "admin", username: "admin" })),
+  signJWT: mock(async () => "mock-token"),
   verifyJWT: mock(async () => null),
   login: mock(async () => {}),
   logout: mock(async () => {}),
 }));
 
-mock.module('@/lib/seed/resolve-connection', () => {
+mock.module("@/lib/seed/resolve-connection", () => {
   class SeedConnectionError extends Error {
-    constructor(message: string, public statusCode: number) {
+    constructor(
+      message: string,
+      public statusCode: number,
+    ) {
       super(message);
-      this.name = 'SeedConnectionError';
+      this.name = "SeedConnectionError";
     }
   }
   return {
     resolveConnection: mock(async (body: Record<string, unknown>) => {
       if (!body.connection && !body.connectionId) {
-        throw new SeedConnectionError('Either connection or connectionId is required', 400);
+        throw new SeedConnectionError("Either connection or connectionId is required", 400);
       }
       return body.connection;
     }),
@@ -68,7 +71,7 @@ mock.module('@/lib/seed/resolve-connection', () => {
 });
 
 // ─── Mock dependencies BEFORE importing route ───────────────────────────────
-mock.module('@/lib/db', () => ({
+mock.module("@/lib/db", () => ({
   getOrCreateProvider: mockGetOrCreateProvider,
   createDatabaseProvider: mock(async () => mockTxProvider),
   removeProvider: mock(async () => {}),
@@ -91,20 +94,20 @@ mock.module('@/lib/db', () => ({
 }));
 
 // ─── Import route handler AFTER mocking ─────────────────────────────────────
-const { POST } = await import('@/app/api/db/transaction/route');
+const { POST } = await import("@/app/api/db/transaction/route");
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 const validConnection = {
-  id: 'test-1',
-  name: 'Test DB',
-  type: 'postgres',
-  host: 'localhost',
+  id: "test-1",
+  name: "Test DB",
+  type: "postgres",
+  host: "localhost",
   port: 5432,
-  database: 'testdb',
+  database: "testdb",
 };
 
 // ─── Tests ──────────────────────────────────────────────────────────────────
-describe('POST /api/db/transaction', () => {
+describe("POST /api/db/transaction", () => {
   beforeEach(() => {
     mockGetOrCreateProvider.mockClear();
     mockTxProvider.beginTransaction.mockClear();
@@ -121,62 +124,62 @@ describe('POST /api/db/transaction', () => {
     mockTxProvider.rollbackTransaction.mockImplementation(async () => {});
     mockTxProvider.isInTransaction.mockImplementation(() => true);
     mockTxProvider.queryInTransaction.mockImplementation(async () => ({
-      rows: [{ id: 1, name: 'Alice' }],
-      fields: ['id', 'name'],
+      rows: [{ id: 1, name: "Alice" }],
+      fields: ["id", "name"],
       rowCount: 1,
       executionTime: 10,
     }));
   });
 
-  test('begin action returns status active', async () => {
-    const req = createMockRequest('/api/db/transaction', {
-      method: 'POST',
-      body: { connection: validConnection, action: 'begin' },
+  test("begin action returns status active", async () => {
+    const req = createMockRequest("/api/db/transaction", {
+      method: "POST",
+      body: { connection: validConnection, action: "begin" },
     });
 
     const res = await POST(req as never);
     const data = await parseResponseJSON<{ status: string; message: string }>(res);
 
     expect(res.status).toBe(200);
-    expect(data.status).toBe('active');
-    expect(data.message).toBe('Transaction started');
+    expect(data.status).toBe("active");
+    expect(data.message).toBe("Transaction started");
     expect(mockTxProvider.beginTransaction).toHaveBeenCalledTimes(1);
   });
 
-  test('commit action returns status committed', async () => {
-    const req = createMockRequest('/api/db/transaction', {
-      method: 'POST',
-      body: { connection: validConnection, action: 'commit' },
+  test("commit action returns status committed", async () => {
+    const req = createMockRequest("/api/db/transaction", {
+      method: "POST",
+      body: { connection: validConnection, action: "commit" },
     });
 
     const res = await POST(req as never);
     const data = await parseResponseJSON<{ status: string; message: string }>(res);
 
     expect(res.status).toBe(200);
-    expect(data.status).toBe('committed');
-    expect(data.message).toBe('Transaction committed');
+    expect(data.status).toBe("committed");
+    expect(data.message).toBe("Transaction committed");
     expect(mockTxProvider.commitTransaction).toHaveBeenCalledTimes(1);
   });
 
-  test('rollback action returns status rolled_back', async () => {
-    const req = createMockRequest('/api/db/transaction', {
-      method: 'POST',
-      body: { connection: validConnection, action: 'rollback' },
+  test("rollback action returns status rolled_back", async () => {
+    const req = createMockRequest("/api/db/transaction", {
+      method: "POST",
+      body: { connection: validConnection, action: "rollback" },
     });
 
     const res = await POST(req as never);
     const data = await parseResponseJSON<{ status: string; message: string }>(res);
 
     expect(res.status).toBe(200);
-    expect(data.status).toBe('rolled_back');
-    expect(data.message).toBe('Transaction rolled back');
+    expect(data.status).toBe("rolled_back");
+    expect(data.message).toBe("Transaction rolled back");
     expect(mockTxProvider.rollbackTransaction).toHaveBeenCalledTimes(1);
   });
 
-  test('query action with sql returns result with pagination', async () => {
-    const req = createMockRequest('/api/db/transaction', {
-      method: 'POST',
-      body: { connection: validConnection, action: 'query', sql: 'SELECT * FROM users' },
+  test("query action with sql returns result with pagination", async () => {
+    const req = createMockRequest("/api/db/transaction", {
+      method: "POST",
+      body: { connection: validConnection, action: "query", sql: "SELECT * FROM users" },
     });
 
     const res = await POST(req as never);
@@ -196,25 +199,25 @@ describe('POST /api/db/transaction', () => {
     expect(data.pagination.wasLimited).toBeDefined();
   });
 
-  test('query action without sql returns 400', async () => {
-    const req = createMockRequest('/api/db/transaction', {
-      method: 'POST',
-      body: { connection: validConnection, action: 'query' },
+  test("query action without sql returns 400", async () => {
+    const req = createMockRequest("/api/db/transaction", {
+      method: "POST",
+      body: { connection: validConnection, action: "query" },
     });
 
     const res = await POST(req as never);
     const data = await parseResponseJSON<{ error: string }>(res);
 
     expect(res.status).toBe(400);
-    expect(data.error).toContain('SQL query is required');
+    expect(data.error).toContain("SQL query is required");
   });
 
-  test('status action returns inTransaction boolean', async () => {
+  test("status action returns inTransaction boolean", async () => {
     mockTxProvider.isInTransaction.mockImplementation(() => false);
 
-    const req = createMockRequest('/api/db/transaction', {
-      method: 'POST',
-      body: { connection: validConnection, action: 'status' },
+    const req = createMockRequest("/api/db/transaction", {
+      method: "POST",
+      body: { connection: validConnection, action: "status" },
     });
 
     const res = await POST(req as never);
@@ -224,35 +227,35 @@ describe('POST /api/db/transaction', () => {
     expect(data.inTransaction).toBe(false);
   });
 
-  test('unknown action returns 400', async () => {
-    const req = createMockRequest('/api/db/transaction', {
-      method: 'POST',
-      body: { connection: validConnection, action: 'invalid-action' },
+  test("unknown action returns 400", async () => {
+    const req = createMockRequest("/api/db/transaction", {
+      method: "POST",
+      body: { connection: validConnection, action: "invalid-action" },
     });
 
     const res = await POST(req as never);
     const data = await parseResponseJSON<{ error: string }>(res);
 
     expect(res.status).toBe(400);
-    expect(data.error).toContain('Unknown transaction action');
+    expect(data.error).toContain("Unknown transaction action");
   });
 
-  test('missing connection returns 400', async () => {
-    const req = createMockRequest('/api/db/transaction', {
-      method: 'POST',
-      body: { action: 'begin' },
+  test("missing connection returns 400", async () => {
+    const req = createMockRequest("/api/db/transaction", {
+      method: "POST",
+      body: { action: "begin" },
     });
 
     const res = await POST(req as never);
     const data = await parseResponseJSON<{ error: string }>(res);
 
     expect(res.status).toBe(400);
-    expect(data.error).toContain('required');
+    expect(data.error).toContain("required");
   });
 
-  test('missing action returns 400', async () => {
-    const req = createMockRequest('/api/db/transaction', {
-      method: 'POST',
+  test("missing action returns 400", async () => {
+    const req = createMockRequest("/api/db/transaction", {
+      method: "POST",
       body: { connection: validConnection },
     });
 
@@ -260,55 +263,55 @@ describe('POST /api/db/transaction', () => {
     const data = await parseResponseJSON<{ error: string }>(res);
 
     expect(res.status).toBe(400);
-    expect(data.error).toContain('Connection and action are required');
+    expect(data.error).toContain("Connection and action are required");
   });
 
-  test('provider without transaction support returns 400', async () => {
+  test("provider without transaction support returns 400", async () => {
     mockGetOrCreateProvider.mockImplementation(async () => mockNonTxProvider as never);
 
-    const req = createMockRequest('/api/db/transaction', {
-      method: 'POST',
-      body: { connection: validConnection, action: 'begin' },
+    const req = createMockRequest("/api/db/transaction", {
+      method: "POST",
+      body: { connection: validConnection, action: "begin" },
     });
 
     const res = await POST(req as never);
     const data = await parseResponseJSON<{ error: string }>(res);
 
     expect(res.status).toBe(400);
-    expect(data.error).toContain('not supported');
+    expect(data.error).toContain("not supported");
   });
 
-  test('QueryError returns 400', async () => {
+  test("QueryError returns 400", async () => {
     mockTxProvider.beginTransaction.mockImplementation(async () => {
-      throw new QueryError('Syntax error near BEGIN', 'postgres');
+      throw new QueryError("Syntax error near BEGIN", "postgres");
     });
 
-    const req = createMockRequest('/api/db/transaction', {
-      method: 'POST',
-      body: { connection: validConnection, action: 'begin' },
+    const req = createMockRequest("/api/db/transaction", {
+      method: "POST",
+      body: { connection: validConnection, action: "begin" },
     });
 
     const res = await POST(req as never);
     const data = await parseResponseJSON<{ error: string }>(res);
 
     expect(res.status).toBe(400);
-    expect(data.error).toContain('Syntax error');
+    expect(data.error).toContain("Syntax error");
   });
 
-  test('DatabaseError returns 500', async () => {
+  test("DatabaseError returns 500", async () => {
     mockTxProvider.beginTransaction.mockImplementation(async () => {
-      throw new DatabaseError('Internal database error', 'postgres', 'DATABASE_ERROR');
+      throw new DatabaseError("Internal database error", "postgres", "DATABASE_ERROR");
     });
 
-    const req = createMockRequest('/api/db/transaction', {
-      method: 'POST',
-      body: { connection: validConnection, action: 'begin' },
+    const req = createMockRequest("/api/db/transaction", {
+      method: "POST",
+      body: { connection: validConnection, action: "begin" },
     });
 
     const res = await POST(req as never);
     const data = await parseResponseJSON<{ error: string }>(res);
 
     expect(res.status).toBe(500);
-    expect(data.error).toContain('Internal database error');
+    expect(data.error).toContain("Internal database error");
   });
 });

@@ -1,5 +1,5 @@
 // src/workspace/types.ts
-import type { DatabaseType, TableSchema, SavedQuery } from '@/lib/types';
+import type { DatabaseType, TableSchema, SavedQuery } from "@/lib/types";
 
 // === Connection (platform → studio) ===
 
@@ -78,11 +78,15 @@ export interface StudioWorkspaceProps {
   connections: WorkspaceConnection[];
   currentUser?: WorkspaceUser;
 
-  onQueryExecute: (connectionId: string, sql: string, options?: {
-    limit?: number;
-    offset?: number;
-    unlimited?: boolean;
-  }) => Promise<WorkspaceQueryResult>;
+  onQueryExecute: (
+    connectionId: string,
+    sql: string,
+    options?: {
+      limit?: number;
+      offset?: number;
+      unlimited?: boolean;
+    },
+  ) => Promise<WorkspaceQueryResult>;
   onSchemaFetch: (connectionId: string) => Promise<TableSchema[]>;
 
   onTestConnection?: (config: {

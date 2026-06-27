@@ -1,11 +1,11 @@
-import { useId } from 'react';
+import { useId } from "react";
 
 interface LibreDBLogoProps {
   className?: string;
 }
 
 export default function LibreDBLogo({ className }: LibreDBLogoProps) {
-  const svgId = useId().replace(/:/g, '');
+  const svgId = useId().replace(/:/g, "");
   const logoGradientId = `logo-gradient-${svgId}`;
   const codeGradientId = `code-gradient-${svgId}`;
   const glowFilterId = `logo-glow-${svgId}`;

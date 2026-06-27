@@ -1,10 +1,16 @@
-'use client';
+"use client";
 
-import { useState, useEffect, useRef, useCallback } from 'react';
-import { storage, type StorageConfigResponse, type StorageChangeDetail, type StorageData, STORAGE_COLLECTIONS } from '@/lib/storage';
-import { logger } from '@/lib/logger';
+import { useState, useEffect, useRef, useCallback } from "react";
+import {
+  storage,
+  type StorageConfigResponse,
+  type StorageChangeDetail,
+  type StorageData,
+  STORAGE_COLLECTIONS,
+} from "@/lib/storage";
+import { logger } from "@/lib/logger";
 
-const MIGRATION_FLAG = 'libredb_server_migrated';
+const MIGRATION_FLAG = "libredb_server_migrated";
 const DEBOUNCE_MS = 500;
 
 export interface StorageSyncState {
@@ -39,8 +45,8 @@ export function useStorageSync(): StorageSyncState {
   const pushToServer = useCallback(async (collection: string, data: unknown) => {
     try {
       const res = await fetch(`/api/storage/${collection}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ data }),
       });
       if (!res.ok) {
@@ -50,8 +56,8 @@ export function useStorageSync(): StorageSyncState {
       setLastSyncedAt(new Date());
       setSyncError(null);
     } catch (err) {
-      logger.warn('StorageSync push failed', { collection, error: err instanceof Error ? err.message : String(err) });
-      setSyncError(err instanceof Error ? err.message : 'Sync failed');
+      logger.warn("StorageSync push failed", { collection, error: err instanceof Error ? err.message : String(err) });
+      setSyncError(err instanceof Error ? err.message : "Sync failed");
     }
   }, []);
 
@@ -67,7 +73,7 @@ export function useStorageSync(): StorageSyncState {
         collections.map((col) => {
           const getter = getCollectionData(col);
           return pushToServer(col, getter);
-        })
+        }),
       );
     } finally {
       setIsSyncing(false);
@@ -85,34 +91,35 @@ export function useStorageSync(): StorageSyncState {
         flushPending();
       }, DEBOUNCE_MS);
     },
-    [flushPending]
+    [flushPending],
   );
 
   // ── Pull all data from server → localStorage ──
   const pullFromServer = useCallback(async () => {
     setIsSyncing(true);
     try {
-      const res = await fetch('/api/storage');
+      const res = await fetch("/api/storage");
       if (!res.ok) return;
       const data = (await res.json()) as Partial<StorageData>;
 
       // Write server data to localStorage (overwrite)
-      if (data.connections) writeCollectionToLocal('connections', data.connections);
-      if (data.history) writeCollectionToLocal('history', data.history);
-      if (data.saved_queries) writeCollectionToLocal('saved_queries', data.saved_queries);
-      if (data.schema_snapshots) writeCollectionToLocal('schema_snapshots', data.schema_snapshots);
-      if (data.saved_charts) writeCollectionToLocal('saved_charts', data.saved_charts);
-      if (data.active_connection_id !== undefined) writeCollectionToLocal('active_connection_id', data.active_connection_id);
-      if (data.audit_log) writeCollectionToLocal('audit_log', data.audit_log);
-      if (data.masking_config) writeCollectionToLocal('masking_config', data.masking_config);
-      if (data.threshold_config) writeCollectionToLocal('threshold_config', data.threshold_config);
-      if (data.dismissed_seeds) writeCollectionToLocal('dismissed_seeds', data.dismissed_seeds);
+      if (data.connections) writeCollectionToLocal("connections", data.connections);
+      if (data.history) writeCollectionToLocal("history", data.history);
+      if (data.saved_queries) writeCollectionToLocal("saved_queries", data.saved_queries);
+      if (data.schema_snapshots) writeCollectionToLocal("schema_snapshots", data.schema_snapshots);
+      if (data.saved_charts) writeCollectionToLocal("saved_charts", data.saved_charts);
+      if (data.active_connection_id !== undefined)
+        writeCollectionToLocal("active_connection_id", data.active_connection_id);
+      if (data.audit_log) writeCollectionToLocal("audit_log", data.audit_log);
+      if (data.masking_config) writeCollectionToLocal("masking_config", data.masking_config);
+      if (data.threshold_config) writeCollectionToLocal("threshold_config", data.threshold_config);
+      if (data.dismissed_seeds) writeCollectionToLocal("dismissed_seeds", data.dismissed_seeds);
 
       setLastSyncedAt(new Date());
       setSyncError(null);
     } catch (err) {
-      logger.warn('StorageSync pull failed', { error: err instanceof Error ? err.message : String(err) });
-      setSyncError(err instanceof Error ? err.message : 'Pull failed');
+      logger.warn("StorageSync pull failed", { error: err instanceof Error ? err.message : String(err) });
+      setSyncError(err instanceof Error ? err.message : "Pull failed");
     } finally {
       setIsSyncing(false);
     }
@@ -120,15 +127,13 @@ export function useStorageSync(): StorageSyncState {
 
   // ── Migration: localStorage → server ──
   const migrateToServer = useCallback(async () => {
-    if (typeof window === 'undefined') return;
+    if (typeof window === "undefined") return;
     if (localStorage.getItem(MIGRATION_FLAG)) return;
 
     // Check if localStorage actually has any libredb data to migrate.
     // On a fresh browser, no libredb_* keys exist — skip migration to
     // avoid overwriting server data with empty defaults.
-    const hasLocalData = STORAGE_COLLECTIONS.some(
-      (col) => localStorage.getItem(`libredb_${col}`) !== null
-    );
+    const hasLocalData = STORAGE_COLLECTIONS.some((col) => localStorage.getItem(`libredb_${col}`) !== null);
 
     if (!hasLocalData) {
       localStorage.setItem(MIGRATION_FLAG, new Date().toISOString());
@@ -154,9 +159,9 @@ export function useStorageSync(): StorageSyncState {
         return;
       }
 
-      const res = await fetch('/api/storage/migrate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+      const res = await fetch("/api/storage/migrate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(allData),
       });
 
@@ -164,7 +169,7 @@ export function useStorageSync(): StorageSyncState {
         localStorage.setItem(MIGRATION_FLAG, new Date().toISOString());
       }
     } catch (err) {
-      logger.warn('StorageSync migration failed', { error: err instanceof Error ? err.message : String(err) });
+      logger.warn("StorageSync migration failed", { error: err instanceof Error ? err.message : String(err) });
     } finally {
       setIsSyncing(false);
     }
@@ -176,7 +181,7 @@ export function useStorageSync(): StorageSyncState {
 
     async function init() {
       try {
-        const res = await fetch('/api/storage/config');
+        const res = await fetch("/api/storage/config");
         if (!res.ok || cancelled) return;
         const config = (await res.json()) as StorageConfigResponse;
 
@@ -192,7 +197,7 @@ export function useStorageSync(): StorageSyncState {
         }
       } catch {
         // Server unreachable — stay in local mode
-        logger.debug('Storage server unreachable, staying in local mode');
+        logger.debug("Storage server unreachable, staying in local mode");
       } finally {
         if (!cancelled) {
           setIsReady(true);
@@ -217,9 +222,9 @@ export function useStorageSync(): StorageSyncState {
       }
     }
 
-    window.addEventListener('libredb-storage-change', handleStorageChange);
+    window.addEventListener("libredb-storage-change", handleStorageChange);
     return () => {
-      window.removeEventListener('libredb-storage-change', handleStorageChange);
+      window.removeEventListener("libredb-storage-change", handleStorageChange);
       if (debounceTimerRef.current) {
         clearTimeout(debounceTimerRef.current);
       }
@@ -234,17 +239,28 @@ export function useStorageSync(): StorageSyncState {
 /** Read a collection's current data from the storage facade */
 function getCollectionData(collection: string): unknown {
   switch (collection) {
-    case 'connections': return storage.getConnections();
-    case 'history': return storage.getHistory();
-    case 'saved_queries': return storage.getSavedQueries();
-    case 'schema_snapshots': return storage.getSchemaSnapshots();
-    case 'saved_charts': return storage.getSavedCharts();
-    case 'active_connection_id': return storage.getActiveConnectionId();
-    case 'audit_log': return storage.getAuditLog();
-    case 'masking_config': return storage.getMaskingConfig();
-    case 'threshold_config': return storage.getThresholdConfig();
-    case 'dismissed_seeds': return storage.getDismissedSeeds();
-    default: return null;
+    case "connections":
+      return storage.getConnections();
+    case "history":
+      return storage.getHistory();
+    case "saved_queries":
+      return storage.getSavedQueries();
+    case "schema_snapshots":
+      return storage.getSchemaSnapshots();
+    case "saved_charts":
+      return storage.getSavedCharts();
+    case "active_connection_id":
+      return storage.getActiveConnectionId();
+    case "audit_log":
+      return storage.getAuditLog();
+    case "masking_config":
+      return storage.getMaskingConfig();
+    case "threshold_config":
+      return storage.getThresholdConfig();
+    case "dismissed_seeds":
+      return storage.getDismissedSeeds();
+    default:
+      return null;
   }
 }
 
@@ -253,7 +269,7 @@ function writeCollectionToLocal(collection: string, data: unknown): void {
   const key = `libredb_${collection}`;
   if (data === null || data === undefined) {
     localStorage.removeItem(key);
-  } else if (typeof data === 'string') {
+  } else if (typeof data === "string") {
     localStorage.setItem(key, data);
   } else {
     localStorage.setItem(key, JSON.stringify(data));

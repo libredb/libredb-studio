@@ -1,24 +1,24 @@
-export type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'mongodb' | 'redis' | 'oracle' | 'mssql' | 'libredb';
+export type DatabaseType = "postgres" | "mysql" | "sqlite" | "mongodb" | "redis" | "oracle" | "mssql" | "libredb";
 
-export type ConnectionEnvironment = 'production' | 'staging' | 'development' | 'local' | 'other';
+export type ConnectionEnvironment = "production" | "staging" | "development" | "local" | "other";
 
 export const ENVIRONMENT_COLORS: Record<ConnectionEnvironment, string> = {
-  production: '#ef4444',
-  staging: '#eab308',
-  development: '#22c55e',
-  local: '#3b82f6',
-  other: '#6b7280',
+  production: "#ef4444",
+  staging: "#eab308",
+  development: "#22c55e",
+  local: "#3b82f6",
+  other: "#6b7280",
 };
 
 export const ENVIRONMENT_LABELS: Record<ConnectionEnvironment, string> = {
-  production: 'PROD',
-  staging: 'STAGING',
-  development: 'DEV',
-  local: 'LOCAL',
-  other: '',
+  production: "PROD",
+  staging: "STAGING",
+  development: "DEV",
+  local: "LOCAL",
+  other: "",
 };
 
-export type SSLMode = 'disable' | 'require' | 'verify-ca' | 'verify-full';
+export type SSLMode = "disable" | "require" | "verify-ca" | "verify-full";
 
 export interface SSLConfig {
   mode: SSLMode;
@@ -33,7 +33,7 @@ export interface SSHTunnelConfig {
   host: string;
   port: number;
   username: string;
-  authMethod: 'password' | 'privateKey';
+  authMethod: "password" | "privateKey";
   password?: string;
   privateKey?: string;
   passphrase?: string;
@@ -55,10 +55,10 @@ export interface DatabaseConnection {
   group?: string;
   ssl?: SSLConfig;
   sshTunnel?: SSHTunnelConfig;
-  serviceName?: string;   // Oracle: service name (e.g. ORCL, XEPDB1)
-  instanceName?: string;  // MSSQL: named instance (e.g. SQLEXPRESS)
-  managed?: boolean;      // true = admin-controlled, read-only in UI
-  seedId?: string;        // stable reference to seed config ID
+  serviceName?: string; // Oracle: service name (e.g. ORCL, XEPDB1)
+  instanceName?: string; // MSSQL: named instance (e.g. SQLEXPRESS)
+  managed?: boolean; // true = admin-controlled, read-only in UI
+  seedId?: string; // stable reference to seed config ID
 }
 
 export interface TableSchema {
@@ -125,8 +125,8 @@ export interface QueryTab {
   query: string;
   result: QueryResult | null;
   isExecuting: boolean;
-  type: 'sql' | 'mongodb' | 'redis' | 'libredb';
-  viewMode?: 'results' | 'explain' | 'history' | 'saved';
+  type: "sql" | "mongodb" | "redis" | "libredb";
+  viewMode?: "results" | "explain" | "history" | "saved";
   explainPlan?: unknown;
   // Pagination state
   currentOffset?: number;
@@ -141,7 +141,7 @@ export interface QueryHistoryItem {
   tabName?: string;
   query: string;
   executionTime: number;
-  status: 'success' | 'error';
+  status: "success" | "error";
   executedAt: Date;
   rowCount?: number;
   errorMessage?: string;
@@ -168,8 +168,8 @@ export interface SchemaSnapshot {
   label?: string;
 }
 
-export type AggregationType = 'none' | 'sum' | 'avg' | 'count' | 'min' | 'max';
-export type DateGrouping = 'hour' | 'day' | 'week' | 'month' | 'year';
+export type AggregationType = "none" | "sum" | "avg" | "count" | "min" | "max";
+export type DateGrouping = "hour" | "day" | "week" | "month" | "year";
 
 export interface SavedChartConfig {
   id: string;

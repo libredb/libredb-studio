@@ -21,7 +21,7 @@
  * provider contract. The import is lazy and dynamic so the package never enters
  * a client bundle and `build:lib` (tsup) can externalize it.
  */
-import { BaseDatabaseProvider } from '../../base-provider';
+import { BaseDatabaseProvider } from "../../base-provider";
 import {
   type DatabaseConnection,
   type TableSchema,
@@ -39,21 +39,21 @@ import {
   type TableStats,
   type IndexStats,
   type StorageStats,
-} from '../../types';
-import { DatabaseConfigError, ConnectionError, QueryError } from '../../errors';
-import { formatBytes } from '../../utils/pool-manager';
-import * as fs from 'fs';
-import * as path from 'path';
+} from "../../types";
+import { DatabaseConfigError, ConnectionError, QueryError } from "../../errors";
+import { formatBytes } from "../../utils/pool-manager";
+import * as fs from "fs";
+import * as path from "path";
 
 // ============================================================================
 // Lazy package loader (mirrors sqlite.ts loading bun:sqlite)
 // ============================================================================
 
-type LibreDBModule = typeof import('@libredb/libredb');
-type LibreDatabase = import('@libredb/libredb').Database;
-type LibreKv = import('@libredb/libredb').Kv;
-type LibreCatalogEntry = import('@libredb/libredb').CatalogEntry;
-type LibreCatalogRegistry = import('@libredb/libredb').CatalogRegistry;
+type LibreDBModule = typeof import("@libredb/libredb");
+type LibreDatabase = import("@libredb/libredb").Database;
+type LibreKv = import("@libredb/libredb").Kv;
+type LibreCatalogEntry = import("@libredb/libredb").CatalogEntry;
+type LibreCatalogRegistry = import("@libredb/libredb").CatalogRegistry;
 
 let libredbModule: LibreDBModule | null = null;
 let libredbLoadError: Error | null = null;
@@ -62,12 +62,12 @@ async function loadLibreDB(): Promise<LibreDBModule> {
   if (libredbModule) return libredbModule;
   if (libredbLoadError) throw libredbLoadError;
   try {
-    libredbModule = await import('@libredb/libredb');
+    libredbModule = await import("@libredb/libredb");
     return libredbModule;
   } catch {
     libredbLoadError = new DatabaseConfigError(
-      'LibreDB package (@libredb/libredb) is not available in this environment. Install it with: bun add @libredb/libredb',
-      'libredb'
+      "LibreDB package (@libredb/libredb) is not available in this environment. Install it with: bun add @libredb/libredb",
+      "libredb",
     );
     throw libredbLoadError;
   }
@@ -80,7 +80,7 @@ async function loadLibreDB(): Promise<LibreDBModule> {
 export class LibreDBProvider extends BaseDatabaseProvider {
   protected db: LibreDatabase | null = null;
   protected kv: LibreKv | null = null;
-  protected dbVersion = 'unknown';
+  protected dbVersion = "unknown";
   /** The resolved, validated absolute file path, set on connect(). */
   protected dbPath: string | null = null;
 
@@ -94,8 +94,8 @@ export class LibreDBProvider extends BaseDatabaseProvider {
 
   public override getCapabilities(): ProviderCapabilities {
     return {
-      queryLanguage: 'json',
-      queryDialect: 'libredb',
+      queryLanguage: "json",
+      queryDialect: "libredb",
       supportsExplain: false,
       supportsExternalQueryLimiting: false,
       supportsCreateTable: false,
@@ -103,27 +103,27 @@ export class LibreDBProvider extends BaseDatabaseProvider {
       maintenanceOperations: [],
       supportsConnectionString: false,
       defaultPort: null,
-      schemaRefreshPattern: '\\b(put|delete)\\b',
+      schemaRefreshPattern: "\\b(put|delete)\\b",
     };
   }
 
   public override getLabels(): ProviderLabels {
     return {
-      entityName: 'Key Prefix',
-      entityNamePlural: 'Key Prefixes',
-      rowName: 'key',
-      rowNamePlural: 'keys',
-      selectAction: 'Scan Keys',
-      generateAction: 'Generate Command',
-      analyzeAction: 'Key Info',
-      vacuumAction: 'Compact',
-      searchPlaceholder: 'Search keys...',
-      analyzeGlobalLabel: 'Info',
-      analyzeGlobalTitle: 'Database Info',
-      analyzeGlobalDesc: 'Show LibreDB file information and key statistics.',
-      vacuumGlobalLabel: 'Compact',
-      vacuumGlobalTitle: 'Compact',
-      vacuumGlobalDesc: 'Not supported for LibreDB in this version.',
+      entityName: "Key Prefix",
+      entityNamePlural: "Key Prefixes",
+      rowName: "key",
+      rowNamePlural: "keys",
+      selectAction: "Scan Keys",
+      generateAction: "Generate Command",
+      analyzeAction: "Key Info",
+      vacuumAction: "Compact",
+      searchPlaceholder: "Search keys...",
+      analyzeGlobalLabel: "Info",
+      analyzeGlobalTitle: "Database Info",
+      analyzeGlobalDesc: "Show LibreDB file information and key statistics.",
+      vacuumGlobalLabel: "Compact",
+      vacuumGlobalTitle: "Compact",
+      vacuumGlobalDesc: "Not supported for LibreDB in this version.",
     };
   }
 
@@ -136,7 +136,7 @@ export class LibreDBProvider extends BaseDatabaseProvider {
     if (!this.config.database) {
       throw new DatabaseConfigError(
         'LibreDB requires a file path (use the "database" field, e.g. /data/app.libredb)',
-        'libredb'
+        "libredb",
       );
     }
   }
@@ -153,12 +153,12 @@ export class LibreDBProvider extends BaseDatabaseProvider {
     if (!configured) {
       throw new DatabaseConfigError(
         'LibreDB requires a file path (use the "database" field, e.g. /data/app.libredb)',
-        'libredb'
+        "libredb",
       );
     }
     const resolved = path.resolve(configured);
-    if (resolved !== path.normalize(resolved) || configured.includes('\0')) {
-      throw new DatabaseConfigError('Invalid database path: path traversal is not allowed', 'libredb');
+    if (resolved !== path.normalize(resolved) || configured.includes("\0")) {
+      throw new DatabaseConfigError("Invalid database path: path traversal is not allowed", "libredb");
     }
     return resolved;
   }
@@ -177,14 +177,18 @@ export class LibreDBProvider extends BaseDatabaseProvider {
       this.setError(error instanceof Error ? error : new Error(String(error)));
       throw new ConnectionError(
         `Failed to open LibreDB file: ${error instanceof Error ? error.message : String(error)}`,
-        'libredb'
+        "libredb",
       );
     }
   }
 
   public async disconnect(): Promise<void> {
     if (this.db) {
-      try { this.db.close(); } catch { /* the null-guard above runs close() at most once; ignore any error */ }
+      try {
+        this.db.close();
+      } catch {
+        /* the null-guard above runs close() at most once; ignore any error */
+      }
       this.db = null;
       this.kv = null;
       this.dbPath = null;
@@ -212,7 +216,7 @@ export class LibreDBProvider extends BaseDatabaseProvider {
     // Empty-string start encodes to the lowest bytes; '\u{10FFFF}' encodes above
     // any UTF-8 text key the lenses produce, so [start, end) covers the keyspace.
     // (kv.prefix cannot be used here — it rejects an empty prefix.)
-    for (const { key } of this.kv!.range('', '\u{10FFFF}')) {
+    for (const { key } of this.kv!.range("", "\u{10FFFF}")) {
       if (scanned >= MAX_SCAN) break;
       // Skip the database's reserved internal namespace — it is not user data.
       if (this.isReserved(key)) continue;
@@ -233,7 +237,7 @@ export class LibreDBProvider extends BaseDatabaseProvider {
     // Surface cataloged namespaces that exist but have no scanned rows yet (an
     // empty table/collection), so the catalog view is complete.
     for (const [catalogName, entry] of registry) {
-      if (entry.kind === 'kv') continue; // kv is the raw layer, never cataloged as a table
+      if (entry.kind === "kv") continue; // kv is the raw layer, never cataloged as a table
       const groupName = `${catalogName}:*`;
       if (groupCounts.has(groupName)) continue;
       schemas.push(this.schemaForGroup(groupName, 0, entry));
@@ -244,7 +248,7 @@ export class LibreDBProvider extends BaseDatabaseProvider {
 
   /** Group key "user:1" under "user:*"; a key with no ":" is its own group. */
   private groupName(key: string): string {
-    const colon = key.indexOf(':');
+    const colon = key.indexOf(":");
     return colon > 0 ? `${key.slice(0, colon)}:*` : key;
   }
 
@@ -265,14 +269,11 @@ export class LibreDBProvider extends BaseDatabaseProvider {
   /** The catalog entry that owns a scanned group, if any. A catalog entry named
    * "users" owns the keys "users:..." which group as "users:*", so strip the
    * trailing ":*" to recover the namespace name and look it up. */
-  private catalogEntryFor(
-    groupName: string,
-    registry: LibreCatalogRegistry
-  ): LibreCatalogEntry | undefined {
+  private catalogEntryFor(groupName: string, registry: LibreCatalogRegistry): LibreCatalogEntry | undefined {
     // Only prefix groups ("<ns>:*") own a cataloged namespace. A bare single-key
     // group (no colon) is raw kv and must never be "upgraded" to relational /
     // document columns, even if its name happens to match a catalog namespace.
-    if (!groupName.endsWith(':*')) return undefined;
+    if (!groupName.endsWith(":*")) return undefined;
     return registry.get(groupName.slice(0, -2));
   }
 
@@ -287,12 +288,8 @@ export class LibreDBProvider extends BaseDatabaseProvider {
    * by the columns themselves (real columns => relational; id/document =>
    * document; key/value => raw kv).
    */
-  private schemaForGroup(
-    name: string,
-    rowCount: number,
-    entry: LibreCatalogEntry | undefined
-  ): TableSchema {
-    if (entry?.kind === 'relational' && entry.schema) {
+  private schemaForGroup(name: string, rowCount: number, entry: LibreCatalogEntry | undefined): TableSchema {
+    if (entry?.kind === "relational" && entry.schema) {
       const { primaryKey, columns } = entry.schema;
       const cols = Object.entries(columns).map(([colName, colType]) => ({
         name: colName,
@@ -302,12 +299,12 @@ export class LibreDBProvider extends BaseDatabaseProvider {
       }));
       return { name, columns: cols, indexes: [], rowCount };
     }
-    if (entry?.kind === 'document') {
+    if (entry?.kind === "document") {
       return {
         name,
         columns: [
-          { name: 'id', type: 'string', nullable: false, isPrimary: true },
-          { name: 'document', type: 'object', nullable: true, isPrimary: false },
+          { name: "id", type: "string", nullable: false, isPrimary: true },
+          { name: "document", type: "object", nullable: true, isPrimary: false },
         ],
         indexes: [],
         rowCount,
@@ -317,8 +314,8 @@ export class LibreDBProvider extends BaseDatabaseProvider {
     return {
       name,
       columns: [
-        { name: 'key', type: 'string', nullable: false, isPrimary: true },
-        { name: 'value', type: 'string', nullable: true, isPrimary: false },
+        { name: "key", type: "string", nullable: false, isPrimary: true },
+        { name: "value", type: "string", nullable: true, isPrimary: false },
       ],
       indexes: [],
       rowCount,
@@ -333,43 +330,43 @@ export class LibreDBProvider extends BaseDatabaseProvider {
     });
   }
 
-  private runCommand(input: string): Omit<QueryResult, 'executionTime'> {
+  private runCommand(input: string): Omit<QueryResult, "executionTime"> {
     const line = this.firstCommandLine(input);
-    if (line === '') {
-      throw new QueryError('No command to run (only comments or blank lines)', 'libredb');
+    if (line === "") {
+      throw new QueryError("No command to run (only comments or blank lines)", "libredb");
     }
     const parts = this.tokenize(line);
-    if (parts.length === 0) throw new QueryError('Empty command', 'libredb');
+    if (parts.length === 0) throw new QueryError("Empty command", "libredb");
     const kv = this.kv!;
     const verb = parts[0].toLowerCase();
 
     switch (verb) {
-      case 'get': {
-        if (parts.length < 2) throw new QueryError('Usage: get <key>', 'libredb');
+      case "get": {
+        if (parts.length < 2) throw new QueryError("Usage: get <key>", "libredb");
         const value = kv.get(parts[1]);
-        if (value === undefined) return { rows: [], fields: ['key', 'value'], rowCount: 0 };
-        return { rows: [{ key: parts[1], value: this.renderValue(value) }], fields: ['key', 'value'], rowCount: 1 };
+        if (value === undefined) return { rows: [], fields: ["key", "value"], rowCount: 0 };
+        return { rows: [{ key: parts[1], value: this.renderValue(value) }], fields: ["key", "value"], rowCount: 1 };
       }
-      case 'put': {
-        if (parts.length < 3) throw new QueryError('Usage: put <key> <value>', 'libredb');
-        const { changed } = kv.set(parts[1], parts.slice(2).join(' '));
-        return { rows: [{ changed }], fields: ['changed'], rowCount: changed };
+      case "put": {
+        if (parts.length < 3) throw new QueryError("Usage: put <key> <value>", "libredb");
+        const { changed } = kv.set(parts[1], parts.slice(2).join(" "));
+        return { rows: [{ changed }], fields: ["changed"], rowCount: changed };
       }
-      case 'delete': {
-        if (parts.length < 2) throw new QueryError('Usage: delete <key>', 'libredb');
+      case "delete": {
+        if (parts.length < 2) throw new QueryError("Usage: delete <key>", "libredb");
         const { changed } = kv.delete(parts[1]);
-        return { rows: [{ changed }], fields: ['changed'], rowCount: changed };
+        return { rows: [{ changed }], fields: ["changed"], rowCount: changed };
       }
-      case 'prefix': {
-        if (parts.length < 2) throw new QueryError('Usage: prefix <p>', 'libredb');
+      case "prefix": {
+        if (parts.length < 2) throw new QueryError("Usage: prefix <p>", "libredb");
         return this.toRows(kv.prefix(parts[1]));
       }
-      case 'range': {
-        if (parts.length < 3) throw new QueryError('Usage: range <start> <end>', 'libredb');
+      case "range": {
+        if (parts.length < 3) throw new QueryError("Usage: range <start> <end>", "libredb");
         return this.toRows(kv.range(parts[1], parts[2]));
       }
       default:
-        throw new QueryError(`Unknown command "${verb}". Supported: get, put, delete, prefix, range`, 'libredb');
+        throw new QueryError(`Unknown command "${verb}". Supported: get, put, delete, prefix, range`, "libredb");
     }
   }
 
@@ -382,12 +379,12 @@ export class LibreDBProvider extends BaseDatabaseProvider {
    * is never mistaken for one. Returns `''` when nothing runnable remains.
    */
   private firstCommandLine(input: string): string {
-    for (const raw of input.split('\n')) {
+    for (const raw of input.split("\n")) {
       const line = raw.trim();
-      if (line === '' || line.startsWith('#')) continue;
+      if (line === "" || line.startsWith("#")) continue;
       return line;
     }
-    return '';
+    return "";
   }
 
   /**
@@ -399,41 +396,52 @@ export class LibreDBProvider extends BaseDatabaseProvider {
    */
   private tokenize(input: string): string[] {
     const parts: string[] = [];
-    let current = '';
+    let current = "";
     let inQuote = false;
-    let quoteChar = '';
+    let quoteChar = "";
     let sawToken = false;
     for (const ch of input) {
       if (!inQuote && (ch === '"' || ch === "'")) {
-        inQuote = true; quoteChar = ch; sawToken = true;
+        inQuote = true;
+        quoteChar = ch;
+        sawToken = true;
       } else if (inQuote && ch === quoteChar) {
         inQuote = false;
       } else if (!inQuote && /\s/.test(ch)) {
-        if (sawToken) { parts.push(current); current = ''; sawToken = false; }
+        if (sawToken) {
+          parts.push(current);
+          current = "";
+          sawToken = false;
+        }
       } else {
-        current += ch; sawToken = true;
+        current += ch;
+        sawToken = true;
       }
     }
     if (sawToken) parts.push(current);
     if (inQuote) {
-      throw new QueryError('Unmatched quote in command', 'libredb');
+      throw new QueryError("Unmatched quote in command", "libredb");
     }
     return parts;
   }
 
   /** Pretty-print a JSON value; leave non-JSON strings as-is. */
   private renderValue(value: string): string {
-    try { return JSON.stringify(JSON.parse(value), null, 2); } catch { return value; }
+    try {
+      return JSON.stringify(JSON.parse(value), null, 2);
+    } catch {
+      return value;
+    }
   }
 
-  private toRows(scan: Iterable<{ key: string; value: string }>): Omit<QueryResult, 'executionTime'> {
+  private toRows(scan: Iterable<{ key: string; value: string }>): Omit<QueryResult, "executionTime"> {
     const rows: Record<string, unknown>[] = [];
     for (const { key, value } of scan) {
       // Never surface the database's reserved internal namespace in query results.
       if (this.isReserved(key)) continue;
       rows.push({ key, value: this.renderValue(value) });
     }
-    return { rows, fields: ['key', 'value'], rowCount: rows.length };
+    return { rows, fields: ["key", "value"], rowCount: rows.length };
   }
 
   // --------------------------------------------------------------------------
@@ -442,14 +450,20 @@ export class LibreDBProvider extends BaseDatabaseProvider {
 
   public async getHealth(): Promise<HealthInfo> {
     this.ensureConnected();
-    return { activeConnections: 1, databaseSize: this.fileSizeHuman(), cacheHitRatio: '100.0', slowQueries: [], activeSessions: [] };
+    return {
+      activeConnections: 1,
+      databaseSize: this.fileSizeHuman(),
+      cacheHitRatio: "100.0",
+      slowQueries: [],
+      activeSessions: [],
+    };
   }
 
   public async getOverview(): Promise<DatabaseOverview> {
     this.ensureConnected();
     return {
       version: this.dbVersion,
-      uptime: '-',
+      uptime: "-",
       activeConnections: 1,
       maxConnections: 1,
       databaseSize: this.fileSizeHuman(),
@@ -464,18 +478,33 @@ export class LibreDBProvider extends BaseDatabaseProvider {
     return { cacheHitRatio: 100 };
   }
 
-  public async getSlowQueries(): Promise<SlowQueryStats[]> { return []; }
-  public async getActiveSessions(): Promise<ActiveSessionDetails[]> { return []; }
-  public async getTableStats(): Promise<TableStats[]> { return []; }
-  public async getIndexStats(): Promise<IndexStats[]> { return []; }
+  public async getSlowQueries(): Promise<SlowQueryStats[]> {
+    return [];
+  }
+  public async getActiveSessions(): Promise<ActiveSessionDetails[]> {
+    return [];
+  }
+  public async getTableStats(): Promise<TableStats[]> {
+    return [];
+  }
+  public async getIndexStats(): Promise<IndexStats[]> {
+    return [];
+  }
 
   public async getStorageStats(): Promise<StorageStats[]> {
     this.ensureConnected();
-    return [{ name: 'File', location: this.dbPath ?? this.config.database ?? '', size: this.fileSizeHuman(), sizeBytes: this.fileSizeBytes() }];
+    return [
+      {
+        name: "File",
+        location: this.dbPath ?? this.config.database ?? "",
+        size: this.fileSizeHuman(),
+        sizeBytes: this.fileSizeBytes(),
+      },
+    ];
   }
 
   public async runMaintenance(type: MaintenanceType): Promise<MaintenanceResult> {
-    throw new QueryError(`Maintenance operation "${type}" is not supported for LibreDB`, 'libredb');
+    throw new QueryError(`Maintenance operation "${type}" is not supported for LibreDB`, "libredb");
   }
 
   // --------------------------------------------------------------------------
@@ -483,7 +512,11 @@ export class LibreDBProvider extends BaseDatabaseProvider {
   // --------------------------------------------------------------------------
 
   private fileSizeBytes(): number {
-    try { return this.dbPath ? fs.statSync(this.dbPath).size : 0; } catch { return 0; }
+    try {
+      return this.dbPath ? fs.statSync(this.dbPath).size : 0;
+    } catch {
+      return 0;
+    }
   }
 
   private fileSizeHuman(): string {

@@ -1,10 +1,10 @@
-import React from 'react';
-import { TableSchema } from '@/lib/types';
-import { Key, Hash } from 'lucide-react';
+import React from "react";
+import { TableSchema } from "@/lib/types";
+import { Key, Hash } from "lucide-react";
 
 interface ColumnListProps {
-  columns: TableSchema['columns'];
-  indexes: TableSchema['indexes'];
+  columns: TableSchema["columns"];
+  indexes: TableSchema["indexes"];
 }
 
 export const ColumnList = React.memo(function ColumnList({ columns, indexes }: ColumnListProps) {
@@ -28,7 +28,7 @@ export const ColumnList = React.memo(function ColumnList({ columns, indexes }: C
           </span>
 
           <span className="text-xs font-mono text-muted-foreground/60 uppercase group-hover/col:text-muted-foreground">
-            {column.type.split('(')[0]}
+            {column.type.split("(")[0]}
           </span>
         </div>
       ))}
@@ -38,10 +38,13 @@ export const ColumnList = React.memo(function ColumnList({ columns, indexes }: C
             <Hash strokeWidth={1.5} className="w-2.5 h-2.5 text-purple-500/40" />
             <span className="text-[0.625rem] font-medium text-muted-foreground">Indexes</span>
           </div>
-          {indexes.map(idx => (
+          {indexes.map((idx) => (
             <div key={idx.name} className="flex items-center gap-2 py-0.5 px-2">
               <div className="w-2.5 h-2.5" />
-              <span className="text-xs text-muted-foreground italic truncate" title={Array.isArray(idx.columns) ? idx.columns.join(', ') : ''}>
+              <span
+                className="text-xs text-muted-foreground italic truncate"
+                title={Array.isArray(idx.columns) ? idx.columns.join(", ") : ""}
+              >
                 {idx.name}
               </span>
             </div>

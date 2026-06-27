@@ -1,34 +1,39 @@
 "use client";
 
-import React, { useState, useMemo, useCallback, useEffect } from 'react';
-import { Columns3, GripVertical, ArrowRight } from 'lucide-react';
-import { cn } from '@/lib/utils';
-import { QueryResult } from '@/lib/types';
+import React, { useState, useMemo, useCallback, useEffect } from "react";
+import { Columns3, GripVertical, ArrowRight } from "lucide-react";
+import { cn } from "@/lib/utils";
+import { QueryResult } from "@/lib/types";
 
 interface PivotTableProps {
   result: QueryResult | null;
   onLoadQuery?: (query: string) => void;
 }
 
-type AggFunction = 'count' | 'sum' | 'avg' | 'min' | 'max';
+type AggFunction = "count" | "sum" | "avg" | "min" | "max";
 
 const AGG_LABELS: Record<AggFunction, string> = {
-  count: 'COUNT',
-  sum: 'SUM',
-  avg: 'AVG',
-  min: 'MIN',
-  max: 'MAX',
+  count: "COUNT",
+  sum: "SUM",
+  avg: "AVG",
+  min: "MIN",
+  max: "MAX",
 };
 
 export function aggregate(values: unknown[], fn: AggFunction): string {
-  const nums = values.map(v => Number(v)).filter(n => !isNaN(n));
+  const nums = values.map((v) => Number(v)).filter((n) => !isNaN(n));
 
   switch (fn) {
-    case 'count': return String(values.length);
-    case 'sum': return nums.length ? nums.reduce((a, b) => a + b, 0).toFixed(2) : '0';
-    case 'avg': return nums.length ? (nums.reduce((a, b) => a + b, 0) / nums.length).toFixed(2) : '0';
-    case 'min': return nums.length ? String(Math.min(...nums)) : '-';
-    case 'max': return nums.length ? String(Math.max(...nums)) : '-';
+    case "count":
+      return String(values.length);
+    case "sum":
+      return nums.length ? nums.reduce((a, b) => a + b, 0).toFixed(2) : "0";
+    case "avg":
+      return nums.length ? (nums.reduce((a, b) => a + b, 0) / nums.length).toFixed(2) : "0";
+    case "min":
+      return nums.length ? String(Math.min(...nums)) : "-";
+    case "max":
+      return nums.length ? String(Math.max(...nums)) : "-";
   }
 }
 
@@ -36,26 +41,26 @@ export function PivotTable({ result, onLoadQuery }: PivotTableProps) {
   const [rowField, setRowField] = useState<string | null>(null);
   const [colField, setColField] = useState<string | null>(null);
   const [valueField, setValueField] = useState<string | null>(null);
-  const [aggFunction, setAggFunction] = useState<AggFunction>('count');
+  const [aggFunction, setAggFunction] = useState<AggFunction>("count");
   const fields = result?.fields || [];
   const rows = useMemo(() => result?.rows || [], [result?.rows]);
 
   // Auto-detect fields on first render
   useEffect(() => {
     if (fields.length >= 2 && !rowField) {
-      const strCol = fields.find(f => {
+      const strCol = fields.find((f) => {
         const sample = rows[0]?.[f];
-        return typeof sample === 'string';
+        return typeof sample === "string";
       });
       if (strCol) setRowField(strCol);
 
-      const numCol = fields.find(f => {
+      const numCol = fields.find((f) => {
         const sample = rows[0]?.[f];
-        return typeof sample === 'number';
+        return typeof sample === "number";
       });
       if (numCol) setValueField(numCol);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fields.length]);
 
   // Compute pivot data
@@ -67,8 +72,8 @@ export function PivotTable({ result, onLoadQuery }: PivotTableProps) {
     const colValues = new Set<string>();
 
     for (const row of rows) {
-      const rowKey = String(row[rowField] ?? 'NULL');
-      const colKey = colField ? String(row[colField] ?? 'NULL') : '__all__';
+      const rowKey = String(row[rowField] ?? "NULL");
+      const colKey = colField ? String(row[colField] ?? "NULL") : "__all__";
       const value = valueField ? row[valueField] : 1;
 
       if (colField) colValues.add(colKey);
@@ -79,7 +84,7 @@ export function PivotTable({ result, onLoadQuery }: PivotTableProps) {
       colMap.get(colKey)!.push(value);
     }
 
-    const colKeys = colField ? Array.from(colValues).sort() : ['__all__'];
+    const colKeys = colField ? Array.from(colValues).sort() : ["__all__"];
 
     // Build pivot rows
     const pivotRows: { rowKey: string; values: Map<string, string> }[] = [];
@@ -100,7 +105,7 @@ export function PivotTable({ result, onLoadQuery }: PivotTableProps) {
 
   // Generate SQL
   const generateSQL = useCallback(() => {
-    if (!rowField) return '';
+    if (!rowField) return "";
     const select: string[] = [`"${rowField}"`];
     const groupBy: string[] = [`"${rowField}"`];
 
@@ -108,18 +113,18 @@ export function PivotTable({ result, onLoadQuery }: PivotTableProps) {
       // Use CASE WHEN for pivot columns
       const colKeys = pivotData?.colKeys || [];
       for (const ck of colKeys) {
-        if (ck === '__all__') continue;
-        const valExpr = valueField ? `"${valueField}"` : '1';
+        if (ck === "__all__") continue;
+        const valExpr = valueField ? `"${valueField}"` : "1";
         select.push(
-          `${AGG_LABELS[aggFunction]}(CASE WHEN "${colField}" = '${ck.replace(/'/g, "''")}' THEN ${valExpr} END) AS "${ck}"`
+          `${AGG_LABELS[aggFunction]}(CASE WHEN "${colField}" = '${ck.replace(/'/g, "''")}' THEN ${valExpr} END) AS "${ck}"`,
         );
       }
     } else {
-      const valExpr = valueField ? `"${valueField}"` : '*';
+      const valExpr = valueField ? `"${valueField}"` : "*";
       select.push(`${AGG_LABELS[aggFunction]}(${valExpr}) AS "${aggFunction}_value"`);
     }
 
-    return `SELECT\n  ${select.join(',\n  ')}\nFROM your_table\nGROUP BY ${groupBy.join(', ')}\nORDER BY ${groupBy.join(', ')};`;
+    return `SELECT\n  ${select.join(",\n  ")}\nFROM your_table\nGROUP BY ${groupBy.join(", ")}\nORDER BY ${groupBy.join(", ")};`;
   }, [rowField, colField, valueField, aggFunction, pivotData]);
 
   if (!result || rows.length === 0) {
@@ -140,12 +145,16 @@ export function PivotTable({ result, onLoadQuery }: PivotTableProps) {
         <div className="flex items-center gap-1.5">
           <span className="text-xs text-zinc-500 font-medium">Rows:</span>
           <select
-            value={rowField || ''}
-            onChange={e => setRowField(e.target.value || null)}
+            value={rowField || ""}
+            onChange={(e) => setRowField(e.target.value || null)}
             className="bg-[#111] border border-white/10 rounded px-2 py-1 text-xs text-zinc-300 outline-none"
           >
             <option value="">Select...</option>
-            {fields.map(f => <option key={f} value={f}>{f}</option>)}
+            {fields.map((f) => (
+              <option key={f} value={f}>
+                {f}
+              </option>
+            ))}
           </select>
         </div>
 
@@ -153,12 +162,18 @@ export function PivotTable({ result, onLoadQuery }: PivotTableProps) {
         <div className="flex items-center gap-1.5">
           <span className="text-xs text-zinc-500 font-medium">Columns:</span>
           <select
-            value={colField || ''}
-            onChange={e => setColField(e.target.value || null)}
+            value={colField || ""}
+            onChange={(e) => setColField(e.target.value || null)}
             className="bg-[#111] border border-white/10 rounded px-2 py-1 text-xs text-zinc-300 outline-none"
           >
             <option value="">None</option>
-            {fields.filter(f => f !== rowField).map(f => <option key={f} value={f}>{f}</option>)}
+            {fields
+              .filter((f) => f !== rowField)
+              .map((f) => (
+                <option key={f} value={f}>
+                  {f}
+                </option>
+              ))}
           </select>
         </div>
 
@@ -166,18 +181,24 @@ export function PivotTable({ result, onLoadQuery }: PivotTableProps) {
         <div className="flex items-center gap-1.5">
           <span className="text-xs text-zinc-500 font-medium">Values:</span>
           <select
-            value={valueField || ''}
-            onChange={e => setValueField(e.target.value || null)}
+            value={valueField || ""}
+            onChange={(e) => setValueField(e.target.value || null)}
             className="bg-[#111] border border-white/10 rounded px-2 py-1 text-xs text-zinc-300 outline-none"
           >
             <option value="">Count</option>
-            {fields.filter(f => f !== rowField && f !== colField).map(f => <option key={f} value={f}>{f}</option>)}
+            {fields
+              .filter((f) => f !== rowField && f !== colField)
+              .map((f) => (
+                <option key={f} value={f}>
+                  {f}
+                </option>
+              ))}
           </select>
         </div>
 
         {/* Aggregation */}
         <div className="flex items-center gap-1">
-          {(Object.keys(AGG_LABELS) as AggFunction[]).map(fn => (
+          {(Object.keys(AGG_LABELS) as AggFunction[]).map((fn) => (
             <button
               key={fn}
               onClick={() => setAggFunction(fn)}
@@ -185,7 +206,7 @@ export function PivotTable({ result, onLoadQuery }: PivotTableProps) {
                 "px-1.5 py-0.5 rounded text-xs font-medium transition-colors",
                 aggFunction === fn
                   ? "bg-blue-500/20 text-blue-400 border border-blue-500/20"
-                  : "text-zinc-600 hover:text-zinc-400"
+                  : "text-zinc-600 hover:text-zinc-400",
               )}
             >
               {AGG_LABELS[fn]}
@@ -216,9 +237,12 @@ export function PivotTable({ result, onLoadQuery }: PivotTableProps) {
                 <th className="text-left px-3 py-2 text-zinc-500 border-b border-r border-white/5 font-mediumr">
                   {rowField}
                 </th>
-                {pivotData.colKeys.map(ck => (
-                  <th key={ck} className="text-right px-3 py-2 text-zinc-500 border-b border-r border-white/5 font-medium">
-                    {ck === '__all__' ? `${AGG_LABELS[aggFunction]}(${valueField || '*'})` : ck}
+                {pivotData.colKeys.map((ck) => (
+                  <th
+                    key={ck}
+                    className="text-right px-3 py-2 text-zinc-500 border-b border-r border-white/5 font-medium"
+                  >
+                    {ck === "__all__" ? `${AGG_LABELS[aggFunction]}(${valueField || "*"})` : ck}
                   </th>
                 ))}
               </tr>
@@ -226,12 +250,10 @@ export function PivotTable({ result, onLoadQuery }: PivotTableProps) {
             <tbody>
               {pivotData.pivotRows.map((row, i) => (
                 <tr key={i} className="hover:bg-blue-500/[0.03] border-b border-white/5">
-                  <td className="px-3 py-1.5 text-zinc-300 border-r border-white/5 font-medium">
-                    {row.rowKey}
-                  </td>
-                  {pivotData.colKeys.map(ck => (
+                  <td className="px-3 py-1.5 text-zinc-300 border-r border-white/5 font-medium">{row.rowKey}</td>
+                  {pivotData.colKeys.map((ck) => (
                     <td key={ck} className="px-3 py-1.5 text-right text-amber-500/90 border-r border-white/5">
-                      {row.values.get(ck) || '0'}
+                      {row.values.get(ck) || "0"}
                     </td>
                   ))}
                 </tr>
@@ -249,7 +271,8 @@ export function PivotTable({ result, onLoadQuery }: PivotTableProps) {
       {/* Status */}
       {pivotData && (
         <div className="px-4 py-1.5 border-t border-white/5 bg-[#0a0a0a] text-xs text-zinc-500 font-mono">
-          {pivotData.pivotRows.length} groups • {pivotData.colKeys.length} columns • {AGG_LABELS[aggFunction]} aggregation
+          {pivotData.pivotRows.length} groups • {pivotData.colKeys.length} columns • {AGG_LABELS[aggFunction]}{" "}
+          aggregation
         </div>
       )}
     </div>

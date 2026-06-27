@@ -1,12 +1,12 @@
-import type { QueryResult } from '@/lib/types';
+import type { QueryResult } from "@/lib/types";
 
 export const mockSelectResult: QueryResult = {
   rows: [
-    { id: 1, name: 'Alice', email: 'alice@example.com' },
-    { id: 2, name: 'Bob', email: 'bob@example.com' },
-    { id: 3, name: 'Charlie', email: 'charlie@example.com' },
+    { id: 1, name: "Alice", email: "alice@example.com" },
+    { id: 2, name: "Bob", email: "bob@example.com" },
+    { id: 3, name: "Charlie", email: "charlie@example.com" },
   ],
-  fields: ['id', 'name', 'email'],
+  fields: ["id", "name", "email"],
   rowCount: 3,
   executionTime: 12,
 };
@@ -31,7 +31,7 @@ export const mockPaginatedResult: QueryResult = {
     name: `User ${i + 1}`,
     email: `user${i + 1}@example.com`,
   })),
-  fields: ['id', 'name', 'email'],
+  fields: ["id", "name", "email"],
   rowCount: 50,
   executionTime: 25,
   pagination: {
@@ -44,28 +44,26 @@ export const mockPaginatedResult: QueryResult = {
 };
 
 export const mockExplainResult: QueryResult = {
-  rows: [
-    { 'QUERY PLAN': 'Seq Scan on users  (cost=0.00..10.00 rows=100 width=540)' },
-  ],
-  fields: ['QUERY PLAN'],
+  rows: [{ "QUERY PLAN": "Seq Scan on users  (cost=0.00..10.00 rows=100 width=540)" }],
+  fields: ["QUERY PLAN"],
   rowCount: 1,
   executionTime: 2,
   explainPlan: {
     Plan: {
-      'Node Type': 'Seq Scan',
-      'Relation Name': 'users',
-      'Total Cost': 10.0,
-      'Plan Rows': 100,
+      "Node Type": "Seq Scan",
+      "Relation Name": "users",
+      "Total Cost": 10.0,
+      "Plan Rows": 100,
     },
   },
 };
 
 export const mockSensitiveDataResult: QueryResult = {
   rows: [
-    { id: 1, name: 'Alice', email: 'alice@example.com', ssn: '123-45-6789', salary: '85000.00' },
-    { id: 2, name: 'Bob', email: 'bob@test.com', ssn: '987-65-4321', salary: '92000.00' },
+    { id: 1, name: "Alice", email: "alice@example.com", ssn: "123-45-6789", salary: "85000.00" },
+    { id: 2, name: "Bob", email: "bob@test.com", ssn: "987-65-4321", salary: "92000.00" },
   ],
-  fields: ['id', 'name', 'email', 'ssn', 'salary'],
+  fields: ["id", "name", "email", "ssn", "salary"],
   rowCount: 2,
   executionTime: 8,
 };

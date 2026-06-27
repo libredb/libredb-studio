@@ -111,3 +111,7 @@ data/
 
 docs/superpowers/
 
+# attw packaging scratch (type-resolution check)
+.attw/
+*.tgz
+

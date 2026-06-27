@@ -3,19 +3,14 @@
  * Abstract class with shared logic for all SQL-based databases
  */
 
-import { BaseDatabaseProvider } from '../../base-provider';
+import { BaseDatabaseProvider } from "../../base-provider";
 import {
   type DatabaseConnection,
   type ProviderOptions,
   type PreparedQuery,
   type QueryPrepareOptions,
-} from '../../types';
-import {
-  analyzeQuery,
-  applyQueryLimit,
-  DEFAULT_QUERY_LIMIT,
-  MAX_UNLIMITED_ROWS,
-} from '../../utils/query-limiter';
+} from "../../types";
+import { analyzeQuery, applyQueryLimit, DEFAULT_QUERY_LIMIT, MAX_UNLIMITED_ROWS } from "../../utils/query-limiter";
 
 // ============================================================================
 // SQL Base Provider
@@ -36,15 +31,12 @@ export abstract class SQLBaseProvider extends BaseDatabaseProvider {
    * MySQL: `identifier`
    */
   protected escapeIdentifier(identifier: string): string {
-    if (this.type === 'mssql') {
-      const escaped = identifier.replace(/\]/g, ']]');
+    if (this.type === "mssql") {
+      const escaped = identifier.replace(/\]/g, "]]");
       return `[${escaped}]`;
     }
-    const quoteChar = this.type === 'mysql' ? '`' : '"';
-    const escaped = identifier.replace(
-      new RegExp(quoteChar, 'g'),
-      quoteChar + quoteChar
-    );
+    const quoteChar = this.type === "mysql" ? "`" : '"';
+    const escaped = identifier.replace(new RegExp(quoteChar, "g"), quoteChar + quoteChar);
     return `${quoteChar}${escaped}${quoteChar}`;
   }
 
@@ -71,38 +63,26 @@ export abstract class SQLBaseProvider extends BaseDatabaseProvider {
    * MySQL/SQLite: ?, ?, ?
    */
   protected getPlaceholder(index: number): string {
-    if (this.type === 'postgres') return `$${index}`;
-    if (this.type === 'oracle') return `:${index}`;
-    if (this.type === 'mssql') return `@p${index}`;
-    return '?';
+    if (this.type === "postgres") return `$${index}`;
+    if (this.type === "oracle") return `:${index}`;
+    if (this.type === "mssql") return `@p${index}`;
+    return "?";
   }
 
   /**
    * Determine if SSL should be enabled based on host
    */
   protected shouldEnableSSL(): boolean {
-    const host = this.config.host?.toLowerCase() || '';
-    const cloudProviders = [
-      'supabase',
-      'render',
-      'neon',
-      'planetscale',
-      'aws',
-      'azure',
-      'gcp',
-      'cloud',
-    ];
-    return (
-      this.options.ssl === true ||
-      cloudProviders.some((provider) => host.includes(provider))
-    );
+    const host = this.config.host?.toLowerCase() || "";
+    const cloudProviders = ["supabase", "render", "neon", "planetscale", "aws", "azure", "gcp", "cloud"];
+    return this.options.ssl === true || cloudProviders.some((provider) => host.includes(provider));
   }
 
   /**
    * Get information schema name based on dialect
    */
   protected getInformationSchemaName(): string {
-    return 'information_schema';
+    return "information_schema";
   }
 
   /**
@@ -110,16 +90,16 @@ export abstract class SQLBaseProvider extends BaseDatabaseProvider {
    */
   protected getDefaultSchema(): string {
     switch (this.type) {
-      case 'postgres':
-        return 'public';
-      case 'mysql':
-        return this.config.database || '';
-      case 'oracle':
-        return this.config.user?.toUpperCase() || '';
-      case 'mssql':
-        return 'dbo';
+      case "postgres":
+        return "public";
+      case "mysql":
+        return this.config.database || "";
+      case "oracle":
+        return this.config.user?.toUpperCase() || "";
+      case "mssql":
+        return "dbo";
       default:
-        return '';
+        return "";
     }
   }
 
@@ -129,11 +109,11 @@ export abstract class SQLBaseProvider extends BaseDatabaseProvider {
   protected isReadOnlyQuery(sql: string): boolean {
     const trimmed = sql.trim().toLowerCase();
     return (
-      trimmed.startsWith('select') ||
-      trimmed.startsWith('show') ||
-      trimmed.startsWith('describe') ||
-      trimmed.startsWith('explain') ||
-      trimmed.startsWith('pragma')
+      trimmed.startsWith("select") ||
+      trimmed.startsWith("show") ||
+      trimmed.startsWith("describe") ||
+      trimmed.startsWith("explain") ||
+      trimmed.startsWith("pragma")
     );
   }
 
@@ -143,10 +123,10 @@ export abstract class SQLBaseProvider extends BaseDatabaseProvider {
   protected isSchemaModifyingQuery(sql: string): boolean {
     const trimmed = sql.trim().toLowerCase();
     return (
-      trimmed.startsWith('create') ||
-      trimmed.startsWith('drop') ||
-      trimmed.startsWith('alter') ||
-      trimmed.startsWith('truncate')
+      trimmed.startsWith("create") ||
+      trimmed.startsWith("drop") ||
+      trimmed.startsWith("alter") ||
+      trimmed.startsWith("truncate")
     );
   }
 
@@ -159,7 +139,7 @@ export abstract class SQLBaseProvider extends BaseDatabaseProvider {
     const effectiveLimit = unlimited ? MAX_UNLIMITED_ROWS : limit;
     const queryInfo = analyzeQuery(query);
 
-    if (queryInfo.type === 'SELECT') {
+    if (queryInfo.type === "SELECT") {
       const limitResult = applyQueryLimit(query, effectiveLimit, offset);
       return {
         query: limitResult.sql,

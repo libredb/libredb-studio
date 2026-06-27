@@ -3,7 +3,7 @@
  * Generic OpenAI-compatible endpoint for LiteLLM, LMStudio, vLLM, etc.
  */
 
-import { BaseLLMProvider } from '../base-provider';
+import { BaseLLMProvider } from "../base-provider";
 import {
   type LLMConfig,
   type LLMStreamOptions,
@@ -11,9 +11,9 @@ import {
   LLMRateLimitError,
   LLMStreamError,
   LLMConfigError,
-} from '../types';
-import { createStreamFromSSEResponse } from '../utils/streaming';
-import { logger } from '@/lib/logger';
+} from "../types";
+import { createStreamFromSSEResponse } from "../utils/streaming";
+import { logger } from "@/lib/logger";
 
 // ============================================================================
 // Custom Provider
@@ -32,18 +32,12 @@ export class CustomProvider extends BaseLLMProvider {
    * Validate configuration - requires API URL
    */
   public validate(): void {
-    if (!this.config.apiUrl || this.config.apiUrl.trim() === '') {
-      throw new LLMConfigError(
-        'Custom provider requires LLM_API_URL environment variable.',
-        'custom'
-      );
+    if (!this.config.apiUrl || this.config.apiUrl.trim() === "") {
+      throw new LLMConfigError("Custom provider requires LLM_API_URL environment variable.", "custom");
     }
 
-    if (!this.config.model || this.config.model.trim() === '') {
-      throw new LLMConfigError(
-        'Model name is required for Custom provider.',
-        'custom'
-      );
+    if (!this.config.model || this.config.model.trim() === "") {
+      throw new LLMConfigError("Model name is required for Custom provider.", "custom");
     }
   }
 
@@ -59,13 +53,9 @@ export class CustomProvider extends BaseLLMProvider {
         const response = await this.fetchStream(model, messages, options);
         await this.validateResponse(response);
 
-        return createStreamFromSSEResponse(response, 'custom');
+        return createStreamFromSSEResponse(response, "custom");
       } catch (error) {
-        if (
-          error instanceof LLMAuthError ||
-          error instanceof LLMRateLimitError ||
-          error instanceof LLMConfigError
-        ) {
+        if (error instanceof LLMAuthError || error instanceof LLMRateLimitError || error instanceof LLMConfigError) {
           throw error;
         }
         throw this.mapError(error);
@@ -89,10 +79,10 @@ export class CustomProvider extends BaseLLMProvider {
   private async fetchStream(
     model: string,
     messages: Array<{ role: string; content: string }>,
-    options: LLMStreamOptions
+    options: LLMStreamOptions,
   ): Promise<Response> {
     const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
+      "Content-Type": "application/json",
     };
 
     // Add API key if provided
@@ -101,7 +91,7 @@ export class CustomProvider extends BaseLLMProvider {
     }
 
     const response = await fetch(`${this.baseUrl}/chat/completions`, {
-      method: 'POST',
+      method: "POST",
       headers,
       body: JSON.stringify({
         model,
@@ -130,24 +120,18 @@ export class CustomProvider extends BaseLLMProvider {
       const errorJson = JSON.parse(errorBody);
       errorMessage = errorJson.error?.message ?? errorBody;
     } catch {
-      logger.debug('Could not parse error response body as JSON', { provider: 'custom' });
+      logger.debug("Could not parse error response body as JSON", { provider: "custom" });
     }
 
     if (response.status === 401 || response.status === 403) {
-      throw new LLMAuthError(
-        'Authentication failed. Check your API key configuration.',
-        'custom'
-      );
+      throw new LLMAuthError("Authentication failed. Check your API key configuration.", "custom");
     }
 
     if (response.status === 429) {
-      throw new LLMRateLimitError(
-        'Rate limit exceeded. Please try again later.',
-        'custom'
-      );
+      throw new LLMRateLimitError("Rate limit exceeded. Please try again later.", "custom");
     }
 
-    throw new LLMStreamError(`Custom API error: ${errorMessage}`, 'custom');
+    throw new LLMStreamError(`Custom API error: ${errorMessage}`, "custom");
   }
 
   /**
@@ -159,23 +143,19 @@ export class CustomProvider extends BaseLLMProvider {
     }
 
     if (!(error instanceof Error)) {
-      return new LLMStreamError(String(error), 'custom');
+      return new LLMStreamError(String(error), "custom");
     }
 
     const message = error.message.toLowerCase();
 
     // Connection errors
-    if (
-      message.includes('econnrefused') ||
-      message.includes('fetch failed') ||
-      message.includes('network')
-    ) {
+    if (message.includes("econnrefused") || message.includes("fetch failed") || message.includes("network")) {
       return new LLMStreamError(
         `Cannot connect to custom endpoint at ${this.baseUrl}. Make sure the service is running.`,
-        'custom'
+        "custom",
       );
     }
 
-    return new LLMStreamError(error.message, 'custom');
+    return new LLMStreamError(error.message, "custom");
   }
 }

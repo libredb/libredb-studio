@@ -20,7 +20,7 @@ export type {
   SavedChartConfig,
   AggregationType,
   DateGrouping,
-} from '../lib/types'
+} from "../lib/types";
 
 // Also export provider types
-export type { ProviderCapabilities } from '../lib/db/types'
+export type { ProviderCapabilities } from "../lib/db/types";

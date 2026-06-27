@@ -1,23 +1,20 @@
-import { describe, test, expect, mock, beforeEach } from 'bun:test';
-import type { DatabaseConnection } from '@/lib/db/types';
+import { describe, test, expect, mock, beforeEach } from "bun:test";
+import type { DatabaseConnection } from "@/lib/db/types";
 
 // ============================================================================
 // Helper: build a minimal DatabaseConnection for a given type
 // ============================================================================
 
-function makeConnection(
-  type: string,
-  overrides: Partial<DatabaseConnection> = {},
-): DatabaseConnection {
+function makeConnection(type: string, overrides: Partial<DatabaseConnection> = {}): DatabaseConnection {
   return {
     id: `test-${type}`,
     name: `Test ${type}`,
     type,
-    host: 'localhost',
+    host: "localhost",
     port: 5432,
-    database: 'testdb',
-    user: 'test',
-    password: 'test',
+    database: "testdb",
+    user: "test",
+    password: "test",
     createdAt: new Date(),
     ...overrides,
   } as DatabaseConnection;
@@ -35,9 +32,19 @@ const mockPgPool = {
   on: () => {},
 };
 
-mock.module('pg', () => ({
-  default: { Pool: class { constructor() { return mockPgPool; } } },
-  Pool: class { constructor() { return mockPgPool; } },
+mock.module("pg", () => ({
+  default: {
+    Pool: class {
+      constructor() {
+        return mockPgPool;
+      }
+    },
+  },
+  Pool: class {
+    constructor() {
+      return mockPgPool;
+    }
+  },
 }));
 
 const mockMysqlPool = {
@@ -53,12 +60,12 @@ const mockMysqlPool = {
   execute: async () => [[], []],
 };
 
-mock.module('mysql2/promise', () => ({
+mock.module("mysql2/promise", () => ({
   default: { createPool: () => mockMysqlPool },
   createPool: () => mockMysqlPool,
 }));
 
-mock.module('oracledb', () => ({
+mock.module("oracledb", () => ({
   default: {
     THIN: 0,
     initOracleClient: () => {},
@@ -81,7 +88,7 @@ mock.module('oracledb', () => ({
   },
 }));
 
-mock.module('mssql', () => {
+mock.module("mssql", () => {
   const mockRequest = {
     query: async () => ({ recordset: [], recordsets: [[]], columns: {} }),
     cancel: () => {},
@@ -94,10 +101,16 @@ mock.module('mssql', () => {
   };
   const MockConnectionPool = class {
     connected = true;
-    async connect() { return this; }
+    async connect() {
+      return this;
+    }
     async close() {}
-    request() { return mockRequest; }
-    transaction() { return mockTransaction; }
+    request() {
+      return mockRequest;
+    }
+    transaction() {
+      return mockTransaction;
+    }
   };
   return {
     default: { ConnectionPool: MockConnectionPool },
@@ -105,13 +118,13 @@ mock.module('mssql', () => {
   };
 });
 
-mock.module('mongodb', () => {
+mock.module("mongodb", () => {
   const mockCollection = {
     find: () => ({ limit: () => ({ toArray: async () => [] }), toArray: async () => [] }),
     findOne: async () => ({}),
     aggregate: () => ({ toArray: async () => [] }),
     countDocuments: async () => 0,
-    insertOne: async () => ({ insertedId: 'test-id' }),
+    insertOne: async () => ({ insertedId: "test-id" }),
     insertMany: async () => ({ insertedCount: 0 }),
     updateOne: async () => ({ modifiedCount: 0 }),
     updateMany: async () => ({ modifiedCount: 0 }),
@@ -126,49 +139,81 @@ mock.module('mongodb', () => {
     admin: () => ({
       serverStatus: async () => ({
         connections: { current: 1 },
-        storageEngine: { name: 'wiredTiger' },
-        version: '6.0.0',
+        storageEngine: { name: "wiredTiger" },
+        version: "6.0.0",
       }),
       listDatabases: async () => ({ databases: [] }),
     }),
   };
   return {
     MongoClient: class {
-      async connect() { return this; }
+      async connect() {
+        return this;
+      }
       async close() {}
-      db() { return mockDb; }
+      db() {
+        return mockDb;
+      }
     },
-    ObjectId: class { toString() { return 'test-id'; } },
-    Binary: class { toString() { return ''; } },
-    Decimal128: class { toString() { return '0'; } },
+    ObjectId: class {
+      toString() {
+        return "test-id";
+      }
+    },
+    Binary: class {
+      toString() {
+        return "";
+      }
+    },
+    Decimal128: class {
+      toString() {
+        return "0";
+      }
+    },
   };
 });
 
-mock.module('ioredis', () => ({
+mock.module("ioredis", () => ({
   default: class {
-    status = 'ready';
+    status = "ready";
     async connect() {}
     async quit() {}
-    async ping() { return 'PONG'; }
-    async info() { return 'redis_version:7.0.0\r\nconnected_clients:1\r\nused_memory_human:1M\r\n'; }
-    async dbsize() { return 0; }
-    async scan() { return ['0', []]; }
-    async get() { return null; }
-    async set() { return 'OK'; }
-    async del() { return 1; }
-    on() { return this; }
+    async ping() {
+      return "PONG";
+    }
+    async info() {
+      return "redis_version:7.0.0\r\nconnected_clients:1\r\nused_memory_human:1M\r\n";
+    }
+    async dbsize() {
+      return 0;
+    }
+    async scan() {
+      return ["0", []];
+    }
+    async get() {
+      return null;
+    }
+    async set() {
+      return "OK";
+    }
+    async del() {
+      return 1;
+    }
+    on() {
+      return this;
+    }
   },
 }));
 
 const mockCreateSSHTunnel = mock(async () => ({
-  localHost: '127.0.0.1',
+  localHost: "127.0.0.1",
   localPort: 54321,
   close: mock(async () => {}),
 }));
 
 const mockCloseSSHTunnel = mock(async () => {});
 
-mock.module('@/lib/ssh/tunnel', () => ({
+mock.module("@/lib/ssh/tunnel", () => ({
   createSSHTunnel: mockCreateSSHTunnel,
   closeSSHTunnel: mockCloseSSHTunnel,
   hasTunnel: mock(() => false),
@@ -187,7 +232,7 @@ const {
   getProviderCacheStats,
   evictIdleProviders,
   registerShutdownHandlers,
-} = await import('@/lib/db/factory');
+} = await import("@/lib/db/factory");
 
 // ============================================================================
 // Tests
@@ -201,87 +246,85 @@ beforeEach(async () => {
 
 // ─── createDatabaseProvider ────────────────────────────────────────────────
 
-describe('createDatabaseProvider', () => {
-  test('throws DatabaseConfigError for unknown type', async () => {
-    const conn = makeConnection('unknown');
-    await expect(createDatabaseProvider(conn)).rejects.toThrow(
-      /Unknown database type: unknown/,
-    );
+describe("createDatabaseProvider", () => {
+  test("throws DatabaseConfigError for unknown type", async () => {
+    const conn = makeConnection("unknown");
+    await expect(createDatabaseProvider(conn)).rejects.toThrow(/Unknown database type: unknown/);
   });
 
   test('creates provider for type "postgres"', async () => {
-    const conn = makeConnection('postgres');
+    const conn = makeConnection("postgres");
     const provider = await createDatabaseProvider(conn);
     expect(provider).toBeDefined();
-    expect(provider.type).toBe('postgres');
+    expect(provider.type).toBe("postgres");
   });
 
   test('creates provider for type "mysql"', async () => {
-    const conn = makeConnection('mysql');
+    const conn = makeConnection("mysql");
     const provider = await createDatabaseProvider(conn);
     expect(provider).toBeDefined();
-    expect(provider.type).toBe('mysql');
+    expect(provider.type).toBe("mysql");
   });
 
   test('creates provider for type "sqlite"', async () => {
-    const conn = makeConnection('sqlite', { database: ':memory:' });
+    const conn = makeConnection("sqlite", { database: ":memory:" });
     const provider = await createDatabaseProvider(conn);
     expect(provider).toBeDefined();
-    expect(provider.type).toBe('sqlite');
+    expect(provider.type).toBe("sqlite");
   });
 
   test('creates provider for type "mongodb"', async () => {
-    const conn = makeConnection('mongodb', { connectionString: 'mongodb://localhost/test' });
+    const conn = makeConnection("mongodb", { connectionString: "mongodb://localhost/test" });
     const provider = await createDatabaseProvider(conn);
     expect(provider).toBeDefined();
-    expect(provider.type).toBe('mongodb');
+    expect(provider.type).toBe("mongodb");
   });
 
   test('creates provider for type "redis"', async () => {
-    const conn = makeConnection('redis');
+    const conn = makeConnection("redis");
     const provider = await createDatabaseProvider(conn);
     expect(provider).toBeDefined();
-    expect(provider.type).toBe('redis');
+    expect(provider.type).toBe("redis");
   });
 
   test('creates provider for type "oracle"', async () => {
-    const conn = makeConnection('oracle', { serviceName: 'ORCL' } as Partial<DatabaseConnection>);
+    const conn = makeConnection("oracle", { serviceName: "ORCL" } as Partial<DatabaseConnection>);
     const provider = await createDatabaseProvider(conn);
     expect(provider).toBeDefined();
-    expect(provider.type).toBe('oracle');
+    expect(provider.type).toBe("oracle");
   });
 
   test('creates provider for type "mssql"', async () => {
-    const conn = makeConnection('mssql');
+    const conn = makeConnection("mssql");
     const provider = await createDatabaseProvider(conn);
     expect(provider).toBeDefined();
-    expect(provider.type).toBe('mssql');
+    expect(provider.type).toBe("mssql");
   });
 });
 
 // ─── getOrCreateProvider — uses 'sqlite' for lightweight testing ─────
 
-describe('getOrCreateProvider', () => {
-  test('creates and caches a provider', async () => {
-    const conn = makeConnection('sqlite');
+describe("getOrCreateProvider", () => {
+  test("creates and caches a provider", async () => {
+    const conn = makeConnection("sqlite");
     const provider = await getOrCreateProvider(conn);
     expect(provider).toBeDefined();
     expect(provider.isConnected()).toBe(true);
 
     const stats = getProviderCacheStats();
     expect(stats.size).toBe(1);
-    expect(stats.connections).toContain('test-sqlite');
+    expect(stats.connections).toContain("test-sqlite");
   });
 
-  test('returns cached provider on second call', async () => {
-    const conn = makeConnection('sqlite');
+  test("returns cached provider on second call", async () => {
+    const conn = makeConnection("sqlite");
     const first = await getOrCreateProvider(conn);
     const second = await getOrCreateProvider(conn);
     expect(first).toBe(second);
   });
 
-  test('creates new provider if cached one is disconnected', async () => {
-    const conn = makeConnection('sqlite');
+  test("creates new provider if cached one is disconnected", async () => {
+    const conn = makeConnection("sqlite");
     const first = await getOrCreateProvider(conn);
     await first.disconnect();
     expect(first.isConnected()).toBe(false);
@@ -291,18 +334,18 @@ describe('getOrCreateProvider', () => {
     expect(second.isConnected()).toBe(true);
   });
 
-  test('creates SSH tunnel when sshTunnel is configured', async () => {
-    const conn = makeConnection('sqlite', {
-      id: 'ssh-conn',
-      host: 'remote-db.example.com',
+  test("creates SSH tunnel when sshTunnel is configured", async () => {
+    const conn = makeConnection("sqlite", {
+      id: "ssh-conn",
+      host: "remote-db.example.com",
       port: 5432,
       sshTunnel: {
         enabled: true,
-        host: 'bastion.example.com',
+        host: "bastion.example.com",
         port: 22,
-        username: 'admin',
-        authMethod: 'password',
-        password: 'secret',
+        username: "admin",
+        authMethod: "password",
+        password: "secret",
       },
     } as Partial<DatabaseConnection>);
 
@@ -313,9 +356,9 @@ describe('getOrCreateProvider', () => {
 
 // ─── removeProvider ────────────────────────────────────────────────────────
 
-describe('removeProvider', () => {
-  test('removes provider from cache and calls disconnect', async () => {
-    const conn = makeConnection('sqlite');
+describe("removeProvider", () => {
+  test("removes provider from cache and calls disconnect", async () => {
+    const conn = makeConnection("sqlite");
     const provider = await getOrCreateProvider(conn);
     expect(provider.isConnected()).toBe(true);
 
@@ -323,11 +366,11 @@ describe('removeProvider', () => {
 
     const stats = getProviderCacheStats();
     expect(stats.size).toBe(0);
-    expect(stats.connections).not.toContain('test-sqlite');
+    expect(stats.connections).not.toContain("test-sqlite");
   });
 
-  test('calls closeSSHTunnel', async () => {
-    const conn = makeConnection('sqlite');
+  test("calls closeSSHTunnel", async () => {
+    const conn = makeConnection("sqlite");
     await getOrCreateProvider(conn);
     await removeProvider(conn.id);
     expect(mockCloseSSHTunnel).toHaveBeenCalledWith(conn.id);
@@ -336,10 +379,10 @@ describe('removeProvider', () => {
 
 // ─── clearProviderCache ────────────────────────────────────────────────────
 
-describe('clearProviderCache', () => {
-  test('clears all cached providers and disconnects each', async () => {
-    const d1 = makeConnection('sqlite', { id: 'sqlite-a' });
-    const d2 = makeConnection('sqlite', { id: 'sqlite-b' });
+describe("clearProviderCache", () => {
+  test("clears all cached providers and disconnects each", async () => {
+    const d1 = makeConnection("sqlite", { id: "sqlite-a" });
+    const d2 = makeConnection("sqlite", { id: "sqlite-b" });
 
     const prov1 = await getOrCreateProvider(d1);
     const prov2 = await getOrCreateProvider(d2);
@@ -356,28 +399,28 @@ describe('clearProviderCache', () => {
 
 // ─── getProviderCacheStats ─────────────────────────────────────────────────
 
-describe('getProviderCacheStats', () => {
-  test('returns correct size and connection IDs', async () => {
+describe("getProviderCacheStats", () => {
+  test("returns correct size and connection IDs", async () => {
     expect(getProviderCacheStats()).toEqual({ size: 0, connections: [] });
 
-    await getOrCreateProvider(makeConnection('sqlite', { id: 'sqlite-x' }));
-    await getOrCreateProvider(makeConnection('sqlite', { id: 'sqlite-y' }));
-    await getOrCreateProvider(makeConnection('sqlite', { id: 'sqlite-z' }));
+    await getOrCreateProvider(makeConnection("sqlite", { id: "sqlite-x" }));
+    await getOrCreateProvider(makeConnection("sqlite", { id: "sqlite-y" }));
+    await getOrCreateProvider(makeConnection("sqlite", { id: "sqlite-z" }));
 
     const stats = getProviderCacheStats();
     expect(stats.size).toBe(3);
-    expect(stats.connections).toContain('sqlite-x');
-    expect(stats.connections).toContain('sqlite-y');
-    expect(stats.connections).toContain('sqlite-z');
+    expect(stats.connections).toContain("sqlite-x");
+    expect(stats.connections).toContain("sqlite-y");
+    expect(stats.connections).toContain("sqlite-z");
   });
 });
 
 // ─── evictIdleProviders ──────────────────────────────────────────────────
 
-describe('evictIdleProviders', () => {
-  test('evicts providers idle longer than maxIdleMs', async () => {
-    await getOrCreateProvider(makeConnection('sqlite', { id: 'idle-a' }));
-    await getOrCreateProvider(makeConnection('sqlite', { id: 'idle-b' }));
+describe("evictIdleProviders", () => {
+  test("evicts providers idle longer than maxIdleMs", async () => {
+    await getOrCreateProvider(makeConnection("sqlite", { id: "idle-a" }));
+    await getOrCreateProvider(makeConnection("sqlite", { id: "idle-b" }));
 
     expect(getProviderCacheStats().size).toBe(2);
 
@@ -387,8 +430,8 @@ describe('evictIdleProviders', () => {
     expect(getProviderCacheStats().size).toBe(0);
   });
 
-  test('does not evict recently used providers', async () => {
-    await getOrCreateProvider(makeConnection('sqlite', { id: 'fresh-a' }));
+  test("does not evict recently used providers", async () => {
+    await getOrCreateProvider(makeConnection("sqlite", { id: "fresh-a" }));
 
     // Use a very large maxIdleMs — nothing should be evicted
     const evicted = await evictIdleProviders(999_999_999);
@@ -396,25 +439,25 @@ describe('evictIdleProviders', () => {
     expect(getProviderCacheStats().size).toBe(1);
   });
 
-  test('returns 0 when cache is empty', async () => {
+  test("returns 0 when cache is empty", async () => {
     const evicted = await evictIdleProviders(0);
     expect(evicted).toBe(0);
   });
 
-  test('closes SSH tunnel for evicted providers', async () => {
-    await getOrCreateProvider(makeConnection('sqlite', { id: 'tunnel-evict' }));
+  test("closes SSH tunnel for evicted providers", async () => {
+    await getOrCreateProvider(makeConnection("sqlite", { id: "tunnel-evict" }));
     await evictIdleProviders(0);
-    expect(mockCloseSSHTunnel).toHaveBeenCalledWith('tunnel-evict');
+    expect(mockCloseSSHTunnel).toHaveBeenCalledWith("tunnel-evict");
   });
 
-  test('handles disconnect errors gracefully during eviction', async () => {
-    const conn = makeConnection('sqlite', { id: 'err-evict' });
+  test("handles disconnect errors gracefully during eviction", async () => {
+    const conn = makeConnection("sqlite", { id: "err-evict" });
     const provider = await getOrCreateProvider(conn);
     // Make disconnect throw
     const origDisconnect = provider.disconnect.bind(provider);
     provider.disconnect = async () => {
       await origDisconnect();
-      throw new Error('disconnect failed');
+      throw new Error("disconnect failed");
     };
 
     // Should not throw — errors are caught internally
@@ -426,8 +469,8 @@ describe('evictIdleProviders', () => {
 
 // ─── registerShutdownHandlers ─────────────────────────────────────────────
 
-describe('registerShutdownHandlers', () => {
-  test('can be called multiple times without error (idempotent)', () => {
+describe("registerShutdownHandlers", () => {
+  test("can be called multiple times without error (idempotent)", () => {
     // Should not throw even when called repeatedly
     registerShutdownHandlers();
     registerShutdownHandlers();

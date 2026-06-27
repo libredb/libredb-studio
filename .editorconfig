@@ -1,0 +1,15 @@
+# EditorConfig (https://editorconfig.org) - matches the Biome formatter settings
+# so editors agree before Biome ever runs.
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+indent_style = space
+indent_size = 2
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+[*.md]
+# Markdown hard line breaks are two trailing spaces; do not strip them.
+trim_trailing_whitespace = false

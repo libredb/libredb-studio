@@ -1,17 +1,10 @@
 "use client";
 
-import React, { useMemo } from 'react';
-import { cn } from '@/lib/utils';
-import {
-  Hash,
-  ChevronRight,
-  Lock,
-} from 'lucide-react';
-import {
-  type MaskingPattern,
-  maskValueByPattern,
-} from '@/lib/data-masking';
-import { formatCellValue } from './utils';
+import React, { useMemo } from "react";
+import { cn } from "@/lib/utils";
+import { Hash, ChevronRight, Lock } from "lucide-react";
+import { type MaskingPattern, maskValueByPattern } from "@/lib/data-masking";
+import { formatCellValue } from "./utils";
 
 export interface ResultCardProps {
   row: Record<string, unknown>;
@@ -46,9 +39,7 @@ export function ResultCard({
   }, [maskingActive, sensitiveColumns, primaryColumn, primaryValue, index]);
 
   // Show first 4 fields (excluding primary and id)
-  const previewFields = fields
-    .filter(f => f !== primaryColumn && f !== idColumn)
-    .slice(0, 4);
+  const previewFields = fields.filter((f) => f !== primaryColumn && f !== idColumn).slice(0, 4);
 
   return (
     <div
@@ -62,15 +53,15 @@ export function ResultCard({
             <Hash strokeWidth={1.5} className="w-3.5 h-3.5 text-blue-400" />
           </div>
           <div className="min-w-0 flex-1">
-            <p className={cn(
-              "text-xs font-medium truncate",
-              maskingActive && sensitiveColumns?.has(primaryColumn) ? "text-zinc-500 italic" : "text-zinc-100"
-            )}>
+            <p
+              className={cn(
+                "text-xs font-medium truncate",
+                maskingActive && sensitiveColumns?.has(primaryColumn) ? "text-zinc-500 italic" : "text-zinc-100",
+              )}
+            >
               {displayPrimary}
             </p>
-            {idValue != null && (
-              <p className="text-xs text-zinc-500 font-mono">#{String(idValue)}</p>
-            )}
+            {idValue != null && <p className="text-xs text-zinc-500 font-mono">#{String(idValue)}</p>}
           </div>
         </div>
         <ChevronRight strokeWidth={1.5} className="w-3.5 h-3.5 text-zinc-600" />
@@ -78,15 +69,11 @@ export function ResultCard({
 
       {/* Preview Fields */}
       <div className="space-y-2">
-        {previewFields.map(field => {
+        {previewFields.map((field) => {
           const pattern = sensitiveColumns?.get(field);
           const isMasked = maskingActive && pattern && row[field] != null && row[field] !== undefined;
-          const displayValue = isMasked
-            ? maskValueByPattern(row[field], pattern)
-            : formatCellValue(row[field]).display;
-          const className = isMasked
-            ? 'text-zinc-500 italic'
-            : formatCellValue(row[field]).className;
+          const displayValue = isMasked ? maskValueByPattern(row[field], pattern) : formatCellValue(row[field]).display;
+          const className = isMasked ? "text-zinc-500 italic" : formatCellValue(row[field]).className;
 
           return (
             <div key={field} className="flex items-center justify-between text-xs">
@@ -94,9 +81,7 @@ export function ResultCard({
                 {field}
                 {isMasked && <Lock strokeWidth={1.5} className="w-2.5 h-2.5 inline ml-1 text-purple-400" />}
               </span>
-              <span className={cn("truncate max-w-[60%] text-right font-mono", className)}>
-                {displayValue}
-              </span>
+              <span className={cn("truncate max-w-[60%] text-right font-mono", className)}>{displayValue}</span>
             </div>
           );
         })}

@@ -1,4 +1,4 @@
-export type DiffAction = 'added' | 'removed' | 'modified';
+export type DiffAction = "added" | "removed" | "modified";
 
 export interface ColumnDiff {
   action: DiffAction;

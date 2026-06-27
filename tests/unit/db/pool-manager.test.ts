@@ -1,4 +1,4 @@
-import { describe, test, expect } from 'bun:test';
+import { describe, test, expect } from "bun:test";
 import {
   mergePoolConfig,
   validatePoolConfig,
@@ -6,16 +6,16 @@ import {
   formatBytes,
   formatDuration,
   escapeIdentifier,
-} from '@/lib/db/utils/pool-manager';
-import { TimeoutError } from '@/lib/db/errors';
-import { DEFAULT_POOL_CONFIG, type PoolConfig } from '@/lib/db/types';
+} from "@/lib/db/utils/pool-manager";
+import { TimeoutError } from "@/lib/db/errors";
+import { DEFAULT_POOL_CONFIG, type PoolConfig } from "@/lib/db/types";
 
 // ============================================================================
 // mergePoolConfig
 // ============================================================================
 
-describe('mergePoolConfig', () => {
-  test('returns defaults when no argument provided', () => {
+describe("mergePoolConfig", () => {
+  test("returns defaults when no argument provided", () => {
     const config = mergePoolConfig();
     expect(config).toEqual(DEFAULT_POOL_CONFIG);
     expect(config.min).toBe(2);
@@ -24,7 +24,7 @@ describe('mergePoolConfig', () => {
     expect(config.acquireTimeout).toBe(60000);
   });
 
-  test('partial override merges with defaults', () => {
+  test("partial override merges with defaults", () => {
     const config = mergePoolConfig({ max: 20 });
     expect(config.min).toBe(2);
     expect(config.max).toBe(20);
@@ -32,7 +32,7 @@ describe('mergePoolConfig', () => {
     expect(config.acquireTimeout).toBe(60000);
   });
 
-  test('full override replaces all defaults', () => {
+  test("full override replaces all defaults", () => {
     const custom: PoolConfig = {
       min: 5,
       max: 50,
@@ -48,47 +48,82 @@ describe('mergePoolConfig', () => {
 // validatePoolConfig
 // ============================================================================
 
-describe('validatePoolConfig', () => {
-  test('valid config passes without throwing', () => {
-    expect(() => validatePoolConfig({
-      min: 2, max: 10, idleTimeout: 30000, acquireTimeout: 60000,
-    })).not.toThrow();
+describe("validatePoolConfig", () => {
+  test("valid config passes without throwing", () => {
+    expect(() =>
+      validatePoolConfig({
+        min: 2,
+        max: 10,
+        idleTimeout: 30000,
+        acquireTimeout: 60000,
+      }),
+    ).not.toThrow();
   });
 
-  test('min=0 is valid (non-negative)', () => {
-    expect(() => validatePoolConfig({
-      min: 0, max: 10, idleTimeout: 30000, acquireTimeout: 60000,
-    })).not.toThrow();
+  test("min=0 is valid (non-negative)", () => {
+    expect(() =>
+      validatePoolConfig({
+        min: 0,
+        max: 10,
+        idleTimeout: 30000,
+        acquireTimeout: 60000,
+      }),
+    ).not.toThrow();
   });
 
-  test('min < 0 throws', () => {
-    expect(() => validatePoolConfig({
-      min: -1, max: 10, idleTimeout: 30000, acquireTimeout: 60000,
-    })).toThrow('Pool min must be non-negative');
+  test("min < 0 throws", () => {
+    expect(() =>
+      validatePoolConfig({
+        min: -1,
+        max: 10,
+        idleTimeout: 30000,
+        acquireTimeout: 60000,
+      }),
+    ).toThrow("Pool min must be non-negative");
   });
 
-  test('max < 1 throws', () => {
-    expect(() => validatePoolConfig({
-      min: 0, max: 0, idleTimeout: 30000, acquireTimeout: 60000,
-    })).toThrow('Pool max must be at least 1');
+  test("max < 1 throws", () => {
+    expect(() =>
+      validatePoolConfig({
+        min: 0,
+        max: 0,
+        idleTimeout: 30000,
+        acquireTimeout: 60000,
+      }),
+    ).toThrow("Pool max must be at least 1");
   });
 
-  test('min > max throws', () => {
-    expect(() => validatePoolConfig({
-      min: 15, max: 10, idleTimeout: 30000, acquireTimeout: 60000,
-    })).toThrow('Pool min cannot be greater than max');
+  test("min > max throws", () => {
+    expect(() =>
+      validatePoolConfig({
+        min: 15,
+        max: 10,
+        idleTimeout: 30000,
+        acquireTimeout: 60000,
+      }),
+    ).toThrow("Pool min cannot be greater than max");
   });
 
-  test('negative idleTimeout throws', () => {
-    expect(() => validatePoolConfig({
-      min: 2, max: 10, idleTimeout: -1, acquireTimeout: 60000,
-    })).toThrow('Pool idleTimeout must be non-negative');
+  test("negative idleTimeout throws", () => {
+    expect(() =>
+      validatePoolConfig({
+        min: 2,
+        max: 10,
+        idleTimeout: -1,
+        acquireTimeout: 60000,
+      }),
+    ).toThrow("Pool idleTimeout must be non-negative");
   });
 
-  test('negative acquireTimeout throws', () => {
-    expect(() => validatePoolConfig({
-      min: 2, max: 10, idleTimeout: 30000, acquireTimeout: -1,
-    })).toThrow('Pool acquireTimeout must be non-negative');
+  test("negative acquireTimeout throws", () => {
+    expect(() =>
+      validatePoolConfig({
+        min: 2,
+        max: 10,
+        idleTimeout: 30000,
+        acquireTimeout: -1,
+      }),
+    ).toThrow("Pool acquireTimeout must be non-negative");
   });
 });
 
@@ -96,37 +131,37 @@ describe('validatePoolConfig', () => {
 // withTimeout
 // ============================================================================
 
-describe('withTimeout', () => {
-  test('resolves when promise completes before timeout', async () => {
-    const promise = Promise.resolve('done');
-    const result = await withTimeout(promise, 1000, 'postgres', 'test-op');
-    expect(result).toBe('done');
+describe("withTimeout", () => {
+  test("resolves when promise completes before timeout", async () => {
+    const promise = Promise.resolve("done");
+    const result = await withTimeout(promise, 1000, "postgres", "test-op");
+    expect(result).toBe("done");
   });
 
-  test('rejects with TimeoutError when promise exceeds timeout', async () => {
+  test("rejects with TimeoutError when promise exceeds timeout", async () => {
     const slowPromise = new Promise<string>((resolve) => {
-      setTimeout(() => resolve('too late'), 500);
+      setTimeout(() => resolve("too late"), 500);
     });
 
     try {
-      await withTimeout(slowPromise, 10, 'postgres', 'test-op');
+      await withTimeout(slowPromise, 10, "postgres", "test-op");
       expect(true).toBe(false); // should not reach
     } catch (error) {
       expect(error).toBeInstanceOf(TimeoutError);
-      expect((error as TimeoutError).message).toContain('test-op');
-      expect((error as TimeoutError).message).toContain('timed out');
+      expect((error as TimeoutError).message).toContain("test-op");
+      expect((error as TimeoutError).message).toContain("timed out");
     }
   });
 
-  test('original error propagates if promise rejects before timeout', async () => {
-    const failingPromise = Promise.reject(new Error('original failure'));
+  test("original error propagates if promise rejects before timeout", async () => {
+    const failingPromise = Promise.reject(new Error("original failure"));
 
     try {
-      await withTimeout(failingPromise, 5000, 'mysql', 'test-op');
+      await withTimeout(failingPromise, 5000, "mysql", "test-op");
       expect(true).toBe(false); // should not reach
     } catch (error) {
       expect(error).toBeInstanceOf(Error);
-      expect((error as Error).message).toBe('original failure');
+      expect((error as Error).message).toBe("original failure");
     }
   });
 });
@@ -135,29 +170,29 @@ describe('withTimeout', () => {
 // formatBytes
 // ============================================================================
 
-describe('formatBytes', () => {
+describe("formatBytes", () => {
   test('0 bytes returns "0 B"', () => {
-    expect(formatBytes(0)).toBe('0 B');
+    expect(formatBytes(0)).toBe("0 B");
   });
 
   test('1024 bytes returns "1 KB"', () => {
-    expect(formatBytes(1024)).toBe('1 KB');
+    expect(formatBytes(1024)).toBe("1 KB");
   });
 
   test('1536 bytes returns "1.5 KB"', () => {
-    expect(formatBytes(1536)).toBe('1.5 KB');
+    expect(formatBytes(1536)).toBe("1.5 KB");
   });
 
   test('1048576 bytes returns "1 MB"', () => {
-    expect(formatBytes(1048576)).toBe('1 MB');
+    expect(formatBytes(1048576)).toBe("1 MB");
   });
 
   test('1073741824 bytes returns "1 GB"', () => {
-    expect(formatBytes(1073741824)).toBe('1 GB');
+    expect(formatBytes(1073741824)).toBe("1 GB");
   });
 
   test('1099511627776 bytes returns "1 TB"', () => {
-    expect(formatBytes(1099511627776)).toBe('1 TB');
+    expect(formatBytes(1099511627776)).toBe("1 TB");
   });
 });
 
@@ -165,25 +200,25 @@ describe('formatBytes', () => {
 // formatDuration
 // ============================================================================
 
-describe('formatDuration', () => {
+describe("formatDuration", () => {
   test('50ms returns "50ms"', () => {
-    expect(formatDuration(50)).toBe('50ms');
+    expect(formatDuration(50)).toBe("50ms");
   });
 
   test('999ms returns "999ms"', () => {
-    expect(formatDuration(999)).toBe('999ms');
+    expect(formatDuration(999)).toBe("999ms");
   });
 
   test('1500ms returns "1.50s"', () => {
-    expect(formatDuration(1500)).toBe('1.50s');
+    expect(formatDuration(1500)).toBe("1.50s");
   });
 
   test('90000ms returns "1.50m"', () => {
-    expect(formatDuration(90000)).toBe('1.50m');
+    expect(formatDuration(90000)).toBe("1.50m");
   });
 
   test('7200000ms returns "2.00h"', () => {
-    expect(formatDuration(7200000)).toBe('2.00h');
+    expect(formatDuration(7200000)).toBe("2.00h");
   });
 });
 
@@ -191,27 +226,27 @@ describe('formatDuration', () => {
 // escapeIdentifier
 // ============================================================================
 
-describe('escapeIdentifier', () => {
-  test('postgres wraps in double quotes', () => {
-    expect(escapeIdentifier('users', 'postgres')).toBe('"users"');
+describe("escapeIdentifier", () => {
+  test("postgres wraps in double quotes", () => {
+    expect(escapeIdentifier("users", "postgres")).toBe('"users"');
   });
 
-  test('mysql wraps in backticks', () => {
-    expect(escapeIdentifier('users', 'mysql')).toBe('`users`');
+  test("mysql wraps in backticks", () => {
+    expect(escapeIdentifier("users", "mysql")).toBe("`users`");
   });
 
-  test('sqlite wraps in double quotes', () => {
-    expect(escapeIdentifier('users', 'sqlite')).toBe('"users"');
+  test("sqlite wraps in double quotes", () => {
+    expect(escapeIdentifier("users", "sqlite")).toBe('"users"');
   });
 
-  test('default (unknown provider) wraps in double quotes', () => {
-    expect(escapeIdentifier('users', 'mongodb')).toBe('"users"');
+  test("default (unknown provider) wraps in double quotes", () => {
+    expect(escapeIdentifier("users", "mongodb")).toBe('"users"');
   });
 
-  test('strips existing quotes from identifier', () => {
-    expect(escapeIdentifier('"my_table"', 'postgres')).toBe('"my_table"');
-    expect(escapeIdentifier('`my_table`', 'mysql')).toBe('`my_table`');
-    expect(escapeIdentifier("'my_table'", 'sqlite')).toBe('"my_table"');
+  test("strips existing quotes from identifier", () => {
+    expect(escapeIdentifier('"my_table"', "postgres")).toBe('"my_table"');
+    expect(escapeIdentifier("`my_table`", "mysql")).toBe("`my_table`");
+    expect(escapeIdentifier("'my_table'", "sqlite")).toBe('"my_table"');
   });
 });
 
@@ -219,27 +254,23 @@ describe('escapeIdentifier', () => {
 // createCancellableQuery
 // ============================================================================
 
-import { createCancellableQuery, checkConnectionHealth, withRetry } from '@/lib/db/utils/pool-manager';
+import { createCancellableQuery, checkConnectionHealth, withRetry } from "@/lib/db/utils/pool-manager";
 
-describe('createCancellableQuery', () => {
-  test('resolves when query completes before timeout', async () => {
-    const { promise } = createCancellableQuery(
-      async () => 'result',
-      5000,
-      'postgres'
-    );
+describe("createCancellableQuery", () => {
+  test("resolves when query completes before timeout", async () => {
+    const { promise } = createCancellableQuery(async () => "result", 5000, "postgres");
     const result = await promise;
-    expect(result).toBe('result');
+    expect(result).toBe("result");
   });
 
-  test('rejects with TimeoutError when query exceeds timeout', async () => {
+  test("rejects with TimeoutError when query exceeds timeout", async () => {
     const { promise } = createCancellableQuery(
       async () => {
         await new Promise((r) => setTimeout(r, 500));
-        return 'too late';
+        return "too late";
       },
       10,
-      'postgres'
+      "postgres",
     );
 
     try {
@@ -247,24 +278,24 @@ describe('createCancellableQuery', () => {
       expect(true).toBe(false);
     } catch (error) {
       expect(error).toBeInstanceOf(TimeoutError);
-      expect((error as TimeoutError).message).toContain('timed out');
+      expect((error as TimeoutError).message).toContain("timed out");
     }
   });
 
-  test('cancel() aborts the query', async () => {
+  test("cancel() aborts the query", async () => {
     const { promise, cancel } = createCancellableQuery(
       async (signal) => {
         await new Promise((resolve, reject) => {
           const timer = setTimeout(resolve, 5000);
-          signal?.addEventListener('abort', () => {
+          signal?.addEventListener("abort", () => {
             clearTimeout(timer);
-            reject(new Error('aborted'));
+            reject(new Error("aborted"));
           });
         });
-        return 'done';
+        return "done";
       },
       10000,
-      'postgres'
+      "postgres",
     );
 
     // Cancel immediately
@@ -274,24 +305,24 @@ describe('createCancellableQuery', () => {
       await promise;
       expect(true).toBe(false);
     } catch (error) {
-      expect((error as Error).message).toBe('aborted');
+      expect((error as Error).message).toBe("aborted");
     }
   });
 
-  test('query error propagates correctly', async () => {
+  test("query error propagates correctly", async () => {
     const { promise } = createCancellableQuery(
       async () => {
-        throw new Error('query failed');
+        throw new Error("query failed");
       },
       5000,
-      'postgres'
+      "postgres",
     );
 
     try {
       await promise;
       expect(true).toBe(false);
     } catch (error) {
-      expect((error as Error).message).toBe('query failed');
+      expect((error as Error).message).toBe("query failed");
     }
   });
 });
@@ -300,59 +331,67 @@ describe('createCancellableQuery', () => {
 // checkConnectionHealth
 // ============================================================================
 
-describe('checkConnectionHealth', () => {
-  test('returns true when acquire and ping succeed', async () => {
+describe("checkConnectionHealth", () => {
+  test("returns true when acquire and ping succeed", async () => {
     const result = await checkConnectionHealth(
       async () => ({ client: true }),
       () => {},
       async () => {},
       5000,
-      'postgres'
+      "postgres",
     );
     expect(result).toBe(true);
   });
 
-  test('returns false when acquire fails', async () => {
+  test("returns false when acquire fails", async () => {
     const result = await checkConnectionHealth(
-      async () => { throw new Error('pool exhausted'); },
+      async () => {
+        throw new Error("pool exhausted");
+      },
       () => {},
       async () => {},
       5000,
-      'postgres'
+      "postgres",
     );
     expect(result).toBe(false);
   });
 
-  test('returns false when ping fails', async () => {
+  test("returns false when ping fails", async () => {
     const result = await checkConnectionHealth(
       async () => ({ client: true }),
       () => {},
-      async () => { throw new Error('ping failed'); },
+      async () => {
+        throw new Error("ping failed");
+      },
       5000,
-      'postgres'
+      "postgres",
     );
     expect(result).toBe(false);
   });
 
-  test('returns false when acquire times out', async () => {
+  test("returns false when acquire times out", async () => {
     const result = await checkConnectionHealth(
       () => new Promise((resolve) => setTimeout(() => resolve({ client: true }), 500)),
       () => {},
       async () => {},
       10,
-      'postgres'
+      "postgres",
     );
     expect(result).toBe(false);
   });
 
-  test('releases connection even when ping fails', async () => {
+  test("releases connection even when ping fails", async () => {
     let released = false;
     const result = await checkConnectionHealth(
-      async () => 'conn',
-      () => { released = true; },
-      async () => { throw new Error('ping error'); },
+      async () => "conn",
+      () => {
+        released = true;
+      },
+      async () => {
+        throw new Error("ping error");
+      },
       5000,
-      'postgres'
+      "postgres",
     );
     expect(result).toBe(false);
     expect(released).toBe(true);
@@ -363,71 +402,71 @@ describe('checkConnectionHealth', () => {
 // withRetry
 // ============================================================================
 
-describe('withRetry', () => {
-  test('returns result on first try success', async () => {
-    const result = await withRetry(async () => 'success');
-    expect(result).toBe('success');
+describe("withRetry", () => {
+  test("returns result on first try success", async () => {
+    const result = await withRetry(async () => "success");
+    expect(result).toBe("success");
   });
 
-  test('retries on failure and succeeds on second attempt', async () => {
+  test("retries on failure and succeeds on second attempt", async () => {
     let attempt = 0;
     const result = await withRetry(
       async () => {
         attempt++;
-        if (attempt < 2) throw new Error('transient');
-        return 'recovered';
+        if (attempt < 2) throw new Error("transient");
+        return "recovered";
       },
-      { maxAttempts: 3, initialDelay: 1 }
+      { maxAttempts: 3, initialDelay: 1 },
     );
-    expect(result).toBe('recovered');
+    expect(result).toBe("recovered");
     expect(attempt).toBe(2);
   });
 
-  test('throws after exhausting all attempts', async () => {
+  test("throws after exhausting all attempts", async () => {
     let attempt = 0;
     try {
       await withRetry(
         async () => {
           attempt++;
-          throw new Error('persistent failure');
+          throw new Error("persistent failure");
         },
-        { maxAttempts: 2, initialDelay: 1 }
+        { maxAttempts: 2, initialDelay: 1 },
       );
       expect(true).toBe(false);
     } catch (error) {
-      expect((error as Error).message).toBe('persistent failure');
+      expect((error as Error).message).toBe("persistent failure");
       expect(attempt).toBe(2);
     }
   });
 
-  test('does not retry when isRetryable returns false', async () => {
+  test("does not retry when isRetryable returns false", async () => {
     let attempt = 0;
     try {
       await withRetry(
         async () => {
           attempt++;
-          throw new Error('non-retryable');
+          throw new Error("non-retryable");
         },
         { maxAttempts: 3, initialDelay: 1 },
-        () => false
+        () => false,
       );
       expect(true).toBe(false);
     } catch (error) {
-      expect((error as Error).message).toBe('non-retryable');
+      expect((error as Error).message).toBe("non-retryable");
       expect(attempt).toBe(1);
     }
   });
 
-  test('uses exponential backoff', async () => {
+  test("uses exponential backoff", async () => {
     let attempt = 0;
     const startTime = Date.now();
     try {
       await withRetry(
         async () => {
           attempt++;
-          throw new Error('fail');
+          throw new Error("fail");
         },
-        { maxAttempts: 3, initialDelay: 10, backoffMultiplier: 2, maxDelay: 100 }
+        { maxAttempts: 3, initialDelay: 10, backoffMultiplier: 2, maxDelay: 100 },
       );
     } catch {
       // Expected

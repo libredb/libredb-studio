@@ -1,13 +1,13 @@
-import { storage } from '@/lib/storage';
+import { storage } from "@/lib/storage";
 
 export type AuditEventType =
-  | 'maintenance'
-  | 'kill_session'
-  | 'masking_config'
-  | 'threshold_config'
-  | 'connection_test'
-  | 'query_execution'
-  | 'managed_connection';
+  | "maintenance"
+  | "kill_session"
+  | "masking_config"
+  | "threshold_config"
+  | "connection_test"
+  | "query_execution"
+  | "managed_connection";
 
 export interface AuditEvent {
   id: string;
@@ -17,7 +17,7 @@ export interface AuditEvent {
   target: string;
   connectionName?: string;
   user: string;
-  result: 'success' | 'failure';
+  result: "success" | "failure";
   duration?: number;
   details?: string;
 }
@@ -32,7 +32,7 @@ export class AuditRingBuffer {
     this.maxSize = maxSize;
   }
 
-  push(event: Omit<AuditEvent, 'id' | 'timestamp'>) {
+  push(event: Omit<AuditEvent, "id" | "timestamp">) {
     const fullEvent: AuditEvent = {
       ...event,
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -55,7 +55,7 @@ export class AuditRingBuffer {
 
   filter(opts: {
     type?: AuditEventType;
-    result?: 'success' | 'failure';
+    result?: "success" | "failure";
     connectionName?: string;
     since?: string;
   }): AuditEvent[] {

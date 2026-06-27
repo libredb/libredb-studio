@@ -1,28 +1,48 @@
-'use client';
+"use client";
 
-import React, { type RefObject } from 'react';
-import type { DatabaseConnection } from '@/lib/types';
-import type { QueryEditorRef } from '@/components/QueryEditor';
-import { useRouter } from 'next/navigation';
-import { cn } from '@/lib/utils';
+import React, { type RefObject } from "react";
+import type { DatabaseConnection } from "@/lib/types";
+import type { QueryEditorRef } from "@/components/QueryEditor";
+import { useRouter } from "next/navigation";
+import { cn } from "@/lib/utils";
 import {
-  AlignLeft, ChevronDown, Copy, Database, Edit3, Gauge,
-  LogOut, MoreVertical, Pencil, Play, PlayCircle, Plus,
-  Save, Settings, Sparkles, Square, Trash2, Upload, User, Zap,
-} from 'lucide-react';
+  AlignLeft,
+  ChevronDown,
+  Copy,
+  Database,
+  Edit3,
+  Gauge,
+  LogOut,
+  MoreVertical,
+  Pencil,
+  Play,
+  PlayCircle,
+  Plus,
+  Save,
+  Settings,
+  Sparkles,
+  Square,
+  Trash2,
+  Upload,
+  User,
+  Zap,
+} from "lucide-react";
 import {
-  DropdownMenu, DropdownMenuContent,
-  DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
-import { Button } from '@/components/ui/button';
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Button } from "@/components/ui/button";
 
 interface StudioMobileHeaderProps {
   connections: DatabaseConnection[];
   activeConnection: DatabaseConnection | null;
-  connectionPulse: 'healthy' | 'degraded' | 'error' | null;
+  connectionPulse: "healthy" | "degraded" | "error" | null;
   user: { role?: string } | null;
   isAdmin: boolean;
-  activeMobileTab: 'database' | 'schema' | 'editor';
+  activeMobileTab: "database" | "schema" | "editor";
   isExecuting: boolean;
   currentQuery: string;
   queryEditorRef: RefObject<QueryEditorRef | null>;
@@ -89,7 +109,7 @@ export function StudioMobileHeader({
               >
                 <Database strokeWidth={1.5} className="w-3 h-3 text-blue-400 shrink-0" />
                 <span className="truncate text-xs font-medium">
-                  {activeConnection ? activeConnection.name : 'Select DB'}
+                  {activeConnection ? activeConnection.name : "Select DB"}
                 </span>
                 <ChevronDown strokeWidth={1.5} className="w-3 h-3 text-zinc-500 shrink-0" />
               </Button>
@@ -105,10 +125,7 @@ export function StudioMobileHeader({
                     <DropdownMenuItem
                       key={c.id}
                       onClick={() => onSelectConnection(c)}
-                      className={cn(
-                        "cursor-pointer",
-                        activeConnection?.id === c.id && "bg-blue-600/20 text-blue-400"
-                      )}
+                      className={cn("cursor-pointer", activeConnection?.id === c.id && "bg-blue-600/20 text-blue-400")}
                     >
                       <Database strokeWidth={1.5} className="w-3.5 h-3.5 mr-2" />
                       <span className="truncate">{c.name}</span>
@@ -129,9 +146,7 @@ export function StudioMobileHeader({
           </DropdownMenu>
 
           {activeConnection && (
-            <span className="text-xs text-emerald-500 font-medium px-1.5 py-0.5 rounded bg-emerald-500/10">
-              Online
-            </span>
+            <span className="text-xs text-emerald-500 font-medium px-1.5 py-0.5 rounded bg-emerald-500/10">Online</span>
           )}
         </div>
 
@@ -140,18 +155,23 @@ export function StudioMobileHeader({
             variant="ghost"
             size="sm"
             className="h-8 w-8 p-0 text-zinc-500 hover:text-purple-400"
-            onClick={() => router.push('/monitoring')}
+            onClick={() => router.push("/monitoring")}
           >
             <Gauge strokeWidth={1.5} className="w-3.5 h-3.5" />
           </Button>
           {connectionPulse && (
-            <div className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-white/5" title={`Connection: ${connectionPulse}`}>
-              <div className={cn(
-                "w-1.5 h-1.5 rounded-full",
-                connectionPulse === 'healthy' && "bg-emerald-500 animate-pulse",
-                connectionPulse === 'degraded' && "bg-amber-500",
-                connectionPulse === 'error' && "bg-red-500",
-              )} />
+            <div
+              className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-white/5"
+              title={`Connection: ${connectionPulse}`}
+            >
+              <div
+                className={cn(
+                  "w-1.5 h-1.5 rounded-full",
+                  connectionPulse === "healthy" && "bg-emerald-500 animate-pulse",
+                  connectionPulse === "degraded" && "bg-amber-500",
+                  connectionPulse === "error" && "bg-red-500",
+                )}
+              />
             </div>
           )}
           {user && (
@@ -163,11 +183,11 @@ export function StudioMobileHeader({
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="bg-[#0d0d0d] border-white/10">
                 {isAdmin && (
-                  <DropdownMenuItem onClick={() => router.push('/admin')} className="cursor-pointer">
+                  <DropdownMenuItem onClick={() => router.push("/admin")} className="cursor-pointer">
                     <Settings strokeWidth={1.5} className="w-3.5 h-3.5 mr-2" /> Admin Dashboard
                   </DropdownMenuItem>
                 )}
-                <DropdownMenuItem onClick={() => router.push('/monitoring')} className="cursor-pointer">
+                <DropdownMenuItem onClick={() => router.push("/monitoring")} className="cursor-pointer">
                   <Gauge strokeWidth={1.5} className="w-3.5 h-3.5 mr-2" /> Monitoring
                 </DropdownMenuItem>
                 <div className="border-t border-white/5 my-1" />
@@ -184,7 +204,7 @@ export function StudioMobileHeader({
       </div>
 
       {/* Row 2: Actions + RUN (only show when on editor tab) */}
-      {activeMobileTab === 'editor' && (
+      {activeMobileTab === "editor" && (
         <div className="h-10 flex items-center justify-between px-3 border-t border-white/5 bg-[#080808]">
           <div className="flex items-center gap-1">
             <Button
@@ -204,10 +224,7 @@ export function StudioMobileHeader({
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="start" className="bg-[#0d0d0d] border-white/10 w-48">
-                <DropdownMenuItem
-                  onClick={() => queryEditorRef.current?.format()}
-                  className="cursor-pointer text-xs"
-                >
+                <DropdownMenuItem onClick={() => queryEditorRef.current?.format()} className="cursor-pointer text-xs">
                   <AlignLeft strokeWidth={1.5} className="w-3.5 h-3.5 mr-2" /> Format SQL
                 </DropdownMenuItem>
                 <DropdownMenuItem
@@ -219,26 +236,17 @@ export function StudioMobileHeader({
                 >
                   <Copy strokeWidth={1.5} className="w-3.5 h-3.5 mr-2" /> Copy Query
                 </DropdownMenuItem>
-                <DropdownMenuItem
-                  onClick={onClearQuery}
-                  className="cursor-pointer text-xs text-red-400"
-                >
+                <DropdownMenuItem onClick={onClearQuery} className="cursor-pointer text-xs text-red-400">
                   <Trash2 strokeWidth={1.5} className="w-3.5 h-3.5 mr-2" /> Clear
                 </DropdownMenuItem>
-                <DropdownMenuItem
-                  onClick={onSaveQuery}
-                  className="cursor-pointer text-xs"
-                >
+                <DropdownMenuItem onClick={onSaveQuery} className="cursor-pointer text-xs">
                   <Save strokeWidth={1.5} className="w-3.5 h-3.5 mr-2" /> Save Query
                 </DropdownMenuItem>
 
                 {onExplain && (
                   <>
                     <DropdownMenuSeparator className="bg-white/5" />
-                    <DropdownMenuItem
-                      onClick={onExplain}
-                      className="cursor-pointer text-xs text-amber-400"
-                    >
+                    <DropdownMenuItem onClick={onExplain} className="cursor-pointer text-xs text-amber-400">
                       <Zap strokeWidth={1.5} className="w-3.5 h-3.5 mr-2" /> Explain Plan
                     </DropdownMenuItem>
                   </>
@@ -259,42 +267,26 @@ export function StudioMobileHeader({
                   </DropdownMenuItem>
                 ) : (
                   <>
-                    <DropdownMenuItem
-                      onClick={onCommitTransaction}
-                      className="cursor-pointer text-xs text-emerald-400"
-                    >
+                    <DropdownMenuItem onClick={onCommitTransaction} className="cursor-pointer text-xs text-emerald-400">
                       <PlayCircle strokeWidth={1.5} className="w-3.5 h-3.5 mr-2" /> COMMIT
                     </DropdownMenuItem>
-                    <DropdownMenuItem
-                      onClick={onRollbackTransaction}
-                      className="cursor-pointer text-xs text-red-400"
-                    >
+                    <DropdownMenuItem onClick={onRollbackTransaction} className="cursor-pointer text-xs text-red-400">
                       <PlayCircle strokeWidth={1.5} className="w-3.5 h-3.5 mr-2" /> ROLLBACK
                     </DropdownMenuItem>
                   </>
                 )}
 
-                <DropdownMenuItem
-                  onClick={onTogglePlayground}
-                  className="cursor-pointer text-xs"
-                >
+                <DropdownMenuItem onClick={onTogglePlayground} className="cursor-pointer text-xs">
                   <Pencil strokeWidth={1.5} className="w-3.5 h-3.5 mr-2" />
-                  {playgroundMode ? 'Disable Sandbox' : 'Enable Sandbox'}
+                  {playgroundMode ? "Disable Sandbox" : "Enable Sandbox"}
                 </DropdownMenuItem>
 
-                <DropdownMenuItem
-                  onClick={onToggleEditing}
-                  className="cursor-pointer text-xs"
-                >
+                <DropdownMenuItem onClick={onToggleEditing} className="cursor-pointer text-xs">
                   <Edit3 strokeWidth={1.5} className="w-3.5 h-3.5 mr-2" />
-                  {editingEnabled ? 'Disable Editing' : 'Enable Editing'}
+                  {editingEnabled ? "Disable Editing" : "Enable Editing"}
                 </DropdownMenuItem>
 
-                <DropdownMenuItem
-                  onClick={onImport}
-                  className="cursor-pointer text-xs"
-                  disabled={!activeConnection}
-                >
+                <DropdownMenuItem onClick={onImport} className="cursor-pointer text-xs" disabled={!activeConnection}>
                   <Upload strokeWidth={1.5} className="w-3.5 h-3.5 mr-2" /> Import Data
                 </DropdownMenuItem>
               </DropdownMenuContent>

@@ -3,16 +3,11 @@
  * Local LLM integration via OpenAI-compatible API
  */
 
-import { BaseLLMProvider } from '../base-provider';
-import {
-  type LLMConfig,
-  type LLMStreamOptions,
-  LLMStreamError,
-  LLMConfigError,
-} from '../types';
-import { createStreamFromSSEResponse } from '../utils/streaming';
-import { DEFAULT_API_URLS } from '../utils/config';
-import { logger } from '@/lib/logger';
+import { BaseLLMProvider } from "../base-provider";
+import { type LLMConfig, type LLMStreamOptions, LLMStreamError, LLMConfigError } from "../types";
+import { createStreamFromSSEResponse } from "../utils/streaming";
+import { DEFAULT_API_URLS } from "../utils/config";
+import { logger } from "@/lib/logger";
 
 // ============================================================================
 // Ollama Provider
@@ -30,11 +25,8 @@ export class OllamaProvider extends BaseLLMProvider {
    * Override validation - Ollama doesn't require API key
    */
   public validate(): void {
-    if (!this.config.model || this.config.model.trim() === '') {
-      throw new LLMConfigError(
-        'Model name is required for Ollama provider.',
-        'ollama'
-      );
+    if (!this.config.model || this.config.model.trim() === "") {
+      throw new LLMConfigError("Model name is required for Ollama provider.", "ollama");
     }
   }
 
@@ -50,7 +42,7 @@ export class OllamaProvider extends BaseLLMProvider {
         const response = await this.fetchStream(model, messages, options);
         await this.validateResponse(response);
 
-        return createStreamFromSSEResponse(response, 'ollama');
+        return createStreamFromSSEResponse(response, "ollama");
       } catch (error) {
         throw this.mapError(error);
       }
@@ -73,14 +65,14 @@ export class OllamaProvider extends BaseLLMProvider {
   private async fetchStream(
     model: string,
     messages: Array<{ role: string; content: string }>,
-    options: LLMStreamOptions
+    options: LLMStreamOptions,
   ): Promise<Response> {
     const response = await fetch(`${this.baseUrl}/chat/completions`, {
-      method: 'POST',
+      method: "POST",
       headers: {
-        'Content-Type': 'application/json',
+        "Content-Type": "application/json",
         // Ollama accepts 'ollama' or empty string as API key
-        Authorization: 'Bearer ollama',
+        Authorization: "Bearer ollama",
       },
       body: JSON.stringify({
         model,
@@ -109,18 +101,15 @@ export class OllamaProvider extends BaseLLMProvider {
       const errorJson = JSON.parse(errorBody);
       errorMessage = errorJson.error?.message ?? errorBody;
     } catch {
-      logger.debug('Could not parse error response body as JSON', { provider: 'ollama' });
+      logger.debug("Could not parse error response body as JSON", { provider: "ollama" });
     }
 
     // Ollama-specific errors
     if (response.status === 404) {
-      throw new LLMConfigError(
-        `Model not found. Make sure "${this.config.model}" is pulled in Ollama.`,
-        'ollama'
-      );
+      throw new LLMConfigError(`Model not found. Make sure "${this.config.model}" is pulled in Ollama.`, "ollama");
     }
 
-    throw new LLMStreamError(`Ollama API error: ${errorMessage}`, 'ollama');
+    throw new LLMStreamError(`Ollama API error: ${errorMessage}`, "ollama");
   }
 
   /**
@@ -132,23 +121,16 @@ export class OllamaProvider extends BaseLLMProvider {
     }
 
     if (!(error instanceof Error)) {
-      return new LLMStreamError(String(error), 'ollama');
+      return new LLMStreamError(String(error), "ollama");
     }
 
     const message = error.message.toLowerCase();
 
     // Connection errors - Ollama not running
-    if (
-      message.includes('econnrefused') ||
-      message.includes('fetch failed') ||
-      message.includes('network')
-    ) {
-      return new LLMStreamError(
-        `Cannot connect to Ollama at ${this.baseUrl}. Make sure Ollama is running.`,
-        'ollama'
-      );
+    if (message.includes("econnrefused") || message.includes("fetch failed") || message.includes("network")) {
+      return new LLMStreamError(`Cannot connect to Ollama at ${this.baseUrl}. Make sure Ollama is running.`, "ollama");
     }
 
-    return new LLMStreamError(error.message, 'ollama');
+    return new LLMStreamError(error.message, "ollama");
   }
 }
