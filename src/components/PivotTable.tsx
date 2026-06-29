@@ -84,7 +84,7 @@ export function PivotTable({ result, onLoadQuery }: PivotTableProps) {
       colMap.get(colKey)!.push(value);
     }
 
-    const colKeys = colField ? Array.from(colValues).sort() : ["__all__"];
+    const colKeys = colField ? Array.from(colValues).sort((a, b) => a.localeCompare(b)) : ["__all__"];
 
     // Build pivot rows
     const pivotRows: { rowKey: string; values: Map<string, string> }[] = [];

@@ -188,10 +188,19 @@ jobs:
           echo "=== Sample record ==="
           head -20 coverage/lcov.info
 
+      # Report the package version so SonarCloud's "previous_version" new-code
+      # definition resets its baseline at each release. Single source of truth:
+      # package.json (node is preinstalled on the runner). Read into a step
+      # output, then passed to the scanner via args (not shell-interpolated).
+      - name: Resolve project version
+        id: pkg
+        run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+
       - name: SonarCloud Scan
         uses: SonarSource/sonarqube-scan-action@fd88b7d7ccbaefd23d8f36f73b59db7a3d246602 # v6
         with:
           args: >
+            -Dsonar.projectVersion=${{ steps.pkg.outputs.version }}
             -Dsonar.verbose=true
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}

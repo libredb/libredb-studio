@@ -79,16 +79,22 @@ function diffColumns(sourceCols: ColumnSchema[], targetCols: ColumnSchema[]): Co
 function diffIndexes(sourceIndexes: IndexSchema[], targetIndexes: IndexSchema[]): IndexDiff[] {
   const diffs: IndexDiff[] = [];
 
+  // Build a stable map key from the column set. Copy before sorting so the
+  // original column order is preserved for the diff messages below. Use the
+  // default (code-point) sort, NOT localeCompare: this is an internal canonical
+  // key for set matching, so it must be deterministic and locale-independent.
+  // localeCompare would tie the key to the host locale. S2871 is suppressed for
+  // this file in sonar-project.properties for exactly this reason.
+  const columnKey = (idx: IndexSchema) => idx.name || [...idx.columns].sort().join(",");
+
   const sourceMap = new Map<string, IndexSchema>();
   sourceIndexes.forEach((idx) => {
-    const key = idx.name || idx.columns.sort().join(",");
-    sourceMap.set(key, idx);
+    sourceMap.set(columnKey(idx), idx);
   });
 
   const targetMap = new Map<string, IndexSchema>();
   targetIndexes.forEach((idx) => {
-    const key = idx.name || idx.columns.sort().join(",");
-    targetMap.set(key, idx);
+    targetMap.set(columnKey(idx), idx);
   });
 
   for (const [key, idx] of targetMap) {
@@ -120,8 +126,11 @@ function diffIndexes(sourceIndexes: IndexSchema[], targetIndexes: IndexSchema[])
     if (!targetIdx) continue;
 
     const changes: string[] = [];
-    const sourceColStr = sourceIdx.columns.sort().join(",");
-    const targetColStr = targetIdx.columns.sort().join(",");
+    // Code-point sort (not localeCompare) so this equality check is deterministic
+    // and locale-independent — see columnKey above.
+    const sortedJoin = (cols: string[]) => [...cols].sort().join(",");
+    const sourceColStr = sortedJoin(sourceIdx.columns);
+    const targetColStr = sortedJoin(targetIdx.columns);
 
     if (sourceColStr !== targetColStr) {
       changes.push(`Columns changed: (${sourceIdx.columns.join(", ")}) → (${targetIdx.columns.join(", ")})`);

@@ -217,7 +217,9 @@ function SchemaDiagramInner({ schema, onClose }: SchemaDiagramProps) {
           labelBgStyle: { fill: "#0d0d0d", fillOpacity: 0.8 },
           labelBgPadding: [4, 2] as [number, number],
           style: {
-            stroke: isHighlighted ? "#3b82f6" : "#3b82f6",
+            // Highlight is conveyed by strokeWidth + opacity below; the stroke
+            // colour is the same blue in both states.
+            stroke: "#3b82f6",
             strokeWidth: isHighlighted ? 2 : 1.5,
             opacity: selectedNode ? (isHighlighted ? 1 : 0.15) : 0.4,
           },
