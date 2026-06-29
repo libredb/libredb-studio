@@ -772,9 +772,10 @@ export function DataCharts({ result }: DataChartsProps) {
                   {savedCharts.map((chart) => (
                     <DropdownMenuItem
                       key={chart.id}
+                      onSelect={() => loadSavedChart(chart)}
                       className="text-xs cursor-pointer flex items-center justify-between gap-4"
                     >
-                      <span onClick={() => loadSavedChart(chart)}>
+                      <span>
                         {chart.name} <span className="text-zinc-600">({chart.chartType})</span>
                       </span>
                       <button
