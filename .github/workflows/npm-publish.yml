@@ -1,9 +1,12 @@
 name: NPM Publish
 
+# Publish when a GitHub Release is published, regardless of the tag's naming
+# (the project uses plain "0.9.x" tags now, but older ones were "v0.9.x" — a
+# tag-name filter kept missing the plain ones). The release commit's
+# package.json is the version source. workflow_dispatch remains a manual fallback.
 on:
-  push:
-    tags:
-      - 'v*'
+  release:
+    types: [published]
   workflow_dispatch:
     inputs:
       version:
