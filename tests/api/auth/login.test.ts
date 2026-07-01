@@ -1,4 +1,4 @@
-import { describe, test, expect, mock, beforeEach } from "bun:test";
+import { describe, test, expect, mock, beforeEach, afterEach } from "bun:test";
 import { createMockRequest, parseResponseJSON } from "../../helpers/mock-next";
 import { AuthConfigError } from "@/lib/auth-errors";
 
@@ -19,16 +19,26 @@ const { POST } = await import("@/app/api/auth/login/route");
 
 // ─── Tests ──────────────────────────────────────────────────────────────────
 describe("POST /api/auth/login", () => {
+  // Snapshot the env vars these tests mutate and always restore them in
+  // afterEach — so a failing assertion mid-test can never leak env state into
+  // later tests (a plain restore() at the end of a test body would be skipped
+  // when an earlier expect() throws).
+  const MUTATED_ENV_KEYS = ["ADMIN_PASSWORD", "USER_PASSWORD"] as const;
+  const envSnapshot: Record<string, string | undefined> = {};
+
   beforeEach(() => {
     mockLogin.mockClear();
+    for (const key of MUTATED_ENV_KEYS) envSnapshot[key] = process.env[key];
   });
 
-  // Restore an env var to its original state. Deleting on undefined avoids
-  // setting it to the string "undefined" (which would leak into later tests).
-  function restore(key: string, value: string | undefined): void {
-    if (value === undefined) delete process.env[key];
-    else process.env[key] = value;
-  }
+  afterEach(() => {
+    // Delete-on-undefined so an originally-unset var is never set to the literal string "undefined".
+    for (const key of MUTATED_ENV_KEYS) {
+      const value = envSnapshot[key];
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  });
 
   test("returns 200 with role admin when admin credentials are provided", async () => {
     const req = createMockRequest("/api/auth/login", {
@@ -155,7 +165,6 @@ describe("POST /api/auth/login", () => {
   });
 
   test("returns 503 with an actionable message when ADMIN_PASSWORD is missing", async () => {
-    const origAdminPassword = process.env.ADMIN_PASSWORD;
     delete process.env.ADMIN_PASSWORD;
 
     const req = createMockRequest("/api/auth/login", {
@@ -173,8 +182,6 @@ describe("POST /api/auth/login", () => {
     expect(data.success).toBe(false);
     expect(data.message).toContain("ADMIN_PASSWORD");
     expect(data.message).not.toBe("Invalid email or password");
-
-    restore("ADMIN_PASSWORD", origAdminPassword);
   });
 
   test("surfaces a JWT_SECRET config error as a 503 with its message (credentials are valid)", async () => {
@@ -203,7 +210,6 @@ describe("POST /api/auth/login", () => {
   });
 
   test("still authenticates admin when USER_PASSWORD is not set", async () => {
-    const origUserPassword = process.env.USER_PASSWORD;
     delete process.env.USER_PASSWORD;
 
     const req = createMockRequest("/api/auth/login", {
@@ -217,12 +223,9 @@ describe("POST /api/auth/login", () => {
     expect(res.status).toBe(200);
     expect(data.success).toBe(true);
     expect(data.role).toBe("admin");
-
-    restore("USER_PASSWORD", origUserPassword);
   });
 
   test("rejects user login when USER_PASSWORD is not set (account is optional, no default)", async () => {
-    const origUserPassword = process.env.USER_PASSWORD;
     delete process.env.USER_PASSWORD;
 
     const req = createMockRequest("/api/auth/login", {
@@ -236,7 +239,5 @@ describe("POST /api/auth/login", () => {
     expect(res.status).toBe(401);
     expect(data.success).toBe(false);
     expect(data.message).toBe("Invalid email or password");
-
-    restore("USER_PASSWORD", origUserPassword);
   });
 });
