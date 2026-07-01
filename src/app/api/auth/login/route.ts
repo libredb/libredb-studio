@@ -1,40 +1,8 @@
 import { login } from "@/lib/auth";
+import { AuthConfigError, getAuthUsers } from "@/lib/local-auth";
 import { NextRequest, NextResponse } from "next/server";
 import { createErrorResponse } from "@/lib/api/errors";
 import { logger } from "@/lib/logger";
-
-interface AuthUser {
-  email: string;
-  password: string;
-  role: "admin" | "user";
-}
-
-function getAuthUsers(): AuthUser[] {
-  const adminEmail = process.env.ADMIN_EMAIL || "admin@libredb.org";
-  const adminPassword = process.env.ADMIN_PASSWORD;
-  const userEmail = process.env.USER_EMAIL || "user@libredb.org";
-  const userPassword = process.env.USER_PASSWORD;
-
-  // Passwords MUST come from the environment in every environment. Never fall
-  // back to a hardcoded default — a baked-in password would be a publicly known
-  // credential on any deployment that forgets to set ADMIN_PASSWORD/USER_PASSWORD.
-  if (!adminPassword || !userPassword) {
-    throw new Error("ADMIN_PASSWORD and USER_PASSWORD environment variables are required");
-  }
-
-  return [
-    {
-      email: adminEmail,
-      password: adminPassword,
-      role: "admin",
-    },
-    {
-      email: userEmail,
-      password: userPassword,
-      role: "user",
-    },
-  ];
-}
 
 export async function POST(request: NextRequest) {
   try {
@@ -51,6 +19,21 @@ export async function POST(request: NextRequest) {
     logger.warn("Failed login attempt", { route: "POST /api/auth/login", email });
     return NextResponse.json({ success: false, message: "Invalid email or password" }, { status: 401 });
   } catch (error) {
+    // Server is not configured for local login — surface a clear, actionable
+    // message on the login screen (503, not a generic 500) so the operator
+    // knows exactly what to fix rather than seeing "Invalid email or password".
+    if (error instanceof AuthConfigError) {
+      logger.error("Local authentication is not configured", error, { route: "POST /api/auth/login" });
+      return NextResponse.json(
+        {
+          success: false,
+          message:
+            "Login is unavailable: this server has no administrator password configured. " +
+            "Set the ADMIN_PASSWORD environment variable and restart the server.",
+        },
+        { status: 503 },
+      );
+    }
     return createErrorResponse(error, { route: "POST /api/auth/login" });
   }
 }

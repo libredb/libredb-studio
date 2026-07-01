@@ -30,12 +30,15 @@ services:
     #     condition: service_healthy
     environment:
       # -----------------------------------------------------------------------
-      # AUTHENTICATION (required)
+      # AUTHENTICATION — local provider. ADMIN_PASSWORD is required (without it
+      # the login screen shows a clear config error); USER_* is optional.
       # -----------------------------------------------------------------------
       ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@libredb.org}        # admin: full access + maintenance tools
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?set ADMIN_PASSWORD in .env}
-      USER_EMAIL: ${USER_EMAIL:-user@libredb.org}           # user: query execution only
-      USER_PASSWORD: ${USER_PASSWORD:?set USER_PASSWORD in .env}
+      # Optional lower-privilege account (query execution only). Omit USER_PASSWORD
+      # to run admin-only — no default user password is ever assumed.
+      USER_EMAIL: ${USER_EMAIL:-user@libredb.org}
+      USER_PASSWORD: ${USER_PASSWORD:-}
       # JWT signing secret — min 32 chars. Generate: openssl rand -base64 32
       JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env (min 32 chars)}
 

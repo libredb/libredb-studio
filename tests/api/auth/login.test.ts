@@ -146,7 +146,7 @@ describe("POST /api/auth/login", () => {
     expect(mockLogin).toHaveBeenCalledWith("user", "user@libredb.org");
   });
 
-  test("returns 500 when required password env vars are missing", async () => {
+  test("returns 503 with an actionable message when ADMIN_PASSWORD is missing", async () => {
     const origAdminPassword = process.env.ADMIN_PASSWORD;
     delete process.env.ADMIN_PASSWORD;
 
@@ -156,12 +156,54 @@ describe("POST /api/auth/login", () => {
     });
 
     const res = await POST(req as never);
-    const data = await parseResponseJSON<{ error: string; code: string; statusCode: number }>(res);
+    const data = await parseResponseJSON<{ success: boolean; message: string }>(res);
 
-    expect(res.status).toBe(500);
-    expect(data.code).toBe("INTERNAL_ERROR");
-    expect(data.statusCode).toBe(500);
+    // A misconfiguration is an operator error, not bad credentials: it must be
+    // clearly distinguishable (503) and carry a message the login screen shows
+    // via `data.message` — never the misleading "Invalid email or password".
+    expect(res.status).toBe(503);
+    expect(data.success).toBe(false);
+    expect(data.message).toContain("ADMIN_PASSWORD");
+    expect(data.message).not.toBe("Invalid email or password");
 
     process.env.ADMIN_PASSWORD = origAdminPassword!;
+  });
+
+  test("still authenticates admin when USER_PASSWORD is not set", async () => {
+    const origUserPassword = process.env.USER_PASSWORD;
+    delete process.env.USER_PASSWORD;
+
+    const req = createMockRequest("/api/auth/login", {
+      method: "POST",
+      body: { email: "admin@libredb.org", password: "LibreDB.2026" },
+    });
+
+    const res = await POST(req as never);
+    const data = await parseResponseJSON<{ success: boolean; role: string }>(res);
+
+    expect(res.status).toBe(200);
+    expect(data.success).toBe(true);
+    expect(data.role).toBe("admin");
+
+    process.env.USER_PASSWORD = origUserPassword!;
+  });
+
+  test("rejects user login when USER_PASSWORD is not set (account is optional, no default)", async () => {
+    const origUserPassword = process.env.USER_PASSWORD;
+    delete process.env.USER_PASSWORD;
+
+    const req = createMockRequest("/api/auth/login", {
+      method: "POST",
+      body: { email: "user@libredb.org", password: "LibreDB.2026" },
+    });
+
+    const res = await POST(req as never);
+    const data = await parseResponseJSON<{ success: boolean; message: string }>(res);
+
+    expect(res.status).toBe(401);
+    expect(data.success).toBe(false);
+    expect(data.message).toBe("Invalid email or password");
+
+    process.env.USER_PASSWORD = origUserPassword!;
   });
 });
