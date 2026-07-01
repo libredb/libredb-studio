@@ -23,6 +23,13 @@ describe("POST /api/auth/login", () => {
     mockLogin.mockClear();
   });
 
+  // Restore an env var to its original state. Deleting on undefined avoids
+  // setting it to the string "undefined" (which would leak into later tests).
+  function restore(key: string, value: string | undefined): void {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
+
   test("returns 200 with role admin when admin credentials are provided", async () => {
     const req = createMockRequest("/api/auth/login", {
       method: "POST",
@@ -167,7 +174,7 @@ describe("POST /api/auth/login", () => {
     expect(data.message).toContain("ADMIN_PASSWORD");
     expect(data.message).not.toBe("Invalid email or password");
 
-    process.env.ADMIN_PASSWORD = origAdminPassword!;
+    restore("ADMIN_PASSWORD", origAdminPassword);
   });
 
   test("surfaces a JWT_SECRET config error as a 503 with its message (credentials are valid)", async () => {
@@ -211,7 +218,7 @@ describe("POST /api/auth/login", () => {
     expect(data.success).toBe(true);
     expect(data.role).toBe("admin");
 
-    process.env.USER_PASSWORD = origUserPassword!;
+    restore("USER_PASSWORD", origUserPassword);
   });
 
   test("rejects user login when USER_PASSWORD is not set (account is optional, no default)", async () => {
@@ -230,6 +237,6 @@ describe("POST /api/auth/login", () => {
     expect(data.success).toBe(false);
     expect(data.message).toBe("Invalid email or password");
 
-    process.env.USER_PASSWORD = origUserPassword!;
+    restore("USER_PASSWORD", origUserPassword);
   });
 });
