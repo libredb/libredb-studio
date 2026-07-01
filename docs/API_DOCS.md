@@ -120,7 +120,7 @@ Authenticate user and create session.
 ```
 
 **Notes:**
-- Both `email` and `password` are required; matched against `ADMIN_EMAIL`/`ADMIN_PASSWORD` or `USER_EMAIL`/`USER_PASSWORD` environment variables
+- Both `email` and `password` are required in the request body; matched against `ADMIN_EMAIL`/`ADMIN_PASSWORD` or `USER_EMAIL`/`USER_PASSWORD` environment variables. `ADMIN_PASSWORD` is mandatory; the `USER_*` account exists only when `USER_PASSWORD` is set
 - Sets `auth-token` HTTP-only cookie on success
 
 ---

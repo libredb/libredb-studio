@@ -1,5 +1,6 @@
-import { describe, test, expect, mock, beforeEach } from "bun:test";
+import { describe, test, expect, mock, beforeEach, afterEach } from "bun:test";
 import { createMockRequest, parseResponseJSON } from "../../helpers/mock-next";
+import { AuthConfigError } from "@/lib/auth-errors";
 
 // ─── Mock @/lib/auth BEFORE importing the route ─────────────────────────────
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -18,8 +19,25 @@ const { POST } = await import("@/app/api/auth/login/route");
 
 // ─── Tests ──────────────────────────────────────────────────────────────────
 describe("POST /api/auth/login", () => {
+  // Snapshot the env vars these tests mutate and always restore them in
+  // afterEach — so a failing assertion mid-test can never leak env state into
+  // later tests (a plain restore() at the end of a test body would be skipped
+  // when an earlier expect() throws).
+  const MUTATED_ENV_KEYS = ["ADMIN_PASSWORD", "USER_PASSWORD"] as const;
+  const envSnapshot: Record<string, string | undefined> = {};
+
   beforeEach(() => {
     mockLogin.mockClear();
+    for (const key of MUTATED_ENV_KEYS) envSnapshot[key] = process.env[key];
+  });
+
+  afterEach(() => {
+    // Delete-on-undefined so an originally-unset var is never set to the literal string "undefined".
+    for (const key of MUTATED_ENV_KEYS) {
+      const value = envSnapshot[key];
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
   });
 
   test("returns 200 with role admin when admin credentials are provided", async () => {
@@ -146,8 +164,7 @@ describe("POST /api/auth/login", () => {
     expect(mockLogin).toHaveBeenCalledWith("user", "user@libredb.org");
   });
 
-  test("returns 500 when required password env vars are missing", async () => {
-    const origAdminPassword = process.env.ADMIN_PASSWORD;
+  test("returns 503 with an actionable message when ADMIN_PASSWORD is missing", async () => {
     delete process.env.ADMIN_PASSWORD;
 
     const req = createMockRequest("/api/auth/login", {
@@ -156,12 +173,71 @@ describe("POST /api/auth/login", () => {
     });
 
     const res = await POST(req as never);
-    const data = await parseResponseJSON<{ error: string; code: string; statusCode: number }>(res);
+    const data = await parseResponseJSON<{ success: boolean; message: string }>(res);
 
-    expect(res.status).toBe(500);
-    expect(data.code).toBe("INTERNAL_ERROR");
-    expect(data.statusCode).toBe(500);
+    // A misconfiguration is an operator error, not bad credentials: it must be
+    // clearly distinguishable (503) and carry a message the login screen shows
+    // via `data.message` — never the misleading "Invalid email or password".
+    expect(res.status).toBe(503);
+    expect(data.success).toBe(false);
+    expect(data.message).toContain("ADMIN_PASSWORD");
+    expect(data.message).not.toBe("Invalid email or password");
+  });
 
-    process.env.ADMIN_PASSWORD = origAdminPassword!;
+  test("surfaces a JWT_SECRET config error as a 503 with its message (credentials are valid)", async () => {
+    // Credentials match, but signing the session fails because JWT_SECRET is
+    // missing/too short: login() throws AuthConfigError. The route must surface
+    // that actionable message, not the misleading "Invalid email or password".
+    const jwtMessage =
+      "Login is unavailable: the server's JWT_SECRET is not configured. " +
+      "Set JWT_SECRET (at least 32 characters) and restart the server.";
+    mockLogin.mockImplementationOnce(async () => {
+      throw new AuthConfigError(jwtMessage);
+    });
+
+    const req = createMockRequest("/api/auth/login", {
+      method: "POST",
+      body: { email: "admin@libredb.org", password: "LibreDB.2026" },
+    });
+
+    const res = await POST(req as never);
+    const data = await parseResponseJSON<{ success: boolean; message: string }>(res);
+
+    expect(res.status).toBe(503);
+    expect(data.success).toBe(false);
+    expect(data.message).toBe(jwtMessage);
+    expect(data.message).not.toBe("Invalid email or password");
+  });
+
+  test("still authenticates admin when USER_PASSWORD is not set", async () => {
+    delete process.env.USER_PASSWORD;
+
+    const req = createMockRequest("/api/auth/login", {
+      method: "POST",
+      body: { email: "admin@libredb.org", password: "LibreDB.2026" },
+    });
+
+    const res = await POST(req as never);
+    const data = await parseResponseJSON<{ success: boolean; role: string }>(res);
+
+    expect(res.status).toBe(200);
+    expect(data.success).toBe(true);
+    expect(data.role).toBe("admin");
+  });
+
+  test("rejects user login when USER_PASSWORD is not set (account is optional, no default)", async () => {
+    delete process.env.USER_PASSWORD;
+
+    const req = createMockRequest("/api/auth/login", {
+      method: "POST",
+      body: { email: "user@libredb.org", password: "LibreDB.2026" },
+    });
+
+    const res = await POST(req as never);
+    const data = await parseResponseJSON<{ success: boolean; message: string }>(res);
+
+    expect(res.status).toBe(401);
+    expect(data.success).toBe(false);
+    expect(data.message).toBe("Invalid email or password");
   });
 });

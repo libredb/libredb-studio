@@ -40,6 +40,8 @@ docker run -d \
 
 Open <http://localhost:3000> and log in with the `ADMIN_EMAIL` / `ADMIN_PASSWORD` you set above. **Use your own strong passwords and a random `JWT_SECRET`** — the values here are placeholders.
 
+> With the local auth provider, `ADMIN_PASSWORD` is required — without it the login screen reports a clear configuration error instead of authenticating. `USER_EMAIL` / `USER_PASSWORD` are optional — omit them to run admin-only. They are not used when `NEXT_PUBLIC_AUTH_PROVIDER=oidc`.
+
 > **Enable AI:** add `-e LLM_PROVIDER=gemini -e LLM_API_KEY=your_key -e LLM_MODEL=gemini-2.5-flash`.
 
 ### Docker Compose
