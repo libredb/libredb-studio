@@ -1,5 +1,6 @@
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { AuthConfigError, getAuthUsers } from "@/lib/local-auth";
+import { AuthConfigError } from "@/lib/auth-errors";
+import { getAuthUsers } from "@/lib/local-auth";
 
 describe("local-auth getAuthUsers()", () => {
   let origAdminEmail: string | undefined;

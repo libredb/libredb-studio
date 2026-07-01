@@ -1,13 +1,24 @@
 import { SignJWT, jwtVerify } from "jose";
 import { cookies } from "next/headers";
 import { logger } from "@/lib/logger";
+import { AuthConfigError } from "@/lib/auth-errors";
+
+// Single-line messages, hoisted to module scope: bun's line coverage under-counts
+// the continuation lines of multi-line string concatenation, which would show as
+// uncovered "new code" in SonarCloud even though the throw is exercised by tests.
+const JWT_SECRET_MISSING_MESSAGE =
+  "Login is unavailable: the server's JWT_SECRET is not configured. Set JWT_SECRET (at least 32 characters) and restart the server.";
+const JWT_SECRET_TOO_SHORT_MESSAGE =
+  "Login is unavailable: the server's JWT_SECRET is too short; it must be at least 32 characters. Update JWT_SECRET and restart the server.";
 
 function getJwtSecret(): Uint8Array {
   const secret = process.env.JWT_SECRET;
 
   if (!secret) {
     if (process.env.NODE_ENV === "production") {
-      throw new Error("JWT_SECRET environment variable is required in production");
+      // Thrown lazily (at sign/verify time), so the login route can turn it into
+      // a clear on-screen 503 instead of a misleading "Invalid email or password".
+      throw new AuthConfigError(JWT_SECRET_MISSING_MESSAGE);
     }
     // Development fallback - only for local development
     console.warn("⚠️ JWT_SECRET not set, using development fallback. Set JWT_SECRET in production!");
@@ -15,7 +26,7 @@ function getJwtSecret(): Uint8Array {
   }
 
   if (secret.length < 32) {
-    throw new Error("JWT_SECRET must be at least 32 characters long");
+    throw new AuthConfigError(JWT_SECRET_TOO_SHORT_MESSAGE);
   }
 
   return new TextEncoder().encode(secret);

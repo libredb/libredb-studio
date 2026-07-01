@@ -1,5 +1,6 @@
 import { describe, test, expect, mock, beforeEach } from "bun:test";
 import { createMockRequest, parseResponseJSON } from "../../helpers/mock-next";
+import { AuthConfigError } from "@/lib/auth-errors";
 
 // ─── Mock @/lib/auth BEFORE importing the route ─────────────────────────────
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -167,6 +168,31 @@ describe("POST /api/auth/login", () => {
     expect(data.message).not.toBe("Invalid email or password");
 
     process.env.ADMIN_PASSWORD = origAdminPassword!;
+  });
+
+  test("surfaces a JWT_SECRET config error as a 503 with its message (credentials are valid)", async () => {
+    // Credentials match, but signing the session fails because JWT_SECRET is
+    // missing/too short: login() throws AuthConfigError. The route must surface
+    // that actionable message, not the misleading "Invalid email or password".
+    const jwtMessage =
+      "Login is unavailable: the server's JWT_SECRET is not configured. " +
+      "Set JWT_SECRET (at least 32 characters) and restart the server.";
+    mockLogin.mockImplementationOnce(async () => {
+      throw new AuthConfigError(jwtMessage);
+    });
+
+    const req = createMockRequest("/api/auth/login", {
+      method: "POST",
+      body: { email: "admin@libredb.org", password: "LibreDB.2026" },
+    });
+
+    const res = await POST(req as never);
+    const data = await parseResponseJSON<{ success: boolean; message: string }>(res);
+
+    expect(res.status).toBe(503);
+    expect(data.success).toBe(false);
+    expect(data.message).toBe(jwtMessage);
+    expect(data.message).not.toBe("Invalid email or password");
   });
 
   test("still authenticates admin when USER_PASSWORD is not set", async () => {

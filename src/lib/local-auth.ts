@@ -4,6 +4,7 @@
  * shared session/JWT concerns live in `auth.ts`.
  */
 import type { Role } from "@/lib/auth";
+import { AuthConfigError } from "@/lib/auth-errors";
 
 export interface AuthUser {
   email: string;
@@ -11,19 +12,10 @@ export interface AuthUser {
   role: Role;
 }
 
-/**
- * Raised when local authentication cannot be served because the server is
- * missing required config (no ADMIN_PASSWORD). It is a deployment/operator
- * error, not a bad-credentials error — the login route turns it into a clear,
- * actionable 503 so the operator sees WHAT to fix on the login screen instead
- * of a misleading "Invalid email or password".
- */
-export class AuthConfigError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "AuthConfigError";
-  }
-}
+// Single-line and module-scoped so bun's line coverage credits it cleanly (it
+// under-counts continuation lines of multi-line string concatenation).
+const ADMIN_PASSWORD_MISSING_MESSAGE =
+  "Login is unavailable: this server has no administrator password configured. Set the ADMIN_PASSWORD environment variable and restart the server.";
 
 /**
  * Build the list of accounts that can authenticate against the local provider.
@@ -38,7 +30,7 @@ export function getAuthUsers(): AuthUser[] {
   const adminPassword = process.env.ADMIN_PASSWORD;
 
   if (!adminPassword) {
-    throw new AuthConfigError("ADMIN_PASSWORD is not set");
+    throw new AuthConfigError(ADMIN_PASSWORD_MISSING_MESSAGE);
   }
 
   const users: AuthUser[] = [{ email: adminEmail, password: adminPassword, role: "admin" }];
