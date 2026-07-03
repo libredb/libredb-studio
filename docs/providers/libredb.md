@@ -11,7 +11,7 @@
 | **Status** | Implemented & shipped |
 | **Database type id** | `libredb` |
 | **Family** | Embedded / Key-Value (`src/lib/db/providers/embedded/`) |
-| **Driver** | `@libredb/libredb` (lazy dynamic import) |
+| **Driver** | `@libredb/libredb` `^0.2.2` (lazy dynamic import) |
 | **Query language** | `json` (small command grammar — NOT SQL) |
 | **Default port** | None (embedded in-process, no network) |
 | **Connection pooling** | None — single in-process file handle |
@@ -252,6 +252,32 @@ file does not exist at `connect()` time, the `@libredb/libredb` package will cre
 ordered-KV store). If the path is missing entirely, `connect()` throws `DatabaseConfigError`
 before attempting to open anything.
 
+### 4.2.1 On-disk format, locking, and version compatibility (0.2.x)
+
+Since `@libredb/libredb` 0.2.0 the driver hardens the file boundary; the provider surfaces each
+condition as a clear `ConnectionError` (see [§10](#10-error-handling)):
+
+- **`LRDB` header.** New databases begin with an 8-byte magic/version header. Files written by
+  0.1.x (headerless) keep opening through a legacy read path — upgrading Studio does not require
+  migrating existing files.
+- **Foreign files are refused untouched.** Opening a file that is not a LibreDB database throws
+  `NOT_A_DATABASE` and leaves the file byte-for-byte intact (0.1.x silently truncated it to zero).
+  A file written by a newer format version is refused as `UNSUPPORTED_VERSION`, also untouched.
+- **Exclusive per-file lock.** `open()` takes an exclusive `<path>.lock` sidecar (pid/host/nonce).
+  A second writer — another Studio connection to the same file, an external process, or the
+  `libredb` CLI — fails loudly with `LOCKED` instead of silently diverging. The lock is released
+  on `disconnect()`; locks from verifiably dead holders are reclaimed automatically. To *read* a
+  file a live writer holds, external tooling can use the package's `readonlyFileSystem` (no lock,
+  no writes).
+- **Provider cache interaction.** Studio caches a connected provider per connection id and evicts
+  it after 30 minutes idle — the lock is held that whole time. To edit the same file with external
+  tooling, disconnect the Studio connection first (or wait for eviction); otherwise the external
+  writer gets `LOCKED`.
+
+> **DOWNGRADE WARNING:** a file written by `@libredb/libredb` 0.2.x must never be opened by 0.1.3
+> or older. The old recovery cannot parse the header, classifies the whole file as a torn tail,
+> and silently truncates it to zero bytes. Back up before any downgrade.
+
 ### 4.3 Sample connection (standalone mode)
 
 On the first startup of a **standalone** Studio instance (i.e. not embedded inside
@@ -480,6 +506,24 @@ The provider raises the shared error classes from
 
 All `QueryError`s carry the `QUERY_ERROR` API code and surface to the client as `400 Bad Request`.
 
+### 10.1 Kernel error codes (`LibreDbError.code`)
+
+Since 0.2.0, every failure the `@libredb/libredb` kernel throws is a `LibreDbError` carrying a
+stable `code` — the part a caller may branch on (messages are free to change between releases).
+The provider maps the open-time codes to user-actionable `ConnectionError` messages in
+`describeOpenError()`:
+
+| Kernel code | When | Studio surfaces it as |
+|-------------|------|----------------------|
+| `LOCKED` | Another writer holds the file's exclusive lock | `ConnectionError` — *"already open by another process ... close the other writer"* |
+| `NOT_A_DATABASE` | The file at the path is not a LibreDB database | `ConnectionError` — *"not a LibreDB database ... left untouched"* |
+| `UNSUPPORTED_VERSION` | The file was written by a newer format version | `ConnectionError` — *"written by a newer version of LibreDB ... upgrade @libredb/libredb"* |
+| `CORRUPT_WAL` | Mid-log corruption; the kernel refuses to destroy data | `ConnectionError` — *"write-ahead log is corrupt mid-file"* + kernel detail |
+| `INVALID_ARGUMENT` (query-time) | Bad user input the lenses reject — e.g. a lone-surrogate (malformed UTF-16) key or value | `QueryError` with the kernel message (→ `400 Bad Request`) |
+| any other code (`CLOSED`, `FAILED`, ...) | Storage/durability conditions | Rethrown untouched so the meaning survives to the caller |
+
+The mapping branches on `error.code` via `instanceof lib.LibreDbError` — never on message text.
+
 ---
 
 ## 11. Testing
@@ -511,6 +555,14 @@ document collection (`doc()`) alongside the raw kv keys, then asserts: (a) `getS
 its real declared columns with the primary key marked (the relational signal); (c) the document
 collection shows the generic `id`/`document` columns (the document signal); and (d) raw kv
 namespaces still group as `key`/`value` pseudo-tables.
+
+A **0.2.x error mapping & locking** suite covers the hardened file boundary: a second open of a
+live-locked file is a clear `ConnectionError` (`LOCKED`); `connect()` takes the exclusive
+`<path>.lock` and `disconnect()` releases it; a non-LibreDB file is refused (`NOT_A_DATABASE`)
+and left byte-for-byte untouched with no lock held; a newer-format file is refused
+(`UNSUPPORTED_VERSION`); and a malformed UTF-16 (lone surrogate) `put` value surfaces as a
+`QueryError` without poisoning the open handle. Test temp-file cleanup removes the `.lock`
+sidecars alongside the database files.
 
 ### 11.3 Run it
 
@@ -570,8 +622,10 @@ await provider.query('put session:abc token123');
 await provider.query('put note "hello world"');
 // -> { rows: [{ changed: 1 }], ... }
 
-// Write a JSON value (stored as-is; read back pretty-printed)
-await provider.query('put user:3 {"name":"Grace","age":45}');
+// Write a JSON value — wrap it in single quotes. The tokenizer treats bare
+// double quotes as token quoting (Redis-style) and would strip them, storing
+// invalid JSON; the single-quote wrapper preserves them verbatim.
+await provider.query('put user:3 \'{"name":"Grace","age":45}\'');
 // get user:3 -> value: '{\n  "name": "Grace",\n  "age": 45\n}'
 
 // Delete a key

@@ -42,7 +42,13 @@ export async function seedSampleFile(filePath: string): Promise<void> {
   // file. The rename publishes one complete file (last writer wins; both seeds are
   // identical), and stays on one filesystem since the temp is in the same dir.
   const tempPath = `${filePath}.${process.pid}.seeding`;
-  fs.rmSync(tempPath, { force: true }); // discard any stale temp from a crashed boot
+  // Discard any stale temp from a crashed boot — including its exclusive-lock
+  // sidecar (`<temp>.lock`, since @libredb/libredb 0.2.x). The temp name is
+  // per-pid, and in Docker a restarted process often reuses the same pid, so a
+  // crashed boot's lock would read as a LIVE holder and open() would refuse
+  // with LOCKED forever. We have not opened the temp yet, so on entry any lock
+  // on it is stale by construction and safe to clear.
+  removeSeedingTemp(tempPath);
 
   const { open, kv, doc, table } = await import("@libredb/libredb");
   try {
@@ -73,13 +79,19 @@ export async function seedSampleFile(filePath: string): Promise<void> {
       // overwrites, but Windows throws if the destination exists — treat a
       // present destination as success (the sample is seeded), and only rethrow
       // if filePath still does not exist.
-      fs.rmSync(tempPath, { force: true });
+      removeSeedingTemp(tempPath);
       if (!fs.existsSync(filePath)) throw renameError;
     }
   } catch (error) {
-    fs.rmSync(tempPath, { force: true }); // never leave a partial temp behind
+    removeSeedingTemp(tempPath); // never leave a partial temp (or its lock) behind
     throw error;
   }
+}
+
+/** Remove a seeding temp file and its 0.2.x exclusive-lock sidecar, if present. */
+function removeSeedingTemp(tempPath: string): void {
+  fs.rmSync(tempPath, { force: true });
+  fs.rmSync(`${tempPath}.lock`, { force: true });
 }
 
 /** The built-in editable seed connection descriptor (managed:false). */

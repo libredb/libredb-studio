@@ -175,11 +175,33 @@ export class LibreDBProvider extends BaseDatabaseProvider {
       this.setConnected(true);
     } catch (error) {
       this.setError(error instanceof Error ? error : new Error(String(error)));
-      throw new ConnectionError(
-        `Failed to open LibreDB file: ${error instanceof Error ? error.message : String(error)}`,
-        "libredb",
-      );
+      throw new ConnectionError(this.describeOpenError(lib, error), "libredb");
     }
+  }
+
+  /**
+   * Map a 0.2.x kernel open() failure to a user-actionable message. The kernel's
+   * `LibreDbError.code` is its stable contract (messages may be reworded between
+   * releases), so branch on the code, never on message text. Codes that cannot
+   * occur at open time (CLOSED, NESTED_TRANSACTION, ...) fall through to the
+   * generic wrapper together with non-kernel errors.
+   */
+  private describeOpenError(lib: LibreDBModule, error: unknown): string {
+    if (error instanceof lib.LibreDbError) {
+      switch (error.code) {
+        case "LOCKED":
+          return "LibreDB file is already open by another process (exclusive lock). Close the other writer, or wait for its lock to be released.";
+        case "NOT_A_DATABASE":
+          return "The file is not a LibreDB database. It was left untouched — check the path.";
+        case "UNSUPPORTED_VERSION":
+          return "The file was written by a newer version of LibreDB than this Studio supports. Upgrade the @libredb/libredb package.";
+        case "CORRUPT_WAL":
+          return `The LibreDB write-ahead log is corrupt mid-file; refusing to open so no data is destroyed. (${error.message})`;
+        default:
+          break; // open-time codes only; anything else keeps the kernel message below
+      }
+    }
+    return `Failed to open LibreDB file: ${error instanceof Error ? error.message : String(error)}`;
   }
 
   public async disconnect(): Promise<void> {
@@ -337,8 +359,23 @@ export class LibreDBProvider extends BaseDatabaseProvider {
     }
     const parts = this.tokenize(line);
     if (parts.length === 0) throw new QueryError("Empty command", "libredb");
-    const kv = this.kv!;
     const verb = parts[0].toLowerCase();
+    try {
+      return this.dispatchCommand(verb, parts);
+    } catch (error) {
+      // A kernel INVALID_ARGUMENT is bad user input (e.g. a lone-surrogate key or
+      // value the lenses reject), so present it as a QueryError. Every other
+      // kernel code (CLOSED, FAILED, ...) is a storage/durability condition and
+      // is rethrown untouched so its meaning survives to the caller.
+      if (error instanceof libredbModule!.LibreDbError && error.code === "INVALID_ARGUMENT") {
+        throw new QueryError(error.message, "libredb", line);
+      }
+      throw error;
+    }
+  }
+
+  private dispatchCommand(verb: string, parts: string[]): Omit<QueryResult, "executionTime"> {
+    const kv = this.kv!;
 
     switch (verb) {
       case "get": {

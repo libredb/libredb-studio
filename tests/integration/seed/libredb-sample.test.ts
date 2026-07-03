@@ -65,6 +65,35 @@ describe("libredb-sample", () => {
     db.close();
   });
 
+  test("seedSampleFile: survives a stale temp + lock left by a crashed boot with the same pid", async () => {
+    // A boot that crashed mid-seed leaves `<file>.<pid>.seeding` AND (since
+    // @libredb/libredb 0.2.x) its exclusive-lock sidecar. In Docker a restarted
+    // process often reuses the SAME pid (pid 1), so the stale lock reads as a
+    // LIVE holder and open() would refuse with LOCKED forever. The temp name is
+    // per-pid, so on entry any existing lock on it is necessarily stale and the
+    // seeder must clear it.
+    const file = tmpPath();
+    const tempPath = `${file}.${process.pid}.seeding`;
+    fs.writeFileSync(tempPath, "partial junk from a crashed seed");
+    fs.writeFileSync(`${tempPath}.lock`, `libredb-lock\n${process.pid}\n${os.hostname()}\ndeadbeef\n`);
+
+    await seedSampleFile(file);
+
+    expect(fs.existsSync(file)).toBe(true);
+    expect(fs.existsSync(tempPath)).toBe(false);
+    expect(fs.existsSync(`${tempPath}.lock`)).toBe(false);
+    const db = open({ path: file });
+    expect(catalog(db).get("users")?.kind).toBe("relational");
+    db.close();
+  });
+
+  test("seedSampleFile: leaves no lock sidecar next to the published sample", async () => {
+    const file = tmpPath();
+    await seedSampleFile(file);
+    expect(fs.existsSync(`${file}.lock`)).toBe(false);
+    expect(fs.existsSync(`${file}.${process.pid}.seeding.lock`)).toBe(false);
+  });
+
   test("seedSampleFile: idempotent — does not modify an existing file", async () => {
     const file = tmpPath();
     await seedSampleFile(file);

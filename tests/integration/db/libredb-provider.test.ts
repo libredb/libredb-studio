@@ -6,11 +6,23 @@
  */
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import { LibreDBProvider } from "@/lib/db/providers/embedded/libredb";
+import { ConnectionError, QueryError } from "@/lib/db/errors";
 import type { DatabaseConnection } from "@/lib/types";
 import { open, kv, doc, table } from "@libredb/libredb";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
+
+/** Remove a database file AND its 0.2.x exclusive-lock sidecar (`<path>.lock`). */
+function rmDbFile(file: string): void {
+  for (const f of [file, `${file}.lock`]) {
+    try {
+      fs.unlinkSync(f);
+    } catch {
+      /* ignore */
+    }
+  }
+}
 
 let tmpFile: string;
 
@@ -66,11 +78,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  try {
-    fs.unlinkSync(tmpFile);
-  } catch {
-    /* ignore */
-  }
+  rmDbFile(tmpFile);
 });
 
 describe("LibreDBProvider — lifecycle & metadata", () => {
@@ -144,11 +152,7 @@ describe("LibreDBProvider — catalog-aware schema", () => {
   });
 
   afterEach(() => {
-    try {
-      fs.unlinkSync(catalogFile);
-    } catch {
-      /* ignore */
-    }
+    rmDbFile(catalogFile);
   });
 
   test("a bare key is NOT catalog-upgraded even if its name matches a namespace", async () => {
@@ -174,11 +178,7 @@ describe("LibreDBProvider — catalog-aware schema", () => {
       // ...but the bare key stays raw key/value, not upgraded.
       expect(bareGroup?.columns.map((c) => c.name)).toEqual(["key", "value"]);
     } finally {
-      try {
-        fs.unlinkSync(file);
-      } catch {
-        /* ignore */
-      }
+      rmDbFile(file);
     }
   });
 
@@ -388,6 +388,84 @@ describe("LibreDBProvider — query commands", () => {
     const provider = new LibreDBProvider(makeConn(tmpFile));
     await provider.connect();
     await expect(provider.query("# just a note\n\n")).rejects.toThrow(/only comments|no command/i);
+    await provider.disconnect();
+  });
+});
+
+describe("LibreDBProvider — 0.2.x error mapping & locking", () => {
+  test("a second open of a live-locked file is a clear ConnectionError (LOCKED)", async () => {
+    const writer = open({ path: tmpFile }); // holds the exclusive <path>.lock
+    try {
+      const provider = new LibreDBProvider(makeConn(tmpFile));
+      const error = await provider.connect().then(
+        () => null,
+        (e: unknown) => e,
+      );
+      expect(error).toBeInstanceOf(ConnectionError);
+      expect((error as Error).message).toMatch(/already open by another process/i);
+      expect(provider.isConnected()).toBe(false);
+    } finally {
+      writer.close();
+    }
+  });
+
+  test("connect() takes the exclusive lock; disconnect() releases it (.lock removed)", async () => {
+    const provider = new LibreDBProvider(makeConn(tmpFile));
+    await provider.connect();
+    expect(fs.existsSync(`${tmpFile}.lock`)).toBe(true);
+    await provider.disconnect();
+    expect(fs.existsSync(`${tmpFile}.lock`)).toBe(false);
+  });
+
+  test("a non-LibreDB file is refused (NOT_A_DATABASE) and left byte-for-byte untouched", async () => {
+    const foreign = path.join(os.tmpdir(), `libredb-foreign-${Math.random().toString(36).slice(2)}.libredb`);
+    const bytes = Buffer.from("definitely not a libredb database; long enough to pass the header probe\n");
+    fs.writeFileSync(foreign, bytes);
+    try {
+      const provider = new LibreDBProvider(makeConn(foreign));
+      const error = await provider.connect().then(
+        () => null,
+        (e: unknown) => e,
+      );
+      expect(error).toBeInstanceOf(ConnectionError);
+      expect((error as Error).message).toMatch(/not a LibreDB database/i);
+      // The refusal must not mutate the file (0.1.x used to truncate it to zero).
+      expect(fs.readFileSync(foreign).equals(bytes)).toBe(true);
+      // A refused open must not keep holding the exclusive lock.
+      expect(fs.existsSync(`${foreign}.lock`)).toBe(false);
+    } finally {
+      rmDbFile(foreign);
+    }
+  });
+
+  test("a file written by a newer format version is refused (UNSUPPORTED_VERSION)", async () => {
+    const future = path.join(os.tmpdir(), `libredb-future-${Math.random().toString(36).slice(2)}.libredb`);
+    // "LRDB" magic + big-endian format version 99 — a valid header from the future.
+    fs.writeFileSync(future, Buffer.from([0x4c, 0x52, 0x44, 0x42, 0x00, 0x63, 0x00, 0x00]));
+    try {
+      const provider = new LibreDBProvider(makeConn(future));
+      const error = await provider.connect().then(
+        () => null,
+        (e: unknown) => e,
+      );
+      expect(error).toBeInstanceOf(ConnectionError);
+      expect((error as Error).message).toMatch(/newer version of LibreDB/i);
+    } finally {
+      rmDbFile(future);
+    }
+  });
+
+  test("a malformed UTF-16 put value (lone surrogate) is a QueryError, and the connection survives", async () => {
+    const provider = new LibreDBProvider(makeConn(tmpFile));
+    await provider.connect();
+    const error = await provider.query("put broken \uD800").then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(error).toBeInstanceOf(QueryError);
+    expect((error as Error).message).toMatch(/utf-16|surrogate/i);
+    // The invalid write must not poison the open handle.
+    expect((await provider.query("get user:1")).rowCount).toBe(1);
     await provider.disconnect();
   });
 });
