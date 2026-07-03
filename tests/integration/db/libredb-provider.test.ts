@@ -418,7 +418,10 @@ describe("LibreDBProvider — 0.2.x error mapping & locking", () => {
   });
 
   test("a non-LibreDB file is refused (NOT_A_DATABASE) and left byte-for-byte untouched", async () => {
-    const foreign = path.join(os.tmpdir(), `libredb-foreign-${Math.random().toString(36).slice(2)}.libredb`);
+    // mkdtempSync atomically creates a unique 0700 dir — the secure-temp pattern
+    // (avoids the predictable-name race CodeQL flags for os.tmpdir + Math.random).
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "libredb-foreign-"));
+    const foreign = path.join(dir, "foreign.libredb");
     const bytes = Buffer.from("definitely not a libredb database; long enough to pass the header probe\n");
     fs.writeFileSync(foreign, bytes);
     try {
@@ -434,12 +437,14 @@ describe("LibreDBProvider — 0.2.x error mapping & locking", () => {
       // A refused open must not keep holding the exclusive lock.
       expect(fs.existsSync(`${foreign}.lock`)).toBe(false);
     } finally {
-      rmDbFile(foreign);
+      fs.rmSync(dir, { recursive: true, force: true });
     }
   });
 
   test("a file written by a newer format version is refused (UNSUPPORTED_VERSION)", async () => {
-    const future = path.join(os.tmpdir(), `libredb-future-${Math.random().toString(36).slice(2)}.libredb`);
+    // Secure-temp pattern (mkdtempSync), same as the foreign-file test above.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "libredb-future-"));
+    const future = path.join(dir, "future.libredb");
     // "LRDB" magic + big-endian format version 99 — a valid header from the future.
     fs.writeFileSync(future, Buffer.from([0x4c, 0x52, 0x44, 0x42, 0x00, 0x63, 0x00, 0x00]));
     try {
@@ -451,7 +456,7 @@ describe("LibreDBProvider — 0.2.x error mapping & locking", () => {
       expect(error).toBeInstanceOf(ConnectionError);
       expect((error as Error).message).toMatch(/newer version of LibreDB/i);
     } finally {
-      rmDbFile(future);
+      fs.rmSync(dir, { recursive: true, force: true });
     }
   });
 
