@@ -45,6 +45,9 @@ function readBootstrapFile(filePath: string): BootstrapFile {
   } catch {
     // Unreadable state: keep the evidence, regenerate. Sessions signed with a
     // lost secret become invalid; that is logged by the caller's banner path.
+    // Windows rename throws if the destination exists (see seedSampleFile), so
+    // clear any older .bak first — the newest evidence wins.
+    fs.rmSync(`${filePath}.bak`, { force: true });
     fs.renameSync(filePath, `${filePath}.bak`);
     console.warn(`LibreDB Studio: corrupt ${filePath} moved to .bak; regenerating credentials`);
     return {};
@@ -57,7 +60,21 @@ function writeBootstrapFile(filePath: string, data: BootstrapFile): void {
   // (same pattern as seedSampleFile in libredb-sample.ts).
   const tempPath = `${filePath}.${process.pid}.tmp`;
   fs.writeFileSync(tempPath, JSON.stringify(data, null, 2), { mode: 0o600 });
-  fs.renameSync(tempPath, filePath);
+  try {
+    fs.renameSync(tempPath, filePath);
+  } catch (renameError) {
+    // POSIX rename overwrites, but Windows throws if the destination exists
+    // (see seedSampleFile). Unlike the sample, a present destination is NOT
+    // success here — this write may carry a newly generated field — so drop
+    // the old file and retry once; on failure never leave a partial temp.
+    try {
+      fs.rmSync(filePath, { force: true });
+      fs.renameSync(tempPath, filePath);
+    } catch {
+      fs.rmSync(tempPath, { force: true });
+      throw renameError;
+    }
+  }
 }
 
 function printFirstRunBanner(filePath: string, adminPassword: string): void {

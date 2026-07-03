@@ -198,4 +198,16 @@ describe("auth-bootstrap bootstrapAuth()", () => {
       log.mockRestore();
     }
   });
+
+  test("corrupt-file recovery still works when a stale .bak already exists", () => {
+    fs.writeFileSync(resolveBootstrapPath(), "{not json");
+    fs.writeFileSync(`${resolveBootstrapPath()}.bak`, "older evidence");
+
+    bootstrapAuth();
+
+    expect(process.env.JWT_SECRET).toBeDefined();
+    expect(process.env.ADMIN_PASSWORD).toBeDefined();
+    expect(fs.readFileSync(`${resolveBootstrapPath()}.bak`, "utf8")).toBe("{not json");
+    expect(readStored().jwtSecret).toBe(process.env.JWT_SECRET!);
+  });
 });
