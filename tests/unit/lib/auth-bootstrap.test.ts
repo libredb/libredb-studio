@@ -199,6 +199,17 @@ describe("auth-bootstrap bootstrapAuth()", () => {
     }
   });
 
+  test("regenerates when the stored jwtSecret is shorter than the 32-char minimum", () => {
+    fs.writeFileSync(resolveBootstrapPath(), JSON.stringify({ jwtSecret: "short" }));
+
+    bootstrapAuth();
+
+    expect(process.env.JWT_SECRET).toBeDefined();
+    expect(process.env.JWT_SECRET!.length).toBeGreaterThanOrEqual(32);
+    expect(fs.existsSync(`${resolveBootstrapPath()}.bak`)).toBe(true);
+    expect(readStored().jwtSecret).toBe(process.env.JWT_SECRET!);
+  });
+
   test("corrupt-file recovery still works when a stale .bak already exists", () => {
     fs.writeFileSync(resolveBootstrapPath(), "{not json");
     fs.writeFileSync(`${resolveBootstrapPath()}.bak`, "older evidence");

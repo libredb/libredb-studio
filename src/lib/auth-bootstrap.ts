@@ -37,8 +37,11 @@ function readBootstrapFile(filePath: string): BootstrapFile {
       throw new Error("bootstrap file does not contain a JSON object");
     }
     const { jwtSecret, adminPassword } = parsed as BootstrapFile;
-    if (jwtSecret !== undefined && typeof jwtSecret !== "string") {
-      throw new Error("bootstrap file jwtSecret is not a string");
+    // Mirror the >= 32 chars minimum enforced by auth.ts getJwtSecret(): a
+    // hand-edited short secret must regenerate here instead of being injected
+    // and wedging every login on a misleading "JWT_SECRET too short" 503.
+    if (jwtSecret !== undefined && (typeof jwtSecret !== "string" || jwtSecret.length < 32)) {
+      throw new Error("bootstrap file jwtSecret is not a string of at least 32 chars");
     }
     if (adminPassword !== undefined && typeof adminPassword !== "string") {
       throw new Error("bootstrap file adminPassword is not a string");
@@ -64,17 +67,16 @@ function writeBootstrapFile(filePath: string, data: BootstrapFile): void {
   fs.writeFileSync(tempPath, JSON.stringify(data, null, 2), { mode: 0o600 });
   try {
     fs.renameSync(tempPath, filePath);
-  } catch (renameError) {
+  } catch {
     // POSIX rename overwrites, but Windows throws if the destination exists
-    // (see seedSampleFile). Unlike the sample, a present destination is NOT
-    // success here — this write may carry a newly generated field — so drop
-    // the old file and retry once; on failure never leave a partial temp.
+    // (see seedSampleFile). Fall back to copy-over instead of delete-and-retry
+    // so a failure here can never destroy the only copy of the credentials
+    // file; a torn copy is repaired by the corrupt-file recovery on next boot.
     try {
-      fs.rmSync(filePath, { force: true });
-      fs.renameSync(tempPath, filePath);
-    } catch {
+      fs.copyFileSync(tempPath, filePath);
+      fs.chmodSync(filePath, 0o600); // copyFileSync does not carry the temp's mode
+    } finally {
       fs.rmSync(tempPath, { force: true });
-      throw renameError;
     }
   }
 }
