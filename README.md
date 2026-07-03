@@ -215,6 +215,14 @@ docker run -d \
 
   > **Tip**: Add `-e LLM_PROVIDER=gemini -e LLM_API_KEY=your_key -e LLM_MODEL=gemini-2.5-flash` to enable AI features.
 
+  ### Zero-config first run
+
+  Starting the server without `JWT_SECRET` / `ADMIN_PASSWORD` works out of the box:
+  the missing values are generated on first start, stored in `<data dir>/auth-bootstrap.json`
+  (file mode 0600), and the admin password is printed once to the server log. Explicitly
+  set environment variables always take precedence. Set `AUTH_BOOTSTRAP=off` to require
+  explicit configuration instead (recommended for production deployments).
+
   ### Prerequisites
   - [Bun](https://bun.sh/) (Recommended) or Node.js 24+
   - A target database to query (PostgreSQL, MySQL, Oracle, SQL Server, SQLite, MongoDB, or Redis)
