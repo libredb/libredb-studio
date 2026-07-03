@@ -221,4 +221,117 @@ describe("auth-bootstrap bootstrapAuth()", () => {
     expect(fs.readFileSync(`${resolveBootstrapPath()}.bak`, "utf8")).toBe("{not json");
     expect(readStored().jwtSecret).toBe(process.env.JWT_SECRET!);
   });
+
+  test("recovers when the file contains primitive JSON", () => {
+    fs.writeFileSync(resolveBootstrapPath(), "42");
+
+    bootstrapAuth();
+
+    expect(process.env.JWT_SECRET).toBeDefined();
+    expect(fs.existsSync(`${resolveBootstrapPath()}.bak`)).toBe(true);
+    expect(readStored().jwtSecret).toBe(process.env.JWT_SECRET!);
+  });
+
+  test("recovers when jwtSecret is not a string", () => {
+    fs.writeFileSync(resolveBootstrapPath(), JSON.stringify({ jwtSecret: 12345 }));
+
+    bootstrapAuth();
+
+    expect(process.env.JWT_SECRET).toBeDefined();
+    expect(fs.existsSync(`${resolveBootstrapPath()}.bak`)).toBe(true);
+  });
+
+  test("recovers when adminPassword is not a string", () => {
+    fs.writeFileSync(resolveBootstrapPath(), JSON.stringify({ adminPassword: false }));
+
+    bootstrapAuth();
+
+    expect(process.env.ADMIN_PASSWORD).toBeDefined();
+    expect(fs.existsSync(`${resolveBootstrapPath()}.bak`)).toBe(true);
+  });
+
+  test("generates only the password when JWT_SECRET is set, bannering the custom admin email", () => {
+    process.env.JWT_SECRET = "an-explicit-secret-of-32-characters!";
+    process.env.ADMIN_EMAIL = "ops@example.org";
+    const log = spyOn(console, "log").mockImplementation(() => {});
+    try {
+      bootstrapAuth();
+
+      expect(process.env.JWT_SECRET).toBe("an-explicit-secret-of-32-characters!");
+      expect(process.env.ADMIN_PASSWORD).toBeDefined();
+      const stored = readStored();
+      expect(stored.adminPassword).toBe(process.env.ADMIN_PASSWORD!);
+      expect(stored.jwtSecret).toBeUndefined();
+      const output = log.mock.calls.flat().join("\n");
+      expect(output).toContain("ops@example.org");
+      expect(output).toContain(process.env.ADMIN_PASSWORD!);
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  test("adds the missing password to a jwtSecret-only file, reusing secret and createdAt", () => {
+    const existingSecret = "persisted-secret-that-is-32-chars-x";
+    fs.writeFileSync(
+      resolveBootstrapPath(),
+      JSON.stringify({ jwtSecret: existingSecret, createdAt: "2026-01-01T00:00:00.000Z" }),
+    );
+    const log = spyOn(console, "log").mockImplementation(() => {});
+    try {
+      bootstrapAuth();
+    } finally {
+      log.mockRestore();
+    }
+
+    expect(process.env.JWT_SECRET).toBe(existingSecret);
+    expect(process.env.ADMIN_PASSWORD).toBeDefined();
+    const stored = readStored();
+    expect(stored.jwtSecret).toBe(existingSecret);
+    expect(stored.adminPassword).toBe(process.env.ADMIN_PASSWORD!);
+    expect(stored.createdAt).toBe("2026-01-01T00:00:00.000Z");
+  });
+
+  test("write falls back to copy-over when rename fails, keeping mode 600 and no temp", () => {
+    const renameSpy = spyOn(fs, "renameSync").mockImplementation(() => {
+      throw new Error("EPERM: simulated Windows rename failure");
+    });
+    const log = spyOn(console, "log").mockImplementation(() => {});
+    try {
+      bootstrapAuth();
+    } finally {
+      renameSpy.mockRestore();
+      log.mockRestore();
+    }
+
+    expect(process.env.JWT_SECRET).toBeDefined();
+    expect(readStored().jwtSecret).toBe(process.env.JWT_SECRET!);
+    if (process.platform !== "win32") {
+      expect(fs.statSync(resolveBootstrapPath()).mode & 0o777).toBe(0o600);
+    }
+    expect(fs.readdirSync(tmpDir).filter((f) => f.endsWith(".tmp"))).toHaveLength(0);
+  });
+
+  test("fails open when both rename and copy fail, leaving no temp behind", () => {
+    const renameSpy = spyOn(fs, "renameSync").mockImplementation(() => {
+      throw new Error("EPERM: simulated rename failure");
+    });
+    const copySpy = spyOn(fs, "copyFileSync").mockImplementation(() => {
+      // A non-Error throw also exercises the String(error) logging branch.
+      throw "simulated non-Error copy failure";
+    });
+    const warn = spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      expect(() => bootstrapAuth()).not.toThrow();
+      expect(warn.mock.calls.flat().join("\n")).toContain("auth bootstrap skipped");
+    } finally {
+      renameSpy.mockRestore();
+      copySpy.mockRestore();
+      warn.mockRestore();
+    }
+
+    expect(process.env.JWT_SECRET).toBeUndefined();
+    expect(process.env.ADMIN_PASSWORD).toBeUndefined();
+    expect(fs.existsSync(resolveBootstrapPath())).toBe(false);
+    expect(fs.readdirSync(tmpDir).filter((f) => f.endsWith(".tmp"))).toHaveLength(0);
+  });
 });
