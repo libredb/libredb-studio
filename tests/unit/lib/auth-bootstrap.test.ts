@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+import { describe, test, expect, beforeEach, afterEach, spyOn } from "bun:test";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
@@ -127,5 +127,51 @@ describe("auth-bootstrap bootstrapAuth()", () => {
 
     expect(() => bootstrapAuth()).not.toThrow();
     expect(fs.readFileSync(resolveBootstrapPath(), "utf8")).toBe("{not json");
+  });
+
+  test("recovers from a corrupt bootstrap file by renaming it to .bak and regenerating", () => {
+    fs.mkdirSync(tmpDir, { recursive: true });
+    fs.writeFileSync(resolveBootstrapPath(), "{not json");
+
+    bootstrapAuth();
+
+    expect(process.env.JWT_SECRET).toBeDefined();
+    expect(process.env.ADMIN_PASSWORD).toBeDefined();
+    expect(fs.existsSync(`${resolveBootstrapPath()}.bak`)).toBe(true);
+    expect(readStored().jwtSecret).toBe(process.env.JWT_SECRET!);
+  });
+
+  test("fails open when the data dir is not writable: no throw, no injection", () => {
+    if (process.platform === "win32" || process.getuid?.() === 0) return; // perms not enforceable
+    fs.mkdirSync(tmpDir, { recursive: true });
+    fs.chmodSync(tmpDir, 0o500);
+    try {
+      expect(() => bootstrapAuth()).not.toThrow();
+      expect(process.env.JWT_SECRET).toBeUndefined();
+      expect(process.env.ADMIN_PASSWORD).toBeUndefined();
+    } finally {
+      fs.chmodSync(tmpDir, 0o700);
+    }
+  });
+
+  test("prints the password in a banner on generation, but not on reuse", () => {
+    const log = spyOn(console, "log").mockImplementation(() => {});
+    try {
+      bootstrapAuth();
+      const password = process.env.ADMIN_PASSWORD!;
+      const firstRunOutput = log.mock.calls.flat().join("\n");
+      expect(firstRunOutput).toContain(password);
+      expect(firstRunOutput).not.toContain(process.env.JWT_SECRET!);
+
+      log.mockClear();
+      delete process.env.JWT_SECRET;
+      delete process.env.ADMIN_PASSWORD;
+      bootstrapAuth();
+      const reuseOutput = log.mock.calls.flat().join("\n");
+      expect(reuseOutput).not.toContain(password);
+      expect(reuseOutput).toContain(resolveBootstrapPath());
+    } finally {
+      log.mockRestore();
+    }
   });
 });

@@ -24,7 +24,15 @@ export function resolveBootstrapPath(): string {
 
 function readBootstrapFile(filePath: string): BootstrapFile {
   if (!fs.existsSync(filePath)) return {};
-  return JSON.parse(fs.readFileSync(filePath, "utf8")) as BootstrapFile;
+  try {
+    return JSON.parse(fs.readFileSync(filePath, "utf8")) as BootstrapFile;
+  } catch {
+    // Unreadable state: keep the evidence, regenerate. Sessions signed with a
+    // lost secret become invalid; that is logged by the caller's banner path.
+    fs.renameSync(filePath, `${filePath}.bak`);
+    console.warn(`LibreDB Studio: corrupt ${filePath} moved to .bak; regenerating credentials`);
+    return {};
+  }
 }
 
 function writeBootstrapFile(filePath: string, data: BootstrapFile): void {
@@ -36,32 +44,57 @@ function writeBootstrapFile(filePath: string, data: BootstrapFile): void {
   fs.renameSync(tempPath, filePath);
 }
 
+function printFirstRunBanner(filePath: string, adminPassword: string): void {
+  const adminEmail = process.env.ADMIN_EMAIL || "admin@libredb.org"; // mirrors local-auth.ts default
+  console.log(
+    [
+      "",
+      "============================================================",
+      " LibreDB Studio first run: generated admin credentials",
+      ` Email:    ${adminEmail}`,
+      ` Password: ${adminPassword}`,
+      ` Stored in ${filePath} (delete the file to regenerate)`,
+      "============================================================",
+      "",
+    ].join("\n"),
+  );
+}
+
 export function bootstrapAuth(): void {
   if (process.env.AUTH_BOOTSTRAP === "off") return;
 
   const needSecret = !process.env.JWT_SECRET;
   const needPassword = !process.env.ADMIN_PASSWORD && process.env.NEXT_PUBLIC_AUTH_PROVIDER !== "oidc";
-
   if (!needSecret && !needPassword) return;
 
-  const filePath = resolveBootstrapPath();
-  const stored = readBootstrapFile(filePath);
-  let generated = false;
+  try {
+    const filePath = resolveBootstrapPath();
+    const stored = readBootstrapFile(filePath);
+    let secretGenerated = false;
+    let passwordGenerated = false;
 
-  if (needSecret && !stored.jwtSecret) {
-    stored.jwtSecret = randomBytes(48).toString("base64");
-    generated = true;
-  }
-  if (needPassword && !stored.adminPassword) {
-    stored.adminPassword = randomBytes(12).toString("base64url");
-    generated = true;
-  }
+    if (needSecret && !stored.jwtSecret) {
+      stored.jwtSecret = randomBytes(48).toString("base64");
+      secretGenerated = true;
+    }
+    if (needPassword && !stored.adminPassword) {
+      stored.adminPassword = randomBytes(12).toString("base64url");
+      passwordGenerated = true;
+    }
 
-  if (generated) {
-    stored.createdAt = stored.createdAt || new Date().toISOString();
-    writeBootstrapFile(filePath, stored);
-  }
+    if (secretGenerated || passwordGenerated) {
+      stored.createdAt = stored.createdAt || new Date().toISOString();
+      writeBootstrapFile(filePath, stored); // throws on read-only fs -> fail open below
+    }
 
-  if (needSecret && stored.jwtSecret) process.env.JWT_SECRET = stored.jwtSecret;
-  if (needPassword && stored.adminPassword) process.env.ADMIN_PASSWORD = stored.adminPassword;
+    if (needSecret && stored.jwtSecret) process.env.JWT_SECRET = stored.jwtSecret;
+    if (needPassword && stored.adminPassword) {
+      process.env.ADMIN_PASSWORD = stored.adminPassword;
+      if (passwordGenerated) printFirstRunBanner(filePath, stored.adminPassword);
+      else console.log(`LibreDB Studio: using generated admin credentials from ${filePath}`);
+    }
+  } catch (error) {
+    // Fail open: leave env untouched so login surfaces the clear 503 (PR #106).
+    console.warn(`LibreDB Studio: auth bootstrap skipped (${error instanceof Error ? error.message : String(error)})`);
+  }
 }
