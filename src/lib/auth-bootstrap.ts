@@ -42,6 +42,8 @@ export function bootstrapAuth(): void {
   const needSecret = !process.env.JWT_SECRET;
   const needPassword = !process.env.ADMIN_PASSWORD && process.env.NEXT_PUBLIC_AUTH_PROVIDER !== "oidc";
 
+  if (!needSecret && !needPassword) return;
+
   const filePath = resolveBootstrapPath();
   const stored = readBootstrapFile(filePath);
   let generated = false;

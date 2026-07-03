@@ -118,4 +118,14 @@ describe("auth-bootstrap bootstrapAuth()", () => {
     expect(stored.jwtSecret).toBeDefined();
     expect(stored.adminPassword).toBeUndefined();
   });
+
+  test("does not read the bootstrap file at all when both env vars are set", () => {
+    fs.mkdirSync(tmpDir, { recursive: true });
+    fs.writeFileSync(resolveBootstrapPath(), "{not json");
+    process.env.JWT_SECRET = "an-explicit-secret-of-32-characters!";
+    process.env.ADMIN_PASSWORD = "explicit-password";
+
+    expect(() => bootstrapAuth()).not.toThrow();
+    expect(fs.readFileSync(resolveBootstrapPath(), "utf8")).toBe("{not json");
+  });
 });
