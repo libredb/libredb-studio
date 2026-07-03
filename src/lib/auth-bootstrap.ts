@@ -74,7 +74,13 @@ function writeBootstrapFile(filePath: string, data: BootstrapFile): void {
     // file; a torn copy is repaired by the corrupt-file recovery on next boot.
     try {
       fs.copyFileSync(tempPath, filePath);
-      fs.chmodSync(filePath, 0o600); // copyFileSync does not carry the temp's mode
+      try {
+        fs.chmodSync(filePath, 0o600); // copyFileSync does not carry the temp's mode
+      } catch {
+        // Best-effort hardening: the credentials were written successfully, so
+        // an unsupported/failed chmod must not abort bootstrap. Warn instead.
+        console.warn(`LibreDB Studio: could not restrict permissions on ${filePath}`);
+      }
     } finally {
       fs.rmSync(tempPath, { force: true });
     }

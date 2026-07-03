@@ -311,6 +311,31 @@ describe("auth-bootstrap bootstrapAuth()", () => {
     expect(fs.readdirSync(tmpDir).filter((f) => f.endsWith(".tmp"))).toHaveLength(0);
   });
 
+  test("still injects when the post-copy chmod fails (best-effort hardening)", () => {
+    const renameSpy = spyOn(fs, "renameSync").mockImplementation(() => {
+      throw new Error("EPERM: simulated rename failure");
+    });
+    const chmodSpy = spyOn(fs, "chmodSync").mockImplementation(() => {
+      throw new Error("ENOSYS: simulated unsupported chmod");
+    });
+    const log = spyOn(console, "log").mockImplementation(() => {});
+    const warn = spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      bootstrapAuth();
+      expect(warn.mock.calls.flat().join("\n")).toContain("could not restrict permissions");
+    } finally {
+      renameSpy.mockRestore();
+      chmodSpy.mockRestore();
+      log.mockRestore();
+      warn.mockRestore();
+    }
+
+    expect(process.env.JWT_SECRET).toBeDefined();
+    expect(process.env.ADMIN_PASSWORD).toBeDefined();
+    expect(readStored().jwtSecret).toBe(process.env.JWT_SECRET!);
+    expect(fs.readdirSync(tmpDir).filter((f) => f.endsWith(".tmp"))).toHaveLength(0);
+  });
+
   test("fails open when both rename and copy fail, leaving no temp behind", () => {
     const renameSpy = spyOn(fs, "renameSync").mockImplementation(() => {
       throw new Error("EPERM: simulated rename failure");
