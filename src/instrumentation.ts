@@ -1,12 +1,18 @@
 /**
  * Next.js boot hook. register() runs once per server worker, ONLY when this app
  * boots its own Next.js server (never when @libredb/studio is imported by
- * libredb-platform). On standalone boot, seed the embedded sample .libredb file
- * if enabled. A failure here must never break boot.
+ * libredb-platform). On standalone boot, bootstrap missing auth env (#109) and
+ * seed the embedded sample .libredb file if enabled. A failure here must never
+ * break boot.
  */
 export async function register(): Promise<void> {
   // Node.js server runtime only (skip the edge runtime).
   if (process.env.NEXT_RUNTIME !== "nodejs") return;
+
+  // Zero-config first run (#109): fill missing auth env from the persisted
+  // bootstrap file BEFORE anything reads process.env secrets. Fail-open inside.
+  const { bootstrapAuth } = await import("@/lib/auth-bootstrap");
+  bootstrapAuth();
 
   const { isSampleEnabled, resolveSamplePath, seedSampleFile } = await import("@/lib/seed/libredb-sample");
   if (!isSampleEnabled()) return;
