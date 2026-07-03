@@ -6,10 +6,16 @@ on:
       - main
       - 'feat/**'
       - 'fix/**'
+  # Version and latest tags are published ONLY from a release: a branch push
+  # (including any PR merge to main) must never overwrite a pinned version tag
+  # or move latest. main pushes publish the mutable "main" tag; feature/fix
+  # branches publish "dev"; both always publish an immutable sha- tag.
+  release:
+    types: [published]
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version tag (e.g., v0.5.5)'
+        description: 'Version tag (e.g., 0.9.41 - no v prefix)'
         required: true
         type: string
 
@@ -54,11 +60,25 @@ jobs:
 
       - name: Extract version from package.json or branch name
         id: extract-version
+        # Event payload values go through env (never inline ${{ }} in run:) so a
+        # crafted tag name or dispatch input cannot inject into the shell.
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            VERSION="${{ github.event.inputs.version }}"
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            VERSION="$INPUT_VERSION"
           else
             VERSION=$(bun -e "console.log(require('./package.json').version)")
+          fi
+          if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$'; then
+            echo "Version '$VERSION' is not a valid semver (no v prefix) - refusing to tag images" >&2
+            exit 1
+          fi
+          if [ "$EVENT_NAME" = "release" ] && [ "$RELEASE_TAG" != "$VERSION" ]; then
+            echo "Release tag '$RELEASE_TAG' does not match package.json version '$VERSION' - refusing to publish mismatched image tags" >&2
+            exit 1
           fi
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
           echo "Version: ${VERSION}"
@@ -133,9 +153,10 @@ jobs:
         with:
           images: ${{ steps.images.outputs.list }}
           tags: |
-            type=raw,value=${{ steps.extract-version.outputs.version }},enable=${{ github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' }}
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
-            type=raw,value=dev,enable=${{ github.ref != 'refs/heads/main' }}
+            type=raw,value=${{ steps.extract-version.outputs.version }},enable=${{ github.event_name == 'release' || github.event_name == 'workflow_dispatch' }}
+            type=raw,value=latest,enable=${{ github.event_name == 'release' }}
+            type=raw,value=main,enable=${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+            type=raw,value=dev,enable=${{ github.event_name == 'push' && github.ref != 'refs/heads/main' }}
             type=sha,prefix=sha-
 
       - name: Build and push Docker image
