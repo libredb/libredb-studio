@@ -9,6 +9,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import type { ManagedConnection } from "./types";
+import { getDataDir } from "@/lib/data-dir";
 
 export const SAMPLE_SEED_ID = "libredb-embedded-sample";
 
@@ -22,8 +23,7 @@ export function isSampleEnabled(): boolean {
 export function resolveSamplePath(): string {
   const override = process.env.LIBREDB_EMBEDDED_SAMPLE_PATH;
   if (override) return override;
-  const storageDb = process.env.STORAGE_SQLITE_PATH || "./data/libredb-storage.db";
-  return path.join(path.dirname(storageDb), "sample.libredb");
+  return path.join(getDataDir(), "sample.libredb");
 }
 
 /**

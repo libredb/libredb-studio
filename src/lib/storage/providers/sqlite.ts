@@ -8,6 +8,7 @@ import type { ServerStorageProvider, StorageCollection, StorageData } from "../t
 import { STORAGE_COLLECTIONS } from "../types";
 import type BetterSqlite3 from "better-sqlite3";
 import { logger } from "@/lib/logger";
+import { DEFAULT_STORAGE_SQLITE_PATH } from "@/lib/data-dir";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let Database: any;
@@ -17,7 +18,7 @@ export class SQLiteStorageProvider implements ServerStorageProvider {
   private dbPath: string;
 
   constructor(dbPath?: string) {
-    this.dbPath = dbPath || process.env.STORAGE_SQLITE_PATH || "./data/libredb-storage.db";
+    this.dbPath = dbPath || process.env.STORAGE_SQLITE_PATH || DEFAULT_STORAGE_SQLITE_PATH;
   }
 
   async initialize(): Promise<void> {
