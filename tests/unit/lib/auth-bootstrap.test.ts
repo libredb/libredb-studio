@@ -72,8 +72,8 @@ describe("auth-bootstrap bootstrapAuth()", () => {
     delete process.env.ADMIN_PASSWORD;
     bootstrapAuth();
 
-    expect(process.env.JWT_SECRET).toBe(firstSecret!);
-    expect(process.env.ADMIN_PASSWORD).toBe(firstPassword!);
+    expect(process.env.JWT_SECRET!).toBe(firstSecret!);
+    expect(process.env.ADMIN_PASSWORD!).toBe(firstPassword!);
   });
 
   test("generates only the missing field and leaves set env untouched", () => {
