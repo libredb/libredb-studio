@@ -19,7 +19,9 @@ interface BootstrapFile {
 }
 
 export function resolveBootstrapPath(): string {
-  return path.join(getDataDir(), BOOTSTRAP_FILE_NAME);
+  // Resolve to an absolute path so the banner and log lines name a location
+  // the operator can copy verbatim (the data dir default is CWD-relative).
+  return path.resolve(getDataDir(), BOOTSTRAP_FILE_NAME);
 }
 
 function readBootstrapFile(filePath: string): BootstrapFile {
