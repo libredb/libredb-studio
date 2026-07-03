@@ -37,9 +37,10 @@ function writeBootstrapFile(filePath: string, data: BootstrapFile): void {
 }
 
 export function bootstrapAuth(): void {
+  if (process.env.AUTH_BOOTSTRAP === "off") return;
+
   const needSecret = !process.env.JWT_SECRET;
-  const needPassword = !process.env.ADMIN_PASSWORD;
-  if (!needSecret && !needPassword) return;
+  const needPassword = !process.env.ADMIN_PASSWORD && process.env.NEXT_PUBLIC_AUTH_PROVIDER !== "oidc";
 
   const filePath = resolveBootstrapPath();
   const stored = readBootstrapFile(filePath);

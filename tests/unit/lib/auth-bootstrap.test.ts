@@ -96,4 +96,26 @@ describe("auth-bootstrap bootstrapAuth()", () => {
 
     expect(fs.existsSync(resolveBootstrapPath())).toBe(false);
   });
+
+  test("AUTH_BOOTSTRAP=off disables bootstrap entirely (strict PR #106 behavior)", () => {
+    process.env.AUTH_BOOTSTRAP = "off";
+
+    bootstrapAuth();
+
+    expect(process.env.JWT_SECRET).toBeUndefined();
+    expect(process.env.ADMIN_PASSWORD).toBeUndefined();
+    expect(fs.existsSync(resolveBootstrapPath())).toBe(false);
+  });
+
+  test("OIDC mode bootstraps the JWT secret but never a password", () => {
+    process.env.NEXT_PUBLIC_AUTH_PROVIDER = "oidc";
+
+    bootstrapAuth();
+
+    expect(process.env.JWT_SECRET).toBeDefined();
+    expect(process.env.ADMIN_PASSWORD).toBeUndefined();
+    const stored = readStored();
+    expect(stored.jwtSecret).toBeDefined();
+    expect(stored.adminPassword).toBeUndefined();
+  });
 });
