@@ -31,7 +31,9 @@ export function isBootstrapEnabled(): boolean {
   const normalized = raw.trim().toLowerCase();
   if (normalized === "off" || normalized === "false" || normalized === "0") return false;
   if (normalized !== "on" && normalized !== "true" && normalized !== "1") {
-    console.warn(`LibreDB Studio: unrecognized AUTH_BOOTSTRAP value "${raw}"; bootstrap stays on (use "off" to disable)`);
+    console.warn(
+      `LibreDB Studio: unrecognized AUTH_BOOTSTRAP value "${raw}"; bootstrap stays on (use "off" to disable)`,
+    );
   }
   return true;
 }

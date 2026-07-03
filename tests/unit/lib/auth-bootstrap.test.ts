@@ -107,28 +107,29 @@ describe("auth-bootstrap bootstrapAuth()", () => {
     expect(fs.existsSync(resolveBootstrapPath())).toBe(false);
   });
 
-  test.each(["off", "OFF", " Off ", "false", "FALSE", "0"])(
-    "isBootstrapEnabled() treats %j as opt-out",
-    (value) => {
-      process.env.AUTH_BOOTSTRAP = value;
-      expect(isBootstrapEnabled()).toBe(false);
-    },
-  );
+  test.each(["off", "OFF", " Off ", "false", "FALSE", "0"])("isBootstrapEnabled() treats %j as opt-out", (value) => {
+    process.env.AUTH_BOOTSTRAP = value;
+    expect(isBootstrapEnabled()).toBe(false);
+  });
 
-  test.each([undefined, "", "on", "ON", "true", "1"])(
-    "isBootstrapEnabled() stays on for %j without warning",
-    (value) => {
-      if (value === undefined) delete process.env.AUTH_BOOTSTRAP;
-      else process.env.AUTH_BOOTSTRAP = value;
-      const warn = spyOn(console, "warn").mockImplementation(() => {});
-      try {
-        expect(isBootstrapEnabled()).toBe(true);
-        expect(warn).not.toHaveBeenCalled();
-      } finally {
-        warn.mockRestore();
-      }
-    },
-  );
+  test.each([
+    undefined,
+    "",
+    "on",
+    "ON",
+    "true",
+    "1",
+  ])("isBootstrapEnabled() stays on for %j without warning", (value) => {
+    if (value === undefined) delete process.env.AUTH_BOOTSTRAP;
+    else process.env.AUTH_BOOTSTRAP = value;
+    const warn = spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      expect(isBootstrapEnabled()).toBe(true);
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
+  });
 
   test("isBootstrapEnabled() warns on an unrecognized value and stays on", () => {
     process.env.AUTH_BOOTSTRAP = "offf";
