@@ -18,6 +18,24 @@ interface BootstrapFile {
   createdAt?: string;
 }
 
+/**
+ * Zero-config bootstrap is on unless AUTH_BOOTSTRAP opts out: "off", "false",
+ * or "0", case-insensitive ("false"/"0" match the LIBREDB_EMBEDDED_SAMPLE
+ * convention). Any other non-empty, non-affirmative value is treated as a
+ * misconfiguration: warn and stay on, so a typo never silently flips the
+ * security posture in either direction.
+ */
+export function isBootstrapEnabled(): boolean {
+  const raw = process.env.AUTH_BOOTSTRAP;
+  if (!raw) return true;
+  const normalized = raw.trim().toLowerCase();
+  if (normalized === "off" || normalized === "false" || normalized === "0") return false;
+  if (normalized !== "on" && normalized !== "true" && normalized !== "1") {
+    console.warn(`LibreDB Studio: unrecognized AUTH_BOOTSTRAP value "${raw}"; bootstrap stays on (use "off" to disable)`);
+  }
+  return true;
+}
+
 export function resolveBootstrapPath(): string {
   // Resolve to an absolute path so the banner and log lines name a location
   // the operator can copy verbatim (the data dir default is CWD-relative).
@@ -104,7 +122,7 @@ function printFirstRunBanner(filePath: string, adminPassword: string): void {
 }
 
 export function bootstrapAuth(): void {
-  if (process.env.AUTH_BOOTSTRAP === "off") return;
+  if (!isBootstrapEnabled()) return;
 
   const needSecret = !process.env.JWT_SECRET;
   const needPassword = !process.env.ADMIN_PASSWORD && process.env.NEXT_PUBLIC_AUTH_PROVIDER !== "oidc";

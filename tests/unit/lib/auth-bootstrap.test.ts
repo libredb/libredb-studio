@@ -2,7 +2,7 @@ import { describe, test, expect, beforeEach, afterEach, spyOn } from "bun:test";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
-import { bootstrapAuth, resolveBootstrapPath, BOOTSTRAP_FILE_NAME } from "@/lib/auth-bootstrap";
+import { bootstrapAuth, isBootstrapEnabled, resolveBootstrapPath, BOOTSTRAP_FILE_NAME } from "@/lib/auth-bootstrap";
 
 const ENV_KEYS = [
   "JWT_SECRET",
@@ -105,6 +105,40 @@ describe("auth-bootstrap bootstrapAuth()", () => {
     expect(process.env.JWT_SECRET).toBeUndefined();
     expect(process.env.ADMIN_PASSWORD).toBeUndefined();
     expect(fs.existsSync(resolveBootstrapPath())).toBe(false);
+  });
+
+  test.each(["off", "OFF", " Off ", "false", "FALSE", "0"])(
+    "isBootstrapEnabled() treats %j as opt-out",
+    (value) => {
+      process.env.AUTH_BOOTSTRAP = value;
+      expect(isBootstrapEnabled()).toBe(false);
+    },
+  );
+
+  test.each([undefined, "", "on", "ON", "true", "1"])(
+    "isBootstrapEnabled() stays on for %j without warning",
+    (value) => {
+      if (value === undefined) delete process.env.AUTH_BOOTSTRAP;
+      else process.env.AUTH_BOOTSTRAP = value;
+      const warn = spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        expect(isBootstrapEnabled()).toBe(true);
+        expect(warn).not.toHaveBeenCalled();
+      } finally {
+        warn.mockRestore();
+      }
+    },
+  );
+
+  test("isBootstrapEnabled() warns on an unrecognized value and stays on", () => {
+    process.env.AUTH_BOOTSTRAP = "offf";
+    const warn = spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      expect(isBootstrapEnabled()).toBe(true);
+      expect(warn.mock.calls.flat().join("\n")).toContain('unrecognized AUTH_BOOTSTRAP value "offf"');
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   test("OIDC mode bootstraps the JWT secret but never a password", () => {
