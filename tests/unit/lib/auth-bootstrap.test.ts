@@ -141,6 +141,30 @@ describe("auth-bootstrap bootstrapAuth()", () => {
     expect(readStored().jwtSecret).toBe(process.env.JWT_SECRET!);
   });
 
+  test("recovers from a bootstrap file containing JSON null by renaming it to .bak and regenerating", () => {
+    fs.mkdirSync(tmpDir, { recursive: true });
+    fs.writeFileSync(resolveBootstrapPath(), "null");
+
+    expect(() => bootstrapAuth()).not.toThrow();
+
+    expect(process.env.JWT_SECRET).toBeDefined();
+    expect(process.env.ADMIN_PASSWORD).toBeDefined();
+    expect(fs.existsSync(`${resolveBootstrapPath()}.bak`)).toBe(true);
+    expect(readStored().jwtSecret).toBe(process.env.JWT_SECRET!);
+  });
+
+  test("recovers from a bootstrap file containing a JSON array by renaming it to .bak and regenerating", () => {
+    fs.mkdirSync(tmpDir, { recursive: true });
+    fs.writeFileSync(resolveBootstrapPath(), "[]");
+
+    expect(() => bootstrapAuth()).not.toThrow();
+
+    expect(process.env.JWT_SECRET).toBeDefined();
+    expect(process.env.ADMIN_PASSWORD).toBeDefined();
+    expect(fs.existsSync(`${resolveBootstrapPath()}.bak`)).toBe(true);
+    expect(readStored().jwtSecret).toBe(process.env.JWT_SECRET!);
+  });
+
   test("fails open when the data dir is not writable: no throw, no injection", () => {
     if (process.platform === "win32" || process.getuid?.() === 0) return; // perms not enforceable
     fs.mkdirSync(tmpDir, { recursive: true });

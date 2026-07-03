@@ -25,7 +25,23 @@ export function resolveBootstrapPath(): string {
 function readBootstrapFile(filePath: string): BootstrapFile {
   if (!fs.existsSync(filePath)) return {};
   try {
-    return JSON.parse(fs.readFileSync(filePath, "utf8")) as BootstrapFile;
+    const parsed: unknown = JSON.parse(fs.readFileSync(filePath, "utf8"));
+    // Wrong-shape JSON (null, an array, a primitive) must be rejected here, in
+    // the same try block as JSON.parse, so the catch below treats it exactly
+    // like a corrupt file: rename to .bak and regenerate. Without this check,
+    // `null` throws later on property access (permanent fail-open) and `[]`
+    // silently drops assigned fields on write (new credentials every boot).
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      throw new Error("bootstrap file does not contain a JSON object");
+    }
+    const { jwtSecret, adminPassword } = parsed as BootstrapFile;
+    if (jwtSecret !== undefined && typeof jwtSecret !== "string") {
+      throw new Error("bootstrap file jwtSecret is not a string");
+    }
+    if (adminPassword !== undefined && typeof adminPassword !== "string") {
+      throw new Error("bootstrap file adminPassword is not a string");
+    }
+    return parsed as BootstrapFile;
   } catch {
     // Unreadable state: keep the evidence, regenerate. Sessions signed with a
     // lost secret become invalid; that is logged by the caller's banner path.
