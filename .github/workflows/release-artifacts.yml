@@ -1,0 +1,139 @@
+name: Release Artifacts
+
+# Builds per-platform tarballs of the standalone Next.js server
+# (libredb-studio-standalone-<version>-<os>-<arch>.tar.gz) and attaches them,
+# plus a SHA256SUMS file, to the GitHub release. These tarballs are the
+# canonical artifact consumed by downstream channels (npx, homebrew, deb).
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag (e.g., 0.9.41 - no v prefix)'
+        required: true
+        type: string
+
+concurrency:
+  group: release-artifacts-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  guard:
+    name: Validate release version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Validate version against package.json
+        id: version
+        # Event payload values go through env (never inline ${{ }} in run:) so a
+        # crafted tag name or dispatch input cannot inject into the shell.
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            VERSION="$INPUT_VERSION"
+          else
+            VERSION="$PKG_VERSION"
+          fi
+          if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$'; then
+            echo "Version '$VERSION' is not a valid semver (no v prefix) - refusing to build release artifacts" >&2
+            exit 1
+          fi
+          if [ "$EVENT_NAME" = "release" ] && [ "$RELEASE_TAG" != "$VERSION" ]; then
+            echo "Release tag '$RELEASE_TAG' does not match package.json version '$VERSION' - refusing to publish mismatched artifacts" >&2
+            exit 1
+          fi
+          # Tarball names always derive from package.json (see the build
+          # script), so a dispatched version must match it too.
+          if [ "$VERSION" != "$PKG_VERSION" ]; then
+            echo "Requested version '$VERSION' does not match package.json version '$PKG_VERSION' - refusing to publish mismatched artifacts" >&2
+            exit 1
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Version: ${VERSION}"
+
+  build:
+    name: Build standalone tarball (${{ matrix.platform }})
+    needs: guard
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            platform: linux-x64
+          - runner: ubuntu-24.04-arm
+            platform: linux-arm64
+          - runner: macos-13
+            platform: darwin-x64
+          - runner: macos-14
+            platform: darwin-arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Setup Node.js
+        # Node runs the standalone server (and the smoke test); pin the major
+        # to match the Dockerfile runner image and package.json engines.
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: "1.3.14"
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build payload and run smoke test
+        run: bash scripts/build-standalone-payload.sh dist --smoke
+
+      - name: Upload tarball artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: standalone-${{ matrix.platform }}
+          path: dist/libredb-studio-standalone-*.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Attach artifacts to release
+    needs: [guard, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all tarballs
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: standalone-*
+          merge-multiple: true
+          path: dist
+
+      - name: Generate SHA256SUMS
+        run: |
+          cd dist
+          sha256sum libredb-studio-standalone-*.tar.gz > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Upload artifacts to GitHub release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.guard.outputs.version }}
+        run: |
+          gh release upload "$TAG" dist/libredb-studio-standalone-*.tar.gz dist/SHA256SUMS \
+            --clobber --repo "$GITHUB_REPOSITORY"
