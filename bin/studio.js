@@ -48,8 +48,12 @@ Options:
                     use --host 0.0.0.0 to expose on the network)
   --archive <path>  Start from a local standalone tarball instead of
                     downloading (env: LIBREDB_STUDIO_ARCHIVE). WARNING:
-                    local archives skip checksum verification - only use
-                    tarballs you built or obtained from a trusted source.
+                    local archives skip checksum verification unless
+                    --archive-sha256 is given - only use tarballs you
+                    built or obtained from a trusted source.
+  --archive-sha256 <hex>
+                    Expected sha256 of the --archive tarball; mismatch
+                    refuses to start
   --verify-cache    Re-verify the cached tarball checksum and re-extract
                     the payload before starting
   --help, -h        Show this help
@@ -265,12 +269,22 @@ async function main() {
   if (archive) {
     const archivePath = path.resolve(archive);
     if (!fs.existsSync(archivePath)) fail(`Archive not found: ${archivePath}`);
-    // Local archives bypass download AND checksum verification; they are
-    // re-extracted on every run so a rebuilt tarball always takes effect.
+    // Local archives bypass download and, unless --archive-sha256 pins a
+    // digest, checksum verification too; they are re-extracted on every run
+    // so a rebuilt tarball always takes effect.
+    if (args.archiveSha256) {
+      const actual = await sha256File(archivePath);
+      if (actual !== args.archiveSha256) {
+        fail(`SHA256 mismatch for ${archivePath}: expected ${args.archiveSha256}, got ${actual}`);
+      }
+      console.log(`Using local archive ${archivePath} (checksum verified)`);
+    } else {
+      console.log(`Using local archive ${archivePath} (checksum verification skipped)`);
+    }
     payloadDir = path.join(cacheDir, "payload-local");
-    console.log(`Using local archive ${archivePath} (checksum verification skipped)`);
     extract(archivePath, payloadDir);
   } else {
+    if (args.archiveSha256) fail("--archive-sha256 requires --archive");
     payloadDir = path.join(cacheDir, "payload");
     if (!args.verifyCache && fs.existsSync(path.join(payloadDir, "server.js"))) {
       console.log(`Using cached payload ${payloadDir} (re-check it anytime with --verify-cache)`);

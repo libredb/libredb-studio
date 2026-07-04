@@ -130,7 +130,7 @@ export function sha256File(filePath) {
  * LauncherUsageError on unknown flags, missing values, or invalid ports.
  *
  * @param {string[]} argv process.argv.slice(2)
- * @returns {{ help: boolean, port: number | null, host: string | null, archive: string | null, verifyCache: boolean }}
+ * @returns {{ help: boolean, port: number | null, host: string | null, archive: string | null, archiveSha256: string | null, verifyCache: boolean }}
  */
 export function parseLauncherArgs(argv) {
   const args = {
@@ -138,6 +138,7 @@ export function parseLauncherArgs(argv) {
     port: /** @type {number | null} */ (null),
     host: /** @type {string | null} */ (null),
     archive: /** @type {string | null} */ (null),
+    archiveSha256: /** @type {string | null} */ (null),
     verifyCache: false,
   };
   for (let i = 0; i < argv.length; i++) {
@@ -167,6 +168,14 @@ export function parseLauncherArgs(argv) {
         const value = inlineValue ?? argv[++i];
         if (value === undefined || value === "") throw new LauncherUsageError("--archive requires a path");
         args.archive = value;
+        break;
+      }
+      case "--archive-sha256": {
+        const value = inlineValue ?? argv[++i];
+        if (value === undefined || !/^[0-9a-fA-F]{64}$/.test(value)) {
+          throw new LauncherUsageError("--archive-sha256 requires a 64-char hex sha256 digest");
+        }
+        args.archiveSha256 = value.toLowerCase();
         break;
       }
       case "--verify-cache":

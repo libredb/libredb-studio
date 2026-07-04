@@ -122,7 +122,14 @@ describe("sha256File", () => {
 
 describe("parseLauncherArgs", () => {
   test("returns defaults for an empty argv", () => {
-    expect(parseLauncherArgs([])).toEqual({ help: false, port: null, host: null, archive: null, verifyCache: false });
+    expect(parseLauncherArgs([])).toEqual({
+      help: false,
+      port: null,
+      host: null,
+      archive: null,
+      archiveSha256: null,
+      verifyCache: false,
+    });
   });
 
   test("parses --help and -h", () => {
@@ -149,12 +156,25 @@ describe("parseLauncherArgs", () => {
     expect(parseLauncherArgs(["--verify-cache"]).verifyCache).toBe(true);
   });
 
+  test("parses --archive-sha256 and lowercases the digest", () => {
+    const digest = "A".repeat(64);
+    expect(parseLauncherArgs(["--archive-sha256", digest]).archiveSha256).toBe("a".repeat(64));
+  });
+
+  test("rejects malformed --archive-sha256 digests", () => {
+    for (const value of ["abc", "g".repeat(64), "a".repeat(63), ""]) {
+      expect(() => parseLauncherArgs(["--archive-sha256", value])).toThrow(LauncherUsageError);
+    }
+    expect(() => parseLauncherArgs(["--archive-sha256"])).toThrow(LauncherUsageError);
+  });
+
   test("parses combined flags", () => {
     expect(parseLauncherArgs(["--port", "3893", "--host", "0.0.0.0", "--archive", "/tmp/a.tar.gz"])).toEqual({
       help: false,
       port: 3893,
       host: "0.0.0.0",
       archive: "/tmp/a.tar.gz",
+      archiveSha256: null,
       verifyCache: false,
     });
   });

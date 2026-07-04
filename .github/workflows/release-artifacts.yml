@@ -23,7 +23,9 @@ on:
 
 concurrency:
   group: release-artifacts-${{ github.ref }}
-  cancel-in-progress: true
+  # Never cancel an in-flight release publish (a manual dispatch retry must
+  # not kill a half-finished asset upload); non-release runs stay cancelable.
+  cancel-in-progress: ${{ github.event_name != 'release' }}
 
 permissions:
   contents: read
@@ -267,6 +269,13 @@ jobs:
           mkdir -p "$PAYLOAD_DIR"
           tar -xzf "dist/libredb-studio-standalone-${VERSION}-linux-${TARBALL_ARCH}.tar.gz" -C "$PAYLOAD_DIR"
           bash packaging/linux/fetch-node.sh "$PAYLOAD_DIR" "$TARBALL_ARCH"
+          # The amd64 container smoke below cannot run arm64 binaries, so at
+          # minimum assert the bundled node matches the target architecture.
+          NODE_INFO="$(file -b "$PAYLOAD_DIR/node/bin/node")"
+          case "$TARBALL_ARCH" in
+            x64) echo "$NODE_INFO" | grep -q "x86-64" ;;
+            arm64) echo "$NODE_INFO" | grep -q "aarch64" ;;
+          esac || { echo "Bundled node does not match ${TARBALL_ARCH}: $NODE_INFO" >&2; exit 1; }
           echo "PAYLOAD_DIR=$PAYLOAD_DIR" >> "$GITHUB_ENV"
 
       - name: Build .deb and .rpm with nfpm

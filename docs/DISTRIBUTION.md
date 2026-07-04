@@ -178,8 +178,9 @@ npx @libredb/studio --port 8080    # or set PORT
 npx @libredb/studio --help
 ```
 
-`--archive` starts from a local tarball and **skips checksum verification** - only use archives
-you built yourself or obtained from a trusted source. Downloads retry transient failures with
+`--archive` starts from a local tarball and **skips checksum verification** unless you pin a
+digest with `--archive-sha256 <hex>` - only use archives you built yourself or obtained from a
+trusted source. Downloads retry transient failures with
 backoff and abort when the connection stalls. The cache in `~/.libredb-studio/<version>/` lives
 in your home directory's trust domain; `--verify-cache` re-checks the cached tarball against the
 cached `SHA256SUMS` and re-extracts the payload.
@@ -319,6 +320,23 @@ Release publishing is driven by two workflows, both triggered on `release: publi
   ([`snap/snapcraft.yaml`](../snap/snapcraft.yaml)).
 - The npm package (`@libredb/studio`, which carries the npx launcher `bin/studio.js`) is
   published by the separate npm-publish workflow, also on `release: published`.
+
+### First-release validation runbook
+
+The macOS matrix legs, the Homebrew tap push, and the Snap publish first run live on the next
+release. Right after publishing it:
+
+1. Watch the `release-artifacts` run: all four tarball legs green (if the `macos-15-intel` or
+   `macos-14` runner labels ever disappear, check the current labels in
+   [actions/runner-images](https://github.com/actions/runner-images) - do not fall back to
+   retired `macos-13` or paid `-large` labels blindly), `.deb`/`.rpm` uploaded with `.sha256`
+   sidecars, `SHA256SUMS` complete, tap push and snap jobs behaving per their secrets.
+2. `npx @libredb/studio@<version>` on a clean machine: download + checksum + first-run banner +
+   login.
+3. `brew tap libredb/tap && brew install libredb-studio && brew services start libredb-studio`.
+4. Download the `.deb` on Debian/Ubuntu: `dpkg -i`, `systemctl start libredb-studio`, health 200
+   on `127.0.0.1:3000`; verify the arm64 package on an arm64 machine (the CI smoke covers amd64
+   only; the bundled node arch is statically asserted for both).
 
 ### Artifact provenance roadmap
 
