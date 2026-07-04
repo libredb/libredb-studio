@@ -53,7 +53,7 @@ The test instance comes with a pre-configured PostgreSQL database via [Seed Conn
 ### Why LibreDB Studio?
 - **Zero Install**: Run a professional SQL IDE in your browser or private network.
 - **Multi-Platform**: Native-like experience on both **Web** and **Mobile** browsers.
-  - **AI-Native**: Multi-model support (Gemini, OpenAI, or Local LLMs) for NL2SQL.
+- **AI-Native**: Multi-model support (Gemini, OpenAI, or Local LLMs) for NL2SQL.
 - **DevOps Ready**: Optimized for Kubernetes orchestration and Docker environments.
 - **Enterprise Grade**: Built-in RBAC, SSO (OIDC), query auditing, and live health monitoring.
 
@@ -161,7 +161,7 @@ The test instance comes with a pre-configured PostgreSQL database via [Seed Conn
 | **MySQL** | `mysql2` | Full SQL IDE, EXPLAIN plans, transactions, query cancellation (`KILL QUERY`), SSL/TLS, SSH tunnel |
 | **Oracle** | `oracledb` (Thin mode) | Full SQL IDE, `FETCH FIRST N ROWS` pagination, `V$` monitoring views, `ANALYZE TABLE`, `ALTER INDEX REBUILD`, transactions |
 | **SQL Server** | `mssql` (tedious) | Full SQL IDE, `TOP N` / `OFFSET FETCH` pagination, `sys.dm_*` DMVs, `UPDATE STATISTICS`, `DBCC CHECKDB`, transactions, Azure SQL auto-detect |
-| **SQLite** | `bun:sqlite` | Full SQL IDE, file-based or in-memory databases (server-local file) |
+| **SQLite** | `bun:sqlite` / `node:sqlite` (runtime-selected) | Full SQL IDE, file-based or in-memory databases (server-local file) |
 | **MongoDB** | `mongodb` | JSON query editor, collection operations (find, aggregate, insert, update, delete) |
 | **Redis** | `ioredis` | Command editor, key browser, INFO-based monitoring |
 
@@ -341,7 +341,7 @@ The `docker/postgres.yml` setup includes a pre-loaded e-commerce schema:
 
 | Feature | Description |
 |---------|-------------|
-| **PostgreSQL 17** | Latest Alpine image |
+| **PostgreSQL 18** | Official image with `pg_stat_statements` |
 | **pg_stat_statements** | Pre-enabled for query monitoring |
 | **Sample Schema** | E-commerce database (app schema) |
 | **Sample Data** | 25 customers, 30 products, 100 orders |
@@ -355,7 +355,7 @@ Sample tables: `app.customers`, `app.products`, `app.orders`, `app.order_items`,
 
 ## Testing
 
-LibreDB Studio has a comprehensive test suite with **2,500+ unit/integration tests** and **35 E2E tests** across 6 layers, achieving **96%+ line coverage**.
+LibreDB Studio has a comprehensive test suite with **3,000+ unit/integration tests** and **32 E2E tests** across 6 layers, with **90%+ line coverage** measured on SonarCloud.
 
 ### Quick Commands
 
@@ -364,14 +364,14 @@ LibreDB Studio has a comprehensive test suite with **2,500+ unit/integration tes
 bun run test
 
 # Run by layer
-bun run test:unit          # Pure function tests (800 cases)
-bun run test:api           # API route handler tests (205 cases)
-bun run test:integration   # Database provider tests (294 cases)
-bun run test:hooks         # React hook tests (178 cases)
-bun run test:components    # Component tests with mock isolation (194 cases)
+bun run test:unit          # Pure function tests (1,600+ cases)
+bun run test:api           # API route handler tests (270+ cases)
+bun run test:integration   # Database provider tests (340+ cases)
+bun run test:hooks         # React hook tests (250+ cases)
+bun run test:components    # Component tests with mock isolation (570+ cases)
 
 # E2E tests (requires build)
-bun run test:e2e           # Playwright browser tests (35 cases)
+bun run test:e2e           # Playwright browser tests (32 cases)
 
 # Coverage report (lcov)
 bun run test:coverage
@@ -381,12 +381,12 @@ bun run test:coverage
 
 | Layer | Directory | Runner | Tests | What it covers |
 |-------|-----------|--------|-------|----------------|
-| **Unit** | `tests/unit/` | `bun:test` | ~800 | Pure functions: SQL parser, connection strings, data masking, query limiter, schema diff, error classes, DB icons, showcase queries |
-| **API** | `tests/api/` | `bun:test` | ~205 | Route handlers: auth, query, transaction, maintenance, AI endpoints, middleware |
-| **Integration** | `tests/integration/` | `bun:test` | ~294 | Database providers: PG, MySQL, SQLite, MongoDB, Redis, Oracle, MSSQL|
-| **Hooks** | `tests/hooks/` | `bun:test` | ~178 | React hooks: auth, connections, tabs, query execution, transactions, inline editing, AI chat, monitoring |
-| **Components** | `tests/components/` | `bun:test` + happy-dom | ~194 | UI components: Studio, Sidebar, QueryEditor, ResultsGrid, Admin Dashboard, Charts, ERD |
-| **E2E** | `e2e/` | Playwright | ~35 | Full browser flows: login, connections, query execution, tabs, export, admin |
+| **Unit** | `tests/unit/` | `bun:test` | ~1,609 | Pure functions: SQL parser, connection strings, data masking, query limiter, schema diff, error classes, DB icons, showcase queries |
+| **API** | `tests/api/` | `bun:test` | ~279 | Route handlers: auth, query, transaction, maintenance, AI endpoints, middleware |
+| **Integration** | `tests/integration/` | `bun:test` | ~346 | Database providers: PG, MySQL, SQLite, MongoDB, Redis, Oracle, MSSQL|
+| **Hooks** | `tests/hooks/` | `bun:test` | ~251 | React hooks: auth, connections, tabs, query execution, transactions, inline editing, AI chat, monitoring |
+| **Components** | `tests/components/` | `bun:test` + happy-dom | ~570 | UI components: Studio, Sidebar, QueryEditor, ResultsGrid, Admin Dashboard, Charts, ERD |
+| **E2E** | `e2e/` | Playwright | ~32 | Full browser flows: login, connections, query execution, tabs, export, admin |
 
 ### Key Details
 
@@ -421,11 +421,12 @@ Deploy your own instance of LibreDB Studio with a single click on Koyeb, Render,
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `ADMIN_EMAIL` | ✅ | Admin email (default: `admin@libredb.org`) |
-| `ADMIN_PASSWORD` | ✅ | Admin password |
-| `USER_EMAIL` | ✅ | User email (default: `user@libredb.org`) |
-| `USER_PASSWORD` | ✅ | User password |
-| `JWT_SECRET` | ✅ | Secret for JWT tokens (min 32 chars) |
+| `ADMIN_EMAIL` | ❌ | Admin email (default: `admin@libredb.org`) |
+| `ADMIN_PASSWORD` | ❌ | Admin password; auto-generated on first run unless `AUTH_BOOTSTRAP=off` |
+| `USER_EMAIL` | ❌ | Optional user account email (default: `user@libredb.org`) |
+| `USER_PASSWORD` | ❌ | Optional; the lower-privilege user account exists only when set |
+| `JWT_SECRET` | ❌ | JWT secret (min 32 chars); auto-generated on first run unless `AUTH_BOOTSTRAP=off` |
+| `AUTH_BOOTSTRAP` | ❌ | `off` disables zero-config generation (strict mode; recommended for production) |
 | `NEXT_PUBLIC_AUTH_PROVIDER` | ❌ | `local` (default) or `oidc` for SSO |
 | `OIDC_ISSUER` | ❌ | OIDC issuer URL (required when `oidc`) |
 | `OIDC_CLIENT_ID` | ❌ | OIDC client ID (required when `oidc`) |
@@ -541,7 +542,7 @@ helm install libredb libredb/libredb-studio \
 
 Or via OCI registry:
 ```bash
-helm install libredb oci://ghcr.io/libredb/charts/libredb-studio --version 0.1.0 \
+helm install libredb oci://ghcr.io/libredb/charts/libredb-studio \
   --set secrets.jwtSecret=$(openssl rand -base64 32) \
   --set secrets.adminPassword=MyAdmin123 \
   --set secrets.userPassword=MyUser123
@@ -684,7 +685,7 @@ extraEnvFrom:
 - [x] **Phase 8**: Analyst & Developer Tools (Data Profiler, Code Generator, Test Data Generator, Pivot Table, Column Filtering, Database Docs).
 - [x] **Phase 9**: Data Privacy (Automatic Sensitive Column Detection, Configurable Masking Patterns, RBAC-Enforced Masking, Export Protection).
 - [x] **Phase 10**: Advanced ERD (Real FK Edges, ELK.js Auto-Layout, MiniMap, PNG/SVG Export, Compact Mode, Table Search).
-- [x] **Phase 11**: Schema Diff & Migration (Snapshot Timeline, Cross-Connection Diff, Migration SQL Generation for PG/MySQL/SQLite).
+- [x] **Phase 11**: Schema Diff & Migration (Snapshot Timeline, Cross-Connection Diff, Migration SQL Generation for PostgreSQL, MySQL, SQLite, Oracle, and SQL Server).
 - [x] **Phase 12**: Advanced Charting (Scatter, Histogram, Stacked Charts, Aggregation, Date Grouping, Chart Save/Load, Chart Dashboard).
 - [x] **Phase 13**: Monitoring Enhancement (Time-Series Trends, Threshold Alerting, Connection Pool Stats, Configurable Polling).
 - [x] **Phase 14**: Enterprise Database Support (Oracle Database via oracledb Thin mode, Microsoft SQL Server via mssql/tedious).
