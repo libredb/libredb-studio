@@ -1,0 +1,25 @@
+# Environment for the libredb-studio systemd service (issue #112).
+# Loaded by the unit via EnvironmentFile=-/etc/libredb-studio/env.
+# Format: KEY=value, one per line (no "export", no shell expansion).
+# Apply changes with: systemctl restart libredb-studio
+#
+# Port and bind address (defaults: 3000, all interfaces).
+#PORT=3000
+#HOSTNAME=127.0.0.1
+#
+# Authentication. When unset, the zero-config first run generates JWT_SECRET
+# and ADMIN_PASSWORD, persists them in
+# /var/lib/libredb-studio/auth-bootstrap.json, and prints the admin password
+# once to the journal: journalctl -u libredb-studio
+# Set AUTH_BOOTSTRAP=off to require explicit values instead.
+#AUTH_BOOTSTRAP=off
+#JWT_SECRET=change-me-to-a-random-32-char-string
+#ADMIN_EMAIL=admin@libredb.org
+#ADMIN_PASSWORD=
+#USER_EMAIL=user@libredb.org
+#USER_PASSWORD=
+#
+# AI query assistance (optional).
+#LLM_PROVIDER=gemini
+#LLM_API_KEY=
+#LLM_MODEL=gemini-2.5-flash

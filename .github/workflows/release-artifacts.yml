@@ -4,6 +4,8 @@ name: Release Artifacts
 # (libredb-studio-standalone-<version>-<os>-<arch>.tar.gz) and attaches them,
 # plus a SHA256SUMS file, to the GitHub release. These tarballs are the
 # canonical artifact consumed by downstream channels (npx, homebrew, deb).
+# The linux-packages job additionally turns the linux tarballs into .deb and
+# .rpm packages (nfpm + bundled Node runtime, issue #112) and attaches them.
 
 on:
   release:
@@ -137,3 +139,103 @@ jobs:
         run: |
           gh release upload "$TAG" dist/libredb-studio-standalone-*.tar.gz dist/SHA256SUMS \
             --clobber --repo "$GITHUB_REPOSITORY"
+
+  linux-packages:
+    name: Build .deb and .rpm (${{ matrix.arch }})
+    # Turns the linux standalone tarballs into native packages (issue #112):
+    # unpack the payload, bundle the pinned Node runtime (fetch-node.sh),
+    # run nfpm (one config -> both formats), smoke test the .deb on the
+    # amd64 runner, and attach the packages to the release.
+    needs: [guard, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64 # nfpm/GOARCH label
+            tarball_arch: x64 # release tarball + nodejs.org label
+            rpm_arch: x86_64
+          - arch: arm64
+            tarball_arch: arm64
+            rpm_arch: aarch64
+    env:
+      NFPM_VERSION: 2.47.0
+      # sha256 of nfpm_2.47.0_Linux_x86_64.tar.gz from the release checksums.txt
+      NFPM_SHA256: 0660ca602b2d2d2ae4781a06c692b3eeb9d437ffea05b831d76e41f4a3188783
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Download linux tarball
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: standalone-linux-${{ matrix.tarball_arch }}
+          path: dist
+
+      - name: Install nfpm (pinned, checksum-verified)
+        run: |
+          curl -fsSL --retry 3 -o /tmp/nfpm.tar.gz \
+            "https://github.com/goreleaser/nfpm/releases/download/v${NFPM_VERSION}/nfpm_${NFPM_VERSION}_Linux_x86_64.tar.gz"
+          echo "${NFPM_SHA256}  /tmp/nfpm.tar.gz" | sha256sum -c -
+          mkdir -p /tmp/nfpm-dist
+          tar -xzf /tmp/nfpm.tar.gz -C /tmp/nfpm-dist nfpm
+          sudo install -m 0755 /tmp/nfpm-dist/nfpm /usr/local/bin/nfpm
+          nfpm --version
+
+      - name: Unpack payload and bundle Node runtime
+        env:
+          VERSION: ${{ needs.guard.outputs.version }}
+          TARBALL_ARCH: ${{ matrix.tarball_arch }}
+        run: |
+          PAYLOAD_DIR="$RUNNER_TEMP/payload"
+          mkdir -p "$PAYLOAD_DIR"
+          tar -xzf "dist/libredb-studio-standalone-${VERSION}-linux-${TARBALL_ARCH}.tar.gz" -C "$PAYLOAD_DIR"
+          bash packaging/linux/fetch-node.sh "$PAYLOAD_DIR" "$TARBALL_ARCH"
+          echo "PAYLOAD_DIR=$PAYLOAD_DIR" >> "$GITHUB_ENV"
+
+      - name: Build .deb and .rpm with nfpm
+        env:
+          VERSION: ${{ needs.guard.outputs.version }}
+          ARCH: ${{ matrix.arch }}
+          RPM_ARCH: ${{ matrix.rpm_arch }}
+        run: |
+          mkdir -p pkgs
+          nfpm package -f packaging/linux/nfpm.yaml -p deb -t "pkgs/libredb-studio_${VERSION}_${ARCH}.deb"
+          nfpm package -f packaging/linux/nfpm.yaml -p rpm -t "pkgs/libredb-studio-${VERSION}.${RPM_ARCH}.rpm"
+          ls -l pkgs
+
+      - name: Smoke test the .deb (native arch only)
+        if: matrix.arch == 'amd64'
+        env:
+          VERSION: ${{ needs.guard.outputs.version }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          sudo dpkg -i "pkgs/libredb-studio_${VERSION}_${ARCH}.deb"
+          # No systemd smoke on shared runners: run the packaged wrapper
+          # directly; zero-config bootstrap generates the missing secrets.
+          # HOSTNAME pins the bind address (an inherited HOSTNAME env var
+          # would make the server bind the machine hostname instead).
+          sudo env STORAGE_SQLITE_PATH=/var/lib/libredb-studio-smoke/storage.db \
+            HOSTNAME=127.0.0.1 \
+            libredb-studio > /tmp/studio-smoke.log 2>&1 &
+          HEALTHY=false
+          for _ in $(seq 1 30); do
+            CODE=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3000/api/db/health || true)
+            if [ "$CODE" = "200" ]; then HEALTHY=true; break; fi
+            sleep 1
+          done
+          if [ "$HEALTHY" != "true" ]; then
+            echo "Smoke test FAILED: /api/db/health did not return 200 within 30s" >&2
+            cat /tmp/studio-smoke.log >&2 || true
+            exit 1
+          fi
+          grep -q "first run: generated admin credentials" /tmp/studio-smoke.log
+          echo "Smoke: /api/db/health returned 200 and first-run banner printed"
+
+      - name: Upload packages to GitHub release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.guard.outputs.version }}
+        run: gh release upload "$TAG" pkgs/* --clobber --repo "$GITHUB_REPOSITORY"

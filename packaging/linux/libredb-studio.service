@@ -1,0 +1,51 @@
+# systemd unit for LibreDB Studio, installed by the .deb/.rpm packages
+# (issue #112). Configuration goes in /etc/libredb-studio/env; state
+# (SQLite storage, generated auth credentials) lives in
+# /var/lib/libredb-studio, owned by the DynamicUser service account.
+[Unit]
+Description=LibreDB Studio - web-based SQL IDE
+Documentation=https://github.com/libredb/libredb-studio
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+DynamicUser=yes
+StateDirectory=libredb-studio
+Environment=NODE_ENV=production
+Environment=NEXT_TELEMETRY_DISABLED=1
+Environment=STORAGE_PROVIDER=sqlite
+Environment=STORAGE_SQLITE_PATH=/var/lib/libredb-studio/libredb-storage.db
+# Operator overrides (PORT, JWT_SECRET, LLM_*, ...). Read by systemd as
+# root before privileges drop; missing file is fine (leading -).
+EnvironmentFile=-/etc/libredb-studio/env
+ExecStart=/usr/bin/libredb-studio
+Restart=on-failure
+RestartSec=5
+
+# Hardening: the service only needs to listen on its port and write its
+# state directory.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/libredb-studio
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+# V8's JIT needs writable-executable memory; keep this off (explicitly).
+MemoryDenyWriteExecute=no
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+
+[Install]
+WantedBy=multi-user.target

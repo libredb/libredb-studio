@@ -223,6 +223,28 @@ docker run -d \
   set environment variables always take precedence. Set `AUTH_BOOTSTRAP=off` to require
   explicit configuration instead (recommended for production deployments).
 
+  ### Linux packages (.deb / .rpm)
+
+  Native packages for Debian/Ubuntu and RHEL/Fedora (amd64 and arm64) are attached to every
+  [GitHub release](https://github.com/libredb/libredb-studio/releases). They bundle the standalone
+  server together with a private Node.js runtime (nothing else to install) and register a systemd service:
+
+```bash
+# Debian / Ubuntu
+sudo dpkg -i libredb-studio_<version>_amd64.deb
+
+# RHEL / Fedora / Rocky
+sudo rpm -i libredb-studio-<version>.x86_64.rpm
+
+# Start the service (first run prints the generated admin password to the journal)
+sudo systemctl enable --now libredb-studio
+journalctl -u libredb-studio
+```
+
+  Configuration lives in `/etc/libredb-studio/env` (loaded by the unit; see the commented template
+  installed there), state (SQLite storage and generated credentials) in `/var/lib/libredb-studio`.
+  The `libredb-studio` command can also be run directly without systemd.
+
   ### Prerequisites
   - [Bun](https://bun.sh/) (Recommended) or Node.js 24+
   - A target database to query (PostgreSQL, MySQL, Oracle, SQL Server, SQLite, MongoDB, or Redis)

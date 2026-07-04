@@ -1,0 +1,60 @@
+# ==============================================================================
+# nfpm configuration for the libredb-studio .deb and .rpm packages (issue #112).
+# One config produces both formats; built by the linux-packages job in
+# .github/workflows/release-artifacts.yml.
+#
+# Templated by environment variables (expanded by nfpm):
+#   VERSION      package version (package.json version, no v prefix)
+#   ARCH         GOARCH-style target arch: amd64 | arm64 (nfpm maps this to
+#                the native labels: deb amd64/arm64, rpm x86_64/aarch64)
+#   PAYLOAD_DIR  unpacked standalone server payload (built by
+#                scripts/build-standalone-payload.sh) that already contains
+#                the bundled Node runtime at node/bin/node (fetch-node.sh)
+#
+# Build (from the repo root):
+#   VERSION=0.9.41 ARCH=amd64 PAYLOAD_DIR=/tmp/payload \
+#     nfpm package -f packaging/linux/nfpm.yaml -p deb -t dist/
+# ==============================================================================
+name: libredb-studio
+arch: ${ARCH}
+platform: linux
+version: ${VERSION}
+section: database
+priority: optional
+maintainer: cevheri <cevheribozoglan@gmail.com>
+description: |
+  Web-based SQL IDE for PostgreSQL, MySQL, SQLite, Oracle, SQL Server,
+  MongoDB, and Redis with AI query assistance.
+  Ships the standalone Next.js server with a bundled private Node.js
+  runtime (no external dependencies) and installs a systemd service
+  (libredb-studio) that serves the app on port 3000.
+vendor: LibreDB
+homepage: https://github.com/libredb/libredb-studio
+license: MIT
+contents:
+  # Standalone server payload + private Node runtime (node/bin/node).
+  # expand: nfpm only expands env vars in contents entries that opt in.
+  - src: ${PAYLOAD_DIR}
+    dst: /usr/lib/libredb-studio
+    type: tree
+    expand: true
+  # CLI entry point / systemd ExecStart: execs the bundled node against
+  # the payload server.js.
+  - src: packaging/linux/libredb-studio
+    dst: /usr/bin/libredb-studio
+    file_info:
+      mode: 0755
+  - src: packaging/linux/libredb-studio.service
+    dst: /usr/lib/systemd/system/libredb-studio.service
+    file_info:
+      mode: 0644
+  # Operator configuration, loaded by the unit (EnvironmentFile). Read by
+  # systemd as root before privileges drop, so 0600 keeps secrets
+  # (JWT_SECRET, LLM_API_KEY) away from the DynamicUser service account
+  # and every other local user. config|noreplace: upgrades never
+  # overwrite operator edits.
+  - src: packaging/linux/env
+    dst: /etc/libredb-studio/env
+    type: config|noreplace
+    file_info:
+      mode: 0600
