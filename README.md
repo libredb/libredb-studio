@@ -198,11 +198,11 @@ The test instance comes with a pre-configured PostgreSQL database via [Seed Conn
   | **Docker** | `docker run -d -p 3000:3000 ghcr.io/libredb/libredb-studio:latest` | Zero-config: the admin password is printed to the log on first run |
   | **Helm (Kubernetes)** | `helm install libredb oci://ghcr.io/libredb/charts/libredb-studio` | Requires `secrets.jwtSecret` / `secrets.adminPassword` (strict mode by default) |
   | **npx** | `npx @libredb/studio` | Linux/macOS, Node 24+; downloads the release server tarball |
-  | **Homebrew** | `brew install libredb/tap/libredb-studio` | From the next release |
-  | **deb / rpm** | `sudo dpkg -i libredb-studio_<version>_amd64.deb` | From the next release; systemd service included |
+  | **Homebrew** | `brew trust libredb/tap && brew install libredb/tap/libredb-studio` | `brew trust` is required once for third-party taps |
+  | **deb / rpm** | `sudo dpkg -i libredb-studio_<version>_amd64.deb` | Attached to each GitHub release; systemd service included |
   | **Snap** | `sudo snap install libredb-studio` | From the next release, once Snap Store publishing goes live |
 
-  > Homebrew, deb/rpm, Snap, and the npx launcher consume standalone artifacts that are attached to GitHub releases from the next release onward. Full per-channel guide — commands, configuration, systemd usage, and the Docker image tag model — in [`docs/DISTRIBUTION.md`](docs/DISTRIBUTION.md).
+  > Homebrew, deb/rpm, Snap, and the npx launcher consume standalone artifacts attached to each GitHub release. Full per-channel guide — commands, configuration, systemd usage, and the Docker image tag model — in [`docs/DISTRIBUTION.md`](docs/DISTRIBUTION.md).
 
   ### Quick Start (Docker)
 

@@ -204,10 +204,13 @@ cached `SHA256SUMS` and re-extracts the payload.
 
 ## Homebrew
 
-Available from the next release onward (the formula is rendered and pushed to
+The formula tracks the latest release (it is rendered and pushed to
 [`libredb/homebrew-tap`](https://github.com/libredb/homebrew-tap) by release CI):
 
 ```bash
+# One-time: Homebrew's untrusted-tap policy requires trusting third-party taps
+brew trust libredb/tap
+
 brew install libredb/tap/libredb-studio
 
 # Foreground (first run prints the generated admin password to the terminal)
@@ -231,7 +234,7 @@ brew services start libredb-studio
 ## Linux packages (.deb / .rpm)
 
 Native packages for Debian/Ubuntu and RHEL/Fedora (amd64/x86_64 and arm64/aarch64) are attached
-to every GitHub release from the next release onward. They bundle the standalone server together
+to every GitHub release. They bundle the standalone server together
 with a private, checksum-verified Node.js runtime under `/usr/lib/libredb-studio` — nothing else
 to install — and register a hardened systemd service:
 
