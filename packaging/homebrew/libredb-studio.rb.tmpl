@@ -1,0 +1,78 @@
+# ==============================================================================
+# Homebrew formula template for libredb-studio (issue #111).
+#
+# Rendered by scripts/render-homebrew-formula.mjs: the version and the four
+# per-platform sha256 placeholders are filled from the SHA256SUMS file
+# attached to the GitHub release, then the result is pushed to
+# libredb/homebrew-tap as Formula/libredb-studio.rb by
+# .github/workflows/release-artifacts.yml. Never edit the rendered formula in
+# the tap by hand - change this template and re-release.
+# ==============================================================================
+class LibredbStudio < Formula
+  desc "Web-based SQL IDE for Postgres, MySQL, SQLite, Oracle, MSSQL, MongoDB, Redis"
+  homepage "https://github.com/libredb/libredb-studio"
+  version "{{VERSION}}"
+  license "MIT"
+
+  # The standalone payload runs under Node; Homebrew's node formula tracks the
+  # latest major (>= 24), which satisfies the package.json engines range.
+  depends_on "node"
+
+  on_macos do
+    on_intel do
+      url "https://github.com/libredb/libredb-studio/releases/download/{{VERSION}}/libredb-studio-standalone-{{VERSION}}-darwin-x64.tar.gz"
+      sha256 "{{SHA256_DARWIN_X64}}"
+    end
+    on_arm do
+      url "https://github.com/libredb/libredb-studio/releases/download/{{VERSION}}/libredb-studio-standalone-{{VERSION}}-darwin-arm64.tar.gz"
+      sha256 "{{SHA256_DARWIN_ARM64}}"
+    end
+  end
+
+  on_linux do
+    on_intel do
+      url "https://github.com/libredb/libredb-studio/releases/download/{{VERSION}}/libredb-studio-standalone-{{VERSION}}-linux-x64.tar.gz"
+      sha256 "{{SHA256_LINUX_X64}}"
+    end
+    on_arm do
+      url "https://github.com/libredb/libredb-studio/releases/download/{{VERSION}}/libredb-studio-standalone-{{VERSION}}-linux-arm64.tar.gz"
+      sha256 "{{SHA256_LINUX_ARM64}}"
+    end
+  end
+
+  def install
+    # The tarball is the standalone server payload with server.js at its root
+    # (no top-level directory), so install everything - including the hidden
+    # .next directory - into libexec.
+    libexec.install Dir["*", ".next"]
+
+    # Launcher: run the standalone server under Homebrew's node, passing the
+    # caller's environment through untouched. All configuration is
+    # environment-driven; the zero-config first run generates missing auth
+    # secrets and prints the admin password once.
+    (bin/"libredb-studio").write <<~SCRIPT
+      #!/bin/bash
+      exec "#{Formula["node"].opt_bin}/node" "#{libexec}/server.js" "$@"
+    SCRIPT
+    (bin/"libredb-studio").chmod 0755
+  end
+
+  def post_install
+    (var/"libredb-studio").mkpath
+  end
+
+  # brew services start libredb-studio: serve on the default port with the
+  # server-side storage database under var (server.js chdirs into the payload,
+  # so a relative STORAGE_SQLITE_PATH would otherwise land inside the keg).
+  service do
+    run [opt_bin/"libredb-studio"]
+    keep_alive false
+    working_dir var
+    environment_variables STORAGE_SQLITE_PATH: var/"libredb-studio/libredb-storage.db"
+  end
+
+  test do
+    assert_path_exists libexec/"server.js"
+    assert_predicate bin/"libredb-studio", :executable?
+  end
+end

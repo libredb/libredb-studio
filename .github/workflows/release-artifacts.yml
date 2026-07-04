@@ -6,6 +6,8 @@ name: Release Artifacts
 # canonical artifact consumed by downstream channels (npx, homebrew, deb).
 # The linux-packages job additionally turns the linux tarballs into .deb and
 # .rpm packages (nfpm + bundled Node runtime, issue #112) and attaches them.
+# The publish job also renders the Homebrew formula from SHA256SUMS and pushes
+# it to libredb/homebrew-tap when TAP_GITHUB_TOKEN is configured (issue #111).
 
 on:
   release:
@@ -119,6 +121,11 @@ jobs:
     permissions:
       contents: write
     steps:
+      # Checkout provides the Homebrew formula template and its render script;
+      # it must run before download-artifact so it cannot clobber dist/.
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
       - name: Download all tarballs
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
@@ -139,6 +146,54 @@ jobs:
         run: |
           gh release upload "$TAG" dist/libredb-studio-standalone-*.tar.gz dist/SHA256SUMS \
             --clobber --repo "$GITHUB_REPOSITORY"
+
+      # The Homebrew tap update is optional: it only runs when TAP_GITHUB_TOKEN
+      # (a token with write access to libredb/homebrew-tap) is configured, so
+      # forks without the secret still publish artifacts cleanly - mirroring
+      # the DOCKER_HUB_TOKEN gate in docker-build-push.yml.
+      - name: Check Homebrew tap availability
+        id: tap
+        env:
+          TAP_GITHUB_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
+        run: |
+          if [ -n "$TAP_GITHUB_TOKEN" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::TAP_GITHUB_TOKEN is not configured - skipping the Homebrew tap update"
+          fi
+
+      - name: Render Homebrew formula
+        if: steps.tap.outputs.enabled == 'true'
+        env:
+          VERSION: ${{ needs.guard.outputs.version }}
+        run: |
+          node scripts/render-homebrew-formula.mjs \
+            packaging/homebrew/libredb-studio.rb.tmpl \
+            dist/SHA256SUMS \
+            "$VERSION" \
+            dist/libredb-studio.rb
+
+      - name: Push formula to libredb/homebrew-tap
+        if: steps.tap.outputs.enabled == 'true'
+        env:
+          TAP_GITHUB_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
+          VERSION: ${{ needs.guard.outputs.version }}
+        run: |
+          TAP_DIR="$RUNNER_TEMP/homebrew-tap"
+          git clone --depth 1 \
+            "https://x-access-token:${TAP_GITHUB_TOKEN}@github.com/libredb/homebrew-tap.git" "$TAP_DIR"
+          mkdir -p "$TAP_DIR/Formula"
+          cp dist/libredb-studio.rb "$TAP_DIR/Formula/libredb-studio.rb"
+          cd "$TAP_DIR"
+          git add Formula/libredb-studio.rb
+          if git diff --cached --quiet; then
+            echo "::notice::Formula already up to date for ${VERSION} - nothing to push"
+            exit 0
+          fi
+          git -c user.name=cevheri -c user.email=cevheribozoglan@gmail.com \
+            commit -m "libredb-studio ${VERSION}"
+          git push origin HEAD
 
   linux-packages:
     name: Build .deb and .rpm (${{ matrix.arch }})
