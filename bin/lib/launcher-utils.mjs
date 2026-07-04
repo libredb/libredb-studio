@@ -124,15 +124,22 @@ export function sha256File(filePath) {
 }
 
 /**
- * Parse launcher CLI arguments. Returns { help, port, archive }; port stays
- * null when not given (the server then falls back to $PORT / 3000). Throws
+ * Parse launcher CLI arguments. Returns { help, port, host, archive,
+ * verifyCache }; port/host stay null when not given (the server then falls
+ * back to $PORT / 3000 and the launcher's loopback default). Throws
  * LauncherUsageError on unknown flags, missing values, or invalid ports.
  *
  * @param {string[]} argv process.argv.slice(2)
- * @returns {{ help: boolean, port: number | null, archive: string | null }}
+ * @returns {{ help: boolean, port: number | null, host: string | null, archive: string | null, verifyCache: boolean }}
  */
 export function parseLauncherArgs(argv) {
-  const args = { help: false, port: /** @type {number | null} */ (null), archive: /** @type {string | null} */ (null) };
+  const args = {
+    help: false,
+    port: /** @type {number | null} */ (null),
+    host: /** @type {string | null} */ (null),
+    archive: /** @type {string | null} */ (null),
+    verifyCache: false,
+  };
   for (let i = 0; i < argv.length; i++) {
     const [flag, inlineValue] = splitFlag(argv[i]);
     switch (flag) {
@@ -150,12 +157,21 @@ export function parseLauncherArgs(argv) {
         args.port = port;
         break;
       }
+      case "--host": {
+        const value = inlineValue ?? argv[++i];
+        if (value === undefined || value === "") throw new LauncherUsageError("--host requires an address");
+        args.host = value;
+        break;
+      }
       case "--archive": {
         const value = inlineValue ?? argv[++i];
         if (value === undefined || value === "") throw new LauncherUsageError("--archive requires a path");
         args.archive = value;
         break;
       }
+      case "--verify-cache":
+        args.verifyCache = true;
+        break;
       default:
         throw new LauncherUsageError(`Unknown argument: ${argv[i]}`);
     }

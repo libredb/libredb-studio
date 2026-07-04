@@ -76,6 +76,11 @@ apps:
       STORAGE_PROVIDER: sqlite
       STORAGE_SQLITE_PATH: $SNAP_DATA/libredb-storage.db
       PORT: "3000"
+      # Local-first: loopback only by default. To expose the daemon on the
+      # network, override the env on the generated systemd unit:
+      #   sudo systemctl edit snap.libredb-studio.libredb-studio.service
+      # with [Service] Environment=HOSTNAME=0.0.0.0
+      HOSTNAME: "127.0.0.1"
 
 parts:
   payload:

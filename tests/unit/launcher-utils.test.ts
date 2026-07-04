@@ -122,7 +122,7 @@ describe("sha256File", () => {
 
 describe("parseLauncherArgs", () => {
   test("returns defaults for an empty argv", () => {
-    expect(parseLauncherArgs([])).toEqual({ help: false, port: null, archive: null });
+    expect(parseLauncherArgs([])).toEqual({ help: false, port: null, host: null, archive: null, verifyCache: false });
   });
 
   test("parses --help and -h", () => {
@@ -140,11 +140,22 @@ describe("parseLauncherArgs", () => {
     expect(parseLauncherArgs(["--archive=/tmp/payload.tar.gz"]).archive).toBe("/tmp/payload.tar.gz");
   });
 
+  test("parses --host with a separate or inline value", () => {
+    expect(parseLauncherArgs(["--host", "0.0.0.0"]).host).toBe("0.0.0.0");
+    expect(parseLauncherArgs(["--host=::1"]).host).toBe("::1");
+  });
+
+  test("parses --verify-cache", () => {
+    expect(parseLauncherArgs(["--verify-cache"]).verifyCache).toBe(true);
+  });
+
   test("parses combined flags", () => {
-    expect(parseLauncherArgs(["--port", "3893", "--archive", "/tmp/a.tar.gz"])).toEqual({
+    expect(parseLauncherArgs(["--port", "3893", "--host", "0.0.0.0", "--archive", "/tmp/a.tar.gz"])).toEqual({
       help: false,
       port: 3893,
+      host: "0.0.0.0",
       archive: "/tmp/a.tar.gz",
+      verifyCache: false,
     });
   });
 
@@ -158,6 +169,8 @@ describe("parseLauncherArgs", () => {
     expect(() => parseLauncherArgs(["--port"])).toThrow(LauncherUsageError);
     expect(() => parseLauncherArgs(["--archive"])).toThrow(LauncherUsageError);
     expect(() => parseLauncherArgs(["--archive="])).toThrow(LauncherUsageError);
+    expect(() => parseLauncherArgs(["--host"])).toThrow(LauncherUsageError);
+    expect(() => parseLauncherArgs(["--host="])).toThrow(LauncherUsageError);
   });
 
   test("rejects unknown arguments", () => {

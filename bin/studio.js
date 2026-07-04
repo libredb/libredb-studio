@@ -44,14 +44,21 @@ Later runs start straight from the cache.
 
 Options:
   --port <n>        Port to listen on (default: $PORT or 3000)
+  --host <addr>     Address to bind (default: $HOSTNAME or 127.0.0.1;
+                    use --host 0.0.0.0 to expose on the network)
   --archive <path>  Start from a local standalone tarball instead of
-                    downloading (env: LIBREDB_STUDIO_ARCHIVE)
+                    downloading (env: LIBREDB_STUDIO_ARCHIVE). WARNING:
+                    local archives skip checksum verification - only use
+                    tarballs you built or obtained from a trusted source.
+  --verify-cache    Re-verify the cached tarball checksum and re-extract
+                    the payload before starting
   --help, -h        Show this help
 
-All environment variables are forwarded to the server (PORT, HOSTNAME,
-JWT_SECRET, ADMIN_PASSWORD, STORAGE_PROVIDER, STORAGE_SQLITE_PATH, ...).
-When JWT_SECRET or ADMIN_PASSWORD are not set, the server generates them on
-first run and prints the admin credentials once.`;
+The server binds to 127.0.0.1 by default; exposing it on the network is an
+explicit opt-in (--host or HOSTNAME). All environment variables are forwarded
+to the server (PORT, HOSTNAME, JWT_SECRET, ADMIN_PASSWORD, STORAGE_PROVIDER,
+STORAGE_SQLITE_PATH, ...). When JWT_SECRET or ADMIN_PASSWORD are not set, the
+server generates them on first run and prints the admin credentials once.`;
 
 /** @param {string} message @returns {never} */
 function fail(message) {
@@ -59,38 +66,90 @@ function fail(message) {
   process.exit(1);
 }
 
+const DOWNLOAD_IDLE_TIMEOUT_MS = 60_000;
+const DOWNLOAD_ATTEMPTS = 3;
+
+/** A download failure that a retry cannot change (definitive HTTP answers). */
+class NoRetryError extends Error {}
+
 /**
  * Download a release asset to a local file (atomic: .partial then rename).
  * Node's global fetch follows the GitHub -> CDN redirect automatically.
+ * An idle watchdog aborts the request when no data arrives for
+ * DOWNLOAD_IDLE_TIMEOUT_MS, so a hung connection never blocks forever while
+ * slow-but-alive links stay unaffected.
+ *
+ * @param {string} url
+ * @param {string} destination
+ */
+async function downloadOnce(url, destination) {
+  const controller = new AbortController();
+  /** @type {NodeJS.Timeout | undefined} */
+  let idleTimer;
+  const armIdleTimer = () => {
+    clearTimeout(idleTimer);
+    idleTimer = setTimeout(
+      () => controller.abort(new Error(`no data received for ${DOWNLOAD_IDLE_TIMEOUT_MS / 1000}s`)),
+      DOWNLOAD_IDLE_TIMEOUT_MS,
+    );
+  };
+  armIdleTimer();
+  try {
+    const response = await fetch(url, { redirect: "follow", signal: controller.signal });
+    if (response.status === 404) {
+      throw new NoRetryError(
+        [
+          `Release ${pkg.version} has no standalone server artifacts yet (HTTP 404 for ${url}).`,
+          "Standalone tarballs are attached to GitHub releases by CI and do not exist for older versions.",
+          "Options:",
+          "  - run a newer release:  npx @libredb/studio@latest",
+          "  - use a locally built tarball:  npx @libredb/studio --archive <path>",
+          "    (build one with scripts/build-standalone-payload.sh from the repository)",
+        ].join("\n"),
+      );
+    }
+    if (!response.ok || !response.body) {
+      const message = `Download failed with HTTP ${response.status} for ${url}`;
+      // Other 4xx answers are definitive; 5xx and truncated bodies may recover.
+      if (response.status >= 400 && response.status < 500) throw new NoRetryError(message);
+      throw new Error(message);
+    }
+    fs.mkdirSync(path.dirname(destination), { recursive: true });
+    const partial = `${destination}.partial`;
+    try {
+      const body = Readable.fromWeb(response.body);
+      body.on("data", armIdleTimer);
+      await pipeline(body, fs.createWriteStream(partial));
+      fs.renameSync(partial, destination);
+    } finally {
+      fs.rmSync(partial, { force: true });
+    }
+  } finally {
+    clearTimeout(idleTimer);
+  }
+}
+
+/**
+ * downloadOnce with bounded retries and linear backoff for transient
+ * failures (network errors, idle timeouts, 5xx). Definitive answers
+ * (404 guidance, other 4xx) fail immediately.
  *
  * @param {string} url
  * @param {string} destination
  */
 async function download(url, destination) {
-  console.log(`Downloading ${url}`);
-  const response = await fetch(url, { redirect: "follow" });
-  if (response.status === 404) {
-    fail(
-      [
-        `Release ${pkg.version} has no standalone server artifacts yet (HTTP 404 for ${url}).`,
-        "Standalone tarballs are attached to GitHub releases by CI and do not exist for older versions.",
-        "Options:",
-        "  - run a newer release:  npx @libredb/studio@latest",
-        "  - use a locally built tarball:  npx @libredb/studio --archive <path>",
-        "    (build one with scripts/build-standalone-payload.sh from the repository)",
-      ].join("\n"),
-    );
-  }
-  if (!response.ok || !response.body) {
-    fail(`Download failed with HTTP ${response.status} for ${url}`);
-  }
-  fs.mkdirSync(path.dirname(destination), { recursive: true });
-  const partial = `${destination}.partial`;
-  try {
-    await pipeline(Readable.fromWeb(response.body), fs.createWriteStream(partial));
-    fs.renameSync(partial, destination);
-  } finally {
-    fs.rmSync(partial, { force: true });
+  for (let attempt = 1; ; attempt++) {
+    try {
+      console.log(attempt === 1 ? `Downloading ${url}` : `Retrying download (${attempt}/${DOWNLOAD_ATTEMPTS}): ${url}`);
+      await downloadOnce(url, destination);
+      return;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (error instanceof NoRetryError || attempt >= DOWNLOAD_ATTEMPTS) fail(message);
+      const delaySeconds = attempt * 2;
+      console.warn(`Download failed (${message}); retrying in ${delaySeconds}s`);
+      await new Promise((resolve) => setTimeout(resolve, delaySeconds * 1000));
+    }
   }
 }
 
@@ -148,15 +207,20 @@ async function preparePayload(cacheDir, payloadDir) {
 
 /**
  * Spawn `node server.js` from the payload, forwarding the full environment.
+ * Local-first: without --host/HOSTNAME the server binds to loopback only
+ * (the standalone Next server would otherwise default to 0.0.0.0).
  *
  * @param {string} payloadDir
  * @param {number | null} port
+ * @param {string | null} host
  */
-function startServer(payloadDir, port) {
+function startServer(payloadDir, port, host) {
   const env = { ...process.env };
   if (port !== null) env.PORT = String(port);
+  if (host !== null) env.HOSTNAME = host;
+  if (!env.HOSTNAME) env.HOSTNAME = "127.0.0.1";
   if (!env.NODE_ENV) env.NODE_ENV = "production";
-  console.log(`Starting LibreDB Studio ${pkg.version} on http://localhost:${env.PORT || "3000"}`);
+  console.log(`Starting LibreDB Studio ${pkg.version} on http://${env.HOSTNAME}:${env.PORT || "3000"}`);
   const child = spawn(process.execPath, ["server.js"], { cwd: payloadDir, env, stdio: "inherit" });
   child.on("error", (error) => fail(`Could not start server.js: ${error.message}`));
   for (const signal of /** @type {const} */ (["SIGINT", "SIGTERM"])) {
@@ -206,9 +270,11 @@ async function main() {
     extract(archivePath, payloadDir);
   } else {
     payloadDir = path.join(cacheDir, "payload");
-    if (fs.existsSync(path.join(payloadDir, "server.js"))) {
-      console.log(`Using cached payload ${payloadDir}`);
+    if (!args.verifyCache && fs.existsSync(path.join(payloadDir, "server.js"))) {
+      console.log(`Using cached payload ${payloadDir} (re-check it anytime with --verify-cache)`);
     } else {
+      // --verify-cache re-runs the full prepare flow: the cached tarball is
+      // re-hashed against the cached SHA256SUMS and the payload re-extracted.
       await preparePayload(cacheDir, payloadDir);
     }
   }
@@ -216,7 +282,7 @@ async function main() {
   if (!fs.existsSync(path.join(payloadDir, "server.js"))) {
     fail(`Payload in ${payloadDir} has no server.js - not a LibreDB Studio standalone tarball`);
   }
-  startServer(payloadDir, args.port);
+  startServer(payloadDir, args.port, args.host);
 }
 
 main().catch((error) => {

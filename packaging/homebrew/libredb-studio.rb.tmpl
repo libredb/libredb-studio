@@ -74,8 +74,11 @@ class LibredbStudio < Formula
     run [opt_bin/"libredb-studio"]
     keep_alive false
     working_dir var
+    # HOSTNAME keeps the service loopback-only (local-first); run the binary
+    # manually with HOSTNAME=0.0.0.0 or use a reverse proxy to expose it.
     environment_variables STORAGE_PROVIDER: "sqlite",
-                          STORAGE_SQLITE_PATH: var/"libredb-studio/libredb-storage.db"
+                          STORAGE_SQLITE_PATH: var/"libredb-studio/libredb-storage.db",
+                          HOSTNAME: "127.0.0.1"
   end
 
   test do

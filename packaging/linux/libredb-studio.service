@@ -14,6 +14,10 @@ DynamicUser=yes
 StateDirectory=libredb-studio
 Environment=NODE_ENV=production
 Environment=NEXT_TELEMETRY_DISABLED=1
+# Local-first: bind to loopback by default. Expose the service explicitly by
+# setting HOSTNAME=0.0.0.0 in /etc/libredb-studio/env (the EnvironmentFile
+# below overrides these defaults) or by fronting it with a reverse proxy.
+Environment=HOSTNAME=127.0.0.1
 Environment=STORAGE_PROVIDER=sqlite
 Environment=STORAGE_SQLITE_PATH=/var/lib/libredb-studio/libredb-storage.db
 # Operator overrides (PORT, JWT_SECRET, LLM_*, ...). Read by systemd as

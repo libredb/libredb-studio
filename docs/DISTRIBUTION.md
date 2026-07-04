@@ -54,6 +54,23 @@ clear error on the login page instead of silently generated credentials in colle
 Helm chart defaults to strict mode; all other channels default to zero-config. Unrecognized
 `AUTH_BOOTSTRAP` values log a warning and keep bootstrap on.
 
+## Network exposure (bind address)
+
+Every native channel is **local-first**: the server binds to `127.0.0.1` by default, and
+exposing it on the network is an explicit opt-in. (The Docker image and the Helm chart are the
+exception - containers must bind `0.0.0.0` and are isolated by container networking instead.)
+
+| Channel | Default bind | How to expose |
+|---|---|---|
+| npx | `127.0.0.1` | `npx @libredb/studio --host 0.0.0.0` (or set `HOSTNAME`) |
+| .deb / .rpm (systemd) | `127.0.0.1` | `HOSTNAME=0.0.0.0` in `/etc/libredb-studio/env`, then restart |
+| Homebrew service | `127.0.0.1` | run the binary manually with `HOSTNAME=0.0.0.0`, or front it with a reverse proxy |
+| Snap | `127.0.0.1` | `sudo systemctl edit snap.libredb-studio.libredb-studio.service` with `[Service]` `Environment=HOSTNAME=0.0.0.0` |
+| Docker / Helm | `0.0.0.0` (container-internal) | publish/route ports as usual (`-p`, Service/Ingress) |
+
+For anything reachable from a network, prefer a reverse proxy with TLS in front and strict mode
+(`AUTH_BOOTSTRAP=off`) with explicit credentials.
+
 ## Release artifact naming
 
 Release tags carry **no `v` prefix** (tag `0.9.41` == package.json version). Each release ships:
@@ -160,6 +177,12 @@ npx @libredb/studio                # first run downloads + verifies, then starts
 npx @libredb/studio --port 8080    # or set PORT
 npx @libredb/studio --help
 ```
+
+`--archive` starts from a local tarball and **skips checksum verification** - only use archives
+you built yourself or obtained from a trusted source. Downloads retry transient failures with
+backoff and abort when the connection stalls. The cache in `~/.libredb-studio/<version>/` lives
+in your home directory's trust domain; `--verify-cache` re-checks the cached tarball against the
+cached `SHA256SUMS` and re-extracts the payload.
 
 - Later runs start straight from the cache (per-version directory; delete it to force a
   re-download).
@@ -296,6 +319,12 @@ Release publishing is driven by two workflows, both triggered on `release: publi
   ([`snap/snapcraft.yaml`](../snap/snapcraft.yaml)).
 - The npm package (`@libredb/studio`, which carries the npx launcher `bin/studio.js`) is
   published by the separate npm-publish workflow, also on `release: published`.
+
+### Artifact provenance roadmap
+
+Tarballs, packages, and the npm tarball are checksum-verified (`SHA256SUMS`), but checksums and
+artifacts share one trust domain (the GitHub release). Signed provenance (Sigstore/cosign
+signatures or SLSA attestations) is tracked as a follow-up issue.
 
 ### CI secrets that gate publishing
 
