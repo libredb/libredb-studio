@@ -31,7 +31,7 @@ kubectl port-forward svc/libredb-libredb-studio 3000:80
 
 ```bash
 helm install libredb oci://ghcr.io/libredb/charts/libredb-studio \
-  --version 0.1.0 \
+  --version 0.1.1 \
   --set secrets.jwtSecret=$(openssl rand -base64 32) \
   --set secrets.adminPassword=MyAdmin123 \
   --set secrets.userPassword=MyUser123
@@ -82,6 +82,12 @@ helm install libredb libredb/libredb-studio \
   --set secrets.adminPassword=MyAdmin123 \
   --set secrets.userPassword=MyUser123
 ```
+
+## Auth Bootstrap (Zero-Config vs Strict)
+
+The application supports a zero-config bootstrap mode (`AUTH_BOOTSTRAP=on`, the app default): missing `JWT_SECRET` / `ADMIN_PASSWORD` are auto-generated on first start, printed once to the pod log, and persisted in the data directory. **The chart defaults to strict mode instead** (`config.authBootstrap: "off"`): Kubernetes deployments inject real secrets anyway, and generated credentials in pod logs are undesirable when logs are collected centrally. In strict mode, missing `secrets.jwtSecret` or `secrets.adminPassword` surface as a clear login error.
+
+If you opt into zero-config (`--set config.authBootstrap=on`), set `persistence.enabled=true` so the generated credentials survive pod restarts — without a persistent volume for the data directory, every restart generates new credentials. Set `config.authBootstrap=""` to omit the variable entirely and use the app default.
 
 ## OIDC SSO
 
@@ -183,6 +189,7 @@ helm uninstall libredb
 | `image.tag` | Image tag | `""` (Chart appVersion) |
 | `image.pullPolicy` | Pull policy | `IfNotPresent` |
 | `authProvider` | Auth mode: local or oidc | `local` |
+| `config.authBootstrap` | Auth bootstrap: off (strict), on (zero-config), "" (app default) | `off` |
 | `secrets.jwtSecret` | JWT signing secret | `""` |
 | `secrets.adminEmail` | Admin email | `admin@libredb.org` |
 | `secrets.adminPassword` | Admin password | `""` |

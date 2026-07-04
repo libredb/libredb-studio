@@ -64,6 +64,11 @@ authProvider: "local"
 config:
   # -- Log level
   logLevel: "info"
+  # -- Auth bootstrap mode: "off" (strict: secrets.jwtSecret and secrets.adminPassword are required;
+  # missing values surface as a clear login error) or "on" (zero-config: missing JWT_SECRET /
+  # ADMIN_PASSWORD are auto-generated on first start and printed to the pod log).
+  # The chart defaults to "off"; set to "" to omit AUTH_BOOTSTRAP and use the app default (on).
+  authBootstrap: "off"
   # -- Storage provider: "local" (browser), "sqlite" (file), or "postgres" (database)
   storageProvider: "local"
   # -- SQLite database file path (when storageProvider=sqlite)
