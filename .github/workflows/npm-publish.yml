@@ -24,6 +24,9 @@ permissions:
 
 jobs:
   validate:
+    # Product releases only: chart releases (libredb-studio-<chart-version>)
+    # are published by helm-release.yml and must not reach npm.
+    if: github.event_name != 'release' || !startsWith(github.event.release.tag_name, 'libredb-studio-')
     name: Validate
     runs-on: ubuntu-latest
     steps:
