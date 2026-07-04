@@ -90,7 +90,7 @@ function createBootstrapFile(filePath: string, data: BootstrapFile): void {
   fs.writeFileSync(filePath, JSON.stringify(data, null, 2), { flag: "wx", mode: 0o600 });
 }
 
-function isEexist(error: unknown): boolean {
+function isEEXIST(error: unknown): boolean {
   return error instanceof Error && (error as NodeJS.ErrnoException).code === "EEXIST";
 }
 
@@ -178,7 +178,7 @@ export function bootstrapAuth(): void {
         try {
           createBootstrapFile(filePath, stored); // throws on read-only fs -> fail open below
         } catch (error) {
-          if (!isEexist(error)) throw error;
+          if (!isEEXIST(error)) throw error;
           // A concurrent boot created the file between our read and write: it
           // won the race. Adopt its values and discard the locally generated
           // ones so every process injects identical credentials. Only fields
