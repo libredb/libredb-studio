@@ -327,6 +327,8 @@ describe("auth-bootstrap bootstrapAuth()", () => {
   });
 
   test("write falls back to copy-over when rename fails, keeping mode 600 and no temp", () => {
+    // Pre-seed a partial file: the update path is the one that uses temp+rename.
+    fs.writeFileSync(resolveBootstrapPath(), JSON.stringify({ jwtSecret: "persisted-secret-that-is-32-chars-x" }));
     const renameSpy = spyOn(fs, "renameSync").mockImplementation(() => {
       throw new Error("EPERM: simulated Windows rename failure");
     });
@@ -338,8 +340,9 @@ describe("auth-bootstrap bootstrapAuth()", () => {
       log.mockRestore();
     }
 
-    expect(process.env.JWT_SECRET).toBeDefined();
-    expect(readStored().jwtSecret).toBe(process.env.JWT_SECRET!);
+    expect(process.env.JWT_SECRET).toBe("persisted-secret-that-is-32-chars-x");
+    expect(process.env.ADMIN_PASSWORD).toBeDefined();
+    expect(readStored().adminPassword).toBe(process.env.ADMIN_PASSWORD!);
     if (process.platform !== "win32") {
       expect(fs.statSync(resolveBootstrapPath()).mode & 0o777).toBe(0o600);
     }
@@ -347,6 +350,7 @@ describe("auth-bootstrap bootstrapAuth()", () => {
   });
 
   test("still injects when the post-copy chmod fails (best-effort hardening)", () => {
+    fs.writeFileSync(resolveBootstrapPath(), JSON.stringify({ jwtSecret: "persisted-secret-that-is-32-chars-x" }));
     const renameSpy = spyOn(fs, "renameSync").mockImplementation(() => {
       throw new Error("EPERM: simulated rename failure");
     });
@@ -372,6 +376,8 @@ describe("auth-bootstrap bootstrapAuth()", () => {
   });
 
   test("fails open when both rename and copy fail, leaving no temp behind", () => {
+    const seeded = JSON.stringify({ jwtSecret: "persisted-secret-that-is-32-chars-x" });
+    fs.writeFileSync(resolveBootstrapPath(), seeded);
     const renameSpy = spyOn(fs, "renameSync").mockImplementation(() => {
       throw new Error("EPERM: simulated rename failure");
     });
@@ -391,7 +397,71 @@ describe("auth-bootstrap bootstrapAuth()", () => {
 
     expect(process.env.JWT_SECRET).toBeUndefined();
     expect(process.env.ADMIN_PASSWORD).toBeUndefined();
-    expect(fs.existsSync(resolveBootstrapPath())).toBe(false);
+    expect(fs.readFileSync(resolveBootstrapPath(), "utf8")).toBe(seeded);
     expect(fs.readdirSync(tmpDir).filter((f) => f.endsWith(".tmp"))).toHaveLength(0);
+  });
+
+  test("EEXIST race: the loser adopts the winner's credentials instead of its own generated ones", () => {
+    const winner = {
+      jwtSecret: "winner-secret-that-is-at-least-32-chars",
+      adminPassword: "winner-password",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    };
+    const realWriteFileSync = fs.writeFileSync;
+    // Simulate a concurrent boot winning the exclusive create: when this
+    // process attempts the wx write, the file appears (with the winner's
+    // content) and the write fails with EEXIST.
+    const writeSpy = spyOn(fs, "writeFileSync").mockImplementation((file, data, options) => {
+      if (typeof options === "object" && options !== null && options.flag === "wx") {
+        realWriteFileSync(file, JSON.stringify(winner, null, 2), { mode: 0o600 });
+        throw Object.assign(new Error("EEXIST: file already exists"), { code: "EEXIST" });
+      }
+      realWriteFileSync(file, data, options);
+    });
+    const log = spyOn(console, "log").mockImplementation(() => {});
+    try {
+      bootstrapAuth();
+      // Reuse log line, not the first-run banner: the winner printed the banner.
+      const output = log.mock.calls.flat().join("\n");
+      expect(output).toContain("using generated admin credentials");
+      expect(output).not.toContain(winner.adminPassword);
+    } finally {
+      writeSpy.mockRestore();
+      log.mockRestore();
+    }
+
+    expect(process.env.JWT_SECRET).toBe(winner.jwtSecret);
+    expect(process.env.ADMIN_PASSWORD).toBe(winner.adminPassword);
+    const stored = readStored();
+    expect(stored.jwtSecret).toBe(winner.jwtSecret);
+    expect(stored.adminPassword).toBe(winner.adminPassword);
+    expect(stored.createdAt).toBe(winner.createdAt);
+  });
+
+  test("EEXIST race: fields missing from the winner's file keep the local values and get persisted", () => {
+    const winner = { jwtSecret: "winner-secret-that-is-at-least-32-chars" };
+    const realWriteFileSync = fs.writeFileSync;
+    const writeSpy = spyOn(fs, "writeFileSync").mockImplementation((file, data, options) => {
+      if (typeof options === "object" && options !== null && options.flag === "wx") {
+        realWriteFileSync(file, JSON.stringify(winner, null, 2), { mode: 0o600 });
+        throw Object.assign(new Error("EEXIST: file already exists"), { code: "EEXIST" });
+      }
+      realWriteFileSync(file, data, options);
+    });
+    const log = spyOn(console, "log").mockImplementation(() => {});
+    try {
+      bootstrapAuth();
+      // The password is still locally generated, so the first-run banner shows it.
+      expect(log.mock.calls.flat().join("\n")).toContain(process.env.ADMIN_PASSWORD!);
+    } finally {
+      writeSpy.mockRestore();
+      log.mockRestore();
+    }
+
+    expect(process.env.JWT_SECRET).toBe(winner.jwtSecret);
+    expect(process.env.ADMIN_PASSWORD).toBeDefined();
+    const stored = readStored();
+    expect(stored.jwtSecret).toBe(winner.jwtSecret);
+    expect(stored.adminPassword).toBe(process.env.ADMIN_PASSWORD!);
   });
 });

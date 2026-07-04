@@ -79,6 +79,27 @@ function readBootstrapFile(filePath: string): BootstrapFile {
   }
 }
 
+/**
+ * Fresh-create path (issue #116): `wx` (O_CREAT|O_EXCL) makes the first write
+ * atomic across processes. When two fresh boots race against one data dir,
+ * exactly one create succeeds; the loser gets EEXIST and adopts the winner's
+ * credentials in bootstrapAuth instead of injecting divergent ones.
+ */
+function createBootstrapFile(filePath: string, data: BootstrapFile): void {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, JSON.stringify(data, null, 2), { flag: "wx", mode: 0o600 });
+}
+
+function isEexist(error: unknown): boolean {
+  return error instanceof Error && (error as NodeJS.ErrnoException).code === "EEXIST";
+}
+
+/**
+ * Update path only (the file already existed with partial fields). Temp +
+ * rename is last-writer-wins across processes by design: unlike the
+ * fresh-create race, concurrent updaters start from the same persisted fields,
+ * so the surviving file stays consistent with what each process injected.
+ */
 function writeBootstrapFile(filePath: string, data: BootstrapFile): void {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   // Temp + atomic rename so a crash never leaves a partial credentials file
@@ -133,6 +154,10 @@ export function bootstrapAuth(): void {
   try {
     const filePath = resolveBootstrapPath();
     const stored = readBootstrapFile(filePath);
+    // Fresh create when no valid file survived the read (absent, or corrupt
+    // and moved to .bak): that case must take the exclusive-create path below
+    // so concurrent boots cannot inject divergent credentials (issue #116).
+    const isFreshCreate = !fs.existsSync(filePath);
     let secretGenerated = false;
     let passwordGenerated = false;
 
@@ -147,7 +172,27 @@ export function bootstrapAuth(): void {
 
     if (secretGenerated || passwordGenerated) {
       stored.createdAt = stored.createdAt || new Date().toISOString();
-      writeBootstrapFile(filePath, stored); // throws on read-only fs -> fail open below
+      if (!isFreshCreate) {
+        writeBootstrapFile(filePath, stored); // throws on read-only fs -> fail open below
+      } else {
+        try {
+          createBootstrapFile(filePath, stored); // throws on read-only fs -> fail open below
+        } catch (error) {
+          if (!isEexist(error)) throw error;
+          // A concurrent boot created the file between our read and write: it
+          // won the race. Adopt its values and discard the locally generated
+          // ones so every process injects identical credentials. Only fields
+          // the winner is missing keep the local values and are persisted via
+          // a follow-up update write.
+          const winner = readBootstrapFile(filePath);
+          if (winner.jwtSecret) stored.jwtSecret = winner.jwtSecret;
+          if (winner.adminPassword) stored.adminPassword = winner.adminPassword;
+          if (winner.createdAt) stored.createdAt = winner.createdAt;
+          secretGenerated = needSecret && !winner.jwtSecret;
+          passwordGenerated = needPassword && !winner.adminPassword;
+          if (secretGenerated || passwordGenerated) writeBootstrapFile(filePath, stored);
+        }
+      }
     }
 
     if (needSecret && stored.jwtSecret) process.env.JWT_SECRET = stored.jwtSecret;
