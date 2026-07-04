@@ -67,6 +67,17 @@ jobs:
             echo "Requested version '$VERSION' does not match package.json version '$PKG_VERSION' - refusing to publish mismatched artifacts" >&2
             exit 1
           fi
+          # workflow_dispatch can run from any ref, but the uploads below use
+          # --clobber: artifacts must be built from the exact tagged commit or
+          # a dispatch from a matching-version branch could silently replace a
+          # published release's assets with different code.
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            git fetch --depth 1 origin "refs/tags/${VERSION}"
+            if [ "$(git rev-parse HEAD)" != "$(git rev-parse "FETCH_HEAD^{commit}")" ]; then
+              echo "Checked-out commit $(git rev-parse HEAD) is not release tag '$VERSION' - refusing to overwrite published release assets" >&2
+              exit 1
+            fi
+          fi
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "Version: ${VERSION}"
 
@@ -81,7 +92,9 @@ jobs:
             platform: linux-x64
           - runner: ubuntu-24.04-arm
             platform: linux-arm64
-          - runner: macos-13
+          # macos-13 (the previous Intel label) was retired from hosted
+          # runners; macos-15-intel is the free x64 image, macos-14 is arm64.
+          - runner: macos-15-intel
             platform: darwin-x64
           - runner: macos-14
             platform: darwin-arm64
@@ -93,7 +106,7 @@ jobs:
       - name: Setup Node.js
         # Node runs the standalone server (and the smoke test); pin the major
         # to match the Dockerfile runner image and package.json engines.
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '24'
 
@@ -183,8 +196,12 @@ jobs:
           VERSION: ${{ needs.guard.outputs.version }}
         run: |
           TAP_DIR="$RUNNER_TEMP/homebrew-tap"
-          git clone --depth 1 \
-            "https://x-access-token:${TAP_GITHUB_TOKEN}@github.com/libredb/homebrew-tap.git" "$TAP_DIR"
+          # Header-based auth (the actions/checkout mechanism): a token in the
+          # clone URL would persist in plaintext in the clone's .git/config
+          # for the rest of the job; a per-command http.extraheader does not.
+          AUTH_HEADER="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$TAP_GITHUB_TOKEN" | base64 -w0)"
+          git -c http.extraheader="$AUTH_HEADER" clone --depth 1 \
+            "https://github.com/libredb/homebrew-tap.git" "$TAP_DIR"
           mkdir -p "$TAP_DIR/Formula"
           cp dist/libredb-studio.rb "$TAP_DIR/Formula/libredb-studio.rb"
           cd "$TAP_DIR"
@@ -195,7 +212,7 @@ jobs:
           fi
           git -c user.name=cevheri -c user.email=cevheribozoglan@gmail.com \
             commit -m "libredb-studio ${VERSION}"
-          git push origin HEAD
+          git -c http.extraheader="$AUTH_HEADER" push origin HEAD
 
   linux-packages:
     name: Build .deb and .rpm (${{ matrix.arch }})
@@ -261,6 +278,9 @@ jobs:
           mkdir -p pkgs
           nfpm package -f packaging/linux/nfpm.yaml -p deb -t "pkgs/libredb-studio_${VERSION}_${ARCH}.deb"
           nfpm package -f packaging/linux/nfpm.yaml -p rpm -t "pkgs/libredb-studio-${VERSION}.${RPM_ARCH}.rpm"
+          # Per-file checksum sidecars (SHA256SUMS covers only the tarballs
+          # and is written by a different job, so packages ship their own).
+          (cd pkgs && for f in *.deb *.rpm; do sha256sum "$f" > "$f.sha256"; done)
           ls -l pkgs
 
       - name: Smoke test the .deb (native arch only)

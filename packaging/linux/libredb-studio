@@ -10,12 +10,19 @@
 # admin password once).
 #
 # server.js chdirs to the payload directory itself, so relative defaults
-# (e.g. STORAGE_SQLITE_PATH=./data/...) resolve inside the payload - the
-# systemd unit always sets an absolute STORAGE_SQLITE_PATH under
-# /var/lib/libredb-studio instead.
+# (e.g. STORAGE_SQLITE_PATH=./data/...) would resolve inside the read-only,
+# root-owned /usr/lib/libredb-studio and the first-run bootstrap could not
+# persist its generated credentials. The systemd unit sets an absolute
+# STORAGE_SQLITE_PATH under /var/lib/libredb-studio; for direct runs the
+# fallback below keeps state in a user-writable XDG state directory.
 # ==============================================================================
 set -eu
 
 LIBREDB_STUDIO_HOME=/usr/lib/libredb-studio
+
+if [ -z "${STORAGE_SQLITE_PATH:-}" ]; then
+  STORAGE_SQLITE_PATH="${XDG_STATE_HOME:-${HOME:-/root}/.local/state}/libredb-studio/libredb-storage.db"
+  export STORAGE_SQLITE_PATH
+fi
 
 exec "$LIBREDB_STUDIO_HOME/node/bin/node" "$LIBREDB_STUDIO_HOME/server.js" "$@"

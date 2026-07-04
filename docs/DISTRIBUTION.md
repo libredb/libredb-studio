@@ -62,9 +62,12 @@ Release tags carry **no `v` prefix** (tag `0.9.41` == package.json version). Eac
 |---|---|---|
 | Standalone server tarball | `libredb-studio-standalone-<version>-<os>-<arch>.tar.gz` | `linux-x64`, `linux-arm64`, `darwin-x64`, `darwin-arm64` |
 | Checksums | `SHA256SUMS` | covers all tarballs |
-| Debian package | `libredb-studio_<version>_<arch>.deb` | `amd64`, `arm64` |
-| RPM package | `libredb-studio-<version>.<arch>.rpm` | `x86_64`, `aarch64` |
+| Debian package | `libredb-studio_<version>_<arch>.deb` (+ `.sha256` sidecar) | `amd64`, `arm64` |
+| RPM package | `libredb-studio-<version>.<arch>.rpm` (+ `.sha256` sidecar) | `x86_64`, `aarch64` |
 | Snap | `libredb-studio_<version>_<arch>.snap` | `amd64`, `arm64` (also published to the Snap Store) |
+
+`SHA256SUMS` covers the standalone tarballs; each `.deb`/`.rpm` ships its own per-file
+`<artifact>.sha256` sidecar instead (the packages are built in a separate job).
 
 Download URL pattern:
 `https://github.com/libredb/libredb-studio/releases/download/<version>/<artifact>`.
@@ -188,12 +191,14 @@ libredb-studio
 brew services start libredb-studio
 ```
 
-- The formula depends on Homebrew's `node` and installs the standalone payload into the keg's
+- The formula depends on Homebrew's `node@24` — the payload's native SQLite storage binding
+  (better-sqlite3) is built against the Node 24 ABI in release CI, so the floating `node`
+  formula (a newer major) cannot load it — and installs the standalone payload into the keg's
   `libexec`; `libredb-studio` on your PATH runs it.
 - `brew services start libredb-studio` runs the server on port 3000 with server-side SQLite
-  storage under `$(brew --prefix)/var/libredb-studio/` — the data dir where generated
-  credentials are persisted. The service does not capture stdout, so read the generated
-  password from `$(brew --prefix)/var/libredb-studio/auth-bootstrap.json`.
+  storage (it sets `STORAGE_PROVIDER=sqlite`) under `$(brew --prefix)/var/libredb-studio/` —
+  the data dir where generated credentials are persisted. The service does not capture stdout,
+  so read the generated password from `$(brew --prefix)/var/libredb-studio/auth-bootstrap.json`.
 - When running `libredb-studio` directly, set `STORAGE_SQLITE_PATH` to a path outside the keg
   if you use `STORAGE_PROVIDER=sqlite`, so state survives upgrades.
 
@@ -209,10 +214,14 @@ VERSION=<version>   # e.g. 0.9.42 - release tags have no v prefix
 
 # Debian / Ubuntu
 curl -fsSLO "https://github.com/libredb/libredb-studio/releases/download/${VERSION}/libredb-studio_${VERSION}_amd64.deb"
+curl -fsSLO "https://github.com/libredb/libredb-studio/releases/download/${VERSION}/libredb-studio_${VERSION}_amd64.deb.sha256"
+sha256sum -c "libredb-studio_${VERSION}_amd64.deb.sha256"
 sudo dpkg -i "libredb-studio_${VERSION}_amd64.deb"
 
 # RHEL / Fedora / Rocky
 curl -fsSLO "https://github.com/libredb/libredb-studio/releases/download/${VERSION}/libredb-studio-${VERSION}.x86_64.rpm"
+curl -fsSLO "https://github.com/libredb/libredb-studio/releases/download/${VERSION}/libredb-studio-${VERSION}.x86_64.rpm.sha256"
+sha256sum -c "libredb-studio-${VERSION}.x86_64.rpm.sha256"
 sudo rpm -i "libredb-studio-${VERSION}.x86_64.rpm"
 ```
 
@@ -234,7 +243,11 @@ sudo systemctl restart libredb-studio        # apply configuration changes
 - The unit runs with systemd hardening (`ProtectSystem=strict`, `NoNewPrivileges`, empty
   capability set, ...) and only writes its state directory.
 - The `libredb-studio` command (`/usr/bin/libredb-studio`) can also be run directly without
-  systemd; configuration then comes from your shell environment.
+  systemd; configuration then comes from your shell environment, and state defaults to
+  `${XDG_STATE_HOME:-~/.local/state}/libredb-studio/` when `STORAGE_SQLITE_PATH` is unset (the
+  payload directory under `/usr/lib` is read-only).
+- Removal (`apt remove` / `rpm -e`) stops and disables the service; upgrades restart it if it
+  is running (standard systemd maintainer scripts, `packaging/linux/scripts/`).
 
 ## Snap
 
@@ -300,8 +313,36 @@ setups still publish the rest:
 - **Snap Store account**: the snap name `libredb-studio` must be registered in the Snap Store
   and `SNAPCRAFT_STORE_CREDENTIALS` configured before the snap channel goes live
   ([issue #113](https://github.com/libredb/libredb-studio/issues/113)).
+- **Snap Store listing screenshots**: the description and icon ship with the snap
+  (`snap/snapcraft.yaml`, `public/logo.svg`), but screenshots are a manual upload in the
+  Snap Store web UI — part of the #113 store-listing acceptance criteria.
+- **Website install docs**: the libredb-website documentation must be updated with the new
+  channels (npx, Homebrew, .deb/.rpm, Snap) — a cross-repo step and part of issue #111's
+  "README and website docs" acceptance criterion (and implicitly of #110/#112/#113).
 - **Windows**: no standalone payload / installer yet; winget/Chocolatey and the `win32-x64`
   tarball are tracked in [issue #114](https://github.com/libredb/libredb-studio/issues/114).
 - **Desktop app**: a native desktop wrapper (Tauri v2 sidecar; unlocks AppImage, Flathub, .dmg,
   Microsoft Store, brew cask) has a go recommendation —
   see [`docs/DESKTOP_WRAPPER_SPIKE.md`](DESKTOP_WRAPPER_SPIKE.md).
+
+### Issue close-out notes
+
+Deviations and partial deliveries to record on the tracking issues when closing them, so the
+record matches the implementation:
+
+- **#110 (npx)**: the "Works on Linux, macOS, and Windows" acceptance criterion is NOT delivered
+  for Windows — the launcher exits on `win32` with a Docker pointer. Amend/re-scope that
+  criterion to [#114](https://github.com/libredb/libredb-studio/issues/114) before closing.
+- **#111 (Homebrew)**: the website half of "Install instructions added to README and website
+  docs" is a cross-repo step (see Manual steps above).
+- **#113 (Snap)**: store account/credentials and listing screenshots remain manual (see Manual
+  steps above).
+- **#115 (desktop wrapper spike)**: the written go/no-go recommendation is delivered
+  ([`docs/DESKTOP_WRAPPER_SPIKE.md`](DESKTOP_WRAPPER_SPIKE.md)), but the hands-on spike scope
+  (Tauri prototype, WebKitGTK/Monaco validation, unsigned PoC builds) was re-scoped into its
+  Phase 1 — close as "recommendation delivered, hands-on spike open" and open the Phase 1
+  follow-up issue.
+- **#118 (Helm AUTH_BOOTSTRAP)**: the chart deliberately defaults to strict mode
+  (`config.authBootstrap: "off"`), deviating from the issue's "default to the app default (on)"
+  wording — generated credentials in centrally collected pod logs are undesirable. Note the
+  deviation when closing.

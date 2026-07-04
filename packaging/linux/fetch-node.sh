@@ -3,10 +3,10 @@
 # Bundle the pinned Node.js runtime into a standalone payload (issue #112).
 #
 # Downloads the official nodejs.org dist tarball for NODE_VERSION and the
-# target arch, verifies it against the official SHASUMS256.txt, and installs
-# ONLY bin/node into <payload-dir>/node/bin/node - the private runtime the
-# packaged wrapper (/usr/bin/libredb-studio) execs. Nothing else from the
-# Node distribution (npm, corepack, headers, docs) is shipped.
+# target arch, verifies it against the sha256 digests pinned in this script,
+# and installs ONLY bin/node into <payload-dir>/node/bin/node - the private
+# runtime the packaged wrapper (/usr/bin/libredb-studio) execs. Nothing else
+# from the Node distribution (npm, corepack, headers, docs) is shipped.
 #
 # Usage: packaging/linux/fetch-node.sh <payload-dir> [x64|arm64]
 #   arch defaults to the host arch (uname -m).
@@ -17,6 +17,14 @@ set -euo pipefail
 # Pinned Node LTS (Krypton). Keep >= the package.json "engines.node" floor
 # and bump deliberately - the checksum verification below always follows.
 NODE_VERSION="24.18.0"
+
+# sha256 of the official node-v${NODE_VERSION}-linux-<arch>.tar.xz tarballs,
+# from https://nodejs.org/dist/v${NODE_VERSION}/SHASUMS256.txt. Pinned
+# in-repo (like NFPM_SHA256 in release-artifacts.yml) so a compromised
+# download origin cannot serve a tampered tarball together with a matching
+# checksum file. Update BOTH digests whenever NODE_VERSION is bumped.
+NODE_SHA256_X64="55aa7153f9d88f28d765fcdad5ae6945b5c0f98a36881703817e4c450fa76742"
+NODE_SHA256_ARM64="58c9520501f6ae2b52d5b210444e24b9d0c029a58c5011b797bc1fe7105886f6"
 
 if [ $# -lt 1 ] || [ $# -gt 2 ]; then
   echo "Usage: $0 <payload-dir> [x64|arm64]" >&2
@@ -43,7 +51,8 @@ else
   esac
 fi
 case "$ARCH" in
-  x64 | arm64) ;;
+  x64) NODE_SHA256="$NODE_SHA256_X64" ;;
+  arm64) NODE_SHA256="$NODE_SHA256_ARM64" ;;
   *)
     echo "Unsupported architecture '$ARCH' (expected x64 or arm64)" >&2
     exit 1
@@ -58,12 +67,11 @@ trap 'rm -rf "$WORK_DIR"' EXIT
 
 echo "==> Downloading ${DIST}.tar.xz"
 curl -fsSL --retry 3 -o "$WORK_DIR/${DIST}.tar.xz" "${BASE_URL}/${DIST}.tar.xz"
-curl -fsSL --retry 3 -o "$WORK_DIR/SHASUMS256.txt" "${BASE_URL}/SHASUMS256.txt"
 
-echo "==> Verifying against SHASUMS256.txt"
+echo "==> Verifying against the pinned sha256"
 (
   cd "$WORK_DIR"
-  grep -E "  ${DIST}\.tar\.xz\$" SHASUMS256.txt | sha256sum -c -
+  echo "${NODE_SHA256}  ${DIST}.tar.xz" | sha256sum -c -
 )
 
 echo "==> Extracting bin/node into ${PAYLOAD_DIR}/node/bin/node"

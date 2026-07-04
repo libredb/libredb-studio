@@ -26,11 +26,19 @@ description: |
   Web-based SQL IDE for PostgreSQL, MySQL, SQLite, Oracle, SQL Server,
   MongoDB, and Redis with AI query assistance.
   Ships the standalone Next.js server with a bundled private Node.js
-  runtime (no external dependencies) and installs a systemd service
-  (libredb-studio) that serves the app on port 3000.
+  runtime (no external dependencies) and a systemd unit (libredb-studio)
+  serving the app on port 3000; enable it with
+  "systemctl enable --now libredb-studio".
 vendor: LibreDB
 homepage: https://github.com/libredb/libredb-studio
 license: MIT
+# Standard systemd lifecycle snippets, shared by deb and rpm (each script
+# handles both packagers' argument conventions): reload units and restart a
+# running service on upgrade, stop/disable on removal, reload after removal.
+scripts:
+  postinstall: packaging/linux/scripts/postinstall.sh
+  preremove: packaging/linux/scripts/preremove.sh
+  postremove: packaging/linux/scripts/postremove.sh
 contents:
   # Standalone server payload + private Node runtime (node/bin/node).
   # expand: nfpm only expands env vars in contents entries that opt in.

@@ -14,9 +14,13 @@ class LibredbStudio < Formula
   version "{{VERSION}}"
   license "MIT"
 
-  # The standalone payload runs under Node; Homebrew's node formula tracks the
-  # latest major (>= 24), which satisfies the package.json engines range.
-  depends_on "node"
+  # The standalone payload runs under Node and ships a better-sqlite3 native
+  # binding compiled against the Node 24 ABI in release CI. The floating
+  # "node" formula tracks the latest major (satisfying the engines range but
+  # not the ABI: loading the binding there fails with ERR_DLOPEN_FAILED), so
+  # pin the versioned formula - matching the Node 24 runtime bundled into the
+  # deb/rpm/snap channels by packaging/linux/fetch-node.sh.
+  depends_on "node@24"
 
   on_macos do
     on_intel do
@@ -46,13 +50,13 @@ class LibredbStudio < Formula
     # .next directory - into libexec.
     libexec.install Dir["*", ".next"]
 
-    # Launcher: run the standalone server under Homebrew's node, passing the
-    # caller's environment through untouched. All configuration is
+    # Launcher: run the standalone server under Homebrew's node@24, passing
+    # the caller's environment through untouched. All configuration is
     # environment-driven; the zero-config first run generates missing auth
     # secrets and prints the admin password once.
     (bin/"libredb-studio").write <<~SCRIPT
       #!/bin/bash
-      exec "#{Formula["node"].opt_bin}/node" "#{libexec}/server.js" "$@"
+      exec "#{Formula["node@24"].opt_bin}/node" "#{libexec}/server.js" "$@"
     SCRIPT
     (bin/"libredb-studio").chmod 0755
   end
@@ -64,11 +68,14 @@ class LibredbStudio < Formula
   # brew services start libredb-studio: serve on the default port with the
   # server-side storage database under var (server.js chdirs into the payload,
   # so a relative STORAGE_SQLITE_PATH would otherwise land inside the keg).
+  # STORAGE_PROVIDER must be set explicitly - the app defaults to
+  # browser-local storage otherwise - mirroring the systemd unit and the snap.
   service do
     run [opt_bin/"libredb-studio"]
     keep_alive false
     working_dir var
-    environment_variables STORAGE_SQLITE_PATH: var/"libredb-studio/libredb-storage.db"
+    environment_variables STORAGE_PROVIDER: "sqlite",
+                          STORAGE_SQLITE_PATH: var/"libredb-studio/libredb-storage.db"
   end
 
   test do

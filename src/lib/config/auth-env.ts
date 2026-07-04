@@ -52,7 +52,7 @@ export function getJwtSecret(options: JwtSecretOptions = {}): Uint8Array {
       throw new AuthConfigError(missingMessage);
     }
     // Development fallback - only for local development
-    console.warn("⚠️ JWT_SECRET not set, using development fallback. Set JWT_SECRET in production!");
+    console.warn("JWT_SECRET not set, using development fallback. Set JWT_SECRET in production!");
     return new TextEncoder().encode(DEV_FALLBACK_SECRET);
   }
 
