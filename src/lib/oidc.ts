@@ -1,6 +1,7 @@
 import * as client from "openid-client";
 import { SignJWT, jwtVerify } from "jose";
 import { logger } from "@/lib/logger";
+import { getJwtSecret } from "@/lib/config/auth-env";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -171,12 +172,14 @@ export function mapOIDCRole(
 
 // ─── State Cookie Encryption ───────────────────────────────────────────────
 
+// Hoisted single-line message (SonarCloud/bun coverage: keep throw messages on one line).
+const OIDC_STATE_SECRET_MISSING_MESSAGE = "JWT_SECRET is required for OIDC state encryption";
+
 function getStateSecret(): Uint8Array {
-  const secret = process.env.JWT_SECRET;
-  if (!secret) {
-    throw new Error("JWT_SECRET is required for OIDC state encryption");
-  }
-  return new TextEncoder().encode(secret);
+  // No dev fallback here: OIDC state must never be signed with a well-known
+  // secret, so a missing JWT_SECRET throws in every environment. Read fresh on
+  // every call (not memoized), matching the pre-consolidation behavior.
+  return getJwtSecret({ allowDevFallback: false, missingMessage: OIDC_STATE_SECRET_MISSING_MESSAGE });
 }
 
 export async function encryptState(data: OIDCState): Promise<string> {

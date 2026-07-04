@@ -1,24 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { jwtVerify } from "jose";
 import { logger } from "@/lib/logger";
-
-function getJwtSecret(): Uint8Array {
-  const secret = process.env.JWT_SECRET;
-
-  if (!secret) {
-    if (process.env.NODE_ENV === "production") {
-      throw new Error("JWT_SECRET environment variable is required in production");
-    }
-    // Development fallback - only for local development
-    return new TextEncoder().encode("development-fallback-secret-32ch");
-  }
-
-  if (secret.length < 32) {
-    throw new Error("JWT_SECRET must be at least 32 characters long");
-  }
-
-  return new TextEncoder().encode(secret);
-}
+import { getJwtSecret } from "@/lib/config/auth-env";
 
 // Lazy-initialized to prevent module-level crash if JWT_SECRET is misconfigured.
 // A module-level throw would block ALL requests (including health check).
