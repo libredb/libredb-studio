@@ -17,7 +17,6 @@
  * provider — other code must not depend on it.
  */
 
-import type { DatabaseSync } from "node:sqlite";
 import { DatabaseConfigError } from "../../errors";
 
 // The exact driver surface the SQLite provider uses (bun:sqlite-shaped).
@@ -39,6 +38,20 @@ export type SQLiteConstructor = new (path: string, options?: SQLiteOpenOptions) 
 
 export type SQLiteDriverName = "bun" | "node";
 
+// Minimal structural view of node:sqlite (kept local so the adapter and its
+// tests never need the real module, which Bun does not implement).
+type NodeStatementLike = {
+  all(...params: unknown[]): unknown;
+  get(...params: unknown[]): unknown;
+  run(...params: unknown[]): { changes: number | bigint };
+};
+export type NodeDatabaseSyncLike = {
+  exec(sql: string): void;
+  prepare(sql: string): NodeStatementLike;
+  close(): void;
+};
+export type NodeSQLiteModule = { DatabaseSync: new (path: string) => NodeDatabaseSyncLike };
+
 const loadedDrivers = new Map<SQLiteDriverName, SQLiteConstructor>();
 const driverLoadErrors = new Map<SQLiteDriverName, Error>();
 
@@ -59,24 +72,25 @@ async function loadBunDriver(): Promise<SQLiteConstructor> {
   return sqlite.Database as unknown as SQLiteConstructor;
 }
 
-async function loadNodeDriver(): Promise<SQLiteConstructor> {
-  const sqlite = await import("node:sqlite");
-
-  /**
-   * Adapts node:sqlite's DatabaseSync to the bun:sqlite-shaped surface above.
-   * The two APIs are nearly identical (synchronous exec/prepare/all/get/run);
-   * the bridges below keep behaviour byte-compatible with bun:sqlite:
-   * - node:sqlite opens read-write and creates missing files by default,
-   *   matching the `{ create: true, readwrite: true }` options the provider
-   *   passes to bun:sqlite, so open options are accepted and ignored.
-   * - `get()` returns `undefined` on a miss where bun:sqlite returns `null`.
-   * - `run()` reports `changes` as `number | bigint`; normalize to `number`.
-   */
+/**
+ * Adapts node:sqlite's DatabaseSync to the bun:sqlite-shaped surface above.
+ * The two APIs are nearly identical (synchronous exec/prepare/all/get/run);
+ * the bridges below keep behaviour byte-compatible with bun:sqlite:
+ * - node:sqlite opens read-write and creates missing files by default,
+ *   matching the `{ create: true, readwrite: true }` options the provider
+ *   passes to bun:sqlite, so open options are accepted and ignored.
+ * - `get()` returns `undefined` on a miss where bun:sqlite returns `null`.
+ * - `run()` reports `changes` as `number | bigint`; normalize to `number`.
+ *
+ * Exported (with the injectable ctor) so the adapter semantics are unit-testable
+ * in-process under Bun, where node:sqlite itself cannot be imported.
+ */
+export function createNodeSQLiteDriver(DatabaseSyncCtor: NodeSQLiteModule["DatabaseSync"]): SQLiteConstructor {
   class NodeSQLiteDatabase implements SQLiteDatabase {
-    private readonly db: DatabaseSync;
+    private readonly db: NodeDatabaseSyncLike;
 
     constructor(dbPath: string, _options?: SQLiteOpenOptions) {
-      this.db = new sqlite.DatabaseSync(dbPath);
+      this.db = new DatabaseSyncCtor(dbPath);
     }
 
     exec(sql: string): void {
@@ -85,12 +99,11 @@ async function loadNodeDriver(): Promise<SQLiteConstructor> {
 
     prepare(sql: string): SQLiteStatement {
       const stmt = this.db.prepare(sql);
-      type BindParams = Parameters<typeof stmt.all>;
       return {
-        all: (...params: unknown[]): unknown[] => stmt.all(...(params as BindParams)) as unknown[],
-        get: (...params: unknown[]): unknown => stmt.get(...(params as BindParams)) ?? null,
+        all: (...params: unknown[]): unknown[] => stmt.all(...params) as unknown[],
+        get: (...params: unknown[]): unknown => stmt.get(...params) ?? null,
         run: (...params: unknown[]): { changes: number } => {
-          const info = stmt.run(...(params as BindParams));
+          const info = stmt.run(...params);
           return { changes: Number(info.changes) };
         },
       };
@@ -102,6 +115,22 @@ async function loadNodeDriver(): Promise<SQLiteConstructor> {
   }
 
   return NodeSQLiteDatabase;
+}
+
+async function importNodeSQLite(): Promise<NodeSQLiteModule> {
+  return (await import("node:sqlite")) as unknown as NodeSQLiteModule;
+}
+
+/**
+ * Load the node:sqlite-backed driver. The module import is injectable so the
+ * success path is unit-testable under Bun (which lacks node:sqlite); callers
+ * outside tests use the default importer.
+ */
+export async function loadNodeSQLiteDriver(
+  importModule: () => Promise<NodeSQLiteModule> = importNodeSQLite,
+): Promise<SQLiteConstructor> {
+  const sqlite = await importModule();
+  return createNodeSQLiteDriver(sqlite.DatabaseSync);
 }
 
 /**
@@ -120,7 +149,7 @@ export async function loadSQLiteDriver(): Promise<SQLiteConstructor> {
   }
 
   try {
-    const driver = name === "bun" ? await loadBunDriver() : await loadNodeDriver();
+    const driver = name === "bun" ? await loadBunDriver() : await loadNodeSQLiteDriver();
     loadedDrivers.set(name, driver);
     return driver;
   } catch (error) {
