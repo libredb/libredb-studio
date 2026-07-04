@@ -115,3 +115,7 @@ docs/superpowers/
 .attw/
 *.tgz
 
+# Snap build scratch (payload staged for snap/snapcraft.yaml) and outputs
+snap-payload/
+*.snap
+

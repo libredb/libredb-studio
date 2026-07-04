@@ -1,0 +1,122 @@
+# ==============================================================================
+# Snapcraft recipe for the LibreDB Studio server snap (issue #113).
+#
+# Packs the prebuilt standalone Next.js server payload plus the pinned
+# Node.js runtime and runs it as a strictly confined daemon on port 3000.
+# The payload is NOT built here: scripts/build-standalone-payload.sh builds
+# it (the snap job in .github/workflows/release-artifacts.yml unpacks the
+# release tarball into snap-payload/ at the repo root) and the payload part
+# below copies it into the snap.
+#
+# Local build (from the repo root, needs snapcraft + LXD):
+#   bash scripts/build-standalone-payload.sh dist
+#   mkdir -p snap-payload
+#   tar -xzf dist/libredb-studio-standalone-<version>-linux-<arch>.tar.gz -C snap-payload
+#   snapcraft
+#
+# Confinement limits (strict): the snap holds only the network and
+# network-bind interfaces, so TCP database connections are the supported
+# path. Unix-socket access to host databases (e.g. /var/run/postgresql/) is
+# out of scope - strict confinement offers no unprivileged interface for
+# arbitrary host sockets. Server-side SQLite storage lives under $SNAP_DATA.
+# ==============================================================================
+name: libredb-studio
+base: core24
+# Version is adopted from the payload part, which reads package.json at
+# build time (craftctl set version=...).
+adopt-info: payload
+summary: The modern, AI-powered open-source SQL IDE for cloud-native teams
+description: |
+  Web-based SQL IDE for PostgreSQL, MySQL, SQLite, Oracle, SQL Server,
+  MongoDB, and Redis with AI query assistance.
+
+  Installing the snap starts a background service that serves the app on
+  port 3000 (http://localhost:3000). State (SQLite storage, generated
+  admin credentials) lives in $SNAP_DATA
+  (/var/snap/libredb-studio/current). On first run the service generates
+  admin credentials and logs the admin password once:
+
+      sudo snap logs libredb-studio
+
+  Databases are reached over TCP; under strict confinement, unix-socket
+  connections to databases on the host are not supported.
+icon: public/logo.svg
+license: MIT
+website: https://github.com/libredb/libredb-studio
+source-code: https://github.com/libredb/libredb-studio
+issues: https://github.com/libredb/libredb-studio/issues
+grade: stable
+confinement: strict
+
+# Native builds only (build-on == build-for): the payload tarball and the
+# fetched Node runtime are per-arch, and the release workflow builds each
+# arch on its matching runner (ubuntu-latest / ubuntu-24.04-arm).
+platforms:
+  amd64:
+  arm64:
+
+apps:
+  libredb-studio:
+    # Launcher script staged by the launcher part; snap.yaml command lines
+    # cannot expand $SNAP in arguments, so the script execs the bundled
+    # node against $SNAP/server.js.
+    command: bin/libredb-studio-launch
+    daemon: simple
+    restart-condition: on-failure
+    plugs:
+      - network
+      - network-bind
+    # Mirrors the systemd unit shipped by the .deb/.rpm packages
+    # (packaging/linux/libredb-studio.service). The zero-config first run
+    # generates missing auth secrets (JWT_SECRET, ADMIN_PASSWORD) in the
+    # data directory - the directory of STORAGE_SQLITE_PATH.
+    environment:
+      NODE_ENV: production
+      NEXT_TELEMETRY_DISABLED: "1"
+      STORAGE_PROVIDER: sqlite
+      STORAGE_SQLITE_PATH: $SNAP_DATA/libredb-storage.db
+      PORT: "3000"
+
+parts:
+  payload:
+    # The payload is prebuilt (Next.js standalone output + traced deps +
+    # better-sqlite3 native binding, built on Ubuntu 24.04 runners to match
+    # the core24 base), so no plugin logic applies: this part stages the
+    # payload directory and adds the pinned Node runtime.
+    plugin: nil
+    build-packages:
+      - ca-certificates
+      - curl
+      - xz-utils
+    override-build: |
+      PAYLOAD_SRC="$CRAFT_PROJECT_DIR/snap-payload"
+      if [ ! -f "$PAYLOAD_SRC/server.js" ]; then
+        echo "snap-payload/server.js not found - build the payload first:" >&2
+        echo "  bash scripts/build-standalone-payload.sh dist" >&2
+        echo "  mkdir -p snap-payload" >&2
+        echo "  tar -xzf dist/libredb-studio-standalone-<version>-linux-<arch>.tar.gz -C snap-payload" >&2
+        exit 1
+      fi
+      cp -R "$PAYLOAD_SRC/." "$CRAFT_PART_INSTALL/"
+
+      # Bundle the pinned Node runtime (same checksum-verified script as
+      # the .deb/.rpm packages).
+      case "$CRAFT_ARCH_BUILD_FOR" in
+        amd64) NODE_ARCH=x64 ;;
+        arm64) NODE_ARCH=arm64 ;;
+        *)
+          echo "Unsupported target architecture '$CRAFT_ARCH_BUILD_FOR' (expected amd64 or arm64)" >&2
+          exit 1
+          ;;
+      esac
+      bash "$CRAFT_PROJECT_DIR/packaging/linux/fetch-node.sh" "$CRAFT_PART_INSTALL" "$NODE_ARCH"
+
+      # Snap version = package.json version. Native builds only (see
+      # platforms), so the just-fetched node binary is runnable here.
+      craftctl set version="$("$CRAFT_PART_INSTALL/node/bin/node" -p "require('$CRAFT_PROJECT_DIR/package.json').version")"
+
+  launcher:
+    plugin: dump
+    source: snap/local
+    organize:
+      launch.sh: bin/libredb-studio-launch

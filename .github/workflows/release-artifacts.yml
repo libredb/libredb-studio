@@ -8,6 +8,8 @@ name: Release Artifacts
 # .rpm packages (nfpm + bundled Node runtime, issue #112) and attaches them.
 # The publish job also renders the Homebrew formula from SHA256SUMS and pushes
 # it to libredb/homebrew-tap when TAP_GITHUB_TOKEN is configured (issue #111).
+# The snap job builds the server snap from the linux tarballs and publishes it
+# to the Snap Store when SNAPCRAFT_STORE_CREDENTIALS is configured (issue #113).
 
 on:
   release:
@@ -294,3 +296,98 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ needs.guard.outputs.version }}
         run: gh release upload "$TAG" pkgs/* --clobber --repo "$GITHUB_REPOSITORY"
+
+  snap:
+    name: Build and publish Snap (${{ matrix.arch }})
+    # Builds the server snap (issue #113): unpack the linux standalone
+    # tarball into snap-payload/ (the directory snap/snapcraft.yaml stages;
+    # the recipe also bundles the pinned Node runtime via fetch-node.sh),
+    # build with snapcraft, publish to the Snap Store stable channel, and
+    # attach the .snap to the GitHub release. The whole job is gated on
+    # SNAPCRAFT_STORE_CREDENTIALS with the same pattern as Docker Hub in
+    # docker-build-push.yml: without the secret every step is skipped and
+    # the job succeeds cleanly (secrets are unavailable in job-level if).
+    needs: [guard, build]
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64 # snap arch label
+            runner: ubuntu-latest
+            tarball_arch: x64 # release tarball + nodejs.org label
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            tarball_arch: arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Check Snap Store availability
+        id: snapstore
+        env:
+          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+        run: |
+          if [ -n "$SNAPCRAFT_STORE_CREDENTIALS" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::SNAPCRAFT_STORE_CREDENTIALS is not configured - skipping the Snap build and publish"
+          fi
+
+      - name: Checkout code
+        if: steps.snapstore.outputs.enabled == 'true'
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Download linux tarball
+        if: steps.snapstore.outputs.enabled == 'true'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: standalone-linux-${{ matrix.tarball_arch }}
+          path: dist
+
+      - name: Unpack payload for the snapcraft part
+        if: steps.snapstore.outputs.enabled == 'true'
+        env:
+          VERSION: ${{ needs.guard.outputs.version }}
+          TARBALL_ARCH: ${{ matrix.tarball_arch }}
+        run: |
+          mkdir -p snap-payload
+          tar -xzf "dist/libredb-studio-standalone-${VERSION}-linux-${TARBALL_ARCH}.tar.gz" -C snap-payload
+
+      - name: Build the snap
+        if: steps.snapstore.outputs.enabled == 'true'
+        id: snapcraft
+        uses: snapcore/action-build@3bdaa03e1ba6bf59a65f84a751d943d549a54e79 # v1.3.0
+
+      - name: Verify snap version matches the release
+        if: steps.snapstore.outputs.enabled == 'true'
+        # snapcraft.yaml adopts its version from package.json; the built
+        # filename (libredb-studio_<version>_<arch>.snap) must agree with
+        # the guarded release version before anything is published.
+        env:
+          SNAP_FILE: ${{ steps.snapcraft.outputs.snap }}
+          VERSION: ${{ needs.guard.outputs.version }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          EXPECTED="libredb-studio_${VERSION}_${ARCH}.snap"
+          if [ "$(basename "$SNAP_FILE")" != "$EXPECTED" ]; then
+            echo "Built snap '$SNAP_FILE' does not match expected '$EXPECTED' - refusing to publish" >&2
+            exit 1
+          fi
+
+      - name: Publish to the Snap Store (stable)
+        if: steps.snapstore.outputs.enabled == 'true'
+        uses: snapcore/action-publish@214b86e5ca036ead1668c79afb81e550e6c54d40 # v1.2.0
+        env:
+          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+        with:
+          snap: ${{ steps.snapcraft.outputs.snap }}
+          release: stable
+
+      - name: Upload snap to GitHub release
+        if: steps.snapstore.outputs.enabled == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.guard.outputs.version }}
+          SNAP_FILE: ${{ steps.snapcraft.outputs.snap }}
+        run: gh release upload "$TAG" "$SNAP_FILE" --clobber --repo "$GITHUB_REPOSITORY"
