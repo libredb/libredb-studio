@@ -22,6 +22,28 @@ const SUPPORTED_TARGETS = {
 export class LauncherUsageError extends Error {}
 
 /**
+ * Release versions in this repo are plain semver without a "v" prefix.
+ * The version read from package.json is used in download URLs and cache
+ * paths, so anything else (path separators, dots-only traversal, URL
+ * metacharacters) is rejected before it can steer a request or escape the
+ * cache directory - a corrupted or tampered manifest must fail loudly.
+ */
+const RELEASE_VERSION_PATTERN = /^[0-9]+\.[0-9]+\.[0-9]+(?:[-.][0-9A-Za-z][0-9A-Za-z.-]*)?$/;
+
+/**
+ * Validate a release version string and return it.
+ *
+ * @param {string} version
+ * @returns {string}
+ */
+export function assertReleaseVersion(version) {
+  if (typeof version !== "string" || !RELEASE_VERSION_PATTERN.test(version)) {
+    throw new Error(`Invalid release version ${JSON.stringify(version)} (expected plain semver, e.g. 0.9.42)`);
+  }
+  return version;
+}
+
+/**
  * Map a Node process.platform/process.arch pair to the release artifact name.
  * The naming must mirror scripts/build-standalone-payload.sh:
  * libredb-studio-standalone-<version>-<os>-<arch>.tar.gz
@@ -33,6 +55,7 @@ export class LauncherUsageError extends Error {}
  * @returns {string}
  */
 export function artifactName(version, platform, arch) {
+  assertReleaseVersion(version);
   const archs = SUPPORTED_TARGETS[platform];
   if (!archs || !archs.includes(arch)) {
     throw new Error(
@@ -52,7 +75,7 @@ export function artifactName(version, platform, arch) {
  * @returns {string}
  */
 export function releaseDownloadUrl(version, fileName) {
-  return `https://github.com/libredb/libredb-studio/releases/download/${version}/${fileName}`;
+  return `https://github.com/libredb/libredb-studio/releases/download/${assertReleaseVersion(version)}/${encodeURIComponent(fileName)}`;
 }
 
 /**
@@ -63,7 +86,7 @@ export function releaseDownloadUrl(version, fileName) {
  * @returns {string}
  */
 export function resolveCacheDir(version, homeDir) {
-  return path.join(homeDir, ".libredb-studio", version);
+  return path.join(homeDir, ".libredb-studio", assertReleaseVersion(version));
 }
 
 /**

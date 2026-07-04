@@ -8,6 +8,7 @@ import * as os from "os";
 import * as path from "path";
 import {
   artifactName,
+  assertReleaseVersion,
   LauncherUsageError,
   parseLauncherArgs,
   parseSha256Sums,
@@ -34,6 +35,35 @@ describe("artifactName", () => {
     expect(() => artifactName("0.9.41", "win32", "x64")).toThrow(/win32-x64/);
     expect(() => artifactName("0.9.41", "linux", "ia32")).toThrow(/linux-ia32/);
     expect(() => artifactName("0.9.41", "freebsd", "arm64")).toThrow(/Supported targets/);
+  });
+});
+
+describe("assertReleaseVersion", () => {
+  test.each(["0.9.41", "1.0.0", "10.20.30", "1.0.0-rc.1", "0.9.42-beta"])("accepts plain semver %s", (version) => {
+    expect(assertReleaseVersion(version)).toBe(version);
+  });
+
+  test.each([
+    "v0.9.41",
+    "../../evil/evil",
+    "0.9.41/../../other",
+    "0.9.41?download=1",
+    "0.9.41#frag",
+    "0.9",
+    "0.9.41..",
+    "",
+  ])("rejects %j before it can reach a URL or cache path", (version) => {
+    expect(() => assertReleaseVersion(version)).toThrow(/Invalid release version/);
+  });
+
+  test("rejects non-string versions from a corrupted manifest", () => {
+    expect(() => assertReleaseVersion(undefined as unknown as string)).toThrow(/Invalid release version/);
+  });
+
+  test("guards the URL and cache-path builders", () => {
+    expect(() => releaseDownloadUrl("../evil", "SHA256SUMS")).toThrow(/Invalid release version/);
+    expect(() => resolveCacheDir("../evil", "/home/alice")).toThrow(/Invalid release version/);
+    expect(() => artifactName("../evil", "linux", "x64")).toThrow(/Invalid release version/);
   });
 });
 
