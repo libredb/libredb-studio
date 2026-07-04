@@ -1038,20 +1038,10 @@ async function streamAIQuery(prompt: string) {
 
 ## Changelog
 
-### v0.5.2
-- Added memory optimization with dynamic imports
-- Improved Docker deployment for low-memory environments
-- Added `serverExternalPackages` for native modules
-
-### v0.5.0
-- Full MongoDB support
-- Strategy Pattern for database providers
-- LLM provider abstraction
-
-### v0.4.0
-- AI Query Assistant with streaming
-- Multi-provider LLM support
+API changes ship with the product releases; see the
+[GitHub releases](https://github.com/libredb/libredb-studio/releases) for the
+per-version changelog instead of a manually maintained copy here.
 
 ---
 
-**Last Updated:** December 2025
+**Last Updated:** 2026-07-04

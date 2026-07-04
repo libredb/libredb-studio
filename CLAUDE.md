@@ -56,7 +56,7 @@ After every code change, run all five locally before claiming done — they matc
 
 ### Rules & patterns
 
-> **⚠️ Providers are the lifeblood of this project — keep the triad in lockstep: code ↔ docs ↔ tests**, 1:1 per canonical type-id (`postgres`, `mysql`, `sqlite`, `oracle`, `mssql`, `mongodb`, `redis`):
+> **⚠️ Providers are the lifeblood of this project — keep the triad in lockstep: code ↔ docs ↔ tests**, 1:1 per canonical type-id (`postgres`, `mysql`, `sqlite`, `oracle`, `mssql`, `mongodb`, `redis`, plus the embedded `libredb`):
 > - Code: `src/lib/db/providers/<family>/<type-id>.ts` · Docs: `docs/providers/<type-id>.md` · Tests: `tests/integration/db/<type-id>-provider.test.ts`
 > - Any change to one side MUST sync the others **in the same PR**. The doc mirrors the code and the code mirrors the doc — never let them drift.
 

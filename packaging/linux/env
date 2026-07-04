@@ -3,7 +3,8 @@
 # Format: KEY=value, one per line (no "export", no shell expansion).
 # Apply changes with: systemctl restart libredb-studio
 #
-# Port and bind address (defaults: 3000, all interfaces).
+# Port and bind address (defaults: 3000, loopback only - set
+# HOSTNAME=0.0.0.0 to expose the service on the network).
 #PORT=3000
 #HOSTNAME=127.0.0.1
 #

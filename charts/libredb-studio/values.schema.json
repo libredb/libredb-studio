@@ -90,6 +90,10 @@
           "enum": ["local", "sqlite", "postgres"],
           "description": "Storage provider"
         },
+        "authBootstrap": {
+          "type": "string",
+          "description": "AUTH_BOOTSTRAP for the app: \"off\" (chart default, strict) or \"on\" (zero-config first run)"
+        },
         "storageSqlitePath": {
           "type": "string",
           "description": "SQLite database file path"
