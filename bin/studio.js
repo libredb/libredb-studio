@@ -141,6 +141,7 @@ async function download(url, destination) {
   for (let attempt = 1; ; attempt++) {
     try {
       console.log(attempt === 1 ? `Downloading ${url}` : `Retrying download (${attempt}/${DOWNLOAD_ATTEMPTS}): ${url}`);
+      // eslint-disable-next-line no-await-in-loop -- retries are sequential by design
       await downloadOnce(url, destination);
       return;
     } catch (error) {
@@ -148,6 +149,7 @@ async function download(url, destination) {
       if (error instanceof NoRetryError || attempt >= DOWNLOAD_ATTEMPTS) fail(message);
       const delaySeconds = attempt * 2;
       console.warn(`Download failed (${message}); retrying in ${delaySeconds}s`);
+      // eslint-disable-next-line no-await-in-loop -- backoff between sequential attempts
       await new Promise((resolve) => setTimeout(resolve, delaySeconds * 1000));
     }
   }

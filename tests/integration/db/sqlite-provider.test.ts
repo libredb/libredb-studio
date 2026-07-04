@@ -553,7 +553,11 @@ describe("resolveSQLiteDriverName()", () => {
 // (see the harness for the exact scenario).
 // ============================================================================
 
-const nodeSqliteProbe = spawnSync("node", ["-e", "require('node:sqlite')"], { timeout: 30_000 });
+const nodeSqliteProbe = spawnSync(
+  "node",
+  ["-e", "import('node:sqlite').then(() => process.exit(0), () => process.exit(1))"],
+  { timeout: 30_000 },
+);
 const nodeDriverTestable = nodeSqliteProbe.status === 0;
 if (!nodeDriverTestable) {
   console.warn("Skipping node-driver SQLite tests: `node` with node:sqlite is not available on this machine");

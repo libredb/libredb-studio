@@ -31,7 +31,7 @@ const PLACEHOLDER_BY_TARGET = {
 };
 
 /** Same semver shape the release workflow guard enforces (no v prefix). */
-const VERSION_PATTERN = /^[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$/;
+const VERSION_PATTERN = /^[0-9]+\.[0-9]+\.[0-9]+(?:[-.][0-9A-Za-z][0-9A-Za-z.-]*)?$/;
 
 /**
  * Render the formula template into a concrete formula.

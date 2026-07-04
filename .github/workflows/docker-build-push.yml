@@ -72,7 +72,7 @@ jobs:
           else
             VERSION=$(bun -e "console.log(require('./package.json').version)")
           fi
-          if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$'; then
+          if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z][0-9A-Za-z.-]*)?$'; then
             echo "Version '$VERSION' is not a valid semver (no v prefix) - refusing to tag images" >&2
             exit 1
           fi
