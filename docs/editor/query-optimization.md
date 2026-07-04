@@ -29,7 +29,7 @@ All SELECT queries are automatically paginated to prevent browser freezes when d
 ### How It Works
 
 1. User executes a SELECT query
-2. System automatically adds `LIMIT 500 OFFSET 0` if no LIMIT exists
+2. System automatically adds `LIMIT 500` if no LIMIT exists (an `OFFSET` clause is only appended when the offset is greater than 0)
 3. If user already specified a LIMIT, it's preserved (no override)
 4. Results display with pagination metadata
 
@@ -72,7 +72,8 @@ const info = analyzeQuery('SELECT * FROM users WHERE active = true');
 
 // Apply limit to query
 const result = applyQueryLimit('SELECT * FROM users', 500, 0);
-// Returns: { sql: 'SELECT * FROM users LIMIT 500 OFFSET 0', wasLimited: true, ... }
+// Returns: { sql: 'SELECT * FROM users LIMIT 500', wasLimited: true, ... }
+// (OFFSET is only appended when offset > 0, e.g. applyQueryLimit(sql, 500, 500) -> '... LIMIT 500 OFFSET 500')
 ```
 
 ### Supported Query Types
@@ -81,7 +82,7 @@ const result = applyQueryLimit('SELECT * FROM users', 500, 0);
 |------------|-------------------|
 | SELECT | Yes |
 | SELECT with LIMIT | No (preserved) |
-| SELECT with UNION | Yes (wrapped) |
+| SELECT with UNION | Yes (LIMIT appended after the last statement) |
 | SELECT with CTE | Yes |
 | INSERT/UPDATE/DELETE | No |
 | DDL (CREATE, ALTER) | No |
@@ -205,7 +206,7 @@ The VisualExplain component analyzes execution plans and provides actionable ins
 | Warning | Trigger | Severity |
 |---------|---------|----------|
 | Sequential Scan | Seq Scan on >10K rows | Warning |
-| Estimate Mismatch | Actual/Planned ratio >10x | Info |
+| Estimate Mismatch | Actual/Planned ratio >10x or <0.1x | Info |
 | Expensive Sort | Sort operation >100ms | Warning |
 | High Loop Count | Nested Loop >1000 iterations | Critical |
 
@@ -235,7 +236,7 @@ Expected 100 rows, got 15.2K. Statistics may be outdated.
 |--------|-------------|
 | Cache Hit Rate | Buffer cache efficiency (>95% is good) |
 | Operations | Number of plan nodes |
-| Execution Time | Total query time |
+| Execution | Total query time |
 
 ### Plan Tree View
 

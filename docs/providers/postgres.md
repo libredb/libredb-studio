@@ -7,7 +7,7 @@
 
 | | |
 |---|---|
-| **Status** | ✅ Implemented & shipped |
+| **Status** | Implemented & shipped |
 | **Database type id** | `postgres` |
 | **Family** | SQL (relational) |
 | **Driver** | `pg` (node-postgres) |
@@ -78,16 +78,16 @@ rather than reimplementing them:
 
 | Member | Purpose |
 |--------|---------|
-| `escapeIdentifier()` ([sql-base.ts:38](../../src/lib/db/providers/sql/sql-base.ts)) | Dialect-aware quoting — `"ident"` for Postgres, `` `ident` `` for MySQL, `[ident]` for MSSQL; doubles embedded quote chars |
-| `getPlaceholder()` ([sql-base.ts:73](../../src/lib/db/providers/sql/sql-base.ts)) | `$1`-style placeholders for Postgres (`?` for MySQL/SQLite, `:n` Oracle, `@pn` MSSQL) |
-| `shouldEnableSSL()` ([sql-base.ts:83](../../src/lib/db/providers/sql/sql-base.ts)) | Auto-enables SSL for known cloud hosts (supabase, neon, render, aws, azure, gcp, …) |
-| `getDefaultSchema()` ([sql-base.ts:111](../../src/lib/db/providers/sql/sql-base.ts)) | `public` for Postgres |
-| `prepareQuery()` ([sql-base.ts:157](../../src/lib/db/providers/sql/sql-base.ts)) | Injects `LIMIT` into bare `SELECT`s — see [§5.2](#52-automatic-limit-injection) |
+| `escapeIdentifier()` ([sql-base.ts:33](../../src/lib/db/providers/sql/sql-base.ts)) | Dialect-aware quoting — `"ident"` for Postgres, `` `ident` `` for MySQL, `[ident]` for MSSQL; doubles embedded quote chars |
+| `getPlaceholder()` ([sql-base.ts:65](../../src/lib/db/providers/sql/sql-base.ts)) | `$1`-style placeholders for Postgres (`?` for MySQL/SQLite, `:n` Oracle, `@pn` MSSQL) |
+| `shouldEnableSSL()` ([sql-base.ts:75](../../src/lib/db/providers/sql/sql-base.ts)) | Auto-enables SSL for known cloud hosts (supabase, neon, render, planetscale, aws, azure, gcp, …) |
+| `getDefaultSchema()` ([sql-base.ts:91](../../src/lib/db/providers/sql/sql-base.ts)) | `public` for Postgres |
+| `prepareQuery()` ([sql-base.ts:137](../../src/lib/db/providers/sql/sql-base.ts)) | Injects `LIMIT` into bare `SELECT`s — see [§5.2](#52-automatic-limit-injection) |
 
 ### 2.3 Registration & lifecycle
 
 The factory loads the provider via dynamic import so the `pg` driver is only pulled in when a
-PostgreSQL connection is opened ([`factory.ts:66`](../../src/lib/db/factory.ts)):
+PostgreSQL connection is opened ([`factory.ts:62`](../../src/lib/db/factory.ts)):
 
 ```ts
 case 'postgres': {
@@ -109,7 +109,7 @@ These are the non-obvious choices. Read this section before changing the provide
 ### 3.1 `MATERIALIZED` CTEs for schema introspection
 
 This is the single most important detail in the file. All schema-introspection CTEs are declared
-`AS MATERIALIZED` ([postgres.ts:77–81](../../src/lib/db/providers/sql/postgres.ts)). PostgreSQL 12+
+`AS MATERIALIZED` ([postgres.ts:86–177](../../src/lib/db/providers/sql/postgres.ts)). PostgreSQL 12+
 *inlines* single-reference CTEs by default, which lets the planner re-execute these
 `information_schema`-based CTEs inside nested-loop joins (it estimates `rows=1` for them). On a
 large schema (100+ tables/constraints/indexes) that explodes into minutes of planning/execution.
@@ -122,7 +122,7 @@ If you edit these queries, keep `MATERIALIZED` or you reintroduce the timeout.
 ### 3.2 Schema SQL hoisted to module scope
 
 `SCHEMA_FULL_SQL`, `SCHEMA_LIST_SQL`, and `SCHEMA_RELATIONS_SQL` are module-level `const`s, not
-inline template literals inside the methods ([postgres.ts:70–75](../../src/lib/db/providers/sql/postgres.ts)).
+inline template literals inside the methods ([postgres.ts:86–226](../../src/lib/db/providers/sql/postgres.ts)).
 This is a **coverage** workaround: `bun`'s coverage instruments the interior lines of a multi-line
 template literal *in a function body* as 0-hit in any test process that imports the file but does
 not exercise that method, and the merged lcov then reports those SQL lines as uncovered. Evaluated
@@ -166,7 +166,7 @@ Monitoring never hard-fails on a missing optional feature:
 
 ### 3.6 Safe maintenance targets
 
-`qualifyMaintenanceTarget()` ([postgres.ts:748](../../src/lib/db/providers/sql/postgres.ts)) quotes
+`qualifyMaintenanceTarget()` ([postgres.ts:751](../../src/lib/db/providers/sql/postgres.ts)) quotes
 maintenance targets through `escapeIdentifier()`: a bare name defaults to the `public` schema; a
 `schema.table` target is quoted per-part. This prevents identifier injection in `VACUUM`/`ANALYZE`/
 `REINDEX` statements (which cannot use bind parameters for object names).
@@ -331,7 +331,7 @@ the client is not returned to the pool until commit/rollback. Surfaced via `POST
 
 | Method | Behaviour |
 |--------|-----------|
-| `beginTransaction()` | Acquires a client, runs `BEGIN`, arms a **5-minute auto-rollback** timer ([postgres.ts:239](../../src/lib/db/providers/sql/postgres.ts)). Throws if one is already active. |
+| `beginTransaction()` | Acquires a client, runs `BEGIN`, arms a **5-minute auto-rollback** timer ([postgres.ts:461](../../src/lib/db/providers/sql/postgres.ts), duration set by `TX_TIMEOUT_MS`). Throws if one is already active. |
 | `queryInTransaction(sql, params?)` | Runs on the transaction's client. Throws if none active. |
 | `commitTransaction()` / `rollbackTransaction()` | Ends the transaction, clears the timer, releases the client. Throws if none active. |
 | `expireTransaction()` | The timeout callback — auto-`ROLLBACK` to prevent leaked locks if a transaction is abandoned. |
@@ -344,7 +344,7 @@ disconnects without committing would otherwise hold locks indefinitely.
 
 ## 9. Maintenance
 
-`runMaintenance(type, target?)` ([postgres.ts:756](../../src/lib/db/providers/sql/postgres.ts)),
+`runMaintenance(type, target?)` ([postgres.ts:762](../../src/lib/db/providers/sql/postgres.ts)),
 with targets quoted via [§3.6](#36-safe-maintenance-targets):
 
 | Type | With target | Without target |
@@ -417,7 +417,7 @@ provider is imported — there is no live PostgreSQL in the suite. The mock's `P
 canned result sets keyed by query shape, which exercises the same provider code paths as a real
 server.
 
-> ⚠️ **Mock isolation:** `bun`'s `mock.module()` is process-wide, so test files that mock different
+> **Mock isolation:** `bun`'s `mock.module()` is process-wide, so test files that mock different
 > drivers (here `pg`, elsewhere `ioredis`, etc.) cross-contaminate when they share a process. Running
 > a **single file** is safe (one file = one process). The full `bun run test` script runs the core
 > group (`tests/unit tests/api tests/integration`) in **one process** and is therefore load-order

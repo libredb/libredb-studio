@@ -26,6 +26,7 @@ src/lib/db/
 │   │   ├── postgres.ts         # PostgreSQL Strategy
 │   │   ├── mysql.ts            # MySQL Strategy
 │   │   ├── sqlite.ts           # SQLite Strategy
+│   │   ├── sqlite-driver.ts    # SQLite runtime driver adapter (bun:sqlite | node:sqlite)
 │   │   ├── oracle.ts           # Oracle Strategy
 │   │   └── mssql.ts            # SQL Server Strategy
 │   ├── document/               # Document Database Providers
@@ -55,6 +56,8 @@ BaseDatabaseProvider (abstract)
 ```
 
 `SQLBaseProvider` provides SQL-specific helpers (LIMIT injection, identifier escaping, placeholder generation). Non-SQL databases like MongoDB, Redis, and LibreDB extend `BaseDatabaseProvider` directly. LibreDB is embedded (opened in-process from a file, like SQLite) but, having no SQL, it is a key-value-style provider rather than a SQL one.
+
+The `SQLiteProvider` loads its embedded driver at runtime through `sqlite-driver.ts`: `bun:sqlite` under Bun, `node:sqlite` under plain Node (Node >= 24 built-in). Set `LIBREDB_SQLITE_DRIVER=bun|node` to force a driver. `better-sqlite3` is **not** used by the DB provider — it is only the SQLite driver for the storage layer (`src/lib/storage/`).
 
 **Key files:**
 
@@ -181,9 +184,9 @@ const docs = await mongoProvider.query(JSON.stringify({
 ### Direct Provider Creation
 
 ```typescript
-import { createDatabaseProvider } from '@/lib/db';
+import { createDatabaseProvider } from '@/lib/db/factory';
 
-const provider = createDatabaseProvider(connection, {
+const provider = await createDatabaseProvider(connection, {
   pool: { min: 2, max: 10 },
   queryTimeout: 30000,
 });
@@ -221,7 +224,7 @@ interface PoolConfig {
 Default query timeout is 60 seconds (60000ms). Configure per-provider:
 
 ```typescript
-const provider = createDatabaseProvider(connection, {
+const provider = await createDatabaseProvider(connection, {
   queryTimeout: 30000, // 30 seconds
 });
 ```
@@ -239,7 +242,7 @@ import {
   isDatabaseError,
   isConnectionError,
   isQueryError,
-} from '@/lib/db';
+} from '@/lib/db/errors';
 
 try {
   await provider.query(sql);
@@ -263,7 +266,8 @@ DatabaseError (base)
 ├── AuthenticationError  - Invalid credentials
 ├── PoolExhaustedError   - No available connections
 ├── QueryError           - SQL/MQL syntax/execution errors
-└── TimeoutError         - Query/connection timeouts
+├── TimeoutError         - Query/connection timeouts
+└── QueryCancelledError  - Query cancelled by the user
 ```
 
 ## Provider-Specific Features
@@ -271,7 +275,7 @@ DatabaseError (base)
 Provider-specific behaviour — pooling model, SSL/encryption, pagination, monitoring sources,
 maintenance operations, and known limitations — is documented per provider under
 [`docs/providers/`](./providers/README.md). Start there for anything specific to PostgreSQL, MySQL,
-Oracle, SQL Server, SQLite, Redis, or MongoDB.
+Oracle, SQL Server, SQLite, Redis, MongoDB, or LibreDB.
 
 ## Security Considerations
 
@@ -307,7 +311,7 @@ Before you start, decide:
    - `'sql'` → Monaco editor uses SQL mode with autocomplete
    - `'json'` → Monaco editor uses JSON mode with MQL-style autocomplete
 
-3. **Which npm driver?** (e.g., `pg`, `mysql2`, `mongodb`, `redis`, `better-sqlite3`)
+3. **Which npm driver?** (e.g., `pg`, `mysql2`, `mongodb`, `ioredis`, `oracledb`, `mssql`). SQLite is a special case — it uses the built-in `bun:sqlite`/`node:sqlite` via `sqlite-driver.ts` and needs no driver install.
 
 ## Step 1: Register the Database Type
 
@@ -317,13 +321,11 @@ Before you start, decide:
 
 ```typescript
 // Before:
-export type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'mongodb' | 'redis' | 'oracle' | 'mssql';
+export type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'mongodb' | 'redis' | 'oracle' | 'mssql' | 'libredb';
 
 // After (example: adding CockroachDB):
-export type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'mongodb' | 'redis' | 'oracle' | 'mssql' | 'cockroachdb';
+export type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'mongodb' | 'redis' | 'oracle' | 'mssql' | 'libredb' | 'cockroachdb';
 ```
-
-> **Note:** `redis` is already in the union but not yet implemented. If you're implementing Redis, skip this step.
 
 ### 1.2 — Add to `QueryTab.type` if needed
 
@@ -334,7 +336,7 @@ If your database uses a new editor mode (not `'sql'` or `'mongodb'`), add it:
 ```typescript
 export interface QueryTab {
   // ...
-  type: 'sql' | 'mongodb' | 'redis';  // Add your type here if needed
+  type: 'sql' | 'mongodb' | 'redis' | 'libredb';  // Add your type here if needed
 }
 ```
 
@@ -448,13 +450,13 @@ const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
 };
 ```
 
-Then add the type to the selectable list in `ConnectionModal.tsx`:
+Then add the type to the selectable list that drives the ConnectionModal picker:
 
-**File:** `src/components/ConnectionModal.tsx`
+**File:** `src/hooks/use-connection-form.ts`
 
 ```typescript
 const selectableTypes: DatabaseType[] = [
-  'postgres', 'mysql', 'cockroachdb', 'mongodb', 'redis'
+  'postgres', 'mysql', 'oracle', 'mssql', 'mongodb', 'redis', 'libredb', 'cockroachdb'
 ];
 ```
 
@@ -470,7 +472,7 @@ bun add <driver-package>
 # bun add mysql2              (MySQL)
 # bun add mongodb             (MongoDB)
 # bun add ioredis             (Redis)
-# bun add better-sqlite3      (SQLite)
+# SQLite needs no driver — bun:sqlite / node:sqlite are runtime built-ins (see sqlite-driver.ts)
 ```
 
 ## Step 6: Verify
@@ -516,6 +518,7 @@ Every field and what it controls:
 | Field | Type | Controls |
 |-------|------|----------|
 | `queryLanguage` | `'sql' \| 'json'` | Monaco editor language mode, AI prompt style, query template format |
+| `queryDialect` | `'libredb' \| undefined` | Optional. Opts a provider's tables into a custom client-side query generator (see `query-generators.ts`); left undefined by SQL/Mongo/Redis |
 | `supportsExplain` | `boolean` | EXPLAIN button visibility in QueryEditor toolbar |
 | `supportsExternalQueryLimiting` | `boolean` | Whether route applies LIMIT to queries (SQL) or provider handles it (MongoDB) |
 | `supportsCreateTable` | `boolean` | "Create Table" button in SchemaExplorer |
@@ -570,7 +573,7 @@ For the authoritative, code-verified reference for each shipped provider (extend
 driver, pooling, capabilities, labels, `prepareQuery` behaviour, and limitations), see the prime
 docs — they are the single source of truth and are kept in sync with the code:
 
-**[docs/providers/](./providers/README.md)** → postgres · mysql · oracle · mssql · sqlite · redis · mongodb
+**[docs/providers/](./providers/README.md)** → postgres · mysql · oracle · mssql · sqlite · redis · mongodb · libredb
 
 When implementing a new provider, the closest existing analogue is the best template: a pooled SQL
 provider (postgres/mysql), an embedded SQL provider (sqlite), or a non-SQL provider
@@ -584,7 +587,7 @@ When adding a new database, ensure you've touched **exactly these files**:
 - [ ] `src/lib/db/providers/<category>/<name>.ts` — **New file:** provider class
 - [ ] `src/lib/db/factory.ts` — Add `case` with dynamic import
 - [ ] `src/lib/db-ui-config.ts` — Add UI config entry
-- [ ] `src/components/ConnectionModal.tsx` — Add to `selectableTypes` array
-- [ ] `package.json` — Install driver (`bun add <driver>`)
+- [ ] `src/hooks/use-connection-form.ts` — Add to `selectableTypes` array
+- [ ] `package.json` — Install driver (`bun add <driver>`; SQLite needs none — uses `bun:sqlite`/`node:sqlite`)
 
 **No other files should need changes.** If you find yourself editing routes, components, or utilities — you're likely bypassing the abstraction. Use `getCapabilities()` and `getLabels()` instead.

@@ -1,6 +1,6 @@
 # LibreDB Studio API Documentation
 
-> **Version:** 0.5.2
+> **Version:** 0.9.41
 > **Base URL:** `https://your-domain.com` or `http://localhost:3000`
 > **Content-Type:** `application/json`
 
@@ -52,7 +52,7 @@ Responses are JSON. There is **no global envelope** — each endpoint returns it
 { "ok": true }
 
 // Errors
-{ "error": "Human-readable message" }   // some also include "code" and/or an HTTP "status"
+{ "error": "Human-readable message" }   // route handlers that call createErrorResponse also add "code" and "statusCode" (and sometimes "retryable" / "details"); handlers that return errors inline may send just "error"
 ```
 
 ---
@@ -511,7 +511,7 @@ Run database maintenance operations.
 
 | Type | PostgreSQL | MySQL | SQLite | Description |
 |------|------------|-------|--------|-------------|
-| `vacuum` | VACUUM ANALYZE | OPTIMIZE | VACUUM | Reclaim storage and update statistics |
+| `vacuum` | VACUUM ANALYZE | - | VACUUM | Reclaim storage and update statistics |
 | `analyze` | ANALYZE | ANALYZE | ANALYZE | Update query planner statistics |
 | `reindex` | REINDEX | - | REINDEX | Rebuild indexes |
 | `optimize` | - | OPTIMIZE | - | Optimize table (MySQL only) |
@@ -537,9 +537,11 @@ Run database maintenance operations.
 **Response (400 Bad Request):**
 ```json
 {
-  "error": "Invalid maintenance type. Valid types: vacuum, analyze, reindex, kill, optimize, check"
+  "error": "Operation 'vacuum' not supported for this database. Supported: analyze, optimize, check, kill"
 }
 ```
+
+The handler validates against the target provider's capabilities: `type` is required (`{ "error": "Maintenance type is required" }`), the provider must support maintenance at all, and the requested operation must be in that provider's supported set (see the matrix above) — otherwise a `400` is returned listing what the provider does support.
 
 ---
 
@@ -812,8 +814,10 @@ interface ActiveSession {
 | `403` | Forbidden - Insufficient permissions |
 | `408` | Request Timeout - Query exceeded time limit |
 | `429` | Too Many Requests - Rate limit exceeded (AI) |
+| `499` | Client Closed Request - Query cancelled by the client |
 | `500` | Internal Server Error |
-| `503` | Service Unavailable - Database connection failed |
+| `502` | Bad Gateway - LLM streaming failure |
+| `503` | Service Unavailable - Database connection failed or LLM misconfigured |
 
 ### Error Response Format
 
@@ -826,13 +830,26 @@ interface ActiveSession {
 
 ### Error Codes
 
+These are the values of the `code` field emitted by `createErrorResponse` (`src/lib/api/error-codes.ts`):
+
 | Code | Description |
 |------|-------------|
-| `QUERY_ERROR` | SQL syntax or execution error |
-| `CONNECTION_ERROR` | Database connection failed |
-| `TIMEOUT_ERROR` | Query exceeded time limit |
-| `AUTH_ERROR` | Authentication failed |
-| `CONFIG_ERROR` | Invalid configuration |
+| `QUERY_ERROR` | SQL syntax or execution error (400) |
+| `QUERY_CANCELLED` | Query cancelled by the client (499) |
+| `CONFIG_ERROR` | Invalid database configuration (400) |
+| `AUTH_ERROR` | Authentication failed (401) |
+| `TIMEOUT_ERROR` | Query exceeded time limit (408) |
+| `CONNECTION_ERROR` | Database connection failed (503) |
+| `POOL_EXHAUSTED` | Connection pool exhausted (503) |
+| `DATABASE_ERROR` | Generic database error (500) |
+| `LLM_SAFETY` | Prompt blocked by safety filters (400) |
+| `LLM_AUTH` | Invalid LLM API key (401) |
+| `LLM_RATE_LIMIT` | LLM usage/rate limit reached (429) |
+| `LLM_CONFIG` | LLM misconfigured (503) |
+| `LLM_STREAM` | LLM streaming failure (502) |
+| `LLM_ERROR` | Generic LLM error |
+| `INTERNAL_ERROR` | Unhandled server error (500) |
+| `NETWORK_ERROR` | Network failure |
 
 ---
 
@@ -862,7 +879,7 @@ Database operations have a default timeout of 60 seconds (`DEFAULT_QUERY_TIMEOUT
 ```bash
 curl -X POST http://localhost:3000/api/auth/login \
   -H "Content-Type: application/json" \
-  -d '{"password": "admin123"}' \
+  -d '{"email": "admin@libredb.org", "password": "admin123"}' \
   -c cookies.txt
 ```
 
@@ -950,7 +967,7 @@ async function executeQuery(sql: string) {
   await fetch('/api/auth/login', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ password: 'admin123' }),
+    body: JSON.stringify({ email: 'admin@libredb.org', password: 'admin123' }),
     credentials: 'include'
   });
 
@@ -1007,9 +1024,11 @@ async function streamAIQuery(prompt: string) {
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `JWT_SECRET` | Yes (prod) | JWT signing secret (min 32 chars) |
-| `ADMIN_PASSWORD` | Yes (prod) | Admin user password |
-| `USER_PASSWORD` | Yes (prod) | Regular user password |
+| `JWT_SECRET` | Recommended | JWT signing secret (min 32 chars). Auto-generated at boot if unset unless `AUTH_BOOTSTRAP=off` (see `.env.example`) |
+| `ADMIN_PASSWORD` | Recommended | Admin account password. Auto-generated and printed once at boot if unset unless `AUTH_BOOTSTRAP=off` |
+| `ADMIN_EMAIL` | No | Admin login email (default `admin@libredb.org`) |
+| `USER_PASSWORD` | No | Optional lower-privilege account password; the `user` account exists only when this is set |
+| `USER_EMAIL` | No | Regular-user login email (default `user@libredb.org`, only used when `USER_PASSWORD` is set) |
 | `LLM_PROVIDER` | No | AI provider: gemini, openai, ollama, custom |
 | `LLM_API_KEY` | No | AI provider API key |
 | `LLM_MODEL` | No | AI model name |

@@ -317,8 +317,8 @@ When you switch from local mode to SQLite or PostgreSQL, **existing browser data
 
 1. User opens the app in server mode
 2. The sync hook detects it's the first time (no `libredb_server_migrated` flag)
-3. All localStorage data is sent to the server via `POST /api/storage/migrate`
-4. Server merges the data (ID-based deduplication — no duplicates)
+3. All existing localStorage data is sent to the server via `POST /api/storage/migrate` (a fresh browser with no `libredb_*` data simply sets the flag and skips the upload)
+4. Server upserts each collection as a whole JSON blob — one row per user per collection, replacing any existing row
 5. A flag is set in localStorage to prevent re-migration
 6. From this point on, the server is the source of truth
 
@@ -403,8 +403,8 @@ curl -b cookies.txt http://localhost:3000/api/storage
 
 ### "Duplicate data after migration"
 
-- Migration uses ID-based deduplication — this shouldn't happen
-- If it does, check if the same user logged in from multiple browsers before migration completed
+- Migration runs once per browser (guarded by the `libredb_server_migrated` flag) and replaces each collection wholesale, so duplicates shouldn't occur
+- If you do see them, check whether the same user pushed data from multiple browsers before the first migration completed
 
 ---
 
@@ -446,7 +446,7 @@ CREATE INDEX IF NOT EXISTS idx_user_storage_user_id ON user_storage (user_id);
 | Column | Type | Description |
 |--------|------|-------------|
 | `user_id` | TEXT | User's email from JWT token (e.g., `admin@libredb.org`) |
-| `collection` | TEXT | Data category: `connections`, `history`, `saved_queries`, `schema_snapshots`, `saved_charts`, `active_connection_id`, `audit_log`, `masking_config`, `threshold_config` |
+| `collection` | TEXT | Data category: `connections`, `history`, `saved_queries`, `schema_snapshots`, `saved_charts`, `active_connection_id`, `audit_log`, `masking_config`, `threshold_config`, `dismissed_seeds` |
 | `data` | TEXT | JSON-serialized collection data |
 | `updated_at` | TEXT / TIMESTAMPTZ | Last modification timestamp |
 
@@ -513,7 +513,7 @@ This part describes the internals of the storage abstraction layer: design goals
 
 ### 3.1 Collections
 
-All application state is organized into **9 collections**, each stored as a JSON blob:
+All application state is organized into **10 collections**, each stored as a JSON blob:
 
 | Collection | Type | Description | Max Items |
 |-----------|------|-------------|-----------|
@@ -526,6 +526,7 @@ All application state is organized into **9 collections**, each stored as a JSON
 | `audit_log` | `AuditEvent[]` | Audit trail events | 1000 |
 | `masking_config` | `MaskingConfig` | Data masking rules and RBAC | — |
 | `threshold_config` | `ThresholdConfig[]` | Monitoring alert thresholds | — |
+| `dismissed_seeds` | `string[]` | Seed IDs the user dismissed (deleted a `managed: false` seed copy) so it is not re-added | — |
 
 ### 3.2 Server Database Schema
 
@@ -562,6 +563,7 @@ active_connection_id → libredb_active_connection_id
 audit_log         → libredb_audit_log
 masking_config    → libredb_masking_config
 threshold_config  → libredb_threshold_config
+dismissed_seeds   → libredb_dismissed_seeds
 ```
 
 ---
@@ -600,9 +602,9 @@ Pure, side-effect-free localStorage CRUD with SSR safety:
 ```typescript
 // All operations check isClient() before accessing localStorage
 export function readJSON<T>(collection: string): T | null;
-export function writeJSON(collection: string, data: unknown): void;
+export function writeJSON(collection: string, data: unknown): boolean;  // false on failure (e.g. QuotaExceededError)
 export function readString(collection: string): string | null;
-export function writeString(collection: string, value: string): void;
+export function writeString(collection: string, value: string): boolean; // false on failure
 export function remove(collection: string): void;
 export function getKey(collection: string): string;  // → 'libredb_' + collection
 ```
@@ -634,7 +636,7 @@ storage.saveConnection(conn);
 
 | Category | Methods |
 |----------|---------|
-| **Connections** | `getConnections()`, `saveConnection(conn)`, `deleteConnection(id)` |
+| **Connections** | `getConnections()`, `saveConnection(conn)`, `deleteConnection(id)`, `getDismissedSeeds()` |
 | **History** | `getHistory()`, `addToHistory(item)`, `clearHistory()` |
 | **Saved Queries** | `getSavedQueries()`, `saveQuery(query)`, `deleteSavedQuery(id)` |
 | **Schema Snapshots** | `getSchemaSnapshots(connId?)`, `saveSchemaSnapshot(snap)`, `deleteSchemaSnapshot(id)` |
@@ -845,9 +847,9 @@ When a user first enables server mode (or a new user logs in for the first time)
 1. Hook detects serverMode = true
 2. Checks localStorage('libredb_server_migrated') flag
 3. If not migrated:
-   a. Reads all 9 collections from localStorage
-   b. POST /api/storage/migrate with full payload
-   c. Server calls provider.mergeData() — ID-based deduplication
+   a. Reads whichever of the 10 collections exist in localStorage (a fresh browser with none simply sets the flag and skips)
+   b. POST /api/storage/migrate with the collected payload
+   c. Server calls provider.mergeData() — upserts each collection as a whole blob in one transaction
    d. Sets 'libredb_server_migrated' flag in localStorage
 4. Pull: GET /api/storage → overwrite localStorage with server data
 5. Subsequent mutations sync normally via push

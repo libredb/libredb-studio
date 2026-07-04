@@ -59,7 +59,7 @@ state/instrumentation helpers (see [Redis doc §2.3](./redis.md) for the shared 
 
 ### Registration
 
-Loaded on demand by the factory ([`factory.ts:92`](../../src/lib/db/factory.ts)):
+Loaded on demand by the factory ([`factory.ts:88`](../../src/lib/db/factory.ts)):
 
 ```ts
 case 'mongodb': {
@@ -74,8 +74,8 @@ case 'mongodb': {
 
 ### 3.1 JSON / MQL query format
 
-`query()` ([mongodb.ts:233](../../src/lib/db/providers/document/mongodb.ts)) accepts a JSON object,
-parsed by `parseQuery()` ([mongodb.ts:359](../../src/lib/db/providers/document/mongodb.ts)), which
+`query()` ([mongodb.ts:240](../../src/lib/db/providers/document/mongodb.ts)) accepts a JSON object,
+parsed by `parseQuery()` ([mongodb.ts:366](../../src/lib/db/providers/document/mongodb.ts)), which
 requires `collection` and `operation`:
 
 ```json
@@ -91,7 +91,7 @@ Supported operations: `find`, `findOne`, `aggregate`, `count`, `distinct`, `inse
 
 ### 3.2 BSON serialization for the grid
 
-`serializeDocument()` ([mongodb.ts:381](../../src/lib/db/providers/document/mongodb.ts)) recursively
+`serializeDocument()` ([mongodb.ts:388](../../src/lib/db/providers/document/mongodb.ts)) recursively
 normalises BSON types so documents render in the JSON grid: `ObjectId` → string, `Decimal128` →
 string, `Date` → ISO-8601, `Binary` → `<Binary: N bytes>` (placeholder, not the raw bytes), and
 nested objects/arrays are walked recursively. **Only these types are special-cased** — other BSON
@@ -100,9 +100,9 @@ may render poorly ([Known limitations](#13-known-limitations--future-work)).
 
 ### 3.3 Sampling-based, flat schema inference
 
-MongoDB has no fixed schema, so `getSchema()` ([mongodb.ts:418](../../src/lib/db/providers/document/mongodb.ts))
+MongoDB has no fixed schema, so `getSchema()` ([mongodb.ts:423](../../src/lib/db/providers/document/mongodb.ts))
 **infers** one: it lists collections (skipping `system.*`, capped at 200), and for each samples the
-first **100 documents** to derive field types ([mongodb.ts:469](../../src/lib/db/providers/document/mongodb.ts)).
+first **100 documents** to derive field types ([mongodb.ts:448](../../src/lib/db/providers/document/mongodb.ts)).
 Caveats baked into this approach:
 - Fields absent from the sample (or appearing only in unsampled documents) won't show.
 - Inference is **flat** — nested object fields are reported as type `object`, not expanded into
@@ -112,7 +112,7 @@ Caveats baked into this approach:
 ### 3.4 `find` is capped at 100; `aggregate` is not
 
 A `find` with no explicit `options.limit` is capped at **100** documents
-([mongodb.ts:252](../../src/lib/db/providers/document/mongodb.ts)). **`aggregate` passes none of
+([mongodb.ts:259](../../src/lib/db/providers/document/mongodb.ts)). **`aggregate` passes none of
 `options` to the cursor** (no `limit`/`skip`) and has no default cap, so a pipeline without a
 `$limit` stage can return an unbounded result set.
 
@@ -127,7 +127,7 @@ unchanged), but it is **not** a true no-op: it returns `limit: options.limit || 
 ## 4. Connection
 
 `connectionString` is used **directly** (this is a genuine connection-string provider, unlike
-SQL Server). `buildConnectionString()` ([mongodb.ts:183](../../src/lib/db/providers/document/mongodb.ts))
+SQL Server). `buildConnectionString()` ([mongodb.ts:189](../../src/lib/db/providers/document/mongodb.ts))
 returns `config.connectionString` if present, else assembles
 `mongodb://<user>:<password>@<host>:<port>/<database>` (credentials are URL-encoded; the
 `<user>:<password>@` segment is omitted when no credentials are set).
@@ -143,7 +143,7 @@ const b = { id: 'mg-1', name: 'App', type: 'mongodb',
   user: 'admin', password: 'secret', createdAt: new Date() };
 ```
 
-`validate()` ([mongodb.ts:117](../../src/lib/db/providers/document/mongodb.ts)) requires either a
+`validate()` ([mongodb.ts:123](../../src/lib/db/providers/document/mongodb.ts)) requires either a
 `connectionString` or both `host` and `database`. `connect()` builds a `MongoClient` whose built-in
 pool is configured from `ProviderOptions.pool`:
 
@@ -163,7 +163,7 @@ defaults to `test`. After connecting, a `{ ping: 1 }` command validates the conn
 ## 5. Query interface
 
 `query(jsonString)` parses the MQL object and dispatches on `operation`
-([mongodb.ts:233](../../src/lib/db/providers/document/mongodb.ts)). Reads (`find`/`findOne`/
+([mongodb.ts:240](../../src/lib/db/providers/document/mongodb.ts)). Reads (`find`/`findOne`/
 `aggregate`/`count`/`distinct`) return documents; writes return an acknowledgement summary
 (`insertedId`/`modifiedCount`/`deletedCount`, …). `rowCount = rows.length || affectedCount`, and
 every returned document passes through `serializeDocument()`. There is no `prepareQuery` limit
@@ -220,7 +220,7 @@ Every method is wrapped in try/catch and degrades to a sensible default on permi
 
 ## 8. Maintenance
 
-`runMaintenance(type, target?)` ([mongodb.ts:610](../../src/lib/db/providers/document/mongodb.ts))
+`runMaintenance(type, target?)` ([mongodb.ts:614](../../src/lib/db/providers/document/mongodb.ts))
 maps the generic operations onto MongoDB admin commands:
 
 | Type | MongoDB action |
@@ -238,7 +238,7 @@ three, though `runMaintenance` also accepts `optimize`/`kill`/`reindex` when inv
 
 ## 9. Capabilities & labels
 
-### `getCapabilities()` ([mongodb.ts:75](../../src/lib/db/providers/document/mongodb.ts))
+### `getCapabilities()` ([mongodb.ts:81](../../src/lib/db/providers/document/mongodb.ts))
 
 | Capability | Value |
 |------------|-------|
@@ -255,7 +255,7 @@ three, though `runMaintenance` also accepts `optimize`/`kill`/`reindex` when inv
 `schemaRefreshPattern` matches write operations in the JSON query so the UI refreshes collections
 after inserts/updates/deletes.
 
-### Labels — overridden ([mongodb.ts:89](../../src/lib/db/providers/document/mongodb.ts))
+### Labels — overridden ([mongodb.ts:95](../../src/lib/db/providers/document/mongodb.ts))
 
 Document vocabulary: entity → *Collection*, row → *document*, select → *Find Documents*, analyze →
 *Validate Collection*, vacuum → *Compact Collection*, search → *Search collections or fields…*.

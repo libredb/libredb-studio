@@ -87,7 +87,7 @@ RedisProvider (redis.ts)
 `RedisProvider` extends `BaseDatabaseProvider` directly (unlike the SQL providers, which extend an
 intermediate `SQLBaseProvider`). It overrides every abstract method plus the three metadata hooks
 (`getCapabilities`, `getLabels`, `prepareQuery`). It inherits `getMonitoringData()`, which fans the
-individual monitoring methods out in parallel — see [`base-provider.ts:102`](../../src/lib/db/base-provider.ts).
+individual monitoring methods out in parallel — see [`base-provider.ts:99`](../../src/lib/db/base-provider.ts).
 
 ### 2.3 What the base class gives you for free
 
@@ -102,7 +102,7 @@ individual monitoring methods out in parallel — see [`base-provider.ts:102`](.
 ### 2.4 Registration & lifecycle
 
 The factory wires Redis in via a dynamic import so the `ioredis` driver is only loaded when a Redis
-connection is actually opened ([`factory.ts:98`](../../src/lib/db/factory.ts)):
+connection is actually opened ([`factory.ts:94`](../../src/lib/db/factory.ts)):
 
 ```ts
 case 'redis': {
@@ -124,14 +124,14 @@ These are the non-obvious choices. Read this section before changing the provide
 ### 3.1 `SCAN`, never `KEYS *`
 
 Schema discovery uses cursor-based `SCAN` with `COUNT 100`, **not** `KEYS *`
-([`redis.ts:322`](../../src/lib/db/providers/keyvalue/redis.ts)). `KEYS *` is O(N) and blocks the
+([`redis.ts:327`](../../src/lib/db/providers/keyvalue/redis.ts)). `KEYS *` is O(N) and blocks the
 entire Redis server until it completes — catastrophic on a production instance with millions of
 keys. `SCAN` is incremental and non-blocking. The scan is also capped at `maxScan = 1000` keys so
 schema introspection stays bounded regardless of keyspace size.
 
 ### 3.2 Key-prefix grouping as "tables"
 
-`getKeyPrefix()` ([`redis.ts:371`](../../src/lib/db/providers/keyvalue/redis.ts)) takes everything
+`getKeyPrefix()` ([`redis.ts:375`](../../src/lib/db/providers/keyvalue/redis.ts)) takes everything
 before the first `:` and appends `:*` — so `user:123` and `user:456` both collapse into the
 `user:*` "table". Keys without a colon are their own group. For each prefix the provider probes
 keys with `TYPE` until it has observed up to **3 distinct** value-types — it may inspect more than
@@ -141,14 +141,14 @@ keys with `TYPE` until it has observed up to **3 distinct** value-types — it m
 ### 3.3 Generic command dispatch via `call()`
 
 Rather than hand-coding a method per Redis command, the provider funnels everything through
-`ioredis`'s low-level `client.call(command, ...args)` ([`redis.ts:220`](../../src/lib/db/providers/keyvalue/redis.ts)).
+`ioredis`'s low-level `client.call(command, ...args)` ([`redis.ts:230`](../../src/lib/db/providers/keyvalue/redis.ts)).
 This means **any** Redis command works without code changes — `GET`, `LPUSH`, `XADD`, `JSON.GET`,
 module commands, etc. The trade-off is that there is no per-command validation; an unknown or
 mis-arity command surfaces as a Redis-side error wrapped in `QueryError`.
 
 ### 3.4 Two query formats, one parser
 
-The query string is dispatched by its first character ([`redis.ts:157`](../../src/lib/db/providers/keyvalue/redis.ts)):
+The query string is dispatched by its first character ([`redis.ts:165`](../../src/lib/db/providers/keyvalue/redis.ts)):
 
 - Starts with `{` → parsed as a **JSON command object** `{ "command": "GET", "args": ["k"] }`.
 - Anything else → parsed as a **plain command** with a small quote-aware tokenizer that preserves
@@ -157,7 +157,7 @@ The query string is dispatched by its first character ([`redis.ts:157`](../../sr
 ### 3.5 Reply normalisation into the shared grid
 
 Redis replies are heterogeneous (status strings, integers, nil, flat arrays, hash arrays, bulk
-`INFO` text). `formatResult()` ([`redis.ts:233`](../../src/lib/db/providers/keyvalue/redis.ts))
+`INFO` text). `formatResult()` ([`redis.ts:237`](../../src/lib/db/providers/keyvalue/redis.ts))
 normalises each into the standard `{ rows, fields, rowCount }` envelope so the existing
 `ResultsGrid` renders them unchanged. See the [reply table](#52-result-shaping) below.
 
@@ -237,13 +237,13 @@ KEYS user:*
 | `INFO` | `section`, `key`, `value` | `Server \| redis_version \| 7.2.4` |
 
 `INFO` is special-cased: `parseInfoResult()` splits the bulk reply into one row per metric, tagging
-each with its `# Section` header ([`redis.ts:284`](../../src/lib/db/providers/keyvalue/redis.ts)).
+each with its `# Section` header ([`redis.ts:288`](../../src/lib/db/providers/keyvalue/redis.ts)).
 
 ---
 
 ## 6. Schema introspection
 
-`getSchema()` ([`redis.ts:312`](../../src/lib/db/providers/keyvalue/redis.ts)) returns one
+`getSchema()` ([`redis.ts:316`](../../src/lib/db/providers/keyvalue/redis.ts)) returns one
 `TableSchema` per key prefix:
 
 ```
@@ -281,7 +281,7 @@ string into a flat `key → value` map that the methods below read from.
 | `getIndexStats()` | — | `[]` (N/A) |
 
 **Cache hit ratio** is computed as `keyspace_hits / (keyspace_hits + keyspace_misses) * 100`,
-defaulting to `100.0` when there has been no traffic ([`redis.ts:547`](../../src/lib/db/providers/keyvalue/redis.ts)).
+defaulting to `100.0` when there has been no traffic ([`redis.ts:557`](../../src/lib/db/providers/keyvalue/redis.ts)).
 
 The monitoring methods that depend on optional Redis features (`SLOWLOG`, `CLIENT LIST`) are wrapped
 in try/catch and degrade to `[]` rather than throwing — a restricted ACL that forbids those commands

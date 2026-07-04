@@ -67,7 +67,7 @@ DatabaseProvider (interface) → BaseDatabaseProvider → SQLBaseProvider → MS
 
 ### Registration
 
-Loaded on demand by the factory ([`factory.ts:86`](../../src/lib/db/factory.ts)):
+Loaded on demand by the factory ([`factory.ts:82`](../../src/lib/db/factory.ts)):
 
 ```ts
 case 'mssql': {
@@ -82,7 +82,7 @@ case 'mssql': {
 
 ### 3.1 Encryption on by default, Azure-aware
 
-`buildConfig()` ([mssql.ts:120](../../src/lib/db/providers/sql/mssql.ts)) sets `encrypt: true` by
+`buildConfig()` ([mssql.ts:111](../../src/lib/db/providers/sql/mssql.ts)) sets `encrypt: true` by
 default (SQL Server 2022+ and the `mssql` v12 driver require encryption), and
 `trustServerCertificate = !isAzure` — i.e. for **non-Azure** hosts it encrypts but **trusts a
 self-signed certificate** (so on-prem dev servers connect without a CA), while **Azure**
@@ -91,14 +91,14 @@ explicit-`ssl` overrides and the [security caveat](#14-known-limitations--future
 
 ### 3.2 T-SQL pagination: `TOP` and `OFFSET … FETCH`
 
-`prepareQuery()` ([mssql.ts:273](../../src/lib/db/providers/sql/mssql.ts)) overrides the base. For a
+`prepareQuery()` ([mssql.ts:264](../../src/lib/db/providers/sql/mssql.ts)) overrides the base. For a
 limit-less `SELECT`: with no offset it injects `TOP n` right after `SELECT [DISTINCT]`; with an
 offset it appends `OFFSET m ROWS FETCH NEXT n ROWS ONLY` — and because T-SQL requires an `ORDER BY`
 for `OFFSET … FETCH`, it injects `ORDER BY (SELECT NULL)` when the query has none.
 
 ### 3.3 Five-query schema introspection, cross-schema
 
-`getSchema()` ([mssql.ts:381](../../src/lib/db/providers/sql/mssql.ts)) runs **five bulk queries**
+`getSchema()` ([mssql.ts:369](../../src/lib/db/providers/sql/mssql.ts)) runs **five bulk queries**
 (tables via `sys.tables`/`sys.partitions`, columns via `INFORMATION_SCHEMA.COLUMNS`, primary keys,
 foreign keys via `sys.foreign_keys`, indexes via `sys.indexes`) over the connected database, then
 groups them in memory keyed by `schema.table`. Tables in the **`dbo`** schema are shown by bare
@@ -109,7 +109,7 @@ tables. Row counts come from `SUM(sys.partitions.rows)`.
 ### 3.4 `rowsAffected` is surfaced
 
 Unlike the MySQL/Oracle providers (which report `rows.length`), `query()` sets
-`rowCount = result.rowsAffected?.[0] ?? recordset.length` ([mssql.ts:250](../../src/lib/db/providers/sql/mssql.ts)),
+`rowCount = result.rowsAffected?.[0] ?? recordset.length` ([mssql.ts:241](../../src/lib/db/providers/sql/mssql.ts)),
 so a non-`SELECT` statement returns its real affected-row count.
 
 ### 3.5 A query timeout *is* wired (driver-enforced)
@@ -124,12 +124,12 @@ statement timeout like Postgres's `statement_timeout`. An overrunning query stil
 ### 3.6 No transaction auto-rollback timeout
 
 Like Oracle (and unlike Postgres/MySQL), transactions use an `mssql.Transaction` with **no**
-5-minute auto-rollback timer ([mssql.ts:315](../../src/lib/db/providers/sql/mssql.ts)).
+5-minute auto-rollback timer ([mssql.ts:303](../../src/lib/db/providers/sql/mssql.ts)).
 
 ### 3.7 Named-instance support
 
 If `config.instanceName` is set, it is passed as `options.instanceName` and the explicit `port` is
-**deleted** — the SQL Server Browser service negotiates the port ([mssql.ts:159](../../src/lib/db/providers/sql/mssql.ts)).
+**deleted** — the SQL Server Browser service negotiates the port ([mssql.ts:150](../../src/lib/db/providers/sql/mssql.ts)).
 
 ---
 
@@ -147,14 +147,14 @@ const conn = {
 };
 ```
 
-`validate()` ([mssql.ts:103](../../src/lib/db/providers/sql/mssql.ts)) requires `host` **and**
+`validate()` ([mssql.ts:94](../../src/lib/db/providers/sql/mssql.ts)) requires `host` **and**
 `database` (when no connection string is set — but note [§4.4](#44-connection-string-nuance)).
 SQL authentication only (`user`/`password`); Windows/AAD auth is not wired.
 
 ### 4.2 Connection pooling
 
 `connect()` builds an `mssql.ConnectionPool` and validates it with `SELECT 1`. Mapping
-([mssql.ts:120](../../src/lib/db/providers/sql/mssql.ts)):
+([mssql.ts:111](../../src/lib/db/providers/sql/mssql.ts)):
 
 | `mssql` config | Value | Source |
 |----------------|-------|--------|
@@ -165,7 +165,7 @@ SQL authentication only (`user`/`password`); Windows/AAD auth is not wired.
 | `options.requestTimeout` | 60000 | `ProviderOptions.queryTimeout` |
 
 This is the most complete pool/timeout mapping of any SQL provider. `getPoolStats()`
-([mssql.ts:701](../../src/lib/db/providers/sql/mssql.ts)) exposes
+([mssql.ts:702](../../src/lib/db/providers/sql/mssql.ts)) exposes
 `{ total: size, idle: available, active, waiting: pending }`.
 
 ### 4.3 Encryption / SSL
@@ -198,7 +198,7 @@ connection always has discrete fields because the UI populates them.
 
 ### 5.1 Execution
 
-`query(sql, params?, queryId?)` ([mssql.ts:212](../../src/lib/db/providers/sql/mssql.ts)) takes a
+`query(sql, params?, queryId?)` ([mssql.ts:203](../../src/lib/db/providers/sql/mssql.ts)) takes a
 `Request` from the pool, optionally records it under `queryId` for cancellation, binds params as
 `@p1`, `@p2`, … via `request.input()`, runs the query, and returns:
 
@@ -211,14 +211,14 @@ Native `mssql` errors are normalised through `mapDatabaseError()` (see [§11](#1
 ### 5.2 Query cancellation
 
 A query issued with a `queryId` stores its `Request`. `cancelQuery(queryId)`
-([mssql.ts:256](../../src/lib/db/providers/sql/mssql.ts)) returns `false` if no `Request` is tracked
+([mssql.ts:247](../../src/lib/db/providers/sql/mssql.ts)) returns `false` if no `Request` is tracked
 for that id; otherwise it calls `request.cancel()` and returns `true` as long as that call doesn't
 throw — it does **not** confirm the cancellation actually took effect. Exposed via `POST /api/db/cancel`.
 
 ### 5.3 Data-type & parameter handling ⚠️
 
 - **Parameters are bound without an explicit SQL type.** `query()` calls
-  `request.input(\`p${i+1}\`, value)` ([mssql.ts:226](../../src/lib/db/providers/sql/mssql.ts)) and
+  `request.input(\`p${i+1}\`, value)` ([mssql.ts:218](../../src/lib/db/providers/sql/mssql.ts)) and
   lets `mssql` **infer** the TDS type from the JS value. Inference is convenient but a known
   foot-gun: `null` params, very large integers, and `VARCHAR` vs `NVARCHAR` intent can be guessed
   wrong. Callers needing exact typing would have to bind explicitly (not currently exposed).
@@ -234,7 +234,7 @@ throw — it does **not** confirm the cancellation actually took effect. Exposed
 
 ## 6. Transactions
 
-Explicit lifecycle via `mssql.Transaction` ([mssql.ts:315](../../src/lib/db/providers/sql/mssql.ts)),
+Explicit lifecycle via `mssql.Transaction` ([mssql.ts:303](../../src/lib/db/providers/sql/mssql.ts)),
 **no auto-rollback timeout** ([§3.6](#36-no-transaction-auto-rollback-timeout)). Surfaced via
 `POST /api/db/transaction`.
 
@@ -288,7 +288,7 @@ Postgres/Oracle/MySQL report `blocked: false`). For **index scan counts** it joi
 
 ## 9. Maintenance
 
-`runMaintenance(type, target?)` ([mssql.ts:636](../../src/lib/db/providers/sql/mssql.ts)); targets
+`runMaintenance(type, target?)` ([mssql.ts:637](../../src/lib/db/providers/sql/mssql.ts)); targets
 are bracket-escaped (`]` → `]]`):
 
 | Type | With target | Without target |
@@ -305,7 +305,7 @@ validates the target parses as an integer SPID.
 
 ## 10. Capabilities & labels
 
-### `getCapabilities()` ([mssql.ts:66](../../src/lib/db/providers/sql/mssql.ts))
+### `getCapabilities()` ([mssql.ts:57](../../src/lib/db/providers/sql/mssql.ts))
 
 | Capability | Value |
 |------------|-------|
@@ -319,7 +319,7 @@ validates the target parses as an integer SPID.
 | `defaultPort` | `1433` |
 | `schemaRefreshPattern` | `(CREATE\|DROP\|ALTER\|TRUNCATE)\b` (from base) |
 
-### Labels — overridden ([mssql.ts:76](../../src/lib/db/providers/sql/mssql.ts))
+### Labels — overridden ([mssql.ts:67](../../src/lib/db/providers/sql/mssql.ts))
 
 `analyzeAction` → *"Update Statistics"*, `vacuumAction` → *"Rebuild Indexes"*, plus the matching
 global labels. The UI display name for the database type is *"SQL Server"* (`db-ui-config.ts`).
@@ -335,7 +335,7 @@ global labels. The UI display name for the database type is *"SQL Server"* (`db-
 | Missing `host`/`database` (no connection string) | `DatabaseConfigError` |
 | Operation before `connect()` | `DatabaseConfigError` (via `ensureConnected()`) |
 | `connect()` fails | `ConnectionError` (carries host/port) |
-| *Login failed* (`ER`/18456) | `AuthenticationError` |
+| Message contains *login failed* | `AuthenticationError` |
 | *Cannot open database* | `ConnectionError` |
 | Cancellation messages (*canceling statement*, *query was cancelled*, *query execution was interrupted*, *kill query*) | `QueryCancelledError` — matched **before** the timeout check |
 | `requestTimeout` exceeded (message contains *timeout*) | `TimeoutError` |

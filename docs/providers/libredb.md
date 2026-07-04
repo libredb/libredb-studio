@@ -17,7 +17,6 @@
 | **Connection pooling** | None — single in-process file handle |
 | **Source** | [`src/lib/db/providers/embedded/libredb.ts`](../../src/lib/db/providers/embedded/libredb.ts) |
 | **Tests** | [`tests/integration/db/libredb-provider.test.ts`](../../tests/integration/db/libredb-provider.test.ts) |
-| **Design spec** | [`docs/superpowers/specs/2026-06-24-libredb-embedded-provider-design.md`](../superpowers/specs/2026-06-24-libredb-embedded-provider-design.md) |
 
 ---
 
@@ -107,7 +106,7 @@ out in parallel.
 
 The factory wires LibreDB in via a dynamic import so the `@libredb/libredb` driver is only loaded
 when a LibreDB connection is actually opened
-([`factory.ts:104`](../../src/lib/db/factory.ts)):
+([`factory.ts:100`](../../src/lib/db/factory.ts)):
 
 ```ts
 case 'libredb': {
@@ -668,7 +667,6 @@ await provider.disconnect();
 
 ## 14. References
 
-- Design spec: [`docs/superpowers/specs/2026-06-24-libredb-embedded-provider-design.md`](../superpowers/specs/2026-06-24-libredb-embedded-provider-design.md)
 - Driver: [`@libredb/libredb`](https://github.com/libredb/libredb-database)
 - Source: [`src/lib/db/providers/embedded/libredb.ts`](../../src/lib/db/providers/embedded/libredb.ts)
 - Base class: [`src/lib/db/base-provider.ts`](../../src/lib/db/base-provider.ts)

@@ -276,6 +276,7 @@ interface QueryEditorRef {
   setValue: (value: string) => void;  // NEW
   focus: () => void;
   format: () => void;
+  toggleAi: () => void;
 }
 ```
 

@@ -428,7 +428,7 @@ The OIDC subsystem follows three core principles:
 | `src/app/api/auth/oidc/login/route.ts` | ~43 | Login initiation: generate auth URL, set state cookie, redirect |
 | `src/app/api/auth/oidc/callback/route.ts` | ~80 | Callback handler: validate state, exchange code, map role, create session |
 | `src/app/api/auth/logout/route.ts` | ~21 | Logout: clear JWT cookie, optionally return OIDC provider logout URL |
-| `src/app/login/page.tsx` | ~200 | Login UI: conditional SSO button vs email/password form |
+| `src/app/login/login-form.tsx` | ~320 | Login UI: conditional SSO button vs email/password form (`page.tsx` is a thin wrapper that reads `NEXT_PUBLIC_AUTH_PROVIDER` and renders it) |
 | `src/hooks/use-auth.ts` | ~52 | Client hook: user state, `handleLogout` with OIDC redirect support |
 | `src/proxy.ts` | ~92 | Middleware: JWT verification, RBAC, route protection (auth-mode agnostic) |
 
@@ -604,14 +604,15 @@ buildLogoutUrl(returnTo)                     ← reads getOIDCConfig()
 ```typescript
 // In-memory, module-level singleton
 let cachedConfig: client.Configuration | null = null;
-let cacheTimestamp = 0;
+let cacheExpiry = 0;
 const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
 // discoverProvider() checks:
-if (cachedConfig && Date.now() - cacheTimestamp < CACHE_TTL) {
+const now = Date.now();
+if (cachedConfig && now < cacheExpiry) {
   return cachedConfig; // Cache hit
 }
-// Otherwise: fetch /.well-known/openid-configuration
+// Otherwise: fetch /.well-known/openid-configuration, then set cacheExpiry = now + CACHE_TTL
 
 // resetDiscoveryCache() — exposed for testing
 ```
@@ -687,6 +688,8 @@ The OIDC login flow requires carrying three values from the login route to the c
 - The state must be tamper-proof — an attacker shouldn't be able to forge a state cookie
 - JWT signing with `JWT_SECRET` provides integrity verification without needing server-side storage
 - The 5-minute expiry prevents stale state cookies from accumulating
+
+> **`JWT_SECRET` is mandatory for OIDC state signing — no development fallback.** Secret reading is centralized in `src/lib/config/auth-env.ts`. The state signer calls `getJwtSecret({ allowDevFallback: false })`, so a missing `JWT_SECRET` throws in *every* environment (unlike `auth.ts`, which permits a dev fallback outside production). A `JWT_SECRET` shorter than 32 characters is rejected everywhere. This is why an OIDC deployment must always set a real `JWT_SECRET` (zero-config boot generates one automatically).
 
 **Lifecycle:**
 1. Created in `/api/auth/oidc/login` via `encryptState()`
@@ -920,11 +923,11 @@ The callback route redirects to `/login?error=<code>` on failure:
 ### Login Page Error Display
 
 ```tsx
-// login/page.tsx reads ?error= param
+// login/login-form.tsx reads ?error= param
 const oidcError = searchParams.get('error');
 
 {oidcError && (
-  <div className="border-destructive/50 bg-destructive/10 text-destructive">
+  <div className="rounded-md border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive">
     Authentication failed. Please try again.
   </div>
 )}
@@ -1042,6 +1045,6 @@ The OIDC claims contain `name`, `email`, `picture` etc. To display these:
 | **PKCE state in JWT cookie** | Stateless — no server-side session store needed | Redis/DB session store adds infrastructure dependency |
 | **5-minute state cookie TTL** | Long enough for slow providers, short enough to limit replay window | Shorter: may fail on slow networks. Longer: increases attack window |
 | **`prompt=login` always** | Prevents confusing auto-login behavior; user expects to choose account | `prompt=consent`: too aggressive. No prompt: users get stuck with one account |
-| **Provider-specific logout detection via hostname** | Simple, works for 90% of cases | OIDC Discovery `end_session_endpoint`: not all providers support it; would require async call |
+| **Provider-specific logout detection via hostname / role claim** | Simple, works for 90% of cases (Auth0 by hostname, Zitadel by role-claim URN, everything else via the generic fallback) | OIDC Discovery `end_session_endpoint`: not all providers support it; would require async call |
 | **Module-level discovery cache** | Fast (avoids HTTP on every login), simple, process-scoped | Redis cache: overkill for single-instance deployments. No cache: 200-500ms per login |
 | **Binary role model (admin/user)** | Matches existing RBAC, simple to map from any claim format | Fine-grained roles: would require schema changes in JWT, proxy, and all components |

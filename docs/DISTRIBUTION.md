@@ -21,8 +21,10 @@ Standalone artifacts (tarballs, .deb/.rpm, Homebrew formula, snap) are published
 starting with the first release that includes the release-artifacts workflow — older releases
 have Docker images only.
 
-> **Runtime note:** the Docker image runs the server under Bun; every standalone channel runs it
-> under Node. The SQLite DB provider works under both runtimes via a driver adapter
+> **Runtime note:** every channel here runs the production server under Node (`node server.js`),
+> including the Docker image — its runner stage is `node:24.16.0-trixie-slim` and `CMD` execs
+> `node server.js`; Bun is only used to install dependencies during the Docker build and for local
+> development (`bun dev`). The SQLite DB provider adapts to whichever runtime it finds
 > (`bun:sqlite` under Bun, `node:sqlite` under Node) — see
 > [docs/providers/sqlite.md, Runtime & driver selection](providers/sqlite.md#runtime--driver-selection).
 
@@ -340,9 +342,13 @@ release. Right after publishing it:
 
 ### Artifact provenance roadmap
 
-Tarballs, packages, and the npm tarball are checksum-verified (`SHA256SUMS`), but checksums and
-artifacts share one trust domain (the GitHub release). Signed provenance (Sigstore/cosign
-signatures or SLSA attestations) is tracked as a follow-up issue.
+Standalone tarballs and `.deb`/`.rpm` packages are checksum-verified against `SHA256SUMS` /
+per-package `.sha256` sidecars (see [Release artifact naming](#release-artifact-naming)) — both
+from the same GitHub release. The `.snap` release asset ships no sidecar (`--dangerous` installs
+skip the Snap Store's own verification), and the npm package tarball is verified separately
+through npm's own registry integrity metadata — a different trust domain than the GitHub release.
+Signed provenance (Sigstore/cosign signatures or SLSA attestations) across every channel is
+tracked as a follow-up issue.
 
 ### CI secrets that gate publishing
 

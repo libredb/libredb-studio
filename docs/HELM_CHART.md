@@ -157,11 +157,15 @@ Most non-sensitive configuration flows through a ConfigMap (the seed-connection 
 | `NEXT_TELEMETRY_DISABLED` | Fixed `1` | Always |
 | `NODE_OPTIONS` | Fixed `--max-old-space-size=384` | Always |
 | `NEXT_PUBLIC_AUTH_PROVIDER` | `authProvider` | Always |
+| `LOG_LEVEL` | `config.logLevel` | Always |
+| `AUTH_BOOTSTRAP` | `config.authBootstrap` | When non-empty (chart default: `off`) |
 | `STORAGE_PROVIDER` | Auto-wired (see above) | Always |
 | `STORAGE_SQLITE_PATH` | `config.storageSqlitePath` | When sqlite |
 | `SEED_CONFIG_PATH` / `SEED_CACHE_TTL_MS` | `seedConnections.*` — set **directly on the Deployment** (not via the ConfigMap) | When `seedConnections.enabled` |
 | `LLM_PROVIDER/MODEL/API_URL` | `config.llm*` | When set |
 | `OIDC_*` | `config.oidc*` | When `authProvider=oidc` |
+
+The application's own zero-config default is `AUTH_BOOTSTRAP=on` (missing `JWT_SECRET`/`ADMIN_PASSWORD` are auto-generated at boot and printed once to the pod log). **The chart inverts this default to `off`** (strict): Kubernetes deployments should inject real secrets via `secrets.jwtSecret`/`secrets.adminPassword` rather than rely on credentials generated into pod logs. Set `config.authBootstrap=on` to opt back into zero-config (pair with `persistence.enabled=true` so the generated credentials survive pod restarts), or `""` to omit the variable and fall back to the app default.
 
 > For the complete, authoritative list of configurable values and defaults, see the chart's own [`README.md`](../charts/libredb-studio/README.md#configuration-reference). This document covers architecture and rationale; the chart README is the values reference.
 

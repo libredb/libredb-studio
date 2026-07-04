@@ -71,9 +71,12 @@ Lowest-risk, path-clearing step. One-shot full-repo reformat.
 ```jsonc
 {
   "$schema": "https://biomejs.dev/schemas/2.5.1/schema.json",
+  "vcs": { "enabled": true, "clientKind": "git", "useIgnoreFile": true },
+  "files": { "includes": ["src/**", "tests/**", "e2e/**", "scripts/**", "bin/**", "*.ts", "*.mts", "*.mjs"] },
   "formatter": { "enabled": true, "indentStyle": "space", "indentWidth": 2, "lineWidth": 120 },
   "javascript": { "formatter": { "quoteStyle": "double", "semicolons": "always" } },
   "css": { "formatter": { "enabled": false } },
+  "json": { "formatter": { "enabled": false } },
   "linter": { "enabled": false },
   "assist": { "enabled": false }
 }
@@ -82,15 +85,20 @@ Lowest-risk, path-clearing step. One-shot full-repo reformat.
 Scripts:
 
 ```jsonc
-"format": "biome format src tests *.ts *.mjs",
-"format:fix": "biome format --write src tests *.ts *.mjs"
+"format": "biome format .",
+"format:fix": "biome format --write ."
 ```
+
+As implemented, scope is not passed on the command line: `biome.json`'s `files.includes`
+(`src/**`, `tests/**`, `e2e/**`, `scripts/**`, `bin/**`, `*.ts`, `*.mts`, `*.mjs`) does the filtering, so the
+scripts can stay a plain `biome format .` / `biome format --write .`.
 
 Notes:
 
 - Style is double-quote + semicolons: consistent with database and with the existing `eslint.config.mjs`.
   The repo is inconsistent today (`tsup.config.ts` is single-quote / no-semi); the reformat unifies it.
-- `css.formatter.enabled: false` keeps `globals.css` and other CSS untouched (platform-integration risk).
+- `css.formatter.enabled: false` (plus `json.formatter.enabled: false`) keeps `globals.css` and JSON files
+  untouched (platform-integration risk).
 - Deliverable: a single `chore(format): adopt Biome formatter` PR (~256 files). Afterwards run `build:lib`
   and verify BOTH modes (standalone + embedded), per the repo's UI-change rule. Coordinate timing to avoid
   clashing with open PRs.

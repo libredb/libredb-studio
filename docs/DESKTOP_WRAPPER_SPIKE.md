@@ -132,9 +132,9 @@ Per-OS native-module notes:
 | AppImage | Tauri bundler output; attach to GitHub Releases | Yes | No store review; instant win once the wrapper exists |
 | .deb | Tauri bundler can emit one | Already covered | Native server .deb/.rpm ship via nfpm (`packaging/linux`, systemd service). Keep the server .deb canonical; a wrapper .deb would be a separate GUI package (e.g. `libredb-studio-desktop`) to avoid conflict |
 | .dmg / .app | Tauri bundler; Apple signing + notarization for a usable install | Yes | Unsigned dmg triggers "damaged/unverified" Gatekeeper flows; effectively requires the Apple Developer Program |
-| Flathub | Flatpak manifest; offline build with vendored cargo/npm sources; GUI app required | Yes | Free; review is technical, not commercial. Flathub rejects headless server apps, which is why the snap (already published, server daemon) cannot be reused here |
+| Flathub | Flatpak manifest; offline build with vendored cargo/npm sources; GUI app required | Yes | Free; review is technical, not commercial. Flathub rejects headless server apps, which is why the snap (a server daemon; store publish is wired in release CI but gated on `SNAPCRAFT_STORE_CREDENTIALS`) cannot be reused here |
 | MSI / MSIX (Microsoft Store) | Tauri emits NSIS .exe and MSI (WiX); MSIX for the Store is a separate packaging step on top | Yes | Store distribution: Microsoft signs the MSIX, no own cert needed; direct-download MSI/NSIS needs code signing to avoid SmartScreen warnings |
-| brew cask | A notarized .dmg/.app plus a cask formula (own tap first, `homebrew/cask` once notable) | Yes | Complements the existing server formula in `libredb/homebrew-tap` (brew services); cask is the GUI companion |
+| brew cask | A notarized .dmg/.app plus a cask formula (own tap first, `homebrew/cask` once notable) | Yes | Complements the server formula that release CI renders and pushes to `libredb/homebrew-tap` (brew services; gated on `TAP_GITHUB_TOKEN`); cask is the GUI companion |
 
 The wrapper is the single artifact that unlocks AppImage, Flathub, the Microsoft Store, dmg,
 and brew cask; .deb/.rpm/snap/npx/brew-formula are already served by the server channels on

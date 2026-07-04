@@ -47,10 +47,13 @@ for a web-based editor:
   edge** deployments (where the file is co-located with Studio) and **zero-config trials** (instant,
   no server to provision) — it is **not** a multi-tenant SaaS target.
 - **It works under both Bun and Node.** The provider selects the runtime's built-in driver at
-  connect time — see [Runtime & driver selection](#runtime--driver-selection). The official Docker
-  image runs on Bun (`bun:sqlite`); Node-based installs (`npx` / brew / deb running `node server.js`)
-  use `node:sqlite` (Node >= 24). Only on a runtime with neither driver does `connect()` throw a
-  `DatabaseConfigError`.
+  connect time — see [Runtime & driver selection](#runtime--driver-selection). All packaged
+  distribution channels — the official Docker image, `npx @libredb/studio`, the Homebrew tap, the
+  `.deb`/`.rpm` packages, and the standalone tarballs — run the built app with `node server.js` (the
+  Docker image's runner stage is `node:24.16.0-trixie-slim`; the other channels bundle their own pinned
+  Node 24 runtime), so they all use `node:sqlite`. `bun:sqlite` is used for local development
+  (`bun dev`) and the test suite, where Next.js runs directly under Bun. Only on a runtime with
+  neither driver does `connect()` throw a `DatabaseConfigError`.
 
 Position it accordingly: a developer-friendly, works-everywhere, frictionless-onboarding feature —
 not an enterprise/SaaS headline.
@@ -125,9 +128,9 @@ The driver is imported lazily via `loadSQLiteDriver()`
 ### Registration
 
 ```ts
-// factory.ts:76
-case 'sqlite': {
-  const { SQLiteProvider } = await import('./providers/sql/sqlite');
+// factory.ts:72
+case "sqlite": {
+  const { SQLiteProvider } = await import("./providers/sql/sqlite");
   return new SQLiteProvider(connection, options);
 }
 ```
@@ -136,7 +139,7 @@ case 'sqlite': {
 
 ## 3. Design decisions
 
-### 3.1 File path resolution & path-traversal guard
+### 3.1 File path resolution & the admin-trusted path model
 
 `getDatabasePath()` ([sqlite.ts:133](../../src/lib/db/providers/sql/sqlite.ts)) resolves the target:
 `connectionString` (stripping a `file:` prefix) → else `database` → else `:memory:`. Non-`:memory:`
@@ -145,8 +148,14 @@ directories are created on connect.
 
 > ⚠️ The accompanying `resolved !== path.normalize(resolved)` check is effectively a **no-op** —
 > `path.resolve()` already normalises its output, so the two are always equal. It therefore does
-> **not** actually block `../` traversal; only the NUL-byte check is meaningful. See
-> [Known limitations](#13-known-limitations--future-work).
+> **not** actually block `../` traversal; only the NUL-byte check is meaningful. This is a
+> known code defect, but not treated as a vulnerability under this feature's trust model: a
+> connection's `database`/`connectionString` path is set by whoever configures the connection (an
+> authenticated user of this Studio instance) — pointing Studio at an arbitrary server-side file is
+> the intended capability, not attacker-controlled input from an untrusted client. There is
+> currently **no** option to sandbox resolvable paths to a base directory. See
+> [Known limitations](#13-known-limitations--future-work) and
+> [issue #125](https://github.com/libredb/libredb-studio/issues/125).
 
 ### 3.2 PRAGMAs on connect
 
@@ -374,8 +383,12 @@ not apply to SQLite ([§3.4](#34-no-transactions-api-no-cancellation-no-pool)).
 - **Single schema (`main`)** — `ATTACH`ed databases are not surfaced.
 - **Path-traversal guard is ineffective.** `getDatabasePath()` intends to reject traversal but
   compares `path.resolve(p)` against its own `normalize()` (always equal), so only NUL bytes are
-  actually rejected — the resolved absolute path is otherwise used as-is. *Future:* confine the
-  input path to an allowed base directory (or validate the raw input before resolving).
+  actually rejected — the resolved absolute path is otherwise used as-is. This does not grant an
+  untrusted client any new access — the path comes from an authenticated user's connection config,
+  and reading arbitrary server-side files by path is the feature — but the guard should either work
+  or be removed. *Future:* confine the input path to an allowed base directory (or validate the raw
+  input before resolving); see
+  [issue #125](https://github.com/libredb/libredb-studio/issues/125).
 
 ---
 

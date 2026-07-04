@@ -98,6 +98,21 @@ On successful login, the user is redirected based on their role:
 - `admin` → `/admin`
 - `user` → `/`
 
+On failure, the form surfaces the API's `message` via a toast instead of a
+generic error:
+- Wrong credentials → `"Invalid email or password"` (401).
+- Server not configured (missing `ADMIN_PASSWORD`, or a missing/too-short
+  `JWT_SECRET`) → the actionable `AuthConfigError` message (503), e.g. *"Login
+  is unavailable: this server has no administrator password configured. Set
+  the ADMIN_PASSWORD environment variable and restart the server."* — never a
+  misleading "Invalid email or password" (PR #106).
+
+**Zero-config first run:** if `ADMIN_PASSWORD`/`JWT_SECRET` are missing, they
+are generated at boot and the admin password is printed once to the server
+log instead of the 503 above; see [DISTRIBUTION.md](../DISTRIBUTION.md) for
+the full behavior. Set `AUTH_BOOTSTRAP=off` to disable generation and exercise
+the 503 path with explicit credentials.
+
 ---
 
 ## Design System
@@ -136,6 +151,7 @@ The login page follows the app's premium dark aesthetic:
 |----------|---------|-----------------|
 | `NEXT_PUBLIC_AUTH_PROVIDER` | `local` | `"oidc"` → SSO button, `"local"` → email/password form |
 | `NEXT_PUBLIC_APP_VERSION` | — | Displayed in footer as `v{version}` |
+| `AUTH_BOOTSTRAP` | on | `off`/`false`/`0` (case-insensitive) disables zero-config credential generation, so a missing `ADMIN_PASSWORD`/`JWT_SECRET` surfaces the 503 error above instead |
 
 ---
 
@@ -160,10 +176,10 @@ Hero text is in the `<h1>` element. The gradient word uses `from-blue-400 to-cya
 Both desktop and mobile lists are separate arrays. Keep them in sync:
 
 ```tsx
-// Desktop (left panel, line ~131)
+// Desktop (left panel, line ~142)
 {['PostgreSQL', 'MySQL', 'MongoDB', 'Oracle', 'SQL Server'].map(...)}
 
-// Mobile (bottom pills, line ~316)
+// Mobile (bottom pills, line ~297)
 {['PostgreSQL', 'MySQL', 'MongoDB', 'Oracle', 'SQL Server'].map(...)}
 ```
 

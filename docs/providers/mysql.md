@@ -66,7 +66,7 @@ that matter most here:
 
 ### Registration
 
-Loaded on demand by the factory ([`factory.ts:71`](../../src/lib/db/factory.ts)):
+Loaded on demand by the factory ([`factory.ts:67`](../../src/lib/db/factory.ts)):
 
 ```ts
 case 'mysql': {
@@ -81,7 +81,7 @@ case 'mysql': {
 
 ### 3.1 N+1 schema introspection (no MATERIALIZED CTEs, no two-phase split)
 
-Unlike PostgreSQL, `getSchema()` ([mysql.ts:327](../../src/lib/db/providers/sql/mysql.ts)) runs one
+Unlike PostgreSQL, `getSchema()` ([mysql.ts:326](../../src/lib/db/providers/sql/mysql.ts)) runs one
 query for the table list and then **three queries per table** (columns, foreign keys, indexes) —
 the classic `1 + N*3` pattern. MySQL also does **not** implement `getSchemaList()` /
 `getSchemaRelations()`, so the two-phase fast-tree loading that PostgreSQL uses is unavailable; the
@@ -96,7 +96,7 @@ names are bare (no `schema.table` prefixing). There is no cross-schema FK resolu
 
 ### 3.3 BLOB / binary values sanitized to hex
 
-`sanitizeRow()` ([mysql.ts:175](../../src/lib/db/providers/sql/mysql.ts)) walks every result row and
+`sanitizeRow()` ([mysql.ts:170](../../src/lib/db/providers/sql/mysql.ts)) walks every result row and
 converts `Buffer` values to `0x<hex>` strings (empty buffers → `''`). MySQL returns `BLOB`/`BINARY`
 columns as Node `Buffer`s; without this they would not serialize cleanly to the JSON grid. This runs
 on both `query()` and `queryInTransaction()`.
@@ -111,7 +111,7 @@ mysql2 returns a `ResultSetHeader` rather than an array, and the provider report
 
 ### 3.5 No server-side query timeout
 
-The pool config ([mysql.ts:119](../../src/lib/db/providers/sql/mysql.ts)) intentionally sets only
+The pool config ([mysql.ts:114](../../src/lib/db/providers/sql/mysql.ts)) intentionally sets only
 mysql2-specific options and **does not** translate `ProviderOptions.queryTimeout` into a server-side
 timeout (MySQL has no direct `statement_timeout` pool option like Postgres). A runaway query is not
 auto-killed by the provider; cancellation is explicit via [`cancelQuery()`](#53-query-cancellation).
@@ -119,7 +119,7 @@ auto-killed by the provider; cancellation is explicit via [`cancelQuery()`](#53-
 ### 3.6 Maintenance over all tables when no target
 
 `analyze`/`optimize`/`check` without a target run against **all base tables** in the database
-(`getAllTablesForMaintenance()`, capped at **50** tables, [mysql.ts:562](../../src/lib/db/providers/sql/mysql.ts)),
+(`getAllTablesForMaintenance()`, capped at **50** tables, [mysql.ts:577](../../src/lib/db/providers/sql/mysql.ts)),
 each name quoted via `escapeIdentifier()`. With a target, the single quoted table is used.
 
 ---
@@ -128,7 +128,7 @@ each name quoted via `escapeIdentifier()`. With a target, the single quoted tabl
 
 ### 4.1 Configuration
 
-Two forms (`validate()`, [mysql.ts:71](../../src/lib/db/providers/sql/mysql.ts)). `validate()`
+Two forms (`validate()`, [mysql.ts:66](../../src/lib/db/providers/sql/mysql.ts)). `validate()`
 requires `host` **and** `database` only when no `connectionString` is given — it does not reject
 supplying both; if both are present the connection string is used (passed to the pool as `uri`).
 
@@ -146,7 +146,7 @@ const b = { id: 'my-1', name: 'App DB', type: 'mysql',
 ### 4.2 Connection pooling
 
 `connect()` builds a `mysql2` pool and validates it by acquiring/releasing one connection. The pool
-options ([mysql.ts:119](../../src/lib/db/providers/sql/mysql.ts)):
+options ([mysql.ts:114](../../src/lib/db/providers/sql/mysql.ts)):
 
 | mysql2 option | Value | Source |
 |---------------|-------|--------|
@@ -169,7 +169,7 @@ options ([mysql.ts:119](../../src/lib/db/providers/sql/mysql.ts)):
 
 ### 4.3 SSL
 
-`buildSSLConfig()` ([mysql.ts:147](../../src/lib/db/providers/sql/mysql.ts)) — applied **only in the
+`buildSSLConfig()` ([mysql.ts:142](../../src/lib/db/providers/sql/mysql.ts)) — applied **only in the
 discrete-fields form** (the `connectionString` path bypasses it entirely). Note `disable` returns
 `undefined` (mysql2's "off"), not `false`:
 
@@ -185,7 +185,7 @@ discrete-fields form** (the `connectionString` path bypasses it entirely). Note 
 
 ### 5.1 Execution
 
-`query(sql, params?, queryId?)` ([mysql.ts:190](../../src/lib/db/providers/sql/mysql.ts)) acquires a
+`query(sql, params?, queryId?)` ([mysql.ts:185](../../src/lib/db/providers/sql/mysql.ts)) acquires a
 pooled connection, optionally records its `threadId` for cancellation, runs the prepared statement,
 sanitizes binary values, and returns the standard envelope:
 
@@ -206,7 +206,7 @@ Default page size `DEFAULT_QUERY_LIMIT = 500`; unlimited caps at `MAX_UNLIMITED_
 ### 5.3 Query cancellation
 
 A query issued with a `queryId` records its connection `threadId`. `cancelQuery(queryId)`
-([mysql.ts:220](../../src/lib/db/providers/sql/mysql.ts)) issues `KILL QUERY <threadId>` and returns
+([mysql.ts:215](../../src/lib/db/providers/sql/mysql.ts)) issues `KILL QUERY <threadId>` and returns
 `true` on success (it does not verify the target was actually mid-query). The killed query surfaces
 to its caller as a `QueryCancelledError` (MySQL emits *"Query execution was interrupted"*, which
 `mapDatabaseError()` classifies as cancellation). Exposed via `POST /api/db/cancel`.
@@ -221,7 +221,7 @@ to the pool until commit/rollback). Surfaced via `POST /api/db/transaction`.
 
 | Method | Behaviour |
 |--------|-----------|
-| `beginTransaction()` | `pool.getConnection()` + `beginTransaction()`, arms a **5-minute auto-rollback** timer ([mysql.ts:46](../../src/lib/db/providers/sql/mysql.ts)). Throws if one is active. |
+| `beginTransaction()` | `pool.getConnection()` + `beginTransaction()`, arms a **5-minute auto-rollback** timer ([mysql.ts:41](../../src/lib/db/providers/sql/mysql.ts)). Throws if one is active. |
 | `queryInTransaction(sql, params?)` | Runs on the transaction's connection (with the same binary sanitization). Throws if none active. |
 | `commitTransaction()` / `rollbackTransaction()` | Ends it, clears the timer, releases the connection. Throws if none active. |
 | `expireTransaction()` | Timeout callback — auto-`rollback()` to prevent leaked locks. |
@@ -272,7 +272,7 @@ All monitoring reads from `SHOW STATUS`/`SHOW VARIABLES`, `information_schema`, 
 
 ## 9. Maintenance
 
-`runMaintenance(type, target?)` ([mysql.ts:507](../../src/lib/db/providers/sql/mysql.ts)); targets
+`runMaintenance(type, target?)` ([mysql.ts:525](../../src/lib/db/providers/sql/mysql.ts)); targets
 are backtick-quoted via `escapeIdentifier()`:
 
 | Type | With target | Without target |
@@ -289,7 +289,7 @@ validates that the target parses as an integer connection id.
 
 ## 10. Capabilities & labels
 
-### `getCapabilities()` ([mysql.ts:57](../../src/lib/db/providers/sql/mysql.ts))
+### `getCapabilities()` ([mysql.ts:52](../../src/lib/db/providers/sql/mysql.ts))
 
 | Capability | Value |
 |------------|-------|

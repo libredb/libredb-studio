@@ -58,7 +58,7 @@ defaults:                    # Optional — merged into every connection
 connections:
   - id: "analytics-pg"       # Required, unique, lowercase slug [a-z0-9-]
     name: "Analytics DB"      # Required, display name in UI
-    type: postgres            # Required: postgres|mysql|sqlite|mongodb|redis|oracle|mssql
+    type: postgres            # Required: postgres|mysql|sqlite|mongodb|redis|oracle|mssql|libredb
     host: "${PG_HOST}"
     port: 5432
     database: analytics
@@ -100,7 +100,7 @@ connections:
 | `connections` | Yes | — | Array of connection definitions (min 1) |
 | `connections[].id` | Yes | — | Unique slug: `[a-z0-9-]+`, max 64 chars |
 | `connections[].name` | Yes | — | Display name, max 128 chars |
-| `connections[].type` | Yes | — | Database type (see supported list above) |
+| `connections[].type` | Yes | — | Database type: `postgres`, `mysql`, `sqlite`, `mongodb`, `redis`, `oracle`, `mssql`, `libredb` |
 | `connections[].host` | No | — | Hostname or IP |
 | `connections[].port` | No | — | Port number (1-65535) |
 | `connections[].database` | No | — | Database name |
@@ -213,7 +213,7 @@ User sees only connections where roles includes "user" or "*"
 - On first load, the connection is **copied to the user's local storage** with credentials
 - User **can edit or delete** their copy
 - Once copied, the connection belongs to the user — admin changes to the seed config won't affect existing copies
-- If the user deletes their copy, it will be re-imported on next login
+- If the user deletes their copy, the seed ID is recorded in a local "dismissed" list and the connection is **not** re-imported on subsequent loads (see [Dismissed Seeds](#dismissed-seeds) below)
 - Best for: development databases, sandbox environments
 
 ### Comparison
@@ -225,6 +225,11 @@ User sees only connections where roles includes "user" or "*"
 | Password rotation | Automatic | User must re-import |
 | Admin removes from config | Disappears for all | User copy remains |
 | Server-side credential resolution | Yes | No (user has local copy) |
+| User deletes their copy | N/A (locked) | Dismissed permanently — will not reappear |
+
+### Dismissed Seeds
+
+Deleting a `managed: false` connection from the sidebar does not simply remove it — the client records the seed's `id` in a local `dismissed_seeds` list (synced through the same write-through storage as connections). On every subsequent load, `dismissed_seeds` is checked before re-importing `managed: false` connections from `/api/connections/managed`, so a deleted seed connection stays gone even after the admin's config is untouched. There is currently no UI to un-dismiss a seed; the only way to bring it back is to clear the `dismissed_seeds` entry from local storage (see [Troubleshooting](#troubleshooting)).
 
 ---
 
@@ -349,7 +354,7 @@ extraEnvFrom:
 |----------|----------|
 | Config file not found | App runs normally, no seed connections. Warning logged. |
 | Invalid YAML/JSON | Endpoint returns 500. Error logged with details. |
-| Invalid config (Zod validation fails) | Endpoint returns 500 with validation errors. |
+| Invalid config (Zod validation fails) | Endpoint returns a generic 500. Validation errors are logged server-side, not returned in the response body. |
 | Unrecognized `version` | Endpoint returns 500. Future versions require code update. |
 | `${ENV_VAR}` not defined | That connection is **skipped**. Others work normally. Error logged. |
 | User role doesn't match any connection | Empty list returned. Normal behavior. |
@@ -376,18 +381,12 @@ extraEnvFrom:
 
 ### Audit Trail
 
-Every operation on a managed connection is logged:
+`resolveConnection()` (`src/lib/seed/resolve-connection.ts`) logs every seed-connection lookup through the structured logger:
 
-```json
-{
-  "event": "managed_connection_query",
-  "connectionId": "prod-analytics",
-  "user": "admin@company.com",
-  "role": "admin",
-  "route": "/api/db/query",
-  "timestamp": "2026-03-25T10:30:00Z"
-}
-```
+- A successful resolution logs at `debug` level with `route`, `connectionId`, and `user`.
+- A denied lookup (connection exists but the caller's role isn't in `roles`) logs at `warn` level with `route`, `connectionId`, `user`, and `role`, before the 403 is returned.
+
+This is the standard application logger (`src/lib/logger.ts`), not a persisted audit-log entry — there is currently no dedicated `managed_connection` audit-ring-buffer event wired up for seed connections, despite that event type existing in `src/lib/audit.ts`'s `AuditEventType` union.
 
 ---
 
@@ -397,6 +396,23 @@ Every operation on a managed connection is logged:
 |----------|---------|-------------|
 | `SEED_CONFIG_PATH` | `/app/config/seed-connections.yaml` | Path to config file |
 | `SEED_CACHE_TTL_MS` | `60000` | Cache TTL in milliseconds |
+
+These are unrelated to the embedded sample connection described below, which uses its own `LIBREDB_EMBEDDED_SAMPLE` / `LIBREDB_EMBEDDED_SAMPLE_PATH` variables.
+
+---
+
+## Built-in Sample Connection
+
+Standalone deployments also get one automatic, code-defined seed connection: on first startup, `src/lib/seed/libredb-sample.ts` creates an embedded LibreDB file (default `<data dir>/sample.libredb`, alongside the SQLite storage DB) and seeds it with example data — a `users` table, an `articles` document collection, and a couple of KV entries — one per LibreDB lens. `getManagedConnections()` then appends it to the managed-connections list as `type: "libredb"`, `managed: false`, `roles: ["*"]`, labeled "Sample (LibreDB)", so it behaves like any other unmanaged seed: editable, and if deleted it goes to the dismissed list rather than reappearing.
+
+This is separate from the `SEED_CONFIG_PATH` file and needs no config of its own:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `LIBREDB_EMBEDDED_SAMPLE` | `true` | Set to `false` (exact match) to disable the sample connection |
+| `LIBREDB_EMBEDDED_SAMPLE_PATH` | `<data dir>/sample.libredb` | Override the sample file's location |
+
+The sample file is only created if it doesn't already exist — the seeding is idempotent and never overwrites a user's edits. This feature has no effect when embedded in libredb-platform (it is not part of the published `@libredb/studio` package surface).
 
 ---
 
@@ -418,11 +434,15 @@ The user's role doesn't match the connection's `roles` array. Check:
 ### Credentials not updating after config change
 
 - `managed: true`: Wait for TTL to expire (default 60s), or restart the app
-- `managed: false`: The user has a local copy. They need to delete it from the sidebar and re-login to get the updated version
+- `managed: false`: The user has a local copy that never re-syncs from the config. Deleting it from the sidebar does not bring back the updated version either — it only marks the seed as dismissed (see [Dismissed Seeds](#dismissed-seeds)). To pick up new credentials, the user must delete their local copy from the `libredb_connections` entry in localStorage **and** remove the matching seed ID from `libredb_dismissed_seeds`, then reload.
 
 ### Two identical connections in sidebar
 
 Clear browser localStorage (`libredb_connections` key) and refresh. This can happen if a connection was persisted before being marked as managed.
+
+### A deleted seed connection won't come back
+
+This is expected: deleting a `managed: false` connection adds its seed ID to `libredb_dismissed_seeds` in localStorage, and it is intentionally excluded from re-import on every subsequent load (see [Dismissed Seeds](#dismissed-seeds)). Remove the ID from that key (or clear it) to let the connection be re-imported.
 
 ---
 
@@ -442,7 +462,9 @@ seed-connections.yaml (volume mount)
   ┌─────▼──────────────┐
   │ ConnectionFilter    │  Role filter + defaults merge → ManagedConnection[]
   └─────┬──────────────┘
-        │
+        │         ┌───────────────────────────────┐
+        ├─────────┤ Embedded sample (libredb-sample.ts) │  Appended if LIBREDB_EMBEDDED_SAMPLE != "false"
+        │         └───────────────────────────────┘
   ┌─────▼───────────────────────┐
   │ GET /api/connections/managed │  Auth + strip credentials for managed:true
   └─────┬───────────────────────┘
@@ -456,7 +478,7 @@ seed-connections.yaml (volume mount)
   └──────────────────────────────────┘
 ```
 
-**Module:** `src/lib/seed/` — 6 files, ~350 lines total
+**Module:** `src/lib/seed/` — 7 files, ~480 lines total
 
 | File | Responsibility |
 |------|---------------|
@@ -465,4 +487,5 @@ seed-connections.yaml (volume mount)
 | `credential-resolver.ts` | `${ENV_VAR}` resolution |
 | `connection-filter.ts` | Role filter + defaults merge |
 | `resolve-connection.ts` | Shared utility for all API routes |
+| `libredb-sample.ts` | Built-in "Sample (LibreDB)" connection: file seeding + descriptor |
 | `index.ts` | Public API: `getManagedConnections()` |

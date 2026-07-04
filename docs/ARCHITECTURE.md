@@ -175,6 +175,19 @@ Studio ships both as a standalone app and as the `@libredb/studio` npm package c
 - **`src/exports/`** — barrel modules (`components.ts`, `providers.ts`, `workspace.ts`, `types.ts`) that define the package's public surface; `package.json` `exports`/`main`/`module` point at the tsup `dist/` output.
 - Platform integration rules (Tailwind tokens, Lucide stroke widths, chunk scanning) live in `CLAUDE.md`.
 
+### 4.7. Standalone Boot Flow (`src/instrumentation.ts`)
+
+Next.js runs `register()` once per server worker, **only** when Studio boots its own server (never when `@libredb/studio` is imported by libredb-platform) and only on the Node.js runtime. On standalone boot it:
+
+1. **Bootstraps missing auth env** (`src/lib/auth-bootstrap.ts`, #109). When `JWT_SECRET` / `ADMIN_PASSWORD` are absent they are generated once, persisted to `<data dir>/auth-bootstrap.json` (mode `0600`), and injected into `process.env` before any secret reader runs; the admin password is printed once. Explicitly set env vars always win. Disable with `AUTH_BOOTSTRAP=off|false|0` (case-insensitive); an unrecognized value warns and stays on. In OIDC mode only the JWT secret is generated.
+2. **Seeds the embedded sample** (`src/lib/seed/libredb-sample.ts`). Unless `LIBREDB_EMBEDDED_SAMPLE=false`, it creates `<data dir>/sample.libredb` (idempotently, atomic rename) and `GET /api/connections/managed` then advertises an editable, dismissable "Sample (LibreDB)" connection pointing at it.
+
+Failures in either step are logged and swallowed — boot never breaks.
+
+### 4.8. SQLite Driver Selection (`src/lib/db/providers/sql/sqlite-driver.ts`)
+
+The SQLite **DB provider** is runtime-adaptive: it loads `bun:sqlite` under Bun and `node:sqlite` under plain Node (npx / brew / deb installs run `node server.js`). `LIBREDB_SQLITE_DRIVER=bun|node` forces a driver (used by tests). This is distinct from the **storage layer**, whose SQLite backend uses `better-sqlite3`.
+
 ## 5. Directory Structure
 
 ```
@@ -185,6 +198,7 @@ src/
 │   │   ├── ai/             # chat, nl2sql, explain, query-safety, index-advisor, impact, describe-schema, autopilot
 │   │   ├── db/             # Query, schema, health, maintenance, transactions
 │   │   ├── storage/        # Storage sync API (config, CRUD, migrate)
+│   │   ├── connections/    # managed/ — built-in (seeded) connections listing
 │   │   └── admin/          # Fleet health, audit
 │   ├── admin/              # Admin dashboard (RBAC protected)
 │   ├── monitoring/         # Monitoring dashboard page
@@ -207,19 +221,22 @@ src/
 └── lib/
     ├── db/                  # Database provider module
     │   ├── providers/
-    │   │   ├── sql/         # postgres, mysql, sqlite, oracle, mssql
+    │   │   ├── sql/         # postgres, mysql, sqlite (+ sqlite-driver runtime adapter), oracle, mssql
     │   │   ├── document/    # mongodb
-    │   │   └── keyvalue/    # redis
+    │   │   ├── keyvalue/    # redis
+    │   │   └── embedded/    # libredb (built-in embedded provider for the sample connection)
     │   ├── factory.ts       # Provider factory
     │   └── types.ts         # Database types
     ├── llm/                 # LLM provider module
     ├── editor/              # Monaco completions (SQL + MongoDB)
     ├── schema-diff/         # Diff engine + migration SQL generator
     ├── sql/                 # Statement splitter, alias extractor
-    ├── seed/                # Seed connections (config, filter, credential resolver)
+    ├── seed/                # Seed connections (config, filter, credential resolver) + libredb-sample seeding
+    ├── config/              # auth-env.ts — single JWT_SECRET reader (auth.ts, proxy.ts, oidc.ts)
     ├── api/                 # API error codes + schema-route helpers
     ├── ssh/                 # SSH tunnel support
     ├── auth.ts              # JWT utilities
+    ├── auth-bootstrap.ts    # Zero-config first-run auth bootstrap (runs in instrumentation)
     ├── oidc.ts              # OIDC utilities
     └── storage/             # Storage abstraction layer
         ├── index.ts         # Barrel export
@@ -231,7 +248,8 @@ src/
 
 ## 6. Deployment
 
-- **Docker**: Multi-stage Bun build with standalone Next.js output
+- **Docker / Helm**: Multi-stage Bun build with standalone Next.js output; these channels bind `0.0.0.0`. Canonical image `ghcr.io/libredb/libredb-studio`.
+- **Native channels** (`bin/studio.js` npx launcher, Homebrew tap, `.deb`/`.rpm`, Snap, standalone tarballs; sources under `bin/` and `packaging/`): local-first, bind `127.0.0.1` by default unless `--host`/`HOSTNAME` opts in. The npx launcher ships as a pure library and downloads the SHA256-verified standalone server tarball from GitHub Releases. Full matrix and per-channel details in [`docs/DISTRIBUTION.md`](DISTRIBUTION.md).
 - **Health Check**: `GET /api/db/health`
 - **Stateless API**: API routes are stateless, suitable for horizontal scaling
-- **Environment**: Configured via `.env.local` (see CLAUDE.md for full variable list)
+- **Environment**: Configured via `.env.local` (see CLAUDE.md for full variable list). Missing auth secrets are generated on first standalone boot — see [§4.7](#47-standalone-boot-flow-srcinstrumentationts).

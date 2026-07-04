@@ -13,6 +13,7 @@ in lockstep with the code (see the tri-sync rule in [`../../CLAUDE.md`](../../CL
 | SQLite | `sqlite` | SQL (embedded) | `bun:sqlite` (Bun) / `node:sqlite` (Node) | SQL | [sqlite.md](./sqlite.md) |
 | Redis | `redis` | Key-Value | `ioredis` | JSON | [redis.md](./redis.md) |
 | MongoDB | `mongodb` | Document | `mongodb` | JSON (MQL) | [mongodb.md](./mongodb.md) |
+| LibreDB | `libredb` | Embedded (Key-Value) | `@libredb/libredb` | JSON (command grammar) | [libredb.md](./libredb.md) |
 
 ## Conventions
 
