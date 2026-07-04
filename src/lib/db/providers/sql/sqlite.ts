@@ -1,6 +1,10 @@
 /**
  * SQLite Database Provider
- * File-based SQLite support - Uses bun:sqlite when available
+ * File-based SQLite support - runs under both Bun and Node.
+ *
+ * The underlying driver is selected at runtime by the sqlite-driver adapter:
+ * bun:sqlite under Bun, node:sqlite under Node (override with
+ * LIBREDB_SQLITE_DRIVER=bun|node).
  *
  * Note: SQLite is primarily for local development. Cloud deployments
  * typically use PostgreSQL or MySQL instead.
@@ -26,46 +30,9 @@ import {
 } from "../../types";
 import { DatabaseConfigError, ConnectionError, QueryError, mapDatabaseError } from "../../errors";
 import { formatBytes } from "../../utils/pool-manager";
+import { loadSQLiteDriver, type SQLiteDatabase } from "./sqlite-driver";
 import * as fs from "fs";
 import * as path from "path";
-
-// ============================================================================
-// Dynamic SQLite Import (for Bun runtime compatibility)
-// ============================================================================
-
-type SQLiteDatabase = {
-  exec(sql: string): void;
-  prepare(sql: string): {
-    all(...params: unknown[]): unknown[];
-    get(...params: unknown[]): unknown;
-    run(...params: unknown[]): { changes: number };
-  };
-  close(): void;
-};
-
-type SQLiteConstructor = new (path: string, options?: { create?: boolean; readwrite?: boolean }) => SQLiteDatabase;
-
-let Database: SQLiteConstructor | null = null;
-let sqliteLoadError: Error | null = null;
-
-// Try to load bun:sqlite at runtime
-async function loadSQLite(): Promise<SQLiteConstructor> {
-  if (Database) return Database;
-  if (sqliteLoadError) throw sqliteLoadError;
-
-  try {
-    // Dynamic import for bun:sqlite
-    const sqlite = await import("bun:sqlite");
-    Database = sqlite.Database as unknown as SQLiteConstructor;
-    return Database;
-  } catch {
-    sqliteLoadError = new DatabaseConfigError(
-      "SQLite is not available in this environment. SQLite requires Bun runtime. For cloud deployments, use PostgreSQL or MySQL instead.",
-      "sqlite",
-    );
-    throw sqliteLoadError;
-  }
-}
 
 // ============================================================================
 // SQLite Provider
@@ -118,8 +85,8 @@ export class SQLiteProvider extends SQLBaseProvider {
     }
 
     try {
-      // Dynamically load SQLite
-      const SQLiteDB = await loadSQLite();
+      // Dynamically load the runtime-appropriate SQLite driver
+      const SQLiteDB = await loadSQLiteDriver();
 
       const dbPath = this.getDatabasePath();
 

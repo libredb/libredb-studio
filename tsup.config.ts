@@ -16,6 +16,11 @@ export default defineConfig({
   clean: true,
   tsconfig: "tsconfig.lib.json",
   treeshake: true,
+  // Keep `node:`-prefixed builtin imports intact: tsup strips the prefix by
+  // default (import("node:sqlite") -> import("sqlite")), which breaks
+  // node:sqlite — that builtin exists only WITH the prefix. The package
+  // targets Node >= 24 + modern bundlers, which all understand `node:`.
+  removeNodeProtocol: false,
   external: [
     "react",
     "react-dom",
@@ -24,6 +29,8 @@ export default defineConfig({
     "pg",
     "mysql2",
     "better-sqlite3",
+    "bun:sqlite", // Bun-runtime builtin (SQLite DB provider driver under Bun)
+    "node:sqlite", // Node-runtime builtin (SQLite DB provider driver under Node)
     "oracledb",
     "mssql",
     "mongodb",

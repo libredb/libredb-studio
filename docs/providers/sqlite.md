@@ -1,6 +1,7 @@
 # SQLite Provider
 
-> File-based SQLite support for LibreDB Studio, using the **`bun:sqlite`** built-in driver.
+> File-based SQLite support for LibreDB Studio, using the runtime's **built-in SQLite driver**:
+> `bun:sqlite` under Bun, `node:sqlite` under Node (see [Runtime](#runtime--driver-selection)).
 > This document is the single reference point for the SQLite provider: design, architecture, usage,
 > and tests. It is a SQL-family provider sharing `SQLBaseProvider`; read the
 > [PostgreSQL doc](./postgres.md) first for the canonical SQL walkthrough, then this doc for the
@@ -11,7 +12,7 @@
 | **Status** | ✅ Implemented & shipped |
 | **Database type id** | `sqlite` |
 | **Family** | SQL (relational, **embedded / file-based**) |
-| **Driver** | **`bun:sqlite`** (Bun runtime built-in) — *not* `better-sqlite3` |
+| **Driver** | **`bun:sqlite`** under Bun / **`node:sqlite`** under Node (both runtime built-ins, selected by the [`sqlite-driver`](../../src/lib/db/providers/sql/sqlite-driver.ts) adapter) — *not* `better-sqlite3` |
 | **Query language** | `sql` |
 | **Default port** | `null` (no network listener) |
 | **Connection** | A **server-local file path** (or `:memory:`) — **not** a network endpoint |
@@ -31,8 +32,9 @@ SQLite shows up in this codebase in **two unrelated roles**. Don't conflate them
 1. **Storage backend for Studio's own data** (`STORAGE_PROVIDER=sqlite`) — persists connections,
    history, and settings. Uses **`better-sqlite3`** (Node-compatible, works in the production
    runner). This is internal infrastructure, documented under the storage layer, **not** this doc.
-2. **A target database you connect to and query** (`type: 'sqlite'`) — *this* document. Uses
-   **`bun:sqlite`**.
+2. **A target database you connect to and query** (`type: 'sqlite'`) — *this* document. Uses the
+   runtime's built-in driver (**`bun:sqlite`** or **`node:sqlite`**, see
+   [Runtime](#runtime--driver-selection)).
 
 ### Deployment constraint (the strategic bit)
 
@@ -44,14 +46,37 @@ for a web-based editor:
   connect to over the network. SQLite-as-target therefore fits **self-hosted / Docker / local-dev /
   edge** deployments (where the file is co-located with Studio) and **zero-config trials** (instant,
   no server to provision) — it is **not** a multi-tenant SaaS target.
-- **It requires the Bun runtime.** The provider imports `bun:sqlite`; if Studio runs on a Node
-  runtime (e.g. some embeddings of the `@libredb/studio` package), `connect()` throws a
-  `DatabaseConfigError` advising PostgreSQL/MySQL instead ([sqlite.ts:57](../../src/lib/db/providers/sql/sqlite.ts)).
-  The official Docker image runs on Bun, so SQLite works there. (Note the asymmetry: the *storage*
-  SQLite uses `better-sqlite3` precisely so it works under Node; the *target* provider does not.)
+- **It works under both Bun and Node.** The provider selects the runtime's built-in driver at
+  connect time — see [Runtime & driver selection](#runtime--driver-selection). The official Docker
+  image runs on Bun (`bun:sqlite`); Node-based installs (`npx` / brew / deb running `node server.js`)
+  use `node:sqlite` (Node >= 24). Only on a runtime with neither driver does `connect()` throw a
+  `DatabaseConfigError`.
 
 Position it accordingly: a developer-friendly, works-everywhere, frictionless-onboarding feature —
 not an enterprise/SaaS headline.
+
+### Runtime & driver selection
+
+The provider talks to a tiny internal driver adapter,
+[`sqlite-driver.ts`](../../src/lib/db/providers/sql/sqlite-driver.ts), which picks the embedded
+SQLite driver by runtime:
+
+| Runtime | Driver | Notes |
+|---------|--------|-------|
+| Bun (`typeof Bun !== "undefined"`) | `bun:sqlite` | Bun built-in |
+| Node | `node:sqlite` (`DatabaseSync`) | Node built-in, stable for the package's Node >= 24 target |
+
+- **Override:** set `LIBREDB_SQLITE_DRIVER=bun|node` to force a driver (used by the integration
+  tests for determinism); any other value falls back to runtime detection.
+- **Lazy:** both drivers load via dynamic import inside `connect()`, so neither is touched unless a
+  sqlite connection is actually used.
+- **Identical behaviour:** the adapter exposes the exact `bun:sqlite`-shaped surface the provider
+  uses (`exec` / `prepare().all/get/run` / `close`) and bridges the small `node:sqlite` deltas
+  (`get()` miss returns `null` not `undefined`; `run().changes` normalized to `number`), so results
+  and error mapping are the same under both runtimes.
+- **Why not `better-sqlite3`?** Bun refuses to load it outright, and its native binding must match
+  the installing runtime's ABI (a bun-installed binding fails under Node). The built-in drivers
+  need no native dependency at all. (`better-sqlite3` remains the *storage-layer* driver.)
 
 ---
 
@@ -63,7 +88,7 @@ everything that assumes a server. Read this as a **diff against the [PostgreSQL 
 | Aspect | PostgreSQL | SQLite |
 |--------|------------|--------|
 | Connection | network host/port | **server-local file** (or `:memory:`) |
-| Driver | `pg` | **`bun:sqlite`** (Bun-only) |
+| Driver | `pg` | **`bun:sqlite`** / **`node:sqlite`** (runtime built-ins) |
 | Pooling | `pg.Pool` | none (one `Database` handle) |
 | Transactions API | begin/commit/rollback + auto-rollback | **none exposed** |
 | Cancellation | `pg_cancel_backend` | **none** |
@@ -90,9 +115,12 @@ works) and the default SQL labels (*Vacuum Table* / *Analyze Table* fit, since S
 
 ### Dynamic driver load
 
-`bun:sqlite` is imported lazily via `loadSQLite()` ([sqlite.ts:57](../../src/lib/db/providers/sql/sqlite.ts)),
-caching the constructor and the failure. On a non-Bun runtime the import fails and a
-`DatabaseConfigError` is thrown — see [§0](#deployment-constraint-the-strategic-bit).
+The driver is imported lazily via `loadSQLiteDriver()`
+([sqlite-driver.ts](../../src/lib/db/providers/sql/sqlite-driver.ts)), which caches the constructor
+(and any load failure) per driver name. Selection is runtime-based (`bun:sqlite` under Bun,
+`node:sqlite` under Node) with a `LIBREDB_SQLITE_DRIVER=bun|node` override — see
+[Runtime & driver selection](#runtime--driver-selection). If the selected driver cannot load, a
+`DatabaseConfigError` is thrown.
 
 ### Registration
 
@@ -110,7 +138,7 @@ case 'sqlite': {
 
 ### 3.1 File path resolution & path-traversal guard
 
-`getDatabasePath()` ([sqlite.ts:171](../../src/lib/db/providers/sql/sqlite.ts)) resolves the target:
+`getDatabasePath()` ([sqlite.ts:133](../../src/lib/db/providers/sql/sqlite.ts)) resolves the target:
 `connectionString` (stripping a `file:` prefix) → else `database` → else `:memory:`. Non-`:memory:`
 paths are `path.resolve()`-d to an absolute path and **rejected if they contain a NUL byte**. Parent
 directories are created on connect.
@@ -124,15 +152,15 @@ directories are created on connect.
 
 `connect()` opens the file with `{ create: true, readwrite: true }` and sets
 `PRAGMA foreign_keys = ON`, `journal_mode = WAL`, `synchronous = NORMAL`
-([sqlite.ts:120](../../src/lib/db/providers/sql/sqlite.ts)) — FK enforcement on, WAL for better
+([sqlite.ts:104](../../src/lib/db/providers/sql/sqlite.ts)) — FK enforcement on, WAL for better
 concurrency, NORMAL sync for a speed/durability balance.
 
 ### 3.3 Read vs write dispatch
 
-`query()` ([sqlite.ts:200](../../src/lib/db/providers/sql/sqlite.ts)) branches on
+`query()` ([sqlite.ts:159](../../src/lib/db/providers/sql/sqlite.ts)) branches on
 `isReadOnlyQuery(sql)` (inherited): reads use `stmt.all()` and return rows; writes use `stmt.run()`
-and return `{ changes }`. `rowCount = rows.length || changes`. `bun:sqlite` is **synchronous** — the
-provider wraps it in the async signature but there is no real concurrency or cancellation.
+and return `{ changes }`. `rowCount = rows.length || changes`. Both drivers are **synchronous** —
+the provider wraps them in the async signature but there is no real concurrency or cancellation.
 
 ### 3.4 No transactions API, no cancellation, no pool
 
@@ -158,7 +186,7 @@ const c = { id: 'lite-3', name: 'App', type: 'sqlite',
   connectionString: 'file:/data/app.db', createdAt: new Date() };
 ```
 
-`validate()` ([sqlite.ts:105](../../src/lib/db/providers/sql/sqlite.ts)) requires either `database`
+`validate()` ([sqlite.ts:67](../../src/lib/db/providers/sql/sqlite.ts)) requires either `database`
 or `connectionString` (else "Database file path is required … or `:memory:`"). Note
 `getCapabilities().supportsConnectionString` is `false`, yet `connectionString` *is* honoured as a
 path by `getDatabasePath()` — the flag reflects that there is no network DSN, not that the field is
@@ -168,7 +196,7 @@ ignored.
 
 ## 5. Query interface
 
-`query(sql, params?)` — positional params via `bun:sqlite`'s `all()`/`run()`. There is no
+`query(sql, params?)` — positional params via the driver's `all()`/`run()`. There is no
 `prepareQuery()` override, so the inherited base injects a `LIMIT` into bare `SELECT`s
 (`DEFAULT_QUERY_LIMIT = 500`). No transactions, no cancellation ([§3.4](#34-no-transactions-api-no-cancellation-no-pool)).
 `EXPLAIN` is **not** supported (`supportsExplain: false`) — the UI hides the Explain action.
@@ -177,7 +205,7 @@ ignored.
 
 ## 6. Schema introspection
 
-`getSchema()` ([sqlite.ts:244](../../src/lib/db/providers/sql/sqlite.ts)) reads `sqlite_master`
+`getSchema()` ([sqlite.ts:203](../../src/lib/db/providers/sql/sqlite.ts)) reads `sqlite_master`
 (excluding `sqlite_*` internal objects) and, per table, runs the SQLite PRAGMAs:
 
 | Data | Source |
@@ -212,7 +240,7 @@ Minimal by nature — SQLite keeps almost no server-style runtime statistics.
 
 ## 8. Maintenance
 
-`runMaintenance(type, target?)` ([sqlite.ts:418](../../src/lib/db/providers/sql/sqlite.ts)):
+`runMaintenance(type, target?)` ([sqlite.ts:377](../../src/lib/db/providers/sql/sqlite.ts)):
 
 | Type | Action |
 |------|--------|
@@ -228,7 +256,7 @@ Minimal by nature — SQLite keeps almost no server-style runtime statistics.
 
 ## 9. Capabilities & labels
 
-### `getCapabilities()` ([sqlite.ts:91](../../src/lib/db/providers/sql/sqlite.ts))
+### `getCapabilities()` ([sqlite.ts:53](../../src/lib/db/providers/sql/sqlite.ts))
 
 | Capability | Value |
 |------------|-------|
@@ -258,7 +286,7 @@ SQLite-specific branches:
 |-----------|-------|
 | Missing `database` and `connectionString` | `DatabaseConfigError` |
 | Path traversal / NUL in path | `DatabaseConfigError` |
-| `bun:sqlite` unavailable (non-Bun runtime) | `DatabaseConfigError` ("requires Bun runtime…") |
+| Selected driver unavailable (no `bun:sqlite` / `node:sqlite` on this runtime) | `DatabaseConfigError` ("SQLite driver … is not available…") |
 | Open failure | `ConnectionError` |
 | Statement errors whose message matches a heuristic (e.g. *syntax error*, *no such column*) | `QueryError` |
 | Other engine errors | generic `QueryError` / `DatabaseError` with the original message |
@@ -269,11 +297,24 @@ SQLite-specific branches:
 
 ### 11.1 Real engine, no mocks
 
-SQLite is the **only** provider whose integration tests run against a **real engine**: they open a
-`bun:sqlite` **`:memory:`** database — no `mock.module()` needed
+SQLite is the **only** provider whose integration tests run against a **real engine** — no
+`mock.module()` needed
 ([`tests/integration/db/sqlite-provider.test.ts`](../../tests/integration/db/sqlite-provider.test.ts)).
-Embedded + in-memory means there is no server to provision, so the tests exercise actual SQL
-execution, schema PRAGMAs, maintenance, and monitoring end-to-end.
+**Both drivers are exercised:**
+
+- **bun driver** — the main suite opens a `bun:sqlite` **`:memory:`** database in-process (tests
+  run under Bun).
+- **node driver** — Bun cannot load any non-bun SQLite driver in-process, so the core CRUD /
+  schema / maintenance / error-mapping cases run in a real **`node` subprocess**:
+  [`sqlite-node-harness.ts`](../../tests/integration/db/sqlite-node-harness.ts) is bundled with
+  `bun build --target=node` and executed with `LIBREDB_SQLITE_DRIVER=node` against a temp on-disk
+  file (`mkdtempSync`). The subprocess test skips (with a warning) if `node` with `node:sqlite` is
+  unavailable.
+- **driver selection** — `resolveSQLiteDriverName()` is tested directly (runtime default, `bun`/
+  `node` overrides, invalid-value fallback), restoring `LIBREDB_SQLITE_DRIVER` after each test.
+
+Embedded + in-memory/tempfile means there is no server to provision, so the tests exercise actual
+SQL execution, schema PRAGMAs, maintenance, and monitoring end-to-end.
 
 > Mock-isolation still applies to the *suite* (other files mock their drivers process-wide), so run
 > with `bun run test:ci` / `bun run test:coverage`, not the single-process `bun run test`. See
@@ -306,7 +347,7 @@ const provider = await createDatabaseProvider({
   createdAt: new Date(),
 });
 
-await provider.connect();      // throws on a non-Bun runtime
+await provider.connect();      // works under Bun and Node (see Runtime & driver selection)
 const res = await provider.query('SELECT id, name FROM users');
 const schema = await provider.getSchema();
 await provider.disconnect();
@@ -321,8 +362,9 @@ not apply to SQLite ([§3.4](#34-no-transactions-api-no-cancellation-no-pool)).
 
 - **Server-local file only.** No network protocol; a hosted/SaaS user cannot reach a SQLite file on
   their own machine. SQLite-as-target suits self-hosted / local-dev / edge and zero-config trials.
-- **Bun runtime required.** The provider needs `bun:sqlite`; on a Node runtime `connect()` throws
-  and advises PostgreSQL/MySQL. (The *storage* SQLite uses `better-sqlite3` and is unaffected.)
+- **Bun or Node >= 24 runtime required.** The provider needs a built-in SQLite driver
+  (`bun:sqlite` or `node:sqlite`); on a runtime with neither, `connect()` throws a
+  `DatabaseConfigError`. See [Runtime & driver selection](#runtime--driver-selection).
 - **No transactions / cancellation / pooling.** Single embedded handle; the transaction and cancel
   API routes don't apply.
 - **No `EXPLAIN`.**
@@ -339,7 +381,8 @@ not apply to SQLite ([§3.4](#34-no-transactions-api-no-cancellation-no-pool)).
 
 ## 14. References
 
-- Driver: [`bun:sqlite`](https://bun.sh/docs/api/sqlite) (Bun built-in)
+- Drivers: [`bun:sqlite`](https://bun.sh/docs/api/sqlite) (Bun built-in) · [`node:sqlite`](https://nodejs.org/api/sqlite.html) (Node built-in)
+- Driver adapter: [`src/lib/db/providers/sql/sqlite-driver.ts`](../../src/lib/db/providers/sql/sqlite-driver.ts)
 - Source: [`src/lib/db/providers/sql/sqlite.ts`](../../src/lib/db/providers/sql/sqlite.ts)
 - SQL base: [`src/lib/db/providers/sql/sql-base.ts`](../../src/lib/db/providers/sql/sql-base.ts)
 - Query limiter: [`src/lib/db/utils/query-limiter.ts`](../../src/lib/db/utils/query-limiter.ts)

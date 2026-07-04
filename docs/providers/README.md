@@ -10,7 +10,7 @@ in lockstep with the code (see the tri-sync rule in [`../../CLAUDE.md`](../../CL
 | MySQL | `mysql` | SQL | `mysql2` | SQL | [mysql.md](./mysql.md) |
 | Oracle | `oracle` | SQL | `oracledb` (Thin) | SQL | [oracle.md](./oracle.md) |
 | Microsoft SQL Server | `mssql` | SQL | `mssql` | SQL (T-SQL) | [mssql.md](./mssql.md) |
-| SQLite | `sqlite` | SQL (embedded) | `bun:sqlite` | SQL | [sqlite.md](./sqlite.md) |
+| SQLite | `sqlite` | SQL (embedded) | `bun:sqlite` (Bun) / `node:sqlite` (Node) | SQL | [sqlite.md](./sqlite.md) |
 | Redis | `redis` | Key-Value | `ioredis` | JSON | [redis.md](./redis.md) |
 | MongoDB | `mongodb` | Document | `mongodb` | JSON (MQL) | [mongodb.md](./mongodb.md) |
 

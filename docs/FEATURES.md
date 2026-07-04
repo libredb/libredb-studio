@@ -47,7 +47,7 @@
 *   **SQL Databases:**
     *   **PostgreSQL:** Full support with connection pooling (`pg`), schema inspection, and maintenance tools.
     *   **MySQL:** Full support with connection pooling (`mysql2`) and `performance_schema` integration.
-    *   **SQLite:** File-based database support via `bun:sqlite` (the DB provider; the storage layer uses `better-sqlite3`).
+    *   **SQLite:** File-based database support via the runtime's built-in driver — `bun:sqlite` under Bun, `node:sqlite` under Node (the storage layer uses `better-sqlite3`).
     *   **Oracle:** Full support with connection pooling (`oracledb`); introspection/monitoring via the `ALL_*`/`DBA_*` data-dictionary views.
     *   **SQL Server:** Full support with connection pooling (`mssql`); monitoring via DMVs (`sys.dm_*`).
 *   **Document Databases:**

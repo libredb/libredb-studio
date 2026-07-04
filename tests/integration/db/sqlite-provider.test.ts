@@ -1,10 +1,19 @@
 /**
  * Integration tests for SQLiteProvider
- * Uses real bun:sqlite with :memory: database — no mocking needed.
+ * Uses real drivers with real databases — no mocking needed:
+ * - bun driver: bun:sqlite with a :memory: database (in-process, tests run under Bun)
+ * - node driver: node:sqlite against a temp on-disk file, exercised in a real
+ *   `node` subprocess (Bun cannot load any non-bun SQLite driver in-process),
+ *   forced deterministically via LIBREDB_SQLITE_DRIVER=node
  */
 
-import { describe, test, expect, afterEach } from "bun:test";
+import { describe, test, expect, afterEach, beforeAll, afterAll } from "bun:test";
+import { spawnSync } from "node:child_process";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { SQLiteProvider } from "@/lib/db/providers/sql/sqlite";
+import { resolveSQLiteDriverName } from "@/lib/db/providers/sql/sqlite-driver";
 import type { DatabaseConnection } from "@/lib/types";
 import { DatabaseConfigError } from "@/lib/db/errors";
 
@@ -476,5 +485,160 @@ describe("SQLiteProvider", () => {
       expect(labels.entityName).toBe("Table");
       expect(typeof labels.selectAction).toBe("string");
     });
+  });
+});
+
+// ============================================================================
+// Driver selection (sqlite-driver adapter)
+// ============================================================================
+
+describe("resolveSQLiteDriverName()", () => {
+  const originalDriverEnv = process.env.LIBREDB_SQLITE_DRIVER;
+
+  afterEach(() => {
+    if (originalDriverEnv === undefined) {
+      delete process.env.LIBREDB_SQLITE_DRIVER;
+    } else {
+      process.env.LIBREDB_SQLITE_DRIVER = originalDriverEnv;
+    }
+  });
+
+  test("defaults to the bun driver under the Bun runtime", () => {
+    delete process.env.LIBREDB_SQLITE_DRIVER;
+    expect(resolveSQLiteDriverName()).toBe("bun");
+  });
+
+  test("LIBREDB_SQLITE_DRIVER=node forces the node driver", () => {
+    process.env.LIBREDB_SQLITE_DRIVER = "node";
+    expect(resolveSQLiteDriverName()).toBe("node");
+  });
+
+  test("LIBREDB_SQLITE_DRIVER=bun forces the bun driver", () => {
+    process.env.LIBREDB_SQLITE_DRIVER = "bun";
+    expect(resolveSQLiteDriverName()).toBe("bun");
+  });
+
+  test("invalid override falls back to runtime detection", () => {
+    process.env.LIBREDB_SQLITE_DRIVER = "sqlite3";
+    expect(resolveSQLiteDriverName()).toBe("bun");
+  });
+
+  test("provider connects and queries with an explicit LIBREDB_SQLITE_DRIVER=bun override", async () => {
+    process.env.LIBREDB_SQLITE_DRIVER = "bun";
+    const provider = new SQLiteProvider({
+      id: "override-bun",
+      name: "Override Bun",
+      type: "sqlite",
+      database: ":memory:",
+      createdAt: new Date(),
+    });
+    try {
+      await provider.connect();
+      const result = await provider.query("SELECT 1 AS one");
+      expect(result.rows).toEqual([{ one: 1 }]);
+    } finally {
+      await provider.disconnect();
+    }
+  });
+});
+
+// ============================================================================
+// Node driver (LIBREDB_SQLITE_DRIVER=node -> node:sqlite)
+//
+// Bun refuses to load better-sqlite3 and does not implement node:sqlite, so
+// no non-bun driver can run inside `bun test`. The core CRUD / schema /
+// maintenance / error-mapping cases therefore run in a real `node` subprocess:
+// sqlite-node-harness.ts is bundled with `bun build --target=node` and
+// executed with LIBREDB_SQLITE_DRIVER=node against a temp on-disk database
+// (see the harness for the exact scenario).
+// ============================================================================
+
+const nodeSqliteProbe = spawnSync("node", ["-e", "require('node:sqlite')"], { timeout: 30_000 });
+const nodeDriverTestable = nodeSqliteProbe.status === 0;
+if (!nodeDriverTestable) {
+  console.warn("Skipping node-driver SQLite tests: `node` with node:sqlite is not available on this machine");
+}
+
+describe.skipIf(!nodeDriverTestable)("SQLiteProvider with LIBREDB_SQLITE_DRIVER=node (node:sqlite)", () => {
+  let tmpDir: string;
+
+  beforeAll(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), "libredb-sqlite-node-"));
+  });
+
+  afterAll(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  test("core CRUD, schema, maintenance, and error mapping work under Node", () => {
+    const harnessEntry = join(import.meta.dir, "sqlite-node-harness.ts");
+    const bundlePath = join(tmpDir, "sqlite-node-harness.mjs");
+    const dbPath = join(tmpDir, "harness.db");
+
+    // Bundle the harness (and the provider under test) for the Node runtime.
+    const build = spawnSync(
+      process.execPath,
+      ["build", harnessEntry, "--target=node", "--format=esm", "--external", "bun:sqlite", "--outfile", bundlePath],
+      { timeout: 60_000 },
+    );
+    if (build.status !== 0) {
+      throw new Error(`bun build failed: ${build.stderr?.toString()}`);
+    }
+
+    // Run it under real Node with the node driver forced.
+    const run = spawnSync("node", [bundlePath, dbPath], {
+      env: { ...process.env, LIBREDB_SQLITE_DRIVER: "node" },
+      timeout: 60_000,
+    });
+    if (run.status !== 0) {
+      throw new Error(`node harness failed: ${run.stderr?.toString()}`);
+    }
+
+    const report = JSON.parse(run.stdout.toString()) as Record<string, unknown>;
+
+    // Runtime and connection lifecycle
+    expect(report.runtime).toBe("node");
+    expect(report.driverEnv).toBe("node");
+    expect(report.connected).toBe(true);
+    expect(report.disconnected).toBe(true);
+    expect(existsSync(dbPath)).toBe(true); // real file-backed database
+
+    // CRUD (same results as the bun driver)
+    expect(report.insertRowCount).toBe(1);
+    expect(report.selectFields).toEqual(["id", "name", "email"]);
+    expect(report.selectRows).toEqual([
+      { id: 1, name: "Alice", email: "alice@example.com" },
+      { id: 2, name: "Bob", email: "bob@example.com" },
+    ]);
+    expect(report.updateRowCount).toBe(1);
+    expect(report.deleteRowCount).toBe(1);
+
+    // Schema introspection
+    const schema = report.schema as Array<{
+      name: string;
+      rowCount: number;
+      columns: Array<{ name: string; isPrimary: boolean; nullable: boolean }>;
+      indexes: string[];
+      foreignKeys: Array<{ columnName: string; referencedTable: string; referencedColumn: string }>;
+    }>;
+    const users = schema.find((t) => t.name === "users")!;
+    expect(users).toBeDefined();
+    expect(users.rowCount).toBe(1);
+    expect(users.columns.find((c) => c.name === "id")!.isPrimary).toBe(true);
+    expect(users.columns.find((c) => c.name === "name")!.nullable).toBe(false);
+    expect(users.indexes).toContain("idx_users_email");
+    const books = schema.find((t) => t.name === "books")!;
+    expect(books.foreignKeys).toEqual([{ columnName: "user_id", referencedTable: "users", referencedColumn: "id" }]);
+
+    // Maintenance + monitoring
+    expect(report.maintenanceCheck).toEqual({ success: true, message: "ok" });
+    expect(report.vacuumSuccess).toBe(true);
+    expect(report.version).toContain("SQLite");
+    expect(report.tableCount).toBe(2);
+    expect(report.integrity).toContain("OK");
+
+    // Error mapping (same mapDatabaseError path as the bun driver)
+    expect(report.queryErrorName).toBe("DatabaseError");
+    expect(report.queryErrorMessage).toContain("no such table");
   });
 });
