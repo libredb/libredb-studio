@@ -64,8 +64,12 @@
       }
     }
   },
+  "bin": {
+    "libredb-studio": "bin/studio.js"
+  },
   "files": [
-    "dist"
+    "dist",
+    "bin"
   ],
   "peerDependencies": {
     "react": "^19",
