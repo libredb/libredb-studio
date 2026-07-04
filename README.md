@@ -191,6 +191,19 @@ The test instance comes with a pre-configured PostgreSQL database via [Seed Conn
 
 ## Getting Started
 
+  ### Install
+
+  | Channel | Command | Notes |
+  | :--- | :--- | :--- |
+  | **Docker** | `docker run -d -p 3000:3000 ghcr.io/libredb/libredb-studio:latest` | Zero-config: the admin password is printed to the log on first run |
+  | **Helm (Kubernetes)** | `helm install libredb oci://ghcr.io/libredb/charts/libredb-studio` | Requires `secrets.jwtSecret` / `secrets.adminPassword` (strict mode by default) |
+  | **npx** | `npx @libredb/studio` | Linux/macOS, Node 24+; downloads the release server tarball |
+  | **Homebrew** | `brew install libredb/tap/libredb-studio` | From the next release |
+  | **deb / rpm** | `sudo dpkg -i libredb-studio_<version>_amd64.deb` | From the next release; systemd service included |
+  | **Snap** | `sudo snap install libredb-studio` | From the next release, once Snap Store publishing goes live |
+
+  > Homebrew, deb/rpm, Snap, and the npx launcher consume standalone artifacts that are attached to GitHub releases from the next release onward. Full per-channel guide — commands, configuration, systemd usage, and the Docker image tag model — in [`docs/DISTRIBUTION.md`](docs/DISTRIBUTION.md).
+
   ### Quick Start (Docker)
 
   Run LibreDB Studio with a single command — no clone, no install, no build:
@@ -243,7 +256,8 @@ journalctl -u libredb-studio
 
   Configuration lives in `/etc/libredb-studio/env` (loaded by the unit; see the commented template
   installed there), state (SQLite storage and generated credentials) in `/var/lib/libredb-studio`.
-  The `libredb-studio` command can also be run directly without systemd.
+  The `libredb-studio` command can also be run directly without systemd. Full details for this and
+  every other channel: [`docs/DISTRIBUTION.md`](docs/DISTRIBUTION.md).
 
   ### Prerequisites
   - [Bun](https://bun.sh/) (Recommended) or Node.js 24+
