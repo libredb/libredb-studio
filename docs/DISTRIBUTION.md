@@ -219,7 +219,10 @@ The formula tracks the latest release (it is rendered and pushed to
 [`libredb/homebrew-tap`](https://github.com/libredb/homebrew-tap) by release CI):
 
 ```bash
-# One-time: Homebrew's untrusted-tap policy requires trusting third-party taps
+# One-time: Homebrew's untrusted-tap policy requires trusting third-party
+# taps. `brew trust` needs Homebrew 6+ - if it prints "Unknown command",
+# run `brew update` first (pre-6 Homebrew installs the tap without a trust
+# step, but the command below would stop the chain).
 brew trust libredb/tap
 
 brew install libredb/tap/libredb-studio
