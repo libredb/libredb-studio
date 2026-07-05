@@ -7,6 +7,13 @@ on:
       - "charts/**"
   workflow_dispatch:
 
+# Prevent overlapping runs from racing on the shared gh-pages index/release
+# state. See #146: back-to-back pushes to charts/** triggered overlapping
+# runs, and chart-releaser silently produced a release with a missing asset.
+concurrency:
+  group: helm-release
+  cancel-in-progress: false
+
 permissions:
   contents: write
   packages: write
@@ -87,6 +94,21 @@ jobs:
           mark_as_latest: false
         env:
           CR_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
+
+      - name: Verify chart release asset was published
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          version=$(grep '^version:' charts/libredb-studio/Chart.yaml | awk '{print $2}')
+          tag="libredb-studio-${version}"
+          echo "Verifying GitHub Release for tag: ${tag}"
+          asset_count=$(gh api "repos/${{ github.repository }}/releases/tags/${tag}" --jq '.assets | length' 2>/dev/null || echo "0")
+          if [ "${asset_count}" -lt 1 ]; then
+            echo "::error::chart-releaser did not publish a release asset for '${tag}'. The gh-pages index may now point to a broken download URL. See #146 for the same failure mode."
+            exit 1
+          fi
+          echo "OK: ${tag} has ${asset_count} asset(s)."
 
   release-oci:
     needs: lint-test
