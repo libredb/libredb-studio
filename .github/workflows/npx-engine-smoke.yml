@@ -5,9 +5,10 @@
 # an ancient bin-less version.
 #
 # Runs automatically after a successful "NPM Publish" (the expected version is
-# read from the released commit's package.json, and the job waits for the
-# registry to serve it before asserting). Manual dispatch stays available for
-# re-runs; see the first-release validation runbook in docs/DISTRIBUTION.md.
+# the release tag - workflow_run.head_branch - which the release guards pin to
+# package.json's version; the job waits for the registry to serve it before
+# asserting). Manual dispatch stays available for re-runs; see the
+# first-release validation runbook in docs/DISTRIBUTION.md.
 name: npx Engine Smoke
 
 on:
@@ -34,35 +35,39 @@ jobs:
       matrix:
         node-version: ["20.9", "22", "24"]
     steps:
-      # On workflow_run this is the commit NPM Publish released from (our own
-      # release commit - never fork content), so its package.json version is
-      # exactly what the registry must serve.
-      - name: Checkout released commit
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-        with:
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
-
       - name: Setup Node ${{ matrix.node-version }}
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: ${{ matrix.node-version }}
 
+      # No checkout needed (and none wanted - a workflow_run checkout of
+      # head_sha is the pattern CodeQL rightly flags): on release-triggered
+      # NPM Publish runs, head_branch IS the release tag, and this repo's
+      # release guards enforce tag == package.json version. Anything that is
+      # not plain semver (e.g. a manually dispatched publish from a branch)
+      # falls back to the runnable-server-only assertion.
       - name: Resolve expected version
         id: expected
         env:
-          # Dispatch inputs are maintainer-provided, but validate anyway - the
-          # value is only used after a strict semver check.
+          # Both values are maintainer-provided (dispatch input / release
+          # tag), but validate anyway - they are only used after a strict
+          # semver check.
           INPUT_VERSION: ${{ inputs.expected-version }}
+          RUN_HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
         run: |
           set -euo pipefail
           if [ "${{ github.event_name }}" = "workflow_run" ]; then
-            EXPECTED=$(node -p "require('./package.json').version")
+            EXPECTED="$RUN_HEAD_BRANCH"
           else
             EXPECTED="$INPUT_VERSION"
           fi
-          if [ -n "$EXPECTED" ] && ! printf '%s' "$EXPECTED" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
-            echo "Invalid expected version '$EXPECTED' (plain semver or empty)" >&2
-            exit 1
+          if ! printf '%s' "$EXPECTED" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "$EXPECTED" ]; then
+              echo "Invalid expected-version '$EXPECTED' (plain semver or empty)" >&2
+              exit 1
+            fi
+            echo "'$EXPECTED' is not a release tag - asserting a runnable server only"
+            EXPECTED=""
           fi
           echo "version=$EXPECTED" >> "$GITHUB_OUTPUT"
           echo "expected version: ${EXPECTED:-<none - runnable-server assertion only>}"
