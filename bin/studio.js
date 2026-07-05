@@ -208,6 +208,8 @@ async function preparePayload(cacheDir, payloadDir) {
         "The corrupted download was deleted - run the command again.",
     );
   }
+  // Log-line contract: "Checksum verified" is asserted verbatim by the
+  // post-release npx-engine-smoke workflow - keep the wording stable.
   console.log("Checksum verified");
   extract(tarballPath, payloadDir);
 }
@@ -227,6 +229,8 @@ function startServer(payloadDir, port, host) {
   if (host !== null) env.HOSTNAME = host;
   if (!env.HOSTNAME) env.HOSTNAME = "127.0.0.1";
   if (!env.NODE_ENV) env.NODE_ENV = "production";
+  // Log-line contract: npx-engine-smoke.yml parses the resolved version from
+  // "Starting LibreDB Studio <version> " - keep the prefix stable.
   console.log(`Starting LibreDB Studio ${pkg.version} on http://${env.HOSTNAME}:${env.PORT || "3000"}`);
   const child = spawn(process.execPath, ["server.js"], { cwd: payloadDir, env, stdio: "inherit" });
   child.on("error", (error) => fail(`Could not start server.js: ${error.message}`));

@@ -252,4 +252,21 @@ describe("assessNodeRuntime", () => {
     expect(result.action).toBe("fail");
     expect(result.message).toContain("could not parse");
   });
+
+  test("fails closed on two-component version strings (process.versions.node is always three)", () => {
+    expect(assessNodeRuntime("22.13").action).toBe("fail");
+  });
+
+  test("fail boundary matches the package.json engines floor (single source of truth)", () => {
+    // MINIMUM_NODE in launcher-utils.mjs and engines.node in package.json
+    // state the same floor in two places; this pins them together so bumping
+    // one without the other fails a test instead of shipping a drift.
+    const pkg = JSON.parse(fs.readFileSync(new URL("../../package.json", import.meta.url), "utf8"));
+    const match = /^>=(\d+)\.(\d+)\.(\d+)$/.exec(pkg.engines.node);
+    expect(match).not.toBeNull();
+    const [major, minor, patch] = [Number(match![1]), Number(match![2]), Number(match![3])];
+    expect(assessNodeRuntime(`${major}.${minor}.${patch}`).action).not.toBe("fail");
+    const justBelow = minor > 0 ? `${major}.${minor - 1}.999` : `${major - 1}.999.999`;
+    expect(assessNodeRuntime(justBelow).action).toBe("fail");
+  });
 });

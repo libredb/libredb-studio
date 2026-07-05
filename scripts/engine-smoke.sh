@@ -157,7 +157,11 @@ start_server "$LOG2" "$STORAGE_PORT" env "STORAGE_PROVIDER=sqlite" "STORAGE_SQLI
 STORAGE_SERVER_PID=$!
 wait_health "$STORAGE_BASE" "$LOG2"
 
-# --archive re-extracts the payload, so this boot generated fresh credentials.
+# --archive re-extracts the payload per boot, wiping payload data, so this
+# boot generated FRESH credentials (issue #132 tracks that wipe). If #132
+# changes --archive to preserve payload data, reuse $PASSWORD here instead -
+# the banner parse below would come up empty and abort with a confusing
+# "no zero-config password banner".
 PASSWORD2=$(sed -n 's/^ Password: //p' "$LOG2" | head -1)
 login "$STORAGE_BASE" "$PASSWORD2" "$WORK/cookies2.txt" >/dev/null
 STORAGE_BODY=$(curl -s -b "$WORK/cookies2.txt" -X PUT "$STORAGE_BASE/api/storage/connections" \
