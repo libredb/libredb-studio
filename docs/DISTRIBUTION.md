@@ -169,7 +169,18 @@ chart architecture: [`docs/HELM_CHART.md`](HELM_CHART.md).
 
 ## npx
 
-Requires Node.js 24+ on Linux or macOS (x64 / arm64). The npm package stays a pure library for
+Requires Node.js 20.9+ on Linux or macOS (x64 / arm64); **Node 24 LTS is the recommended,
+fully supported runtime**. The launcher checks the runtime up front and spells out what an
+older Node cannot do (`scripts/engine-smoke.sh` tests every tier in CI):
+
+| Node | Support |
+|---|---|
+| 24+ (recommended) | Everything works |
+| 22.13 - 23.x | Works; server-side SQLite storage (`STORAGE_PROVIDER=sqlite`) needs Node 24 (the bundled better-sqlite3 binding targets the Node 24 ABI) and fails with a clear error. `node:sqlite` may print a one-time ExperimentalWarning. |
+| 20.9 - 22.12 | Works, minus all SQLite features: SQLite database connections need the built-in `node:sqlite` (unflagged from Node 22.13). |
+| < 20.9 | Refused with a clear error (Next.js 16 floor) - bare `npx` may also fall back to an ancient, bin-less package version here; those versions are npm-deprecated with pointers. |
+
+The npm package stays a pure library for
 libredb-platform; the launcher downloads the matching standalone tarball from the GitHub
 release, verifies it against the `SHA256SUMS` release asset, caches it under
 `~/.libredb-studio/<version>/`, and starts `node server.js`:
@@ -337,7 +348,10 @@ release. Right after publishing it:
    retired `macos-13` or paid `-large` labels blindly), `.deb`/`.rpm` uploaded with `.sha256`
    sidecars, `SHA256SUMS` complete, tap push and snap jobs behaving per their secrets.
 2. `npx @libredb/studio@<version>` on a clean machine: download + checksum + first-run banner +
-   login.
+   login. Then dispatch the `npx Engine Smoke` workflow (`npx-engine-smoke.yml`) with the
+   released version: it runs **bare** `npx @libredb/studio` on Node 20.9/22/24 against the live
+   registry and asserts each tier resolves a runnable release (the #130 regression class -
+   npm's picker avoids engine-incompatible versions for bare specs).
 3. `brew tap libredb/tap && brew install libredb-studio && brew services start libredb-studio`.
 4. Download the `.deb` on Debian/Ubuntu: `dpkg -i`, `systemctl start libredb-studio`, health 200
    on `127.0.0.1:3000`; verify the arm64 package on an arm64 machine (the CI smoke covers amd64

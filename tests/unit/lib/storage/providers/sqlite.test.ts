@@ -21,8 +21,15 @@ const mockDbInstance = {
   transaction: mock((fn: () => void) => fn),
 };
 
+// When set, the mocked better-sqlite3 constructor throws this error - used to
+// exercise the Node-ABI-mismatch guard in initialize().
+let constructorError: Error | null = null;
+
 mock.module("better-sqlite3", () => ({
-  default: mock(() => mockDbInstance),
+  default: mock(() => {
+    if (constructorError) throw constructorError;
+    return mockDbInstance;
+  }),
 }));
 
 // Mock fs and path for directory creation
@@ -243,5 +250,46 @@ describe("SQLiteStorageProvider", () => {
   test("ensureDb throws when not initialized", async () => {
     const freshProvider = new SQLiteStorageProvider(":memory:");
     await expect(freshProvider.getAllData("test@test.com")).rejects.toThrow("not initialized");
+  });
+
+  describe("Node ABI mismatch guard", () => {
+    afterEach(() => {
+      constructorError = null;
+    });
+
+    test("translates a NODE_MODULE_VERSION mismatch into an actionable message", async () => {
+      constructorError = new Error(
+        "The module 'better_sqlite3.node' was compiled against a different Node.js version using NODE_MODULE_VERSION 137. This version of Node.js requires NODE_MODULE_VERSION 127.",
+      );
+      const freshProvider = new SQLiteStorageProvider(":memory:");
+      await expect(freshProvider.initialize()).rejects.toThrow(
+        /requires Node\.js 24\+[\s\S]*STORAGE_PROVIDER=postgres/,
+      );
+    });
+
+    test("translates ERR_DLOPEN_FAILED by error code even without the ABI text", async () => {
+      const dlopenError = new Error("could not load the native binding") as Error & { code?: string };
+      dlopenError.code = "ERR_DLOPEN_FAILED";
+      constructorError = dlopenError;
+      const freshProvider = new SQLiteStorageProvider(":memory:");
+      await expect(freshProvider.initialize()).rejects.toThrow(/requires Node\.js 24\+/);
+    });
+
+    test("keeps the friendly error's cause chained to the original", async () => {
+      constructorError = new Error("was compiled against a different Node.js version using NODE_MODULE_VERSION 137");
+      const freshProvider = new SQLiteStorageProvider(":memory:");
+      const error = await freshProvider.initialize().then(
+        () => null,
+        (e: unknown) => e as Error,
+      );
+      expect(error).not.toBeNull();
+      expect(error?.cause).toBe(constructorError);
+    });
+
+    test("rethrows unrelated initialization errors untouched", async () => {
+      constructorError = new Error("disk I/O error");
+      const freshProvider = new SQLiteStorageProvider(":memory:");
+      await expect(freshProvider.initialize()).rejects.toThrow("disk I/O error");
+    });
   });
 });

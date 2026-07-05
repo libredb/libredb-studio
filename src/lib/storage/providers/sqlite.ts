@@ -13,6 +13,21 @@ import { DEFAULT_STORAGE_SQLITE_PATH } from "@/lib/data-dir";
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let Database: any;
 
+/**
+ * better-sqlite3 ships a native binding compiled against the Node 24 ABI
+ * (release CI / Docker build). Loading it under an older Node fails with an
+ * ABI mismatch that reads like an installation bug - translate it into an
+ * actionable message instead.
+ */
+function isNodeAbiMismatch(error: unknown): boolean {
+  const code = (error as { code?: string })?.code;
+  const message = error instanceof Error ? error.message : String(error);
+  return (
+    code === "ERR_DLOPEN_FAILED" ||
+    /NODE_MODULE_VERSION|was compiled against a different Node\.js version/i.test(message)
+  );
+}
+
 export class SQLiteStorageProvider implements ServerStorageProvider {
   private db: BetterSqlite3.Database | null = null;
   private dbPath: string;
@@ -54,6 +69,14 @@ export class SQLiteStorageProvider implements ServerStorageProvider {
       `);
     } catch (error) {
       logger.error("SQLite storage initialization failed", error, { provider: "sqlite", path: this.dbPath });
+      if (isNodeAbiMismatch(error)) {
+        throw new Error(
+          `Server-side SQLite storage (STORAGE_PROVIDER=sqlite) requires Node.js 24+: the bundled better-sqlite3 native module targets the Node 24 ABI and cannot load on Node ${process.versions.node}. ` +
+            "Run the server under Node 24 LTS, or use STORAGE_PROVIDER=postgres or STORAGE_PROVIDER=local instead. " +
+            `Underlying error: ${error instanceof Error ? error.message : String(error)}`,
+          { cause: error },
+        );
+      }
       throw error;
     }
   }

@@ -23,6 +23,7 @@ import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import {
   artifactName,
+  assessNodeRuntime,
   LauncherUsageError,
   parseLauncherArgs,
   parseSha256Sums,
@@ -262,6 +263,12 @@ async function main() {
       ].join("\n"),
     );
   }
+
+  // Refuse runtimes the payload cannot run on and surface degraded tiers
+  // up front, before any download happens (see assessNodeRuntime).
+  const runtime = assessNodeRuntime(process.versions.node);
+  if (runtime.action === "fail") fail(runtime.message);
+  if (runtime.action === "warn") console.warn(runtime.message);
 
   const cacheDir = resolveCacheDir(pkg.version, os.homedir());
   const archive = args.archive || process.env.LIBREDB_STUDIO_ARCHIVE || null;

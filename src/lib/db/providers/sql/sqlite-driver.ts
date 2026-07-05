@@ -6,10 +6,11 @@
  * (npx / brew / deb installs running `node server.js`):
  *
  * - Bun runtime  -> `bun:sqlite` (Bun built-in)
- * - Node runtime -> `node:sqlite` (Node built-in, stable for the package's
- *   Node >= 24 target; `better-sqlite3` is not used here because Bun refuses
- *   to load it at all and its native binding must match the installing
- *   runtime's ABI, while `node:sqlite` needs no native dependency)
+ * - Node runtime -> `node:sqlite` (Node built-in: unflagged from 22.13,
+ *   stable on the recommended Node 24 LTS; `better-sqlite3` is not used here
+ *   because Bun refuses to load it at all and its native binding must match
+ *   the installing runtime's ABI, while `node:sqlite` needs no native
+ *   dependency)
  *
  * Set LIBREDB_SQLITE_DRIVER=bun|node to force a driver (deterministic tests).
  * Both drivers load lazily via dynamic import, so neither is required unless
@@ -157,7 +158,7 @@ export async function loadSQLiteDriver(): Promise<SQLiteConstructor> {
       `SQLite driver "${name}" is not available in this environment: ` +
         `${error instanceof Error ? error.message : String(error)}. ` +
         'The "bun" driver requires the Bun runtime (bun:sqlite); ' +
-        'the "node" driver requires Node.js with the built-in node:sqlite module (Node >= 24).',
+        'the "node" driver requires Node.js with the built-in node:sqlite module (Node 22.13+; Node 24 LTS recommended).',
       "sqlite",
     );
     driverLoadErrors.set(name, loadError);

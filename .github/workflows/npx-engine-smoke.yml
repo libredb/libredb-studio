@@ -1,0 +1,67 @@
+# Post-release validation of the bare-npx experience against the LIVE npm
+# registry (issue #130 regression class): npm's version picker avoids
+# engine-incompatible versions for bare specs, so `npx @libredb/studio` must
+# resolve a runnable release on every supported Node tier - not fall back to
+# an ancient bin-less version. Run manually after a release (see the
+# first-release validation runbook in docs/DISTRIBUTION.md).
+name: npx Engine Smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected-version:
+        description: "Version bare npx must resolve (empty = only assert a runnable server)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  npx-smoke:
+    name: bare npx on Node ${{ matrix.node-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: ["20.9", "22", "24"]
+    steps:
+      - name: Setup Node ${{ matrix.node-version }}
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ matrix.node-version }}
+
+      - name: Run bare npx and assert resolution
+        env:
+          # Dispatch inputs are maintainer-provided, but validate anyway - the
+          # value ends up in log greps only after a strict semver check.
+          EXPECTED_VERSION: ${{ inputs.expected-version }}
+        run: |
+          set -euo pipefail
+          if [ -n "$EXPECTED_VERSION" ] && ! printf '%s' "$EXPECTED_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "Invalid expected-version '$EXPECTED_VERSION' (plain semver or empty)" >&2
+            exit 1
+          fi
+          WORK=$(mktemp -d)
+          cd "$WORK"
+          echo "==> node $(node --version), bare: npx -y @libredb/studio"
+          npx -y @libredb/studio --port 3105 --host 127.0.0.1 > npx.log 2>&1 &
+          for _ in $(seq 1 150); do
+            curl -sf -o /dev/null http://127.0.0.1:3105/api/db/health && break
+            sleep 2
+          done
+          if ! curl -sf -o /dev/null http://127.0.0.1:3105/api/db/health; then
+            echo "FAIL: bare npx never served /api/db/health; log:" >&2
+            cat npx.log >&2
+            exit 1
+          fi
+          echo "PASS: health 200"
+          grep -F "Checksum verified" npx.log
+          RESOLVED=$(sed -n 's/^Starting LibreDB Studio \([0-9][0-9.]*\) .*/\1/p' npx.log | head -1)
+          echo "resolved version: ${RESOLVED:-unknown}"
+          if [ -n "$EXPECTED_VERSION" ] && [ "$RESOLVED" != "$EXPECTED_VERSION" ]; then
+            echo "FAIL: bare npx resolved '$RESOLVED', expected '$EXPECTED_VERSION'; log:" >&2
+            cat npx.log >&2
+            exit 1
+          fi
+          echo "==> OK"

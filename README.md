@@ -197,7 +197,7 @@ The test instance comes with a pre-configured PostgreSQL database via [Seed Conn
   | :--- | :--- | :--- |
   | **Docker** | `docker run -d -p 3000:3000 ghcr.io/libredb/libredb-studio:latest` | Zero-config: the admin password is printed to the log on first run |
   | **Helm (Kubernetes)** | `helm install libredb oci://ghcr.io/libredb/charts/libredb-studio` | Requires `secrets.jwtSecret` / `secrets.adminPassword` (strict mode by default) |
-  | **npx** | `npx @libredb/studio` | Linux/macOS, Node 24+; downloads the release server tarball |
+  | **npx** | `npx @libredb/studio` | Linux/macOS, Node 20.9+ (Node 24 LTS recommended); downloads the release server tarball |
   | **Homebrew** | `brew trust libredb/tap && brew install libredb/tap/libredb-studio` | `brew trust` is required once for third-party taps |
   | **deb / rpm** | `sudo dpkg -i libredb-studio_<version>_amd64.deb` | Attached to each GitHub release; systemd service included |
   | **Snap** | `sudo snap install libredb-studio` | From the next release, once Snap Store publishing goes live |

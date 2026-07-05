@@ -124,6 +124,67 @@ export function sha256File(filePath) {
 }
 
 /**
+ * Runtime tiers for the payload (Next.js standalone server):
+ * - Next.js 16 itself needs Node >= 20.9 - below that the server cannot run.
+ * - node:sqlite (SQLite database connections) exists unflagged from 22.13.
+ * - The bundled better-sqlite3 binding (server-side SQLite storage,
+ *   STORAGE_PROVIDER=sqlite) targets the Node 24 ABI line.
+ * Node 24 LTS is the fully supported runtime; older tiers run with the
+ * degradations spelled out by assessNodeRuntime so users see them up front.
+ */
+const MINIMUM_NODE = { major: 20, minor: 9 };
+
+/**
+ * Assess a Node.js runtime version (process.versions.node shape, e.g.
+ * "22.13.0") against the payload's requirements. Pure and injectable for
+ * unit tests - never reads process state itself.
+ *
+ * @param {string} version
+ * @returns {{ action: "fail" | "warn" | "ok", message: string | null }}
+ */
+export function assessNodeRuntime(version) {
+  const match = /^(\d+)\.(\d+)\.(\d+)/.exec(version);
+  if (!match) {
+    return {
+      action: "fail",
+      message: `LibreDB Studio launcher could not parse the Node.js version ${JSON.stringify(version)}. Node.js ${MINIMUM_NODE.major}.${MINIMUM_NODE.minor}+ is required (Node 24 LTS recommended).`,
+    };
+  }
+  const [major, minor] = [Number(match[1]), Number(match[2])];
+
+  if (major < MINIMUM_NODE.major || (major === MINIMUM_NODE.major && minor < MINIMUM_NODE.minor)) {
+    return {
+      action: "fail",
+      message: [
+        `LibreDB Studio requires Node.js ${MINIMUM_NODE.major}.${MINIMUM_NODE.minor} or newer; this is Node ${version}.`,
+        "Install Node 24 LTS (https://nodejs.org) or run Studio with Docker:",
+        "  docker run -p 3000:3000 ghcr.io/libredb/libredb-studio:latest",
+      ].join("\n"),
+    };
+  }
+  if (major < 22 || (major === 22 && minor < 13)) {
+    return {
+      action: "warn",
+      message:
+        `Node ${version}: SQLite features are unavailable on this runtime - ` +
+        "SQLite database connections need the built-in node:sqlite module (Node 22.13+) and " +
+        "server-side SQLite storage (STORAGE_PROVIDER=sqlite) needs Node 24. " +
+        "Everything else works; use Node 24 LTS for full functionality.",
+    };
+  }
+  if (major < 24) {
+    return {
+      action: "warn",
+      message:
+        `Node ${version}: server-side SQLite storage (STORAGE_PROVIDER=sqlite) needs Node 24 - ` +
+        "the bundled native module targets the Node 24 ABI. Everything else works " +
+        "(node:sqlite may print a one-time ExperimentalWarning); use Node 24 LTS for full functionality.",
+    };
+  }
+  return { action: "ok", message: null };
+}
+
+/**
  * Parse launcher CLI arguments. Returns { help, port, host, archive,
  * verifyCache }; port/host stay null when not given (the server then falls
  * back to $PORT / 3000 and the launcher's loopback default). Throws
