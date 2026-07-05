@@ -2,11 +2,18 @@
 # registry (issue #130 regression class): npm's version picker avoids
 # engine-incompatible versions for bare specs, so `npx @libredb/studio` must
 # resolve a runnable release on every supported Node tier - not fall back to
-# an ancient bin-less version. Run manually after a release (see the
-# first-release validation runbook in docs/DISTRIBUTION.md).
+# an ancient bin-less version.
+#
+# Runs automatically after a successful "NPM Publish" (the expected version is
+# read from the released commit's package.json, and the job waits for the
+# registry to serve it before asserting). Manual dispatch stays available for
+# re-runs; see the first-release validation runbook in docs/DISTRIBUTION.md.
 name: npx Engine Smoke
 
 on:
+  workflow_run:
+    workflows: ["NPM Publish"]
+    types: [completed]
   workflow_dispatch:
     inputs:
       expected-version:
@@ -20,28 +27,68 @@ permissions:
 jobs:
   npx-smoke:
     name: bare npx on Node ${{ matrix.node-version }}
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         node-version: ["20.9", "22", "24"]
     steps:
+      # On workflow_run this is the commit NPM Publish released from (our own
+      # release commit - never fork content), so its package.json version is
+      # exactly what the registry must serve.
+      - name: Checkout released commit
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
       - name: Setup Node ${{ matrix.node-version }}
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: ${{ matrix.node-version }}
 
-      - name: Run bare npx and assert resolution
+      - name: Resolve expected version
+        id: expected
         env:
           # Dispatch inputs are maintainer-provided, but validate anyway - the
-          # value ends up in log greps only after a strict semver check.
-          EXPECTED_VERSION: ${{ inputs.expected-version }}
+          # value is only used after a strict semver check.
+          INPUT_VERSION: ${{ inputs.expected-version }}
         run: |
           set -euo pipefail
-          if [ -n "$EXPECTED_VERSION" ] && ! printf '%s' "$EXPECTED_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
-            echo "Invalid expected-version '$EXPECTED_VERSION' (plain semver or empty)" >&2
+          if [ "${{ github.event_name }}" = "workflow_run" ]; then
+            EXPECTED=$(node -p "require('./package.json').version")
+          else
+            EXPECTED="$INPUT_VERSION"
+          fi
+          if [ -n "$EXPECTED" ] && ! printf '%s' "$EXPECTED" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "Invalid expected version '$EXPECTED' (plain semver or empty)" >&2
             exit 1
           fi
+          echo "version=$EXPECTED" >> "$GITHUB_OUTPUT"
+          echo "expected version: ${EXPECTED:-<none - runnable-server assertion only>}"
+
+      - name: Wait for the registry to serve the expected version
+        if: steps.expected.outputs.version != ''
+        env:
+          EXPECTED_VERSION: ${{ steps.expected.outputs.version }}
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 30); do
+            if npm view "@libredb/studio@${EXPECTED_VERSION}" version >/dev/null 2>&1; then
+              echo "registry serves ${EXPECTED_VERSION}"
+              exit 0
+            fi
+            echo "waiting for the registry to serve ${EXPECTED_VERSION} (attempt ${i}/30)"
+            sleep 20
+          done
+          echo "FAIL: registry never served ${EXPECTED_VERSION} within 10 minutes" >&2
+          exit 1
+
+      - name: Run bare npx and assert resolution
+        env:
+          EXPECTED_VERSION: ${{ steps.expected.outputs.version }}
+        run: |
+          set -euo pipefail
           WORK=$(mktemp -d)
           cd "$WORK"
           echo "==> node $(node --version), bare: npx -y @libredb/studio"

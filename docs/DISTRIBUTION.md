@@ -348,10 +348,11 @@ release. Right after publishing it:
    retired `macos-13` or paid `-large` labels blindly), `.deb`/`.rpm` uploaded with `.sha256`
    sidecars, `SHA256SUMS` complete, tap push and snap jobs behaving per their secrets.
 2. `npx @libredb/studio@<version>` on a clean machine: download + checksum + first-run banner +
-   login. Then dispatch the `npx Engine Smoke` workflow (`npx-engine-smoke.yml`) with the
-   released version: it runs **bare** `npx @libredb/studio` on Node 20.9/22/24 against the live
-   registry and asserts each tier resolves a runnable release (the #130 regression class -
-   npm's picker avoids engine-incompatible versions for bare specs).
+   login. The `npx Engine Smoke` workflow (`npx-engine-smoke.yml`) runs automatically after a
+   successful NPM Publish: it waits for the registry to serve the released version, then runs
+   **bare** `npx @libredb/studio` on Node 20.9/22/24 and asserts each tier resolves exactly that
+   release (the #130 regression class - npm's picker avoids engine-incompatible versions for
+   bare specs). Check that it went green; dispatch it manually to re-run.
 3. `brew tap libredb/tap && brew install libredb-studio && brew services start libredb-studio`.
 4. Download the `.deb` on Debian/Ubuntu: `dpkg -i`, `systemctl start libredb-studio`, health 200
    on `127.0.0.1:3000`; verify the arm64 package on an arm64 machine (the CI smoke covers amd64
