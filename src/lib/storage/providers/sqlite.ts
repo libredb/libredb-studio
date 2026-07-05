@@ -18,14 +18,16 @@ let Database: any;
  * (release CI / Docker build). Loading it under an older Node fails with an
  * ABI mismatch that reads like an installation bug - translate it into an
  * actionable message instead.
+ *
+ * Only the NODE_MODULE_VERSION text (emitted by Node's module-register
+ * check) is treated as an ABI mismatch. A bare ERR_DLOPEN_FAILED is NOT
+ * enough: missing shared libraries, a libc mismatch, or a corrupted file
+ * also surface as ERR_DLOPEN_FAILED - on any Node version - and must keep
+ * their original error rather than a misleading "requires Node 24" claim.
  */
 function isNodeAbiMismatch(error: unknown): boolean {
-  const code = (error as { code?: string })?.code;
   const message = error instanceof Error ? error.message : String(error);
-  return (
-    code === "ERR_DLOPEN_FAILED" ||
-    /NODE_MODULE_VERSION|was compiled against a different Node\.js version/i.test(message)
-  );
+  return /NODE_MODULE_VERSION|was compiled against a different Node\.js version/i.test(message);
 }
 
 export class SQLiteStorageProvider implements ServerStorageProvider {

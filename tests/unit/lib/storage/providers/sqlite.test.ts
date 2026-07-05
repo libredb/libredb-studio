@@ -267,12 +267,22 @@ describe("SQLiteStorageProvider", () => {
       );
     });
 
-    test("translates ERR_DLOPEN_FAILED by error code even without the ABI text", async () => {
-      const dlopenError = new Error("could not load the native binding") as Error & { code?: string };
+    test("does NOT claim an ABI mismatch for non-ABI dlopen failures (libc mismatch, missing libs)", async () => {
+      // Realistic loader text for a glibc/musl mismatch: ERR_DLOPEN_FAILED and
+      // the better_sqlite3.node path, but no NODE_MODULE_VERSION - the original
+      // error must pass through untouched instead of a misleading Node-24 claim.
+      const dlopenError = new Error(
+        "libstdc++.so.6: cannot open shared object file: No such file or directory (required by /app/node_modules/better-sqlite3/build/Release/better_sqlite3.node)",
+      ) as Error & { code?: string };
       dlopenError.code = "ERR_DLOPEN_FAILED";
       constructorError = dlopenError;
       const freshProvider = new SQLiteStorageProvider(":memory:");
-      await expect(freshProvider.initialize()).rejects.toThrow(/requires Node\.js 24\+/);
+      const error = await freshProvider.initialize().then(
+        () => null,
+        (e: unknown) => e as Error,
+      );
+      expect(error).toBe(dlopenError);
+      expect(error?.message).not.toContain("requires Node.js 24+");
     });
 
     test("keeps the friendly error's cause chained to the original", async () => {
