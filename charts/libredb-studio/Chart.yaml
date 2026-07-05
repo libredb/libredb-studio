@@ -2,8 +2,8 @@ apiVersion: v2
 name: libredb-studio
 description: Web-based SQL IDE for cloud-native teams supporting PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, and Redis
 type: application
-version: 0.1.2
-appVersion: "0.9.43"
+version: 0.1.3
+appVersion: "0.9.44"
 kubeVersion: ">=1.26.0-0"
 home: https://github.com/libredb/libredb-studio
 icon: https://raw.githubusercontent.com/libredb/libredb-studio/main/public/logo.svg
@@ -31,7 +31,7 @@ annotations:
   artifacthub.io/containsSecurityUpdates: "false"
   artifacthub.io/images: |
     - name: libredb-studio
-      image: ghcr.io/libredb/libredb-studio:0.9.43
+      image: ghcr.io/libredb/libredb-studio:0.9.44
       platforms:
         - linux/amd64
   artifacthub.io/links: |
@@ -42,7 +42,7 @@ annotations:
     - name: Source
       url: https://github.com/libredb/libredb-studio
   artifacthub.io/changes: |
-    - Track app release 0.9.43 (appVersion bump; default image tag follows)
+    - Track app release 0.9.44 (appVersion bump; default image tag follows)
 dependencies:
   - name: postgresql
     version: "16.x.x"
