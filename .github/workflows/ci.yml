@@ -135,6 +135,16 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
+      - name: Setup Node.js
+        # build-standalone-payload.sh aligns the better-sqlite3 binding to the
+        # ambient node (probe + npm rebuild). The payload must ship the Node 24
+        # ABI exactly like release-artifacts.yml does - without this, the
+        # runner's default node dictates the ABI and the matrix legs assert
+        # against a payload no release would ever ship.
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "24"
+
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
