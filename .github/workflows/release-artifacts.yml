@@ -532,6 +532,11 @@ jobs:
           TAG: ${{ needs.guard.outputs.version }}
         run: |
           set -euo pipefail
-          gh workflow run npm-publish.yml -f "version=$TAG"
+          # npm-publish gets NO version input: its "Set version" step runs
+          # `npm version <input>`, which fails with "Version not changed"
+          # when package.json already carries the tag version - always the
+          # case on a tag push. Empty input = publish the package.json
+          # version, which the tag was cut from.
+          gh workflow run npm-publish.yml
           gh workflow run docker-build-push.yml -f "version=$TAG"
           echo "Dispatched npm-publish and docker-build-push for '$TAG'."
