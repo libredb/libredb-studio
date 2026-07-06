@@ -105,14 +105,16 @@ export function applyBump({ pkgVersion, chartYaml, readme }) {
     return { chartYaml, readme, changed: false, version, appVersion };
   }
   const newVersion = appVersion === pkgVersion ? version : bumpPatch(version);
-  const newChartYaml = chartYaml
+  let newChartYaml = chartYaml
     .replace(/^version:\s*\S+\s*$/m, `version: ${newVersion}`)
     .replace(/^appVersion:\s*.*$/m, `appVersion: "${pkgVersion}"`)
-    .replace(/(image:\s*ghcr\.io\/libredb\/libredb-studio:)\S+/, `$1${pkgVersion}`)
-    .replace(
+    .replace(/(image:\s*ghcr\.io\/libredb\/libredb-studio:)\S+/, `$1${pkgVersion}`);
+  if (appVersion !== pkgVersion) {
+    newChartYaml = newChartYaml.replace(
       /- Track app release .*/,
       `- Track app release ${pkgVersion} (appVersion bump; default image tag follows)`,
     );
+  }
   const newReadme = readme.replace(/--version\s+\S+/, `--version ${newVersion}`);
   return { chartYaml: newChartYaml, readme: newReadme, changed: true, version: newVersion, appVersion: pkgVersion };
 }
@@ -141,14 +143,21 @@ function chartTagExistsOnOrigin(root, version) {
 }
 
 function main(argv) {
-  const mode = argv.includes("--write") ? "write" : argv.includes("--check") ? "check" : null;
-  const rootIdx = argv.indexOf("--root");
-  const root = rootIdx === -1 ? process.cwd() : path.resolve(argv[rootIdx + 1]);
-  const strict = /^(1|true)$/i.test(process.env.CHART_SYNC_STRICT ?? "");
-  if (!mode) {
+  const hasCheck = argv.includes("--check");
+  const hasWrite = argv.includes("--write");
+  if (hasCheck === hasWrite) {
     console.error("Usage: node scripts/sync-chart-version.mjs --check|--write [--root <dir>]");
     process.exit(2);
   }
+  const mode = hasWrite ? "write" : "check";
+  const rootIdx = argv.indexOf("--root");
+  const rootArg = rootIdx === -1 ? undefined : argv[rootIdx + 1];
+  if (rootIdx !== -1 && (rootArg === undefined || rootArg.startsWith("--"))) {
+    console.error("ERROR: --root requires a directory path");
+    process.exit(2);
+  }
+  const root = rootIdx === -1 ? process.cwd() : path.resolve(rootArg);
+  const strict = /^(1|true)$/i.test(process.env.CHART_SYNC_STRICT ?? "");
 
   const pkgVersion = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).version;
   const chartPath = path.join(root, CHART_YAML);

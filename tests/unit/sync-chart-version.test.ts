@@ -1,9 +1,11 @@
 /**
  * Unit tests for the chart version sync guard
- * (scripts/sync-chart-version.mjs, issue #138). Pure string checks - no git,
- * no network, no filesystem writes.
+ * (scripts/sync-chart-version.mjs, issue #138). The core functions
+ * (parseChart, bumpPatch, checkSync, applyBump) are pure string checks. The
+ * CLI describe block runs the real script as a subprocess against
+ * throwaway temp-dir fixtures - no git, no network.
  */
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -151,13 +153,30 @@ describe("applyBump", () => {
     expect(result.chartYaml).toBe(chartYaml());
     expect(result.readme).toBe(readme());
   });
+
+  test("hand-written changes line is preserved when only the image tag drifted", () => {
+    const custom = chartYaml({ imageTag: "0.9.43" }).replace(
+      /- Track app release .*/,
+      "- Hand-written chart-only changelog entry",
+    );
+    const result = applyBump({ pkgVersion: "0.9.44", chartYaml: custom, readme: readme() });
+    expect(result.changed).toBe(true);
+    expect(result.chartYaml).toContain("image: ghcr.io/libredb/libredb-studio:0.9.44");
+    expect(result.chartYaml).toContain("- Hand-written chart-only changelog entry");
+  });
 });
 
 describe("CLI (--check via subprocess)", () => {
   const SCRIPT = join(import.meta.dir, "../../scripts/sync-chart-version.mjs");
+  const fixtureRoots: string[] = [];
+
+  afterEach(() => {
+    for (const root of fixtureRoots.splice(0)) rmSync(root, { recursive: true, force: true });
+  });
 
   function makeFixture(pkgVersion: string, chart: string, readmeText: string): string {
     const root = mkdtempSync(join(tmpdir(), "chart-sync-"));
+    fixtureRoots.push(root);
     mkdirSync(join(root, "charts/libredb-studio"), { recursive: true });
     writeFileSync(join(root, "package.json"), JSON.stringify({ version: pkgVersion }));
     writeFileSync(join(root, "charts/libredb-studio/Chart.yaml"), chart);
@@ -178,7 +197,6 @@ describe("CLI (--check via subprocess)", () => {
     const result = runCheck(root);
     expect(result.exitCode).toBe(0);
     expect(result.stderr.toString()).toContain("base-comparison checks skipped");
-    rmSync(root, { recursive: true, force: true });
   });
 
   test("violation exits 1 with the chart:bump hint", () => {
@@ -186,7 +204,6 @@ describe("CLI (--check via subprocess)", () => {
     const result = runCheck(root);
     expect(result.exitCode).toBe(1);
     expect(result.stderr.toString()).toContain("bun run chart:bump");
-    rmSync(root, { recursive: true, force: true });
   });
 
   test("strict mode fails when origin/main is not resolvable", () => {
@@ -194,6 +211,26 @@ describe("CLI (--check via subprocess)", () => {
     const result = runCheck(root, { CHART_SYNC_STRICT: "1" });
     expect(result.exitCode).toBe(1);
     expect(result.stderr.toString()).toContain("CHART_SYNC_STRICT");
-    rmSync(root, { recursive: true, force: true });
+  });
+
+  test("--check and --write together exits 2 with usage", () => {
+    const root = makeFixture("0.9.44", chartYaml(), readme());
+    const result = Bun.spawnSync(["node", SCRIPT, "--check", "--write", "--root", root], {
+      env: { ...process.env, CHART_SYNC_STRICT: "" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr.toString()).toContain("Usage:");
+  });
+
+  test("--root with no value exits 2 with the --root error", () => {
+    const result = Bun.spawnSync(["node", SCRIPT, "--check", "--root"], {
+      env: { ...process.env, CHART_SYNC_STRICT: "" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr.toString()).toContain("--root requires");
   });
 });
