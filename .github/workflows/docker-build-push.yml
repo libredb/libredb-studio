@@ -44,8 +44,6 @@ jobs:
     permissions:
       contents: read
       packages: write
-      # Required by the helm-release dispatch step (release context only).
-      actions: write
     outputs:
       version: ${{ steps.extract-version.outputs.version }}
       image: ${{ steps.meta.outputs.tags }}
@@ -189,23 +187,6 @@ jobs:
             ADMIN_PASSWORD_BUILD=build
             USER_PASSWORD_BUILD=build
 
-      - name: Dispatch Helm chart release
-        # The chart deploys this image by default, so helm-release runs only
-        # AFTER a successful image publish: the version-bump merge's own
-        # helm-release run ends as a no-op at its image gate, and this
-        # dispatch re-triggers it now that the image exists. Release context
-        # only - main/dev branch builds must not publish charts. If this
-        # build fails, no dispatch happens and the chart correctly stays
-        # unpublished.
-        if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.publish_latest == true)
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
-        run: |
-          set -euo pipefail
-          gh workflow run helm-release.yml --ref main
-          echo "Dispatched helm-release."
-
       - name: Generate build summary
         run: |
           echo "## 🚀 Docker Build Summary" >> $GITHUB_STEP_SUMMARY
@@ -220,3 +201,31 @@ jobs:
           echo "${{ steps.meta.outputs.tags }}" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
 
+
+  dispatch-helm-release:
+    # The chart deploys the image this run just published, so helm-release
+    # runs only AFTER a successful publish: the version-bump merge's own
+    # helm-release run ends as a no-op at its image gate, and this dispatch
+    # re-triggers it now that the image exists. Release context only -
+    # main/dev branch builds must not publish charts - and a failed build
+    # dispatches nothing, so the chart correctly stays unpublished. Separate
+    # job so actions:write is never granted to ordinary branch builds, and
+    # the dispatch targets THIS run's ref so the chart is released from the
+    # same commit as the image (a main dispatch could pick up a newer,
+    # not-yet-built chart).
+    name: Dispatch Helm chart release
+    needs: build-and-push
+    if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.publish_latest == true)
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - name: Dispatch helm-release on this ref
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          gh workflow run helm-release.yml --ref "$REF"
+          echo "Dispatched helm-release on ${REF}."

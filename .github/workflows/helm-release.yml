@@ -36,6 +36,10 @@ jobs:
     # an image that a failed Docker run will never produce.
     name: Image gate
     runs-on: ubuntu-latest
+    # The gate only reads Chart.yaml and queries a public registry; do not
+    # inherit the workflow-level write scopes.
+    permissions:
+      contents: read
     outputs:
       proceed: ${{ steps.gate.outputs.proceed }}
     steps:
