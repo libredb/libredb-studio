@@ -72,7 +72,10 @@ jobs:
           # inspect failure (registry outage, DNS, auth, CLI) must fail
           # loudly: treating it as "missing" would green-no-op a chart-only
           # release that nothing ever re-dispatches - a silent never-publish.
-          if ! grep -qiE "manifest unknown|not found|no such manifest" <<< "$inspect_out"; then
+          # Every alternative requires manifest context: a bare "not found"
+          # would also match unrelated failures (e.g. "docker: command not
+          # found") and wrongly defer instead of failing loudly.
+          if ! grep -qiE "manifest unknown|no such manifest|manifest for .+ not found" <<< "$inspect_out"; then
             # Collapse newlines: a multi-line message breaks the ::error::
             # annotation format (the full output is in the step log anyway).
             echo "::error::could not query GHCR for ${image} - failing instead of deferring. Inspect output: ${inspect_out//$'\n'/ }"
