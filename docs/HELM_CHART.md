@@ -221,9 +221,33 @@ ArtifactHub auto-scan (~30 min)
 
 ### Version Management
 
-- `Chart.yaml version` (e.g., `0.1.0`): Chart version, bumped for chart-only changes
-- `Chart.yaml appVersion`: The app image version this chart deploys; set manually in `Chart.yaml`
-- CI guard (`ci.yml`, "Verify appVersion is valid"): the build **fails if `appVersion` is _ahead_ of `package.json`**. When `appVersion` is _behind_, CI emits an info notice ("update on next chart release") but does **not** fail — the chart version is bumped independently of the app version.
+- `Chart.yaml version` (e.g., `0.1.4`): the chart's own SemVer. Chart-only fixes bump it
+  alone; `bun run chart:bump` bumps its patch when tracking an app release.
+- `Chart.yaml appVersion`: the app image version this chart deploys. **Always equals
+  `package.json` version — enforced in CI.**
+- Guard: `scripts/sync-chart-version.mjs` runs as `bun run chart:check` inside the required
+  `Lint, Typecheck and Build` check (`ci.yml`), so a PR that bumps `package.json` cannot
+  merge until `bun run chart:bump` is run and committed (issue #138). The guard also fails
+  when `appVersion` changes without a chart `version` bump (chart-releaser's
+  `skip_existing` would silently publish nothing) or when the new chart version was
+  already released, and it keeps the `artifacthub.io/images` tag and the README
+  `--version` example in step. The `artifacthub.io/changes` line is written by
+  `chart:bump` but deliberately not checked, so hand-written changelog entries for
+  chart-only releases never trip the guard.
+
+#### Versioning policy: version and appVersion stay independent (researched 2026-07)
+
+Lockstep (`version` == `appVersion`, the cert-manager model) was considered and rejected:
+it only works when chart-only releases never happen. This chart still has an active
+chart-only backlog, and under lockstep each such fix would either wait for the next
+product release or force an artificial one through the full distribution pipeline (npm,
+Docker, brew, deb/rpm, snap) — irreversible now that immutable releases are enabled.
+SemVer prerelease suffixes are not an escape hatch (they sort *below* the version they
+suffix and Helm hides prereleases by default), and kubernetes-sigs/kueue abandoned
+lockstep for the same reasons (kueue#3971). Consumers still see the app version
+everywhere it matters: the `APP VERSION` column in `helm search repo`, ArtifactHub, and
+the `artifacthub.io/images` annotation. Revisit lockstep if the chart reaches 1.0 and
+chart-only churn drops.
 
 ## Deployment Examples
 
