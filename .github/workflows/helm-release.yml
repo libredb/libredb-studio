@@ -54,10 +54,18 @@ jobs:
           set -euo pipefail
           app_version=$(grep '^appVersion:' charts/libredb-studio/Chart.yaml | awk '{print $2}' | tr -d '"')
           image="ghcr.io/libredb/libredb-studio:${app_version}"
-          if docker manifest inspect "$image" >/dev/null 2>&1; then
+          if inspect_out=$(docker manifest inspect "$image" 2>&1); then
             echo "proceed=true" >> "$GITHUB_OUTPUT"
             echo "OK: ${image} is published - proceeding."
             exit 0
+          fi
+          # Only a genuinely missing tag may defer the release. Any other
+          # inspect failure (registry outage, DNS, auth, CLI) must fail
+          # loudly: treating it as "missing" would green-no-op a chart-only
+          # release that nothing ever re-dispatches - a silent never-publish.
+          if ! grep -qiE "manifest unknown|not found|no such manifest" <<< "$inspect_out"; then
+            echo "::error::could not query GHCR for ${image} - failing instead of deferring. Inspect output: ${inspect_out}"
+            exit 1
           fi
           echo "proceed=false" >> "$GITHUB_OUTPUT"
           if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
