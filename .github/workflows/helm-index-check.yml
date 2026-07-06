@@ -1,0 +1,115 @@
+name: Helm Index Consistency Check
+
+# Daily consistency check between the published Helm repo index and the
+# release assets it points to (follow-up to #146/#148). The publish-time
+# verification in helm-release.yml only catches failures during the release
+# run; the #146 incident was a post-publish release deletion, and the 0.1.3
+# restore additionally showed that a silently failed Pages deployment can
+# leave the live index stale (wrong digest) while the gh-pages source is
+# correct. Checking the *served* index against the *actual* assets catches
+# every variant of that drift within a day.
+on:
+  schedule:
+    - cron: "23 5 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: helm-index-check
+  cancel-in-progress: true
+
+permissions:
+  issues: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      INDEX_URL: https://libredb.org/libredb-studio/index.yaml
+    steps:
+      - name: Check every index entry against its release asset
+        run: |
+          set -euo pipefail
+          # Cache-bust with the run id: the index is served through the GitHub
+          # Pages CDN, and a cached response is exactly the kind of staleness
+          # this check exists to detect at the origin, not to be fooled by.
+          curl -fsSL --retry 3 "${INDEX_URL}?cb=${GITHUB_RUN_ID}" -o index.yaml
+
+          failures=0
+          checked=0
+          report="${RUNNER_TEMP}/report.md"
+          : > "${report}"
+          # One line per chart version: name, version, digest, download URL.
+          # Download the real asset and compare sha256 with the index digest -
+          # a HEAD 200 alone would have missed the stale-digest half of the
+          # 0.1.3 incident.
+          while IFS=$'\t' read -r name version digest url; do
+            checked=$((checked + 1))
+            entry="${name}-${version}"
+            # The index is our own content, but its values still land in a
+            # filesystem path - keep the filename to a safe character set.
+            asset="${RUNNER_TEMP}/$(printf '%s' "${entry}" | tr -c 'A-Za-z0-9._-' '_').tgz"
+            if ! curl -fsSL --retry 3 -o "${asset}" "${url}"; then
+              echo "::error::${entry}: download failed: ${url}"
+              echo "- \`${entry}\`: download failed: ${url}" >> "${report}"
+              failures=$((failures + 1))
+              continue
+            fi
+            actual=$(sha256sum "${asset}" | cut -d' ' -f1)
+            if [ "${actual}" != "${digest}" ]; then
+              echo "::error::${entry}: digest mismatch (index ${digest}, asset ${actual})"
+              echo "- \`${entry}\`: digest mismatch (index \`${digest}\`, asset \`${actual}\`)" >> "${report}"
+              failures=$((failures + 1))
+            else
+              echo "OK: ${entry} (${digest})"
+            fi
+          done < <(yq -r '.entries[][] | [.name, .version, .digest, .urls[0]] | @tsv' index.yaml)
+
+          # An empty or unparseable index must fail too: zero entries means
+          # every helm install is already broken, not that there is no work.
+          if [ "${checked}" -eq 0 ]; then
+            echo "::error::no entries parsed from ${INDEX_URL} - index is empty or malformed"
+            echo "- no entries parsed from ${INDEX_URL} - index is empty or malformed" >> "${report}"
+            failures=$((failures + 1))
+          fi
+
+          echo "Checked ${checked} entries, ${failures} failures."
+          {
+            echo "## Helm index consistency check"
+            echo ""
+            echo "Checked ${checked} entries, ${failures} failures."
+          } >> "${GITHUB_STEP_SUMMARY}"
+          if [ "${failures}" -gt 0 ]; then
+            cat "${report}" >> "${GITHUB_STEP_SUMMARY}"
+            exit 1
+          fi
+
+      - name: Open or update tracking issue
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          title="Helm index consistency check failed"
+          body="${RUNNER_TEMP}/issue-body.md"
+          {
+            echo "The daily index-vs-assets check (#148) found the published Helm repo index out of sync with the release assets it points to. \`helm install\` may be failing for affected versions right now."
+            echo ""
+            if [ -s "${RUNNER_TEMP}/report.md" ]; then
+              cat "${RUNNER_TEMP}/report.md"
+            else
+              echo "- the check failed before producing a report (fetch or parse error); see the run log"
+            fi
+            echo ""
+            echo "Run: ${GITHUB_SERVER_URL}/${GH_REPO}/actions/runs/${GITHUB_RUN_ID}"
+          } > "${body}"
+          # One open tracking issue at a time: comment on it while the
+          # breakage persists instead of opening a duplicate per day.
+          existing=$(gh issue list --state open --search "\"${title}\" in:title" --json number --jq '.[0].number // empty')
+          if [ -n "${existing}" ]; then
+            gh issue comment "${existing}" --body-file "${body}"
+            echo "Commented on existing issue #${existing}."
+          else
+            gh issue create --title "${title}" --body-file "${body}"
+          fi
