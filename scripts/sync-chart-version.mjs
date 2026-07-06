@@ -51,6 +51,15 @@ export function bumpPatch(version) {
  * Returns violation messages (empty = in sync). baseChart is main's parsed
  * Chart.yaml or null when unavailable; chartTagExists is true/false, or null
  * when origin tags could not be queried (check skipped, CLI prints a warning).
+ *
+ * @param {{
+ *   pkgVersion: string,
+ *   chartYaml: string,
+ *   readme: string,
+ *   baseChart?: { version: string, appVersion: string } | null,
+ *   chartTagExists?: boolean | null,
+ * }} input
+ * @returns {string[]}
  */
 export function checkSync({ pkgVersion, chartYaml, readme, baseChart = null, chartTagExists = null }) {
   const violations = [];
