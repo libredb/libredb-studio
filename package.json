@@ -103,7 +103,9 @@
     "test:coverage:core": "bash tests/run-core.sh --coverage --coverage-reporter=lcov --coverage-dir=coverage/core",
     "test:coverage": "rm -rf coverage && bun run test:coverage:core && bun run test:components:coverage && node scripts/merge-lcov.mjs coverage/core/file-*/lcov.info coverage/components/lcov.info coverage/lcov.info",
     "test:coverage-html": "bun run test:coverage && genhtml coverage/lcov.info --output-directory coverage/html && echo '\n Open coverage/html/index.html in your browser'",
-    "knip": "knip"
+    "knip": "knip",
+    "chart:check": "node scripts/sync-chart-version.mjs --check",
+    "chart:bump": "node scripts/sync-chart-version.mjs --write"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",

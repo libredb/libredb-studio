@@ -11,6 +11,11 @@
  * tested in tests/unit/sync-chart-version.test.ts.
  */
 
+import { execFileSync } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
 const CHART_YAML = "charts/libredb-studio/Chart.yaml";
 const CHART_README = "charts/libredb-studio/README.md";
 
@@ -110,4 +115,77 @@ export function applyBump({ pkgVersion, chartYaml, readme }) {
     );
   const newReadme = readme.replace(/--version\s+\S+/, `--version ${newVersion}`);
   return { chartYaml: newChartYaml, readme: newReadme, changed: true, version: newVersion, appVersion: pkgVersion };
+}
+
+function git(root, args) {
+  return execFileSync("git", args, { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+}
+
+/** main's Chart.yaml, or null when origin/main is not resolvable (shallow local clone). */
+function readBaseChart(root) {
+  try {
+    return parseChart(git(root, ["show", `origin/main:${CHART_YAML}`]));
+  } catch {
+    return null;
+  }
+}
+
+/** true/false from origin, or null (skip + warn) when the remote is unreachable. */
+function chartTagExistsOnOrigin(root, version) {
+  try {
+    return git(root, ["ls-remote", "--tags", "origin", `refs/tags/libredb-studio-${version}`]) !== "";
+  } catch {
+    console.warn("WARN: could not query origin tags (offline?) - skipping the released-version check");
+    return null;
+  }
+}
+
+function main(argv) {
+  const mode = argv.includes("--write") ? "write" : argv.includes("--check") ? "check" : null;
+  const rootIdx = argv.indexOf("--root");
+  const root = rootIdx === -1 ? process.cwd() : path.resolve(argv[rootIdx + 1]);
+  if (!mode) {
+    console.error("Usage: node scripts/sync-chart-version.mjs --check|--write [--root <dir>]");
+    process.exit(2);
+  }
+
+  const pkgVersion = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).version;
+  const chartPath = path.join(root, CHART_YAML);
+  const readmePath = path.join(root, CHART_README);
+  const chartYaml = fs.readFileSync(chartPath, "utf8");
+  const readme = fs.readFileSync(readmePath, "utf8");
+
+  if (mode === "check") {
+    const { version, appVersion } = parseChart(chartYaml);
+    const baseChart = readBaseChart(root);
+    let chartTagExists = null;
+    if (baseChart && baseChart.appVersion !== appVersion && baseChart.version !== version) {
+      chartTagExists = chartTagExistsOnOrigin(root, version);
+    }
+    const violations = checkSync({ pkgVersion, chartYaml, readme, baseChart, chartTagExists });
+    if (violations.length > 0) {
+      for (const violation of violations) console.error(`ERROR: ${violation}`);
+      console.error("\nFix: run 'bun run chart:bump', review the diff, and commit it in this PR.");
+      process.exit(1);
+    }
+    if (!baseChart) {
+      console.warn("WARN: origin/main not resolvable - base-comparison checks skipped");
+    }
+    console.log(`OK: chart ${version} / appVersion ${appVersion} in sync with package.json ${pkgVersion}`);
+    return;
+  }
+
+  const result = applyBump({ pkgVersion, chartYaml, readme });
+  if (!result.changed) {
+    console.log(`OK: already in sync (chart ${result.version} / appVersion ${result.appVersion}) - nothing to write`);
+    return;
+  }
+  fs.writeFileSync(chartPath, result.chartYaml);
+  fs.writeFileSync(readmePath, result.readme);
+  console.log(`Bumped chart to ${result.version} / appVersion ${result.appVersion} - review the diff and commit.`);
+}
+
+// CLI entry only when executed directly (the unit test imports this module).
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main(process.argv.slice(2));
 }
