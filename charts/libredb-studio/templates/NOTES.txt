@@ -46,10 +46,25 @@ Configuration:
 Health check:
   kubectl --namespace {{ .Release.Namespace }} exec deploy/{{ include "libredb-studio.fullname" . }} -- wget -qO- http://localhost:{{ .Values.service.targetPort }}/api/db/health
 
-{{- if and (not .Values.secrets.jwtSecret) (not .Values.secrets.existingSecret) }}
+{{- if and (not (include "libredb-studio.authStrict" .)) (eq .Values.authProvider "local") (not .Values.secrets.adminPassword) (not .Values.secrets.existingSecret) }}
 
-WARNING: No JWT secret was provided. Please set secrets.jwtSecret to a strong random value (min 32 chars):
-  helm upgrade {{ .Release.Name }} libredb/libredb-studio --set secrets.jwtSecret=$(openssl rand -base64 32)
+First-run credentials (zero-config bootstrap):
+  secrets.adminPassword was not set, so LibreDB Studio generates admin
+  credentials on first start and prints them once to the pod log. Retrieve them:
+
+    kubectl --namespace {{ .Release.Namespace }} logs deployment/{{ include "libredb-studio.fullname" . }} | grep -A 4 "generated admin credentials"
+
+  - The default install is admin-only. Set secrets.userPassword to enable the
+    second, non-admin user account.
+{{- if include "libredb-studio.persistenceEnabled" . }}
+  - Generated credentials are stored in the persistent data volume
+    (/app/data/auth-bootstrap.json) and survive pod restarts and recreation.
+{{- else }}
+  - Generated credentials are stored in /app/data/auth-bootstrap.json on an
+    emptyDir volume: they survive container restarts but are regenerated when
+    the pod is recreated. For stable credentials set persistence.enabled=true
+    or provide secrets.jwtSecret / secrets.adminPassword yourself.
+{{- end }}
 {{- end }}
 
 {{- if and (eq (include "libredb-studio.storageProvider" .) "sqlite") (gt (int .Values.replicaCount) 1) }}

@@ -100,6 +100,17 @@ Returns "true" if persistence.enabled OR storageProvider is sqlite.
 {{- end }}
 
 {{/*
+Determine if strict auth mode is active (config.authBootstrap disables the
+app's zero-config first run). Mirrors the app's isBootstrapEnabled(): "off",
+"false", or "0" (case-insensitive) opt out; empty means the app default (on).
+*/}}
+{{- define "libredb-studio.authStrict" -}}
+{{- if has (.Values.config.authBootstrap | toString | trim | lower) (list "off" "false" "0") }}
+{{- true }}
+{{- end }}
+{{- end }}
+
+{{/*
 Return the effective storage provider.
 If postgresql subchart is enabled and storageProvider is "local", auto-switch to "postgres".
 */}}

@@ -157,12 +157,16 @@ helm install libredb oci://ghcr.io/libredb/charts/libredb-studio \
   --set secrets.adminPassword=MyAdmin123
 ```
 
-**The chart defaults to strict mode** (`config.authBootstrap: "off"`): Kubernetes deployments
-inject real secrets anyway, and generated credentials in pod logs are undesirable when logs are
-collected centrally, so `secrets.jwtSecret` and `secrets.adminPassword` (or
-`secrets.existingSecret`) are required. To opt into zero-config instead, set
-`--set config.authBootstrap=on` **and** `persistence.enabled=true` so generated credentials
-survive pod restarts; `config.authBootstrap=""` omits the variable and uses the app default (on).
+**The chart defaults to zero-config bootstrap** (`config.authBootstrap: ""` — the variable is
+omitted and the app default, on, applies): `helm install` works with no values; missing
+`JWT_SECRET`/`ADMIN_PASSWORD` are generated on first start, printed once to the pod log, and
+stored in `/app/data/auth-bootstrap.json` (an emptyDir when persistence is off, so pod
+recreation regenerates them — set `persistence.enabled=true` or explicit secrets for stable
+credentials). This keeps the chart deployable with default values, as certified catalogs such
+as the Rancher partner-charts repository require. For production, inject real secrets as above,
+or enforce them with strict mode (`--set config.authBootstrap=off`), which makes
+`secrets.jwtSecret`, `secrets.adminPassword` and `secrets.userPassword` required and fails the
+install fast when any is missing — preferable when pod logs are collected centrally.
 
 Full values reference: [`charts/libredb-studio/README.md`](../charts/libredb-studio/README.md);
 chart architecture: [`docs/HELM_CHART.md`](HELM_CHART.md).
@@ -416,7 +420,9 @@ record matches the implementation:
   (Tauri prototype, WebKitGTK/Monaco validation, unsigned PoC builds) was re-scoped into its
   Phase 1 — close as "recommendation delivered, hands-on spike open" and open the Phase 1
   follow-up issue.
-- **#118 (Helm AUTH_BOOTSTRAP)**: the chart deliberately defaults to strict mode
+- **#118 (Helm AUTH_BOOTSTRAP)**: the chart originally defaulted to strict mode
   (`config.authBootstrap: "off"`), deviating from the issue's "default to the app default (on)"
-  wording — generated credentials in centrally collected pod logs are undesirable. Note the
-  deviation when closing.
+  wording — generated credentials in centrally collected pod logs are undesirable. This was
+  later reversed for the Rancher partner-charts certification, whose repository requires charts
+  to be deployable with default values: the chart now defaults to `""` (zero-config bootstrap),
+  and strict mode remains available via `config.authBootstrap=off`.

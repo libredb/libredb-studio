@@ -16,15 +16,24 @@ Web-based SQL IDE for cloud-native teams supporting PostgreSQL, MySQL, SQLite, O
 helm repo add libredb https://libredb.org/libredb-studio/
 helm repo update
 
-# Install with minimal configuration
-helm install libredb libredb/libredb-studio \
-  --set secrets.jwtSecret=$(openssl rand -base64 32) \
-  --set secrets.adminPassword=MyAdmin123 \
-  --set secrets.userPassword=MyUser123
+# Zero-config install: first-run admin credentials are generated automatically
+helm install libredb libredb/libredb-studio
+
+# Retrieve the generated admin credentials from the pod log
+kubectl logs deployment/libredb-libredb-studio | grep -A 4 "generated admin credentials"
 
 # Access via port-forward
 kubectl port-forward svc/libredb-libredb-studio 3000:80
 # Open http://localhost:3000
+```
+
+For production, provide your own secrets instead of relying on generated ones:
+
+```bash
+helm install libredb libredb/libredb-studio \
+  --set secrets.jwtSecret=$(openssl rand -base64 32) \
+  --set secrets.adminPassword=MyAdmin123 \
+  --set secrets.userPassword=MyUser123
 ```
 
 ### OCI Registry Install
@@ -85,9 +94,15 @@ helm install libredb libredb/libredb-studio \
 
 ## Auth Bootstrap (Zero-Config vs Strict)
 
-The application supports a zero-config bootstrap mode (`AUTH_BOOTSTRAP=on`, the app default): missing `JWT_SECRET` / `ADMIN_PASSWORD` are auto-generated on first start, printed once to the pod log, and persisted in the data directory. **The chart defaults to strict mode instead** (`config.authBootstrap: "off"`): Kubernetes deployments inject real secrets anyway, and generated credentials in pod logs are undesirable when logs are collected centrally. In strict mode, missing `secrets.jwtSecret` or `secrets.adminPassword` surface as a clear login error.
+**The chart defaults to the application's zero-config bootstrap** (`config.authBootstrap: ""` — the `AUTH_BOOTSTRAP` variable is omitted and the app default, on, applies): when `secrets.jwtSecret` / `secrets.adminPassword` are not provided, they are generated on first start, printed once to the pod log, and stored in `/app/data/auth-bootstrap.json`. Explicitly set values always win — only missing ones are generated. This makes the chart deployable with default values, which certified catalogs such as the Rancher partner-charts repository require.
 
-If you opt into zero-config (`--set config.authBootstrap=on`), set `persistence.enabled=true` so the generated credentials survive pod restarts — without a persistent volume for the data directory, every restart generates new credentials. Set `config.authBootstrap=""` to omit the variable entirely and use the app default.
+Notes on the zero-config default:
+
+- The default install is **admin-only**. The second, non-admin account is never generated; set `secrets.userPassword` to enable it.
+- Without persistence the data directory is an `emptyDir`: generated credentials survive container restarts but are regenerated when the pod is recreated. Set `persistence.enabled=true` or provide your own `secrets.*` values for stable credentials.
+- Generated credentials appear once in the pod log. If your logs are collected centrally, prefer explicit secrets or strict mode.
+
+**Strict mode** (`--set config.authBootstrap=off`) restores fail-closed behavior: `secrets.jwtSecret`, `secrets.adminPassword` and `secrets.userPassword` are required (or use `secrets.existingSecret`) and the install fails fast with a clear message when any is missing. Recommended for production. Setting `config.authBootstrap=on` is equivalent to the default `""`, just explicit.
 
 ## OIDC SSO
 
@@ -189,7 +204,7 @@ helm uninstall libredb
 | `image.tag` | Image tag | `""` (Chart appVersion) |
 | `image.pullPolicy` | Pull policy | `IfNotPresent` |
 | `authProvider` | Auth mode: local or oidc | `local` |
-| `config.authBootstrap` | Auth bootstrap: off (strict), on (zero-config), "" (app default) | `off` |
+| `config.authBootstrap` | Auth bootstrap: `""` (zero-config, app default), `on` (explicit zero-config), `off` (strict) | `""` |
 | `secrets.jwtSecret` | JWT signing secret | `""` |
 | `secrets.adminEmail` | Admin email | `admin@libredb.org` |
 | `secrets.adminPassword` | Admin password | `""` |

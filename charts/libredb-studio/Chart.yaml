@@ -27,13 +27,14 @@ maintainers:
 annotations:
   artifacthub.io/category: database
   artifacthub.io/license: MIT
-  artifacthub.io/prerelease: "true"
+  artifacthub.io/prerelease: "false"
   artifacthub.io/containsSecurityUpdates: "false"
   artifacthub.io/images: |
     - name: libredb-studio
       image: ghcr.io/libredb/libredb-studio:0.9.49
       platforms:
         - linux/amd64
+        - linux/arm64
   artifacthub.io/links: |
     - name: Documentation
       url: https://github.com/libredb/libredb-studio#readme
@@ -43,6 +44,10 @@ annotations:
       url: https://github.com/libredb/libredb-studio
   artifacthub.io/changes: |
     - Track app release 0.9.49 (appVersion bump; default image tag follows)
+    - Default install is now zero-config: with no values set, first-run admin credentials are generated and printed to the pod log (config.authBootstrap default changed from "off" to ""); set config.authBootstrap=off for the previous strict behavior
+    - Secret keys and env entries for JWT_SECRET, ADMIN_PASSWORD, USER_EMAIL and USER_PASSWORD are rendered only when their values are set (or an existingSecret is used), so pods no longer reference missing Secret keys
+    - Mount an emptyDir at /app/data when persistence is disabled so first-run credentials can be persisted under readOnlyRootFilesystem
+    - Declare linux/arm64 in artifacthub.io/images (the image is multi-arch) and clear the prerelease flag
 dependencies:
   - name: postgresql
     version: "16.x.x"

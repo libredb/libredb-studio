@@ -49,31 +49,44 @@ spec:
             {{- toYaml . | nindent 12 }}
             {{- end }}
           env:
+            {{- if or .Values.secrets.jwtSecret .Values.secrets.existingSecret }}
             - name: JWT_SECRET
               valueFrom:
                 secretKeyRef:
                   name: {{ include "libredb-studio.secretName" . }}
                   key: {{ .Values.secrets.existingSecretKeys.jwtSecret }}
+                  optional: true
+            {{- end }}
+            {{- if or .Values.secrets.adminEmail .Values.secrets.existingSecret }}
             - name: ADMIN_EMAIL
               valueFrom:
                 secretKeyRef:
                   name: {{ include "libredb-studio.secretName" . }}
                   key: {{ .Values.secrets.existingSecretKeys.adminEmail }}
+                  optional: true
+            {{- end }}
+            {{- if or .Values.secrets.adminPassword .Values.secrets.existingSecret }}
             - name: ADMIN_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: {{ include "libredb-studio.secretName" . }}
                   key: {{ .Values.secrets.existingSecretKeys.adminPassword }}
+                  optional: true
+            {{- end }}
+            {{- if or .Values.secrets.userPassword .Values.secrets.existingSecret }}
             - name: USER_EMAIL
               valueFrom:
                 secretKeyRef:
                   name: {{ include "libredb-studio.secretName" . }}
                   key: {{ .Values.secrets.existingSecretKeys.userEmail }}
+                  optional: true
             - name: USER_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: {{ include "libredb-studio.secretName" . }}
                   key: {{ .Values.secrets.existingSecretKeys.userPassword }}
+                  optional: true
+            {{- end }}
             {{- if or .Values.secrets.llmApiKey .Values.secrets.existingSecret }}
             - name: LLM_API_KEY
               valueFrom:
@@ -142,10 +155,8 @@ spec:
               mountPath: /app/.next/cache
             - name: tmp
               mountPath: /tmp
-            {{- if include "libredb-studio.persistenceEnabled" . }}
             - name: data
               mountPath: /app/data
-            {{- end }}
             {{- if .Values.seedConnections.enabled }}
             - name: seed-config
               mountPath: /app/config
@@ -160,6 +171,9 @@ spec:
         - name: data
           persistentVolumeClaim:
             claimName: {{ include "libredb-studio.pvcName" . }}
+        {{- else }}
+        - name: data
+          emptyDir: {}
         {{- end }}
         {{- if .Values.seedConnections.enabled }}
         - name: seed-config

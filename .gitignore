@@ -87,6 +87,8 @@ Thumbs.db
 .codegraph/
 
 testdb
+testdb-shm
+testdb-wal
 
 *.pid
 
