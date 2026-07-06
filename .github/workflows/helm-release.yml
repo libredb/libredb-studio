@@ -104,7 +104,10 @@ jobs:
           # itself, instead of parsing the version out of Chart.yaml. `helm
           # package` names the file <chart-name>-<version>.tgz from the chart
           # metadata, so there is no version-string parsing to get wrong.
+          # Use a clean directory so a leftover .tgz can never make the glob
+          # below match more than one file.
           pkg_dir="${RUNNER_TEMP}/verify-pkg"
+          rm -rf "${pkg_dir}"
           mkdir -p "${pkg_dir}"
           helm package charts/libredb-studio -d "${pkg_dir}" >/dev/null
           asset=$(basename "${pkg_dir}"/*.tgz)
@@ -115,16 +118,20 @@ jobs:
           # missing is exactly the failure mode in #146. The Release/asset can
           # also lag behind chart-releaser via the API (eventual consistency),
           # so retry with backoff. stderr is left visible so a genuine failure
-          # (permissions, rate limiting) surfaces in the log.
-          for attempt in 1 2 3 4 5; do
-            if gh api "repos/${{ github.repository }}/releases/tags/${tag}" --jq '.assets[].name' | grep -qx "${asset}"; then
+          # (permissions, rate limiting) surfaces in the log. grep -F matches the
+          # asset name literally so the dots are not treated as regex wildcards.
+          attempts=5
+          for ((attempt = 1; attempt <= attempts; attempt++)); do
+            if gh api "repos/${{ github.repository }}/releases/tags/${tag}" --jq '.assets[].name' | grep -Fqx "${asset}"; then
               echo "OK: ${tag} has asset ${asset} (attempt ${attempt})."
               exit 0
             fi
-            echo "Attempt ${attempt}: ${asset} not visible yet on ${tag}, retrying..."
-            sleep $((attempt * 10))
+            if ((attempt < attempts)); then
+              echo "Attempt ${attempt}/${attempts}: ${asset} not visible yet on ${tag}, retrying..."
+              sleep $((attempt * 10))
+            fi
           done
-          echo "::error::chart-releaser did not publish '${asset}' on release '${tag}' after retries. The gh-pages index may now point to a broken download URL. See #146 for the same failure mode."
+          echo "::error::chart-releaser did not publish '${asset}' on release '${tag}' after ${attempts} attempts. The gh-pages index may now point to a broken download URL. See #146 for the same failure mode."
           exit 1
 
   release-oci:
