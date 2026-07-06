@@ -50,6 +50,32 @@ jobs:
       - name: Run chart-testing lint
         run: ct lint --target-branch ${{ github.event.repository.default_branch }} --charts charts/libredb-studio
 
+      - name: Wait for the appVersion image on GHCR
+        # A version-bump merge triggers this workflow BEFORE the release
+        # chain has built the new image (tag push -> artifacts -> publish ->
+        # docker dispatch takes ~25-35 min), so ct install used to fail with
+        # ImagePullBackOff and the chart could even publish before its image
+        # existed (user-facing ImagePullBackOff window). Wait for the image
+        # instead: chart-only releases (appVersion unchanged, image already
+        # published) pass through instantly; release merges wait here until
+        # docker-build-push pushes the tag, then everything proceeds with no
+        # manual re-dispatch.
+        run: |
+          set -euo pipefail
+          app_version=$(grep '^appVersion:' charts/libredb-studio/Chart.yaml | awk '{print $2}' | tr -d '"')
+          image="ghcr.io/libredb/libredb-studio:${app_version}"
+          echo "Waiting for ${image} (up to 45 minutes)..."
+          deadline=$((SECONDS + 45 * 60))
+          until docker manifest inspect "$image" >/dev/null 2>&1; do
+            if ((SECONDS >= deadline)); then
+              echo "::error::${image} did not appear within 45 minutes. If the release chain failed, fix it and re-run this workflow; ct install and the chart publish both need the image."
+              exit 1
+            fi
+            echo "$(date -u +%H:%M:%S) not there yet, retrying in 60s..."
+            sleep 60
+          done
+          echo "Image ${image} is available."
+
       - name: Create Kind cluster
         uses: helm/kind-action@ef37e7f390d99f746eb8b610417061a60e82a6cc # v1.14.0
 
