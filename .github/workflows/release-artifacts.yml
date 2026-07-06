@@ -519,3 +519,19 @@ jobs:
           set -euo pipefail
           gh release edit "$TAG" --draft=false --latest
           echo "Release '$TAG' published with the verified asset set."
+
+      - name: Dispatch npm and Docker publish
+        # The publish above runs under GITHUB_TOKEN, and events created by
+        # GITHUB_TOKEN do not trigger other workflows (the 0.9.46 release
+        # published without npm/Docker firing). workflow_dispatch API calls
+        # are NOT subject to that restriction, so chain the downstream
+        # channels explicitly. Their own guards re-validate the version.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.guard.outputs.version }}
+        run: |
+          set -euo pipefail
+          gh workflow run npm-publish.yml -f "version=$TAG"
+          gh workflow run docker-build-push.yml -f "version=$TAG"
+          echo "Dispatched npm-publish and docker-build-push for '$TAG'."
