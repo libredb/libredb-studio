@@ -97,8 +97,8 @@ jobs:
         # Immutable releases (issue #154) freeze assets at publish time, so the
         # chart .tgz must be attached while the release is still a draft and
         # the release published only afterwards. chart-releaser's own upload
-        # (create published release, then attach asset) would 422; it now runs
-        # index-only in the next step.
+        # (create published release, then attach asset) would 422; the repo
+        # index is pushed manually in the next step.
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
@@ -147,6 +147,9 @@ jobs:
           tag=$(basename "$asset_path" .tgz)
           pages_dir="${RUNNER_TEMP}/gh-pages"
           rm -rf "$pages_dir"
+          # Explicit fetch: keeps this step working even if the checkout
+          # configuration ever stops fetching all branches.
+          git fetch origin "refs/heads/gh-pages:refs/remotes/origin/gh-pages"
           git worktree add "$pages_dir" origin/gh-pages
           helm repo index .cr-release-packages \
             --url "https://github.com/${GITHUB_REPOSITORY}/releases/download/${tag}" \

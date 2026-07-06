@@ -16,10 +16,10 @@ name: Release Artifacts
 # fail with HTTP 422 (the 0.9.45 incident). So this workflow triggers on the
 # TAG push (not on release publish), attaches every asset to a DRAFT release,
 # verifies the full asset set, and publishes the release as its LAST step.
-# `release: published` then fires exactly once with all assets in place, which
-# is what triggers npm-publish and docker-build-push. A hand-written draft
-# release for the tag is reused if one exists; otherwise a draft is created
-# with generated notes.
+# Because that publish runs under GITHUB_TOKEN it fires no `release:published`
+# triggers; npm-publish and docker-build-push are chained explicitly by the
+# final dispatch step instead. A hand-written draft release for the tag is
+# reused if one exists; otherwise a draft is created with generated notes.
 
 on:
   push:
@@ -529,7 +529,10 @@ jobs:
         # GITHUB_TOKEN do not trigger other workflows (the 0.9.46 release
         # published without npm/Docker firing). workflow_dispatch API calls
         # are NOT subject to that restriction, so chain the downstream
-        # channels explicitly. Their own guards re-validate the version.
+        # channels explicitly. Version safety comes from this workflow's
+        # guard job (TAG validated against package.json at the tagged
+        # commit) plus the --ref pinning below - docker trusts its version
+        # input and npm derives the version from the ref's package.json.
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
@@ -544,5 +547,6 @@ jobs:
           # case on a tag ref. Empty input = publish the package.json
           # version at the tag, which is the released version by definition.
           gh workflow run npm-publish.yml --ref "refs/tags/$TAG"
-          gh workflow run docker-build-push.yml --ref "refs/tags/$TAG" -f "version=$TAG"
+          gh workflow run docker-build-push.yml --ref "refs/tags/$TAG" \
+            -f "version=$TAG" -f "publish_latest=true"
           echo "Dispatched npm-publish and docker-build-push for '$TAG'."
