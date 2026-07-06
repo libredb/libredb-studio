@@ -88,12 +88,57 @@ jobs:
       - name: Build chart dependencies
         run: helm dependency build charts/libredb-studio
 
-      - name: Run chart-releaser
+      - name: Package chart
+        run: |
+          rm -rf .cr-release-packages
+          helm package charts/libredb-studio -d .cr-release-packages
+
+      - name: Publish chart release (draft-first, immutable-compatible)
+        # Immutable releases (issue #154) freeze assets at publish time, so the
+        # chart .tgz must be attached while the release is still a draft and
+        # the release published only afterwards. chart-releaser's own upload
+        # (create published release, then attach asset) would 422; it now runs
+        # index-only in the next step.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          asset_path=$(ls .cr-release-packages/*.tgz)
+          asset=$(basename "$asset_path")
+          tag="${asset%.tgz}"
+          desc=$(grep '^description:' charts/libredb-studio/Chart.yaml | cut -d' ' -f2-)
+          if IS_DRAFT=$(gh release view "$tag" --json isDraft --jq .isDraft 2>/dev/null); then
+            if [ "$IS_DRAFT" != "true" ]; then
+              if gh release view "$tag" --json assets --jq '.assets[].name' | grep -Fqx "$asset"; then
+                echo "Release '$tag' is already published with '$asset' - nothing to do."
+                exit 0
+              fi
+              echo "::error::Release '$tag' is published WITHOUT '$asset' and immutable releases cannot be amended - bump the chart version. See #154."
+              exit 1
+            fi
+            echo "Reusing existing draft release '$tag'."
+          else
+            gh release create "$tag" --draft --title "$tag" --notes "$desc"
+          fi
+          # Immutable releases require the git tag to exist at publish time.
+          if ! git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null; then
+            git tag "$tag"
+            git push origin "refs/tags/$tag"
+          fi
+          gh release upload "$tag" "$asset_path" --clobber
+          # Chart releases (tag libredb-studio-<chart-version>) must never take
+          # the repo's Latest marker away from product releases (PR #128).
+          gh release edit "$tag" --draft=false --latest=false
+          echo "Published chart release '$tag' with '$asset'."
+
+      - name: Update Helm repo index (chart-releaser, index only)
         uses: helm/chart-releaser-action@cae68fefc6b5f367a0275617c9f83181ba54714f # v1.7.0
         with:
+          # Upload is handled draft-first above; cr only regenerates and pushes
+          # the gh-pages index.yaml from the published releases.
+          skip_upload: true
           skip_existing: true
-          # Chart releases (tag libredb-studio-<chart-version>) must never take
-          # the repo's Latest marker away from product releases (bare semver).
           mark_as_latest: false
         env:
           CR_TOKEN: "${{ secrets.GITHUB_TOKEN }}"

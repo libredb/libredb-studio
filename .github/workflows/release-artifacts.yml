@@ -10,10 +10,24 @@ name: Release Artifacts
 # it to libredb/homebrew-tap when TAP_GITHUB_TOKEN is configured (issue #111).
 # The snap job builds the server snap from the linux tarballs and publishes it
 # to the Snap Store when SNAPCRAFT_STORE_CREDENTIALS is configured (issue #113).
+#
+# DRAFT-FIRST FLOW (issue #154): the repository uses immutable releases, which
+# freeze a release's assets the moment it is published - post-publish uploads
+# fail with HTTP 422 (the 0.9.45 incident). So this workflow triggers on the
+# TAG push (not on release publish), attaches every asset to a DRAFT release,
+# verifies the full asset set, and publishes the release as its LAST step.
+# `release: published` then fires exactly once with all assets in place, which
+# is what triggers npm-publish and docker-build-push. A hand-written draft
+# release for the tag is reused if one exists; otherwise a draft is created
+# with generated notes.
 
 on:
-  release:
-    types: [published]
+  push:
+    tags:
+      # Product tags are bare semver (no v prefix). Chart tags
+      # (libredb-studio-<chart-version>) never match a leading digit.
+      - '[0-9]+.[0-9]+.[0-9]+'
+      - '[0-9]+.[0-9]+.[0-9]+-*'
   workflow_dispatch:
     inputs:
       version:
@@ -32,9 +46,9 @@ permissions:
 
 jobs:
   guard:
-    # Product releases only: chart releases (libredb-studio-<chart-version>)
-    # are published by helm-release.yml and must not feed this pipeline.
-    if: github.event_name != 'release' || !startsWith(github.event.release.tag_name, 'libredb-studio-')
+    # Product tags only: chart tags (libredb-studio-<chart-version>) are
+    # handled by helm-release.yml and cannot match the digit-anchored tag
+    # patterns above; this guard re-checks anyway for workflow_dispatch runs.
     name: Validate release version
     runs-on: ubuntu-latest
     outputs:
@@ -50,20 +64,16 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
           INPUT_VERSION: ${{ github.event.inputs.version }}
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          PUSHED_TAG: ${{ github.ref_name }}
         run: |
           PKG_VERSION=$(node -p "require('./package.json').version")
           if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
             VERSION="$INPUT_VERSION"
           else
-            VERSION="$PKG_VERSION"
+            VERSION="$PUSHED_TAG"
           fi
           if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z][0-9A-Za-z.-]*)?$'; then
             echo "Version '$VERSION' is not a valid semver (no v prefix) - refusing to build release artifacts" >&2
-            exit 1
-          fi
-          if [ "$EVENT_NAME" = "release" ] && [ "$RELEASE_TAG" != "$VERSION" ]; then
-            echo "Release tag '$RELEASE_TAG' does not match package.json version '$VERSION' - refusing to publish mismatched artifacts" >&2
             exit 1
           fi
           # Tarball names always derive from package.json (see the build
@@ -85,6 +95,35 @@ jobs:
           fi
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "Version: ${VERSION}"
+
+  draft:
+    # Immutable releases (issue #154): assets can only be attached while the
+    # release is a draft. Reuse a hand-written draft when one exists for the
+    # tag; refuse to proceed when the release is already published (uploads
+    # would 422 and the published asset set can never be amended).
+    name: Ensure draft release
+    needs: guard
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Create or reuse the draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.guard.outputs.version }}
+        run: |
+          set -euo pipefail
+          if IS_DRAFT=$(gh release view "$TAG" --json isDraft --jq .isDraft 2>/dev/null); then
+            if [ "$IS_DRAFT" != "true" ]; then
+              echo "::error::Release '$TAG' is already published; immutable releases cannot receive assets. Delete it (if policy allows) or bump the version. See #154."
+              exit 1
+            fi
+            echo "Reusing existing draft release for '$TAG'."
+          else
+            gh release create "$TAG" --draft --title "$TAG" --generate-notes
+            echo "Created draft release for '$TAG'."
+          fi
 
   build:
     name: Build standalone tarball (${{ matrix.platform }})
@@ -136,7 +175,7 @@ jobs:
 
   publish:
     name: Attach artifacts to release
-    needs: [guard, build]
+    needs: [guard, build, draft]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -225,7 +264,7 @@ jobs:
     # unpack the payload, bundle the pinned Node runtime (fetch-node.sh),
     # run nfpm (one config -> both formats), smoke test the .deb on the
     # amd64 runner, and attach the packages to the release.
-    needs: [guard, build]
+    needs: [guard, build, draft]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -339,7 +378,7 @@ jobs:
     # SNAPCRAFT_STORE_CREDENTIALS with the same pattern as Docker Hub in
     # docker-build-push.yml: without the secret every step is skipped and
     # the job succeeds cleanly (secrets are unavailable in job-level if).
-    needs: [guard, build]
+    needs: [guard, build, draft]
     permissions:
       contents: write
     strategy:
@@ -423,3 +462,60 @@ jobs:
           TAG: ${{ needs.guard.outputs.version }}
           SNAP_FILE: ${{ steps.snapcraft.outputs.snap }}
         run: gh release upload "$TAG" "$SNAP_FILE" --clobber --repo "$GITHUB_REPOSITORY"
+
+  publish-release:
+    # The LAST step of the draft-first flow (issue #154): verify the complete
+    # asset set on the draft, then flip it to published. Publishing is the
+    # point of no return under immutable releases - after it, the asset set
+    # can never be amended - so the verification runs strictly before it.
+    # `release: published` fires here, triggering npm-publish and
+    # docker-build-push exactly as before.
+    name: Verify assets and publish release
+    needs: [guard, publish, linux-packages, snap]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Verify the draft carries the full asset set
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.guard.outputs.version }}
+        run: |
+          set -euo pipefail
+          gh release view "$TAG" --json assets --jq '.assets[].name' > /tmp/assets.txt
+          echo "Assets on draft '$TAG':"
+          cat /tmp/assets.txt
+          missing=0
+          # Snap assets are intentionally NOT required: the snap job skips
+          # cleanly when SNAPCRAFT_STORE_CREDENTIALS is not configured.
+          for asset in \
+            "libredb-studio-standalone-${TAG}-linux-x64.tar.gz" \
+            "libredb-studio-standalone-${TAG}-linux-arm64.tar.gz" \
+            "libredb-studio-standalone-${TAG}-darwin-x64.tar.gz" \
+            "libredb-studio-standalone-${TAG}-darwin-arm64.tar.gz" \
+            "SHA256SUMS" \
+            "libredb-studio_${TAG}_amd64.deb" \
+            "libredb-studio_${TAG}_amd64.deb.sha256" \
+            "libredb-studio_${TAG}_arm64.deb" \
+            "libredb-studio_${TAG}_arm64.deb.sha256" \
+            "libredb-studio-${TAG}.x86_64.rpm" \
+            "libredb-studio-${TAG}.x86_64.rpm.sha256" \
+            "libredb-studio-${TAG}.aarch64.rpm" \
+            "libredb-studio-${TAG}.aarch64.rpm.sha256"; do
+            if ! grep -Fqx "$asset" /tmp/assets.txt; then
+              echo "::error::draft release '$TAG' is missing required asset '$asset' - refusing to publish an incomplete immutable release"
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.guard.outputs.version }}
+        run: |
+          set -euo pipefail
+          gh release edit "$TAG" --draft=false --latest
+          echo "Release '$TAG' published with the verified asset set."
