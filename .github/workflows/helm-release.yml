@@ -23,7 +23,54 @@ permissions:
   pages: write
 
 jobs:
+  preflight:
+    # Image gate: the chart deploys ghcr.io/libredb/libredb-studio:<appVersion>
+    # by default, so nothing here may run (or publish) before that image
+    # exists. A version-bump merge fires this workflow ~25-35 minutes before
+    # the release chain has built the image; in that case the push-triggered
+    # run ends here as a green no-op and docker-build-push dispatches this
+    # workflow again after it publishes the version tag (and never dispatches
+    # it when the build failed - a failed image makes every downstream job
+    # pointless). Chart-only releases pass instantly: their appVersion image
+    # is already published. No polling by design: a wait would burn 45 min on
+    # an image that a failed Docker run will never produce.
+    name: Image gate
+    runs-on: ubuntu-latest
+    outputs:
+      proceed: ${{ steps.gate.outputs.proceed }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Check the appVersion image exists on GHCR
+        id: gate
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          app_version=$(grep '^appVersion:' charts/libredb-studio/Chart.yaml | awk '{print $2}' | tr -d '"')
+          image="ghcr.io/libredb/libredb-studio:${app_version}"
+          if docker manifest inspect "$image" >/dev/null 2>&1; then
+            echo "proceed=true" >> "$GITHUB_OUTPUT"
+            echo "OK: ${image} is published - proceeding."
+            exit 0
+          fi
+          echo "proceed=false" >> "$GITHUB_OUTPUT"
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "::error::${image} is not published. A dispatched run expects the image to exist - check docker-build-push for this version, then re-dispatch."
+            exit 1
+          fi
+          echo "::notice::${image} is not published yet - ending as a no-op. docker-build-push re-dispatches this workflow after it pushes the version tag (release chain), so no action is needed unless that build failed."
+          {
+            echo "## Helm release deferred"
+            echo ""
+            echo "\`${image}\` is not on GHCR yet. This push-triggered run is a no-op;"
+            echo "the release chain re-dispatches helm-release after the image is published."
+          } >> "$GITHUB_STEP_SUMMARY"
+
   lint-test:
+    needs: preflight
+    if: needs.preflight.outputs.proceed == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -49,32 +96,6 @@ jobs:
 
       - name: Run chart-testing lint
         run: ct lint --target-branch ${{ github.event.repository.default_branch }} --charts charts/libredb-studio
-
-      - name: Wait for the appVersion image on GHCR
-        # A version-bump merge triggers this workflow BEFORE the release
-        # chain has built the new image (tag push -> artifacts -> publish ->
-        # docker dispatch takes ~25-35 min), so ct install used to fail with
-        # ImagePullBackOff and the chart could even publish before its image
-        # existed (user-facing ImagePullBackOff window). Wait for the image
-        # instead: chart-only releases (appVersion unchanged, image already
-        # published) pass through instantly; release merges wait here until
-        # docker-build-push pushes the tag, then everything proceeds with no
-        # manual re-dispatch.
-        run: |
-          set -euo pipefail
-          app_version=$(grep '^appVersion:' charts/libredb-studio/Chart.yaml | awk '{print $2}' | tr -d '"')
-          image="ghcr.io/libredb/libredb-studio:${app_version}"
-          echo "Waiting for ${image} (up to 45 minutes)..."
-          deadline=$((SECONDS + 45 * 60))
-          until docker manifest inspect "$image" >/dev/null 2>&1; do
-            if ((SECONDS >= deadline)); then
-              echo "::error::${image} did not appear within 45 minutes. If the release chain failed, fix it and re-run this workflow; ct install and the chart publish both need the image."
-              exit 1
-            fi
-            echo "$(date -u +%H:%M:%S) not there yet, retrying in 60s..."
-            sleep 60
-          done
-          echo "Image ${image} is available."
 
       - name: Create Kind cluster
         uses: helm/kind-action@ef37e7f390d99f746eb8b610417061a60e82a6cc # v1.14.0

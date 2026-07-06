@@ -44,6 +44,8 @@ jobs:
     permissions:
       contents: read
       packages: write
+      # Required by the helm-release dispatch step (release context only).
+      actions: write
     outputs:
       version: ${{ steps.extract-version.outputs.version }}
       image: ${{ steps.meta.outputs.tags }}
@@ -186,6 +188,23 @@ jobs:
             JWT_SECRET_BUILD=build-time-placeholder-secret-32ch
             ADMIN_PASSWORD_BUILD=build
             USER_PASSWORD_BUILD=build
+
+      - name: Dispatch Helm chart release
+        # The chart deploys this image by default, so helm-release runs only
+        # AFTER a successful image publish: the version-bump merge's own
+        # helm-release run ends as a no-op at its image gate, and this
+        # dispatch re-triggers it now that the image exists. Release context
+        # only - main/dev branch builds must not publish charts. If this
+        # build fails, no dispatch happens and the chart correctly stays
+        # unpublished.
+        if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.publish_latest == true)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh workflow run helm-release.yml --ref main
+          echo "Dispatched helm-release."
 
       - name: Generate build summary
         run: |
