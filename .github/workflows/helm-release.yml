@@ -105,6 +105,7 @@ jobs:
           # package` names the file <chart-name>-<version>.tgz from the chart
           # metadata, so there is no version-string parsing to get wrong.
           pkg_dir="${RUNNER_TEMP}/verify-pkg"
+          mkdir -p "${pkg_dir}"
           helm package charts/libredb-studio -d "${pkg_dir}" >/dev/null
           asset=$(basename "${pkg_dir}"/*.tgz)
           tag="${asset%.tgz}"
