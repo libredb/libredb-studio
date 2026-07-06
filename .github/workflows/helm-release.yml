@@ -100,9 +100,14 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          # Read the chart version robustly: split on the first colon and strip
-          # surrounding whitespace and quotes, so a quoted or padded value still parses.
-          version=$(awk -F':' '/^version:/ { gsub(/[[:space:]"'\'']/, "", $2); print $2; exit }' charts/libredb-studio/Chart.yaml)
+          # Read the chart version robustly: take the value after "version:",
+          # then strip whitespace and surrounding quotes. The tr set is in double
+          # quotes so the single quote inside it needs no awkward escaping.
+          version=$(awk -F': *' '/^version:/{print $2; exit}' charts/libredb-studio/Chart.yaml | tr -d " \t\r\"'")
+          if [ -z "${version}" ]; then
+            echo "::error::could not extract chart version from charts/libredb-studio/Chart.yaml"
+            exit 1
+          fi
           tag="libredb-studio-${version}"
           echo "Verifying GitHub Release asset for tag: ${tag}"
           # The Release/asset can lag behind chart-releaser via the API (eventual
