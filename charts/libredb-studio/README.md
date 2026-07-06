@@ -31,7 +31,7 @@ kubectl port-forward svc/libredb-libredb-studio 3000:80
 
 ```bash
 helm install libredb oci://ghcr.io/libredb/charts/libredb-studio \
-  --version 0.1.6 \
+  --version 0.1.7 \
   --set secrets.jwtSecret=$(openssl rand -base64 32) \
   --set secrets.adminPassword=MyAdmin123 \
   --set secrets.userPassword=MyUser123
