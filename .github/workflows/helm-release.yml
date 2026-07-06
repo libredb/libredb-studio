@@ -36,7 +36,12 @@ jobs:
     # an image that a failed Docker run will never produce.
     name: Image gate
     runs-on: ubuntu-latest
-    # The gate only reads Chart.yaml and queries a public registry; do not
+    # A registry query is near-instant; never let a network hang hold a
+    # runner.
+    timeout-minutes: 5
+    # The gate only reads Chart.yaml and queries the registry anonymously -
+    # this relies on the GHCR package being PUBLIC (if visibility ever
+    # changes, this step fails loudly and needs a registry login). Do not
     # inherit the workflow-level write scopes.
     permissions:
       contents: read
@@ -53,6 +58,10 @@ jobs:
         run: |
           set -euo pipefail
           app_version=$(grep '^appVersion:' charts/libredb-studio/Chart.yaml | awk '{print $2}' | tr -d '"')
+          if [ -z "$app_version" ]; then
+            echo "::error::could not read appVersion from charts/libredb-studio/Chart.yaml"
+            exit 1
+          fi
           image="ghcr.io/libredb/libredb-studio:${app_version}"
           if inspect_out=$(docker manifest inspect "$image" 2>&1); then
             echo "proceed=true" >> "$GITHUB_OUTPUT"
@@ -64,7 +73,9 @@ jobs:
           # loudly: treating it as "missing" would green-no-op a chart-only
           # release that nothing ever re-dispatches - a silent never-publish.
           if ! grep -qiE "manifest unknown|not found|no such manifest" <<< "$inspect_out"; then
-            echo "::error::could not query GHCR for ${image} - failing instead of deferring. Inspect output: ${inspect_out}"
+            # Collapse newlines: a multi-line message breaks the ::error::
+            # annotation format (the full output is in the step log anyway).
+            echo "::error::could not query GHCR for ${image} - failing instead of deferring. Inspect output: ${inspect_out//$'\n'/ }"
             exit 1
           fi
           echo "proceed=false" >> "$GITHUB_OUTPUT"

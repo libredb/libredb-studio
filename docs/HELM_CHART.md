@@ -191,12 +191,26 @@ When `seedConnections.enabled=true`, the chart provisions a set of pre-defined d
 
 ## Release Pipeline
 
+The chart never releases before the image it deploys exists (#161), and the
+whole flow is compatible with the repository's immutable-releases policy
+(draft-first, #154/#155/#158). For a product release, `docker-build-push.yml`
+dispatches `helm-release.yml` on the release tag ref after the image publish
+succeeds.
+
 ```
-Push to main (charts/** changed)
-  │
+Push to main (charts/** changed)   OR   dispatched by docker-build-push
+  │                                     after a successful image publish
   ▼
 ┌─────────────────────────────────────────┐
 │  helm-release.yml                       │
+│                                         │
+│  Job 0: preflight (image gate)          │
+│    ghcr image <appVersion> published?   │
+│    ├── yes → proceed                    │
+│    ├── no + push event → green no-op    │
+│    │   (the release chain re-dispatches │
+│    │    after the image is published)   │
+│    └── no + dispatch → fail fast        │
 │                                         │
 │  Job 1: lint-test                       │
 │    ├── ct lint (chart-testing)          │
@@ -205,9 +219,10 @@ Push to main (charts/** changed)
 │                                         │
 │  Job 2: release-github-pages            │
 │    ├── helm dependency build            │
-│    └── chart-releaser-action            │
-│        ├── GitHub Release (tag + .tgz)  │
-│        └── gh-pages index.yaml update   │
+│    ├── draft release + .tgz upload,     │
+│    │   publish last (immutable-safe)    │
+│    └── helm repo index --merge → push   │
+│        gh-pages index.yaml              │
 │                                         │
 │  Job 3: release-oci                     │
 │    ├── helm dependency build            │
@@ -218,6 +233,11 @@ Push to main (charts/** changed)
   ▼
 ArtifactHub auto-scan (~30 min)
 ```
+
+Do not manually dispatch `helm-release.yml` for a new appVersion before its
+image is on GHCR - the gate fails fast by design. A failed image build
+dispatches nothing, so the chart correctly stays unpublished. The gate
+queries GHCR anonymously and relies on the image package being public.
 
 ### Version Management
 
