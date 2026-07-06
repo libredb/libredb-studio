@@ -100,36 +100,30 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          # Read the chart version robustly: take the value after "version:",
-          # then strip whitespace and surrounding quotes. The tr set is in double
-          # quotes so the single quote inside it needs no awkward escaping.
-          version=$(awk -F': *' '/^version:/{print $2; exit}' charts/libredb-studio/Chart.yaml | tr -d " \t\r\"'")
-          if [ -z "${version}" ]; then
-            echo "::error::could not extract chart version from charts/libredb-studio/Chart.yaml"
-            exit 1
-          fi
-          tag="libredb-studio-${version}"
-          expected_asset="libredb-studio-${version}.tgz"
-          echo "Verifying GitHub Release asset '${expected_asset}' for tag: ${tag}"
+          # Derive the exact release tag and asset name from the packaged chart
+          # itself, instead of parsing the version out of Chart.yaml. `helm
+          # package` names the file <chart-name>-<version>.tgz from the chart
+          # metadata, so there is no version-string parsing to get wrong.
+          pkg_dir="${RUNNER_TEMP}/verify-pkg"
+          helm package charts/libredb-studio -d "${pkg_dir}" >/dev/null
+          asset=$(basename "${pkg_dir}"/*.tgz)
+          tag="${asset%.tgz}"
+          echo "Verifying release '${tag}' has asset '${asset}'"
           # Check for the specific chart package (.tgz), not just any asset: a
-          # release could carry an unrelated asset while the chart package is
-          # missing, which is exactly the failure mode in #146.
-          # The Release/asset can also lag behind chart-releaser via the API
-          # (eventual consistency), so retry with backoff before failing.
+          # release carrying some unrelated asset while the chart package is
+          # missing is exactly the failure mode in #146. The Release/asset can
+          # also lag behind chart-releaser via the API (eventual consistency),
+          # so retry with backoff. stderr is left visible so a genuine failure
+          # (permissions, rate limiting) surfaces in the log.
           for attempt in 1 2 3 4 5; do
-            # Do not suppress stderr: if gh fails for a real reason (permissions,
-            # rate limiting) we want it visible in the log. The `|| echo ""`
-            # keeps the step from exiting under `set -e` when the tag/release is
-            # simply not visible yet, so the retry loop can proceed.
-            asset_names=$(gh api "repos/${{ github.repository }}/releases/tags/${tag}" --jq '.assets[].name' || echo "")
-            if printf '%s\n' "${asset_names}" | grep -qx "${expected_asset}"; then
-              echo "OK: ${tag} has asset ${expected_asset} (attempt ${attempt})."
+            if gh api "repos/${{ github.repository }}/releases/tags/${tag}" --jq '.assets[].name' | grep -qx "${asset}"; then
+              echo "OK: ${tag} has asset ${asset} (attempt ${attempt})."
               exit 0
             fi
-            echo "Attempt ${attempt}: ${expected_asset} not visible yet for ${tag}, retrying..."
+            echo "Attempt ${attempt}: ${asset} not visible yet on ${tag}, retrying..."
             sleep $((attempt * 10))
           done
-          echo "::error::chart-releaser did not publish '${expected_asset}' on release '${tag}' after retries. The gh-pages index may now point to a broken download URL. See #146 for the same failure mode."
+          echo "::error::chart-releaser did not publish '${asset}' on release '${tag}' after retries. The gh-pages index may now point to a broken download URL. See #146 for the same failure mode."
           exit 1
 
   release-oci:
