@@ -167,6 +167,9 @@ jobs:
             # A plain manual dispatch (backfilling an old version) must never
             # move latest - the 0.9.46 chain shipped with latest stuck on the
             # previous release because dispatch could not move it at all.
+            # Keep this "release context" condition in step with the
+            # dispatch-helm-release job's if: below - if they drift, the
+            # chart dispatch and the latest tag disagree on what a release is.
             type=raw,value=latest,enable=${{ github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.publish_latest == true) }}
             type=raw,value=main,enable=${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
             type=raw,value=dev,enable=${{ github.event_name == 'push' && github.ref != 'refs/heads/main' }}
@@ -212,7 +215,9 @@ jobs:
     # job so actions:write is never granted to ordinary branch builds, and
     # the dispatch targets THIS run's ref so the chart is released from the
     # same commit as the image (a main dispatch could pick up a newer,
-    # not-yet-built chart).
+    # not-yet-built chart). The if: below is the same "release context"
+    # condition as the latest-tag enable in the metadata step above - keep
+    # the two in step.
     name: Dispatch Helm chart release
     needs: build-and-push
     if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.publish_latest == true)

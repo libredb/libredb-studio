@@ -194,8 +194,10 @@ When `seedConnections.enabled=true`, the chart provisions a set of pre-defined d
 The chart never releases before the image it deploys exists (#161), and the
 whole flow is compatible with the repository's immutable-releases policy
 (draft-first, #154/#155/#158). For a product release, `docker-build-push.yml`
-dispatches `helm-release.yml` on the release tag ref after the image publish
-succeeds.
+dispatches `helm-release.yml` **on the release tag ref** after the image
+publish succeeds - the chart is deliberately published from the tag's
+snapshot (the same commit as the image), not from main HEAD; a chart-only
+fix merged in between publishes separately via its own `charts/**` push run.
 
 ```
 Push to main (charts/** changed)   OR   dispatched by docker-build-push

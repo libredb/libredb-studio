@@ -57,6 +57,9 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
         run: |
           set -euo pipefail
+          # grep/awk on purpose (matching the description: extraction in the
+          # release job below): yq is not preinstalled and this job stays
+          # lean - do not "improve" this into a yq dependency.
           app_version=$(grep '^appVersion:' charts/libredb-studio/Chart.yaml | awk '{print $2}' | tr -d '"')
           if [ -z "$app_version" ]; then
             echo "::error::could not read appVersion from charts/libredb-studio/Chart.yaml"
