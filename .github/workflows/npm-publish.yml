@@ -118,3 +118,32 @@ jobs:
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "- **Registry:** https://www.npmjs.com/package/@libredb/studio" >> "$GITHUB_STEP_SUMMARY"
           echo "- **Install:** \`npm install @libredb/studio@${VERSION}\`" >> "$GITHUB_STEP_SUMMARY"
+
+  dispatch-smoke:
+    # npx-engine-smoke listens for this workflow's completion via
+    # workflow_run, but that event never fires when THIS run was itself
+    # dispatched with GITHUB_TOKEN (the release chain path) - the 0.9.48
+    # chain published npm cleanly and the smoke silently never ran. Dispatch
+    # it explicitly; workflow_dispatch API calls are not subject to the
+    # GITHUB_TOKEN event restriction. The workflow_run trigger stays for
+    # PAT/manual runs; if both paths fire for the same publish the second
+    # smoke run is a harmless duplicate (read-only npx install checks).
+    name: Dispatch npx engine smoke
+    needs: publish
+    if: inputs.dry_run != true
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Dispatch npx-engine-smoke with the published version
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          VERSION=$(node -p "require('./package.json').version")
+          gh workflow run npx-engine-smoke.yml -f "expected-version=$VERSION"
+          echo "Dispatched npx-engine-smoke expecting ${VERSION}."
