@@ -132,16 +132,36 @@ jobs:
           gh release edit "$tag" --draft=false --latest=false
           echo "Published chart release '$tag' with '$asset'."
 
-      - name: Update Helm repo index (chart-releaser, index only)
-        uses: helm/chart-releaser-action@cae68fefc6b5f367a0275617c9f83181ba54714f # v1.7.0
-        with:
-          # Upload is handled draft-first above; cr only regenerates and pushes
-          # the gh-pages index.yaml from the published releases.
-          skip_upload: true
-          skip_existing: true
-          mark_as_latest: false
+      - name: Update Helm repo index on gh-pages
+        # chart-releaser cannot do this here: its skip_upload flag (needed
+        # because the upload is draft-first above) also skips the index push
+        # entirely - the 0.1.5 release published with no index entry until it
+        # was hand-patched. Merge the new package into the existing index
+        # with helm itself and push; --merge keeps every prior entry (and its
+        # per-release URL) untouched, only the new version gets --url.
         env:
-          CR_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          asset_path=$(ls .cr-release-packages/*.tgz)
+          tag=$(basename "$asset_path" .tgz)
+          pages_dir="${RUNNER_TEMP}/gh-pages"
+          rm -rf "$pages_dir"
+          git worktree add "$pages_dir" origin/gh-pages
+          helm repo index .cr-release-packages \
+            --url "https://github.com/${GITHUB_REPOSITORY}/releases/download/${tag}" \
+            --merge "$pages_dir/index.yaml"
+          if cmp -s .cr-release-packages/index.yaml "$pages_dir/index.yaml"; then
+            echo "Index already contains ${tag} - nothing to push."
+            exit 0
+          fi
+          cp .cr-release-packages/index.yaml "$pages_dir/index.yaml"
+          cd "$pages_dir"
+          git checkout -B gh-pages origin/gh-pages
+          git add index.yaml
+          git commit -m "Update index.yaml for ${tag}"
+          git push origin gh-pages
+          echo "Pushed index update for ${tag}."
 
       - name: Verify chart release asset was published
         env:
