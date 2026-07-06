@@ -35,9 +35,13 @@ jobs:
         # protection change. actions/checkout is shallow and single-ref, so
         # fetch main explicitly for the base comparison (appVersion changed
         # => chart version must change too and must not be a released tag).
+        # Strict mode makes unavailable git state a failure in CI rather than
+        # a skipped check.
         run: |
           git fetch --no-tags --depth=1 origin +refs/heads/main:refs/remotes/origin/main
           bun run chart:check
+        env:
+          CHART_SYNC_STRICT: "1"
 
       - name: Check formatting (Biome)
         run: bun run format

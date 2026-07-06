@@ -4,6 +4,9 @@
  * no network, no filesystem writes.
  */
 import { describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { applyBump, bumpPatch, checkSync, parseChart } from "../../scripts/sync-chart-version.mjs";
 
 function chartYaml({
@@ -147,5 +150,50 @@ describe("applyBump", () => {
     expect(result.changed).toBe(false);
     expect(result.chartYaml).toBe(chartYaml());
     expect(result.readme).toBe(readme());
+  });
+});
+
+describe("CLI (--check via subprocess)", () => {
+  const SCRIPT = join(import.meta.dir, "../../scripts/sync-chart-version.mjs");
+
+  function makeFixture(pkgVersion: string, chart: string, readmeText: string): string {
+    const root = mkdtempSync(join(tmpdir(), "chart-sync-"));
+    mkdirSync(join(root, "charts/libredb-studio"), { recursive: true });
+    writeFileSync(join(root, "package.json"), JSON.stringify({ version: pkgVersion }));
+    writeFileSync(join(root, "charts/libredb-studio/Chart.yaml"), chart);
+    writeFileSync(join(root, "charts/libredb-studio/README.md"), readmeText);
+    return root;
+  }
+
+  function runCheck(root: string, env: Record<string, string> = {}) {
+    return Bun.spawnSync(["node", SCRIPT, "--check", "--root", root], {
+      env: { ...process.env, CHART_SYNC_STRICT: "", ...env },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+  }
+
+  test("in-sync fixture passes without git (warn + skip base checks)", () => {
+    const root = makeFixture("0.9.44", chartYaml(), readme());
+    const result = runCheck(root);
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr.toString()).toContain("base-comparison checks skipped");
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  test("violation exits 1 with the chart:bump hint", () => {
+    const root = makeFixture("0.9.99", chartYaml(), readme());
+    const result = runCheck(root);
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr.toString()).toContain("bun run chart:bump");
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  test("strict mode fails when origin/main is not resolvable", () => {
+    const root = makeFixture("0.9.44", chartYaml(), readme());
+    const result = runCheck(root, { CHART_SYNC_STRICT: "1" });
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr.toString()).toContain("CHART_SYNC_STRICT");
+    rmSync(root, { recursive: true, force: true });
   });
 });

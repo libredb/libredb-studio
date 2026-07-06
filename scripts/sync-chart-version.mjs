@@ -144,6 +144,7 @@ function main(argv) {
   const mode = argv.includes("--write") ? "write" : argv.includes("--check") ? "check" : null;
   const rootIdx = argv.indexOf("--root");
   const root = rootIdx === -1 ? process.cwd() : path.resolve(argv[rootIdx + 1]);
+  const strict = /^(1|true)$/i.test(process.env.CHART_SYNC_STRICT ?? "");
   if (!mode) {
     console.error("Usage: node scripts/sync-chart-version.mjs --check|--write [--root <dir>]");
     process.exit(2);
@@ -158,9 +159,22 @@ function main(argv) {
   if (mode === "check") {
     const { version, appVersion } = parseChart(chartYaml);
     const baseChart = readBaseChart(root);
+    if (!baseChart && strict) {
+      console.error(
+        "ERROR: origin/main not resolvable and CHART_SYNC_STRICT is set - refusing to skip base-comparison checks",
+      );
+      process.exit(1);
+    }
     let chartTagExists = null;
-    if (baseChart && baseChart.appVersion !== appVersion && baseChart.version !== version) {
+    const tagQueryNeeded = Boolean(baseChart && baseChart.appVersion !== appVersion && baseChart.version !== version);
+    if (tagQueryNeeded) {
       chartTagExists = chartTagExistsOnOrigin(root, version);
+      if (chartTagExists === null && strict) {
+        console.error(
+          "ERROR: could not query origin tags and CHART_SYNC_STRICT is set - refusing to skip the released-version check",
+        );
+        process.exit(1);
+      }
     }
     const violations = checkSync({ pkgVersion, chartYaml, readme, baseChart, chartTagExists });
     if (violations.length > 0) {

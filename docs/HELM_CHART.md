@@ -290,4 +290,4 @@ helm install libredb libredb/libredb-studio \
 
 1. **SQLite + Multi-Replica**: SQLite is single-writer. `storageProvider=sqlite` with `replicaCount > 1` will cause write conflicts. Use `postgres` for multi-replica.
 2. **ISR Cache**: Next.js ISR cache is per-pod (emptyDir). Session-based app, so no impact.
-3. **Chart appVersion**: Set manually in `Chart.yaml`; CI fails only if it is *ahead* of `package.json` (being behind is tolerated). It is not auto-bumped.
+3. **Chart appVersion**: Not auto-bumped - a version-bump PR must run `bun run chart:bump`; the CI sync guard blocks the merge until `appVersion` equals `package.json` (see Version Management above).
