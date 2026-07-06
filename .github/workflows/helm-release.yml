@@ -117,7 +117,11 @@ jobs:
           # The Release/asset can also lag behind chart-releaser via the API
           # (eventual consistency), so retry with backoff before failing.
           for attempt in 1 2 3 4 5; do
-            asset_names=$(gh api "repos/${{ github.repository }}/releases/tags/${tag}" --jq '.assets[].name' 2>/dev/null || echo "")
+            # Do not suppress stderr: if gh fails for a real reason (permissions,
+            # rate limiting) we want it visible in the log. The `|| echo ""`
+            # keeps the step from exiting under `set -e` when the tag/release is
+            # simply not visible yet, so the retry loop can proceed.
+            asset_names=$(gh api "repos/${{ github.repository }}/releases/tags/${tag}" --jq '.assets[].name' || echo "")
             if printf '%s\n' "${asset_names}" | grep -qx "${expected_asset}"; then
               echo "OK: ${tag} has asset ${expected_asset} (attempt ${attempt})."
               exit 0
