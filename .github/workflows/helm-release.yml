@@ -7,9 +7,12 @@ on:
       - "charts/**"
   workflow_dispatch:
 
-# Prevent overlapping runs from racing on the shared gh-pages index/release
-# state. See #146: back-to-back pushes to charts/** triggered overlapping
-# runs, and chart-releaser silently produced a release with a missing asset.
+# Serialize helm-release runs: overlapping runs would race on the shared
+# gh-pages index/release state, so queue them instead. Defense-in-depth -
+# the #146 incident itself turned out to be a post-publish release deletion
+# (the run created the release and asset successfully; the runs were hours
+# apart), not a workflow race, but rapid successive charts/** pushes should
+# still never be able to overlap here.
 concurrency:
   group: helm-release
   cancel-in-progress: false
