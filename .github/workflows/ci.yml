@@ -29,6 +29,16 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      - name: Chart version sync guard (issue #138)
+        # Runs inside the required "Lint, Typecheck and Build" check on
+        # purpose: a separate job would be advisory-only without a branch
+        # protection change. actions/checkout is shallow and single-ref, so
+        # fetch main explicitly for the base comparison (appVersion changed
+        # => chart version must change too and must not be a released tag).
+        run: |
+          git fetch --no-tags --depth=1 origin +refs/heads/main:refs/remotes/origin/main
+          bun run chart:check
+
       - name: Check formatting (Biome)
         run: bun run format
 
@@ -217,21 +227,6 @@ jobs:
 
       - name: Lint Helm chart
         run: helm lint charts/libredb-studio --strict
-
-      - name: Verify appVersion is valid
-        run: |
-          APP_VERSION=$(node -e "console.log(require('./package.json').version)")
-          CHART_APP_VERSION=$(grep '^appVersion:' charts/libredb-studio/Chart.yaml | awk '{print $2}' | tr -d '"')
-          echo "package.json=$APP_VERSION, Chart appVersion=$CHART_APP_VERSION"
-          if [ "$(printf '%s\n' "$CHART_APP_VERSION" "$APP_VERSION" | sort -V | head -1)" != "$CHART_APP_VERSION" ]; then
-            echo "ERROR: Chart appVersion ($CHART_APP_VERSION) is ahead of package.json ($APP_VERSION)"
-            exit 1
-          fi
-          if [ "$APP_VERSION" != "$CHART_APP_VERSION" ]; then
-            echo "INFO: Chart appVersion ($CHART_APP_VERSION) is behind package.json ($APP_VERSION). Update Chart.yaml appVersion on next chart release."
-          else
-            echo "OK: versions in sync"
-          fi
 
   sonarcloud:
     name: SonarCloud Analysis
