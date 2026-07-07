@@ -49,6 +49,14 @@ installs prefer explicit secrets, or strict mode
 `secrets.adminPassword` and fails fast when either is missing. See the [chart README](../charts/libredb-studio/README.md) for the
 full values reference.
 
+> **Persistence needs a StorageClass.** `persistence.enabled=true` creates a PVC,
+> so the cluster must offer a StorageClass — standard on K3s and RKE2 (the
+> `local-path` provisioner), but absent in Rancher's built-in `local` cluster
+> when Rancher runs as a single Docker container. If you fall back to a
+> statically provisioned `hostPath` PersistentVolume there, note that the
+> kubelet does not apply the pod's `fsGroup` to hostPath volumes: the host
+> directory must be made writable for uid/gid 1001 yourself.
+
 ## Installing with Helm
 
 ```bash
@@ -82,13 +90,13 @@ kubectl logs deployment/libredb-libredb-studio | grep -A 4 "generated admin cred
 
 ## Validated combinations
 
-Validated with the chart source in this repository (appVersion 0.9.49). Every
-row passed the full check list above, plus: strict-mode regression
+Every row passed the full check list above, plus: strict-mode regression
 (`config.authBootstrap=off` with no secrets fails the install with a clear
 `required` error), credentials surviving a container restart, and invalidated
 old credentials after pod recreation.
 
-| Distribution | Kubernetes | Validated on | Notes |
-|--------------|------------|--------------|-------|
-| K3s v1.31.14+k3s1 | v1.31.14 | 2026-07-07 | k3d v5.9.0, containerd 2.1.5 |
-| K3s v1.35.5+k3s1 | v1.35.5 | 2026-07-07 | k3d v5.9.0, containerd 2.2.3 |
+| Distribution | Kubernetes | Validated on | Chart | Notes |
+|--------------|------------|--------------|-------|-------|
+| Rancher v2.14.3 (single-node Docker install) | v1.35.5 | 2026-07-07 | 0.1.9 | bundled K3s v1.35.5+k3s1; chart served to the Rancher Apps catalog via a `ClusterRepo`; validated with a nine-scenario matrix (zero-config default, explicit secrets, strict-mode refusal, strict + optional user account, `existingSecret`, multi-replica guard refusal and shared-secret multi-replica, persistence across pod recreation, chart upgrade 0.1.8 to 0.1.9), including Rancher UI evidence |
+| K3s v1.31.14+k3s1 | v1.31.14 | 2026-07-07 | 0.1.8 (appVersion 0.9.49) | k3d v5.9.0, containerd 2.1.5 |
+| K3s v1.35.5+k3s1 | v1.35.5 | 2026-07-07 | 0.1.8 (appVersion 0.9.49) | k3d v5.9.0, containerd 2.2.3 |
