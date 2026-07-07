@@ -121,3 +121,6 @@ docs/superpowers/
 snap-payload/
 *.snap
 
+# deploy test results
+deploy/rancher/results/
+
