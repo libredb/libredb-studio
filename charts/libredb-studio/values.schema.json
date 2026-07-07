@@ -93,7 +93,7 @@
         "authBootstrap": {
           "type": "string",
           "enum": ["", "on", "off"],
-          "description": "AUTH_BOOTSTRAP for the app: \"\" (chart default: omit the variable, the app's zero-config first run applies), \"on\" (explicit zero-config), or \"off\" (strict: secrets.jwtSecret, secrets.adminPassword and secrets.userPassword are required)"
+          "description": "AUTH_BOOTSTRAP for the app: \"\" (chart default: omit the variable, the app's zero-config first run applies), \"on\" (explicit zero-config), or \"off\" (strict: secrets.jwtSecret and secrets.adminPassword are required)"
         },
         "storageSqlitePath": {
           "type": "string",

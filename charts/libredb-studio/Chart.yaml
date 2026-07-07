@@ -44,8 +44,10 @@ annotations:
       url: https://github.com/libredb/libredb-studio
   artifacthub.io/changes: |
     - Track app release 0.9.49 (appVersion bump; default image tag follows)
-    - Default install is now zero-config: with no values set, first-run admin credentials are generated and printed to the pod log (config.authBootstrap default changed from "off" to ""); set config.authBootstrap=off for the previous strict behavior
+    - Default install is now zero-config: with no values set, first-run admin credentials are generated and printed to the pod log (config.authBootstrap default changed from "off" to ""); set config.authBootstrap=off for strict fail-closed installs
     - Secret keys and env entries for JWT_SECRET, ADMIN_PASSWORD, USER_EMAIL and USER_PASSWORD are rendered only when their values are set (or an existingSecret is used), so pods no longer reference missing Secret keys
+    - Strict mode now requires only secrets.jwtSecret and secrets.adminPassword; secrets.userPassword is optional in all modes (the non-admin account is an optional app feature and is never generated)
+    - With secrets.existingSecret, auth env entries are optional only in zero-config mode; strict mode references jwt-secret and admin-password hard, so the pod waits for missing keys instead of starting without them
     - Mount an emptyDir at /app/data when persistence is disabled so first-run credentials can be persisted under readOnlyRootFilesystem
     - Declare linux/arm64 in artifacthub.io/images (the image is multi-arch) and clear the prerelease flag
 dependencies:

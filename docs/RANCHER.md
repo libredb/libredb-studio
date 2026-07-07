@@ -45,9 +45,8 @@ second, non-admin account. Generated credentials survive container restarts
 but are regenerated when the pod is recreated — set `persistence.enabled=true`
 or provide your own `secrets.*` values for stable credentials. For production
 installs prefer explicit secrets, or strict mode
-(`config.authBootstrap=off`), which requires `secrets.jwtSecret`,
-`secrets.adminPassword` and `secrets.userPassword` and fails fast when any is
-missing. See the [chart README](../charts/libredb-studio/README.md) for the
+(`config.authBootstrap=off`), which requires `secrets.jwtSecret` and
+`secrets.adminPassword` and fails fast when either is missing. See the [chart README](../charts/libredb-studio/README.md) for the
 full values reference.
 
 ## Installing with Helm

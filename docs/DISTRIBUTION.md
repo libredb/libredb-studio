@@ -165,8 +165,9 @@ recreation regenerates them — set `persistence.enabled=true` or explicit secre
 credentials). This keeps the chart deployable with default values, as certified catalogs such
 as the Rancher partner-charts repository require. For production, inject real secrets as above,
 or enforce them with strict mode (`--set config.authBootstrap=off`), which makes
-`secrets.jwtSecret`, `secrets.adminPassword` and `secrets.userPassword` required and fails the
-install fast when any is missing — preferable when pod logs are collected centrally.
+`secrets.jwtSecret` and `secrets.adminPassword` required and fails the install fast when
+either is missing — preferable when pod logs are collected centrally. `secrets.userPassword`
+is optional in every mode (the non-admin account exists only when it is set).
 
 Full values reference: [`charts/libredb-studio/README.md`](../charts/libredb-studio/README.md);
 chart architecture: [`docs/HELM_CHART.md`](HELM_CHART.md).

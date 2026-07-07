@@ -35,15 +35,18 @@ secrets:
     oidcClientId: oidc-client-id
     oidcClientSecret: oidc-client-secret
     storagePostgresUrl: storage-postgres-url
-  # -- JWT signing secret (min 32 chars). Required.
+  # -- JWT signing secret (min 32 chars). Required in strict mode (config.authBootstrap=off);
+  # otherwise generated on first start.
   jwtSecret: ""
   # -- Admin account email
   adminEmail: "admin@libredb.org"
-  # -- Admin account password. Required.
+  # -- Admin account password. Required in strict mode (config.authBootstrap=off);
+  # otherwise generated on first start.
   adminPassword: ""
-  # -- Regular user account email
+  # -- Regular user account email (used only when userPassword is set)
   userEmail: "user@libredb.org"
-  # -- Regular user account password. Required.
+  # -- Regular user account password. Optional: the non-admin account exists only when set;
+  # it is never generated.
   userPassword: ""
   # -- LLM API key (optional, for AI features)
   llmApiKey: ""
@@ -67,8 +70,8 @@ config:
   # -- Auth bootstrap mode: "" (default: AUTH_BOOTSTRAP is omitted and the app's zero-config
   # first run applies — missing JWT_SECRET / ADMIN_PASSWORD are auto-generated on first start,
   # printed once to the pod log, and stored in /app/data/auth-bootstrap.json), "on" (same,
-  # explicit), or "off" (strict: secrets.jwtSecret, secrets.adminPassword and
-  # secrets.userPassword are required and a missing value fails the install).
+  # explicit), or "off" (strict: secrets.jwtSecret and secrets.adminPassword are required
+  # and a missing value fails the install).
   # The zero-config default makes the chart deployable with default values (e.g. Rancher Apps).
   authBootstrap: ""
   # -- Storage provider: "local" (browser), "sqlite" (file), or "postgres" (database)

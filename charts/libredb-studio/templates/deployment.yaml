@@ -55,7 +55,9 @@ spec:
                 secretKeyRef:
                   name: {{ include "libredb-studio.secretName" . }}
                   key: {{ .Values.secrets.existingSecretKeys.jwtSecret }}
+                  {{- if not (include "libredb-studio.authStrict" .) }}
                   optional: true
+                  {{- end }}
             {{- end }}
             {{- if or .Values.secrets.adminEmail .Values.secrets.existingSecret }}
             - name: ADMIN_EMAIL
@@ -71,7 +73,9 @@ spec:
                 secretKeyRef:
                   name: {{ include "libredb-studio.secretName" . }}
                   key: {{ .Values.secrets.existingSecretKeys.adminPassword }}
+                  {{- if not (include "libredb-studio.authStrict" .) }}
                   optional: true
+                  {{- end }}
             {{- end }}
             {{- if or .Values.secrets.userPassword .Values.secrets.existingSecret }}
             - name: USER_EMAIL
