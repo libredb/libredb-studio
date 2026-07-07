@@ -101,8 +101,11 @@ Returns "true" if persistence.enabled OR storageProvider is sqlite.
 
 {{/*
 Determine if strict auth mode is active (config.authBootstrap disables the
-app's zero-config first run). Mirrors the app's isBootstrapEnabled(): "off",
-"false", or "0" (case-insensitive) opt out; empty means the app default (on).
+app's zero-config first run). values.schema.json restricts chart input to
+"", "on", "off"; this helper additionally mirrors the app's
+isBootstrapEnabled() synonyms ("false", "0", case-insensitive) so an install
+that bypasses schema validation (helm --skip-schema-validation) stays strict
+in both the chart and the app instead of splitting into a half-strict state.
 */}}
 {{- define "libredb-studio.authStrict" -}}
 {{- if has (.Values.config.authBootstrap | toString | trim | lower) (list "off" "false" "0") }}
