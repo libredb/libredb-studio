@@ -97,6 +97,7 @@ Notes on the zero-config default:
 - The default install is **admin-only**. The second, non-admin account is never generated; set `secrets.userPassword` to enable it.
 - Without persistence the data directory is an `emptyDir`: generated credentials survive container restarts but are regenerated when the pod is recreated. Set `persistence.enabled=true` or provide your own `secrets.*` values for stable credentials.
 - Generated credentials appear once in the pod log. If your logs are collected centrally, prefer explicit secrets or strict mode.
+- Zero-config is single-replica only: each pod would generate its own JWT secret, breaking sessions across replicas, so the chart refuses to render with `replicaCount > 1` or `autoscaling.enabled` unless `secrets.jwtSecret` (or `secrets.existingSecret`) is set.
 
 **Strict mode** (`--set config.authBootstrap=off`) restores fail-closed behavior: `secrets.jwtSecret` and `secrets.adminPassword` are required (or use `secrets.existingSecret`) and the install fails fast with a clear message when either is missing; with an existing secret the pod will not start until the referenced keys exist. Recommended for production. `secrets.userPassword` stays optional in every mode. Setting `config.authBootstrap=on` is equivalent to the default `""`, just explicit.
 
@@ -174,6 +175,14 @@ Your external secret is referenced with these keys (customizable via `secrets.ex
 helm repo update
 helm upgrade libredb libredb/libredb-studio
 ```
+
+> **Behavior change:** the chart default flipped from strict (`config.authBootstrap: "off"`)
+> to zero-config (`""`). Releases that relied on the old default become zero-config on
+> upgrade: missing `secrets.jwtSecret`/`secrets.adminPassword` no longer fail the install,
+> and with `secrets.existingSecret` the auth env references become `optional: true` — a pod
+> whose external Secret is missing a key now starts with generated credentials instead of
+> waiting in `CreateContainerConfigError`. To keep the previous fail-closed behavior, set
+> `config.authBootstrap=off` explicitly.
 
 ## Uninstalling
 

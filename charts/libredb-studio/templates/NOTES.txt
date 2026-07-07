@@ -67,6 +67,18 @@ First-run credentials (zero-config bootstrap):
 {{- end }}
 {{- end }}
 
+{{- if and (not (include "libredb-studio.authStrict" .)) (not .Values.secrets.jwtSecret) (not .Values.secrets.existingSecret) (or .Values.secrets.adminPassword (eq .Values.authProvider "oidc")) }}
+
+NOTE: secrets.jwtSecret was not set, so the JWT signing secret is generated on
+first start (stored in /app/data/auth-bootstrap.json).
+{{- if not (include "libredb-studio.persistenceEnabled" .) }}
+  Without persistence that file lives on an emptyDir: recreating the pod
+  regenerates the secret and invalidates all sessions. For stable sessions set
+  secrets.jwtSecret (helm upgrade --set secrets.jwtSecret=$(openssl rand -base64 32))
+  or persistence.enabled=true.
+{{- end }}
+{{- end }}
+
 {{- if and (eq (include "libredb-studio.storageProvider" .) "sqlite") (gt (int .Values.replicaCount) 1) }}
 
 WARNING: SQLite storage with multiple replicas is not recommended.

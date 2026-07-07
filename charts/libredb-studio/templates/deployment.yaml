@@ -1,3 +1,11 @@
+{{- /*
+Zero-config bootstrap generates JWT_SECRET per pod on its own data volume, so
+two replicas would sign sessions with different keys (intermittent 401s behind
+the Service). Refuse the combination instead of shipping it broken.
+*/}}
+{{- if and (not (include "libredb-studio.authStrict" .)) (not .Values.secrets.jwtSecret) (not .Values.secrets.existingSecret) (or .Values.autoscaling.enabled (gt (int .Values.replicaCount) 1)) }}
+{{- fail "zero-config bootstrap generates a per-pod JWT secret, which breaks sessions across replicas: with replicaCount > 1 or autoscaling.enabled, set secrets.jwtSecret (or secrets.existingSecret), or use config.authBootstrap=off" }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:

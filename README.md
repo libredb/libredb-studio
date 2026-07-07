@@ -196,7 +196,7 @@ The test instance comes with a pre-configured PostgreSQL database via [Seed Conn
   | Channel | Command | Notes |
   | :--- | :--- | :--- |
   | **Docker** | `docker run -d -p 3000:3000 ghcr.io/libredb/libredb-studio:latest` | Zero-config: the admin password is printed to the log on first run |
-  | **Helm (Kubernetes)** | `helm install libredb oci://ghcr.io/libredb/charts/libredb-studio` | Requires `secrets.jwtSecret` / `secrets.adminPassword` (strict mode by default) |
+  | **Helm (Kubernetes)** | `helm install libredb oci://ghcr.io/libredb/charts/libredb-studio` | Zero-config: first-run admin credentials are printed to the pod log |
   | **npx** | `npx @libredb/studio` | Linux/macOS, Node 20.9+ (Node 24 LTS recommended); downloads the release server tarball |
   | **Homebrew** | `brew trust libredb/tap && brew install libredb/tap/libredb-studio` | `brew trust` is required once (Homebrew 6+; run `brew update` if unknown) |
   | **deb / rpm** | `sudo dpkg -i libredb-studio_<version>_amd64.deb` | Attached to each GitHub release; systemd service included |
@@ -534,18 +534,22 @@ This file is platform-neutral and works with PaaS tools that consume a plain `do
 
 ```bash
 helm repo add libredb https://libredb.org/libredb-studio/
-helm install libredb libredb/libredb-studio \
-  --set secrets.jwtSecret=$(openssl rand -base64 32) \
-  --set secrets.adminPassword=MyAdmin123 \
-  --set secrets.userPassword=MyUser123
+helm install libredb libredb/libredb-studio
+
+# Retrieve the generated admin credentials from the pod log
+kubectl logs deployment/libredb-libredb-studio | grep -A 4 "generated admin credentials"
 ```
 
 Or via OCI registry:
 ```bash
-helm install libredb oci://ghcr.io/libredb/charts/libredb-studio \
+helm install libredb oci://ghcr.io/libredb/charts/libredb-studio
+```
+
+For production, provide your own secrets instead of relying on generated ones:
+```bash
+helm install libredb libredb/libredb-studio \
   --set secrets.jwtSecret=$(openssl rand -base64 32) \
-  --set secrets.adminPassword=MyAdmin123 \
-  --set secrets.userPassword=MyUser123
+  --set secrets.adminPassword=MyAdmin123
 ```
 
 Features: PostgreSQL subchart, Ingress/TLS, HPA, PDB, NetworkPolicy, ExternalSecrets support. See [charts/libredb-studio/README.md](charts/libredb-studio/README.md) for full documentation.

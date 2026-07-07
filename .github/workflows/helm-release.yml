@@ -139,6 +139,15 @@ jobs:
               --set secrets.adminPassword=TestAdmin123 \
               --set secrets.userPassword=TestUser123"
 
+      # Certified catalogs (Rancher partner-charts) require the chart to deploy
+      # with default values: zero-config bootstrap must bring the pod to Ready
+      # with no secrets set. Guard that promise explicitly.
+      - name: Run chart-testing install (default values, zero-config)
+        run: |
+          ct install \
+            --target-branch ${{ github.event.repository.default_branch }} \
+            --charts charts/libredb-studio
+
   release-github-pages:
     needs: lint-test
     runs-on: ubuntu-latest

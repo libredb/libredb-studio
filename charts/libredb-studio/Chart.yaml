@@ -50,6 +50,8 @@ annotations:
     - With secrets.existingSecret, auth env entries are optional only in zero-config mode; strict mode references jwt-secret and admin-password hard, so the pod waits for missing keys instead of starting without them
     - Mount an emptyDir at /app/data when persistence is disabled so first-run credentials can be persisted under readOnlyRootFilesystem
     - Declare linux/arm64 in artifacthub.io/images (the image is multi-arch) and clear the prerelease flag
+    - Refuse zero-config installs with replicaCount > 1 or autoscaling enabled (per-pod generated JWT secrets would break sessions across replicas); set secrets.jwtSecret or config.authBootstrap=off for multi-replica setups
+    - Upgrade note: releases relying on the previous strict default keep fail-closed behavior only by setting config.authBootstrap=off explicitly
 dependencies:
   - name: postgresql
     version: "16.x.x"
