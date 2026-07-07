@@ -59,10 +59,10 @@ securityContext:
     drop: [ALL]
 ```
 
-**readOnlyRootFilesystem + emptyDir**: Next.js writes to `.next/cache` at runtime, and the app writes generated first-run credentials and the sample database into its data directory. Three `emptyDir` volumes solve this without relaxing security:
-- `/app/.next/cache` — Next.js ISR/build cache (ephemeral, per-pod)
-- `/tmp` — Temporary files
-- `/app/data` — Data directory (`auth-bootstrap.json`, sample database); replaced by the PVC when persistence is enabled
+**readOnlyRootFilesystem + writable volumes**: Next.js writes to `.next/cache` at runtime, and the app writes generated first-run credentials and the sample database into its data directory. Three writable mounts solve this without relaxing security:
+- `/app/.next/cache` — emptyDir; Next.js ISR/build cache (ephemeral, per-pod)
+- `/tmp` — emptyDir; temporary files
+- `/app/data` — data directory (`auth-bootstrap.json`, sample database): emptyDir by default, the PVC when persistence is enabled
 
 ### 2. Dockerfile Alignment
 
