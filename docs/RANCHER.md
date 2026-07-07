@@ -92,8 +92,10 @@ kubectl logs deployment/libredb-libredb-studio | grep -A 4 "generated admin cred
 
 Every row passed the full check list above, plus: strict-mode regression
 (`config.authBootstrap=off` with no secrets fails the install with a clear
-`required` error), credentials surviving a container restart, and invalidated
-old credentials after pod recreation.
+`required` error), credentials surviving a container restart, and — for the
+default non-persistent (emptyDir) install — old credentials being invalidated
+after pod recreation. With `persistence.enabled=true` credentials survive pod
+recreation instead, as covered by the persistence scenario in the Rancher row.
 
 | Distribution | Kubernetes | Validated on | Chart | Notes |
 |--------------|------------|--------------|-------|-------|

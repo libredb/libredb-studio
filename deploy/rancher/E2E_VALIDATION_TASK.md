@@ -309,7 +309,10 @@ Write `deploy/rancher/results/RESULTS-<YYYY-MM-DD>.md` (date obtained by an agen
 helm uninstall --ignore-not-found ... (every scenario release, every namespace)
 kubectl delete clusterrepo libredb (and the S9 repo if created)
 docker rm -f rancher-e2e
-docker volume prune --filter label=... (only volumes created by this task, if any)
+# Remove ONLY volumes this task explicitly created by name (none by default -
+# the Rancher container's state is removed with the container). Never use
+# `docker volume prune` here: even filtered, it risks unrelated volumes on a
+# developer machine.
 rm -f <temporary kubeconfigs, token files>
 ```
 
