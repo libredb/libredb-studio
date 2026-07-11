@@ -11,8 +11,14 @@
 # Local build (from the repo root, needs snapcraft + LXD):
 #   bash scripts/build-standalone-payload.sh dist
 #   mkdir -p snap-payload
-#   tar -xzf dist/libredb-studio-standalone-<version>-linux-<arch>.tar.gz -C snap-payload
+#   tar -xzf dist/libredb-studio-standalone-<version>-linux-<arch>.tar.gz -C snap-payload --strip-components=1
 #   snapcraft
+# When rebuilding after refreshing snap-payload/, run `snapcraft clean payload`
+# first: the payload part has no `source:` key, so snapcraft cannot detect the
+# changed payload and reuses the cached build (stale version and content).
+# Also delete stale scratch (snap-payload/, *.snap, old dist tarballs) BEFORE
+# rebuilding the payload: the Next.js file tracer sweeps the repo root, so
+# leftovers from a previous iteration end up inside the new payload.
 #
 # Confinement limits (strict): the snap holds only the network and
 # network-bind interfaces, so TCP database connections are the supported
@@ -21,6 +27,7 @@
 # arbitrary host sockets. Server-side SQLite storage lives under $SNAP_DATA.
 # ==============================================================================
 name: libredb-studio
+title: LibreDB Studio
 base: core24
 # Version is adopted from the payload part, which reads package.json at
 # build time (craftctl set version=...).
@@ -44,6 +51,7 @@ icon: public/logo.svg
 license: MIT
 website: https://github.com/libredb/libredb-studio
 source-code: https://github.com/libredb/libredb-studio
+contact: https://github.com/libredb/libredb-studio/issues
 issues: https://github.com/libredb/libredb-studio/issues
 grade: stable
 confinement: strict
@@ -99,7 +107,7 @@ parts:
         echo "snap-payload/server.js not found - build the payload first:" >&2
         echo "  bash scripts/build-standalone-payload.sh dist" >&2
         echo "  mkdir -p snap-payload" >&2
-        echo "  tar -xzf dist/libredb-studio-standalone-<version>-linux-<arch>.tar.gz -C snap-payload" >&2
+        echo "  tar -xzf dist/libredb-studio-standalone-<version>-linux-<arch>.tar.gz -C snap-payload --strip-components=1" >&2
         exit 1
       fi
       cp -R "$PAYLOAD_SRC/." "$CRAFT_PART_INSTALL/"
@@ -119,6 +127,17 @@ parts:
       # Snap version = package.json version. Native builds only (see
       # platforms), so the just-fetched node binary is runnable here.
       craftctl set version="$("$CRAFT_PART_INSTALL/node/bin/node" -p "require('$CRAFT_PROJECT_DIR/package.json').version")"
+    # Snapcraft filesets: the default '*' glob does NOT match hidden files,
+    # which silently drops .next (the Next.js production build) between
+    # install -> stage -> prime and leaves the daemon crash-looping on
+    # "Could not find a production build in the './.next' directory".
+    # List .next explicitly in BOTH filesets (each defaults to '*' on its own).
+    stage:
+      - "*"
+      - .next
+    prime:
+      - "*"
+      - .next
 
   launcher:
     plugin: dump

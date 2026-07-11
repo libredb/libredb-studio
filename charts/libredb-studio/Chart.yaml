@@ -2,8 +2,8 @@ apiVersion: v2
 name: libredb-studio
 description: Web-based SQL IDE for cloud-native teams supporting PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, and Redis
 type: application
-version: 0.1.10
-appVersion: "0.9.51"
+version: 0.1.11
+appVersion: "0.9.52"
 kubeVersion: ">=1.26.0-0"
 home: https://github.com/libredb/libredb-studio
 icon: https://raw.githubusercontent.com/libredb/libredb-studio/main/public/logo.svg
@@ -31,7 +31,7 @@ annotations:
   artifacthub.io/containsSecurityUpdates: "false"
   artifacthub.io/images: |
     - name: libredb-studio
-      image: ghcr.io/libredb/libredb-studio:0.9.51
+      image: ghcr.io/libredb/libredb-studio:0.9.52
       platforms:
         - linux/amd64
         - linux/arm64
@@ -43,7 +43,7 @@ annotations:
     - name: Source
       url: https://github.com/libredb/libredb-studio
   artifacthub.io/changes: |
-    - Track app release 0.9.51 (appVersion bump; default image tag follows)
+    - Track app release 0.9.52 (appVersion bump; default image tag follows)
     - Default install is now zero-config: with no values set, first-run admin credentials are generated and printed to the pod log (config.authBootstrap default changed from "off" to ""); set config.authBootstrap=off for strict fail-closed installs
     - Secret keys and env entries for JWT_SECRET, ADMIN_PASSWORD, USER_EMAIL and USER_PASSWORD are rendered only when their values are set (or an existingSecret is used), so pods no longer reference missing Secret keys
     - Strict mode now requires only secrets.jwtSecret and secrets.adminPassword; secrets.userPassword is optional in all modes (the non-admin account is an optional app feature and is never generated)

@@ -6,7 +6,8 @@ import tseslint from "typescript-eslint";
 const eslintConfig = defineConfig([
   ...nextCoreWebVitals,
   ...nextTypescript,
-  globalIgnores([".next/**", "out/**", "build/**", "dist/**", "next-env.d.ts"]),
+  // snap-payload/ is the local snap-build scratch dir (see snap/snapcraft.yaml)
+  globalIgnores([".next/**", "out/**", "build/**", "dist/**", "snap-payload/**", "next-env.d.ts"]),
   {
     rules: {
       "@typescript-eslint/no-explicit-any": "warn",
