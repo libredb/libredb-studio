@@ -66,12 +66,19 @@ exception - containers must bind `0.0.0.0` and are isolated by container network
 |---|---|---|
 | npx | `127.0.0.1` | `npx @libredb/studio --host 0.0.0.0` (or set `HOSTNAME`) |
 | .deb / .rpm (systemd) | `127.0.0.1` | `HOSTNAME=0.0.0.0` in `/etc/libredb-studio/env`, then restart |
-| Homebrew service | `127.0.0.1` | run the binary manually with `HOSTNAME=0.0.0.0`, or front it with a reverse proxy |
+| .deb / .rpm (direct run) | `127.0.0.1` | `LIBREDB_BIND=0.0.0.0 libredb-studio` |
+| Homebrew service | `127.0.0.1` | run the binary manually with `LIBREDB_BIND=0.0.0.0`, or front it with a reverse proxy |
 | Snap | `127.0.0.1` | `sudo systemctl edit snap.libredb-studio.libredb-studio.service` with `[Service]` `Environment=HOSTNAME=0.0.0.0` |
 | Docker / Helm | `0.0.0.0` (container-internal) | publish/route ports as usual (`-p`, Service/Ingress) |
 
 For anything reachable from a network, prefer a reverse proxy with TLS in front and strict mode
 (`AUTH_BOOTSTRAP=off`) with explicit credentials.
+
+A direct run of the `.deb`/`.rpm` wrapper or the Homebrew binary ignores any inherited `HOSTNAME`
+(empty, or - under Docker - the container ID Next.js would otherwise bind to) and defaults to
+loopback; `LIBREDB_BIND` is the explicit opt-in for that case. Under systemd, `HOSTNAME` in
+`/etc/libredb-studio/env` is still the override, since the unit resolves it before the wrapper
+runs (detected via the systemd-set `INVOCATION_ID`, so the wrapper leaves it untouched there).
 
 ## Release artifact naming
 

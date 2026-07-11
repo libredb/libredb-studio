@@ -40,3 +40,51 @@ Rules:
 - Order chosen: #134, #135 (both touch the packaging wrapper bind/data-dir logic, kept adjacent
   to reuse warm context), then #132, #133 (npx/tarball), then #137 (Helm, largest/most distinct).
 - Next: #134.
+
+### 2026-07-11 — #134 local-first bind for deb/rpm and Homebrew direct runs (DONE)
+
+- Tests first: new `tests/unit/packaging-bind-address.test.ts`, 7 cases (4 for the deb/rpm
+  wrapper, 3 for the Homebrew formula's embedded launcher script). Each spawns the *real* wrapper
+  file as a subprocess against a stub `node` that only echoes `$HOSTNAME`, so the test exercises
+  production shell text, not a reimplementation. Watched RED first: all 7 failed (deb/rpm: empty
+  stdout, since `set -eu` with no `LIBREDB_STUDIO_HOME` override made the stub node unreachable;
+  Homebrew: `HOSTNAME=` empty / `HOSTNAME=3f9a1c2b4d5e` inherited, since neither wrapper touched
+  `HOSTNAME` at all before this fix).
+- Built: both wrappers now default `HOSTNAME` to `127.0.0.1` unless `LIBREDB_BIND` is set, in
+  which case that value becomes `HOSTNAME`. `packaging/linux/libredb-studio` also gained
+  `LIBREDB_STUDIO_HOME="${LIBREDB_STUDIO_HOME:-/usr/lib/libredb-studio}"` (was hardcoded) so the
+  test can point it at a fixture directory instead of the real root-owned install path.
+- DECISION — the deb/rpm wrapper's bind-forcing is skipped when `INVOCATION_ID` is set (flagged
+  for human review): systemd sets this env var for every unit process since systemd 232.
+  `ExecStart=/usr/bin/libredb-studio` in `libredb-studio.service` already resolves `HOSTNAME`
+  correctly before this wrapper execs (default `127.0.0.1` via the unit's `Environment=` line,
+  operator override via `HOSTNAME=0.0.0.0` in `/etc/libredb-studio/env`'s `EnvironmentFile=`).
+  Without the `INVOCATION_ID` guard, forcing `HOSTNAME` unconditionally in the wrapper would have
+  silently broken that already-correct, already-documented systemd override path (the wrapper
+  would reset an operator's `HOSTNAME=0.0.0.0` back to loopback, since only `LIBREDB_BIND` would
+  be honored). The issue (#134) and `loop/ACCEPTANCE.md` both scope the fix to "direct runs" — the
+  systemd/brew-services paths were explicitly called out as already correct — so this guard keeps
+  the fix surgical to the two files the plan names, with no edits to
+  `packaging/linux/libredb-studio.service` or `packaging/linux/env`. Rejected alternative: migrate
+  the whole package to a single `LIBREDB_BIND` knob (systemd unit + env file included) - cleaner
+  long-term but touches files outside the issue's stated scope and changes already-working,
+  documented systemd behavior; not attempted here.
+- DECISION — no `INVOCATION_ID`-equivalent guard needed for the Homebrew wrapper: `brew services`
+  already hardcodes `HOSTNAME: "127.0.0.1"` in the rendered formula's `service do` block (no
+  operator override mechanism exists there to protect), so forcing `HOSTNAME` unconditionally
+  computes the same value brew services already passed in. The only prior "override" was the
+  `service do` block's own comment ("run the binary manually with HOSTNAME=0.0.0.0") - updated to
+  `LIBREDB_BIND=0.0.0.0` in the same file, since that manual/direct run is exactly the case this
+  fix targets.
+- Also updated `docs/DISTRIBUTION.md`'s bind-address table: added a ".deb / .rpm (direct run)" row
+  and changed the Homebrew row's opt-in from `HOSTNAME=0.0.0.0` to `LIBREDB_BIND=0.0.0.0`, plus a
+  paragraph explaining the systemd-vs-direct-run split via `INVOCATION_ID`.
+- KNOWN LIMITATION (recorded): the npx launcher (`bin/studio.js`) has the same latent gap (only
+  checks `if (!env.HOSTNAME)`, so an inherited Docker `HOSTNAME` would flow through uncorrected)
+  but is explicitly out of scope for #134 (issue and acceptance criteria name only the deb/rpm and
+  Homebrew wrappers, and the npx launcher's own docs treat `HOSTNAME` as an intentional `--host`
+  equivalent, not an ambient value to guard against). Not touched here; flagged for a future issue
+  if it proves to bite in practice.
+- Gate: format clean, lint clean (0 errors, pre-existing warnings only, none in touched files),
+  typecheck OK, 2292 tests pass (was 2285; +7), build OK.
+- Next: #135.

@@ -18,7 +18,21 @@
 # ==============================================================================
 set -eu
 
-LIBREDB_STUDIO_HOME=/usr/lib/libredb-studio
+LIBREDB_STUDIO_HOME="${LIBREDB_STUDIO_HOME:-/usr/lib/libredb-studio}"
+
+# Local-first bind (issue #134): a direct run must not leak whatever HOSTNAME
+# the calling shell happens to have - Docker exports HOSTNAME=<container-id>
+# to every process, which Next.js would then bind to instead of loopback (a
+# plain "is it unset" check misses this, since the inherited value is
+# non-empty). Systemd already resolves HOSTNAME correctly before this script
+# execs, via the unit's Environment=/EnvironmentFile= (libredb-studio.service
+# plus /etc/libredb-studio/env); INVOCATION_ID is set for every systemd unit
+# process since systemd 232, so that path is left untouched. Direct runs
+# default to loopback unless LIBREDB_BIND opts in to a different address.
+if [ -z "${INVOCATION_ID:-}" ]; then
+  HOSTNAME="${LIBREDB_BIND:-127.0.0.1}"
+  export HOSTNAME
+fi
 
 if [ -z "${STORAGE_SQLITE_PATH:-}" ]; then
   STORAGE_SQLITE_PATH="${XDG_STATE_HOME:-${HOME:-/root}/.local/state}/libredb-studio/libredb-storage.db"

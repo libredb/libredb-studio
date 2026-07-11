@@ -51,11 +51,18 @@ class LibredbStudio < Formula
     libexec.install Dir["*", ".next"]
 
     # Launcher: run the standalone server under Homebrew's node@24, passing
-    # the caller's environment through untouched. All configuration is
-    # environment-driven; the zero-config first run generates missing auth
+    # the caller's environment through otherwise untouched. All configuration
+    # is environment-driven; the zero-config first run generates missing auth
     # secrets and prints the admin password once.
     (bin/"libredb-studio").write <<~SCRIPT
       #!/bin/bash
+      # Local-first bind (issue #134): default to loopback on a direct run,
+      # regardless of any inherited HOSTNAME (empty, or - e.g. under Docker -
+      # a container ID that Next.js would otherwise bind to); LIBREDB_BIND
+      # opts in to a different bind address. The `brew services` block below
+      # already passes HOSTNAME=127.0.0.1, so this resolves to the same
+      # default there too.
+      export HOSTNAME="${LIBREDB_BIND:-127.0.0.1}"
       exec "#{Formula["node@24"].opt_bin}/node" "#{libexec}/server.js" "$@"
     SCRIPT
     (bin/"libredb-studio").chmod 0755
@@ -75,7 +82,7 @@ class LibredbStudio < Formula
     keep_alive false
     working_dir var
     # HOSTNAME keeps the service loopback-only (local-first); run the binary
-    # manually with HOSTNAME=0.0.0.0 or use a reverse proxy to expose it.
+    # manually with LIBREDB_BIND=0.0.0.0 or use a reverse proxy to expose it.
     environment_variables STORAGE_PROVIDER: "sqlite",
                           STORAGE_SQLITE_PATH: var/"libredb-studio/libredb-storage.db",
                           HOSTNAME: "127.0.0.1"

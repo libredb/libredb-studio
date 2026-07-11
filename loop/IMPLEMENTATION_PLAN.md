@@ -6,7 +6,7 @@
 
 ## Phase 1 — local-first bind and state location (packaging wrappers)
 
-- [ ] **#134** — Force `packaging/linux/libredb-studio` and
+- [x] **#134** — Force `packaging/linux/libredb-studio` and
   `packaging/homebrew/libredb-studio.rb.tmpl` to bind `127.0.0.1` by default on a direct run.
   Test first: exercise the wrapper (or the shared logic it should factor out) with (a) `HOSTNAME`
   unset, (b) `HOSTNAME` set to an inherited value (simulating Docker's container-id export), and
