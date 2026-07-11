@@ -87,6 +87,12 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      - name: Add Bitnami repo
+        run: helm repo add bitnami https://charts.bitnami.com/bitnami
+
+      - name: Build chart dependencies
+        run: helm dependency build charts/libredb-studio
+
       - name: Run merged test coverage (core + components)
         run: bun run test:coverage
         env:
