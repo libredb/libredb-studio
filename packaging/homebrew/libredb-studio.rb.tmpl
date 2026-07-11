@@ -63,6 +63,16 @@ class LibredbStudio < Formula
       # already passes HOSTNAME=127.0.0.1, so this resolves to the same
       # default there too.
       export HOSTNAME="${LIBREDB_BIND:-127.0.0.1}"
+      # Local-first state (issue #135): server.js chdirs into the payload
+      # (libexec) before resolving its default `./data`, so a direct run with
+      # no STORAGE_SQLITE_PATH would persist the zero-config
+      # auth-bootstrap.json (and any STORAGE_PROVIDER=sqlite data) inside the
+      # versioned keg - wiped on every `brew upgrade`. Default to the same
+      # path the `service` block below already uses, so state survives
+      # upgrades and both run modes share one install.
+      if [ -z "${STORAGE_SQLITE_PATH:-}" ]; then
+        export STORAGE_SQLITE_PATH="#{var}/libredb-studio/libredb-storage.db"
+      fi
       exec "#{Formula["node@24"].opt_bin}/node" "#{libexec}/server.js" "$@"
     SCRIPT
     (bin/"libredb-studio").chmod 0755

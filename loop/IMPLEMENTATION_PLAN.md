@@ -17,7 +17,7 @@
   otherwise force `127.0.0.1` — do not just fall back on an empty-`HOSTNAME` check, since the
   inherited-hostname case (Docker) also needs covering.
 
-- [ ] **#135** — Default the Homebrew formula's bin wrapper
+- [x] **#135** — Default the Homebrew formula's bin wrapper
   (`packaging/homebrew/libredb-studio.rb.tmpl`) to store zero-config state outside the versioned
   Cellar keg. Test first: exercise the wrapper and assert the effective data/state directory is
   NOT under `.../Cellar/libredb-studio/<version>/...`. Suggested shape from the issue: export

@@ -254,8 +254,11 @@ brew services start libredb-studio
   storage (it sets `STORAGE_PROVIDER=sqlite`) under `$(brew --prefix)/var/libredb-studio/` —
   the data dir where generated credentials are persisted. The service does not capture stdout,
   so read the generated password from `$(brew --prefix)/var/libredb-studio/auth-bootstrap.json`.
-- When running `libredb-studio` directly, set `STORAGE_SQLITE_PATH` to a path outside the keg
-  if you use `STORAGE_PROVIDER=sqlite`, so state survives upgrades.
+- Running `libredb-studio` directly also defaults `STORAGE_SQLITE_PATH` to
+  `$(brew --prefix)/var/libredb-studio/libredb-storage.db` — the same location `brew services`
+  uses — unless you set it explicitly. This keeps the zero-config `auth-bootstrap.json` (and any
+  `STORAGE_PROVIDER=sqlite` data) outside the versioned keg so it survives `brew upgrade`, and
+  lets both run modes share one data dir.
 
 ## Linux packages (.deb / .rpm)
 

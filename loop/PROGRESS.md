@@ -88,3 +88,41 @@ Rules:
 - Gate: format clean, lint clean (0 errors, pre-existing warnings only, none in touched files),
   typecheck OK, 2292 tests pass (was 2285; +7), build OK.
 - Next: #135.
+
+### 2026-07-11 — #135 Homebrew direct-run state outside the Cellar keg (DONE)
+
+- Tests first: new `tests/unit/packaging-homebrew-datadir.test.ts`, 2 cases. Extracts the real
+  `bin/"libredb-studio"` heredoc from `packaging/homebrew/libredb-studio.rb.tmpl` (same technique
+  as the existing `packaging-bind-address.test.ts` Homebrew block) and runs it as a subprocess
+  against a stub `node` that echoes `STORAGE_SQLITE_PATH`. Watched RED first: "defaults
+  STORAGE_SQLITE_PATH outside the versioned Cellar keg" failed with
+  `Received: "STORAGE_SQLITE_PATH=\n"` — the wrapper set no default at all before this fix.
+- Root cause confirmed by reading `src/lib/data-dir.ts` (`getDataDir()` = `dirname(STORAGE_SQLITE_PATH
+  || "./data/libredb-storage.db")`) and `src/lib/auth-bootstrap.ts` (`resolveBootstrapPath()` joins
+  `getDataDir()` + `auth-bootstrap.json`): setting `STORAGE_SQLITE_PATH` alone relocates both the
+  zero-config credentials file and any `STORAGE_PROVIDER=sqlite` data — no separate data-dir env
+  var exists, so the issue's suggested fix is complete as stated.
+- Built: the Homebrew template's bin wrapper heredoc now exports `STORAGE_SQLITE_PATH` (only if
+  unset, so an explicit value still wins) to `#{var}/libredb-studio/libredb-storage.db` — a Ruby
+  string interpolation resolved once at `brew install` time into a literal absolute path, same
+  pattern already used for `#{libexec}` and `#{Formula[...].opt_bin}` in the same heredoc.
+- DECISION — reused the exact path the `service do` block already sets
+  (`var/"libredb-studio/libredb-storage.db"`), rather than a separate XDG-style location (the
+  second option the issue mentioned): unlike systemd's `DynamicUser` isolation between the unit
+  and a direct run (which is why the deb/rpm wrapper's direct-run fallback and its systemd unit's
+  `/var/lib/libredb-studio` deliberately stay separate), Homebrew has no privilege boundary
+  between `brew services start` and running the binary directly — both run as the same user — so
+  sharing one location means credentials/data generated in either mode are visible in the other,
+  rather than silently forking into two divergent stores. Rejected: XDG state dir (would diverge
+  from the service path for no isolation benefit on this platform).
+- Updated `docs/DISTRIBUTION.md`'s Homebrew section: replaced the old "set STORAGE_SQLITE_PATH
+  manually" instruction with a description of the new automatic default and the shared-location
+  rationale.
+- KNOWN LIMITATION (recorded): `post_install`'s `(var/"libredb-studio").mkpath` already creates
+  the parent directory at install time, and `auth-bootstrap.ts`'s `createBootstrapFile`/
+  `writeBootstrapFile` both `mkdirSync(..., { recursive: true })` regardless, so no additional
+  directory-creation code was needed in the wrapper itself — verified by reading both call sites
+  rather than assumed.
+- Gate: format clean, lint clean (0 errors, pre-existing warnings only, none in touched files),
+  typecheck OK, all test groups pass (0 fail; +2 new cases in the new file), build OK.
+- Next: #132.
