@@ -28,11 +28,28 @@ grep for `LIBREDB_BIND`, `STORAGE_SQLITE_PATH`, and the versioned-root paragraph
 doc changes (already documented by PR #165). All 5 issues remain OPEN on GitHub — this loop does
 not close issues; a human closes them at PR merge.
 
-## Next milestone (not yet planned)
+## Next milestone (infrastructure ready, not yet planned)
 
-Backlog candidates for a future maintainer-loop run: open issues labeled `bug` not in this
-milestone (e.g. #94, #96, #100, #125, #126, #127), plus #124 (trim standalone payload repo-root
-extras, explicitly deferred from #133 — see `loop/IMPLEMENTATION_PLAN.md`'s "Later" section) and
-the npx launcher's own latent `HOSTNAME`-passthrough gap noted as a known limitation in
-`loop/PROGRESS.md`'s #134 entry. Use planning mode (`loop/PROMPT-PLANNING.md`) to select and
-scope the next queue.
+The loop is now hardened for FULLY AUTONOMOUS operation against the open public issue tracker
+(2026-07-12, human-driven hardening — see the PROGRESS.md entry of that date). The pipeline for
+the next milestone, on a fresh dedicated branch off `main`:
+
+1. **Triage mode** — set `LOOP_PROMPT_FILE="loop/PROMPT-TRIAGE.md"` in `loop/config/loop.env`,
+   run `./loop/scripts/loop.sh <N>`. Classifies every untriaged open issue into `loop:queued`
+   (sanitized spec written to `loop/TRIAGE.md`), `loop:needs-info` (question posted),
+   `loop:needs-moderator-action` (human-only), or the TRIAGE.md "Not for the loop" list.
+   Labels exist already (`loop/scripts/setup-labels.sh`, idempotent).
+2. **Human checkpoint (optional but recommended for the first run)** — skim `loop/TRIAGE.md`
+   and the labels; veto by removing `loop:queued` or editing specs.
+3. **Planning mode** — `LOOP_PROMPT_FILE="loop/PROMPT-PLANNING.md"`, one iteration; writes
+   `loop/IMPLEMENTATION_PLAN.md` from the queue. Author `loop/ACCEPTANCE.md` for the milestone
+   (or let it list "all loop:queued issues at planning time") and bump
+   `LOOP_COMPLETION_SENTINEL` in `loop/config/loop.env`.
+4. **Build mode** — `LOOP_PROMPT_FILE="loop/PROMPT.md"`, run to completion. Each task now ends
+   with a mandatory fresh-context `loop-reviewer` pass before its commit.
+5. **Human close** — review the branch, push, open the PR (the loop never pushes).
+
+Backlog candidates known today: open `bug` issues not in Bug Sweep 1 (#40, #94, #126), #127
+(question: sqlite absent from selectableTypes), #125 (traversal-check intent), #124 (trim
+standalone payload; deferred from #133), the npx launcher's latent `HOSTNAME`-passthrough gap
+noted in `loop/PROGRESS.md`'s #134 entry, and whatever triage mode queues from the rest.

@@ -373,3 +373,37 @@ Rules:
   iteration. A human should review before merging `loop/maintainer-bugsweep-1` into `main` (5
   fixes, 5 commits, base `main` per branch rules) and plan the next milestone via
   `loop/PROMPT-PLANNING.md`.
+
+### 2026-07-12 — Full-autonomy hardening (DONE, human)
+
+- Not a loop iteration — human-driven infrastructure work preparing the loop to run against the
+  OPEN public issue tracker autonomously (Bug Sweep 1 ran against a maintainer-curated queue).
+- Built: triage mode (`loop/PROMPT-TRIAGE.md` + `loop/TRIAGE.md` sanitized-spec register), the
+  `loop:queued` / `loop:needs-moderator-action` labels (`loop/scripts/setup-labels.sh`,
+  idempotent, run against the repo), a mandatory fresh-context `loop-reviewer` pass before every
+  build-mode commit (`.claude/agents/loop-reviewer.md`; `loop-judge.md` ported alongside, fixing
+  LOOP-ENGINEERING.md's previously broken references), and runner-level tool blocks in
+  `loop/config/loop.env` (no curl/wget/WebFetch, gh surface reduced to issue read/label/comment).
+- DECISION — issue BODIES are now untrusted, not just comments (PROMPT.md 0e + 999i rewritten;
+  999j added): Bug Sweep 1 could treat "the issue is the spec" because the maintainer authored
+  the queue; that assumption does not survive arbitrary public reporters. Build mode's
+  acceptance bar is now maintainer-loop-authored text only (TRIAGE.md sanitized spec + plan task
+  text); raw issues are evidence to re-verify.
+- DECISION — suspicious issues get a label and NO reply (PROMPT-TRIAGE.md 999e, PROMPT.md 1b):
+  replying leaks what tripped detection and invites iteration on the injection. Trigger text is
+  quoted verbatim here instead, for the human moderator.
+- DECISION — `authorAssociation` is recorded as context but exempts no one from the firewall:
+  uniform rules are the only kind a fresh-context agent applies reliably, and maintainer
+  accounts can be compromised.
+- DECISION — triage may queue autonomously (no human approval gate between triage and build):
+  the final human gate is push/PR/merge, which the loop cannot perform (runner-blocked), and
+  humans can veto any stage by removing labels or editing TRIAGE.md. Flagged for human review
+  after the first full autonomous run.
+- KNOWN LIMITATION (recorded): `LOOP_DISALLOWED_TOOLS` is prefix-based — it cannot distinguish
+  `gh issue edit --add-label loop:queued` from `gh issue edit` adding a non-loop label; that
+  narrower rule is prompt-enforced only (999j). Acceptable: label edits are reversible and
+  audited in PROGRESS.md.
+- Gate: full five-command gate green on this change set (docs/config/agents only, no product
+  code touched).
+- Next: none for Bug Sweep 1 (complete). The next milestone starts with triage mode per
+  `loop/HANDOFF.md`.
