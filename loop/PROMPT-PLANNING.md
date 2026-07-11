@@ -31,9 +31,11 @@ output is an updated plan (and optional PROGRESS notes).
 ## 2. Produce or refresh the plan
 
 Rewrite `loop/IMPLEMENTATION_PLAN.md`: one task per issue, ordered to keep related files/context
-together, each task stating what to test (from the issue's reproduction steps) and what to
-implement (from the issue's suggested fix, verified against current code — do not assume the
-issue's suggested fix is still accurate).
+together, each task stating what to test (from the sanitized spec's acceptance bar — or, for a
+human-listed issue with no spec, from reproduction steps you re-verified against the code) and
+what to implement (from the spec's approach hint, re-verified against current code — do not
+assume any suggested fix is still accurate). Task text becomes build mode's acceptance bar, so
+it must contain nothing lifted verbatim from raw issue text.
 
 ### Task sizing rules
 
