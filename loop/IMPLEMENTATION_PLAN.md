@@ -27,7 +27,7 @@
 
 ## Phase 2 — npx launcher and standalone tarball
 
-- [ ] **#132** — Stop `npx @libredb/studio --verify-cache` (and `--archive`) from wiping
+- [x] **#132** — Stop `npx @libredb/studio --verify-cache` (and `--archive`) from wiping
   `payload/data/` on re-extraction. Test first: in `tests/unit/launcher-utils.test.ts`'s style,
   simulate an existing `payload/data/auth-bootstrap.json`, run the verify-cache re-extraction
   path, and assert the file is preserved (or restored) rather than overwritten. Suggested shape

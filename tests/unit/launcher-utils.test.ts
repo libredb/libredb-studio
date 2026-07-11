@@ -13,6 +13,7 @@ import {
   LauncherUsageError,
   parseLauncherArgs,
   parseSha256Sums,
+  preservePayloadData,
   releaseDownloadUrl,
   resolveCacheDir,
   sha256File,
@@ -268,5 +269,62 @@ describe("assessNodeRuntime", () => {
     expect(assessNodeRuntime(`${major}.${minor}.${patch}`).action).not.toBe("fail");
     const justBelow = minor > 0 ? `${major}.${minor - 1}.999` : `${major - 1}.999.999`;
     expect(assessNodeRuntime(justBelow).action).toBe("fail");
+  });
+});
+
+describe("preservePayloadData", () => {
+  // Simulates bin/studio.js's extract(): tar always unpacks a fresh, empty
+  // data/ dir (per scripts/build-standalone-payload.sh) into a staging
+  // directory before it replaces the previous payload directory. Without
+  // this helper that swap wipes payload/data - the generated
+  // auth-bootstrap.json and any SQLite storage file (issue #132).
+  function makeDirs() {
+    const payloadDir = fs.mkdtempSync(path.join(tempDir, "payload-"));
+    const staging = fs.mkdtempSync(path.join(tempDir, "staging-"));
+    return { payloadDir, staging };
+  }
+
+  test("moves an existing payload/data over the freshly extracted (empty) staging data dir", () => {
+    const { payloadDir, staging } = makeDirs();
+    fs.mkdirSync(path.join(payloadDir, "data"));
+    fs.writeFileSync(path.join(payloadDir, "data", "auth-bootstrap.json"), '{"password":"A"}');
+    fs.mkdirSync(path.join(staging, "data")); // tarball's fresh, empty data/ dir
+
+    preservePayloadData(payloadDir, staging);
+
+    expect(fs.readFileSync(path.join(staging, "data", "auth-bootstrap.json"), "utf8")).toBe('{"password":"A"}');
+    expect(fs.existsSync(path.join(payloadDir, "data"))).toBe(false);
+  });
+
+  test("preserves non-empty data dirs containing generated SQLite storage state too", () => {
+    const { payloadDir, staging } = makeDirs();
+    fs.mkdirSync(path.join(payloadDir, "data"));
+    fs.writeFileSync(path.join(payloadDir, "data", "auth-bootstrap.json"), '{"password":"A"}');
+    fs.writeFileSync(path.join(payloadDir, "data", "libredb-storage.db"), "binary-sqlite-bytes");
+    fs.mkdirSync(path.join(staging, "data"));
+
+    preservePayloadData(payloadDir, staging);
+
+    expect(fs.readdirSync(path.join(staging, "data")).sort()).toEqual(["auth-bootstrap.json", "libredb-storage.db"]);
+  });
+
+  test("is a no-op on first extraction (no previous payload directory)", () => {
+    const { payloadDir, staging } = makeDirs();
+    fs.rmSync(payloadDir, { recursive: true, force: true });
+    fs.mkdirSync(path.join(staging, "data"));
+    fs.writeFileSync(path.join(staging, "data", ".gitkeep"), "");
+
+    expect(() => preservePayloadData(payloadDir, staging)).not.toThrow();
+    expect(fs.readdirSync(path.join(staging, "data"))).toEqual([".gitkeep"]);
+  });
+
+  test("is a no-op when the previous payload has no data dir", () => {
+    const { payloadDir, staging } = makeDirs();
+    fs.mkdirSync(path.join(staging, "data"));
+    fs.writeFileSync(path.join(staging, "data", ".gitkeep"), "");
+
+    preservePayloadData(payloadDir, staging);
+
+    expect(fs.readdirSync(path.join(staging, "data"))).toEqual([".gitkeep"]);
   });
 });

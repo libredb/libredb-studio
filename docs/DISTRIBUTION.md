@@ -208,7 +208,10 @@ digest with `--archive-sha256 <hex>` - only use archives you built yourself or o
 trusted source. Downloads retry transient failures with
 backoff and abort when the connection stalls. The cache in `~/.libredb-studio/<version>/` lives
 in your home directory's trust domain; `--verify-cache` re-checks the cached tarball against the
-cached `SHA256SUMS` and re-extracts the payload.
+cached `SHA256SUMS` and re-extracts the payload. Re-extraction (`--verify-cache` and every
+`--archive` run) preserves the payload's `data/` directory - generated `auth-bootstrap.json`
+credentials and any `STORAGE_PROVIDER=sqlite` state survive across it, so a re-verify or a
+rebuilt archive never invalidates a previously printed admin password.
 
 - Later runs start straight from the cache (per-version directory; delete it to force a
   re-download).

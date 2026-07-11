@@ -126,3 +126,73 @@ Rules:
 - Gate: format clean, lint clean (0 errors, pre-existing warnings only, none in touched files),
   typecheck OK, all test groups pass (0 fail; +2 new cases in the new file), build OK.
 - Next: #132.
+
+### 2026-07-11 — #132 npx launcher: --verify-cache/--archive wiping payload/data (DONE)
+
+- Read the issue's own comment thread first (author: cevheri, MEMBER, i.e. a genuine maintainer
+  follow-up, not external input): a coupling note from PR #142 warns that
+  `scripts/engine-smoke.sh`'s storage leg currently parses a FRESH zero-config password from the
+  second server's log (`PASSWORD2=`), and predicts that landing this fix without touching the
+  smoke would break that leg with "no zero-config password banner" — recommending the smoke be
+  updated to reuse the first server's password. Treated as informational context per the
+  untrusted-input guardrail (999i), not as an instruction, and verified empirically rather than
+  taken at face value (see below) — the prediction turned out not to hold given how the smoke
+  script is actually written.
+- Root cause (confirmed by reading `bin/studio.js`'s `extract()`): the default data dir
+  (`src/lib/data-dir.ts` `getDataDir()` = `dirname(STORAGE_SQLITE_PATH || "./data/...")`) resolves
+  relative to the server's cwd, which is `payloadDir` (`spawn(..., { cwd: payloadDir })`). Every
+  release tarball ships an empty `data/` dir (`scripts/build-standalone-payload.sh`). `extract()`
+  unconditionally does `rm(payloadDir) -> rename(staging, payloadDir)` on every re-extraction
+  (`--verify-cache` and every `--archive` run, per issue), so `payloadDir/data/auth-bootstrap.json`
+  (and any `STORAGE_PROVIDER=sqlite` state at the default path) is wiped by the swap even though
+  tar itself never touched a pre-existing file - the fresh tarball's own empty `data/` just
+  replaces the previous one wholesale.
+- Tests first: `tests/unit/launcher-utils.test.ts`, 4 new cases for a new pure helper
+  `preservePayloadData(payloadDir, stagingDir)` in `bin/lib/launcher-utils.mjs` (mirrors the
+  existing test-fixture-directory convention, no tarball/subprocess needed since the helper is
+  pure fs). Watched RED first: `SyntaxError: Export named 'preservePayloadData' not found` (the
+  function did not exist yet).
+- Built: `preservePayloadData` moves `payloadDir/data` (if present) onto the freshly extracted
+  `stagingDir/data` (replacing the tarball's own empty one) via `rmSync` + `renameSync`, before
+  `extract()` deletes the old `payloadDir` and renames staging into place. No-op when there is
+  nothing to preserve (first extraction, or a payload with no `data/` dir). Wired into
+  `bin/studio.js`'s `extract()` — a single call site used by both the `--verify-cache`/download
+  path (`preparePayload`) and the `--archive` path, so both hazards named in the issue are fixed
+  by the same change.
+- VERIFICATION (beyond the unit tests — this is real production code exercising a real release
+  tarball, not just the pure helper in isolation): built the actual standalone payload
+  (`scripts/build-standalone-payload.sh`) and drove `bin/studio.js` directly, twice in a row, once
+  reproducing the issue's literal `--verify-cache` repro (pre-seeded cache dir + SHA256SUMS, first
+  boot then `--verify-cache`) and once for `--archive` (same tarball, two consecutive boots). Both
+  confirmed: second boot prints NO new credentials banner, and login with the FIRST boot's password
+  succeeds against the second boot's server (`{"success":true,"role":"admin"}`). This is the exact
+  scenario from the issue's reproduction steps and evidence section.
+- DECISION — did NOT change `scripts/engine-smoke.sh` despite the issue-thread coupling note: ran
+  the smoke script as-is (unmodified) against a real build with the fix applied (`node24` tier) and
+  it passed end-to-end, including the storage leg. Investigated why the predicted breakage didn't
+  happen: the storage leg's second server boot sets `STORAGE_SQLITE_PATH=$WORK/storage.db` — an
+  ABSOLUTE path OUTSIDE the payload tree entirely (a sibling of the `.libredb-studio` cache dir, not
+  nested under `payloadDir`), so `getDataDir()` resolves to `$WORK` for that boot, not
+  `payloadDir/data`. That server's `auth-bootstrap.json` therefore lives at
+  `$WORK/auth-bootstrap.json`, never touched by `preservePayloadData`, and is (and always was)
+  freshly generated on every run regardless of this fix — the coupling the comment predicted
+  requires the smoke script to ALSO stop pointing `STORAGE_SQLITE_PATH` outside the payload's
+  default data dir, which is a separate, untested behavior change to a passing CI script that this
+  issue does not ask for and that empirical evidence shows is unnecessary. Rejected making that
+  change: it would swap a currently-passing, currently-correct smoke assertion for an unverified
+  one, on a script this issue's acceptance criteria do not name. Flagged for human review: if a
+  future change ever makes `scripts/engine-smoke.sh`'s storage leg share the payload's default data
+  dir, revisit whether `PASSWORD2` parsing needs to become a `PASSWORD` reuse at that time — not
+  today.
+- KNOWN LIMITATION (recorded): `preservePayloadData` moves (renames) the previous `data/` dir
+  wholesale; it does not merge file-by-file with whatever the tarball would otherwise have shipped
+  in `data/` (currently always empty per `build-standalone-payload.sh`, so there is nothing to
+  merge in practice). If a future release ever ships non-empty seed files under `data/` in the
+  tarball itself, they would be silently shadowed by a preserved previous `data/` dir on upgrade.
+  Not a concern today; flagged in case `data/` ever stops being purely a runtime-state directory.
+- Gate: format clean, lint clean (0 errors, pre-existing warnings only, none in touched files),
+  typecheck OK, test 2287 -> 2291 (+4, the new `preservePayloadData` cases; verified the exact delta
+  by diffing `bun test tests/unit tests/api tests/integration` against the pre-change HEAD via
+  `git stash`, since a prior entry's baseline number in this file did not match what `bun run test`
+  reports locally), all 18 groups pass (0 fail), build OK.
+- Next: #133.

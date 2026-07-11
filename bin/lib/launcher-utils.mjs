@@ -6,7 +6,7 @@
  * The CLI entry stays thin and composes these helpers.
  */
 import { createHash } from "node:crypto";
-import { createReadStream } from "node:fs";
+import { createReadStream, existsSync, renameSync, rmSync } from "node:fs";
 import * as path from "node:path";
 
 /**
@@ -121,6 +121,27 @@ export function sha256File(filePath) {
     stream.on("data", (chunk) => hash.update(chunk));
     stream.on("end", () => resolve(hash.digest("hex")));
   });
+}
+
+/**
+ * Move a previous payload's data/ directory (generated auth-bootstrap.json,
+ * SQLite storage state) over a freshly extracted staging directory's own
+ * data/ dir before it replaces the payload directory. Every release tarball
+ * ships an empty data/ (scripts/build-standalone-payload.sh), so a re-extract
+ * (--verify-cache, --archive) would otherwise silently wipe generated
+ * credentials and server-side SQLite storage on every run (issue #132). A
+ * no-op when there is nothing to preserve: first extraction (no payloadDir
+ * yet) or a payloadDir with no data/ dir.
+ *
+ * @param {string} payloadDir the previous payload root (may not exist)
+ * @param {string} stagingDir the freshly extracted staging directory
+ */
+export function preservePayloadData(payloadDir, stagingDir) {
+  const existingData = path.join(payloadDir, "data");
+  if (!existsSync(existingData)) return;
+  const stagingData = path.join(stagingDir, "data");
+  rmSync(stagingData, { recursive: true, force: true });
+  renameSync(existingData, stagingData);
 }
 
 /**
