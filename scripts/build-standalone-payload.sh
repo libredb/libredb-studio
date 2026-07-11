@@ -18,6 +18,9 @@
 #
 #   <output-dir>  where the tarball is written:
 #                 libredb-studio-standalone-<version>-<os>-<arch>.tar.gz
+#                 Entries are rooted under a top-level libredb-studio-<version>/
+#                 directory (issue #133) - extract with --strip-components=1
+#                 (see scripts/lib/pack-standalone-tarball.sh).
 #   --smoke       after packing, extract the tarball to a temp dir, boot
 #                 `node server.js` on a random port with a temp
 #                 STORAGE_SQLITE_PATH and require GET /api/db/health to
@@ -151,7 +154,9 @@ rm -rf "$PAYLOAD_DIR/node_modules/@libredb/libredb"
 cp -R node_modules/@libredb/libredb "$PAYLOAD_DIR/node_modules/@libredb/libredb"
 
 echo "==> Packing $TARBALL"
-tar -czf "$OUT_DIR/$TARBALL" -C "$PAYLOAD_DIR" .
+# Wraps PAYLOAD_DIR in a top-level libredb-studio-<version>/ root instead of
+# a tarbomb (issue #133); consumers extract with --strip-components=1.
+"$ROOT_DIR/scripts/lib/pack-standalone-tarball.sh" "$PAYLOAD_DIR" "$VERSION" "$OUT_DIR/$TARBALL"
 echo "==> Wrote $OUT_DIR/$TARBALL ($(du -h "$OUT_DIR/$TARBALL" | cut -f1))"
 
 # ------------------------------------------------------------------------------
@@ -162,7 +167,7 @@ if [ "$RUN_SMOKE" = "true" ]; then
   SMOKE_DIR="$STAGE_DIR/smoke"
   STORAGE_DIR="$STAGE_DIR/storage"
   mkdir -p "$SMOKE_DIR" "$STORAGE_DIR"
-  tar -xzf "$OUT_DIR/$TARBALL" -C "$SMOKE_DIR"
+  tar -xzf "$OUT_DIR/$TARBALL" -C "$SMOKE_DIR" --strip-components=1
 
   echo "==> Smoke: better-sqlite3 native binding loads"
   (cd "$SMOKE_DIR" && node -e "const db = require('better-sqlite3')('$STORAGE_DIR/probe.db'); db.exec('CREATE TABLE t (id INTEGER)'); db.close();")

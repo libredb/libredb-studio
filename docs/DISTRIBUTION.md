@@ -95,6 +95,13 @@ Release tags carry **no `v` prefix** (tag `0.9.41` == package.json version). Eac
 `SHA256SUMS` covers the standalone tarballs; each `.deb`/`.rpm` ships its own per-file
 `<artifact>.sha256` sidecar instead (the packages are built in a separate job).
 
+Standalone tarball entries are rooted under a top-level `libredb-studio-<version>/` directory
+(not a tarbomb) - extract with `tar --strip-components=1` (`tar xzf <artifact>
+--strip-components=1`), which is what the npx launcher, the deb/rpm/snap packaging jobs, and
+`scripts/build-standalone-payload.sh`'s own `--smoke` self-test all do; Homebrew strips the single
+top-level directory automatically for its main `url`/`sha256` download, so the formula needs no
+extra flag.
+
 Download URL pattern:
 `https://github.com/libredb/libredb-studio/releases/download/<version>/<artifact>`.
 

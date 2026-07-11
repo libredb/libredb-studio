@@ -10,6 +10,7 @@ import {
   artifactName,
   assertReleaseVersion,
   assessNodeRuntime,
+  extractTarball,
   LauncherUsageError,
   parseLauncherArgs,
   parseSha256Sums,
@@ -326,5 +327,41 @@ describe("preservePayloadData", () => {
     preservePayloadData(payloadDir, staging);
 
     expect(fs.readdirSync(path.join(staging, "data"))).toEqual([".gitkeep"]);
+  });
+});
+
+describe("extractTarball", () => {
+  // Release tarballs are packed with a top-level libredb-studio-<version>/
+  // root (issue #133, scripts/lib/pack-standalone-tarball.sh) instead of a
+  // tarbomb; extractTarball must strip that one path component so the
+  // payload (server.js, etc.) lands directly in destDir, matching every
+  // caller's expectation (e.g. `payloadDir/server.js`).
+  function buildFixtureTarball(rootName: string): string {
+    const sourceDir = fs.mkdtempSync(path.join(tempDir, "extract-src-"));
+    const versionedRoot = path.join(sourceDir, rootName);
+    fs.mkdirSync(path.join(versionedRoot, "nested"), { recursive: true });
+    fs.writeFileSync(path.join(versionedRoot, "server.js"), "// stub server");
+    fs.writeFileSync(path.join(versionedRoot, "nested", "file.txt"), "nested contents");
+
+    const tarballPath = path.join(sourceDir, "fixture.tar.gz");
+    const result = Bun.spawnSync(["tar", "-czf", tarballPath, "-C", sourceDir, rootName], {
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    if (result.exitCode !== 0) throw new Error(`failed to build fixture tarball: ${result.stderr.toString()}`);
+    return tarballPath;
+  }
+
+  test("strips the top-level libredb-studio-<version>/ root so the payload lands directly in destDir", () => {
+    const tarballPath = buildFixtureTarball("libredb-studio-9.9.9");
+    const destDir = fs.mkdtempSync(path.join(tempDir, "extract-dest-"));
+
+    const { status, error } = extractTarball(tarballPath, destDir);
+
+    expect(error).toBeNull();
+    expect(status).toBe(0);
+    expect(fs.readFileSync(path.join(destDir, "server.js"), "utf8")).toBe("// stub server");
+    expect(fs.readFileSync(path.join(destDir, "nested", "file.txt"), "utf8")).toBe("nested contents");
+    expect(fs.existsSync(path.join(destDir, "libredb-studio-9.9.9"))).toBe(false);
   });
 });

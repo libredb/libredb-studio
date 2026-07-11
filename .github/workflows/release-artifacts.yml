@@ -309,7 +309,7 @@ jobs:
         run: |
           PAYLOAD_DIR="$RUNNER_TEMP/payload"
           mkdir -p "$PAYLOAD_DIR"
-          tar -xzf "dist/libredb-studio-standalone-${VERSION}-linux-${TARBALL_ARCH}.tar.gz" -C "$PAYLOAD_DIR"
+          tar -xzf "dist/libredb-studio-standalone-${VERSION}-linux-${TARBALL_ARCH}.tar.gz" -C "$PAYLOAD_DIR" --strip-components=1
           bash packaging/linux/fetch-node.sh "$PAYLOAD_DIR" "$TARBALL_ARCH"
           # The amd64 container smoke below cannot run arm64 binaries, so at
           # minimum assert the bundled node matches the target architecture.
@@ -423,7 +423,7 @@ jobs:
           TARBALL_ARCH: ${{ matrix.tarball_arch }}
         run: |
           mkdir -p snap-payload
-          tar -xzf "dist/libredb-studio-standalone-${VERSION}-linux-${TARBALL_ARCH}.tar.gz" -C snap-payload
+          tar -xzf "dist/libredb-studio-standalone-${VERSION}-linux-${TARBALL_ARCH}.tar.gz" -C snap-payload --strip-components=1
 
       - name: Build the snap
         if: steps.snapstore.outputs.enabled == 'true'

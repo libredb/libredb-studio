@@ -34,7 +34,7 @@
   from the issue: keep `data/` outside the extracted payload root, or explicitly preserve/restore
   `payload/data` across re-extraction in `bin/lib/launcher-utils.mjs`.
 
-- [ ] **#133** — Make `scripts/build-standalone-payload.sh` package the tarball under a
+- [x] **#133** — Make `scripts/build-standalone-payload.sh` package the tarball under a
   top-level `libredb-studio-<version>/` directory instead of tarbomb-style root entries. Test
   first: run the packaging script (or a scoped unit test around its tar invocation) and assert
   `tar tzf <artifact> | head` entries are prefixed with `libredb-studio-<version>/`, not `./`.

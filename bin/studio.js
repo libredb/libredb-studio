@@ -15,7 +15,7 @@
  * directory only - the root package.json must stay typeless because the
  * library dist ships CJS .js files consumed via require().
  */
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -24,6 +24,7 @@ import { pipeline } from "node:stream/promises";
 import {
   artifactName,
   assessNodeRuntime,
+  extractTarball,
   LauncherUsageError,
   parseLauncherArgs,
   parseSha256Sums,
@@ -163,9 +164,11 @@ async function download(url, destination) {
 
 /**
  * Unpack a payload tarball into payloadDir (atomic: staging dir then rename).
- * `tar` exists on all supported POSIX platforms (linux, darwin). A previous
- * payload's data/ dir (generated credentials, SQLite storage) is preserved
- * across the swap - see preservePayloadData (issue #132).
+ * `tar` exists on all supported POSIX platforms (linux, darwin). The tarball
+ * is packed under a top-level libredb-studio-<version>/ root (issue #133),
+ * which extractTarball strips. A previous payload's data/ dir (generated
+ * credentials, SQLite storage) is preserved across the swap - see
+ * preservePayloadData (issue #132).
  *
  * @param {string} tarballPath
  * @param {string} payloadDir
@@ -175,9 +178,9 @@ function extract(tarballPath, payloadDir) {
   const staging = `${payloadDir}.extracting`;
   fs.rmSync(staging, { recursive: true, force: true });
   fs.mkdirSync(staging, { recursive: true });
-  const result = spawnSync("tar", ["-xzf", tarballPath, "-C", staging], { stdio: "inherit" });
-  if (result.error) fail(`Could not run tar: ${result.error.message}`);
-  if (result.status !== 0) fail(`tar exited with code ${result.status} while unpacking ${tarballPath}`);
+  const { status, error } = extractTarball(tarballPath, staging);
+  if (error) fail(`Could not run tar: ${error.message}`);
+  if (status !== 0) fail(`tar exited with code ${status} while unpacking ${tarballPath}`);
   preservePayloadData(payloadDir, staging);
   fs.rmSync(payloadDir, { recursive: true, force: true });
   fs.renameSync(staging, payloadDir);

@@ -5,6 +5,7 @@
  * everything here is unit tested in tests/unit/launcher-utils.test.ts.
  * The CLI entry stays thin and composes these helpers.
  */
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createReadStream, existsSync, renameSync, rmSync } from "node:fs";
 import * as path from "node:path";
@@ -142,6 +143,24 @@ export function preservePayloadData(payloadDir, stagingDir) {
   const stagingData = path.join(stagingDir, "data");
   rmSync(stagingData, { recursive: true, force: true });
   renameSync(existingData, stagingData);
+}
+
+/**
+ * Extract a tarball into destDir via the system `tar`. Release tarballs are
+ * packed under a top-level libredb-studio-<version>/ root (issue #133,
+ * scripts/lib/pack-standalone-tarball.sh) instead of a tarbomb, so every
+ * entry is unwrapped one path component - the payload (server.js, etc.)
+ * lands directly in destDir, matching every caller's expectation.
+ *
+ * @param {string} tarballPath
+ * @param {string} destDir
+ * @returns {{ status: number | null, error: Error | null }}
+ */
+export function extractTarball(tarballPath, destDir) {
+  const result = spawnSync("tar", ["-xzf", tarballPath, "-C", destDir, "--strip-components=1"], {
+    stdio: "inherit",
+  });
+  return { status: result.status, error: result.error ?? null };
 }
 
 /**

@@ -45,9 +45,12 @@ class LibredbStudio < Formula
   end
 
   def install
-    # The tarball is the standalone server payload with server.js at its root
-    # (no top-level directory), so install everything - including the hidden
-    # .next directory - into libexec.
+    # The tarball is rooted under a top-level libredb-studio-<version>/
+    # directory (issue #133); Homebrew strips that single top-level
+    # directory automatically for the formula's main url/sha256 download,
+    # so server.js and friends land directly in the staged working
+    # directory. Install everything - including the hidden .next
+    # directory - into libexec.
     libexec.install Dir["*", ".next"]
 
     # Launcher: run the standalone server under Homebrew's node@24, passing

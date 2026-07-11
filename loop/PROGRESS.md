@@ -196,3 +196,67 @@ Rules:
   `git stash`, since a prior entry's baseline number in this file did not match what `bun run test`
   reports locally), all 18 groups pass (0 fail), build OK.
 - Next: #133.
+
+### 2026-07-11 — #133 standalone tarball tarbomb -> versioned root (DONE)
+
+- Root cause confirmed by reading `scripts/build-standalone-payload.sh`'s final packing step
+  (`tar -czf "$OUT_DIR/$TARBALL" -C "$PAYLOAD_DIR" .`): entries were packed relative to
+  `$PAYLOAD_DIR` itself, so extracting spills every file (`fly.toml`, `scripts/`, `src/`, `.next/`,
+  ...) into the caller's cwd - exactly the issue's `tar tzf | head` evidence.
+- Tests first: new `tests/unit/packaging-standalone-tarball.test.ts` (2 cases) spawns a NEW real
+  script, `scripts/lib/pack-standalone-tarball.sh`, as a subprocess against a small fixture payload
+  dir (no full `bun run build` needed - that script only wraps an already-assembled payload), then
+  asserts every `tar tzf` entry is prefixed `libredb-studio-<version>/`. New `describe("extractTarball"`
+  block in `tests/unit/launcher-utils.test.ts` (1 case) builds a real fixture tarball with a
+  top-level `libredb-studio-9.9.9/` root via the real `tar` binary and asserts the new
+  `extractTarball` helper strips it so `server.js` lands directly in destDir. Watched RED first:
+  `scripts/lib/pack-standalone-tarball.sh` didn't exist yet (exit 127 / "No such file or
+  directory"), and `SyntaxError: Export named 'extractTarball' not found`.
+- Built:
+  - New `scripts/lib/pack-standalone-tarball.sh <payload-dir> <version> <output-tarball>`: renames
+    the payload dir to `libredb-studio-<version>/` in its parent, then tars that named directory
+    (not `--transform`, since BSD tar on macOS runners doesn't share GNU tar's transform syntax -
+    packing a renamed directory works identically on both). `build-standalone-payload.sh`'s final
+    packing step now calls this script instead of tarring `$PAYLOAD_DIR` directly; its own
+    `--smoke` self-test extraction gained `--strip-components=1` to match.
+  - New `extractTarball(tarballPath, destDir)` in `bin/lib/launcher-utils.mjs` (`tar -xzf ... -C
+    destDir --strip-components=1`, mirroring the "CLI entry stays thin, composes tested helpers"
+    convention already used for `preservePayloadData`). `bin/studio.js`'s `extract()` now calls this
+    instead of its own inline `spawnSync("tar", ...)` - both the download/cache path
+    (`preparePayload`) and the `--archive` path share the one `extract()` call site, so both are
+    fixed together.
+  - `.github/workflows/release-artifacts.yml`: added `--strip-components=1` to the two other direct
+    `tar -xzf "dist/libredb-studio-standalone-...tar.gz" -C ...` extractions (the linux-packages/nfpm
+    job and the snap job) - found by grepping the repo for every tarball-consuming `tar -xzf`, per
+    the plan's "check whether any of those reference the archive root path directly."
+    `scripts/engine-smoke.sh` needed no change: it always drives `bin/studio.js --archive`, so it
+    inherits the `extract()` fix automatically.
+  - `packaging/homebrew/libredb-studio.rb.tmpl`: no functional change - researched (WebSearch +
+    DeepWiki on Homebrew/brew) and confirmed `Resource::Downloader` defaults
+    `strip_leading_dir = true` for a formula's *primary* `url`/`sha256` download (as opposed to a
+    named secondary `resource do` block, where no stripping happens by default), so Homebrew already
+    auto-strips a single top-level directory before `def install` runs - the new layout needs no
+    code change there. Updated the now-stale `def install` comment (previously said "no top-level
+    directory") to describe the new layout and why it still works unchanged.
+  - `docs/DISTRIBUTION.md`: added a paragraph under "Release artifact naming" documenting the
+    versioned root and which consumers strip it how.
+- VERIFICATION (beyond unit tests): ran the real `scripts/build-standalone-payload.sh` end-to-end
+  (full `bun run build` + packing, no `--smoke` flag) and confirmed `tar tzf` on the produced
+  tarball shows all 4378 entries prefixed `libredb-studio-0.9.50/` (not `./`). Then drove that exact
+  tarball through the real `bin/studio.js --archive` end-to-end: extraction succeeded, the server
+  booted, printed the zero-config admin password, and `GET /api/db/health` returned 200 - the same
+  real-process verification style used for #132.
+- DECISION - renamed the payload directory and tarred the named directory rather than using
+  `tar --transform`/`--owner`-style flag tricks: GNU tar (Linux CI/dev) and BSD tar (macOS CI
+  runners, per the release matrix) do not share transform-flag syntax, but every `tar` implementation
+  packs a named directory identically, so this is the one approach guaranteed to produce the same
+  archive layout on both platforms without an `if [[ $(uname) == Darwin ]]` branch.
+- KNOWN LIMITATION (recorded): #124 (trim the repo-root extras out of the payload itself, e.g.
+  `fly.toml`, `docker-compose.example.yml`) is explicitly out of scope per
+  `loop/IMPLEMENTATION_PLAN.md`'s "Later" section - the payload still contains those files, just
+  under a conventional root now instead of spilled at the archive root.
+- Gate: format clean, lint clean (0 errors, pre-existing warnings only, none in touched files),
+  typecheck OK, `bun run test` all 18 groups pass (0 fail; +3 new cases: 2 in
+  `packaging-standalone-tarball.test.ts`, 1 in `launcher-utils.test.ts`'s new `extractTarball`
+  block), build OK.
+- Next: #137.
