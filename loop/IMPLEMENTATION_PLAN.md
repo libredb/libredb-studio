@@ -57,7 +57,7 @@
 
 ## Phase F — close out
 
-- [ ] Reconcile `loop/PROGRESS.md` / `loop/HANDOFF.md`; verify all `loop/ACCEPTANCE.md` criteria;
+- [x] Reconcile `loop/PROGRESS.md` / `loop/HANDOFF.md`; verify all `loop/ACCEPTANCE.md` criteria;
   create `.loop/COMPLETE`
 
 ## Later (NOT this milestone)

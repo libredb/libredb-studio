@@ -326,3 +326,50 @@ Rules:
 - Next: Phase F close-out - reconcile `loop/PROGRESS.md`/`loop/HANDOFF.md` against
   `loop/ACCEPTANCE.md` (all 5 functional tasks in `loop/IMPLEMENTATION_PLAN.md` are now `[x]`)
   and create `.loop/COMPLETE` if every criterion holds.
+
+### 2026-07-11 — Phase F close-out (DONE)
+
+- Triage (step 0f): `gh issue list --label "loop:needs-info" --state all` returned `[]` — no
+  issue needs triage or blocks completion.
+- Verified every `loop/ACCEPTANCE.md` criterion against the actual repo state rather than
+  trusting the prior entries' self-report:
+  - Functional: confirmed all 5 issues (#132-#135, #137) are still `OPEN` on GitHub (`gh issue
+    view <N> --json state` for each) - expected, since this loop never closes issues (a human
+    closes them at PR merge, per `PROMPT.md` step 3).
+  - Documentation: `grep` of `docs/DISTRIBUTION.md` confirmed the `LIBREDB_BIND` row (#134), the
+    Homebrew `STORAGE_SQLITE_PATH` default paragraph (#135), and the versioned-tarball-root
+    paragraph (#133) are all present; #137 needed no doc change (already covered by the
+    pre-loop PR #165 docs, per that entry's own investigation).
+  - Quality/gate: re-ran the full gate fresh on the clean branch tip (not reusing any
+    mid-implementation run): `bun run format` clean (489 files, no fixes), `bun run lint` 0
+    errors (58 pre-existing warnings, none new), `bun run typecheck` clean, `bun run test`
+    printed "All 18 groups passed!" with 0 fail (the runner's final tail only echoes the last
+    group's own tally - 486 pass / 0 fail / 983 expect() calls for that group - not a
+    whole-suite total; did not re-derive the exact whole-suite count, so not claiming it matches
+    the #137 entry's prior "2296 tests total" figure, only that all groups reported 0 fail),
+    `bun run build` exit 0 (all routes compiled). Also ran `helm lint charts/libredb-studio
+    --strict` (named in root `CLAUDE.md`'s Helm section though not itself a `PROMPT.md` gate
+    command): 0 charts failed. `git status --short` empty after the build (no stray build
+    artifacts staged/untracked).
+  - Process: `loop/IMPLEMENTATION_PLAN.md` Phase 1-3 (#134, #135, #132, #133, #137) were already
+    `[x]`; ticked Phase F's own line in the same edit as this entry.
+- Updated `loop/ACCEPTANCE.md`: ticked all boxes (Functional, Quality, Documentation, Process),
+  each backed by the verification above, not a rubber stamp.
+- Updated `loop/HANDOFF.md`: replaced the stale "Not started — scaffold just created" status
+  (dated to milestone setup, before any iteration ran) with the actual completed state - per-issue
+  commit hashes, the re-verified gate summary, and the open-issues-stay-open note - plus queued
+  backlog candidates for the next milestone (#124, the npx launcher's own latent `HOSTNAME` gap
+  noted in the #134 entry, and the pre-existing `bug`-labeled backlog from the original scaffold).
+- DECISION - did not attempt a live E2E browser run for #137 beyond what its own entry already
+  recorded (a `helm template`-level render assertion): `loop/ACCEPTANCE.md`'s wording accepts
+  "and/or" between the render-level check and a live E2E flow, the render-level test already
+  exists and passes, and spinning a Kind cluster + Playwright run from inside this close-out
+  iteration would be new scope beyond "reconcile progress/handoff and verify criteria" - consistent
+  with the KNOWN LIMITATION already flagged in the #137 entry.
+- Gate: format clean, lint clean (0 errors), typecheck OK, 18/18 test groups pass (0 fail), build
+  OK, `helm lint --strict` 0 failed - same numbers as the #137 entry, confirming no drift between
+  that commit and this close-out.
+- Next: none - all `loop/ACCEPTANCE.md` criteria met; `.loop/COMPLETE` created in this same
+  iteration. A human should review before merging `loop/maintainer-bugsweep-1` into `main` (5
+  fixes, 5 commits, base `main` per branch rules) and plan the next milestone via
+  `loop/PROMPT-PLANNING.md`.
