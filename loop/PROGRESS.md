@@ -260,3 +260,69 @@ Rules:
   `packaging-standalone-tarball.test.ts`, 1 in `launcher-utils.test.ts`'s new `extractTarball`
   block), build OK.
 - Next: #137.
+
+### 2026-07-11 — #137 Helm default install: writable /app/data (regression test added; fix already shipped)
+
+- Read the issue in full (`gh issue view 137`, 0 comments): default install
+  (`persistence.enabled=false`) left `/app/data` unwritable under
+  `readOnlyRootFilesystem: true`, so embedded-sample seeding silently failed (WARN-only log,
+  no crash) and the login → open "Sample (LibreDB)" → query E2E flow broke without
+  `--set persistence.enabled=true`.
+- Investigated before writing anything: `git log`/`git show` on
+  `charts/libredb-studio/templates/deployment.yaml` showed this was already fixed by commit
+  `3a22428` ("fix(helm): install with default values - zero-config bootstrap as chart default
+  (#165)", merged 2026-07-07, well before this loop started) - the `data` volume already has an
+  `{{- else }}` branch rendering `emptyDir: {}` when `persistenceEnabled` is false, and the
+  `data` volumeMount at `/app/data` is unconditional. Confirmed live with `helm template
+  charts/libredb-studio` (default values): rendered `data` volume is `emptyDir: {}`. Also
+  confirmed `docs/HELM_CHART.md`, `docs/DISTRIBUTION.md`, and `docs/RANCHER.md` already document
+  this exact behavior (emptyDir-by-default, PVC when `persistence.enabled=true`) from the same
+  PR - no doc drift, no doc changes needed this iteration.
+- DECISION - the milestone's functional fix for #137 was ALREADY shipped before this loop
+  started; what was genuinely missing (and what `loop/ACCEPTANCE.md`'s Quality criterion
+  "every fix has a regression test that fails before the fix and passes after" flags) was
+  automated regression coverage pinning the specific "writable /app/data by default" behavior.
+  Checked existing CI coverage first per the plan's instruction: `helm lint --strict` (ci.yml)
+  is syntax-only: the `ct install` (default-values, zero-config) real-Kind-cluster step added in
+  the same PR #165 (`helm-release.yml`) only asserts the pod reaches Ready, which the pre-#165
+  broken template would ALSO have satisfied (the original bug was a silent WARN, not a crash) -
+  so no existing test actually pins this regression at the granularity the issue describes.
+  Wrote `tests/unit/helm-chart-persistence.test.ts` to close that gap.
+- Tests first: 2 new cases, spawning the REAL `helm` binary (`Bun.spawnSync`) against the real
+  `charts/libredb-studio` chart (mirrors this loop's established convention of exercising real
+  production files/binaries rather than reimplementing logic - see `packaging-*.test.ts`), then
+  parsing the rendered multi-doc YAML with the `yaml` package (already a project dependency) to
+  assert on the actual `Deployment` manifest. Watched RED first: temporarily reverted
+  `deployment.yaml`'s two hunks to their pre-#165 shape (conditional volumeMount, no `else`
+  emptyDir branch) via `Edit`, re-ran `bun test tests/unit/helm-chart-persistence.test.ts` -
+  first case failed exactly as expected (`dataMount` undefined, i.e. no `/app/data` mount
+  renders at all with default values), second case (`persistence.enabled=true`) still passed
+  correctly (isolates the regression to the default-values path only). Restored the file via
+  `git checkout --` (verified `git status --short` showed no diff afterward) and reran - both
+  cases GREEN.
+  - Test 1: default values -> `data` volumeMount exists at `/app/data`, `data` volume has
+    `emptyDir` and no `persistentVolumeClaim`.
+  - Test 2: `--set persistence.enabled=true` -> `data` volume has `persistentVolumeClaim` and no
+    `emptyDir` (no-regression guard on the existing correct branch).
+- Verified `helm` is preinstalled on GitHub's `ubuntu-latest` runner image (confirmed via web
+  search of `actions/runner-images` docs: Helm ships under "Package Management" on the
+  Ubuntu 24.04 image) before committing to a test that shells out to the real `helm` CLI - the
+  `test`/`test:coverage` CI job does not run `azure/setup-helm` (only the separate `helm-lint`
+  job does, for version pinning), so this confirms the new test runs deterministically in CI
+  without needing any workflow changes. Also confirmed `helm template charts/libredb-studio`
+  needs no `helm repo add bitnami` / `helm dependency build` step locally, since the postgresql
+  subchart `.tgz` is already vendored at `charts/libredb-studio/charts/postgresql-16.7.27.tgz`.
+- KNOWN LIMITATION (recorded): this is a template-render assertion, not a live E2E "login → open
+  sample → query" browser flow against a real cluster (`loop/ACCEPTANCE.md` accepts either, via
+  "and/or"). A full k8s E2E harness (spin a Kind cluster, deploy the chart, port-forward, drive
+  Playwright) is out of scope for one loop iteration and materially overlaps both the existing
+  `ct install` CI smoke step and the already-completed manual Rancher K3s E2E validation (9/9
+  scenarios, see project memory) - not attempted here; flagged only as a documented gap, not a
+  blocker, since the acceptance wording explicitly allows the render-level check.
+- Gate: format clean, lint clean (0 errors, pre-existing warnings only, none in touched files),
+  typecheck OK, `bun run test` all 18 groups pass (0 fail; +2 new cases, 2296 tests total in the
+  main unit/api/integration group), build OK, `helm lint charts/libredb-studio --strict` clean
+  (0 charts failed).
+- Next: Phase F close-out - reconcile `loop/PROGRESS.md`/`loop/HANDOFF.md` against
+  `loop/ACCEPTANCE.md` (all 5 functional tasks in `loop/IMPLEMENTATION_PLAN.md` are now `[x]`)
+  and create `.loop/COMPLETE` if every criterion holds.

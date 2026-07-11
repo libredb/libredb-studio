@@ -46,7 +46,7 @@
 
 ## Phase 3 — Helm chart persistence
 
-- [ ] **#137** — Give a default Helm install (`persistence.enabled=false`) a writable
+- [x] **#137** — Give a default Helm install (`persistence.enabled=false`) a writable
   `/app/data` so the embedded sample seeds. Test first: whatever test convention already covers
   `charts/libredb-studio` (check for existing helm-lint/template/E2E test patterns before
   inventing one) — assert that with default values, a rendered pod spec has a writable mount at
