@@ -36,6 +36,17 @@ if [ ! -d "$PAYLOAD_DIR" ]; then
   exit 1
 fi
 
+# Refuse to prune anything that does not look like an assembled standalone
+# payload - the deny-list below is applied with rm -rf, so a mistaken
+# invocation (a repo checkout, or / itself) must fail BEFORE any removal.
+# The markers are the runtime keep-list's anchors; all must pre-exist.
+for marker in server.js package.json .next; do
+  if [ ! -e "$PAYLOAD_DIR/$marker" ]; then
+    echo "Refusing to prune: '$PAYLOAD_DIR' does not look like a standalone payload (missing $marker)" >&2
+    exit 1
+  fi
+done
+
 # Repo-root extras that output file tracing pulls into the standalone
 # output. Directories and files alike; missing entries are a no-op.
 PRUNE_LIST=(

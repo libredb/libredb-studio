@@ -1128,3 +1128,21 @@ Rules:
   fixtures' duplicated-line cases.
 - Gate: sync-chart-version unit tests 34/34, `bun run chart:check` green on the real repo; full
   five-command gate via the pre-commit hook.
+
+### 2026-07-12 — PR #178 Copilot review follow-up: payload-marker guard in the prune script (DONE, human/operator)
+
+- Copilot's PR review flagged a real defense gap in `scripts/lib/prune-standalone-payload.sh`:
+  the deny-list is applied with `rm -rf` and the only pre-checks were arg-count and dir
+  existence — a mistaken invocation against a repo checkout (or `/`) would start deleting
+  matching entries (`bin`, `docs`, `snap`, `logs`, ...). The sole current caller
+  (`build-standalone-payload.sh:114`) passes a freshly assembled payload, so the PR itself was
+  safe — but the script is a standalone lib and the guard costs six lines.
+- Tests first (RED confirmed: 2 new cases failed against the unguarded script): (a) a dir with
+  deny-list names but no payload markers is refused with nothing deleted; (b) partial markers
+  (server.js + package.json but no .next) are also refused. GREEN after the fix: 7/7 in the
+  file (was 5).
+- Built: the script now requires all three runtime keep-list anchors (`server.js`,
+  `package.json`, `.next`) to pre-exist in the target before any removal, failing with a
+  "does not look like a standalone payload" error otherwise. This implicitly refuses `/`.
+- The second review note (CodeQL missing-regexp-anchor on `sync-chart-version.mjs`) was already
+  resolved by the previous entry's fix; the inline comment is stale.

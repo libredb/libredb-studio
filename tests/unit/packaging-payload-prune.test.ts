@@ -171,4 +171,31 @@ describe("scripts/lib/prune-standalone-payload.sh (#124)", () => {
     expect(run.exitCode).not.toBe(0);
     expect(run.stderr.toString()).toContain("not found");
   });
+
+  test("refuses a dir that does not look like a standalone payload and deletes nothing", () => {
+    // Deny-list names present but NO payload markers (server.js, package.json,
+    // .next) - e.g. a repo checkout or / passed by mistake. The prune must
+    // refuse before removing anything.
+    const notAPayload = ["docs/example-file", "CLAUDE.md", "bun.lock"];
+    const payloadDir = makeFixturePayload(notAPayload);
+
+    const run = runPrune(payloadDir);
+    expect(run.exitCode).not.toBe(0);
+    expect(run.stderr.toString()).toContain("does not look like a standalone payload");
+
+    for (const survivor of notAPayload) {
+      expect(existsSync(join(payloadDir, survivor))).toBe(true);
+    }
+  });
+
+  test("refuses when only some payload markers are present", () => {
+    // package.json alone (any npm dir has one) must not qualify as a payload.
+    const partial = ["package.json", "server.js", "docs/example-file"];
+    const payloadDir = makeFixturePayload(partial);
+
+    const run = runPrune(payloadDir);
+    expect(run.exitCode).not.toBe(0);
+    expect(run.stderr.toString()).toContain(".next");
+    expect(existsSync(join(payloadDir, "docs/example-file"))).toBe(true);
+  });
 });
