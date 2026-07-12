@@ -407,3 +407,59 @@ Rules:
   code touched).
 - Next: none for Bug Sweep 1 (complete). The next milestone starts with triage mode per
   `loop/HANDOFF.md`.
+
+### 2026-07-12 — Triage batch 1 (Maintainer Sweep 2): #40, #94, #126, #136, #45 (DONE)
+
+- Batch selection: 20 open issues; excluded 5 already carrying `loop:*` labels (#175, #166,
+  #152, #114, #72 — labeled before this loop started, none recorded in TRIAGE.md, treated as
+  already-routed and left untouched). Took the 4 open `bug`-labeled candidates oldest-first
+  (#40, #94, #126, #136) plus the oldest non-bug (#45).
+- TOOLING LIMITATION (recorded): `authorAssociation` is not retrievable this iteration — the
+  runner blocks `gh api` even for read-only GETs (prefix-based, by design; not routed around)
+  and `gh issue view --json` does not expose the field. Recorded "repo maintainer" where the
+  author is the repository owner account and "unknown/external" otherwise; the firewall treats
+  all authors identically anyway. Also: `gh issue view` without `--json` returns empty output in
+  this environment — use `--json` with explicit fields.
+- #40 (ER diagram broken rendering + PNG/SVG export) → `loop:needs-moderator-action`, category:
+  requires-privileged-change. NOT an injection — a benign external bug report whose two export
+  claims I VERIFIED in code: (1) SVG export serializes the first svg element inside the
+  React Flow container (`src/components/SchemaDiagram.tsx:360-370`), but React Flow renders
+  table nodes as HTML divs (only edges/background are SVG layers), so the exported file
+  structurally cannot contain the diagram — matches the report's "The SVG image is not right;
+  it is not the ER diagram." (2) PNG export (`SchemaDiagram.tsx:344-358`) uses html2canvas
+  1.4.1, whose color parser supports rgb/hsl only (verified in the installed package's color
+  types — no oklch support), while Tailwind 4's default palette used by the diagram's classes
+  is oklch-based (verified `node_modules/tailwindcss/theme.css:134` for the blue-400 token used
+  at `SchemaDiagram.tsx:51`); the failure is swallowed as a console.error with no user-visible
+  feedback — matches "PNG can't be downloaded." Escalated rather than queued because the
+  correct fix requires a new runtime dependency (the React-Flow-ecosystem-standard DOM-to-image
+  serializer; html2canvas is effectively unmaintained and a bespoke in-repo serializer would be
+  worse), and dependency additions are a human decision per the firewall. The report's third
+  claim ("the shown is not good", two screenshot attachments) was not verifiable — attachments
+  deliberately not fetched (999b). No reply posted (2a: label only).
+- #94 (query editor clips long lines, no horizontal scroll) → `loop:needs-info`. Plausible but
+  not verifiable in current code: the Monaco options explicitly request visible horizontal
+  scrollbars, automatic relayout, and no word wrap (`src/components/QueryEditor.tsx:59-92`,
+  scrollbar block at 76-81), i.e. current code asks for exactly the behavior the report says is
+  missing. Report is against v0.9.29 (~23 releases old) and names no reproducible layout state.
+  Posted one question (does it reproduce on 0.9.52; exact panel/window state; standalone vs
+  embedded) — issue comment 4949538647.
+- #126 (Oracle/MSSQL explain advertised but unimplemented) → `loop:queued`. Verified all four
+  code sites (capability true at `oracle.ts:65`/`mssql.ts:61`; builder null-falls-back to the
+  raw query at `use-query-execution.ts:145-155,181-186`). Observed behavior correction recorded
+  in the spec: the button silently runs the plain query — it does not produce an engine-rejected
+  statement as the issue text assumed. Spec pins the disable-until-implemented option (the
+  issue's own alternative) — rationale in TRIAGE.md.
+- #136 (chart hard-required the optional user password) → `loop:queued` as a regression-test
+  task: the functional fix ALREADY SHIPPED on main (conditional secret key + env wiring + docs;
+  verified by reading the templates and rendering the chart locally with only the two required
+  secrets — clean render, zero USER_PASSWORD references), but no test pins it. Same shape as
+  the #137 precedent last milestone.
+- #45 (four deferred Helm hardening items from the chart-introduction review) → `loop:queued`.
+  All four gaps verified in the chart source (schema coverage, no machine-enforced JWT length,
+  PDB zero-value truthiness drop, no HPA-vs-sqlite guard). Spec records a verified trap: the
+  JWT secret defaults to empty for zero-config mode, so a naive minLength would break the
+  default install — constraint must accept empty-or->=32.
+- Not-for-the-loop: none this batch.
+- Next: triage the remaining untriaged pool (next batch, oldest-first: #167, #170, #151, #100,
+  #96, then #127, #125, #124, #123, #108).
