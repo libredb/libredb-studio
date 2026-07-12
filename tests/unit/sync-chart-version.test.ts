@@ -168,7 +168,7 @@ describe("checkChangesAnnotation", () => {
     // changes value means the extraction no longer understands the file.
     const inline = chartYaml().replace(
       /  artifacthub\.io\/changes: \|\n(?: {4}.*\n)*/,
-      '  artifacthub.io/changes: \'["entry"]\'\n',
+      "  artifacthub.io/changes: '[\"entry\"]'\n",
     );
     const violations = checkChangesAnnotation(inline);
     expect(violations.length).toBe(1);
