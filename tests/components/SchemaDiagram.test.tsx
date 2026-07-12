@@ -631,7 +631,11 @@ describe("SchemaDiagram", () => {
     const { container } = render(<SchemaDiagram {...props} />);
     const view = within(container);
 
-    expect(view.queryByText(/No FK data available/)).not.toBeNull();
+    // FK metadata EXISTS here (it just references a table outside the view),
+    // so the message must not claim there is no FK data at all.
+    expect(view.queryByText(/No usable FK relationships in this view/)).not.toBeNull();
+    expect(view.queryByText(/heuristic relationships/)).not.toBeNull();
+    expect(view.queryByText(/No FK data available/)).toBeNull();
   });
 
   // ── Selected node info ──────────────────────────────────────────────────

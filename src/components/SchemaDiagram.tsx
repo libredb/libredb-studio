@@ -275,7 +275,11 @@ function SchemaDiagramInner({ schema, onClose }: SchemaDiagramProps) {
   // Warn when the DISPLAYED graph runs on guesses: either the schema carries
   // no FK data at all, or the current (possibly filtered) view fell back to
   // dashed heuristic edges because no FK is usable within it.
-  const showHeuristicWarning = graph.usedHeuristic || !schema.some((t) => (t.foreignKeys || []).length > 0);
+  const schemaHasFkData = schema.some((t) => (t.foreignKeys || []).length > 0);
+  const showHeuristicWarning = graph.usedHeuristic || !schemaHasFkData;
+  const heuristicWarningText = graph.usedHeuristic
+    ? `${schemaHasFkData ? "No usable FK relationships in this view." : "No FK data available."} Showing heuristic relationships (dashed).`
+    : "No FK data available.";
 
   if (schema.length === 0) {
     return (
@@ -410,11 +414,7 @@ function SchemaDiagramInner({ schema, onClose }: SchemaDiagramProps) {
                 {showHeuristicWarning && (
                   <div className="flex items-start gap-1.5 text-[0.625rem] text-amber-500/80">
                     <Info strokeWidth={1.5} className="w-3 h-3 mt-0.5 shrink-0" />
-                    <span>
-                      {graph.usedHeuristic
-                        ? "No FK data available. Showing heuristic relationships (dashed)."
-                        : "No FK data available."}
-                    </span>
+                    <span>{heuristicWarningText}</span>
                   </div>
                 )}
 

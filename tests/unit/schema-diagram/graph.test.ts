@@ -285,6 +285,12 @@ describe("graphSignature", () => {
     expect(graphSignature(a, false)).toBe(graphSignature(b, false));
   });
 
+  test("is order-insensitive: the same structure in a different order keeps the signature", () => {
+    const a = buildGraph([users, orders], { compact: false });
+    const b = buildGraph([orders, users], { compact: false });
+    expect(graphSignature(a, false)).toBe(graphSignature(b, false));
+  });
+
   test("changes when the table set, edge set or compact mode changes", () => {
     const base = graphSignature(buildGraph([users, orders], { compact: false }), false);
     expect(graphSignature(buildGraph([users], { compact: false }), false)).not.toBe(base);

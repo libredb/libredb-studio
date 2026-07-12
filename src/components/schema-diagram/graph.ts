@@ -170,8 +170,17 @@ function collectHeuristicEdgeSpecs(schema: TableSchema[]): EdgeSpec[] {
  * signature stable so layout and viewport are preserved.
  */
 export function graphSignature(graph: Pick<BuiltGraph, "nodes" | "edges">, compact: boolean): string {
-  const nodeIds = graph.nodes.map((n) => n.id).join(",");
-  const edgeIds = graph.edges.map((e) => e.id).join(",");
+  // Sorted so the same logical structure yields the same signature even if
+  // the schema arrives in a different order - array order must not force an
+  // ELK re-run.
+  const nodeIds = graph.nodes
+    .map((n) => n.id)
+    .sort()
+    .join(",");
+  const edgeIds = graph.edges
+    .map((e) => e.id)
+    .sort()
+    .join(",");
   return `${compact ? "c" : "d"}::${nodeIds}::${edgeIds}`;
 }
 
