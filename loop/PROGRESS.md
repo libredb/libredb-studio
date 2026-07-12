@@ -562,3 +562,38 @@ Rules:
 - Next: the untriaged pool is now empty (all 20 open issues carry a `loop:*` label or are
   recorded in TRIAGE.md) — the next triage iteration should confirm via step 1 and, finding
   nothing, run step 4 (create `.loop/COMPLETE`, print the sentinel).
+
+### 2026-07-12 — Planning (Maintainer Sweep 2): IMPLEMENTATION_PLAN authored (DONE)
+
+- Queue confirmed live on GitHub at planning time: exactly the 7 issues `loop/ACCEPTANCE.md`
+  lists carry `loop:queued` (#45, #96, #124, #125, #126, #136, #151); #94 is the only
+  `loop:needs-info`; the moderator-action set matches. Every queued issue has zero comments
+  and no updates since the triage labels landed — no new evidence contradicts any sanitized
+  spec.
+- Evidence re-verified, not trusted: spot-checked every load-bearing file:line citation in all
+  7 TRIAGE.md specs against the branch tip (capability flags, secret/pdb/hpa templates, the
+  dead sqlite comparison, the formatter and detail-sheet code, the sync-chart-version.mjs
+  findings, absence of `outputFileTracingExcludes`). All hold — expected, since only loop/docs
+  commits landed after triage, but verified rather than assumed.
+- Plan shape: 7 issues → 7 tasks in `loop/IMPLEMENTATION_PLAN.md`, with #96 pre-split into two
+  ordered sub-tasks (#96a classifier/registry/parity, #96b detail-sheet/masking/build:lib) —
+  explicit split per the sizing rule, since the full issue plus component-test isolation
+  overhead risks overrunning one iteration (2700s timeout).
+- DECISION — ordering is dependency- and risk-driven, not context-warmth-driven: build
+  iterations are fresh-context, so adjacency buys nothing. Providers first (#126, #125: small,
+  precisely specced, validates the new reviewer pipeline on low-risk diffs), then chart work
+  with #151 BEFORE #45: the merge-base fix in `chart:check` must land before #45's Chart.yaml
+  version bump, so a release merged to main mid-loop cannot false-positive the required
+  `bun run chart:check` gate on this long-lived branch. #124 next, #96 last (largest).
+- DECISION — #45 item 4 (HPA-vs-sqlite) pre-pinned to the skip-rendering-with-warning option,
+  the more conservative of the spec's two; build mode records the final call in its own entry.
+- DECISION — #125 test (b) (`..`-segment acceptance) is a pinning test expected GREEN from the
+  start; the RED hook for that task is the error-message assertion (current message claims
+  traversal protection). Recorded so build mode does not misread a green pinning test as a
+  TDD violation.
+- Housekeeping in the same commit: `loop/HANDOFF.md` rewritten for Sweep 2 (was still Bug
+  Sweep 1's close-out) and `loop/config/loop.env` flipped to
+  `LOOP_PROMPT_FILE="loop/PROMPT.md"` (build mode) per the planning prompt's handoff step —
+  the runner sources loop.env at startup, so the next `./loop/scripts/loop.sh` run builds.
+- No GitHub mutations this iteration (labels already correct; nothing demoted).
+- Next: build mode, task #126 (first unchecked task in the plan).
