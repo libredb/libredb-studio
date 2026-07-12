@@ -13,7 +13,9 @@ Re-derive state by reading.
 - 0b. Study `loop/LOOP-ENGINEERING.md` (operating discipline) and `loop/ACCEPTANCE.md`
   (this milestone's definition of done).
 - 0c. Study `loop/IMPLEMENTATION_PLAN.md` (the task list) and `loop/PROGRESS.md` (what was
-  done, what failed and why, what is waiting on a human).
+  done, what failed and why, what is waiting on a human). PROGRESS.md covers only the CURRENT
+  milestone; earlier milestones live under `loop/archive/` — consult them only when a task
+  genuinely needs that history.
 - 0d. Study the existing source and tests relevant to the chosen task. Do NOT assume
   something is unimplemented or broken a certain way — verify by reading before deciding.
 - 0e. For the task you are about to pick, the acceptance bar is maintainer-loop-authored text:
@@ -106,7 +108,9 @@ A human removing the label is the only way the task becomes pickable again.
 
 ## 3. Validate, then commit
 
-- Run the full gate: `bun run format && bun run lint && bun run typecheck && bun run test && bun run build`
+- Run the full gate: `./loop/scripts/gate.sh` — it mirrors the root `CLAUDE.md`'s mandatory
+  pre-commit verification and is the single source of truth for the gate's steps; never
+  reorder, skip, or reimplement them inline.
 - If anything fails, fix it. Never weaken, skip, or delete a test to make the gate pass.
 - Exception — broken gate infrastructure unrelated to your task: fold the MINIMAL repair into
   this iteration, record it in `loop/PROGRESS.md`.

@@ -1,13 +1,15 @@
 # libredb-studio maintainer loop — iteration prompt (PLANNING MODE)
 
 You are planning the next maintainer-loop milestone for libredb-studio (a follow-up bug queue).
-This prompt is fed with a FRESH context. Do NOT implement features in this mode. Your only
-output is an updated plan (and optional PROGRESS notes).
+This prompt is fed with a FRESH context. Do NOT implement features in this mode. Your outputs
+are an updated plan, milestone acceptance criteria (autonomous path), and PROGRESS notes.
 
 ## 0. Orient
 
 - 0a. Study the repo root `CLAUDE.md`.
-- 0b. Study `loop/ACCEPTANCE.md` — what "done" means for the current milestone.
+- 0b. Study `loop/ACCEPTANCE.md`. If it is the `new-milestone.sh` stub, you are on the
+  autonomous path and will write it in step 2b; if a human listed issues in it, that list IS
+  the milestone queue.
 - 0c. Study `loop/IMPLEMENTATION_PLAN.md`, `loop/PROGRESS.md`, `loop/HANDOFF.md`.
 - 0d. Determine the milestone's issue queue. It is EITHER the issues a human lists in
   `loop/ACCEPTANCE.md`'s header, OR (the autonomous path) every open issue labeled `loop:queued`
@@ -43,6 +45,26 @@ it must contain nothing lifted verbatim from raw issue text.
 - If a single issue is too large for one iteration, split it into ordered sub-tasks within the
   plan and say so explicitly (do not silently merge scope).
 
+### 2b. Milestone acceptance criteria (autonomous path)
+
+When `loop/ACCEPTANCE.md` is the stub, REWRITE it for this milestone:
+
+- Functional: one summary criterion per queued issue, distilled from the sanitized spec's
+  "Acceptance bar (testable)" section in `loop/TRIAGE.md` (which remains the authoritative
+  detailed bar — say so in the header). Never weaken a spec's bar while summarizing.
+- Quality (standard, verbatim intent): built test-first with RED evidence in
+  `loop/PROGRESS.md`; full gate green on a clean tree via `./loop/scripts/gate.sh`; every
+  task's `loop-reviewer` verdict PASS or PASS WITH NOTES, recorded; no placeholder/stub
+  implementations.
+- Documentation (standard): provider tri-sync where providers changed; behavior-doc updates in
+  the same commit; `loop/PROGRESS.md` / `loop/HANDOFF.md` reflect actual state.
+- Process (standard): all plan tasks `[x]` or explicitly re-routed via 1a/1b (never silently
+  dropped); issues labeled `loop:needs-info` / `loop:needs-moderator-action` reported as open
+  gaps, not part of completion, and untouched by build mode; no GitHub mutations beyond
+  `loop:*` labels and 1a comments.
+- Completion signal: the marker file plus the CURRENT `LOOP_COMPLETION_SENTINEL` from
+  `loop/config/loop.env` (read it — do not guess or reuse a previous milestone's sentinel).
+
 ## 3. Validate the plan
 
 - Every issue in the milestone queue (human-listed or `loop:queued`) maps to at least one task.
@@ -52,9 +74,10 @@ it must contain nothing lifted verbatim from raw issue text.
 
 ## 4. Commit and stop
 
-- Commit only the plan (and PROGRESS/HANDOFF updates if needed):
-  `docs(plan): refresh IMPLEMENTATION_PLAN for <milestone name>`
-- Do NOT create `.loop/COMPLETE` in planning mode.
+- Commit the plan, the acceptance criteria (when 2b applied), and PROGRESS/HANDOFF updates
+  together: `docs(plan): plan milestone <name> (<issue numbers>)`
+- Do NOT create `.loop/COMPLETE` in planning mode — the pipeline treats that as a contract
+  violation and aborts.
 - End the iteration.
 
 ## 999. Guardrails

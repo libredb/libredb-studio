@@ -110,11 +110,12 @@ rules — maintainer accounts can be compromised too.
 | `.claude/agents/loop-reviewer.md`, `loop-judge.md` | Fresh-context review/judge subagents used by build iterations. | Human |
 | `CLAUDE.md` (repo root) | Conventions, project map, build/test, the mandatory gate. Not duplicated here. | Human (pre-existing) |
 | Linked GitHub issue (per task) | Frozen per-task spec — the *what* and *why* for the one task in progress. | Human (pre-existing, external) |
-| `loop/IMPLEMENTATION_PLAN.md` | Prioritized task checklist. **Disposable.** | Loop + human |
-| `loop/PROGRESS.md` | Lab notebook: done, failed, decisions, limitations. | Loop |
+| `loop/IMPLEMENTATION_PLAN.md` | Prioritized task checklist. **Disposable.** | Loop (planning) |
+| `loop/PROGRESS.md` | Lab notebook, CURRENT milestone only. | Loop |
 | `loop/HANDOFF.md` | Cross-session baton. Orientation only — not authoritative state. | Human / loop at close |
-| `loop/ACCEPTANCE.md` | Current milestone definition of done. | Human |
-| `loop/config/loop.env` | Runner configuration (agent cmd, gate, sentinel). | Human |
+| `loop/ACCEPTANCE.md` | Current milestone definition of done. | Loop (planning, autonomous path) or human |
+| `loop/archive/<milestone>/` | Frozen history: previous PROGRESS logs, consumed TRIAGE specs, closed ACCEPTANCE/PLAN. | `new-milestone.sh` |
+| `loop/config/loop.env` | Runner configuration (agent cmd, gate, sentinel). | `new-milestone.sh` + human |
 
 **Authoritative state during a build:** `IMPLEMENTATION_PLAN.md` (ticks) + `PROGRESS.md` + git history — not `HANDOFF.md` prose.
 
@@ -136,6 +137,13 @@ The fully autonomous pipeline chains them: **triage** (until `.loop/COMPLETE`) �
 (one iteration) → **building** (until `.loop/COMPLETE`), each on the same dedicated branch,
 with a human review + push at the very end. Humans can veto between stages by editing labels or
 `TRIAGE.md` — the loop always re-derives state from files.
+
+Generic operation (see `HANDOFF.md` for the runbook): `scripts/new-milestone.sh <name>`
+archives the previous milestone's working set (PROGRESS log, consumed TRIAGE specs,
+ACCEPTANCE, PLAN → `loop/archive/<prev>/`) and resets state; `scripts/pipeline.sh` then runs
+all three stages unattended, enforcing the stage contracts (triage/build must produce the
+marker; planning must NOT). The archive rotation is what keeps per-iteration reading cost
+bounded — PROGRESS.md holds the current milestone only.
 
 Planning is cheap and regenerable. Prefer regenerating the plan over letting the build circle.
 

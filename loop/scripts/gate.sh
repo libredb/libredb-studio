@@ -17,6 +17,9 @@ bun run lint
 echo "=== gate: typecheck ==="
 bun run typecheck
 
+echo "=== gate: knip ==="
+bun run knip
+
 echo "=== gate: test ==="
 bun run test
 
