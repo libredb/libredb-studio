@@ -1085,3 +1085,32 @@ Rules:
 - `.loop/COMPLETE` created in this iteration.
 - Next: none — milestone complete. A human should review the branch (8 task commits + this
   close-out), push, and open the PR (base `main`), then plan the next milestone.
+
+### 2026-07-12 — Sweep 2 independent human-side verification (DONE, human/operator)
+
+- Not a loop iteration — operator verification of the completed milestone, per the division of
+  labor: the loop provides code-level regression proof; the operator provides end-to-end
+  functional proof before the human push/PR.
+- Independent full gate re-run on the clean branch tip (da83b8d), not reusing the loop's runs:
+  format clean, lint 0 errors (58 pre-existing warnings), typecheck OK, 18/18 test groups pass
+  (0 fail), build OK.
+- Playwright E2E: 32/32 pass. GOTCHA (environment, recorded for future operators): the first two
+  E2E attempts failed 4/32-passed with admin-login waitForURL timeouts — root cause was NOT a
+  regression: this machine's libredb-studio Snap daemon (root, enabled) occupies 127.0.0.1:3000,
+  and playwright.config.ts has reuseExistingServer:true locally, so the suite silently ran
+  against the Snap's server with the wrong credentials. Re-ran on port 3101 via a temporary
+  config (identical settings, PORT=3101, reuseExistingServer:false): all green. Follow-up
+  candidate: make the E2E port/reuse env-configurable so a locally installed Snap cannot shadow
+  the suite.
+- Live browser functional test of #96 (the sweep's only UI-visible change), against a fresh
+  server on port 3102 with an isolated data dir (sample.libredb seeded on boot — also
+  re-confirms the #137 flow): login -> Sample (LibreDB) -> `prefix users:` -> grid cell shows
+  compact single-line JSON; row detail sheet (mobile card view; the sheet is mobile-triggered
+  by design) shows the value field pretty-printed with preserved newlines/indentation
+  (computed white-space: pre-wrap, font-mono) while the scalar `key` field keeps
+  white-space: normal — exact #96b acceptance behavior, DOM-verified. Screenshot retained in
+  the session scratchpad.
+- Environment note: in the E2E env (explicit ADMIN_PASSWORD etc.) the server logged "Seed
+  connection skipped due to credential resolution failure" — sample seeding is zero-config-mode
+  behavior; benign for the E2E suite (seed-state-independent by design, see the e2e memory),
+  but worth knowing when reading E2E server logs.
