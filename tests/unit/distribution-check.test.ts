@@ -90,6 +90,14 @@ describe("parseChannels", () => {
     expect(() => parseChannels(channelsYaml(bad))).toThrow(/capture group/);
   });
 
+  test("throws when a measurable pin has more than one capture group (extractPin reads only the first)", () => {
+    const bad = HELM_ROW.replace(
+      "extract: 'appVersion: \"(\\d+\\.\\d+\\.\\d+)\"'",
+      "extract: '(appVersion): \"(\\d+\\.\\d+\\.\\d+)\"'",
+    );
+    expect(() => parseChannels(channelsYaml(bad))).toThrow(/capture group/);
+  });
+
   test("throws when a remote_file channel has no url", () => {
     const bad = HELM_ROW.replace("strategy: local_file", "strategy: remote_file").replace(
       / {6}files:\n {8}- [^\n]+\n/,

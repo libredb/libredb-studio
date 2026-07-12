@@ -72,8 +72,10 @@ export function parseChannels(yamlText) {
       throw new Error(`${CHANNELS_YAML}: ${id}: remote_file pin needs a 'url'`);
     }
     if (pin.strategy !== "none") {
-      if (typeof pin.extract !== "string" || countCaptureGroups(pin.extract) < 1) {
-        throw new Error(`${CHANNELS_YAML}: ${id}: pin.extract must be a regex with one capture group`);
+      // Exactly one: extractPin reads m[1] only, so a second capture group
+      // would be measured or ignored silently. Use (?:...) for grouping.
+      if (typeof pin.extract !== "string" || countCaptureGroups(pin.extract) !== 1) {
+        throw new Error(`${CHANNELS_YAML}: ${id}: pin.extract must be a regex with exactly one capture group`);
       }
     }
   }
