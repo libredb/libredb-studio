@@ -36,11 +36,13 @@ mock.module("recharts", () => ({
   PolarAngleAxis: () => null,
 }));
 
-// ── Mock html2canvas (dynamic import in export) ─────────────────────────────
-mock.module("html2canvas", () => ({
-  default: mock(async () => ({
-    toDataURL: () => "data:image/png;base64,fake",
-  })),
+// ── Mock snapdom (dynamic import in export) ─────────────────────────────────
+const mockChartToBlob = mock(async () => new Blob(["png"], { type: "image/png" }));
+const mockSnapdom = mock(async (_el?: unknown, _options?: Record<string, unknown>) => ({
+  toBlob: mockChartToBlob,
+}));
+mock.module("@zumer/snapdom", () => ({
+  snapdom: mockSnapdom,
 }));
 
 // ── Mock lucide-react icons ─────────────────────────────────────────────────
@@ -653,7 +655,8 @@ describe("DataCharts", () => {
   // Export
   // -----------------------------------------------------------------------
 
-  test("exports chart as PNG without throwing", async () => {
+  test("exports chart as PNG via snapdom", async () => {
+    mockSnapdom.mockClear();
     const linkClick = mock(() => {});
     const originalClick = HTMLAnchorElement.prototype.click;
     HTMLAnchorElement.prototype.click = linkClick as unknown as typeof HTMLAnchorElement.prototype.click;
@@ -664,6 +667,11 @@ describe("DataCharts", () => {
     await waitFor(() => {
       expect(linkClick).toHaveBeenCalled();
     });
+    expect(mockSnapdom).toHaveBeenCalledTimes(1);
+    const options = mockSnapdom.mock.calls[0][1] as unknown as Record<string, unknown>;
+    expect(options.backgroundColor).toBe("#080808");
+    expect(options.scale).toBe(2);
+    expect(options.embedFonts).toBe(false);
 
     HTMLAnchorElement.prototype.click = originalClick;
   });

@@ -98,7 +98,7 @@ charts/*/charts/*.tgz
 
 seed-connections.yaml
 
-.playwright-mcp/*.png
+.playwright-mcp/
 
 npmjs-token
 

@@ -1,131 +1,56 @@
 "use client";
 
-import React, { useMemo, useState, useCallback, useRef, useEffect } from "react";
+import React, { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import {
-  ReactFlow,
   Background,
   Controls,
-  Handle,
-  Position,
-  NodeProps,
-  Edge,
-  Node,
-  Panel,
   MiniMap,
-  useReactFlow,
+  Panel,
+  ReactFlow,
   ReactFlowProvider,
+  applyNodeChanges,
+  getNodesBounds,
+  useReactFlow,
+  type EdgeTypes,
+  type Node,
+  type NodeChange,
   type NodeTypes,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { TableSchema } from "@/lib/types";
-import { Database, Hash, Type, Key, Loader2, X, Download, Search, Info, Link2 } from "lucide-react";
+import { Download, Info, Loader2, Search, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { motion } from "framer-motion";
+import { useToast } from "@/hooks/use-toast";
+import { DiagramActionsContext, type DiagramActions } from "./schema-diagram/diagram-context";
+import { FkEdge } from "./schema-diagram/FkEdge";
+import { TableNode } from "./schema-diagram/TableNode";
+import { exportViewportImage } from "./schema-diagram/export";
+import { buildGraph, graphSignature, type FkFlowEdge, type TableFlowNode } from "./schema-diagram/graph";
+import { createHighlightStore, HighlightStoreProvider } from "./schema-diagram/highlight-store";
+import { buildElkGraph, applyLayout } from "./schema-diagram/layout";
+import { createLayoutEngine, type LayoutEngine } from "./schema-diagram/layout-engine";
 
-// Custom Node for Database Tables
-interface TableNodeData extends Record<string, unknown> {
-  table: TableSchema;
-  highlighted?: boolean;
-  compact?: boolean;
+// Module-scope identity: a fresh nodeTypes/edgeTypes object per render would
+// remount every node (React Flow warns about exactly this).
+const nodeTypes: NodeTypes = { table: TableNode };
+const edgeTypes: EdgeTypes = { fk: FkEdge };
+
+// Viewport culling pays off on large graphs but adds overhead on small ones;
+// the minimap becomes noise (and rendering cost) past a few hundred tables.
+const CULLING_THRESHOLD = 100;
+const MINIMAP_THRESHOLD = 300;
+
+/** Lets the exporting/layouting spinner paint before heavy synchronous work. */
+function yieldToPaint(): Promise<void> {
+  return new Promise((resolve) => {
+    if (typeof requestAnimationFrame === "function") {
+      requestAnimationFrame(() => setTimeout(resolve, 0));
+    } else {
+      setTimeout(resolve, 0);
+    }
+  });
 }
-
-const TableNode = ({ data }: NodeProps<Node<TableNodeData>>) => {
-  if (!data) return null;
-  const nodeData = data as TableNodeData;
-  const table = nodeData.table;
-  if (!table) return null;
-
-  const isHighlighted = nodeData.highlighted;
-  const isCompact = nodeData.compact;
-
-  // Show FK icon for columns that are foreign keys
-  const fkColumns = new Set((table.foreignKeys || []).map((fk) => fk.columnName));
-
-  return (
-    <div
-      className={`bg-[#0d0d0d] border rounded-lg overflow-hidden min-w-[200px] shadow-2xl transition-all ${
-        isHighlighted ? "border-blue-500/60 ring-1 ring-blue-500/30" : "border-white/10"
-      }`}
-    >
-      <div className="bg-blue-600/10 px-3 py-2 border-b border-white/5 flex items-center gap-2">
-        <Database strokeWidth={1.5} className="w-3.5 h-3.5 text-blue-400" />
-        <span className="text-xs font-medium text-zinc-100r">{table.name}</span>
-        <span className="text-[0.625rem] text-zinc-600 ml-auto">{table.columns?.length || 0} cols</span>
-      </div>
-      {!isCompact && (
-        <div className="p-1">
-          {table.columns?.map(
-            (
-              col: { name: string; type: string; isPrimary: boolean; nullable?: boolean; defaultValue?: string },
-              idx: number,
-            ) => {
-              const isFk = fkColumns.has(col.name);
-              return (
-                <div
-                  key={idx}
-                  className="flex items-center justify-between px-2 py-1 text-xs hover:bg-white/5 rounded transition-colors group relative"
-                >
-                  <Handle
-                    type="source"
-                    position={Position.Right}
-                    id={`${col.name}-right`}
-                    style={{ opacity: 0, right: -5 }}
-                  />
-                  <Handle
-                    type="target"
-                    position={Position.Left}
-                    id={`${col.name}-left`}
-                    style={{ opacity: 0, left: -5 }}
-                  />
-
-                  <div className="flex items-center gap-2">
-                    {col.isPrimary ? (
-                      <Key strokeWidth={1.5} className="w-2.5 h-2.5 text-yellow-500" />
-                    ) : isFk ? (
-                      <Link2 strokeWidth={1.5} className="w-2.5 h-2.5 text-blue-400" />
-                    ) : col.type.toLowerCase().includes("int") ? (
-                      <Hash strokeWidth={1.5} className="w-2.5 h-2.5 text-zinc-500" />
-                    ) : (
-                      <Type strokeWidth={1.5} className="w-2.5 h-2.5 text-zinc-500" />
-                    )}
-                    <span
-                      className={
-                        col.isPrimary ? "text-yellow-500/90 font-medium" : isFk ? "text-blue-400/80" : "text-zinc-400"
-                      }
-                    >
-                      {col.name}
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-1">
-                    {col.nullable === false && <span className="text-[0.5rem] text-red-500/60">NN</span>}
-                    <span className="text-[0.625rem] text-zinc-600 font-mono uppercase">{col.type}</span>
-                  </div>
-
-                  {/* Hover tooltip */}
-                  <div className="absolute left-full ml-2 top-0 z-50 hidden group-hover:block">
-                    <div className="bg-[#1a1a1a] border border-white/10 rounded px-2 py-1 text-[0.625rem] whitespace-nowrap shadow-xl">
-                      <div className="text-zinc-300">
-                        {col.name}: <span className="text-zinc-500">{col.type}</span>
-                      </div>
-                      {col.isPrimary && <div className="text-yellow-500">Primary Key</div>}
-                      {isFk && <div className="text-blue-400">Foreign Key</div>}
-                      {col.nullable === false && <div className="text-red-400">NOT NULL</div>}
-                      {col.defaultValue && <div className="text-zinc-500">Default: {col.defaultValue}</div>}
-                    </div>
-                  </div>
-                </div>
-              );
-            },
-          )}
-        </div>
-      )}
-    </div>
-  );
-};
-
-const nodeTypes: NodeTypes = {
-  table: TableNode,
-} as NodeTypes;
 
 interface SchemaDiagramProps {
   schema: TableSchema[];
@@ -135,241 +60,215 @@ interface SchemaDiagramProps {
 function SchemaDiagramInner({ schema, onClose }: SchemaDiagramProps) {
   const [selectedNode, setSelectedNode] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
+  const deferredQuery = useDeferredValue(searchQuery);
   const [compactMode, setCompactMode] = useState(false);
+  const [expandedTables, setExpandedTables] = useState<ReadonlySet<string>>(new Set());
+  const [exporting, setExporting] = useState<"png" | "svg" | null>(null);
+  const [isLayouting, setIsLayouting] = useState(false);
   const reactFlowInstance = useReactFlow();
-  const layoutInitRef = useRef(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const layoutEngineRef = useRef<LayoutEngine | null>(null);
+  const highlightStoreRef = useRef(createHighlightStore());
+  const { toast } = useToast();
 
-  // Filter tables by search
+  // Filter tables by search (deferred so typing stays responsive on large schemas)
   const filteredSchema = useMemo(() => {
-    if (!searchQuery.trim()) return schema;
-    const q = searchQuery.toLowerCase();
+    if (!deferredQuery.trim()) return schema;
+    const q = deferredQuery.toLowerCase();
     return schema.filter((t) => t.name.toLowerCase().includes(q));
-  }, [schema, searchQuery]);
+  }, [schema, deferredQuery]);
 
-  // Build nodes and edges from real FK data
-  const { nodes, edges, edgeCount } = useMemo(() => {
-    const tableSet = new Set(filteredSchema.map((t) => t.name));
+  const graph = useMemo(
+    () => buildGraph(filteredSchema, { compact: compactMode, expandedTables: new Set(expandedTables) }),
+    [filteredSchema, compactMode, expandedTables],
+  );
 
-    // ELK-style hierarchical layout: tables with more relations go first
-    const relationCount = new Map<string, number>();
-    filteredSchema.forEach((table) => {
-      const fkCount = (table.foreignKeys || []).length;
-      relationCount.set(table.name, (relationCount.get(table.name) || 0) + fkCount);
-      (table.foreignKeys || []).forEach((fk) => {
-        if (tableSet.has(fk.referencedTable)) {
-          relationCount.set(fk.referencedTable, (relationCount.get(fk.referencedTable) || 0) + 1);
-        }
-      });
+  // FK neighbors per table, for selection highlighting.
+  const adjacency = useMemo(() => {
+    const map = new Map<string, Set<string>>();
+    for (const edge of graph.edges) {
+      if (!map.has(edge.source)) map.set(edge.source, new Set());
+      if (!map.has(edge.target)) map.set(edge.target, new Set());
+      map.get(edge.source)?.add(edge.target);
+      map.get(edge.target)?.add(edge.source);
+    }
+    return map;
+  }, [graph.edges]);
+
+  const [nodes, setNodes] = useState<TableFlowNode[]>(graph.nodes);
+  const [edges, setEdges] = useState<FkFlowEdge[]>(graph.edges);
+  const nodesRef = useRef(nodes);
+  nodesRef.current = nodes;
+  // Last known position per table: survives graph rebuilds so user drags and
+  // ELK results are not thrown away by cosmetic changes (expand, re-renders).
+  const positionsRef = useRef(new Map<string, { x: number; y: number }>());
+  const lastLayoutSigRef = useRef<string | null>(null);
+
+  const restorePositions = useCallback((graphNodes: TableFlowNode[]) => {
+    return graphNodes.map((node) => {
+      const position = positionsRef.current.get(node.id);
+      return position ? { ...node, position } : node;
     });
+  }, []);
 
-    // Sort by relation count for better layout
-    const sorted = [...filteredSchema].sort(
-      (a, b) => (relationCount.get(b.name) || 0) - (relationCount.get(a.name) || 0),
-    );
-
-    // Grid layout with spacing
-    const cols = Math.max(2, Math.ceil(Math.sqrt(sorted.length)));
-    const colWidth = compactMode ? 250 : 300;
-    const rowHeight = compactMode ? 80 : 400;
-
-    const nodes: Node<TableNodeData>[] = sorted.map((table, index) => ({
-      id: table.name,
-      type: "table" as const,
-      position: { x: (index % cols) * colWidth, y: Math.floor(index / cols) * rowHeight },
-      data: {
-        table,
-        highlighted:
-          selectedNode === table.name ||
-          (selectedNode
-            ? filteredSchema.some(
-                (t) => t.name === selectedNode && (t.foreignKeys || []).some((fk) => fk.referencedTable === table.name),
-              ) ||
-              filteredSchema.some(
-                (t) => t.name === table.name && (t.foreignKeys || []).some((fk) => fk.referencedTable === selectedNode),
-              )
-            : false),
-        compact: compactMode,
-      } as TableNodeData,
-    }));
-
-    // Build edges from real foreignKeys data
-    const edges: Edge[] = [];
-    const edgeIds = new Set<string>();
-
-    filteredSchema.forEach((table) => {
-      (table.foreignKeys || []).forEach((fk) => {
-        if (!tableSet.has(fk.referencedTable)) return;
-        const edgeId = `${table.name}.${fk.columnName}->${fk.referencedTable}.${fk.referencedColumn}`;
-        if (edgeIds.has(edgeId)) return;
-        edgeIds.add(edgeId);
-
-        const isHighlighted = selectedNode === table.name || selectedNode === fk.referencedTable;
-
-        edges.push({
-          id: edgeId,
-          source: table.name,
-          target: fk.referencedTable,
-          sourceHandle: `${fk.columnName}-right`,
-          targetHandle: `${fk.referencedColumn}-left`,
-          animated: isHighlighted,
-          label: "1:N",
-          labelStyle: { fill: "#666", fontSize: 9 },
-          labelBgStyle: { fill: "#0d0d0d", fillOpacity: 0.8 },
-          labelBgPadding: [4, 2] as [number, number],
-          style: {
-            // Highlight is conveyed by strokeWidth + opacity below; the stroke
-            // colour is the same blue in both states.
-            stroke: "#3b82f6",
-            strokeWidth: isHighlighted ? 2 : 1.5,
-            opacity: selectedNode ? (isHighlighted ? 1 : 0.15) : 0.4,
-          },
-        });
-      });
-    });
-
-    // Fallback: if no FK data, use heuristic for _id columns
-    if (edges.length === 0) {
-      filteredSchema.forEach((table) => {
-        table.columns.forEach((col) => {
-          if (col.name.endsWith("_id")) {
-            const targetTable = col.name.replace("_id", "") + "s";
-            const target = filteredSchema.find((t) => t.name === targetTable || t.name === col.name.replace("_id", ""));
-            if (target) {
-              const edgeId = `heuristic-${table.name}-${target.name}-${col.name}`;
-              if (!edgeIds.has(edgeId)) {
-                edgeIds.add(edgeId);
-                const isHighlighted = selectedNode === table.name || selectedNode === target.name;
-                edges.push({
-                  id: edgeId,
-                  source: table.name,
-                  target: target.name,
-                  sourceHandle: `${col.name}-right`,
-                  targetHandle: `id-left`,
-                  animated: isHighlighted,
-                  label: "1:N?",
-                  labelStyle: { fill: "#666", fontSize: 9, fontStyle: "italic" },
-                  labelBgStyle: { fill: "#0d0d0d", fillOpacity: 0.8 },
-                  labelBgPadding: [4, 2] as [number, number],
-                  style: {
-                    stroke: "#6b7280",
-                    strokeWidth: 1,
-                    strokeDasharray: "4 2",
-                    opacity: selectedNode ? (isHighlighted ? 0.8 : 0.1) : 0.3,
-                  },
-                });
-              }
-            }
-          }
-        });
-      });
+  // Render immediately, then move nodes to their ELK positions once the
+  // (worker-backed) layout resolves. ELK re-runs only when the graph
+  // STRUCTURE changes (tables, relationships, compact mode) - including when
+  // FK relations arrive from the async second-phase schema fetch. Cosmetic
+  // rebuilds (expanding a table's columns) keep positions and viewport.
+  useEffect(() => {
+    if (graph.nodes.length === 0) {
+      setNodes(graph.nodes);
+      setEdges(graph.edges);
+      setIsLayouting(false);
+      return;
     }
 
-    return { nodes, edges, edgeCount: edges.length };
-  }, [filteredSchema, selectedNode, compactMode]);
+    const signature = graphSignature(graph, compactMode);
+    // The signature is recorded only AFTER a layout completes - an effect
+    // re-run that cancels an in-flight layout (e.g. useReactFlow identity
+    // settling on mount) must run ELK again, not skip it.
+    if (signature === lastLayoutSigRef.current) {
+      setNodes(restorePositions(graph.nodes));
+      setEdges(graph.edges);
+      return;
+    }
 
-  // Attempt ELK layout
-  useEffect(() => {
-    if (layoutInitRef.current || nodes.length === 0) return;
-    layoutInitRef.current = true;
-
-    // Try to import and use elkjs for better layout
-    import("elkjs/lib/elk.bundled.js")
-      .then(({ default: ELK }) => {
-        const elk = new ELK();
-        const graph = {
-          id: "root",
-          layoutOptions: {
-            "elk.algorithm": "layered",
-            "elk.direction": "RIGHT",
-            "elk.spacing.nodeNode": "80",
-            "elk.layered.spacing.nodeNodeBetweenLayers": "120",
-            "elk.layered.crossingMinimization.strategy": "LAYER_SWEEP",
-          },
-          children: nodes.map((n) => ({
-            id: n.id,
-            width: compactMode ? 220 : 240,
-            height: compactMode ? 60 : Math.max(80, 50 + (n.data.table?.columns?.length || 0) * 22),
-          })),
-          edges: edges.map((e) => ({
-            id: e.id,
-            sources: [e.source],
-            targets: [e.target],
-          })),
-        };
-
-        elk
-          .layout(graph)
-          .then((layoutedGraph) => {
-            const updates = (layoutedGraph.children || []).map((node) => ({
-              id: node.id,
-              position: { x: node.x || 0, y: node.y || 0 },
-            }));
-
-            // Apply positions
-            updates.forEach((update) => {
-              const nodeIdx = nodes.findIndex((n) => n.id === update.id);
-              if (nodeIdx >= 0) {
-                nodes[nodeIdx] = { ...nodes[nodeIdx], position: update.position };
-              }
-            });
-
-            // layout ready
-            // Fit view after layout
-            setTimeout(() => {
-              reactFlowInstance.fitView({ padding: 0.2 });
-            }, 100);
-          })
-          .catch(() => {
-            // layout ready
-          });
+    let cancelled = false;
+    setNodes(restorePositions(graph.nodes));
+    setEdges(graph.edges);
+    setIsLayouting(true);
+    if (!layoutEngineRef.current) {
+      layoutEngineRef.current = createLayoutEngine();
+    }
+    const elkGraph = buildElkGraph(graph.nodes, graph.edges);
+    layoutEngineRef.current
+      .layout(elkGraph)
+      .then((result) => {
+        if (cancelled) return;
+        setIsLayouting(false);
+        if (!result) return; // keep the grid fallback
+        lastLayoutSigRef.current = signature;
+        const layouted = applyLayout(graph.nodes, result);
+        for (const node of layouted) {
+          positionsRef.current.set(node.id, node.position);
+        }
+        setNodes(layouted);
+        yieldToPaint().then(() => {
+          if (!cancelled) reactFlowInstance.fitView({ padding: 0.15 });
+        });
       })
       .catch(() => {
-        // elkjs not available, use grid layout
+        if (!cancelled) setIsLayouting(false);
       });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [nodes.length]);
 
-  const onNodeClick = useCallback((_: React.MouseEvent, node: Node) => {
-    setSelectedNode((prev) => (prev === node.id ? null : node.id));
+    return () => {
+      cancelled = true;
+    };
+  }, [graph, compactMode, reactFlowInstance, restorePositions]);
+
+  // Tear down the layout worker with the component. The ref is nulled so a
+  // StrictMode remount creates a fresh engine instead of reusing a disposed
+  // worker.
+  useEffect(() => {
+    return () => {
+      void layoutEngineRef.current?.dispose();
+      layoutEngineRef.current = null;
+    };
   }, []);
 
-  const onPaneClick = useCallback(() => {
-    setSelectedNode(null);
-  }, []);
+  // Keep the highlight in sync with the graph: drop a selection that was
+  // filtered out, and refresh the neighbor set when relationships change
+  // under an active selection (FK data arrives asynchronously).
+  useEffect(() => {
+    if (!selectedNode) return;
+    if (!graph.nodes.some((n) => n.id === selectedNode)) {
+      setSelectedNode(null);
+      highlightStoreRef.current.select(null);
+      return;
+    }
+    highlightStoreRef.current.select(selectedNode, adjacency.get(selectedNode) ?? new Set());
+  }, [graph, adjacency, selectedNode]);
 
-  const exportDiagram = useCallback(async (format: "png" | "svg") => {
-    const container = document.querySelector(".react-flow") as HTMLElement;
-    if (!container) return;
-
-    if (format === "png") {
-      try {
-        const html2canvasModule = await import("html2canvas");
-        const html2canvas = html2canvasModule.default as (
-          element: HTMLElement,
-          options?: { backgroundColor?: string; scale?: number },
-        ) => Promise<HTMLCanvasElement>;
-        const canvas = await html2canvas(container, { backgroundColor: "#050505", scale: 2 });
-        const link = document.createElement("a");
-        link.download = `erd_${Date.now()}.png`;
-        link.href = canvas.toDataURL("image/png");
-        link.click();
-      } catch (error) {
-        console.error("Failed to export PNG:", error);
-      }
-    } else {
-      const svgElement = container.querySelector("svg");
-      if (svgElement) {
-        const svgData = new XMLSerializer().serializeToString(svgElement);
-        const blob = new Blob([svgData], { type: "image/svg+xml" });
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement("a");
-        link.download = `erd_${Date.now()}.svg`;
-        link.href = url;
-        link.click();
-        URL.revokeObjectURL(url);
+  const onNodesChange = useCallback((changes: NodeChange<TableFlowNode>[]) => {
+    for (const change of changes) {
+      if (change.type === "position" && change.position) {
+        positionsRef.current.set(change.id, change.position);
       }
     }
+    setNodes((current) => applyNodeChanges(changes, current));
   }, []);
+
+  const selectTable = useCallback(
+    (table: string | null) => {
+      setSelectedNode(table);
+      highlightStoreRef.current.select(table, table ? (adjacency.get(table) ?? new Set()) : undefined);
+    },
+    [adjacency],
+  );
+
+  const onNodeClick = useCallback(
+    (_: React.MouseEvent, node: Node) => {
+      selectTable(selectedNode === node.id ? null : node.id);
+    },
+    [selectTable, selectedNode],
+  );
+
+  const onPaneClick = useCallback(() => {
+    selectTable(null);
+  }, [selectTable]);
+
+  const diagramActions = useMemo<DiagramActions>(
+    () => ({
+      toggleExpand: (table: string) => {
+        setExpandedTables((current) => {
+          const next = new Set(current);
+          if (next.has(table)) {
+            next.delete(table);
+          } else {
+            next.add(table);
+          }
+          return next;
+        });
+      },
+    }),
+    [],
+  );
+
+  const exportDiagram = useCallback(
+    async (format: "png" | "svg") => {
+      if (exporting) return;
+      const viewport = containerRef.current?.querySelector<HTMLElement>(".react-flow__viewport");
+      const currentNodes = nodesRef.current;
+      if (!viewport || currentNodes.length === 0) {
+        toast({ title: "Export failed", description: "There is no diagram to export.", variant: "destructive" });
+        return;
+      }
+
+      setExporting(format);
+      try {
+        // Two paint yields: the first lets React commit the exporting state
+        // (which also disables viewport culling so every node is in the DOM),
+        // the second lets the newly mounted nodes paint before the snapshot.
+        await yieldToPaint();
+        await yieldToPaint();
+        const bounds = getNodesBounds(currentNodes);
+        await exportViewportImage(format, { viewport, bounds });
+      } catch (error) {
+        console.error(`Failed to export ${format.toUpperCase()}:`, error);
+        toast({
+          title: `${format.toUpperCase()} export failed`,
+          description: error instanceof Error ? error.message : String(error),
+          variant: "destructive",
+        });
+      } finally {
+        setExporting(null);
+      }
+    },
+    [exporting, toast],
+  );
+
+  const hasForeignKeys = schema.some((t) => (t.foreignKeys || []).length > 0);
 
   if (schema.length === 0) {
     return (
@@ -380,117 +279,157 @@ function SchemaDiagramInner({ schema, onClose }: SchemaDiagramProps) {
     );
   }
 
-  const hasForeignKeys = schema.some((t) => (t.foreignKeys || []).length > 0);
-
   return (
     <motion.div
       initial={{ opacity: 0, scale: 0.95 }}
       animate={{ opacity: 1, scale: 1 }}
       className="absolute inset-0 z-40 bg-[#050505]"
+      ref={containerRef}
     >
-      <ReactFlow
-        nodes={nodes}
-        edges={edges}
-        nodeTypes={nodeTypes}
-        onNodeClick={onNodeClick}
-        onPaneClick={onPaneClick}
-        fitView
-        colorMode="dark"
-      >
-        <Background color="#1a1a1a" gap={20} />
-        <Controls showInteractive={false} className="bg-[#0d0d0d] border-white/10 fill-white" />
-        <MiniMap
-          nodeColor="#1e40af"
-          maskColor="rgba(0,0,0,0.7)"
-          style={{ backgroundColor: "#0d0d0d", border: "1px solid rgba(255,255,255,0.1)" }}
-        />
-
-        {/* Close button */}
-        <Panel position="top-right" className="p-4">
-          <div className="flex items-center gap-2">
-            {/* Export buttons */}
-            <Button
-              variant="outline"
-              size="sm"
-              className="bg-[#0d0d0d] border-white/10 hover:bg-white/5 text-xs gap-1"
-              onClick={() => exportDiagram("png")}
-            >
-              <Download strokeWidth={1.5} className="w-3 h-3" /> PNG
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              className="bg-[#0d0d0d] border-white/10 hover:bg-white/5 text-xs gap-1"
-              onClick={() => exportDiagram("svg")}
-            >
-              <Download strokeWidth={1.5} className="w-3 h-3" /> SVG
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              className={`bg-[#0d0d0d] border-white/10 hover:bg-white/5 text-xs ${compactMode ? "text-blue-400" : ""}`}
-              onClick={() => {
-                setCompactMode(!compactMode);
-                layoutInitRef.current = false;
-              }}
-            >
-              {compactMode ? "Detail" : "Compact"}
-            </Button>
-            <Button
-              variant="outline"
-              size="icon"
-              className="rounded-full bg-[#0d0d0d] border-white/10 hover:bg-white/5"
-              onClick={onClose}
-            >
-              <X strokeWidth={1.5} className="w-3.5 h-3.5" />
-            </Button>
-          </div>
-        </Panel>
-
-        {/* Info panel with stats and search */}
-        <Panel position="top-left" className="p-4">
-          <div className="bg-[#0d0d0d]/80 backdrop-blur-md border border-white/10 p-3 rounded-xl shadow-2xl space-y-2">
-            <h3 className="text-xs font-medium text-white mb-1 flex items-center gap-2">
-              <div className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
-              ERD Visualizer
-            </h3>
-            <div className="flex items-center gap-3 text-xs text-zinc-500">
-              <span>{filteredSchema.length} tables</span>
-              <span>{edgeCount} relationships</span>
-            </div>
-
-            {/* Search */}
-            <div className="relative">
-              <Search strokeWidth={1.5} className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-zinc-600" />
-              <input
-                type="text"
-                placeholder="Filter tables..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-7 pr-2 py-1.5 bg-white/5 border border-white/10 rounded text-xs text-zinc-300 placeholder-zinc-600 focus:outline-none focus:border-blue-500/50"
+      <HighlightStoreProvider value={highlightStoreRef.current}>
+        <DiagramActionsContext.Provider value={diagramActions}>
+          <ReactFlow
+            nodes={nodes}
+            edges={edges}
+            nodeTypes={nodeTypes}
+            edgeTypes={edgeTypes}
+            onNodesChange={onNodesChange}
+            onNodeClick={onNodeClick}
+            onPaneClick={onPaneClick}
+            fitView
+            minZoom={0.05}
+            maxZoom={2.5}
+            onlyRenderVisibleElements={nodes.length > CULLING_THRESHOLD && exporting === null}
+            nodesConnectable={false}
+            colorMode="dark"
+          >
+            <Background color="#1a1a1a" gap={20} />
+            <Controls showInteractive={false} className="bg-[#0d0d0d] border-white/10 fill-white" />
+            {nodes.length <= MINIMAP_THRESHOLD && (
+              <MiniMap
+                pannable
+                zoomable
+                nodeColor="#1e40af"
+                maskColor="rgba(0,0,0,0.7)"
+                style={{ backgroundColor: "#0d0d0d", border: "1px solid rgba(255,255,255,0.1)" }}
               />
+            )}
+
+            {/* Close button */}
+            <Panel position="top-right" className="p-4">
+              <div className="flex items-center gap-2">
+                {/* Export buttons */}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="bg-[#0d0d0d] border-white/10 hover:bg-white/5 text-xs gap-1"
+                  disabled={exporting !== null}
+                  onClick={() => exportDiagram("png")}
+                >
+                  {exporting === "png" ? (
+                    <Loader2 strokeWidth={1.5} className="w-3 h-3 animate-spin" />
+                  ) : (
+                    <Download strokeWidth={1.5} className="w-3 h-3" />
+                  )}{" "}
+                  PNG
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="bg-[#0d0d0d] border-white/10 hover:bg-white/5 text-xs gap-1"
+                  disabled={exporting !== null}
+                  onClick={() => exportDiagram("svg")}
+                >
+                  {exporting === "svg" ? (
+                    <Loader2 strokeWidth={1.5} className="w-3 h-3 animate-spin" />
+                  ) : (
+                    <Download strokeWidth={1.5} className="w-3 h-3" />
+                  )}{" "}
+                  SVG
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className={`bg-[#0d0d0d] border-white/10 hover:bg-white/5 text-xs ${compactMode ? "text-blue-400" : ""}`}
+                  onClick={() => setCompactMode(!compactMode)}
+                >
+                  {compactMode ? "Detail" : "Compact"}
+                </Button>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  className="rounded-full bg-[#0d0d0d] border-white/10 hover:bg-white/5"
+                  onClick={onClose}
+                >
+                  <X strokeWidth={1.5} className="w-3.5 h-3.5" />
+                </Button>
+              </div>
+            </Panel>
+
+            {/* Info panel with stats and search */}
+            <Panel position="top-left" className="p-4">
+              <div className="bg-[#0d0d0d]/80 backdrop-blur-md border border-white/10 p-3 rounded-xl shadow-2xl space-y-2">
+                <h3 className="text-xs font-medium text-white mb-1 flex items-center gap-2">
+                  <div className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
+                  ERD Visualizer
+                </h3>
+                <div className="flex items-center gap-3 text-xs text-zinc-500">
+                  <span>{filteredSchema.length} tables</span>
+                  <span>{graph.edgeCount} relationships</span>
+                  {isLayouting && (
+                    <span className="flex items-center gap-1 text-zinc-600">
+                      <Loader2 strokeWidth={1.5} className="w-3 h-3 animate-spin" />
+                      layout
+                    </span>
+                  )}
+                </div>
+
+                {/* Search */}
+                <div className="relative">
+                  <Search
+                    strokeWidth={1.5}
+                    className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-zinc-600"
+                  />
+                  <input
+                    type="text"
+                    placeholder="Filter tables..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="w-full pl-7 pr-2 py-1.5 bg-white/5 border border-white/10 rounded text-xs text-zinc-300 placeholder-zinc-600 focus:outline-none focus:border-blue-500/50"
+                  />
+                </div>
+
+                {/* No FK warning */}
+                {!hasForeignKeys && (
+                  <div className="flex items-start gap-1.5 text-[0.625rem] text-amber-500/80">
+                    <Info strokeWidth={1.5} className="w-3 h-3 mt-0.5 shrink-0" />
+                    <span>No FK data available. Showing heuristic relationships (dashed).</span>
+                  </div>
+                )}
+
+                {/* Selected node info */}
+                {selectedNode && (
+                  <div className="text-xs text-blue-400 border-t border-white/5 pt-2">
+                    Selected: <span className="font-mono font-medium">{selectedNode}</span>
+                    <button onClick={() => selectTable(null)} className="ml-2 text-zinc-600 hover:text-zinc-400">
+                      clear
+                    </button>
+                  </div>
+                )}
+              </div>
+            </Panel>
+          </ReactFlow>
+
+          {/* Export overlay: covers the canvas while the live viewport
+              transform is temporarily swapped for the fit-all capture. */}
+          {exporting && (
+            <div className="absolute inset-0 z-50 bg-[#050505]/85 flex flex-col items-center justify-center gap-2">
+              <Loader2 strokeWidth={1.5} className="w-6 h-6 text-blue-500 animate-spin" />
+              <p className="text-zinc-500 text-xs">Exporting {exporting.toUpperCase()}...</p>
             </div>
-
-            {/* No FK warning */}
-            {!hasForeignKeys && (
-              <div className="flex items-start gap-1.5 text-[0.625rem] text-amber-500/80">
-                <Info strokeWidth={1.5} className="w-3 h-3 mt-0.5 shrink-0" />
-                <span>No FK data available. Showing heuristic relationships (dashed).</span>
-              </div>
-            )}
-
-            {/* Selected node info */}
-            {selectedNode && (
-              <div className="text-xs text-blue-400 border-t border-white/5 pt-2">
-                Selected: <span className="font-mono font-medium">{selectedNode}</span>
-                <button onClick={() => setSelectedNode(null)} className="ml-2 text-zinc-600 hover:text-zinc-400">
-                  clear
-                </button>
-              </div>
-            )}
-          </div>
-        </Panel>
-      </ReactFlow>
+          )}
+        </DiagramActionsContext.Provider>
+      </HighlightStoreProvider>
     </motion.div>
   );
 }

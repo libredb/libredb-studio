@@ -47,7 +47,10 @@ export default defineConfig({
     "elkjs",
     "recharts",
     "framer-motion",
-    "html2canvas",
+    // Exact-pinned image-capture engine (html-to-image variants choke on
+    // Tailwind 4 computed styles); external like every other UI lib - it is
+    // a regular dependency, so consumers resolve it via npm.
+    "@zumer/snapdom",
     "@tanstack/react-table",
     "@tanstack/react-virtual",
     "react-resizable-panels",

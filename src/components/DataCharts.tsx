@@ -21,6 +21,7 @@ import {
   Cell,
   ResponsiveContainer,
 } from "recharts";
+import { toast } from "sonner";
 import { QueryResult } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import {
@@ -491,22 +492,29 @@ export function DataCharts({ result }: DataChartsProps) {
 
     if (format === "png") {
       try {
-        // Dynamic import for html2canvas
-        const html2canvasModule = await import("html2canvas");
-        const html2canvas = html2canvasModule.default as (
-          element: HTMLElement,
-          options?: { backgroundColor?: string; scale?: number },
-        ) => Promise<HTMLCanvasElement>;
-        const canvas = await html2canvas(chartRef.current, {
+        // snapdom lets the browser rasterize a DOM snapshot, so Tailwind 4's
+        // oklch() colors export correctly (html2canvas could not parse them
+        // and failed silently). Fonts stay unembedded: Monaco's cross-origin
+        // CDN stylesheet breaks webfont CSS collection (SecurityError).
+        const { snapdom } = await import("@zumer/snapdom");
+        const capture = await snapdom(chartRef.current, {
           backgroundColor: "#080808",
           scale: 2,
+          embedFonts: false,
         });
+        const blob = await capture.toBlob({ type: "png" });
+        if (!blob) throw new Error("PNG encoding produced no data");
+        const url = URL.createObjectURL(blob);
         const link = document.createElement("a");
         link.download = `chart_${Date.now()}.png`;
-        link.href = canvas.toDataURL("image/png");
+        link.href = url;
         link.click();
+        URL.revokeObjectURL(url);
       } catch (error) {
         console.error("Failed to export PNG:", error);
+        toast.error("PNG export failed", {
+          description: error instanceof Error ? error.message : String(error),
+        });
       }
     } else {
       // SVG export - find the SVG element
