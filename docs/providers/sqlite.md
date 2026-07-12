@@ -146,16 +146,13 @@ case "sqlite": {
 paths are `path.resolve()`-d to an absolute path and **rejected if they contain a NUL byte**. Parent
 directories are created on connect.
 
-> ⚠️ The accompanying `resolved !== path.normalize(resolved)` check is effectively a **no-op** —
-> `path.resolve()` already normalises its output, so the two are always equal. It therefore does
-> **not** actually block `../` traversal; only the NUL-byte check is meaningful. This is a
-> known code defect, but not treated as a vulnerability under this feature's trust model: a
-> connection's `database`/`connectionString` path is set by whoever configures the connection (an
+> **NUL rejection is the only path validation — by design.** `../` segments are legal and simply
+> resolve into the absolute path. This follows the feature's trust model: a connection's
+> `database`/`connectionString` path is set by whoever configures the connection (an
 > authenticated user of this Studio instance) — pointing Studio at an arbitrary server-side file is
 > the intended capability, not attacker-controlled input from an untrusted client. There is
 > currently **no** option to sandbox resolvable paths to a base directory. See
-> [Known limitations](#13-known-limitations--future-work) and
-> [issue #125](https://github.com/libredb/libredb-studio/issues/125).
+> [Known limitations](#13-known-limitations--future-work).
 
 ### 3.2 PRAGMAs on connect
 
@@ -294,7 +291,7 @@ SQLite-specific branches:
 | Situation | Error |
 |-----------|-------|
 | Missing `database` and `connectionString` | `DatabaseConfigError` |
-| Path traversal / NUL in path | `DatabaseConfigError` |
+| NUL byte in path | `DatabaseConfigError` ("Invalid database path: NUL bytes are not allowed") |
 | Selected driver unavailable (no `bun:sqlite` / `node:sqlite` on this runtime) | `DatabaseConfigError` ("SQLite driver … is not available…") |
 | Open failure | `ConnectionError` |
 | Statement errors whose message matches a heuristic (e.g. *syntax error*, *no such column*) | `QueryError` |
@@ -331,9 +328,10 @@ SQL execution, schema PRAGMAs, maintenance, and monitoring end-to-end.
 
 ### 11.2 Coverage
 
-Validation, connect/disconnect, query (read + write), capabilities, `getSchema` (columns/PKs/FKs/
-indexes), health, maintenance (vacuum/analyze/reindex/check), overview, performance, active sessions,
-slow queries, table/index/storage stats, `getMonitoringData`, `prepareQuery`, and labels.
+Validation, connect/disconnect, path handling (NUL rejection, `..` acceptance), query (read +
+write), capabilities, `getSchema` (columns/PKs/FKs/indexes), health, maintenance
+(vacuum/analyze/reindex/check), overview, performance, active sessions, slow queries,
+table/index/storage stats, `getMonitoringData`, `prepareQuery`, and labels.
 
 ### 11.3 Run it
 
@@ -382,14 +380,13 @@ not apply to SQLite ([§3.4](#34-no-transactions-api-no-cancellation-no-pool)).
   `scans` is always `0`; cache-hit ratio is a fixed estimate; slow queries are unavailable.
 - **`:memory:` is ephemeral** — data is lost on disconnect; intended for trials/tests.
 - **Single schema (`main`)** — `ATTACH`ed databases are not surfaced.
-- **Path-traversal guard is ineffective.** `getDatabasePath()` intends to reject traversal but
-  compares `path.resolve(p)` against its own `normalize()` (always equal), so only NUL bytes are
-  actually rejected — the resolved absolute path is otherwise used as-is. This does not grant an
-  untrusted client any new access — the path comes from an authenticated user's connection config,
-  and reading arbitrary server-side files by path is the feature — but the guard should either work
-  or be removed. *Future:* confine the input path to an allowed base directory (or validate the raw
-  input before resolving); see
-  [issue #125](https://github.com/libredb/libredb-studio/issues/125).
+- **No path sandboxing (by design).** `getDatabasePath()` validates only that the path contains
+  no NUL byte; the resolved absolute path — `..` segments included — is used as-is. This grants an
+  untrusted client no access: the path comes from an authenticated user's connection config, and
+  reading arbitrary server-side files by path is the feature. *Future:* an optional base-dir
+  allowlist restricting resolvable paths (proposed in
+  [issue #125](https://github.com/libredb/libredb-studio/issues/125)) was deliberately left out of
+  this honesty fix — new security-configuration surface needs its own issue.
 
 ---
 

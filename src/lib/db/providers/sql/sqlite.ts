@@ -143,13 +143,14 @@ export class SQLiteProvider extends SQLBaseProvider {
     // Allow :memory: without path validation
     if (dbPath === ":memory:") return dbPath;
 
-    // Resolve to absolute path and reject path traversal attempts
-    const resolved = path.resolve(dbPath);
-    if (resolved !== path.normalize(resolved) || dbPath.includes("\0")) {
-      throw new DatabaseConfigError("Invalid database path: path traversal is not allowed", "sqlite");
+    // Reject NUL bytes (never valid in a filesystem path), then resolve to an
+    // absolute path. ".." segments are accepted by design: sqlite paths are
+    // trusted server-side paths (docs/providers/sqlite.md).
+    if (dbPath.includes("\0")) {
+      throw new DatabaseConfigError("Invalid database path: NUL bytes are not allowed", "sqlite");
     }
 
-    return resolved;
+    return path.resolve(dbPath);
   }
 
   // ============================================================================

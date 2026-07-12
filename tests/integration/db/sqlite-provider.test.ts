@@ -11,7 +11,7 @@ import { describe, test, expect, afterEach, beforeAll, afterAll } from "bun:test
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join, relative } from "node:path";
 import { SQLiteProvider } from "@/lib/db/providers/sql/sqlite";
 import { resolveSQLiteDriverName } from "@/lib/db/providers/sql/sqlite-driver";
 import type { DatabaseConnection } from "@/lib/types";
@@ -91,6 +91,50 @@ describe("SQLiteProvider", () => {
       await provider.connect();
       await provider.connect();
       expect(provider.isConnected()).toBe(true);
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // Database path handling (#125)
+  // --------------------------------------------------------------------------
+
+  describe("getDatabasePath() via connect()", () => {
+    let pathTmpDir: string;
+
+    beforeAll(() => {
+      pathTmpDir = mkdtempSync(join(tmpdir(), "libredb-sqlite-path-"));
+    });
+
+    afterAll(() => {
+      rmSync(pathTmpDir, { recursive: true, force: true });
+    });
+
+    test("a path containing a NUL byte throws DatabaseConfigError without claiming traversal protection", async () => {
+      provider = new SQLiteProvider(makeSQLiteConfig({ database: "data/evil\0.db" }));
+      const error = await provider.connect().then(
+        () => null,
+        (e: unknown) => e,
+      );
+      expect(error).toBeInstanceOf(DatabaseConfigError);
+      const message = (error as Error).message;
+      expect(message).toContain("NUL");
+      // The only path validation is NUL rejection; the message must not promise
+      // traversal protection the code does not provide.
+      expect(message.toLowerCase()).not.toContain("traversal");
+    });
+
+    test("a relative path with '..' segments is accepted and resolves to an absolute location", async () => {
+      // Pins intended behavior: sqlite paths are trusted server-side paths, so
+      // ".." segments are legal and simply resolve against the process cwd.
+      const relPath = relative(process.cwd(), join(pathTmpDir, "dotdot-ok.db"));
+      expect(isAbsolute(relPath)).toBe(false);
+      expect(relPath).toContain("..");
+
+      provider = new SQLiteProvider(makeSQLiteConfig({ database: relPath }));
+      await provider.connect();
+      expect(provider.isConnected()).toBe(true);
+      // The database file materializes at the resolved absolute location.
+      expect(existsSync(join(pathTmpDir, "dotdot-ok.db"))).toBe(true);
     });
   });
 

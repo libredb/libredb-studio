@@ -636,3 +636,45 @@ Rules:
   files), typecheck OK, `bun run test` all 18 groups pass (0 fail; test count unchanged —
   assertions flipped, no cases added), build OK, build:lib OK.
 - Next: #125 (sqlite path guard honesty), per the plan.
+
+### 2026-07-12 — #125 sqlite path guard: remove dead traversal branch, claims match behavior (DONE)
+
+- Triage (step 0f): #94 remains the only `loop:needs-info`; its thread still contains only the
+  loop's own clarifying question (2026-07-12T01:55:40Z) — no reply to evaluate.
+- Tests first: 2 new cases in `tests/integration/db/sqlite-provider.test.ts` (new
+  "getDatabasePath() via connect()" block, own mkdtemp fixture dir). Watched RED:
+  the NUL case failed with `Expected to contain: "NUL" / Received: "Invalid database path:
+  path traversal is not allowed"` (35 pass / 1 fail). The `..`-segment case is the plan's
+  pre-declared PINNING test — GREEN from the start exactly as planning pre-recorded (and its
+  green empirically proves the traversal branch was dead: a cwd-relative `../../...` path was
+  accepted by the UNMODIFIED code), not a TDD violation. The pinning test self-guards its
+  precondition (`isAbsolute(relPath)` false, relPath contains "..") so it fails loudly rather
+  than silently testing nothing if tmpdir ever sits inside cwd.
+- Built: `getDatabasePath()` now rejects only NUL bytes ("Invalid database path: NUL bytes are
+  not allowed") and returns `path.resolve(dbPath)`; the unsatisfiable
+  `resolved !== path.normalize(resolved)` comparison, its traversal-claiming comment, and the
+  traversal-claiming error message are gone (grep of sqlite.ts finds no traversal claim).
+- Tri-sync in the same commit: `docs/providers/sqlite.md` — §3.1's no-op-defect warning became
+  a statement of intended behavior ("NUL rejection is the only path validation — by design"),
+  the §10 error-table row now matches the new message character-for-character, §13's limitation
+  became "No path sandboxing (by design)" keeping the #125 link only as the
+  future-allowlist pointer, and §11.2's coverage list gained the new path-handling cases.
+- DECISION — base-dir allowlist NOT implemented (the issue's option 2, excluded by the
+  sanitized spec): new configuration surface with security semantics is a human product
+  decision; it needs its own issue if wanted.
+- ADJACENT ISSUE (recorded, not fixed — 999e): `src/lib/db/providers/embedded/libredb.ts:159-162`
+  carries the IDENTICAL dead comparison (its docstring says "mirroring the SQLite provider")
+  and the same traversal-claiming error message at :161; its test
+  (`tests/integration/db/libredb-provider.test.ts:96-98`) only exercises the NUL path with a
+  `/traversal|invalid/i` regex that passes either way. Out of scope for #125 (different
+  provider type-id, its own triad); flagged for a human to file a follow-up issue.
+- loop-reviewer verdict: PASS WITH NOTES (2 LOW applied, 1 LOW accepted). Applied: §11.2
+  coverage list extended; the comment's unverified "NUL truncates in the driver's C layer"
+  rationale reworded to the indisputable "never valid in a filesystem path". Accepted as-is:
+  the pinning test's tmpdir-outside-cwd assumption — reviewer's own assessment is that the
+  failure mode is a loud, clearly-labeled assertion, and standard dev boxes/CI runners satisfy
+  it. Full gate re-run after applying the notes.
+- Gate (final state): format clean (489 files), lint 0 errors (58 pre-existing warnings, none
+  in touched files), typecheck OK, all 18 test groups pass (0 fail; main
+  unit/api/integration group 2298, was 2296; +2), build OK, build:lib OK.
+- Next: #136 (pin the minimal two-secret helm install with a render-level test), per the plan.

@@ -41,7 +41,7 @@
     semantics the current single-statement explain path cannot express; no live engines to
     validate against). The spec pins the disable option.
 
-- [ ] **#125** — sqlite path guard: remove the dead traversal branch and make code claims
+- [x] **#125** — sqlite path guard: remove the dead traversal branch and make code claims
   match behavior.
   - Test first (in `tests/integration/db/sqlite-provider.test.ts`, which today covers neither
     NUL nor traversal paths): (a) a database path containing a NUL byte throws
