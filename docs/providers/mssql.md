@@ -310,7 +310,7 @@ validates the target parses as an integer SPID.
 | Capability | Value |
 |------------|-------|
 | `queryLanguage` | `sql` |
-| `supportsExplain` | `true` (but see [Known limitations](#14-known-limitations--future-work)) |
+| `supportsExplain` | **`false`** (intentionally disabled — see [Known limitations](#14-known-limitations--future-work)) |
 | `supportsExternalQueryLimiting` | `true` (from base) |
 | `supportsCreateTable` | `true` (from base) |
 | `supportsMaintenance` | `true` |
@@ -418,10 +418,11 @@ Over the API: `POST /api/db/query`, `POST /api/db/transaction`, `POST /api/db/ca
   fields and never reads `config.connectionString` ([§4.4](#44-connection-string-nuance)). A
   config carrying only a raw connection string would connect to `localhost`. *Future:* pass a raw
   connection string through to the driver, or set the capability honestly.
-- **`EXPLAIN` is advertised but not implemented for SQL Server.** `supportsExplain` is `true`, but
-  the UI's EXPLAIN builder only handles Postgres/MySQL — for SQL Server the *Explain* action runs
-  the **unmodified** query instead of a plan. *Future:* `SET SHOWPLAN_XML ON` (or `SET STATISTICS
-  XML ON`) around the statement.
+- **`EXPLAIN` is intentionally disabled for SQL Server until a dialect wrapper exists.**
+  `supportsExplain` is `false`, so the UI hides the *Explain* action. The UI's EXPLAIN builder only
+  handles Postgres/MySQL; before the flag was flipped, the *Explain* action silently ran the
+  **unmodified** query instead of a plan. *Future:* `SET SHOWPLAN_XML ON` (or `SET STATISTICS
+  XML ON`) around the statement, then re-enable the capability.
 - **Non-Azure default trusts the server certificate.** With no explicit `connection.ssl`, non-Azure
   hosts use `encrypt: true` + `trustServerCertificate: true` — encrypted but **not** authenticated
   (MITM-exposed). For verified TLS, set `connection.ssl` mode `verify-ca`/`verify-full`. (Azure hosts

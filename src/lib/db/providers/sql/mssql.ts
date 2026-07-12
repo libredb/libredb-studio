@@ -58,7 +58,9 @@ export class MSSQLProvider extends SQLBaseProvider {
     return {
       ...super.getCapabilities(),
       defaultPort: 1433,
-      supportsExplain: true,
+      // Disabled until a SQL Server dialect wrapper exists (#126): a real plan flow needs
+      // session-level SET SHOWPLAN_*, which the single-statement explain path cannot express.
+      supportsExplain: false,
       supportsConnectionString: true,
       maintenanceOperations: ["analyze", "check", "optimize", "kill"],
     };

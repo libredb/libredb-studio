@@ -62,7 +62,9 @@ export class OracleProvider extends SQLBaseProvider {
     return {
       ...super.getCapabilities(),
       defaultPort: 1521,
-      supportsExplain: true,
+      // Disabled until an Oracle dialect wrapper exists (#126): a real plan flow needs
+      // EXPLAIN PLAN FOR + DBMS_XPLAN, which the single-statement explain path cannot express.
+      supportsExplain: false,
       supportsConnectionString: true,
       maintenanceOperations: ["analyze", "optimize", "kill"],
     };

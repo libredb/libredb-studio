@@ -20,7 +20,7 @@
 
 ## Phase 1 — provider honesty fixes (tri-sync: code + docs/providers/<id>.md + integration tests in one commit)
 
-- [ ] **#126** — stop advertising explain for Oracle and SQL Server until a dialect wrapper
+- [x] **#126** — stop advertising explain for Oracle and SQL Server until a dialect wrapper
   exists.
   - Test first: flip the capability assertions to `false` in
     `tests/integration/db/oracle-provider.test.ts:473` and

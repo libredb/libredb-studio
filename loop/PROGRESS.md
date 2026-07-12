@@ -597,3 +597,42 @@ Rules:
   the runner sources loop.env at startup, so the next `./loop/scripts/loop.sh` run builds.
 - No GitHub mutations this iteration (labels already correct; nothing demoted).
 - Next: build mode, task #126 (first unchecked task in the plan).
+
+### 2026-07-12 — #126 Oracle/MSSQL: stop advertising explain without a dialect wrapper (DONE)
+
+- Triage (step 0f): #94 is the only `loop:needs-info` issue; its comment thread contains only the
+  loop's own clarifying question (comment 2026-07-12T01:55:40Z) — no reply to evaluate.
+- Tests first: flipped the capability assertions to `false` in
+  `tests/integration/db/oracle-provider.test.ts` and `tests/integration/db/mssql-provider.test.ts`
+  (with a why-comment each) and watched them fail RED against the then-current code:
+  `expect(caps.supportsExplain).toBe(false)` → `Expected: false, Received: true`, 2 fail / 68 pass
+  across the two files. No new test cases — the assertion inversion IS the regression pin, since
+  the old assertions pinned the buggy advertised-but-unimplemented value.
+- Built: set `supportsExplain: false` (with a disabled-until-dialect-wrapper comment) in
+  `src/lib/db/providers/sql/oracle.ts` and `mssql.ts`, mirroring sqlite's existing explicit
+  `false` (`sqlite.ts:57`). The explicit override is required — `base-provider.ts:176` defaults
+  the flag to `true`. No UI change: `QueryEditor.tsx:580` and `Studio.tsx:338,463` gate the
+  Explain action on the capability, and `use-query-execution.ts:132-142` blocks the explain code
+  path with a toast when the flag is false, so the silent raw-query fallback
+  (`buildExplainQuery` → null → unmodified SQL runs) is unreachable for these types.
+- Tri-sync in the same commit: `docs/providers/oracle.md` (capability table row + known-limitation
+  bullet) and `docs/providers/mssql.md` (same two spots) rewritten from "advertised but not
+  implemented" to "intentionally disabled until a dialect wrapper exists", keeping each doc's
+  future-work recipe (EXPLAIN PLAN FOR + DBMS_XPLAN; SET SHOWPLAN_XML/STATISTICS XML). Grepped
+  docs/ and tests/ for other oracle/mssql `supportsExplain` claims — none exist
+  (`DATABASE_PROVIDERS.md:505` is a conditional checklist row, not a per-provider claim; all other
+  test references are mocks or the base-provider default test, unchanged).
+- DECISION — capability flip, not dialect wrappers (per the sanitized spec's pinned option): a
+  real Oracle plan flow needs two statements and SQL Server needs a session-level showplan
+  setting — both exceed the current single-statement explain path — and the loop has no live
+  Oracle/MSSQL engines to validate wrappers against. Re-enabling is the recorded future-work path
+  in both docs.
+- Also ran `bun run build:lib` (exit 0): the provider classes ship in the `@libredb/studio`
+  package via `src/exports/providers.ts` → factory → provider imports; dist/ is gitignored, so
+  nothing extra lands in the commit.
+- loop-reviewer verdict: PASS, no findings (traced the capability gates downstream, confirmed
+  tri-sync completeness, test realness, scope, and clean supply chain).
+- Gate: format clean (489 files), lint 0 errors (58 pre-existing warnings, none in touched
+  files), typecheck OK, `bun run test` all 18 groups pass (0 fail; test count unchanged —
+  assertions flipped, no cases added), build OK, build:lib OK.
+- Next: #125 (sqlite path guard honesty), per the plan.

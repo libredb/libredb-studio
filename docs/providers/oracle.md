@@ -293,7 +293,7 @@ inside `DBMS_STATS` arguments / `ALTER` identifiers that can't take bind paramet
 | Capability | Value |
 |------------|-------|
 | `queryLanguage` | `sql` |
-| `supportsExplain` | `true` |
+| `supportsExplain` | **`false`** (intentionally disabled — see [Known limitations](#14-known-limitations--future-work)) |
 | `supportsExternalQueryLimiting` | `true` (from base) |
 | `supportsCreateTable` | `true` (from base) |
 | `supportsMaintenance` | `true` |
@@ -401,10 +401,12 @@ Over the API: `POST /api/db/query`, `POST /api/db/transaction`, `POST /api/db/ca
   per-query `fetchInfo`), and stream genuinely large LOBs instead of buffering.
 - **Large `NUMBER` precision loss** — returned as a JS `number`; `NUMBER` values beyond 2^53 should
   be fetched as strings to stay exact.
-- **`EXPLAIN` is advertised but not implemented for Oracle.** `getCapabilities().supportsExplain` is
-  `true`, but the UI's EXPLAIN builder only handles Postgres/MySQL — for Oracle the *Explain* action
-  runs the **unmodified** query instead of producing a plan. *Future:* build
-  `EXPLAIN PLAN FOR …` followed by `SELECT * FROM TABLE(DBMS_XPLAN.DISPLAY())`.
+- **`EXPLAIN` is intentionally disabled for Oracle until a dialect wrapper exists.**
+  `getCapabilities().supportsExplain` is `false`, so the UI hides the *Explain* action. The UI's
+  EXPLAIN builder only handles Postgres/MySQL; before the flag was flipped, the *Explain* action
+  silently ran the **unmodified** query instead of producing a plan. *Future:* build
+  `EXPLAIN PLAN FOR …` followed by `SELECT * FROM TABLE(DBMS_XPLAN.DISPLAY())`, then re-enable the
+  capability.
 - **No server-side query timeout.** `queryTimeout` is not wired into the pool; runaway queries must
   be cancelled explicitly via `cancelQuery()` (`connection.break()`). *Future:* set
   `connection.callTimeout` (node-oracledb's per-round-trip timeout) from `queryTimeout`.

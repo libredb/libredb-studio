@@ -499,7 +499,10 @@ describe("MSSQLProvider", () => {
       expect(caps.maintenanceOperations).toContain("check");
       expect(caps.maintenanceOperations).toContain("optimize");
       expect(caps.maintenanceOperations).toContain("kill");
-      expect(caps.supportsExplain).toBe(true);
+      // Explain is intentionally disabled until a SQL Server dialect wrapper exists (#126):
+      // the UI's EXPLAIN builder has no SET SHOWPLAN_* flow, so advertising the capability
+      // made the Explain action silently run the unmodified query.
+      expect(caps.supportsExplain).toBe(false);
       expect(caps.supportsConnectionString).toBe(true);
     });
   });
