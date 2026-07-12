@@ -169,17 +169,23 @@ function collectHeuristicEdgeSpecs(schema: TableSchema[]): EdgeSpec[] {
  * display mode. Cosmetic changes (expanding a table's column list) keep the
  * signature stable so layout and viewport are preserved.
  */
+// Locale-independent, deterministic string order - the signature only needs
+// a stable total order, not alphabetical semantics.
+function byCodeUnit(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
 export function graphSignature(graph: Pick<BuiltGraph, "nodes" | "edges">, compact: boolean): string {
   // Sorted so the same logical structure yields the same signature even if
   // the schema arrives in a different order - array order must not force an
   // ELK re-run.
   const nodeIds = graph.nodes
     .map((n) => n.id)
-    .sort()
+    .sort(byCodeUnit)
     .join(",");
   const edgeIds = graph.edges
     .map((e) => e.id)
-    .sort()
+    .sort(byCodeUnit)
     .join(",");
   return `${compact ? "c" : "d"}::${nodeIds}::${edgeIds}`;
 }
