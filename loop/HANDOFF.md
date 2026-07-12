@@ -13,21 +13,29 @@ sanitized spec in `loop/TRIAGE.md`. Definition of done: `loop/ACCEPTANCE.md` (se
 
 ## Status
 
-PLANNED, build not started. As of 2026-07-12:
+COMPLETE. As of 2026-07-12, all three stages of the first fully autonomous milestone ran on
+this branch:
 
-- Triage complete: 15 issues triaged across three batches (commits `3c78105`, `26fb92f`,
-  `ca7cc05`) — 7 queued, 1 needs-info (#94), 4 escalated to moderator (#40, #123, #127,
-  #167), 3 not-for-loop (#100, #108, #170).
-- Planning complete: `loop/IMPLEMENTATION_PLAN.md` rewritten for Sweep 2 — 7 tasks (one per
-  queued issue; #96 pre-split into #96a/#96b), ordered providers (#126, #125) → chart
-  (#136, #151, then #45 — #151's merge-base fix deliberately lands before #45's chart
-  version bump) → payload (#124) → results rendering (#96a, #96b) → close-out. All spec
-  evidence re-verified against the branch tip at planning time; no queued issue has
-  comments or updates since triage.
-- `loop/config/loop.env` is already flipped to build mode
-  (`LOOP_PROMPT_FILE="loop/PROMPT.md"`): the next `./loop/scripts/loop.sh <N>` run starts
-  building at task #126. Each build iteration ends with the mandatory fresh-context
-  `loop-reviewer` pass before its commit.
+- Triage: 15 issues across three batches (commits `3c78105`, `26fb92f`, `ca7cc05`) —
+  7 queued, 1 needs-info (#94), 4 escalated to moderator (#40, #123, #127, #167),
+  3 not-for-loop (#100, #108, #170).
+- Planning: 7 queued issues → 8 build tasks (#96 pre-split), commit `3b5472d`.
+- Build: all 8 tasks done, one commit each, every one with RED evidence and a fresh-context
+  `loop-reviewer` verdict of PASS or PASS WITH NOTES (details per entry in
+  `loop/PROGRESS.md`):
+  - #126 `01873b9` — Oracle/MSSQL `supportsExplain: false` + docs tri-sync
+  - #125 `f334137` — sqlite path guard rejects NUL only; dead traversal branch removed
+  - #136 `586b3b5` — render-level test pins the minimal two-secret install
+  - #151 `b751399` — chart:check merge-base comparison + shared predicate + polish
+  - #45 `496c191` — chart hardening (schema coverage, jwtSecret length, PDB zero-value and
+    exclusivity, no HPA with sqlite); chart 0.1.11 → 0.1.12
+  - #124 `e26dcf9` — deny-list prune of the standalone payload (105M → 32M locally)
+  - #96a `c2de170` — registry-based value renderers behind `formatCellValue`
+  - #96b `7a7f7e4` — pretty-printed json-kind values in the row detail sheet
+- Close-out: every `loop/ACCEPTANCE.md` criterion re-verified against actual repo state; the
+  full gate re-run fresh and green (format, lint, typecheck, all 18 test groups, build, plus
+  `helm lint --strict` and `bun run chart:check`); `.loop/COMPLETE` created.
+- All 7 queued issues remain OPEN by design — a human closes them at PR merge.
 
 ## Human gates outstanding
 
@@ -39,5 +47,16 @@ PLANNED, build not started. As of 2026-07-12:
   sqlite in the connection form — trust-model product call), #167 (helm-release republish
   guard — workflow edit), plus pre-existing #175, #166, #152, #114, #72. Build mode must not
   touch any of these.
-- Final human gate: review the branch, push, open the PR (base `main`) — the loop never
-  pushes.
+- Final human gate: review the branch (8 task commits + close-out), push, open the PR
+  (base `main`) — the loop never pushes. The PR bumps chart content (#45), and the chart
+  version bump (0.1.12) is already in the same commit per the charts/** repo rule.
+- Human-follow-up flags collected during the build (details in the matching
+  `loop/PROGRESS.md` entries): the embedded libredb provider carries the same dead traversal
+  branch #125 removed from sqlite; the Dockerfile runner stage still copies the untrimmed
+  standalone output (#124's prune covers only the payload script); a real `npmjs-token` file
+  sits at this dev machine's repo root (credential hygiene — move it off the repo root);
+  deployment.yaml's pre-existing zero-config guard message is slightly stale for the
+  sqlite+autoscaling case (#45); RowDetailSheet's pre-existing `Eye` icon lacks
+  `strokeWidth={1.5}` (#96b).
+- Next milestone: start with triage mode (`LOOP_PROMPT_FILE="loop/PROMPT-TRIAGE.md"`), new
+  sentinel in `loop/config/loop.env`, and remove the stale `.loop/COMPLETE` before running.

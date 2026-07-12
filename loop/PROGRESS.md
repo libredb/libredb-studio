@@ -1029,3 +1029,59 @@ Rules:
   is gitignored).
 - Next: Phase F close-out — reconcile PROGRESS/HANDOFF, verify every `loop/ACCEPTANCE.md`
   criterion against actual repo state, report #94 as the open gap, create `.loop/COMPLETE`.
+
+### 2026-07-12 — Phase F close-out (Maintainer Sweep 2) (DONE)
+
+- Triage (step 0f): #94 remains the only `loop:needs-info`; its thread still contains only the
+  loop's own clarifying question (2026-07-12T01:55:40Z) — no reply to evaluate.
+- Verified every `loop/ACCEPTANCE.md` criterion against the actual repo state, not prior
+  entries' self-report:
+  - #126: `supportsExplain: false` live at `oracle.ts:67` / `mssql.ts:63`; both integration
+    tests assert `false`; both provider docs carry the intentionally-disabled wording.
+  - #125: `sqlite.ts` guard rejects NUL bytes only ("NUL bytes are not allowed"); zero
+    traversal claims remain in the file; test + doc tri-sync grep-confirmed.
+  - #136: `tests/unit/helm-chart-user-password.test.ts` present (2 render-level cases).
+  - #45: chart 0.1.12 / appVersion 0.9.52; jwtSecret `anyOf [maxLength 0, minLength 32]` in
+    the schema; `kindIs`-based PDB nil-checks; hpa.yaml gated on the
+    `libredb-studio.autoscalingEnabled` helper; `helm lint --strict` 0 failed;
+    `bun run chart:check` OK.
+  - #124: `scripts/lib/prune-standalone-payload.sh` present and wired at
+    `build-standalone-payload.sh:114`; fixture test present. The real-build tarball listing
+    + `--smoke` evidence is the #124 entry's (three real builds, final on shipped code) — not
+    re-run at close-out; a fourth full rebuild would re-verify an unchanged script.
+  - #151: merge-base comparison + single exported `tagQueryNeeded()` live in
+    `sync-chart-version.mjs`; `CHART_SYNC_STRICT` documented in `docs/HELM_CHART.md`;
+    `git diff origin/main...HEAD -- .github/workflows/ci.yml` is empty (ci.yml untouched).
+  - #96: `src/components/results-grid/renderers/` (6 kind-named modules); detail sheet
+    masks BEFORE renderer selection (`RowDetailSheet.tsx:54-66`) and maps
+    `preserveWhitespace` to `whitespace-pre-wrap`; zero connection-type conditionals in the
+    rendering layer (grep); build:lib was run in both #96 iterations.
+  - Process: all 8 build tasks `[x]` in the plan; all 7 queued issues still OPEN on GitHub
+    (nothing closed — human closes at PR merge); label state matches the plan exactly
+    (7 `loop:queued`, #94 `loop:needs-info`, moderator set #40/#72/#114/#123/#127/#152/#166/
+    #167/#175 intact and untouched by build mode); every task entry above records a
+    loop-reviewer verdict of PASS or PASS WITH NOTES with RED evidence.
+- Gate re-run fresh on the clean branch tip (single chained run, exit 0): format clean
+  (500 files, no fixes), lint 0 errors (pre-existing warnings only, all in untouched
+  monitoring tabs), typecheck OK, `bun run test` "All 18 groups passed!" (0 fail),
+  `bun run build` OK, `helm lint charts/libredb-studio --strict` 0 failed,
+  `bun run chart:check` OK (0.1.12 / 0.9.52). `git status --short` empty afterwards.
+- DECISION — no loop-reviewer pass for this close-out: PROMPT step 3's mandatory review
+  applies to a task's implementation diff judged against its sanitized spec; Phase F's diff is
+  loop-bookkeeping only (plan tick, acceptance ticks, this entry, HANDOFF, `.loop/COMPLETE`),
+  there is no spec to judge against, and step 4 defines its own procedure. Consistent with the
+  Bug Sweep 1 close-out precedent.
+- OPEN GAP (reported, per the plan): #94 (`loop:needs-info`) is awaiting the reporter's
+  answer — NOT part of this milestone; only a human removing the label makes it pickable.
+  Moderator queue (#40, #123, #127, #167 + pre-existing #175, #166, #152, #114, #72) is
+  human-only. Human-follow-up flags recorded in earlier entries remain open: the embedded
+  libredb provider's dead traversal branch (#125 entry), the Dockerfile runner-stage extras
+  (#124 entry), the repo-root `npmjs-token` file (#124 entry, credential hygiene), the
+  deployment.yaml zero-config guard's slightly-stale message (#45 entry), and RowDetailSheet's
+  pre-existing `Eye` icon missing `strokeWidth={1.5}` (#96b entry).
+- Updated `loop/ACCEPTANCE.md` (all 18 boxes ticked, each backed by the verification above)
+  and `loop/HANDOFF.md` (stale "PLANNED, build not started" replaced with the actual
+  completed state, per-issue commit hashes, and the outstanding human gates).
+- `.loop/COMPLETE` created in this iteration.
+- Next: none — milestone complete. A human should review the branch (8 task commits + this
+  close-out), push, and open the PR (base `main`), then plan the next milestone.

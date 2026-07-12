@@ -186,7 +186,7 @@
 
 ## Phase F — close out
 
-- [ ] Reconcile `loop/PROGRESS.md` / `loop/HANDOFF.md`; verify every `loop/ACCEPTANCE.md`
+- [x] Reconcile `loop/PROGRESS.md` / `loop/HANDOFF.md`; verify every `loop/ACCEPTANCE.md`
   criterion against actual repo state (not prior entries' self-report); report #94
   (`loop:needs-info`, awaiting reporter) as an open gap — it is NOT part of this milestone;
   create `.loop/COMPLETE`; print `LIBREDB-STUDIO-SWEEP-2-DONE`.
