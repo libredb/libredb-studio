@@ -243,8 +243,7 @@ function SchemaDiagramInner({ schema, onClose }: SchemaDiagramProps) {
     async (format: "png" | "svg") => {
       if (exporting) return;
       const viewport = containerRef.current?.querySelector<HTMLElement>(".react-flow__viewport");
-      const currentNodes = nodesRef.current;
-      if (!viewport || currentNodes.length === 0) {
+      if (!viewport || nodesRef.current.length === 0) {
         toast({ title: "Export failed", description: "There is no diagram to export.", variant: "destructive" });
         return;
       }
@@ -256,7 +255,10 @@ function SchemaDiagramInner({ schema, onClose }: SchemaDiagramProps) {
         // the second lets the newly mounted nodes paint before the snapshot.
         await yieldToPaint();
         await yieldToPaint();
-        const bounds = getNodesBounds(currentNodes);
+        // Read nodes AFTER the yields: newly mounted (previously culled)
+        // nodes report their measured dimensions during that window, and
+        // bounds must include them.
+        const bounds = getNodesBounds(nodesRef.current);
         await exportViewportImage(format, { viewport, bounds });
       } catch (error) {
         console.error(`Failed to export ${format.toUpperCase()}:`, error);

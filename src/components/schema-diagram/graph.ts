@@ -239,8 +239,10 @@ export function buildGraph(schema: TableSchema[], options: BuildGraphOptions): B
         compact,
         visibleColumns: visible,
         hiddenCount,
-        sourceAnchors: [...(sources.get(table.name) || [])],
-        targetAnchors: [...(targets.get(table.name) || [])],
+        // Sorted: FK declaration order must not change node data (TableNode
+        // derives its handle re-measure signature from these).
+        sourceAnchors: [...(sources.get(table.name) || [])].sort(byCodeUnit),
+        targetAnchors: [...(targets.get(table.name) || [])].sort(byCodeUnit),
       },
     };
   });

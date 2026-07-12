@@ -253,6 +253,33 @@ describe("buildGraph", () => {
     expect(usersNode.data.targetAnchors).toContain("id");
   });
 
+  test("anchor arrays are sorted so FK declaration order cannot change node data", () => {
+    const t1 = makeTable(
+      "hub",
+      [{ name: "id", isPrimary: true }, { name: "b_id" }, { name: "a_id" }],
+      [
+        { columnName: "b_id", referencedTable: "bees", referencedColumn: "id" },
+        { columnName: "a_id", referencedTable: "ayes", referencedColumn: "id" },
+      ],
+    );
+    const t2 = makeTable(
+      "hub",
+      [{ name: "id", isPrimary: true }, { name: "b_id" }, { name: "a_id" }],
+      [
+        { columnName: "a_id", referencedTable: "ayes", referencedColumn: "id" },
+        { columnName: "b_id", referencedTable: "bees", referencedColumn: "id" },
+      ],
+    );
+    const ayes = makeTable("ayes", [{ name: "id", isPrimary: true }]);
+    const bees = makeTable("bees", [{ name: "id", isPrimary: true }]);
+    const g1 = buildGraph([t1, ayes, bees], { compact: false });
+    const g2 = buildGraph([t2, ayes, bees], { compact: false });
+    const anchors1 = g1.nodes.find((n) => n.id === "hub")!.data.sourceAnchors;
+    const anchors2 = g2.nodes.find((n) => n.id === "hub")!.data.sourceAnchors;
+    expect(anchors1).toEqual(anchors2);
+    expect(anchors1).toEqual([...anchors1].sort());
+  });
+
   test("expandedTables reveals all columns for that table only", () => {
     const wide = makeTable(
       "wide",
