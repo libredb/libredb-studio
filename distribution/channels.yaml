@@ -1,0 +1,361 @@
+# Distribution channel inventory (the "visibility matrix").
+#
+# One entry per place users can obtain LibreDB Studio. Human-maintained:
+# scripts/distribution-check.mjs READS this file and reports drift against
+# package.json - it never writes version numbers into it. Schema, tier and
+# SLA definitions, and maintenance rules (including when to update
+# last_bump_pr) live in docs/DISTRIBUTION.md ("Channel inventory and drift
+# check").
+#
+# Field summary:
+#   id/name/status/tier/kind  identity; status: live | pending | deprecated
+#   update.method             ci_publish | commit | upstream_pr | manual_ui
+#   update.sla                every_release | minor_plus | major_only | on_demand
+#   links                     tracking_issue / first_pr / last_bump_pr (nullable
+#                             until the first post-listing bump) / catalog /
+#                             upstream_repo / docs
+#   pin.strategy              local_file | remote_file | none
+#   pin.extract               regex with ONE capture group; all matches in a
+#                             source must agree (ambiguity is reported, never
+#                             resolved to the first hit)
+
+channels:
+  # ---- Tier 0: core registries, published directly by release CI ----------
+
+  - id: github-release
+    name: GitHub Releases (standalone tarballs, deb/rpm, snap assets)
+    status: live
+    tier: 0
+    kind: release-assets
+    update:
+      method: ci_publish
+      sla: every_release
+    links:
+      catalog: https://github.com/libredb/libredb-studio/releases
+      docs: docs/DISTRIBUTION.md
+    pin:
+      strategy: none
+      note: Assets are built from the tag by release-artifacts.yml; nothing to drift.
+
+  - id: docker-ghcr
+    name: Docker image (GHCR, canonical)
+    status: live
+    tier: 0
+    kind: container-image
+    update:
+      method: ci_publish
+      sla: every_release
+    links:
+      catalog: https://github.com/libredb/libredb-studio/pkgs/container/libredb-studio
+    pin:
+      strategy: none
+      note: Version and latest tags pushed by docker-build-push.yml on release.
+
+  - id: docker-hub-mirror
+    name: Docker Hub mirror (discoverability only)
+    status: live
+    tier: 0
+    kind: container-image
+    update:
+      method: ci_publish
+      sla: every_release
+    links:
+      catalog: https://hub.docker.com/r/libredb/libredb-studio
+    pin:
+      strategy: none
+      note: Mirror of GHCR; immutable-tag rules must stay semver-only.
+
+  - id: npm
+    name: npm package @libredb/studio (library + npx launcher)
+    status: live
+    tier: 0
+    kind: package-registry
+    update:
+      method: ci_publish
+      sla: every_release
+    links:
+      tracking_issue: https://github.com/libredb/libredb-studio/issues/110
+      first_pr: https://github.com/libredb/libredb-studio/pull/122
+      catalog: https://www.npmjs.com/package/@libredb/studio
+    pin:
+      strategy: none
+      note: Published by npm-publish.yml; registry API probe is a phase-2 idea.
+
+  # ---- Tier 1: packaged formats owned by this repo, CI-published ----------
+
+  - id: helm
+    name: Helm chart (libredb.org repo + GHCR OCI + ArtifactHub)
+    status: live
+    tier: 1
+    kind: helm-chart
+    update:
+      method: ci_publish
+      sla: every_release
+    links:
+      tracking_issue: https://github.com/libredb/libredb-studio/issues/138
+      first_pr: https://github.com/libredb/libredb-studio/pull/44
+      catalog: https://artifacthub.io/packages/helm/libredb-studio/libredb-studio
+      docs: docs/HELM_CHART.md
+    pin:
+      strategy: local_file
+      files:
+        - charts/libredb-studio/Chart.yaml
+      extract: 'appVersion: "(\d+\.\d+\.\d+)"'
+      note: Enforcement lives in the required chart:check CI gate (#138); this row is visibility.
+
+  - id: homebrew
+    name: Homebrew tap (libredb/tap/libredb-studio)
+    status: live
+    tier: 1
+    kind: package-manager
+    update:
+      method: ci_publish
+      sla: every_release
+    links:
+      tracking_issue: https://github.com/libredb/libredb-studio/issues/111
+      first_pr: https://github.com/libredb/libredb-studio/pull/122
+      upstream_repo: https://github.com/libredb/homebrew-tap
+    pin:
+      strategy: remote_file
+      url: https://raw.githubusercontent.com/libredb/homebrew-tap/main/Formula/libredb-studio.rb
+      extract: 'version "(\d+\.\d+\.\d+)"'
+      note: Confirms the release-CI tap push actually landed.
+
+  - id: snap
+    name: Snap Store (stable channel, amd64+arm64)
+    status: live
+    tier: 1
+    kind: package-manager
+    update:
+      method: ci_publish
+      sla: every_release
+    links:
+      tracking_issue: https://github.com/libredb/libredb-studio/issues/113
+      first_pr: https://github.com/libredb/libredb-studio/pull/177
+      catalog: https://snapcraft.io/libredb-studio
+    pin:
+      strategy: none
+      note: Store-published by the release-artifacts snap job; store API probe is a phase-2 idea.
+
+  - id: linux-deb-rpm
+    name: Linux .deb / .rpm packages (release assets)
+    status: live
+    tier: 1
+    kind: os-package
+    update:
+      method: ci_publish
+      sla: every_release
+    links:
+      tracking_issue: https://github.com/libredb/libredb-studio/issues/112
+      first_pr: https://github.com/libredb/libredb-studio/pull/122
+    pin:
+      strategy: none
+      note: Built by nfpm from the tag in release-artifacts.yml; nothing to drift.
+
+  # ---- Tier 2: LibreDB-owned copies and listings, bumped by hand ----------
+
+  - id: caprover-local
+    name: CapRover one-click template (in-repo source of truth)
+    status: live
+    tier: 2
+    kind: one-click-template
+    update:
+      method: commit
+      sla: on_demand
+    links:
+      tracking_issue: https://github.com/libredb/libredb-studio/issues/56
+      first_pr: https://github.com/libredb/libredb-studio/pull/57
+      docs: deploy/caprover/README.md
+    pin:
+      strategy: local_file
+      files:
+        - deploy/caprover/libredb-studio.yml
+      extract: "defaultValue: '(\\d+\\.\\d+\\.\\d+)'"
+
+  - id: caprover-mirror
+    name: CapRover 3rd-party repo (libredb.org/caprover-one-click-apps)
+    status: live
+    tier: 2
+    kind: one-click-template
+    update:
+      method: commit
+      sla: on_demand
+    links:
+      tracking_issue: https://github.com/libredb/libredb-studio/issues/56
+      catalog: https://libredb.org/caprover-one-click-apps
+      upstream_repo: https://github.com/libredb/caprover-one-click-apps
+    pin:
+      strategy: remote_file
+      url: https://raw.githubusercontent.com/libredb/caprover-one-click-apps/main/public/v4/apps/libredb-studio.yml
+      extract: "defaultValue: '(\\d+\\.\\d+\\.\\d+)'"
+
+  - id: railway-template
+    name: Railway one-click template
+    status: live
+    tier: 2
+    kind: paas-template
+    update:
+      method: manual_ui
+      sla: on_demand
+    links:
+      tracking_issue: https://github.com/libredb/libredb-studio/issues/174
+      first_pr: https://github.com/libredb/libredb-studio/pull/67
+      catalog: https://railway.com/deploy/libredb-studio
+      docs: deploy/railway/PUBLISH.md
+    pin:
+      strategy: local_file
+      files:
+        - deploy/railway/template.json
+        - deploy/railway/README.md
+        - deploy/railway/PUBLISH.md
+      extract: 'libredb-studio:(\d+\.\d+\.\d+)'
+      note: The published template is edited in the Railway dashboard; these three files must move together.
+
+  - id: koyeb-deploy-button
+    name: Koyeb deploy button (repo README)
+    status: live
+    tier: 2
+    kind: deploy-button
+    update:
+      method: commit
+      sla: on_demand
+    links:
+      docs: deploy/koyeb/README.md
+    pin:
+      strategy: none
+      note: The button deploys ghcr.io latest by design; there is no version pin.
+
+  # ---- Tier 3: upstream community catalogs, bumped via PR -----------------
+
+  - id: caprover-official
+    name: CapRover official one-click apps
+    status: live
+    tier: 3
+    kind: one-click-template
+    update:
+      method: upstream_pr
+      sla: on_demand
+    links:
+      tracking_issue: https://github.com/libredb/libredb-studio/issues/56
+      first_pr: https://github.com/caprover/one-click-apps/pull/1303
+      upstream_repo: https://github.com/caprover/one-click-apps
+    pin:
+      strategy: remote_file
+      url: https://raw.githubusercontent.com/caprover/one-click-apps/master/public/v4/apps/libredb-studio.yml
+      extract: "defaultValue: '(\\d+\\.\\d+\\.\\d+)'"
+
+  - id: dokploy
+    name: Dokploy template catalog
+    status: live
+    tier: 3
+    kind: paas-template
+    update:
+      method: upstream_pr
+      sla: on_demand
+    links:
+      tracking_issue: https://github.com/libredb/libredb-studio/issues/171
+      first_pr: https://github.com/Dokploy/templates/pull/931
+      catalog: https://templates.dokploy.com
+      upstream_repo: https://github.com/Dokploy/templates
+      docs: deploy/dokploy/README.md
+    pin:
+      strategy: remote_file
+      url: https://raw.githubusercontent.com/Dokploy/templates/main/blueprints/libredb-studio/docker-compose.yml
+      extract: 'libredb-studio:(\d+\.\d+\.\d+)'
+      note: Bump from 0.9.27 to the current release is tracked in issue 175.
+
+  - id: cosmos
+    name: Cosmos servapp marketplace
+    status: live
+    tier: 3
+    kind: one-click-template
+    update:
+      method: upstream_pr
+      sla: on_demand
+    links:
+      tracking_issue: https://github.com/libredb/libredb-studio/issues/172
+      first_pr: https://github.com/azukaar/cosmos-servapps-official/pull/218
+      upstream_repo: https://github.com/azukaar/cosmos-servapps-official
+      docs: deploy/cosmos/README.md
+    pin:
+      strategy: remote_file
+      url: https://raw.githubusercontent.com/azukaar/cosmos-servapps-official/master/servapps/LibreDB-Studio/cosmos-compose.json
+      extract: 'libredb-studio:(\d+\.\d+\.\d+)'
+
+  - id: kubero
+    name: Kubero template catalog
+    status: live
+    tier: 3
+    kind: paas-template
+    update:
+      method: upstream_pr
+      sla: on_demand
+    links:
+      tracking_issue: https://github.com/libredb/libredb-studio/issues/173
+      first_pr: https://github.com/kubero-dev/kubero/pull/754
+      catalog: https://www.kubero.dev/templates
+      upstream_repo: https://github.com/kubero-dev/kubero
+      docs: deploy/kubero/README.md
+    pin:
+      strategy: remote_file
+      url: https://raw.githubusercontent.com/kubero-dev/kubero/main/services/libredb-studio/app.yaml
+      extract: 'ghcr\.io/libredb/libredb-studio\s+tag:\s*(\d+\.\d+\.\d+)'
+
+  # ---- Tier 4: partner and curated catalogs (not self-serve) --------------
+
+  - id: rancher-partner
+    name: Rancher Partner Charts
+    status: pending
+    tier: 4
+    kind: partner-catalog
+    update:
+      method: upstream_pr
+      sla: on_demand
+    links:
+      tracking_issue: https://github.com/libredb/libredb-studio/issues/166
+      first_pr: https://github.com/rancher/partner-charts/pull/1158
+      upstream_repo: https://github.com/rancher/partner-charts
+    pin:
+      strategy: none
+      note: Awaiting certification; pin strategy decided once the listing exists.
+
+  - id: koyeb-catalog
+    name: Koyeb One-Click Apps catalog (curated by Koyeb)
+    status: pending
+    tier: 4
+    kind: curated-catalog
+    update:
+      method: manual_ui
+      sla: on_demand
+    links:
+      catalog: https://www.koyeb.com/deploy
+      docs: deploy/koyeb/CATALOG_SUBMISSION.md
+    pin:
+      strategy: none
+
+  - id: digitalocean
+    name: DigitalOcean Marketplace
+    status: pending
+    tier: 4
+    kind: marketplace
+    update:
+      method: manual_ui
+      sla: on_demand
+    links:
+      tracking_issue: https://github.com/libredb/libredb-studio/issues/72
+    pin:
+      strategy: none
+
+  - id: winget
+    name: Windows distribution (winget / Chocolatey)
+    status: pending
+    tier: 4
+    kind: package-manager
+    update:
+      method: ci_publish
+      sla: every_release
+    links:
+      tracking_issue: https://github.com/libredb/libredb-studio/issues/114
+    pin:
+      strategy: none
+      note: Blocked on a Windows standalone payload.

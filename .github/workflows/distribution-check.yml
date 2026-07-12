@@ -1,0 +1,45 @@
+name: Distribution Check
+
+# Weekly visibility report: measures every distribution channel's pinned
+# version (distribution/channels.yaml) against package.json and writes the
+# drift table to the Job Summary. Warn-only by design - PaaS catalog drift is
+# routine and must never block anything; per-channel enforcement lives where
+# it is owned (e.g. the required chart:check gate for Helm).
+#
+# Deliberately NOT triggered on release: published - releases are published
+# by release-artifacts.yml under GITHUB_TOKEN, whose events never trigger
+# other workflows (see the explicit dispatch chain in that file). A weekly
+# cron plus manual dispatch covers the reporting need without joining the
+# release chain.
+on:
+  schedule:
+    - cron: "41 6 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: distribution-check
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: "1.3.14"
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Check distribution channels
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bun run distribution:check

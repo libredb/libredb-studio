@@ -416,6 +416,51 @@ setups still publish the rest:
 | `SNAPCRAFT_STORE_CREDENTIALS` | The entire snap build/publish job (exported via `snapcraft export-login`) | Snap job skipped |
 | `DOCKER_HUB_TOKEN` (+ `DOCKER_HUB_USERNAME` variable) | The Docker Hub mirror push | GHCR-only publish |
 
+### Channel inventory and drift check
+
+[`distribution/channels.yaml`](../distribution/channels.yaml) is the machine-readable inventory
+of every distribution channel: identity, update policy, provenance links, and (where measurable)
+where its pinned version lives. `bun run distribution:check`
+([`scripts/distribution-check.mjs`](../scripts/distribution-check.mjs)) compares every live
+channel's pin against `package.json` and prints a markdown drift table; the weekly
+[`distribution-check.yml`](../.github/workflows/distribution-check.yml) workflow writes the same
+table to its Job Summary (cron + manual dispatch — deliberately not `release: published`, which
+GITHUB_TOKEN-published releases never fire). The checker only **reads** the inventory; bumping a
+pin or editing a channel entry is always a human commit.
+
+**Tiers** describe who controls publication:
+
+| Tier | Meaning | Examples |
+|---|---|---|
+| 0 | Core registries, published directly by release CI | GitHub Releases, GHCR, Docker Hub, npm |
+| 1 | Packaged formats owned by this repo, CI-published | Helm, Homebrew tap, Snap, .deb/.rpm |
+| 2 | LibreDB-owned copies and listings, bumped by hand | CapRover source/mirror, Railway, Koyeb button |
+| 3 | Upstream community catalogs, bumped via PR | CapRover official, Dokploy, Cosmos, Kubero |
+| 4 | Partner or curated catalogs (not self-serve) | Rancher partner charts, Koyeb catalog, DO, winget |
+
+**SLAs** (`update.sla`) state how quickly a channel is expected to follow a release:
+`every_release` (bumped as part of releasing), `minor_plus` (bumped for minor releases and
+above), `major_only`, `on_demand` (bumped when someone gets to it — the honest default for PaaS
+catalog templates).
+
+**Pin strategies:** `local_file` (version lives in files in this repo), `remote_file` (fetched
+from an upstream raw URL, best-effort — fetch failures degrade to UNKNOWN and never fail the
+run), `none` (nothing to measure, stated explicitly with a `note`). Measurable pins carry an
+`extract` regex with exactly one capture group; when a source yields multiple *different*
+matches the channel is reported instead of silently using the first hit.
+
+**Strict mode:** `bun run distribution:check --strict` exits non-zero only for `local_file`
+channels with `sla: every_release` that are drifted or unmeasurable. Remote catalogs and
+`on_demand` templates never gate, so strict is enableable today without first paying off
+historical PaaS drift. For the Helm chart the enforcement remains the required `chart:check` CI
+gate (#138) — the matrix row is visibility, not a second gate. `--json` emits the rows for
+scripting.
+
+**Adding a channel** = one new entry in `channels.yaml` (copy a neighbour of the same tier; the
+schema is validated on every run). Set `links.first_pr` to the PR that landed the listing, and
+update `links.last_bump_pr` whenever a version-bump PR for that channel merges — it is `null`
+until the first post-listing bump and is displayed, not auto-discovered.
+
 ### Manual steps still open
 
 - **Snap Store listing screenshots**: the description and icon ship with the snap

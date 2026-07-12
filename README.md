@@ -448,6 +448,11 @@ Deploy your own instance of LibreDB Studio with a single click on Koyeb, Render,
 
 ## Deployment (DevOps)
 
+> Maintainers: every distribution channel is inventoried in
+> [`distribution/channels.yaml`](distribution/channels.yaml); `bun run distribution:check`
+> reports version drift across all of them (see
+> [docs/DISTRIBUTION.md](docs/DISTRIBUTION.md#channel-inventory-and-drift-check)).
+
 ### Koyeb
 
 1. **Fork this repository**
