@@ -844,3 +844,73 @@ Rules:
   `helm lint charts/libredb-studio --strict` clean, `bun run chart:check` green
   (chart 0.1.12 / appVersion 0.9.52).
 - Next: #124 (standalone payload deny-list prune), per the plan.
+
+### 2026-07-12 — #124 standalone payload: deny-list prune of trace-swept repo-root extras (DONE)
+
+- Triage (step 0f): #94 remains the only `loop:needs-info`; its thread still contains only the
+  loop's own clarifying question (2026-07-12T01:55:40Z) — no reply to evaluate.
+- Tests first: new `tests/unit/packaging-payload-prune.test.ts`, 5 cases following the
+  `packaging-standalone-tarball.test.ts` convention (spawn the real helper as a subprocess
+  against mkdtemp fixture payloads). Watched RED first: 0 pass / 5 fail,
+  `bash: .../prune-standalone-payload.sh: No such file or directory` (the helper did not exist).
+- Built: new `scripts/lib/prune-standalone-payload.sh <payload-dir>` (deny-list `rm -rf` of
+  payload-ROOT entries only; `"${PAYLOAD_DIR:?}/${entry:?}"` guards; glob line for
+  docker-compose*/`*.snap`/`*.tgz`/`*.log`/`*.pem`), wired into
+  `scripts/build-standalone-payload.sh` immediately after the wholesale `.next/standalone`
+  copy. `docs/DISTRIBUTION.md` documents the pruned payload root and the local-build caveat in
+  the same commit. `next.config.ts` deliberately unchanged (spec: tracing excludes must not be
+  the only mechanism; the script prune alone meets the bar).
+- DECISION — deny-list extended beyond the spec's named minimum, from real-build evidence (the
+  actual payload-root listing), in two verified classes: (a) tracked non-runtime repo content
+  that ships even in clean CI release builds (bin, conductor, deploy, docker, loop, packaging,
+  scripts, snap, src, and root config/meta files — `src/` is raw .ts/.tsx the compiled
+  standalone server never reads; `loop/` shipped this loop's own notes in every release);
+  (b) project-conventional gitignored local leftovers (coverage, dist, logs, npmjs-token,
+  snap-payload, testdb+sidecars, seed-connections.yaml, tsconfig.tsbuildinfo — a 67M local
+  `.snap` leftover was the single largest traced-in file). LICENSE and README.md deliberately
+  kept (release-artifact convention; MIT notice travels with the payload). Rejected: an
+  allowlist prune — the sanitized spec pins deny-list semantics (conservative: only remove
+  what is verified non-runtime).
+- DECISION — leading-dot names (.npmrc, .token, .sonar-token) NOT added: empirically, output
+  file tracing never pulled any leading-dot root entry into the payload (.gitignore, .github,
+  .claude, .dockerignore all exist and none appeared in the listing), so those entries would be
+  dead code. Only non-dot files trace in.
+- FLAGGED FOR HUMAN REVIEW — a real `npmjs-token` file sits at the repo root of this dev
+  machine and WAS traced into the first local build's tarball during this task (credential
+  class). CI release checkouts are clean, so published artifacts are unaffected; the file name
+  is already public in `.gitignore` and is now deny-listed, and the offending local tarball was
+  overwritten by the later builds. Recommendation: move that token off the repo root entirely
+  (env var or ~/.npmrc) — the deny-list cannot protect arbitrary personal files.
+- VERIFICATION (beyond unit tests — acceptance items 2 and 3, and the reviewer's MEDIUM):
+  three real full builds during the task; the FINAL one ran on exactly the shipped code:
+  `--smoke` passed (health 200), `tar tzf` root listing is exactly server.js, package.json,
+  .next, node_modules, public, data, LICENSE, README.md; zero matches for the acceptance set
+  (docs/, charts/, e2e/, tests/, CLAUDE.md, bun.lock, fly.toml, docker-compose); tarball
+  105M -> 32M, 5355 -> 3072 entries on this local tree (the advisory "roughly halve" target
+  exceeded here; a clean CI tree, without the 67M .snap leftover, will see a smaller but still
+  real reduction).
+- KNOWN LIMITATION (recorded): a finite deny-list cannot cover arbitrary personal files at the
+  repo root — any non-dot file a developer leaves there still traces into LOCAL builds (CI is
+  clean). `docs/DISTRIBUTION.md` now warns about this explicitly. The complete fix (an
+  allowlist assembly or a gitignore-aware prune) is a mechanism decision beyond this issue's
+  pinned deny-list approach — for a human or a follow-up issue.
+- ADJACENT ISSUE (recorded, not fixed — 999e): the Dockerfile runner stage copies
+  `.next/standalone` wholesale (Dockerfile:54), so the Docker image carries the same traced-in
+  extras and is NOT covered by this script-level prune (issue #124 names only the
+  payload-derived artifacts: tarballs, deb/rpm, snap, npx cache). Flagged for a human to file a
+  follow-up (either a runner-stage prune or `outputFileTracingExcludes`, which would shrink
+  both).
+- loop-reviewer verdict: PASS WITH NOTES (1 MEDIUM + 4 LOW). MEDIUM (re-confirm the real-build
+  --smoke evidence since the wiring line has no unit test): resolved — the final build above
+  ran on the shipped code; evidence recorded here. LOW applied: the deny-list comment
+  overclaimed "already public in .gitignore" for `logs` (untracked, not ignored) — reworded;
+  full gate re-run after the fix. LOW declined with reasons: (a) deriving the test fixture by
+  parsing PRUNE_LIST — hand-mirrored fixtures match the packaging-test convention, and the
+  dangerous drift direction (a new deny entry hitting the keep-list) is already caught by the
+  keep-list test; (b) adding speculative `next-env.d.ts` — never observed traced, harmless
+  stub, consistent with the observed-entries-only principle. LOW informational: the deny-list
+  extension judged justified, not scope creep.
+- Gate (final tree, after applying the reviewer note): format clean (492 files), lint 0 errors
+  (58 pre-existing warnings, none in touched files), typecheck OK, all 18 test groups pass
+  (0 fail; main unit/api/integration group 2347, was 2342; +5), build OK.
+- Next: #96a (value classifier + renderer registry + compact-path parity), per the plan.

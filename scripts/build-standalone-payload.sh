@@ -107,6 +107,11 @@ PAYLOAD_DIR="$STAGE_DIR/payload"
 mkdir -p "$PAYLOAD_DIR"
 
 cp -R .next/standalone/. "$PAYLOAD_DIR/"
+# Output file tracing sweeps the repo root, dragging non-runtime extras
+# (docs/, charts/, e2e/, tests/, CLAUDE.md, bun.lock, deploy manifests) into
+# .next/standalone (issue #124) - prune them before anything downstream
+# consumes the payload.
+"$ROOT_DIR/scripts/lib/prune-standalone-payload.sh" "$PAYLOAD_DIR"
 # Ship an empty data/ dir (the default SQLite storage location). Output file
 # tracing can pull git-ignored local dev databases (data/*.libredb, *.db)
 # into .next/standalone - never leak those into a distributable tarball. A CI

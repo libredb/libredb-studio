@@ -102,6 +102,15 @@ Standalone tarball entries are rooted under a top-level `libredb-studio-<version
 top-level directory automatically for its main `url`/`sha256` download, so the formula needs no
 extra flag.
 
+The payload contains only the runtime (`server.js`, `package.json`, `.next`, `node_modules`,
+`public`, an empty `data/`, plus `LICENSE`/`README.md`): Next.js output file tracing sweeps the
+repo root into `.next/standalone`, so payload assembly prunes the non-runtime extras (docs,
+source, tooling configs, deploy manifests, local build leftovers) via a deny-list
+([`scripts/lib/prune-standalone-payload.sh`](../scripts/lib/prune-standalone-payload.sh)).
+The deny-list covers project-conventional paths only - on a local (non-CI) build, arbitrary
+personal files sitting at the repo root can still be traced in, so keep secrets out of the
+repo root (CI release checkouts are clean; published artifacts are unaffected).
+
 Download URL pattern:
 `https://github.com/libredb/libredb-studio/releases/download/<version>/<artifact>`.
 

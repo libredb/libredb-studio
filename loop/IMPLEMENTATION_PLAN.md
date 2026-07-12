@@ -127,7 +127,7 @@
 
 ## Phase 3 — standalone payload
 
-- [ ] **#124** — deny-list prune step in `scripts/build-standalone-payload.sh` (the script is
+- [x] **#124** — deny-list prune step in `scripts/build-standalone-payload.sh` (the script is
   the enforced, testable layer; `next.config.ts` tracing excludes may additionally shrink the
   trace but must not be the only mechanism, since they are unverifiable without a full build).
   - Test first, per the packaging convention (`tests/unit/packaging-*.test.ts` spawn real
