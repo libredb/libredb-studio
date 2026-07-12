@@ -152,7 +152,7 @@
    not silent scope-splitting: the full issue plus component-test isolation overhead is too
    large for one iteration; each sub-task is one commit and one gate run)
 
-- [ ] **#96a** — value classifier + renderer registry + compact-path parity (pure TS, unit
+- [x] **#96a** — value classifier + renderer registry + compact-path parity (pure TS, unit
   tests only).
   - Test first: (1) a `classifyValue` unit suite covering null/undefined, string, number,
     boolean, object, array, JSON-parseable string, and non-JSON string inputs (RED: the module

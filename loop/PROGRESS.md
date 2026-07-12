@@ -914,3 +914,52 @@ Rules:
   (58 pre-existing warnings, none in touched files), typecheck OK, all 18 test groups pass
   (0 fail; main unit/api/integration group 2347, was 2342; +5), build OK.
 - Next: #96a (value classifier + renderer registry + compact-path parity), per the plan.
+
+### 2026-07-12 — #96a value classifier + renderer registry + compact-path parity (DONE)
+
+- Triage (step 0f): #94 remains the only `loop:needs-info`; its thread still contains only the
+  loop's own clarifying question (2026-07-12T01:55:40Z) — no reply to evaluate.
+- Tests first, two files by design so the RED import failure cannot mask the GREEN parity pins:
+  `tests/unit/components/results-grid-utils.test.ts` (11 parity cases pinning formatCellValue's
+  exact `{display, className}` for null/undefined, object/array, number, boolean, status
+  strings, plain strings, and JSON-parseable strings — GREEN against the UNMODIFIED code, per
+  the plan's refactor-under-green instruction) and
+  `tests/unit/components/results-grid-renderers.test.ts` (14 cases: classifier, registry
+  selection + fallback, per-renderer compact output, provider-agnostic source grep). Watched
+  RED first: `Cannot find module '@/components/results-grid/renderers/classify'` (11 pass /
+  1 fail + 1 unhandled module-resolution error).
+- Built: new `src/components/results-grid/renderers/` (types, classify, null, scalar, json,
+  registry — kind-named modules mirroring the db-factory type-id convention);
+  `formatCellValue` in `utils.ts` is now a two-line adapter
+  (`getRenderer(classifyValue(value)).renderCompact(value)`) with its exported name and
+  signature unchanged, so all five call sites (ResultsGrid x4, ResultCard x2,
+  RowDetailSheet x1) needed no edits. RowDetailSheet deliberately untouched — that is #96b.
+- DECISION — JSON-parseable strings classify as json-kind but their COMPACT display stays the
+  raw string with `text-zinc-300` (the old plain-string path's exact output): the grid cell
+  must not change for any input in this sub-task; only the detail sheet (#96b) will treat
+  json-kind differently. The kind boundary is containers-only (`{`/`[` prefix + parse to
+  object/array), so `"true"`/`"123"`/`"null"` keep scalar status coloring.
+- DECISION — registry typed `Partial<Record<ValueKind, ValueRenderer>>` so the spec-required
+  `?? scalarRenderer` fallback is LIVE code the type system acknowledges: a full `Record`
+  would make the fallback a provably-dead branch — the same dishonesty class #125 just
+  removed. Exhaustiveness is instead pinned by the registry test asserting all three kinds
+  resolve to their renderer.
+- DECISION — `classifyValue` guards `JSON.parse` behind a trimmed `{`/`[` startsWith check so
+  common non-JSON string cells never pay parse cost; reviewer LOW note carried forward to
+  #96b: if profiling ever shows large JSON-string columns hurting (formatCellValue runs twice
+  per cell at two call sites), consider memoizing classification — not needed for this bar.
+- Parity verified beyond the pins: the fresh-context reviewer differential-fuzzed HEAD's
+  implementation against the new one across 66 inputs (wrapper objects, Object.create(null),
+  BigInt, Symbol, NaN, -0, toJSON-undefined, case-variant status strings, malformed JSON) —
+  byte-identical on all 66.
+- loop-reviewer verdict: PASS WITH NOTES (3 LOW, all advisory, none applied as code changes):
+  (1) the JSON.parse-per-render perf note above (carried to #96b); (2) the Partial-Record
+  fallback is only reachable via a cast today — matches the plan's explicit "scalar fallback"
+  requirement, accepted; (3) the provider-agnostic grep test resolves sources via
+  process.cwd() — true for every current runner, and it fails loud (readdirSync throws), not
+  soft, if cwd ever changes.
+- Gate: format clean (500 files), lint 0 errors (58 pre-existing warnings, none in touched
+  files), typecheck OK, all 18 test groups pass (0 fail; main unit/api/integration group 2372,
+  was 2347; +25), build OK, build:lib OK (run because utils.ts ships in the package; dist is
+  gitignored).
+- Next: #96b (detail-sheet JSON rendering + masking order + package dist), per the plan.
