@@ -14,6 +14,36 @@ function runner(impl: Partial<LayoutRunner>): LayoutRunner {
   };
 }
 
+describe("createLayoutEngine (default runners)", () => {
+  test("lays out a graph via the bundled elk when no Worker is available", async () => {
+    // Force the worker-unavailable branch deterministically (bun defines a
+    // global Worker; the default worker path is environment-dependent).
+    const savedWorker = (globalThis as Record<string, unknown>).Worker;
+    delete (globalThis as Record<string, unknown>).Worker;
+    try {
+      const engine = createLayoutEngine();
+      const result = await engine.layout({
+        id: "root",
+        layoutOptions: { "elk.algorithm": "layered" },
+        children: [
+          { id: "a", width: 100, height: 50 },
+          { id: "b", width: 100, height: 50 },
+        ],
+        edges: [{ id: "a->b", sources: ["a"], targets: ["b"] }],
+      });
+      expect(result).not.toBeNull();
+      const positions = new Map((result?.children ?? []).map((c) => [c.id, c]));
+      expect(typeof positions.get("a")?.x).toBe("number");
+      expect(typeof positions.get("b")?.x).toBe("number");
+      // layered layout must actually separate the two nodes
+      expect(positions.get("a")?.x).not.toBe(positions.get("b")?.x);
+      await engine.dispose();
+    } finally {
+      (globalThis as Record<string, unknown>).Worker = savedWorker;
+    }
+  });
+});
+
 describe("createLayoutEngine", () => {
   test("uses the worker runner when available", async () => {
     const bundledFactory = mock(() => Promise.resolve(runner({ layout: () => Promise.resolve(BUNDLED_RESULT) })));

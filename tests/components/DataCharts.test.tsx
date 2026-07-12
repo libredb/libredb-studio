@@ -126,6 +126,7 @@ mock.module("@/components/ui/select", () => ({
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import { render, cleanup, fireEvent, waitFor } from "@testing-library/react";
 import { DataCharts } from "@/components/DataCharts";
+import { mockToastError } from "../helpers/mock-sonner";
 import type { QueryResult } from "@/lib/types";
 
 import userEvent from "@testing-library/user-event";
@@ -672,6 +673,26 @@ describe("DataCharts", () => {
     expect(options.backgroundColor).toBe("#080808");
     expect(options.scale).toBe(2);
     expect(options.embedFonts).toBe(false);
+
+    HTMLAnchorElement.prototype.click = originalClick;
+  });
+
+  test("failed PNG export surfaces an error toast", async () => {
+    mockSnapdom.mockImplementationOnce(async () => {
+      throw new Error("capture exploded");
+    });
+    mockToastError.mockClear();
+    const linkClick = mock(() => {});
+    const originalClick = HTMLAnchorElement.prototype.click;
+    HTMLAnchorElement.prototype.click = linkClick as unknown as typeof HTMLAnchorElement.prototype.click;
+
+    const { queryByText } = render(React.createElement(DataCharts, { result: mockNumericResult }));
+    fireEvent.click(queryByText("Export as PNG")!);
+
+    await waitFor(() => {
+      expect(mockToastError).toHaveBeenCalled();
+    });
+    expect(linkClick).not.toHaveBeenCalled();
 
     HTMLAnchorElement.prototype.click = originalClick;
   });

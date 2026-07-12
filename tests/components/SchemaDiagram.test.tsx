@@ -61,7 +61,8 @@ mock.module("@xyflow/react", () => {
     Controls: () => null,
     Background: () => null,
     Handle: () => null,
-    BaseEdge: () => null,
+    BaseEdge: ({ id, path, style }: Record<string, unknown>) =>
+      React.createElement("path", { "data-testid": "mock-base-edge", "data-edge-id": id, d: path, style }),
     EdgeLabelRenderer: ({ children }: { children: unknown }) => children,
     getSmoothStepPath: () => ["M0 0 L10 10", 5, 5],
     getNodesBounds: () => ({ x: 0, y: 0, width: 800, height: 600 }),
@@ -127,6 +128,8 @@ import { render, fireEvent, within, cleanup, act } from "@testing-library/react"
 import React from "react";
 
 import { SchemaDiagram } from "@/components/SchemaDiagram";
+import { FkEdge } from "@/components/schema-diagram/FkEdge";
+import { createHighlightStore, HighlightStoreProvider } from "@/components/schema-diagram/highlight-store";
 import { mockToastError } from "../helpers/mock-sonner";
 import { mockSchema, emptySchema } from "../fixtures/schemas";
 import type { TableSchema } from "@/lib/types";
@@ -1120,6 +1123,88 @@ describe("SchemaDiagram", () => {
       });
 
       expect(mockToastError).toHaveBeenCalled();
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // FkEdge rendering (direct, with a real highlight store)
+  // ═══════════════════════════════════════════════════════════════════════
+
+  describe("FkEdge", () => {
+    const edgeProps = {
+      id: "orders.user_id->users.id",
+      source: "orders",
+      target: "users",
+      sourceX: 0,
+      sourceY: 0,
+      targetX: 100,
+      targetY: 100,
+      sourcePosition: "right",
+      targetPosition: "left",
+    } as never;
+
+    function renderEdge(store: ReturnType<typeof createHighlightStore>, heuristic: boolean) {
+      const props = { ...(edgeProps as Record<string, unknown>), data: { heuristic } };
+      return render(
+        <HighlightStoreProvider value={store}>
+          <svg>{React.createElement(FkEdge as unknown as React.ComponentType<Record<string, unknown>>, props)}</svg>
+        </HighlightStoreProvider>,
+      );
+    }
+
+    test("real FK edge renders solid blue at rest with no label", () => {
+      const store = createHighlightStore();
+      const { container } = renderEdge(store, false);
+      const path = container.querySelector('[data-testid="mock-base-edge"]') as HTMLElement;
+      expect(path).not.toBeNull();
+      expect(path.style.stroke).toBe("#3b82f6");
+      expect(path.style.strokeDasharray).toBe("");
+      expect(within(container).queryByText("1:N")).toBeNull();
+    });
+
+    test("heuristic edge renders dashed gray with thinner stroke", () => {
+      const store = createHighlightStore();
+      const { container } = renderEdge(store, true);
+      const path = container.querySelector('[data-testid="mock-base-edge"]') as HTMLElement;
+      expect(path.style.stroke).toBe("#6b7280");
+      expect(path.style.strokeDasharray).toBe("4 2");
+    });
+
+    test("edge touching the selected table is highlighted and labeled", () => {
+      const store = createHighlightStore();
+      store.select("orders", new Set(["users"]));
+      const { container } = renderEdge(store, false);
+      const path = container.querySelector('[data-testid="mock-base-edge"]') as HTMLElement;
+      expect(path.style.opacity).toBe("1");
+      expect(path.style.strokeWidth).toBe("2");
+      expect(within(container).queryByText("1:N")).not.toBeNull();
+    });
+
+    test("heuristic highlighted edge is labeled with a question mark", () => {
+      const store = createHighlightStore();
+      store.select("orders", new Set(["users"]));
+      const { container } = renderEdge(store, true);
+      expect(within(container).queryByText("1:N?")).not.toBeNull();
+    });
+
+    test("edge unrelated to the selection is dimmed", () => {
+      const store = createHighlightStore();
+      store.select("products", new Set());
+      const { container } = renderEdge(store, false);
+      const path = container.querySelector('[data-testid="mock-base-edge"]') as HTMLElement;
+      expect(path.style.opacity).toBe("0.12");
+      expect(within(container).queryByText("1:N")).toBeNull();
+    });
+
+    test("edge reacts to selection changes made after mount", () => {
+      const store = createHighlightStore();
+      const { container } = renderEdge(store, false);
+      expect(within(container).queryByText("1:N")).toBeNull();
+
+      act(() => {
+        store.select("users", new Set(["orders"]));
+      });
+      expect(within(container).queryByText("1:N")).not.toBeNull();
     });
   });
 
