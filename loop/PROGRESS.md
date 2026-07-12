@@ -1114,3 +1114,17 @@ Rules:
   connection skipped due to credential resolution failure" — sample seeding is zero-config-mode
   behavior; benign for the E2E suite (seed-state-independent by design, see the e2e memory),
   but worth knowing when reading E2E server logs.
+
+### 2026-07-12 — PR #178 CodeQL follow-up: anchor the image-tag regexes (DONE, human/operator)
+
+- PR CI came back 13 pass / 1 fail: CodeQL flagged `js/regex/missing-regexp-anchor` (high) on
+  `parseImageTag`'s pattern in `scripts/sync-chart-version.mjs:32` — the #151 matchAll refactor
+  made the pattern "new code", so the pre-existing unanchored shape surfaced as a new alert.
+  Practical risk is negligible (input is the repo's own Chart.yaml), but the alert is correct:
+  the host prefix was not anchored to the start of a line.
+- Fix: anchored both occurrences consistently (`^\s*` + `m` flag; parse also anchors `\s*$`) —
+  `parseImageTag` and `applyBump`'s rewrite keep matching the same set of lines, preserving
+  #151's parse/rewrite symmetry. Verified against the real Chart.yaml line shape and the test
+  fixtures' duplicated-line cases.
+- Gate: sync-chart-version unit tests 34/34, `bun run chart:check` green on the real repo; full
+  five-command gate via the pre-commit hook.
