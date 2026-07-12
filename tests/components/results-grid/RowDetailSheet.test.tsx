@@ -185,13 +185,83 @@ describe("results-grid/RowDetailSheet", () => {
     expect(valueElements[1]!.textContent).toBe("NULL");
   });
 
-  test("displays JSON.stringify for object values", () => {
-    const obj = { foo: "bar", num: 42 };
-    const { queryByText } = render(
+  // Replaces the old "displays JSON.stringify for object values" pin: #96
+  // deliberately changes json-kind detail rendering from a compact one-liner
+  // to a pretty-printed whitespace-preserving block.
+  test("renders object values pretty-printed in a whitespace-preserving block", () => {
+    const obj = { foo: "bar", nested: { n: 1 } };
+    const { container } = render(
       <RowDetailSheet row={{ data: obj }} fields={["data"]} isOpen onClose={mock(() => {})} rowIndex={0} />,
     );
 
-    expect(queryByText(JSON.stringify(obj))).not.toBeNull();
+    const block = container.querySelector(".whitespace-pre-wrap");
+    expect(block).not.toBeNull();
+    expect(block!.textContent).toBe(JSON.stringify(obj, null, 2));
+    // Newlines and indentation survive into the DOM text.
+    expect(block!.textContent).toContain('{\n  "foo"');
+    expect(block!.className).toContain("font-mono");
+  });
+
+  test("renders a JSON container string parsed and pretty-printed", () => {
+    const raw = '{"id":"1","name":"Ada"}';
+    const { container } = render(
+      <RowDetailSheet row={{ value: raw }} fields={["value"]} isOpen onClose={mock(() => {})} rowIndex={0} />,
+    );
+
+    const block = container.querySelector(".whitespace-pre-wrap");
+    expect(block).not.toBeNull();
+    expect(block!.textContent).toBe(JSON.stringify(JSON.parse(raw), null, 2));
+  });
+
+  test("scalar fields keep the inline rendering without a whitespace-preserving block", () => {
+    const { container, queryByText } = render(
+      <RowDetailSheet
+        row={{ id: 7, name: "Alice" }}
+        fields={["id", "name"]}
+        isOpen
+        onClose={mock(() => {})}
+        rowIndex={0}
+      />,
+    );
+
+    expect(queryByText("Alice")).not.toBeNull();
+    expect(queryByText("7")).not.toBeNull();
+    expect(container.querySelector(".whitespace-pre-wrap")).toBeNull();
+  });
+
+  test("masking short-circuits before renderer selection for json-kind fields", () => {
+    const sensitiveColumns = new Map<string, unknown>([["payload", { type: "custom" }]]);
+    const { container, queryByText } = render(
+      <RowDetailSheet
+        row={{ payload: { secret: "top" } }}
+        fields={["payload"]}
+        isOpen
+        onClose={mock(() => {})}
+        rowIndex={0}
+        maskingActive
+        sensitiveColumns={sensitiveColumns as never}
+      />,
+    );
+
+    expect(queryByText("***MASKED***")).not.toBeNull();
+    // The masked field must not reach the json renderer's pretty block.
+    expect(container.querySelector(".whitespace-pre-wrap")).toBeNull();
+    expect(container.textContent).not.toContain("top");
+  });
+
+  test("copying a json field copies the pretty-printed text", () => {
+    const obj = { foo: "bar" };
+    const { container } = render(
+      <RowDetailSheet row={{ data: obj }} fields={["data"]} isOpen onClose={mock(() => {})} rowIndex={0} />,
+    );
+
+    const buttons = Array.from(container.querySelectorAll("button"));
+    const copyButtons = buttons.filter(
+      (b) => !b.textContent?.includes("Copy JSON") && !b.textContent?.includes("Copied"),
+    );
+    fireEvent.click(copyButtons[0]!);
+    expect(writeText).toHaveBeenCalledTimes(1);
+    expect(String(writeText.mock.calls[0]?.[0])).toBe(JSON.stringify(obj, null, 2));
   });
 
   test("renders long values (>50 chars) with smaller text class", () => {

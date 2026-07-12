@@ -7,7 +7,8 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { type MaskingPattern, maskValueByPattern } from "@/lib/data-masking";
-import { formatCellValue } from "./utils";
+import { classifyValue } from "./renderers/classify";
+import { getRenderer } from "./renderers/registry";
 
 export interface RowDetailSheetProps {
   row: Record<string, unknown>;
@@ -46,12 +47,23 @@ export function RowDetailSheet({
   }, []);
 
   const getDisplayValue = useCallback(
-    (field: string, value: unknown): { text: string; isMasked: boolean } => {
+    (
+      field: string,
+      value: unknown,
+    ): { text: string; className: string; preserveWhitespace: boolean; isMasked: boolean } => {
       const pattern = sensitiveColumns?.get(field);
+      // Masking short-circuits before renderer selection — renderers never see
+      // sensitive values.
       if (maskingActive && pattern && value != null && value !== undefined && !revealedFields.has(field)) {
-        return { text: maskValueByPattern(value, pattern), isMasked: true };
+        return {
+          text: maskValueByPattern(value, pattern),
+          className: "text-zinc-500 italic",
+          preserveWhitespace: false,
+          isMasked: true,
+        };
       }
-      return { text: typeof value === "object" ? JSON.stringify(value) : String(value ?? "NULL"), isMasked: false };
+      const detail = getRenderer(classifyValue(value)).renderDetail(value);
+      return { ...detail, isMasked: false };
     },
     [maskingActive, sensitiveColumns, revealedFields],
   );
@@ -112,7 +124,7 @@ export function RowDetailSheet({
         <ScrollArea className="h-[calc(85vh-100px)] mt-4">
           <div className="space-y-1 pr-4">
             {fields.map((field) => {
-              const { text, isMasked } = getDisplayValue(field, row[field]);
+              const { text, className, preserveWhitespace, isMasked } = getDisplayValue(field, row[field]);
               const isLongValue = text.length > 50;
 
               return (
@@ -126,7 +138,8 @@ export function RowDetailSheet({
                       <p
                         className={cn(
                           "font-mono text-xs break-all",
-                          isMasked ? "text-zinc-500 italic" : formatCellValue(row[field]).className,
+                          className,
+                          preserveWhitespace && "whitespace-pre-wrap",
                           isLongValue && "text-xs",
                         )}
                       >

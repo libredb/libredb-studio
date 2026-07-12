@@ -113,6 +113,82 @@ describe("renderCompact", () => {
 });
 
 // =============================================================================
+// renderDetail — per-renderer detail-sheet output (#96 phase 1)
+// =============================================================================
+
+describe("renderDetail", () => {
+  test("nullRenderer pins the detail sheet's historical null/undefined split", () => {
+    // The sheet has always shown lowercase "null" for null (typeof null ===
+    // "object" took the JSON.stringify branch) and "NULL" for undefined.
+    expect(nullRenderer.renderDetail(null)).toEqual({
+      text: "null",
+      className: "text-zinc-600 italic",
+      preserveWhitespace: false,
+    });
+    expect(nullRenderer.renderDetail(undefined)).toEqual({
+      text: "NULL",
+      className: "text-zinc-600 italic",
+      preserveWhitespace: false,
+    });
+  });
+
+  test("scalarRenderer detail output matches its compact output inline", () => {
+    for (const value of [42, true, false, "active", "disabled", "plain text"]) {
+      const compact = scalarRenderer.renderCompact(value);
+      expect(scalarRenderer.renderDetail(value)).toEqual({
+        text: compact.display,
+        className: compact.className,
+        preserveWhitespace: false,
+      });
+    }
+  });
+
+  test("jsonRenderer pretty-prints objects and arrays with preserved whitespace", () => {
+    const obj = { a: 1, b: [1, 2] };
+    expect(jsonRenderer.renderDetail(obj)).toEqual({
+      text: JSON.stringify(obj, null, 2),
+      className: "text-zinc-300",
+      preserveWhitespace: true,
+    });
+    expect(jsonRenderer.renderDetail([1, 2]).text).toBe("[\n  1,\n  2\n]");
+  });
+
+  test("jsonRenderer parses a JSON container string before pretty-printing", () => {
+    expect(jsonRenderer.renderDetail('{"id":1}').text).toBe('{\n  "id": 1\n}');
+    // An already-pretty JSON string round-trips to canonical two-space form.
+    expect(jsonRenderer.renderDetail('{\n    "id": 1\n}').text).toBe('{\n  "id": 1\n}');
+  });
+
+  test("jsonRenderer keeps the raw string when the number round-trip would lose fidelity", () => {
+    // 9007199254740993 > 2^53: JSON.parse would round it to ...992, so the
+    // detail sheet must show the stored text, not the canonicalized lie.
+    const bigInt = '{"n":9007199254740993}';
+    expect(jsonRenderer.renderDetail(bigInt)).toEqual({
+      text: bigInt,
+      className: "text-zinc-300",
+      preserveWhitespace: true,
+    });
+    // Same for representations stringify would normalize (1.50 -> 1.5).
+    const trailingZero = '{"price":1.50}';
+    expect(jsonRenderer.renderDetail(trailingZero).text).toBe(trailingZero);
+    // A pretty-printed original with a lossy number keeps its own newlines.
+    const prettyLossy = '{\n  "n": 9007199254740993\n}';
+    const detail = jsonRenderer.renderDetail(prettyLossy);
+    expect(detail.text).toBe(prettyLossy);
+    expect(detail.preserveWhitespace).toBe(true);
+  });
+
+  test("whitespace inside JSON string values never triggers the raw fallback", () => {
+    // Spaces/newlines inside string literals are significant and survive the
+    // canonical round-trip, so this input still gets the pretty treatment.
+    expect(jsonRenderer.renderDetail('{"note":"a  b"}').text).toBe('{\n  "note": "a  b"\n}');
+    expect(jsonRenderer.renderDetail('{"quote":"she said \\"hi\\""}').text).toBe(
+      '{\n  "quote": "she said \\"hi\\""\n}',
+    );
+  });
+});
+
+// =============================================================================
 // Rendering layer stays provider-agnostic (#96 acceptance: greppable)
 // =============================================================================
 

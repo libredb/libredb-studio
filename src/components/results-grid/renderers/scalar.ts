@@ -19,4 +19,9 @@ export const scalarRenderer: ValueRenderer = {
     }
     return { display, className: "text-zinc-300" };
   },
+  renderDetail(value) {
+    // Scalars have no expanded form — the detail sheet shows the compact text.
+    const { display, className } = scalarRenderer.renderCompact(value);
+    return { text: display, className, preserveWhitespace: false };
+  },
 };

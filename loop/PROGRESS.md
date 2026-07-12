@@ -963,3 +963,69 @@ Rules:
   was 2347; +25), build OK, build:lib OK (run because utils.ts ships in the package; dist is
   gitignored).
 - Next: #96b (detail-sheet JSON rendering + masking order + package dist), per the plan.
+
+### 2026-07-12 — #96b detail-sheet JSON rendering + masking order + package dist (DONE)
+
+- Triage (step 0f): #94 remains the only `loop:needs-info`; its thread still contains only the
+  loop's own clarifying question (2026-07-12T01:55:40Z, latest activity 01:55:49Z) — no reply to
+  evaluate.
+- Tests first (two files, watched RED before implementing): (a) 4 new `renderDetail` unit cases
+  in `tests/unit/components/results-grid-renderers.test.ts` — RED with
+  `TypeError: jsonRenderer.renderDetail is not a function` (14 pass / 4 fail); (b) 5 new/replaced
+  cases in `tests/components/results-grid/RowDetailSheet.test.tsx` — RED on the two pretty-block
+  cases (`.whitespace-pre-wrap` query returned null) and the copy-pretty pin (compact
+  `{"foo":"bar"}` received); the scalar-inline and masked-json cases were declared pinning tests,
+  GREEN from the start (no pre-wrap block existed anywhere, masking already short-circuited).
+- Built: `ValueRenderer` gains `renderDetail(value): DetailValue` (`text`, `className`,
+  `preserveWhitespace`); all three renderers implement it; `RowDetailSheet.getDisplayValue` masks
+  FIRST (renderers never see sensitive values) and otherwise selects via
+  `getRenderer(classifyValue(value)).renderDetail(value)`; the value `<p>` conditionally adds
+  `whitespace-pre-wrap` (standard twMerge-safe class, 16 existing precedents in
+  `src/components`); the second per-field `formatCellValue` call is gone (className now comes
+  from renderDetail; `formatCellValue` itself unchanged, still used by ResultsGrid/ResultCard).
+- TEST REPLACED (999b, reason recorded): the old "displays JSON.stringify for object values"
+  component test pinned the compact-object detail rendering that this task's spec deliberately
+  changes; replaced by the pretty-block test with an explanatory comment, not deleted silently.
+- DECISION — renderDetail returns pure data (text/className/preserveWhitespace), not ReactNode
+  (the raw issue's sketch suggested ReactNode; treated as evidence only): keeps the renderer
+  layer pure TS, unit-testable without DOM, matches how #96a shaped CompactValue; the sheet maps
+  the flag to the repo's whitespace-pre-wrap convention. A future interactive renderer (JSON
+  tree, phase 2) would extend the contract then — no speculative React coupling now.
+- DECISION — nullRenderer.renderDetail pins the sheet's historical lowercase-"null"(null) /
+  "NULL"(undefined) split (typeof null === "object" took the JSON.stringify branch in the old
+  inline ternary): parity with the existing detail-sheet test; unifying to "NULL" would be a
+  behavior change outside the bar.
+- DECISION — json detail block uses `text-zinc-300`, dropping the compact cell's
+  `text-blue-400/80 italic font-light` object hint: the block is a readable document, and the
+  repo's pre-block convention (CodeGenerator, SchemaDiff) is zinc-300 mono; italic multi-line
+  JSON would fight the issue's readability goal. Grid cells keep the blue italic hint unchanged.
+- DECISION — per-field copy of a json-kind field now copies the pretty display text (was compact):
+  copy follows what the sheet shows, consistent with the Copy JSON button's existing indent-2
+  output; pinned by a new test.
+- DECISION — reviewer MEDIUM fixed, not declined (fidelity guard, test-first: watched the new
+  fidelity test fail RED against the unguarded implementation): re-stringifying a stored JSON
+  STRING canonicalizes it — integers beyond 2^53 silently change digits
+  ('{"n":9007199254740993}' would display AND copy as ...992 while the grid cell shows the true
+  bytes). `renderDetail` now re-stringifies a string only when
+  `stripJsonWhitespace(value) === JSON.stringify(JSON.parse(value))` (module-private tokenizer
+  dropping JSON's four insignificant whitespace chars outside string literals, escape-aware);
+  otherwise the stored text renders verbatim, still whitespace-preserving. Reviewer re-verified
+  the delta: guard traced sound (escaped backslashes, unicode escapes, duplicate keys,
+  integer-like key reordering, 1e2/-0 all fall back to raw — the safe direction).
+- KNOWN LIMITATION (recorded): non-canonical-but-valid JSON strings (unicode escapes, exponent
+  notation, duplicate keys, integer-like key order) skip the pretty upgrade and render raw —
+  they lose only prettiness, never bytes. Object/array values parsed upstream by drivers have
+  any precision loss baked in before the rendering layer; not addressable here.
+- loop-reviewer verdict: PASS WITH NOTES (round 1: 1 MEDIUM + 2 LOW; round 2 on the fix delta:
+  MEDIUM resolved, verdict stands). LOW accepted with reason: `copyAllAsJson` in the
+  masking-active path now embeds multi-line pretty text for unmasked json-kind fields (cosmetic
+  escape drift in the copied JSON; the unmasked path still copies the raw row). LOW out of scope
+  (999e, flagged for human follow-up): pre-existing `Eye` icon in RowDetailSheet.tsx lacks
+  `strokeWidth={1.5}` per platform-integration rules — predates this task, not touched.
+- Gate (final tree, after the MEDIUM fix): format clean (500 files), lint 0 errors (58
+  pre-existing warnings, none in touched files), typecheck OK, all 18 test groups pass (0 fail;
+  main unit/api/integration group 2376, was 2372, +4; RowDetailSheet component file 17 cases,
+  was 13), build OK, build:lib OK (required — these components ship in `@libredb/studio`; dist
+  is gitignored).
+- Next: Phase F close-out — reconcile PROGRESS/HANDOFF, verify every `loop/ACCEPTANCE.md`
+  criterion against actual repo state, report #94 as the open gap, create `.loop/COMPLETE`.

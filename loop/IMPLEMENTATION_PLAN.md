@@ -168,7 +168,7 @@
     conditionals (greppable). NO new dependencies — if one turns out to be required, stop and
     escalate per 1b instead of adding it.
 
-- [ ] **#96b** — detail-sheet JSON rendering + masking order + package dist.
+- [x] **#96b** — detail-sheet JSON rendering + masking order + package dist.
   - Test first: a component test asserting a json-kind value renders in the detail sheet as a
     pretty-printed, whitespace-preserving monospace block (newlines/indentation survive) — RED
     today: `RowDetailSheet.tsx:126-134` renders every field in a normal-whitespace `break-all`
