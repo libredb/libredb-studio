@@ -75,7 +75,7 @@
     locally, watch case (1) fail, restore the file (verify `git status` clean afterwards).
   - No chart content changes → no Chart.yaml version bump for this task.
 
-- [ ] **#151** — chart:check hardening: merge-base comparison plus the six verified polish
+- [x] **#151** — chart:check hardening: merge-base comparison plus the six verified polish
   items in `scripts/sync-chart-version.mjs`.
   - Test first, extending the existing fixture-git-repo convention in
     `tests/unit/sync-chart-version.test.ts` (its `runCheck` helper spawns the real script):

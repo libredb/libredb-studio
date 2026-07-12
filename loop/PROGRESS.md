@@ -712,3 +712,67 @@ Rules:
   files), typecheck OK, all 18 test groups pass (0 fail; main unit/api/integration group 2300,
   was 2298; +2), build OK.
 - Next: #151 (chart:check hardening: merge-base comparison + polish items), per the plan.
+
+### 2026-07-12 — #151 chart:check hardening: merge-base comparison + shared predicate + polish (DONE)
+
+- ITERATION RECOVERY (recorded): this iteration started with uncommitted changes to exactly the
+  task's three files (`scripts/sync-chart-version.mjs`, `tests/unit/sync-chart-version.test.ts`,
+  `docs/HELM_CHART.md`) and NO #151 entry here — a prior iteration died mid-task after the #136
+  commit (LOOP-ENGINEERING §7 says this is safe by design; nothing commits mid-task). DECISION —
+  adopted the dead iteration's work as an UNVERIFIED DRAFT instead of discarding and retyping:
+  the changes match the plan task exactly (loop-authored work, not human edits — humans never
+  edit mid-run), and honesty is preserved by independently reconstructing RED evidence and
+  running the full review pipeline rather than by re-typing the same bytes. Everything below was
+  verified in this iteration, not inherited on trust.
+- Triage (step 0f): #94 remains the only `loop:needs-info`; its thread still contains only the
+  loop's own clarifying question (2026-07-12T01:55:40Z) — no reply to evaluate.
+- Tests first / RED evidence (reconstructed via the temporary-revert/mutation technique from the
+  #136/#137 precedent — each mutation fails EXACTLY the test that pins it):
+  (A) script reverted to HEAD → whole test file RED (`Export named 'tagQueryNeeded' not found`);
+  (B) `readBaseChart` mutated back to the origin/main TIP comparison → only "stale branch passes
+  --check after a released chart bump merged to origin/main" fails (the clone's local-path
+  upstream is reachable, so the old code finds tag libredb-studio-0.1.3 and false-positives
+  "already released" — exactly the issue's scenario);
+  (C) `unparseable` reason re-conflated to `missing-ref` → only the distinct-messages fixture
+  test fails; (D) `/g` flags dropped from `applyBump`'s replacements → only the
+  duplicated-lines rewrite test fails. GREEN after restore: 34/34 in the file; +14 new cases
+  (2 parseImageTag dup, 2 parseReadmeVersion dup, 4 tagQueryNeeded, 1 applyBump dup-rewrite,
+  1 strict-violations-first, 4 git-fixture CLI cases).
+- Built (all seven spec items): `readBaseChart` compares against `git merge-base HEAD
+  origin/main` with a fallback to the origin/main tip when no merge-base is computable
+  (ci.yml's depth-1 checkout + depth-1 main fetch produce grafted roots where merge-base always
+  fails — verified against ci.yml read-only, workflow untouched; a git-fixture test emulates
+  this with two orphan roots and self-checks that merge-base genuinely fails); missing-ref vs
+  unparseable-Chart.yaml are distinct reasons with distinct strict/warn messages; the tag-query
+  gating predicate is the single exported `tagQueryNeeded()` shared by `checkSync()` and
+  `main()`; `parseImageTag`/`parseReadmeVersion` use matchAll and throw when duplicated
+  occurrences DISAGREE (agreeing duplicates pass), `applyBump` rewrites all occurrences (`/g`);
+  both strict early-exit paths print content violations first (the spec's optional item 5 —
+  included since it stayed at two small loops); `CHART_SYNC_STRICT` documented in
+  `docs/HELM_CHART.md`'s version-management section. The hermetic git fixtures pin all four
+  base-comparison paths including the previously untested strict tag-query-null path
+  (resolvable origin/main ref, unreachable remote — a pinning test, green from the start, as
+  the spec expected).
+- Constraints held: `.github/workflows/ci.yml` untouched; no chart content changes → no
+  Chart.yaml version bump; `bun run chart:check` green on the real repo before and after.
+- loop-reviewer verdict: PASS WITH NOTES (3 LOW; 1 applied, 2 accepted). Applied: softened the
+  overstated "exact on PR merge refs" claim to "effectively exact" in both docs/HELM_CHART.md
+  and the script comment (a depth-1 fetch of main at step runtime can be newer than the merge
+  ref's main parent, so the race is only effectively — not provably — closed in shallow CI; the
+  full fix needs ci.yml edits, outside loop authority). Accepted with reasons: (a) when the
+  merge-base fallback hits the tip AND that tip chart is unparseable, the strict message still
+  says "at the merge-base" — cosmetic wording in a rare combined-failure path, fixing it means
+  threading the resolved ref through the reason; (b) the test's `runCheck` subprocess inherits
+  the developer's real git config (only `runGit` fixture setup is hermetic) — matches the
+  existing #138 test convention of spawning the real script, flagged not fixed.
+- KNOWN LIMITATION (recorded): if a branch predates the chart's introduction, the merge-base
+  commit has no Chart.yaml and the guard reports "origin/main not resolvable" (missing-ref) —
+  misleading wording for an ancient-branch edge no current branch can hit (the chart shipped
+  long before any live branch point); the strict CI path is unaffected (fallback tip always has
+  the chart).
+- Gate (final tree, after applying the reviewer note): format clean (490 files), lint 0 errors
+  (58 pre-existing warnings, none in touched files), typecheck OK, all 18 test groups pass
+  (0 fail; main unit/api/integration group 2314, was 2300; +14), build OK.
+- Next: #45 (chart hardening, four gaps, one commit WITH `bun run chart:bump`), per the plan —
+  deliberately ordered after this task so the merge-base comparison protects #45's version bump
+  from a false-positive `chart:check` if a release merges to main mid-loop.

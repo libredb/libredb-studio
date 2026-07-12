@@ -29,19 +29,25 @@ export function parseChart(chartYaml) {
 }
 
 export function parseImageTag(chartYaml) {
-  const tag = chartYaml.match(/image:\s*ghcr\.io\/libredb\/libredb-studio:(\S+)/)?.[1];
-  if (!tag) {
+  const tags = [...chartYaml.matchAll(/image:\s*ghcr\.io\/libredb\/libredb-studio:(\S+)/g)].map((m) => m[1]);
+  if (tags.length === 0) {
     throw new Error(`${CHART_YAML}: could not find the artifacthub.io/images image tag`);
   }
-  return tag;
+  if (new Set(tags).size > 1) {
+    throw new Error(`${CHART_YAML}: image tags disagree (${tags.join(", ")}) - they must all match`);
+  }
+  return tags[0];
 }
 
 export function parseReadmeVersion(readme) {
-  const version = readme.match(/--version\s+(\S+)/)?.[1];
-  if (!version) {
+  const versions = [...readme.matchAll(/--version\s+(\S+)/g)].map((m) => m[1]);
+  if (versions.length === 0) {
     throw new Error(`${CHART_README}: could not find a --version example`);
   }
-  return version;
+  if (new Set(versions).size > 1) {
+    throw new Error(`${CHART_README}: --version examples disagree (${versions.join(", ")}) - they must all match`);
+  }
+  return versions[0];
 }
 
 export function bumpPatch(version) {
@@ -53,9 +59,22 @@ export function bumpPatch(version) {
 }
 
 /**
- * Returns violation messages (empty = in sync). baseChart is main's parsed
- * Chart.yaml or null when unavailable; chartTagExists is true/false, or null
- * when origin tags could not be queried (check skipped, CLI prints a warning).
+ * The released-version check only matters when the appVersion changed against the base
+ * AND the chart version moved off the base's (otherwise the chart-releaser violation
+ * covers it). Shared by checkSync() and main() so the gating cannot drift (#151).
+ *
+ * @param {{ baseChart: { version: string, appVersion: string } | null, version: string, appVersion: string }} input
+ * @returns {boolean}
+ */
+export function tagQueryNeeded({ baseChart, version, appVersion }) {
+  return Boolean(baseChart && baseChart.appVersion !== appVersion && baseChart.version !== version);
+}
+
+/**
+ * Returns violation messages (empty = in sync). baseChart is the parsed Chart.yaml at
+ * the merge-base of HEAD and origin/main, or null when unavailable; chartTagExists is
+ * true/false, or null when origin tags could not be queried (check skipped, CLI prints
+ * a warning).
  *
  * @param {{
  *   pkgVersion: string,
@@ -80,23 +99,26 @@ export function checkSync({ pkgVersion, chartYaml, readme, baseChart = null, cha
   if (readmeVersion !== version) {
     violations.push(`${CHART_README}: --version example '${readmeVersion}' does not equal chart version '${version}'`);
   }
-  if (baseChart && baseChart.appVersion !== appVersion) {
-    if (baseChart.version === version) {
-      violations.push(
-        `${CHART_YAML}: appVersion changed (${baseChart.appVersion} -> ${appVersion}) but chart version is still ` +
-          `'${version}' - chart-releaser (skip_existing) would silently publish nothing`,
-      );
-    } else if (chartTagExists === true) {
-      violations.push(
-        `${CHART_YAML}: chart version '${version}' is already released (tag libredb-studio-${version} exists) - ` +
-          `bump to an unreleased version`,
-      );
-    }
+  if (baseChart && baseChart.appVersion !== appVersion && baseChart.version === version) {
+    violations.push(
+      `${CHART_YAML}: appVersion changed (${baseChart.appVersion} -> ${appVersion}) but chart version is still ` +
+        `'${version}' - chart-releaser (skip_existing) would silently publish nothing`,
+    );
+  }
+  if (tagQueryNeeded({ baseChart, version, appVersion }) && chartTagExists === true) {
+    violations.push(
+      `${CHART_YAML}: chart version '${version}' is already released (tag libredb-studio-${version} exists) - ` +
+        `bump to an unreleased version`,
+    );
   }
   return violations;
 }
 
-/** Applies the canonical bump; returns changed=false (inputs untouched) when already in sync. */
+/**
+ * Applies the canonical bump; returns changed=false (inputs untouched) when already in
+ * sync. Throws (via the parsers) when duplicated image/--version occurrences disagree -
+ * an ambiguous chart must be fixed by hand, not auto-repaired.
+ */
 export function applyBump({ pkgVersion, chartYaml, readme }) {
   const { version, appVersion } = parseChart(chartYaml);
   const inSync =
@@ -108,14 +130,14 @@ export function applyBump({ pkgVersion, chartYaml, readme }) {
   let newChartYaml = chartYaml
     .replace(/^version:\s*\S+\s*$/m, `version: ${newVersion}`)
     .replace(/^appVersion:\s*.*$/m, `appVersion: "${pkgVersion}"`)
-    .replace(/(image:\s*ghcr\.io\/libredb\/libredb-studio:)\S+/, `$1${pkgVersion}`);
+    .replace(/(image:\s*ghcr\.io\/libredb\/libredb-studio:)\S+/g, `$1${pkgVersion}`);
   if (appVersion !== pkgVersion) {
     newChartYaml = newChartYaml.replace(
       /- Track app release .*/,
       `- Track app release ${pkgVersion} (appVersion bump; default image tag follows)`,
     );
   }
-  const newReadme = readme.replace(/--version\s+\S+/, `--version ${newVersion}`);
+  const newReadme = readme.replace(/--version\s+\S+/g, `--version ${newVersion}`);
   return { chartYaml: newChartYaml, readme: newReadme, changed: true, version: newVersion, appVersion: pkgVersion };
 }
 
@@ -123,12 +145,33 @@ function git(root, args) {
   return execFileSync("git", args, { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
 }
 
-/** main's Chart.yaml, or null when origin/main is not resolvable (shallow local clone). */
+/**
+ * Chart.yaml at the merge-base of HEAD and origin/main - not the origin/main tip, so a
+ * release merged to main after the branch point cannot false-positive the already-released
+ * check on a stale branch (#151). Shallow CI checkouts (ci.yml: depth-1 merge ref plus a
+ * depth-1 fetch of main) have no computable merge-base; there the origin/main tip is used
+ * as before - effectively exact on PR merge refs, which are built against the current main tip.
+ * Returns { chart, reason }: chart is null when unavailable, with reason "missing-ref"
+ * (origin/main not resolvable, e.g. a git-less fixture dir) or "unparseable" (the base
+ * Chart.yaml exists but has no version/appVersion) kept distinct for strict-mode reporting.
+ */
 function readBaseChart(root) {
+  let content;
   try {
-    return parseChart(git(root, ["show", `origin/main:${CHART_YAML}`]));
+    let baseRef;
+    try {
+      baseRef = git(root, ["merge-base", "HEAD", "origin/main"]);
+    } catch {
+      baseRef = "origin/main";
+    }
+    content = git(root, ["show", `${baseRef}:${CHART_YAML}`]);
   } catch {
-    return null;
+    return { chart: null, reason: "missing-ref" };
+  }
+  try {
+    return { chart: parseChart(content), reason: null };
+  } catch {
+    return { chart: null, reason: "unparseable" };
   }
 }
 
@@ -167,18 +210,24 @@ function main(argv) {
 
   if (mode === "check") {
     const { version, appVersion } = parseChart(chartYaml);
-    const baseChart = readBaseChart(root);
+    const { chart: baseChart, reason: baseReason } = readBaseChart(root);
+    const baseUnavailable =
+      baseReason === "unparseable"
+        ? `${CHART_YAML} at the merge-base of HEAD and origin/main is unparseable`
+        : "origin/main not resolvable";
     if (!baseChart && strict) {
-      console.error(
-        "ERROR: origin/main not resolvable and CHART_SYNC_STRICT is set - refusing to skip base-comparison checks",
-      );
+      // Content violations first, so a developer is not told about them one CI re-run later.
+      for (const violation of checkSync({ pkgVersion, chartYaml, readme })) console.error(`ERROR: ${violation}`);
+      console.error(`ERROR: ${baseUnavailable} and CHART_SYNC_STRICT is set - refusing to skip base-comparison checks`);
       process.exit(1);
     }
     let chartTagExists = null;
-    const tagQueryNeeded = Boolean(baseChart && baseChart.appVersion !== appVersion && baseChart.version !== version);
-    if (tagQueryNeeded) {
+    if (tagQueryNeeded({ baseChart, version, appVersion })) {
       chartTagExists = chartTagExistsOnOrigin(root, version);
       if (chartTagExists === null && strict) {
+        for (const violation of checkSync({ pkgVersion, chartYaml, readme, baseChart, chartTagExists })) {
+          console.error(`ERROR: ${violation}`);
+        }
         console.error(
           "ERROR: could not query origin tags and CHART_SYNC_STRICT is set - refusing to skip the released-version check",
         );
@@ -192,7 +241,7 @@ function main(argv) {
       process.exit(1);
     }
     if (!baseChart) {
-      console.warn("WARN: origin/main not resolvable - base-comparison checks skipped");
+      console.warn(`WARN: ${baseUnavailable} - base-comparison checks skipped`);
     }
     console.log(`OK: chart ${version} / appVersion ${appVersion} in sync with package.json ${pkgVersion}`);
     return;

@@ -260,6 +260,14 @@ queries GHCR anonymously and relies on the image package being public.
   `--version` example in step. The `artifacthub.io/changes` line is written by
   `chart:bump` but deliberately not checked, so hand-written changelog entries for
   chart-only releases never trip the guard.
+- Base comparisons read main's `Chart.yaml` at the merge-base of `HEAD` and `origin/main`,
+  so a release merged to `main` after your branch point cannot false-positive the
+  already-released check on a stale branch (issue #151); in shallow checkouts with no
+  computable merge-base (CI's depth-1 fetch), the `origin/main` tip is used as before,
+  which is effectively exact on PR merge refs. CI sets `CHART_SYNC_STRICT=1`
+  (`ci.yml`), which turns the guard's skip-and-warn paths (`origin/main` not resolvable,
+  origin tags unreachable) into hard failures; unset locally, they stay warnings so
+  offline runs still work.
 
 #### Versioning policy: version and appVersion stay independent (researched 2026-07)
 
