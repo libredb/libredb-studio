@@ -73,10 +73,11 @@ export function computeFkColumnMap(schema: TableSchema[]): FkColumnMap {
 }
 
 /**
- * Picks which columns a table card renders. Wide tables are capped at
- * MAX_VISIBLE_COLUMNS, but primary-key and FK anchor columns are never
- * dropped — edges must always have a visible row to attach to. Original
- * column order is preserved.
+ * Picks which columns a table card renders. Wide tables are hard-capped at
+ * MAX_VISIBLE_COLUMNS with slots granted by priority: primary keys first,
+ * then FK anchor columns, then the rest. Edges whose anchor column is capped
+ * out fall back to table-level handles, so nothing dangles. Original column
+ * order is preserved.
  */
 export function selectVisibleColumns(
   table: TableSchema,
@@ -88,22 +89,20 @@ export function selectVisibleColumns(
     return { visible: columns, hiddenCount: 0 };
   }
 
-  const mustShow = new Set<string>();
-  for (const col of columns) {
-    if (col.isPrimary || anchors.has(col.name)) mustShow.add(col.name);
-  }
-
-  let fillBudget = Math.max(0, MAX_VISIBLE_COLUMNS - mustShow.size);
-  const visible: ColumnSchema[] = [];
-  for (const col of columns) {
-    if (mustShow.has(col.name)) {
-      visible.push(col);
-    } else if (fillBudget > 0) {
-      visible.push(col);
-      fillBudget--;
+  const chosen = new Set<string>();
+  const tiers: Array<(col: ColumnSchema) => boolean> = [
+    (col) => col.isPrimary,
+    (col) => anchors.has(col.name),
+    () => true,
+  ];
+  for (const matches of tiers) {
+    for (const col of columns) {
+      if (chosen.size >= MAX_VISIBLE_COLUMNS) break;
+      if (!chosen.has(col.name) && matches(col)) chosen.add(col.name);
     }
   }
 
+  const visible = columns.filter((col) => chosen.has(col.name));
   return { visible, hiddenCount: columns.length - visible.length };
 }
 

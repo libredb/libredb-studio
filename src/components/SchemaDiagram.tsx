@@ -147,8 +147,10 @@ function SchemaDiagramInner({ schema, onClose }: SchemaDiagramProps) {
       .then((result) => {
         if (cancelled) return;
         setIsLayouting(false);
-        if (!result) return; // keep the grid fallback
+        // Recorded for null results too: a known-failed layout must not be
+        // retried on every cosmetic rebuild (only cancelled runs may retry).
         lastLayoutSigRef.current = signature;
+        if (!result) return; // keep the grid fallback
         const layouted = applyLayout(graph.nodes, result);
         for (const node of layouted) {
           positionsRef.current.set(node.id, node.position);
@@ -159,7 +161,9 @@ function SchemaDiagramInner({ schema, onClose }: SchemaDiagramProps) {
         });
       })
       .catch(() => {
-        if (!cancelled) setIsLayouting(false);
+        if (cancelled) return;
+        setIsLayouting(false);
+        lastLayoutSigRef.current = signature;
       });
 
     return () => {
@@ -406,7 +410,11 @@ function SchemaDiagramInner({ schema, onClose }: SchemaDiagramProps) {
                 {showHeuristicWarning && (
                   <div className="flex items-start gap-1.5 text-[0.625rem] text-amber-500/80">
                     <Info strokeWidth={1.5} className="w-3 h-3 mt-0.5 shrink-0" />
-                    <span>No FK data available. Showing heuristic relationships (dashed).</span>
+                    <span>
+                      {graph.usedHeuristic
+                        ? "No FK data available. Showing heuristic relationships (dashed)."
+                        : "No FK data available."}
+                    </span>
                   </div>
                 )}
 

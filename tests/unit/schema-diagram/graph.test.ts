@@ -90,6 +90,22 @@ describe("selectVisibleColumns", () => {
     expect(names).toEqual(sorted);
   });
 
+  test("hard-caps even when PK plus FK anchors exceed the cap, prioritizing PK then anchors", () => {
+    const hub = makeTable("hub", [
+      { name: "pk", isPrimary: true },
+      ...Array.from({ length: 15 }, (_, i) => ({ name: `fk${i}` })),
+      ...Array.from({ length: 10 }, (_, i) => ({ name: `data${i}` })),
+    ]);
+    const anchors = new Set(Array.from({ length: 15 }, (_, i) => `fk${i}`));
+    const { visible, hiddenCount } = selectVisibleColumns(hub, anchors, false);
+    expect(visible.length).toBe(MAX_VISIBLE_COLUMNS);
+    expect(visible.map((c) => c.name)).toContain("pk");
+    // remaining slots go to FK anchors before plain data columns
+    expect(visible.filter((c) => anchors.has(c.name)).length).toBe(MAX_VISIBLE_COLUMNS - 1);
+    expect(visible.some((c) => c.name.startsWith("data"))).toBe(false);
+    expect(hiddenCount).toBe(26 - MAX_VISIBLE_COLUMNS);
+  });
+
   test("expanded shows every column", () => {
     const { visible, hiddenCount } = selectVisibleColumns(wide, new Set(), true);
     expect(visible.length).toBe(30);
@@ -192,6 +208,27 @@ describe("buildGraph", () => {
     const { edges, usedHeuristic } = buildGraph([users, orders, posts], { compact: false });
     expect(usedHeuristic).toBe(false);
     expect(edges.length).toBe(1);
+  });
+
+  test("edges whose anchor column is capped out fall back to table-level handles", () => {
+    // hub has 15 FK columns; only 11 fit next to the PK, so some FK edges
+    // must anchor to the table header instead of a hidden row.
+    const targets = Array.from({ length: 15 }, (_, i) => makeTable(`target_${i}`, [{ name: "id", isPrimary: true }]));
+    const hub = makeTable(
+      "hub",
+      [{ name: "pk", isPrimary: true }, ...Array.from({ length: 15 }, (_, i) => ({ name: `fk${i}` }))],
+      Array.from({ length: 15 }, (_, i) => ({
+        columnName: `fk${i}`,
+        referencedTable: `target_${i}`,
+        referencedColumn: "id",
+      })),
+    );
+    const { edges } = buildGraph([hub, ...targets], { compact: false });
+    expect(edges.length).toBe(15);
+    const rowAnchored = edges.filter((e) => e.sourceHandle !== TABLE_SOURCE_HANDLE);
+    const tableAnchored = edges.filter((e) => e.sourceHandle === TABLE_SOURCE_HANDLE);
+    expect(rowAnchored.length).toBe(MAX_VISIBLE_COLUMNS - 1);
+    expect(tableAnchored.length).toBe(15 - (MAX_VISIBLE_COLUMNS - 1));
   });
 
   test("compact mode wires edges to table-level handles", () => {

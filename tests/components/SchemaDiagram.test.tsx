@@ -87,15 +87,28 @@ mock.module("@xyflow/react", () => {
 setupFramerMotionMock();
 
 // Mock the layout engine so component tests never spin up workers or ELK.
-// Its own behavior is unit-tested in tests/unit/schema-diagram/.
+// Its own behavior is unit-tested in tests/unit/schema-diagram/. Tests can
+// swap the implementation via setLayoutEngineImpl (restored in beforeEach).
+type MockLayoutEngine = {
+  layout: (graph: { children: Array<{ id: string }> }) => Promise<unknown>;
+  dispose: () => Promise<void>;
+};
+const defaultLayoutEngine: MockLayoutEngine = {
+  layout: (graph) =>
+    Promise.resolve({
+      id: "root",
+      children: graph.children.map((child, i) => ({ ...child, x: i * 100, y: 0 })),
+    }),
+  dispose: () => Promise.resolve(),
+};
+let layoutEngineImpl: MockLayoutEngine = defaultLayoutEngine;
+function setLayoutEngineImpl(impl: MockLayoutEngine) {
+  layoutEngineImpl = impl;
+}
 mock.module("@/components/schema-diagram/layout-engine", () => ({
   createLayoutEngine: () => ({
-    layout: (graph: { children: Array<{ id: string }> }) =>
-      Promise.resolve({
-        id: "root",
-        children: graph.children.map((child, i) => ({ ...child, x: i * 100, y: 0 })),
-      }),
-    dispose: () => Promise.resolve(),
+    layout: (graph: { children: Array<{ id: string }> }) => layoutEngineImpl.layout(graph),
+    dispose: () => layoutEngineImpl.dispose(),
   }),
 }));
 
@@ -302,6 +315,7 @@ describe("SchemaDiagram", () => {
     mockToastError.mockClear();
     capturedStyles = null;
     mockUpdateNodeInternals.mockClear();
+    setLayoutEngineImpl(defaultLayoutEngine);
     mockSnapdom.mockImplementation((el: unknown, _options?: Record<string, unknown>) => {
       const root = el as HTMLElement;
       const viewport = root.querySelector<HTMLElement>(".react-flow__viewport");
@@ -565,6 +579,17 @@ describe("SchemaDiagram", () => {
 
   test("shows no-FK warning when schema has no foreign keys", () => {
     const props = createDefaultProps({ schema: schemaNoFK });
+    const { container } = render(<SchemaDiagram {...props} />);
+    const view = within(container);
+
+    expect(view.queryByText(/No FK data available/)).not.toBeNull();
+    // schemaNoFK produces no heuristic edges either - the message must not
+    // claim dashed relationships are being shown.
+    expect(view.queryByText(/heuristic relationships/)).toBeNull();
+  });
+
+  test("warning mentions dashed heuristic edges only when some are displayed", () => {
+    const props = createDefaultProps({ schema: schemaHeuristic });
     const { container } = render(<SchemaDiagram {...props} />);
     const view = within(container);
 
@@ -1315,6 +1340,55 @@ describe("SchemaDiagram", () => {
         await new Promise((r) => setTimeout(r, 20));
       });
       expect(mockUpdateNodeInternals.mock.calls.length).toBeGreaterThan(callsBefore);
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // Layout failure behavior
+  // ═══════════════════════════════════════════════════════════════════════
+
+  describe("Layout failure", () => {
+    const wideTable: TableSchema[] = [
+      {
+        name: "wide",
+        columns: Array.from({ length: 30 }, (_, i) => ({
+          name: `col_${i}`,
+          type: "integer",
+          nullable: true,
+          isPrimary: i === 0,
+        })),
+        indexes: [],
+        foreignKeys: [],
+        rowCount: 1,
+      },
+    ];
+
+    test("a failed (null) layout is not retried on cosmetic rebuilds", async () => {
+      let layoutCalls = 0;
+      setLayoutEngineImpl({
+        layout: () => {
+          layoutCalls++;
+          return Promise.resolve(null);
+        },
+        dispose: () => Promise.resolve(),
+      });
+
+      const props = createDefaultProps({ schema: wideTable });
+      const { container } = render(<SchemaDiagram {...props} />);
+      const view = within(container);
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 20));
+      });
+      expect(layoutCalls).toBe(1);
+
+      // Expanding a table changes graph identity but not structure - the
+      // known-failed layout must not rerun (no spinner churn).
+      fireEvent.click(view.getByText(/\+\d+ more/));
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 20));
+      });
+      expect(layoutCalls).toBe(1);
+      expect(view.queryByText("col_29")).not.toBeNull();
     });
   });
 
