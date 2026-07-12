@@ -43,10 +43,10 @@ annotations:
     - name: Source
       url: https://github.com/libredb/libredb-studio
   artifacthub.io/changes: |
-    - Expand values.schema.json coverage (serviceAccount, pod/container security contexts, imagePullSecrets, tolerations, affinity, topologySpreadConstraints, networkPolicy, service/persistence annotations, ingress hosts/tls, persistence accessModes, extraEnv/extraEnvFrom, podDisruptionBudget.maxUnavailable)
-    - Machine-enforce the documented jwtSecret length in values.schema.json - empty (zero-config) or at least 32 characters
-    - PodDisruptionBudget - an explicit minAvailable 0 now renders; minAvailable/maxUnavailable are mutually exclusive and exactly one is required when the PDB is enabled
-    - Autoscaling - the HPA is no longer rendered when the effective storage provider is sqlite (single-writer); the deployment falls back to replicaCount and the install notes warn
+    - "Expand values.schema.json coverage (serviceAccount, pod/container security contexts, imagePullSecrets, tolerations, affinity, topologySpreadConstraints, networkPolicy, service/persistence annotations, ingress hosts/tls, persistence accessModes, extraEnv/extraEnvFrom, podDisruptionBudget.maxUnavailable)"
+    - "Machine-enforce the documented jwtSecret length in values.schema.json - empty (zero-config) or at least 32 characters"
+    - "PodDisruptionBudget - an explicit minAvailable 0 now renders; minAvailable/maxUnavailable are mutually exclusive and exactly one is required when the PDB is enabled"
+    - "Autoscaling - the HPA is no longer rendered when the effective storage provider is sqlite (single-writer); the deployment falls back to replicaCount and the install notes warn"
 dependencies:
   - name: postgresql
     version: "16.x.x"

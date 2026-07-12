@@ -59,6 +59,38 @@ export function bumpPatch(version) {
 }
 
 /**
+ * ArtifactHub refuses to index a chart version whose artifacthub.io/changes entries
+ * contain any of {}:[],&*#?|-<>=!%@ unquoted ("error preparing package ... invalid
+ * changes annotation"); released 0.1.1 and 0.1.9-0.1.11 are missing from the AH
+ * listing for exactly this reason. House style therefore requires every entry to be
+ * a double-quoted plain string, which sidesteps the character list entirely.
+ * Continuation lines (deeper indentation) are not entries and are ignored.
+ *
+ * @param {string} chartYaml
+ * @returns {string[]} violation messages (empty = clean or annotation absent)
+ */
+export function checkChangesAnnotation(chartYaml) {
+  const violations = [];
+  const block = chartYaml.match(/^ {2}artifacthub\.io\/changes: \|\n((?: {4}.*\n?)*)/m);
+  if (!block) {
+    return violations;
+  }
+  for (const raw of block[1].split("\n")) {
+    if (!/^ {4}- /.test(raw)) {
+      continue;
+    }
+    const entry = raw.trim();
+    if (!/^- "[^"]*"$/.test(entry)) {
+      violations.push(
+        `${CHART_YAML}: artifacthub.io/changes entry must be a double-quoted string ` +
+          `(ArtifactHub refuses unquoted {}:[],&*#?|-<>=!%@ and skips the whole chart version): ${entry}`,
+      );
+    }
+  }
+  return violations;
+}
+
+/**
  * The released-version check only matters when the appVersion changed against the base
  * AND the chart version moved off the base's (otherwise the chart-releaser violation
  * covers it). Shared by checkSync() and main() so the gating cannot drift (#151).
@@ -95,6 +127,7 @@ export function checkSync({ pkgVersion, chartYaml, readme, baseChart = null, cha
   if (imageTag !== appVersion) {
     violations.push(`${CHART_YAML}: artifacthub.io/images tag '${imageTag}' does not equal appVersion '${appVersion}'`);
   }
+  violations.push(...checkChangesAnnotation(chartYaml));
   const readmeVersion = parseReadmeVersion(readme);
   if (readmeVersion !== version) {
     violations.push(`${CHART_README}: --version example '${readmeVersion}' does not equal chart version '${version}'`);
@@ -133,8 +166,8 @@ export function applyBump({ pkgVersion, chartYaml, readme }) {
     .replace(/^(\s*image:\s*ghcr\.io\/libredb\/libredb-studio:)\S+/gm, `$1${pkgVersion}`);
   if (appVersion !== pkgVersion) {
     newChartYaml = newChartYaml.replace(
-      /- Track app release .*/,
-      `- Track app release ${pkgVersion} (appVersion bump; default image tag follows)`,
+      /- "?Track app release .*/,
+      `- "Track app release ${pkgVersion} (appVersion bump; default image tag follows)"`,
     );
   }
   const newReadme = readme.replace(/--version\s+\S+/g, `--version ${newVersion}`);

@@ -13,6 +13,7 @@ import { join } from "node:path";
 import {
   applyBump,
   bumpPatch,
+  checkChangesAnnotation,
   checkSync,
   parseChart,
   parseImageTag,
@@ -43,7 +44,7 @@ annotations:
       platforms:
         - linux/amd64
   artifacthub.io/changes: |
-    - Track app release ${appVersion} (appVersion bump; default image tag follows)
+    - "Track app release ${appVersion} (appVersion bump; default image tag follows)"
 dependencies:
   - name: postgresql
     version: "16.x.x"
@@ -102,6 +103,46 @@ describe("parseReadmeVersion", () => {
   test("throws when duplicated --version examples disagree instead of silently using the first (#151)", () => {
     const dup = `${readme()}helm upgrade libredb libredb/libredb-studio --version 0.1.2\n`;
     expect(() => parseReadmeVersion(dup)).toThrow(/disagree/);
+  });
+});
+
+describe("checkChangesAnnotation", () => {
+  // ArtifactHub refuses to index a chart version whose artifacthub.io/changes
+  // entries contain any of {}:[],&*#?|-<>=!%@ unquoted - released 0.1.1 and
+  // 0.1.9-0.1.11 are missing from the AH listing for exactly this reason.
+  test("quoted entries are clean", () => {
+    expect(checkChangesAnnotation(chartYaml())).toEqual([]);
+  });
+
+  test("an unquoted entry is a violation naming the offending line", () => {
+    const unquoted = chartYaml().replace(
+      /- "Track app release .*/,
+      "- Default install is now zero-config: no values needed",
+    );
+    const violations = checkChangesAnnotation(unquoted);
+    expect(violations.length).toBe(1);
+    expect(violations[0]).toContain("artifacthub.io/changes");
+    expect(violations[0]).toContain("zero-config");
+  });
+
+  test("a half-quoted entry is a violation", () => {
+    const half = chartYaml().replace(/- "Track app release .*/, '- "Unterminated quote entry');
+    expect(checkChangesAnnotation(half).length).toBe(1);
+  });
+
+  test("a chart without a changes annotation is clean", () => {
+    const noChanges = chartYaml().replace(/  artifacthub\.io\/changes: \|\n(?: {4}.*\n)*/, "");
+    expect(noChanges).not.toContain("artifacthub.io/changes");
+    expect(checkChangesAnnotation(noChanges)).toEqual([]);
+  });
+
+  test("checkSync surfaces changes-annotation violations", () => {
+    const unquoted = chartYaml().replace(
+      /- "Track app release .*/,
+      "- Refuse zero-config installs with replicaCount > 1",
+    );
+    const violations = checkSync({ pkgVersion: "0.9.44", chartYaml: unquoted, readme: readme() });
+    expect(violations.some((v) => v.includes("artifacthub.io/changes"))).toBe(true);
   });
 });
 
@@ -196,7 +237,7 @@ describe("applyBump", () => {
     expect(result.appVersion).toBe("0.9.45");
     expect(result.chartYaml).toContain('appVersion: "0.9.45"');
     expect(result.chartYaml).toContain("image: ghcr.io/libredb/libredb-studio:0.9.45");
-    expect(result.chartYaml).toContain("- Track app release 0.9.45 (appVersion bump; default image tag follows)");
+    expect(result.chartYaml).toContain('- "Track app release 0.9.45 (appVersion bump; default image tag follows)"');
     expect(result.readme).toContain("--version 0.1.4");
     expect(checkSync({ pkgVersion: "0.9.45", chartYaml: result.chartYaml, readme: result.readme })).toEqual([]);
   });
@@ -210,13 +251,23 @@ describe("applyBump", () => {
 
   test("hand-written changes line is preserved when only the image tag drifted", () => {
     const custom = chartYaml({ imageTag: "0.9.43" }).replace(
-      /- Track app release .*/,
-      "- Hand-written chart-only changelog entry",
+      /- "Track app release .*/,
+      '- "Hand-written chart-only changelog entry"',
     );
     const result = applyBump({ pkgVersion: "0.9.44", chartYaml: custom, readme: readme() });
     expect(result.changed).toBe(true);
     expect(result.chartYaml).toContain("image: ghcr.io/libredb/libredb-studio:0.9.44");
-    expect(result.chartYaml).toContain("- Hand-written chart-only changelog entry");
+    expect(result.chartYaml).toContain('- "Hand-written chart-only changelog entry"');
+  });
+
+  test("rewrites a legacy unquoted Track line into the quoted form", () => {
+    const legacy = chartYaml().replace(
+      /- "Track app release .*/,
+      "- Track app release 0.9.44 (appVersion bump; default image tag follows)",
+    );
+    const result = applyBump({ pkgVersion: "0.9.45", chartYaml: legacy, readme: readme() });
+    expect(result.chartYaml).toContain('- "Track app release 0.9.45 (appVersion bump; default image tag follows)"');
+    expect(result.chartYaml).not.toContain("\n    - Track app release");
   });
 
   test("rewrites every duplicated image line and --version example, not just the first (#151)", () => {
