@@ -160,6 +160,33 @@ describe("buildGraph", () => {
     expect(edges[0].target).toBe("author");
   });
 
+  test("usedHeuristic is true when FK definitions exist but none are usable in the subset", () => {
+    // b HAS FK data, but it points outside the schema subset - the graph
+    // falls back to heuristic edges and must say so.
+    const a = makeTable(
+      "customer",
+      [{ name: "id", isPrimary: true }, { name: "region_id" }],
+      [{ columnName: "region_id", referencedTable: "regions", referencedColumn: "id" }],
+    );
+    const b = makeTable(
+      "invoices",
+      [{ name: "id", isPrimary: true }, { name: "customer_id" }],
+      [{ columnName: "customer_id", referencedTable: "archived_customers", referencedColumn: "id" }],
+    );
+    const { edges, usedHeuristic } = buildGraph([a, b], { compact: false });
+    expect(usedHeuristic).toBe(true);
+    expect(edges.length).toBe(1);
+    expect(edges[0].data?.heuristic).toBe(true);
+  });
+
+  test("usedHeuristic is false when the fallback finds no matches", () => {
+    const a = makeTable("alpha", [{ name: "id", isPrimary: true }]);
+    const b = makeTable("beta", [{ name: "id", isPrimary: true }]);
+    const { edges, usedHeuristic } = buildGraph([a, b], { compact: false });
+    expect(usedHeuristic).toBe(false);
+    expect(edges.length).toBe(0);
+  });
+
   test("does not add heuristic edges when a real FK exists anywhere", () => {
     const posts = makeTable("posts", [{ name: "id", isPrimary: true }, { name: "user_id" }]);
     const { edges, usedHeuristic } = buildGraph([users, orders, posts], { compact: false });

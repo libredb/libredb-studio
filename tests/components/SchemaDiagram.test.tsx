@@ -577,6 +577,35 @@ describe("SchemaDiagram", () => {
     expect(view.queryByText(/No FK data available/)).toBeNull();
   });
 
+  test("shows warning when FK data exists but the displayed graph is heuristic", () => {
+    // invoices HAS FK data, but it references a table outside the schema -
+    // the diagram falls back to dashed heuristic edges and must explain them.
+    const unusableFk: TableSchema[] = [
+      {
+        name: "customer",
+        columns: [{ name: "id", type: "integer", nullable: false, isPrimary: true }],
+        indexes: [],
+        foreignKeys: [],
+        rowCount: 1,
+      },
+      {
+        name: "invoices",
+        columns: [
+          { name: "id", type: "integer", nullable: false, isPrimary: true },
+          { name: "customer_id", type: "integer", nullable: false, isPrimary: false },
+        ],
+        indexes: [],
+        foreignKeys: [{ columnName: "customer_id", referencedTable: "archived_customers", referencedColumn: "id" }],
+        rowCount: 1,
+      },
+    ];
+    const props = createDefaultProps({ schema: unusableFk });
+    const { container } = render(<SchemaDiagram {...props} />);
+    const view = within(container);
+
+    expect(view.queryByText(/No FK data available/)).not.toBeNull();
+  });
+
   // ── Selected node info ──────────────────────────────────────────────────
 
   test("does not show selected node info by default", () => {
@@ -1018,7 +1047,9 @@ describe("SchemaDiagram", () => {
       // on the viewport child.
       expect(capturedEl.classList.contains("react-flow__viewport")).toBe(false);
       expect(options.backgroundColor).toBe("#050505");
-      expect(typeof options.scale).toBe("number");
+      // Desired scale is 2 for sharp output; capPixelRatio clamps it against
+      // browser canvas limits for huge diagrams (mocked bounds are small).
+      expect(options.scale).toBe(2);
       // Webfont embedding reads cssRules from every stylesheet; Monaco's
       // cross-origin CDN stylesheet makes that throw a SecurityError, so it
       // must stay off (the diagram uses system fonts anyway).

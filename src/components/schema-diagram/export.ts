@@ -8,6 +8,8 @@ export const MAX_CANVAS_AREA = 268_435_456;
 
 const EXPORT_BACKGROUND = "#050505";
 const EXPORT_PADDING = 32;
+// Desired capture sharpness; capPixelRatio clamps it for huge diagrams.
+const EXPORT_SCALE = 2;
 
 export function capPixelRatio(width: number, height: number, desired: number): number {
   return Math.min(
@@ -93,7 +95,7 @@ export interface ExportViewportOptions {
 export async function exportViewportImage(format: "png" | "svg", options: ExportViewportOptions): Promise<void> {
   const { viewport, bounds } = options;
   const layout = computeExportLayout(bounds);
-  const scale = capPixelRatio(layout.width, layout.height, 1);
+  const scale = capPixelRatio(layout.width, layout.height, EXPORT_SCALE);
   const { snapdom } = await import("@zumer/snapdom");
 
   // snapdom snapshots the live DOM, captures the target element's OWN box,

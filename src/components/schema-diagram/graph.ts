@@ -195,8 +195,11 @@ export function buildGraph(schema: TableSchema[], options: BuildGraphOptions): B
   const { sources, targets } = computeFkColumnMap(schema);
 
   const fkSpecs = collectFkEdgeSpecs(schema, tableSet);
-  const usedHeuristic = fkSpecs.length === 0 && schema.some((t) => (t.foreignKeys || []).length === 0);
   const specs = fkSpecs.length > 0 ? fkSpecs : collectHeuristicEdgeSpecs(schema);
+  // "Used" means the fallback actually produced displayed edges - FK
+  // definitions may exist yet be unusable (referencing tables outside the
+  // current subset), and that still counts as heuristic display.
+  const usedHeuristic = fkSpecs.length === 0 && specs.length > 0;
 
   // Heuristic edges also anchor rows, so fold them into the anchor sets.
   if (fkSpecs.length === 0) {
@@ -245,5 +248,5 @@ export function buildGraph(schema: TableSchema[], options: BuildGraphOptions): B
     };
   });
 
-  return { nodes, edges, edgeCount: edges.length, usedHeuristic: usedHeuristic && edges.length > 0 };
+  return { nodes, edges, edgeCount: edges.length, usedHeuristic };
 }
