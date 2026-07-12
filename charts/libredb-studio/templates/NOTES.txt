@@ -39,7 +39,7 @@ Configuration:
 {{- if .Values.postgresql.enabled }}
   PostgreSQL:       Built-in (subchart)
 {{- end }}
-{{- if .Values.autoscaling.enabled }}
+{{- if include "libredb-studio.autoscalingEnabled" . }}
   Autoscaling:      {{ .Values.autoscaling.minReplicas }}-{{ .Values.autoscaling.maxReplicas }} replicas
 {{- end }}
 
@@ -83,4 +83,12 @@ first start (stored in /app/data/auth-bootstrap.json).
 
 WARNING: SQLite storage with multiple replicas is not recommended.
 SQLite is a single-writer database. Consider using storageProvider=postgres for multi-replica setups.
+{{- end }}
+
+{{- if and (eq (include "libredb-studio.storageProvider" .) "sqlite") .Values.autoscaling.enabled }}
+
+WARNING: autoscaling.enabled is ignored with SQLite storage.
+SQLite is a single-writer database, so the HorizontalPodAutoscaler was not
+rendered and the deployment stays at replicaCount ({{ .Values.replicaCount }}).
+Use storageProvider=postgres for multi-replica setups.
 {{- end }}

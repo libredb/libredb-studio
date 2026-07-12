@@ -238,9 +238,10 @@ autoscaling:
 podDisruptionBudget:
   # -- Enable PodDisruptionBudget
   enabled: false
-  # -- Minimum available pods (mutually exclusive with maxUnavailable)
+  # -- Minimum available pods (mutually exclusive with maxUnavailable; unset the
+  # default with --set podDisruptionBudget.minAvailable=null when using maxUnavailable)
   minAvailable: 1
-  # -- Maximum unavailable pods
+  # -- Maximum unavailable pods (mutually exclusive with minAvailable)
   # maxUnavailable: 1
 
 # =============================================================================

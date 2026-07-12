@@ -13,7 +13,7 @@ metadata:
   labels:
     {{- include "libredb-studio.labels" . | nindent 4 }}
 spec:
-  {{- if not .Values.autoscaling.enabled }}
+  {{- if not (include "libredb-studio.autoscalingEnabled" .) }}
   replicas: {{ .Values.replicaCount }}
   {{- end }}
   selector:

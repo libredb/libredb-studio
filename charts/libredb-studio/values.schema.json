@@ -25,6 +25,19 @@
         }
       }
     },
+    "imagePullSecrets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Name of the image pull Secret"
+          }
+        }
+      },
+      "description": "Image pull secrets for private registries"
+    },
     "authProvider": {
       "type": "string",
       "enum": ["local", "oidc"],
@@ -39,7 +52,8 @@
         },
         "jwtSecret": {
           "type": "string",
-          "description": "JWT signing secret (min 32 chars)"
+          "anyOf": [{ "maxLength": 0 }, { "minLength": 32 }],
+          "description": "JWT signing secret: empty (zero-config bootstrap generates one on first start) or at least 32 characters"
         },
         "adminEmail": {
           "type": "string",
@@ -149,6 +163,17 @@
         "storageClassName": {
           "type": "string",
           "description": "Storage class name"
+        },
+        "accessModes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "PVC access modes"
+        },
+        "annotations": {
+          "type": "object",
+          "description": "Annotations for the PVC"
         }
       }
     },
@@ -167,6 +192,10 @@
         "targetPort": {
           "type": "integer",
           "description": "Container target port"
+        },
+        "annotations": {
+          "type": "object",
+          "description": "Service annotations"
         }
       }
     },
@@ -180,6 +209,57 @@
         "className": {
           "type": "string",
           "description": "Ingress class name"
+        },
+        "hosts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "host": {
+                "type": "string",
+                "description": "Hostname"
+              },
+              "paths": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "path": {
+                      "type": "string",
+                      "description": "URL path"
+                    },
+                    "pathType": {
+                      "type": "string",
+                      "enum": ["Prefix", "Exact", "ImplementationSpecific"],
+                      "description": "Kubernetes path type"
+                    }
+                  }
+                },
+                "description": "Paths for this host"
+              }
+            }
+          },
+          "description": "Ingress hosts"
+        },
+        "tls": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "secretName": {
+                "type": "string",
+                "description": "TLS certificate Secret name"
+              },
+              "hosts": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Hostnames covered by the certificate"
+              }
+            }
+          },
+          "description": "Ingress TLS configuration"
         }
       }
     },
@@ -224,9 +304,98 @@
         "minAvailable": {
           "type": "integer",
           "minimum": 0,
-          "description": "Minimum available pods"
+          "description": "Minimum available pods (mutually exclusive with maxUnavailable; unset with null when using maxUnavailable)"
+        },
+        "maxUnavailable": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Maximum unavailable pods (mutually exclusive with minAvailable)"
         }
       }
+    },
+    "serviceAccount": {
+      "type": "object",
+      "properties": {
+        "create": {
+          "type": "boolean",
+          "description": "Create a ServiceAccount"
+        },
+        "annotations": {
+          "type": "object",
+          "description": "ServiceAccount annotations (e.g., for IRSA or Workload Identity)"
+        },
+        "name": {
+          "type": "string",
+          "description": "ServiceAccount name (auto-generated if empty)"
+        },
+        "automountServiceAccountToken": {
+          "type": "boolean",
+          "description": "Automount API credentials"
+        }
+      }
+    },
+    "podSecurityContext": {
+      "type": "object",
+      "description": "Pod-level security context (Kubernetes PodSecurityContext)"
+    },
+    "securityContext": {
+      "type": "object",
+      "description": "Container-level security context (Kubernetes SecurityContext)"
+    },
+    "tolerations": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      },
+      "description": "Tolerations (Kubernetes Toleration objects)"
+    },
+    "affinity": {
+      "type": "object",
+      "description": "Affinity rules (Kubernetes Affinity)"
+    },
+    "topologySpreadConstraints": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      },
+      "description": "Topology spread constraints (Kubernetes TopologySpreadConstraint objects)"
+    },
+    "networkPolicy": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Enable NetworkPolicy"
+        },
+        "additionalIngress": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          },
+          "description": "Additional ingress rules"
+        },
+        "additionalEgress": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          },
+          "description": "Additional egress rules"
+        }
+      }
+    },
+    "extraEnv": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      },
+      "description": "Additional environment variables (Kubernetes EnvVar objects)"
+    },
+    "extraEnvFrom": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      },
+      "description": "Additional envFrom references (Kubernetes EnvFromSource objects)"
     },
     "postgresql": {
       "type": "object",

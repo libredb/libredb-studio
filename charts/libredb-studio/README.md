@@ -40,7 +40,7 @@ helm install libredb libredb/libredb-studio \
 
 ```bash
 helm install libredb oci://ghcr.io/libredb/charts/libredb-studio \
-  --version 0.1.11 \
+  --version 0.1.12 \
   --set secrets.jwtSecret=$(openssl rand -base64 32) \
   --set secrets.adminPassword=MyAdmin123
 ```
@@ -63,6 +63,8 @@ helm install libredb libredb/libredb-studio \
 ```
 
 > **Note:** SQLite is single-writer. Do not use with multiple replicas.
+> With SQLite storage `autoscaling.enabled` is ignored: the HPA is not rendered
+> (a warning appears in the install notes) and the deployment stays at `replicaCount`.
 
 ### PostgreSQL (built-in subchart)
 
@@ -205,7 +207,7 @@ helm uninstall libredb
 | `image.pullPolicy` | Pull policy | `IfNotPresent` |
 | `authProvider` | Auth mode: local or oidc | `local` |
 | `config.authBootstrap` | Auth bootstrap: `""` (zero-config, app default), `on` (explicit zero-config), `off` (strict) | `""` |
-| `secrets.jwtSecret` | JWT signing secret | `""` |
+| `secrets.jwtSecret` | JWT signing secret: empty (zero-config) or >= 32 chars (schema-enforced) | `""` |
 | `secrets.adminEmail` | Admin email | `admin@libredb.org` |
 | `secrets.adminPassword` | Admin password | `""` |
 | `secrets.userEmail` | User email | `user@libredb.org` |
@@ -218,10 +220,12 @@ helm uninstall libredb
 | `service.type` | Service type | `ClusterIP` |
 | `service.port` | Service port | `80` |
 | `ingress.enabled` | Enable Ingress | `false` |
-| `autoscaling.enabled` | Enable HPA | `false` |
+| `autoscaling.enabled` | Enable HPA (ignored with SQLite storage: single-writer) | `false` |
 | `autoscaling.minReplicas` | Min replicas | `2` |
 | `autoscaling.maxReplicas` | Max replicas | `10` |
 | `podDisruptionBudget.enabled` | Enable PDB | `false` |
+| `podDisruptionBudget.minAvailable` | Min available pods (set only one of minAvailable/maxUnavailable) | `1` |
+| `podDisruptionBudget.maxUnavailable` | Max unavailable pods (unset minAvailable with `null` to use) | unset |
 | `networkPolicy.enabled` | Enable NetworkPolicy | `false` |
 | `postgresql.enabled` | Deploy PostgreSQL subchart | `false` |
 

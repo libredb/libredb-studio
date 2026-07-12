@@ -776,3 +776,71 @@ Rules:
 - Next: #45 (chart hardening, four gaps, one commit WITH `bun run chart:bump`), per the plan —
   deliberately ordered after this task so the merge-base comparison protects #45's version bump
   from a false-positive `chart:check` if a release merges to main mid-loop.
+
+### 2026-07-12 — #45 Helm chart hardening: schema coverage, jwtSecret length, PDB zero-value, HPA-vs-sqlite (DONE)
+
+- Triage (step 0f): #94 remains the only `loop:needs-info`; its thread still contains only the
+  loop's own clarifying question (2026-07-12T01:55:40Z) — no reply to evaluate.
+- Tests first: new `tests/unit/helm-chart-hardening.test.ts`, 28 cases following the real-helm
+  render convention (#136/#137 precedent: spawn `helm template` against the actual chart, parse
+  the multi-doc YAML). Watched RED: 22 fail / 6 pass, the 6 passes being exactly the planned
+  controls/pinning cases (empty/32-char jwt renders, valid-values render, maxUnavailable-only
+  pinning, non-sqlite HPA control) plus `service.annotations`, which already fails today at
+  helm's YAML-unmarshal stage (metadata.annotations must be a map) rather than schema
+  validation — recorded; the schema now catches it earlier and properly.
+- Test-design research (recorded so later iterations need not re-derive): verified empirically
+  on a scratch chart that helm validates values.schema.json against the COALESCED values and
+  that a wrong-typed whole-key override (scalar over a map/array default) reaches schema
+  validation instead of being dropped by coalescing — this is what makes the wrong-typed
+  probes real. Failure assertions check exit code + offending key name only, because helm 3
+  and helm 4 schema-error formats differ (local helm is v4; CI ubuntu-latest may ship v3).
+- Built (all four gaps, one commit): (1) schema coverage for every listed key in the schema's
+  existing permissive per-key style — deliberately NO `additionalProperties: false` (would
+  break postgresql-subchart passthrough values and any user extra key; not in the bar);
+  (2) jwtSecret `anyOf: [{maxLength: 0}, {minLength: 32}]` — empty stays valid for the
+  zero-config default (the spec's verified trap); (3) pdb.yaml: `kindIs "invalid"` nil-checks
+  so `minAvailable: 0` renders, plus template-level `fail` for both-set AND neither-set
+  (exactly-one semantics); (4) new `libredb-studio.autoscalingEnabled` helper
+  (autoscaling.enabled AND effective storage != sqlite, via the existing storageProvider
+  helper so the postgresql auto-switch keeps its HPA) gating hpa.yaml, the deployment replicas
+  fallback (sqlite+autoscaling now renders an explicit `replicas: {{ replicaCount }}`), and
+  the NOTES autoscaling status line, plus a NOTES WARNING block following the existing
+  sqlite-multi-replica warning convention.
+- DECISION — HPA-vs-sqlite resolved as skip-rendering-with-NOTES-warning (the plan's
+  pre-recorded choice, more conservative than clamping maxReplicas): no HPA plus an explicit
+  single-replica deployment cannot scale writes, while a clamped HPA would still imply
+  autoscaling works with sqlite. Warning text verified via `helm install --dry-run=client`.
+- DECISION — PDB mutual exclusivity enforced by a template `fail`, not JSON-Schema `not`:
+  values.yaml defaults minAvailable to 1, so a user setting maxUnavailable ALWAYS has both set
+  after coalescing; the fail message can teach the escape hatch
+  (`--set podDisruptionBudget.minAvailable=null`) where a schema violation cannot.
+  maxUnavailable typed integer (minimum 0) to match the existing minAvailable typing —
+  percentage strings (valid in k8s) stay unsupported for both, consistent with the
+  pre-existing schema.
+- DECISION — hand-bumped chart version 0.1.11 -> 0.1.12 + README `--version` example:
+  `bun run chart:bump` reports "already in sync" for chart-content-only changes (applyBump
+  only moves the version when appVersion drifts from package.json), so the plan's "use
+  chart:bump" instruction is not executable here; the hand bump preserves every invariant the
+  script checks (`bun run chart:check` green; appVersion untouched at 0.9.52).
+  `artifacthub.io/changes` rewritten for 0.1.12 per the per-release convention.
+- loop-reviewer verdict: PASS WITH NOTES (4 LOW; 1 applied, 3 accepted). The reviewer
+  independently reconstructed the pre-change chart and confirmed all four gaps reproduce on it
+  and are fixed by this diff. Applied: HPA control assertion `toBe(10)` ->
+  `toBeGreaterThan(1)` (pins the invariant, not the values.yaml default). Accepted with
+  reasons: (a) deployment.yaml's pre-existing zero-config guard still keys on raw
+  `autoscaling.enabled`, so its "breaks sessions across replicas" message is slightly stale
+  for the sqlite case (conservatively safe fail; editing a pre-existing guard is outside this
+  task's scope — flagged for a human follow-up); (b) probe assertions check exit code +
+  top-level key name only (deliberate helm 3/4 robustness); (c) a neither-set PDB now fails
+  the render instead of producing an API-invalid PDB (intended exactly-one semantics,
+  documented in README and the changes annotation).
+- KNOWN LIMITATION (recorded): the schema still lacks `additionalProperties`, so unknown/typo
+  keys pass silently — pre-existing, explicitly outside the spec's bar. The NOTES warning is
+  install/upgrade-time only (`helm template` output cannot show NOTES); the render-level test
+  pins the HPA absence, which is the enforceable bar.
+- Gate (final tree, after applying the reviewer note): format clean (491 files), lint 0 errors
+  (58 pre-existing warnings, none in touched files), typecheck OK, all 18 test groups pass
+  (0 fail; main unit/api/integration group 2342, was 2314; +28), build OK,
+  `helm lint charts/libredb-studio --strict` clean, `bun run chart:check` green
+  (chart 0.1.12 / appVersion 0.9.52).
+- Next: #124 (standalone payload deny-list prune), per the plan.

@@ -99,7 +99,7 @@
     required CI gate and must stay green on the real repo throughout; no chart content
     changes, so no Chart.yaml version bump.
 
-- [ ] **#45** — chart hardening, all four verified gaps, one commit, WITH a Chart.yaml version
+- [x] **#45** — chart hardening, all four verified gaps, one commit, WITH a Chart.yaml version
   bump (chart content changes; repo rule — a charts/** merge without a bump corrupts the
   released chart index). Use `bun run chart:bump` for the bump (keeps the chart README
   `--version` example and appVersion in sync) and keep `helm lint charts/libredb-studio

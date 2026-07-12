@@ -127,6 +127,19 @@ If postgresql subchart is enabled and storageProvider is "local", auto-switch to
 {{- end }}
 
 {{/*
+Determine if autoscaling is effectively enabled. SQLite storage is
+single-writer, so a multi-replica HPA would corrupt the shared database
+file: autoscaling.enabled is ignored (the HPA is not rendered and the
+deployment falls back to replicaCount) when the effective storage provider
+is sqlite. NOTES.txt warns when this happens.
+*/}}
+{{- define "libredb-studio.autoscalingEnabled" -}}
+{{- if and .Values.autoscaling.enabled (ne (include "libredb-studio.storageProvider" .) "sqlite") }}
+{{- true }}
+{{- end }}
+{{- end }}
+
+{{/*
 Return the full image reference (repository:tag)
 */}}
 {{- define "libredb-studio.image" -}}
