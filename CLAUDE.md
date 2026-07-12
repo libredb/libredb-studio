@@ -47,7 +47,7 @@ bun run attw             # validate published type-resolution against the packed
 
 ## Pre-Commit Verification (MANDATORY)
 
-After every code change, run all five locally before claiming done — they match CI (`ci.yml`, `docker-build-push.yml`): `bun run format` · `bun run lint` · `bun run typecheck` · `bun run test` · `bun run build`. A local pass guarantees CI passes; do not skip any. (`bun run lint` runs oxlint then ESLint; the CI `lint-and-build` job additionally runs `build:lib` + `attw`.)
+After every code change, run all six locally before claiming done — they match CI (`ci.yml`, `docker-build-push.yml`): `bun run format` · `bun run lint` · `bun run typecheck` · `bun run knip` · `bun run test` · `bun run build`. A local pass guarantees CI passes; do not skip any. (`bun run lint` runs oxlint then ESLint; `knip` fails on unused files/exports/dependencies; the CI `lint-and-build` job additionally runs `build:lib` + `attw`.)
 
 ## Architecture
 
