@@ -119,10 +119,93 @@
   the more conservative choice and record the decision in PROGRESS.md.
 - Deliberately not carried over: none — the issue lists tasks in prose with no commands or URLs.
 
+### #96 — Results area: one formatter for every value shape; JSON/document values unreadable in the detail sheet (QUEUED 2026-07-12)
+
+- Author association: repo maintainer (issue-body field not retrievable this iteration — see the
+  #126 note; the same account's comments elsewhere carry MEMBER).
+- Problem (own words): every result value renders through a single formatter switch that
+  compact-stringifies objects and stringifies everything else, and the row detail sheet prints
+  each field inside a normal-whitespace paragraph with break-all — so a pretty-printed JSON
+  string collapses back into one long unreadable line. There is no extension point for richer
+  value shapes (JSON documents, KV rows): adding one today means growing the central switch.
+  Verified: no renderer modules exist under the results-grid component tree (only ResultCard,
+  RowDetailSheet, StatsBar, utils).
+- Evidence in code: `src/components/results-grid/utils.ts:1-23` (the entire formatter —
+  null/object/number/boolean/string branches; objects compact-stringified at lines 6-8);
+  `src/components/results-grid/RowDetailSheet.tsx:126-134` (field value rendered in a
+  `font-mono text-xs break-all` paragraph with default white-space, which collapses newlines);
+  grid call sites `src/components/ResultsGrid.tsx:330,341,534-535`.
+- Acceptance bar (testable): (1) a value classifier (kinds at least: null, scalar, json) with
+  unit tests across null/undefined, string/number/boolean, object/array, JSON-parseable string,
+  and non-JSON string inputs; (2) scalar parity — existing grid/detail-sheet tests stay green
+  and the formatter's output for null/scalar inputs is pinned identical to today by a unit
+  test; (3) a json-kind value renders in the detail sheet as a pretty-printed,
+  whitespace-preserving monospace block (component test asserts newlines/indentation survive)
+  while the grid cell keeps a compact single line; (4) adding a renderer requires only a new
+  module plus a registry entry, and the rendering layer contains no connection-type
+  conditionals (greppable); (5) masking short-circuits before renderer selection — masked
+  fields still render the mask string and existing masking tests stay green.
+- Approach hint (verified against current code): keep the formatter's exported name and
+  signature so the `ResultsGrid.tsx` call sites need no changes; only `RowDetailSheet` gains a
+  detail-render path. Phase-1 scope only: a pretty preformatted block, NO new dependencies (a
+  collapsible JSON tree would need one, and dependency additions are a human decision —
+  escalate instead if it turns out to be required). These components ship inside the
+  `@libredb/studio` npm package: `.claude/rules/platform-integration.md` applies (standard
+  twMerge-safe Tailwind text classes only; `strokeWidth={1.5}` on any Lucide icon) and
+  `build:lib` must be run as part of the change.
+- Deliberately not carried over: the issue contains a TypeScript interface sketch and a
+  proposed module layout in code blocks — not reproduced here; the acceptance bar above was
+  restated from code reading, and build mode should derive the module structure from repo
+  conventions, treating the issue's sketch as evidence only.
+
+### #124 — Standalone payload ships repo-root extras pulled in by output file tracing (QUEUED 2026-07-12)
+
+- Author association: repo maintainer (field not retrievable this iteration; see #126 note).
+- Problem (own words): the standalone payload is assembled by copying the whole
+  `.next/standalone` tree, and the Next config declares no output-file-tracing excludes, so
+  the build's dependency tracing drags non-runtime repo-root content (docs, charts, e2e,
+  lockfile, deploy manifests, agent config) into every payload-derived artifact — release
+  tarballs, deb/rpm, snap, and the npx cache. Verified structurally (no excludes configured;
+  wholesale copy) and empirically by the previous milestone: the #133 iteration's real
+  `tar tzf` listing recorded `fly.toml`, `docs/`, `scripts/` and other repo-root extras inside
+  the payload, and that entry's KNOWN LIMITATION explicitly deferred this issue
+  (`loop/PROGRESS.md`, #133 entry).
+- Evidence in code: `next.config.ts:1-31` (no `outputFileTracingExcludes` key exists);
+  `scripts/build-standalone-payload.sh:109` (wholesale `.next/standalone` copy into the
+  payload) and lines 110-115 (the script already prunes exactly one traced-in hazard — local
+  `data/` dev databases — proving the trace-pulls-extras mechanism is real and already
+  partially worked around).
+- Acceptance bar (testable): (1) a deny-list prune step runs during payload assembly, covered
+  by a test in the existing packaging-test convention (spawn the real script or a real helper
+  against a fixture payload dir seeded with planted extras; assert the extras are gone and a
+  keep-list — server.js, `.next/static`, `public`, `node_modules/better-sqlite3`,
+  `node_modules/@libredb/libredb` — survives); (2) a real full build's tarball listing
+  contains no `docs/`, `charts/`, `e2e/`, `tests/`, `CLAUDE.md`, `bun.lock`, `fly.toml`, or
+  docker-compose entries; (3) the script's `--smoke` self-test still passes (health endpoint
+  200) on the trimmed payload. The issue's rough size-reduction target is advisory, not the
+  bar.
+- Approach hint (verified): make the prune step in `scripts/build-standalone-payload.sh` the
+  enforced layer (single source for CI and local builds, fixture-testable); tracing excludes
+  in the Next config may additionally shrink the trace but cannot be unit-tested without a
+  full build, so they must not be the only mechanism. Do not touch the keep-list items the
+  script header documents (the better-sqlite3 native binding chain and `@libredb/libredb`,
+  which tracing cannot see). Downstream consumers (nfpm deb/rpm, snap) consume the extracted
+  payload as-is, so no workflow edits are needed — and none are allowed without escalation.
+  Snap gotcha on record: the hidden `.next` dir must stay explicitly staged (see the 0.9.52
+  fileset fix) — the prune must never remove dot-directories from the keep-list.
+- Deliberately not carried over: none — the issue lists proposals in prose with no commands,
+  URLs, or patches.
+
 ## Not for the loop
 
 Issues triaged as benign but not loop work (epics, tracking issues, other-repo work, human-owned
 release/infra chores, duplicates). One line each: `#<N> — reason`. This record is what stops the
 next triage iteration from re-processing them; they get no label and no comment.
 
-(empty)
+- #100 — consolidated tracking issue (toolchain follow-ups from #98); its acceptance requires
+  human actions on external dashboards the loop cannot and must not perform (dismissing CodeQL
+  alerts with by-design justifications, marking SonarCloud hotspots Safe). The jsx-a11y code
+  sub-scope is loop-shaped but would need a human to split it into its own issue first.
+- #108 — epic/tracking issue for distribution channels; all remaining work lives in child
+  issues (#114 already routed to moderator; #113 closed), the epic itself is human-owned
+  status tracking and gets closed by a human.

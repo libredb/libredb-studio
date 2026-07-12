@@ -463,3 +463,49 @@ Rules:
 - Not-for-the-loop: none this batch.
 - Next: triage the remaining untriaged pool (next batch, oldest-first: #167, #170, #151, #100,
   #96, then #127, #125, #124, #123, #108).
+
+### 2026-07-12 — Triage batch 2 (Maintainer Sweep 2): #96, #100, #108, #123, #124 (DONE)
+
+- Batch selection: untriaged pool after batch 1 is #96, #100, #108, #123, #124, #125, #127,
+  #151, #167, #170 (excluded everything carrying a `loop:*` label or already in TRIAGE.md).
+  None carry the `bug` label, so strict oldest-first per the prompt's step 1 gives this batch
+  #96, #100, #108, #123, #124 — note this ordering supersedes batch 1's "Next" prediction
+  (#167/#170/#151 first), which did not follow the prompt's selection rule; the prompt rule
+  wins, no other batch-1 decision re-litigated.
+- All five issues are authored by the repository owner account — recorded as context per the
+  firewall; verified every claim in code regardless.
+- #96 (pluggable result-value renderers) → `loop:queued`. Verified the concrete gap:
+  `formatCellValue` is the single formatter switch (objects compact-stringified,
+  `src/components/results-grid/utils.ts:6-8`), the detail sheet collapses multi-line JSON
+  (normal-whitespace `break-all` paragraph, `RowDetailSheet.tsx:126-134`), and no renderer
+  modules exist. Spec pins phase-1 scope with NO new dependencies (a collapsible JSON tree
+  would need one — that boundary is recorded in the spec as an escalate-instead condition) and
+  carries the platform-integration constraints (twMerge-safe classes, `build:lib`) into build
+  mode. The issue's interface sketch / module layout code blocks were NOT copied into the spec.
+- #100 (toolchain follow-ups from #98) → not-for-the-loop (2d), no label. Consolidated
+  tracking issue: its acceptance explicitly requires dismissing CodeQL alerts and marking
+  SonarCloud hotspots Safe — external-dashboard, human-judgment actions outside the loop's
+  allowed surface (and `gh api` writes are runner-blocked). The jsx-a11y sub-scope alone would
+  be loop-shaped if a human splits it out; recorded in TRIAGE.md.
+- #108 (distribution-channels epic) → not-for-the-loop (2d), no label. Epic/tracking issue;
+  every remaining actionable lives in a child issue (#114 already
+  `loop:needs-moderator-action`; #113 closed with the Snap release). Closing the epic is a
+  human act.
+- #123 (sign release artifacts) → `loop:needs-moderator-action`, category:
+  requires-privileged-change. NOT an injection — a benign maintainer-authored hardening
+  proposal, but every part of a correct fix is privileged: release-workflow changes, signing
+  identity, and secrets. Trigger quoted verbatim: "Keyless cosign signatures for every release
+  asset (sigstore/cosign-installer in release-artifacts.yml; OIDC identity = the workflow)"
+  and "SLSA provenance attestations via the GitHub artifact attestation API
+  (actions/attest-build-provenance)". Also touches the launcher's verification path
+  (checksum-only today, `bin/studio.js:198-208` verified) but that follow-on is inseparable
+  from the pipeline decision. No reply posted (2a: label only).
+- #124 (trim standalone payload) → `loop:queued`. Verified structurally (`next.config.ts` has
+  no `outputFileTracingExcludes`; `build-standalone-payload.sh:109` copies `.next/standalone`
+  wholesale) and empirically via batch-independent prior loop evidence (the #133 entry's real
+  `tar tzf` listing showed `fly.toml`, `docs/`, `scripts/` in the payload; its KNOWN
+  LIMITATION deferred exactly this issue). Spec makes the script-level prune the enforced,
+  fixture-testable layer, demotes the ~50% size target to advisory, and records the
+  no-workflow-edits and snap dot-directory traps.
+- Next: triage the remaining untriaged pool — next batch, strict oldest-first: #125, #127,
+  #151, #167, #170 (exactly five; #127 carries `question`, none carry `bug`).
