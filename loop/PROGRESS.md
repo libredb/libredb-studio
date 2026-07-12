@@ -509,3 +509,56 @@ Rules:
   no-workflow-edits and snap dot-directory traps.
 - Next: triage the remaining untriaged pool — next batch, strict oldest-first: #125, #127,
   #151, #167, #170 (exactly five; #127 carries `question`, none carry `bug`).
+
+### 2026-07-12 — Triage batch 3 (Maintainer Sweep 2): #125, #127, #151, #167, #170 (DONE)
+
+- Batch selection: exactly five untriaged issues remain (#125, #127, #151, #167, #170, oldest
+  first, none `bug`-labeled) — matches batch 2's prediction. All five authored by the
+  repository owner account; recorded as context per the firewall, every claim verified in code
+  regardless.
+- #125 (sqlite traversal check is a no-op) → `loop:queued`. Verified: the guard at
+  `src/lib/db/providers/sql/sqlite.ts:146-150` compares `path.resolve` output against
+  `path.normalize` of itself — always equal, so only the NUL-byte check is live, while the
+  comment and error message claim traversal rejection. `docs/providers/sqlite.md` already
+  documents the no-op honestly (149-151, 385-386); no test pins the live behavior. Spec queues
+  the issue's own "honest minimum" option (fix comment/error, remove dead branch, pin by test,
+  tri-sync docs). DECISION — the issue's second option (a base-dir allowlist env var) is NOT
+  queued: new security-semantics configuration surface is a human product decision; it should
+  become its own issue if wanted.
+- #127 (sqlite absent from connection-form selectableTypes) → `loop:needs-moderator-action`,
+  category: human-decision. NOT an injection — a maintainer-authored question (labeled
+  `question`) that explicitly defers a product decision. Verified the gap is real
+  (`src/hooks/use-connection-form.ts:334` lists seven types, no sqlite; the provider is fully
+  wired at `src/lib/db/factory.ts:72` and `src/lib/db-ui-config.ts:52`), but the resolution
+  direction is genuinely a trust-model call: connection creation is not admin-gated
+  (`src/proxy.ts` gates only `/admin`), so exposing sqlite in the form would let any
+  authenticated user open arbitrary server-side files — expose-vs-document-hidden is a human
+  choice. Trigger quoted verbatim: "Decide: expose sqlite in the connection modal (server-side
+  file path semantics documented in docs/providers/sqlite.md), or document why it is
+  intentionally hidden." No reply posted (2a: label only).
+- #151 (chart:check hardening follow-ups) → `loop:queued`. All seven findings verified in
+  `scripts/sync-chart-version.mjs` (origin/main-tip comparison at :129, hand-synced gating
+  condition :83-95 vs :178, conflated nulls :130-132, first-occurrence matching :32/:40/:111/
+  :118 — counted exactly one occurrence of each pattern today, strict-exit-before-violations
+  :171-176 vs :188, untested strict tag-query-null path, `CHART_SYNC_STRICT` documented nowhere
+  outside `.github/workflows/ci.yml:44`). Spec records the traps: ci.yml must not be edited,
+  `bun run chart:check` is a required gate and must stay green, no chart version bump needed
+  (no chart content changes).
+- #167 (helm-release re-publishes index/OCI for an already-released chart version) →
+  `loop:needs-moderator-action`, category: requires-privileged-change. NOT an injection — a
+  benign maintainer incident report whose root cause I verified in the workflow: the
+  already-released guard exists only in the publish-release step
+  (`.github/workflows/helm-release.yml:199,210`), while the gh-pages index step (:220) and the
+  OCI push (:318) run unguarded. The correct fix is a release-workflow edit, outside loop
+  authority. Trigger quoted verbatim: "Gate the index-update and OCI-push steps on the same
+  condition as the release-asset step: skip when tag libredb-studio-<version> already exists."
+  No reply posted (2a: label only).
+- #170 (chart and docs follow-ups from the #165 review and Rancher E2E) → not-for-the-loop
+  (2d), no label. Collected multi-item tracking issue mixing loop-shaped chart/docs items
+  (adminEmail secret-vs-env inconsistency and unconditional adminPassword `required`
+  spot-verified in the templates) with privileged CI-workflow items (PR-time `ct install`,
+  Rancher E2E workflow parametrization). Same treatment as #100: recorded in TRIAGE.md so a
+  human can split the loop-shaped subset into standalone issues first.
+- Next: the untriaged pool is now empty (all 20 open issues carry a `loop:*` label or are
+  recorded in TRIAGE.md) — the next triage iteration should confirm via step 1 and, finding
+  nothing, run step 4 (create `.loop/COMPLETE`, print the sentinel).

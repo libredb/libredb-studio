@@ -196,6 +196,83 @@
 - Deliberately not carried over: none — the issue lists proposals in prose with no commands,
   URLs, or patches.
 
+### #125 — sqlite path guard: dead traversal branch behind a comment that promises protection (QUEUED 2026-07-12)
+
+- Author association: repo maintainer (field not retrievable this iteration; see #126 note).
+- Problem (own words): the sqlite provider's path resolver claims — in a code comment and in the
+  thrown error message — to reject path traversal, but the guard compares `path.resolve` output
+  against `path.normalize` of that same output, which are always equal (resolve already
+  normalizes), so the traversal branch is dead and only the NUL-byte check is live. Under the
+  product trust model this is not a vulnerability (the sqlite path is deliberately a server-side
+  file path and pointing at arbitrary server files is the feature), but the code promises
+  protection it does not provide. The provider doc ALREADY documents the guard as a no-op
+  honestly; what is out of sync is the code comment/error message and the absence of any test
+  pinning the live behavior.
+- Evidence in code: `src/lib/db/providers/sql/sqlite.ts:146-150` (comment "reject path traversal
+  attempts"; unsatisfiable condition; error message says traversal is not allowed);
+  `docs/providers/sqlite.md:149-151` and `docs/providers/sqlite.md:385-386` (doc already flags
+  the no-op) plus the error-mapping row at `docs/providers/sqlite.md:297`;
+  `tests/integration/db/sqlite-provider.test.ts` has no case covering NUL bytes or traversal
+  paths (verified by grep).
+- Acceptance bar (testable): (1) an integration test pins actual behavior — a database path
+  containing a NUL byte throws `DatabaseConfigError`, and a relative path containing `..`
+  segments is accepted and resolves absolute (no rejection); (2) the dead comparison branch is
+  removed and neither the comment nor the error message claims traversal protection (grep of
+  `sqlite.ts` finds no traversal-rejection claim); (3) `docs/providers/sqlite.md` updated in the
+  same PR — the no-op warning becomes a statement of intended behavior (NUL rejection only;
+  sqlite paths are trusted server-side paths) and the error-table row matches the new message.
+  Provider tri-sync: code, doc, and test move together in one PR.
+- Approach hint: this is the issue's own "honest minimum" option. The issue's second option (a
+  base-dir allowlist environment variable restricting resolvable paths) is deliberately NOT
+  queued — new configuration surface with security semantics is a human product decision; if
+  wanted, it should become its own issue.
+- Deliberately not carried over: none — the issue contains no commands, URLs, or patches.
+
+### #151 — chart version-sync guard: merge-base comparison plus hardening polish (QUEUED 2026-07-12)
+
+- Author association: repo maintainer (field not retrievable this iteration; see #126 note).
+- Problem (own words) and evidence in code — the issue lists seven deferred findings on the
+  version-sync guard script; all verified in current code:
+  1. Base comparison reads main's Chart.yaml from the origin/main TIP
+     (`scripts/sync-chart-version.mjs:129`), not from the merge-base of HEAD and origin/main —
+     on a stale local branch, or a push build racing a just-merged release bump, the
+     already-released check can false-positive.
+  2. The tag-query gating condition is duplicated: `main()` computes it at
+     `scripts/sync-chart-version.mjs:178` and `checkSync()` re-derives the same nested condition
+     at `scripts/sync-chart-version.mjs:83-95` — hand-synced today.
+  3. `readBaseChart`'s catch-all (`scripts/sync-chart-version.mjs:130-132`) conflates
+     "origin/main not resolvable" with "main's Chart.yaml unparseable"; strict mode reports "not
+     resolvable" for both (`scripts/sync-chart-version.mjs:171-176`).
+  4. `parseImageTag` (`:32`), `parseReadmeVersion` (`:40`), and `applyBump`'s replacements
+     (`:111`, `:118`) match only the first occurrence. Verified fine today (exactly one image
+     line in Chart.yaml, one `--version` example in the chart README — counted), but a second
+     occurrence would silently drift.
+  5. In strict mode with unresolvable git state, the script exits before computing content
+     violations (`:171-176` runs before `:188`), so equality violations surface one CI re-run
+     later. The issue itself marks this optional.
+  6. The strict tag-query-null path (`:181-186`) is untested —
+     `tests/unit/sync-chart-version.test.ts` covers strict base-null (its test at line 209) but
+     not the resolvable-base/unreachable-remote strict path.
+  7. `CHART_SYNC_STRICT` appears only as a ci.yml env line (`.github/workflows/ci.yml:44`) — it
+     is not documented in `docs/HELM_CHART.md`.
+- Acceptance bar (testable): (1) a fixture repo whose origin/main has advanced past the branch
+  point with a released chart bump passes `--check` from the stale branch (fails today);
+  (2) the tag-query gating condition is defined once and shared by both call sites; (3) strict
+  mode emits distinct messages for missing-ref vs unparseable-Chart.yaml, each pinned by a
+  fixture test; (4) a chart fixture with two image-tag lines is either fully checked or fully
+  rewritten (no silent first-match-only drift), pinned by a unit test on the pure functions;
+  (5) the strict tag-query-null path gains a test (resolvable origin/main, unreachable remote);
+  (6) `docs/HELM_CHART.md` documents `CHART_SYNC_STRICT`. Problem item 5 is optional polish —
+  include only if it stays small.
+- Approach hint: the existing test file already spawns the real script against fixture git
+  repos (its `runCheck` helper) — extend that convention rather than reimplementing logic. No
+  chart content changes are involved, so no Chart.yaml version bump is needed. ci.yml must NOT
+  be edited (workflow edits are outside loop authority), and `bun run chart:check` must stay
+  green on the real repo throughout — this script is a required CI gate.
+- Deliberately not carried over: the issue contains one inline git command sketch for the
+  merge-base comparison — not reproduced; the acceptance bar restates the intent from code
+  reading.
+
 ## Not for the loop
 
 Issues triaged as benign but not loop work (epics, tracking issues, other-repo work, human-owned
@@ -209,3 +286,11 @@ next triage iteration from re-processing them; they get no label and no comment.
 - #108 — epic/tracking issue for distribution channels; all remaining work lives in child
   issues (#114 already routed to moderator; #113 closed), the epic itself is human-owned
   status tracking and gets closed by a human.
+- #170 — collected follow-ups/tracking issue from the #165 review and the Rancher E2E
+  validation: mixes loop-shaped chart/docs items (spot-verified: the adminEmail secret-key
+  vs env-gating inconsistency at `charts/libredb-studio/templates/secret.yaml:17` vs
+  `templates/deployment.yaml:70-75`; the unconditional `required` on adminPassword at
+  `templates/secret.yaml:3-4` regardless of authProvider) with CI-workflow items (PR-time
+  `ct install`, Rancher E2E workflow parametrization) that are privileged. Same treatment
+  as #100: a human should split the loop-shaped subset into standalone issues before the
+  loop takes them.
