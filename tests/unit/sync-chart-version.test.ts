@@ -136,6 +136,55 @@ describe("checkChangesAnnotation", () => {
     expect(checkChangesAnnotation(noChanges)).toEqual([]);
   });
 
+  test("CRLF line endings do not blind the check", () => {
+    const crlfClean = chartYaml().replace(/\n/g, "\r\n");
+    expect(checkChangesAnnotation(crlfClean)).toEqual([]);
+    const crlfUnquoted = chartYaml()
+      .replace(/- "Track app release .*/, "- Default install is now zero-config: no values needed")
+      .replace(/\n/g, "\r\n");
+    expect(checkChangesAnnotation(crlfUnquoted).length).toBe(1);
+  });
+
+  test("a reindented changes block is still checked", () => {
+    const reindented = [
+      "apiVersion: v2",
+      "name: libredb-studio",
+      "version: 0.1.3",
+      'appVersion: "0.9.44"',
+      "annotations:",
+      "    artifacthub.io/changes: |",
+      '        - "Quoted entry"',
+      "        - Unquoted entry with a dash - flagged",
+      "dependencies: []",
+      "",
+    ].join("\n");
+    const violations = checkChangesAnnotation(reindented);
+    expect(violations.length).toBe(1);
+    expect(violations[0]).toContain("Unquoted entry");
+  });
+
+  test("a changes key whose block cannot be parsed fails loudly instead of passing silently", () => {
+    // The guard's failure mode must never be silence: an inline (non-block)
+    // changes value means the extraction no longer understands the file.
+    const inline = chartYaml().replace(
+      /  artifacthub\.io\/changes: \|\n(?: {4}.*\n)*/,
+      '  artifacthub.io/changes: \'["entry"]\'\n',
+    );
+    const violations = checkChangesAnnotation(inline);
+    expect(violations.length).toBe(1);
+    expect(violations[0]).toContain("could not be parsed");
+  });
+
+  test("a multi-line folded entry is flagged once (house style: single-line quoted entries)", () => {
+    const continued = chartYaml().replace(
+      /- "Track app release .*/,
+      '- "A quoted entry\n      that folds onto a second line"',
+    );
+    const violations = checkChangesAnnotation(continued);
+    expect(violations.length).toBe(1);
+    expect(violations[0]).toContain("A quoted entry");
+  });
+
   test("checkSync surfaces changes-annotation violations", () => {
     const unquoted = chartYaml().replace(
       /- "Track app release .*/,

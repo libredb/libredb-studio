@@ -71,18 +71,37 @@ export function bumpPatch(version) {
  */
 export function checkChangesAnnotation(chartYaml) {
   const violations = [];
-  const block = chartYaml.match(/^ {2}artifacthub\.io\/changes: \|\n((?: {4}.*\n?)*)/m);
-  if (!block) {
+  // Normalize CRLF and guarantee a trailing newline so the block regex sees
+  // every line the same way regardless of checkout/editor settings.
+  let text = chartYaml.replace(/\r\n/g, "\n");
+  if (!text.endsWith("\n")) {
+    text += "\n";
+  }
+  if (!/^[ \t]*artifacthub\.io\/changes:/m.test(text)) {
     return violations;
   }
-  for (const raw of block[1].split("\n")) {
-    if (!/^ {4}- /.test(raw)) {
-      continue;
+  // Locate the block scalar independent of the key's indentation: its body is
+  // every following line indented deeper than the key (or blank). If the key
+  // exists but this extraction fails, the guard must fail LOUDLY - a silent
+  // pass here is exactly the failure mode this check exists to prevent.
+  const block = text.match(/^([ \t]*)artifacthub\.io\/changes:[ \t]*\|[^\n]*\n((?:\1[ \t]+[^\n]*\n|[ \t]*\n)*)/m);
+  if (!block) {
+    violations.push(
+      `${CHART_YAML}: artifacthub.io/changes exists but its block scalar could not be parsed - ` +
+        `use a literal block ("changes: |" with indented entries) or update checkChangesAnnotation`,
+    );
+    return violations;
+  }
+  const lines = block[2].split("\n").filter((line) => line.trim() !== "");
+  const entryIndent = lines.length > 0 ? lines[0].match(/^[ \t]*/)[0].length : 0;
+  for (const raw of lines) {
+    if (raw.match(/^[ \t]*/)[0].length > entryIndent) {
+      continue; // continuation of a multi-line entry; the entry's first line is judged
     }
     const entry = raw.trim();
     if (!/^- "[^"]*"$/.test(entry)) {
       violations.push(
-        `${CHART_YAML}: artifacthub.io/changes entry must be a double-quoted string ` +
+        `${CHART_YAML}: artifacthub.io/changes entry must be a single-line double-quoted string ` +
           `(ArtifactHub refuses unquoted {}:[],&*#?|-<>=!%@ and skips the whole chart version): ${entry}`,
       );
     }
