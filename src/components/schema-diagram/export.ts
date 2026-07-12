@@ -6,8 +6,8 @@ import { getViewportForBounds, type Rect, type Viewport } from "@xyflow/react";
 export const MAX_CANVAS_SIDE = 16_384;
 export const MAX_CANVAS_AREA = 268_435_456;
 
-export const EXPORT_BACKGROUND = "#050505";
-export const EXPORT_PADDING = 32;
+const EXPORT_BACKGROUND = "#050505";
+const EXPORT_PADDING = 32;
 
 export function capPixelRatio(width: number, height: number, desired: number): number {
   return Math.min(
@@ -65,7 +65,7 @@ export function buildExportFilename(format: "png" | "svg"): string {
   return `erd_${Date.now()}.${format}`;
 }
 
-export function downloadBlob(filename: string, blob: Blob): void {
+function downloadBlob(filename: string, blob: Blob): void {
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.download = filename;

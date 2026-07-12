@@ -52,7 +52,7 @@ const HighlightStoreContext = createContext<HighlightStore | null>(null);
 
 export const HighlightStoreProvider = HighlightStoreContext.Provider;
 
-export function useHighlightStore(): HighlightStore {
+function useHighlightStore(): HighlightStore {
   const store = useContext(HighlightStoreContext);
   if (!store) {
     throw new Error("useHighlightStore must be used inside a HighlightStoreProvider");
