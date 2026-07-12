@@ -678,3 +678,37 @@ Rules:
   in touched files), typecheck OK, all 18 test groups pass (0 fail; main
   unit/api/integration group 2298, was 2296; +2), build OK, build:lib OK.
 - Next: #136 (pin the minimal two-secret helm install with a render-level test), per the plan.
+
+### 2026-07-12 — #136 Helm minimal two-secret install: render-level regression test (fix already shipped) (DONE)
+
+- Triage (step 0f): #94 remains the only `loop:needs-info`; its thread still contains only the
+  loop's own clarifying question (2026-07-12T01:55:40Z) — no reply to evaluate.
+- Verified before writing (per the sanitized spec, re-checked live): the functional fix already
+  shipped on main — user-password/user-email secret keys render only when
+  `secrets.userPassword` is set (`charts/libredb-studio/templates/secret.yaml:21-24`),
+  USER_PASSWORD/USER_EMAIL envs only when set or an existing secret is referenced
+  (`templates/deployment.yaml:88-101`) — and a live minimal two-secret render produced zero
+  user-password references. What was missing was the pinning test (nothing under `tests/`
+  mentioned the user-password value).
+- Tests first: new `tests/unit/helm-chart-user-password.test.ts`, 2 cases, following the #137
+  convention (`helm-chart-persistence.test.ts`): spawn the real `helm template` against the
+  real chart, parse the multi-doc YAML, assert on the actual Secret and Deployment manifests.
+  RED evidence: temporarily inserted the hard require back into `secret.yaml` (OUTSIDE the
+  authStrict guard — inside it the require is dead for a default render), watched case 1 fail
+  with `execution error at (libredb-studio/templates/secret.yaml:6:10): secrets.userPassword
+  is required` (1 pass / 1 fail — case 2 stays green, isolating the regression to the minimal
+  path), restored via `git checkout --` and verified `git status` clean, then GREEN (2 pass).
+- Also pins `user-email`/`USER_EMAIL` alongside the password — they live in the exact same
+  conditional hunks; tightens the net without expanding scope (reviewer concurred, LOW note).
+- DECISION — no Chart.yaml version bump: no chart content changed (test-only diff), and the
+  repo rule triggers on charts/** content merges only.
+- loop-reviewer verdict: PASS WITH NOTES (2 LOW, informational, no action required): (1) the
+  Secret lookup hardcodes the rendered fullname but fails loudly, not silently, if the helper
+  ever changes; (2) the user-email pinning is slightly beyond the literal bar but inside the
+  same hunks. Reviewer independently reproduced all three regression vectors (hard require,
+  secret-conditional removal, deployment-conditional removal) against /tmp chart copies —
+  the test fails under each.
+- Gate: format clean (490 files), lint 0 errors (58 pre-existing warnings, none in touched
+  files), typecheck OK, all 18 test groups pass (0 fail; main unit/api/integration group 2300,
+  was 2298; +2), build OK.
+- Next: #151 (chart:check hardening: merge-base comparison + polish items), per the plan.

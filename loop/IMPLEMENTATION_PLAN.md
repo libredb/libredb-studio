@@ -62,7 +62,7 @@
 
 ## Phase 2 — Helm chart and its version-sync guard
 
-- [ ] **#136** — pin the minimal two-secret install with a render-level regression test (the
+- [x] **#136** — pin the minimal two-secret install with a render-level regression test (the
   functional fix already shipped on main; verified at
   `charts/libredb-studio/templates/secret.yaml:21-24` and
   `templates/deployment.yaml:88-99`).
