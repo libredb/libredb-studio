@@ -14,35 +14,41 @@ const mockRefresh = mock(() => {});
 const mockKillSession = mock(async () => true);
 const mockRunMaintenance = mock(async () => true);
 
-mock.module("@/hooks/use-monitoring-data", () => ({
-  useMonitoringData: mock(() => ({
-    data: {
-      overview: {
-        version: "15.4",
-        uptime: 86400,
-        connections: { active: 5, total: 15, max: 100 },
-        databaseSize: "256 MB",
-      },
-      performance: {
-        queriesPerSecond: 150,
-        avgQueryTime: 2.5,
-        cacheHitRatio: 99.1,
-      },
-      slowQueries: [],
-      activeSessions: [],
+type MonitoringHookState = Record<string, unknown>;
+
+const monitoringDataDefaults = (): MonitoringHookState => ({
+  data: {
+    overview: {
+      version: "15.4",
+      uptime: 86400,
+      connections: { active: 5, total: 15, max: 100 },
+      databaseSize: "256 MB",
     },
-    loading: false,
-    error: null,
-    lastUpdated: new Date(),
-    autoRefresh: true,
-    refreshInterval: 10000,
-    history: [],
-    setAutoRefresh: mockSetAutoRefresh,
-    setRefreshInterval: mockSetRefreshInterval,
-    refresh: mockRefresh,
-    killSession: mockKillSession,
-    runMaintenance: mockRunMaintenance,
-  })),
+    performance: {
+      queriesPerSecond: 150,
+      avgQueryTime: 2.5,
+      cacheHitRatio: 99.1,
+    },
+    slowQueries: [],
+    activeSessions: [],
+  },
+  loading: false,
+  error: null,
+  lastUpdated: new Date(),
+  autoRefresh: true,
+  refreshInterval: 10000,
+  history: [],
+  setAutoRefresh: mockSetAutoRefresh,
+  setRefreshInterval: mockSetRefreshInterval,
+  refresh: mockRefresh,
+  killSession: mockKillSession,
+  runMaintenance: mockRunMaintenance,
+});
+
+const mockUseMonitoringData = mock(monitoringDataDefaults);
+
+mock.module("@/hooks/use-monitoring-data", () => ({
+  useMonitoringData: mockUseMonitoringData,
 }));
 
 mock.module("@/lib/storage", () => ({
@@ -57,10 +63,47 @@ mock.module("@/lib/storage", () => ({
         database: "dev",
         createdAt: new Date(),
       },
+      {
+        id: "c2",
+        name: "PG Prod",
+        type: "postgres",
+        host: "prod",
+        port: 5432,
+        database: "prod",
+        createdAt: new Date(),
+      },
     ]),
     getActiveConnectionId: mock(() => "c1"),
     getDismissedSeeds: mock(() => []),
   },
+}));
+
+// Mock ui/select: capture onValueChange keyed by the Select's current value so
+// tests can drive selection changes (Radix Select portals do not open in happy-dom).
+// SelectContent renders null so item labels do not duplicate the SelectValue text.
+const selectCallbacks = new Map<string, (v: string) => void>();
+
+mock.module("@/components/ui/select", () => ({
+  Select: ({
+    children,
+    value,
+    onValueChange,
+  }: {
+    children?: React.ReactNode;
+    value?: string;
+    onValueChange?: (v: string) => void;
+  }) => {
+    const key = value ?? "__empty__";
+    if (onValueChange) selectCallbacks.set(key, onValueChange);
+    return React.createElement("div", { "data-testid": `select-${key}` }, children);
+  },
+  SelectTrigger: ({ children }: { children?: React.ReactNode }) =>
+    React.createElement("div", { "data-testid": "select-trigger" }, children),
+  SelectContent: () => null,
+  SelectItem: ({ children, value }: { children?: React.ReactNode; value: string }) =>
+    React.createElement("div", { "data-testid": `select-item-${value}` }, children),
+  SelectValue: ({ children, placeholder }: { children?: React.ReactNode; placeholder?: string }) =>
+    React.createElement("span", { "data-testid": "select-value" }, children ?? placeholder),
 }));
 
 // Mock all 7 monitoring tab sub-components
@@ -146,6 +189,8 @@ describe("MonitoringDashboard", () => {
     mockRefresh.mockClear();
     mockSetAutoRefresh.mockClear();
     mockSetRefreshInterval.mockClear();
+    mockUseMonitoringData.mockImplementation(monitoringDataDefaults);
+    selectCallbacks.clear();
   });
 
   test("renders monitoring title", async () => {
@@ -237,6 +282,73 @@ describe("MonitoringDashboard", () => {
 
     // When embedded, the Back button should not be present
     expect(queryByText("Back")).toBeNull();
+  });
+
+  test("changing connection via selector selects the new connection", async () => {
+    let renderResult: ReturnType<typeof render>;
+    await act(async () => {
+      renderResult = render(<MonitoringDashboard />);
+    });
+    const { queryByText } = renderResult!;
+
+    // Connection Select carries value "c1" after the initial selection effect
+    const onConnectionChange = selectCallbacks.get("c1");
+    expect(onConnectionChange).toBeDefined();
+
+    await act(async () => {
+      onConnectionChange!("c2");
+    });
+
+    expect(queryByText("PG Prod")).not.toBeNull();
+  });
+
+  test("selecting an unknown connection id clears the selection", async () => {
+    let renderResult: ReturnType<typeof render>;
+    await act(async () => {
+      renderResult = render(<MonitoringDashboard />);
+    });
+    const { queryByText } = renderResult!;
+
+    const onConnectionChange = selectCallbacks.get("c1");
+    expect(onConnectionChange).toBeDefined();
+
+    await act(async () => {
+      onConnectionChange!("missing-id");
+    });
+
+    expect(queryByText("No Connection Selected")).not.toBeNull();
+  });
+
+  test("shows connection error state when error and no data", async () => {
+    const user = userEvent.setup();
+    mockUseMonitoringData.mockImplementation(
+      (): MonitoringHookState => ({
+        data: null,
+        loading: false,
+        error: "Connection refused",
+        lastUpdated: null,
+        autoRefresh: false,
+        refreshInterval: 10000,
+        history: [],
+        setAutoRefresh: mockSetAutoRefresh,
+        setRefreshInterval: mockSetRefreshInterval,
+        refresh: mockRefresh,
+        killSession: mockKillSession,
+        runMaintenance: mockRunMaintenance,
+      }),
+    );
+
+    let renderResult: ReturnType<typeof render>;
+    await act(async () => {
+      renderResult = render(<MonitoringDashboard />);
+    });
+    const { queryByText, getByText } = renderResult!;
+
+    expect(queryByText("Connection Error")).not.toBeNull();
+    expect(queryByText("Connection refused")).not.toBeNull();
+
+    await user.click(getByText("Try Again"));
+    expect(mockRefresh).toHaveBeenCalled();
   });
 
   test("tab switching works", async () => {

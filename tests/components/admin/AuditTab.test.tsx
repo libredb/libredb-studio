@@ -45,7 +45,7 @@ mock.module("@/lib/storage", () => ({
 }));
 
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { render, waitFor, act, cleanup } from "@testing-library/react";
+import { render, waitFor, act, cleanup, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import React from "react";
 
@@ -216,5 +216,91 @@ describe("AuditTab", () => {
 
     // The type filter select should show "All Types" by default
     expect(queryByText("All Types")).not.toBeNull();
+  });
+
+  test("shows empty state when audit fetch fails", async () => {
+    // Override the fetch installed in beforeEach with one that rejects,
+    // exercising the catch path (setEvents([])) and the empty-state UI.
+    globalThis.fetch = mock(async () => {
+      throw new Error("network down");
+    }) as unknown as typeof fetch;
+
+    let renderResult: ReturnType<typeof render>;
+    await act(async () => {
+      renderResult = render(<AuditTab />);
+    });
+    const { queryByText } = renderResult!;
+
+    await waitFor(() => {
+      expect(queryByText("No audit events found.")).not.toBeNull();
+      expect(queryByText(/maintenance tasks are run/)).not.toBeNull();
+    });
+  });
+
+  test("search filter works in queries tab", async () => {
+    const user = userEvent.setup();
+    let renderResult: ReturnType<typeof render>;
+    await act(async () => {
+      renderResult = render(<AuditTab />);
+    });
+    const { queryByText, getByPlaceholderText, container } = renderResult!;
+
+    // Switch to the Queries tab
+    const allTriggers = container.querySelectorAll('[role="tab"]');
+    const queriesTab = Array.from(allTriggers).find((t) => t.textContent?.includes("Queries")) as HTMLElement;
+    await user.click(queriesTab);
+
+    await waitFor(() => {
+      expect(queryByText("SELECT 1")).not.toBeNull();
+    });
+
+    // Type a search query — only matching history items remain
+    const searchInput = getByPlaceholderText("Search query...");
+    await user.type(searchInput, "select");
+
+    await waitFor(() => {
+      expect(queryByText("SELECT 1")).not.toBeNull();
+      expect(queryByText("DROP TABLE x")).toBeNull();
+    });
+  });
+
+  test("status filter works in queries tab", async () => {
+    const user = userEvent.setup();
+    let renderResult: ReturnType<typeof render>;
+    await act(async () => {
+      renderResult = render(<AuditTab />);
+    });
+    const { queryByText, container, baseElement } = renderResult!;
+
+    // Switch to the Queries tab
+    const allTriggers = container.querySelectorAll('[role="tab"]');
+    const queriesTab = Array.from(allTriggers).find((t) => t.textContent?.includes("Queries")) as HTMLElement;
+    await user.click(queriesTab);
+
+    await waitFor(() => {
+      expect(queryByText("SELECT 1")).not.toBeNull();
+      expect(queryByText("DROP TABLE x")).not.toBeNull();
+    });
+
+    // Open the status select via keyboard (happy-dom lacks full pointer support)
+    const selectTrigger = container.querySelector('[data-slot="select-trigger"]') as HTMLElement;
+    expect(selectTrigger).not.toBeNull();
+    await act(async () => {
+      fireEvent.keyDown(selectTrigger, { key: "ArrowDown" });
+    });
+
+    // Pick the "Error" option from the portaled listbox
+    const options = Array.from(baseElement.querySelectorAll('[role="option"]'));
+    const errorOption = options.find((o) => o.textContent?.trim() === "Error") as HTMLElement;
+    expect(errorOption).not.toBeNull();
+    await act(async () => {
+      fireEvent.keyDown(errorOption, { key: "Enter" });
+    });
+
+    // Only the error-status history item remains
+    await waitFor(() => {
+      expect(queryByText("DROP TABLE x")).not.toBeNull();
+      expect(queryByText("SELECT 1")).toBeNull();
+    });
   });
 });

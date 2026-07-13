@@ -258,7 +258,7 @@ export function DataImportModal({ isOpen, onClose, onImport, tables, databaseTyp
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Upload strokeWidth={1.5} className="w-5 h-5 text-blue-400" />
-            Import Data
+            {"Import Data"}
             {fileName && <span className="text-xs text-zinc-500 font-normal ml-2">{fileName}</span>}
           </DialogTitle>
         </DialogHeader>
@@ -440,7 +440,7 @@ export function DataImportModal({ isOpen, onClose, onImport, tables, databaseTyp
                     onClick={() => setCreateNewTable(false)}
                   >
                     <Table2 strokeWidth={1.5} className="w-3.5 h-3.5 mb-1" />
-                    Existing Table
+                    {"Existing Table"}
                   </button>
                   <button
                     className={cn(
@@ -452,7 +452,7 @@ export function DataImportModal({ isOpen, onClose, onImport, tables, databaseTyp
                     onClick={() => setCreateNewTable(true)}
                   >
                     <FileSpreadsheet strokeWidth={1.5} className="w-3.5 h-3.5 mb-1" />
-                    New Table
+                    {"New Table"}
                   </button>
                 </div>
               </div>
@@ -521,7 +521,7 @@ export function DataImportModal({ isOpen, onClose, onImport, tables, databaseTyp
                   className="h-8 text-xs text-zinc-500"
                   onClick={() => setStep("preview")}
                 >
-                  Back
+                  {"Back"}
                 </Button>
                 <Button
                   size="sm"
@@ -565,7 +565,7 @@ export function DataImportModal({ isOpen, onClose, onImport, tables, databaseTyp
                   className="h-8 text-xs text-zinc-500"
                   onClick={() => setStep("configure")}
                 >
-                  Back
+                  {"Back"}
                 </Button>
                 <div className="flex gap-2">
                   <Button
@@ -576,7 +576,7 @@ export function DataImportModal({ isOpen, onClose, onImport, tables, databaseTyp
                       navigator.clipboard.writeText(generatedSQL);
                     }}
                   >
-                    Copy SQL
+                    {"Copy SQL"}
                   </Button>
                   <Button
                     size="sm"

@@ -949,6 +949,61 @@ describe("OperationsTab", () => {
   });
 
   // =========================================================================
+  // handleConnectionChange via connection selector
+  // =========================================================================
+
+  test("changing connection in selector updates selection", async () => {
+    mockConnectionsList = [
+      {
+        id: "c1",
+        name: "PG Dev",
+        type: "postgres",
+        host: "localhost",
+        port: 5432,
+        database: "dev",
+        createdAt: new Date(),
+      },
+      {
+        id: "c2",
+        name: "MySQL Prod",
+        type: "mysql",
+        host: "localhost",
+        port: 3306,
+        database: "prod",
+        createdAt: new Date(),
+      },
+    ];
+    mockActiveConnectionId = "c1";
+    let renderResult: ReturnType<typeof render>;
+    await act(async () => {
+      renderResult = render(<OperationsTab />);
+    });
+    const { container, baseElement } = renderResult!;
+
+    // Initially the saved connection (PG Dev) is selected
+    expect(container.textContent).toContain("(postgres)");
+
+    // Open the connection select via keyboard (happy-dom lacks full pointer support)
+    const selectTrigger = container.querySelector('[data-slot="select-trigger"]') as HTMLElement;
+    expect(selectTrigger).not.toBeNull();
+    await act(async () => {
+      fireEvent.keyDown(selectTrigger, { key: "ArrowDown" });
+    });
+
+    // Pick the MySQL Prod option from the portaled listbox
+    const options = Array.from(baseElement.querySelectorAll('[role="option"]'));
+    const mysqlOption = options.find((o) => o.textContent?.includes("MySQL Prod")) as HTMLElement;
+    expect(mysqlOption).not.toBeNull();
+    await act(async () => {
+      fireEvent.keyDown(mysqlOption, { key: "Enter" });
+    });
+
+    // handleConnectionChange found c2 and updated the selection
+    expect(container.textContent).toContain("MySQL Prod");
+    expect(container.textContent).toContain("(mysql)");
+  });
+
+  // =========================================================================
   // Session duration badge outline variant (10s-60s range)
   // =========================================================================
 

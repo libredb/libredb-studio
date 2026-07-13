@@ -112,6 +112,18 @@ describe("DataImportModal", () => {
     expect(body.queryByText(/2 columns/)).not.toBeNull();
   });
 
+  test("parses CSV with quoted fields, escaped quotes, and embedded commas", () => {
+    const { baseElement } = render(<DataImportModal isOpen onClose={noop} onImport={noop} tables={sampleTables} />);
+
+    act(() => {
+      simulateFileUpload(baseElement, 'name,notes\n"Alice ""The Ace""","loves, commas"', "quoted.csv");
+    });
+
+    const body = within(baseElement);
+    expect(body.queryByText('Alice "The Ace"')).not.toBeNull();
+    expect(body.queryByText("loves, commas")).not.toBeNull();
+  });
+
   test("shows preview table headers from CSV", () => {
     const { baseElement } = render(<DataImportModal isOpen onClose={noop} onImport={noop} tables={sampleTables} />);
 
@@ -509,6 +521,41 @@ describe("DataImportModal", () => {
     expect(sql).toContain("INSERT INTO");
   });
 
+  test("Execute Import closes the modal after the import delay", async () => {
+    const mockClose = mock(() => {});
+    const { baseElement } = render(
+      <DataImportModal isOpen onClose={mockClose} onImport={noop} tables={sampleTables} />,
+    );
+
+    act(() => {
+      simulateFileUpload(baseElement, "name\nAlice", "data.csv");
+    });
+
+    act(() => {
+      fireEvent.click(within(baseElement).getByText("Configure Import"));
+    });
+
+    act(() => {
+      fireEvent.click(within(baseElement).getByText("New Table"));
+    });
+
+    act(() => {
+      fireEvent.click(within(baseElement).getByText("Review SQL"));
+    });
+
+    act(() => {
+      fireEvent.click(within(baseElement).getByText("Execute Import"));
+    });
+
+    // The modal closes (resetState + onClose) after a 200ms delay
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    });
+
+    expect(mockClose).toHaveBeenCalledTimes(1);
+    expect(within(baseElement).queryByText(/Drop a file here/)).not.toBeNull();
+  });
+
   test("Back button in ready step goes to configure", () => {
     const { baseElement } = render(<DataImportModal isOpen onClose={noop} onImport={noop} tables={sampleTables} />);
 
@@ -598,6 +645,34 @@ describe("DataImportModal", () => {
   });
 
   // ── Drag and drop ─────────────────────────────────────────────────────────
+
+  test("dropping a file on the drop zone parses it and advances to preview", () => {
+    const { baseElement } = render(<DataImportModal isOpen onClose={noop} onImport={noop} tables={sampleTables} />);
+
+    const dropZone = baseElement.querySelector(".border-dashed") as HTMLElement;
+    expect(dropZone).not.toBeNull();
+
+    const content = "name,age\nAlice,30";
+    const file = new File([content], "dropped.csv", { type: "text/csv" });
+
+    // Mock FileReader so onload fires synchronously with the file content
+    const origFileReader = globalThis.FileReader;
+    globalThis.FileReader = class {
+      onload = null as ((e: { target: { result: string } }) => void) | null;
+      readAsText() {
+        this.onload?.({ target: { result: content } });
+      }
+    } as unknown as typeof FileReader;
+
+    act(() => {
+      fireEvent.drop(dropZone, { dataTransfer: { files: [file] } });
+    });
+
+    globalThis.FileReader = origFileReader;
+
+    // Preview step shows the dropped file name
+    expect(within(baseElement).queryAllByText("dropped.csv").length).toBeGreaterThanOrEqual(1);
+  });
 
   test("drag over handler is attached to drop zone", () => {
     const { baseElement } = render(<DataImportModal isOpen onClose={noop} onImport={noop} tables={[]} />);

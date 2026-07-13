@@ -614,6 +614,41 @@ describe("NL2SQLPanel", () => {
   });
 
   // -----------------------------------------------------------------------
+  // Platform adapter (onNL2SQL) bypasses the built-in fetch
+  // -----------------------------------------------------------------------
+
+  test("uses the onNL2SQL adapter instead of fetch when provided", async () => {
+    const fetchSpy = mock(() => Promise.resolve({ ok: true, body: null, json: () => Promise.resolve({}) }));
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+    const onNL2SQL = mock(async () => "Adapter answer:\n```sql\nSELECT 42;\n```");
+
+    const user = userEvent.setup();
+    const { container, queryByPlaceholderText } = render(<NL2SQLPanel {...defaultProps} onNL2SQL={onNL2SQL} />);
+    const input = queryByPlaceholderText(/Ask in plain English/) as HTMLInputElement;
+    const form = container.querySelector("form");
+
+    await user.type(input, "adapter question");
+    fireEvent.submit(form!);
+
+    await waitFor(() => {
+      const pre = container.querySelector("pre");
+      expect(pre).not.toBeNull();
+      expect(pre!.textContent).toBe("SELECT 42;");
+    });
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(onNL2SQL).toHaveBeenCalledTimes(1);
+    const params = (onNL2SQL.mock.calls[0] as unknown[])[0] as {
+      prompt: string;
+      schemaContext: string;
+      conversationHistory?: { role: string; content: string }[];
+    };
+    expect(params.prompt).toBe("adapter question");
+    expect(params.schemaContext).toBe("");
+    expect(params.conversationHistory).toEqual([]);
+  });
+
+  // -----------------------------------------------------------------------
   // Non-ok response with fallback error message
   // -----------------------------------------------------------------------
 

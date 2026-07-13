@@ -139,21 +139,21 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
         return (
           <Badge className="bg-green-500/20 text-green-400 border-green-500/30 text-xs">
             <Plus strokeWidth={1.5} className="w-2.5 h-2.5 mr-0.5" />
-            Added
+            {"Added"}
           </Badge>
         );
       case "removed":
         return (
           <Badge className="bg-red-500/20 text-red-400 border-red-500/30 text-xs">
             <Minus className="w-2.5 h-2.5 mr-0.5" />
-            Removed
+            {"Removed"}
           </Badge>
         );
       case "modified":
         return (
           <Badge className="bg-yellow-500/20 text-yellow-400 border-yellow-500/30 text-xs">
             <Edit3 strokeWidth={1.5} className="w-2.5 h-2.5 mr-0.5" />
-            Modified
+            {"Modified"}
           </Badge>
         );
       default:
@@ -233,7 +233,7 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
               {allConnections.filter((c) => c.id !== connection?.id).length > 0 && (
                 <>
                   <div className="px-2 py-1 text-[0.625rem] text-zinc-600 border-t border-white/5 mt-1">
-                    Fetch from connection
+                    {"Fetch from connection"}
                   </div>
                   {allConnections
                     .filter((c) => c.id !== connection?.id)
@@ -269,7 +269,7 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
               autoFocus
             />
             <Button variant="ghost" size="sm" className="h-7 text-xs text-blue-400" onClick={takeSnapshot}>
-              Save
+              {"Save"}
             </Button>
             <Button
               variant="ghost"
@@ -277,7 +277,7 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
               className="h-7 text-xs text-zinc-500"
               onClick={() => setShowLabelInput(false)}
             >
-              Cancel
+              {"Cancel"}
             </Button>
           </div>
         ) : (
@@ -367,7 +367,7 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
                 <TableDiffDetail diff={diff.tables.find((t) => t.tableName === selectedTable)!} />
               ) : (
                 <div className="h-full flex items-center justify-center text-zinc-600 text-xs">
-                  Select a table to view diff details
+                  {"Select a table to view diff details"}
                 </div>
               )}
             </div>

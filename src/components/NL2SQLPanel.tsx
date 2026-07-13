@@ -10,6 +10,12 @@ interface ConversationMessage {
   query?: string; // Extracted SQL/JSON query from assistant response
 }
 
+interface SchemaTable {
+  name: string;
+  rowCount?: number;
+  columns?: { name: string; type: string; isPrimary?: boolean }[];
+}
+
 interface NL2SQLPanelProps {
   isOpen: boolean;
   onClose: () => void;
@@ -77,20 +83,14 @@ export function NL2SQLPanel({
             .sort((a: { rowCount?: number }, b: { rowCount?: number }) => (b.rowCount || 0) - (a.rowCount || 0))
             .slice(0, 100);
           filteredSchema = sorted
-            .map(
-              (t: {
-                name: string;
-                rowCount?: number;
-                columns?: { name: string; type: string; isPrimary?: boolean }[];
-              }) => {
-                const cols =
-                  t.columns
-                    ?.slice(0, 10)
-                    .map((c) => `${c.name} (${c.type}${c.isPrimary ? ", PK" : ""})`)
-                    .join(", ") || "";
-                return `Table: ${t.name} (${t.rowCount || 0} rows)\nColumns: ${cols}`;
-              },
-            )
+            .map((t: SchemaTable) => {
+              const cols =
+                t.columns
+                  ?.slice(0, 10)
+                  .map((c) => `${c.name} (${c.type}${c.isPrimary ? ", PK" : ""})`)
+                  .join(", ") || "";
+              return `Table: ${t.name} (${t.rowCount || 0} rows)\nColumns: ${cols}`;
+            })
             .join("\n\n");
         } catch {
           filteredSchema = schemaContext.substring(0, 3000);
@@ -235,7 +235,7 @@ export function NL2SQLPanel({
                           onClick={() => onLoadQuery(msg.query!)}
                           className="flex items-center gap-1 px-2 py-1 rounded bg-white/5 border border-white/5 text-zinc-400 text-xs font-medium hover:bg-white/10 transition-colors"
                         >
-                          Load to Editor
+                          <span>Load to Editor</span>
                         </button>
                       </div>
                     </div>
@@ -256,7 +256,7 @@ export function NL2SQLPanel({
           <div className="flex gap-2 justify-start">
             <div className="bg-[#111] border border-white/5 rounded-lg px-3 py-2 flex items-center gap-2 text-zinc-500 text-xs">
               <Loader2 strokeWidth={1.5} className="w-3 h-3 animate-spin" />
-              Generating query...
+              <span>Generating query...</span>
             </div>
           </div>
         )}

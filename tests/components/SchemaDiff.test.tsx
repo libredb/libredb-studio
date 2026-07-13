@@ -751,6 +751,39 @@ describe("SchemaDiff", () => {
       const { queryByText } = renderAndSelectTable("new_table");
       expect(queryByText("Foreign Keys")).toBeNull();
     });
+
+    test("renders no action icon for unknown column action", () => {
+      mockDiffSchemas.mockImplementation(() =>
+        structuredClone({
+          tables: [
+            {
+              action: "modified",
+              tableName: "users",
+              columns: [
+                {
+                  action: "unchanged",
+                  columnName: "created_at",
+                  sourceType: "timestamp",
+                  targetType: "timestamp",
+                  changes: [] as string[],
+                },
+              ],
+              indexes: [],
+              foreignKeys: [],
+            },
+          ],
+          summary: { added: 0, removed: 0, modified: 1 },
+          hasChanges: true,
+        }),
+      );
+      const { getByText } = renderDiff();
+      changeTarget("snap-1");
+      fireEvent.click(getByText("users"));
+
+      const colRow = getByText("created_at").closest('div[class*="rounded"]');
+      expect(colRow).toBeTruthy();
+      expect(colRow!.querySelector("svg")).toBeNull();
+    });
   });
 
   // ═══════════════════════════════════════════════════════════════════════════
