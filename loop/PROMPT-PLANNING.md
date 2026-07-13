@@ -53,9 +53,10 @@ When `loop/ACCEPTANCE.md` is the stub, REWRITE it for this milestone:
   "Acceptance bar (testable)" section in `loop/TRIAGE.md` (which remains the authoritative
   detailed bar — say so in the header). Never weaken a spec's bar while summarizing.
 - Quality (standard, verbatim intent): built test-first with RED evidence in
-  `loop/PROGRESS.md`; full gate green on a clean tree via `./loop/scripts/gate.sh`; every
-  task's `loop-reviewer` verdict PASS or PASS WITH NOTES, recorded; no placeholder/stub
-  implementations.
+  `loop/PROGRESS.md`; full gate green on a clean tree via `./loop/scripts/gate.sh`; the
+  functional smoke green at close-out (`./loop/scripts/functional-smoke.sh` — login →
+  PostgreSQL connection via the UI → query → rows render); every task's `loop-reviewer`
+  verdict PASS or PASS WITH NOTES, recorded; no placeholder/stub implementations.
 - Documentation (standard): provider tri-sync where providers changed; behavior-doc updates in
   the same commit; `loop/PROGRESS.md` / `loop/HANDOFF.md` reflect actual state.
 - Process (standard): all plan tasks `[x]` or explicitly re-routed via 1a/1b (never silently

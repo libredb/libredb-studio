@@ -135,6 +135,16 @@ A human removing the label is the only way the task becomes pickable again.
 
 - Only if every criterion in `loop/ACCEPTANCE.md` is met and the full gate is green on a clean
   tree:
+  - Functional smoke (mandatory, LAST gate): run `./loop/scripts/functional-smoke.sh` — it
+    boots the built app, creates a real PostgreSQL connection through the UI, runs a SQL
+    query, and asserts the rows render. This pins the one invariant no milestone may break:
+    login → connect → query → results.
+    - If it FAILS: the milestone is NOT complete. Record the failure in `loop/PROGRESS.md`,
+      identify the breaking task by walking this milestone's one-task-one-commit history
+      (each commit's gate was green, so the breakage is in an interaction — test task
+      commits against the smoke as needed), and fix it as a regular task in a following
+      iteration (test-first; the smoke spec itself is a test under 999b — never weaken it
+      to pass). Do not create the marker this iteration.
   - Update `loop/HANDOFF.md` with actual state.
   - Create the marker file: `mkdir -p .loop && touch .loop/COMPLETE`.
   - Print the milestone's completion sentinel (`LOOP_COMPLETION_SENTINEL` in
