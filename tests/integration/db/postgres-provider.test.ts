@@ -862,6 +862,27 @@ describe("PostgresProvider", () => {
       await provider.expireTransaction();
       expect(provider.isInTransaction()).toBe(false);
     });
+
+    test("transaction timeout timer fires and auto-rollbacks", async () => {
+      // TX_TIMEOUT_MS is a private static read at beginTransaction() call time;
+      // shrink it so the auto-rollback timer actually fires in the test
+      // (same private-access-via-cast precedent as runningQueryPids above).
+      const providerStatics = PostgresProvider as unknown as { TX_TIMEOUT_MS: number };
+      const originalTimeout = providerStatics.TX_TIMEOUT_MS;
+      providerStatics.TX_TIMEOUT_MS = 5;
+      try {
+        provider = new PostgresProvider(makePgConfig());
+        await provider.connect();
+
+        await provider.beginTransaction();
+        expect(provider.isInTransaction()).toBe(true);
+
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        expect(provider.isInTransaction()).toBe(false);
+      } finally {
+        providerStatics.TX_TIMEOUT_MS = originalTimeout;
+      }
+    });
   });
 
   // --------------------------------------------------------------------------

@@ -61,6 +61,32 @@ interface MongoQuery {
   };
 }
 
+// Operations query() accepts. parseQuery() casts unvalidated JSON, so the
+// operation value is re-checked against this set at runtime before dispatch.
+const SUPPORTED_OPERATIONS: ReadonlySet<MongoQuery["operation"]> = new Set([
+  "find",
+  "findOne",
+  "aggregate",
+  "count",
+  "distinct",
+  "insertOne",
+  "insertMany",
+  "updateOne",
+  "updateMany",
+  "deleteOne",
+  "deleteMany",
+]);
+
+// Maintenance operations runMaintenance() accepts; validated the same way.
+const SUPPORTED_MAINTENANCE_TYPES: ReadonlySet<MaintenanceType> = new Set([
+  "analyze",
+  "reindex",
+  "vacuum",
+  "optimize",
+  "check",
+  "kill",
+]);
+
 // ============================================================================
 // MongoDB Provider
 // ============================================================================
@@ -246,6 +272,10 @@ export class MongoDBProvider extends BaseDatabaseProvider {
           const query = this.parseQuery(queryStr);
           const collection = this.db!.collection(query.collection);
 
+          if (!SUPPORTED_OPERATIONS.has(query.operation)) {
+            throw new QueryError(`Unsupported operation: ${query.operation}`, "mongodb");
+          }
+
           let rows: Document[] = [];
           let affectedCount = 0;
 
@@ -335,9 +365,6 @@ export class MongoDBProvider extends BaseDatabaseProvider {
               rows = [{ deletedCount: deleteManyResult.deletedCount }];
               affectedCount = deleteManyResult.deletedCount;
               break;
-
-            default:
-              throw new QueryError(`Unsupported operation: ${query.operation}`, "mongodb");
           }
 
           // Convert ObjectId to string for display
@@ -616,6 +643,11 @@ export class MongoDBProvider extends BaseDatabaseProvider {
 
     const { result, executionTime } = await this.measureExecution(async () => {
       try {
+        // Callers pass unvalidated JSON, so the type is re-checked before dispatch
+        // (same pattern as SUPPORTED_OPERATIONS in query()).
+        if (!SUPPORTED_MAINTENANCE_TYPES.has(type)) {
+          throw new QueryError(`Unsupported maintenance type for MongoDB: ${type}`, "mongodb");
+        }
         switch (type) {
           case "analyze":
             // Validate collection
@@ -673,9 +705,6 @@ export class MongoDBProvider extends BaseDatabaseProvider {
             }
             await this.db!.admin().command({ killOp: 1, op: parseInt(target, 10) });
             return { success: true, message: `Killed operation: ${target}` };
-
-          default:
-            throw new QueryError(`Unsupported maintenance type for MongoDB: ${type}`, "mongodb");
         }
       } catch (error) {
         if (error instanceof QueryError) throw error;

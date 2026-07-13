@@ -208,9 +208,8 @@ export function escapeIdentifier(identifier: string, provider: DatabaseType): st
       return `\`${cleaned}\``;
     case "sqlite":
       return `"${cleaned}"`;
-    default:
-      return `"${cleaned}"`;
   }
+  return `"${cleaned}"`;
 }
 
 /**

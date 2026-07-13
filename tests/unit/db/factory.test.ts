@@ -221,9 +221,17 @@ mock.module("@/lib/ssh/tunnel", () => ({
 }));
 
 // ============================================================================
-// Import factory AFTER mocking native drivers
+// Import factory AFTER mocking native drivers.
+// NODE_ENV is temporarily overridden so the module-level auto-registration
+// (registerShutdownHandlers) executes on import; the SIGTERM/SIGINT handlers
+// it registers are captured by diffing the process listeners.
 // ============================================================================
 
+const sigtermListenersBefore = process.listeners("SIGTERM");
+const sigintListenersBefore = process.listeners("SIGINT");
+
+const nodeEnvBefore = process.env.NODE_ENV;
+(process.env as Record<string, string>).NODE_ENV = "production";
 const {
   createDatabaseProvider,
   getOrCreateProvider,
@@ -233,6 +241,14 @@ const {
   evictIdleProviders,
   registerShutdownHandlers,
 } = await import("@/lib/db/factory");
+if (nodeEnvBefore === undefined) {
+  delete (process.env as Record<string, string>).NODE_ENV;
+} else {
+  (process.env as Record<string, string>).NODE_ENV = nodeEnvBefore;
+}
+
+const sigtermHandler = process.listeners("SIGTERM").find((l) => !sigtermListenersBefore.includes(l));
+const sigintHandler = process.listeners("SIGINT").find((l) => !sigintListenersBefore.includes(l));
 
 // ============================================================================
 // Tests
@@ -300,6 +316,13 @@ describe("createDatabaseProvider", () => {
     expect(provider).toBeDefined();
     expect(provider.type).toBe("mssql");
   });
+
+  test('creates provider for type "libredb"', async () => {
+    const conn = makeConnection("libredb", { database: "/tmp/test.libredb" });
+    const provider = await createDatabaseProvider(conn);
+    expect(provider).toBeDefined();
+    expect(provider.type).toBe("libredb");
+  });
 });
 
 // ─── getOrCreateProvider — uses 'sqlite' for lightweight testing ─────
@@ -352,6 +375,29 @@ describe("getOrCreateProvider", () => {
     await getOrCreateProvider(conn);
     expect(mockCreateSSHTunnel).toHaveBeenCalledTimes(1);
   });
+
+  test("closes SSH tunnel when provider connect fails", async () => {
+    // NUL byte in the path makes SQLiteProvider.connect() throw after the tunnel is created
+    const conn = makeConnection("sqlite", {
+      id: "ssh-connect-fail",
+      database: "bad\u0000path.db",
+      sshTunnel: {
+        enabled: true,
+        host: "bastion.example.com",
+        port: 22,
+        username: "admin",
+        authMethod: "password",
+        password: "secret",
+      },
+    } as Partial<DatabaseConnection>);
+
+    await expect(getOrCreateProvider(conn)).rejects.toThrow(/NUL bytes/);
+
+    expect(mockCreateSSHTunnel).toHaveBeenCalledTimes(1);
+    const tunnel = (await mockCreateSSHTunnel.mock.results[0]?.value) as { close: ReturnType<typeof mock> } | undefined;
+    expect(tunnel?.close).toHaveBeenCalledTimes(1);
+    expect(getProviderCacheStats().size).toBe(0);
+  });
 });
 
 // ─── removeProvider ────────────────────────────────────────────────────────
@@ -375,6 +421,28 @@ describe("removeProvider", () => {
     await removeProvider(conn.id);
     expect(mockCloseSSHTunnel).toHaveBeenCalledWith(conn.id);
   });
+
+  test("logs and continues when disconnect fails during removal", async () => {
+    const conn = makeConnection("sqlite", { id: "remove-disconnect-err", database: ":memory:" });
+    const provider = await getOrCreateProvider(conn);
+    provider.disconnect = async () => {
+      throw new Error("disconnect failed");
+    };
+
+    // Should not throw — the error is caught and logged
+    await removeProvider("remove-disconnect-err");
+    expect(getProviderCacheStats().size).toBe(0);
+  });
+
+  test("logs and continues when SSH tunnel close fails", async () => {
+    mockCloseSSHTunnel.mockImplementationOnce(async () => {
+      throw new Error("tunnel close failed");
+    });
+
+    // Should not throw — the error is caught and logged
+    await removeProvider("no-such-connection");
+    expect(mockCloseSSHTunnel).toHaveBeenCalledWith("no-such-connection");
+  });
 });
 
 // ─── clearProviderCache ────────────────────────────────────────────────────
@@ -394,6 +462,18 @@ describe("clearProviderCache", () => {
     expect(getProviderCacheStats().size).toBe(0);
     expect(prov1.isConnected()).toBe(false);
     expect(prov2.isConnected()).toBe(false);
+  });
+
+  test("logs and continues when a provider disconnect rejects during clear", async () => {
+    const conn = makeConnection("sqlite", { id: "clear-disconnect-err", database: ":memory:" });
+    const provider = await getOrCreateProvider(conn);
+    provider.disconnect = async () => {
+      throw new Error("disconnect failed");
+    };
+
+    // Should not throw — rejections are caught per provider
+    await clearProviderCache();
+    expect(getProviderCacheStats().size).toBe(0);
   });
 });
 
@@ -467,6 +547,34 @@ describe("evictIdleProviders", () => {
   });
 });
 
+// ─── idle sweep timer ─────────────────────────────────────────────────────
+
+describe("idle sweep timer", () => {
+  test("sweep interval callback invokes evictIdleProviders", async () => {
+    const originalSetInterval = globalThis.setInterval;
+    let sweepCallback: (() => void) | undefined;
+    globalThis.setInterval = ((handler: () => void) => {
+      sweepCallback = handler;
+      // Return a real (far-future) timer so unref/clearInterval behave normally
+      return originalSetInterval(() => {}, 2_147_000_000);
+    }) as typeof globalThis.setInterval;
+
+    try {
+      // Cache is empty (beforeEach), so this starts a fresh sweep timer
+      await getOrCreateProvider(makeConnection("sqlite", { id: "sweep-cb", database: ":memory:" }));
+      expect(sweepCallback).toBeDefined();
+
+      // Fire the captured sweep callback; the default idle timeout evicts nothing
+      sweepCallback?.();
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      expect(getProviderCacheStats().size).toBe(1);
+    } finally {
+      globalThis.setInterval = originalSetInterval;
+      await clearProviderCache();
+    }
+  });
+});
+
 // ─── registerShutdownHandlers ─────────────────────────────────────────────
 
 describe("registerShutdownHandlers", () => {
@@ -475,5 +583,70 @@ describe("registerShutdownHandlers", () => {
     registerShutdownHandlers();
     registerShutdownHandlers();
     registerShutdownHandlers();
+  });
+});
+
+// ─── shutdown signal handlers ─────────────────────────────────────────────
+// The handlers were auto-registered at import time (NODE_ENV override above)
+// and captured by diffing the process listeners.
+
+/** Stub process.exit with a spy whose promise resolves on the first call. */
+function stubProcessExit(): { exitCalls: Array<number | undefined>; exited: Promise<void>; restore: () => void } {
+  const originalExit = process.exit;
+  const exitCalls: Array<number | undefined> = [];
+  let resolveExited: () => void = () => {};
+  const exited = new Promise<void>((resolve) => {
+    resolveExited = resolve;
+  });
+  process.exit = ((code?: number) => {
+    exitCalls.push(code);
+    resolveExited();
+  }) as unknown as typeof process.exit;
+  return {
+    exitCalls,
+    exited,
+    restore: () => {
+      process.exit = originalExit;
+    },
+  };
+}
+
+describe("shutdown signal handlers", () => {
+  test("auto-registration on import captured SIGTERM and SIGINT handlers", () => {
+    expect(sigtermHandler).toBeDefined();
+    expect(sigintHandler).toBeDefined();
+  });
+
+  test("SIGTERM handler clears the provider cache and exits with code 0", async () => {
+    await getOrCreateProvider(makeConnection("sqlite", { id: "shutdown-term", database: ":memory:" }));
+
+    const { exitCalls, exited, restore } = stubProcessExit();
+    try {
+      sigtermHandler?.("SIGTERM");
+      await exited;
+      expect(exitCalls).toEqual([0]);
+      expect(getProviderCacheStats().size).toBe(0);
+    } finally {
+      restore();
+    }
+  });
+
+  test("SIGINT handler logs the error and still exits when cache clear fails", async () => {
+    const conn = makeConnection("sqlite", { id: "shutdown-int", database: ":memory:" });
+    const provider = await getOrCreateProvider(conn);
+    const realDisconnect = provider.disconnect.bind(provider);
+    // Return a non-promise so clearProviderCache rejects inside the handler
+    (provider as unknown as { disconnect: () => undefined }).disconnect = () => undefined;
+
+    const { exitCalls, exited, restore } = stubProcessExit();
+    try {
+      sigintHandler?.("SIGINT");
+      await exited;
+      expect(exitCalls).toEqual([0]);
+    } finally {
+      restore();
+      provider.disconnect = realDisconnect;
+      await clearProviderCache();
+    }
   });
 });

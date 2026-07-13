@@ -2,11 +2,12 @@ import "../setup-dom";
 import { mockToastSuccess, mockToastError } from "../helpers/mock-sonner";
 import "../helpers/mock-navigation";
 
-import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+import { describe, test, expect, beforeEach, afterEach, spyOn } from "bun:test";
 import { renderHook, act, waitFor } from "@testing-library/react";
 import { mockGlobalFetch, restoreGlobalFetch } from "../helpers/mock-fetch";
 
 import { useConnectionManager } from "@/hooks/use-connection-manager";
+import { logger } from "@/lib/logger";
 import { storage } from "@/lib/storage";
 import type { DatabaseConnection, TableSchema } from "@/lib/types";
 
@@ -581,5 +582,125 @@ describe("useConnectionManager", () => {
 
     expect(result.current.schema).toEqual(schemaData);
     expect(result.current.isLoadingSchema).toBe(false);
+  });
+
+  // Server payloads are JSON — createdAt arrives as an ISO string, not a Date.
+  const makeManagedConnection = (overrides: Record<string, unknown> = {}) => ({
+    id: "srv-1",
+    name: "Seeded DB",
+    type: "postgres",
+    host: "db.internal",
+    port: 5432,
+    database: "seeded",
+    user: "svc",
+    password: "pw",
+    createdAt: "2026-01-02T00:00:00.000Z",
+    ...overrides,
+  });
+
+  test("merges managed and seed connections from /api/connections/managed", async () => {
+    // Existing editable user copy of seed "seed-copy" — must be kept, not re-created.
+    storage.saveConnection(makeConnection({ id: "user-copy-1", name: "My Copy", seedId: "seed-copy", managed: false }));
+
+    // Plain user connection unrelated to any seed — must survive the merge.
+    storage.saveConnection(makeConnection({ id: "plain-1", name: "Plain" }));
+
+    // Dismiss seed "seed-dismissed" through the public API (deleting a seed copy records the dismissal).
+    storage.saveConnection(makeConnection({ id: "dismiss-me", seedId: "seed-dismissed" }));
+    storage.deleteConnection("dismiss-me");
+
+    storage.setActiveConnectionId("plain-1");
+
+    mockGlobalFetch({
+      "/api/connections/managed": {
+        ok: true,
+        json: {
+          connections: [
+            makeManagedConnection({ id: "managed-1", managed: true, seedId: "seed-managed" }),
+            makeManagedConnection({ id: "seed-new-srv", managed: false, seedId: "seed-new" }),
+            makeManagedConnection({ id: "seed-copy-srv", managed: false, seedId: "seed-copy" }),
+            makeManagedConnection({ id: "seed-dismissed-srv", managed: false, seedId: "seed-dismissed" }),
+          ],
+        },
+      },
+      "/api/db/health": { ok: true, json: { status: "healthy" } },
+    });
+
+    const { result } = renderHook(() => useConnectionManager(true));
+
+    await waitFor(() => {
+      expect(result.current.connections).toHaveLength(4);
+    });
+
+    const ids = result.current.connections.map((c) => c.id);
+
+    // managed:true always comes from the server, createdAt revived as a Date.
+    const managed = result.current.connections.find((c) => c.id === "managed-1")!;
+    expect(managed.managed).toBe(true);
+    expect(managed.createdAt).toBeInstanceOf(Date);
+
+    // A new seed gets an editable local copy persisted to storage.
+    const newCopy = result.current.connections.find((c) => c.seedId === "seed-new")!;
+    expect(newCopy.managed).toBe(false);
+    expect(storage.getConnections().some((c) => c.seedId === "seed-new")).toBe(true);
+
+    // The existing user copy wins over the server version of the same seed.
+    expect(ids).toContain("user-copy-1");
+    expect(ids).not.toContain("seed-copy-srv");
+
+    // Dismissed seeds are never re-added.
+    expect(result.current.connections.some((c) => c.seedId === "seed-dismissed")).toBe(false);
+
+    // The plain user connection survives, and the persisted active ID is honored.
+    expect(ids).toContain("plain-1");
+    expect(result.current.activeConnection!.id).toBe("plain-1");
+  });
+
+  test("managed merge falls back to the first merged connection when no active ID is persisted", async () => {
+    mockGlobalFetch({
+      "/api/connections/managed": {
+        ok: true,
+        json: { connections: [makeManagedConnection({ id: "managed-1", managed: true, seedId: "seed-managed" })] },
+      },
+      "/api/db/health": { ok: true, json: { status: "healthy" } },
+    });
+
+    const { result } = renderHook(() => useConnectionManager(true));
+
+    await waitFor(() => {
+      expect(result.current.activeConnection).not.toBeNull();
+    });
+
+    expect(result.current.connections).toHaveLength(1);
+    expect(result.current.activeConnection!.id).toBe("managed-1");
+  });
+
+  // ── Initialization failure is logged, never thrown ────────────────────────
+
+  test("logs a warning when connection initialization fails", async () => {
+    mockGlobalFetch({});
+
+    const getConnectionsSpy = spyOn(storage, "getConnections").mockImplementation(() => {
+      throw new Error("storage exploded");
+    });
+    const warnSpy = spyOn(logger, "warn");
+
+    try {
+      const { result } = renderHook(() => useConnectionManager(true));
+
+      await waitFor(() => {
+        expect(warnSpy).toHaveBeenCalledWith("Connection initialization failed", {
+          route: "use-connection-manager",
+          error: "storage exploded",
+        });
+      });
+
+      // The hook stays usable with empty state — the rejection never escapes.
+      expect(result.current.connections).toEqual([]);
+      expect(result.current.activeConnection).toBeNull();
+    } finally {
+      getConnectionsSpy.mockRestore();
+      warnSpy.mockRestore();
+    }
   });
 });

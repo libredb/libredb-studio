@@ -476,6 +476,35 @@ describe("LibreDBProvider — 0.2.x error mapping & locking", () => {
 });
 
 describe("LibreDBProvider — monitoring", () => {
+  test("getHealth reports a single embedded connection and the file size", async () => {
+    const provider = new LibreDBProvider(makeConn(tmpFile));
+    await provider.connect();
+    const health = await provider.getHealth();
+    expect(health.activeConnections).toBe(1);
+    expect(health.databaseSize).toMatch(/\d/); // human-formatted, e.g. "12.0 KB"
+    expect(health.cacheHitRatio).toBe("100.0");
+    expect(health.slowQueries).toEqual([]);
+    expect(health.activeSessions).toEqual([]);
+    await provider.disconnect();
+  });
+
+  test("getPerformanceMetrics reports a full cache hit ratio (in-process file)", async () => {
+    const provider = new LibreDBProvider(makeConn(tmpFile));
+    await provider.connect();
+    expect(await provider.getPerformanceMetrics()).toEqual({ cacheHitRatio: 100 });
+    await provider.disconnect();
+  });
+
+  test("slow-query/session/table/index stats are honest empty defaults", async () => {
+    const provider = new LibreDBProvider(makeConn(tmpFile));
+    await provider.connect();
+    expect(await provider.getSlowQueries()).toEqual([]);
+    expect(await provider.getActiveSessions()).toEqual([]);
+    expect(await provider.getTableStats()).toEqual([]);
+    expect(await provider.getIndexStats()).toEqual([]);
+    await provider.disconnect();
+  });
+
   test("getOverview reports file size and group count", async () => {
     const provider = new LibreDBProvider(makeConn(tmpFile));
     await provider.connect();

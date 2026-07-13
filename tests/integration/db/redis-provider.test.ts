@@ -35,6 +35,13 @@ const MOCK_INFO_STRING = [
 const MOCK_CLIENT_LIST =
   "id=1 addr=127.0.0.1:6379 name=app1 db=0 flags=N cmd=get idle=5\nid=2 addr=127.0.0.1:6380 name=app2 db=0 flags=N cmd=set idle=10";
 
+// SLOWLOG GET entries: [id, timestamp, duration-in-microseconds, args, clientAddr, clientName]
+// The second entry carries a non-array args payload to exercise the String() fallback.
+const MOCK_SLOWLOG_ENTRIES = [
+  [1, 1700000000, 1500, ["GET", "user:1"], "127.0.0.1:6379", "app1"],
+  [2, 1700000001, 2500, "HGETALL user:2", "127.0.0.1:6380", "app2"],
+];
+
 const mockCallResults: Record<string, unknown> = {
   GET: "hello-world",
   SET: "OK",
@@ -44,6 +51,7 @@ const mockCallResults: Record<string, unknown> = {
   DEL: 1,
   PING: "PONG",
   DBSIZE: 42,
+  SLOWLOG: MOCK_SLOWLOG_ENTRIES,
 };
 
 mock.module("ioredis", () => {
@@ -407,6 +415,24 @@ describe("RedisProvider", () => {
     test("returns slow query data", async () => {
       const slow = await provider.getSlowQueries();
       expect(slow).toBeArray();
+    });
+
+    test("maps SLOWLOG entries to SlowQueryStats", async () => {
+      const slow = await provider.getSlowQueries();
+      expect(slow.length).toBe(2);
+
+      // Array args are joined into a command string; duration is microseconds -> ms
+      expect(slow[0].queryId).toBe("1");
+      expect(slow[0].query).toBe("GET user:1");
+      expect(slow[0].calls).toBe(1);
+      expect(slow[0].totalTime).toBe(1.5);
+      expect(slow[0].avgTime).toBe(1.5);
+      expect(slow[0].rows).toBe(0);
+
+      // Non-array args payload falls back to String()
+      expect(slow[1].queryId).toBe("2");
+      expect(slow[1].query).toBe("HGETALL user:2");
+      expect(slow[1].totalTime).toBe(2.5);
     });
   });
 

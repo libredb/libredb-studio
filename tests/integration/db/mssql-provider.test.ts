@@ -5,6 +5,8 @@ import { describe, test, expect, beforeEach, afterEach, mock } from "bun:test";
 // ---------------------------------------------------------------------------
 
 let mockQueryFn: (sql: string) => Promise<unknown>;
+let capturedInputs: Array<{ name: string; value: unknown }> = [];
+let cancelShouldThrow = false;
 
 class MockRequest {
   private _transaction: unknown;
@@ -13,8 +15,8 @@ class MockRequest {
     this._transaction = transaction;
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  input(_name: string, _val: unknown) {
+  input(name: string, val: unknown) {
+    capturedInputs.push({ name, value: val });
     return this;
   }
 
@@ -22,7 +24,9 @@ class MockRequest {
     return mockQueryFn(sql);
   }
 
-  cancel() {}
+  cancel() {
+    if (cancelShouldThrow) throw new Error("cancel failed");
+  }
 }
 
 class MockTransaction {
@@ -400,6 +404,8 @@ describe("MSSQLProvider", () => {
 
   beforeEach(() => {
     mockQueryFn = async (sql: string) => defaultQuery(sql);
+    capturedInputs = [];
+    cancelShouldThrow = false;
     provider = new MSSQLProvider(baseConfig);
   });
 
@@ -484,6 +490,29 @@ describe("MSSQLProvider", () => {
       expect(result.rows.length).toBeGreaterThan(0);
       expect(result.fields).toBeArray();
       expect(typeof result.executionTime).toBe("number");
+    });
+
+    test("binds positional parameters as p1..pN inputs", async () => {
+      await provider.connect();
+      const result = await provider.query("SELECT * FROM users WHERE id = @p1 AND name = @p2", [42, "alice"]);
+
+      expect(result.rows).toBeArray();
+      expect(capturedInputs).toEqual([
+        { name: "p1", value: 42 },
+        { name: "p2", value: "alice" },
+      ]);
+    });
+  });
+
+  // =========================================================================
+  // 3b. escapeIdentifier() dialect override
+  // =========================================================================
+
+  describe("escapeIdentifier()", () => {
+    test("wraps identifiers in brackets and escapes closing brackets", () => {
+      const providerAny = provider as unknown as { escapeIdentifier(identifier: string): string };
+      expect(providerAny.escapeIdentifier("users")).toBe("[users]");
+      expect(providerAny.escapeIdentifier("weird]name")).toBe("[weird]]name]");
     });
   });
 
@@ -707,6 +736,17 @@ describe("MSSQLProvider", () => {
       await provider.rollbackTransaction();
       expect(provider.isInTransaction()).toBe(false);
     });
+
+    test("queryInTransaction binds positional parameters as p1..pN inputs", async () => {
+      await provider.connect();
+      await provider.beginTransaction();
+
+      const result = await provider.queryInTransaction("SELECT * FROM users WHERE id = @p1", [7]);
+      expect(result.rows).toBeArray();
+      expect(capturedInputs).toEqual([{ name: "p1", value: 7 }]);
+
+      await provider.rollbackTransaction();
+    });
   });
 
   // =========================================================================
@@ -718,6 +758,49 @@ describe("MSSQLProvider", () => {
       await provider.connect();
       const cancelled = await provider.cancelQuery("non-existent-id");
       expect(cancelled).toBe(false);
+    });
+
+    test("cancels a tracked running request and returns true", async () => {
+      await provider.connect();
+
+      let release: (() => void) | undefined;
+      mockQueryFn = () =>
+        new Promise((resolve) => {
+          release = () => resolve({ recordset: [], rowsAffected: [0] });
+        });
+
+      const pending = provider.query("SELECT * FROM slow_table", undefined, "qid-1");
+      // Let the provider register the running request before cancelling
+      await new Promise((r) => setTimeout(r, 0));
+
+      const cancelled = await provider.cancelQuery("qid-1");
+      expect(cancelled).toBe(true);
+
+      release?.();
+      await pending;
+
+      // Request is deregistered after completion
+      expect(await provider.cancelQuery("qid-1")).toBe(false);
+    });
+
+    test("returns false when the driver cancel throws", async () => {
+      await provider.connect();
+
+      cancelShouldThrow = true;
+      let release: (() => void) | undefined;
+      mockQueryFn = () =>
+        new Promise((resolve) => {
+          release = () => resolve({ recordset: [], rowsAffected: [0] });
+        });
+
+      const pending = provider.query("SELECT * FROM slow_table", undefined, "qid-2");
+      await new Promise((r) => setTimeout(r, 0));
+
+      const cancelled = await provider.cancelQuery("qid-2");
+      expect(cancelled).toBe(false);
+
+      release?.();
+      await pending;
     });
   });
 

@@ -98,9 +98,8 @@ export abstract class SQLBaseProvider extends BaseDatabaseProvider {
         return this.config.user?.toUpperCase() || "";
       case "mssql":
         return "dbo";
-      default:
-        return "";
     }
+    return "";
   }
 
   /**

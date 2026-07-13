@@ -1,22 +1,28 @@
 import { describe, test, expect, beforeEach, afterEach, mock } from "bun:test";
+import { ConnectionError, DatabaseConfigError, QueryError } from "@/lib/db/errors";
+import type { DatabaseConnection } from "@/lib/types";
 
 // ---------------------------------------------------------------------------
-// Mock oracledb BEFORE importing the provider
+// Mock oracledb BEFORE loading the provider
 // ---------------------------------------------------------------------------
 
 let mockExecuteFn: (sql: string, params?: unknown[], opts?: unknown) => Promise<unknown>;
+let mockConnCloseFn: () => Promise<void>;
+let mockBreakFn: () => Promise<void>;
+let mockPoolCloseFn: () => Promise<void>;
+let mockCreatePoolFn: () => Promise<unknown>;
 
 const createMockConnection = () => ({
   execute: (sql: string, params?: unknown[], opts?: unknown) => mockExecuteFn(sql, params, opts),
-  close: async () => {},
-  break: async () => {},
+  close: () => mockConnCloseFn(),
+  break: () => mockBreakFn(),
   commit: async () => {},
   rollback: async () => {},
 });
 
 const createMockPool = () => ({
   getConnection: async () => createMockConnection(),
-  close: async () => {},
+  close: () => mockPoolCloseFn(),
   connectionsOpen: 5,
   connectionsInUse: 2,
 });
@@ -27,15 +33,15 @@ mock.module("oracledb", () => {
     initOracleClient: undefined as unknown,
     outFormat: 0,
     autoCommit: false,
-    createPool: async () => createMockPool(),
+    createPool: () => mockCreatePoolFn(),
   };
   return { default: oracledbMock };
 });
 
-// Now import the provider (after mock is in place)
-import { OracleProvider } from "@/lib/db/providers/sql/oracle";
-import { DatabaseConfigError, QueryError } from "@/lib/db/errors";
-import type { DatabaseConnection } from "@/lib/types";
+// Load the provider via dynamic import AFTER the mock is registered. A static
+// import is hoisted above mock.module(), which evaluates the real oracledb
+// driver first and drops oracle.ts from bun's lcov attribution entirely.
+const { OracleProvider } = await import("@/lib/db/providers/sql/oracle");
 
 // ---------------------------------------------------------------------------
 // Default mock execute implementation
@@ -378,10 +384,14 @@ const baseConfig: DatabaseConnection = {
 // ---------------------------------------------------------------------------
 
 describe("OracleProvider", () => {
-  let provider: OracleProvider;
+  let provider: InstanceType<typeof OracleProvider>;
 
   beforeEach(() => {
     mockExecuteFn = async (sql: string) => defaultExecute(sql);
+    mockConnCloseFn = async () => {};
+    mockBreakFn = async () => {};
+    mockPoolCloseFn = async () => {};
+    mockCreatePoolFn = async () => createMockPool();
     provider = new OracleProvider(baseConfig);
   });
 
@@ -440,6 +450,37 @@ describe("OracleProvider", () => {
       await provider.connect(); // should not throw
       expect(provider.isConnected()).toBe(true);
     });
+
+    test("connect wraps pool creation failure in ConnectionError", async () => {
+      mockCreatePoolFn = async () => {
+        throw new Error("ORA-12154: TNS:could not resolve the connect identifier");
+      };
+
+      await expect(provider.connect()).rejects.toThrow(ConnectionError);
+      expect(provider.isConnected()).toBe(false);
+    });
+
+    test("connect uses connectionString when provided", async () => {
+      const p = new OracleProvider({
+        ...baseConfig,
+        host: undefined,
+        connectionString: "dbhost:1521/ORCLPDB1",
+      } as unknown as DatabaseConnection);
+
+      await p.connect();
+      expect(p.isConnected()).toBe(true);
+      await p.disconnect();
+    });
+
+    test("disconnect swallows pool close errors", async () => {
+      await provider.connect();
+      mockPoolCloseFn = async () => {
+        throw new Error("connections still in use");
+      };
+
+      await provider.disconnect(); // should not throw
+      expect(provider.isConnected()).toBe(false);
+    });
   });
 
   // =========================================================================
@@ -456,6 +497,16 @@ describe("OracleProvider", () => {
       expect(result.fields).toContain("NAME");
       expect(result.rowCount).toBe(result.rows.length);
       expect(typeof result.executionTime).toBe("number");
+    });
+
+    test("ignores connection close errors after execution", async () => {
+      await provider.connect();
+      mockConnCloseFn = async () => {
+        throw new Error("close failed");
+      };
+
+      const result = await provider.query("SELECT * FROM DUAL");
+      expect(result.rows.length).toBeGreaterThan(0);
     });
   });
 
@@ -525,6 +576,24 @@ describe("OracleProvider", () => {
       const result = provider.prepareQuery(sql);
       expect(result.wasLimited).toBe(false);
     });
+
+    test("trailing semicolon is preserved after the FETCH clause", () => {
+      const result = provider.prepareQuery("SELECT * FROM USERS;");
+      expect(result.wasLimited).toBe(true);
+      expect(result.query.endsWith("FETCH FIRST 500 ROWS ONLY;")).toBe(true);
+    });
+
+    test("trailing semicolon is preserved with offset pagination", () => {
+      const result = provider.prepareQuery("SELECT * FROM USERS;", { offset: 20, limit: 10 });
+      expect(result.query.endsWith("OFFSET 20 ROWS FETCH NEXT 10 ROWS ONLY;")).toBe(true);
+    });
+
+    test("unlimited raises the limit to MAX_UNLIMITED_ROWS", () => {
+      const result = provider.prepareQuery("SELECT * FROM USERS", { unlimited: true });
+      expect(result.wasLimited).toBe(true);
+      expect(result.limit).toBe(100000);
+      expect(result.query).toContain("FETCH FIRST 100000 ROWS ONLY");
+    });
   });
 
   // =========================================================================
@@ -591,6 +660,21 @@ describe("OracleProvider", () => {
       expect(health).toBeDefined();
       expect(health.activeConnections).toBe(0);
     });
+
+    test("reports database size in GB above 1024 MB", async () => {
+      mockExecuteFn = async (sql: string) => {
+        const upper = sql.toUpperCase();
+        if (upper.includes("USER_SEGMENTS")) {
+          return { rows: [{ SIZE_MB: 2048 }], metaData: [{ name: "SIZE_MB" }] };
+        }
+        return defaultExecute(sql);
+      };
+
+      await provider.connect();
+      const health = await provider.getHealth();
+
+      expect(health.databaseSize).toBe("2.00 GB");
+    });
   });
 
   // =========================================================================
@@ -611,6 +695,75 @@ describe("OracleProvider", () => {
       expect(result.success).toBe(true);
       expect(capturedSql).toContain("DBMS_STATS");
       expect(typeof result.executionTime).toBe("number");
+    });
+
+    test("analyze without target gathers schema statistics", async () => {
+      let capturedSql = "";
+      mockExecuteFn = async (sql: string) => {
+        capturedSql = sql;
+        return defaultExecute(sql);
+      };
+
+      await provider.connect();
+      const result = await provider.runMaintenance("analyze");
+
+      expect(result.success).toBe(true);
+      expect(capturedSql).toContain("GATHER_SCHEMA_STATS");
+    });
+
+    test("optimize with target rebuilds that index", async () => {
+      const captured: string[] = [];
+      mockExecuteFn = async (sql: string) => {
+        captured.push(sql);
+        return defaultExecute(sql);
+      };
+
+      await provider.connect();
+      const result = await provider.runMaintenance("optimize", "IDX_USERS_NAME");
+
+      expect(result.success).toBe(true);
+      expect(captured.some((sql) => sql.includes('ALTER INDEX "IDX_USERS_NAME" REBUILD'))).toBe(true);
+    });
+
+    test("optimize without target rebuilds all indexes and tolerates individual failures", async () => {
+      const rebuilt: string[] = [];
+      mockExecuteFn = async (sql: string) => {
+        const upper = sql.toUpperCase();
+        if (upper.includes("USER_INDEXES") && upper.includes("INDEX_TYPE")) {
+          return {
+            rows: [{ INDEX_NAME: "GOOD_IDX" }, { INDEX_NAME: "BAD_IDX" }],
+            metaData: [{ name: "INDEX_NAME" }],
+          };
+        }
+        if (sql.startsWith('ALTER INDEX "BAD_IDX"')) {
+          throw new Error("ORA-01418: specified index does not exist");
+        }
+        if (sql.startsWith("ALTER INDEX")) {
+          rebuilt.push(sql);
+          return { rows: [], metaData: [] };
+        }
+        return defaultExecute(sql);
+      };
+
+      await provider.connect();
+      const result = await provider.runMaintenance("optimize");
+
+      expect(result.success).toBe(true);
+      expect(rebuilt).toEqual(['ALTER INDEX "GOOD_IDX" REBUILD']);
+    });
+
+    test("kill with target issues ALTER SYSTEM KILL SESSION", async () => {
+      let capturedSql = "";
+      mockExecuteFn = async (sql: string) => {
+        capturedSql = sql;
+        return defaultExecute(sql);
+      };
+
+      await provider.connect();
+      const result = await provider.runMaintenance("kill", "101,5432");
+
+      expect(result.success).toBe(true);
+      expect(capturedSql).toContain("ALTER SYSTEM KILL SESSION '101,5432'");
     });
 
     test("kill without target throws QueryError", async () => {
@@ -675,6 +828,44 @@ describe("OracleProvider", () => {
       await provider.rollbackTransaction();
       expect(provider.isInTransaction()).toBe(false);
     });
+
+    test("beginTransaction while a transaction is active throws QueryError", async () => {
+      await provider.connect();
+      await provider.beginTransaction();
+
+      await expect(provider.beginTransaction()).rejects.toThrow(QueryError);
+      await provider.rollbackTransaction();
+    });
+
+    test("commitTransaction without an active transaction throws QueryError", async () => {
+      await provider.connect();
+      await expect(provider.commitTransaction()).rejects.toThrow(QueryError);
+    });
+
+    test("rollbackTransaction without an active transaction throws QueryError", async () => {
+      await provider.connect();
+      await expect(provider.rollbackTransaction()).rejects.toThrow(QueryError);
+    });
+
+    test("queryInTransaction without an active transaction throws QueryError", async () => {
+      await provider.connect();
+      await expect(provider.queryInTransaction("SELECT 1 FROM DUAL")).rejects.toThrow(QueryError);
+    });
+
+    test("queryInTransaction maps driver errors", async () => {
+      await provider.connect();
+      await provider.beginTransaction();
+
+      mockExecuteFn = async () => {
+        throw new Error("ORA-00942: table or view does not exist");
+      };
+
+      await expect(provider.queryInTransaction("SELECT * FROM MISSING")).rejects.toThrow();
+      expect(provider.isInTransaction()).toBe(true); // error keeps the tx open
+
+      mockExecuteFn = async (sql: string) => defaultExecute(sql);
+      await provider.rollbackTransaction();
+    });
   });
 
   // =========================================================================
@@ -686,6 +877,65 @@ describe("OracleProvider", () => {
       await provider.connect();
       const cancelled = await provider.cancelQuery("non-existent-id");
       expect(cancelled).toBe(false);
+    });
+
+    test("breaks a running query and returns true", async () => {
+      await provider.connect();
+
+      let executeStarted: () => void;
+      const started = new Promise<void>((resolve) => {
+        executeStarted = resolve;
+      });
+      let releaseExecute: (value: unknown) => void;
+      mockExecuteFn = () =>
+        new Promise((resolve) => {
+          executeStarted();
+          releaseExecute = resolve;
+        });
+
+      let breakCalled = false;
+      mockBreakFn = async () => {
+        breakCalled = true;
+      };
+
+      const queryPromise = provider.query("SELECT * FROM BIG_TABLE", [], "run-1");
+      await started;
+
+      const cancelled = await provider.cancelQuery("run-1");
+      expect(cancelled).toBe(true);
+      expect(breakCalled).toBe(true);
+
+      releaseExecute!({ rows: [], metaData: [] });
+      const result = await queryPromise;
+      expect(result.rowCount).toBe(0);
+    });
+
+    test("returns false when break fails", async () => {
+      await provider.connect();
+
+      let executeStarted: () => void;
+      const started = new Promise<void>((resolve) => {
+        executeStarted = resolve;
+      });
+      let releaseExecute: (value: unknown) => void;
+      mockExecuteFn = () =>
+        new Promise((resolve) => {
+          executeStarted();
+          releaseExecute = resolve;
+        });
+
+      mockBreakFn = async () => {
+        throw new Error("break not supported");
+      };
+
+      const queryPromise = provider.query("SELECT * FROM BIG_TABLE", [], "run-2");
+      await started;
+
+      const cancelled = await provider.cancelQuery("run-2");
+      expect(cancelled).toBe(false);
+
+      releaseExecute!({ rows: [], metaData: [] });
+      await queryPromise;
     });
   });
 
@@ -708,6 +958,24 @@ describe("OracleProvider", () => {
       expect(typeof overview.databaseSizeBytes).toBe("number");
       expect(typeof overview.tableCount).toBe("number");
       expect(typeof overview.indexCount).toBe("number");
+    });
+
+    test("degrades to defaults when every statistics query fails", async () => {
+      mockExecuteFn = async () => {
+        throw new Error("ORA-00942: table or view does not exist");
+      };
+
+      await provider.connect();
+      const overview = await provider.getOverview();
+
+      expect(overview.version).toBe("Oracle");
+      expect(overview.uptime).toBe("N/A");
+      expect(overview.startTime).toBeUndefined();
+      expect(overview.activeConnections).toBe(0);
+      expect(overview.maxConnections).toBe(0);
+      expect(overview.databaseSizeBytes).toBe(0);
+      expect(overview.tableCount).toBe(0);
+      expect(overview.indexCount).toBe(0);
     });
   });
 
@@ -767,6 +1035,33 @@ describe("OracleProvider", () => {
       expect(typeof first.rows).toBe("number");
       expect(typeof first.queryId).toBe("string");
     });
+
+    test("honours the limit option", async () => {
+      let capturedSql = "";
+      mockExecuteFn = async (sql: string) => {
+        capturedSql = sql;
+        return defaultExecute(sql);
+      };
+
+      await provider.connect();
+      await provider.getSlowQueries({ limit: 3 });
+
+      expect(capturedSql).toContain("ROWNUM <= 3");
+    });
+
+    test("returns empty array when V$SQL is not accessible", async () => {
+      mockExecuteFn = async (sql: string) => {
+        if (sql.toUpperCase().includes("V$SQL")) {
+          throw new Error("ORA-00942: table or view does not exist");
+        }
+        return defaultExecute(sql);
+      };
+
+      await provider.connect();
+      const slowQueries = await provider.getSlowQueries();
+
+      expect(slowQueries).toEqual([]);
+    });
   });
 
   // =========================================================================
@@ -789,6 +1084,78 @@ describe("OracleProvider", () => {
       expect(typeof first.query).toBe("string");
       expect(typeof first.duration).toBe("string");
       expect(typeof first.durationMs).toBe("number");
+    });
+
+    test("formats hour, minute, and second durations and defaults missing fields", async () => {
+      const sessionRow = (sid: number, secs: number, overrides: Record<string, unknown> = {}) => ({
+        SID: sid,
+        "SERIAL#": sid * 10,
+        USERNAME: "APP",
+        SCHEMANAME: "APP",
+        PROGRAM: "sqlplus",
+        MACHINE: "host1",
+        STATUS: "ACTIVE",
+        SQL_ID: `sql-${sid}`,
+        QUERY: "SELECT 1 FROM DUAL",
+        LOGON_TIME: new Date().toISOString(),
+        DURATION_SECS: secs,
+        WAIT_CLASS: "CPU",
+        EVENT: "cpu time",
+        ...overrides,
+      });
+
+      mockExecuteFn = async (sql: string) => {
+        const upper = sql.toUpperCase();
+        if (upper.includes("V$SESSION") && upper.includes("SERIAL#")) {
+          return {
+            rows: [
+              sessionRow(1, 7200),
+              sessionRow(2, 90, {
+                USERNAME: null,
+                SCHEMANAME: null,
+                STATUS: null,
+                QUERY: null,
+                LOGON_TIME: null,
+                WAIT_CLASS: null,
+                EVENT: null,
+              }),
+              sessionRow(3, 30),
+            ],
+            metaData: [{ name: "SID" }, { name: "SERIAL#" }],
+          };
+        }
+        return defaultExecute(sql);
+      };
+
+      await provider.connect();
+      const sessions = await provider.getActiveSessions({ limit: 5 });
+
+      expect(sessions.length).toBe(3);
+      expect(sessions[0].duration).toBe("2h 0m");
+      expect(sessions[1].duration).toBe("1m 30s");
+      expect(sessions[2].duration).toBe("30s");
+
+      // Null columns fall back to safe defaults
+      expect(sessions[1].user).toBe("unknown");
+      expect(sessions[1].state).toBe("unknown");
+      expect(sessions[1].query).toBe("sql-2"); // falls back to SQL_ID
+      expect(sessions[1].queryStart).toBeUndefined();
+      expect(sessions[1].waitEventType).toBeUndefined();
+      expect(sessions[1].waitEvent).toBeUndefined();
+    });
+
+    test("returns empty array when V$SESSION is not accessible", async () => {
+      mockExecuteFn = async (sql: string) => {
+        if (sql.toUpperCase().includes("V$SESSION")) {
+          throw new Error("ORA-00942: table or view does not exist");
+        }
+        return defaultExecute(sql);
+      };
+
+      await provider.connect();
+      const sessions = await provider.getActiveSessions();
+
+      expect(sessions).toEqual([]);
     });
   });
 
@@ -813,6 +1180,20 @@ describe("OracleProvider", () => {
       expect(typeof first.indexSize).toBe("string");
       expect(typeof first.totalSize).toBe("string");
       expect(typeof first.totalSizeBytes).toBe("number");
+    });
+
+    test("returns empty array when the stats query fails", async () => {
+      mockExecuteFn = async (sql: string) => {
+        if (sql.toUpperCase().includes("ALL_TABLES")) {
+          throw new Error("ORA-00942: table or view does not exist");
+        }
+        return defaultExecute(sql);
+      };
+
+      await provider.connect();
+      const stats = await provider.getTableStats();
+
+      expect(stats).toEqual([]);
     });
   });
 
@@ -839,6 +1220,20 @@ describe("OracleProvider", () => {
       expect(typeof first.indexSize).toBe("string");
       expect(typeof first.indexSizeBytes).toBe("number");
       expect(typeof first.scans).toBe("number");
+    });
+
+    test("returns empty array when the index query fails", async () => {
+      mockExecuteFn = async (sql: string) => {
+        if (sql.toUpperCase().includes("ALL_INDEXES")) {
+          throw new Error("ORA-00942: table or view does not exist");
+        }
+        return defaultExecute(sql);
+      };
+
+      await provider.connect();
+      const stats = await provider.getIndexStats();
+
+      expect(stats).toEqual([]);
     });
   });
 
@@ -878,6 +1273,17 @@ describe("OracleProvider", () => {
       expect(Array.isArray(stats)).toBe(true);
       // May return results from fallback query or empty array
       expect(stats.length).toBeGreaterThanOrEqual(0);
+    });
+
+    test("returns empty array when the fallback also fails", async () => {
+      mockExecuteFn = async () => {
+        throw new Error("ORA-00942: table or view does not exist");
+      };
+
+      await provider.connect();
+      const stats = await provider.getStorageStats();
+
+      expect(stats).toEqual([]);
     });
   });
 

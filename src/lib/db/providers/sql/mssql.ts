@@ -31,6 +31,268 @@ import { DatabaseConfigError, ConnectionError, QueryError, mapDatabaseError } fr
 import { formatBytes } from "../../utils/pool-manager";
 import { analyzeQuery, DEFAULT_QUERY_LIMIT, MAX_UNLIMITED_ROWS } from "../../utils/query-limiter";
 
+// Row shape used to group foreign keys per table in getSchema().
+type ForeignKeyInfo = { columnName: string; referencedTable: string; referencedColumn: string };
+
+// ============================================================================
+// SQL Statements
+// ============================================================================
+// Multi-line SQL is hoisted to module scope so per-line coverage attribution
+// stays stable (repo pattern, see the SCHEMA_*_SQL consts in postgres.ts).
+
+const SCHEMA_TABLES_SQL = `
+        SELECT
+          s.name AS schema_name,
+          t.name AS table_name,
+          SUM(p.rows) AS row_count
+        FROM sys.tables t
+        JOIN sys.schemas s ON t.schema_id = s.schema_id
+        LEFT JOIN sys.partitions p ON t.object_id = p.object_id AND p.index_id IN (0, 1)
+        WHERE t.type = 'U'
+        GROUP BY s.name, t.name
+        ORDER BY s.name, t.name
+      `;
+
+const SCHEMA_COLUMNS_SQL = `
+        SELECT
+          TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME, DATA_TYPE,
+          IS_NULLABLE, COLUMN_DEFAULT, ORDINAL_POSITION
+        FROM INFORMATION_SCHEMA.COLUMNS
+        ORDER BY TABLE_SCHEMA, TABLE_NAME, ORDINAL_POSITION
+      `;
+
+const SCHEMA_PRIMARY_KEYS_SQL = `
+        SELECT
+          s.name AS schema_name,
+          t.name AS table_name,
+          c.name AS column_name
+        FROM sys.indexes i
+        JOIN sys.index_columns ic ON i.object_id = ic.object_id AND i.index_id = ic.index_id
+        JOIN sys.columns c ON ic.object_id = c.object_id AND ic.column_id = c.column_id
+        JOIN sys.tables t ON i.object_id = t.object_id
+        JOIN sys.schemas s ON t.schema_id = s.schema_id
+        WHERE i.is_primary_key = 1
+      `;
+
+const SCHEMA_FOREIGN_KEYS_SQL = `
+        SELECT
+          OBJECT_SCHEMA_NAME(fk.parent_object_id) AS schema_name,
+          OBJECT_NAME(fk.parent_object_id) AS table_name,
+          COL_NAME(fkc.parent_object_id, fkc.parent_column_id) AS column_name,
+          OBJECT_NAME(fk.referenced_object_id) AS ref_table,
+          COL_NAME(fkc.referenced_object_id, fkc.referenced_column_id) AS ref_column
+        FROM sys.foreign_keys fk
+        JOIN sys.foreign_key_columns fkc ON fk.object_id = fkc.constraint_object_id
+      `;
+
+const SCHEMA_INDEXES_SQL = `
+        SELECT
+          s.name AS schema_name,
+          t.name AS table_name,
+          i.name AS index_name,
+          i.is_unique,
+          c.name AS column_name,
+          ic.key_ordinal
+        FROM sys.indexes i
+        JOIN sys.index_columns ic ON i.object_id = ic.object_id AND i.index_id = ic.index_id
+        JOIN sys.columns c ON ic.object_id = c.object_id AND ic.column_id = c.column_id
+        JOIN sys.tables t ON i.object_id = t.object_id
+        JOIN sys.schemas s ON t.schema_id = s.schema_id
+        WHERE i.name IS NOT NULL AND i.is_primary_key = 0
+        ORDER BY s.name, t.name, i.name, ic.key_ordinal
+      `;
+
+const DATABASE_SIZE_MB_SQL = `
+          SELECT
+            CAST(SUM(size) * 8.0 / 1024 AS DECIMAL(10,2)) AS size_mb
+          FROM sys.database_files
+        `;
+
+// Shared by getHealth() and getPerformanceMetrics().
+const BUFFER_CACHE_HIT_RATIO_SQL = `
+          SELECT
+            CAST(
+              (a.cntr_value * 1.0 / NULLIF(b.cntr_value, 0)) * 100
+              AS DECIMAL(5,2)
+            ) AS hit_ratio
+          FROM sys.dm_os_performance_counters a
+          CROSS JOIN sys.dm_os_performance_counters b
+          WHERE a.counter_name = 'Buffer cache hit ratio'
+            AND a.object_name LIKE '%Buffer Manager%'
+            AND b.counter_name = 'Buffer cache hit ratio base'
+            AND b.object_name LIKE '%Buffer Manager%'
+        `;
+
+const HEALTH_SLOW_QUERIES_SQL = `
+          SELECT TOP 5
+            SUBSTRING(qt.text, 1, 100) AS query,
+            qs.execution_count AS calls,
+            CAST(qs.total_elapsed_time / NULLIF(qs.execution_count, 0) / 1000.0 AS DECIMAL(10,2)) AS avg_time_ms
+          FROM sys.dm_exec_query_stats qs
+          CROSS APPLY sys.dm_exec_sql_text(qs.sql_handle) qt
+          WHERE qs.execution_count > 0
+          ORDER BY qs.total_elapsed_time DESC
+        `;
+
+const HEALTH_ACTIVE_SESSIONS_SQL = `
+          SELECT TOP 10
+            s.session_id AS pid,
+            s.login_name AS [user],
+            DB_NAME(s.database_id) AS [database],
+            s.status AS state,
+            ISNULL(SUBSTRING(t.text, 1, 100), '') AS query,
+            ISNULL(CAST(DATEDIFF(SECOND, s.last_request_start_time, GETDATE()) AS VARCHAR) + 's', 'N/A') AS duration
+          FROM sys.dm_exec_sessions s
+          LEFT JOIN sys.dm_exec_requests r ON s.session_id = r.session_id
+          OUTER APPLY sys.dm_exec_sql_text(r.sql_handle) t
+          WHERE s.is_user_process = 1
+          ORDER BY s.last_request_start_time DESC
+        `;
+
+// Rebuild all indexes on all tables.
+const REBUILD_ALL_INDEXES_SQL = `
+                DECLARE @sql NVARCHAR(MAX) = '';
+                SELECT @sql = @sql + 'ALTER INDEX ALL ON [' + s.name + '].[' + t.name + '] REBUILD;'
+                FROM sys.tables t
+                JOIN sys.schemas s ON t.schema_id = s.schema_id
+                WHERE t.type = 'U';
+                EXEC sp_executesql @sql;
+              `;
+
+const OVERVIEW_UPTIME_SQL = `
+          SELECT sqlserver_start_time,
+                 DATEDIFF(SECOND, sqlserver_start_time, GETDATE()) AS uptime_seconds
+          FROM sys.dm_os_sys_info
+        `;
+
+const OVERVIEW_CONNECTIONS_SQL = `
+          SELECT
+            COUNT(*) AS active_connections,
+            (SELECT CAST(value_in_use AS INT) FROM sys.configurations WHERE name = 'user connections') AS max_connections
+          FROM sys.dm_exec_sessions
+          WHERE is_user_process = 1
+        `;
+
+const OVERVIEW_DATABASE_SIZE_SQL = `
+          SELECT SUM(CAST(size AS BIGINT)) * 8 * 1024 AS size_bytes FROM sys.database_files
+        `;
+
+const OVERVIEW_OBJECT_COUNTS_SQL = `
+          SELECT
+            (SELECT COUNT(*) FROM sys.tables WHERE type = 'U') AS table_count,
+            (SELECT COUNT(*) FROM sys.indexes WHERE object_id IN (SELECT object_id FROM sys.tables WHERE type = 'U') AND name IS NOT NULL) AS index_count
+        `;
+
+// Interpolated after "SELECT TOP <limit>" in getSlowQueries().
+const SLOW_QUERIES_BODY_SQL = `
+          CAST(qs.query_hash AS VARCHAR(50)) AS query_id,
+          SUBSTRING(qt.text, 1, 500) AS query,
+          qs.execution_count AS calls,
+          CAST(qs.total_elapsed_time / 1000.0 AS DECIMAL(18,2)) AS total_time,
+          CAST(qs.total_elapsed_time / NULLIF(qs.execution_count, 0) / 1000.0 AS DECIMAL(18,2)) AS avg_time,
+          CAST(qs.min_elapsed_time / 1000.0 AS DECIMAL(18,2)) AS min_time,
+          CAST(qs.max_elapsed_time / 1000.0 AS DECIMAL(18,2)) AS max_time,
+          qs.total_rows AS row_cnt,
+          qs.total_logical_reads AS logical_reads,
+          qs.total_physical_reads AS physical_reads
+        FROM sys.dm_exec_query_stats qs
+        CROSS APPLY sys.dm_exec_sql_text(qs.sql_handle) qt
+        WHERE qs.execution_count > 0
+        ORDER BY qs.total_elapsed_time DESC
+      `;
+
+// Interpolated after "SELECT TOP <limit>" in getActiveSessions().
+const ACTIVE_SESSIONS_BODY_SQL = `
+          s.session_id AS pid,
+          s.login_name AS [user],
+          DB_NAME(s.database_id) AS [database],
+          s.program_name AS application_name,
+          s.host_name AS client_addr,
+          s.status AS state,
+          ISNULL(SUBSTRING(t.text, 1, 500), '') AS query,
+          s.last_request_start_time AS query_start,
+          ISNULL(CAST(DATEDIFF(SECOND, s.last_request_start_time, GETDATE()) AS VARCHAR) + 's', 'N/A') AS duration,
+          ISNULL(DATEDIFF(MILLISECOND, s.last_request_start_time, GETDATE()), 0) AS duration_ms,
+          r.wait_type,
+          r.last_wait_type,
+          CASE WHEN r.blocking_session_id > 0 THEN 1 ELSE 0 END AS is_blocked
+        FROM sys.dm_exec_sessions s
+        LEFT JOIN sys.dm_exec_requests r ON s.session_id = r.session_id
+        OUTER APPLY sys.dm_exec_sql_text(r.sql_handle) t
+        WHERE s.is_user_process = 1
+        ORDER BY
+          CASE s.status WHEN 'running' THEN 0 WHEN 'sleeping' THEN 1 ELSE 2 END,
+          s.last_request_start_time DESC
+      `;
+
+const TABLE_STATS_SQL = `
+        SELECT
+          s.name AS schema_name,
+          t.name AS table_name,
+          SUM(p.rows) AS row_count,
+          SUM(a.total_pages) * 8 * 1024 AS total_size_bytes,
+          SUM(a.used_pages) * 8 * 1024 AS used_size_bytes,
+          SUM(CASE WHEN i.type IN (0, 1) THEN a.total_pages ELSE 0 END) * 8 * 1024 AS table_size_bytes,
+          SUM(CASE WHEN i.type > 1 THEN a.total_pages ELSE 0 END) * 8 * 1024 AS index_size_bytes,
+          STATS_DATE(t.object_id, 1) AS last_stats_update
+        FROM sys.tables t
+        JOIN sys.schemas s ON t.schema_id = s.schema_id
+        JOIN sys.indexes i ON t.object_id = i.object_id
+        JOIN sys.partitions p ON i.object_id = p.object_id AND i.index_id = p.index_id
+        JOIN sys.allocation_units a ON p.partition_id = a.container_id
+        WHERE t.type = 'U'
+        GROUP BY s.name, t.name, t.object_id
+        ORDER BY SUM(a.total_pages) DESC
+      `;
+
+const INDEX_STATS_SQL = `
+        SELECT
+          s.name AS schema_name,
+          t.name AS table_name,
+          i.name AS index_name,
+          i.type_desc AS index_type,
+          i.is_unique,
+          i.is_primary_key,
+          SUM(a.total_pages) * 8 * 1024 AS index_size_bytes,
+          ISNULL(u.user_seeks + u.user_scans + u.user_lookups, 0) AS scans
+        FROM sys.indexes i
+        JOIN sys.tables t ON i.object_id = t.object_id
+        JOIN sys.schemas s ON t.schema_id = s.schema_id
+        LEFT JOIN sys.partitions p ON i.object_id = p.object_id AND i.index_id = p.index_id
+        LEFT JOIN sys.allocation_units a ON p.partition_id = a.container_id
+        LEFT JOIN sys.dm_db_index_usage_stats u ON i.object_id = u.object_id AND i.index_id = u.index_id AND u.database_id = DB_ID()
+        WHERE i.name IS NOT NULL AND t.type = 'U'
+        GROUP BY s.name, t.name, i.name, i.type_desc, i.is_unique, i.is_primary_key,
+                 i.object_id, i.index_id, u.user_seeks, u.user_scans, u.user_lookups
+        ORDER BY SUM(a.total_pages) DESC
+      `;
+
+const INDEX_COLUMNS_SQL = `
+        SELECT
+          s.name AS schema_name,
+          t.name AS table_name,
+          i.name AS index_name,
+          c.name AS column_name,
+          ic.key_ordinal
+        FROM sys.index_columns ic
+        JOIN sys.indexes i ON ic.object_id = i.object_id AND ic.index_id = i.index_id
+        JOIN sys.columns c ON ic.object_id = c.object_id AND ic.column_id = c.column_id
+        JOIN sys.tables t ON i.object_id = t.object_id
+        JOIN sys.schemas s ON t.schema_id = s.schema_id
+        WHERE i.name IS NOT NULL AND t.type = 'U'
+        ORDER BY s.name, t.name, i.name, ic.key_ordinal
+      `;
+
+const STORAGE_STATS_SQL = `
+        SELECT
+          name,
+          physical_name AS location,
+          CAST(size AS BIGINT) * 8 * 1024 AS size_bytes,
+          type_desc
+        FROM sys.database_files
+        ORDER BY size DESC
+      `;
+
 // ============================================================================
 // MSSQL Provider
 // ============================================================================
@@ -373,43 +635,15 @@ export class MSSQLProvider extends SQLBaseProvider {
 
     try {
       // Get tables
-      const tablesRes = await this.pool!.request().query(`
-        SELECT
-          s.name AS schema_name,
-          t.name AS table_name,
-          SUM(p.rows) AS row_count
-        FROM sys.tables t
-        JOIN sys.schemas s ON t.schema_id = s.schema_id
-        LEFT JOIN sys.partitions p ON t.object_id = p.object_id AND p.index_id IN (0, 1)
-        WHERE t.type = 'U'
-        GROUP BY s.name, t.name
-        ORDER BY s.name, t.name
-      `);
+      const tablesRes = await this.pool!.request().query(SCHEMA_TABLES_SQL);
       const tables = tablesRes.recordset || [];
 
       // Get columns
-      const colsRes = await this.pool!.request().query(`
-        SELECT
-          TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME, DATA_TYPE,
-          IS_NULLABLE, COLUMN_DEFAULT, ORDINAL_POSITION
-        FROM INFORMATION_SCHEMA.COLUMNS
-        ORDER BY TABLE_SCHEMA, TABLE_NAME, ORDINAL_POSITION
-      `);
+      const colsRes = await this.pool!.request().query(SCHEMA_COLUMNS_SQL);
       const allCols = colsRes.recordset || [];
 
       // Get primary keys
-      const pkRes = await this.pool!.request().query(`
-        SELECT
-          s.name AS schema_name,
-          t.name AS table_name,
-          c.name AS column_name
-        FROM sys.indexes i
-        JOIN sys.index_columns ic ON i.object_id = ic.object_id AND i.index_id = ic.index_id
-        JOIN sys.columns c ON ic.object_id = c.object_id AND ic.column_id = c.column_id
-        JOIN sys.tables t ON i.object_id = t.object_id
-        JOIN sys.schemas s ON t.schema_id = s.schema_id
-        WHERE i.is_primary_key = 1
-      `);
+      const pkRes = await this.pool!.request().query(SCHEMA_PRIMARY_KEYS_SQL);
       const pkMap = new Map<string, Set<string>>();
       for (const row of pkRes.recordset || []) {
         const key = `${row.schema_name}.${row.table_name}`;
@@ -418,20 +652,8 @@ export class MSSQLProvider extends SQLBaseProvider {
       }
 
       // Get foreign keys
-      const fkRes = await this.pool!.request().query(`
-        SELECT
-          OBJECT_SCHEMA_NAME(fk.parent_object_id) AS schema_name,
-          OBJECT_NAME(fk.parent_object_id) AS table_name,
-          COL_NAME(fkc.parent_object_id, fkc.parent_column_id) AS column_name,
-          OBJECT_NAME(fk.referenced_object_id) AS ref_table,
-          COL_NAME(fkc.referenced_object_id, fkc.referenced_column_id) AS ref_column
-        FROM sys.foreign_keys fk
-        JOIN sys.foreign_key_columns fkc ON fk.object_id = fkc.constraint_object_id
-      `);
-      const fksByTable = new Map<
-        string,
-        Array<{ columnName: string; referencedTable: string; referencedColumn: string }>
-      >();
+      const fkRes = await this.pool!.request().query(SCHEMA_FOREIGN_KEYS_SQL);
+      const fksByTable = new Map<string, ForeignKeyInfo[]>();
       for (const row of fkRes.recordset || []) {
         const key = `${row.schema_name}.${row.table_name}`;
         if (!fksByTable.has(key)) fksByTable.set(key, []);
@@ -443,22 +665,7 @@ export class MSSQLProvider extends SQLBaseProvider {
       }
 
       // Get indexes
-      const idxRes = await this.pool!.request().query(`
-        SELECT
-          s.name AS schema_name,
-          t.name AS table_name,
-          i.name AS index_name,
-          i.is_unique,
-          c.name AS column_name,
-          ic.key_ordinal
-        FROM sys.indexes i
-        JOIN sys.index_columns ic ON i.object_id = ic.object_id AND i.index_id = ic.index_id
-        JOIN sys.columns c ON ic.object_id = c.object_id AND ic.column_id = c.column_id
-        JOIN sys.tables t ON i.object_id = t.object_id
-        JOIN sys.schemas s ON t.schema_id = s.schema_id
-        WHERE i.name IS NOT NULL AND i.is_primary_key = 0
-        ORDER BY s.name, t.name, i.name, ic.key_ordinal
-      `);
+      const idxRes = await this.pool!.request().query(SCHEMA_INDEXES_SQL);
 
       const idxByTable = new Map<string, Map<string, { unique: boolean; columns: string[] }>>();
       for (const row of idxRes.recordset || []) {
@@ -542,11 +749,7 @@ export class MSSQLProvider extends SQLBaseProvider {
 
       // Database size
       try {
-        const sizeRes = await this.pool!.request().query(`
-          SELECT
-            CAST(SUM(size) * 8.0 / 1024 AS DECIMAL(10,2)) AS size_mb
-          FROM sys.database_files
-        `);
+        const sizeRes = await this.pool!.request().query(DATABASE_SIZE_MB_SQL);
         const mb = Number(sizeRes.recordset[0]?.size_mb || 0);
         databaseSize = mb > 1024 ? `${(mb / 1024).toFixed(2)} GB` : `${mb} MB`;
       } catch {
@@ -555,19 +758,7 @@ export class MSSQLProvider extends SQLBaseProvider {
 
       // Cache hit ratio
       try {
-        const cacheRes = await this.pool!.request().query(`
-          SELECT
-            CAST(
-              (a.cntr_value * 1.0 / NULLIF(b.cntr_value, 0)) * 100
-              AS DECIMAL(5,2)
-            ) AS hit_ratio
-          FROM sys.dm_os_performance_counters a
-          CROSS JOIN sys.dm_os_performance_counters b
-          WHERE a.counter_name = 'Buffer cache hit ratio'
-            AND a.object_name LIKE '%Buffer Manager%'
-            AND b.counter_name = 'Buffer cache hit ratio base'
-            AND b.object_name LIKE '%Buffer Manager%'
-        `);
+        const cacheRes = await this.pool!.request().query(BUFFER_CACHE_HIT_RATIO_SQL);
         cacheHitRatio = `${cacheRes.recordset[0]?.hit_ratio || 0}%`;
       } catch {
         /* ignore */
@@ -575,16 +766,7 @@ export class MSSQLProvider extends SQLBaseProvider {
 
       // Slow queries
       try {
-        const slowRes = await this.pool!.request().query(`
-          SELECT TOP 5
-            SUBSTRING(qt.text, 1, 100) AS query,
-            qs.execution_count AS calls,
-            CAST(qs.total_elapsed_time / NULLIF(qs.execution_count, 0) / 1000.0 AS DECIMAL(10,2)) AS avg_time_ms
-          FROM sys.dm_exec_query_stats qs
-          CROSS APPLY sys.dm_exec_sql_text(qs.sql_handle) qt
-          WHERE qs.execution_count > 0
-          ORDER BY qs.total_elapsed_time DESC
-        `);
+        const slowRes = await this.pool!.request().query(HEALTH_SLOW_QUERIES_SQL);
         for (const row of slowRes.recordset || []) {
           slowQueries.push({
             query: String(row.query || ""),
@@ -598,20 +780,7 @@ export class MSSQLProvider extends SQLBaseProvider {
 
       // Active sessions
       try {
-        const sessRes = await this.pool!.request().query(`
-          SELECT TOP 10
-            s.session_id AS pid,
-            s.login_name AS [user],
-            DB_NAME(s.database_id) AS [database],
-            s.status AS state,
-            ISNULL(SUBSTRING(t.text, 1, 100), '') AS query,
-            ISNULL(CAST(DATEDIFF(SECOND, s.last_request_start_time, GETDATE()) AS VARCHAR) + 's', 'N/A') AS duration
-          FROM sys.dm_exec_sessions s
-          LEFT JOIN sys.dm_exec_requests r ON s.session_id = r.session_id
-          OUTER APPLY sys.dm_exec_sql_text(r.sql_handle) t
-          WHERE s.is_user_process = 1
-          ORDER BY s.last_request_start_time DESC
-        `);
+        const sessRes = await this.pool!.request().query(HEALTH_ACTIVE_SESSIONS_SQL);
         for (const row of sessRes.recordset || []) {
           activeSessions.push({
             pid: Number(row.pid || 0),
@@ -658,15 +827,7 @@ export class MSSQLProvider extends SQLBaseProvider {
             if (target) {
               sql = `ALTER INDEX ALL ON [${target.replace(/\]/g, "]]")}] REBUILD`;
             } else {
-              // Rebuild all indexes on all tables
-              sql = `
-                DECLARE @sql NVARCHAR(MAX) = '';
-                SELECT @sql = @sql + 'ALTER INDEX ALL ON [' + s.name + '].[' + t.name + '] REBUILD;'
-                FROM sys.tables t
-                JOIN sys.schemas s ON t.schema_id = s.schema_id
-                WHERE t.type = 'U';
-                EXEC sp_executesql @sql;
-              `;
+              sql = REBUILD_ALL_INDEXES_SQL;
             }
             break;
           case "kill":
@@ -679,8 +840,12 @@ export class MSSQLProvider extends SQLBaseProvider {
             }
             sql = `KILL ${spid}`;
             break;
-          default:
-            throw new QueryError(`Unsupported maintenance type: ${type}`, "mssql");
+        }
+
+        // Unsupported types leave sql empty and are rejected here; every supported
+        // case above assigns a non-empty statement or throws before reaching this.
+        if (!sql) {
+          throw new QueryError(`Unsupported maintenance type: ${type}`, "mssql");
         }
 
         await this.pool!.request().query(sql);
@@ -742,11 +907,7 @@ export class MSSQLProvider extends SQLBaseProvider {
 
       // Uptime
       try {
-        const upRes = await this.pool!.request().query(`
-          SELECT sqlserver_start_time,
-                 DATEDIFF(SECOND, sqlserver_start_time, GETDATE()) AS uptime_seconds
-          FROM sys.dm_os_sys_info
-        `);
+        const upRes = await this.pool!.request().query(OVERVIEW_UPTIME_SQL);
         if (upRes.recordset[0]) {
           const secs = Number(upRes.recordset[0].uptime_seconds || 0);
           const days = Math.floor(secs / 86400);
@@ -761,13 +922,7 @@ export class MSSQLProvider extends SQLBaseProvider {
 
       // Connections
       try {
-        const connRes = await this.pool!.request().query(`
-          SELECT
-            COUNT(*) AS active_connections,
-            (SELECT CAST(value_in_use AS INT) FROM sys.configurations WHERE name = 'user connections') AS max_connections
-          FROM sys.dm_exec_sessions
-          WHERE is_user_process = 1
-        `);
+        const connRes = await this.pool!.request().query(OVERVIEW_CONNECTIONS_SQL);
         activeConnections = Number(connRes.recordset[0]?.active_connections || 0);
         maxConnections = Number(connRes.recordset[0]?.max_connections || 32767);
         if (maxConnections === 0) maxConnections = 32767; // 0 means unlimited
@@ -777,9 +932,7 @@ export class MSSQLProvider extends SQLBaseProvider {
 
       // Database size
       try {
-        const sizeRes = await this.pool!.request().query(`
-          SELECT SUM(CAST(size AS BIGINT)) * 8 * 1024 AS size_bytes FROM sys.database_files
-        `);
+        const sizeRes = await this.pool!.request().query(OVERVIEW_DATABASE_SIZE_SQL);
         databaseSizeBytes = Number(sizeRes.recordset[0]?.size_bytes || 0);
         databaseSize = formatBytes(databaseSizeBytes);
       } catch {
@@ -788,11 +941,7 @@ export class MSSQLProvider extends SQLBaseProvider {
 
       // Table/index counts
       try {
-        const cntRes = await this.pool!.request().query(`
-          SELECT
-            (SELECT COUNT(*) FROM sys.tables WHERE type = 'U') AS table_count,
-            (SELECT COUNT(*) FROM sys.indexes WHERE object_id IN (SELECT object_id FROM sys.tables WHERE type = 'U') AND name IS NOT NULL) AS index_count
-        `);
+        const cntRes = await this.pool!.request().query(OVERVIEW_OBJECT_COUNTS_SQL);
         tableCount = Number(cntRes.recordset[0]?.table_count || 0);
         indexCount = Number(cntRes.recordset[0]?.index_count || 0);
       } catch {
@@ -823,19 +972,7 @@ export class MSSQLProvider extends SQLBaseProvider {
       let bufferPoolUsage: number | undefined;
 
       try {
-        const cacheRes = await this.pool!.request().query(`
-          SELECT
-            CAST(
-              (a.cntr_value * 1.0 / NULLIF(b.cntr_value, 0)) * 100
-              AS DECIMAL(5,2)
-            ) AS hit_ratio
-          FROM sys.dm_os_performance_counters a
-          CROSS JOIN sys.dm_os_performance_counters b
-          WHERE a.counter_name = 'Buffer cache hit ratio'
-            AND a.object_name LIKE '%Buffer Manager%'
-            AND b.counter_name = 'Buffer cache hit ratio base'
-            AND b.object_name LIKE '%Buffer Manager%'
-        `);
+        const cacheRes = await this.pool!.request().query(BUFFER_CACHE_HIT_RATIO_SQL);
         cacheHitRatio = Number(cacheRes.recordset[0]?.hit_ratio || 100);
         bufferPoolUsage = cacheHitRatio;
       } catch {
@@ -856,23 +993,7 @@ export class MSSQLProvider extends SQLBaseProvider {
     const limit = options?.limit ?? 10;
 
     try {
-      const res = await this.pool!.request().query(`
-        SELECT TOP ${limit}
-          CAST(qs.query_hash AS VARCHAR(50)) AS query_id,
-          SUBSTRING(qt.text, 1, 500) AS query,
-          qs.execution_count AS calls,
-          CAST(qs.total_elapsed_time / 1000.0 AS DECIMAL(18,2)) AS total_time,
-          CAST(qs.total_elapsed_time / NULLIF(qs.execution_count, 0) / 1000.0 AS DECIMAL(18,2)) AS avg_time,
-          CAST(qs.min_elapsed_time / 1000.0 AS DECIMAL(18,2)) AS min_time,
-          CAST(qs.max_elapsed_time / 1000.0 AS DECIMAL(18,2)) AS max_time,
-          qs.total_rows AS row_cnt,
-          qs.total_logical_reads AS logical_reads,
-          qs.total_physical_reads AS physical_reads
-        FROM sys.dm_exec_query_stats qs
-        CROSS APPLY sys.dm_exec_sql_text(qs.sql_handle) qt
-        WHERE qs.execution_count > 0
-        ORDER BY qs.total_elapsed_time DESC
-      `);
+      const res = await this.pool!.request().query(`SELECT TOP ${limit} ${SLOW_QUERIES_BODY_SQL}`);
 
       return (res.recordset || []).map((r: Record<string, unknown>) => ({
         queryId: String(r.query_id || ""),
@@ -896,29 +1017,7 @@ export class MSSQLProvider extends SQLBaseProvider {
     const limit = options?.limit ?? 50;
 
     try {
-      const res = await this.pool!.request().query(`
-        SELECT TOP ${limit}
-          s.session_id AS pid,
-          s.login_name AS [user],
-          DB_NAME(s.database_id) AS [database],
-          s.program_name AS application_name,
-          s.host_name AS client_addr,
-          s.status AS state,
-          ISNULL(SUBSTRING(t.text, 1, 500), '') AS query,
-          s.last_request_start_time AS query_start,
-          ISNULL(CAST(DATEDIFF(SECOND, s.last_request_start_time, GETDATE()) AS VARCHAR) + 's', 'N/A') AS duration,
-          ISNULL(DATEDIFF(MILLISECOND, s.last_request_start_time, GETDATE()), 0) AS duration_ms,
-          r.wait_type,
-          r.last_wait_type,
-          CASE WHEN r.blocking_session_id > 0 THEN 1 ELSE 0 END AS is_blocked
-        FROM sys.dm_exec_sessions s
-        LEFT JOIN sys.dm_exec_requests r ON s.session_id = r.session_id
-        OUTER APPLY sys.dm_exec_sql_text(r.sql_handle) t
-        WHERE s.is_user_process = 1
-        ORDER BY
-          CASE s.status WHEN 'running' THEN 0 WHEN 'sleeping' THEN 1 ELSE 2 END,
-          s.last_request_start_time DESC
-      `);
+      const res = await this.pool!.request().query(`SELECT TOP ${limit} ${ACTIVE_SESSIONS_BODY_SQL}`);
 
       return (res.recordset || []).map((r: Record<string, unknown>) => ({
         pid: Number(r.pid || 0),
@@ -944,25 +1043,7 @@ export class MSSQLProvider extends SQLBaseProvider {
     this.ensureConnected();
 
     try {
-      const res = await this.pool!.request().query(`
-        SELECT
-          s.name AS schema_name,
-          t.name AS table_name,
-          SUM(p.rows) AS row_count,
-          SUM(a.total_pages) * 8 * 1024 AS total_size_bytes,
-          SUM(a.used_pages) * 8 * 1024 AS used_size_bytes,
-          SUM(CASE WHEN i.type IN (0, 1) THEN a.total_pages ELSE 0 END) * 8 * 1024 AS table_size_bytes,
-          SUM(CASE WHEN i.type > 1 THEN a.total_pages ELSE 0 END) * 8 * 1024 AS index_size_bytes,
-          STATS_DATE(t.object_id, 1) AS last_stats_update
-        FROM sys.tables t
-        JOIN sys.schemas s ON t.schema_id = s.schema_id
-        JOIN sys.indexes i ON t.object_id = i.object_id
-        JOIN sys.partitions p ON i.object_id = p.object_id AND i.index_id = p.index_id
-        JOIN sys.allocation_units a ON p.partition_id = a.container_id
-        WHERE t.type = 'U'
-        GROUP BY s.name, t.name, t.object_id
-        ORDER BY SUM(a.total_pages) DESC
-      `);
+      const res = await this.pool!.request().query(TABLE_STATS_SQL);
 
       return (res.recordset || []).map((r: Record<string, unknown>) => {
         const tableSizeBytes = Number(r.table_size_bytes || 0);
@@ -990,44 +1071,10 @@ export class MSSQLProvider extends SQLBaseProvider {
     this.ensureConnected();
 
     try {
-      const res = await this.pool!.request().query(`
-        SELECT
-          s.name AS schema_name,
-          t.name AS table_name,
-          i.name AS index_name,
-          i.type_desc AS index_type,
-          i.is_unique,
-          i.is_primary_key,
-          SUM(a.total_pages) * 8 * 1024 AS index_size_bytes,
-          ISNULL(u.user_seeks + u.user_scans + u.user_lookups, 0) AS scans
-        FROM sys.indexes i
-        JOIN sys.tables t ON i.object_id = t.object_id
-        JOIN sys.schemas s ON t.schema_id = s.schema_id
-        LEFT JOIN sys.partitions p ON i.object_id = p.object_id AND i.index_id = p.index_id
-        LEFT JOIN sys.allocation_units a ON p.partition_id = a.container_id
-        LEFT JOIN sys.dm_db_index_usage_stats u ON i.object_id = u.object_id AND i.index_id = u.index_id AND u.database_id = DB_ID()
-        WHERE i.name IS NOT NULL AND t.type = 'U'
-        GROUP BY s.name, t.name, i.name, i.type_desc, i.is_unique, i.is_primary_key,
-                 i.object_id, i.index_id, u.user_seeks, u.user_scans, u.user_lookups
-        ORDER BY SUM(a.total_pages) DESC
-      `);
+      const res = await this.pool!.request().query(INDEX_STATS_SQL);
 
       // Get columns for each index
-      const colRes = await this.pool!.request().query(`
-        SELECT
-          s.name AS schema_name,
-          t.name AS table_name,
-          i.name AS index_name,
-          c.name AS column_name,
-          ic.key_ordinal
-        FROM sys.index_columns ic
-        JOIN sys.indexes i ON ic.object_id = i.object_id AND ic.index_id = i.index_id
-        JOIN sys.columns c ON ic.object_id = c.object_id AND ic.column_id = c.column_id
-        JOIN sys.tables t ON i.object_id = t.object_id
-        JOIN sys.schemas s ON t.schema_id = s.schema_id
-        WHERE i.name IS NOT NULL AND t.type = 'U'
-        ORDER BY s.name, t.name, i.name, ic.key_ordinal
-      `);
+      const colRes = await this.pool!.request().query(INDEX_COLUMNS_SQL);
 
       const colMap = new Map<string, string[]>();
       for (const c of colRes.recordset || []) {
@@ -1061,15 +1108,7 @@ export class MSSQLProvider extends SQLBaseProvider {
     this.ensureConnected();
 
     try {
-      const res = await this.pool!.request().query(`
-        SELECT
-          name,
-          physical_name AS location,
-          CAST(size AS BIGINT) * 8 * 1024 AS size_bytes,
-          type_desc
-        FROM sys.database_files
-        ORDER BY size DESC
-      `);
+      const res = await this.pool!.request().query(STORAGE_STATS_SQL);
 
       return (res.recordset || []).map((r: Record<string, unknown>) => {
         const sizeBytes = Number(r.size_bytes || 0);

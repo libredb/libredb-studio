@@ -32,6 +32,137 @@ import { formatBytes } from "../../utils/pool-manager";
 import { analyzeQuery, DEFAULT_QUERY_LIMIT, MAX_UNLIMITED_ROWS } from "../../utils/query-limiter";
 
 // ============================================================================
+// SQL Statements
+// ============================================================================
+// Multi-line SQL is hoisted to module scope so per-line coverage attribution
+// stays stable (repo pattern, see the SCHEMA_*_SQL consts in mssql.ts).
+
+const SCHEMA_COLUMNS_SQL = `SELECT TABLE_NAME, COLUMN_NAME, DATA_TYPE, NULLABLE, DATA_DEFAULT, COLUMN_ID
+         FROM ALL_TAB_COLUMNS WHERE OWNER = :1
+         ORDER BY TABLE_NAME, COLUMN_ID`;
+
+const SCHEMA_PRIMARY_KEYS_SQL = `SELECT ac.TABLE_NAME, acc.COLUMN_NAME
+         FROM ALL_CONSTRAINTS ac
+         JOIN ALL_CONS_COLUMNS acc ON ac.CONSTRAINT_NAME = acc.CONSTRAINT_NAME AND ac.OWNER = acc.OWNER
+         WHERE ac.OWNER = :1 AND ac.CONSTRAINT_TYPE = 'P'`;
+
+const SCHEMA_FOREIGN_KEYS_SQL = `SELECT ac.TABLE_NAME,
+                acc.COLUMN_NAME,
+                rc.TABLE_NAME AS REF_TABLE,
+                rcc.COLUMN_NAME AS REF_COLUMN
+         FROM ALL_CONSTRAINTS ac
+         JOIN ALL_CONS_COLUMNS acc ON ac.CONSTRAINT_NAME = acc.CONSTRAINT_NAME AND ac.OWNER = acc.OWNER
+         JOIN ALL_CONSTRAINTS rc ON ac.R_CONSTRAINT_NAME = rc.CONSTRAINT_NAME AND ac.R_OWNER = rc.OWNER
+         JOIN ALL_CONS_COLUMNS rcc ON rc.CONSTRAINT_NAME = rcc.CONSTRAINT_NAME AND rc.OWNER = rcc.OWNER
+         WHERE ac.OWNER = :1 AND ac.CONSTRAINT_TYPE = 'R'`;
+
+const SCHEMA_INDEXES_SQL = `SELECT ai.TABLE_NAME, ai.INDEX_NAME, ai.UNIQUENESS, aic.COLUMN_NAME, aic.COLUMN_POSITION
+         FROM ALL_INDEXES ai
+         JOIN ALL_IND_COLUMNS aic ON ai.INDEX_NAME = aic.INDEX_NAME AND ai.OWNER = aic.INDEX_OWNER
+         WHERE ai.OWNER = :1
+         ORDER BY ai.TABLE_NAME, ai.INDEX_NAME, aic.COLUMN_POSITION`;
+
+// Shared by getHealth() and getPerformanceMetrics().
+const CACHE_HIT_RATIO_SQL = `SELECT ROUND(
+            (1 - (SUM(DECODE(NAME, 'physical reads', VALUE, 0)) /
+                  NULLIF(SUM(DECODE(NAME, 'db block gets', VALUE, 0)) + SUM(DECODE(NAME, 'consistent gets', VALUE, 0)), 0)
+            )) * 100, 2) AS HIT_RATIO
+           FROM V$SYSSTAT
+           WHERE NAME IN ('db block gets', 'consistent gets', 'physical reads')`;
+
+const HEALTH_SLOW_QUERIES_SQL = `SELECT * FROM (
+            SELECT SUBSTR(SQL_TEXT, 1, 100) AS QUERY,
+                   EXECUTIONS AS CALLS,
+                   ROUND(ELAPSED_TIME / NULLIF(EXECUTIONS, 0) / 1000, 2) || 'ms' AS AVGTIME
+            FROM V$SQL
+            WHERE EXECUTIONS > 0
+            ORDER BY ELAPSED_TIME DESC
+          ) WHERE ROWNUM <= 5`;
+
+const HEALTH_ACTIVE_SESSIONS_SQL = `SELECT * FROM (
+            SELECT SID, USERNAME, STATUS, SUBSTR(NVL(SQL_ID, ''), 1, 100) AS QUERY,
+                   SCHEMANAME AS "DATABASE",
+                   NVL(TO_CHAR(LOGON_TIME, 'HH24:MI:SS'), 'N/A') AS DURATION
+            FROM V$SESSION
+            WHERE TYPE = 'USER' AND STATUS = 'ACTIVE'
+            ORDER BY LOGON_TIME DESC
+          ) WHERE ROWNUM <= 10`;
+
+const OVERVIEW_OBJECT_COUNTS_SQL = `SELECT
+            (SELECT COUNT(*) FROM USER_TABLES) AS TABLE_COUNT,
+            (SELECT COUNT(*) FROM USER_INDEXES) AS INDEX_COUNT
+           FROM DUAL`;
+
+// Interpolated before " WHERE ROWNUM <= <limit>" in getSlowQueries().
+const SLOW_QUERIES_BODY_SQL = `SELECT * FROM (
+          SELECT SQL_ID AS QUERY_ID,
+                 SUBSTR(SQL_TEXT, 1, 500) AS QUERY,
+                 EXECUTIONS AS CALLS,
+                 ROUND(ELAPSED_TIME / 1000, 2) AS TOTAL_TIME,
+                 ROUND(ELAPSED_TIME / NULLIF(EXECUTIONS, 0) / 1000, 2) AS AVG_TIME,
+                 ROWS_PROCESSED AS ROW_CNT,
+                 BUFFER_GETS AS BUF_GETS,
+                 DISK_READS
+          FROM V$SQL
+          WHERE EXECUTIONS > 0
+          ORDER BY ELAPSED_TIME DESC
+        )`;
+
+// Interpolated before " WHERE ROWNUM <= <limit>" in getActiveSessions().
+const ACTIVE_SESSIONS_BODY_SQL = `SELECT * FROM (
+          SELECT s.SID, s.SERIAL#, s.USERNAME, s.SCHEMANAME, s.PROGRAM,
+                 s.MACHINE, s.STATUS, s.SQL_ID,
+                 SUBSTR(sq.SQL_TEXT, 1, 500) AS QUERY,
+                 s.LOGON_TIME,
+                 ROUND((SYSDATE - s.LOGON_TIME) * 86400) AS DURATION_SECS,
+                 s.WAIT_CLASS, s.EVENT
+          FROM V$SESSION s
+          LEFT JOIN V$SQL sq ON s.SQL_ID = sq.SQL_ID AND s.SQL_CHILD_NUMBER = sq.CHILD_NUMBER
+          WHERE s.TYPE = 'USER'
+          ORDER BY CASE s.STATUS WHEN 'ACTIVE' THEN 0 ELSE 1 END, s.LOGON_TIME DESC
+        )`;
+
+const TABLE_STATS_SQL = `SELECT t.TABLE_NAME,
+                NVL(t.NUM_ROWS, 0) AS ROW_COUNT,
+                NVL(s.BYTES, 0) AS TABLE_SIZE_BYTES,
+                NVL(idx_size.BYTES, 0) AS INDEX_SIZE_BYTES,
+                t.LAST_ANALYZED
+         FROM ALL_TABLES t
+         LEFT JOIN USER_SEGMENTS s ON s.SEGMENT_NAME = t.TABLE_NAME AND s.SEGMENT_TYPE = 'TABLE'
+         LEFT JOIN (
+           SELECT TABLE_NAME, SUM(BYTES) AS BYTES
+           FROM USER_SEGMENTS
+           WHERE SEGMENT_TYPE = 'INDEX'
+           GROUP BY TABLE_NAME
+         ) idx_size ON idx_size.TABLE_NAME = t.TABLE_NAME
+         WHERE t.OWNER = :1
+         ORDER BY NVL(s.BYTES, 0) DESC`;
+
+const INDEX_STATS_SQL = `SELECT ai.TABLE_NAME, ai.INDEX_NAME, ai.INDEX_TYPE, ai.UNIQUENESS,
+                NVL(us.BYTES, 0) AS INDEX_SIZE_BYTES,
+                ai.LEAF_BLOCKS, ai.DISTINCT_KEYS
+         FROM ALL_INDEXES ai
+         LEFT JOIN USER_SEGMENTS us ON us.SEGMENT_NAME = ai.INDEX_NAME AND us.SEGMENT_TYPE = 'INDEX'
+         WHERE ai.OWNER = :1
+         ORDER BY NVL(us.BYTES, 0) DESC`;
+
+const INDEX_COLUMNS_SQL = `SELECT INDEX_NAME, COLUMN_NAME, COLUMN_POSITION
+         FROM ALL_IND_COLUMNS WHERE INDEX_OWNER = :1
+         ORDER BY INDEX_NAME, COLUMN_POSITION`;
+
+const STORAGE_DBA_FILES_SQL = `SELECT TABLESPACE_NAME AS NAME,
+                  SUM(BYTES) AS SIZE_BYTES
+           FROM DBA_DATA_FILES
+           GROUP BY TABLESPACE_NAME
+           ORDER BY SUM(BYTES) DESC`;
+
+const STORAGE_USER_SEGMENTS_SQL = `SELECT TABLESPACE_NAME AS NAME,
+                    SUM(BYTES) AS SIZE_BYTES
+             FROM USER_SEGMENTS
+             GROUP BY TABLESPACE_NAME
+             ORDER BY SUM(BYTES) DESC`;
+
+// ============================================================================
 // Oracle Provider
 // ============================================================================
 
@@ -339,24 +470,11 @@ export class OracleProvider extends SQLBaseProvider {
       const tables = (tablesRes.rows || []) as Record<string, unknown>[];
 
       // Get columns
-      const colsRes = await conn.execute(
-        `SELECT TABLE_NAME, COLUMN_NAME, DATA_TYPE, NULLABLE, DATA_DEFAULT, COLUMN_ID
-         FROM ALL_TAB_COLUMNS WHERE OWNER = :1
-         ORDER BY TABLE_NAME, COLUMN_ID`,
-        [owner],
-        { outFormat: oracledb.OUT_FORMAT_OBJECT },
-      );
+      const colsRes = await conn.execute(SCHEMA_COLUMNS_SQL, [owner], { outFormat: oracledb.OUT_FORMAT_OBJECT });
       const allCols = (colsRes.rows || []) as Record<string, unknown>[];
 
       // Get primary keys
-      const pkRes = await conn.execute(
-        `SELECT ac.TABLE_NAME, acc.COLUMN_NAME
-         FROM ALL_CONSTRAINTS ac
-         JOIN ALL_CONS_COLUMNS acc ON ac.CONSTRAINT_NAME = acc.CONSTRAINT_NAME AND ac.OWNER = acc.OWNER
-         WHERE ac.OWNER = :1 AND ac.CONSTRAINT_TYPE = 'P'`,
-        [owner],
-        { outFormat: oracledb.OUT_FORMAT_OBJECT },
-      );
+      const pkRes = await conn.execute(SCHEMA_PRIMARY_KEYS_SQL, [owner], { outFormat: oracledb.OUT_FORMAT_OBJECT });
       const pkRows = (pkRes.rows || []) as Record<string, unknown>[];
       const pkMap = new Map<string, Set<string>>();
       for (const row of pkRows) {
@@ -367,31 +485,11 @@ export class OracleProvider extends SQLBaseProvider {
       }
 
       // Get foreign keys
-      const fkRes = await conn.execute(
-        `SELECT ac.TABLE_NAME,
-                acc.COLUMN_NAME,
-                rc.TABLE_NAME AS REF_TABLE,
-                rcc.COLUMN_NAME AS REF_COLUMN
-         FROM ALL_CONSTRAINTS ac
-         JOIN ALL_CONS_COLUMNS acc ON ac.CONSTRAINT_NAME = acc.CONSTRAINT_NAME AND ac.OWNER = acc.OWNER
-         JOIN ALL_CONSTRAINTS rc ON ac.R_CONSTRAINT_NAME = rc.CONSTRAINT_NAME AND ac.R_OWNER = rc.OWNER
-         JOIN ALL_CONS_COLUMNS rcc ON rc.CONSTRAINT_NAME = rcc.CONSTRAINT_NAME AND rc.OWNER = rcc.OWNER
-         WHERE ac.OWNER = :1 AND ac.CONSTRAINT_TYPE = 'R'`,
-        [owner],
-        { outFormat: oracledb.OUT_FORMAT_OBJECT },
-      );
+      const fkRes = await conn.execute(SCHEMA_FOREIGN_KEYS_SQL, [owner], { outFormat: oracledb.OUT_FORMAT_OBJECT });
       const fkRows = (fkRes.rows || []) as Record<string, unknown>[];
 
       // Get indexes
-      const idxRes = await conn.execute(
-        `SELECT ai.TABLE_NAME, ai.INDEX_NAME, ai.UNIQUENESS, aic.COLUMN_NAME, aic.COLUMN_POSITION
-         FROM ALL_INDEXES ai
-         JOIN ALL_IND_COLUMNS aic ON ai.INDEX_NAME = aic.INDEX_NAME AND ai.OWNER = aic.INDEX_OWNER
-         WHERE ai.OWNER = :1
-         ORDER BY ai.TABLE_NAME, ai.INDEX_NAME, aic.COLUMN_POSITION`,
-        [owner],
-        { outFormat: oracledb.OUT_FORMAT_OBJECT },
-      );
+      const idxRes = await conn.execute(SCHEMA_INDEXES_SQL, [owner], { outFormat: oracledb.OUT_FORMAT_OBJECT });
       const idxRows = (idxRes.rows || []) as Record<string, unknown>[];
 
       // Group columns, indexes, foreign keys by table
@@ -506,16 +604,7 @@ export class OracleProvider extends SQLBaseProvider {
 
       // Cache hit ratio
       try {
-        const cacheRes = await conn.execute(
-          `SELECT ROUND(
-            (1 - (SUM(DECODE(NAME, 'physical reads', VALUE, 0)) /
-                  NULLIF(SUM(DECODE(NAME, 'db block gets', VALUE, 0)) + SUM(DECODE(NAME, 'consistent gets', VALUE, 0)), 0)
-            )) * 100, 2) AS HIT_RATIO
-           FROM V$SYSSTAT
-           WHERE NAME IN ('db block gets', 'consistent gets', 'physical reads')`,
-          [],
-          { outFormat: oracledb.OUT_FORMAT_OBJECT },
-        );
+        const cacheRes = await conn.execute(CACHE_HIT_RATIO_SQL, [], { outFormat: oracledb.OUT_FORMAT_OBJECT });
         const cacheRows = (cacheRes.rows || []) as Record<string, unknown>[];
         cacheHitRatio = `${cacheRows[0]?.HIT_RATIO || 0}%`;
       } catch {
@@ -524,18 +613,7 @@ export class OracleProvider extends SQLBaseProvider {
 
       // Slow queries
       try {
-        const slowRes = await conn.execute(
-          `SELECT * FROM (
-            SELECT SUBSTR(SQL_TEXT, 1, 100) AS QUERY,
-                   EXECUTIONS AS CALLS,
-                   ROUND(ELAPSED_TIME / NULLIF(EXECUTIONS, 0) / 1000, 2) || 'ms' AS AVGTIME
-            FROM V$SQL
-            WHERE EXECUTIONS > 0
-            ORDER BY ELAPSED_TIME DESC
-          ) WHERE ROWNUM <= 5`,
-          [],
-          { outFormat: oracledb.OUT_FORMAT_OBJECT },
-        );
+        const slowRes = await conn.execute(HEALTH_SLOW_QUERIES_SQL, [], { outFormat: oracledb.OUT_FORMAT_OBJECT });
         for (const row of (slowRes.rows || []) as Record<string, unknown>[]) {
           slowQueries.push({
             query: String(row.QUERY || ""),
@@ -549,18 +627,7 @@ export class OracleProvider extends SQLBaseProvider {
 
       // Active sessions
       try {
-        const sessRes = await conn.execute(
-          `SELECT * FROM (
-            SELECT SID, USERNAME, STATUS, SUBSTR(NVL(SQL_ID, ''), 1, 100) AS QUERY,
-                   SCHEMANAME AS "DATABASE",
-                   NVL(TO_CHAR(LOGON_TIME, 'HH24:MI:SS'), 'N/A') AS DURATION
-            FROM V$SESSION
-            WHERE TYPE = 'USER' AND STATUS = 'ACTIVE'
-            ORDER BY LOGON_TIME DESC
-          ) WHERE ROWNUM <= 10`,
-          [],
-          { outFormat: oracledb.OUT_FORMAT_OBJECT },
-        );
+        const sessRes = await conn.execute(HEALTH_ACTIVE_SESSIONS_SQL, [], { outFormat: oracledb.OUT_FORMAT_OBJECT });
         for (const row of (sessRes.rows || []) as Record<string, unknown>[]) {
           activeSessions.push({
             pid: String(row.SID || ""),
@@ -626,13 +693,17 @@ export class OracleProvider extends SQLBaseProvider {
             }
             sql = `ALTER SYSTEM KILL SESSION '${target.replace(/'/g, "''")}'`;
             break;
-          default:
-            throw new QueryError(`Unsupported maintenance type: ${type}`, "oracle");
         }
 
-        if (sql) {
-          await conn.execute(sql);
+        // Unsupported types fall through the switch with sql left empty. A
+        // `default:` label is deliberately avoided here: bun's coverage emits
+        // a 0-hit line record for `default:` that no runtime execution ever
+        // credits, which permanently poisons the merged lcov report.
+        if (!sql) {
+          throw new QueryError(`Unsupported maintenance type: ${type}`, "oracle");
         }
+
+        await conn.execute(sql);
         return { success: true };
       } finally {
         if (conn) await conn.close();
@@ -742,14 +813,7 @@ export class OracleProvider extends SQLBaseProvider {
 
       // Table and index counts
       try {
-        const cntRes = await conn.execute(
-          `SELECT
-            (SELECT COUNT(*) FROM USER_TABLES) AS TABLE_COUNT,
-            (SELECT COUNT(*) FROM USER_INDEXES) AS INDEX_COUNT
-           FROM DUAL`,
-          [],
-          { outFormat: oracledb.OUT_FORMAT_OBJECT },
-        );
+        const cntRes = await conn.execute(OVERVIEW_OBJECT_COUNTS_SQL, [], { outFormat: oracledb.OUT_FORMAT_OBJECT });
         const cntRows = (cntRes.rows || []) as Record<string, unknown>[];
         tableCount = Number(cntRows[0]?.TABLE_COUNT || 0);
         indexCount = Number(cntRows[0]?.INDEX_COUNT || 0);
@@ -784,16 +848,7 @@ export class OracleProvider extends SQLBaseProvider {
       let bufferPoolUsage: number | undefined;
 
       try {
-        const cacheRes = await conn.execute(
-          `SELECT ROUND(
-            (1 - (SUM(DECODE(NAME, 'physical reads', VALUE, 0)) /
-                  NULLIF(SUM(DECODE(NAME, 'db block gets', VALUE, 0)) + SUM(DECODE(NAME, 'consistent gets', VALUE, 0)), 0)
-            )) * 100, 2) AS HIT_RATIO
-           FROM V$SYSSTAT
-           WHERE NAME IN ('db block gets', 'consistent gets', 'physical reads')`,
-          [],
-          { outFormat: oracledb.OUT_FORMAT_OBJECT },
-        );
+        const cacheRes = await conn.execute(CACHE_HIT_RATIO_SQL, [], { outFormat: oracledb.OUT_FORMAT_OBJECT });
         const rows = (cacheRes.rows || []) as Record<string, unknown>[];
         cacheHitRatio = Number(rows[0]?.HIT_RATIO || 100);
         bufferPoolUsage = cacheHitRatio;
@@ -818,23 +873,9 @@ export class OracleProvider extends SQLBaseProvider {
     try {
       conn = await this.pool!.getConnection();
 
-      const res = await conn.execute(
-        `SELECT * FROM (
-          SELECT SQL_ID AS QUERY_ID,
-                 SUBSTR(SQL_TEXT, 1, 500) AS QUERY,
-                 EXECUTIONS AS CALLS,
-                 ROUND(ELAPSED_TIME / 1000, 2) AS TOTAL_TIME,
-                 ROUND(ELAPSED_TIME / NULLIF(EXECUTIONS, 0) / 1000, 2) AS AVG_TIME,
-                 ROWS_PROCESSED AS ROW_CNT,
-                 BUFFER_GETS AS BUF_GETS,
-                 DISK_READS
-          FROM V$SQL
-          WHERE EXECUTIONS > 0
-          ORDER BY ELAPSED_TIME DESC
-        ) WHERE ROWNUM <= ${limit}`,
-        [],
-        { outFormat: oracledb.OUT_FORMAT_OBJECT },
-      );
+      const res = await conn.execute(`${SLOW_QUERIES_BODY_SQL} WHERE ROWNUM <= ${limit}`, [], {
+        outFormat: oracledb.OUT_FORMAT_OBJECT,
+      });
 
       return ((res.rows || []) as Record<string, unknown>[]).map((r) => ({
         queryId: String(r.QUERY_ID || ""),
@@ -861,22 +902,9 @@ export class OracleProvider extends SQLBaseProvider {
     try {
       conn = await this.pool!.getConnection();
 
-      const res = await conn.execute(
-        `SELECT * FROM (
-          SELECT s.SID, s.SERIAL#, s.USERNAME, s.SCHEMANAME, s.PROGRAM,
-                 s.MACHINE, s.STATUS, s.SQL_ID,
-                 SUBSTR(sq.SQL_TEXT, 1, 500) AS QUERY,
-                 s.LOGON_TIME,
-                 ROUND((SYSDATE - s.LOGON_TIME) * 86400) AS DURATION_SECS,
-                 s.WAIT_CLASS, s.EVENT
-          FROM V$SESSION s
-          LEFT JOIN V$SQL sq ON s.SQL_ID = sq.SQL_ID AND s.SQL_CHILD_NUMBER = sq.CHILD_NUMBER
-          WHERE s.TYPE = 'USER'
-          ORDER BY CASE s.STATUS WHEN 'ACTIVE' THEN 0 ELSE 1 END, s.LOGON_TIME DESC
-        ) WHERE ROWNUM <= ${limit}`,
-        [],
-        { outFormat: oracledb.OUT_FORMAT_OBJECT },
-      );
+      const res = await conn.execute(`${ACTIVE_SESSIONS_BODY_SQL} WHERE ROWNUM <= ${limit}`, [], {
+        outFormat: oracledb.OUT_FORMAT_OBJECT,
+      });
 
       return ((res.rows || []) as Record<string, unknown>[]).map((r) => {
         const secs = Number(r.DURATION_SECS || 0);
@@ -918,25 +946,7 @@ export class OracleProvider extends SQLBaseProvider {
       conn = await this.pool!.getConnection();
       const owner = this.config.user?.toUpperCase() || "";
 
-      const res = await conn.execute(
-        `SELECT t.TABLE_NAME,
-                NVL(t.NUM_ROWS, 0) AS ROW_COUNT,
-                NVL(s.BYTES, 0) AS TABLE_SIZE_BYTES,
-                NVL(idx_size.BYTES, 0) AS INDEX_SIZE_BYTES,
-                t.LAST_ANALYZED
-         FROM ALL_TABLES t
-         LEFT JOIN USER_SEGMENTS s ON s.SEGMENT_NAME = t.TABLE_NAME AND s.SEGMENT_TYPE = 'TABLE'
-         LEFT JOIN (
-           SELECT TABLE_NAME, SUM(BYTES) AS BYTES
-           FROM USER_SEGMENTS
-           WHERE SEGMENT_TYPE = 'INDEX'
-           GROUP BY TABLE_NAME
-         ) idx_size ON idx_size.TABLE_NAME = t.TABLE_NAME
-         WHERE t.OWNER = :1
-         ORDER BY NVL(s.BYTES, 0) DESC`,
-        [owner],
-        { outFormat: oracledb.OUT_FORMAT_OBJECT },
-      );
+      const res = await conn.execute(TABLE_STATS_SQL, [owner], { outFormat: oracledb.OUT_FORMAT_OBJECT });
 
       return ((res.rows || []) as Record<string, unknown>[]).map((r) => {
         const tableSizeBytes = Number(r.TABLE_SIZE_BYTES || 0);
@@ -969,26 +979,10 @@ export class OracleProvider extends SQLBaseProvider {
       conn = await this.pool!.getConnection();
       const owner = this.config.user?.toUpperCase() || "";
 
-      const res = await conn.execute(
-        `SELECT ai.TABLE_NAME, ai.INDEX_NAME, ai.INDEX_TYPE, ai.UNIQUENESS,
-                NVL(us.BYTES, 0) AS INDEX_SIZE_BYTES,
-                ai.LEAF_BLOCKS, ai.DISTINCT_KEYS
-         FROM ALL_INDEXES ai
-         LEFT JOIN USER_SEGMENTS us ON us.SEGMENT_NAME = ai.INDEX_NAME AND us.SEGMENT_TYPE = 'INDEX'
-         WHERE ai.OWNER = :1
-         ORDER BY NVL(us.BYTES, 0) DESC`,
-        [owner],
-        { outFormat: oracledb.OUT_FORMAT_OBJECT },
-      );
+      const res = await conn.execute(INDEX_STATS_SQL, [owner], { outFormat: oracledb.OUT_FORMAT_OBJECT });
 
       // Get columns for each index
-      const colRes = await conn.execute(
-        `SELECT INDEX_NAME, COLUMN_NAME, COLUMN_POSITION
-         FROM ALL_IND_COLUMNS WHERE INDEX_OWNER = :1
-         ORDER BY INDEX_NAME, COLUMN_POSITION`,
-        [owner],
-        { outFormat: oracledb.OUT_FORMAT_OBJECT },
-      );
+      const colRes = await conn.execute(INDEX_COLUMNS_SQL, [owner], { outFormat: oracledb.OUT_FORMAT_OBJECT });
 
       const colMap = new Map<string, string[]>();
       for (const c of (colRes.rows || []) as Record<string, unknown>[]) {
@@ -1030,15 +1024,7 @@ export class OracleProvider extends SQLBaseProvider {
 
       // Try DBA tablespaces first, fallback to USER
       try {
-        const tsRes = await conn.execute(
-          `SELECT TABLESPACE_NAME AS NAME,
-                  SUM(BYTES) AS SIZE_BYTES
-           FROM DBA_DATA_FILES
-           GROUP BY TABLESPACE_NAME
-           ORDER BY SUM(BYTES) DESC`,
-          [],
-          { outFormat: oracledb.OUT_FORMAT_OBJECT },
-        );
+        const tsRes = await conn.execute(STORAGE_DBA_FILES_SQL, [], { outFormat: oracledb.OUT_FORMAT_OBJECT });
 
         for (const row of (tsRes.rows || []) as Record<string, unknown>[]) {
           const sizeBytes = Number(row.SIZE_BYTES || 0);
@@ -1051,15 +1037,7 @@ export class OracleProvider extends SQLBaseProvider {
       } catch {
         // Fallback: user segments
         try {
-          const segRes = await conn.execute(
-            `SELECT TABLESPACE_NAME AS NAME,
-                    SUM(BYTES) AS SIZE_BYTES
-             FROM USER_SEGMENTS
-             GROUP BY TABLESPACE_NAME
-             ORDER BY SUM(BYTES) DESC`,
-            [],
-            { outFormat: oracledb.OUT_FORMAT_OBJECT },
-          );
+          const segRes = await conn.execute(STORAGE_USER_SEGMENTS_SQL, [], { outFormat: oracledb.OUT_FORMAT_OBJECT });
 
           for (const row of (segRes.rows || []) as Record<string, unknown>[]) {
             const sizeBytes = Number(row.SIZE_BYTES || 0);

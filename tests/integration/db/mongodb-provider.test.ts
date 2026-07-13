@@ -17,6 +17,7 @@ let mockCollections: { name: string; type: string }[] = [
   { name: "users", type: "collection" },
   { name: "orders", type: "collection" },
 ];
+let mockCurrentOps: Record<string, unknown>[] = [];
 
 const createMockCursor = (data: Record<string, unknown>[]) => {
   const cursor = {
@@ -99,7 +100,7 @@ const createMockDb = () => ({
       opcounters: { query: 100, insert: 50, update: 30, delete: 20 },
     }),
     command: async (cmd: Record<string, unknown>) => {
-      if (cmd.currentOp) return { inprog: [] };
+      if (cmd.currentOp) return { inprog: mockCurrentOps };
       if (cmd.buildInfo) return { version: "7.0.0" };
       return {};
     },
@@ -200,6 +201,7 @@ describe("MongoDBProvider", () => {
       { name: "users", type: "collection" },
       { name: "orders", type: "collection" },
     ];
+    mockCurrentOps = [];
     provider = new MongoDBProvider({ ...baseConfig });
   });
 
@@ -428,6 +430,34 @@ describe("MongoDBProvider", () => {
       expect(typeof health.databaseSize).toBe("string");
       expect(typeof health.cacheHitRatio).toBe("string");
     });
+
+    test("maps in-progress operations to active sessions", async () => {
+      mockCurrentOps = [
+        {
+          opid: 123,
+          client: "127.0.0.1:5555",
+          ns: "testdb.users",
+          active: true,
+          command: { find: "users" },
+          microsecs_running: 2500000,
+        },
+        { active: false },
+      ];
+      const health = await provider.getHealth();
+      expect(health.activeSessions.length).toBe(2);
+      expect(health.activeSessions[0].pid).toBe(123);
+      expect(health.activeSessions[0].user).toBe("127.0.0.1:5555");
+      expect(health.activeSessions[0].database).toBe("testdb.users");
+      expect(health.activeSessions[0].state).toBe("active");
+      expect(health.activeSessions[0].query).toContain("find");
+      expect(health.activeSessions[0].duration).toBe("2.50s");
+      // Missing fields fall back to defaults
+      expect(health.activeSessions[1].pid).toBe("N/A");
+      expect(health.activeSessions[1].user).toBe("N/A");
+      expect(health.activeSessions[1].database).toBe("testdb");
+      expect(health.activeSessions[1].state).toBe("idle");
+      expect(health.activeSessions[1].duration).toBe("N/A");
+    });
   });
 
   // --------------------------------------------------------------------------
@@ -521,6 +551,65 @@ describe("MongoDBProvider", () => {
     test("returns session data", async () => {
       const sessions = await provider.getActiveSessions();
       expect(sessions).toBeArray();
+    });
+
+    test("maps in-progress operations with duration formatting for every range", async () => {
+      mockCurrentOps = [
+        {
+          opid: 1,
+          client: "10.0.0.1:4444",
+          ns: "testdb.orders",
+          appName: "mongosh",
+          active: true,
+          command: { find: "orders" },
+          microsecs_running: 500000, // 500ms
+          waitingForLock: true,
+          lockStats: { acquireCount: 1 },
+        },
+        { opid: 2, microsecs_running: 5000000 }, // 5.0s
+        { opid: 3, microsecs_running: 120000000 }, // 2m 0s
+        { opid: 4, microsecs_running: 7260000000 }, // 2h 1m
+      ];
+      const sessions = await provider.getActiveSessions();
+      expect(sessions.length).toBe(4);
+
+      // Fully populated op
+      expect(sessions[0].pid).toBe(1);
+      expect(sessions[0].user).toBe("10.0.0.1:4444");
+      expect(sessions[0].database).toBe("testdb");
+      expect(sessions[0].applicationName).toBe("mongosh");
+      expect(sessions[0].clientAddr).toBe("10.0.0.1");
+      expect(sessions[0].state).toBe("active");
+      expect(sessions[0].query).toContain("find");
+      expect(sessions[0].duration).toBe("500ms");
+      expect(sessions[0].durationMs).toBe(500);
+      expect(sessions[0].waitEventType).toBe("Lock");
+      expect(sessions[0].waitEvent).toBe("Acquiring lock");
+
+      // Sparse op falls back to defaults
+      expect(sessions[1].pid).toBe(2);
+      expect(sessions[1].user).toBe("N/A");
+      expect(sessions[1].database).toBe("testdb");
+      expect(sessions[1].applicationName).toBeUndefined();
+      expect(sessions[1].clientAddr).toBeUndefined();
+      expect(sessions[1].state).toBe("idle");
+      expect(sessions[1].waitEventType).toBeUndefined();
+      expect(sessions[1].waitEvent).toBeUndefined();
+
+      // Duration formatting across seconds / minutes / hours ranges
+      expect(sessions[1].duration).toBe("5.0s");
+      expect(sessions[2].duration).toBe("2m 0s");
+      expect(sessions[3].duration).toBe("2h 1m");
+    });
+
+    test("respects the limit option", async () => {
+      mockCurrentOps = [
+        { opid: 1, microsecs_running: 1000 },
+        { opid: 2, microsecs_running: 2000 },
+        { opid: 3, microsecs_running: 3000 },
+      ];
+      const sessions = await provider.getActiveSessions({ limit: 2 });
+      expect(sessions.length).toBe(2);
     });
   });
 

@@ -1,6 +1,6 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect, spyOn } from "bun:test";
 import { BaseDatabaseProvider } from "@/lib/db/base-provider";
-import { DatabaseConfigError } from "@/lib/db/errors";
+import { ConnectionError, DatabaseConfigError, DatabaseError } from "@/lib/db/errors";
 import type {
   DatabaseConnection,
   QueryResult,
@@ -125,6 +125,18 @@ class TestProvider extends BaseDatabaseProvider {
 
   public callGetConnectionInfo(): string {
     return this.getConnectionInfo();
+  }
+
+  public callMapError(error: unknown, query?: string): Error {
+    return this.mapError(error, query);
+  }
+
+  public callLogError(operation: string, error: unknown): void {
+    this.logError(operation, error);
+  }
+
+  public callFormatDuration(ms: number): string {
+    return this.formatDuration(ms);
   }
 
   public getState() {
@@ -486,28 +498,67 @@ describe("BaseDatabaseProvider", () => {
     });
   });
 
+  // ─── mapError ──────────────────────────────────────────────────────────
+
+  describe("mapError", () => {
+    test("maps connection failures to ConnectionError", () => {
+      const provider = new TestProvider(makeConfig());
+      const mapped = provider.callMapError(new Error("ECONNREFUSED 127.0.0.1:5432"), "SELECT 1");
+
+      expect(mapped).toBeInstanceOf(ConnectionError);
+      expect(mapped.message).toContain("Failed to connect to postgres");
+    });
+
+    test("wraps non-Error values in a DatabaseError", () => {
+      const provider = new TestProvider(makeConfig());
+      const mapped = provider.callMapError("plain string failure");
+
+      expect(mapped).toBeInstanceOf(DatabaseError);
+      expect(mapped.message).toBe("plain string failure");
+    });
+  });
+
   // ─── logError ──────────────────────────────────────────────────────────
 
   describe("logError", () => {
-    test("does not throw and logs to console", () => {
-      const provider = new TestProvider(makeConfig());
-      // logError is protected, call it via connect path that triggers it
-      // Or test indirectly — just make sure it doesn't crash
-      // Actually logError is protected and not exposed, so let's skip direct testing
-      // But we can test that mapError works which calls through logError
-      provider.callSetError(new Error("test error"));
-      expect(provider.getState().lastError?.message).toBe("test error");
+    test("logs sanitized operation and Error message to console.error", () => {
+      const consoleSpy = spyOn(console, "error").mockImplementation(() => {});
+      try {
+        const provider = new TestProvider(makeConfig());
+        provider.callLogError("connect\nphase", new Error("boom\r\nwith newlines"));
+
+        expect(consoleSpy).toHaveBeenCalledTimes(1);
+        const logged = consoleSpy.mock.calls[0][0] as string;
+        expect(logged).toBe("[DB:postgres] connect phase failed: boom  with newlines");
+      } finally {
+        consoleSpy.mockRestore();
+      }
+    });
+
+    test("stringifies non-Error values", () => {
+      const consoleSpy = spyOn(console, "error").mockImplementation(() => {});
+      try {
+        const provider = new TestProvider(makeConfig());
+        provider.callLogError("query", "raw failure");
+
+        expect(consoleSpy).toHaveBeenCalledTimes(1);
+        const logged = consoleSpy.mock.calls[0][0] as string;
+        expect(logged).toBe("[DB:postgres] query failed: raw failure");
+      } finally {
+        consoleSpy.mockRestore();
+      }
     });
   });
 
   // ─── formatDuration ────────────────────────────────────────────────────
 
-  describe("formatDuration (via base provider)", () => {
-    test("base provider has formatDuration available", () => {
+  describe("formatDuration", () => {
+    test("delegates to the shared pool-manager formatter", () => {
       const provider = new TestProvider(makeConfig());
-      // formatDuration is protected, tested through pool-manager tests
-      // Just verify the state object is clean
-      expect(provider.getState().activeQueries).toBe(0);
+
+      expect(provider.callFormatDuration(500)).toBe("500ms");
+      expect(provider.callFormatDuration(1500)).toBe("1.50s");
+      expect(provider.callFormatDuration(90000)).toBe("1.50m");
     });
   });
 });

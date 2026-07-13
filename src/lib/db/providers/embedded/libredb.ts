@@ -197,8 +197,7 @@ export class LibreDBProvider extends BaseDatabaseProvider {
           return "The file was written by a newer version of LibreDB than this Studio supports. Upgrade the @libredb/libredb package.";
         case "CORRUPT_WAL":
           return `The LibreDB write-ahead log is corrupt mid-file; refusing to open so no data is destroyed. (${error.message})`;
-        default:
-          break; // open-time codes only; anything else keeps the kernel message below
+        // no default: open-time codes only; anything else keeps the kernel message below
       }
     }
     return `Failed to open LibreDB file: ${error instanceof Error ? error.message : String(error)}`;
@@ -402,9 +401,10 @@ export class LibreDBProvider extends BaseDatabaseProvider {
         if (parts.length < 3) throw new QueryError("Usage: range <start> <end>", "libredb");
         return this.toRows(kv.range(parts[1], parts[2]));
       }
-      default:
-        throw new QueryError(`Unknown command "${verb}". Supported: get, put, delete, prefix, range`, "libredb");
     }
+    // Reached only for verbs no case matched; a bare `default:` label is not
+    // attributable in bun lcov, so the dispatcher rejects unknown verbs here.
+    throw new QueryError(`Unknown command "${verb}". Supported: get, put, delete, prefix, range`, "libredb");
   }
 
   /**

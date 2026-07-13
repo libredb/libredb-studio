@@ -35,6 +35,86 @@ import * as fs from "fs";
 import * as path from "path";
 
 // ============================================================================
+// Type Definitions
+// ============================================================================
+
+// Row shapes returned by the PRAGMA introspection statements below.
+interface SQLiteColumnInfoRow {
+  cid: number;
+  name: string;
+  type: string;
+  notnull: number;
+  dflt_value: string | null;
+  pk: number;
+}
+
+interface SQLiteForeignKeyRow {
+  id: number;
+  seq: number;
+  table: string;
+  from: string;
+  to: string;
+}
+
+interface SQLiteIndexListRow {
+  seq: number;
+  name: string;
+  unique: number;
+}
+
+// ============================================================================
+// Introspection SQL
+// ----------------------------------------------------------------------------
+// Hoisted to module scope (not inlined in the methods) on purpose. bun's
+// coverage instruments the interior lines of a *multi-line template literal in
+// a function body* as 0-hit in any test process that imports this file but
+// does not exercise the method — and the merged lcov then reports those SQL
+// lines as uncovered even though the method is tested. Evaluated once at
+// module load, these consts are reported as covered everywhere, so coverage
+// stays accurate (same pattern as postgres.ts).
+// ============================================================================
+
+const SCHEMA_TABLES_SQL = `
+      SELECT name FROM sqlite_master
+      WHERE type = 'table'
+      AND name NOT LIKE 'sqlite_%'
+      ORDER BY name;
+    `;
+
+const DB_PAGE_SIZE_SQL = `
+          SELECT (SELECT page_count FROM pragma_page_count()) *
+                 (SELECT page_size FROM pragma_page_size()) as size
+        `;
+
+// Size of a :memory: database (no file to stat).
+const MEMORY_DB_SIZE_SQL = `
+          SELECT (page_count * page_size) as size
+          FROM pragma_page_count(), pragma_page_size()
+        `;
+
+const TABLE_COUNT_SQL = `
+      SELECT COUNT(*) as count FROM sqlite_master
+      WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
+    `;
+
+const INDEX_COUNT_SQL = `
+      SELECT COUNT(*) as count FROM sqlite_master
+      WHERE type = 'index' AND name NOT LIKE 'sqlite_%'
+    `;
+
+const STATS_TABLES_SQL = `
+      SELECT name FROM sqlite_master
+      WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
+      ORDER BY name
+    `;
+
+const STATS_INDEXES_SQL = `
+      SELECT name, tbl_name FROM sqlite_master
+      WHERE type = 'index' AND name NOT LIKE 'sqlite_%'
+      ORDER BY tbl_name, name
+    `;
+
+// ============================================================================
 // SQLite Provider
 // ============================================================================
 
@@ -204,12 +284,7 @@ export class SQLiteProvider extends SQLBaseProvider {
   public async getSchema(): Promise<TableSchema[]> {
     this.ensureConnected();
 
-    const tablesStmt = this.db!.prepare(`
-      SELECT name FROM sqlite_master
-      WHERE type = 'table'
-      AND name NOT LIKE 'sqlite_%'
-      ORDER BY name;
-    `);
+    const tablesStmt = this.db!.prepare(SCHEMA_TABLES_SQL);
     const tables = tablesStmt.all() as { name: string }[];
 
     const schemas: TableSchema[] = [];
@@ -220,30 +295,13 @@ export class SQLiteProvider extends SQLBaseProvider {
       const rowCount = countResult?.count || 0;
 
       const columnsStmt = this.db!.prepare(`PRAGMA table_info("${tableName}")`);
-      const columns = columnsStmt.all() as Array<{
-        cid: number;
-        name: string;
-        type: string;
-        notnull: number;
-        dflt_value: string | null;
-        pk: number;
-      }>;
+      const columns = columnsStmt.all() as SQLiteColumnInfoRow[];
 
       const fkStmt = this.db!.prepare(`PRAGMA foreign_key_list("${tableName}")`);
-      const foreignKeys = fkStmt.all() as Array<{
-        id: number;
-        seq: number;
-        table: string;
-        from: string;
-        to: string;
-      }>;
+      const foreignKeys = fkStmt.all() as SQLiteForeignKeyRow[];
 
       const indexStmt = this.db!.prepare(`PRAGMA index_list("${tableName}")`);
-      const indexList = indexStmt.all() as Array<{
-        seq: number;
-        name: string;
-        unique: number;
-      }>;
+      const indexList = indexStmt.all() as SQLiteIndexListRow[];
 
       const indexes = [];
       for (const idx of indexList) {
@@ -261,10 +319,7 @@ export class SQLiteProvider extends SQLBaseProvider {
 
       let sizeBytes = 0;
       try {
-        const pageCountStmt = this.db!.prepare(`
-          SELECT (SELECT page_count FROM pragma_page_count()) *
-                 (SELECT page_size FROM pragma_page_size()) as size
-        `);
+        const pageCountStmt = this.db!.prepare(DB_PAGE_SIZE_SQL);
         const sizeResult = pageCountStmt.get() as { size: number };
         sizeBytes = sizeResult?.size || 0;
       } catch {
@@ -313,10 +368,7 @@ export class SQLiteProvider extends SQLBaseProvider {
       }
     } else {
       try {
-        const sizeStmt = this.db!.prepare(`
-          SELECT (page_count * page_size) as size
-          FROM pragma_page_count(), pragma_page_size()
-        `);
+        const sizeStmt = this.db!.prepare(MEMORY_DB_SIZE_SQL);
         const result = sizeStmt.get() as { size: number };
         databaseSize = formatBytes(result?.size || 0);
       } catch {
@@ -398,8 +450,14 @@ export class SQLiteProvider extends SQLBaseProvider {
             success: checkResult?.integrity_check === "ok",
             message: checkResult?.integrity_check || "Unknown",
           };
-        default:
-          throw new QueryError(`Unsupported maintenance type for SQLite: ${type}`, "sqlite");
+      }
+
+      // Unsupported types fall through the switch with sql left empty. A
+      // `default:` label is deliberately avoided here: bun's coverage emits a
+      // 0-hit line record for `default:` that no runtime execution ever
+      // credits, which permanently poisons the merged lcov report.
+      if (!sql) {
+        throw new QueryError(`Unsupported maintenance type for SQLite: ${type}`, "sqlite");
       }
 
       this.db!.exec(sql);
@@ -438,10 +496,7 @@ export class SQLiteProvider extends SQLBaseProvider {
       }
     } else {
       try {
-        const sizeStmt = this.db!.prepare(`
-          SELECT (page_count * page_size) as size
-          FROM pragma_page_count(), pragma_page_size()
-        `);
+        const sizeStmt = this.db!.prepare(MEMORY_DB_SIZE_SQL);
         const result = sizeStmt.get() as { size: number };
         databaseSizeBytes = result?.size || 0;
       } catch {
@@ -450,18 +505,12 @@ export class SQLiteProvider extends SQLBaseProvider {
     }
 
     // Get table count
-    const tableCountStmt = this.db!.prepare(`
-      SELECT COUNT(*) as count FROM sqlite_master
-      WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
-    `);
+    const tableCountStmt = this.db!.prepare(TABLE_COUNT_SQL);
     const tableCountResult = tableCountStmt.get() as { count: number };
     const tableCount = tableCountResult?.count || 0;
 
     // Get index count
-    const indexCountStmt = this.db!.prepare(`
-      SELECT COUNT(*) as count FROM sqlite_master
-      WHERE type = 'index' AND name NOT LIKE 'sqlite_%'
-    `);
+    const indexCountStmt = this.db!.prepare(INDEX_COUNT_SQL);
     const indexCountResult = indexCountStmt.get() as { count: number };
     const indexCount = indexCountResult?.count || 0;
 
@@ -531,11 +580,7 @@ export class SQLiteProvider extends SQLBaseProvider {
   public async getTableStats(): Promise<TableStats[]> {
     this.ensureConnected();
 
-    const tablesStmt = this.db!.prepare(`
-      SELECT name FROM sqlite_master
-      WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
-      ORDER BY name
-    `);
+    const tablesStmt = this.db!.prepare(STATS_TABLES_SQL);
     const tables = tablesStmt.all() as { name: string }[];
 
     const stats: TableStats[] = [];
@@ -573,11 +618,7 @@ export class SQLiteProvider extends SQLBaseProvider {
   public async getIndexStats(): Promise<IndexStats[]> {
     this.ensureConnected();
 
-    const indexesStmt = this.db!.prepare(`
-      SELECT name, tbl_name FROM sqlite_master
-      WHERE type = 'index' AND name NOT LIKE 'sqlite_%'
-      ORDER BY tbl_name, name
-    `);
+    const indexesStmt = this.db!.prepare(STATS_INDEXES_SQL);
     const indexes = indexesStmt.all() as { name: string; tbl_name: string }[];
 
     const stats: IndexStats[] = [];
@@ -625,10 +666,7 @@ export class SQLiteProvider extends SQLBaseProvider {
       }
     } else {
       try {
-        const sizeStmt = this.db!.prepare(`
-          SELECT (page_count * page_size) as size
-          FROM pragma_page_count(), pragma_page_size()
-        `);
+        const sizeStmt = this.db!.prepare(MEMORY_DB_SIZE_SQL);
         const result = sizeStmt.get() as { size: number };
         mainSizeBytes = result?.size || 0;
       } catch {

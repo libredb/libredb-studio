@@ -528,6 +528,26 @@ describe("MySQLProvider", () => {
       expect(result.message).toContain("CHECK");
     });
 
+    test("analyze without target runs against all tables", async () => {
+      const executedStatements: string[] = [];
+      mockExecuteFn = (sql: string) => {
+        executedStatements.push(sql);
+        return defaultMockExecute(sql);
+      };
+
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      const result = await provider.runMaintenance("analyze");
+      expect(result.success).toBe(true);
+      expect(result.message).toContain("ANALYZE");
+
+      // getAllTablesForMaintenance lists tables and escapes each identifier
+      const analyzeSql = executedStatements.find((s) => s.startsWith("ANALYZE TABLE"));
+      expect(analyzeSql).toBeDefined();
+      expect(analyzeSql).toContain("`users`");
+      expect(analyzeSql).toContain("`orders`");
+    });
+
     test("kill without target throws QueryError", async () => {
       provider = new MySQLProvider(makeMySQLConfig());
       await provider.connect();
@@ -596,6 +616,27 @@ describe("MySQLProvider", () => {
 
       await provider.expireTransaction();
       expect(provider.isInTransaction()).toBe(false);
+    });
+
+    test("transaction auto-rolls back when the timeout timer fires", async () => {
+      // TX_TIMEOUT_MS is a compile-time-private static; shrink it at runtime so
+      // the setTimeout callback in beginTransaction actually fires in the test.
+      const providerStatics = MySQLProvider as unknown as { TX_TIMEOUT_MS: number };
+      const originalTimeout = providerStatics.TX_TIMEOUT_MS;
+      providerStatics.TX_TIMEOUT_MS = 5;
+
+      try {
+        provider = new MySQLProvider(makeMySQLConfig());
+        await provider.connect();
+        await provider.beginTransaction();
+        expect(provider.isInTransaction()).toBe(true);
+
+        // Wait for the shortened timeout to trigger the auto-rollback
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        expect(provider.isInTransaction()).toBe(false);
+      } finally {
+        providerStatics.TX_TIMEOUT_MS = originalTimeout;
+      }
     });
 
     test("expireTransaction is no-op when no active transaction", async () => {

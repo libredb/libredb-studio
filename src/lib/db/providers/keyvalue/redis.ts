@@ -37,6 +37,9 @@ import {
 } from "../../types";
 import { DatabaseConfigError, QueryError, ConnectionError } from "../../errors";
 
+// JSON query payload: { "command": "GET", "args": ["key"] }
+type RedisJsonCommand = { command: string; args?: string[] };
+
 // ============================================================================
 // Redis Provider
 // ============================================================================
@@ -175,10 +178,7 @@ export class RedisProvider extends BaseDatabaseProvider {
     return this.executePlainCommand(trimmed);
   }
 
-  private async executeJsonCommand(cmd: {
-    command: string;
-    args?: string[];
-  }): Promise<Omit<QueryResult, "executionTime">> {
+  private async executeJsonCommand(cmd: RedisJsonCommand): Promise<Omit<QueryResult, "executionTime">> {
     if (!cmd.command) {
       throw new QueryError('Command is required in JSON format: { "command": "GET", "args": ["key"] }', "redis");
     }
@@ -527,9 +527,8 @@ export class RedisProvider extends BaseDatabaseProvider {
           const lines = info.split("\n").length;
           return { success: true, executionTime, message: `Server info retrieved (${lines} metrics)` };
         }
-        default:
-          throw new QueryError(`Unsupported maintenance type for Redis: ${type}`, "redis");
       }
+      throw new QueryError(`Unsupported maintenance type for Redis: ${type}`, "redis");
     } catch (error) {
       if (error instanceof QueryError) throw error;
       const executionTime = Math.round(performance.now() - startTime);

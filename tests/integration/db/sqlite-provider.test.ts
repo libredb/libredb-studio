@@ -136,6 +136,24 @@ describe("SQLiteProvider", () => {
       // The database file materializes at the resolved absolute location.
       expect(existsSync(join(pathTmpDir, "dotdot-ok.db"))).toBe(true);
     });
+
+    test("a connectionString with a file: prefix is accepted and the prefix is stripped", async () => {
+      const dbPath = join(pathTmpDir, "conn-string-file.db");
+      provider = new SQLiteProvider(makeSQLiteConfig({ database: undefined, connectionString: `file:${dbPath}` }));
+      await provider.connect();
+      expect(provider.isConnected()).toBe(true);
+      const result = await provider.query("SELECT 1 AS one");
+      expect(result.rows).toEqual([{ one: 1 }]);
+      expect(existsSync(dbPath)).toBe(true);
+    });
+
+    test("a plain-path connectionString (no file: prefix) is used as-is", async () => {
+      const dbPath = join(pathTmpDir, "conn-string-plain.db");
+      provider = new SQLiteProvider(makeSQLiteConfig({ database: undefined, connectionString: dbPath }));
+      await provider.connect();
+      expect(provider.isConnected()).toBe(true);
+      expect(existsSync(dbPath)).toBe(true);
+    });
   });
 
   // --------------------------------------------------------------------------
@@ -184,6 +202,36 @@ describe("SQLiteProvider", () => {
       await provider.query("CREATE TABLE test (id INTEGER PRIMARY KEY, val TEXT)");
       const result = await provider.query("INSERT INTO test VALUES (1, 'a')");
       expect(result.rowCount).toBe(1);
+    });
+
+    test("bound parameters work for both writes and reads", async () => {
+      provider = new SQLiteProvider(makeSQLiteConfig());
+      await provider.connect();
+
+      await provider.query("CREATE TABLE params (id INTEGER PRIMARY KEY, name TEXT)");
+      const insert = await provider.query("INSERT INTO params (id, name) VALUES (?, ?)", [1, "Ann"]);
+      expect(insert.rowCount).toBe(1);
+
+      const select = await provider.query("SELECT * FROM params WHERE id = ?", [1]);
+      expect(select.rows).toEqual([{ id: 1, name: "Ann" }]);
+    });
+
+    test("SELECT with no matching rows returns empty rows and fields", async () => {
+      provider = new SQLiteProvider(makeSQLiteConfig());
+      await provider.connect();
+
+      await provider.query("CREATE TABLE empty_result (id INTEGER PRIMARY KEY)");
+      const result = await provider.query("SELECT * FROM empty_result WHERE id = 999");
+      expect(result.rows).toEqual([]);
+      expect(result.fields).toEqual([]);
+      expect(result.rowCount).toBe(0);
+    });
+
+    test("query against a missing table is mapped through mapDatabaseError", async () => {
+      provider = new SQLiteProvider(makeSQLiteConfig());
+      await provider.connect();
+
+      await expect(provider.query("SELECT * FROM missing_table")).rejects.toThrow("no such table");
     });
   });
 
@@ -344,6 +392,25 @@ describe("SQLiteProvider", () => {
         "Unsupported maintenance type for SQLite",
       );
     });
+
+    test("analyze with a target table succeeds", async () => {
+      provider = new SQLiteProvider(makeSQLiteConfig());
+      await provider.connect();
+      await provider.query("CREATE TABLE mt (id INTEGER PRIMARY KEY, v TEXT)");
+      const result = await provider.runMaintenance("analyze", "mt");
+      expect(result.success).toBe(true);
+      expect(result.message).toContain("ANALYZE");
+    });
+
+    test("reindex with a target index succeeds", async () => {
+      provider = new SQLiteProvider(makeSQLiteConfig());
+      await provider.connect();
+      await provider.query("CREATE TABLE mt (id INTEGER PRIMARY KEY, v TEXT)");
+      await provider.query("CREATE INDEX idx_mt_v ON mt(v)");
+      const result = await provider.runMaintenance("reindex", "idx_mt_v");
+      expect(result.success).toBe(true);
+      expect(result.message).toContain("REINDEX");
+    });
   });
 
   // --------------------------------------------------------------------------
@@ -474,6 +541,68 @@ describe("SQLiteProvider", () => {
       expect(stats.length).toBeGreaterThan(0);
       expect(typeof stats[0].name).toBe("string");
       expect(typeof stats[0].size).toBe("string");
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // File-backed database (statSync paths + WAL/SHM sidecar files)
+  // --------------------------------------------------------------------------
+
+  describe("file-backed database", () => {
+    let fileTmpDir: string;
+
+    beforeAll(() => {
+      fileTmpDir = mkdtempSync(join(tmpdir(), "libredb-sqlite-file-"));
+    });
+
+    afterAll(() => {
+      rmSync(fileTmpDir, { recursive: true, force: true });
+    });
+
+    test("getHealth reports the on-disk file size and passes the integrity check", async () => {
+      const dbPath = join(fileTmpDir, "health.db");
+      provider = new SQLiteProvider(makeSQLiteConfig({ database: dbPath }));
+      await provider.connect();
+      await provider.query("CREATE TABLE h (id INTEGER PRIMARY KEY)");
+
+      const health = await provider.getHealth();
+      expect(health.databaseSize).not.toBe("N/A");
+      expect(health.databaseSize).not.toBe("Unknown");
+      const integrityInfo = health.slowQueries.find((sq) => sq.query.includes("Integrity"));
+      expect(integrityInfo!.query).toContain("OK");
+      expect(health.activeSessions[0].database).toBe("health.db");
+    });
+
+    test("getOverview reads the database size from the file", async () => {
+      const dbPath = join(fileTmpDir, "overview.db");
+      provider = new SQLiteProvider(makeSQLiteConfig({ database: dbPath }));
+      await provider.connect();
+      await provider.query("CREATE TABLE o (id INTEGER PRIMARY KEY)");
+
+      const overview = await provider.getOverview();
+      expect(overview.databaseSizeBytes).toBeGreaterThan(0);
+      expect(overview.tableCount).toBe(1);
+    });
+
+    test("getStorageStats lists the main database plus WAL and SHM sidecar files", async () => {
+      const dbPath = join(fileTmpDir, "storage.db");
+      provider = new SQLiteProvider(makeSQLiteConfig({ database: dbPath }));
+      await provider.connect();
+      // A write in WAL journal mode materializes the -wal and -shm files.
+      await provider.query("CREATE TABLE s (id INTEGER PRIMARY KEY, v TEXT)");
+      await provider.query("INSERT INTO s VALUES (1, 'x')");
+
+      const stats = await provider.getStorageStats();
+      const names = stats.map((s) => s.name);
+      expect(names).toContain("Main Database");
+      expect(names).toContain("WAL");
+      expect(names).toContain("Shared Memory");
+
+      const main = stats.find((s) => s.name === "Main Database")!;
+      expect(main.location).toBe("storage.db");
+      const wal = stats.find((s) => s.name === "WAL")!;
+      expect(wal.location).toBe("storage.db-wal");
+      expect(typeof wal.walSizeBytes).toBe("number");
     });
   });
 

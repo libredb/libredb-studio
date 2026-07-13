@@ -457,6 +457,24 @@ describe("withRetry", () => {
     }
   });
 
+  test("throws without invoking fn when maxAttempts is 0", async () => {
+    let calls = 0;
+    try {
+      await withRetry(
+        async () => {
+          calls++;
+          return "never";
+        },
+        { maxAttempts: 0 },
+      );
+      expect(true).toBe(false);
+    } catch (error) {
+      // The retry loop never runs, so lastError is still undefined
+      expect(error).toBeUndefined();
+    }
+    expect(calls).toBe(0);
+  });
+
   test("uses exponential backoff", async () => {
     let attempt = 0;
     const startTime = Date.now();

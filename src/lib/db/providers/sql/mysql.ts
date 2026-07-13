@@ -28,6 +28,221 @@ import { DatabaseConfigError, ConnectionError, QueryError, mapDatabaseError } fr
 import { formatBytes } from "../../utils/pool-manager";
 
 // ============================================================================
+// SQL Statements
+// ============================================================================
+// Multi-line SQL is hoisted to module scope so per-line coverage attribution
+// stays stable (repo pattern, see the SCHEMA_*_SQL consts in mssql.ts).
+
+const SCHEMA_TABLES_SQL = `
+        SELECT
+          TABLE_NAME as table_name,
+          TABLE_ROWS as row_count,
+          DATA_LENGTH + INDEX_LENGTH as total_size
+        FROM information_schema.TABLES
+        WHERE TABLE_SCHEMA = ?
+        AND TABLE_TYPE = 'BASE TABLE'
+        ORDER BY TABLE_NAME ASC;
+      `;
+
+const SCHEMA_COLUMNS_SQL = `
+          SELECT
+            COLUMN_NAME as column_name,
+            DATA_TYPE as data_type,
+            IS_NULLABLE as is_nullable,
+            COLUMN_DEFAULT as column_default,
+            COLUMN_KEY as column_key
+          FROM information_schema.COLUMNS
+          WHERE TABLE_SCHEMA = ?
+          AND TABLE_NAME = ?
+          ORDER BY ORDINAL_POSITION
+          LIMIT 100;
+        `;
+
+const SCHEMA_FOREIGN_KEYS_SQL = `
+          SELECT
+            COLUMN_NAME as column_name,
+            REFERENCED_TABLE_NAME as referenced_table,
+            REFERENCED_COLUMN_NAME as referenced_column
+          FROM information_schema.KEY_COLUMN_USAGE
+          WHERE TABLE_SCHEMA = ?
+          AND TABLE_NAME = ?
+          AND REFERENCED_TABLE_NAME IS NOT NULL;
+        `;
+
+const SCHEMA_INDEXES_SQL = `
+          SELECT
+            INDEX_NAME as index_name,
+            GROUP_CONCAT(COLUMN_NAME ORDER BY SEQ_IN_INDEX) as columns,
+            NOT NON_UNIQUE as is_unique
+          FROM information_schema.STATISTICS
+          WHERE TABLE_SCHEMA = ?
+          AND TABLE_NAME = ?
+          GROUP BY INDEX_NAME, NON_UNIQUE;
+        `;
+
+const DATABASE_SIZE_MB_SQL = `
+        SELECT
+          ROUND(SUM(DATA_LENGTH + INDEX_LENGTH) / 1024 / 1024, 2) as size_mb
+        FROM information_schema.TABLES
+        WHERE TABLE_SCHEMA = ?;
+      `;
+
+// Shared by getHealth() and getPerformanceMetrics().
+const BUFFER_CACHE_HIT_RATIO_SQL = `
+        SELECT
+          (1 - (
+            (SELECT VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME = 'Innodb_buffer_pool_reads') /
+            NULLIF((SELECT VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME = 'Innodb_buffer_pool_read_requests'), 0)
+          )) * 100 as hit_ratio;
+      `;
+
+const HEALTH_SLOW_QUERIES_SQL = `
+          SELECT
+            LEFT(sql_text, 100) as query,
+            count_star as calls,
+            CONCAT(ROUND(avg_timer_wait / 1000000000, 2), 'ms') as avgTime
+          FROM performance_schema.events_statements_summary_by_digest
+          WHERE schema_name = ?
+          ORDER BY sum_timer_wait DESC
+          LIMIT 5;
+        `;
+
+const HEALTH_ACTIVE_SESSIONS_SQL = `
+        SELECT
+          ID as pid,
+          USER as user,
+          DB as \`database\`,
+          COMMAND as state,
+          LEFT(COALESCE(INFO, ''), 100) as query,
+          CONCAT(TIME, 's') as duration
+        FROM information_schema.PROCESSLIST
+        WHERE DB = ?
+        ORDER BY TIME DESC
+        LIMIT 10;
+      `;
+
+const MAINTENANCE_TABLES_SQL = `
+      SELECT TABLE_NAME
+      FROM information_schema.TABLES
+      WHERE TABLE_SCHEMA = ?
+      AND TABLE_TYPE = 'BASE TABLE'
+      LIMIT 50;
+    `;
+
+const OVERVIEW_DATABASE_SIZE_SQL = `
+        SELECT SUM(DATA_LENGTH + INDEX_LENGTH) as size_bytes
+        FROM information_schema.TABLES
+        WHERE TABLE_SCHEMA = ?;
+      `;
+
+const OVERVIEW_OBJECT_COUNTS_SQL = `
+        SELECT
+          COUNT(DISTINCT TABLE_NAME) as table_count,
+          COUNT(DISTINCT INDEX_NAME) as index_count
+        FROM information_schema.STATISTICS
+        WHERE TABLE_SCHEMA = ?;
+      `;
+
+const OVERVIEW_TABLE_COUNT_SQL = `
+        SELECT COUNT(*) as cnt FROM information_schema.TABLES
+        WHERE TABLE_SCHEMA = ? AND TABLE_TYPE = 'BASE TABLE';
+      `;
+
+const BUFFER_POOL_PAGES_SQL = `
+        SELECT
+          (SELECT VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME = 'Innodb_buffer_pool_pages_data') as data_pages,
+          (SELECT VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME = 'Innodb_buffer_pool_pages_total') as total_pages;
+      `;
+
+const QUERIES_PER_SECOND_SQL = `
+        SELECT
+          (SELECT VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME = 'Queries') as queries,
+          (SELECT VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME = 'Uptime') as uptime;
+      `;
+
+// The LIMIT clause is interpolated at the call site in getSlowQueries().
+const SLOW_QUERIES_BODY_SQL = `
+        SELECT
+          DIGEST as query_id,
+          LEFT(DIGEST_TEXT, 500) as query,
+          COUNT_STAR as calls,
+          SUM_TIMER_WAIT / 1000000000 as total_time_ms,
+          AVG_TIMER_WAIT / 1000000000 as avg_time_ms,
+          MIN_TIMER_WAIT / 1000000000 as min_time_ms,
+          MAX_TIMER_WAIT / 1000000000 as max_time_ms,
+          SUM_ROWS_EXAMINED as rows_examined
+        FROM performance_schema.events_statements_summary_by_digest
+        WHERE SCHEMA_NAME = ?
+        ORDER BY SUM_TIMER_WAIT DESC`;
+
+// The LIMIT clause is interpolated at the call site in getActiveSessions().
+const ACTIVE_SESSIONS_BODY_SQL = `
+        SELECT
+          ID as pid,
+          USER as user,
+          DB as database_name,
+          HOST as client_addr,
+          COMMAND as state,
+          LEFT(COALESCE(INFO, ''), 500) as query,
+          TIME as duration_seconds
+        FROM information_schema.PROCESSLIST
+        WHERE DB = ? OR DB IS NULL
+        ORDER BY TIME DESC`;
+
+const TABLE_STATS_SQL = `
+        SELECT
+          TABLE_SCHEMA as schema_name,
+          TABLE_NAME as table_name,
+          TABLE_ROWS as row_count,
+          DATA_LENGTH as table_size_bytes,
+          INDEX_LENGTH as index_size_bytes,
+          DATA_LENGTH + INDEX_LENGTH as total_size_bytes,
+          DATA_FREE as free_space_bytes
+        FROM information_schema.TABLES
+        WHERE TABLE_SCHEMA = ?
+        AND TABLE_TYPE = 'BASE TABLE'
+        ORDER BY DATA_LENGTH + INDEX_LENGTH DESC
+        LIMIT 100;
+      `;
+
+const INDEX_STATS_SQL = `
+        SELECT
+          TABLE_SCHEMA as schema_name,
+          TABLE_NAME as table_name,
+          INDEX_NAME as index_name,
+          INDEX_TYPE as index_type,
+          GROUP_CONCAT(COLUMN_NAME ORDER BY SEQ_IN_INDEX) as columns,
+          NOT NON_UNIQUE as is_unique,
+          INDEX_NAME = 'PRIMARY' as is_primary,
+          MAX(CARDINALITY) as cardinality
+        FROM information_schema.STATISTICS
+        WHERE TABLE_SCHEMA = ?
+        GROUP BY TABLE_SCHEMA, TABLE_NAME, INDEX_NAME, INDEX_TYPE, NON_UNIQUE
+        ORDER BY TABLE_NAME, INDEX_NAME
+        LIMIT 200;
+      `;
+
+const INDEX_SIZES_SQL = `
+          SELECT
+            CONCAT(t.NAME) as full_name,
+            SUM(s.INDEX_SIZE * @@innodb_page_size) as size_bytes
+          FROM information_schema.INNODB_INDEXES i
+          JOIN information_schema.INNODB_TABLES t ON i.TABLE_ID = t.TABLE_ID
+          JOIN information_schema.INNODB_TABLESPACES s ON t.SPACE = s.SPACE
+          WHERE t.NAME LIKE ?
+          GROUP BY t.NAME, i.NAME;
+        `;
+
+const STORAGE_STATS_SQL = `
+        SELECT
+          TABLE_SCHEMA as name,
+          SUM(DATA_LENGTH + INDEX_LENGTH) as size_bytes
+        FROM information_schema.TABLES
+        WHERE TABLE_SCHEMA = ?
+        GROUP BY TABLE_SCHEMA;
+      `;
+
+// ============================================================================
 // MySQL Provider
 // ============================================================================
 
@@ -328,19 +543,7 @@ export class MySQLProvider extends SQLBaseProvider {
 
     const conn = await this.pool!.getConnection();
     try {
-      const [tablesRows] = await conn.execute<RowDataPacket[]>(
-        `
-        SELECT
-          TABLE_NAME as table_name,
-          TABLE_ROWS as row_count,
-          DATA_LENGTH + INDEX_LENGTH as total_size
-        FROM information_schema.TABLES
-        WHERE TABLE_SCHEMA = ?
-        AND TABLE_TYPE = 'BASE TABLE'
-        ORDER BY TABLE_NAME ASC;
-      `,
-        [this.config.database],
-      );
+      const [tablesRows] = await conn.execute<RowDataPacket[]>(SCHEMA_TABLES_SQL, [this.config.database]);
 
       const schemas: TableSchema[] = [];
 
@@ -349,50 +552,17 @@ export class MySQLProvider extends SQLBaseProvider {
         const rowCount = parseInt(row.row_count || "0");
         const sizeBytes = parseInt(row.total_size || "0");
 
-        const [columnsRows] = await conn.execute<RowDataPacket[]>(
-          `
-          SELECT
-            COLUMN_NAME as column_name,
-            DATA_TYPE as data_type,
-            IS_NULLABLE as is_nullable,
-            COLUMN_DEFAULT as column_default,
-            COLUMN_KEY as column_key
-          FROM information_schema.COLUMNS
-          WHERE TABLE_SCHEMA = ?
-          AND TABLE_NAME = ?
-          ORDER BY ORDINAL_POSITION
-          LIMIT 100;
-        `,
-          [this.config.database, tableName],
-        );
+        const [columnsRows] = await conn.execute<RowDataPacket[]>(SCHEMA_COLUMNS_SQL, [
+          this.config.database,
+          tableName,
+        ]);
 
-        const [fkRows] = await conn.execute<RowDataPacket[]>(
-          `
-          SELECT
-            COLUMN_NAME as column_name,
-            REFERENCED_TABLE_NAME as referenced_table,
-            REFERENCED_COLUMN_NAME as referenced_column
-          FROM information_schema.KEY_COLUMN_USAGE
-          WHERE TABLE_SCHEMA = ?
-          AND TABLE_NAME = ?
-          AND REFERENCED_TABLE_NAME IS NOT NULL;
-        `,
-          [this.config.database, tableName],
-        );
+        const [fkRows] = await conn.execute<RowDataPacket[]>(SCHEMA_FOREIGN_KEYS_SQL, [
+          this.config.database,
+          tableName,
+        ]);
 
-        const [indexRows] = await conn.execute<RowDataPacket[]>(
-          `
-          SELECT
-            INDEX_NAME as index_name,
-            GROUP_CONCAT(COLUMN_NAME ORDER BY SEQ_IN_INDEX) as columns,
-            NOT NON_UNIQUE as is_unique
-          FROM information_schema.STATISTICS
-          WHERE TABLE_SCHEMA = ?
-          AND TABLE_NAME = ?
-          GROUP BY INDEX_NAME, NON_UNIQUE;
-        `,
-          [this.config.database, tableName],
-        );
+        const [indexRows] = await conn.execute<RowDataPacket[]>(SCHEMA_INDEXES_SQL, [this.config.database, tableName]);
 
         schemas.push({
           name: tableName,
@@ -436,41 +606,15 @@ export class MySQLProvider extends SQLBaseProvider {
       const [connRows] = await conn.execute<RowDataPacket[]>("SHOW STATUS LIKE 'Threads_connected'");
       const activeConnections = parseInt(connRows[0]?.Value || "0");
 
-      const [sizeRows] = await conn.execute<RowDataPacket[]>(
-        `
-        SELECT
-          ROUND(SUM(DATA_LENGTH + INDEX_LENGTH) / 1024 / 1024, 2) as size_mb
-        FROM information_schema.TABLES
-        WHERE TABLE_SCHEMA = ?;
-      `,
-        [this.config.database],
-      );
+      const [sizeRows] = await conn.execute<RowDataPacket[]>(DATABASE_SIZE_MB_SQL, [this.config.database]);
       const databaseSize = `${sizeRows[0]?.size_mb || 0} MB`;
 
-      const [hitRows] = await conn.execute<RowDataPacket[]>(`
-        SELECT
-          (1 - (
-            (SELECT VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME = 'Innodb_buffer_pool_reads') /
-            NULLIF((SELECT VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME = 'Innodb_buffer_pool_read_requests'), 0)
-          )) * 100 as hit_ratio;
-      `);
+      const [hitRows] = await conn.execute<RowDataPacket[]>(BUFFER_CACHE_HIT_RATIO_SQL);
       const cacheHitRatio = `${(hitRows[0]?.hit_ratio || 99).toFixed(1)}%`;
 
       let slowQueries: SlowQuery[] = [];
       try {
-        const [slowRows] = await conn.execute<RowDataPacket[]>(
-          `
-          SELECT
-            LEFT(sql_text, 100) as query,
-            count_star as calls,
-            CONCAT(ROUND(avg_timer_wait / 1000000000, 2), 'ms') as avgTime
-          FROM performance_schema.events_statements_summary_by_digest
-          WHERE schema_name = ?
-          ORDER BY sum_timer_wait DESC
-          LIMIT 5;
-        `,
-          [this.config.database],
-        );
+        const [slowRows] = await conn.execute<RowDataPacket[]>(HEALTH_SLOW_QUERIES_SQL, [this.config.database]);
         slowQueries = slowRows.map((r) => ({
           query: r.query || "",
           calls: parseInt(r.calls || "0"),
@@ -480,22 +624,7 @@ export class MySQLProvider extends SQLBaseProvider {
         slowQueries = [{ query: "Performance schema not available", calls: 0, avgTime: "N/A" }];
       }
 
-      const [sessionRows] = await conn.execute<RowDataPacket[]>(
-        `
-        SELECT
-          ID as pid,
-          USER as user,
-          DB as \`database\`,
-          COMMAND as state,
-          LEFT(COALESCE(INFO, ''), 100) as query,
-          CONCAT(TIME, 's') as duration
-        FROM information_schema.PROCESSLIST
-        WHERE DB = ?
-        ORDER BY TIME DESC
-        LIMIT 10;
-      `,
-        [this.config.database],
-      );
+      const [sessionRows] = await conn.execute<RowDataPacket[]>(HEALTH_ACTIVE_SESSIONS_SQL, [this.config.database]);
 
       const activeSessions: ActiveSession[] = sessionRows.map((r) => ({
         pid: r.pid,
@@ -556,8 +685,14 @@ export class MySQLProvider extends SQLBaseProvider {
             }
             sql = `KILL ${connId}`;
             break;
-          default:
-            throw new QueryError(`Unsupported maintenance type for MySQL: ${type}`, "mysql");
+        }
+
+        // Unsupported types fall through the switch with sql left empty. A
+        // `default:` label is deliberately avoided here: bun's coverage emits
+        // a 0-hit line record for `default:` that no runtime execution ever
+        // credits, which permanently poisons the merged lcov report.
+        if (!sql) {
+          throw new QueryError(`Unsupported maintenance type for MySQL: ${type}`, "mysql");
         }
 
         await conn.execute(sql);
@@ -575,16 +710,7 @@ export class MySQLProvider extends SQLBaseProvider {
   }
 
   private async getAllTablesForMaintenance(conn: PoolConnection): Promise<string> {
-    const [rows] = await conn.execute<RowDataPacket[]>(
-      `
-      SELECT TABLE_NAME
-      FROM information_schema.TABLES
-      WHERE TABLE_SCHEMA = ?
-      AND TABLE_TYPE = 'BASE TABLE'
-      LIMIT 50;
-    `,
-      [this.config.database],
-    );
+    const [rows] = await conn.execute<RowDataPacket[]>(MAINTENANCE_TABLES_SQL, [this.config.database]);
 
     return rows.map((r) => this.escapeIdentifier(r.TABLE_NAME)).join(", ");
   }
@@ -616,35 +742,13 @@ export class MySQLProvider extends SQLBaseProvider {
       const maxConnections = parseInt(maxConnRows[0]?.Value || "151");
 
       // Get database size
-      const [sizeRows] = await conn.execute<RowDataPacket[]>(
-        `
-        SELECT SUM(DATA_LENGTH + INDEX_LENGTH) as size_bytes
-        FROM information_schema.TABLES
-        WHERE TABLE_SCHEMA = ?;
-      `,
-        [this.config.database],
-      );
+      const [sizeRows] = await conn.execute<RowDataPacket[]>(OVERVIEW_DATABASE_SIZE_SQL, [this.config.database]);
       const databaseSizeBytes = parseInt(sizeRows[0]?.size_bytes || "0");
 
       // Get table and index count
-      const [countRows] = await conn.execute<RowDataPacket[]>(
-        `
-        SELECT
-          COUNT(DISTINCT TABLE_NAME) as table_count,
-          COUNT(DISTINCT INDEX_NAME) as index_count
-        FROM information_schema.STATISTICS
-        WHERE TABLE_SCHEMA = ?;
-      `,
-        [this.config.database],
-      );
+      const [countRows] = await conn.execute<RowDataPacket[]>(OVERVIEW_OBJECT_COUNTS_SQL, [this.config.database]);
 
-      const [tableCountRows] = await conn.execute<RowDataPacket[]>(
-        `
-        SELECT COUNT(*) as cnt FROM information_schema.TABLES
-        WHERE TABLE_SCHEMA = ? AND TABLE_TYPE = 'BASE TABLE';
-      `,
-        [this.config.database],
-      );
+      const [tableCountRows] = await conn.execute<RowDataPacket[]>(OVERVIEW_TABLE_COUNT_SQL, [this.config.database]);
 
       return {
         version: `MySQL ${version}`,
@@ -668,31 +772,17 @@ export class MySQLProvider extends SQLBaseProvider {
     const conn = await this.pool!.getConnection();
     try {
       // Calculate cache hit ratio from InnoDB buffer pool
-      const [hitRows] = await conn.execute<RowDataPacket[]>(`
-        SELECT
-          (1 - (
-            (SELECT VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME = 'Innodb_buffer_pool_reads') /
-            NULLIF((SELECT VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME = 'Innodb_buffer_pool_read_requests'), 0)
-          )) * 100 as hit_ratio;
-      `);
+      const [hitRows] = await conn.execute<RowDataPacket[]>(BUFFER_CACHE_HIT_RATIO_SQL);
       const cacheHitRatio = parseFloat(hitRows[0]?.hit_ratio || "99");
 
       // Get buffer pool usage
-      const [poolRows] = await conn.execute<RowDataPacket[]>(`
-        SELECT
-          (SELECT VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME = 'Innodb_buffer_pool_pages_data') as data_pages,
-          (SELECT VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME = 'Innodb_buffer_pool_pages_total') as total_pages;
-      `);
+      const [poolRows] = await conn.execute<RowDataPacket[]>(BUFFER_POOL_PAGES_SQL);
       const dataPages = parseInt(poolRows[0]?.data_pages || "0");
       const totalPages = parseInt(poolRows[0]?.total_pages || "1");
       const bufferPoolUsage = (dataPages / totalPages) * 100;
 
       // Get queries per second
-      const [qpsRows] = await conn.execute<RowDataPacket[]>(`
-        SELECT
-          (SELECT VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME = 'Queries') as queries,
-          (SELECT VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME = 'Uptime') as uptime;
-      `);
+      const [qpsRows] = await conn.execute<RowDataPacket[]>(QUERIES_PER_SECOND_SQL);
       const queries = parseInt(qpsRows[0]?.queries || "0");
       const uptime = parseInt(qpsRows[0]?.uptime || "1");
       const queriesPerSecond = queries / uptime;
@@ -726,24 +816,9 @@ export class MySQLProvider extends SQLBaseProvider {
 
     const conn = await this.pool!.getConnection();
     try {
-      const [rows] = await conn.execute<RowDataPacket[]>(
-        `
-        SELECT
-          DIGEST as query_id,
-          LEFT(DIGEST_TEXT, 500) as query,
-          COUNT_STAR as calls,
-          SUM_TIMER_WAIT / 1000000000 as total_time_ms,
-          AVG_TIMER_WAIT / 1000000000 as avg_time_ms,
-          MIN_TIMER_WAIT / 1000000000 as min_time_ms,
-          MAX_TIMER_WAIT / 1000000000 as max_time_ms,
-          SUM_ROWS_EXAMINED as rows_examined
-        FROM performance_schema.events_statements_summary_by_digest
-        WHERE SCHEMA_NAME = ?
-        ORDER BY SUM_TIMER_WAIT DESC
-        LIMIT ${Number(limit)};
-      `,
-        [this.config.database],
-      );
+      const [rows] = await conn.execute<RowDataPacket[]>(`${SLOW_QUERIES_BODY_SQL} LIMIT ${Number(limit)};`, [
+        this.config.database,
+      ]);
 
       return rows.map((r) => ({
         queryId: r.query_id || undefined,
@@ -769,23 +844,9 @@ export class MySQLProvider extends SQLBaseProvider {
 
     const conn = await this.pool!.getConnection();
     try {
-      const [rows] = await conn.execute<RowDataPacket[]>(
-        `
-        SELECT
-          ID as pid,
-          USER as user,
-          DB as database_name,
-          HOST as client_addr,
-          COMMAND as state,
-          LEFT(COALESCE(INFO, ''), 500) as query,
-          TIME as duration_seconds
-        FROM information_schema.PROCESSLIST
-        WHERE DB = ? OR DB IS NULL
-        ORDER BY TIME DESC
-        LIMIT ${Number(limit)};
-      `,
-        [this.config.database],
-      );
+      const [rows] = await conn.execute<RowDataPacket[]>(`${ACTIVE_SESSIONS_BODY_SQL} LIMIT ${Number(limit)};`, [
+        this.config.database,
+      ]);
 
       return rows.map((r) => {
         const durationSeconds = parseInt(r.duration_seconds || "0");
@@ -811,24 +872,7 @@ export class MySQLProvider extends SQLBaseProvider {
 
     const conn = await this.pool!.getConnection();
     try {
-      const [rows] = await conn.execute<RowDataPacket[]>(
-        `
-        SELECT
-          TABLE_SCHEMA as schema_name,
-          TABLE_NAME as table_name,
-          TABLE_ROWS as row_count,
-          DATA_LENGTH as table_size_bytes,
-          INDEX_LENGTH as index_size_bytes,
-          DATA_LENGTH + INDEX_LENGTH as total_size_bytes,
-          DATA_FREE as free_space_bytes
-        FROM information_schema.TABLES
-        WHERE TABLE_SCHEMA = ?
-        AND TABLE_TYPE = 'BASE TABLE'
-        ORDER BY DATA_LENGTH + INDEX_LENGTH DESC
-        LIMIT 100;
-      `,
-        [schema],
-      );
+      const [rows] = await conn.execute<RowDataPacket[]>(TABLE_STATS_SQL, [schema]);
 
       return rows.map((r) => {
         const tableSizeBytes = parseInt(r.table_size_bytes || "0");
@@ -862,42 +906,12 @@ export class MySQLProvider extends SQLBaseProvider {
 
     const conn = await this.pool!.getConnection();
     try {
-      const [rows] = await conn.execute<RowDataPacket[]>(
-        `
-        SELECT
-          TABLE_SCHEMA as schema_name,
-          TABLE_NAME as table_name,
-          INDEX_NAME as index_name,
-          INDEX_TYPE as index_type,
-          GROUP_CONCAT(COLUMN_NAME ORDER BY SEQ_IN_INDEX) as columns,
-          NOT NON_UNIQUE as is_unique,
-          INDEX_NAME = 'PRIMARY' as is_primary,
-          MAX(CARDINALITY) as cardinality
-        FROM information_schema.STATISTICS
-        WHERE TABLE_SCHEMA = ?
-        GROUP BY TABLE_SCHEMA, TABLE_NAME, INDEX_NAME, INDEX_TYPE, NON_UNIQUE
-        ORDER BY TABLE_NAME, INDEX_NAME
-        LIMIT 200;
-      `,
-        [schema],
-      );
+      const [rows] = await conn.execute<RowDataPacket[]>(INDEX_STATS_SQL, [schema]);
 
       // Get index sizes from INNODB_SYS_INDEXES if available
       const indexSizes: Record<string, number> = {};
       try {
-        const [sizeRows] = await conn.execute<RowDataPacket[]>(
-          `
-          SELECT
-            CONCAT(t.NAME) as full_name,
-            SUM(s.INDEX_SIZE * @@innodb_page_size) as size_bytes
-          FROM information_schema.INNODB_INDEXES i
-          JOIN information_schema.INNODB_TABLES t ON i.TABLE_ID = t.TABLE_ID
-          JOIN information_schema.INNODB_TABLESPACES s ON t.SPACE = s.SPACE
-          WHERE t.NAME LIKE ?
-          GROUP BY t.NAME, i.NAME;
-        `,
-          [`${schema}/%`],
-        );
+        const [sizeRows] = await conn.execute<RowDataPacket[]>(INDEX_SIZES_SQL, [`${schema}/%`]);
 
         for (const row of sizeRows) {
           indexSizes[row.full_name] = parseInt(row.size_bytes || "0");
@@ -936,17 +950,7 @@ export class MySQLProvider extends SQLBaseProvider {
       const stats: StorageStats[] = [];
 
       // Get database size
-      const [dbRows] = await conn.execute<RowDataPacket[]>(
-        `
-        SELECT
-          TABLE_SCHEMA as name,
-          SUM(DATA_LENGTH + INDEX_LENGTH) as size_bytes
-        FROM information_schema.TABLES
-        WHERE TABLE_SCHEMA = ?
-        GROUP BY TABLE_SCHEMA;
-      `,
-        [this.config.database],
-      );
+      const [dbRows] = await conn.execute<RowDataPacket[]>(STORAGE_STATS_SQL, [this.config.database]);
 
       if (dbRows.length > 0) {
         const sizeBytes = parseInt(dbRows[0].size_bytes || "0");
