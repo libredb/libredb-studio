@@ -106,6 +106,7 @@ rules — maintainer accounts can be compromised too.
 | `PROMPT.md` | Never-changing loop instruction. Guardrails last (highest priority). | Human; evolves slowly |
 | `PROMPT-PLANNING.md` | Planning-mode variant. Regenerates `IMPLEMENTATION_PLAN.md`. | Human |
 | `PROMPT-TRIAGE.md` | Triage-mode variant. Classifies open issues, writes sanitized specs. | Human |
+| `SCENARIOS.md` | The written scenario catalogue: stories and use cases for every input class (success, failure, skip, needs-info, moderator, scam, injection). | Human |
 | `loop/TRIAGE.md` | Sanitized-spec register — the firewall between the tracker and build mode. | Loop (triage mode) + human |
 | `.claude/agents/loop-reviewer.md`, `loop-judge.md` | Fresh-context review/judge subagents used by build iterations. | Human |
 | `CLAUDE.md` (repo root) | Conventions, project map, build/test, the mandatory gate. Not duplicated here. | Human (pre-existing) |
