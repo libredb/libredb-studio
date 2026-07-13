@@ -697,7 +697,9 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
           )}
         </AnimatePresence>
 
-        <div className="flex-1 relative">
+        {/* min-h-0 lets this flex item shrink below Monaco's rendered height;
+            without it the editor can grow but never shrink (issue #94) */}
+        <div className="flex-1 relative min-h-0">
           <Editor
             height="100%"
             language={language}

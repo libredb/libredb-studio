@@ -100,6 +100,10 @@ seed-connections.yaml
 
 .playwright-mcp/
 
+# Playwright run artifacts
+/test-results/
+/playwright-report/
+
 npmjs-token
 
 .npmrc

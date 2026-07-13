@@ -422,7 +422,7 @@ export function StudioWorkspace({
                           onImport={features.dataImport ? () => setIsImportModalOpen(true) : noop}
                         />
 
-                        <div className="flex-1 relative">
+                        <div className="flex-1 relative min-h-0">
                           <QueryEditor
                             ref={queryEditorRef}
                             value={tabMgr.currentTab.query}

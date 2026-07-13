@@ -1,5 +1,8 @@
 import { defineConfig, devices } from "@playwright/test";
 
+// Override with E2E_PORT when localhost:3000 is occupied by another instance.
+const port = Number(process.env.E2E_PORT ?? 3000);
+
 export default defineConfig({
   testDir: "./e2e",
   fullyParallel: true,
@@ -8,7 +11,7 @@ export default defineConfig({
   workers: process.env.CI ? 1 : undefined,
   reporter: process.env.CI ? "html" : "list",
   use: {
-    baseURL: "http://localhost:3000",
+    baseURL: `http://localhost:${port}`,
     trace: "on-first-retry",
     screenshot: "only-on-failure",
   },
@@ -20,10 +23,11 @@ export default defineConfig({
   ],
   webServer: {
     command: "bun run build && bun start",
-    url: "http://localhost:3000",
+    url: `http://localhost:${port}`,
     reuseExistingServer: !process.env.CI,
     timeout: 120_000,
     env: {
+      PORT: String(port),
       JWT_SECRET: "test-jwt-secret-for-e2e-tests-32ch",
       ADMIN_EMAIL: "admin@libredb.org",
       ADMIN_PASSWORD: "test-admin",

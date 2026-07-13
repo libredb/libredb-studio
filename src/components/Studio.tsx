@@ -454,7 +454,7 @@ export default function Studio() {
                           onImport={() => setIsImportModalOpen(true)}
                         />
 
-                        <div className="flex-1 relative">
+                        <div className="flex-1 relative min-h-0">
                           <QueryEditor
                             ref={queryEditorRef}
                             value={tabMgr.currentTab.query}
