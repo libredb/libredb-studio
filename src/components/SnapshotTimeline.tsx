@@ -69,9 +69,22 @@ export function SnapshotTimeline({ snapshots, onCompare, onDelete }: SnapshotTim
             e.stopPropagation();
             onDelete(snapshot.id);
           };
+          const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              handleClick(snapshot.id);
+            }
+          };
 
           return (
-            <div key={snapshot.id} className={NODE_CLASS} onClick={() => handleClick(snapshot.id)}>
+            <div
+              key={snapshot.id}
+              className={NODE_CLASS}
+              role="button"
+              tabIndex={0}
+              onClick={() => handleClick(snapshot.id)}
+              onKeyDown={handleKeyDown}
+            >
               <div
                 className={cn(
                   "w-3.5 h-3.5 rounded-full border-2 z-10 transition-all",

@@ -71,6 +71,31 @@ describe("SnapshotTimeline", () => {
     expect(onCompare).toHaveBeenCalledTimes(1);
   });
 
+  test("selecting two snapshots via keyboard (Enter and Space) triggers onCompare", () => {
+    const onCompare = mock((a: string, b: string) => {
+      void a;
+      void b;
+    });
+    const { getAllByRole } = render(
+      <SnapshotTimeline snapshots={snapshots} onCompare={onCompare} onDelete={mock(() => {})} />,
+    );
+    const nodes = getAllByRole("button").filter((el) => el.tagName === "DIV");
+    fireEvent.keyDown(nodes[0]!, { key: "Enter" });
+    fireEvent.keyDown(nodes[1]!, { key: " " });
+    expect(onCompare).toHaveBeenCalledTimes(1);
+  });
+
+  test("other keys do not select a snapshot", () => {
+    const onCompare = mock(() => {});
+    const { getAllByRole } = render(
+      <SnapshotTimeline snapshots={snapshots} onCompare={onCompare} onDelete={mock(() => {})} />,
+    );
+    const nodes = getAllByRole("button").filter((el) => el.tagName === "DIV");
+    fireEvent.keyDown(nodes[0]!, { key: "Tab" });
+    fireEvent.keyDown(nodes[1]!, { key: "Escape" });
+    expect(onCompare).toHaveBeenCalledTimes(0);
+  });
+
   test("delete button fires onDelete", () => {
     const onDelete = mock((id: string) => {
       void id;
