@@ -4,9 +4,11 @@
 > every class of input it can meet — successful runs, failures, skips, bugs, fixes, features,
 > tasks, questions, missing information, moderator escalations, scams, and prompt injection.
 >
-> This document mirrors the implemented system (`PROMPT-TRIAGE.md`, `PROMPT-PLANNING.md`,
-> `PROMPT.md`, the 999-series guardrails, `scripts/*.sh`). If the mechanisms change, this file
-> changes in the same PR — the code mirrors the doc and the doc mirrors the code.
+> This document is DESCRIPTIVE, not authoritative: agent behavior is defined exclusively by
+> the prompts (`PROMPT-TRIAGE.md`, `PROMPT-PLANNING.md`, `PROMPT.md`, their 999-series
+> guardrails) and the runner scripts (`scripts/*.sh`) — on any conflict, those win and this
+> file is the bug. The sync obligation still holds: when the mechanisms change, this
+> catalogue is updated in the same PR so it never drifts into fiction.
 > Use cases marked **precedent** actually happened (Sweep 1: issues #132–#137; Sweep 2:
 > #45/#96/#124/#125/#126/#136/#151 plus routing decisions on #40/#94/#100/#108/#123/#127/#167/#170).
 > Use cases marked **synthetic** are designed-for but have not occurred live yet.

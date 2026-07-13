@@ -43,7 +43,9 @@ Full runbook and current status: [`HANDOFF.md`](./HANDOFF.md).
    `CLAUDE.md` (format · lint · typecheck · knip · test · build), per task, before every commit.
 2. **Functional** — `scripts/functional-smoke.sh`: boot the built app, create a real
    PostgreSQL connection through the UI, run a SQL query, assert the rows render. Mandatory
-   before a milestone may complete; also runs in CI's E2E job.
+   before a milestone may complete. (CI covers the same flow by running the underlying spec,
+   `e2e/functional-smoke.spec.ts`, inside the regular Playwright E2E job — not this wrapper;
+   the wrapper additionally hard-fails when Docker is missing, the spec skips.)
 
 ## Trust model in one paragraph
 
