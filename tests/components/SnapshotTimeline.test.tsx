@@ -261,6 +261,20 @@ describe("SnapshotTimeline", () => {
     expect(onCompare).toHaveBeenCalledTimes(1);
   });
 
+  test("selecting a snapshot applies highlighted dot and label styling", () => {
+    const { container, queryByText } = render(
+      <SnapshotTimeline snapshots={snapshots} onCompare={mock(() => {})} onDelete={mock(() => {})} />,
+    );
+    // Unselected state: no dot is highlighted, labels use the muted color
+    expect(container.querySelector(".bg-blue-500")).toBeNull();
+    expect(container.querySelectorAll(".text-zinc-500.group-hover\\:text-zinc-300").length).toBe(2);
+    fireEvent.click(queryByText("Before migration")!);
+    // Selected state: exactly one highlighted dot and one highlighted label
+    expect(container.querySelectorAll(".bg-blue-500.border-blue-400.scale-125").length).toBe(1);
+    expect(container.querySelectorAll(".mt-2.text-center.text-blue-400").length).toBe(1);
+    expect(container.querySelectorAll(".text-zinc-500.group-hover\\:text-zinc-300").length).toBe(1);
+  });
+
   test("delete passes correct snapshot id", () => {
     const onDelete = mock((id: string) => {
       void id;

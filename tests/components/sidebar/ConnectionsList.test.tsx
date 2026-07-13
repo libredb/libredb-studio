@@ -177,6 +177,87 @@ describe("ConnectionsList", () => {
     expect(defaultOnAdd).toHaveBeenCalledTimes(1);
   });
 
+  test("clicking a connection calls onSelectConnection with that connection", () => {
+    const { container } = render(
+      <ConnectionsList
+        connections={[mockPostgresConnection, mockMySQLConnection]}
+        activeConnection={null}
+        onSelectConnection={defaultOnSelect}
+        onDeleteConnection={defaultOnDelete}
+        onEditConnection={defaultOnEdit}
+        onAddConnection={defaultOnAdd}
+      />,
+    );
+
+    const items = container.querySelectorAll('[class*="cursor-pointer"]');
+    const mysqlItem = Array.from(items).find((el) => el.textContent?.includes("Test MySQL"));
+    fireEvent.click(mysqlItem!);
+
+    expect(defaultOnSelect).toHaveBeenCalledTimes(1);
+    expect(defaultOnSelect).toHaveBeenCalledWith(mockMySQLConnection);
+  });
+
+  test("delete button click calls onDeleteConnection with the connection id", () => {
+    const { container } = render(
+      <ConnectionsList
+        connections={[mockPostgresConnection]}
+        activeConnection={null}
+        onSelectConnection={defaultOnSelect}
+        onDeleteConnection={defaultOnDelete}
+        onEditConnection={defaultOnEdit}
+        onAddConnection={defaultOnAdd}
+      />,
+    );
+
+    // First button is edit (Pencil), second is delete (Trash2)
+    const buttons = container.querySelectorAll("button");
+    fireEvent.click(buttons[1]!);
+
+    expect(defaultOnDelete).toHaveBeenCalledTimes(1);
+    expect(defaultOnDelete).toHaveBeenCalledWith(mockPostgresConnection.id);
+    // stopPropagation: the item itself must not be selected
+    expect(defaultOnSelect).not.toHaveBeenCalled();
+  });
+
+  test("edit button click calls onEditConnection with the connection", () => {
+    const { container } = render(
+      <ConnectionsList
+        connections={[mockPostgresConnection]}
+        activeConnection={null}
+        onSelectConnection={defaultOnSelect}
+        onDeleteConnection={defaultOnDelete}
+        onEditConnection={defaultOnEdit}
+        onAddConnection={defaultOnAdd}
+      />,
+    );
+
+    // First button is edit (Pencil), second is delete (Trash2)
+    const buttons = container.querySelectorAll("button");
+    fireEvent.click(buttons[0]!);
+
+    expect(defaultOnEdit).toHaveBeenCalledTimes(1);
+    expect(defaultOnEdit).toHaveBeenCalledWith(mockPostgresConnection);
+    expect(defaultOnSelect).not.toHaveBeenCalled();
+  });
+
+  test("omitting onEditConnection renders no edit button", () => {
+    const { container } = render(
+      <ConnectionsList
+        connections={[mockPostgresConnection]}
+        activeConnection={null}
+        onSelectConnection={defaultOnSelect}
+        onDeleteConnection={defaultOnDelete}
+        onAddConnection={defaultOnAdd}
+      />,
+    );
+
+    // Only the delete button remains when onEdit is not passed down
+    const buttons = container.querySelectorAll("button");
+    expect(buttons.length).toBe(1);
+    fireEvent.click(buttons[0]!);
+    expect(defaultOnDelete).toHaveBeenCalledTimes(1);
+  });
+
   test("does not show empty state when connections exist", () => {
     const { queryByText } = render(
       <ConnectionsList

@@ -9,6 +9,7 @@ import {
   RedisIcon,
   OracleIcon,
   MSSQLIcon,
+  LibreDBIcon,
 } from "@/components/icons/db-icons";
 
 describe("db-icons", () => {
@@ -20,6 +21,7 @@ describe("db-icons", () => {
     { name: "RedisIcon", Component: RedisIcon },
     { name: "OracleIcon", Component: OracleIcon },
     { name: "MSSQLIcon", Component: MSSQLIcon },
+    { name: "LibreDBIcon", Component: LibreDBIcon },
   ];
 
   for (const { name, Component } of icons) {

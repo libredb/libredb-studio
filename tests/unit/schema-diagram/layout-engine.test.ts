@@ -14,6 +14,51 @@ function runner(impl: Partial<LayoutRunner>): LayoutRunner {
   };
 }
 
+/**
+ * Minimal Worker double for the default worker runner. elk-api only needs
+ * `postMessage`/`onmessage` (via PromisedWorker) plus `addEventListener` and
+ * `terminate`; replies echo the message id the way the real ELK worker does.
+ */
+class FakeElkWorker {
+  static last: FakeElkWorker | null = null;
+  onmessage: ((event: { data: { id: number; data: unknown } }) => void) | null = null;
+  terminated = 0;
+  respond = true;
+  private errorListeners: Array<(event: unknown) => void> = [];
+
+  constructor(_url?: unknown) {
+    FakeElkWorker.last = this;
+  }
+
+  addEventListener(type: string, listener: (event: unknown) => void): void {
+    if (type === "error") this.errorListeners.push(listener);
+  }
+
+  postMessage(msg: { id: number; cmd: string }): void {
+    if (!this.respond) return;
+    const data = msg.cmd === "layout" ? WORKER_RESULT : true;
+    queueMicrotask(() => this.onmessage?.({ data: { id: msg.id, data } }));
+  }
+
+  terminate(): void {
+    this.terminated += 1;
+  }
+
+  emitError(event: { message?: string }): void {
+    for (const listener of this.errorListeners) listener(event);
+  }
+}
+
+async function withGlobalWorker<T>(workerImpl: unknown, fn: () => Promise<T>): Promise<T> {
+  const savedWorker = (globalThis as Record<string, unknown>).Worker;
+  (globalThis as Record<string, unknown>).Worker = workerImpl;
+  try {
+    return await fn();
+  } finally {
+    (globalThis as Record<string, unknown>).Worker = savedWorker;
+  }
+}
+
 describe("createLayoutEngine (default runners)", () => {
   test("lays out a graph via the bundled elk when no Worker is available", async () => {
     // Force the worker-unavailable branch deterministically (bun defines a
@@ -41,6 +86,82 @@ describe("createLayoutEngine (default runners)", () => {
     } finally {
       (globalThis as Record<string, unknown>).Worker = savedWorker;
     }
+  });
+
+  test("lays out via the worker-backed ELK when the Worker responds", async () => {
+    await withGlobalWorker(FakeElkWorker, async () => {
+      const bundledFactory = mock(() => Promise.resolve(runner({ layout: () => Promise.resolve(BUNDLED_RESULT) })));
+      const engine = createLayoutEngine({ createBundledRunner: bundledFactory });
+
+      expect(await engine.layout(GRAPH)).toEqual(WORKER_RESULT);
+      expect(bundledFactory).not.toHaveBeenCalled();
+
+      await engine.dispose();
+      expect(FakeElkWorker.last?.terminated).toBe(1);
+    });
+  });
+
+  test("falls back to bundled when the Worker constructor throws", async () => {
+    class ThrowingWorker {
+      constructor() {
+        throw new Error("worker asset missing");
+      }
+    }
+    await withGlobalWorker(ThrowingWorker, async () => {
+      const engine = createLayoutEngine({
+        createBundledRunner: () => Promise.resolve(runner({ layout: () => Promise.resolve(BUNDLED_RESULT) })),
+      });
+
+      expect(await engine.layout(GRAPH)).toEqual(BUNDLED_RESULT);
+      await engine.dispose();
+    });
+  });
+
+  test("terminates the worker and falls back when ELK cannot wrap it", async () => {
+    // elk-api rejects workers without a postMessage function, which exercises
+    // the terminate-and-rethrow path of the default worker runner.
+    class NoPostMessageWorker {
+      static last: NoPostMessageWorker | null = null;
+      terminated = 0;
+      constructor(_url?: unknown) {
+        NoPostMessageWorker.last = this;
+      }
+      addEventListener(): void {}
+      terminate(): void {
+        this.terminated += 1;
+      }
+    }
+    await withGlobalWorker(NoPostMessageWorker, async () => {
+      const engine = createLayoutEngine({
+        createBundledRunner: () => Promise.resolve(runner({ layout: () => Promise.resolve(BUNDLED_RESULT) })),
+      });
+
+      expect(await engine.layout(GRAPH)).toEqual(BUNDLED_RESULT);
+      expect(NoPostMessageWorker.last?.terminated).toBe(1);
+      await engine.dispose();
+    });
+  });
+
+  test("a worker error event rejects the in-flight layout and falls back", async () => {
+    await withGlobalWorker(FakeElkWorker, async () => {
+      const engine = createLayoutEngine({
+        createBundledRunner: () => Promise.resolve(runner({ layout: () => Promise.resolve(BUNDLED_RESULT) })),
+      });
+
+      // The worker is constructed synchronously by the first layout call;
+      // silence it so the layout stays in flight, then fire the error event
+      // once the race in the worker runner is attached.
+      const resultPromise = engine.layout(GRAPH);
+      const worker = FakeElkWorker.last;
+      expect(worker).not.toBeNull();
+      if (worker) worker.respond = false;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      worker?.emitError({ message: "worker crashed" });
+
+      expect(await resultPromise).toEqual(BUNDLED_RESULT);
+      expect(worker?.terminated).toBe(1);
+      await engine.dispose();
+    });
   });
 });
 

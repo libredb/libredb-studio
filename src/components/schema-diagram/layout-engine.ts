@@ -40,18 +40,18 @@ export interface LayoutEngine {
   dispose(): Promise<void>;
 }
 
+interface ElkInstance {
+  layout(graph: ElkGraphInput): Promise<ElkGraphOutput>;
+}
+
+type ElkConstructor = new (options?: { workerFactory?: (url?: string) => Worker }) => ElkInstance;
+
 /**
  * ELK can loop effectively forever on pathological inputs (kieler/elkjs#258);
  * the worker is terminated after this deadline and layout falls back to the
  * main-thread bundled build.
  */
 const DEFAULT_TIMEOUT_MS = 20_000;
-
-interface ElkInstance {
-  layout(graph: ElkGraphInput): Promise<ElkGraphOutput>;
-}
-
-type ElkConstructor = new (options?: { workerFactory?: (url?: string) => Worker }) => ElkInstance;
 
 /**
  * Off-main-thread ELK. The worker wrapper file is resolved statically by

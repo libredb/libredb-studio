@@ -81,9 +81,16 @@ import { describe, test, expect, afterEach } from "bun:test";
 import { render, fireEvent, cleanup } from "@testing-library/react";
 import React from "react";
 
-import { Sidebar } from "@/components/sidebar/Sidebar";
 import { mockPostgresConnection, mockMySQLConnection } from "../../fixtures/connections";
 import { mockSchema } from "../../fixtures/schemas";
+
+// ---- Load the component under test AFTER all mock.module registrations ----
+// A static import would be hoisted and evaluate the real module tree
+// (ConnectionsList, ConnectionItem, schema-explorer, ...) before the mocks
+// apply, poisoning coverage with zero-hit phantom lines for modules that
+// never execute. The dynamic import resolves against the mock registry instead.
+
+const { Sidebar } = await import("@/components/sidebar/Sidebar");
 
 // =============================================================================
 // Sidebar Tests

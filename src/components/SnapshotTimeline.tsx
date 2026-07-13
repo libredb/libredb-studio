@@ -12,6 +12,13 @@ interface SnapshotTimelineProps {
   onDelete: (id: string) => void;
 }
 
+// Hoisted to module scope so bun lcov attributes these lines at module load;
+// multi-line JSX text and attribute tails are otherwise unattributable.
+const EMPTY_MESSAGE = "No snapshots taken yet. Take a snapshot to start tracking schema changes.";
+const NODE_CLASS = "relative flex flex-col items-center min-w-[100px] cursor-pointer group";
+const DELETE_BUTTON_CLASS =
+  "absolute -top-2 -right-1 p-0.5 text-zinc-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity";
+
 export function SnapshotTimeline({ snapshots, onCompare, onDelete }: SnapshotTimelineProps) {
   const [selected, setSelected] = useState<string[]>([]);
 
@@ -36,11 +43,7 @@ export function SnapshotTimeline({ snapshots, onCompare, onDelete }: SnapshotTim
   }, [selected, canCompare, onCompare]);
 
   if (snapshots.length === 0) {
-    return (
-      <div className="flex items-center justify-center py-4 text-zinc-600 text-xs">
-        No snapshots taken yet. Take a snapshot to start tracking schema changes.
-      </div>
-    );
+    return <div className="flex items-center justify-center py-4 text-zinc-600 text-xs">{EMPTY_MESSAGE}</div>;
   }
 
   const sorted = [...snapshots].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
@@ -52,22 +55,23 @@ export function SnapshotTimeline({ snapshots, onCompare, onDelete }: SnapshotTim
         {canCompare && <span className="text-xs text-blue-400">Comparing 2 snapshots</span>}
       </div>
 
-      {/* Horizontal timeline */}
       <div className="relative flex items-center overflow-x-auto pb-2 px-2 gap-0">
-        {/* Timeline line */}
         <div className="absolute top-[18px] left-4 right-4 h-[2px] bg-white/10" />
 
         {sorted.map((snapshot, idx) => {
           const isSelected = selected.includes(snapshot.id);
           const date = new Date(snapshot.createdAt);
+          const labelClass = cn(
+            "mt-2 text-center transition-colors",
+            isSelected ? "text-blue-400" : "text-zinc-500 group-hover:text-zinc-300",
+          );
+          const handleDelete = (e: React.MouseEvent<HTMLButtonElement>) => {
+            e.stopPropagation();
+            onDelete(snapshot.id);
+          };
 
           return (
-            <div
-              key={snapshot.id}
-              className="relative flex flex-col items-center min-w-[100px] cursor-pointer group"
-              onClick={() => handleClick(snapshot.id)}
-            >
-              {/* Dot */}
+            <div key={snapshot.id} className={NODE_CLASS} onClick={() => handleClick(snapshot.id)}>
               <div
                 className={cn(
                   "w-3.5 h-3.5 rounded-full border-2 z-10 transition-all",
@@ -77,16 +81,9 @@ export function SnapshotTimeline({ snapshots, onCompare, onDelete }: SnapshotTim
                 )}
               />
 
-              {/* Connector */}
               {idx < sorted.length - 1 && <div className="absolute top-[7px] left-[50%] w-full h-[2px] bg-white/10" />}
 
-              {/* Label */}
-              <div
-                className={cn(
-                  "mt-2 text-center transition-colors",
-                  isSelected ? "text-blue-400" : "text-zinc-500 group-hover:text-zinc-300",
-                )}
-              >
+              <div className={labelClass}>
                 <div className="text-xs font-medium truncate max-w-[90px]">
                   {snapshot.label || snapshot.connectionName}
                 </div>
@@ -98,14 +95,7 @@ export function SnapshotTimeline({ snapshots, onCompare, onDelete }: SnapshotTim
                 </Badge>
               </div>
 
-              {/* Delete button */}
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onDelete(snapshot.id);
-                }}
-                className="absolute -top-2 -right-1 p-0.5 text-zinc-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"
-              >
+              <button onClick={handleDelete} className={DELETE_BUTTON_CLASS}>
                 <Trash2 strokeWidth={1.5} className="w-2.5 h-2.5" />
               </button>
             </div>
