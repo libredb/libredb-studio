@@ -1774,6 +1774,24 @@ describe("QueryEditor", () => {
     expect(onChange).not.toHaveBeenCalled();
   });
 
+  test("ref format is a no-op for languages without a formatter (e.g. libredb)", () => {
+    const onChange = mock(() => {});
+    const editorRef = React.createRef<import("@/components/QueryEditor").QueryEditorRef>();
+    const { queryByTestId } = render(
+      React.createElement(QueryEditor, {
+        ...createDefaultProps({ onChange, value: "USE db1", language: "libredb" }),
+        ref: editorRef,
+      }),
+    );
+    act(() => {
+      editorRef.current?.format();
+    });
+    // handleFormat hits the else branch and returns without touching the editor
+    const editor = queryByTestId("mock-monaco-editor") as HTMLTextAreaElement;
+    expect(editor.value).toBe("USE db1");
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
   // -----------------------------------------------------------------------
   // Branch coverage: onChange optional chaining (false path)
   // -----------------------------------------------------------------------

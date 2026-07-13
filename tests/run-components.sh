@@ -24,7 +24,7 @@ set -e
 
 PASS=0
 FAIL=0
-TOTAL_GROUPS=18
+TOTAL_GROUPS=19
 EXTRA_BUN_ARGS=("$@")
 GROUP_INDEX=0
 COVERAGE_MODE=0
@@ -181,6 +181,13 @@ run_group "Group 15/16: Remaining components" \
   tests/components/monitoring/QueriesTab.test.tsx \
   tests/components/monitoring/PerformanceTab.test.tsx \
   tests/components/monitoring/OverviewTab.test.tsx
+
+# Group 17: StudioWorkspace (isolated — mocks the same child families as Studio:
+#           sidebar, QueryEditor, studio/index, SchemaDiagram, DataProfiler,
+#           CodeGenerator, TestDataGenerator, SaveQueryModal, DataImportModal,
+#           QuerySafetyDialog, plus the workspace adapter hooks)
+run_group "Group 17: StudioWorkspace" \
+  tests/components/StudioWorkspace.test.tsx
 
 # Summary
 echo ""

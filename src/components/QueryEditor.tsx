@@ -113,11 +113,9 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
 
     // Line numbers toggle state (persisted in localStorage)
     const [showLineNumbers, setShowLineNumbers] = useState<boolean>(() => {
-      if (typeof window !== "undefined") {
-        const saved = localStorage.getItem("editor-line-numbers");
-        return saved !== null ? saved === "true" : true; // default: true
-      }
-      return true;
+      if (typeof window === "undefined") return true;
+      const saved = localStorage.getItem("editor-line-numbers");
+      return saved !== null ? saved === "true" : true; // default: true
     });
 
     // Track last synced value to detect external changes
@@ -697,8 +695,7 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
           )}
         </AnimatePresence>
 
-        {/* min-h-0 lets this flex item shrink below Monaco's rendered height;
-            without it the editor can grow but never shrink (issue #94) */}
+        {/* min-h-0: the flex item must shrink below Monaco's rendered height, else the editor can never shrink (#94) */}
         <div className="flex-1 relative min-h-0">
           <Editor
             height="100%"

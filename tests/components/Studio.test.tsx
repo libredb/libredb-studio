@@ -2,7 +2,9 @@ import "../setup-dom";
 import "../helpers/mock-sonner";
 import { mockRouterPush } from "../helpers/mock-navigation";
 
-import { mock } from "bun:test";
+import { describe, test, expect, afterEach, beforeEach, mock } from "bun:test";
+import { render, cleanup, act, fireEvent } from "@testing-library/react";
+import React from "react";
 import { setupMonacoMock, setupRechartssMock, setupXYFlowMock, setupFramerMotionMock } from "../helpers/mock-monaco";
 
 // Setup heavy library mocks before any component imports
@@ -20,6 +22,10 @@ let capturedSaveQueryModalProps: Record<string, unknown> = {};
 let capturedCommandPaletteProps: Record<string, unknown> = {};
 let capturedSafetyDialogProps: Record<string, unknown> = {};
 let capturedMobileHeaderProps: Record<string, unknown> = {};
+let capturedSchemaExplorerProps: Record<string, unknown> = {};
+let capturedConnectionsListProps: Record<string, unknown> = {};
+let capturedQueryEditorProps: Record<string, unknown> = {};
+let capturedMobileNavProps: Record<string, unknown> = {};
 
 // ---- Trackable mock functions (shared across mocks + assertions) ----
 
@@ -33,6 +39,7 @@ const mockFetchSchema = mock(() => {});
 // Tab Manager
 const mockSetTabs = mock(() => {});
 const mockUpdateCurrentTab = mock(() => {});
+const mockUpdateTabById = mock(() => {});
 const mockHandleTableClick = mock(() => {});
 const mockHandleGenerateSelect = mock(() => {});
 // Transaction Control
@@ -135,6 +142,7 @@ mock.module("@/hooks/use-tab-manager", () => ({
     addTab: mock(() => {}),
     closeTab: mock(() => {}),
     updateCurrentTab: mockUpdateCurrentTab,
+    updateTabById: mockUpdateTabById,
     handleTableClick: mockHandleTableClick,
     handleGenerateSelect: mockHandleGenerateSelect,
     ...tabMgrOverride,
@@ -189,6 +197,16 @@ mock.module("@/hooks/use-toast", () => ({
   })),
 }));
 
+mock.module("@/hooks/use-storage-sync", () => ({
+  useStorageSync: mock(() => ({
+    isServerMode: false,
+    isSyncing: false,
+    isReady: true,
+    lastSyncedAt: null,
+    syncError: null,
+  })),
+}));
+
 // ---- Mock utility modules ----
 
 mock.module("@/lib/storage", () => ({
@@ -227,19 +245,28 @@ mock.module("@/components/sidebar", () => {
       capturedSidebarProps = props;
       return React.createElement("div", { "data-testid": "sidebar" }, "Sidebar");
     },
-    ConnectionsList: () => React.createElement("div", { "data-testid": "connections-list" }, "ConnectionsList"),
+    ConnectionsList: (props: Record<string, unknown>) => {
+      capturedConnectionsListProps = props;
+      return React.createElement("div", { "data-testid": "connections-list" }, "ConnectionsList");
+    },
   };
 });
 
 mock.module("@/components/MobileNav", () => ({
-  MobileNav: () => null,
+  MobileNav: (props: Record<string, unknown>) => {
+    capturedMobileNavProps = props;
+    return null;
+  },
 }));
 
 mock.module("@/components/schema-explorer", () => {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const React = require("react");
   return {
-    SchemaExplorer: () => React.createElement("div", { "data-testid": "schema-explorer" }, "SchemaExplorer"),
+    SchemaExplorer: (props: Record<string, unknown>) => {
+      capturedSchemaExplorerProps = props;
+      return React.createElement("div", { "data-testid": "schema-explorer" }, "SchemaExplorer");
+    },
   };
 });
 
@@ -255,9 +282,10 @@ mock.module("@/components/ConnectionModal", () => ({
 mock.module("@/components/QueryEditor", () => {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const React = require("react");
-  const QueryEditor = React.forwardRef((props: Record<string, unknown>, ref: unknown) =>
-    React.createElement("div", { "data-testid": "query-editor", ref }, "QueryEditor"),
-  );
+  const QueryEditor = React.forwardRef((props: Record<string, unknown>, ref: unknown) => {
+    capturedQueryEditorProps = props;
+    return React.createElement("div", { "data-testid": "query-editor", ref }, "QueryEditor");
+  });
   QueryEditor.displayName = "QueryEditor";
   return { QueryEditor, QueryEditorRef: {} };
 });
@@ -378,13 +406,13 @@ mock.module("@/components/ui/resizable", () => {
   };
 });
 
-// ---- Now import bun:test, testing-library, and the component ----
+// ---- Load the component under test AFTER all mock.module registrations ----
+// A static import would be hoisted and evaluate the real module tree (QueryEditor,
+// sidebar, schema-explorer, BottomPanel, monaco, ...) before the mocks apply,
+// poisoning coverage with zero-hit phantom lines for modules that never execute.
+// The dynamic import resolves against the mock registry instead.
 
-import { describe, test, expect, afterEach, beforeEach } from "bun:test";
-import { render, cleanup, act } from "@testing-library/react";
-import React from "react";
-
-import Studio from "@/components/Studio";
+const { default: Studio } = await import("@/components/Studio");
 
 // =============================================================================
 // Test data
@@ -426,6 +454,10 @@ describe("Studio", () => {
     capturedCommandPaletteProps = {};
     capturedSafetyDialogProps = {};
     capturedMobileHeaderProps = {};
+    capturedSchemaExplorerProps = {};
+    capturedConnectionsListProps = {};
+    capturedQueryEditorProps = {};
+    capturedMobileNavProps = {};
 
     // Reset overrides
     connMgrOverride = {};
@@ -442,6 +474,7 @@ describe("Studio", () => {
     mockFetchSchema.mockClear();
     mockSetTabs.mockClear();
     mockUpdateCurrentTab.mockClear();
+    mockUpdateTabById.mockClear();
     mockHandleTableClick.mockClear();
     mockHandleGenerateSelect.mockClear();
     mockResetTransactionState.mockClear();
@@ -1039,5 +1072,164 @@ describe("Studio", () => {
     // we just verify the callback is properly wired.
     expect(fn).toBeDefined();
     expect(typeof fn).toBe("function");
+  });
+
+  // --- Connection-change effect: setTabs updater ---
+  test("connection-change effect retypes existing tabs via setTabs updater", () => {
+    connMgrOverride = { activeConnection: pgConn };
+    render(<Studio />);
+    expect(mockSetTabs).toHaveBeenCalled();
+    const updater = (mockSetTabs.mock.calls[0] as unknown[])[0] as (prev: unknown[]) => Array<{ type: string }>;
+    const result = updater([
+      { id: "tab-1", name: "Query 1", query: "SELECT 1", result: null, isExecuting: false, type: "mongodb" },
+    ]);
+    expect(result).toHaveLength(1);
+    expect(result[0].type).toBe("sql");
+  });
+
+  // --- exportResults sql-ddl type mapping ---
+  test("exportResults sql-ddl maps boolean and date sample values", async () => {
+    tabMgrOverride = {
+      currentTab: {
+        id: "tab-1",
+        name: "Users",
+        query: "SELECT 1",
+        result: {
+          rows: [{ active: true, created: new Date("2026-01-01T00:00:00Z") }],
+          fields: ["active", "created"],
+          rowCount: 1,
+          executionTime: 5,
+        },
+        isExecuting: false,
+        type: "sql",
+      },
+    };
+    render(<Studio />);
+    const exportFn = capturedBottomPanelProps.onExportResults as (format: string) => void;
+    act(() => exportFn("sql-ddl"));
+    expect(mockCreateObjectURL).toHaveBeenCalledTimes(1);
+    const blob = (mockCreateObjectURL.mock.calls[0] as unknown[])[0] as Blob;
+    const content = await blob.text();
+    expect(content).toContain("active BOOLEAN");
+    expect(content).toContain("created TIMESTAMP");
+  });
+
+  // --- Mobile: database tab ---
+  test("mobile database tab lists connections and selecting one returns to editor", () => {
+    connMgrOverride = { connections: [pgConn] };
+    const { queryByTestId } = render(<Studio />);
+    expect(queryByTestId("connections-list")).toBeNull();
+    const onTabChange = capturedMobileNavProps.onTabChange as (tab: string) => void;
+    act(() => onTabChange("database"));
+    expect(queryByTestId("connections-list")).not.toBeNull();
+    const addFn = capturedConnectionsListProps.onAddConnection as () => void;
+    act(() => addFn());
+    expect(capturedConnectionModalProps.isOpen).toBe(true);
+    const selectFn = capturedConnectionsListProps.onSelectConnection as (c: unknown) => void;
+    act(() => selectFn(pgConn));
+    expect(mockSetActiveConnection).toHaveBeenCalledWith(pgConn);
+    expect(queryByTestId("connections-list")).toBeNull();
+  });
+
+  test("mobile database tab Add button opens connection modal", () => {
+    const { getByText, queryByTestId } = render(<Studio />);
+    const onTabChange = capturedMobileNavProps.onTabChange as (tab: string) => void;
+    act(() => onTabChange("database"));
+    fireEvent.click(getByText(/Add/));
+    expect(queryByTestId("connection-modal")).not.toBeNull();
+  });
+
+  // --- Mobile: schema tab ---
+  test("mobile schema tab shows empty state without a connection", () => {
+    const { queryByTestId, getByText } = render(<Studio />);
+    const onTabChange = capturedMobileNavProps.onTabChange as (tab: string) => void;
+    act(() => onTabChange("schema"));
+    expect(queryByTestId("schema-explorer")).toBeNull();
+    expect(getByText("Select a connection first")).not.toBeNull();
+  });
+
+  test("mobile schema tab table click returns to editor", () => {
+    connMgrOverride = { activeConnection: pgConn, connections: [pgConn] };
+    const { queryByTestId } = render(<Studio />);
+    const onTabChange = capturedMobileNavProps.onTabChange as (tab: string) => void;
+    act(() => onTabChange("schema"));
+    expect(queryByTestId("schema-explorer")).not.toBeNull();
+    const tableClick = capturedSchemaExplorerProps.onTableClick as (name: string) => void;
+    act(() => tableClick("users"));
+    expect(mockHandleTableClick).toHaveBeenCalledWith("users", mockExecuteQuery);
+    expect(queryByTestId("schema-explorer")).toBeNull();
+  });
+
+  test("mobile schema tab generate select returns to editor", () => {
+    connMgrOverride = { activeConnection: pgConn };
+    const { queryByTestId } = render(<Studio />);
+    act(() => (capturedMobileNavProps.onTabChange as (tab: string) => void)("schema"));
+    const genFn = capturedSchemaExplorerProps.onGenerateSelect as (name: string) => void;
+    act(() => genFn("users"));
+    expect(mockHandleGenerateSelect).toHaveBeenCalledWith("users");
+    expect(queryByTestId("schema-explorer")).toBeNull();
+  });
+
+  test("mobile schema tab table tool callbacks open modals and maintenance", () => {
+    connMgrOverride = { activeConnection: pgConn };
+    const { queryByTestId } = render(<Studio />);
+    act(() => (capturedMobileNavProps.onTabChange as (tab: string) => void)("schema"));
+    act(() => (capturedSchemaExplorerProps.onCreateTableClick as () => void)());
+    expect(queryByTestId("createtablemodal")).not.toBeNull();
+    act(() => (capturedSchemaExplorerProps.onProfileTable as (n: string) => void)("users"));
+    expect(queryByTestId("dataprofiler")).not.toBeNull();
+    act(() => (capturedSchemaExplorerProps.onGenerateCode as (n: string) => void)("users"));
+    expect(queryByTestId("codegenerator")).not.toBeNull();
+    act(() => (capturedSchemaExplorerProps.onGenerateTestData as (n: string) => void)("users"));
+    expect(queryByTestId("testdatagenerator")).not.toBeNull();
+    act(() => (capturedSchemaExplorerProps.onOpenMaintenance as () => void)());
+    expect(mockRouterPush).toHaveBeenCalledWith("/admin?tab=operations");
+  });
+
+  // --- QueryToolbar execution/transaction callbacks ---
+  test("QueryToolbar onExecuteQuery delegates to executeQuery", () => {
+    render(<Studio />);
+    const fn = capturedQueryToolbarProps.onExecuteQuery as () => void;
+    act(() => fn());
+    expect(mockExecuteQuery).toHaveBeenCalled();
+  });
+
+  test("QueryToolbar onCancelQuery delegates to cancelQuery", () => {
+    render(<Studio />);
+    const fn = capturedQueryToolbarProps.onCancelQuery as () => void;
+    act(() => fn());
+    expect(mockCancelQuery).toHaveBeenCalled();
+  });
+
+  test("QueryToolbar transaction callbacks delegate to handleTransaction", () => {
+    render(<Studio />);
+    act(() => (capturedQueryToolbarProps.onBeginTransaction as () => void)());
+    expect(mockHandleTransaction).toHaveBeenCalledWith("begin");
+    act(() => (capturedQueryToolbarProps.onCommitTransaction as () => void)());
+    expect(mockHandleTransaction).toHaveBeenCalledWith("commit");
+    act(() => (capturedQueryToolbarProps.onRollbackTransaction as () => void)());
+    expect(mockHandleTransaction).toHaveBeenCalledWith("rollback");
+  });
+
+  test("QueryToolbar onTogglePlayground toggles playground mode", () => {
+    render(<Studio />);
+    const fn = capturedQueryToolbarProps.onTogglePlayground as () => void;
+    act(() => fn());
+    expect(mockSetPlaygroundMode).toHaveBeenCalledWith(true);
+  });
+
+  // --- QueryEditor callbacks ---
+  test("QueryEditor onContentChange updates the owning tab by id", () => {
+    render(<Studio />);
+    const fn = capturedQueryEditorProps.onContentChange as (val: string) => void;
+    act(() => fn("SELECT 2"));
+    expect(mockUpdateTabById).toHaveBeenCalledWith("tab-1", { query: "SELECT 2" });
+  });
+
+  test("QueryEditor onExplain executes explain query", () => {
+    render(<Studio />);
+    const fn = capturedQueryEditorProps.onExplain as () => void;
+    act(() => fn());
+    expect(mockExecuteQuery).toHaveBeenCalledWith(undefined, undefined, true);
   });
 });

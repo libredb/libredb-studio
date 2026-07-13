@@ -1,9 +1,8 @@
 "use client";
 
 import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
-import { Sidebar, ConnectionsList } from "@/components/sidebar";
-// MobileNav excluded in embedded mode — platform provides its own navigation
-import { SchemaExplorer } from "@/components/schema-explorer";
+import { Sidebar } from "@/components/sidebar";
+// MobileNav and mobile tab panels excluded in embedded mode — platform provides its own navigation
 import { QueryEditor, QueryEditorRef } from "@/components/QueryEditor";
 import { DataImportModal } from "@/components/DataImportModal";
 import { QuerySafetyDialog } from "@/components/QuerySafetyDialog";
@@ -13,7 +12,6 @@ import { TestDataGenerator } from "@/components/TestDataGenerator";
 import { SchemaDiagram } from "@/components/SchemaDiagram";
 import { SaveQueryModal } from "@/components/SaveQueryModal";
 import { StudioTabBar, QueryToolbar, BottomPanel } from "@/components/studio/index";
-import type { DatabaseConnection } from "@/lib/types";
 import type { MaskingConfig } from "@/lib/data-masking";
 import { useToast } from "@/hooks/use-toast";
 import { useTabManager } from "@/hooks/use-tab-manager";
@@ -91,7 +89,7 @@ function useStudioTheme() {
     };
   }, []);
 }
-import { AlertTriangle, Database } from "lucide-react";
+import { AlertTriangle } from "lucide-react";
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/components/ui/resizable";
 import { AnimatePresence } from "framer-motion";
 import {
@@ -171,7 +169,6 @@ export function StudioWorkspace({
   const [showDiagram, setShowDiagram] = useState(false);
   const [isSaveQueryModalOpen, setIsSaveQueryModalOpen] = useState(false);
   const [savedKey, setSavedKey] = useState(0);
-  const [activeMobileTab, setActiveMobileTab] = useState<"database" | "schema" | "editor">("editor");
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [isNL2SQLOpen, setIsNL2SQLOpen] = useState(false);
   const [profilerTable, setProfilerTable] = useState<string | null>(null);
@@ -344,62 +341,8 @@ export function StudioWorkspace({
                 </AnimatePresence>
               )}
 
-              {/* Mobile: Database Tab */}
-              {activeMobileTab === "database" && (
-                <div className="md:hidden h-full bg-[#080808] overflow-auto p-4">
-                  <div className="mb-4 flex items-center justify-between">
-                    <h2 className="text-xs font-medium text-zinc-300">Connections</h2>
-                  </div>
-                  <ConnectionsList
-                    connections={conn.connections}
-                    activeConnection={conn.activeConnection}
-                    onSelectConnection={(c: DatabaseConnection) => {
-                      conn.setActiveConnection(c);
-                      setActiveMobileTab("editor");
-                    }}
-                    onDeleteConnection={noop}
-                    onAddConnection={noop}
-                  />
-                </div>
-              )}
-
-              {/* Mobile: Schema Tab */}
-              {activeMobileTab === "schema" && (
-                <div className="md:hidden h-full bg-[#080808] overflow-auto p-4">
-                  {conn.activeConnection ? (
-                    <SchemaExplorer
-                      schema={conn.schema}
-                      isLoadingSchema={conn.isLoadingSchema}
-                      onTableClick={(tableName: string) => {
-                        onTableClick(tableName);
-                        setActiveMobileTab("editor");
-                      }}
-                      onGenerateSelect={(tableName: string) => {
-                        tabMgr.handleGenerateSelect(tableName);
-                        setActiveMobileTab("editor");
-                      }}
-                      onCreateTableClick={undefined}
-                      isAdmin={false}
-                      onOpenMaintenance={noop}
-                      databaseType={conn.activeConnection?.type}
-                      metadata={null}
-                      onProfileTable={features.codeGenerator ? (name: string) => setProfilerTable(name) : undefined}
-                      onGenerateCode={features.codeGenerator ? (name: string) => setCodeGenTable(name) : undefined}
-                      onGenerateTestData={
-                        features.testDataGenerator ? (name: string) => setTestDataTable(name) : undefined
-                      }
-                    />
-                  ) : (
-                    <div className="flex flex-col items-center justify-center h-full text-zinc-500">
-                      <Database strokeWidth={1.5} className="w-12 h-12 mb-4 opacity-30" />
-                      <p className="text-xs">Select a connection first</p>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* Desktop & Mobile Editor Tab */}
-              <div className={cn("h-full", activeMobileTab !== "editor" && "hidden md:block")}>
+              {/* Editor area — no mobile database/schema tab panels in embedded mode (no MobileNav to switch to them) */}
+              <div className="h-full">
                 <div className="h-full">
                   <ResizablePanelGroup id="workspace-editor" direction="vertical">
                     <ResizablePanel defaultSize={40} minSize={20}>
