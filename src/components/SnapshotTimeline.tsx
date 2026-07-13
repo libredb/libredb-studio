@@ -70,6 +70,9 @@ export function SnapshotTimeline({ snapshots, onCompare, onDelete }: SnapshotTim
             onDelete(snapshot.id);
           };
           const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+            // Ignore keydown bubbling from the nested delete button so its
+            // native Enter/Space activation is not hijacked into selection.
+            if (e.target !== e.currentTarget) return;
             if (e.key === "Enter" || e.key === " ") {
               e.preventDefault();
               handleClick(snapshot.id);

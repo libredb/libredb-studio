@@ -85,6 +85,20 @@ describe("SnapshotTimeline", () => {
     expect(onCompare).toHaveBeenCalledTimes(1);
   });
 
+  test("keydown on the nested delete button does not select the node", () => {
+    const onCompare = mock(() => {});
+    const { container, getAllByRole } = render(
+      <SnapshotTimeline snapshots={snapshots} onCompare={onCompare} onDelete={mock(() => {})} />,
+    );
+    const nodes = getAllByRole("button").filter((el) => el.tagName === "DIV");
+    const deleteButton = container.querySelector("button")!;
+    // Enter on the delete button bubbles to the node but must be ignored
+    fireEvent.keyDown(deleteButton, { key: "Enter" });
+    fireEvent.keyDown(nodes[1]!, { key: "Enter" });
+    // Only the second keydown selected a node, so no compare pair exists
+    expect(onCompare).toHaveBeenCalledTimes(0);
+  });
+
   test("other keys do not select a snapshot", () => {
     const onCompare = mock(() => {});
     const { getAllByRole } = render(
