@@ -122,11 +122,13 @@ cat > "$LOOP_DIR/IMPLEMENTATION_PLAN.md" << EOF
 > milestone queue. Build mode must not run against this stub.
 EOF
 
-# --- loop.env: new sentinel, triage mode -------------------------------------
-sed -i \
+# --- loop.env: new sentinel, triage mode (tmp+mv, consistent with the file
+# --- rewrites above and portable across GNU/BSD sed) --------------------------
+sed \
   -e "s|^LOOP_COMPLETION_SENTINEL=.*|LOOP_COMPLETION_SENTINEL=\"$SENTINEL\"|" \
   -e "s|^LOOP_PROMPT_FILE=.*|LOOP_PROMPT_FILE=\"loop/PROMPT-TRIAGE.md\"|" \
-  "$ENV_FILE"
+  "$ENV_FILE" > "$ENV_FILE.tmp"
+mv "$ENV_FILE.tmp" "$ENV_FILE"
 
 rm -f "$ROOT/.loop/COMPLETE"
 

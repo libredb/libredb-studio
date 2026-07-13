@@ -56,7 +56,7 @@ fi
 stage() {
   local label=$1 prompt=$2 max=$3 expectation=$4
   local stage_env code
-  stage_env=$(mktemp)
+  stage_env=$(mktemp "${TMPDIR:-/tmp}/loop-stage-env.XXXXXX")
   printf 'source "%s"\nLOOP_PROMPT_FILE="%s"\n' "$BASE_ENV" "$prompt" > "$stage_env"
 
   echo

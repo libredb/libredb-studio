@@ -138,12 +138,12 @@ The fully autonomous pipeline chains them: **triage** (until `.loop/COMPLETE`) �
 with a human review + push at the very end. Humans can veto between stages by editing labels or
 `TRIAGE.md` — the loop always re-derives state from files.
 
-Generic operation (see `HANDOFF.md` for the runbook): `scripts/new-milestone.sh <name>`
-archives the previous milestone's working set (PROGRESS log, consumed TRIAGE specs,
-ACCEPTANCE, PLAN → `loop/archive/<prev>/`) and resets state; `scripts/pipeline.sh` then runs
-all three stages unattended, enforcing the stage contracts (triage/build must produce the
-marker; planning must NOT). The archive rotation is what keeps per-iteration reading cost
-bounded — PROGRESS.md holds the current milestone only.
+Generic operation (see `HANDOFF.md` for the runbook): `./loop/scripts/new-milestone.sh <name>`
+(from the repo root) archives the previous milestone's working set (PROGRESS log, consumed
+TRIAGE specs, ACCEPTANCE, PLAN → `loop/archive/<prev>/`) and resets state;
+`./loop/scripts/pipeline.sh` then runs all three stages unattended, enforcing the stage
+contracts (triage/build must produce the marker; planning must NOT). The archive rotation is
+what keeps per-iteration reading cost bounded — PROGRESS.md holds the current milestone only.
 
 Planning is cheap and regenerable. Prefer regenerating the plan over letting the build circle.
 
