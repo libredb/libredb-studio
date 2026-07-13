@@ -250,6 +250,12 @@ if (nodeEnvBefore === undefined) {
 const sigtermHandler = process.listeners("SIGTERM").find((l) => !sigtermListenersBefore.includes(l));
 const sigintHandler = process.listeners("SIGINT").find((l) => !sigintListenersBefore.includes(l));
 
+// Detach the captured handlers immediately: the tests below invoke the
+// function references directly, and leaving them attached would leak
+// factory shutdown behavior into other tests sharing this process.
+if (sigtermHandler) process.removeListener("SIGTERM", sigtermHandler);
+if (sigintHandler) process.removeListener("SIGINT", sigintHandler);
+
 // ============================================================================
 // Tests
 // ============================================================================

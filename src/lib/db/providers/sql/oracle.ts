@@ -873,9 +873,13 @@ export class OracleProvider extends SQLBaseProvider {
     try {
       conn = await this.pool!.getConnection();
 
-      const res = await conn.execute(`${SLOW_QUERIES_BODY_SQL} WHERE ROWNUM <= ${limit}`, [], {
-        outFormat: oracledb.OUT_FORMAT_OBJECT,
-      });
+      const res = await conn.execute(
+        `${SLOW_QUERIES_BODY_SQL} WHERE ROWNUM <= ${Math.max(1, Math.trunc(Number(limit)) || 1)}`,
+        [],
+        {
+          outFormat: oracledb.OUT_FORMAT_OBJECT,
+        },
+      );
 
       return ((res.rows || []) as Record<string, unknown>[]).map((r) => ({
         queryId: String(r.QUERY_ID || ""),
@@ -902,9 +906,13 @@ export class OracleProvider extends SQLBaseProvider {
     try {
       conn = await this.pool!.getConnection();
 
-      const res = await conn.execute(`${ACTIVE_SESSIONS_BODY_SQL} WHERE ROWNUM <= ${limit}`, [], {
-        outFormat: oracledb.OUT_FORMAT_OBJECT,
-      });
+      const res = await conn.execute(
+        `${ACTIVE_SESSIONS_BODY_SQL} WHERE ROWNUM <= ${Math.max(1, Math.trunc(Number(limit)) || 1)}`,
+        [],
+        {
+          outFormat: oracledb.OUT_FORMAT_OBJECT,
+        },
+      );
 
       return ((res.rows || []) as Record<string, unknown>[]).map((r) => {
         const secs = Number(r.DURATION_SECS || 0);

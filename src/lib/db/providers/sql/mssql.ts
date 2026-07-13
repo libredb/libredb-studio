@@ -993,7 +993,9 @@ export class MSSQLProvider extends SQLBaseProvider {
     const limit = options?.limit ?? 10;
 
     try {
-      const res = await this.pool!.request().query(`SELECT TOP ${limit} ${SLOW_QUERIES_BODY_SQL}`);
+      const res = await this.pool!.request().query(
+        `SELECT TOP ${Math.max(1, Math.trunc(Number(limit)) || 1)} ${SLOW_QUERIES_BODY_SQL}`,
+      );
 
       return (res.recordset || []).map((r: Record<string, unknown>) => ({
         queryId: String(r.query_id || ""),
@@ -1017,7 +1019,9 @@ export class MSSQLProvider extends SQLBaseProvider {
     const limit = options?.limit ?? 50;
 
     try {
-      const res = await this.pool!.request().query(`SELECT TOP ${limit} ${ACTIVE_SESSIONS_BODY_SQL}`);
+      const res = await this.pool!.request().query(
+        `SELECT TOP ${Math.max(1, Math.trunc(Number(limit)) || 1)} ${ACTIVE_SESSIONS_BODY_SQL}`,
+      );
 
       return (res.recordset || []).map((r: Record<string, unknown>) => ({
         pid: Number(r.pid || 0),

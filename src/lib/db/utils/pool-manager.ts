@@ -182,7 +182,9 @@ export async function withRetry<T>(
     }
   }
 
-  throw lastError;
+  // Reached only when maxAttempts < 1 skipped the retry loop entirely; every
+  // in-loop path either returns or rethrows the original error.
+  throw lastError ?? new RangeError(`maxAttempts must be >= 1, got ${opts.maxAttempts}`);
 }
 
 function sleep(ms: number): Promise<void> {

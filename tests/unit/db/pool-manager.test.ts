@@ -469,8 +469,9 @@ describe("withRetry", () => {
       );
       expect(true).toBe(false);
     } catch (error) {
-      // The retry loop never runs, so lastError is still undefined
-      expect(error).toBeUndefined();
+      // The retry loop never runs, so the guard after it throws a real error
+      expect(error).toBeInstanceOf(RangeError);
+      expect((error as RangeError).message).toContain("maxAttempts must be >= 1");
     }
     expect(calls).toBe(0);
   });
