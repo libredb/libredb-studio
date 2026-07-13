@@ -1,4 +1,5 @@
-import { describe, test, expect, mock, beforeEach } from "bun:test";
+import { describe, test, expect, mock, beforeEach, spyOn } from "bun:test";
+import * as jose from "jose";
 
 // ============================================================================
 // Mock State — only mock next/headers (cookies), NOT jose
@@ -84,6 +85,21 @@ describe("auth", () => {
     test("invalid token returns null", async () => {
       const payload = await verifyJWT("invalid-token-string");
       expect(payload).toBeNull();
+    });
+
+    test("expired token returns null (debug log branch)", async () => {
+      // jose reports expiry as '"exp" claim timestamp check failed', which does
+      // not contain "expired" — spy jwtVerify to exercise the expired branch.
+      const spy = spyOn(jose, "jwtVerify").mockImplementation(() => {
+        throw new Error("JWT token expired");
+      });
+      try {
+        const payload = await verifyJWT("expired-token");
+        expect(payload).toBeNull();
+        expect(spy).toHaveBeenCalled();
+      } finally {
+        spy.mockRestore();
+      }
     });
   });
 

@@ -139,9 +139,7 @@ export function PivotTable({ result, onLoadQuery }: PivotTableProps) {
 
   return (
     <div className="h-full flex flex-col bg-[#080808]">
-      {/* Config Bar */}
       <div className="flex items-center gap-3 px-4 py-2 border-b border-white/5 bg-[#0a0a0a] flex-wrap">
-        {/* Row Field */}
         <div className="flex items-center gap-1.5">
           <span className="text-xs text-zinc-500 font-medium">Rows:</span>
           <select
@@ -158,7 +156,6 @@ export function PivotTable({ result, onLoadQuery }: PivotTableProps) {
           </select>
         </div>
 
-        {/* Column Field */}
         <div className="flex items-center gap-1.5">
           <span className="text-xs text-zinc-500 font-medium">Columns:</span>
           <select
@@ -177,7 +174,6 @@ export function PivotTable({ result, onLoadQuery }: PivotTableProps) {
           </select>
         </div>
 
-        {/* Value Field */}
         <div className="flex items-center gap-1.5">
           <span className="text-xs text-zinc-500 font-medium">Values:</span>
           <select
@@ -196,7 +192,6 @@ export function PivotTable({ result, onLoadQuery }: PivotTableProps) {
           </select>
         </div>
 
-        {/* Aggregation */}
         <div className="flex items-center gap-1">
           {(Object.keys(AGG_LABELS) as AggFunction[]).map((fn) => (
             <button
@@ -214,7 +209,6 @@ export function PivotTable({ result, onLoadQuery }: PivotTableProps) {
           ))}
         </div>
 
-        {/* Generate SQL Button */}
         {onLoadQuery && rowField && (
           <button
             onClick={() => {
@@ -228,9 +222,8 @@ export function PivotTable({ result, onLoadQuery }: PivotTableProps) {
         )}
       </div>
 
-      {/* Pivot Result */}
       <div className="flex-1 overflow-auto">
-        {pivotData && pivotData.pivotRows.length > 0 ? (
+        {pivotData && pivotData.pivotRows.length > 0 && (
           <table className="w-full text-xs font-mono">
             <thead className="sticky top-0 z-10 bg-[#0d0d0d]">
               <tr>
@@ -260,7 +253,8 @@ export function PivotTable({ result, onLoadQuery }: PivotTableProps) {
               ))}
             </tbody>
           </table>
-        ) : (
+        )}
+        {(!pivotData || pivotData.pivotRows.length === 0) && (
           <div className="flex flex-col items-center justify-center h-full opacity-30">
             <GripVertical strokeWidth={1.5} className="w-6 h-6 mb-2" />
             <p className="text-xs">Select row and value fields to build pivot</p>
@@ -268,11 +262,9 @@ export function PivotTable({ result, onLoadQuery }: PivotTableProps) {
         )}
       </div>
 
-      {/* Status */}
       {pivotData && (
         <div className="px-4 py-1.5 border-t border-white/5 bg-[#0a0a0a] text-xs text-zinc-500 font-mono">
-          {pivotData.pivotRows.length} groups • {pivotData.colKeys.length} columns • {AGG_LABELS[aggFunction]}{" "}
-          aggregation
+          {`${pivotData.pivotRows.length} groups • ${pivotData.colKeys.length} columns • ${AGG_LABELS[aggFunction]} aggregation`}
         </div>
       )}
     </div>

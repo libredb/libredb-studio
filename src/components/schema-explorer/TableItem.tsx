@@ -48,18 +48,16 @@ interface TableItemProps {
   onOpenMaintenance?: (tab?: "global" | "tables" | "sessions", table?: string) => void;
 }
 
+type TableItemCallbacks = Pick<
+  TableItemProps,
+  "onTableClick" | "onGenerateSelect" | "onProfileTable" | "onGenerateCode" | "onGenerateTestData" | "onOpenMaintenance"
+>;
+
 function renderMenuItems(
   table: TableSchema,
   labels: TableItemProps["labels"],
   isAdmin: boolean,
-  callbacks: {
-    onTableClick?: (tableName: string) => void;
-    onGenerateSelect?: (tableName: string) => void;
-    onProfileTable?: (tableName: string) => void;
-    onGenerateCode?: (tableName: string) => void;
-    onGenerateTestData?: (tableName: string) => void;
-    onOpenMaintenance?: (tab?: "global" | "tables" | "sessions", table?: string) => void;
-  },
+  callbacks: TableItemCallbacks,
   copyToClipboard: (text: string, label: string) => void,
   Item: React.ComponentType<{ onClick?: () => void; children: React.ReactNode }>,
   Separator: React.ComponentType,
@@ -76,20 +74,20 @@ function renderMenuItems(
       </Item>
       <Item onClick={() => copyToClipboard(table.name, `${labels?.entityName || "Table"} name`)}>
         <Copy strokeWidth={1.5} className="w-3.5 h-3.5 mr-2 text-muted-foreground" />
-        Copy Name
+        {"Copy Name"}
       </Item>
       <Separator />
       <Item onClick={() => callbacks.onProfileTable?.(table.name)}>
         <BarChart3 strokeWidth={1.5} className="w-3.5 h-3.5 mr-2 text-cyan-500" />
-        Profile Table
+        {"Profile Table"}
       </Item>
       <Item onClick={() => callbacks.onGenerateCode?.(table.name)}>
         <Code strokeWidth={1.5} className="w-3.5 h-3.5 mr-2 text-purple-500" />
-        Generate Code
+        {"Generate Code"}
       </Item>
       <Item onClick={() => callbacks.onGenerateTestData?.(table.name)}>
         <Wand2 strokeWidth={1.5} className="w-3.5 h-3.5 mr-2 text-amber-500" />
-        Generate Test Data
+        {"Generate Test Data"}
       </Item>
       {isAdmin && (
         <>

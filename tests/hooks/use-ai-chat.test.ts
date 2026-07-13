@@ -619,4 +619,110 @@ describe("useAiChat", () => {
     const lastCallArg = (mockOnChange.mock.calls as unknown[][])[0][0] as string;
     expect(lastCallArg).toContain("SELECT 42");
   });
+
+  // ── onAiChat adapter bypasses the built-in fetch ────────────────────────
+
+  test("onAiChat adapter bypasses fetch and applies the result", async () => {
+    const fetchMock = mockGlobalFetch({});
+    const onAiChat = mock(
+      async (_params: { prompt: string; schemaContext: string; history: { role: string; content: string }[] }) =>
+        "SELECT 99",
+    );
+    const mockSetEditorValue = mock(() => {});
+    const mockOnChange = mock(() => {});
+    const deps = makeDeps({
+      onAiChat,
+      setEditorValue: mockSetEditorValue as (v: string) => void,
+      onChange: mockOnChange as (val: string) => void,
+    });
+
+    const { result } = renderHook(() => useAiChat(deps));
+
+    act(() => {
+      result.current.setAiPrompt("adapter prompt");
+    });
+
+    await act(async () => {
+      await result.current.handleAiSubmit();
+    });
+
+    // The adapter replaces the built-in fetch entirely
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(onAiChat).toHaveBeenCalledTimes(1);
+
+    const adapterArg = (onAiChat.mock.calls as unknown[][])[0][0] as {
+      prompt: string;
+      schemaContext: string;
+      history: unknown[];
+    };
+    expect(adapterArg.prompt).toBe("adapter prompt");
+    expect(adapterArg.schemaContext).toContain("Table: users");
+    expect(adapterArg.history).toEqual([]);
+
+    expect(mockSetEditorValue).toHaveBeenCalledWith("SELECT 99");
+    expect(mockOnChange).toHaveBeenCalledWith("SELECT 99");
+    expect(result.current.aiConversationHistory).toHaveLength(2);
+    expect(result.current.aiPrompt).toBe("");
+    expect(result.current.showAi).toBe(false);
+  });
+
+  // ── Schema filtering failure → raw schemaContext fallback ───────────────
+
+  test("falls back to raw schemaContext substring when schema filtering throws", async () => {
+    const stream = makeTextStream("SELECT 1");
+    const fetchMock = mock(async () => new Response(stream, { status: 200 }));
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    // A non-iterable parsedSchema makes the spread inside the filter try-block throw
+    const deps = makeDeps({ parsedSchema: null as unknown as ParsedTable[] });
+    const { result } = renderHook(() => useAiChat(deps));
+
+    act(() => {
+      result.current.setAiPrompt("broken schema");
+    });
+
+    await act(async () => {
+      await result.current.handleAiSubmit();
+    });
+
+    const body = JSON.parse(((fetchMock.mock.calls as unknown[][])[0][1] as RequestInit).body as string);
+    expect(body.schemaContext).toBe(defaultSchemaContext.substring(0, 2000));
+    expect(result.current.aiError).toBeNull();
+  });
+
+  // ── requestAnimationFrame flush callback ─────────────────────────────────
+
+  test("requestAnimationFrame callback flushes buffered chunks to the editor", async () => {
+    const originalRaf = globalThis.requestAnimationFrame;
+    // Invoke the scheduled callback synchronously so the buffered update runs
+    globalThis.requestAnimationFrame = ((cb: FrameRequestCallback) => {
+      cb(0);
+      return 1;
+    }) as typeof requestAnimationFrame;
+
+    try {
+      const stream = makeTextStream("SELECT ", "* FROM users");
+      globalThis.fetch = mock(async () => new Response(stream, { status: 200 })) as unknown as typeof fetch;
+
+      const mockSetEditorValue = mock(() => {});
+      const deps = makeDeps({ setEditorValue: mockSetEditorValue as (v: string) => void });
+      const { result } = renderHook(() => useAiChat(deps));
+
+      act(() => {
+        result.current.setAiPrompt("stream it");
+      });
+
+      await act(async () => {
+        await result.current.handleAiSubmit();
+      });
+
+      const calls = mockSetEditorValue.mock.calls as unknown[][];
+      // At least two calls: the RAF flush during streaming plus the final set
+      expect(calls.length).toBeGreaterThanOrEqual(2);
+      expect((calls[0][0] as string).startsWith("SELECT ")).toBe(true);
+      expect(calls[calls.length - 1][0]).toBe("SELECT * FROM users");
+    } finally {
+      globalThis.requestAnimationFrame = originalRaf;
+    }
+  });
 });

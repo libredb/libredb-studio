@@ -76,6 +76,32 @@ describe("BaseLLMProvider", () => {
   });
 
   // --------------------------------------------------------------------------
+  // streamWithRetry()
+  // --------------------------------------------------------------------------
+
+  describe("streamWithRetry()", () => {
+    class ExposedProvider extends TestProvider {
+      public exposedStreamWithRetry(
+        streamFn: () => Promise<ReadableStream<Uint8Array>>,
+      ): Promise<ReadableStream<Uint8Array>> {
+        return this.streamWithRetry(streamFn);
+      }
+    }
+
+    test("resolves with the stream produced by streamFn", async () => {
+      const provider = new ExposedProvider(makeConfig());
+      const expected = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.close();
+        },
+      });
+
+      const result = await provider.exposedStreamWithRetry(async () => expected);
+      expect(result).toBe(expected);
+    });
+  });
+
+  // --------------------------------------------------------------------------
   // getModel() — accessed via stream behavior, tested indirectly
   // We can test by creating a subclass that exposes the protected method
   // --------------------------------------------------------------------------
@@ -179,6 +205,60 @@ describe("BaseLLMProvider", () => {
       expect(messages[0]).toEqual({ role: "user", content: "Hello" });
       expect(messages[1]).toEqual({ role: "assistant", content: "Hi!" });
       expect(messages[2]).toEqual({ role: "user", content: "How are you?" });
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // logError()
+  // --------------------------------------------------------------------------
+
+  describe("logError()", () => {
+    class ExposedProvider extends TestProvider {
+      public exposedLogError(operation: string, error: unknown): void {
+        this.logError(operation, error);
+      }
+    }
+
+    function captureConsoleError(run: () => void): unknown[][] {
+      const calls: unknown[][] = [];
+      const originalError = console.error;
+      console.error = (...args: unknown[]) => {
+        calls.push(args);
+      };
+      try {
+        run();
+      } finally {
+        console.error = originalError;
+      }
+      return calls;
+    }
+
+    test("logs Error message with masked config", () => {
+      const provider = new ExposedProvider(makeConfig());
+      const calls = captureConsoleError(() => {
+        provider.exposedLogError("stream", new Error("boom"));
+      });
+
+      expect(calls).toHaveLength(1);
+      expect(calls[0][0]).toBe("[LLM:gemini] stream failed:");
+      expect(calls[0][1]).toBe("boom");
+      expect(calls[0][2]).toEqual({
+        provider: "gemini",
+        model: "test-model",
+        apiUrl: "https://api.example.com/v1",
+        apiKey: "***",
+      });
+    });
+
+    test("stringifies non-Error values", () => {
+      const provider = new ExposedProvider(makeConfig({ provider: "openai" }));
+      const calls = captureConsoleError(() => {
+        provider.exposedLogError("stream", "plain failure");
+      });
+
+      expect(calls).toHaveLength(1);
+      expect(calls[0][0]).toBe("[LLM:openai] stream failed:");
+      expect(calls[0][1]).toBe("plain failure");
     });
   });
 

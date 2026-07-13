@@ -414,4 +414,22 @@ describe("parseConnectionString: ADO.NET edge cases", () => {
     expect(result!.password).toBeUndefined();
     expect(result!.database).toBe("testdb");
   });
+
+  test("returns null when ADO.NET parsing throws (defensive catch)", () => {
+    // The ADO.NET parser only performs string operations, so its defensive
+    // catch is unreachable with plain strings. Force the internal `split(";")`
+    // to throw for the duration of this synchronous call to exercise it.
+    const originalSplit = String.prototype.split;
+    // eslint-disable-next-line no-extend-native
+    String.prototype.split = function (this: string, separator: unknown, limit?: number) {
+      if (separator === ";") throw new Error("simulated split failure");
+      return originalSplit.call(this, separator as never, limit);
+    } as typeof String.prototype.split;
+    try {
+      expect(parseConnectionString("Server=host;Database=db;")).toBeNull();
+    } finally {
+      // eslint-disable-next-line no-extend-native
+      String.prototype.split = originalSplit;
+    }
+  });
 });

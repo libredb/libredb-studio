@@ -152,6 +152,9 @@ function isNonExecutableLine(src) {
   if (t.startsWith("/*")) return true; // block comment opener
   if (t === "*/" || /^\*( |$|\/)/.test(t)) return true; // JSDoc / block comment body
   if (/^[{}()[\];,>]+$/.test(t)) return true; // bare structural punctuation (incl. JSX `>` bracket lines)
+  if (/^\{\/\*.*\*\/\}$/.test(t)) return true; // single-line JSX comment `{/* ... */}`
+  if (t === "default:") return true; // switch default label (bun never credits label lines)
+  if (t === ") : (") return true; // multi-line ternary connector
   return false;
 }
 

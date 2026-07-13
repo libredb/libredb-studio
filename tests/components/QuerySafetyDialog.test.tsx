@@ -384,6 +384,67 @@ describe("QuerySafetyDialog", () => {
     expect(infoEl?.className).toContain("border-blue-500/20");
   });
 
+  test("uses onAnalyzeSafety adapter instead of fetch when provided", async () => {
+    const fetchMock = mock(async () => createStreamResponse({ chunks: [] }));
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const adapterAnalysis = {
+      riskLevel: "medium" as const,
+      summary: "Adapter analysis result.",
+      warnings: [],
+      affectedRows: "42",
+      cascadeEffects: "none",
+      recommendation: "Review before running.",
+    };
+    const onAnalyzeSafety = mock(async (_params: { query: string; schemaContext: string }) => adapterAnalysis);
+
+    const { queryByText } = render(
+      <QuerySafetyDialog
+        isOpen
+        query="UPDATE users SET active = false WHERE id = 1"
+        schemaContext='[{"name":"users","rowCount":42,"columns":[{"name":"id","type":"integer"}]}]'
+        onClose={onClose}
+        onProceed={onProceed}
+        onAnalyzeSafety={onAnalyzeSafety}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(queryByText("Medium Risk")).not.toBeNull();
+      expect(queryByText("Adapter analysis result.")).not.toBeNull();
+      expect(queryByText("42")).not.toBeNull();
+    });
+
+    expect(onAnalyzeSafety).toHaveBeenCalledTimes(1);
+    const params = onAnalyzeSafety.mock.calls[0][0];
+    expect(params.query).toBe("UPDATE users SET active = false WHERE id = 1");
+    expect(params.schemaContext).toContain("users (42 rows)");
+    expect(params.schemaContext).toContain("id (integer)");
+    // The built-in fetch path must be bypassed entirely
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  test("shows error when onAnalyzeSafety adapter rejects", async () => {
+    const onAnalyzeSafety = mock(async (_params: { query: string; schemaContext: string }) => {
+      throw new Error("Adapter unavailable");
+    });
+
+    const { queryByText } = render(
+      <QuerySafetyDialog
+        isOpen
+        query="DELETE FROM users WHERE id = 1"
+        schemaContext=""
+        onClose={onClose}
+        onProceed={onProceed}
+        onAnalyzeSafety={onAnalyzeSafety}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(queryByText("Adapter unavailable")).not.toBeNull();
+    });
+  });
+
   test("falls back to substring truncation when schemaContext is invalid JSON", async () => {
     const invalidSchema = "this is not valid JSON but is longer than we need for testing purposes";
     const safePayload = {

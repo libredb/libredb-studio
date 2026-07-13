@@ -548,6 +548,49 @@ describe("DataProfiler", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
+  // ── Platform adapters bypass fetch ───────────────────────────────────────
+
+  test("uses onProfile and onDescribeSchema adapters instead of fetch when provided", async () => {
+    restoreGlobalFetch();
+    const fetchSpy = mockGlobalFetch({
+      "/api/db/profile": { ok: true, json: mockProfileResponse },
+      "/api/ai/describe-schema": { ok: false, status: 500, json: { error: "AI not configured" } },
+    });
+
+    const onProfile = mock(async () => mockProfileResponse);
+    const onDescribeSchema = mock(async () => "Adapter AI summary");
+
+    const props = createDefaultProps({ onProfile, onDescribeSchema, schemaContext: "schema ctx" });
+    const { container } = render(<DataProfiler {...props} />);
+    const view = within(container);
+
+    await waitFor(() => {
+      expect(view.queryByText("Column Profiles")).not.toBeNull();
+    });
+
+    expect(onProfile).toHaveBeenCalledTimes(1);
+    const profileArg = (onProfile.mock.calls as unknown[][])[0][0] as { connectionId: string; tableName: string };
+    expect(profileArg.tableName).toBe("users");
+    expect(profileArg.connectionId).toBe(mockPostgresConnection.id);
+
+    // The adapter result is rendered as the AI summary
+    await waitFor(() => {
+      expect(view.queryByText("Adapter AI summary")).not.toBeNull();
+    });
+
+    expect(onDescribeSchema).toHaveBeenCalledTimes(1);
+    const describeArg = (onDescribeSchema.mock.calls as unknown[][])[0][0] as {
+      tableName: string;
+      schemaContext: string;
+    };
+    expect(describeArg.tableName).toBe("users");
+    expect(describeArg.schemaContext).toContain("Column Profiles:");
+    expect(describeArg.schemaContext).toContain("schema ctx");
+
+    // Neither endpoint is hit when the adapters are provided
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
   // ── Average null % in summary ────────────────────────────────────────────
 
   test("displays correct average null percentage in summary", async () => {

@@ -1250,4 +1250,247 @@ describe("useQueryExecution", () => {
     const body = JSON.parse(queryCalls[0][1]!.body as string);
     expect(body.sql).not.toContain("EXPLAIN");
   });
+
+  // ── No background EXPLAIN for non-postgres/mysql connections ──────────
+
+  test("no background EXPLAIN for non-postgres/mysql connections", async () => {
+    const fetchMock = mockGlobalFetch({
+      "/api/db/query": { ok: true, json: mockQueryResult },
+    });
+    const mssqlConnection = { ...mockConnection, type: "mssql" as const };
+    const params = createDefaultParams({ activeConnection: mssqlConnection });
+
+    const { result } = renderHook(() => useQueryExecution(params));
+
+    await act(async () => {
+      await result.current.executeQuery("SELECT * FROM users");
+    });
+
+    // Only the main query — no EXPLAIN is built for mssql
+    const queryCalls = fetchMock.mock.calls.filter(
+      (call) => typeof call[0] === "string" && call[0].includes("/api/db/query"),
+    );
+    expect(queryCalls.length).toBe(1);
+    const body = JSON.parse(queryCalls[0][1]!.body as string);
+    expect(body.sql).not.toContain("EXPLAIN");
+  });
+
+  // ── setTabs updaters preserve non-target tabs ──────────────────────────
+
+  test("QUERY_CANCELLED updater preserves non-target tabs", async () => {
+    mockGlobalFetch({
+      "/api/db/query": {
+        ok: false,
+        status: 499,
+        json: { error: "Query was cancelled", code: "QUERY_CANCELLED", statusCode: 499 },
+      },
+    });
+
+    const otherTab = createTab({ id: "tab-2", name: "Query 2" });
+    const snapshots: QueryTab[][] = [];
+    const setTabsMock = mock((fn: unknown) => {
+      if (typeof fn === "function") {
+        snapshots.push(fn([createTab(), otherTab]));
+      }
+    });
+    const params = createDefaultParams({ setTabs: setTabsMock });
+
+    const { result } = renderHook(() => useQueryExecution(params));
+
+    await act(async () => {
+      await result.current.executeQuery("SELECT pg_sleep(60)");
+    });
+
+    expect(mockToastSuccess).toHaveBeenCalled();
+    // Executing + cancelled updaters both ran, passing the non-target tab through unchanged
+    expect(snapshots.length).toBeGreaterThanOrEqual(2);
+    for (const snapshot of snapshots) {
+      expect(snapshot[1]).toBe(otherTab);
+    }
+  });
+
+  test("query error updater preserves non-target tabs", async () => {
+    mockGlobalFetch({
+      "/api/db/query": { ok: false, status: 400, json: { error: "relation missing" } },
+    });
+
+    const otherTab = createTab({ id: "tab-2", name: "Query 2" });
+    const snapshots: QueryTab[][] = [];
+    const setTabsMock = mock((fn: unknown) => {
+      if (typeof fn === "function") {
+        snapshots.push(fn([createTab(), otherTab]));
+      }
+    });
+    const params = createDefaultParams({ setTabs: setTabsMock });
+
+    const { result } = renderHook(() => useQueryExecution(params));
+
+    await act(async () => {
+      await result.current.executeQuery("SELECT * FROM missing");
+    });
+
+    expect(mockToastError).toHaveBeenCalled();
+    expect(snapshots.length).toBeGreaterThanOrEqual(2);
+    for (const snapshot of snapshots) {
+      expect(snapshot[1]).toBe(otherTab);
+    }
+  });
+
+  // ── Playground BEGIN failure is logged and execution continues ─────────
+
+  test("playground mode continues when transaction BEGIN fails", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      if (url.includes("/api/db/transaction")) {
+        const body = JSON.parse((init?.body as string) || "{}");
+        if (body.action === "begin") {
+          return new Response(JSON.stringify({ error: "begin failed" }), {
+            status: 500,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        return new Response(JSON.stringify(mockQueryResult), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify(mockQueryResult), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }) as typeof fetch;
+
+    const params = createDefaultParams({ playgroundMode: true });
+
+    const { result } = renderHook(() => useQueryExecution(params));
+
+    await act(async () => {
+      await result.current.executeQuery("UPDATE users SET active = false");
+    });
+
+    // Query still runs and the playground toast is shown despite BEGIN failing
+    expect(mockToastSuccess).toHaveBeenCalled();
+    expect(mockToastError).not.toHaveBeenCalled();
+
+    globalThis.fetch = originalFetch;
+  });
+
+  // ── Playground rollback fetch failures are swallowed ───────────────────
+
+  test("playground rollback failure after success is swallowed", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      if (url.includes("/api/db/transaction")) {
+        const body = JSON.parse((init?.body as string) || "{}");
+        if (body.action === "rollback") {
+          throw new Error("rollback network failure");
+        }
+        return new Response(JSON.stringify(mockQueryResult), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify(mockQueryResult), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }) as typeof fetch;
+
+    const params = createDefaultParams({ playgroundMode: true });
+
+    const { result } = renderHook(() => useQueryExecution(params));
+
+    await act(async () => {
+      await result.current.executeQuery("UPDATE users SET active = false");
+    });
+
+    // Rollback failure is swallowed and the playground toast is still shown
+    expect(mockToastSuccess).toHaveBeenCalled();
+    expect(mockToastError).not.toHaveBeenCalled();
+
+    globalThis.fetch = originalFetch;
+  });
+
+  test("playground rollback failure after query error is swallowed", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      if (url.includes("/api/db/transaction")) {
+        const body = JSON.parse((init?.body as string) || "{}");
+        if (body.action === "begin") {
+          return new Response(JSON.stringify({ success: true }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        if (body.action === "query") {
+          return new Response(JSON.stringify({ error: "syntax error" }), {
+            status: 400,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        throw new Error("rollback network failure");
+      }
+      return new Response(JSON.stringify({ error: "Not found" }), { status: 404 });
+    }) as typeof fetch;
+
+    const params = createDefaultParams({ playgroundMode: true });
+
+    const { result } = renderHook(() => useQueryExecution(params));
+
+    await act(async () => {
+      await result.current.executeQuery("UPDATE users SET broken");
+    });
+
+    // Rollback failure is swallowed; the original query error toast is shown
+    expect(mockToastError).toHaveBeenCalled();
+
+    globalThis.fetch = originalFetch;
+  });
+
+  // ── cancelQuery swallows server-side cancel failures ───────────────────
+
+  test("cancelQuery swallows server cancel endpoint failure", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      if (url.includes("/api/db/query")) {
+        return new Promise<Response>((resolve, reject) => {
+          if (init?.signal?.aborted) {
+            reject(new DOMException("The operation was aborted.", "AbortError"));
+            return;
+          }
+          init?.signal?.addEventListener("abort", () => {
+            reject(new DOMException("The operation was aborted.", "AbortError"));
+          });
+        });
+      }
+      if (url.includes("/api/db/cancel")) {
+        throw new Error("cancel endpoint unreachable");
+      }
+      return new Response(JSON.stringify({ error: "Not found" }), { status: 404 });
+    }) as typeof fetch;
+
+    const params = createDefaultParams();
+    const { result } = renderHook(() => useQueryExecution(params));
+
+    // Start query (hangs until aborted)
+    const queryPromise = act(async () => {
+      await result.current.executeQuery("SELECT * FROM users");
+    });
+
+    // Cancel — the server-side cancel request fails but must not throw
+    await act(async () => {
+      await result.current.cancelQuery();
+    });
+
+    await queryPromise;
+
+    // Cancellation toast is still shown
+    expect(mockToastSuccess).toHaveBeenCalled();
+
+    globalThis.fetch = originalFetch;
+  });
 });

@@ -237,6 +237,17 @@ describe("detectSensitiveColumnsFromConfig", () => {
     const result = detectSensitiveColumnsFromConfig(["email"], config);
     expect(result.get("email")!.maskType).toBe("email");
   });
+
+  test("invalid regex column pattern falls back to case-insensitive equality", () => {
+    const config: MaskingConfig = {
+      enabled: true,
+      patterns: [{ ...makePattern("full"), columnPatterns: ["se(cret"], id: "broken-regex" }],
+      roleSettings: DEFAULT_MASKING_CONFIG.roleSettings,
+    };
+    const result = detectSensitiveColumnsFromConfig(["SE(CRET", "other"], config);
+    expect(result.has("SE(CRET")).toBe(true);
+    expect(result.has("other")).toBe(false);
+  });
 });
 
 // ─── detectSensitiveColumns (legacy) ────────────────────────────────────────
@@ -273,6 +284,50 @@ describe("detectSensitiveColumns", () => {
     const result = detectSensitiveColumns(["Email", "PASSWORD"]);
     expect(result.has("Email")).toBe(true);
     expect(result.has("PASSWORD")).toBe(true);
+  });
+});
+
+// ─── Legacy MASKING_RULES mask functions ────────────────────────────────────
+
+describe("legacy masking rules: mask functions", () => {
+  test("email rule masks a valid address keeping first chars", () => {
+    const rule = detectSensitiveColumns(["email"]).get("email")!;
+    expect(maskValue("john.doe@example.com", rule)).toBe("j*******@e**********");
+  });
+
+  test("email rule masks a malformed address entirely", () => {
+    const rule = detectSensitiveColumns(["email"]).get("email")!;
+    expect(maskValue("notanemail", rule)).toBe("***@***.***");
+  });
+
+  test("phone rule keeps the last 4 digits", () => {
+    const rule = detectSensitiveColumns(["phone"]).get("phone")!;
+    expect(maskValue("+1-555-123-4567", rule)).toBe("*******4567");
+  });
+
+  test("phone rule fully masks short numbers", () => {
+    const rule = detectSensitiveColumns(["phone"]).get("phone")!;
+    expect(maskValue("12", rule)).toBe("***");
+  });
+
+  test("ip rule keeps first and last IPv4 octets", () => {
+    const rule = detectSensitiveColumns(["ip_address"]).get("ip_address")!;
+    expect(maskValue("192.168.1.100", rule)).toBe("192.***.***.100");
+  });
+
+  test("ip rule fully masks non-IPv4 values", () => {
+    const rule = detectSensitiveColumns(["ip_address"]).get("ip_address")!;
+    expect(maskValue("::1", rule)).toBe("***");
+  });
+
+  test("birthdate rule keeps the day part", () => {
+    const rule = detectSensitiveColumns(["date_of_birth"]).get("date_of_birth")!;
+    expect(maskValue("1990-05-15", rule)).toBe("****-**-15");
+  });
+
+  test("birthdate rule fully masks short values", () => {
+    const rule = detectSensitiveColumns(["date_of_birth"]).get("date_of_birth")!;
+    expect(maskValue("05", rule)).toBe("****-**-**");
   });
 });
 

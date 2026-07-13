@@ -23,9 +23,13 @@ import {
 const mockProvider = createMockProvider();
 const mockGetOrCreateProvider = mock(async () => mockProvider);
 
+const mockGetSession = mock(
+  async (): Promise<{ role: string; username: string } | null> => ({ role: "admin", username: "admin" }),
+);
+
 // ─── Mock auth + seed resolution BEFORE importing the route ─────────────────
 mock.module("@/lib/auth", () => ({
-  getSession: mock(async () => ({ role: "admin", username: "admin" })),
+  getSession: mockGetSession,
   signJWT: mock(async () => "mock-token"),
   verifyJWT: mock(async () => null),
   login: mock(async () => {}),
@@ -97,6 +101,43 @@ describe("POST /api/db/query", () => {
     mockGetOrCreateProvider.mockClear();
     (mockProvider.query as ReturnType<typeof mock>).mockClear();
     (mockProvider.prepareQuery as ReturnType<typeof mock>).mockClear();
+    mockGetSession.mockClear();
+    mockGetSession.mockImplementation(
+      async (): Promise<{ role: string; username: string } | null> => ({ role: "admin", username: "admin" }),
+    );
+  });
+
+  test("returns 401 when no session exists", async () => {
+    mockGetSession.mockResolvedValueOnce(null);
+
+    const req = createMockRequest("/api/db/query", {
+      method: "POST",
+      body: { connection: validConnection, sql: "SELECT * FROM users" },
+    });
+
+    const res = await POST(req as never);
+    const data = await parseResponseJSON<{ error: string }>(res);
+
+    expect(res.status).toBe(401);
+    expect(data.error).toContain("Authentication required");
+  });
+
+  test("passes queryId to provider when cancellation is supported", async () => {
+    const providerWithCancel = {
+      ...createMockProvider(),
+      cancelQuery: mock(async () => true),
+    };
+    mockGetOrCreateProvider.mockResolvedValueOnce(providerWithCancel as never);
+
+    const req = createMockRequest("/api/db/query", {
+      method: "POST",
+      body: { connection: validConnection, sql: "SELECT * FROM users", queryId: "query-42" },
+    });
+
+    const res = await POST(req as never);
+
+    expect(res.status).toBe(200);
+    expect(providerWithCancel.query).toHaveBeenCalledWith("SELECT * FROM users LIMIT 50", undefined, "query-42");
   });
 
   test("returns 200 with rows and pagination for valid query", async () => {

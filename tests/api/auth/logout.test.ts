@@ -66,6 +66,18 @@ describe("POST /api/auth/logout (local)", () => {
     expect(data.redirectUrl).toBeUndefined();
   });
 
+  test("returns 500 when logout throws", async () => {
+    mockLogout.mockImplementationOnce(async () => {
+      throw new Error("Cookie store unavailable");
+    });
+
+    const res = await POST(makeRequest() as never);
+    const data = await parseResponseJSON<{ error: string }>(res);
+
+    expect(res.status).toBe(500);
+    expect(data.error).toBe("Cookie store unavailable");
+  });
+
   test("multiple logouts all succeed", async () => {
     const res1 = await POST(makeRequest() as never);
     const res2 = await POST(makeRequest() as never);

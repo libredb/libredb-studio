@@ -12,6 +12,18 @@ import { DEFAULT_THRESHOLDS, type ThresholdConfig } from "@/lib/monitoring-thres
 import { storage } from "@/lib/storage";
 import { toast } from "sonner";
 
+const MASKING_TAB_LABEL = "Data Masking";
+const ACCESS_TAB_LABEL = "Access";
+const THRESHOLDS_TAB_LABEL = "Thresholds";
+const ACCESS_CARD_TITLE = "Security & Access";
+const SUPPORTED_LABEL = "Supported";
+const CONFIGURABLE_LABEL = "Configurable";
+const THRESHOLDS_CARD_TITLE = "Monitoring Thresholds";
+const THRESHOLDS_DESCRIPTION =
+  "Configure warning and critical thresholds for monitoring alerts. These values are used by the monitoring dashboard to trigger visual alerts.";
+const RESET_LABEL = "Reset Defaults";
+const SAVE_LABEL = "Save Config";
+
 export function SecurityTab() {
   return (
     <div className="space-y-6">
@@ -22,21 +34,21 @@ export function SecurityTab() {
             className="gap-2 rounded-none border-b-2 border-transparent data-[state=active]:border-blue-400 data-[state=active]:bg-transparent data-[state=active]:text-blue-400 text-zinc-500 text-xs px-4"
           >
             <EyeOff className="h-3.5 w-3.5" />
-            Data Masking
+            {MASKING_TAB_LABEL}
           </TabsTrigger>
           <TabsTrigger
             value="access"
             className="gap-2 rounded-none border-b-2 border-transparent data-[state=active]:border-blue-400 data-[state=active]:bg-transparent data-[state=active]:text-blue-400 text-zinc-500 text-xs px-4"
           >
             <Lock className="h-3.5 w-3.5" />
-            Access
+            {ACCESS_TAB_LABEL}
           </TabsTrigger>
           <TabsTrigger
             value="thresholds"
             className="gap-2 rounded-none border-b-2 border-transparent data-[state=active]:border-blue-400 data-[state=active]:bg-transparent data-[state=active]:text-blue-400 text-zinc-500 text-xs px-4"
           >
             <Activity className="h-3.5 w-3.5" />
-            Thresholds
+            {THRESHOLDS_TAB_LABEL}
           </TabsTrigger>
         </TabsList>
 
@@ -62,7 +74,7 @@ function AccessSummary() {
       <div className="rounded-xl border border-white/5 bg-zinc-900/50 p-5 space-y-3">
         <h3 className="text-sm font-bold text-zinc-300 flex items-center gap-2">
           <Lock className="h-4 w-4 text-blue-400" />
-          Security & Access
+          {ACCESS_CARD_TITLE}
         </h3>
         <div className="space-y-3 text-sm">
           <div className="flex items-center justify-between">
@@ -95,21 +107,21 @@ function AccessSummary() {
           <div className="flex items-center justify-between">
             <span className="text-zinc-500">SSL/TLS</span>
             <Badge variant="secondary" className="text-xs">
-              Supported
+              {SUPPORTED_LABEL}
             </Badge>
           </div>
           <Separator className="bg-white/5" />
           <div className="flex items-center justify-between">
             <span className="text-zinc-500">SSH Tunnel</span>
             <Badge variant="secondary" className="text-xs">
-              Supported
+              {SUPPORTED_LABEL}
             </Badge>
           </div>
           <Separator className="bg-white/5" />
           <div className="flex items-center justify-between">
             <span className="text-zinc-500">Data Masking</span>
             <Badge variant="secondary" className="text-xs">
-              Configurable
+              {CONFIGURABLE_LABEL}
             </Badge>
           </div>
         </div>
@@ -160,12 +172,9 @@ function ThresholdSettings() {
       <div className="rounded-xl border border-white/5 bg-zinc-900/50 p-5">
         <h3 className="text-sm font-bold text-zinc-300 mb-4 flex items-center gap-2">
           <Activity className="h-4 w-4 text-blue-400" />
-          Monitoring Thresholds
+          {THRESHOLDS_CARD_TITLE}
         </h3>
-        <p className="text-xs text-zinc-500 mb-6">
-          Configure warning and critical thresholds for monitoring alerts. These values are used by the monitoring
-          dashboard to trigger visual alerts.
-        </p>
+        <p className="text-xs text-zinc-500 mb-6">{THRESHOLDS_DESCRIPTION}</p>
 
         <div className="space-y-6">
           {thresholds.map((threshold, index) => {
@@ -183,7 +192,6 @@ function ThresholdSettings() {
                 </div>
 
                 <div className="grid grid-cols-2 gap-6">
-                  {/* Warning */}
                   <div className="space-y-2">
                     <div className="flex items-center justify-between">
                       <span className={`text-xs font-bold ${colors.warn}`}>Warning</span>
@@ -201,7 +209,6 @@ function ThresholdSettings() {
                     />
                   </div>
 
-                  {/* Critical */}
                   <div className="space-y-2">
                     <div className="flex items-center justify-between">
                       <span className={`text-xs font-bold ${colors.crit}`}>Critical</span>
@@ -229,7 +236,7 @@ function ThresholdSettings() {
         <div className="flex items-center justify-end gap-2 mt-6 pt-4 border-t border-white/5">
           <Button variant="ghost" size="sm" className="text-zinc-500 hover:text-zinc-300" onClick={handleReset}>
             <RotateCcw className="w-3.5 h-3.5 mr-1.5" />
-            Reset Defaults
+            {RESET_LABEL}
           </Button>
           <Button
             size="sm"
@@ -238,7 +245,7 @@ function ThresholdSettings() {
             disabled={!hasChanges}
           >
             <Save className="w-3.5 h-3.5 mr-1.5" />
-            Save Config
+            {SAVE_LABEL}
           </Button>
         </div>
       </div>

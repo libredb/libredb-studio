@@ -57,12 +57,13 @@ export function SavedQueries({ onSelectQuery, connectionType, refreshTrigger }: 
       </div>
 
       <div className="flex-1 overflow-y-auto custom-scrollbar">
-        {filteredQueries.length === 0 ? (
+        {filteredQueries.length === 0 && (
           <div className="h-full flex flex-col items-center justify-center opacity-20 p-8 text-center">
             <Bookmark strokeWidth={1.5} className="w-12 h-12 mb-4" />
             <p className="text-xs italic">No saved queries found</p>
           </div>
-        ) : (
+        )}
+        {filteredQueries.length > 0 && (
           <div className="grid grid-cols-1 gap-px bg-white/5">
             {filteredQueries.map((q) => (
               <div

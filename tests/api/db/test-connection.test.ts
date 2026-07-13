@@ -7,9 +7,13 @@ import { DatabaseConfigError } from "@/lib/db/errors";
 const mockProvider = createMockProvider();
 const mockCreateDatabaseProvider = mock(async () => mockProvider);
 
+const mockGetSession = mock(
+  async (): Promise<{ role: string; username: string } | null> => ({ role: "admin", username: "admin" }),
+);
+
 // ─── Mock auth + seed resolution BEFORE importing route ─────────────────────
 mock.module("@/lib/auth", () => ({
-  getSession: mock(async () => ({ role: "admin", username: "admin" })),
+  getSession: mockGetSession,
   signJWT: mock(async () => "mock-token"),
   verifyJWT: mock(async () => null),
   login: mock(async () => {}),
@@ -68,6 +72,10 @@ describe("POST /api/db/test-connection", () => {
     (mockProvider.getHealth as ReturnType<typeof mock>).mockClear();
 
     // Reset implementations to defaults
+    mockGetSession.mockClear();
+    mockGetSession.mockImplementation(
+      async (): Promise<{ role: string; username: string } | null> => ({ role: "admin", username: "admin" }),
+    );
     mockCreateDatabaseProvider.mockImplementation(async () => mockProvider);
     (mockProvider.connect as ReturnType<typeof mock>).mockImplementation(async () => {});
     (mockProvider.disconnect as ReturnType<typeof mock>).mockImplementation(async () => {});
@@ -78,6 +86,21 @@ describe("POST /api/db/test-connection", () => {
       slowQueries: [],
       activeSessions: [],
     }));
+  });
+
+  test("returns 401 when no session exists", async () => {
+    mockGetSession.mockResolvedValueOnce(null);
+
+    const req = createMockRequest("/api/db/test-connection", {
+      method: "POST",
+      body: validConnection,
+    });
+
+    const res = await POST(req as never);
+    const data = await parseResponseJSON<{ error: string }>(res);
+
+    expect(res.status).toBe(401);
+    expect(data.error).toContain("Authentication required");
   });
 
   test("returns success with latency for valid connection", async () => {

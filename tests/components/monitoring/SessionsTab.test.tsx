@@ -122,6 +122,33 @@ describe("SessionsTab", () => {
     expect(queryByText("65s")).not.toBeNull();
   });
 
+  test("renders badges for idle, aborted and unknown session states", () => {
+    const data = {
+      ...makeData(),
+      activeSessions: [
+        { pid: 301, user: "a", database: "db", state: "idle", query: "", duration: "3s", durationMs: 3000 },
+        {
+          pid: 302,
+          user: "b",
+          database: "db",
+          state: "idle in transaction (aborted)",
+          query: "",
+          duration: "4s",
+          durationMs: 4000,
+        },
+        { pid: 303, user: "c", database: "db", state: "starting", query: "", duration: "5s", durationMs: 5000 },
+      ],
+    } as MonitoringData;
+    const { queryByText, queryAllByText } = render(
+      <SessionsTab data={data} loading={false} onKillSession={mock(async () => true)} />,
+    );
+
+    // "Idle" appears both as a stats-card title and as the idle-state badge
+    expect(queryAllByText("Idle").length).toBeGreaterThan(1);
+    expect(queryByText("Aborted TX")).not.toBeNull();
+    expect(queryByText("starting")).not.toBeNull();
+  });
+
   test("calls onKillSession after confirming terminate action", async () => {
     const onKillSession = mock(async () => true);
     const { container, queryByText } = render(

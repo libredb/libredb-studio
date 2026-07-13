@@ -312,6 +312,47 @@ describe("DatabaseDocs", () => {
     document.createElement = origCreateElement;
   });
 
+  test("Export MD includes AI Analysis section when AI docs exist", async () => {
+    const user = userEvent.setup();
+    const createObjectURLMock = mock(() => "blob:fake-url");
+    const revokeObjectURLMock = mock(() => {});
+    const clickMock = mock(() => {});
+
+    globalThis.URL.createObjectURL = createObjectURLMock as unknown as typeof URL.createObjectURL;
+    globalThis.URL.revokeObjectURL = revokeObjectURLMock;
+
+    const origCreateElement = document.createElement.bind(document);
+    const createElementSpy = mock((tag: string) => {
+      const el = origCreateElement(tag);
+      if (tag === "a") {
+        el.click = clickMock;
+      }
+      return el;
+    });
+    document.createElement = createElementSpy as unknown as typeof document.createElement;
+
+    globalThis.fetch = mockFetchStream("Schema overview docs") as unknown as typeof fetch;
+
+    const { queryByText } = render(<DatabaseDocs schema={schema} schemaContext="[]" databaseType="postgres" />);
+
+    await user.click(queryByText("AI Describe")!);
+
+    await waitFor(() => {
+      expect(queryByText("Regenerate")).not.toBeNull();
+    });
+
+    await user.click(queryByText("Export MD")!);
+
+    expect(createObjectURLMock).toHaveBeenCalled();
+    const exportedBlob = (createObjectURLMock.mock.calls as unknown[][])[0][0] as Blob;
+    const exported = await exportedBlob.text();
+    expect(exported).toContain("## AI Analysis");
+    expect(exported).toContain("Schema overview docs");
+
+    // Restore
+    document.createElement = origCreateElement;
+  });
+
   // -----------------------------------------------------------------------
   // Header buttons
   // -----------------------------------------------------------------------

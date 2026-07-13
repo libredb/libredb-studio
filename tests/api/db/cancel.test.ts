@@ -32,9 +32,13 @@ const mockNoCancelProvider = createMockProvider();
 
 const mockGetOrCreateProvider = mock(async () => mockCancelProvider as never);
 
+const mockGetSession = mock(
+  async (): Promise<{ role: string; username: string } | null> => ({ role: "admin", username: "admin" }),
+);
+
 // ─── Mock auth + seed resolution BEFORE importing route ─────────────────────
 mock.module("@/lib/auth", () => ({
-  getSession: mock(async () => ({ role: "admin", username: "admin" })),
+  getSession: mockGetSession,
   signJWT: mock(async () => "mock-token"),
   verifyJWT: mock(async () => null),
   login: mock(async () => {}),
@@ -104,10 +108,29 @@ describe("POST /api/db/cancel", () => {
   beforeEach(() => {
     mockGetOrCreateProvider.mockClear();
     mockCancelProvider.cancelQuery.mockClear();
+    mockGetSession.mockClear();
 
     // Reset implementations
     mockGetOrCreateProvider.mockImplementation(async () => mockCancelProvider as never);
     mockCancelProvider.cancelQuery.mockImplementation(async () => true);
+    mockGetSession.mockImplementation(
+      async (): Promise<{ role: string; username: string } | null> => ({ role: "admin", username: "admin" }),
+    );
+  });
+
+  test("returns 401 when no session exists", async () => {
+    mockGetSession.mockResolvedValueOnce(null);
+
+    const req = createMockRequest("/api/db/cancel", {
+      method: "POST",
+      body: { connection: validConnection, queryId: "query-123" },
+    });
+
+    const res = await POST(req as never);
+    const data = await parseResponseJSON<{ error: string }>(res);
+
+    expect(res.status).toBe(401);
+    expect(data.error).toContain("Authentication required");
   });
 
   test("returns cancelled:true with valid connection and queryId", async () => {

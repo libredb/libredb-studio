@@ -46,7 +46,6 @@ export function ResultCard({
       onClick={onSelect}
       className="bg-[#0d0d0d] border border-white/5 rounded-xl p-4 active:scale-[0.98] transition-all cursor-pointer hover:border-white/10 hover:bg-[#111]"
     >
-      {/* Header: Primary value + ID */}
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2 flex-1 min-w-0">
           <div className="w-8 h-8 rounded-lg bg-blue-500/10 flex items-center justify-center shrink-0">
@@ -67,7 +66,6 @@ export function ResultCard({
         <ChevronRight strokeWidth={1.5} className="w-3.5 h-3.5 text-zinc-600" />
       </div>
 
-      {/* Preview Fields */}
       <div className="space-y-2">
         {previewFields.map((field) => {
           const pattern = sensitiveColumns?.get(field);

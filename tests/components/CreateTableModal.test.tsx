@@ -302,6 +302,31 @@ describe("CreateTableModal", () => {
     expect(onTableCreated).not.toHaveBeenCalled();
   });
 
+  // ── 9b. Validate empty table name -> error toast (guard inside handleCreate) ─
+
+  test("handleCreate shows error toast when table name is empty", async () => {
+    const onTableCreated = mock(() => {});
+    const { baseElement } = render(
+      <CreateTableModal isOpen onClose={mock(() => {})} onTableCreated={onTableCreated} />,
+    );
+    const body = within(baseElement);
+
+    const createBtn = body.getByText("CREATE TABLE").closest("button") as HTMLButtonElement;
+    expect(createBtn.disabled).toBe(true);
+
+    // The button is prop-disabled while the table name is empty, so a DOM click
+    // never reaches React's delegated handler. Invoke the onClick prop directly
+    // to exercise the defensive empty-name guard inside handleCreate.
+    const propsKey = Object.keys(createBtn).find((k) => k.startsWith("__reactProps$"))!;
+    const btnProps = (createBtn as unknown as Record<string, { onClick?: () => Promise<void> }>)[propsKey];
+    await act(async () => {
+      await btnProps.onClick?.();
+    });
+
+    expect(mockToastError).toHaveBeenCalledWith("Table name is required");
+    expect(onTableCreated).not.toHaveBeenCalled();
+  });
+
   // ── 10. Validate empty column names -> error toast ─────────────────────────
 
   test("handleCreate shows error toast when a column has empty name", () => {

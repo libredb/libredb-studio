@@ -7,6 +7,10 @@ import { ChevronDown, LayoutGrid, Table2, Loader2, EyeOff, Eye, Save, X, Filter,
 import { Button } from "@/components/ui/button";
 import type { CellChange } from "@/components/ResultsGrid";
 
+const MASKED_LABEL = "MASKED";
+const LOADING_LABEL = "Loading...";
+const LOAD_MORE_LABEL = "Load More (500 rows)";
+
 export interface StatsBarProps {
   result: QueryResult;
   filteredRowCount: number;
@@ -71,7 +75,6 @@ export function StatsBar({
       </div>
 
       <div className="flex items-center gap-2">
-        {/* Data Masking Toggle */}
         {hasSensitive &&
           (userCanToggle && onToggleMasking ? (
             <Button
@@ -90,11 +93,10 @@ export function StatsBar({
           ) : effectiveMaskingEnabled ? (
             <span className="h-6 px-2 text-xs font-medium text-purple-400 bg-purple-500/10 rounded flex items-center gap-1">
               <Lock strokeWidth={1.5} className="w-3 h-3" />
-              MASKED
+              {MASKED_LABEL}
             </span>
           ) : null)}
 
-        {/* Pending Changes Indicator */}
         {editingEnabled && pendingChanges && pendingChanges.length > 0 && (
           <div className="flex items-center gap-1">
             <span className="text-xs text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded">
@@ -119,12 +121,10 @@ export function StatsBar({
           </div>
         )}
 
-        {/* Execution Time - Hidden on mobile */}
         <span className="hidden sm:flex px-2 py-0.5 rounded bg-white/5 border border-white/5">
           EXEC TIME: {result.executionTime || "0ms"}
         </span>
 
-        {/* View Toggle - Mobile only */}
         <div className="flex md:hidden items-center bg-white/5 rounded-lg p-0.5">
           <button
             onClick={() => onSetViewMode("card")}
@@ -168,15 +168,16 @@ export function LoadMoreFooter({ hasMore, onLoadMore, isLoadingMore }: LoadMoreF
         disabled={isLoadingMore}
         className="h-8 px-4 text-xs border-white/10 hover:bg-white/5"
       >
-        {isLoadingMore ? (
+        {isLoadingMore && (
           <>
             <Loader2 strokeWidth={1.5} className="w-3 h-3 mr-2 animate-spin" />
-            Loading...
+            {LOADING_LABEL}
           </>
-        ) : (
+        )}
+        {!isLoadingMore && (
           <>
             <ChevronDown strokeWidth={1.5} className="w-3 h-3 mr-2" />
-            Load More (500 rows)
+            {LOAD_MORE_LABEL}
           </>
         )}
       </Button>

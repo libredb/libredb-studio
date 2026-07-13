@@ -123,6 +123,25 @@ describe("generateSelectQuery — LibreDB dialect", () => {
     expect(commandLines(out)).toEqual(["get orphan", "put orphan example", "delete orphan"]);
   });
 
+  test("relational group: object and unknown column types map to example JSON values", () => {
+    const exoticColumns: ColumnSchema[] = [
+      { name: "id", type: "string", nullable: false, isPrimary: true },
+      { name: "meta", type: "object", nullable: true, isPrimary: false },
+      { name: "notes", type: "text", nullable: true, isPrimary: false },
+    ];
+    const out = generateSelectQuery("things:*", exoticColumns, libreCaps);
+    expect(commandLines(out)).toContain(`put things:1 '{"id":"example","meta":{},"notes":"example"}'`);
+  });
+
+  test("document collection (id/document columns): put example is a small JSON object", () => {
+    const docColumns: ColumnSchema[] = [
+      { name: "id", type: "string", nullable: false, isPrimary: true },
+      { name: "document", type: "object", nullable: true, isPrimary: false },
+    ];
+    const out = generateSelectQuery("articles:*", docColumns, libreCaps);
+    expect(commandLines(out)).toContain(`put articles:1 '{"name":"example"}'`);
+  });
+
   test("every command line is a concrete, directly-runnable verb (no placeholders)", () => {
     const out = generateSelectQuery("people:*", kvColumns, libreCaps);
     for (const line of commandLines(out)) {

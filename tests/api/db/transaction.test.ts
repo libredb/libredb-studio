@@ -40,9 +40,13 @@ const mockNonTxProvider = createMockProvider();
 
 const mockGetOrCreateProvider = mock(async () => mockTxProvider as never);
 
+const mockGetSession = mock(
+  async (): Promise<{ role: string; username: string } | null> => ({ role: "admin", username: "admin" }),
+);
+
 // ─── Mock auth + seed resolution BEFORE importing route ─────────────────────
 mock.module("@/lib/auth", () => ({
-  getSession: mock(async () => ({ role: "admin", username: "admin" })),
+  getSession: mockGetSession,
   signJWT: mock(async () => "mock-token"),
   verifyJWT: mock(async () => null),
   login: mock(async () => {}),
@@ -118,6 +122,10 @@ describe("POST /api/db/transaction", () => {
     (mockTxProvider.prepareQuery as ReturnType<typeof mock>).mockClear();
 
     // Reset to default implementations
+    mockGetSession.mockClear();
+    mockGetSession.mockImplementation(
+      async (): Promise<{ role: string; username: string } | null> => ({ role: "admin", username: "admin" }),
+    );
     mockGetOrCreateProvider.mockImplementation(async () => mockTxProvider as never);
     mockTxProvider.beginTransaction.mockImplementation(async () => {});
     mockTxProvider.commitTransaction.mockImplementation(async () => {});
@@ -129,6 +137,21 @@ describe("POST /api/db/transaction", () => {
       rowCount: 1,
       executionTime: 10,
     }));
+  });
+
+  test("returns 401 when no session exists", async () => {
+    mockGetSession.mockResolvedValueOnce(null);
+
+    const req = createMockRequest("/api/db/transaction", {
+      method: "POST",
+      body: { connection: validConnection, action: "begin" },
+    });
+
+    const res = await POST(req as never);
+    const data = await parseResponseJSON<{ error: string }>(res);
+
+    expect(res.status).toBe(401);
+    expect(data.error).toContain("Authentication required");
   });
 
   test("begin action returns status active", async () => {

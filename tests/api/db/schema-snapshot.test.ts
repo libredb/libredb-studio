@@ -6,9 +6,13 @@ import { createMockProvider } from "../../helpers/mock-provider";
 const mockProvider = createMockProvider();
 const mockCreateDatabaseProvider = mock(async () => mockProvider);
 
+const mockGetSession = mock(
+  async (): Promise<{ role: string; username: string } | null> => ({ role: "admin", username: "admin" }),
+);
+
 // ─── Mock auth + seed resolution BEFORE importing the route ─────────────────
 mock.module("@/lib/auth", () => ({
-  getSession: mock(async () => ({ role: "admin", username: "admin" })),
+  getSession: mockGetSession,
   signJWT: mock(async () => "mock-token"),
   verifyJWT: mock(async () => null),
   login: mock(async () => {}),
@@ -66,6 +70,25 @@ describe("POST /api/db/schema-snapshot", () => {
     // Reset implementations
     (mockProvider.connect as ReturnType<typeof mock>).mockImplementation(async () => {});
     (mockProvider.disconnect as ReturnType<typeof mock>).mockImplementation(async () => {});
+    mockGetSession.mockClear();
+    mockGetSession.mockImplementation(
+      async (): Promise<{ role: string; username: string } | null> => ({ role: "admin", username: "admin" }),
+    );
+  });
+
+  test("returns 401 when no session exists", async () => {
+    mockGetSession.mockResolvedValueOnce(null);
+
+    const req = createMockRequest("/api/db/schema-snapshot", {
+      method: "POST",
+      body: { connection: validConnection },
+    });
+
+    const res = await POST(req as never);
+    const data = await parseResponseJSON<{ error: string }>(res);
+
+    expect(res.status).toBe(401);
+    expect(data.error).toContain("Authentication required");
   });
 
   test("returns schema with metadata for valid connection", async () => {

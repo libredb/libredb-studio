@@ -155,10 +155,10 @@ export function QueryHistory({ onSelectQuery, activeConnectionId, refreshTrigger
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="bg-[#0d0d0d] border-white/10 text-zinc-300">
                 <DropdownMenuItem onClick={() => exportHistory("csv")} className="text-xs cursor-pointer">
-                  Export as CSV
+                  <span>Export as CSV</span>
                 </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => exportHistory("json")} className="text-xs cursor-pointer">
-                  Export as JSON
+                  <span>Export as JSON</span>
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
@@ -203,7 +203,7 @@ export function QueryHistory({ onSelectQuery, activeConnectionId, refreshTrigger
                   : "text-zinc-500 hover:text-zinc-300",
               )}
             >
-              Active Conn
+              <span>Active Conn</span>
             </button>
             <button
               onClick={() => setIsGlobal(true)}
@@ -214,7 +214,7 @@ export function QueryHistory({ onSelectQuery, activeConnectionId, refreshTrigger
                   : "text-zinc-500 hover:text-zinc-300",
               )}
             >
-              All Connections
+              <span>All Connections</span>
             </button>
           </div>
 
@@ -236,13 +236,14 @@ export function QueryHistory({ onSelectQuery, activeConnectionId, refreshTrigger
       </div>
 
       <div className="flex-1 overflow-auto custom-scrollbar">
-        {filteredHistory.length === 0 ? (
+        {filteredHistory.length === 0 && (
           <div className="h-full flex flex-col items-center justify-center opacity-20 p-8 text-center">
             <HistoryIcon strokeWidth={1.5} className="w-16 h-16 mb-4 text-zinc-600" />
             <p className="text-xs font-medium">No history items found</p>
             <p className="text-xs text-zinc-500 mt-1r">Run some queries to see them here</p>
           </div>
-        ) : (
+        )}
+        {filteredHistory.length > 0 && (
           <div className="min-w-[800px]">
             <table className="w-full text-left border-collapse">
               <thead>
@@ -253,7 +254,7 @@ export function QueryHistory({ onSelectQuery, activeConnectionId, refreshTrigger
                     onClick={() => handleSort("executedAt")}
                   >
                     <div className="flex items-center gap-2">
-                      Executed At
+                      <span>Executed At</span>
                       <ArrowUpDown
                         className={cn(
                           "w-3 h-3 transition-opacity",
@@ -271,7 +272,7 @@ export function QueryHistory({ onSelectQuery, activeConnectionId, refreshTrigger
                     onClick={() => handleSort("executionTime")}
                   >
                     <div className="flex items-center gap-2">
-                      Duration
+                      <span>Duration</span>
                       <ArrowUpDown
                         className={cn(
                           "w-3 h-3 transition-opacity",
@@ -287,7 +288,7 @@ export function QueryHistory({ onSelectQuery, activeConnectionId, refreshTrigger
                     onClick={() => handleSort("rowCount")}
                   >
                     <div className="flex items-center gap-2">
-                      Rows
+                      <span>Rows</span>
                       <ArrowUpDown
                         className={cn(
                           "w-3 h-3 transition-opacity",
@@ -309,11 +310,12 @@ export function QueryHistory({ onSelectQuery, activeConnectionId, refreshTrigger
                   >
                     <td className="px-4 py-4 text-center">
                       <div className="flex justify-center">
-                        {item.status === "success" ? (
+                        {item.status === "success" && (
                           <div className="w-5 h-5 rounded-full bg-emerald-500/10 flex items-center justify-center border border-emerald-500/20">
                             <CheckCircle2 strokeWidth={1.5} className="w-3 h-3 text-emerald-500" />
                           </div>
-                        ) : (
+                        )}
+                        {item.status !== "success" && (
                           <div className="w-5 h-5 rounded-full bg-red-500/10 flex items-center justify-center border border-red-500/20">
                             <AlertCircle strokeWidth={1.5} className="w-3 h-3 text-red-500" />
                           </div>

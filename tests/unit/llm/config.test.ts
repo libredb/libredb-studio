@@ -115,6 +115,13 @@ describe("resolveConfig", () => {
     const config = resolveConfig();
     expect(config.model).toBe(DEFAULT_MODELS.ollama);
   });
+
+  test("custom provider gets undefined apiUrl when LLM_API_URL is not set", () => {
+    process.env.LLM_PROVIDER = "custom";
+    const config = resolveConfig();
+    expect(config.provider).toBe("custom");
+    expect(config.apiUrl).toBeUndefined();
+  });
 });
 
 // ============================================================================

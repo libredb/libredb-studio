@@ -112,6 +112,20 @@ describe("/api/admin/audit", () => {
       expect(mockBuffer.filter).toHaveBeenCalled();
       expect(data.events).toBeArray();
     });
+
+    test("returns 500 when buffer read fails", async () => {
+      mockBuffer.getRecent.mockImplementationOnce(() => {
+        throw new Error("Buffer read failed");
+      });
+
+      const req = createMockRequest("/api/admin/audit");
+
+      const res = await GET(req);
+      const data = await parseResponseJSON<{ error: string }>(res);
+
+      expect(res.status).toBe(500);
+      expect(data.error).toBe("Buffer read failed");
+    });
   });
 
   describe("POST /api/admin/audit", () => {

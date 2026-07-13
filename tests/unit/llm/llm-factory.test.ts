@@ -15,7 +15,11 @@ const LLM_ENV_KEYS = ["LLM_PROVIDER", "LLM_API_KEY", "LLM_MODEL", "LLM_API_URL"]
 // ============================================================================
 
 mock.module("@google/generative-ai", () => ({
-  GoogleGenerativeAI: function () {
+  GoogleGenerativeAI: function (apiKey: string) {
+    // Sentinel key lets tests exercise the factory's non-config error wrapping
+    if (apiKey === "throw-plain-error") {
+      throw new Error("SDK exploded");
+    }
     return {
       getGenerativeModel: () => ({
         generateContentStream: async () => ({ stream: (async function* () {})() }),
@@ -102,6 +106,30 @@ describe("LLM Factory", () => {
           model: "some-model",
         }),
       ).rejects.toThrow(LLMConfigError);
+    });
+
+    test("created gemini provider can stream via the mocked SDK", async () => {
+      const provider = await createLLMProvider({
+        provider: "gemini",
+        apiKey: "test-gemini-key",
+        model: "gemini-2.0-flash",
+      });
+
+      const stream = await provider.stream({ messages: [{ role: "user", content: "hello" }] });
+      const reader = stream.getReader();
+      const { done } = await reader.read();
+      expect(done).toBe(true);
+    });
+
+    test("wraps non-config provider errors in LLMConfigError", async () => {
+      const promise = createLLMProvider({
+        provider: "gemini",
+        apiKey: "throw-plain-error",
+        model: "gemini-2.0-flash",
+      });
+
+      await expect(promise).rejects.toThrow(LLMConfigError);
+      await expect(promise).rejects.toThrow("Failed to load gemini provider: SDK exploded");
     });
   });
 

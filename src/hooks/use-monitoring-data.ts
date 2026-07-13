@@ -159,11 +159,9 @@ export function useMonitoringData(
 
   // Auto-refresh setup (separate effect)
   useEffect(() => {
-    // Clear existing interval
-    if (intervalRef.current) {
-      clearInterval(intervalRef.current);
-      intervalRef.current = null;
-    }
+    // Clear existing interval (the effect cleanup below also clears it between runs)
+    if (intervalRef.current) clearInterval(intervalRef.current);
+    intervalRef.current = null;
 
     // Setup new interval if autoRefresh is enabled and we have a connection
     if (autoRefresh && connection) {

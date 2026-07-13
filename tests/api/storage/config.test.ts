@@ -1,4 +1,5 @@
-import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+import { describe, test, expect, beforeEach, afterEach, spyOn } from "bun:test";
+import * as storageFactory from "@/lib/storage/factory";
 import { GET } from "@/app/api/storage/config/route";
 
 describe("GET /api/storage/config", () => {
@@ -38,5 +39,19 @@ describe("GET /api/storage/config", () => {
     const json = await res.json();
     expect(json.provider).toBe("postgres");
     expect(json.serverMode).toBe(true);
+  });
+
+  test("returns 500 when config resolution fails", async () => {
+    const configSpy = spyOn(storageFactory, "getStorageConfig").mockImplementation(() => {
+      throw new Error("Config read failed");
+    });
+    try {
+      const res = await GET();
+      expect(res.status).toBe(500);
+      const json = await res.json();
+      expect(json.error).toBe("Config read failed");
+    } finally {
+      configSpy.mockRestore();
+    }
   });
 });

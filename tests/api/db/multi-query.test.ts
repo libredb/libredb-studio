@@ -22,9 +22,13 @@ import {
 const mockProvider = createMockProvider();
 const mockGetOrCreateProvider = mock(async () => mockProvider as never);
 
+const mockGetSession = mock(
+  async (): Promise<{ role: string; username: string } | null> => ({ role: "admin", username: "admin" }),
+);
+
 // ─── Mock auth + seed resolution BEFORE importing route ─────────────────────
 mock.module("@/lib/auth", () => ({
-  getSession: mock(async () => ({ role: "admin", username: "admin" })),
+  getSession: mockGetSession,
   signJWT: mock(async () => "mock-token"),
   verifyJWT: mock(async () => null),
   login: mock(async () => {}),
@@ -94,8 +98,12 @@ describe("POST /api/db/multi-query", () => {
     mockGetOrCreateProvider.mockClear();
     (mockProvider.query as ReturnType<typeof mock>).mockClear();
     (mockProvider.prepareQuery as ReturnType<typeof mock>).mockClear();
+    mockGetSession.mockClear();
 
     // Reset to default implementations
+    mockGetSession.mockImplementation(
+      async (): Promise<{ role: string; username: string } | null> => ({ role: "admin", username: "admin" }),
+    );
     mockGetOrCreateProvider.mockImplementation(async () => mockProvider as never);
     (mockProvider.query as ReturnType<typeof mock>).mockImplementation(async () => ({
       rows: [{ id: 1, name: "Alice" }],
@@ -109,6 +117,21 @@ describe("POST /api/db/multi-query", () => {
       limit: 50,
       offset: 0,
     }));
+  });
+
+  test("returns 401 when no session exists", async () => {
+    mockGetSession.mockResolvedValueOnce(null);
+
+    const req = createMockRequest("/api/db/multi-query", {
+      method: "POST",
+      body: { connection: validConnection, sql: "SELECT * FROM users" },
+    });
+
+    const res = await POST(req as never);
+    const data = await parseResponseJSON<{ error: string }>(res);
+
+    expect(res.status).toBe(401);
+    expect(data.error).toContain("Authentication required");
   });
 
   test("single statement returns multiStatement results", async () => {

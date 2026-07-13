@@ -78,4 +78,16 @@ describe("OverviewTab", () => {
     expect(queryByText("Connection Trend")).not.toBeNull();
     expect(queryByTestId("metric-chart")).not.toBeNull();
   });
+
+  test("labels cache hit ratio between 80 and 90 as Good", () => {
+    const data = { ...makeData(), performance: { ...makeData().performance, cacheHitRatio: 85 } } as MonitoringData;
+    const { queryByText } = render(<OverviewTab data={data} loading={false} />);
+    expect(queryByText("Good")).not.toBeNull();
+  });
+
+  test("labels cache hit ratio below 80 as Needs tuning", () => {
+    const data = { ...makeData(), performance: { ...makeData().performance, cacheHitRatio: 72 } } as MonitoringData;
+    const { queryByText } = render(<OverviewTab data={data} loading={false} />);
+    expect(queryByText("Needs tuning")).not.toBeNull();
+  });
 });

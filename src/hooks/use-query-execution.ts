@@ -146,11 +146,8 @@ export function useQueryExecution({
         // Only for SELECT queries
         if (!/^\s*SELECT\b/i.test(sql.trim())) return null;
 
-        if (dbType === "postgres") {
-          return `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ${sql}`;
-        } else if (dbType === "mysql") {
-          return `EXPLAIN FORMAT=JSON ${sql}`;
-        }
+        if (dbType === "postgres") return `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ${sql}`;
+        if (dbType === "mysql") return `EXPLAIN FORMAT=JSON ${sql}`;
         return null;
       };
 

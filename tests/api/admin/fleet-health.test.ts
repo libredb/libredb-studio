@@ -185,6 +185,20 @@ describe("POST /api/admin/fleet-health", () => {
     expect(errorItem!.error).toContain("Connection refused");
   });
 
+  test("invalid JSON body returns 500", async () => {
+    const req = new Request("http://localhost:3000/api/admin/fleet-health", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "not-valid-json{{{",
+    });
+
+    const res = await POST(req);
+    const data = await parseResponseJSON<{ error: string; code: string }>(res);
+
+    expect(res.status).toBe(500);
+    expect(data.code).toBe("INTERNAL_ERROR");
+  });
+
   test("empty connections array returns empty results", async () => {
     const req = createMockRequest("/api/admin/fleet-health", {
       method: "POST",

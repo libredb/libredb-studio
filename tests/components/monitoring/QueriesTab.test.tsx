@@ -77,4 +77,27 @@ describe("QueriesTab", () => {
     expect(rows.length).toBeGreaterThan(0);
     expect(rows[0]?.textContent).toContain("SELECT * FROM events");
   });
+
+  test("toggles sort direction when the same header is clicked twice", () => {
+    const { container, queryByText } = render(<QueriesTab data={makeData()} loading={false} />);
+
+    const callsSortButton = queryByText("Calls");
+    fireEvent.click(callsSortButton!);
+    fireEvent.click(callsSortButton!);
+
+    const rows = container.querySelectorAll("tbody tr");
+    expect(rows[0]?.textContent).toContain("VACUUM users");
+  });
+
+  test("formats call counts of a million or more with the M suffix", () => {
+    const data = {
+      ...makeData(),
+      slowQueries: [
+        ...makeData().slowQueries,
+        { queryId: "q4", query: "SELECT count(*) FROM logs", calls: 2500000, totalTime: 500000, avgTime: 0.2, rows: 1 },
+      ],
+    } as MonitoringData;
+    const { queryAllByText } = render(<QueriesTab data={data} loading={false} />);
+    expect(queryAllByText("2.5M").length).toBeGreaterThan(0);
+  });
 });

@@ -118,6 +118,26 @@ describe("POST /api/ai/nl2sql", () => {
     expect(data.error).toContain("required");
   });
 
+  test("uses MongoDB prompt when queryLanguage is json", async () => {
+    const req = createMockRequest("/api/ai/nl2sql", {
+      method: "POST",
+      body: { question: "Count all users", databaseType: "mongodb", queryLanguage: "json" },
+    });
+
+    const res = await POST(req as never);
+    expect(res.status).toBe(200);
+
+    const text = await readStreamResponse(res);
+    expect(text).toBe("mock response");
+
+    const callArgs = (mockStream.mock.calls as unknown[][])[0][0] as {
+      messages: Array<{ role: string; content: string }>;
+    };
+    expect(callArgs.messages[0].role).toBe("system");
+    expect(callArgs.messages[0].content).toContain("NL-to-MongoDB translator");
+    expect(callArgs.messages[0].content).toContain("No schema available.");
+  });
+
   test("returns streaming response with conversation history", async () => {
     const req = createMockRequest("/api/ai/nl2sql", {
       method: "POST",

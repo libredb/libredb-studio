@@ -42,6 +42,17 @@ describe("config-loader", () => {
     await expect(loadConfig()).rejects.toThrow();
   });
 
+  it("throws a parse error on malformed JSON", async () => {
+    process.env.SEED_CONFIG_PATH = path.join(FIXTURES, "malformed-config.json");
+    await expect(loadConfig()).rejects.toThrow(/Failed to parse seed config/);
+  });
+
+  it("rethrows non-ENOENT read errors", async () => {
+    // Reading a directory fails with EISDIR, which must NOT be swallowed.
+    process.env.SEED_CONFIG_PATH = FIXTURES;
+    await expect(loadConfig()).rejects.toThrow();
+  });
+
   it("uses default path when SEED_CONFIG_PATH not set", async () => {
     const config = await loadConfig();
     expect(config).toBeNull();

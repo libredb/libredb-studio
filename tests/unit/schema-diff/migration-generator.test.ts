@@ -191,6 +191,29 @@ describe("generateMigrationSQL: CREATE TABLE", () => {
     expect(sql).toContain('CREATE TABLE "users"');
     expect(sql).toContain("BEGIN;");
   });
+
+  test("unlisted dialect falls back to double-quoted identifiers", () => {
+    const sql = generateMigrationSQL(makeAddedTableDiff(), "mongodb");
+    expect(sql).toContain('CREATE TABLE "users"');
+    expect(sql).toContain('"id" integer NOT NULL');
+  });
+
+  test("added table with foreign keys emits ADD CONSTRAINT after CREATE TABLE", () => {
+    const diff = makeAddedTableDiff();
+    diff.tables[0].foreignKeys = [
+      {
+        action: "added",
+        columnName: "dept_id",
+        targetReferencedTable: "departments",
+        targetReferencedColumn: "id",
+        changes: ["Added FK"],
+      },
+    ];
+    const sql = generateMigrationSQL(diff, "postgres");
+    expect(sql).toContain(
+      'ALTER TABLE "users" ADD CONSTRAINT "fk_users_dept_id" FOREIGN KEY ("dept_id") REFERENCES "departments"("id");',
+    );
+  });
 });
 
 // ============================================================================

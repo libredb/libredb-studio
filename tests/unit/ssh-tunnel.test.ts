@@ -372,6 +372,96 @@ describe("SSH Tunnel", () => {
         port: 5432,
       });
     });
+
+    test("ends the local socket when forwardOut fails", async () => {
+      const connId = "test-fwderr-" + Date.now();
+      lastConnectionId = connId;
+
+      await createSSHTunnel(
+        connId,
+        {
+          enabled: true,
+          host: "bastion.example.com",
+          port: 22,
+          username: "admin",
+          authMethod: "password",
+          password: "pass",
+        },
+        "db.internal",
+        5432,
+      );
+
+      // Make the SSH forward fail for the next incoming socket
+      mockSSHInstance.forwardOut = (
+        _bindAddr: string,
+        _bindPort: number,
+        _host: string,
+        _port: number,
+        cb: (err: Error | null, stream: unknown) => void,
+      ) => {
+        cb(new Error("Channel open failure"), null);
+      };
+
+      const mockSocket = new MockDuplexStream();
+      let ended = false;
+      (mockSocket as unknown as { end: () => void }).end = () => {
+        ended = true;
+      };
+      mockServerInstance.connectionHandler!(mockSocket);
+      expect(ended).toBe(true);
+    });
+
+    test("destroys the socket on stream error and closes the stream on socket error", async () => {
+      const connId = "test-streamerr-" + Date.now();
+      lastConnectionId = connId;
+
+      await createSSHTunnel(
+        connId,
+        {
+          enabled: true,
+          host: "bastion.example.com",
+          port: 22,
+          username: "admin",
+          authMethod: "password",
+          password: "pass",
+        },
+        "db.internal",
+        5432,
+      );
+
+      // Capture the forwarded stream so its error handlers can be exercised
+      const streams: MockDuplexStream[] = [];
+      let streamClosed = false;
+      mockSSHInstance.forwardOut = (
+        _bindAddr: string,
+        _bindPort: number,
+        _host: string,
+        _port: number,
+        cb: (err: Error | null, stream: unknown) => void,
+      ) => {
+        const stream = new MockDuplexStream();
+        (stream as unknown as { close: () => void }).close = () => {
+          streamClosed = true;
+        };
+        streams.push(stream);
+        cb(null, stream);
+      };
+
+      const mockSocket = new MockDuplexStream();
+      let destroyed = false;
+      (mockSocket as unknown as { end: () => void }).end = () => {};
+      (mockSocket as unknown as { destroy: () => void }).destroy = () => {
+        destroyed = true;
+      };
+      mockServerInstance.connectionHandler!(mockSocket);
+      expect(streams.length).toBe(1);
+
+      streams[0].emit("error", new Error("stream broke"));
+      expect(destroyed).toBe(true);
+
+      mockSocket.emit("error", new Error("socket broke"));
+      expect(streamClosed).toBe(true);
+    });
   });
 
   describe("closeSSHTunnel", () => {

@@ -50,7 +50,7 @@ mock.module("@/components/admin/tabs/AuditTab", () => ({
   },
 }));
 
-import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+import { describe, test, expect, beforeEach, afterEach, mock as bunMock } from "bun:test";
 import { render, fireEvent, waitFor, act, cleanup } from "@testing-library/react";
 import React from "react";
 
@@ -58,7 +58,10 @@ import { mockGlobalFetch, restoreGlobalFetch } from "../../helpers/mock-fetch";
 import { mockRouterPush, mockRouterRefresh } from "../../helpers/mock-navigation";
 import { mockToastSuccess } from "../../helpers/mock-sonner";
 
-import AdminDashboard from "@/components/admin/AdminDashboard";
+// Dynamic import AFTER mock.module registrations: static imports are hoisted,
+// which would evaluate the real tab modules (SecurityTab, OverviewTab, ...) in
+// this process and pollute their coverage with unexecuted 0-hit line records.
+const { default: AdminDashboard } = await import("@/components/admin/AdminDashboard");
 
 // =============================================================================
 // AdminDashboard Tests
@@ -201,5 +204,30 @@ describe("AdminDashboard", () => {
     await waitFor(() => {
       expect(mockRouterPush).toHaveBeenCalledWith("/login");
     });
+  });
+
+  test("logs error when auth fetch fails", async () => {
+    // Override the default fetch mock with one that rejects for /api/auth/me
+    mockGlobalFetch({
+      "/api/auth/me": () => {
+        throw new Error("network down");
+      },
+    });
+
+    const originalConsoleError = console.error;
+    const consoleErrorMock = bunMock(() => {});
+    console.error = consoleErrorMock;
+
+    try {
+      await act(async () => {
+        render(<AdminDashboard />);
+      });
+
+      await waitFor(() => {
+        expect(consoleErrorMock).toHaveBeenCalledWith("Failed to fetch user:", expect.any(Error));
+      });
+    } finally {
+      console.error = originalConsoleError;
+    }
   });
 });

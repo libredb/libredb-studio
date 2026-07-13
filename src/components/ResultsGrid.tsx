@@ -34,6 +34,9 @@ export interface CellChange {
   newValue: string;
 }
 
+const CLEAR_FILTER_LABEL = "Clear filter";
+const EMPTY_RESULT_HINT = "The operation was successful, but the result set is currently empty.";
+
 interface ResultsGridProps {
   result: QueryResult;
   onLoadMore?: () => void;
@@ -194,13 +197,9 @@ export function ResultsGrid({
                 </span>
               )}
               <div className="flex-shrink-0 opacity-0 group-hover/header:opacity-100 transition-opacity">
-                {column.getIsSorted() === "asc" ? (
-                  <ArrowUp className="w-3 h-3" />
-                ) : column.getIsSorted() === "desc" ? (
-                  <ArrowDown strokeWidth={1.5} className="w-3 h-3" />
-                ) : (
-                  <ArrowUpDown strokeWidth={1.5} className="w-3 h-3" />
-                )}
+                {column.getIsSorted() === "asc" && <ArrowUp className="w-3 h-3" />}
+                {column.getIsSorted() === "desc" && <ArrowDown strokeWidth={1.5} className="w-3 h-3" />}
+                {!column.getIsSorted() && <ArrowUpDown strokeWidth={1.5} className="w-3 h-3" />}
               </div>
             </div>
             <button
@@ -248,7 +247,7 @@ export function ResultsGrid({
                       setActiveFilterCol(null);
                     }}
                   >
-                    Clear filter
+                    {CLEAR_FILTER_LABEL}
                   </button>
                 )}
               </div>
@@ -418,16 +417,13 @@ export function ResultsGrid({
           <span className="text-2xl text-zinc-500">&#x2205;</span>
         </div>
         <p className="text-xs font-medium text-zinc-400">Query returned no data</p>
-        <p className="text-xs text-zinc-600 mt-2 max-w-[280px] leading-relaxed">
-          The operation was successful, but the result set is currently empty.
-        </p>
+        <p className="text-xs text-zinc-600 mt-2 max-w-[280px] leading-relaxed">{EMPTY_RESULT_HINT}</p>
       </div>
     );
   }
 
   return (
     <div className="flex flex-col h-full bg-[#080808]">
-      {/* Stats Bar with View Toggle */}
       <StatsBar
         result={result}
         filteredRowCount={filteredRows.length}
@@ -445,7 +441,6 @@ export function ResultsGrid({
         onDiscardChanges={onDiscardChanges}
       />
 
-      {/* Mobile Card View */}
       <div ref={cardContainerRef} className={cn("flex-1 overflow-auto p-4 md:hidden", viewMode !== "card" && "hidden")}>
         <div style={{ height: `${cardVirtualizer.getTotalSize()}px`, position: "relative" }}>
           {cardVirtualizer.getVirtualItems().map((virtualRow) => (
@@ -476,13 +471,11 @@ export function ResultsGrid({
         </div>
       </div>
 
-      {/* Mobile Table View (when toggled) - Virtualized with horizontal scroll */}
       <div
         ref={mobileTableContainerRef}
         className={cn("flex-1 overflow-auto md:hidden", viewMode !== "table" && "hidden")}
       >
         <div className="min-w-max">
-          {/* Header - Sticky */}
           <div className="sticky top-0 z-20 bg-[#0d0d0d] flex">
             {result.fields.map((field, idx) => {
               const isSensitive = effectiveMaskingEnabled && sensitiveColumns.has(field);
@@ -502,7 +495,6 @@ export function ResultsGrid({
             })}
           </div>
 
-          {/* Virtualized Body */}
           <div
             style={{
               height: `${mobileTableVirtualizer.getTotalSize()}px`,
@@ -554,10 +546,8 @@ export function ResultsGrid({
         </div>
       </div>
 
-      {/* Desktop Table View (always visible on desktop) */}
       <div ref={tableContainerRef} className="hidden md:block flex-1 overflow-auto editor-scrollbar">
         <div className="min-w-max">
-          {/* Header */}
           <div className="sticky top-0 z-20 bg-[#0d0d0d] flex">
             {table.getHeaderGroups().map((headerGroup) =>
               headerGroup.headers.map((header) => (
@@ -568,7 +558,6 @@ export function ResultsGrid({
                 >
                   {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
 
-                  {/* Column Resizer */}
                   <div
                     onMouseDown={header.getResizeHandler()}
                     onTouchStart={header.getResizeHandler()}
@@ -582,7 +571,6 @@ export function ResultsGrid({
             )}
           </div>
 
-          {/* Body */}
           <div style={{ height: `${rowVirtualizer.getTotalSize()}px`, position: "relative" }}>
             {rowVirtualizer.getVirtualItems().map((virtualRow) => {
               const row = rows[virtualRow.index];
@@ -615,12 +603,10 @@ export function ResultsGrid({
         </div>
       </div>
 
-      {/* Load More Footer */}
       {result.pagination?.hasMore && onLoadMore && (
         <LoadMoreFooter hasMore={true} onLoadMore={onLoadMore} isLoadingMore={isLoadingMore} />
       )}
 
-      {/* Row Detail Sheet */}
       {selectedRow && (
         <RowDetailSheet
           row={selectedRow.row}

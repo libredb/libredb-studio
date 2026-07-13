@@ -1,4 +1,4 @@
-import { describe, test, expect, afterEach } from "bun:test";
+import { describe, test, expect, afterEach, spyOn } from "bun:test";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
@@ -91,6 +91,45 @@ describe("libredb-sample", () => {
     const file = tmpPath();
     await seedSampleFile(file);
     expect(fs.existsSync(`${file}.lock`)).toBe(false);
+    expect(fs.existsSync(`${file}.${process.pid}.seeding.lock`)).toBe(false);
+  });
+
+  test("seedSampleFile: treats a rename race as success when the sample was published by another worker", async () => {
+    const file = tmpPath();
+    const realRename = fs.renameSync;
+    // Simulate the Windows-style race: another worker publishes the sample
+    // first, then our rename throws because the destination already exists.
+    const renameSpy = spyOn(fs, "renameSync").mockImplementation(((from: fs.PathLike, to: fs.PathLike) => {
+      if (to === file) {
+        fs.copyFileSync(from, file);
+        throw new Error("EEXIST: file already exists");
+      }
+      return realRename(from, to);
+    }) as typeof fs.renameSync);
+    try {
+      await seedSampleFile(file);
+    } finally {
+      renameSpy.mockRestore();
+    }
+    expect(fs.existsSync(file)).toBe(true);
+    expect(fs.existsSync(`${file}.${process.pid}.seeding`)).toBe(false);
+    expect(fs.existsSync(`${file}.${process.pid}.seeding.lock`)).toBe(false);
+  });
+
+  test("seedSampleFile: rethrows a rename failure when no sample was published, leaving no temp", async () => {
+    const file = tmpPath();
+    const realRename = fs.renameSync;
+    const renameSpy = spyOn(fs, "renameSync").mockImplementation(((from: fs.PathLike, to: fs.PathLike) => {
+      if (to === file) throw new Error("EACCES: simulated rename failure");
+      return realRename(from, to);
+    }) as typeof fs.renameSync);
+    try {
+      await expect(seedSampleFile(file)).rejects.toThrow("EACCES: simulated rename failure");
+    } finally {
+      renameSpy.mockRestore();
+    }
+    expect(fs.existsSync(file)).toBe(false);
+    expect(fs.existsSync(`${file}.${process.pid}.seeding`)).toBe(false);
     expect(fs.existsSync(`${file}.${process.pid}.seeding.lock`)).toBe(false);
   });
 

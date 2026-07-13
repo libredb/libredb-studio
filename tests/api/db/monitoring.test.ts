@@ -22,9 +22,13 @@ import {
 const mockProvider = createMockProvider();
 const mockGetOrCreateProvider = mock(async () => mockProvider as never);
 
+const mockGetSession = mock(
+  async (): Promise<{ role: string; username: string } | null> => ({ role: "admin", username: "admin" }),
+);
+
 // ─── Mock auth + seed resolution BEFORE importing route ─────────────────────
 mock.module("@/lib/auth", () => ({
-  getSession: mock(async () => ({ role: "admin", username: "admin" })),
+  getSession: mockGetSession,
   signJWT: mock(async () => "mock-token"),
   verifyJWT: mock(async () => null),
   login: mock(async () => {}),
@@ -93,8 +97,12 @@ describe("POST /api/db/monitoring", () => {
   beforeEach(() => {
     mockGetOrCreateProvider.mockClear();
     (mockProvider.getMonitoringData as ReturnType<typeof mock>).mockClear();
+    mockGetSession.mockClear();
 
     // Reset implementations
+    mockGetSession.mockImplementation(
+      async (): Promise<{ role: string; username: string } | null> => ({ role: "admin", username: "admin" }),
+    );
     mockGetOrCreateProvider.mockImplementation(async () => mockProvider as never);
     (mockProvider.getMonitoringData as ReturnType<typeof mock>).mockImplementation(async () => ({
       timestamp: new Date(),
@@ -170,6 +178,37 @@ describe("POST /api/db/monitoring", () => {
 
     expect(res.status).toBe(400);
     expect(data.error).toContain("Invalid JSON");
+  });
+
+  test("returns 401 when no session exists", async () => {
+    mockGetSession.mockResolvedValueOnce(null);
+
+    const req = createMockRequest("/api/db/monitoring", {
+      method: "POST",
+      body: { connection: validConnection },
+    });
+
+    const res = await POST(req as never);
+    const data = await parseResponseJSON<{ error: string }>(res);
+
+    expect(res.status).toBe(401);
+    expect(data.error).toContain("Authentication required");
+  });
+
+  test("aborted request returns 499 with empty body", async () => {
+    const abortError = new Error("socket hang up") as NodeJS.ErrnoException;
+    abortError.code = "ECONNRESET";
+    (mockProvider.getMonitoringData as ReturnType<typeof mock>).mockRejectedValueOnce(abortError);
+
+    const req = createMockRequest("/api/db/monitoring", {
+      method: "POST",
+      body: { connection: validConnection },
+    });
+
+    const res = await POST(req as never);
+
+    expect(res.status).toBe(499);
+    expect(await res.text()).toBe("");
   });
 
   test("missing connection type returns 400", async () => {

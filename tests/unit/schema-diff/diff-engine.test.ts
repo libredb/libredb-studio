@@ -204,6 +204,25 @@ describe("diffSchemas: modified columns", () => {
     expect(col.changes.some((c) => c.includes("Nullable changed"))).toBe(true);
   });
 
+  test("column primary key changed", () => {
+    const source: TableSchema[] = [
+      makeTable({
+        name: "users",
+        columns: [{ name: "uuid", type: "uuid", nullable: false, isPrimary: false }],
+      }),
+    ];
+    const target: TableSchema[] = [
+      makeTable({
+        name: "users",
+        columns: [{ name: "uuid", type: "uuid", nullable: false, isPrimary: true }],
+      }),
+    ];
+    const result = diffSchemas(source, target);
+    const col = result.tables[0].columns.find((c) => c.columnName === "uuid")!;
+    expect(col.action).toBe("modified");
+    expect(col.changes.some((c) => c.includes("Primary key changed: false → true"))).toBe(true);
+  });
+
   test("column default changed", () => {
     const source: TableSchema[] = [
       makeTable({
@@ -271,6 +290,27 @@ describe("diffSchemas: indexes", () => {
     const result = diffSchemas(source, target);
     const table = result.tables.find((t) => t.tableName === "users")!;
     expect(table.indexes[0].action).toBe("removed");
+  });
+
+  test("index columns changed is detected as modified", () => {
+    const source: TableSchema[] = [
+      makeTable({
+        name: "users",
+        columns: [{ name: "email", type: "varchar", nullable: false, isPrimary: false }],
+        indexes: [{ name: "idx_users", columns: ["email"], unique: false }],
+      }),
+    ];
+    const target: TableSchema[] = [
+      makeTable({
+        name: "users",
+        columns: [{ name: "email", type: "varchar", nullable: false, isPrimary: false }],
+        indexes: [{ name: "idx_users", columns: ["email", "created_at"], unique: false }],
+      }),
+    ];
+    const result = diffSchemas(source, target);
+    const idx = result.tables[0].indexes.find((i) => i.indexName === "idx_users")!;
+    expect(idx.action).toBe("modified");
+    expect(idx.changes.some((c) => c.includes("Columns changed: (email) → (email, created_at)"))).toBe(true);
   });
 
   test("index uniqueness changed is detected as modified", () => {

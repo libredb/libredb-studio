@@ -14,6 +14,18 @@ let lastReactFlowProps: Record<string, unknown> = {};
 mock.module("@xyflow/react", () => {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const React = require("react");
+  // Probe rendered inside the diagram's providers: the only in-card control
+  // (the "+N more" expander) disappears once a table is expanded, so tests
+  // exercise the collapse half of toggleExpand through the context action.
+  const DiagramActionsProbe = () => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { useDiagramActions } = require("@/components/schema-diagram/diagram-context");
+    const actions = useDiagramActions();
+    return React.createElement("button", {
+      "data-testid": "probe-toggle-expand",
+      onClick: () => actions.toggleExpand("wide"),
+    });
+  };
   return {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     ReactFlow: (props: Record<string, any>) => {
@@ -54,6 +66,7 @@ mock.module("@xyflow/react", () => {
           React.createElement("svg", { key: "__svg__" }),
         ),
         React.createElement(React.Fragment, { key: "__children__" }, children),
+        React.createElement(DiagramActionsProbe, { key: "__probe__" }),
       );
     },
     ReactFlowProvider: ({ children }: { children: unknown }) => children,
@@ -140,9 +153,16 @@ import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import { render, fireEvent, within, cleanup, act } from "@testing-library/react";
 import React from "react";
 
+import { renderToStaticMarkup } from "react-dom/server";
+
 import { SchemaDiagram } from "@/components/SchemaDiagram";
+import { exportViewportImage, svgDataUrlToBlob } from "@/components/schema-diagram/export";
 import { FkEdge } from "@/components/schema-diagram/FkEdge";
-import { createHighlightStore, HighlightStoreProvider } from "@/components/schema-diagram/highlight-store";
+import {
+  createHighlightStore,
+  HighlightStoreProvider,
+  useTableHighlighted,
+} from "@/components/schema-diagram/highlight-store";
 import { mockToastError } from "../helpers/mock-sonner";
 import { mockSchema, emptySchema } from "../fixtures/schemas";
 import type { TableSchema } from "@/lib/types";
@@ -945,6 +965,24 @@ describe("SchemaDiagram", () => {
       expect(view.queryByText("Selected:")).toBeNull();
     });
 
+    test("selection is dropped when the selected table is filtered out", () => {
+      const props = createDefaultProps();
+      const { container } = render(<SchemaDiagram {...props} />);
+      const view = within(container);
+
+      fireEvent.click(container.querySelector('[data-node-id="users"]')!);
+      expect(view.queryByText("Selected:")).not.toBeNull();
+
+      // Filtering "users" out of the graph must clear the stale selection.
+      const searchInput = view.getByPlaceholderText("Filter tables...");
+      fireEvent.change(searchInput, { target: { value: "orders" } });
+
+      expect(view.queryByText("Selected:")).toBeNull();
+      // ...and the surviving table does not inherit any highlight.
+      const ordersNode = container.querySelector('[data-node-id="orders"]')!;
+      expect(ordersNode.querySelector(".border-blue-500\\/60")).toBeNull();
+    });
+
     test("clicking pane background clears selection", () => {
       const props = createDefaultProps();
       const { container } = render(<SchemaDiagram {...props} />);
@@ -1153,6 +1191,78 @@ describe("SchemaDiagram", () => {
 
       expect(mockToastError).toHaveBeenCalled();
     });
+
+    test("export with every table filtered out toasts and never captures", async () => {
+      const props = createDefaultProps();
+      const { container } = render(<SchemaDiagram {...props} />);
+      const view = within(container);
+
+      fireEvent.change(view.getByPlaceholderText("Filter tables..."), { target: { value: "no-such-table" } });
+      expect(view.queryByText("0 tables")).not.toBeNull();
+
+      const pngButton = view.getByText("PNG").closest("button")!;
+      await act(async () => {
+        fireEvent.click(pngButton);
+        await new Promise((r) => setTimeout(r, 20));
+      });
+
+      expect(mockSnapdom).not.toHaveBeenCalled();
+      expect(mockToastError).toHaveBeenCalled();
+    });
+
+    test("PNG export whose encoder produces no data surfaces a toast", async () => {
+      // Browsers may hand back a null blob from canvas encoding; the export
+      // must turn that into user feedback instead of downloading nothing.
+      mockToBlob.mockImplementationOnce(() => Promise.resolve(null as unknown as Blob));
+
+      const props = createDefaultProps();
+      const { container } = render(<SchemaDiagram {...props} />);
+      const view = within(container);
+
+      const pngButton = view.getByText("PNG").closest("button")!;
+      await act(async () => {
+        fireEvent.click(pngButton);
+        await new Promise((r) => setTimeout(r, 20));
+      });
+
+      expect(mockToastError).toHaveBeenCalled();
+    });
+
+    test("svgDataUrlToBlob rejects non-SVG data URLs", () => {
+      expect(() => svgDataUrlToBlob("data:image/png;base64,AAAA")).toThrow("Not an SVG data URL");
+    });
+
+    test("exportViewportImage rejects when the viewport is not attached to a pane", async () => {
+      const detachedViewport = document.createElement("div");
+      detachedViewport.className = "react-flow__viewport";
+      await expect(
+        exportViewportImage("png", { viewport: detachedViewport, bounds: { x: 0, y: 0, width: 100, height: 100 } }),
+      ).rejects.toThrow("Diagram viewport is not attached to the document");
+      expect(mockSnapdom).not.toHaveBeenCalled();
+    });
+
+    test("export still succeeds when requestAnimationFrame is unavailable", async () => {
+      // The paint-yield helper must fall back to a plain timeout when rAF is
+      // missing (non-browser embedding); the export must complete either way.
+      const originalRaf = globalThis.requestAnimationFrame;
+      globalThis.requestAnimationFrame = undefined as unknown as typeof requestAnimationFrame;
+      try {
+        const props = createDefaultProps();
+        const { container } = render(<SchemaDiagram {...props} />);
+        const view = within(container);
+
+        const pngButton = view.getByText("PNG").closest("button")!;
+        await act(async () => {
+          fireEvent.click(pngButton);
+          await new Promise((r) => setTimeout(r, 40));
+        });
+
+        expect(mockSnapdom).toHaveBeenCalledTimes(1);
+        expect(mockToBlob).toHaveBeenCalledTimes(1);
+      } finally {
+        globalThis.requestAnimationFrame = originalRaf;
+      }
+    });
   });
 
   // ═══════════════════════════════════════════════════════════════════════
@@ -1234,6 +1344,14 @@ describe("SchemaDiagram", () => {
         store.select("users", new Set(["orders"]));
       });
       expect(within(container).queryByText("1:N")).not.toBeNull();
+    });
+
+    test("highlight hooks throw when used outside a HighlightStoreProvider", () => {
+      const Probe = ({ table }: { table: string }) =>
+        React.createElement("span", null, String(useTableHighlighted(table)));
+      expect(() => renderToStaticMarkup(React.createElement(Probe, { table: "users" }))).toThrow(
+        "useHighlightStore must be used inside a HighlightStoreProvider",
+      );
     });
   });
 
@@ -1394,6 +1512,35 @@ describe("SchemaDiagram", () => {
       expect(layoutCalls).toBe(1);
       expect(view.queryByText("col_29")).not.toBeNull();
     });
+
+    test("a rejected layout clears the spinner and is not retried on cosmetic rebuilds", async () => {
+      let layoutCalls = 0;
+      setLayoutEngineImpl({
+        layout: () => {
+          layoutCalls++;
+          return Promise.reject(new Error("elk exploded"));
+        },
+        dispose: () => Promise.resolve(),
+      });
+
+      const props = createDefaultProps({ schema: wideTable });
+      const { container } = render(<SchemaDiagram {...props} />);
+      const view = within(container);
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 20));
+      });
+      expect(layoutCalls).toBe(1);
+      // The catch handler must clear the layouting spinner...
+      expect(view.queryByText("layout")).toBeNull();
+
+      // ...and record the signature so cosmetic rebuilds do not retry.
+      fireEvent.click(view.getByText(/\+\d+ more/));
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 20));
+      });
+      expect(layoutCalls).toBe(1);
+      expect(view.queryByText("col_29")).not.toBeNull();
+    });
   });
 
   // ═══════════════════════════════════════════════════════════════════════
@@ -1435,6 +1582,45 @@ describe("SchemaDiagram", () => {
 
       expect(view.queryByText("col_29")).not.toBeNull();
       expect(view.queryByText(/\+\d+ more/)).toBeNull();
+    });
+
+    test("toggling an expanded table again collapses it back to the capped view", () => {
+      const props = createDefaultProps({ schema: wideTable });
+      const { container } = render(<SchemaDiagram {...props} />);
+      const view = within(container);
+
+      fireEvent.click(view.getByText(/\+\d+ more/));
+      expect(view.queryByText("col_29")).not.toBeNull();
+
+      // The expander is gone once expanded, so the second toggle goes through
+      // the diagram-actions context (see DiagramActionsProbe in the mock).
+      fireEvent.click(view.getByTestId("probe-toggle-expand"));
+      expect(view.queryByText("col_29")).toBeNull();
+      expect(view.queryByText(/\+\d+ more/)).not.toBeNull();
+    });
+
+    test("dragged node positions are recorded and survive cosmetic rebuilds", async () => {
+      const props = createDefaultProps({ schema: wideTable });
+      const { container } = render(<SchemaDiagram {...props} />);
+      const view = within(container);
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 20));
+      });
+
+      const onNodesChange = lastReactFlowProps.onNodesChange as (changes: unknown[]) => void;
+      act(() => {
+        onNodesChange([
+          { id: "wide", type: "position", position: { x: 123, y: 456 } },
+          { id: "wide", type: "select", selected: true },
+          { id: "wide", type: "position" }, // no position payload - must be ignored
+        ]);
+      });
+
+      // Expanding rebuilds the graph with the same structural signature; the
+      // rebuilt node must come back at the dragged position, not the default.
+      fireEvent.click(view.getByText(/\+\d+ more/));
+      const nodes = lastReactFlowProps.nodes as Array<{ id: string; position: { x: number; y: number } }>;
+      expect(nodes.find((n) => n.id === "wide")?.position).toEqual({ x: 123, y: 456 });
     });
   });
 

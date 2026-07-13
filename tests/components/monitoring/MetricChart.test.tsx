@@ -2,13 +2,22 @@ import "../../setup-dom";
 import { mock } from "bun:test";
 import React from "react";
 
-// Mock recharts — DOM-only environment can't render SVG charts
+// Local-time timestamp so the tick-formatter assertion is timezone-independent
+const SAMPLE_TS = new Date(2026, 1, 15, 9, 5, 7).getTime();
+
+// Mock recharts — DOM-only environment can't render SVG charts.
+// XAxis invokes the tickFormatter prop so the time-formatting helper runs.
 mock.module("recharts", () => ({
   AreaChart: ({ children, data }: { children: React.ReactNode; data: unknown[] }) =>
     React.createElement("div", { "data-testid": "area-chart", "data-count": data.length }, children),
   Area: (props: Record<string, unknown>) =>
     React.createElement("div", { "data-testid": "area", "data-color": props.stroke }),
-  XAxis: () => React.createElement("div", { "data-testid": "x-axis" }),
+  XAxis: (props: Record<string, unknown>) =>
+    React.createElement(
+      "div",
+      { "data-testid": "x-axis" },
+      typeof props.tickFormatter === "function" ? (props.tickFormatter as (ts: number) => string)(SAMPLE_TS) : null,
+    ),
   YAxis: () => React.createElement("div", { "data-testid": "y-axis" }),
   ResponsiveContainer: ({ children }: { children: React.ReactNode }) =>
     React.createElement("div", { "data-testid": "responsive-container" }, children),
@@ -95,5 +104,14 @@ describe("MetricChart", () => {
     const { container } = render(<MetricChart data={[]} color="#3b82f6" title="Test" />);
     // Should render without error (unit defaults to '')
     expect(container).not.toBeNull();
+  });
+
+  test("formats axis tick timestamps as HH:MM:SS", () => {
+    const data = [
+      { timestamp: SAMPLE_TS, value: 10 },
+      { timestamp: SAMPLE_TS + 1000, value: 20 },
+    ];
+    const { getByTestId } = render(<MetricChart data={data} color="#3b82f6" title="Latency" />);
+    expect(getByTestId("x-axis").textContent).toBe("09:05:07");
   });
 });

@@ -117,6 +117,26 @@ describe("PUT /api/storage/[collection]", () => {
     expect(res.status).toBe(200);
     expect(mockProvider.setCollection).toHaveBeenCalledWith("admin@test.com", "connections", data);
   });
+
+  test("returns 400 when data field is missing", async () => {
+    const request = new NextRequest("http://localhost/api/storage/connections", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    const res = await PUT(request, { params: Promise.resolve({ collection: "connections" }) });
+    expect(res.status).toBe(400);
+    const json = await res.json();
+    expect(json.error).toContain("Missing required field: data");
+  });
+
+  test("returns 500 when setCollection fails", async () => {
+    mockProvider.setCollection.mockRejectedValueOnce(new Error("Write failed"));
+    const res = await makeRequest("connections", []);
+    expect(res.status).toBe(500);
+    const json = await res.json();
+    expect(json.error).toBe("Write failed");
+  });
 });
 
 describe("POST /api/storage/migrate", () => {
@@ -165,6 +185,14 @@ describe("POST /api/storage/migrate", () => {
     const json = await res.json();
     expect(json.ok).toBe(true);
     expect(json.migrated).toEqual([]);
+  });
+
+  test("returns 500 when mergeData fails", async () => {
+    mockProvider.mergeData.mockRejectedValueOnce(new Error("Merge failed"));
+    const res = await makeMigrateRequest({ connections: [] });
+    expect(res.status).toBe(500);
+    const json = await res.json();
+    expect(json.error).toBe("Merge failed");
   });
 });
 

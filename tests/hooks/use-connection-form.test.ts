@@ -716,4 +716,59 @@ describe("useConnectionForm", () => {
     // testResult should remain null — no action taken
     expect(result.current.testResult).toBeNull();
   });
+
+  // ── onTestConnection adapter (platform embedding) ───────────────────────
+
+  test("handleTestConnection uses onTestConnection adapter on success", async () => {
+    const fetchMock = mockGlobalFetch({});
+    const onTestConnection = mock(async () => ({ success: true, latency: 42 }));
+
+    const { result } = renderHook(() => useConnectionForm({ ...defaultProps, onTestConnection }));
+
+    await act(async () => {
+      await result.current.handleTestConnection();
+    });
+
+    // The adapter replaces the built-in fetch entirely
+    expect(onTestConnection).toHaveBeenCalledTimes(1);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(result.current.testResult?.success).toBe(true);
+    expect(result.current.testResult?.message).toBe("Connected successfully (42ms)");
+    expect(result.current.testResult?.latency).toBe(42);
+  });
+
+  test("handleTestConnection uses onTestConnection adapter error on failure", async () => {
+    mockGlobalFetch({});
+    const onTestConnection = mock(async () => ({ success: false, error: "Auth failed" }));
+
+    const { result } = renderHook(() => useConnectionForm({ ...defaultProps, onTestConnection }));
+
+    await act(async () => {
+      await result.current.handleTestConnection();
+    });
+
+    expect(result.current.testResult?.success).toBe(false);
+    expect(result.current.testResult?.message).toBe("Auth failed");
+  });
+
+  test("handleConnect uses onTestConnection adapter and connects on success", async () => {
+    const fetchMock = mockGlobalFetch({});
+    const onTestConnection = mock(async () => ({ success: true }));
+
+    const { result } = renderHook(() => useConnectionForm({ ...defaultProps, onTestConnection }));
+
+    act(() => {
+      result.current.setName("Adapter Conn");
+    });
+
+    await act(async () => {
+      await result.current.handleConnect();
+    });
+
+    expect(onTestConnection).toHaveBeenCalledTimes(1);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(defaultProps.onConnect).toHaveBeenCalledTimes(1);
+    // Form is reset after a successful connect
+    expect(result.current.name).toBe("");
+  });
 });

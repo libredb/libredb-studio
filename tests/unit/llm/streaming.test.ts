@@ -112,6 +112,15 @@ describe("createSSEParser", () => {
     expect(output).toBe("value");
   });
 
+  test("skips data lines whose JSON is not an object", async () => {
+    const input = ["data: null", 'data: "plain string"', 'data: {"choices":[{"delta":{"content":"obj"}}]}', ""].join(
+      "\n",
+    );
+
+    const output = await pipeSSE(input);
+    expect(output).toBe("obj");
+  });
+
   test("skips data lines where delta has no content field", async () => {
     const input = ['data: {"choices":[{"delta":{}}]}', 'data: {"choices":[{"delta":{"content":"real"}}]}', ""].join(
       "\n",

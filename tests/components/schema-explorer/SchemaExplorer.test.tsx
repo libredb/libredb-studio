@@ -10,10 +10,22 @@ setupFramerMotionMock();
 
 // Mock the child TableItem component to simplify testing
 mock.module("@/components/schema-explorer/TableItem", () => ({
-  TableItem: ({ table }: { table: { name: string } }) => {
+  TableItem: ({
+    table,
+    isExpanded,
+    onToggle,
+  }: {
+    table: { name: string };
+    isExpanded: boolean;
+    onToggle: () => void;
+  }) => {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const React = require("react");
-    return React.createElement("div", { "data-testid": `table-${table.name}` }, table.name);
+    return React.createElement(
+      "div",
+      { "data-testid": `table-${table.name}`, "data-expanded": String(isExpanded), onClick: onToggle },
+      table.name,
+    );
   },
 }));
 
@@ -126,6 +138,26 @@ describe("SchemaExplorer", () => {
     expect(container.querySelector('[data-testid="table-users"]')).not.toBeNull();
     expect(container.querySelector('[data-testid="table-orders"]')).toBeNull();
     expect(container.querySelector('[data-testid="table-products"]')).toBeNull();
+  });
+
+  // ── Expand / collapse toggle ──────────────────────────────────────────────
+
+  test("clicking a table expands it and clicking again collapses it", async () => {
+    const user = userEvent.setup();
+    const props = createDefaultProps();
+    const { container } = render(<SchemaExplorer {...props} />);
+    const usersItem = () => container.querySelector('[data-testid="table-users"]') as HTMLElement;
+    const ordersItem = () => container.querySelector('[data-testid="table-orders"]') as HTMLElement;
+
+    expect(usersItem().getAttribute("data-expanded")).toBe("false");
+
+    await user.click(usersItem());
+    expect(usersItem().getAttribute("data-expanded")).toBe("true");
+    // Only the toggled table expands
+    expect(ordersItem().getAttribute("data-expanded")).toBe("false");
+
+    await user.click(usersItem());
+    expect(usersItem().getAttribute("data-expanded")).toBe("false");
   });
 
   // ── Table count badge ─────────────────────────────────────────────────────

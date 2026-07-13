@@ -814,4 +814,46 @@ describe("useMonitoringData", () => {
 
     expect(callsLater).toBe(callsAfterDisable);
   });
+
+  // ── refresh with null connection returns early ─────────────────────────
+
+  test("refresh with null connection clears data and skips fetch", async () => {
+    const fetchMock = mockGlobalFetch({});
+
+    const { result } = renderHook(() => useMonitoringData(null));
+
+    await act(async () => {
+      await result.current.refresh();
+    });
+
+    expect(result.current.data).toBeNull();
+    expect(result.current.error).toBeNull();
+    expect(result.current.loading).toBe(false);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  // ── AbortError rejection is ignored ─────────────────────────────────────
+
+  test("ignores AbortError rejections without setting error", async () => {
+    const originalFetch = globalThis.fetch;
+    const abortError = new Error("The operation was aborted.");
+    abortError.name = "AbortError";
+    globalThis.fetch = (async () => {
+      throw abortError;
+    }) as unknown as typeof fetch;
+
+    const { result } = renderHook(() => useMonitoringData(mockConnection));
+
+    // Give the initial fetch time to reject
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+
+    // Cancellation must be silent: no error, no data
+    expect(result.current.error).toBeNull();
+    expect(result.current.data).toBeNull();
+    expect(result.current.loading).toBe(false);
+
+    globalThis.fetch = originalFetch;
+  });
 });

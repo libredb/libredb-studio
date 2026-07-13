@@ -226,6 +226,57 @@ describe("StudioMobileHeader", () => {
     expect(mockOnImport).toHaveBeenCalledTimes(1);
   });
 
+  test("shows Add Connection item when connections list is empty and click calls onAddConnection", () => {
+    const onAddConnection = mock(() => {});
+    const { queryByText } = render(
+      <StudioMobileHeader {...defaults} connections={[]} activeConnection={null} onAddConnection={onAddConnection} />,
+    );
+    const item = queryByText("Add Connection");
+    expect(item).not.toBeNull();
+    // The "Add New" variant only renders when connections exist
+    expect(queryByText("Add New")).toBeNull();
+    fireEvent.click(item!.closest('[role="menuitem"]')!);
+    expect(onAddConnection).toHaveBeenCalledTimes(1);
+  });
+
+  test("Copy Query click writes the editor query to the clipboard", () => {
+    const writeText = mock(async () => {});
+    Object.defineProperty(globalThis.navigator, "clipboard", {
+      value: { writeText },
+      configurable: true,
+    });
+
+    const { queryByText } = render(<StudioMobileHeader {...defaults} />);
+    const item = queryByText("Copy Query");
+    expect(item).not.toBeNull();
+    fireEvent.click(item!.closest('[role="menuitem"]')!);
+
+    expect(writeText).toHaveBeenCalledTimes(1);
+    expect((writeText.mock.calls as unknown[][])[0][0]).toBe("SELECT 1");
+  });
+
+  test("Copy Query falls back to currentQuery when the editor has no value", () => {
+    const writeText = mock(async () => {});
+    Object.defineProperty(globalThis.navigator, "clipboard", {
+      value: { writeText },
+      configurable: true,
+    });
+
+    const emptyEditorRef = {
+      current: {
+        ...defaults.queryEditorRef.current,
+        getValue: mock(() => ""),
+      },
+    };
+    const { queryByText } = render(
+      <StudioMobileHeader {...defaults} queryEditorRef={emptyEditorRef} currentQuery="SELECT 2" />,
+    );
+    fireEvent.click(queryByText("Copy Query")!.closest('[role="menuitem"]')!);
+
+    expect(writeText).toHaveBeenCalledTimes(1);
+    expect((writeText.mock.calls as unknown[][])[0][0]).toBe("SELECT 2");
+  });
+
   test("transactionActive=true shows TXN badge", () => {
     const { queryByText } = render(<StudioMobileHeader {...defaults} transactionActive />);
     expect(queryByText("TXN")).not.toBeNull();

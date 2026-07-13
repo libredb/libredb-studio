@@ -18,8 +18,11 @@ mock.module("@/components/monitoring/MonitoringDashboard", () => ({
 }));
 
 // ── Import after mock ───────────────────────────────────────────────────────
+// Dynamic import so it is not hoisted above the mock.module() call: a static
+// import would evaluate the real MonitoringDashboard (and every monitoring tab
+// it imports), poisoning coverage with all-zero records for those files.
 
-import { MonitoringEmbed } from "@/components/admin/tabs/MonitoringEmbed";
+const { MonitoringEmbed } = await import("@/components/admin/tabs/MonitoringEmbed");
 
 // ── Tests ───────────────────────────────────────────────────────────────────
 

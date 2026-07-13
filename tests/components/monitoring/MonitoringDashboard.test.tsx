@@ -127,7 +127,10 @@ import React from "react";
 
 import { mockRouterPush } from "../../helpers/mock-navigation";
 
-import { MonitoringDashboard } from "@/components/monitoring/MonitoringDashboard";
+// Dynamic import AFTER the mock.module() calls above: a static import would be
+// hoisted and evaluate the real tab modules, poisoning coverage with all-zero
+// records for files this test never exercises.
+const { MonitoringDashboard } = await import("@/components/monitoring/MonitoringDashboard");
 
 // =============================================================================
 // MonitoringDashboard Tests

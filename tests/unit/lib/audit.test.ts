@@ -3,6 +3,7 @@ import {
   AuditRingBuffer,
   type AuditEvent,
   type AuditEventType,
+  getServerAuditBuffer,
   loadAuditFromStorage,
   saveAuditToStorage,
 } from "@/lib/audit";
@@ -296,6 +297,25 @@ describe("AuditRingBuffer", () => {
       expect(all[1].action).toBe("a-3");
       expect(all[2].action).toBe("a-4");
     });
+  });
+});
+
+// ============================================================================
+// getServerAuditBuffer
+// ============================================================================
+
+describe("getServerAuditBuffer", () => {
+  test("lazily creates the global server buffer", () => {
+    const buffer = getServerAuditBuffer();
+    expect(buffer).toBeInstanceOf(AuditRingBuffer);
+  });
+
+  test("returns the same instance on subsequent calls", () => {
+    const first = getServerAuditBuffer();
+    first.push({ type: "maintenance", action: "vacuum", target: "t", user: "u", result: "success" });
+    const second = getServerAuditBuffer();
+    expect(second).toBe(first);
+    expect(second.size).toBe(first.size);
   });
 });
 

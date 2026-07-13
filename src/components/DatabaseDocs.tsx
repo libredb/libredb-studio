@@ -11,6 +11,12 @@ interface DatabaseDocsProps {
   databaseType?: string;
 }
 
+interface ParsedSchemaTable {
+  name: string;
+  rowCount?: number;
+  columns?: { name: string; type: string; isPrimary?: boolean; isNullable?: boolean }[];
+}
+
 export function DatabaseDocs({ schema, schemaContext, databaseType }: DatabaseDocsProps) {
   const [search, setSearch] = useState("");
   const [aiDocs, setAiDocs] = useState("");
@@ -35,22 +41,16 @@ export function DatabaseDocs({ schema, schemaContext, databaseType }: DatabaseDo
           const tables = JSON.parse(schemaContext);
           filteredSchemaStr = tables
             .slice(0, 50)
-            .map(
-              (t: {
-                name: string;
-                rowCount?: number;
-                columns?: { name: string; type: string; isPrimary?: boolean; isNullable?: boolean }[];
-              }) => {
-                const cols =
-                  t.columns
-                    ?.map(
-                      (c) =>
-                        `${c.name} (${c.type}${c.isPrimary ? ", PK" : ""}${c.isNullable === false ? ", NOT NULL" : ""})`,
-                    )
-                    .join(", ") || "";
-                return `Table: ${t.name} (${t.rowCount || 0} rows)\nColumns: ${cols}`;
-              },
-            )
+            .map((t: ParsedSchemaTable) => {
+              const cols =
+                t.columns
+                  ?.map(
+                    (c) =>
+                      `${c.name} (${c.type}${c.isPrimary ? ", PK" : ""}${c.isNullable === false ? ", NOT NULL" : ""})`,
+                  )
+                  .join(", ") || "";
+              return `Table: ${t.name} (${t.rowCount || 0} rows)\nColumns: ${cols}`;
+            })
             .join("\n\n");
         } catch {
           filteredSchemaStr = schemaContext.substring(0, 5000);
@@ -169,7 +169,6 @@ export function DatabaseDocs({ schema, schemaContext, databaseType }: DatabaseDo
 
   return (
     <div className="h-full flex flex-col bg-[#080808]">
-      {/* Header */}
       <div className="flex items-center justify-between px-4 py-2 border-b border-white/5 bg-[#0a0a0a]">
         <div className="flex items-center gap-2">
           <div className="p-1 rounded bg-teal-500/10">
@@ -187,11 +186,8 @@ export function DatabaseDocs({ schema, schemaContext, databaseType }: DatabaseDo
               isAiLoading ? "bg-teal-600/20 text-teal-400 cursor-wait" : "bg-teal-600 hover:bg-teal-500 text-white",
             )}
           >
-            {isAiLoading ? (
-              <Loader2 strokeWidth={1.5} className="w-3 h-3 animate-spin" />
-            ) : (
-              <Sparkles strokeWidth={1.5} className="w-3 h-3" />
-            )}
+            {isAiLoading && <Loader2 strokeWidth={1.5} className="w-3 h-3 animate-spin" />}
+            {!isAiLoading && <Sparkles strokeWidth={1.5} className="w-3 h-3" />}
             {aiDocs ? "Regenerate" : "AI Describe"}
           </button>
           <button
@@ -203,7 +199,6 @@ export function DatabaseDocs({ schema, schemaContext, databaseType }: DatabaseDo
         </div>
       </div>
 
-      {/* Search */}
       <div className="px-4 py-2 border-b border-white/5 bg-[#0a0a0a]">
         <div className="relative">
           <Search strokeWidth={1.5} className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3 h-3 text-zinc-500" />
@@ -216,13 +211,11 @@ export function DatabaseDocs({ schema, schemaContext, databaseType }: DatabaseDo
         </div>
       </div>
 
-      {/* Content */}
       <div className="flex-1 overflow-auto p-4 space-y-3">
         {error && (
           <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-3 text-xs text-red-400">{error}</div>
         )}
 
-        {/* AI Documentation Section */}
         {(aiDocs || isAiLoading) && (
           <div className="bg-teal-500/5 border border-teal-500/10 rounded-lg p-4 mb-4">
             <div className="flex items-center gap-2 mb-3">
@@ -234,7 +227,6 @@ export function DatabaseDocs({ schema, schemaContext, databaseType }: DatabaseDo
           </div>
         )}
 
-        {/* Table Reference */}
         <h3 className="text-xs font-medium text-zinc-400">Table Reference</h3>
         {filteredSchema.map((table) => (
           <div key={table.name} className="bg-[#0a0a0a] border border-white/5 rounded-lg overflow-hidden">

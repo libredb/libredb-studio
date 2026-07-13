@@ -236,7 +236,6 @@ export function CodeGenerator({ isOpen, onClose, tableName, tableSchema, databas
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
       <div className="bg-[#111] border border-white/10 rounded-xl shadow-2xl w-full max-w-xl mx-4 overflow-hidden">
-        {/* Header */}
         <div className="flex items-center justify-between px-5 py-3 border-b border-white/5">
           <div className="flex items-center gap-2">
             <Code strokeWidth={1.5} className="w-3.5 h-3.5 text-purple-400" />
@@ -249,7 +248,6 @@ export function CodeGenerator({ isOpen, onClose, tableName, tableSchema, databas
           </button>
         </div>
 
-        {/* Language Selector */}
         <div className="px-5 py-2 border-b border-white/5 bg-[#0a0a0a]">
           <div className="relative">
             <button
@@ -281,7 +279,6 @@ export function CodeGenerator({ isOpen, onClose, tableName, tableSchema, databas
           </div>
         </div>
 
-        {/* Code Preview */}
         <div className="relative">
           <pre className="p-5 text-xs font-mono text-zinc-300 overflow-auto max-h-[50vh] bg-[#050505] leading-relaxed whitespace-pre">
             {code}
@@ -290,16 +287,12 @@ export function CodeGenerator({ isOpen, onClose, tableName, tableSchema, databas
             onClick={handleCopy}
             className="absolute top-3 right-3 flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-xs text-zinc-400 transition-colors"
           >
-            {copied ? (
-              <Check strokeWidth={1.5} className="w-3 h-3 text-emerald-400" />
-            ) : (
-              <Copy strokeWidth={1.5} className="w-3 h-3" />
-            )}
+            {copied && <Check strokeWidth={1.5} className="w-3 h-3 text-emerald-400" />}
+            {!copied && <Copy strokeWidth={1.5} className="w-3 h-3" />}
             {copied ? "Copied!" : "Copy"}
           </button>
         </div>
 
-        {/* Footer */}
         <div className="px-5 py-3 border-t border-white/5 bg-[#0a0a0a]">
           <p className="text-xs text-zinc-600">
             Generated from <span className="text-zinc-500">{tableName}</span> • {tableSchema?.columns?.length || 0}{" "}

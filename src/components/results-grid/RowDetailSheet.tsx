@@ -108,11 +108,12 @@ export function RowDetailSheet({
               className="h-8 text-xs border-white/10 hover:bg-white/5"
               onClick={copyAllAsJson}
             >
-              {copiedField === "__all__" ? (
+              {copiedField === "__all__" && (
                 <>
                   <Check strokeWidth={1.5} className="w-3 h-3 mr-1 text-emerald-400" /> Copied
                 </>
-              ) : (
+              )}
+              {copiedField !== "__all__" && (
                 <>
                   <Copy strokeWidth={1.5} className="w-3 h-3 mr-1" /> Copy JSON
                 </>
@@ -164,11 +165,8 @@ export function RowDetailSheet({
                         className="h-7 w-7 p-0 opacity-0 group-hover:opacity-100 transition-opacity"
                         onClick={() => copyValue(field, row[field])}
                       >
-                        {copiedField === field ? (
-                          <Check strokeWidth={1.5} className="w-3.5 h-3.5 text-emerald-400" />
-                        ) : (
-                          <Copy strokeWidth={1.5} className="w-3.5 h-3.5 text-zinc-500" />
-                        )}
+                        {copiedField === field && <Check strokeWidth={1.5} className="w-3.5 h-3.5 text-emerald-400" />}
+                        {copiedField !== field && <Copy strokeWidth={1.5} className="w-3.5 h-3.5 text-zinc-500" />}
                       </Button>
                     </div>
                   </div>
