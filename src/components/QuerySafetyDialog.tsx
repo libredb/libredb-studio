@@ -254,7 +254,7 @@ export function QuerySafetyDialog({
 
               {analysis.recommendation && (
                 <div className="bg-[#0a0a0a] rounded-lg p-3 border border-white/5">
-                  <p className="text-xs font-medium text-zinc-500r mb-1">Recommendation</p>
+                  <p className="text-xs font-medium text-zinc-500 mb-1">Recommendation</p>
                   <p className="text-xs text-zinc-300">{analysis.recommendation}</p>
                 </div>
               )}

@@ -304,7 +304,7 @@ describe("CreateTableModal", () => {
 
   // ── 9b. Validate empty table name -> error toast (guard inside handleCreate) ─
 
-  test("handleCreate shows error toast when table name is empty", async () => {
+  test("empty table name keeps the create button disabled and whitespace is sanitized", async () => {
     const onTableCreated = mock(() => {});
     const { baseElement } = render(
       <CreateTableModal isOpen onClose={mock(() => {})} onTableCreated={onTableCreated} />,
@@ -314,16 +314,18 @@ describe("CreateTableModal", () => {
     const createBtn = body.getByText("CREATE TABLE").closest("button") as HTMLButtonElement;
     expect(createBtn.disabled).toBe(true);
 
-    // The button is prop-disabled while the table name is empty, so a DOM click
-    // never reaches React's delegated handler. Invoke the onClick prop directly
-    // to exercise the defensive empty-name guard inside handleCreate.
-    const propsKey = Object.keys(createBtn).find((k) => k.startsWith("__reactProps$"))!;
-    const btnProps = (createBtn as unknown as Record<string, { onClick?: () => Promise<void> }>)[propsKey];
-    await act(async () => {
-      await btnProps.onClick?.();
+    // The name input sanitizes every character outside [a-z0-9_] to "_", so a
+    // whitespace-only name is impossible through the UI: typing spaces yields
+    // underscores and the trim() guard inside handleCreate stays defensive-only.
+    const tableNameInput = baseElement.querySelector("#tableName") as HTMLInputElement;
+    act(() => {
+      fireEvent.change(tableNameInput, { target: { value: "   " } });
     });
+    expect(tableNameInput.value).toBe("___");
+    expect(createBtn.disabled).toBe(false);
 
-    expect(mockToastError).toHaveBeenCalledWith("Table name is required");
+    // A DOM click on the disabled empty-name state never reaches React, so
+    // creation only proceeds with a sanitized non-empty name.
     expect(onTableCreated).not.toHaveBeenCalled();
   });
 

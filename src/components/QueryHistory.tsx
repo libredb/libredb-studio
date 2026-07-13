@@ -240,7 +240,7 @@ export function QueryHistory({ onSelectQuery, activeConnectionId, refreshTrigger
           <div className="h-full flex flex-col items-center justify-center opacity-20 p-8 text-center">
             <HistoryIcon strokeWidth={1.5} className="w-16 h-16 mb-4 text-zinc-600" />
             <p className="text-xs font-medium">No history items found</p>
-            <p className="text-xs text-zinc-500 mt-1r">Run some queries to see them here</p>
+            <p className="text-xs text-zinc-500 mt-1">Run some queries to see them here</p>
           </div>
         )}
         {filteredHistory.length > 0 && (

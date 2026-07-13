@@ -58,42 +58,44 @@ describe("SavedQueries", () => {
   test("delete button removes query after confirm", () => {
     const originalConfirm = globalThis.confirm;
     globalThis.confirm = mock(() => true) as unknown as typeof confirm;
+    try {
+      const onSelectQuery = mock(() => {});
+      const { container, queryByText } = render(<SavedQueries onSelectQuery={onSelectQuery} />);
+      expect(queryByText("Active Users")).not.toBeNull();
 
-    const onSelectQuery = mock(() => {});
-    const { container, queryByText } = render(<SavedQueries onSelectQuery={onSelectQuery} />);
-    expect(queryByText("Active Users")).not.toBeNull();
+      // After deletion, storage returns an empty list
+      mockGetSavedQueries.mockImplementation(() => []);
 
-    // After deletion, storage returns an empty list
-    mockGetSavedQueries.mockImplementation(() => []);
+      // Buttons per card: [0] edit, [1] delete
+      const deleteButton = container.querySelectorAll("button")[1];
+      expect(deleteButton).not.toBeNull();
+      fireEvent.click(deleteButton!);
 
-    // Buttons per card: [0] edit, [1] delete
-    const deleteButton = container.querySelectorAll("button")[1];
-    expect(deleteButton).not.toBeNull();
-    fireEvent.click(deleteButton!);
-
-    expect(mockDeleteSavedQuery).toHaveBeenCalledTimes(1);
-    expect(mockDeleteSavedQuery).toHaveBeenCalledWith("q1");
-    // stopPropagation keeps the card onClick from firing
-    expect(onSelectQuery).not.toHaveBeenCalled();
-    expect(queryByText("Active Users")).toBeNull();
-    expect(queryByText("No saved queries found")).not.toBeNull();
-
-    globalThis.confirm = originalConfirm;
+      expect(mockDeleteSavedQuery).toHaveBeenCalledTimes(1);
+      expect(mockDeleteSavedQuery).toHaveBeenCalledWith("q1");
+      // stopPropagation keeps the card onClick from firing
+      expect(onSelectQuery).not.toHaveBeenCalled();
+      expect(queryByText("Active Users")).toBeNull();
+      expect(queryByText("No saved queries found")).not.toBeNull();
+    } finally {
+      globalThis.confirm = originalConfirm;
+    }
   });
 
   test("delete cancelled by confirm keeps query", () => {
     const originalConfirm = globalThis.confirm;
     globalThis.confirm = mock(() => false) as unknown as typeof confirm;
+    try {
+      const { container, queryByText } = render(<SavedQueries onSelectQuery={mock(() => {})} />);
 
-    const { container, queryByText } = render(<SavedQueries onSelectQuery={mock(() => {})} />);
+      const deleteButton = container.querySelectorAll("button")[1];
+      fireEvent.click(deleteButton!);
 
-    const deleteButton = container.querySelectorAll("button")[1];
-    fireEvent.click(deleteButton!);
-
-    expect(mockDeleteSavedQuery).not.toHaveBeenCalled();
-    expect(queryByText("Active Users")).not.toBeNull();
-
-    globalThis.confirm = originalConfirm;
+      expect(mockDeleteSavedQuery).not.toHaveBeenCalled();
+      expect(queryByText("Active Users")).not.toBeNull();
+    } finally {
+      globalThis.confirm = originalConfirm;
+    }
   });
 
   test("shows empty state when no queries match", () => {
