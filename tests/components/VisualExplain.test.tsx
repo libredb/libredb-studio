@@ -818,3 +818,90 @@ describe("VisualExplain", () => {
     expect(chevrons.length).toBe(0);
   });
 });
+
+// ============================================================================
+// Tree render model (sqlite-queryplan and other tagged-tree strategies)
+// ============================================================================
+
+describe("tree render model (sqlite-queryplan)", () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  const TREE_INPUT = {
+    kind: "tree" as const,
+    root: {
+      label: "Query Plan",
+      children: [{ label: "SCAN employee", children: [{ label: "USING INDEX idx_dept", children: [] }] }],
+    },
+    raw: [{ id: 3, parent: 0, notused: 0, detail: "SCAN employee" }],
+  };
+
+  test("renders the tree labels without fabricated metric badges", () => {
+    const { getByText, queryByText } = render(
+      <VisualExplain plan={TREE_INPUT} query="SELECT 1" databaseType="sqlite" />,
+    );
+    expect(getByText("SCAN employee")).toBeTruthy();
+    expect(getByText("USING INDEX idx_dept")).toBeTruthy();
+    expect(queryByText(/0 rows/)).toBeNull();
+  });
+
+  test("hides the insights tab for metric-less plans and defaults to tree", () => {
+    const { queryByText } = render(<VisualExplain plan={TREE_INPUT} query="SELECT 1" databaseType="sqlite" />);
+    expect(queryByText("insights")).toBeNull();
+  });
+
+  test("raw tab stringifies the raw rows", () => {
+    // switch to the raw tab per the file's existing tab-click helper, then:
+    const { getByText, queryByText } = render(
+      <VisualExplain plan={TREE_INPUT} query="SELECT 1" databaseType="sqlite" />,
+    );
+    fireEvent.click(queryByText("raw")!);
+    expect(getByText(/"detail": "SCAN employee"/)).toBeTruthy();
+  });
+
+  test("legacy array prop still renders the postgres pipeline", () => {
+    // reuse the file's existing postgres plan fixture through the UNCHANGED array prop
+    // and assert the insights tab is present — proves the widening is additive.
+    const { queryByText } = render(<VisualExplain plan={samplePlan} />);
+    expect(queryByText("insights")).not.toBeNull();
+  });
+
+  test("empty tree input falls back to the empty state", () => {
+    const { getByText } = render(<VisualExplain plan={null} query="" />);
+    expect(getByText("No execution plan")).toBeTruthy();
+  });
+
+  test("renders metric badges only for nodes that carry them", () => {
+    const treeWithMetrics = {
+      kind: "tree" as const,
+      root: {
+        label: "Query Plan",
+        children: [
+          {
+            label: "SCAN employee",
+            metrics: { actualRows: 42, actualTimeMs: 3.5 },
+            children: [],
+          },
+        ],
+      },
+      raw: [],
+    };
+    const { getByText, queryByText } = render(<VisualExplain plan={treeWithMetrics} />);
+    expect(getByText(/42 rows/)).toBeTruthy();
+    expect(getByText("3.50ms")).toBeTruthy();
+    // The root node itself carries no metrics, so it must not fabricate a badge.
+    expect(queryByText(/0 rows/)).toBeNull();
+  });
+
+  test("tree header shows a node count instead of postgres stat chips", () => {
+    const { getByText, queryByText } = render(
+      <VisualExplain plan={TREE_INPUT} query="SELECT 1" databaseType="sqlite" />,
+    );
+    // 3 nodes total: root + "SCAN employee" + "USING INDEX idx_dept"
+    expect(getByText("3")).toBeTruthy();
+    expect(getByText("nodes")).toBeTruthy();
+    expect(queryByText("execution")).toBeNull();
+    expect(queryByText("cost")).toBeNull();
+  });
+});

@@ -21,14 +21,15 @@ import {
   Sparkles,
   Play,
   Loader2,
+  ListTree,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import type { ExplainPlanNode, ExplainPlanResult } from "@/lib/explain/types";
+import type { ExplainPlanNode, ExplainPlanResult, ExplainPlanInput, ExplainTreeNode } from "@/lib/explain/types";
 
 export type { ExplainPlanResult } from "@/lib/explain/types";
 
 interface VisualExplainProps {
-  plan: ExplainPlanResult[] | null | undefined;
+  plan: ExplainPlanResult[] | ExplainPlanInput | null | undefined;
   query?: string;
   schemaContext?: string;
   databaseType?: string;
@@ -330,6 +331,69 @@ const PlanNode = ({ node, depth = 0, maxTime }: { node: ExplainPlanNode; depth?:
   );
 };
 
+function countTreeNodes(node: ExplainTreeNode): number {
+  return 1 + node.children.reduce((sum, child) => sum + countTreeNodes(child), 0);
+}
+
+// Generic tree renderer for dialects with no postgres-shaped cost/timing fields
+// (e.g. SQLite's EXPLAIN QUERY PLAN). Mirrors PlanNode's indent/border/expand
+// conventions but only shows metric badges when the node actually carries them
+// — never fabricates "0 rows" / "0μs" for metric-less plans.
+const TreeNodeView = ({ node, depth = 0 }: { node: ExplainTreeNode; depth?: number }) => {
+  const [expanded, setExpanded] = useState(depth < 2);
+  const children = node.children;
+  const metrics = node.metrics;
+  const hasMetrics = metrics !== undefined && (metrics.actualRows !== undefined || metrics.actualTimeMs !== undefined);
+
+  return (
+    <div className="relative">
+      {/* Node */}
+      <div
+        className="group flex items-center gap-2 py-1.5 px-2 rounded-lg transition-all cursor-pointer hover:bg-white/5"
+        onClick={() => setExpanded(!expanded)}
+        style={{ marginLeft: depth * 20 }}
+      >
+        {/* Expand icon */}
+        {children.length > 0 && (
+          <ChevronRight className={cn("w-3 h-3 text-zinc-600 transition-transform", expanded && "rotate-90")} />
+        )}
+        {children.length === 0 && <div className="w-3" />}
+
+        {/* Icon */}
+        <div className="p-1 rounded bg-white/5">
+          <ListTree strokeWidth={1.5} className="w-3 h-3 text-zinc-400" />
+        </div>
+
+        {/* Label */}
+        <div className="flex-1 min-w-0">
+          <span className="text-xs font-medium text-zinc-200 truncate">{node.label}</span>
+        </div>
+
+        {/* Metric badges — only when the node actually carries metrics */}
+        {hasMetrics && (
+          <div className="flex items-center gap-4 text-xs font-mono">
+            {metrics!.actualRows !== undefined && (
+              <span className="text-zinc-500 w-16 text-right">{formatNumber(metrics!.actualRows)} rows</span>
+            )}
+            {metrics!.actualTimeMs !== undefined && (
+              <span className="text-zinc-400 w-16 text-right">{formatTime(metrics!.actualTimeMs)}</span>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Children */}
+      {expanded && children.length > 0 && (
+        <div className="ml-8 pl-4 border-l border-white/5" style={{ marginLeft: depth * 20 + 32 }}>
+          {children.map((child, idx) => (
+            <TreeNodeView key={idx} node={child} depth={depth + 1} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
 // ============================================================================
 // AI Explain Tab Component
 // ============================================================================
@@ -341,7 +405,7 @@ function AIExplainTab({
   databaseType,
   onLoadQuery,
 }: {
-  plan: ExplainPlanResult[];
+  plan: unknown;
   query?: string;
   schemaContext?: string;
   databaseType?: string;
@@ -609,15 +673,28 @@ function AIExplainTab({
 // ============================================================================
 
 export function VisualExplain({ plan, query, schemaContext, databaseType, onLoadQuery }: VisualExplainProps) {
-  const [activeTab, setActiveTab] = useState<"insights" | "tree" | "raw" | "ai">("insights");
-
-  const analysis = useMemo(() => {
-    if (!plan || !Array.isArray(plan) || plan.length === 0) return null;
-    return analyzePlan(plan);
+  // Normalize once: array (legacy) / tagged input / null|undefined -> ExplainPlanInput | null.
+  // Non-empty legacy arrays are wrapped as postgres-json so the rest of the component only
+  // ever deals with the tagged model; this reproduces the old empty-state guards exactly.
+  const input: ExplainPlanInput | null = useMemo(() => {
+    if (!plan) return null;
+    if (Array.isArray(plan)) return plan.length > 0 ? { kind: "postgres-json", plan } : null;
+    return typeof plan === "object" && "kind" in plan ? plan : null;
   }, [plan]);
 
+  const postgresPlan = input !== null && input.kind === "postgres-json" ? input.plan : null;
+
+  const [activeTab, setActiveTab] = useState<"insights" | "tree" | "raw" | "ai">(
+    input !== null && input.kind === "tree" ? "tree" : "insights",
+  );
+
+  const analysis = useMemo(() => {
+    if (!postgresPlan) return null;
+    return analyzePlan(postgresPlan);
+  }, [postgresPlan]);
+
   // Empty state
-  if (!plan || !Array.isArray(plan) || plan.length === 0) {
+  if (input === null) {
     return (
       <div className="h-full flex flex-col items-center justify-center text-zinc-500 bg-[#080808] p-12 text-center">
         <div className="w-12 h-12 rounded-xl bg-white/5 flex items-center justify-center mb-4">
@@ -631,7 +708,10 @@ export function VisualExplain({ plan, query, schemaContext, databaseType, onLoad
     );
   }
 
-  const rootPlan = plan[0]?.Plan;
+  const rootPlan = postgresPlan?.[0]?.Plan;
+  // No "insights" for tree plans — analyzePlan's heuristics key off postgres-only fields
+  // (Actual Rows, Total Cost, buffer stats) that sqlite-queryplan and friends never produce.
+  const tabs = input.kind === "tree" ? (["tree", "raw", "ai"] as const) : (["insights", "ai", "tree", "raw"] as const);
 
   return (
     <div className="h-full flex flex-col bg-[#080808]">
@@ -639,27 +719,35 @@ export function VisualExplain({ plan, query, schemaContext, databaseType, onLoad
       <div className="px-4 py-3 border-b border-white/5 bg-[#0a0a0a]">
         <div className="flex items-center justify-between">
           {/* Quick stats */}
-          <div className="flex items-center gap-6">
+          {input.kind === "tree" ? (
             <div className="flex items-center gap-2">
-              <Clock strokeWidth={1.5} className="w-3 h-3 text-blue-400" />
-              <span className="text-xs font-medium text-zinc-200">{formatTime(analysis?.executionTime || 0)}</span>
-              <span className="text-xs text-zinc-600">execution</span>
+              <Layers strokeWidth={1.5} className="w-3 h-3 text-zinc-500" />
+              <span className="text-xs font-medium text-zinc-200">{countTreeNodes(input.root)}</span>
+              <span className="text-xs text-zinc-600">nodes</span>
             </div>
-            <div className="flex items-center gap-2">
-              <TrendingUp className="w-3 h-3 text-zinc-500" />
-              <span className="text-xs font-medium text-zinc-400">{formatNumber(analysis?.totalRows || 0)}</span>
-              <span className="text-xs text-zinc-600">rows</span>
+          ) : (
+            <div className="flex items-center gap-6">
+              <div className="flex items-center gap-2">
+                <Clock strokeWidth={1.5} className="w-3 h-3 text-blue-400" />
+                <span className="text-xs font-medium text-zinc-200">{formatTime(analysis?.executionTime || 0)}</span>
+                <span className="text-xs text-zinc-600">execution</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <TrendingUp className="w-3 h-3 text-zinc-500" />
+                <span className="text-xs font-medium text-zinc-400">{formatNumber(analysis?.totalRows || 0)}</span>
+                <span className="text-xs text-zinc-600">rows</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <HardDrive strokeWidth={1.5} className="w-3 h-3 text-zinc-500" />
+                <span className="text-xs font-medium text-zinc-400">{formatNumber(analysis?.totalCost || 0)}</span>
+                <span className="text-xs text-zinc-600">cost</span>
+              </div>
             </div>
-            <div className="flex items-center gap-2">
-              <HardDrive strokeWidth={1.5} className="w-3 h-3 text-zinc-500" />
-              <span className="text-xs font-medium text-zinc-400">{formatNumber(analysis?.totalCost || 0)}</span>
-              <span className="text-xs text-zinc-600">cost</span>
-            </div>
-          </div>
+          )}
 
           {/* Tabs */}
           <div className="flex items-center gap-1 bg-white/5 rounded-lg p-0.5">
-            {(["insights", "ai", "tree", "raw"] as const).map((tab) => (
+            {tabs.map((tab) => (
               <button
                 key={tab}
                 onClick={() => setActiveTab(tab)}
@@ -687,7 +775,7 @@ export function VisualExplain({ plan, query, schemaContext, databaseType, onLoad
       <div className="flex-1 overflow-auto">
         {activeTab === "ai" && (
           <AIExplainTab
-            plan={plan}
+            plan={input.kind === "tree" ? input.raw : postgresPlan}
             query={query}
             schemaContext={schemaContext}
             databaseType={databaseType}
@@ -790,7 +878,10 @@ export function VisualExplain({ plan, query, schemaContext, databaseType, onLoad
         {activeTab === "tree" && (
           <div className="p-4">
             <div className="rounded-lg border border-white/5 bg-white/[0.01] p-2">
-              {rootPlan && analysis && <PlanNode node={rootPlan} maxTime={analysis.executionTime || 1} />}
+              {input.kind === "tree" && <TreeNodeView node={input.root} />}
+              {input.kind !== "tree" && rootPlan && analysis && (
+                <PlanNode node={rootPlan} maxTime={analysis.executionTime || 1} />
+              )}
             </div>
           </div>
         )}
@@ -798,7 +889,7 @@ export function VisualExplain({ plan, query, schemaContext, databaseType, onLoad
         {activeTab === "raw" && (
           <div className="p-4">
             <pre className="text-xs font-mono text-zinc-400 bg-white/[0.02] rounded-lg p-4 overflow-auto border border-white/5">
-              {JSON.stringify(plan, null, 2)}
+              {JSON.stringify(input.kind === "tree" ? input.raw : postgresPlan, null, 2)}
             </pre>
           </div>
         )}

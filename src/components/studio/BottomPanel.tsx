@@ -10,11 +10,12 @@ import { NL2SQLPanel } from "@/components/NL2SQLPanel";
 import { AIAutopilotPanel } from "@/components/AIAutopilotPanel";
 import { PivotTable } from "@/components/PivotTable";
 import { DatabaseDocs } from "@/components/DatabaseDocs";
-import { VisualExplain, type ExplainPlanResult } from "@/components/VisualExplain";
+import { VisualExplain } from "@/components/VisualExplain";
 import { QueryHistory } from "@/components/QueryHistory";
 import { SavedQueries } from "@/components/SavedQueries";
 import { DataCharts } from "@/components/DataCharts";
 import { SchemaDiff } from "@/components/SchemaDiff";
+import { resolveExplainPlan } from "@/lib/explain";
 import { cn } from "@/lib/utils";
 import {
   BarChart3,
@@ -344,7 +345,7 @@ export function BottomPanel({
           <ChartDashboardLazy result={currentTab.result} />
         ) : mode === "explain" ? (
           <VisualExplain
-            plan={currentTab.explainPlan as ExplainPlanResult[] | null | undefined}
+            plan={resolveExplainPlan(currentTab.explainPlan)}
             query={currentTab.query}
             schemaContext={schemaContext}
             databaseType={activeConnection?.type}
