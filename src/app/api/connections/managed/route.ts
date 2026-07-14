@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
-import { getManagedConnections } from "@/lib/seed";
+import { getManagedConnections, getPendingSeeds } from "@/lib/seed";
 import { logger } from "@/lib/logger";
 
 export const dynamic = "force-dynamic";
@@ -25,7 +25,10 @@ export async function GET() {
     const rawTTL = Number(process.env.SEED_CACHE_TTL_MS);
     const cacheTTL = Number.isFinite(rawTTL) ? rawTTL : 60_000;
 
-    return NextResponse.json({ connections: sanitized, cacheHint: cacheTTL });
+    // Seed ids still being seeded asynchronously (e.g. the SQLite sample file
+    // copy at boot) — clients poll while non-empty so the sample appears
+    // without a page refresh. Always [] when embedded in platform.
+    return NextResponse.json({ connections: sanitized, cacheHint: cacheTTL, pendingSeeds: getPendingSeeds() });
   } catch (error) {
     logger.error("Failed to load managed connections", error, {
       route: "GET /api/connections/managed",

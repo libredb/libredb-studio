@@ -7,6 +7,14 @@ import { storage } from "@/lib/storage";
 import { logger } from "@/lib/logger";
 import { buildConnectionPayload } from "./use-connection-payload";
 
+/** Managed connections as serialized by GET /api/connections/managed. */
+type ManagedConnectionPayload = Omit<DatabaseConnection, "createdAt"> & { createdAt: string; seedId?: string };
+
+/** Pending-seed poll: 1s ticks, give up after 30. NEXT_PUBLIC_MANAGED_POLL_MS
+ * shortens the tick in source builds and tests only — NEXT_PUBLIC_ values are
+ * inlined at build time, so packaged artifacts always use the default. */
+const MANAGED_POLL_MAX_ATTEMPTS = 30;
+
 export function useConnectionManager(storageReady = false) {
   const [connections, setConnections] = useState<DatabaseConnection[]>([]);
   const [activeConnection, setActiveConnection] = useState<DatabaseConnection | null>(null);
@@ -81,60 +89,141 @@ export function useConnectionManager(storageReady = false) {
   useEffect(() => {
     if (!storageReady) return;
 
+    let cancelled = false;
+    let pollTimer: ReturnType<typeof setInterval> | null = null;
+    const stopPoll = () => {
+      if (pollTimer) {
+        clearInterval(pollTimer);
+        pollTimer = null;
+      }
+    };
+
+    // Merge the server's managed (seed) connections with the user's own,
+    // persisting editable copies of new seeds. Used by the initial fetch AND
+    // the pending-seed poll below, so both produce identical lists.
+    const mergeManagedConnections = (managedConns: ManagedConnectionPayload[]): DatabaseConnection[] => {
+      const userConns = storage.getConnections();
+      const dismissed = new Set(storage.getDismissedSeeds());
+      const merged: DatabaseConnection[] = [];
+
+      // Add managed:true connections (always from server)
+      for (const mc of managedConns) {
+        if (mc.managed) {
+          merged.push({ ...mc, createdAt: new Date(mc.createdAt) });
+        } else {
+          // managed:false — editable user copy
+          if (mc.seedId && dismissed.has(mc.seedId)) continue; // user deleted it; do not re-add
+          const existingCopy = userConns.find((uc: DatabaseConnection) => uc.seedId === mc.seedId);
+          if (existingCopy) {
+            merged.push(existingCopy);
+          } else {
+            const userCopy: DatabaseConnection = { ...mc, createdAt: new Date(mc.createdAt), managed: false };
+            storage.saveConnection(userCopy);
+            merged.push(userCopy);
+          }
+        }
+      }
+
+      // Add remaining user connections (not from seeds)
+      const seedIds = new Set(managedConns.map((mc) => mc.seedId));
+      const mergedIds = new Set(merged.map((c) => c.id));
+      for (const uc of userConns) {
+        // Skip if this user connection came from a seed (by seedId or id match)
+        if (uc.seedId && seedIds.has(uc.seedId)) continue;
+        if (mergedIds.has(uc.id)) continue;
+        merged.push(uc);
+      }
+
+      return merged;
+    };
+
+    const fetchManaged = async (): Promise<{
+      merged: DatabaseConnection[] | null;
+      pendingSeeds: string[];
+      failed: boolean;
+    }> => {
+      const managedRes = await fetch("/api/connections/managed");
+      // A non-OK response is a transient failure, NOT "nothing pending" — the
+      // poll below must keep retrying (bounded by its attempt budget) instead
+      // of treating it as an authoritative empty pendingSeeds.
+      if (!managedRes.ok) return { merged: null, pendingSeeds: [], failed: true };
+      const { connections: managedConns, pendingSeeds } = (await managedRes.json()) as {
+        connections?: ManagedConnectionPayload[];
+        pendingSeeds?: string[];
+      };
+      return {
+        merged: managedConns && managedConns.length > 0 ? mergeManagedConnections(managedConns) : null,
+        pendingSeeds: pendingSeeds ?? [],
+        failed: false,
+      };
+    };
+
+    // A seed being created asynchronously on the server (e.g. the SQLite
+    // sample file copy at boot) is advertised via pendingSeeds. Poll quietly
+    // until it appears so the sample shows up without a page refresh; give up
+    // after the attempt budget and never surface errors — the sample is a
+    // nicety, not a dependency.
+    const startSeedPoll = (pendingSeeds: string[]) => {
+      const dismissed = new Set(storage.getDismissedSeeds());
+      if (!pendingSeeds.some((seedId) => !dismissed.has(seedId))) return;
+
+      const pollMs = Number(process.env.NEXT_PUBLIC_MANAGED_POLL_MS) || 1000;
+      let attempts = 0;
+      let inFlight = false;
+      pollTimer = setInterval(() => {
+        if (inFlight) return;
+        inFlight = true;
+        attempts += 1;
+        fetchManaged()
+          .then(({ merged, pendingSeeds: stillPending, failed }) => {
+            if (cancelled) return;
+            if (merged) {
+              setConnections(merged);
+              setActiveConnection((prev) => prev ?? merged[0] ?? null);
+            }
+            if (failed) return; // transient HTTP failure — keep polling until the attempt budget runs out
+            const dismissedNow = new Set(storage.getDismissedSeeds());
+            if (!stillPending.some((seedId) => !dismissedNow.has(seedId))) stopPoll();
+          })
+          .catch(() => {
+            // Silent — same contract as the initial managed fetch.
+          })
+          .finally(() => {
+            inFlight = false;
+            if (attempts >= MANAGED_POLL_MAX_ATTEMPTS) stopPoll();
+          });
+      }, pollMs);
+    };
+
     const initializeConnections = async () => {
       const loadedConnections = storage.getConnections();
 
       // Fetch managed (seed) connections
       let managedMerged = false;
       try {
-        const managedRes = await fetch("/api/connections/managed");
-        if (managedRes.ok) {
-          const { connections: managedConns } = await managedRes.json();
-          if (managedConns?.length > 0) {
-            const userConns = storage.getConnections();
-            const dismissed = new Set(storage.getDismissedSeeds());
-            const merged: DatabaseConnection[] = [];
+        const { merged, pendingSeeds } = await fetchManaged();
+        if (cancelled) return;
+        if (merged) {
+          setConnections(merged);
+          managedMerged = true;
 
-            // Add managed:true connections (always from server)
-            for (const mc of managedConns) {
-              if (mc.managed) {
-                merged.push({ ...mc, createdAt: new Date(mc.createdAt) });
-              } else {
-                // managed:false — editable user copy
-                if (mc.seedId && dismissed.has(mc.seedId)) continue; // user deleted it; do not re-add
-                const existingCopy = userConns.find((uc: DatabaseConnection) => uc.seedId === mc.seedId);
-                if (existingCopy) {
-                  merged.push(existingCopy);
-                } else {
-                  const userCopy: DatabaseConnection = { ...mc, createdAt: new Date(mc.createdAt), managed: false };
-                  storage.saveConnection(userCopy);
-                  merged.push(userCopy);
-                }
-              }
-            }
-
-            // Add remaining user connections (not from seeds)
-            const seedIds = new Set(managedConns.map((mc: { seedId: string }) => mc.seedId));
-            const mergedIds = new Set(merged.map((c) => c.id));
-            for (const uc of userConns) {
-              // Skip if this user connection came from a seed (by seedId or id match)
-              if (uc.seedId && seedIds.has(uc.seedId)) continue;
-              if (mergedIds.has(uc.id)) continue;
-              merged.push(uc);
-            }
-
-            setConnections(merged);
-            managedMerged = true;
-
-            if (merged.length > 0) {
-              const savedId = storage.getActiveConnectionId();
-              const saved = savedId ? merged.find((c: DatabaseConnection) => c.id === savedId) : null;
-              setActiveConnection(saved ?? merged[0]);
-            }
+          if (merged.length > 0) {
+            const savedId = storage.getActiveConnectionId();
+            const saved = savedId ? merged.find((c: DatabaseConnection) => c.id === savedId) : null;
+            setActiveConnection(saved ?? merged[0]);
           }
         }
+        startSeedPoll(pendingSeeds);
       } catch {
-        // Managed connections are optional — don't break app
+        // Managed connections are optional — don't break app. Deliberately NO
+        // speculative seed poll when this initial fetch fails (rejection here,
+        // or failed:true reaching startSeedPoll as empty pendingSeeds): when
+        // embedded in libredb-platform this endpoint does not exist, and
+        // polling on failure would fire up to 30 useless requests per mount.
+        // A transient boot-time failure is rare (this same server just served
+        // the page) and self-heals on refresh; the failure tolerance inside
+        // the poll only guards the window where a pending seed was actually
+        // observed.
       }
 
       if (!managedMerged) {
@@ -153,6 +242,11 @@ export function useConnectionManager(storageReady = false) {
         error: err instanceof Error ? err.message : String(err),
       });
     });
+
+    return () => {
+      cancelled = true;
+      stopPoll();
+    };
   }, [storageReady]);
 
   // Persist active connection ID

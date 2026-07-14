@@ -12,6 +12,8 @@
 #   - node_modules/bindings         -> better-sqlite3 runtime dependency
 #   - node_modules/file-uri-to-path -> bindings runtime dependency
 #   - node_modules/@libredb/libredb -> lazy-imported, not seen by file tracing
+#   - seed-assets/                  -> vendored sample DB templates (fs-read
+#                                      at runtime, not seen by file tracing)
 #   - data/                         -> default SQLite storage directory
 #
 # Usage: scripts/build-standalone-payload.sh <output-dir> [--smoke]
@@ -158,6 +160,16 @@ mkdir -p "$PAYLOAD_DIR/node_modules/@libredb"
 rm -rf "$PAYLOAD_DIR/node_modules/@libredb/libredb"
 cp -R node_modules/@libredb/libredb "$PAYLOAD_DIR/node_modules/@libredb/libredb"
 
+# Vendored sample database templates (seed-assets/): read at runtime relative
+# to the payload root, so output file tracing never includes them — copy
+# explicitly (mirrors the Dockerfile runner stage COPY).
+if [ ! -f seed-assets/sqlite/employee.db ]; then
+  echo "seed-assets/sqlite/employee.db not found - the repo checkout is incomplete" >&2
+  exit 1
+fi
+rm -rf "$PAYLOAD_DIR/seed-assets"
+cp -R seed-assets "$PAYLOAD_DIR/seed-assets"
+
 echo "==> Packing $TARBALL"
 # Wraps PAYLOAD_DIR in a top-level libredb-studio-<version>/ root instead of
 # a tarbomb (issue #133); consumers extract with --strip-components=1.
@@ -212,6 +224,27 @@ if [ "$RUN_SMOKE" = "true" ]; then
   fi
 
   echo "==> Smoke: /api/db/health returned 200"
+
+  # The embedded SQLite sample seeds asynchronously after boot: the vendored
+  # template must have shipped in the payload and the copy must land in the
+  # data dir. This catches a payload missing seed-assets/ on every platform
+  # without needing a browser (the full Playwright gate is
+  # scripts/channel-embedded-sample-e2e.sh).
+  SAMPLE_SEEDED=false
+  for _ in $(seq 1 30); do
+    if [ -f "$STORAGE_DIR/sample-employees.db" ]; then
+      SAMPLE_SEEDED=true
+      break
+    fi
+    sleep 1
+  done
+  if [ "$SAMPLE_SEEDED" != "true" ]; then
+    echo "Smoke test FAILED: embedded SQLite sample was not seeded within 30s" >&2
+    echo "---- server.log ----" >&2
+    cat "$STAGE_DIR/server.log" >&2 || true
+    exit 1
+  fi
+  echo "==> Smoke: embedded SQLite sample seeded"
 fi
 
 echo "==> Done: $OUT_DIR/$TARBALL"

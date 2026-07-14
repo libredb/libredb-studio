@@ -401,18 +401,26 @@ These are unrelated to the embedded sample connection described below, which use
 
 ---
 
-## Built-in Sample Connection
+## Built-in Sample Connections
 
-Standalone deployments also get one automatic, code-defined seed connection: on first startup, `src/lib/seed/libredb-sample.ts` creates an embedded LibreDB file (default `<data dir>/sample.libredb`, alongside the SQLite storage DB) and seeds it with example data — a `users` table, an `articles` document collection, and a couple of KV entries — one per LibreDB lens. `getManagedConnections()` then appends it to the managed-connections list as `type: "libredb"`, `managed: false`, `roles: ["*"]`, labeled "Sample (LibreDB)", so it behaves like any other unmanaged seed: editable, and if deleted it goes to the dismissed list rather than reappearing.
+Standalone deployments also get automatic, code-defined seed connections (none of this has any effect when embedded in libredb-platform — it is not part of the published `@libredb/studio` package surface):
+
+- **Sample (LibreDB)** — on first startup, `src/lib/seed/libredb-sample.ts` creates an embedded LibreDB file (default `<data dir>/sample.libredb`, alongside the SQLite storage DB) and seeds it with example data — a `users` table, an `articles` document collection, and a couple of KV entries — one per LibreDB lens. Seeded synchronously during boot.
+- **Sample (Employees)** — `src/lib/seed/sqlite-sample.ts` copies the vendored employees SQLite database (`seed-assets/sqlite/employee.db`, from [bytebase/employee-sample-database](https://github.com/bytebase/employee-sample-database) `dataset_small`, originally [datacharmer/test_db](https://github.com/datacharmer/test_db); see `seed-assets/sqlite/ATTRIBUTION.md`) to `<data dir>/sample-employees.db`. Seeded **asynchronously and fail-open**: boot never waits for the copy; while it is in flight `GET /api/connections/managed` lists the seed id in `pendingSeeds` and the client polls (1s, max 30 attempts; the interval constant is inlined at build time — `NEXT_PUBLIC_MANAGED_POLL_MS` only affects source builds and tests, not packaged artifacts) so the connection appears without a page refresh.
+
+`getManagedConnections()` appends each sample to the managed-connections list once its file exists (`managed: false`, `roles: ["*"]`), so they behave like any other unmanaged seed: editable, and if deleted they go to the dismissed list rather than reappearing.
 
 This is separate from the `SEED_CONFIG_PATH` file and needs no config of its own:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `LIBREDB_EMBEDDED_SAMPLE` | `true` | Set to `false` (exact match) to disable the sample connection |
-| `LIBREDB_EMBEDDED_SAMPLE_PATH` | `<data dir>/sample.libredb` | Override the sample file's location |
+| `LIBREDB_EMBEDDED_SAMPLE` | `true` | Set to `false` (exact match) to disable the LibreDB sample |
+| `LIBREDB_EMBEDDED_SAMPLE_PATH` | `<data dir>/sample.libredb` | Override the LibreDB sample file's location |
+| `SQLITE_EMBEDDED_SAMPLE` | `true` | Set to `false` (exact match) to disable the SQLite sample |
+| `SQLITE_EMBEDDED_SAMPLE_PATH` | `<data dir>/sample-employees.db` | Override the SQLite sample file's location |
+| `SQLITE_EMBEDDED_SAMPLE_TEMPLATE` | `<cwd>/seed-assets/sqlite/employee.db` | Override the vendored template's location |
 
-The sample file is only created if it doesn't already exist — the seeding is idempotent and never overwrites a user's edits. This feature has no effect when embedded in libredb-platform (it is not part of the published `@libredb/studio` package surface).
+The sample files are only created if they don't already exist — the seeding is idempotent and never overwrites a user's edits.
 
 ---
 
@@ -462,9 +470,10 @@ seed-connections.yaml (volume mount)
   ┌─────▼──────────────┐
   │ ConnectionFilter    │  Role filter + defaults merge → ManagedConnection[]
   └─────┬──────────────┘
-        │         ┌───────────────────────────────┐
-        ├─────────┤ Embedded sample (libredb-sample.ts) │  Appended if LIBREDB_EMBEDDED_SAMPLE != "false"
-        │         └───────────────────────────────┘
+        │         ┌───────────────────────────────────────┐
+        ├─────────┤ Embedded samples (libredb-sample.ts,   │  Appended if enabled and the
+        │         │ sqlite-sample.ts)                      │  sample file exists
+        │         └───────────────────────────────────────┘
   ┌─────▼───────────────────────┐
   │ GET /api/connections/managed │  Auth + strip credentials for managed:true
   └─────┬───────────────────────┘

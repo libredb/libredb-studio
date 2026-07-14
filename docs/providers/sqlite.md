@@ -198,6 +198,37 @@ or `connectionString` (else "Database file path is required … or `:memory:`").
 path by `getDatabasePath()` — the flag reflects that there is no network DSN, not that the field is
 ignored.
 
+### 4.1 Embedded sample database (standalone mode)
+
+On standalone startup (never when embedded in libredb-platform),
+[`src/lib/seed/sqlite-sample.ts`](../../src/lib/seed/sqlite-sample.ts) copies the vendored
+employees database ([`seed-assets/sqlite/employee.db`](../../seed-assets/sqlite/employee.db),
+from [bytebase/employee-sample-database](https://github.com/bytebase/employee-sample-database)
+`dataset_small`, originally [datacharmer/test_db](https://github.com/datacharmer/test_db) — see
+[`seed-assets/sqlite/ATTRIBUTION.md`](../../seed-assets/sqlite/ATTRIBUTION.md)) to
+`<data dir>/sample-employees.db` and `getManagedConnections()` advertises it as an editable,
+dismissable "Sample (Employees)" connection (`type: "sqlite"`, `managed: false`, `roles: ["*"]`).
+
+Unlike the LibreDB sample, the copy runs **asynchronously and fail-open**: `register()`
+fires-and-forgets the seed (start/completion/duration are logged), boot never waits on it, and a
+failure only logs a warning — the sample is then silently absent. While the copy is in flight the
+managed-connections API reports the seed id in `pendingSeeds` and the client polls (1s, up to 30
+attempts) so the connection appears in the sidebar without a page refresh.
+
+Env vars:
+
+| Variable | Default | Notes |
+|----------|---------|-------|
+| `SQLITE_EMBEDDED_SAMPLE` | `true` | Only the literal `false` disables |
+| `SQLITE_EMBEDDED_SAMPLE_PATH` | `<data dir>/sample-employees.db` | Runtime copy location |
+| `SQLITE_EMBEDDED_SAMPLE_TEMPLATE` | `<cwd>/seed-assets/sqlite/employee.db` | Vendored template location (packaging overrides) |
+
+The template ships as a top-level `seed-assets/` directory in every distribution payload
+(Docker image, standalone tarball, and everything derived from it: npx, deb/rpm, snap,
+Homebrew). Each channel is browser-verified by
+[`scripts/channel-embedded-sample-e2e.sh`](../../scripts/channel-embedded-sample-e2e.sh)
+(see [`docs/DISTRIBUTION.md`](../DISTRIBUTION.md)).
+
 ---
 
 ## 5. Query interface

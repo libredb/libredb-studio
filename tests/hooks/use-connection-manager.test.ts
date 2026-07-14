@@ -675,6 +675,180 @@ describe("useConnectionManager", () => {
     expect(result.current.activeConnection!.id).toBe("managed-1");
   });
 
+  // ── Async seed poll (pendingSeeds) ─────────────────────────────────────────
+
+  const sampleSeed = () =>
+    makeManagedConnection({
+      id: "seed:sqlite-embedded-sample",
+      managed: false,
+      seedId: "sqlite-embedded-sample",
+      name: "Sample (Employees)",
+      type: "sqlite",
+    });
+
+  const managedCallCount = (fetchMock: ReturnType<typeof mockGlobalFetch>) =>
+    fetchMock.mock.calls.filter((c) => String(c[0]).includes("/api/connections/managed")).length;
+
+  const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  test("polls while a seed is pending and merges the sample when it appears, without a refresh", async () => {
+    process.env.NEXT_PUBLIC_MANAGED_POLL_MS = "25";
+    let managedCalls = 0;
+    const fetchMock = mockGlobalFetch({
+      "/api/connections/managed": () => {
+        managedCalls += 1;
+        return managedCalls === 1
+          ? { ok: true, json: { connections: [], pendingSeeds: ["sqlite-embedded-sample"] } }
+          : { ok: true, json: { connections: [sampleSeed()], pendingSeeds: [] } };
+      },
+      "/api/db/health": { ok: true, json: { status: "healthy" } },
+    });
+    try {
+      const { result } = renderHook(() => useConnectionManager(true));
+
+      await waitFor(
+        () => {
+          expect(result.current.connections.some((c) => c.seedId === "sqlite-embedded-sample")).toBe(true);
+        },
+        { timeout: 3000 },
+      );
+      expect(result.current.activeConnection?.seedId).toBe("sqlite-embedded-sample");
+
+      // The poll must stop once nothing is pending.
+      const callsWhenFound = managedCallCount(fetchMock);
+      await sleep(150);
+      expect(managedCallCount(fetchMock)).toBe(callsWhenFound);
+    } finally {
+      delete process.env.NEXT_PUBLIC_MANAGED_POLL_MS;
+    }
+  });
+
+  test("a transient HTTP failure mid-poll does not stop the poll before the sample appears", async () => {
+    process.env.NEXT_PUBLIC_MANAGED_POLL_MS = "25";
+    let managedCalls = 0;
+    mockGlobalFetch({
+      "/api/connections/managed": () => {
+        managedCalls += 1;
+        if (managedCalls === 1)
+          return { ok: true, json: { connections: [], pendingSeeds: ["sqlite-embedded-sample"] } };
+        if (managedCalls === 2) return { status: 503, json: { error: "warming up" } };
+        return { ok: true, json: { connections: [sampleSeed()], pendingSeeds: [] } };
+      },
+      "/api/db/health": { ok: true, json: { status: "healthy" } },
+    });
+    try {
+      const { result } = renderHook(() => useConnectionManager(true));
+
+      // The 503 on tick 1 must NOT be read as "nothing pending" — the poll
+      // keeps going and the sample lands on the next successful tick.
+      await waitFor(
+        () => {
+          expect(result.current.connections.some((c) => c.seedId === "sqlite-embedded-sample")).toBe(true);
+        },
+        { timeout: 3000 },
+      );
+      expect(managedCalls).toBeGreaterThanOrEqual(3);
+    } finally {
+      delete process.env.NEXT_PUBLIC_MANAGED_POLL_MS;
+    }
+  });
+
+  test("does not poll when the managed response has no pending seeds", async () => {
+    process.env.NEXT_PUBLIC_MANAGED_POLL_MS = "25";
+    const fetchMock = mockGlobalFetch({
+      "/api/connections/managed": {
+        ok: true,
+        json: { connections: [makeManagedConnection({ id: "managed-1", managed: true, seedId: "seed-managed" })] },
+      },
+      "/api/db/health": { ok: true, json: { status: "healthy" } },
+    });
+    try {
+      const { result } = renderHook(() => useConnectionManager(true));
+      await waitFor(() => {
+        expect(result.current.connections).toHaveLength(1);
+      });
+
+      await sleep(150);
+      expect(managedCallCount(fetchMock)).toBe(1);
+    } finally {
+      delete process.env.NEXT_PUBLIC_MANAGED_POLL_MS;
+    }
+  });
+
+  test("does not poll for a seed the user has dismissed", async () => {
+    process.env.NEXT_PUBLIC_MANAGED_POLL_MS = "25";
+    // Deleting a seed copy records the dismissal.
+    storage.saveConnection(makeConnection({ id: "dismiss-me", seedId: "sqlite-embedded-sample" }));
+    storage.deleteConnection("dismiss-me");
+
+    const fetchMock = mockGlobalFetch({
+      "/api/connections/managed": {
+        ok: true,
+        json: { connections: [], pendingSeeds: ["sqlite-embedded-sample"] },
+      },
+      "/api/db/health": { ok: true, json: { status: "healthy" } },
+    });
+    try {
+      renderHook(() => useConnectionManager(true));
+      await waitFor(() => {
+        expect(managedCallCount(fetchMock)).toBe(1);
+      });
+
+      await sleep(150);
+      expect(managedCallCount(fetchMock)).toBe(1);
+    } finally {
+      delete process.env.NEXT_PUBLIC_MANAGED_POLL_MS;
+    }
+  });
+
+  test("stops polling after the attempt budget even if the seed never appears", async () => {
+    process.env.NEXT_PUBLIC_MANAGED_POLL_MS = "5";
+    const fetchMock = mockGlobalFetch({
+      "/api/connections/managed": {
+        ok: true,
+        json: { connections: [], pendingSeeds: ["sqlite-embedded-sample"] },
+      },
+      "/api/db/health": { ok: true, json: { status: "healthy" } },
+    });
+    try {
+      renderHook(() => useConnectionManager(true));
+
+      // 1 initial fetch + at most 30 poll attempts.
+      await sleep(500);
+      const after = managedCallCount(fetchMock);
+      expect(after).toBeGreaterThan(1);
+      expect(after).toBeLessThanOrEqual(31);
+      await sleep(100);
+      expect(managedCallCount(fetchMock)).toBe(after);
+    } finally {
+      delete process.env.NEXT_PUBLIC_MANAGED_POLL_MS;
+    }
+  });
+
+  test("clears the seed poll on unmount", async () => {
+    process.env.NEXT_PUBLIC_MANAGED_POLL_MS = "25";
+    const fetchMock = mockGlobalFetch({
+      "/api/connections/managed": {
+        ok: true,
+        json: { connections: [], pendingSeeds: ["sqlite-embedded-sample"] },
+      },
+      "/api/db/health": { ok: true, json: { status: "healthy" } },
+    });
+    try {
+      const { unmount } = renderHook(() => useConnectionManager(true));
+      await waitFor(() => {
+        expect(managedCallCount(fetchMock)).toBeGreaterThanOrEqual(1);
+      });
+      unmount();
+
+      const atUnmount = managedCallCount(fetchMock);
+      await sleep(150);
+      expect(managedCallCount(fetchMock)).toBe(atUnmount);
+    } finally {
+      delete process.env.NEXT_PUBLIC_MANAGED_POLL_MS;
+    }
+  });
+
   // ── Initialization failure is logged, never thrown ────────────────────────
 
   test("logs a warning when connection initialization fails", async () => {
