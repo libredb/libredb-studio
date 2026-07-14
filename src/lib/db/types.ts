@@ -88,9 +88,9 @@ export interface MaintenanceResult {
 /**
  * Dialect discriminant for client-side EXPLAIN handling (issue #194).
  * Each id selects one strategy module in `src/lib/explain`. Extended per
- * provider as explain support lands (sqlite-queryplan arrives with #194 PR-3).
+ * provider as explain support lands.
  */
-export type ExplainFormat = "postgres-json" | "mysql-json";
+export type ExplainFormat = "postgres-json" | "mysql-json" | "sqlite-queryplan";
 
 export interface ProviderCapabilities {
   queryLanguage: "sql" | "json";

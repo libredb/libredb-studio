@@ -2,6 +2,7 @@ import type { ExplainFormat } from "@/lib/db/types";
 import type { ExplainPlanInput, ExplainStrategy, StoredExplainPlan } from "./types";
 import { postgresJsonStrategy } from "./postgres-json";
 import { mysqlJsonStrategy } from "./mysql-json";
+import { sqliteQueryplanStrategy } from "./sqlite-queryplan";
 
 export type { ExplainMode, ExplainStrategy } from "./types";
 export type { ExplainPlanInput, ExplainTreeNode, StoredExplainPlan } from "./types";
@@ -11,6 +12,7 @@ export type { ExplainPlanInput, ExplainTreeNode, StoredExplainPlan } from "./typ
 const registry: Record<ExplainFormat, ExplainStrategy> = {
   "postgres-json": postgresJsonStrategy,
   "mysql-json": mysqlJsonStrategy,
+  "sqlite-queryplan": sqliteQueryplanStrategy,
 };
 
 export function getExplainStrategy(format: ExplainFormat | undefined): ExplainStrategy | null {
