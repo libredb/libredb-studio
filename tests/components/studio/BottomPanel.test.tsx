@@ -238,7 +238,9 @@ describe("BottomPanel", () => {
   });
 
   test("renders tab buttons for all modes", () => {
-    const props = createDefaultProps();
+    const props = createDefaultProps({
+      metadata: { capabilities: { explainFormat: "postgres-json", supportsExplain: true } },
+    });
     const { getByText } = render(<BottomPanel {...(props as React.ComponentProps<typeof BottomPanel>)} />);
 
     const expectedLabels = [
@@ -258,6 +260,20 @@ describe("BottomPanel", () => {
       const btn = getByText(label);
       expect(btn).not.toBeNull();
     }
+  });
+
+  test("Explain tab is hidden when provider metadata lacks explainFormat", () => {
+    const props = createDefaultProps(); // metadata: null
+    const { queryByText } = render(<BottomPanel {...(props as React.ComponentProps<typeof BottomPanel>)} />);
+    expect(queryByText("Explain")).toBeNull();
+  });
+
+  test("Explain tab is visible when provider declares explainFormat", () => {
+    const props = createDefaultProps({
+      metadata: { capabilities: { explainFormat: "postgres-json", supportsExplain: true } },
+    });
+    const { getByText } = render(<BottomPanel {...(props as React.ComponentProps<typeof BottomPanel>)} />);
+    expect(getByText("Explain")).not.toBeNull();
   });
 
   test('Results tab is active by default when mode="results"', () => {

@@ -228,11 +228,13 @@ export function BottomPanel({
     },
   ];
 
+  const visibleTabs = metadata?.capabilities.explainFormat ? tabs : tabs.filter((tab) => tab.key !== "explain");
+
   return (
     <div className="h-full flex flex-col bg-[#080808]">
       <div className="h-9 bg-[#0a0a0a] border-b border-white/5 flex items-center justify-between px-2">
         <div className="flex items-center h-full gap-1">
-          {tabs.map((tab) => (
+          {visibleTabs.map((tab) => (
             <button
               key={tab.key}
               onClick={() => {
