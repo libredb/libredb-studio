@@ -76,4 +76,24 @@ describe("check-coverage CLI", () => {
     expect(exitCode).toBe(1);
     expect(stderr).toContain("no DA records");
   });
+
+  test("fails fast on a DA record appearing before any SF record", () => {
+    const { exitCode, stderr } = runCheck("da-before-sf", "DA:1,5\nSF:src/a.ts\nDA:2,1\nend_of_record\n");
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain("malformed lcov");
+    expect(stderr).toContain("DA record before any SF record");
+  });
+
+  test("fails fast on non-numeric DA fields, naming the offending line", () => {
+    const { exitCode, stderr } = runCheck("da-nan", "SF:src/a.ts\nDA:abc,5\nend_of_record\n");
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain("malformed lcov");
+    expect(stderr).toContain("DA:abc,5");
+  });
+
+  test("tolerates the optional lcov checksum field on DA records", () => {
+    const { exitCode, stdout } = runCheck("da-checksum", "SF:src/a.ts\nDA:1,5,3kA9x\nDA:2,2,zzzz\nend_of_record\n");
+    expect(exitCode).toBe(0);
+    expect(stdout).toContain("2/2 lines (100.00%)");
+  });
 });

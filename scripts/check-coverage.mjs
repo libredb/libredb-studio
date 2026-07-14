@@ -48,7 +48,20 @@ function main() {
     if (line.startsWith("SF:")) {
       currentFile = line.slice(3).trim();
     } else if (line.startsWith("DA:")) {
-      const [lineNo, hits] = line.slice(3).split(",").map(Number);
+      // Gate contract: fail loudly on malformed input instead of producing
+      // confusing output (empty filenames, NaN line numbers). The optional
+      // third lcov field (checksum) is tolerated and ignored.
+      if (!currentFile) {
+        console.error(`check-coverage: malformed lcov — DA record before any SF record: "${line}"`);
+        process.exit(1);
+      }
+      const [lineNoRaw, hitsRaw] = line.slice(3).split(",");
+      const lineNo = Number(lineNoRaw);
+      const hits = Number(hitsRaw);
+      if (!Number.isFinite(lineNo) || !Number.isFinite(hits)) {
+        console.error(`check-coverage: malformed lcov — non-numeric DA record: "${line}"`);
+        process.exit(1);
+      }
       totalLines += 1;
       if (hits > 0) {
         coveredLines += 1;
