@@ -1,4 +1,4 @@
-import type { ExplainStrategy } from "./types";
+import type { ExplainPlanResult, ExplainStrategy } from "./types";
 
 const SELECT_ONLY = /^\s*SELECT\b/i;
 
@@ -10,5 +10,9 @@ export const postgresJsonStrategy: ExplainStrategy = {
   },
   extractPlan(result) {
     return result.rows?.[0]?.["QUERY PLAN"] || result.rows;
+  },
+  toRenderModel(raw) {
+    if (!Array.isArray(raw) || raw.length === 0) return null;
+    return { kind: "postgres-json", plan: raw as ExplainPlanResult[] };
   },
 };

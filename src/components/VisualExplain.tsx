@@ -23,28 +23,9 @@ import {
   Loader2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import type { ExplainPlanNode, ExplainPlanResult } from "@/lib/explain/types";
 
-type ExplainPlanNode = {
-  Plan?: ExplainPlanNode;
-  "Node Type"?: string;
-  "Actual Rows"?: number;
-  "Plan Rows"?: number;
-  "Actual Total Time"?: number;
-  "Total Cost"?: number;
-  "Shared Hit Blocks"?: number;
-  "Shared Read Blocks"?: number;
-  "Relation Name"?: string;
-  "Actual Loops"?: number;
-  Filter?: string;
-  "Index Name"?: string;
-  Plans?: ExplainPlanNode[];
-};
-
-export type ExplainPlanResult = {
-  Plan?: ExplainPlanNode;
-  "Execution Time"?: number;
-  "Planning Time"?: number;
-};
+export type { ExplainPlanResult } from "@/lib/explain/types";
 
 interface VisualExplainProps {
   plan: ExplainPlanResult[] | null | undefined;

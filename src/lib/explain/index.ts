@@ -1,9 +1,10 @@
 import type { ExplainFormat } from "@/lib/db/types";
-import type { ExplainStrategy } from "./types";
+import type { ExplainPlanInput, ExplainStrategy, StoredExplainPlan } from "./types";
 import { postgresJsonStrategy } from "./postgres-json";
 import { mysqlJsonStrategy } from "./mysql-json";
 
 export type { ExplainMode, ExplainStrategy } from "./types";
+export type { ExplainPlanInput, ExplainTreeNode, StoredExplainPlan } from "./types";
 
 // Exhaustive by construction: adding an ExplainFormat member without a
 // registry entry is a compile error.
@@ -14,4 +15,17 @@ const registry: Record<ExplainFormat, ExplainStrategy> = {
 
 export function getExplainStrategy(format: ExplainFormat | undefined): ExplainStrategy | null {
   return format ? registry[format] : null;
+}
+
+function isStoredExplainPlan(value: unknown): value is StoredExplainPlan {
+  if (typeof value !== "object" || value === null || !("raw" in value)) return false;
+  const format = (value as { format?: unknown }).format;
+  return typeof format === "string" && format in registry;
+}
+
+/** Render boundary: QueryTab.explainPlan (unknown) -> tagged render model. Tolerates legacy raw postgres arrays. */
+export function resolveExplainPlan(value: unknown): ExplainPlanInput | null {
+  if (isStoredExplainPlan(value)) return registry[value.format].toRenderModel(value.raw);
+  if (Array.isArray(value)) return postgresJsonStrategy.toRenderModel(value);
+  return null;
 }

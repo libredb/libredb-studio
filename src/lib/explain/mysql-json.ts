@@ -1,4 +1,4 @@
-import type { ExplainStrategy } from "./types";
+import type { ExplainPlanResult, ExplainStrategy } from "./types";
 
 const SELECT_ONLY = /^\s*SELECT\b/i;
 
@@ -12,5 +12,10 @@ export const mysqlJsonStrategy: ExplainStrategy = {
   // "EXPLAIN" column, not "QUERY PLAN"; the real parser lands in #194 PR-4.
   extractPlan(result) {
     return result.rows?.[0]?.["QUERY PLAN"] || result.rows;
+  },
+  // B4 passthrough: renders exactly like today's cast until the real query_block parser lands in #194 PR-4.
+  toRenderModel(raw) {
+    if (!Array.isArray(raw) || raw.length === 0) return null;
+    return { kind: "postgres-json", plan: raw as ExplainPlanResult[] };
   },
 };
