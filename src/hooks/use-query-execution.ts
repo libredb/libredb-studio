@@ -314,14 +314,16 @@ export function useQueryExecution({
         // Process EXPLAIN results (from background or direct)
         let explainPlanData = null;
         if (isExplain) {
-          explainPlanData = explainStrategy ? explainStrategy.extractPlan(resultData) : null;
+          explainPlanData = explainStrategy
+            ? { format: explainStrategy.format, raw: explainStrategy.extractPlan(resultData) }
+            : null;
         } else if (explainPromise && explainStrategy) {
           // Background EXPLAIN - don't block, update async
           explainPromise
             .then(async (explainRes) => {
               if (explainRes.ok) {
                 const explainData = await explainRes.json();
-                const plan = explainStrategy.extractPlan(explainData);
+                const plan = { format: explainStrategy.format, raw: explainStrategy.extractPlan(explainData) };
                 setTabs((prev) => prev.map((t) => (t.id === targetTabId ? { ...t, explainPlan: plan } : t)));
               }
             })

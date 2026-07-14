@@ -1366,6 +1366,40 @@ describe("useQueryExecution", () => {
     expect(body.sql).not.toContain("EXPLAIN");
   });
 
+  // ── background EXPLAIN stores a format-tagged wrapper ──────────────────
+
+  test("background EXPLAIN stores a format-tagged { format, raw } wrapper on the tab", async () => {
+    mockGlobalFetch({
+      "/api/db/query": {
+        ok: true,
+        json: { rows: [{ "QUERY PLAN": { plan: "Seq Scan" } }], fields: ["QUERY PLAN"], rowCount: 1, executionTime: 5 },
+      },
+    });
+
+    const snapshots: QueryTab[][] = [];
+    const setTabsMock = mock((fn: unknown) => {
+      if (typeof fn === "function") {
+        snapshots.push(fn([createTab()]));
+      }
+    });
+
+    const params = createDefaultParams({ setTabs: setTabsMock });
+
+    const { result } = renderHook(() => useQueryExecution(params));
+
+    await act(async () => {
+      await result.current.executeQuery("SELECT * FROM users");
+    });
+
+    // Let the fire-and-forget background EXPLAIN promise's .then() resolve
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+
+    const tabWithPlan = snapshots.map((snapshot) => snapshot[0]).find((t) => t.explainPlan);
+    expect(tabWithPlan?.explainPlan).toEqual({ format: "postgres-json", raw: { plan: "Seq Scan" } });
+  });
+
   // ── setTabs updaters preserve non-target tabs ──────────────────────────
 
   test("QUERY_CANCELLED updater preserves non-target tabs", async () => {
