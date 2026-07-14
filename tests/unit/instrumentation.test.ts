@@ -111,6 +111,30 @@ describe("instrumentation register()", () => {
     expect(fs.statSync(path.join(tmpDir, "sample-employees.db")).size).toBeGreaterThan(0);
   });
 
+  test("fast-path boot (sample already present) stays quiet: one debug line, no info pair", async () => {
+    process.env.NEXT_RUNTIME = "nodejs";
+    process.env.AUTH_BOOTSTRAP = "off";
+    process.env.LIBREDB_EMBEDDED_SAMPLE = "false";
+    const samplePath = path.join(tmpDir, "sample-employees.db");
+    process.env.SQLITE_EMBEDDED_SAMPLE_PATH = samplePath;
+    fs.writeFileSync(samplePath, "already seeded on a previous boot");
+
+    const info = spyOn(logger, "info").mockImplementation(() => {});
+    const debug = spyOn(logger, "debug").mockImplementation(() => {});
+    try {
+      await register();
+      await waitFor(() => getSqliteSampleSeedState() === "done");
+
+      const infoMessages = info.mock.calls.map((c) => String(c[0]));
+      expect(infoMessages.some((m) => m.includes("SQLite embedded sample"))).toBe(false);
+      expect(debug.mock.calls.map((c) => String(c[0]))).toContain("SQLite embedded sample already present");
+    } finally {
+      info.mockRestore();
+      debug.mockRestore();
+    }
+    expect(fs.readFileSync(samplePath, "utf8")).toBe("already seeded on a previous boot");
+  });
+
   test("marks the sqlite seed failed and keeps boot alive when the template is missing", async () => {
     process.env.NEXT_RUNTIME = "nodejs";
     process.env.AUTH_BOOTSTRAP = "off";

@@ -74,7 +74,8 @@ async function fileExists(p: string): Promise<boolean> {
 
 /**
  * Copy the vendored template to the runtime sample path. Idempotent: if the
- * file already exists it is left untouched (never clobber the user's edits).
+ * file already exists it is left untouched (never clobber the user's edits)
+ * and "skipped" is returned so the caller can keep fast-path boots quiet.
  * Copies into a per-process temp file first, then atomically renames it into
  * place — a partial file is never published (getManagedConnections would
  * otherwise advertise a broken sample because the path exists), and
@@ -86,8 +87,8 @@ async function fileExists(p: string): Promise<boolean> {
  * sync fs calls the whole copy would run before the IIFE's first suspension,
  * blocking boot and making the "seeding" state unobservable.
  */
-export async function seedSqliteSampleFile(filePath: string): Promise<void> {
-  if (await fileExists(filePath)) return; // fast path: a complete file is already present
+export async function seedSqliteSampleFile(filePath: string): Promise<"seeded" | "skipped"> {
+  if (await fileExists(filePath)) return "skipped"; // a complete file is already present
 
   const templatePath = resolveSqliteSampleTemplatePath();
   if (!(await fileExists(templatePath))) {
@@ -118,6 +119,7 @@ export async function seedSqliteSampleFile(filePath: string): Promise<void> {
     await fs.promises.rm(tempPath, { force: true }); // never leave a partial temp behind
     throw error;
   }
+  return "seeded";
 }
 
 /** The built-in editable seed connection descriptor (managed:false). */

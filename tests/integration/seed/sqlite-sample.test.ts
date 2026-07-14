@@ -67,7 +67,7 @@ describe("sqlite-sample", () => {
 
   test("seedSqliteSampleFile: copies the vendored template to a queryable SQLite file", async () => {
     const file = tmpPath();
-    await seedSqliteSampleFile(file);
+    expect(await seedSqliteSampleFile(file)).toBe("seeded");
     expect(fs.existsSync(file)).toBe(true);
 
     const db = new Database(file, { readonly: true });
@@ -79,10 +79,10 @@ describe("sqlite-sample", () => {
     }
   });
 
-  test("seedSqliteSampleFile: idempotent — does not modify an existing file", async () => {
+  test("seedSqliteSampleFile: idempotent — reports skipped and does not modify an existing file", async () => {
     const file = tmpPath();
     fs.writeFileSync(file, "user data, not a sample");
-    await seedSqliteSampleFile(file);
+    expect(await seedSqliteSampleFile(file)).toBe("skipped");
     expect(fs.readFileSync(file, "utf8")).toBe("user data, not a sample");
   });
 

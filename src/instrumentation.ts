@@ -40,20 +40,29 @@ export async function register(): Promise<void> {
     await import("@/lib/seed/sqlite-sample");
   if (!isSqliteSampleEnabled()) return;
 
+  // "seeding" is set BEFORE the IIFE so no request can observe "idle" while a
+  // first-boot copy is about to start; on fast-path boots (file already
+  // present) the window closes within the first fs call, before the HTTP
+  // server accepts its first request.
   setSqliteSampleSeedState("seeding");
   void (async () => {
     const started = Date.now();
     let filePath: string | undefined;
     try {
       filePath = resolveSqliteSamplePath();
-      logger.info("SQLite embedded sample seed started", { route: "instrumentation", path: filePath });
-      await seedSqliteSampleFile(filePath);
+      const outcome = await seedSqliteSampleFile(filePath);
       setSqliteSampleSeedState("done");
-      logger.info("SQLite embedded sample seed completed", {
-        route: "instrumentation",
-        path: filePath,
-        durationMs: Date.now() - started,
-      });
+      if (outcome === "skipped") {
+        // Every boot after the first takes this path — keep it to one quiet
+        // line instead of a started/completed info pair (PR #191 review).
+        logger.debug("SQLite embedded sample already present", { route: "instrumentation", path: filePath });
+      } else {
+        logger.info("SQLite embedded sample seed completed", {
+          route: "instrumentation",
+          path: filePath,
+          durationMs: Date.now() - started,
+        });
+      }
     } catch (error) {
       setSqliteSampleSeedState("failed");
       logger.warn("SQLite embedded sample seeding skipped", {

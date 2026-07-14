@@ -215,7 +215,15 @@ export function useConnectionManager(storageReady = false) {
         }
         startSeedPoll(pendingSeeds);
       } catch {
-        // Managed connections are optional — don't break app
+        // Managed connections are optional — don't break app. Deliberately NO
+        // speculative seed poll when this initial fetch fails (rejection here,
+        // or failed:true reaching startSeedPoll as empty pendingSeeds): when
+        // embedded in libredb-platform this endpoint does not exist, and
+        // polling on failure would fire up to 30 useless requests per mount.
+        // A transient boot-time failure is rare (this same server just served
+        // the page) and self-heals on refresh; the failure tolerance inside
+        // the poll only guards the window where a pending seed was actually
+        // observed.
       }
 
       if (!managedMerged) {
