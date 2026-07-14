@@ -163,3 +163,38 @@ describe("LoginPage", () => {
     });
   });
 });
+
+describe("LoginPage route (app/login/page)", () => {
+  const savedAuthProvider = process.env.NEXT_PUBLIC_AUTH_PROVIDER;
+
+  afterEach(() => {
+    if (savedAuthProvider === undefined) {
+      delete process.env.NEXT_PUBLIC_AUTH_PROVIDER;
+    } else {
+      process.env.NEXT_PUBLIC_AUTH_PROVIDER = savedAuthProvider;
+    }
+    cleanup();
+  });
+
+  test("forces dynamic rendering so the auth provider is read at runtime", async () => {
+    const { dynamic } = await import("@/app/login/page");
+    expect(dynamic).toBe("force-dynamic");
+  });
+
+  test("defaults to the local login form when no auth provider is set", async () => {
+    delete process.env.NEXT_PUBLIC_AUTH_PROVIDER;
+    const { default: LoginPageRoute } = await import("@/app/login/page");
+
+    const { container } = render(<LoginPageRoute />);
+    expect(container.querySelector("form")).not.toBeNull();
+  });
+
+  test("renders the SSO login when NEXT_PUBLIC_AUTH_PROVIDER is oidc", async () => {
+    process.env.NEXT_PUBLIC_AUTH_PROVIDER = "oidc";
+    const { default: LoginPageRoute } = await import("@/app/login/page");
+
+    const { queryByText, container } = render(<LoginPageRoute />);
+    expect(queryByText("Login with SSO")).not.toBeNull();
+    expect(container.querySelector("form")).toBeNull();
+  });
+});

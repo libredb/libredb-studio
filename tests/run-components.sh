@@ -24,7 +24,7 @@ set -e
 
 PASS=0
 FAIL=0
-TOTAL_GROUPS=19
+TOTAL_GROUPS=20
 EXTRA_BUN_ARGS=("$@")
 GROUP_INDEX=0
 COVERAGE_MODE=0
@@ -42,6 +42,15 @@ done
 run_group() {
   local label="$1"
   shift
+  # Optional --nocov flag: run the group WITHOUT coverage collection. Used for
+  # groups that import modules without exercising them (e.g. the exports shim,
+  # which loads the whole component chain) — their load-only lcov records would
+  # otherwise merge as phantom uncovered lines on files other groups fully cover.
+  local nocov=0
+  if [ "$1" = "--nocov" ]; then
+    nocov=1
+    shift
+  fi
   GROUP_INDEX=$((GROUP_INDEX + 1))
   echo ""
   echo "=== $label ==="
@@ -51,10 +60,13 @@ run_group() {
     if [[ "$arg" == --coverage-dir=* ]]; then
       continue
     fi
+    if [ "$nocov" -eq 1 ] && [[ "$arg" == --coverage* ]]; then
+      continue
+    fi
     RUN_ARGS+=("$arg")
   done
 
-  if [ "$COVERAGE_MODE" -eq 1 ] && [ -n "$COVERAGE_BASE_DIR" ]; then
+  if [ "$COVERAGE_MODE" -eq 1 ] && [ -n "$COVERAGE_BASE_DIR" ] && [ "$nocov" -eq 0 ]; then
     RUN_ARGS+=("--coverage-dir=${COVERAGE_BASE_DIR}/group-${GROUP_INDEX}")
   fi
 
@@ -73,6 +85,13 @@ run_group "Group 0a: useStorageSync hook" \
 # Group 0b: Factory singleton (isolated — mocks provider modules which contaminates provider unit tests)
 run_group "Group 0b: Factory singleton" \
   tests/isolated/factory-singleton.test.ts
+
+# Group 0c: exports CJS shim (isolated — importing it pulls @/lib/db/factory into the
+# module cache, which breaks factory.test.ts's first-import signal-handler capture).
+# --nocov: the shim import loads the entire component chain without rendering it,
+# which would inject load-only zero-hit lcov records for files other groups cover.
+run_group "Group 0c: Exports shim" --nocov \
+  tests/isolated/exports-shim.test.ts
 
 # Group 1: Studio (isolated — mocks almost every child component)
 run_group "Group 1/6: Studio" \
@@ -134,6 +153,7 @@ run_group "Group 11/12: Smoke tests" \
   tests/components/MobileNav.test.tsx \
   tests/components/DataImportModal.test.tsx \
   tests/components/RootLayout.test.tsx \
+  tests/components/AppErrorPages.test.tsx \
   tests/components/Page.test.tsx \
   tests/components/LoginPage.test.tsx \
   tests/components/LoginPageOIDC.test.tsx \
