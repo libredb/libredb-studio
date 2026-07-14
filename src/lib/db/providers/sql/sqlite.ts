@@ -134,7 +134,8 @@ export class SQLiteProvider extends SQLBaseProvider {
     return {
       ...super.getCapabilities(),
       defaultPort: null,
-      supportsExplain: false,
+      supportsExplain: true,
+      explainFormat: "sqlite-queryplan",
       supportsConnectionString: false,
       maintenanceOperations: ["vacuum", "analyze", "reindex", "check"],
     };

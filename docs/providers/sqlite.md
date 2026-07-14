@@ -95,7 +95,7 @@ everything that assumes a server. Read this as a **diff against the [PostgreSQL 
 | Pooling | `pg.Pool` | none (one `Database` handle) |
 | Transactions API | begin/commit/rollback + auto-rollback | **none exposed** |
 | Cancellation | `pg_cancel_backend` | **none** |
-| `EXPLAIN` | `true` | **`false`** |
+| `EXPLAIN` | `true` | `true` (EXPLAIN QUERY PLAN) |
 | Connection string | `true` | `false` (path accepted in the field, but flagged unsupported) |
 | Schema scope | many schemas | single (`main`) |
 | Monitoring | rich `pg_stat_*` | minimal (PRAGMAs + file stats; many fields `N/A`/estimated) |
@@ -236,7 +236,7 @@ Homebrew). Each channel is browser-verified by
 `query(sql, params?)` — positional params via the driver's `all()`/`run()`. There is no
 `prepareQuery()` override, so the inherited base injects a `LIMIT` into bare `SELECT`s
 (`DEFAULT_QUERY_LIMIT = 500`). No transactions, no cancellation ([§3.4](#34-no-transactions-api-no-cancellation-no-pool)).
-`EXPLAIN` is **not** supported (`supportsExplain: false`) — the UI hides the Explain action.
+`EXPLAIN QUERY PLAN` is supported (`supportsExplain: true`, `explainFormat: "sqlite-queryplan"`) — the UI renders the plan as a tree; SQLite reports no per-node cost or timing metrics, so none are shown.
 
 ---
 
@@ -293,12 +293,13 @@ Minimal by nature — SQLite keeps almost no server-style runtime statistics.
 
 ## 9. Capabilities & labels
 
-### `getCapabilities()` ([sqlite.ts:53](../../src/lib/db/providers/sql/sqlite.ts))
+### `getCapabilities()` ([sqlite.ts:133](../../src/lib/db/providers/sql/sqlite.ts))
 
 | Capability | Value |
 |------------|-------|
 | `queryLanguage` | `sql` |
-| `supportsExplain` | **`false`** |
+| `supportsExplain` | `true` |
+| `explainFormat` | `"sqlite-queryplan"` |
 | `supportsExternalQueryLimiting` | `true` (from base) |
 | `supportsCreateTable` | `true` (from base) |
 | `supportsMaintenance` | `true` |
@@ -406,7 +407,8 @@ not apply to SQLite ([§3.4](#34-no-transactions-api-no-cancellation-no-pool)).
   See [Runtime & driver selection](#runtime--driver-selection).
 - **No transactions / cancellation / pooling.** Single embedded handle; the transaction and cancel
   API routes don't apply.
-- **No `EXPLAIN`.**
+- **No EXPLAIN plan metrics.** `EXPLAIN QUERY PLAN` returns step descriptions only — SQLite does not
+  report per-node cost, row estimates, or timing data.
 - **Estimated/absent monitoring:** per-table size is `rows × 100 bytes` (a rough estimate); index
   `scans` is always `0`; cache-hit ratio is a fixed estimate; slow queries are unavailable.
 - **`:memory:` is ephemeral** — data is lost on disconnect; intended for trials/tests.
