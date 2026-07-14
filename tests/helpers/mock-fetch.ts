@@ -26,7 +26,12 @@ export function mockGlobalFetch(
 
     for (const [pattern, handler] of Object.entries(routes)) {
       if (pathname.includes(pattern)) {
-        const mockResponse = typeof handler === "function" ? await handler(new Request(url, init)) : handler;
+        // Resolve relative URLs before constructing the Request — bun's
+        // Request (unlike browser fetch) rejects "/api/..." outright.
+        const mockResponse =
+          typeof handler === "function"
+            ? await handler(new Request(new URL(url, "http://localhost:3000"), init))
+            : handler;
 
         return new Response(
           mockResponse.json !== undefined ? JSON.stringify(mockResponse.json) : (mockResponse.text ?? ""),

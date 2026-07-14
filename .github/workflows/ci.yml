@@ -222,6 +222,47 @@ jobs:
       - name: Run engine smoke (${{ matrix.tier }})
         run: bash scripts/engine-smoke.sh dist-payload/libredb-studio-standalone-*.tar.gz ${{ matrix.tier }}
 
+  # Browser E2E of the embedded samples against the PACKAGED artifact: the
+  # tarball channel (extract + node server.js) and the npx channel
+  # (bin/studio.js --archive). The regular e2e job covers the same spec
+  # against the repo build; this one catches packaging-only regressions
+  # (e.g. a payload missing seed-assets/). scripts/channel-embedded-sample-e2e.sh
+  channel-e2e:
+    name: Channel E2E (tarball + npx)
+    needs: [engine-payload]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "24"
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: "1.3.14"
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Install Playwright browsers
+        run: bunx playwright install --with-deps chromium
+
+      - name: Download payload artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: engine-smoke-payload
+          path: dist-payload
+
+      - name: Channel E2E - tarball
+        run: bash scripts/channel-embedded-sample-e2e.sh tarball dist-payload/libredb-studio-standalone-*.tar.gz
+
+      - name: Channel E2E - npx
+        run: bash scripts/channel-embedded-sample-e2e.sh npx dist-payload/libredb-studio-standalone-*.tar.gz
+
   helm-lint:
     name: Helm Chart Lint
     runs-on: ubuntu-latest

@@ -66,6 +66,12 @@ COPY --from=builder /usr/src/app/node_modules/file-uri-to-path ./node_modules/fi
 # standalone server bundle — copy it explicitly so the provider works at runtime.
 COPY --from=builder /usr/src/app/node_modules/@libredb/libredb ./node_modules/@libredb/libredb
 
+# Vendored sample database templates (the SQLite employees sample). Read at
+# runtime via fs relative to process.cwd() (/app), so output file tracing
+# never sees them — copy explicitly (keep scripts/build-standalone-payload.sh
+# in sync).
+COPY --from=builder /usr/src/app/seed-assets ./seed-assets
+
 # Create non-root user for security
 RUN addgroup --system --gid 1001 nodejs && \
     adduser --system --uid 1001 nextjs && \

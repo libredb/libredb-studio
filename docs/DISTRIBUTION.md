@@ -470,6 +470,42 @@ Release publishing is driven by two workflows, both triggered on `release: publi
 - The npm package (`@libredb/studio`, which carries the npx launcher `bin/studio.js`) is
   published by the separate npm-publish workflow, also on `release: published`.
 
+### Embedded-sample channel E2E
+
+Every zero-config channel must prove — in a real browser — that a fresh install
+serves the embedded sample connections ("Sample (LibreDB)", "Sample
+(Employees)"). One `bun run test:e2e` is not enough: each channel boots the
+payload through a different launcher, cwd, and `STORAGE_SQLITE_PATH`, so a
+packaging bug (a payload missing `seed-assets/`, a dropped fileset entry)
+surfaces only in the affected channel.
+
+The shared spec is [`e2e/embedded-samples.spec.ts`](../e2e/embedded-samples.spec.ts);
+[`playwright.channel.config.ts`](../playwright.channel.config.ts) runs it against an
+externally booted server (`CHANNEL_E2E_BASE_URL`, no `webServer`). The orchestrator
+boots one channel, waits for health (and best-effort for the async seed), runs
+Playwright, and tears down:
+
+```bash
+scripts/channel-embedded-sample-e2e.sh <channel> [artifact]
+scripts/channel-embedded-sample-e2e.sh all            # every channel feasible here
+
+# channels: tarball | npx | docker | deb | rpm | snap | homebrew
+scripts/channel-embedded-sample-e2e.sh tarball dist/libredb-studio-standalone-*.tar.gz
+scripts/channel-embedded-sample-e2e.sh docker ghcr.io/libredb/libredb-studio:main
+```
+
+`all` skips infeasible channels (no docker daemon, no passwordless sudo, not
+macOS, missing artifact) and prints a summary. Where each channel runs in CI:
+
+| Channel | CI gate |
+|---------|---------|
+| next-dev | `ci.yml` e2e job (regular Playwright run includes the spec) |
+| tarball, npx | `ci.yml` channel-e2e job (payload artifact) |
+| docker | `docker-build-push.yml` channel-e2e job (pushed image; gates the Helm release dispatch) |
+| deb, rpm | `release-artifacts.yml` linux-packages job (amd64; alongside the zero-config smoke) |
+| snap | `release-artifacts.yml` snap job (amd64; runs before the store publish) |
+| homebrew | not in CI (linux runners) — run locally on macOS |
+
 ### First-release validation runbook
 
 All channels have now had their first live run (the Snap publish completed its first with

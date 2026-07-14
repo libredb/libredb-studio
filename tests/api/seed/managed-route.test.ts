@@ -17,6 +17,7 @@ mock.module("@/lib/auth", () => ({
 import { GET } from "@/app/api/connections/managed/route";
 import { resetCache } from "@/lib/seed/config-loader";
 import { getSession } from "@/lib/auth";
+import { setSqliteSampleSeedState, SQLITE_SAMPLE_SEED_ID } from "@/lib/seed/sqlite-sample";
 
 describe("GET /api/connections/managed", () => {
   beforeEach(() => {
@@ -92,6 +93,23 @@ describe("GET /api/connections/managed", () => {
     delete process.env.TEST_MONGO_URI;
     delete process.env.TEST_REDIS_PASSWORD;
     resetCache();
+  });
+
+  it("returns no pending seeds when nothing is seeding", async () => {
+    const res = await GET();
+    const data = await res.json();
+    expect(data.pendingSeeds).toEqual([]);
+  });
+
+  it("advertises the sqlite sample while its async seed is in flight", async () => {
+    setSqliteSampleSeedState("seeding");
+    try {
+      const res = await GET();
+      const data = await res.json();
+      expect(data.pendingSeeds).toEqual([SQLITE_SAMPLE_SEED_ID]);
+    } finally {
+      setSqliteSampleSeedState("idle");
+    }
   });
 
   it("returns 500 when config is invalid", async () => {
