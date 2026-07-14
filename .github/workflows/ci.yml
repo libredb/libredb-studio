@@ -107,6 +107,11 @@ jobs:
           USER_EMAIL: user@libredb.org
           USER_PASSWORD: test-user
 
+      # The project holds 100% line coverage (#196). Fail fast with the exact
+      # uncovered file:line ranges instead of letting coverage erode silently.
+      - name: Enforce 100% line coverage
+        run: bun run coverage:check
+
       - name: Upload coverage artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:

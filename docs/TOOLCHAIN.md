@@ -226,3 +226,37 @@ phase that can affect output.
 
 `@biomejs/biome@^2.5`, `oxlint@^1.71`, `@arethetypeswrong/cli@^0.18.4`. `eslint` / `eslint-config-next` /
 `typescript-eslint` / `knip` stay at their current Studio versions.
+
+## Coverage measurement (100% line coverage, held since 2026-07-14)
+
+The merged `coverage/lcov.info` sits at 100% lines (#192/#195/#196) and CI enforces it:
+`scripts/check-coverage.mjs` fails the `Unit & Integration Tests` job on any zero-hit DA record,
+printing the uncovered file:line ranges. Local check: `bun run test:coverage && bun run coverage:check`.
+
+Holding 100% honestly requires knowing how bun measures:
+
+1. **Per-function granularity (V8 semantics).** Functions that executed in a process get a precise
+   executable-line map; functions that never ran are reported as coarse whole-span blocks whose DA
+   sets include type annotations and JSX text lines. A process that merely loads a module (a
+   mocked-away child, a transitive import) therefore claims lines as "coverable" that no exercising
+   process does.
+2. **Authority-universe merge** (`scripts/merge-lcov.mjs`, tested in `tests/unit/merge-lcov.test.ts`):
+   per file, the record with the most executed lines decides which lines are coverable; per-line hit
+   counts still take the max across all records, so secondary groups (e.g. the mobile-drawer group of
+   a desktop-rendered component) keep contributing. Without this rule, load-only records surface
+   phantom uncovered lines that no test can ever close.
+3. **`run_group --nocov`** (`tests/run-components.sh`): groups that import without exercising (the
+   exports CJS shim pulls the whole component chain) run without coverage collection entirely.
+4. **Non-executable-line strip** (`merge-lcov.mjs`): bun emits DA records for blanks, comments, and
+   bare punctuation; these are removed against the actual source before SonarCloud reads the report.
+5. **Diagnosis recipe:** when a file shows stubborn uncovered lines, compare its records across
+   `coverage/components/group-*/lcov.info` and `coverage/core/file-*/lcov.info`. If the zero lines
+   are absent from the record with the most hits, they are measurement phantoms (fix the merge
+   inputs), not test gaps.
+6. **Mock fidelity over stubs:** hover/portal-dependent branches are closed by making test mocks
+   honor the real library contract (recharts `Tooltip` renders its `content` element with an active
+   payload; the select mock drives `onValueChange` through clickable items; dropdown items honor
+   Radix `onSelect`) instead of reshaping production code.
+
+`src/exports/index.js` (one-line CJS shim) is the single `sonar.coverage.exclusions` entry — it is
+smoke-tested functionally in `tests/isolated/exports-shim.test.ts`.

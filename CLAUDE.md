@@ -10,7 +10,7 @@ Web-based SQL IDE for cloud-native teams: PostgreSQL, MySQL, SQLite, Oracle, SQL
 
 ## Branching & PRs
 
-> **Trunk-based: feature/work branches target `main` directly; releases are git tags.** Branch off `main` for new work and open every PR with base `main` (`gh pr create --base main`). `main` is the single protected integration trunk — PRs are required and the `Lint, Typecheck and Build` check must pass before merge. Cut a release by tagging `main` (`vX.Y.Z`), which triggers the npm publish workflow. There is no `dev` branch and no long-lived `release/*` branches. A PR that bumps the
+> **Trunk-based: feature/work branches target `main` directly; releases are git tags.** Branch off `main` for new work and open every PR with base `main` (`gh pr create --base main`). `main` is the single protected integration trunk — PRs are required and the `Lint, Typecheck and Build`, `Unit & Integration Tests`, and `SonarCloud Code Analysis` checks must pass before merge. Cut a release by tagging `main` (`vX.Y.Z`), which triggers the npm publish workflow. There is no `dev` branch and no long-lived `release/*` branches. A PR that bumps the
 > `package.json` version must also run `bun run chart:bump` and commit the result — the
 > required CI check enforces `Chart.yaml appVersion` == `package.json` version (#138).
 
@@ -32,7 +32,8 @@ bun run lint:oxc         # oxlint only
 bun run typecheck        # TypeScript strict
 bun run test             # all layers: unit + api + integration + hooks + components
 bun run test:e2e         # Playwright (requires build)
-bun run test:coverage    # coverage report
+bun run test:coverage    # coverage report (merged lcov)
+bun run coverage:check   # enforce 100% line coverage on the merged lcov (CI gate)
 bun run build:lib        # tsup → @libredb/studio package dist (see rule below)
 bun run attw             # validate published type-resolution against the packed tarball (needs build:lib first)
 ```
@@ -48,6 +49,8 @@ bun run attw             # validate published type-resolution against the packed
 ## Pre-Commit Verification (MANDATORY)
 
 After every code change, run all six locally before claiming done — they match CI (`ci.yml`, `docker-build-push.yml`): `bun run format` · `bun run lint` · `bun run typecheck` · `bun run knip` · `bun run test` · `bun run build`. A local pass guarantees CI passes; do not skip any. (`bun run lint` runs oxlint then ESLint; `knip` fails on unused files/exports/dependencies; the CI `lint-and-build` job additionally runs `build:lib` + `attw`.)
+
+> **100% line coverage is a hard CI gate.** The merged lcov must stay at 100% (`scripts/check-coverage.mjs` fails the `Unit & Integration Tests` job otherwise), so every change that adds or alters executable lines MUST land with tests covering them **in the same PR**. Verify locally with `bun run test:coverage && bun run coverage:check` — it prints the exact uncovered file:line ranges. Coverage-measurement rationale (per-function lcov granularity, phantom lines, the authority-universe merge rule, `run_group --nocov`) lives in [`docs/TOOLCHAIN.md`](docs/TOOLCHAIN.md).
 
 ## Architecture
 
