@@ -368,16 +368,17 @@ describe("BottomPanel", () => {
     expect(queryByTestId("schemadiff")).not.toBeNull();
   });
 
-  test('Explain tab renders VisualExplain when mode="explain" and result exists', () => {
+  test('Explain tab renders VisualExplain when mode="explain" even with result=null (real explain-run shape)', () => {
     const props = createDefaultProps({
       mode: "explain",
       currentTab: {
         id: "tab-1",
         name: "Q",
         query: "SELECT 1",
-        result: { rows: [{ id: 1 }], fields: ["id"], rowCount: 1, executionTime: 10 },
+        result: null, // executeQuery(isExplain=true) always nulls result (bug B1 regression guard)
         isExecuting: false,
         type: "sql" as const,
+        explainPlan: [{ Plan: { "Node Type": "Seq Scan" } }],
       },
     });
     const { queryByTestId } = render(<BottomPanel {...(props as React.ComponentProps<typeof BottomPanel>)} />);

@@ -340,34 +340,32 @@ export function BottomPanel({
           <SchemaDiff schema={schema} connection={activeConnection} />
         ) : mode === "dashboard" ? (
           <ChartDashboardLazy result={currentTab.result} />
+        ) : mode === "explain" ? (
+          <VisualExplain
+            plan={currentTab.explainPlan as ExplainPlanResult[] | null | undefined}
+            query={currentTab.query}
+            schemaContext={schemaContext}
+            databaseType={activeConnection?.type}
+            onLoadQuery={(q) => {
+              onLoadQuery(q);
+              onSetMode("results");
+            }}
+          />
         ) : currentTab.result ? (
-          mode === "explain" ? (
-            <VisualExplain
-              plan={currentTab.explainPlan as ExplainPlanResult[] | null | undefined}
-              query={currentTab.query}
-              schemaContext={schemaContext}
-              databaseType={activeConnection?.type}
-              onLoadQuery={(q) => {
-                onLoadQuery(q);
-                onSetMode("results");
-              }}
-            />
-          ) : (
-            <ResultsGrid
-              result={currentTab.result}
-              onLoadMore={onLoadMore}
-              isLoadingMore={isLoadingMore}
-              maskingEnabled={maskingEnabled}
-              onToggleMasking={onToggleMasking}
-              userRole={userRole}
-              maskingConfig={maskingConfig}
-              editingEnabled={editingEnabled}
-              pendingChanges={pendingChanges}
-              onCellChange={onCellChange}
-              onApplyChanges={onApplyChanges}
-              onDiscardChanges={onDiscardChanges}
-            />
-          )
+          <ResultsGrid
+            result={currentTab.result}
+            onLoadMore={onLoadMore}
+            isLoadingMore={isLoadingMore}
+            maskingEnabled={maskingEnabled}
+            onToggleMasking={onToggleMasking}
+            userRole={userRole}
+            maskingConfig={maskingConfig}
+            editingEnabled={editingEnabled}
+            pendingChanges={pendingChanges}
+            onCellChange={onCellChange}
+            onApplyChanges={onApplyChanges}
+            onDiscardChanges={onDiscardChanges}
+          />
         ) : (
           <div className="h-full flex flex-col items-center justify-center opacity-20 bg-[#0a0a0a]">
             <Terminal strokeWidth={1.5} className="w-12 h-12 mb-4" />
