@@ -42,4 +42,9 @@ describe("resolveExplainPlan", () => {
     expect(resolveExplainPlan({ format: "not-a-format", raw: [] })).toBeNull();
     expect(resolveExplainPlan({ format: "postgres-json" })).toBeNull();
   });
+
+  test("rejects prototype-chain keys masquerading as formats", () => {
+    expect(resolveExplainPlan({ format: "toString", raw: [] })).toBeNull();
+    expect(resolveExplainPlan({ format: "constructor", raw: [] })).toBeNull();
+  });
 });

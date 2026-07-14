@@ -22,7 +22,7 @@ export function getExplainStrategy(format: ExplainFormat | undefined): ExplainSt
 function isStoredExplainPlan(value: unknown): value is StoredExplainPlan {
   if (typeof value !== "object" || value === null || !("raw" in value)) return false;
   const format = (value as { format?: unknown }).format;
-  return typeof format === "string" && format in registry;
+  return typeof format === "string" && Object.hasOwn(registry, format);
 }
 
 /** Render boundary: QueryTab.explainPlan (unknown) -> tagged render model. Tolerates legacy raw postgres arrays. */
