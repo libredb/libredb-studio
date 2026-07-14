@@ -203,7 +203,8 @@ ignored.
 On standalone startup (never when embedded in libredb-platform),
 [`src/lib/seed/sqlite-sample.ts`](../../src/lib/seed/sqlite-sample.ts) copies the vendored
 employees database ([`seed-assets/sqlite/employee.db`](../../seed-assets/sqlite/employee.db),
-a reduced [datacharmer/test_db](https://github.com/datacharmer/test_db) subset — see
+from [bytebase/employee-sample-database](https://github.com/bytebase/employee-sample-database)
+`dataset_small`, originally [datacharmer/test_db](https://github.com/datacharmer/test_db) — see
 [`seed-assets/sqlite/ATTRIBUTION.md`](../../seed-assets/sqlite/ATTRIBUTION.md)) to
 `<data dir>/sample-employees.db` and `getManagedConnections()` advertises it as an editable,
 dismissable "Sample (Employees)" connection (`type: "sqlite"`, `managed: false`, `roles: ["*"]`).
