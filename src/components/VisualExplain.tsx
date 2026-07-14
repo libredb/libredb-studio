@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo, useState, useCallback, useRef } from "react";
+import React, { useMemo, useState, useCallback, useEffect, useRef } from "react";
 import {
   Zap,
   Search,
@@ -343,7 +343,12 @@ const TreeNodeView = ({ node, depth = 0 }: { node: ExplainTreeNode; depth?: numb
   const [expanded, setExpanded] = useState(depth < 2);
   const children = node.children;
   const metrics = node.metrics;
-  const hasMetrics = metrics !== undefined && (metrics.actualRows !== undefined || metrics.actualTimeMs !== undefined);
+  const hasMetrics =
+    metrics !== undefined &&
+    (metrics.actualRows !== undefined ||
+      metrics.actualTimeMs !== undefined ||
+      metrics.estRows !== undefined ||
+      metrics.estCost !== undefined);
 
   return (
     <div className="relative">
@@ -375,8 +380,14 @@ const TreeNodeView = ({ node, depth = 0 }: { node: ExplainTreeNode; depth?: numb
             {metrics!.actualRows !== undefined && (
               <span className="text-zinc-500 w-16 text-right">{formatNumber(metrics!.actualRows)} rows</span>
             )}
+            {metrics!.estRows !== undefined && (
+              <span className="text-zinc-500 w-16 text-right">~{formatNumber(metrics!.estRows)} rows</span>
+            )}
             {metrics!.actualTimeMs !== undefined && (
               <span className="text-zinc-400 w-16 text-right">{formatTime(metrics!.actualTimeMs)}</span>
+            )}
+            {metrics!.estCost !== undefined && (
+              <span className="text-zinc-400 w-16 text-right">cost {formatNumber(metrics!.estCost)}</span>
             )}
           </div>
         )}
@@ -672,6 +683,14 @@ function AIExplainTab({
 // Main Component
 // ============================================================================
 
+type ExplainTab = "insights" | "tree" | "raw" | "ai";
+
+// First entry is the kind's default tab. No "insights" for tree plans —
+// analyzePlan's heuristics key off postgres-only fields (Actual Rows, Total
+// Cost, buffer stats) that sqlite-queryplan and friends never produce.
+const TREE_TABS = ["tree", "raw", "ai"] as const;
+const POSTGRES_TABS = ["insights", "ai", "tree", "raw"] as const;
+
 export function VisualExplain({ plan, query, schemaContext, databaseType, onLoadQuery }: VisualExplainProps) {
   // Normalize once: array (legacy) / tagged input / null|undefined -> ExplainPlanInput | null.
   // Non-empty legacy arrays are wrapped as postgres-json so the rest of the component only
@@ -683,10 +702,21 @@ export function VisualExplain({ plan, query, schemaContext, databaseType, onLoad
   }, [plan]);
 
   const postgresPlan = input !== null && input.kind === "postgres-json" ? input.plan : null;
+  const kind = input === null ? null : input.kind;
 
-  const [activeTab, setActiveTab] = useState<"insights" | "tree" | "raw" | "ai">(
-    input !== null && input.kind === "tree" ? "tree" : "insights",
-  );
+  const [activeTab, setActiveTab] = useState<ExplainTab>(kind === "tree" ? "tree" : "insights");
+
+  // BottomPanel keeps a single VisualExplain mounted across query-tab/connection
+  // switches, so the plan kind can change without a remount. Resync the active tab
+  // when it does: a stale tab that is unavailable for the new kind ("insights" on a
+  // tree plan) would otherwise leave the content panel blank.
+  useEffect(() => {
+    if (kind === null) return;
+    setActiveTab((current) => {
+      const available: readonly ExplainTab[] = kind === "tree" ? TREE_TABS : POSTGRES_TABS;
+      return available.includes(current) ? current : available[0];
+    });
+  }, [kind]);
 
   const analysis = useMemo(() => {
     if (!postgresPlan) return null;
@@ -709,9 +739,7 @@ export function VisualExplain({ plan, query, schemaContext, databaseType, onLoad
   }
 
   const rootPlan = postgresPlan?.[0]?.Plan;
-  // No "insights" for tree plans — analyzePlan's heuristics key off postgres-only fields
-  // (Actual Rows, Total Cost, buffer stats) that sqlite-queryplan and friends never produce.
-  const tabs = input.kind === "tree" ? (["tree", "raw", "ai"] as const) : (["insights", "ai", "tree", "raw"] as const);
+  const tabs = input.kind === "tree" ? TREE_TABS : POSTGRES_TABS;
 
   return (
     <div className="h-full flex flex-col bg-[#080808]">

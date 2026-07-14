@@ -1,6 +1,6 @@
 "use client";
 
-import React from "react";
+import React, { useMemo } from "react";
 import type { DatabaseConnection, QueryTab, TableSchema, QueryResult } from "@/lib/types";
 import type { ProviderMetadata } from "@/hooks/use-provider-metadata";
 import type { MaskingConfig } from "@/lib/data-masking";
@@ -160,6 +160,8 @@ export function BottomPanel({
   isLoadingMore,
   onExportResults,
 }: BottomPanelProps) {
+  const explainInput = useMemo(() => resolveExplainPlan(currentTab.explainPlan), [currentTab.explainPlan]);
+
   const tabs: { key: BottomPanelMode; label: string; icon: React.ReactNode; activeClass: string }[] = [
     {
       key: "results",
@@ -345,7 +347,7 @@ export function BottomPanel({
           <ChartDashboardLazy result={currentTab.result} />
         ) : mode === "explain" ? (
           <VisualExplain
-            plan={resolveExplainPlan(currentTab.explainPlan)}
+            plan={explainInput}
             query={currentTab.query}
             schemaContext={schemaContext}
             databaseType={activeConnection?.type}

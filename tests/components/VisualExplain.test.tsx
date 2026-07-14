@@ -904,4 +904,36 @@ describe("tree render model (sqlite-queryplan)", () => {
     expect(queryByText("execution")).toBeNull();
     expect(queryByText("cost")).toBeNull();
   });
+
+  test("resyncs the active tab when the mounted instance's plan kind changes", () => {
+    // BottomPanel keeps one VisualExplain mounted across query-tab/connection switches,
+    // so the SAME instance can flip from a postgres plan to a tree plan without unmounting.
+    const { rerender, getByText, queryByText } = render(<VisualExplain plan={samplePlan} query="SELECT 1" />);
+    // postgres kind defaults to the insights tab
+    expect(queryByText("Performance Issues")).not.toBeNull();
+
+    rerender(<VisualExplain plan={TREE_INPUT} query="SELECT 1" databaseType="sqlite" />);
+
+    // insights is unavailable for tree plans and the tree content must actually be
+    // visible — a stale "insights" activeTab would leave a blank content panel.
+    expect(queryByText("insights")).toBeNull();
+    expect(getByText("SCAN employee")).toBeTruthy();
+    expect(getByText("USING INDEX idx_dept")).toBeTruthy();
+  });
+
+  test("renders estimate badges for estimate-only metrics", () => {
+    const estimateTree = {
+      kind: "tree" as const,
+      root: {
+        label: "Query Plan",
+        children: [{ label: "SCAN employee", metrics: { estRows: 1200, estCost: 7 }, children: [] }],
+      },
+      raw: [],
+    };
+    const { getByText, queryByText } = render(<VisualExplain plan={estimateTree} />);
+    expect(getByText("~1.2K rows")).toBeTruthy();
+    expect(getByText("cost 7")).toBeTruthy();
+    // no fabricated actuals for an estimate-only node
+    expect(queryByText(/0 rows/)).toBeNull();
+  });
 });
