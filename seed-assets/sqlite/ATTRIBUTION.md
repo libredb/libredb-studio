@@ -7,7 +7,7 @@ maintained at [datacharmer/test_db](https://github.com/datacharmer/test_db).
   Research); relational schema by Giuseppe Maxia, data conversion by Patrick
   Crews.
 - License: [Creative Commons Attribution-ShareAlike 3.0 Unported
-  (CC BY-SA 3.0)](https://creativecommons.org/licenses/by-sa/3.0/us/).
+  (CC BY-SA 3.0)](https://creativecommons.org/licenses/by-sa/3.0/).
 - The data is fabricated and does not correspond to real people; any
   resemblance to existing people is purely coincidental.
 
