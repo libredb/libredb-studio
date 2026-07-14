@@ -304,7 +304,7 @@ describe("CreateTableModal", () => {
 
   // ── 9b. Validate empty table name -> error toast (guard inside handleCreate) ─
 
-  test("empty table name keeps the create button disabled and whitespace is sanitized", async () => {
+  test("empty table name keeps the create button disabled and whitespace is sanitized", () => {
     const onTableCreated = mock(() => {});
     const { baseElement } = render(
       <CreateTableModal isOpen onClose={mock(() => {})} onTableCreated={onTableCreated} />,
@@ -316,7 +316,7 @@ describe("CreateTableModal", () => {
 
     // The name input sanitizes every character outside [a-z0-9_] to "_", so a
     // whitespace-only name is impossible through the UI: typing spaces yields
-    // underscores and the trim() guard inside handleCreate stays defensive-only.
+    // underscores and the name validation inside handleCreate stays defensive-only.
     const tableNameInput = baseElement.querySelector("#tableName") as HTMLInputElement;
     act(() => {
       fireEvent.change(tableNameInput, { target: { value: "   " } });
