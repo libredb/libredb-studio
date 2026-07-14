@@ -113,6 +113,9 @@ jobs:
         run: bun run coverage:check
 
       - name: Upload coverage artifact
+        # always(): keep the lcov available for debugging when coverage:check
+        # fails for a non-obvious reason (e.g. malformed report, merge bug).
+        if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: coverage
