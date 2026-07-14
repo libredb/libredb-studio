@@ -3,7 +3,7 @@ import "../helpers/mock-sonner";
 import "../helpers/mock-navigation";
 
 import React from "react";
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { VisualExplain, type ExplainPlanResult } from "@/components/VisualExplain";
@@ -377,22 +377,29 @@ describe("VisualExplain", () => {
   test("clicking Re-analyze after a completed run aborts the previous controller", async () => {
     const user = userEvent.setup();
     globalThis.fetch = mockFetchStreamMulti("First analysis result.") as unknown as typeof fetch;
+    const abortSpy = spyOn(AbortController.prototype, "abort");
 
-    const { queryByText } = render(<VisualExplain plan={samplePlan} query="SELECT 1" />);
-    fireEvent.click(queryByText("AI Explain")!);
-    await user.click(queryByText("Analyze with AI")!);
+    try {
+      const { queryByText } = render(<VisualExplain plan={samplePlan} query="SELECT 1" />);
+      fireEvent.click(queryByText("AI Explain")!);
+      await user.click(queryByText("Analyze with AI")!);
 
-    await waitFor(() => {
-      expect(queryByText("Re-analyze")).not.toBeNull();
-    });
+      await waitFor(() => {
+        expect(queryByText("Re-analyze")).not.toBeNull();
+      });
+      expect(abortSpy).not.toHaveBeenCalled();
 
-    // abortControllerRef.current is already set from the first run, so this second
-    // invocation exercises the "abort previous request" branch before issuing a new fetch.
-    await user.click(queryByText("Re-analyze")!);
+      // abortControllerRef.current is already set from the first run, so this second
+      // invocation exercises the "abort previous request" branch before issuing a new fetch.
+      await user.click(queryByText("Re-analyze")!);
 
-    await waitFor(() => {
-      expect((globalThis.fetch as unknown as ReturnType<typeof mock>).mock.calls.length).toBe(2);
-    });
+      await waitFor(() => {
+        expect(abortSpy).toHaveBeenCalledTimes(1);
+        expect((globalThis.fetch as unknown as ReturnType<typeof mock>).mock.calls.length).toBe(2);
+      });
+    } finally {
+      abortSpy.mockRestore();
+    }
   });
 
   test("AI tab markdown renderer covers headers, lists, blank lines, bold, inline code, and a non-SQL code block", async () => {
