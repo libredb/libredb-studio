@@ -342,6 +342,7 @@ function countTreeNodes(node: ExplainTreeNode): number {
 const TreeNodeView = ({ node, depth = 0 }: { node: ExplainTreeNode; depth?: number }) => {
   const [expanded, setExpanded] = useState(depth < 2);
   const children = node.children;
+  const hasChildren = children.length > 0;
   const metrics = node.metrics;
   const hasMetrics =
     metrics !== undefined &&
@@ -350,51 +351,79 @@ const TreeNodeView = ({ node, depth = 0 }: { node: ExplainTreeNode; depth?: numb
       metrics.estRows !== undefined ||
       metrics.estCost !== undefined);
 
-  return (
-    <div className="relative">
-      {/* Node */}
-      <div
-        className="group flex items-center gap-2 py-1.5 px-2 rounded-lg transition-all cursor-pointer hover:bg-white/5"
-        onClick={() => setExpanded(!expanded)}
-        style={{ marginLeft: depth * 20 }}
-      >
-        {/* Expand icon */}
-        {children.length > 0 && (
-          <ChevronRight className={cn("w-3 h-3 text-zinc-600 transition-transform", expanded && "rotate-90")} />
-        )}
-        {children.length === 0 && <div className="w-3" />}
+  const toggle = () => setExpanded((prev) => !prev);
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    // prevent Space from scrolling the panel
+    if (e.key === " ") e.preventDefault();
+    toggle();
+  };
 
-        {/* Icon */}
-        <div className="p-1 rounded bg-white/5">
-          <ListTree strokeWidth={1.5} className="w-3 h-3 text-zinc-400" />
-        </div>
+  const rowContent = (
+    <>
+      {/* Expand icon */}
+      {hasChildren ? (
+        <ChevronRight className={cn("w-3 h-3 text-zinc-600 transition-transform", expanded && "rotate-90")} />
+      ) : (
+        <div className="w-3" />
+      )}
 
-        {/* Label */}
-        <div className="flex-1 min-w-0">
-          <span className="text-xs font-medium text-zinc-200 truncate">{node.label}</span>
-        </div>
-
-        {/* Metric badges — only when the node actually carries metrics */}
-        {hasMetrics && (
-          <div className="flex items-center gap-4 text-xs font-mono">
-            {metrics!.actualRows !== undefined && (
-              <span className="text-zinc-500 w-16 text-right">{formatNumber(metrics!.actualRows)} rows</span>
-            )}
-            {metrics!.estRows !== undefined && (
-              <span className="text-zinc-500 w-16 text-right">~{formatNumber(metrics!.estRows)} rows</span>
-            )}
-            {metrics!.actualTimeMs !== undefined && (
-              <span className="text-zinc-400 w-16 text-right">{formatTime(metrics!.actualTimeMs)}</span>
-            )}
-            {metrics!.estCost !== undefined && (
-              <span className="text-zinc-400 w-16 text-right">cost {formatNumber(metrics!.estCost)}</span>
-            )}
-          </div>
-        )}
+      {/* Icon */}
+      <div className="p-1 rounded bg-white/5">
+        <ListTree strokeWidth={1.5} className="w-3 h-3 text-zinc-400" />
       </div>
 
+      {/* Label */}
+      <div className="flex-1 min-w-0">
+        <span className="text-xs font-medium text-zinc-200 truncate">{node.label}</span>
+      </div>
+
+      {/* Metric badges — only when the node actually carries metrics */}
+      {hasMetrics && (
+        <div className="flex items-center gap-4 text-xs font-mono">
+          {metrics!.actualRows !== undefined && (
+            <span className="text-zinc-500 w-16 text-right">{formatNumber(metrics!.actualRows)} rows</span>
+          )}
+          {metrics!.estRows !== undefined && (
+            <span className="text-zinc-500 w-16 text-right">~{formatNumber(metrics!.estRows)} rows</span>
+          )}
+          {metrics!.actualTimeMs !== undefined && (
+            <span className="text-zinc-400 w-16 text-right">{formatTime(metrics!.actualTimeMs)}</span>
+          )}
+          {metrics!.estCost !== undefined && (
+            <span className="text-zinc-400 w-16 text-right">cost {formatNumber(metrics!.estCost)}</span>
+          )}
+        </div>
+      )}
+    </>
+  );
+
+  return (
+    <div className="relative">
+      {/* Expandable rows are keyboard-accessible buttons; leaves are plain divs */}
+      {hasChildren ? (
+        <div
+          className="group flex items-center gap-2 py-1.5 px-2 rounded-lg transition-all cursor-pointer hover:bg-white/5"
+          onClick={toggle}
+          onKeyDown={handleKeyDown}
+          role="button"
+          tabIndex={0}
+          aria-expanded={expanded}
+          style={{ marginLeft: depth * 20 }}
+        >
+          {rowContent}
+        </div>
+      ) : (
+        <div
+          className="group flex items-center gap-2 py-1.5 px-2 rounded-lg transition-all"
+          style={{ marginLeft: depth * 20 }}
+        >
+          {rowContent}
+        </div>
+      )}
+
       {/* Children */}
-      {expanded && children.length > 0 && (
+      {expanded && hasChildren && (
         <div className="ml-8 pl-4 border-l border-white/5" style={{ marginLeft: depth * 20 + 32 }}>
           {children.map((child, idx) => (
             <TreeNodeView key={idx} node={child} depth={depth + 1} />
@@ -427,6 +456,19 @@ function AIExplainTab({
   const [error, setError] = useState<string | null>(null);
   const [hasRun, setHasRun] = useState(false);
   const abortControllerRef = useRef<AbortController | null>(null);
+
+  // A mounted panel can switch plans without remounting (BottomPanel keeps one
+  // VisualExplain alive across query-tab switches and the AI tab exists for every
+  // plan kind): drop the previous plan's analysis and abort any in-flight stream
+  // so the old response never bleeds into the new plan.
+  useEffect(() => {
+    abortControllerRef.current?.abort();
+    abortControllerRef.current = null;
+    setHasRun(false);
+    setAiResponse("");
+    setError(null);
+    setIsLoading(false);
+  }, [plan, query]);
 
   const analyzeWithAI = useCallback(async () => {
     if (!query && !plan) return;
@@ -698,7 +740,10 @@ export function VisualExplain({ plan, query, schemaContext, databaseType, onLoad
   const input: ExplainPlanInput | null = useMemo(() => {
     if (!plan) return null;
     if (Array.isArray(plan)) return plan.length > 0 ? { kind: "postgres-json", plan } : null;
-    return typeof plan === "object" && "kind" in plan ? plan : null;
+    if (typeof plan !== "object" || !("kind" in plan)) return null;
+    // A tagged-but-empty postgres plan is as empty as a legacy [] — same empty state.
+    if (plan.kind === "postgres-json" && plan.plan.length === 0) return null;
+    return plan;
   }, [plan]);
 
   const postgresPlan = input !== null && input.kind === "postgres-json" ? input.plan : null;

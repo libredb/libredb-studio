@@ -824,7 +824,12 @@ describe("VisualExplain", () => {
 // ============================================================================
 
 describe("tree render model (sqlite-queryplan)", () => {
+  beforeEach(() => {
+    originalFetch = globalThis.fetch;
+  });
+
   afterEach(() => {
+    globalThis.fetch = originalFetch;
     cleanup();
   });
 
@@ -935,5 +940,72 @@ describe("tree render model (sqlite-queryplan)", () => {
     expect(getByText("cost 7")).toBeTruthy();
     // no fabricated actuals for an estimate-only node
     expect(queryByText(/0 rows/)).toBeNull();
+  });
+
+  test("parent tree rows are keyboard-accessible; leaf rows are non-interactive", () => {
+    const { getByText, queryByText } = render(
+      <VisualExplain plan={TREE_INPUT} query="SELECT 1" databaseType="sqlite" />,
+    );
+
+    // "SCAN employee" has a child, so its row must be a focusable button
+    const parentRow = getByText("SCAN employee").closest('[role="button"]') as HTMLElement | null;
+    expect(parentRow).not.toBeNull();
+    expect(parentRow!.getAttribute("tabindex")).toBe("0");
+    expect(parentRow!.getAttribute("aria-expanded")).toBe("true");
+
+    // Enter collapses the children
+    parentRow!.focus();
+    fireEvent.keyDown(parentRow!, { key: "Enter" });
+    expect(queryByText("USING INDEX idx_dept")).toBeNull();
+    expect(parentRow!.getAttribute("aria-expanded")).toBe("false");
+
+    // Space expands them again
+    fireEvent.keyDown(parentRow!, { key: " " });
+    expect(queryByText("USING INDEX idx_dept")).not.toBeNull();
+
+    // any other key does nothing
+    fireEvent.keyDown(parentRow!, { key: "a" });
+    expect(queryByText("USING INDEX idx_dept")).not.toBeNull();
+
+    // the leaf row (no children) is a plain non-interactive div
+    const leafRow = getByText("USING INDEX idx_dept").parentElement!.parentElement!;
+    expect(leafRow.getAttribute("role")).toBeNull();
+    expect(leafRow.getAttribute("tabindex")).toBeNull();
+    expect(leafRow.className).not.toContain("cursor-pointer");
+  });
+
+  test("AI tab clears the previous plan's analysis when the plan changes", async () => {
+    const user = userEvent.setup();
+    globalThis.fetch = mockFetchStream("## Old Analysis\nPostgres plan details.") as unknown as typeof fetch;
+    const abortSpy = spyOn(AbortController.prototype, "abort");
+
+    try {
+      const { queryByText, rerender } = render(
+        <VisualExplain plan={samplePlan} query="SELECT * FROM users" databaseType="postgres" />,
+      );
+      fireEvent.click(queryByText("AI Explain")!);
+      await user.click(queryByText("Analyze with AI")!);
+      await waitFor(() => {
+        expect(queryByText("Old Analysis")).not.toBeNull();
+      });
+
+      // same mounted instance switches plans while the AI tab stays active
+      rerender(<VisualExplain plan={TREE_INPUT} query="SELECT 1" databaseType="sqlite" />);
+
+      await waitFor(() => {
+        // the previous plan's response is gone and the tab is back to its initial state
+        expect(queryByText("Old Analysis")).toBeNull();
+        expect(queryByText("AI Query Analysis")).not.toBeNull();
+        // the previous request's controller was aborted
+        expect(abortSpy).toHaveBeenCalled();
+      });
+    } finally {
+      abortSpy.mockRestore();
+    }
+  });
+
+  test("tagged postgres-json input with an empty plan falls back to the empty state", () => {
+    const { getByText } = render(<VisualExplain plan={{ kind: "postgres-json", plan: [] }} />);
+    expect(getByText("No execution plan")).toBeTruthy();
   });
 });
