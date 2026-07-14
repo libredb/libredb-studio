@@ -31,7 +31,25 @@ mock.module("recharts", () => ({
   YAxis: () => null,
   ZAxis: () => null,
   CartesianGrid: () => null,
-  Tooltip: () => null,
+  // Recharts only renders tooltip content on hover, which happy-dom cannot
+  // trigger. Render the `content` element directly with an active payload
+  // (plus an inactive clone) so CustomTooltip executes in this group.
+  Tooltip: ({ content }: { content?: React.ReactElement }) =>
+    React.isValidElement(content)
+      ? React.createElement(
+          "div",
+          { "data-testid": "mock-tooltip" },
+          React.cloneElement(content as React.ReactElement<Record<string, unknown>>, {
+            active: true,
+            payload: [{ name: "tooltip_series", value: 1234567, color: "#8884d8" }],
+            label: "tooltip_label",
+          }),
+          React.cloneElement(content as React.ReactElement<Record<string, unknown>>, {
+            active: false,
+            payload: [],
+          }),
+        )
+      : null,
   Legend: () => null,
   PolarAngleAxis: () => null,
 }));
@@ -72,10 +90,11 @@ mock.module("@/components/ui/dropdown-menu", () => ({
     React.createElement("div", { "data-testid": "dropdown-trigger", ...props }, children as React.ReactNode),
   DropdownMenuContent: ({ children }: { children: React.ReactNode }) =>
     React.createElement("div", { "data-testid": "dropdown-content" }, children),
-  DropdownMenuItem: ({ children, onClick, className }: Record<string, unknown>) =>
+  // Saved-chart items use Radix's onSelect instead of onClick — honor both.
+  DropdownMenuItem: ({ children, onClick, onSelect, className }: Record<string, unknown>) =>
     React.createElement(
       "div",
-      { role: "menuitem", onClick: onClick as () => void, className },
+      { role: "menuitem", onClick: (onClick ?? onSelect) as () => void, className },
       children as React.ReactNode,
     ),
 }));
@@ -109,15 +128,33 @@ mock.module("@/lib/storage", () => ({
   },
 }));
 
+// Context lets each mocked SelectItem invoke its own Select's onValueChange on
+// click, so tests can drive value changes without Radix pointer machinery.
+const SelectChangeContext = React.createContext<((v: string) => void) | undefined>(undefined);
+
 mock.module("@/components/ui/select", () => ({
-  Select: ({ children, value }: Record<string, unknown>) =>
-    React.createElement("div", { "data-testid": "select", "data-value": value }, children as React.ReactNode),
+  Select: ({ children, value, onValueChange }: Record<string, unknown>) =>
+    React.createElement(
+      SelectChangeContext.Provider,
+      { value: onValueChange as ((v: string) => void) | undefined },
+      React.createElement("div", { "data-testid": "select", "data-value": value }, children as React.ReactNode),
+    ),
   SelectTrigger: ({ children, className }: Record<string, unknown>) =>
     React.createElement("div", { "data-testid": "select-trigger", className }, children as React.ReactNode),
   SelectContent: ({ children }: { children: React.ReactNode }) =>
     React.createElement("div", { "data-testid": "select-content" }, children),
-  SelectItem: ({ children, value }: Record<string, unknown>) =>
-    React.createElement("div", { "data-testid": `select-item-${value}`, role: "option" }, children as React.ReactNode),
+  SelectItem: ({ children, value }: Record<string, unknown>) => {
+    const onValueChange = React.useContext(SelectChangeContext);
+    return React.createElement(
+      "div",
+      {
+        "data-testid": `select-item-${value}`,
+        role: "option",
+        onClick: () => onValueChange?.(value as string),
+      },
+      children as React.ReactNode,
+    );
+  },
   SelectValue: ({ placeholder }: Record<string, unknown>) =>
     React.createElement("span", { "data-testid": "select-value" }, placeholder as string),
 }));
@@ -807,5 +844,91 @@ describe("DataCharts", () => {
     expect(hashIcons.length).toBeGreaterThan(0);
     expect(calendarIcons.length).toBeGreaterThan(0);
     expect(typeIcons.length).toBeGreaterThan(0);
+  });
+
+  // -----------------------------------------------------------------------
+  // Tooltip content, aggregation paths, saved-chart load, SVG export
+  // -----------------------------------------------------------------------
+
+  test("custom tooltip renders label and formatted payload entries when active", () => {
+    const { container } = render(React.createElement(DataCharts, { result: mockNumericResult }));
+    // The recharts Tooltip mock renders CustomTooltip once active (with a
+    // payload) and once inactive (which must render nothing).
+    expect(container.textContent).toContain("tooltip_label");
+    expect(container.textContent).toContain("tooltip_series");
+    expect(container.textContent).toContain("1.2M");
+  });
+
+  test("selecting an aggregation feeds chart data through aggregateData", () => {
+    const { getByTestId, container } = render(React.createElement(DataCharts, { result: mockNumericResult }));
+    fireEvent.click(getByTestId("select-item-sum"));
+    expect(container.querySelector('[data-value="sum"]')).not.toBeNull();
+  });
+
+  test("selecting a date grouping without aggregation groups chart data", () => {
+    const { getByTestId, container } = render(React.createElement(DataCharts, { result: mockNumericResult }));
+    fireEvent.click(getByTestId("select-item-month"));
+    expect(container.querySelector('[data-value="month"]')).not.toBeNull();
+  });
+
+  test("clicking an already-selected Y-axis field deselects it", () => {
+    const { getAllByRole, queryByText } = render(React.createElement(DataCharts, { result: mockNumericResult }));
+    // revenue is auto-selected as the first numeric field
+    expect(queryByText("Select fields")).toBeNull();
+    const revenueItem = getAllByRole("menuitem").find((i) => i.textContent?.includes("revenue"));
+    expect(revenueItem).toBeDefined();
+    fireEvent.click(revenueItem!);
+    expect(queryByText("Select fields")).not.toBeNull();
+  });
+
+  test("loading a saved chart applies its stored configuration", () => {
+    localStorage.setItem(
+      "libredb_saved_charts",
+      JSON.stringify([
+        {
+          id: "chart-1",
+          name: "Saved revenue by category",
+          chartType: "bar",
+          xAxis: "category",
+          yAxis: ["revenue"],
+          aggregation: "sum",
+          dateGrouping: "",
+        },
+      ]),
+    );
+    const { getAllByRole, queryByText, container } = render(
+      React.createElement(DataCharts, { result: mockNumericResult }),
+    );
+    expect(queryByText(/Saved \(1\)/)).not.toBeNull();
+
+    const savedItem = getAllByRole("menuitem").find((i) => i.textContent?.includes("Saved revenue by category"));
+    expect(savedItem).toBeDefined();
+    fireEvent.click(savedItem!);
+
+    // loadSavedChart applied the stored aggregation
+    expect(container.querySelector('[data-value="sum"]')).not.toBeNull();
+  });
+
+  test("exports the chart as SVG by serializing the rendered svg element", async () => {
+    const linkClick = mock(() => {});
+    const originalClick = HTMLAnchorElement.prototype.click;
+    HTMLAnchorElement.prototype.click = linkClick as unknown as typeof HTMLAnchorElement.prototype.click;
+
+    try {
+      const { queryByText, container } = render(React.createElement(DataCharts, { result: mockNumericResult }));
+      // The recharts mock renders no real <svg>, so provide one inside the
+      // chart area for exportChart's querySelector to find.
+      const chartArea = container.querySelector(".flex-1.p-4");
+      expect(chartArea).not.toBeNull();
+      chartArea!.appendChild(document.createElementNS("http://www.w3.org/2000/svg", "svg"));
+
+      fireEvent.click(queryByText("Export as SVG")!);
+
+      await waitFor(() => {
+        expect(linkClick).toHaveBeenCalled();
+      });
+    } finally {
+      HTMLAnchorElement.prototype.click = originalClick;
+    }
   });
 });

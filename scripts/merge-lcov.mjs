@@ -96,45 +96,93 @@ function mergeRecords(inputRecords) {
   const byFile = new Map();
 
   for (const record of inputRecords) {
-    const existing = byFile.get(record.sf) || {
-      sf: record.sf,
-      functions: new Map(),
-      functionHits: new Map(),
-      lines: new Map(),
-      branches: new Map(),
-    };
+    const group = byFile.get(record.sf);
+    if (group) {
+      group.push(record);
+    } else {
+      byFile.set(record.sf, [record]);
+    }
+  }
 
+  return [...byFile.entries()]
+    .map(([sf, records]) => mergeFileRecords(sf, records))
+    .sort((a, b) => a.sf.localeCompare(b.sf));
+}
+
+/**
+ * bun's per-process lcov granularity is per-FUNCTION (V8 semantics): functions
+ * that executed get a precise executable-line map, while functions that never
+ * ran in that process are reported as coarse whole-span blocks whose DA set
+ * also includes type annotations, JSX text lines, and other non-executable
+ * lines. A process that loads a module without exercising it (a mocked-away
+ * child, a transitive import) therefore emits extra zero-hit lines that no
+ * exercising process considers coverable, and a naive per-line union surfaces
+ * them as phantom uncovered lines (observed: 41 phantom lines across
+ * DataCharts/MaskingSettings/VisualExplain before this rule existed).
+ *
+ * Merge rule: the record with the most EXECUTED lines is the authority for
+ * which lines are coverable (its map is the finest available); per-line hit
+ * counts still take the max across ALL records, so coverage contributed by
+ * secondary processes (e.g. the mobile-drawer group for a component whose
+ * main group renders desktop) is preserved.
+ */
+function mergeFileRecords(sf, records) {
+  const hitLineCount = (record) => [...record.lines.values()].filter((hits) => hits > 0).length;
+  let authority = records[0];
+  for (const record of records) {
+    const a = hitLineCount(authority);
+    const b = hitLineCount(record);
+    // Tie-break on the smaller line map: with equal executed lines the finer
+    // (more-exercised) map claims fewer lines as coverable.
+    if (b > a || (b === a && record.lines.size < authority.lines.size)) {
+      authority = record;
+    }
+  }
+
+  const merged = {
+    sf,
+    functions: new Map(),
+    functionHits: new Map(),
+    lines: new Map(),
+    branches: new Map(),
+  };
+
+  for (const lineNo of authority.lines.keys()) {
+    let best = 0;
+    for (const record of records) {
+      const hits = record.lines.get(lineNo);
+      if (hits !== undefined && hits > best) {
+        best = hits;
+      }
+    }
+    merged.lines.set(lineNo, best);
+  }
+
+  for (const record of records) {
     for (const [fnName, fnLine] of record.functions.entries()) {
-      if (!existing.functions.has(fnName)) {
-        existing.functions.set(fnName, fnLine);
+      if (!merged.functions.has(fnName)) {
+        merged.functions.set(fnName, fnLine);
       }
     }
 
     for (const [fnName, hits] of record.functionHits.entries()) {
-      const prevHits = existing.functionHits.get(fnName) || 0;
-      existing.functionHits.set(fnName, Math.max(prevHits, hits));
-    }
-
-    for (const [lineNo, hits] of record.lines.entries()) {
-      const prevHits = existing.lines.get(lineNo) || 0;
-      existing.lines.set(lineNo, Math.max(prevHits, hits));
+      const prevHits = merged.functionHits.get(fnName) || 0;
+      merged.functionHits.set(fnName, Math.max(prevHits, hits));
     }
 
     for (const [key, taken] of record.branches.entries()) {
-      const prevTaken = existing.branches.has(key) ? existing.branches.get(key) : -1;
+      const prevTaken = merged.branches.has(key) ? merged.branches.get(key) : -1;
       if (prevTaken === -1 && taken !== -1) {
-        existing.branches.set(key, taken);
+        merged.branches.set(key, taken);
       } else if (prevTaken !== -1 && taken === -1) {
-        existing.branches.set(key, prevTaken);
+        merged.branches.set(key, prevTaken);
       } else {
-        existing.branches.set(key, Math.max(prevTaken, taken));
+        merged.branches.set(key, Math.max(prevTaken, taken));
       }
     }
-
-    byFile.set(record.sf, existing);
   }
 
-  return [...byFile.values()].sort((a, b) => a.sf.localeCompare(b.sf));
+  return merged;
 }
 
 /**
