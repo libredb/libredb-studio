@@ -240,6 +240,7 @@ export function BottomPanel({
           {visibleTabs.map((tab) => (
             <button
               key={tab.key}
+              data-testid={tab.key === "explain" ? "bottom-panel-tab-explain" : undefined}
               onClick={() => {
                 onSetMode(tab.key);
                 if (tab.key === "nl2sql") onSetIsNL2SQLOpen(true);
