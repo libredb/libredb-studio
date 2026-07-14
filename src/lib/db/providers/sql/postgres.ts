@@ -531,6 +531,7 @@ export class PostgresProvider extends SQLBaseProvider {
       ...super.getCapabilities(),
       defaultPort: 5432,
       supportsExplain: true,
+      explainFormat: "postgres-json",
       supportsConnectionString: true,
       maintenanceOperations: ["vacuum", "analyze", "reindex", "kill"],
     };

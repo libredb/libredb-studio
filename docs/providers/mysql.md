@@ -295,6 +295,7 @@ validates that the target parses as an integer connection id.
 |------------|-------|
 | `queryLanguage` | `sql` |
 | `supportsExplain` | `true` |
+| `explainFormat` | `mysql-json` |
 | `supportsExternalQueryLimiting` | `true` (from base) |
 | `supportsCreateTable` | `true` (from base) |
 | `supportsMaintenance` | `true` |

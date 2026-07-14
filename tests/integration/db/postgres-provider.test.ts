@@ -1677,6 +1677,8 @@ describe("PostgresProvider", () => {
       expect(caps.defaultPort).toBe(5432);
       expect(caps.queryLanguage).toBe("sql");
       expect(caps.supportsExplain).toBe(true);
+      expect(caps.explainFormat).toBe("postgres-json");
+      expect(caps.supportsExplain).toBe(caps.explainFormat !== undefined);
       expect(caps.supportsConnectionString).toBe(true);
       expect(caps.maintenanceOperations).toContain("vacuum");
       expect(caps.maintenanceOperations).toContain("analyze");

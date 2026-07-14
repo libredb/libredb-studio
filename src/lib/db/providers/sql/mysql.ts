@@ -269,6 +269,7 @@ export class MySQLProvider extends SQLBaseProvider {
       ...super.getCapabilities(),
       defaultPort: 3306,
       supportsExplain: true,
+      explainFormat: "mysql-json",
       supportsConnectionString: true,
       maintenanceOperations: ["analyze", "optimize", "check", "kill"],
     };

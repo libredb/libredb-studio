@@ -288,6 +288,8 @@ describe("MongoDBProvider", () => {
       expect(caps.supportsCreateTable).toBe(false);
       expect(caps.supportsConnectionString).toBe(true);
       expect(caps.supportsMaintenance).toBe(true);
+      expect(caps.explainFormat).toBeUndefined();
+      expect(caps.supportsExplain).toBe(caps.explainFormat !== undefined);
     });
   });
 

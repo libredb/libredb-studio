@@ -436,6 +436,8 @@ describe("MySQLProvider", () => {
       expect(caps.defaultPort).toBe(3306);
       expect(caps.queryLanguage).toBe("sql");
       expect(caps.supportsExplain).toBe(true);
+      expect(caps.explainFormat).toBe("mysql-json");
+      expect(caps.supportsExplain).toBe(caps.explainFormat !== undefined);
       expect(caps.supportsConnectionString).toBe(true);
       expect(caps.maintenanceOperations).toContain("analyze");
       expect(caps.maintenanceOperations).toContain("optimize");

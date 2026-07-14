@@ -532,6 +532,8 @@ describe("MSSQLProvider", () => {
       // the UI's EXPLAIN builder has no SET SHOWPLAN_* flow, so advertising the capability
       // made the Explain action silently run the unmodified query.
       expect(caps.supportsExplain).toBe(false);
+      expect(caps.explainFormat).toBeUndefined();
+      expect(caps.supportsExplain).toBe(caps.explainFormat !== undefined);
       expect(caps.supportsConnectionString).toBe(true);
     });
   });

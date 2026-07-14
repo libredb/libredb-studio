@@ -369,6 +369,7 @@ Overrides the SQL base defaults:
 |------------|-------|
 | `queryLanguage` | `sql` |
 | `supportsExplain` | `true` |
+| `explainFormat` | `postgres-json` |
 | `supportsExternalQueryLimiting` | `true` |
 | `supportsCreateTable` | `true` |
 | `supportsMaintenance` | `true` |

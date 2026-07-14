@@ -85,6 +85,13 @@ export interface MaintenanceResult {
 // Provider Capabilities & Labels
 // ============================================================================
 
+/**
+ * Dialect discriminant for client-side EXPLAIN handling (issue #194).
+ * Each id selects one strategy module in `src/lib/explain`. Extended per
+ * provider as explain support lands (sqlite-queryplan arrives with #194 PR-3).
+ */
+export type ExplainFormat = "postgres-json" | "mysql-json";
+
 export interface ProviderCapabilities {
   queryLanguage: "sql" | "json";
   /**
@@ -96,6 +103,11 @@ export interface ProviderCapabilities {
    */
   queryDialect?: "libredb";
   supportsExplain: boolean;
+  /**
+   * Present iff supportsExplain is true (enforced by provider tests).
+   * Undefined = no explain support; the UI hides the Explain button and tab.
+   */
+  explainFormat?: ExplainFormat;
   supportsExternalQueryLimiting: boolean;
   supportsCreateTable: boolean;
   supportsMaintenance: boolean;

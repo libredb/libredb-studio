@@ -115,6 +115,8 @@ describe("LibreDBProvider — lifecycle & metadata", () => {
     expect(caps.queryDialect).toBe("libredb");
     expect(caps.supportsCreateTable).toBe(false);
     expect(caps.supportsExplain).toBe(false);
+    expect(caps.explainFormat).toBeUndefined();
+    expect(caps.supportsExplain).toBe(caps.explainFormat !== undefined);
     expect(caps.defaultPort).toBeNull();
   });
 

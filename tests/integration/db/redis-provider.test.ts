@@ -191,6 +191,8 @@ describe("RedisProvider", () => {
       expect(caps.supportsConnectionString).toBe(false);
       expect(caps.supportsCreateTable).toBe(false);
       expect(caps.supportsMaintenance).toBe(true);
+      expect(caps.explainFormat).toBeUndefined();
+      expect(caps.supportsExplain).toBe(caps.explainFormat !== undefined);
     });
   });
 

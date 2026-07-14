@@ -525,6 +525,8 @@ describe("OracleProvider", () => {
       // the UI's EXPLAIN builder has no EXPLAIN PLAN FOR / DBMS_XPLAN flow, so advertising
       // the capability made the Explain action silently run the unmodified query.
       expect(caps.supportsExplain).toBe(false);
+      expect(caps.explainFormat).toBeUndefined();
+      expect(caps.supportsExplain).toBe(caps.explainFormat !== undefined);
       expect(caps.supportsConnectionString).toBe(true);
     });
   });

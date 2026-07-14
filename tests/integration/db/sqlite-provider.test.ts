@@ -247,6 +247,8 @@ describe("SQLiteProvider", () => {
       expect(caps.defaultPort).toBeNull();
       expect(caps.queryLanguage).toBe("sql");
       expect(caps.supportsExplain).toBe(false);
+      expect(caps.explainFormat).toBeUndefined();
+      expect(caps.supportsExplain).toBe(caps.explainFormat !== undefined);
       expect(caps.supportsConnectionString).toBe(false);
       expect(caps.maintenanceOperations).toContain("vacuum");
       expect(caps.maintenanceOperations).toContain("analyze");
