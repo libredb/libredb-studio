@@ -593,4 +593,56 @@ describe("ConnectionModal", () => {
     const { queryByText } = render(React.createElement(ConnectionModal, props));
     expect(queryByText("SSL Mode")).not.toBeNull();
   });
+
+  // ── 31. Clicking a different DB type card sets type, default port, and resets test result ──
+
+  test("clicking a different DB type card sets type, default port, and resets test result", () => {
+    const props = createDefaultProps();
+    const { getByText } = render(React.createElement(ConnectionModal, props));
+
+    const mysqlButton = getByText("MySQL").closest("button");
+    expect(mysqlButton).not.toBeNull();
+    fireEvent.click(mysqlButton as HTMLButtonElement);
+
+    expect(mockSetType).toHaveBeenCalledWith("mysql");
+    expect(mockSetPort).toHaveBeenCalledWith("3306");
+    expect(mockSetTestResult).toHaveBeenCalledWith(null);
+  });
+
+  // ── 32. SQLite type renders the file path input and its onChange updates database ──
+
+  test("SQLite type renders Database File Path input and updates on change", () => {
+    mockFormOverrides = { type: "sqlite" };
+    const props = createDefaultProps();
+    const { queryByText, container } = render(React.createElement(ConnectionModal, props));
+
+    expect(queryByText("Database File Path")).not.toBeNull();
+
+    const pathInput = container.querySelector("#database");
+    expect(pathInput).not.toBeNull();
+    fireEvent.change(pathInput as HTMLInputElement, { target: { value: "/data/app.db" } });
+
+    expect(mockSetDatabase).toHaveBeenCalledWith("/data/app.db");
+  });
+
+  // ── 33. SSH private key auth mode renders PEM and passphrase fields ──
+
+  test("SSH private key auth mode renders private key fields and their onChange handlers fire", () => {
+    mockFormOverrides = { showSSH: true, sshEnabled: true, sshAuthMethod: "privateKey" };
+    const props = createDefaultProps();
+    const { queryByText, container } = render(React.createElement(ConnectionModal, props));
+
+    expect(queryByText("Private Key (PEM)")).not.toBeNull();
+    expect(queryByText("Passphrase (optional)")).not.toBeNull();
+
+    const privateKeyTextarea = container.querySelector('textarea[placeholder*="OPENSSH PRIVATE KEY"]');
+    expect(privateKeyTextarea).not.toBeNull();
+    fireEvent.change(privateKeyTextarea as HTMLTextAreaElement, { target: { value: "fake-key-content" } });
+    expect(mockSetSSHPrivateKey).toHaveBeenCalledWith("fake-key-content");
+
+    const passphraseInput = container.querySelector('input[placeholder="Key passphrase (if encrypted)"]');
+    expect(passphraseInput).not.toBeNull();
+    fireEvent.change(passphraseInput as HTMLInputElement, { target: { value: "secret-pass" } });
+    expect(mockSetSSHPassphrase).toHaveBeenCalledWith("secret-pass");
+  });
 });

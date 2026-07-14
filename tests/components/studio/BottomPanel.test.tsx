@@ -19,26 +19,62 @@ mock.module("@/components/ResultsGrid", () => ({
 }));
 
 mock.module("@/components/VisualExplain", () => ({
-  VisualExplain: () => {
+  VisualExplain: ({ onLoadQuery }: Record<string, unknown>) => {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const React = require("react");
-    return React.createElement("div", { "data-testid": "visualexplain" }, "VisualExplain");
+    return React.createElement(
+      "div",
+      { "data-testid": "visualexplain" },
+      "VisualExplain",
+      React.createElement(
+        "button",
+        {
+          "data-testid": "visualexplain-load-btn",
+          onClick: () => (onLoadQuery as ((query: string) => void) | undefined)?.("SELECT 5"),
+        },
+        "Load",
+      ),
+    );
   },
 }));
 
 mock.module("@/components/QueryHistory", () => ({
-  QueryHistory: () => {
+  QueryHistory: ({ onSelectQuery }: Record<string, unknown>) => {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const React = require("react");
-    return React.createElement("div", { "data-testid": "queryhistory" }, "QueryHistory");
+    return React.createElement(
+      "div",
+      { "data-testid": "queryhistory" },
+      "QueryHistory",
+      React.createElement(
+        "button",
+        {
+          "data-testid": "queryhistory-select-btn",
+          onClick: () => (onSelectQuery as (query: string) => void)("SELECT 3"),
+        },
+        "Select",
+      ),
+    );
   },
 }));
 
 mock.module("@/components/SavedQueries", () => ({
-  SavedQueries: () => {
+  SavedQueries: ({ onSelectQuery }: Record<string, unknown>) => {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const React = require("react");
-    return React.createElement("div", { "data-testid": "savedqueries" }, "SavedQueries");
+    return React.createElement(
+      "div",
+      { "data-testid": "savedqueries" },
+      "SavedQueries",
+      React.createElement(
+        "button",
+        {
+          "data-testid": "savedqueries-select-btn",
+          onClick: () => (onSelectQuery as (query: string) => void)("SELECT 4"),
+        },
+        "Select",
+      ),
+    );
   },
 }));
 
@@ -51,10 +87,23 @@ mock.module("@/components/DataCharts", () => ({
 }));
 
 mock.module("@/components/NL2SQLPanel", () => ({
-  NL2SQLPanel: () => {
+  NL2SQLPanel: ({ onClose, onLoadQuery }: Record<string, unknown>) => {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const React = require("react");
-    return React.createElement("div", { "data-testid": "nl2sqlpanel" }, "NL2SQLPanel");
+    return React.createElement(
+      "div",
+      { "data-testid": "nl2sqlpanel" },
+      "NL2SQLPanel",
+      React.createElement("button", { "data-testid": "nl2sql-close-btn", onClick: onClose as () => void }, "Close"),
+      React.createElement(
+        "button",
+        {
+          "data-testid": "nl2sql-load-btn",
+          onClick: () => (onLoadQuery as (query: string) => void)("SELECT 1"),
+        },
+        "Load",
+      ),
+    );
   },
 }));
 
@@ -67,10 +116,22 @@ mock.module("@/components/AIAutopilotPanel", () => ({
 }));
 
 mock.module("@/components/PivotTable", () => ({
-  PivotTable: () => {
+  PivotTable: ({ onLoadQuery }: Record<string, unknown>) => {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const React = require("react");
-    return React.createElement("div", { "data-testid": "pivottable" }, "PivotTable");
+    return React.createElement(
+      "div",
+      { "data-testid": "pivottable" },
+      "PivotTable",
+      React.createElement(
+        "button",
+        {
+          "data-testid": "pivottable-load-btn",
+          onClick: () => (onLoadQuery as ((query: string) => void) | undefined)?.("SELECT 2"),
+        },
+        "Load",
+      ),
+    );
   },
 }));
 
@@ -90,6 +151,16 @@ mock.module("@/components/SchemaDiff", () => ({
   },
 }));
 
+// ---- Mock storage so the ChartDashboardLazy saved-charts grid is controllable ----
+
+const mockGetSavedCharts = mock(() => [] as SavedChartConfig[]);
+
+mock.module("@/lib/storage", () => ({
+  storage: {
+    getSavedCharts: mockGetSavedCharts,
+  },
+}));
+
 // ---- Now import bun:test, testing-library, and the component ----
 
 import { describe, test, expect, afterEach } from "bun:test";
@@ -98,10 +169,23 @@ import React from "react";
 
 import { BottomPanel } from "@/components/studio/BottomPanel";
 import type { BottomPanelMode } from "@/components/studio/BottomPanel";
+import type { SavedChartConfig } from "@/lib/types";
 
 // =============================================================================
 // BottomPanel Tests
 // =============================================================================
+
+function makeSavedChart(overrides: Partial<SavedChartConfig> = {}): SavedChartConfig {
+  return {
+    id: "chart-1",
+    name: "Revenue Chart",
+    chartType: "bar",
+    xAxis: "month",
+    yAxis: ["revenue"],
+    createdAt: new Date("2026-01-01"),
+    ...overrides,
+  };
+}
 
 function createDefaultProps(overrides: Partial<Record<string, unknown>> = {}) {
   return {
@@ -239,7 +323,7 @@ describe("BottomPanel", () => {
 
     const history = queryByTestId("queryhistory");
     expect(history).not.toBeNull();
-    expect(history!.textContent).toBe("QueryHistory");
+    expect(history!.textContent).toContain("QueryHistory");
   });
 
   test('Saved tab renders SavedQueries when mode="saved"', () => {
@@ -400,5 +484,126 @@ describe("BottomPanel", () => {
     const { getByText } = render(<BottomPanel {...(props as React.ComponentProps<typeof BottomPanel>)} />);
     fireEvent.click(getByText("Docs").closest("button")!);
     expect(onSetMode).toHaveBeenCalledWith("docs");
+  });
+
+  test("Dashboard renders saved chart cards with DataCharts when result exists", () => {
+    mockGetSavedCharts.mockReturnValueOnce([
+      makeSavedChart({ id: "chart-1", name: "Revenue", chartType: "bar", xAxis: "month", yAxis: ["revenue"] }),
+    ]);
+    const props = createDefaultProps({
+      mode: "dashboard",
+      currentTab: {
+        id: "tab-1",
+        name: "Query 1",
+        query: "SELECT 1",
+        result: { rows: [{ id: 1 }], fields: ["id"], rowCount: 1, executionTime: 10 },
+        isExecuting: false,
+        type: "sql" as const,
+      },
+    });
+    const { getByText, queryByTestId } = render(
+      <BottomPanel {...(props as React.ComponentProps<typeof BottomPanel>)} />,
+    );
+
+    expect(getByText("Revenue")).not.toBeNull();
+    expect(getByText("bar")).not.toBeNull();
+    expect(getByText(/X: month/)).not.toBeNull();
+    expect(getByText(/Y: revenue/)).not.toBeNull();
+    expect(queryByTestId("datacharts")).not.toBeNull();
+  });
+
+  test("Dashboard shows placeholder on saved chart card when result is null", () => {
+    mockGetSavedCharts.mockReturnValueOnce([makeSavedChart()]);
+    const props = createDefaultProps({ mode: "dashboard" });
+    const { getByText, queryByTestId } = render(
+      <BottomPanel {...(props as React.ComponentProps<typeof BottomPanel>)} />,
+    );
+
+    expect(getByText("Execute a query to see chart")).not.toBeNull();
+    expect(queryByTestId("datacharts")).toBeNull();
+  });
+
+  test("NL2SQL onClose wrapper closes the panel and resets mode to results", () => {
+    const onSetIsNL2SQLOpen = mock(() => {});
+    const onSetMode = mock(() => {});
+    const props = createDefaultProps({ mode: "nl2sql", onSetIsNL2SQLOpen, onSetMode });
+    const { getByTestId } = render(<BottomPanel {...(props as React.ComponentProps<typeof BottomPanel>)} />);
+
+    fireEvent.click(getByTestId("nl2sql-close-btn"));
+
+    expect(onSetIsNL2SQLOpen).toHaveBeenCalledWith(false);
+    expect(onSetMode).toHaveBeenCalledWith("results");
+  });
+
+  test("NL2SQL onLoadQuery wrapper loads the query and switches to results mode", () => {
+    const onLoadQuery = mock(() => {});
+    const onSetMode = mock(() => {});
+    const props = createDefaultProps({ mode: "nl2sql", onLoadQuery, onSetMode });
+    const { getByTestId } = render(<BottomPanel {...(props as React.ComponentProps<typeof BottomPanel>)} />);
+
+    fireEvent.click(getByTestId("nl2sql-load-btn"));
+
+    expect(onLoadQuery).toHaveBeenCalledWith("SELECT 1");
+    expect(onSetMode).toHaveBeenCalledWith("results");
+  });
+
+  test("Pivot onLoadQuery wrapper loads the query and switches to results mode", () => {
+    const onLoadQuery = mock(() => {});
+    const onSetMode = mock(() => {});
+    const props = createDefaultProps({ mode: "pivot", onLoadQuery, onSetMode });
+    const { getByTestId } = render(<BottomPanel {...(props as React.ComponentProps<typeof BottomPanel>)} />);
+
+    fireEvent.click(getByTestId("pivottable-load-btn"));
+
+    expect(onLoadQuery).toHaveBeenCalledWith("SELECT 2");
+    expect(onSetMode).toHaveBeenCalledWith("results");
+  });
+
+  test("History onSelectQuery wrapper loads the query and switches to results mode", () => {
+    const onLoadQuery = mock(() => {});
+    const onSetMode = mock(() => {});
+    const props = createDefaultProps({ mode: "history", onLoadQuery, onSetMode });
+    const { getByTestId } = render(<BottomPanel {...(props as React.ComponentProps<typeof BottomPanel>)} />);
+
+    fireEvent.click(getByTestId("queryhistory-select-btn"));
+
+    expect(onLoadQuery).toHaveBeenCalledWith("SELECT 3");
+    expect(onSetMode).toHaveBeenCalledWith("results");
+  });
+
+  test("Saved onSelectQuery wrapper loads the query and switches to results mode", () => {
+    const onLoadQuery = mock(() => {});
+    const onSetMode = mock(() => {});
+    const props = createDefaultProps({ mode: "saved", onLoadQuery, onSetMode });
+    const { getByTestId } = render(<BottomPanel {...(props as React.ComponentProps<typeof BottomPanel>)} />);
+
+    fireEvent.click(getByTestId("savedqueries-select-btn"));
+
+    expect(onLoadQuery).toHaveBeenCalledWith("SELECT 4");
+    expect(onSetMode).toHaveBeenCalledWith("results");
+  });
+
+  test("Explain onLoadQuery wrapper loads the query and switches to results mode", () => {
+    const onLoadQuery = mock(() => {});
+    const onSetMode = mock(() => {});
+    const props = createDefaultProps({
+      mode: "explain",
+      onLoadQuery,
+      onSetMode,
+      currentTab: {
+        id: "tab-1",
+        name: "Q",
+        query: "SELECT 1",
+        result: { rows: [{ id: 1 }], fields: ["id"], rowCount: 1, executionTime: 10 },
+        isExecuting: false,
+        type: "sql" as const,
+      },
+    });
+    const { getByTestId } = render(<BottomPanel {...(props as React.ComponentProps<typeof BottomPanel>)} />);
+
+    fireEvent.click(getByTestId("visualexplain-load-btn"));
+
+    expect(onLoadQuery).toHaveBeenCalledWith("SELECT 5");
+    expect(onSetMode).toHaveBeenCalledWith("results");
   });
 });

@@ -16,6 +16,17 @@ export const mockRouterRefresh = mock(() => {});
 export const mockRouterBack = mock(() => {});
 export const mockRouterForward = mock(() => {});
 
+// Mutable search params so tests can simulate query strings (e.g. ?error=...).
+// Defaults to empty; tests that set it MUST reset it in afterEach to avoid
+// leaking state into later files in the same process.
+let mockSearchParams = new URLSearchParams();
+export function setMockSearchParams(params: URLSearchParams) {
+  mockSearchParams = params;
+}
+export function resetMockSearchParams() {
+  mockSearchParams = new URLSearchParams();
+}
+
 mock.module("next/navigation", () => ({
   useRouter: () => ({
     push: mockRouterPush,
@@ -24,5 +35,5 @@ mock.module("next/navigation", () => ({
     forward: mockRouterForward,
   }),
   usePathname: () => "/",
-  useSearchParams: () => new URLSearchParams(),
+  useSearchParams: () => mockSearchParams,
 }));

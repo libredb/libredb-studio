@@ -252,4 +252,218 @@ describe("OverviewTab", () => {
       expect(queryByText("admin (admin)")).not.toBeNull();
     });
   });
+
+  test("maps audit events into the activity feed and formats their relative times", async () => {
+    const now = Date.now();
+    fetchMock = mockGlobalFetch({
+      "/api/admin/audit": {
+        json: {
+          events: [
+            {
+              id: "a1",
+              timestamp: new Date(now - 5 * 60 * 1000).toISOString(),
+              type: "query_execution",
+              action: "Executed query",
+              target: "orders",
+              connectionName: "PG Dev",
+              user: "admin",
+              result: "success",
+            },
+            {
+              id: "a2",
+              timestamp: new Date(now - 5 * 60 * 60 * 1000).toISOString(),
+              type: "maintenance",
+              action: "Ran VACUUM",
+              target: "orders",
+              connectionName: "PG Dev",
+              user: "admin",
+              result: "success",
+            },
+            {
+              id: "a3",
+              timestamp: new Date(now - 3 * 24 * 60 * 60 * 1000).toISOString(),
+              type: "kill_session",
+              action: "Killed session",
+              target: "session-42",
+              connectionName: "PG Dev",
+              user: "admin",
+              result: "failure",
+            },
+          ],
+        },
+      },
+      "/api/admin/fleet-health": {
+        json: {
+          results: [
+            {
+              connectionId: "c1",
+              connectionName: "PG Dev",
+              type: "postgres",
+              status: "healthy",
+              latencyMs: 15,
+              databaseSize: "256 MB",
+              activeConnections: 5,
+            },
+          ],
+        },
+      },
+    });
+
+    let renderResult: ReturnType<typeof render>;
+    await act(async () => {
+      renderResult = render(<OverviewTab user={{ username: "admin", role: "admin" }} />);
+    });
+    const { queryByText } = renderResult!;
+
+    await waitFor(() => {
+      // Audit events are mapped into the feed alongside query history
+      expect(queryByText("Executed query orders")).not.toBeNull();
+      expect(queryByText("Killed session session-42")).not.toBeNull();
+      // formatRelativeTime: minutes / hours / days branches
+      expect(queryByText("5m ago")).not.toBeNull();
+      expect(queryByText("5h ago")).not.toBeNull();
+      expect(queryByText("3d ago")).not.toBeNull();
+    });
+  });
+
+  test("computes the good-range avg latency gauge color and the kb database size branch", async () => {
+    fetchMock = mockGlobalFetch({
+      "/api/admin/audit": { json: { events: [] } },
+      "/api/admin/fleet-health": {
+        json: {
+          results: [
+            {
+              connectionId: "c1",
+              connectionName: "PG Dev",
+              type: "postgres",
+              status: "healthy",
+              latencyMs: 150,
+              databaseSize: "512 kb",
+              activeConnections: 5,
+            },
+          ],
+        },
+      },
+    });
+
+    let renderResult: ReturnType<typeof render>;
+    await act(async () => {
+      renderResult = render(<OverviewTab user={{ username: "admin", role: "admin" }} />);
+    });
+    const { queryByText } = renderResult!;
+
+    await waitFor(() => {
+      // getGaugeColorReverse: value in (50, 200] -> "good" branch
+      expect(queryByText("150")).not.toBeNull();
+      // totalDBSize aggregation: "kb" branch
+      expect(queryByText("512 KB")).not.toBeNull();
+    });
+  });
+
+  test("computes the warning-range avg latency gauge color", async () => {
+    fetchMock = mockGlobalFetch({
+      "/api/admin/audit": { json: { events: [] } },
+      "/api/admin/fleet-health": {
+        json: {
+          results: [
+            {
+              connectionId: "c1",
+              connectionName: "PG Dev",
+              type: "postgres",
+              status: "healthy",
+              latencyMs: 300,
+              databaseSize: "10 MB",
+              activeConnections: 5,
+            },
+          ],
+        },
+      },
+    });
+
+    let renderResult: ReturnType<typeof render>;
+    await act(async () => {
+      renderResult = render(<OverviewTab user={{ username: "admin", role: "admin" }} />);
+    });
+    const { queryByText } = renderResult!;
+
+    await waitFor(() => {
+      // getGaugeColorReverse: value in (200, 500] -> "warning" branch
+      expect(queryByText("300")).not.toBeNull();
+    });
+  });
+
+  test("computes the critical-range avg latency gauge color", async () => {
+    fetchMock = mockGlobalFetch({
+      "/api/admin/audit": { json: { events: [] } },
+      "/api/admin/fleet-health": {
+        json: {
+          results: [
+            {
+              connectionId: "c1",
+              connectionName: "PG Dev",
+              type: "postgres",
+              status: "healthy",
+              latencyMs: 600,
+              databaseSize: "10 MB",
+              activeConnections: 5,
+            },
+          ],
+        },
+      },
+    });
+
+    let renderResult: ReturnType<typeof render>;
+    await act(async () => {
+      renderResult = render(<OverviewTab user={{ username: "admin", role: "admin" }} />);
+    });
+    const { queryByText } = renderResult!;
+
+    await waitFor(() => {
+      // getGaugeColorReverse: value > 500 -> "critical" branch
+      expect(queryByText("600")).not.toBeNull();
+    });
+  });
+
+  test("fleet health section styles degraded and error status cards", async () => {
+    fetchMock = mockGlobalFetch({
+      "/api/admin/audit": { json: { events: [] } },
+      "/api/admin/fleet-health": {
+        json: {
+          results: [
+            {
+              connectionId: "c1",
+              connectionName: "PG Staging",
+              type: "postgres",
+              status: "degraded",
+              latencyMs: 120,
+              databaseSize: "10 MB",
+            },
+            {
+              connectionId: "c2",
+              connectionName: "PG Prod",
+              type: "postgres",
+              status: "error",
+              latencyMs: 999,
+              error: "Connection refused",
+            },
+          ],
+        },
+      },
+    });
+
+    let renderResult: ReturnType<typeof render>;
+    await act(async () => {
+      renderResult = render(<OverviewTab user={{ username: "admin", role: "admin" }} />);
+    });
+    const { queryByText } = renderResult!;
+
+    await waitFor(() => {
+      // "degraded" branch of getStatusColor
+      expect(queryByText("PG Staging")).not.toBeNull();
+      // default ("error") branch of getStatusColor
+      expect(queryByText("PG Prod")).not.toBeNull();
+      expect(queryByText("timeout")).not.toBeNull();
+      expect(queryByText("Connection refused")).not.toBeNull();
+    });
+  });
 });

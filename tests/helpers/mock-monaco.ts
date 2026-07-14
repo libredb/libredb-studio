@@ -110,6 +110,17 @@ export function setupFramerMotionMock() {
       "layoutId",
     ];
     const passthrough = ({ children, ...props }: Record<string, unknown>) => {
+      // Real framer-motion resolves function-valued variants (e.g. `visible: (i) => ({...})`)
+      // by invoking them with the `custom` prop. Emulate that here so components relying on
+      // per-item computed variants get exercised under test.
+      const variants = props.variants as Record<string, unknown> | undefined;
+      const animateKey = typeof props.animate === "string" ? props.animate : undefined;
+      if (variants && animateKey) {
+        const variant = variants[animateKey];
+        if (typeof variant === "function") {
+          (variant as (custom: unknown) => unknown)(props.custom);
+        }
+      }
       // Filter out framer-motion-specific props that React doesn't understand
       const domProps = Object.fromEntries(Object.entries(props).filter(([key]) => !motionPropKeys.includes(key)));
       return React.createElement("div", domProps, children);

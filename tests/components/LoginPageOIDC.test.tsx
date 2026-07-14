@@ -1,35 +1,20 @@
 import "../setup-dom";
 import React from "react";
 import { mock } from "bun:test";
+import { setMockSearchParams, resetMockSearchParams } from "../helpers/mock-navigation";
 
-// Override next/navigation to support searchParams with error
-let mockSearchParams = new URLSearchParams();
-const mockRouterPush = mock(() => {});
-const mockRouterRefresh = mock(() => {});
-
-mock.module("next/navigation", () => ({
-  useRouter: () => ({
-    push: mockRouterPush,
-    refresh: mockRouterRefresh,
-    back: mock(() => {}),
-    forward: mock(() => {}),
-  }),
-  usePathname: () => "/",
-  useSearchParams: () => mockSearchParams,
-}));
+// next/navigation is mocked via the preloaded shared helper; search params
+// are driven through setMockSearchParams instead of a local mock.module call.
 
 const { default: LoginForm } = await import("@/app/login/login-form");
 
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { cleanup, render } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 describe("LoginPage (OIDC mode)", () => {
-  beforeEach(() => {
-    mockSearchParams = new URLSearchParams();
-  });
-
   afterEach(() => {
+    resetMockSearchParams();
     cleanup();
   });
 
@@ -51,12 +36,13 @@ describe("LoginPage (OIDC mode)", () => {
   });
 
   test("renders LibreDB Studio title", () => {
-    const { getByText } = render(<LoginForm authProvider="oidc" />);
-    expect(getByText("LibreDB Studio")).not.toBeNull();
+    // The title appears twice: desktop hero and mobile header.
+    const { getAllByText } = render(<LoginForm authProvider="oidc" />);
+    expect(getAllByText("LibreDB Studio").length).toBeGreaterThan(0);
   });
 
   test("shows error message when error param is present", () => {
-    mockSearchParams = new URLSearchParams("error=oidc_failed");
+    setMockSearchParams(new URLSearchParams("error=oidc_failed"));
     const { getByText } = render(<LoginForm authProvider="oidc" />);
     expect(getByText("Authentication failed. Please try again.")).not.toBeNull();
   });

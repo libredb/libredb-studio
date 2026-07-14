@@ -414,4 +414,128 @@ describe("TestDataGenerator", () => {
       expect(v).toMatch(/'$/);
     }
   });
+
+  // ── Name-based fake generators: address/city/country/zip/state/company/ ───
+  // ── subject/description/color/ip ────────────────────────────────────────────
+
+  test("maps location and content columns to their fake generators", () => {
+    const richSchema: TableSchema = {
+      name: "profiles",
+      indexes: [],
+      columns: [
+        { name: "shipping_address", type: "VARCHAR(255)", nullable: true, isPrimary: false },
+        { name: "city", type: "VARCHAR(100)", nullable: true, isPrimary: false },
+        { name: "country", type: "VARCHAR(100)", nullable: true, isPrimary: false },
+        { name: "zip_code", type: "VARCHAR(20)", nullable: true, isPrimary: false },
+        { name: "state", type: "VARCHAR(50)", nullable: true, isPrimary: false },
+        { name: "company_name", type: "VARCHAR(255)", nullable: true, isPrimary: false },
+        { name: "subject", type: "VARCHAR(255)", nullable: true, isPrimary: false },
+        { name: "description", type: "TEXT", nullable: true, isPrimary: false },
+        { name: "color", type: "VARCHAR(7)", nullable: true, isPrimary: false },
+        { name: "ip", type: "VARCHAR(45)", nullable: true, isPrimary: false },
+      ],
+    };
+    const onExecuteQuery = mock((q: string) => {
+      void q;
+    });
+    const { queryByText } = render(
+      <TestDataGenerator
+        isOpen
+        onClose={mock(() => {})}
+        tableName="profiles"
+        tableSchema={richSchema}
+        queryLanguage="json"
+        onExecuteQuery={onExecuteQuery}
+      />,
+    );
+    fireEvent.click(queryByText("Execute")!);
+    const raw = onExecuteQuery.mock.calls[0][0] as string;
+    const doc = (JSON.parse(raw) as { documents: Record<string, string>[] }).documents[0];
+
+    expect(doc.shipping_address).toMatch(/^\d+ (Main|Oak|Pine|Elm|Maple) St$/);
+    expect([
+      "New York",
+      "Los Angeles",
+      "Chicago",
+      "Houston",
+      "Phoenix",
+      "London",
+      "Paris",
+      "Berlin",
+      "Tokyo",
+      "Sydney",
+    ]).toContain(doc.city);
+    expect([
+      "United States",
+      "United Kingdom",
+      "Canada",
+      "Germany",
+      "France",
+      "Japan",
+      "Australia",
+      "Brazil",
+    ]).toContain(doc.country);
+    expect(doc.zip_code).toMatch(/^\d{5}$/);
+    expect(["California", "New York", "Texas", "Florida", "Illinois", "Pennsylvania", "Ohio", "Georgia"]).toContain(
+      doc.state,
+    );
+    expect([
+      "Acme Corp",
+      "TechStart",
+      "GlobalSync",
+      "NovaTech",
+      "DataFlow",
+      "CloudPeak",
+      "ByteWise",
+      "NetSphere",
+    ]).toContain(doc.company_name);
+    expect([
+      "Quick update needed",
+      "New feature request",
+      "Bug fix applied",
+      "Performance review",
+      "System maintenance",
+    ]).toContain(doc.subject);
+    expect(doc.description).toContain("Lorem ipsum");
+    expect(doc.color).toMatch(/^#[0-9a-f]{6}$/i);
+    expect(doc.ip).toMatch(/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/);
+  });
+
+  // ── Type-based fake generators: date/timestamp/uuid/json + default fallback ─
+
+  test("maps date, timestamp, uuid, json, and unmatched columns to their fake generators", () => {
+    const typedSchema: TableSchema = {
+      name: "events",
+      indexes: [],
+      columns: [
+        { name: "birth_date", type: "DATE", nullable: true, isPrimary: false },
+        { name: "updated_at", type: "TIMESTAMP", nullable: true, isPrimary: false },
+        { name: "record_uuid", type: "UUID", nullable: true, isPrimary: false },
+        { name: "metadata", type: "JSON", nullable: true, isPrimary: false },
+        { name: "misc_value", type: "CHAR(1)", nullable: true, isPrimary: false },
+      ],
+    };
+    const onExecuteQuery = mock((q: string) => {
+      void q;
+    });
+    const { queryByText } = render(
+      <TestDataGenerator
+        isOpen
+        onClose={mock(() => {})}
+        tableName="events"
+        tableSchema={typedSchema}
+        queryLanguage="json"
+        onExecuteQuery={onExecuteQuery}
+      />,
+    );
+    fireEvent.click(queryByText("Execute")!);
+    const raw = onExecuteQuery.mock.calls[0][0] as string;
+    const doc = (JSON.parse(raw) as { documents: Record<string, string>[] }).documents[0];
+
+    expect(doc.birth_date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(doc.updated_at).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/);
+    expect(doc.record_uuid).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+    expect(doc.metadata).toBe("{}");
+    expect(["Sample text", "Test data", "Example value", "Test content", "Placeholder"]).toContain(doc.misc_value);
+  });
 });

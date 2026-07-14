@@ -27,6 +27,25 @@ function mockFetchStream(body: string, ok = true, errorBody?: { error: string })
   );
 }
 
+// Unlike mockFetchStream, builds a brand-new ReadableStream on every invocation so the
+// mock can be called more than once (a shared stream would already be locked/consumed
+// after the first read).
+function mockFetchStreamMulti(body: string) {
+  const encoder = new TextEncoder();
+  return mock(() =>
+    Promise.resolve({
+      ok: true,
+      body: new ReadableStream({
+        start(controller) {
+          controller.enqueue(encoder.encode(body));
+          controller.close();
+        },
+      }),
+      json: () => Promise.resolve({}),
+    }),
+  );
+}
+
 // Sample plan with Seq Scan on large table + row estimate mismatch
 const samplePlan: ExplainPlanResult[] = [
   {
@@ -353,6 +372,79 @@ describe("VisualExplain", () => {
       expect(pre!.textContent).toContain("SELECT id FROM users WHERE active;");
       expect(queryByText("Try This")).not.toBeNull();
     });
+  });
+
+  test("clicking Re-analyze after a completed run aborts the previous controller", async () => {
+    const user = userEvent.setup();
+    globalThis.fetch = mockFetchStreamMulti("First analysis result.") as unknown as typeof fetch;
+
+    const { queryByText } = render(<VisualExplain plan={samplePlan} query="SELECT 1" />);
+    fireEvent.click(queryByText("AI Explain")!);
+    await user.click(queryByText("Analyze with AI")!);
+
+    await waitFor(() => {
+      expect(queryByText("Re-analyze")).not.toBeNull();
+    });
+
+    // abortControllerRef.current is already set from the first run, so this second
+    // invocation exercises the "abort previous request" branch before issuing a new fetch.
+    await user.click(queryByText("Re-analyze")!);
+
+    await waitFor(() => {
+      expect((globalThis.fetch as unknown as ReturnType<typeof mock>).mock.calls.length).toBe(2);
+    });
+  });
+
+  test("AI tab markdown renderer covers headers, lists, blank lines, bold, inline code, and a non-SQL code block", async () => {
+    const user = userEvent.setup();
+    const markdown =
+      "## Overview\n" +
+      "### Details\n" +
+      "- First bullet\n" +
+      "- Second bullet\n" +
+      "1. First step\n" +
+      "2. Second step\n" +
+      "\n" +
+      "**Important** note with `inline code` here.\n" +
+      "```sql\n" +
+      "SELECT * FROM users;\n" +
+      "```\n" +
+      "```text\n" +
+      "plain block content\n" +
+      "```\n";
+    globalThis.fetch = mockFetchStream(markdown) as unknown as typeof fetch;
+
+    const { queryByText, container } = render(<VisualExplain plan={samplePlan} query="SELECT * FROM users" />);
+    fireEvent.click(queryByText("AI Explain")!);
+    await user.click(queryByText("Analyze with AI")!);
+
+    await waitFor(() => {
+      expect(queryByText("Overview")).not.toBeNull();
+      expect(queryByText("Details")).not.toBeNull();
+      expect(queryByText("First bullet")).not.toBeNull();
+      expect(queryByText("Second bullet")).not.toBeNull();
+      expect(queryByText("First step")).not.toBeNull();
+      expect(queryByText("Second step")).not.toBeNull();
+      expect(queryByText("Important")).not.toBeNull();
+      expect(queryByText("inline code")).not.toBeNull();
+    });
+
+    // One SQL fenced block (blue styling) and one non-SQL "text" fenced block (zinc styling).
+    const pres = container.querySelectorAll("pre");
+    expect(pres.length).toBe(2);
+
+    const sqlPre = Array.from(pres).find((pre) => pre.textContent?.includes("SELECT * FROM users;"));
+    expect(sqlPre).not.toBeUndefined();
+    expect(sqlPre!.className).toContain("bg-blue-500/5");
+
+    const nonSqlPre = Array.from(pres).find((pre) => pre.textContent?.includes("plain block content"));
+    expect(nonSqlPre).not.toBeUndefined();
+    expect(nonSqlPre!.className).toContain("bg-white/[0.02]");
+
+    const strongEl = Array.from(container.querySelectorAll("strong")).find((el) => el.textContent === "Important");
+    expect(strongEl).not.toBeUndefined();
+    const codeEl = Array.from(container.querySelectorAll("code")).find((el) => el.textContent === "inline code");
+    expect(codeEl).not.toBeUndefined();
   });
 
   // -----------------------------------------------------------------------

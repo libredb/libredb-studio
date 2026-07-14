@@ -136,6 +136,7 @@ run_group "Group 11/12: Smoke tests" \
   tests/components/RootLayout.test.tsx \
   tests/components/Page.test.tsx \
   tests/components/LoginPage.test.tsx \
+  tests/components/LoginPageOIDC.test.tsx \
   tests/components/CommunitySection.test.tsx \
   tests/components/AdminPage.test.tsx \
   tests/components/MonitoringPage.test.tsx \
@@ -168,6 +169,7 @@ run_group "Group 15/16: Remaining components" \
   tests/components/SchemaDiagram.test.tsx \
   tests/components/DataProfiler.test.tsx \
   tests/components/schema-explorer/SchemaExplorer.test.tsx \
+  tests/components/schema-explorer/ColumnList.test.tsx \
   tests/components/sidebar/ConnectionItem.test.tsx \
   tests/components/sidebar/ConnectionsList.test.tsx \
   tests/components/studio/QueryToolbar.test.tsx \
