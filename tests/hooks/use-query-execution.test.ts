@@ -504,6 +504,30 @@ describe("useQueryExecution", () => {
     await waitFor(() => expect(result.current.bottomPanelMode).toBe("results"));
   });
 
+  test("bottomPanelMode resets from explain when metadata lacks explainFormat even if supportsExplain is true", async () => {
+    mockGlobalFetch({});
+    const params = createDefaultParams();
+    // Divergent state (reachable via custom metadata in embedded mode): the tab
+    // filter and getExplainStrategy key on explainFormat, so the reset must too.
+    const noFormat = {
+      ...mockMetadata,
+      capabilities: { ...mockMetadata.capabilities, supportsExplain: true, explainFormat: undefined },
+    };
+
+    const { result, rerender } = renderHook(({ metadata }) => useQueryExecution({ ...params, metadata }), {
+      initialProps: { metadata: mockMetadata as ProviderMetadata },
+    });
+
+    act(() => {
+      result.current.setBottomPanelMode("explain");
+    });
+    expect(result.current.bottomPanelMode).toBe("explain");
+
+    rerender({ metadata: noFormat });
+
+    await waitFor(() => expect(result.current.bottomPanelMode).toBe("results"));
+  });
+
   // ── executeQuery sets explain panel mode for explain queries ────────────────
 
   test("executeQuery sets explain panel mode for explain queries", async () => {
