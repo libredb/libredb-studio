@@ -37,6 +37,7 @@ const mockMetadata: ProviderMetadata = {
   capabilities: {
     queryLanguage: "sql" as const,
     supportsExplain: true,
+    explainFormat: "postgres-json" as const,
     supportsExternalQueryLimiting: true,
     supportsCreateTable: true,
     supportsMaintenance: true,
@@ -989,7 +990,11 @@ describe("useQueryExecution", () => {
       },
     });
     const mysqlConnection = { ...mockConnection, type: "mysql" as const };
-    const params = createDefaultParams({ activeConnection: mysqlConnection });
+    const mysqlMetadata: ProviderMetadata = {
+      ...mockMetadata,
+      capabilities: { ...mockMetadata.capabilities, explainFormat: "mysql-json" as const },
+    };
+    const params = createDefaultParams({ activeConnection: mysqlConnection, metadata: mysqlMetadata });
 
     const { result } = renderHook(() => useQueryExecution(params));
 
@@ -1101,10 +1106,41 @@ describe("useQueryExecution", () => {
     });
 
     // Should proceed to execute (no toast about unsupported)
+    expect(mockToastError).not.toHaveBeenCalled();
     const queryCall = fetchMock.mock.calls.find(
       (call) => typeof call[0] === "string" && call[0].includes("/api/db/query"),
     );
     expect(queryCall).toBeDefined();
+    // Metadata is the sole source of dialect knowledge now — without it, no
+    // EXPLAIN SQL is built (no more falling back to connection.type).
+    const body = JSON.parse(queryCall![1]!.body as string);
+    expect(body.sql).not.toContain("EXPLAIN");
+  });
+
+  // ── no EXPLAIN without explainFormat, even if supportsExplain is true ──
+
+  test("no EXPLAIN built when metadata lacks explainFormat even if supportsExplain is true", async () => {
+    const fetchMock = mockGlobalFetch({
+      "/api/db/query": { ok: true, json: mockQueryResult },
+    });
+    const noFormatMetadata: ProviderMetadata = {
+      ...mockMetadata,
+      capabilities: { ...mockMetadata.capabilities, supportsExplain: true, explainFormat: undefined },
+    };
+    const params = createDefaultParams({ metadata: noFormatMetadata });
+
+    const { result } = renderHook(() => useQueryExecution(params));
+
+    await act(async () => {
+      await result.current.executeQuery("SELECT 1", undefined, true);
+    });
+
+    const queryCall = fetchMock.mock.calls.find(
+      (call) => typeof call[0] === "string" && call[0].includes("/api/db/query"),
+    );
+    expect(queryCall).toBeDefined();
+    const body = JSON.parse(queryCall![1]!.body as string);
+    expect(body.sql).toBe("SELECT 1");
   });
 
   // ── handleLoadMore uses result.rows.length when currentOffset undefined ─
@@ -1258,7 +1294,11 @@ describe("useQueryExecution", () => {
       "/api/db/query": { ok: true, json: mockQueryResult },
     });
     const mssqlConnection = { ...mockConnection, type: "mssql" as const };
-    const params = createDefaultParams({ activeConnection: mssqlConnection });
+    const mssqlMetadata: ProviderMetadata = {
+      ...mockMetadata,
+      capabilities: { ...mockMetadata.capabilities, explainFormat: undefined },
+    };
+    const params = createDefaultParams({ activeConnection: mssqlConnection, metadata: mssqlMetadata });
 
     const { result } = renderHook(() => useQueryExecution(params));
 
@@ -1266,7 +1306,7 @@ describe("useQueryExecution", () => {
       await result.current.executeQuery("SELECT * FROM users");
     });
 
-    // Only the main query — no EXPLAIN is built for mssql
+    // Only the main query — no EXPLAIN is built when metadata carries no explainFormat
     const queryCalls = fetchMock.mock.calls.filter(
       (call) => typeof call[0] === "string" && call[0].includes("/api/db/query"),
     );

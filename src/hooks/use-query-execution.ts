@@ -11,6 +11,7 @@ import { isMultiStatement } from "@/lib/sql/statement-splitter";
 import { shouldRefreshSchema } from "@/lib/query-generators";
 import { ApiErrorCode } from "@/lib/api/error-codes";
 import { logger } from "@/lib/logger";
+import { getExplainStrategy } from "@/lib/explain";
 import { buildConnectionPayload } from "./use-connection-payload";
 
 export interface QueryExecutionOptions {
@@ -141,15 +142,7 @@ export function useQueryExecution({
         return;
       }
 
-      // Build EXPLAIN query for PostgreSQL/MySQL
-      const buildExplainQuery = (sql: string, dbType: string): string | null => {
-        // Only for SELECT queries
-        if (!/^\s*SELECT\b/i.test(sql.trim())) return null;
-
-        if (dbType === "postgres") return `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ${sql}`;
-        if (dbType === "mysql") return `EXPLAIN FORMAT=JSON ${sql}`;
-        return null;
-      };
+      const explainStrategy = getExplainStrategy(metadata?.capabilities.explainFormat);
 
       const startTime = Date.now();
       // Set up abort controller for query cancellation
@@ -173,10 +166,10 @@ export function useQueryExecution({
           }
         }
 
-        // If isExplain mode, run EXPLAIN query instead
+        // If isExplain mode, run the dialect's EXPLAIN query instead
         let queryToRun = queryToExecute;
-        if (isExplain && activeConnection.type) {
-          const explainSql = buildExplainQuery(queryToExecute, activeConnection.type);
+        if (isExplain && explainStrategy) {
+          const explainSql = explainStrategy.buildSql(queryToExecute, "analyze");
           if (explainSql) {
             queryToRun = explainSql;
           }
@@ -213,8 +206,8 @@ export function useQueryExecution({
 
         // Run EXPLAIN in background for non-explain queries (SELECT only)
         let explainPromise: Promise<Response> | null = null;
-        if (!isExplain && !isLoadMore && activeConnection.type) {
-          const explainSql = buildExplainQuery(queryToExecute, activeConnection.type);
+        if (!isExplain && !isLoadMore && explainStrategy) {
+          const explainSql = explainStrategy.buildSql(queryToExecute, "estimate");
           if (explainSql) {
             explainPromise = fetch("/api/db/query", {
               method: "POST",
@@ -312,15 +305,14 @@ export function useQueryExecution({
         // Process EXPLAIN results (from background or direct)
         let explainPlanData = null;
         if (isExplain) {
-          // Direct EXPLAIN query - parse result
-          explainPlanData = resultData.rows?.[0]?.["QUERY PLAN"] || resultData.rows;
-        } else if (explainPromise) {
+          explainPlanData = explainStrategy ? explainStrategy.extractPlan(resultData) : null;
+        } else if (explainPromise && explainStrategy) {
           // Background EXPLAIN - don't block, update async
           explainPromise
             .then(async (explainRes) => {
               if (explainRes.ok) {
                 const explainData = await explainRes.json();
-                const plan = explainData.rows?.[0]?.["QUERY PLAN"] || explainData.rows;
+                const plan = explainStrategy.extractPlan(explainData);
                 setTabs((prev) => prev.map((t) => (t.id === targetTabId ? { ...t, explainPlan: plan } : t)));
               }
             })
