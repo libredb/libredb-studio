@@ -79,6 +79,7 @@ export function StudioTabBar({
               )}
               <input
                 autoFocus
+                aria-label={`Rename ${tab.name}`}
                 value={editingTabName}
                 onChange={(e) => onSetEditingTabName(e.target.value)}
                 onBlur={() => {
@@ -131,7 +132,15 @@ export function StudioTabBar({
               type="button"
               aria-label={`Close ${tab.name}`}
               className="ml-auto opacity-0 group-hover:opacity-100 focus-visible:opacity-100 hover:text-white shrink-0 cursor-pointer"
-              onClick={(e) => onCloseTab(tab.id, e)}
+              onClick={(e) => {
+                // Closing removes this button from the DOM; without an explicit
+                // handoff, keyboard focus falls back to the document body.
+                const tablist = e.currentTarget.closest('[role="tablist"]') as HTMLElement | null;
+                onCloseTab(tab.id, e);
+                setTimeout(() => {
+                  tablist?.querySelector<HTMLButtonElement>('[role="tab"][aria-selected="true"]')?.focus();
+                }, 0);
+              }}
             >
               <X strokeWidth={1.5} className="w-3 h-3" />
             </button>

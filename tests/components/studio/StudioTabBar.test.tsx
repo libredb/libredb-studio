@@ -379,5 +379,23 @@ describe("StudioTabBar", () => {
       fireEvent.click(close);
       expect(onCloseTab).toHaveBeenCalledTimes(1);
     });
+
+    test("rename input carries an accessible name identifying the tab", () => {
+      const props = createDefaultProps({ editingTabId: "tab-1", editingTabName: "Query 1" });
+      const { getByLabelText } = render(<StudioTabBar {...props} />);
+      expect(getByLabelText("Rename Query 1")).not.toBeNull();
+    });
+
+    test("closing a tab moves focus back to the selected tab", async () => {
+      const onCloseTab = mock(() => {});
+      const props = createDefaultProps({ activeTabId: "tab-1", onCloseTab });
+      const { getByRole, rerender } = render(<StudioTabBar {...props} />);
+      fireEvent.click(getByRole("button", { name: "Close Query 2" }));
+      // The parent removes the tab in response; simulate that re-render
+      const tab1 = createTab({ id: "tab-1", name: "Query 1" });
+      rerender(<StudioTabBar {...createDefaultProps({ tabs: [tab1], activeTabId: "tab-1", onCloseTab })} />);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(document.activeElement?.getAttribute("data-tab-id")).toBe("tab-1");
+    });
   });
 });

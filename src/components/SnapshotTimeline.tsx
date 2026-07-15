@@ -17,7 +17,7 @@ interface SnapshotTimelineProps {
 const EMPTY_MESSAGE = "No snapshots taken yet. Take a snapshot to start tracking schema changes.";
 const NODE_CLASS = "relative flex flex-col items-center min-w-[100px] cursor-pointer group";
 const DELETE_BUTTON_CLASS =
-  "absolute -top-2 -right-1 p-0.5 text-zinc-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity";
+  "absolute -top-2 -right-1 z-20 p-0.5 text-zinc-600 hover:text-red-400 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100 transition-opacity";
 
 export function SnapshotTimeline({ snapshots, onCompare, onDelete }: SnapshotTimelineProps) {
   const [selected, setSelected] = useState<string[]>([]);
@@ -77,19 +77,20 @@ export function SnapshotTimeline({ snapshots, onCompare, onDelete }: SnapshotTim
                   "w-3.5 h-3.5 rounded-full border-2 z-10 transition-all",
                   isSelected
                     ? "bg-blue-500 border-blue-400 scale-125"
-                    : "bg-[#0d0d0d] border-white/20 hover:border-white/40",
+                    : "bg-[#0d0d0d] border-white/20 group-hover:border-white/40",
                 )}
               />
 
               {idx < sorted.length - 1 && <div className="absolute top-[7px] left-[50%] w-full h-[2px] bg-white/10" />}
 
               {/* Stretched-link pattern: the button's ::after overlay makes the
-                  whole node clickable; the delete button below paints above it */}
+                  whole node clickable. after:z-10 lifts it above the z-10 dot
+                  flex item; the z-20 delete button stays on top. */}
               <button
                 type="button"
                 aria-pressed={isSelected}
                 onClick={() => handleClick(snapshot.id)}
-                className={cn(labelClass, "cursor-pointer after:absolute after:inset-0")}
+                className={cn(labelClass, "cursor-pointer after:absolute after:inset-0 after:z-10")}
               >
                 <div className="text-xs font-medium truncate max-w-[90px]">
                   {snapshot.label || snapshot.connectionName}

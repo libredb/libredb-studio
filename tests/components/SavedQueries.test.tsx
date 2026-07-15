@@ -65,6 +65,21 @@ describe("SavedQueries", () => {
     expect(onSelectQuery).toHaveBeenCalledWith("SELECT * FROM users WHERE active = true");
   });
 
+  test("edit button loads the query for editing", () => {
+    const onSelectQuery = mock(() => {});
+    const { getByRole } = render(<SavedQueries onSelectQuery={onSelectQuery} />);
+    fireEvent.click(getByRole("button", { name: "Edit Active Users" }));
+    expect(onSelectQuery).toHaveBeenCalledTimes(1);
+    expect(onSelectQuery).toHaveBeenCalledWith("SELECT * FROM users WHERE active = true");
+  });
+
+  test("card actions are revealed on keyboard focus and non-hover devices", () => {
+    const { getByRole } = render(<SavedQueries onSelectQuery={mock(() => {})} />);
+    const actions = getByRole("button", { name: "Delete Active Users" }).parentElement!;
+    expect(actions.className).toContain("focus-within:opacity-100");
+    expect(actions.className).toContain("[@media(hover:none)]:opacity-100");
+  });
+
   test("delete button removes query after confirm", () => {
     const originalConfirm = globalThis.confirm;
     globalThis.confirm = mock(() => true) as unknown as typeof confirm;

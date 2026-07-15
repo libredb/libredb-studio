@@ -85,12 +85,13 @@ export function SavedQueries({ onSelectQuery, connectionType, refreshTrigger }: 
                     </h4>
                     {q.description && <p className="text-xs text-zinc-500 line-clamp-1">{q.description}</p>}
                   </div>
-                  <div className="relative z-10 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <div className="relative z-10 flex items-center gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 [@media(hover:none)]:opacity-100 transition-opacity">
                     <Button
                       variant="ghost"
                       size="icon"
                       aria-label={`Edit ${q.name}`}
                       className="h-6 w-6 text-zinc-500 hover:text-white"
+                      onClick={() => onSelectQuery(q.query)}
                     >
                       <Edit3 strokeWidth={1.5} className="w-3 h-3" />
                     </Button>

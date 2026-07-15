@@ -69,6 +69,20 @@ describe("SnapshotTimeline", () => {
     expect(before[0].tagName).toBe("BUTTON");
   });
 
+  test("the select overlay layers above the timeline dot and below delete", () => {
+    const { getAllByRole, getByRole } = render(
+      <SnapshotTimeline snapshots={snapshots} onCompare={mock(() => {})} onDelete={mock(() => {})} />,
+    );
+    // The dot is a z-10 flex item; the overlay must stack above it or clicks
+    // on the dot never reach the button (and delete must stay on top).
+    const node = getAllByRole("button", { name: /^Before migration/ })[0];
+    expect(node.className).toContain("after:z-10");
+    const del = getByRole("button", { name: "Delete Before migration" });
+    expect(del.className).toContain("z-20");
+    expect(del.className).toContain("focus-visible:opacity-100");
+    expect(del.className).toContain("[@media(hover:none)]:opacity-100");
+  });
+
   test("selection state is exposed via aria-pressed", () => {
     const { getAllByRole } = render(
       <SnapshotTimeline snapshots={snapshots} onCompare={mock(() => {})} onDelete={mock(() => {})} />,
