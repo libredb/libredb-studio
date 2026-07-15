@@ -16,8 +16,10 @@ interface SnapshotTimelineProps {
 // multi-line JSX text and attribute tails are otherwise unattributable.
 const EMPTY_MESSAGE = "No snapshots taken yet. Take a snapshot to start tracking schema changes.";
 const NODE_CLASS = "relative flex flex-col items-center min-w-[100px] cursor-pointer group";
+// w-6 h-6 keeps a 24x24 minimum hit target: the control sits on top of the
+// stretched selection overlay, so a near miss must not select the snapshot.
 const DELETE_BUTTON_CLASS =
-  "absolute -top-2 -right-1 z-20 p-0.5 text-zinc-600 hover:text-red-400 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100 transition-opacity";
+  "absolute -top-3 -right-2 z-20 w-6 h-6 flex items-center justify-center text-zinc-600 hover:text-red-400 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100 transition-opacity";
 
 export function SnapshotTimeline({ snapshots, onCompare, onDelete }: SnapshotTimelineProps) {
   const [selected, setSelected] = useState<string[]>([]);

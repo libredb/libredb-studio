@@ -487,5 +487,14 @@ describe("TableItem", () => {
       );
       expect(getByRole("button", { name: "users" }).getAttribute("aria-expanded")).toBe("true");
     });
+
+    test("the toggle button owns the row's vertical padding (full-height hit target)", () => {
+      const { getByRole } = render(
+        <TableItem table={largeTable} isExpanded={false} onToggle={mock(() => {})} isAdmin />,
+      );
+      const toggle = getByRole("button", { name: "users" });
+      expect(toggle.className).toContain("py-1.5");
+      expect(toggle.parentElement?.className).not.toContain("py-1.5");
+    });
   });
 });

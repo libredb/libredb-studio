@@ -549,10 +549,12 @@ describe("MaskingSettings", () => {
   // ── A11y semantics (#100): labels are programmatically associated ───────
 
   describe("a11y semantics", () => {
-    test("role switches are labelled Can toggle / Can reveal", () => {
-      const { getAllByLabelText } = render(<MaskingSettings />);
-      expect(getAllByLabelText("Can toggle").length).toBe(2);
-      expect(getAllByLabelText("Can reveal").length).toBe(2);
+    test("role switches carry distinct role-qualified accessible names", () => {
+      const { getByLabelText } = render(<MaskingSettings />);
+      expect(getByLabelText("Admin can toggle")).not.toBeNull();
+      expect(getByLabelText("Admin can reveal")).not.toBeNull();
+      expect(getByLabelText("User can toggle")).not.toBeNull();
+      expect(getByLabelText("User can reveal")).not.toBeNull();
     });
 
     test("pattern dialog fields are reachable by their labels", () => {

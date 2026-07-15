@@ -790,5 +790,17 @@ describe("DataImportModal", () => {
       });
       expect(within(baseElement).getByLabelText("New Table Name")).not.toBeNull();
     });
+
+    test("column-mapping inputs are named after their source column", () => {
+      const { baseElement } = render(<DataImportModal isOpen onClose={noop} onImport={noop} tables={sampleTables} />);
+      act(() => {
+        simulateFileUpload(baseElement, "name,age\nAlice,30", "data.csv");
+      });
+      act(() => {
+        fireEvent.click(within(baseElement).getByText("Configure Import"));
+      });
+      expect(within(baseElement).getByLabelText("Target column for name")).not.toBeNull();
+      expect(within(baseElement).getByLabelText("Target column for age")).not.toBeNull();
+    });
   });
 });

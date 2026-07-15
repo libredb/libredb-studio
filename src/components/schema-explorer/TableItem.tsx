@@ -139,14 +139,14 @@ export const TableItem = React.memo(function TableItem({
         <ContextMenuTrigger asChild>
           <div
             className={cn(
-              "flex items-center gap-1.5 px-2 py-1.5 rounded-md transition-all",
+              "flex items-center gap-1.5 px-2 rounded-md transition-all",
               isExpanded ? "bg-accent/50" : "hover:bg-accent/30",
             )}
           >
             <button
               type="button"
               aria-expanded={isExpanded}
-              className="flex items-center gap-1.5 flex-1 min-w-0 cursor-pointer text-left"
+              className="flex items-center gap-1.5 flex-1 min-w-0 py-1.5 cursor-pointer text-left"
               onClick={onToggle}
             >
               <motion.div animate={{ rotate: isExpanded ? 90 : 0 }} transition={{ duration: 0.2 }} className="shrink-0">

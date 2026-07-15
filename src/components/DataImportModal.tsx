@@ -510,6 +510,7 @@ export function DataImportModal({ isOpen, onClose, onImport, tables, databaseTyp
                         <span className="text-xs text-zinc-300 font-mono truncate">{header}</span>
                         <ArrowRight strokeWidth={1.5} className="w-3 h-3 text-zinc-600" />
                         <Input
+                          aria-label={`Target column for ${header}`}
                           value={columnMapping[header] || ""}
                           onChange={(e) => setColumnMapping((prev) => ({ ...prev, [header]: e.target.value }))}
                           className="h-7 text-xs bg-[#111] border-white/10"

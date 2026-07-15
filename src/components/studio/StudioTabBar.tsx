@@ -89,16 +89,17 @@ export function StudioTabBar({
                   onSetEditingTabId(null);
                 }}
                 onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    if (editingTabName.trim()) {
-                      onSetTabs((prev) =>
-                        prev.map((t) => (t.id === tab.id ? { ...t, name: editingTabName.trim() } : t)),
-                      );
-                    }
-                    onSetEditingTabId(null);
-                  } else if (e.key === "Escape") {
-                    onSetEditingTabId(null);
+                  if (e.key !== "Enter" && e.key !== "Escape") return;
+                  if (e.key === "Enter" && editingTabName.trim()) {
+                    onSetTabs((prev) => prev.map((t) => (t.id === tab.id ? { ...t, name: editingTabName.trim() } : t)));
                   }
+                  // The input unmounts with the state update; hand focus back to
+                  // the restored tab button instead of the document body.
+                  const tablist = e.currentTarget.closest('[role="tablist"]') as HTMLElement | null;
+                  onSetEditingTabId(null);
+                  setTimeout(() => {
+                    tablist?.querySelector<HTMLButtonElement>(`[role="tab"][data-tab-id="${tab.id}"]`)?.focus();
+                  }, 0);
                 }}
                 onClick={(e) => e.stopPropagation()}
                 className="text-xs font-medium bg-transparent border-b border-blue-500 outline-none w-full text-zinc-100"
@@ -117,7 +118,7 @@ export function StudioTabBar({
                 onSetEditingTabId(tab.id);
                 onSetEditingTabName(tab.name);
               }}
-              className="flex items-center gap-2 flex-1 min-w-0 text-left cursor-pointer"
+              className="flex items-center gap-2 flex-1 min-w-0 h-full text-left cursor-pointer"
             >
               {tab.type === "sql" ? (
                 <Hash strokeWidth={1.5} className="w-3 h-3" />

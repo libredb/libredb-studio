@@ -81,6 +81,9 @@ describe("SnapshotTimeline", () => {
     expect(del.className).toContain("z-20");
     expect(del.className).toContain("focus-visible:opacity-100");
     expect(del.className).toContain("[@media(hover:none)]:opacity-100");
+    // 24x24 minimum hit target: near misses must not fall through to select
+    expect(del.className).toContain("w-6");
+    expect(del.className).toContain("h-6");
   });
 
   test("selection state is exposed via aria-pressed", () => {

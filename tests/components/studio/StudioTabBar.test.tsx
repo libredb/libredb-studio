@@ -386,6 +386,24 @@ describe("StudioTabBar", () => {
       expect(getByLabelText("Rename Query 1")).not.toBeNull();
     });
 
+    test("tab buttons fill the wrapper height so the whole visible tab is clickable", () => {
+      const props = createDefaultProps();
+      const { getAllByRole } = render(<StudioTabBar {...props} />);
+      for (const tab of getAllByRole("tab")) {
+        expect(tab.className).toContain("h-full");
+      }
+    });
+
+    test("committing a rename with Enter restores focus to the tab", async () => {
+      const props = createDefaultProps({ editingTabId: "tab-1", editingTabName: "Renamed" });
+      const { getByLabelText, rerender } = render(<StudioTabBar {...props} />);
+      fireEvent.keyDown(getByLabelText("Rename Query 1"), { key: "Enter" });
+      // The parent clears editing state in response; simulate that re-render
+      rerender(<StudioTabBar {...createDefaultProps({ activeTabId: "tab-1" })} />);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(document.activeElement?.getAttribute("data-tab-id")).toBe("tab-1");
+    });
+
     test("closing a tab moves focus back to the selected tab", async () => {
       const onCloseTab = mock(() => {});
       const props = createDefaultProps({ activeTabId: "tab-1", onCloseTab });

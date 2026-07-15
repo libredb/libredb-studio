@@ -191,6 +191,7 @@ export function MaskingSettings() {
                   <label htmlFor="masking-admin-can-toggle" className="flex items-center gap-2 text-xs text-zinc-400">
                     <Switch
                       id="masking-admin-can-toggle"
+                      aria-label="Admin can toggle"
                       checked={config.roleSettings.admin.canToggle}
                       onCheckedChange={(v) => updateRoleSetting("admin", "canToggle", v)}
                     />
@@ -199,6 +200,7 @@ export function MaskingSettings() {
                   <label htmlFor="masking-admin-can-reveal" className="flex items-center gap-2 text-xs text-zinc-400">
                     <Switch
                       id="masking-admin-can-reveal"
+                      aria-label="Admin can reveal"
                       checked={config.roleSettings.admin.canReveal}
                       onCheckedChange={(v) => updateRoleSetting("admin", "canReveal", v)}
                     />
@@ -217,6 +219,7 @@ export function MaskingSettings() {
                   <label htmlFor="masking-user-can-toggle" className="flex items-center gap-2 text-xs text-zinc-400">
                     <Switch
                       id="masking-user-can-toggle"
+                      aria-label="User can toggle"
                       checked={config.roleSettings.user.canToggle}
                       onCheckedChange={(v) => updateRoleSetting("user", "canToggle", v)}
                     />
@@ -225,6 +228,7 @@ export function MaskingSettings() {
                   <label htmlFor="masking-user-can-reveal" className="flex items-center gap-2 text-xs text-zinc-400">
                     <Switch
                       id="masking-user-can-reveal"
+                      aria-label="User can reveal"
                       checked={config.roleSettings.user.canReveal}
                       onCheckedChange={(v) => updateRoleSetting("user", "canReveal", v)}
                     />
