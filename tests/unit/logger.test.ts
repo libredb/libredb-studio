@@ -63,7 +63,8 @@ describe("logger", () => {
     const err = new TypeError("something broke");
     logger.error("failure", err);
     expect(errorSpy).toHaveBeenCalledTimes(1);
-    const line = errorSpy.mock.calls[0][0] as string;
+    // Stack path uses a constant format string; the line is the first argument
+    const line = errorSpy.mock.calls[0][1] as string;
     expect(line).toContain("[ERROR]");
     expect(line).toContain("failure");
     expect(line).toContain("TypeError");
@@ -162,7 +163,8 @@ describe("logger", () => {
   test("error extraction: Error name and message appear in output", () => {
     const err = new RangeError("out of bounds");
     logger.error("bad range", err);
-    const line = errorSpy.mock.calls[0][0] as string;
+    // Stack path uses a constant format string; the line is the first argument
+    const line = errorSpy.mock.calls[0][1] as string;
     expect(line).toContain("RangeError");
     expect(line).toContain("out of bounds");
   });
@@ -194,5 +196,22 @@ describe("logger", () => {
     logger.error("null error", null);
     const line = errorSpy.mock.calls[0][0] as string;
     expect(line).not.toContain(" | ");
+  });
+
+  // ─── Format-string safety (CodeQL js/tainted-format-string) ──────────────
+
+  test("stack-trace path keeps user text out of the console format-string position", () => {
+    const err = new TypeError("boom with %s and %d specifiers");
+    logger.error("user-controlled %s message", err);
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+    const call = errorSpy.mock.calls[0];
+    // First argument must be a constant format string; the log line and the
+    // stack are passed as arguments so %s/%d in user text is never interpreted.
+    expect(call[0]).toBe("%s\n%s");
+    const line = call[1] as string;
+    expect(line).toContain("[ERROR]");
+    expect(line).toContain("user-controlled %s message");
+    expect(line).toContain("TypeError");
+    expect(call[2] as string).toContain("boom with %s and %d specifiers");
   });
 });

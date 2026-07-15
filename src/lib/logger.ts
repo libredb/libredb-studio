@@ -82,7 +82,9 @@ function log(level: LogLevel, message: string, error?: unknown, context?: LogCon
     if (errInfo.stack) {
       // Stack traces contain intentional newlines — sanitize control chars only
       const safeStack = errInfo.stack.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, "");
-      console.error(full, "\n", safeStack);
+      // Constant format string: %s/%d in user-controlled text must never be
+      // interpreted as format specifiers (CodeQL js/tainted-format-string)
+      console.error("%s\n%s", full, safeStack);
     } else {
       console.error(full);
     }
