@@ -9,56 +9,46 @@ test.describe("Tab Management", () => {
     await page.getByRole("button", { name: "Sign In" }).click();
     await page.waitForURL("/");
     // Wait for studio to fully load
-    await expect(page.locator("text=Query 1").first()).toBeVisible({ timeout: 10000 });
+    await expect(page.getByRole("tab", { name: "Query 1" })).toBeVisible({ timeout: 10000 });
   });
 
   test("default tab exists with name Query 1", async ({ page }) => {
-    await expect(page.locator("text=Query 1").first()).toBeVisible();
+    await expect(page.getByRole("tab", { name: "Query 1" })).toBeVisible();
   });
 
   test("can add a new tab", async ({ page }) => {
-    // The tab bar's plus icon is a sibling of the "Query 1" tab div
-    // Navigate from Query 1 text → its parent tab div → the parent tab bar → find the direct child SVG plus
-    const query1Parent = page.locator("text=Query 1").first().locator("..");
-    const tabBar = query1Parent.locator("..");
-    const tabPlusIcon = tabBar.locator(":scope > svg").first();
-    await tabPlusIcon.click();
+    await page.getByRole("button", { name: "New tab" }).click();
 
     // New tab "Query 2" should appear
-    await expect(page.locator("text=Query 2")).toBeVisible({ timeout: 5000 });
+    await expect(page.getByRole("tab", { name: "Query 2" })).toBeVisible({ timeout: 5000 });
   });
 
   test("can switch between tabs", async ({ page }) => {
-    // Add a second tab using the same strategy
-    const query1Parent = page.locator("text=Query 1").first().locator("..");
-    const tabBar = query1Parent.locator("..");
-    const tabPlusIcon = tabBar.locator(":scope > svg").first();
-    await tabPlusIcon.click();
-    await expect(page.locator("text=Query 2")).toBeVisible({ timeout: 5000 });
+    // Add a second tab; the new tab becomes the active one
+    await page.getByRole("button", { name: "New tab" }).click();
+    const queryTab1 = page.getByRole("tab", { name: "Query 1" });
+    const queryTab2 = page.getByRole("tab", { name: "Query 2" });
+    await expect(queryTab2).toBeVisible({ timeout: 5000 });
+    await expect(queryTab2).toHaveAttribute("aria-selected", "true");
 
     // Click on Query 1 to switch back
-    await page.locator("text=Query 1").first().click();
-    await page.waitForTimeout(300);
+    await queryTab1.click();
+    await expect(queryTab1).toHaveAttribute("aria-selected", "true");
+    await expect(queryTab2).toHaveAttribute("aria-selected", "false");
   });
 
   test("can close a tab when multiple exist", async ({ page }) => {
     // Add a second tab
-    const query1Parent = page.locator("text=Query 1").first().locator("..");
-    const tabBar = query1Parent.locator("..");
-    const tabPlusIcon = tabBar.locator(":scope > svg").first();
-    await tabPlusIcon.click();
-    await expect(page.locator("text=Query 2")).toBeVisible({ timeout: 5000 });
+    await page.getByRole("button", { name: "New tab" }).click();
+    await expect(page.getByRole("tab", { name: "Query 2" })).toBeVisible({ timeout: 5000 });
 
-    // Close Query 2 — the X icon is inside the Query 2 tab div
-    // Hover the tab to reveal the X icon, then click
-    const query2Parent = page.locator("text=Query 2").first().locator("..");
-    await query2Parent.hover();
-    const closeIcon = query2Parent.locator("svg").last();
-    await closeIcon.click();
+    // Hover the tab to reveal its close button, then click it
+    await page.getByRole("tab", { name: "Query 2" }).hover();
+    await page.getByRole("button", { name: "Close Query 2" }).click();
 
     // Query 2 should no longer exist
-    await expect(page.locator("text=Query 2")).not.toBeVisible({ timeout: 3000 });
+    await expect(page.getByRole("tab", { name: "Query 2" })).not.toBeVisible({ timeout: 3000 });
     // Query 1 should still exist
-    await expect(page.locator("text=Query 1").first()).toBeVisible();
+    await expect(page.getByRole("tab", { name: "Query 1" })).toBeVisible();
   });
 });

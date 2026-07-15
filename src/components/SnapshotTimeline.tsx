@@ -87,6 +87,7 @@ export function SnapshotTimeline({ snapshots, onCompare, onDelete }: SnapshotTim
                   whole node clickable; the delete button below paints above it */}
               <button
                 type="button"
+                aria-pressed={isSelected}
                 onClick={() => handleClick(snapshot.id)}
                 className={cn(labelClass, "cursor-pointer after:absolute after:inset-0")}
               >

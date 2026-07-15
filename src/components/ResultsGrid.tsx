@@ -188,6 +188,9 @@ export function ResultsGrid({
           <div className="flex items-center gap-1 select-none group/header w-full">
             <button
               type="button"
+              aria-label={`${field}${
+                column.getIsSorted() ? `, sorted ${column.getIsSorted() === "asc" ? "ascending" : "descending"}` : ""
+              }`}
               className="flex items-center gap-1 cursor-pointer flex-1 min-w-0 text-left"
               onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
             >

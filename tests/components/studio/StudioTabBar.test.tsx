@@ -97,9 +97,8 @@ describe("StudioTabBar", () => {
   test("click on tab fires onSetActiveTabId with tab id", () => {
     const onSetActiveTabId = mock(() => {});
     const props = createDefaultProps({ onSetActiveTabId });
-    const { container } = render(<StudioTabBar {...props} />);
-    const tabElements = container.querySelectorAll('[class*="border-t-2"]');
-    fireEvent.click(tabElements[1]!);
+    const { getAllByRole } = render(<StudioTabBar {...props} />);
+    fireEvent.click(getAllByRole("tab")[1]);
     expect(onSetActiveTabId).toHaveBeenCalledTimes(1);
     expect(onSetActiveTabId).toHaveBeenCalledWith("tab-2");
   });
@@ -139,9 +138,8 @@ describe("StudioTabBar", () => {
     const onSetEditingTabId = mock(() => {});
     const onSetEditingTabName = mock(() => {});
     const props = createDefaultProps({ onSetEditingTabId, onSetEditingTabName });
-    const { container } = render(<StudioTabBar {...props} />);
-    const tabElements = container.querySelectorAll('[class*="border-t-2"]');
-    fireEvent.doubleClick(tabElements[0]!);
+    const { getAllByRole } = render(<StudioTabBar {...props} />);
+    fireEvent.doubleClick(getAllByRole("tab")[0]);
     expect(onSetEditingTabId).toHaveBeenCalledTimes(1);
     expect(onSetEditingTabId).toHaveBeenCalledWith("tab-1");
     expect(onSetEditingTabName).toHaveBeenCalledTimes(1);
@@ -338,22 +336,47 @@ describe("StudioTabBar", () => {
       expect(tabs[1].getAttribute("aria-selected")).toBe("false");
     });
 
-    test("Enter and Space activate a tab from the keyboard", () => {
-      const onSetActiveTabId = mock(() => {});
-      const props = createDefaultProps({ onSetActiveTabId });
+    test("tablist uses a roving tabindex: only the active tab is in tab order", () => {
+      const props = createDefaultProps({ activeTabId: "tab-1" });
       const { getAllByRole } = render(<StudioTabBar {...props} />);
       const tabs = getAllByRole("tab");
-      fireEvent.keyDown(tabs[1], { key: "Enter" });
+      expect(tabs[0].getAttribute("tabindex")).toBe("0");
+      expect(tabs[1].getAttribute("tabindex")).toBe("-1");
+    });
+
+    test("arrow keys, Home and End move activation between tabs", () => {
+      const onSetActiveTabId = mock(() => {});
+      const props = createDefaultProps({ activeTabId: "tab-1", onSetActiveTabId });
+      const { getAllByRole } = render(<StudioTabBar {...props} />);
+      const tabs = getAllByRole("tab");
+      fireEvent.keyDown(tabs[0], { key: "ArrowRight" });
       expect(onSetActiveTabId).toHaveBeenCalledWith("tab-2");
-      fireEvent.keyDown(tabs[0], { key: " " });
+      fireEvent.keyDown(tabs[1], { key: "ArrowLeft" });
+      expect(onSetActiveTabId).toHaveBeenCalledWith("tab-1");
+      fireEvent.keyDown(tabs[0], { key: "End" });
+      expect(onSetActiveTabId).toHaveBeenCalledWith("tab-2");
+      fireEvent.keyDown(tabs[1], { key: "Home" });
       expect(onSetActiveTabId).toHaveBeenCalledWith("tab-1");
     });
 
-    test("close buttons carry the tab name in their accessible name", () => {
+    test("the tab accessible name is not contaminated by nested controls", () => {
+      const props = createDefaultProps();
+      const { getAllByRole } = render(<StudioTabBar {...props} />);
+      // Exact accessible-name match: fails if the close button's label leaks in
+      expect(getAllByRole("tab", { name: "Query 1" }).length).toBe(1);
+      expect(getAllByRole("tab", { name: "Query 2" }).length).toBe(1);
+      // The close control must not be a descendant of the tab element
+      const tab = getAllByRole("tab", { name: "Query 2" })[0];
+      expect(tab.querySelector("button")).toBeNull();
+    });
+
+    test("close buttons carry the tab name and stay visible on keyboard focus", () => {
       const onCloseTab = mock(() => {});
       const props = createDefaultProps({ onCloseTab });
       const { getByRole } = render(<StudioTabBar {...props} />);
-      fireEvent.click(getByRole("button", { name: "Close Query 2" }));
+      const close = getByRole("button", { name: "Close Query 2" });
+      expect(close.className).toContain("focus-visible:opacity-100");
+      fireEvent.click(close);
       expect(onCloseTab).toHaveBeenCalledTimes(1);
     });
   });

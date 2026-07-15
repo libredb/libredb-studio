@@ -892,6 +892,15 @@ describe("ResultsGrid", () => {
       fireEvent.click(sortButtons[0]);
     });
 
+    test("sort buttons expose the current sort direction in their accessible name", () => {
+      const { getAllByRole } = render(React.createElement(ResultsGrid, { result: mockResult }));
+      fireEvent.click(getAllByRole("button", { name: "name" })[0]);
+      const ascending = getAllByRole("button", { name: "name, sorted ascending" });
+      expect(ascending.length).toBeGreaterThan(0);
+      fireEvent.click(ascending[0]);
+      expect(getAllByRole("button", { name: "name, sorted descending" }).length).toBeGreaterThan(0);
+    });
+
     test("mobile rows are buttons that open the row detail sheet", () => {
       const { getAllByRole, queryByTestId } = render(React.createElement(ResultsGrid, { result: mockResult }));
       const rowButtons = getAllByRole("button", { name: /Alice/ });

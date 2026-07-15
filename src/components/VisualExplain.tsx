@@ -242,7 +242,10 @@ const PlanNode = ({ node, depth = 0, maxTime }: { node: ExplainPlanNode; depth?:
         type="button"
         aria-expanded={expanded}
         className={cn(
-          "w-full text-left group flex items-center gap-2 py-1.5 px-2 rounded-lg transition-all cursor-pointer hover:bg-white/5",
+          // display:flex makes the button block-level with auto width, so the
+          // depth margin is deducted from the available width (w-full would
+          // overflow by depth * 20px)
+          "text-left group flex items-center gap-2 py-1.5 px-2 rounded-lg transition-all cursor-pointer hover:bg-white/5",
           depth === 0 && "bg-white/[0.02]",
         )}
         onClick={() => setExpanded(!expanded)}
@@ -400,7 +403,7 @@ const TreeNodeView = ({ node, depth = 0 }: { node: ExplainTreeNode; depth?: numb
       {hasChildren ? (
         <button
           type="button"
-          className="w-full text-left group flex items-center gap-2 py-1.5 px-2 rounded-lg transition-all cursor-pointer hover:bg-white/5"
+          className="text-left group flex items-center gap-2 py-1.5 px-2 rounded-lg transition-all cursor-pointer hover:bg-white/5"
           onClick={toggle}
           aria-expanded={expanded}
           style={{ marginLeft: depth * 20 }}

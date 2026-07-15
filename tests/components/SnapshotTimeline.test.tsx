@@ -69,6 +69,18 @@ describe("SnapshotTimeline", () => {
     expect(before[0].tagName).toBe("BUTTON");
   });
 
+  test("selection state is exposed via aria-pressed", () => {
+    const { getAllByRole } = render(
+      <SnapshotTimeline snapshots={snapshots} onCompare={mock(() => {})} onDelete={mock(() => {})} />,
+    );
+    const node = getAllByRole("button", { name: /^Before migration/ })[0];
+    expect(node.getAttribute("aria-pressed")).toBe("false");
+    fireEvent.click(node);
+    expect(node.getAttribute("aria-pressed")).toBe("true");
+    fireEvent.click(node);
+    expect(node.getAttribute("aria-pressed")).toBe("false");
+  });
+
   test("delete buttons carry the snapshot label in their accessible name", () => {
     const onDelete = mock((id: string) => {
       void id;
