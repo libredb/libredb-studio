@@ -31,11 +31,25 @@ export function StudioTabBar({
   onAddTab,
 }: StudioTabBarProps) {
   return (
-    <div className="hidden md:flex h-10 bg-[#0d0d0d] border-b border-white/5 items-center px-2 gap-1 overflow-x-auto no-scrollbar">
+    <div
+      role="tablist"
+      aria-label="Editor tabs"
+      className="hidden md:flex h-10 bg-[#0d0d0d] border-b border-white/5 items-center px-2 gap-1 overflow-x-auto no-scrollbar"
+    >
       {tabs.map((tab) => (
         <div
           key={tab.id}
+          role="tab"
+          aria-selected={activeTabId === tab.id}
+          tabIndex={0}
           onClick={() => onSetActiveTabId(tab.id)}
+          onKeyDown={(e) => {
+            if (e.target !== e.currentTarget) return;
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              onSetActiveTabId(tab.id);
+            }
+          }}
           onDoubleClick={() => {
             onSetEditingTabId(tab.id);
             onSetEditingTabName(tab.name);
@@ -80,19 +94,25 @@ export function StudioTabBar({
             <span className="text-xs truncate font-medium">{tab.name}</span>
           )}
           {tabs.length > 1 && (
-            <X
-              strokeWidth={1.5}
-              className="w-3 h-3 ml-auto opacity-0 group-hover:opacity-100 hover:text-white shrink-0"
+            <button
+              type="button"
+              aria-label={`Close ${tab.name}`}
+              className="ml-auto opacity-0 group-hover:opacity-100 hover:text-white shrink-0 cursor-pointer"
               onClick={(e) => onCloseTab(tab.id, e)}
-            />
+            >
+              <X strokeWidth={1.5} className="w-3 h-3" />
+            </button>
           )}
         </div>
       ))}
-      <Plus
-        strokeWidth={1.5}
-        className="w-3.5 h-3.5 text-zinc-500 cursor-pointer hover:text-white mx-2"
+      <button
+        type="button"
+        aria-label="New tab"
+        className="text-zinc-500 cursor-pointer hover:text-white mx-2"
         onClick={onAddTab}
-      />
+      >
+        <Plus strokeWidth={1.5} className="w-3.5 h-3.5" />
+      </button>
     </div>
   );
 }

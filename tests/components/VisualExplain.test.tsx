@@ -165,6 +165,20 @@ describe("VisualExplain", () => {
     expect(queryByText("cost")).not.toBeNull();
   });
 
+  // -----------------------------------------------------------------------
+  // A11y semantics (#100)
+  // -----------------------------------------------------------------------
+
+  test("plan node rows are native buttons with expansion state", () => {
+    const { getAllByRole } = render(<VisualExplain plan={samplePlan} />);
+    const nodeButtons = getAllByRole("button", { name: /Seq Scan/ });
+    expect(nodeButtons.length).toBeGreaterThan(0);
+    expect(nodeButtons[0].tagName).toBe("BUTTON");
+    expect(nodeButtons[0].getAttribute("aria-expanded")).toBe("true");
+    fireEvent.click(nodeButtons[0]);
+    expect(nodeButtons[0].getAttribute("aria-expanded")).toBe("false");
+  });
+
   test("displays formatted execution time", () => {
     const { queryAllByText } = render(<VisualExplain plan={samplePlan} />);
     // 42.50ms appears in header + insights + plan node
@@ -942,34 +956,29 @@ describe("tree render model (sqlite-queryplan)", () => {
     expect(queryByText(/0 rows/)).toBeNull();
   });
 
-  test("parent tree rows are keyboard-accessible; leaf rows are non-interactive", () => {
+  test("parent tree rows are native buttons; leaf rows are non-interactive", () => {
     const { getByText, queryByText } = render(
       <VisualExplain plan={TREE_INPUT} query="SELECT 1" databaseType="sqlite" />,
     );
 
-    // "SCAN employee" has a child, so its row must be a focusable button
-    const parentRow = getByText("SCAN employee").closest('[role="button"]') as HTMLElement | null;
+    // "SCAN employee" has a child, so its row must be a native button
+    // (Enter/Space activation is browser behavior on <button>)
+    const parentRow = getByText("SCAN employee").closest("button") as HTMLElement | null;
     expect(parentRow).not.toBeNull();
-    expect(parentRow!.getAttribute("tabindex")).toBe("0");
     expect(parentRow!.getAttribute("aria-expanded")).toBe("true");
 
-    // Enter collapses the children
-    parentRow!.focus();
-    fireEvent.keyDown(parentRow!, { key: "Enter" });
+    // Activation collapses the children
+    fireEvent.click(parentRow!);
     expect(queryByText("USING INDEX idx_dept")).toBeNull();
     expect(parentRow!.getAttribute("aria-expanded")).toBe("false");
 
-    // Space expands them again
-    fireEvent.keyDown(parentRow!, { key: " " });
-    expect(queryByText("USING INDEX idx_dept")).not.toBeNull();
-
-    // any other key does nothing
-    fireEvent.keyDown(parentRow!, { key: "a" });
+    // Activation expands them again
+    fireEvent.click(parentRow!);
     expect(queryByText("USING INDEX idx_dept")).not.toBeNull();
 
     // the leaf row (no children) is a plain non-interactive div
     const leafRow = getByText("USING INDEX idx_dept").parentElement!.parentElement!;
-    expect(leafRow.getAttribute("role")).toBeNull();
+    expect(leafRow.tagName).not.toBe("BUTTON");
     expect(leafRow.getAttribute("tabindex")).toBeNull();
     expect(leafRow.className).not.toContain("cursor-pointer");
   });

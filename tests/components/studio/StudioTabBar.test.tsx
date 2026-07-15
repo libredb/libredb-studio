@@ -109,11 +109,8 @@ describe("StudioTabBar", () => {
   test("plus button fires onAddTab", () => {
     const onAddTab = mock(() => {});
     const props = createDefaultProps({ onAddTab });
-    const { container } = render(<StudioTabBar {...props} />);
-    const svgElements = container.querySelectorAll("svg");
-    const plusIcon = Array.from(svgElements).find((el) => el.getAttribute("class")?.includes("cursor-pointer"));
-    expect(plusIcon).not.toBeNull();
-    fireEvent.click(plusIcon!);
+    const { getByRole } = render(<StudioTabBar {...props} />);
+    fireEvent.click(getByRole("button", { name: "New tab" }));
     expect(onAddTab).toHaveBeenCalledTimes(1);
   });
 
@@ -122,19 +119,18 @@ describe("StudioTabBar", () => {
   test("close button fires onCloseTab when multiple tabs", () => {
     const onCloseTab = mock(() => {});
     const props = createDefaultProps({ onCloseTab });
-    const { container } = render(<StudioTabBar {...props} />);
-    const closeIcons = container.querySelectorAll('svg[class*="ml-auto"]');
-    expect(closeIcons.length).toBeGreaterThan(0);
-    fireEvent.click(closeIcons[0]);
+    const { getAllByRole } = render(<StudioTabBar {...props} />);
+    const closeButtons = getAllByRole("button", { name: /^Close / });
+    expect(closeButtons.length).toBeGreaterThan(0);
+    fireEvent.click(closeButtons[0]);
     expect(onCloseTab).toHaveBeenCalledTimes(1);
   });
 
   test("close button hidden when only one tab", () => {
     const singleTab = createTab({ id: "tab-1", name: "Query 1" });
     const props = createDefaultProps({ tabs: [singleTab], activeTabId: "tab-1" });
-    const { container } = render(<StudioTabBar {...props} />);
-    const closeIcons = container.querySelectorAll('svg[class*="ml-auto"]');
-    expect(closeIcons.length).toBe(0);
+    const { queryAllByRole } = render(<StudioTabBar {...props} />);
+    expect(queryAllByRole("button", { name: /^Close / }).length).toBe(0);
   });
 
   // ── Double-click → rename mode ────────────────────────────────────────
@@ -328,5 +324,37 @@ describe("StudioTabBar", () => {
     expect(capturedFn).not.toBeNull();
     const result = capturedFn!([tab1]);
     expect(result[0].name).toBe("Blur Name");
+  });
+
+  // ── A11y semantics (#100) ─────────────────────────────────────────────
+
+  describe("a11y semantics", () => {
+    test("tabs expose the tab role with aria-selected state", () => {
+      const props = createDefaultProps({ activeTabId: "tab-1" });
+      const { getAllByRole } = render(<StudioTabBar {...props} />);
+      const tabs = getAllByRole("tab");
+      expect(tabs.length).toBe(2);
+      expect(tabs[0].getAttribute("aria-selected")).toBe("true");
+      expect(tabs[1].getAttribute("aria-selected")).toBe("false");
+    });
+
+    test("Enter and Space activate a tab from the keyboard", () => {
+      const onSetActiveTabId = mock(() => {});
+      const props = createDefaultProps({ onSetActiveTabId });
+      const { getAllByRole } = render(<StudioTabBar {...props} />);
+      const tabs = getAllByRole("tab");
+      fireEvent.keyDown(tabs[1], { key: "Enter" });
+      expect(onSetActiveTabId).toHaveBeenCalledWith("tab-2");
+      fireEvent.keyDown(tabs[0], { key: " " });
+      expect(onSetActiveTabId).toHaveBeenCalledWith("tab-1");
+    });
+
+    test("close buttons carry the tab name in their accessible name", () => {
+      const onCloseTab = mock(() => {});
+      const props = createDefaultProps({ onCloseTab });
+      const { getByRole } = render(<StudioTabBar {...props} />);
+      fireEvent.click(getByRole("button", { name: "Close Query 2" }));
+      expect(onCloseTab).toHaveBeenCalledTimes(1);
+    });
   });
 });

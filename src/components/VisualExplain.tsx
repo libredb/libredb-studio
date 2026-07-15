@@ -238,9 +238,11 @@ const PlanNode = ({ node, depth = 0, maxTime }: { node: ExplainPlanNode; depth?:
   return (
     <div className="relative">
       {/* Node */}
-      <div
+      <button
+        type="button"
+        aria-expanded={expanded}
         className={cn(
-          "group flex items-center gap-2 py-1.5 px-2 rounded-lg transition-all cursor-pointer hover:bg-white/5",
+          "w-full text-left group flex items-center gap-2 py-1.5 px-2 rounded-lg transition-all cursor-pointer hover:bg-white/5",
           depth === 0 && "bg-white/[0.02]",
         )}
         onClick={() => setExpanded(!expanded)}
@@ -294,7 +296,7 @@ const PlanNode = ({ node, depth = 0, maxTime }: { node: ExplainPlanNode; depth?:
             />
           </div>
         </div>
-      </div>
+      </button>
 
       {/* Details on expand */}
       {expanded && (
@@ -352,12 +354,6 @@ const TreeNodeView = ({ node, depth = 0 }: { node: ExplainTreeNode; depth?: numb
       metrics.estCost !== undefined);
 
   const toggle = () => setExpanded((prev) => !prev);
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
-    if (e.key !== "Enter" && e.key !== " ") return;
-    // prevent Space from scrolling the panel
-    if (e.key === " ") e.preventDefault();
-    toggle();
-  };
 
   const rowContent = (
     <>
@@ -400,19 +396,17 @@ const TreeNodeView = ({ node, depth = 0 }: { node: ExplainTreeNode; depth?: numb
 
   return (
     <div className="relative">
-      {/* Expandable rows are keyboard-accessible buttons; leaves are plain divs */}
+      {/* Expandable rows are native buttons; leaves are plain divs */}
       {hasChildren ? (
-        <div
-          className="group flex items-center gap-2 py-1.5 px-2 rounded-lg transition-all cursor-pointer hover:bg-white/5"
+        <button
+          type="button"
+          className="w-full text-left group flex items-center gap-2 py-1.5 px-2 rounded-lg transition-all cursor-pointer hover:bg-white/5"
           onClick={toggle}
-          onKeyDown={handleKeyDown}
-          role="button"
-          tabIndex={0}
           aria-expanded={expanded}
           style={{ marginLeft: depth * 20 }}
         >
           {rowContent}
-        </div>
+        </button>
       ) : (
         <div
           className="group flex items-center gap-2 py-1.5 px-2 rounded-lg transition-all"

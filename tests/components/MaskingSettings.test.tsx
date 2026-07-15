@@ -545,4 +545,26 @@ describe("MaskingSettings", () => {
     // Email is enabled, should show preview
     expect(text).toContain("j***@example.com");
   });
+
+  // ── A11y semantics (#100): labels are programmatically associated ───────
+
+  describe("a11y semantics", () => {
+    test("role switches are labelled Can toggle / Can reveal", () => {
+      const { getAllByLabelText } = render(<MaskingSettings />);
+      expect(getAllByLabelText("Can toggle").length).toBe(2);
+      expect(getAllByLabelText("Can reveal").length).toBe(2);
+    });
+
+    test("pattern dialog fields are reachable by their labels", () => {
+      const { container, baseElement } = render(<MaskingSettings />);
+      const addBtn = within(container).getByText("Add Pattern");
+      act(() => {
+        fireEvent.click(addBtn);
+      });
+      const body = within(baseElement);
+      expect(body.getByLabelText("Name")).not.toBeNull();
+      expect(body.getByLabelText("Mask Type")).not.toBeNull();
+      expect(body.getByLabelText("Column Patterns (one per line)")).not.toBeNull();
+    });
+  });
 });

@@ -162,6 +162,7 @@ function LoginFormInner({ authProvider }: { authProvider: string }) {
             href="https://libredb.org"
             target="_blank"
             rel="noopener noreferrer"
+            aria-label="LibreDB Studio website"
             className="flex flex-col items-center gap-4 lg:hidden group"
           >
             <div className="relative">

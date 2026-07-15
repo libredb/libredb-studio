@@ -186,8 +186,9 @@ export function ResultsGrid({
         const isSensitive = effectiveMaskingEnabled && sensitiveColumns.has(field);
         return (
           <div className="flex items-center gap-1 select-none group/header w-full">
-            <div
-              className="flex items-center gap-1 cursor-pointer flex-1 min-w-0"
+            <button
+              type="button"
+              className="flex items-center gap-1 cursor-pointer flex-1 min-w-0 text-left"
               onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
             >
               <span className="truncate">{field}</span>
@@ -201,7 +202,7 @@ export function ResultsGrid({
                 {column.getIsSorted() === "desc" && <ArrowDown strokeWidth={1.5} className="w-3 h-3" />}
                 {!column.getIsSorted() && <ArrowUpDown strokeWidth={1.5} className="w-3 h-3" />}
               </div>
-            </div>
+            </button>
             <button
               className={cn(
                 "shrink-0 p-0.5 rounded transition-colors",
@@ -219,6 +220,7 @@ export function ResultsGrid({
             </button>
             {activeFilterCol === field && (
               <div
+                role="presentation"
                 className="absolute top-full left-0 mt-1 z-30 bg-[#111] border border-white/10 rounded-lg shadow-xl p-2 w-48"
                 onClick={(e) => e.stopPropagation()}
               >
@@ -262,7 +264,7 @@ export function ResultsGrid({
 
         if (isEditing) {
           return (
-            <div className="flex items-center gap-1 w-full" onClick={(e) => e.stopPropagation()}>
+            <div role="presentation" className="flex items-center gap-1 w-full" onClick={(e) => e.stopPropagation()}>
               <input
                 autoFocus
                 className="w-full bg-zinc-800 border border-blue-500 rounded px-1 py-0.5 text-zinc-100 outline-none"
@@ -504,7 +506,8 @@ export function ResultsGrid({
             {mobileTableVirtualizer.getVirtualItems().map((virtualRow) => {
               const row = result.rows[virtualRow.index];
               return (
-                <div
+                <button
+                  type="button"
                   key={virtualRow.index}
                   style={{
                     position: "absolute",
@@ -514,7 +517,7 @@ export function ResultsGrid({
                     height: `${virtualRow.size}px`,
                     transform: `translateY(${virtualRow.start}px)`,
                   }}
-                  className="flex hover:bg-blue-500/[0.03] transition-colors border-b border-white/5 cursor-pointer"
+                  className="flex hover:bg-blue-500/[0.03] transition-colors border-b border-white/5 cursor-pointer text-left"
                   onClick={() => setSelectedRow({ row, index: virtualRow.index })}
                 >
                   {result.fields.map((field, idx) => {
@@ -539,7 +542,7 @@ export function ResultsGrid({
                       </div>
                     );
                   })}
-                </div>
+                </button>
               );
             })}
           </div>
@@ -559,6 +562,7 @@ export function ResultsGrid({
                   {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
 
                   <div
+                    aria-hidden="true"
                     onMouseDown={header.getResizeHandler()}
                     onTouchStart={header.getResizeHandler()}
                     className={cn(

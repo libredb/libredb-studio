@@ -767,4 +767,28 @@ describe("DataImportModal", () => {
 
     expect(baseElement.querySelector("select")).not.toBeNull();
   });
+
+  // ── A11y semantics (#100) ──────────────────────────────────────────────────
+
+  describe("a11y semantics", () => {
+    test("upload dropzone is an accessible button", () => {
+      const { baseElement } = render(<DataImportModal isOpen onClose={noop} onImport={noop} tables={sampleTables} />);
+      expect(within(baseElement).getByRole("button", { name: /Drop a file here/ })).not.toBeNull();
+    });
+
+    test("configure fields are reachable by their labels", () => {
+      const { baseElement } = render(<DataImportModal isOpen onClose={noop} onImport={noop} tables={sampleTables} />);
+      act(() => {
+        simulateFileUpload(baseElement, "name,age\nAlice,30", "data.csv");
+      });
+      act(() => {
+        fireEvent.click(within(baseElement).getByText("Configure Import"));
+      });
+      expect(within(baseElement).getByLabelText("Select Table")).not.toBeNull();
+      act(() => {
+        fireEvent.click(within(baseElement).getByText("New Table"));
+      });
+      expect(within(baseElement).getByLabelText("New Table Name")).not.toBeNull();
+    });
+  });
 });

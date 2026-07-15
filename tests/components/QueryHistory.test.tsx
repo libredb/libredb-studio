@@ -83,6 +83,14 @@ describe("QueryHistory", () => {
     expect(view.queryByText("DROP TABLE bad")).not.toBeNull();
   });
 
+  // ── A11y semantics (#100) ─────────────────────────────────────────────────
+
+  test("actions column header has an accessible name", () => {
+    const props = createDefaultProps();
+    const { container } = render(<QueryHistory {...props} />);
+    expect(within(container).getByRole("columnheader", { name: "Actions" })).not.toBeNull();
+  });
+
   // ── Status icons ──────────────────────────────────────────────────────────
 
   test("shows success and error status indicators", () => {

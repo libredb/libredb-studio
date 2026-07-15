@@ -61,6 +61,26 @@ describe("results-grid/ResultCard", () => {
     expect(onSelect).toHaveBeenCalledTimes(1);
   });
 
+  // ── A11y semantics (#100) ─────────────────────────────────────────────────
+
+  test("card is a native button reachable by its primary value", () => {
+    const onSelect = mock(() => {});
+    const { getByRole } = render(
+      <ResultCard
+        row={{ id: 1, name: "Bob" }}
+        fields={["id", "name"]}
+        primaryColumn="name"
+        idColumn="id"
+        index={0}
+        onSelect={onSelect}
+      />,
+    );
+    const card = getByRole("button", { name: /Bob/ });
+    expect(card.tagName).toBe("BUTTON");
+    fireEvent.click(card);
+    expect(onSelect).toHaveBeenCalledTimes(1);
+  });
+
   test("masks primary and preview sensitive values", () => {
     const sensitiveColumns = new Map<string, unknown>([
       ["name", { type: "email" }],

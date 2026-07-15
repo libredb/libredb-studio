@@ -299,7 +299,9 @@ export function QueryHistory({ onSelectQuery, activeConnectionId, refreshTrigger
                       />
                     </div>
                   </th>
-                  <th className="px-4 py-3 w-20"></th>
+                  <th className="px-4 py-3 w-20">
+                    <span className="sr-only">Actions</span>
+                  </th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/5">
@@ -322,6 +324,7 @@ export function QueryHistory({ onSelectQuery, activeConnectionId, refreshTrigger
                         )}
                       </div>
                     </td>
+                    {/* oxlint-disable-next-line jsx-a11y/control-has-associated-label -- cell text is dynamic; oxlint cannot see expressions through the wrapper div */}
                     <td className="px-4 py-4 whitespace-nowrap">
                       <div className="flex flex-col">
                         <span className="text-zinc-200 font-medium">
@@ -332,6 +335,7 @@ export function QueryHistory({ onSelectQuery, activeConnectionId, refreshTrigger
                         </span>
                       </div>
                     </td>
+                    {/* oxlint-disable-next-line jsx-a11y/control-has-associated-label -- cell text is dynamic; oxlint cannot see expressions through the wrapper div */}
                     <td className="px-4 py-4 whitespace-nowrap">
                       <div className="flex flex-col gap-1">
                         <div className="flex items-center gap-1.5 text-zinc-300">

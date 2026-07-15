@@ -42,9 +42,10 @@ export function ResultCard({
   const previewFields = fields.filter((f) => f !== primaryColumn && f !== idColumn).slice(0, 4);
 
   return (
-    <div
+    <button
+      type="button"
       onClick={onSelect}
-      className="bg-[#0d0d0d] border border-white/5 rounded-xl p-4 active:scale-[0.98] transition-all cursor-pointer hover:border-white/10 hover:bg-[#111]"
+      className="w-full text-left bg-[#0d0d0d] border border-white/5 rounded-xl p-4 active:scale-[0.98] transition-all cursor-pointer hover:border-white/10 hover:bg-[#111]"
     >
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2 flex-1 min-w-0">
@@ -89,6 +90,6 @@ export function ResultCard({
           </p>
         )}
       </div>
-    </div>
+    </button>
   );
 }

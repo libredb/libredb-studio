@@ -306,11 +306,12 @@ export function DataImportModal({ isOpen, onClose, onImport, tables, databaseTyp
           {/* Step 1: Upload */}
           {step === "upload" && (
             <div className="p-4">
-              <div
+              <button
+                type="button"
                 onDrop={handleDrop}
                 onDragOver={handleDragOver}
                 onClick={() => fileInputRef.current?.click()}
-                className="border-2 border-dashed border-white/10 rounded-xl p-12 text-center cursor-pointer hover:border-blue-500/30 hover:bg-blue-500/5 transition-all"
+                className="w-full border-2 border-dashed border-white/10 rounded-xl p-12 text-center cursor-pointer hover:border-blue-500/30 hover:bg-blue-500/5 transition-all"
               >
                 <Upload strokeWidth={1.5} className="w-10 h-10 text-zinc-600 mx-auto mb-4" />
                 <p className="text-xs text-zinc-400 mb-1">Drop a file here or click to browse</p>
@@ -325,7 +326,7 @@ export function DataImportModal({ isOpen, onClose, onImport, tables, databaseTyp
                     <span className="text-xs">JSON</span>
                   </div>
                 </div>
-              </div>
+              </button>
               <input
                 ref={fileInputRef}
                 type="file"
@@ -428,7 +429,7 @@ export function DataImportModal({ isOpen, onClose, onImport, tables, databaseTyp
             <div className="p-4 space-y-4">
               {/* Target Table */}
               <div className="space-y-2">
-                <label className="text-xs text-zinc-400 font-medium">Target Table</label>
+                <span className="text-xs text-zinc-400 font-medium">Target Table</span>
                 <div className="flex items-center gap-2">
                   <button
                     className={cn(
@@ -459,8 +460,11 @@ export function DataImportModal({ isOpen, onClose, onImport, tables, databaseTyp
 
               {createNewTable ? (
                 <div>
-                  <label className="text-xs text-zinc-400">New Table Name</label>
+                  <label htmlFor="import-new-table-name" className="text-xs text-zinc-400">
+                    New Table Name
+                  </label>
                   <Input
+                    id="import-new-table-name"
                     value={newTableName}
                     onChange={(e) => setNewTableName(e.target.value)}
                     placeholder="imported_data"
@@ -469,8 +473,11 @@ export function DataImportModal({ isOpen, onClose, onImport, tables, databaseTyp
                 </div>
               ) : (
                 <div>
-                  <label className="text-xs text-zinc-400">Select Table</label>
+                  <label htmlFor="import-target-table" className="text-xs text-zinc-400">
+                    Select Table
+                  </label>
                   <select
+                    id="import-target-table"
                     value={targetTable}
                     onChange={(e) => setTargetTable(e.target.value)}
                     className="w-full mt-1 bg-[#111] border border-white/10 rounded-md px-3 py-2 text-xs text-zinc-300 outline-none focus:border-blue-500/40"
@@ -487,7 +494,7 @@ export function DataImportModal({ isOpen, onClose, onImport, tables, databaseTyp
 
               {/* Column Mapping */}
               <div className="space-y-2">
-                <label className="text-xs text-zinc-400 font-medium">Column Mapping</label>
+                <span className="text-xs text-zinc-400 font-medium">Column Mapping</span>
                 <div className="border border-white/5 rounded-lg overflow-hidden">
                   <div className="bg-[#0d0d0d] grid grid-cols-[1fr,auto,1fr] gap-2 px-3 py-1.5 text-xs text-zinc-500 border-b border-white/5">
                     <span>Source Column</span>

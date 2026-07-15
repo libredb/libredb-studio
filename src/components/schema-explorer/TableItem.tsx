@@ -139,30 +139,36 @@ export const TableItem = React.memo(function TableItem({
         <ContextMenuTrigger asChild>
           <div
             className={cn(
-              "flex items-center gap-1.5 px-2 py-1.5 rounded-md cursor-pointer transition-all",
+              "flex items-center gap-1.5 px-2 py-1.5 rounded-md transition-all",
               isExpanded ? "bg-accent/50" : "hover:bg-accent/30",
             )}
-            onClick={onToggle}
           >
-            <motion.div animate={{ rotate: isExpanded ? 90 : 0 }} transition={{ duration: 0.2 }} className="shrink-0">
-              <ChevronRight strokeWidth={1.5} className="w-3.5 h-3.5 text-muted-foreground" />
-            </motion.div>
-
-            <TableIcon
-              className={cn(
-                "w-3.5 h-3.5 shrink-0 transition-colors",
-                isExpanded ? "text-blue-400" : "text-muted-foreground group-hover:text-foreground",
-              )}
-            />
-
-            <span
-              className={cn(
-                "truncate min-w-0 flex-1 text-xs font-medium transition-colors",
-                isExpanded ? "text-foreground" : "text-muted-foreground group-hover:text-foreground",
-              )}
+            <button
+              type="button"
+              aria-expanded={isExpanded}
+              className="flex items-center gap-1.5 flex-1 min-w-0 cursor-pointer text-left"
+              onClick={onToggle}
             >
-              {table.name}
-            </span>
+              <motion.div animate={{ rotate: isExpanded ? 90 : 0 }} transition={{ duration: 0.2 }} className="shrink-0">
+                <ChevronRight strokeWidth={1.5} className="w-3.5 h-3.5 text-muted-foreground" />
+              </motion.div>
+
+              <TableIcon
+                className={cn(
+                  "w-3.5 h-3.5 shrink-0 transition-colors",
+                  isExpanded ? "text-blue-400" : "text-muted-foreground group-hover:text-foreground",
+                )}
+              />
+
+              <span
+                className={cn(
+                  "truncate min-w-0 flex-1 text-xs font-medium transition-colors",
+                  isExpanded ? "text-foreground" : "text-muted-foreground group-hover:text-foreground",
+                )}
+              >
+                {table.name}
+              </span>
+            </button>
 
             <div className="shrink-0 relative w-8 h-6 flex items-center justify-center">
               {table.rowCount !== undefined && (

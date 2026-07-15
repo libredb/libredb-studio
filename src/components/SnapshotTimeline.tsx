@@ -69,25 +69,9 @@ export function SnapshotTimeline({ snapshots, onCompare, onDelete }: SnapshotTim
             e.stopPropagation();
             onDelete(snapshot.id);
           };
-          const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
-            // Ignore keydown bubbling from the nested delete button so its
-            // native Enter/Space activation is not hijacked into selection.
-            if (e.target !== e.currentTarget) return;
-            if (e.key === "Enter" || e.key === " ") {
-              e.preventDefault();
-              handleClick(snapshot.id);
-            }
-          };
 
           return (
-            <div
-              key={snapshot.id}
-              className={NODE_CLASS}
-              role="button"
-              tabIndex={0}
-              onClick={() => handleClick(snapshot.id)}
-              onKeyDown={handleKeyDown}
-            >
+            <div key={snapshot.id} className={NODE_CLASS}>
               <div
                 className={cn(
                   "w-3.5 h-3.5 rounded-full border-2 z-10 transition-all",
@@ -99,7 +83,13 @@ export function SnapshotTimeline({ snapshots, onCompare, onDelete }: SnapshotTim
 
               {idx < sorted.length - 1 && <div className="absolute top-[7px] left-[50%] w-full h-[2px] bg-white/10" />}
 
-              <div className={labelClass}>
+              {/* Stretched-link pattern: the button's ::after overlay makes the
+                  whole node clickable; the delete button below paints above it */}
+              <button
+                type="button"
+                onClick={() => handleClick(snapshot.id)}
+                className={cn(labelClass, "cursor-pointer after:absolute after:inset-0")}
+              >
                 <div className="text-xs font-medium truncate max-w-[90px]">
                   {snapshot.label || snapshot.connectionName}
                 </div>
@@ -109,9 +99,13 @@ export function SnapshotTimeline({ snapshots, onCompare, onDelete }: SnapshotTim
                 <Badge variant="secondary" className="text-[0.625rem] mt-1">
                   {snapshot.schema.length} tables
                 </Badge>
-              </div>
+              </button>
 
-              <button onClick={handleDelete} className={DELETE_BUTTON_CLASS}>
+              <button
+                onClick={handleDelete}
+                aria-label={`Delete ${snapshot.label || snapshot.connectionName}`}
+                className={DELETE_BUTTON_CLASS}
+              >
                 <Trash2 strokeWidth={1.5} className="w-2.5 h-2.5" />
               </button>
             </div>

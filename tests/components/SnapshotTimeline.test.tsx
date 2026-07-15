@@ -58,6 +58,29 @@ describe("SnapshotTimeline", () => {
     expect(queryByText("3 tables")).not.toBeNull();
   });
 
+  // ── A11y semantics (#100) ─────────────────────────────────────────────────
+
+  test("snapshot nodes are native buttons named by their label", () => {
+    const { getAllByRole } = render(
+      <SnapshotTimeline snapshots={snapshots} onCompare={mock(() => {})} onDelete={mock(() => {})} />,
+    );
+    const before = getAllByRole("button", { name: /^Before migration/ });
+    expect(before.length).toBe(1);
+    expect(before[0].tagName).toBe("BUTTON");
+  });
+
+  test("delete buttons carry the snapshot label in their accessible name", () => {
+    const onDelete = mock((id: string) => {
+      void id;
+    });
+    const { getByRole } = render(
+      <SnapshotTimeline snapshots={snapshots} onCompare={mock(() => {})} onDelete={onDelete} />,
+    );
+    fireEvent.click(getByRole("button", { name: "Delete Before migration" }));
+    expect(onDelete).toHaveBeenCalledTimes(1);
+    expect(onDelete).toHaveBeenCalledWith("s1");
+  });
+
   test("selecting two snapshots triggers onCompare", () => {
     const onCompare = mock((a: string, b: string) => {
       void a;
@@ -79,34 +102,22 @@ describe("SnapshotTimeline", () => {
     const { getAllByRole } = render(
       <SnapshotTimeline snapshots={snapshots} onCompare={onCompare} onDelete={mock(() => {})} />,
     );
-    const nodes = getAllByRole("button").filter((el) => el.tagName === "DIV");
-    fireEvent.keyDown(nodes[0]!, { key: "Enter" });
-    fireEvent.keyDown(nodes[1]!, { key: " " });
+    // Node buttons are native <button> elements: Enter/Space activation is
+    // browser behavior, so activation is exercised via click semantics.
+    const nodes = getAllByRole("button", { name: /^(Before|After) migration/ });
+    fireEvent.click(nodes[0]!);
+    fireEvent.click(nodes[1]!);
     expect(onCompare).toHaveBeenCalledTimes(1);
   });
 
-  test("keydown on the nested delete button does not select the node", () => {
+  test("clicking the delete button does not select the node", () => {
     const onCompare = mock(() => {});
-    const { container, getAllByRole } = render(
+    const { getByRole, getAllByRole } = render(
       <SnapshotTimeline snapshots={snapshots} onCompare={onCompare} onDelete={mock(() => {})} />,
     );
-    const nodes = getAllByRole("button").filter((el) => el.tagName === "DIV");
-    const deleteButton = container.querySelector("button")!;
-    // Enter on the delete button bubbles to the node but must be ignored
-    fireEvent.keyDown(deleteButton, { key: "Enter" });
-    fireEvent.keyDown(nodes[1]!, { key: "Enter" });
-    // Only the second keydown selected a node, so no compare pair exists
-    expect(onCompare).toHaveBeenCalledTimes(0);
-  });
-
-  test("other keys do not select a snapshot", () => {
-    const onCompare = mock(() => {});
-    const { getAllByRole } = render(
-      <SnapshotTimeline snapshots={snapshots} onCompare={onCompare} onDelete={mock(() => {})} />,
-    );
-    const nodes = getAllByRole("button").filter((el) => el.tagName === "DIV");
-    fireEvent.keyDown(nodes[0]!, { key: "Tab" });
-    fireEvent.keyDown(nodes[1]!, { key: "Escape" });
+    fireEvent.click(getByRole("button", { name: "Delete Before migration" }));
+    fireEvent.click(getAllByRole("button", { name: /After migration/ })[0]!);
+    // Delete must not count as a selection, so no compare pair exists
     expect(onCompare).toHaveBeenCalledTimes(0);
   });
 
@@ -114,11 +125,10 @@ describe("SnapshotTimeline", () => {
     const onDelete = mock((id: string) => {
       void id;
     });
-    const { container } = render(
+    const { getByRole } = render(
       <SnapshotTimeline snapshots={snapshots} onCompare={mock(() => {})} onDelete={onDelete} />,
     );
-    const deleteButtons = container.querySelectorAll("button");
-    fireEvent.click(deleteButtons[0]!);
+    fireEvent.click(getByRole("button", { name: "Delete Before migration" }));
     expect(onDelete).toHaveBeenCalledTimes(1);
   });
 
@@ -285,12 +295,11 @@ describe("SnapshotTimeline", () => {
   test("delete button stopPropagation prevents selection change", () => {
     const onCompare = mock(() => {});
     const onDelete = mock(() => {});
-    const { container, queryByText } = render(
+    const { getByRole, queryByText } = render(
       <SnapshotTimeline snapshots={snapshots} onCompare={onCompare} onDelete={onDelete} />,
     );
     // Click delete on first snapshot — should NOT trigger selection due to stopPropagation
-    const deleteButtons = container.querySelectorAll("button");
-    fireEvent.click(deleteButtons[0]!);
+    fireEvent.click(getByRole("button", { name: "Delete Before migration" }));
     // onDelete should fire
     expect(onDelete).toHaveBeenCalledTimes(1);
     // Now select both snapshots — if delete had leaked a selection, we'd need only 1 more click
@@ -318,15 +327,13 @@ describe("SnapshotTimeline", () => {
     const onDelete = mock((id: string) => {
       void id;
     });
-    const { container } = render(
+    const { getByRole } = render(
       <SnapshotTimeline snapshots={snapshots} onCompare={mock(() => {})} onDelete={onDelete} />,
     );
-    const deleteButtons = container.querySelectorAll("button");
     // Snapshots are sorted by createdAt ascending: s1 (2026-01-10), s2 (2026-01-15)
-    // First delete button corresponds to s1, second to s2
-    fireEvent.click(deleteButtons[0]!);
+    fireEvent.click(getByRole("button", { name: "Delete Before migration" }));
     expect(onDelete).toHaveBeenCalledWith("s1");
-    fireEvent.click(deleteButtons[1]!);
+    fireEvent.click(getByRole("button", { name: "Delete After migration" }));
     expect(onDelete).toHaveBeenCalledWith("s2");
     expect(onDelete).toHaveBeenCalledTimes(2);
   });

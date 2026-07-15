@@ -55,21 +55,28 @@ describe("SavedQueries", () => {
     expect(queryByText("Get active users")).not.toBeNull();
   });
 
+  // ── A11y semantics (#100) ─────────────────────────────────────────────────
+
+  test("query card is loaded via a button named after the query", () => {
+    const onSelectQuery = mock(() => {});
+    const { getByRole } = render(<SavedQueries onSelectQuery={onSelectQuery} />);
+    fireEvent.click(getByRole("button", { name: "Active Users" }));
+    expect(onSelectQuery).toHaveBeenCalledTimes(1);
+    expect(onSelectQuery).toHaveBeenCalledWith("SELECT * FROM users WHERE active = true");
+  });
+
   test("delete button removes query after confirm", () => {
     const originalConfirm = globalThis.confirm;
     globalThis.confirm = mock(() => true) as unknown as typeof confirm;
     try {
       const onSelectQuery = mock(() => {});
-      const { container, queryByText } = render(<SavedQueries onSelectQuery={onSelectQuery} />);
+      const { getByRole, queryByText } = render(<SavedQueries onSelectQuery={onSelectQuery} />);
       expect(queryByText("Active Users")).not.toBeNull();
 
       // After deletion, storage returns an empty list
       mockGetSavedQueries.mockImplementation(() => []);
 
-      // Buttons per card: [0] edit, [1] delete
-      const deleteButton = container.querySelectorAll("button")[1];
-      expect(deleteButton).not.toBeNull();
-      fireEvent.click(deleteButton!);
+      fireEvent.click(getByRole("button", { name: "Delete Active Users" }));
 
       expect(mockDeleteSavedQuery).toHaveBeenCalledTimes(1);
       expect(mockDeleteSavedQuery).toHaveBeenCalledWith("q1");
@@ -86,10 +93,9 @@ describe("SavedQueries", () => {
     const originalConfirm = globalThis.confirm;
     globalThis.confirm = mock(() => false) as unknown as typeof confirm;
     try {
-      const { container, queryByText } = render(<SavedQueries onSelectQuery={mock(() => {})} />);
+      const { getByRole, queryByText } = render(<SavedQueries onSelectQuery={mock(() => {})} />);
 
-      const deleteButton = container.querySelectorAll("button")[1];
-      fireEvent.click(deleteButton!);
+      fireEvent.click(getByRole("button", { name: "Delete Active Users" }));
 
       expect(mockDeleteSavedQuery).not.toHaveBeenCalled();
       expect(queryByText("Active Users")).not.toBeNull();

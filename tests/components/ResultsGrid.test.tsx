@@ -881,4 +881,32 @@ describe("ResultsGrid", () => {
       expect(revealButton).toBeNull();
     });
   });
+
+  // ── A11y semantics (#100): keyboard-reachable interactive elements ────────
+
+  describe("a11y semantics", () => {
+    test("column sort headers are buttons named after the field", () => {
+      const { getAllByRole } = render(React.createElement(ResultsGrid, { result: mockResult }));
+      const sortButtons = getAllByRole("button", { name: "name" });
+      expect(sortButtons.length).toBeGreaterThan(0);
+      fireEvent.click(sortButtons[0]);
+    });
+
+    test("mobile rows are buttons that open the row detail sheet", () => {
+      const { getAllByRole, queryByTestId } = render(React.createElement(ResultsGrid, { result: mockResult }));
+      const rowButtons = getAllByRole("button", { name: /Alice/ });
+      expect(rowButtons.length).toBeGreaterThan(0);
+      fireEvent.click(rowButtons[0]);
+      expect(queryByTestId("row-detail-sheet")).not.toBeNull();
+    });
+
+    test("column resize handles are hidden from assistive technology", () => {
+      const { container } = render(React.createElement(ResultsGrid, { result: mockResult }));
+      const handles = container.querySelectorAll(".cursor-col-resize");
+      expect(handles.length).toBeGreaterThan(0);
+      for (const handle of handles) {
+        expect(handle.getAttribute("aria-hidden")).toBe("true");
+      }
+    });
+  });
 });

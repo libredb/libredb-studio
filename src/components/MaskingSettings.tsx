@@ -188,15 +188,17 @@ export function MaskingSettings() {
                   </Badge>
                 </div>
                 <div className="flex items-center gap-6">
-                  <label className="flex items-center gap-2 text-xs text-zinc-400">
+                  <label htmlFor="masking-admin-can-toggle" className="flex items-center gap-2 text-xs text-zinc-400">
                     <Switch
+                      id="masking-admin-can-toggle"
                       checked={config.roleSettings.admin.canToggle}
                       onCheckedChange={(v) => updateRoleSetting("admin", "canToggle", v)}
                     />
                     Can toggle
                   </label>
-                  <label className="flex items-center gap-2 text-xs text-zinc-400">
+                  <label htmlFor="masking-admin-can-reveal" className="flex items-center gap-2 text-xs text-zinc-400">
                     <Switch
+                      id="masking-admin-can-reveal"
                       checked={config.roleSettings.admin.canReveal}
                       onCheckedChange={(v) => updateRoleSetting("admin", "canReveal", v)}
                     />
@@ -212,15 +214,17 @@ export function MaskingSettings() {
                   </Badge>
                 </div>
                 <div className="flex items-center gap-6">
-                  <label className="flex items-center gap-2 text-xs text-zinc-400">
+                  <label htmlFor="masking-user-can-toggle" className="flex items-center gap-2 text-xs text-zinc-400">
                     <Switch
+                      id="masking-user-can-toggle"
                       checked={config.roleSettings.user.canToggle}
                       onCheckedChange={(v) => updateRoleSetting("user", "canToggle", v)}
                     />
                     Can toggle
                   </label>
-                  <label className="flex items-center gap-2 text-xs text-zinc-400">
+                  <label htmlFor="masking-user-can-reveal" className="flex items-center gap-2 text-xs text-zinc-400">
                     <Switch
+                      id="masking-user-can-reveal"
                       checked={config.roleSettings.user.canReveal}
                       onCheckedChange={(v) => updateRoleSetting("user", "canReveal", v)}
                     />
@@ -332,13 +336,22 @@ export function MaskingSettings() {
           </DialogHeader>
           <div className="space-y-4 py-4">
             <div className="space-y-2">
-              <label className="text-xs font-medium text-zinc-300">Name</label>
-              <Input value={editName} onChange={(e) => setEditName(e.target.value)} placeholder="Pattern name" />
+              <label htmlFor="masking-pattern-name" className="text-xs font-medium text-zinc-300">
+                Name
+              </label>
+              <Input
+                id="masking-pattern-name"
+                value={editName}
+                onChange={(e) => setEditName(e.target.value)}
+                placeholder="Pattern name"
+              />
             </div>
             <div className="space-y-2">
-              <label className="text-xs font-medium text-zinc-300">Mask Type</label>
+              <label htmlFor="masking-mask-type" className="text-xs font-medium text-zinc-300">
+                Mask Type
+              </label>
               <Select value={editMaskType} onValueChange={(v) => setEditMaskType(v as MaskType)}>
-                <SelectTrigger>
+                <SelectTrigger id="masking-mask-type">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -352,8 +365,11 @@ export function MaskingSettings() {
             </div>
             {editMaskType === "custom" && (
               <div className="space-y-2">
-                <label className="text-xs font-medium text-zinc-300">Custom Mask String</label>
+                <label htmlFor="masking-custom-mask" className="text-xs font-medium text-zinc-300">
+                  Custom Mask String
+                </label>
                 <Input
+                  id="masking-custom-mask"
                   value={editCustomMask}
                   onChange={(e) => setEditCustomMask(e.target.value)}
                   placeholder="e.g. ***"
@@ -361,8 +377,11 @@ export function MaskingSettings() {
               </div>
             )}
             <div className="space-y-2">
-              <label className="text-xs font-medium text-zinc-300">Column Patterns (one per line)</label>
+              <label htmlFor="masking-column-patterns" className="text-xs font-medium text-zinc-300">
+                Column Patterns (one per line)
+              </label>
               <textarea
+                id="masking-column-patterns"
                 className="w-full h-32 bg-[#0a0a0a] border border-white/10 rounded-md px-3 py-2 text-xs font-mono text-zinc-200 focus:outline-none focus:ring-1 focus:ring-purple-500/50 resize-none"
                 value={editColumnPatterns}
                 onChange={(e) => setEditColumnPatterns(e.target.value)}

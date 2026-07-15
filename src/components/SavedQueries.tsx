@@ -68,23 +68,36 @@ export function SavedQueries({ onSelectQuery, connectionType, refreshTrigger }: 
             {filteredQueries.map((q) => (
               <div
                 key={q.id}
-                className="bg-[#0a0a0a] p-4 hover:bg-white/[0.02] transition-colors group cursor-pointer"
-                onClick={() => onSelectQuery(q.query)}
+                className="relative bg-[#0a0a0a] p-4 hover:bg-white/[0.02] transition-colors group cursor-pointer"
               >
                 <div className="flex items-start justify-between mb-2">
                   <div>
-                    <h4 className="text-xs font-medium text-blue-400 mb-1 group-hover:text-blue-300 transition-colors">
-                      {q.name}
+                    <h4 className="text-xs font-medium mb-1">
+                      {/* Stretched-link pattern: the button's ::after overlay makes the
+                          whole card clickable while nested action buttons stay above it */}
+                      <button
+                        type="button"
+                        className="text-blue-400 group-hover:text-blue-300 transition-colors cursor-pointer text-left after:absolute after:inset-0"
+                        onClick={() => onSelectQuery(q.query)}
+                      >
+                        {q.name}
+                      </button>
                     </h4>
                     {q.description && <p className="text-xs text-zinc-500 line-clamp-1">{q.description}</p>}
                   </div>
-                  <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <Button variant="ghost" size="icon" className="h-6 w-6 text-zinc-500 hover:text-white">
+                  <div className="relative z-10 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      aria-label={`Edit ${q.name}`}
+                      className="h-6 w-6 text-zinc-500 hover:text-white"
+                    >
                       <Edit3 strokeWidth={1.5} className="w-3 h-3" />
                     </Button>
                     <Button
                       variant="ghost"
                       size="icon"
+                      aria-label={`Delete ${q.name}`}
                       className="h-6 w-6 text-zinc-500 hover:text-red-400"
                       onClick={(e) => handleDelete(q.id, e)}
                     >
