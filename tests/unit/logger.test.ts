@@ -63,7 +63,7 @@ describe("logger", () => {
     const err = new TypeError("something broke");
     logger.error("failure", err);
     expect(errorSpy).toHaveBeenCalledTimes(1);
-    // Stack path uses a constant format string; the line is the first argument
+    // Stack path call shape is ("%s\n%s", line, stack): the log line is at index 1
     const line = errorSpy.mock.calls[0][1] as string;
     expect(line).toContain("[ERROR]");
     expect(line).toContain("failure");
@@ -163,7 +163,7 @@ describe("logger", () => {
   test("error extraction: Error name and message appear in output", () => {
     const err = new RangeError("out of bounds");
     logger.error("bad range", err);
-    // Stack path uses a constant format string; the line is the first argument
+    // Stack path call shape is ("%s\n%s", line, stack): the log line is at index 1
     const line = errorSpy.mock.calls[0][1] as string;
     expect(line).toContain("RangeError");
     expect(line).toContain("out of bounds");
