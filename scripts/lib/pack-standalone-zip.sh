@@ -61,8 +61,10 @@ rm -f "$OUT_ZIP"
 (cd "$PAYLOAD_DIR" && "$SEVENZIP" a -tzip -bd -bso0 "$OUT_ZIP" .)
 
 # Layout assertions: required roots present, and present AT the root (7z
-# lists paths with backslashes on Windows, so match both separators).
-LISTING=$("$SEVENZIP" l -ba -slt "$OUT_ZIP" | sed -n 's/^Path = //p')
+# lists paths with backslashes on Windows, so match both separators; the
+# native 7z.exe also emits CRLF line endings, so strip \r or the anchored
+# grep below would reject every entry on the Windows runner).
+LISTING=$("$SEVENZIP" l -ba -slt "$OUT_ZIP" | sed -n 's/^Path = //p' | tr -d '\r')
 for required in "server.js" ".next" "package.json"; do
   if ! printf '%s\n' "$LISTING" | grep -qx "$required"; then
     echo "Packed zip is missing required root entry '$required' - refusing to ship it" >&2

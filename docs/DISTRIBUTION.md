@@ -489,7 +489,8 @@ Download `libredb-studio-standalone-<version>-win32-x64.zip` and `SHA256SUMS` fr
 # Verify (compare against the SHA256SUMS line for the zip)
 Get-FileHash .\libredb-studio-standalone-<version>-win32-x64.zip -Algorithm SHA256
 
-# Extract (Explorer "Extract All...", or:)
+# Extract (Explorer "Extract All...", or - tar -C needs the directory to exist:)
+mkdir libredb-studio
 tar -xf .\libredb-studio-standalone-<version>-win32-x64.zip -C libredb-studio
 
 # Run from the extracted directory

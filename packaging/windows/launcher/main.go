@@ -45,8 +45,9 @@ func main() {
 	env := launcherEnv(os.Environ())
 	// The default storage path's parent directories may not exist yet
 	// (fresh %LOCALAPPDATA%); the server expects the directory to be there
-	// (the deb/Homebrew packages pre-create theirs the same way).
-	if _, preset := envValue(os.Environ(), "STORAGE_SQLITE_PATH"); !preset {
+	// (the deb/Homebrew packages pre-create theirs the same way). An empty
+	// preset counts as unset, mirroring launcherEnv.
+	if value, preset := envValue(os.Environ(), "STORAGE_SQLITE_PATH"); !preset || value == "" {
 		if storage, ok := envValue(env, "STORAGE_SQLITE_PATH"); ok {
 			if mkdirErr := os.MkdirAll(filepath.Dir(storage), 0o755); mkdirErr != nil {
 				fatal(fmt.Sprintf("could not create the storage directory for %s: %v", storage, mkdirErr))

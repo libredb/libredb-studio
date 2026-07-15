@@ -263,6 +263,14 @@ jobs:
           "${SYSTEMROOT:-${SystemRoot:-C:\\Windows}}/System32/tar.exe" -xf "dist/libredb-studio-standalone-${VERSION}-win32-x64.zip" -C "$SMOKE_DIR"
           test -f "$SMOKE_DIR/libredb-studio.exe"
           test -f "$SMOKE_DIR/node/node.exe"
+          # Issue #114 constraint: the drivers must load on Windows with the
+          # BUNDLED runtime - the health route never imports them, so probe
+          # explicitly before booting. better-sqlite3 is the native binding
+          # (the real prebuild risk); oracledb ships as a traced standalone
+          # node_modules package. mssql cannot be probed this way by design:
+          # Next bundles it (pure-JS tedious, no Windows prebuild risk) into
+          # the server chunks instead of node_modules.
+          (cd "$SMOKE_DIR" && ./node/node.exe -e "require('better-sqlite3')(':memory:').close(); require('oracledb'); console.log('db driver probe ok')")
           # Zero-config boot through the launcher: storage defaults under
           # %LOCALAPPDATA%\LibreDB\Studio, bind defaults to loopback, and
           # the first run must print generated admin credentials.
@@ -854,6 +862,17 @@ jobs:
           if gh api "repos/microsoft/winget-pkgs/contents/manifests/l/LibreDB/Studio/${VERSION}" --jq '.[0].name' >/dev/null 2>&1; then
             echo "enabled=false" >> "$GITHUB_OUTPUT"
             echo "::notice::winget already carries LibreDB.Studio ${VERSION} - nothing to submit"
+            exit 0
+          fi
+          # The Contents API only reflects MERGED manifests, and wingetcreate
+          # has no duplicate detection of its own - a rerun while this
+          # version's update PR is still open must not submit a second one.
+          OPEN_PRS=$(gh api -X GET search/issues \
+            -f q="repo:microsoft/winget-pkgs is:pr is:open in:title LibreDB.Studio ${VERSION}" \
+            --jq '.total_count' 2>/dev/null || echo 0)
+          if [ "$OPEN_PRS" != "0" ]; then
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::an open winget-pkgs PR for LibreDB.Studio ${VERSION} already exists - skipping a duplicate submission"
             exit 0
           fi
           echo "enabled=true" >> "$GITHUB_OUTPUT"

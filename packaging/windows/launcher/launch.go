@@ -25,16 +25,19 @@ func resolveLaunchPaths(exeDir string) launchPaths {
 	}
 }
 
-// envValue looks up a key in a "key=value" environ slice. Windows
-// environment keys are case-insensitive, so the match is too - a user's
-// `set storage_sqlite_path=...` must count as "already set".
+// envValue looks up a key in a "key=value" environ slice and returns the
+// LAST match - the value os/exec hands to the child under its
+// duplicate-key rule. Windows environment keys are case-insensitive, so
+// the match is too - a user's `set storage_sqlite_path=...` must count as
+// "already set".
 func envValue(environ []string, key string) (string, bool) {
+	value, found := "", false
 	for _, entry := range environ {
 		if eq := strings.IndexByte(entry, '='); eq > 0 && strings.EqualFold(entry[:eq], key) {
-			return entry[eq+1:], true
+			value, found = entry[eq+1:], true
 		}
 	}
-	return "", false
+	return value, found
 }
 
 // defaultStoragePath is the zero-config server-side SQLite location:
@@ -82,13 +85,16 @@ func launcherEnv(environ []string) []string {
 	}
 	env = append(env, "HOSTNAME="+bind)
 
-	if _, ok := envValue(environ, "STORAGE_SQLITE_PATH"); !ok {
+	// An inherited-but-EMPTY value counts as unset (parity with the Linux
+	// wrapper's ${VAR:-} handling): the server treats "" as absent and would
+	// otherwise fall back to ./data inside the install tree.
+	if value, ok := envValue(environ, "STORAGE_SQLITE_PATH"); !ok || value == "" {
 		if storage := defaultStoragePath(resolveLocalAppData(environ)); storage != "" {
 			env = append(env, "STORAGE_SQLITE_PATH="+storage)
 		}
 	}
 
-	if _, ok := envValue(environ, "NODE_ENV"); !ok {
+	if value, ok := envValue(environ, "NODE_ENV"); !ok || value == "" {
 		env = append(env, "NODE_ENV=production")
 	}
 	return env

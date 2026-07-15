@@ -33,6 +33,10 @@ func TestEnvValueIsCaseInsensitive(t *testing.T) {
 	if _, ok := envValue([]string{"=C:=C:\\x"}, ""); ok {
 		t.Error("envValue matched an empty key")
 	}
+	// Duplicate keys: the LAST entry wins, matching os/exec's rule.
+	if value, _ := envValue([]string{"FOO=first", "FOO=second"}, "FOO"); value != "second" {
+		t.Errorf("envValue duplicate = %q, want the last entry", value)
+	}
 }
 
 func TestLauncherEnvBindsLoopbackByDefault(t *testing.T) {
@@ -65,6 +69,21 @@ func TestLauncherEnvKeepsPresetStoragePath(t *testing.T) {
 	env := launcherEnv([]string{"STORAGE_SQLITE_PATH=D:\\custom\\s.db", "LOCALAPPDATA=C:\\lad"})
 	if count := countKey(env, "STORAGE_SQLITE_PATH"); count != 1 {
 		t.Errorf("STORAGE_SQLITE_PATH appears %d times, want the single preset entry", count)
+	}
+}
+
+func TestLauncherEnvTreatsEmptyPresetsAsUnset(t *testing.T) {
+	// Parity with packaging/linux/libredb-studio's ${VAR:-} handling: an
+	// inherited-but-empty value must not suppress the zero-config defaults
+	// (the server would fall back to ./data inside the install tree).
+	localAppData := filepath.Join("C:", "Users", "u", "AppData", "Local")
+	env := launcherEnv([]string{"STORAGE_SQLITE_PATH=", "NODE_ENV=", "LOCALAPPDATA=" + localAppData})
+	wantStorage := filepath.Join(localAppData, "LibreDB", "Studio", "libredb-storage.db")
+	if last := lastValue(t, env, "STORAGE_SQLITE_PATH"); last != wantStorage {
+		t.Errorf("STORAGE_SQLITE_PATH = %q, want the default %q despite the empty preset", last, wantStorage)
+	}
+	if last := lastValue(t, env, "NODE_ENV"); last != "production" {
+		t.Errorf("NODE_ENV = %q, want production despite the empty preset", last)
 	}
 }
 
