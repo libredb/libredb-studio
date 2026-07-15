@@ -23,8 +23,8 @@ name: Release Artifacts
 # verifies the full asset set, and publishes the release as its LAST step.
 # Because that publish runs under GITHUB_TOKEN it fires no `release:published`
 # triggers; npm-publish and docker-build-push are chained explicitly by the
-# final dispatch step instead. A hand-written draft release for the tag is
-# reused if one exists; otherwise a draft is created with generated notes.
+# dispatch-downstream job instead. A hand-written draft release for the tag
+# is reused if one exists; otherwise a draft is created with generated notes.
 
 on:
   push:
@@ -685,10 +685,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      # Required by the chain-dispatch step below: gh workflow run calls the
-      # Actions API, and an explicit permissions block disables every scope
-      # it does not name.
-      actions: write
     steps:
       - name: Verify the draft carries the full asset set
         env:
@@ -735,15 +731,27 @@ jobs:
           gh release edit "$TAG" --draft=false --latest
           echo "Release '$TAG' published with the verified asset set."
 
+  dispatch-downstream:
+    # The publish above runs under GITHUB_TOKEN, and events created by
+    # GITHUB_TOKEN do not trigger other workflows (the 0.9.46 release
+    # published without npm/Docker firing). workflow_dispatch API calls
+    # are NOT subject to that restriction, so chain the downstream
+    # channels explicitly. A SIBLING job (not a publish-release step) on
+    # purpose: the chocolatey and winget jobs below need only "the release
+    # is published", and a transient dispatch failure here must not skip
+    # them. Version safety comes from the guard job (TAG validated against
+    # package.json at the tagged commit) plus the --ref pinning below -
+    # docker trusts its version input and npm derives the version from the
+    # ref's package.json.
+    name: Dispatch npm and Docker publish
+    needs: [guard, publish-release]
+    runs-on: ubuntu-latest
+    permissions:
+      # gh workflow run calls the Actions API, and an explicit permissions
+      # block disables every scope it does not name.
+      actions: write
+    steps:
       - name: Dispatch npm and Docker publish
-        # The publish above runs under GITHUB_TOKEN, and events created by
-        # GITHUB_TOKEN do not trigger other workflows (the 0.9.46 release
-        # published without npm/Docker firing). workflow_dispatch API calls
-        # are NOT subject to that restriction, so chain the downstream
-        # channels explicitly. Version safety comes from this workflow's
-        # guard job (TAG validated against package.json at the tagged
-        # commit) plus the --ref pinning below - docker trusts its version
-        # input and npm derives the version from the ref's package.json.
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
@@ -816,9 +824,11 @@ jobs:
           VERSION: ${{ needs.guard.outputs.version }}
         run: |
           # The image's `choco` wrapper already runs the Mono build with
-          # --allow-unofficial; do not pass it again.
+          # --allow-unofficial; do not pass it again. Pinned by immutable
+          # digest (the tag is readability only): a mutable latest-linux
+          # would hand CHOCO_API_KEY to whatever the tag points at.
           docker run --rm -v "$PWD/pkg/choco:/wd" -w /wd -e CHOCO_API_KEY -e VERSION \
-            chocolatey/choco:latest-linux sh -c '
+            chocolatey/choco:v2.7.3-linux@sha256:ae878c6e550ed7bd0adfb958f2f54b3aadab585d6a9386ad9e23a1aae06bee3d sh -c '
               set -eu
               choco pack
               choco push "libredb-studio.${VERSION}.nupkg" \
@@ -886,7 +896,18 @@ jobs:
           WINGET_CREATE_GITHUB_TOKEN: ${{ secrets.WINGETCREATE_GITHUB_TOKEN }}
           VERSION: ${{ needs.guard.outputs.version }}
         run: |
-          Invoke-WebRequest -Uri 'https://aka.ms/wingetcreate/latest' -OutFile wingetcreate.exe
+          # Pinned wingetcreate release, checksum-verified before execution:
+          # the aka.ms/latest redirect is mutable, and this process holds the
+          # classic PAT in its environment. Update the version and sha256
+          # together (digest from the GitHub release asset).
+          $wingetcreateVersion = 'v1.12.8.0'
+          $wingetcreateSha256 = '8bd738851b524885410112678e3771b341c5c716de60fbbecb88ab0a363ed85d'
+          Invoke-WebRequest -Uri "https://github.com/microsoft/winget-create/releases/download/$wingetcreateVersion/wingetcreate.exe" -OutFile wingetcreate.exe
+          $actual = (Get-FileHash wingetcreate.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -ne $wingetcreateSha256) {
+            Write-Error "wingetcreate.exe sha256 mismatch: expected $wingetcreateSha256, got $actual"
+            exit 1
+          }
           $url = "https://github.com/libredb/libredb-studio/releases/download/$env:VERSION/libredb-studio-standalone-$env:VERSION-win32-x64.zip"
           .\wingetcreate.exe update LibreDB.Studio --version $env:VERSION --urls "$url|x64" --submit
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

@@ -49,6 +49,25 @@ jobs:
       - name: Run linters (oxlint + ESLint)
         run: bun run lint
 
+      # The Windows launcher (issue #114) is dependency-free Go whose pure
+      # logic tests run on any OS. Gate it here, not only in the release
+      # workflow: windows-package is a hard release gate, so a launcher
+      # regression discovered first at tag time would block the release.
+      - name: Setup Go (Windows launcher toolchain)
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: packaging/windows/launcher/go.mod
+          # Dependency-free module (no go.sum) - caching would only warn.
+          cache: false
+
+      - name: Vet and test the Windows launcher (Go)
+        run: |
+          cd packaging/windows/launcher
+          gofmt -l . | tee /tmp/gofmt.out
+          test ! -s /tmp/gofmt.out
+          go vet ./...
+          go test ./...
+
       - name: Run TypeScript type check
         run: bun run typecheck
 

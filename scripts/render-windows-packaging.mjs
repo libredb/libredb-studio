@@ -46,8 +46,12 @@ export function renderWindowsPackagingTemplate(template, sumsText, version) {
 
   const rendered = template.replaceAll("{{VERSION}}", version).replaceAll("{{SHA256_WIN32_X64}}", digest);
 
-  // Any surviving marker (known or misspelled) means a broken package file.
-  const leftover = /\{\{[^}\n]*\}\}/.exec(rendered) ?? (rendered.includes("{{") ? ["{{"] : null);
+  // Any surviving marker (known, misspelled, or a stray half - e.g. a
+  // typoed {VERSION}} leaving a bare "}}") means a broken package file.
+  const leftover =
+    /\{\{[^}\n]*\}\}/.exec(rendered) ??
+    (rendered.includes("{{") ? ["{{"] : null) ??
+    (rendered.includes("}}") ? ["}}"] : null);
   if (leftover) {
     throw new Error(`Unfilled placeholder ${leftover[0]} in rendered template`);
   }

@@ -66,7 +66,9 @@ rm -f "$OUT_ZIP"
 # grep below would reject every entry on the Windows runner).
 LISTING=$("$SEVENZIP" l -ba -slt "$OUT_ZIP" | sed -n 's/^Path = //p' | tr -d '\r')
 for required in "server.js" ".next" "package.json"; do
-  if ! printf '%s\n' "$LISTING" | grep -qx "$required"; then
+  # -F: fixed-string match - a regex match would let the dots in these
+  # names match any character (serverXjs must not satisfy server.js).
+  if ! printf '%s\n' "$LISTING" | grep -qxF "$required"; then
     echo "Packed zip is missing required root entry '$required' - refusing to ship it" >&2
     exit 1
   fi

@@ -96,4 +96,13 @@ describe("renderWindowsPackagingTemplate", () => {
       /Unfilled placeholder/,
     );
   });
+
+  test("throws on a stray closing marker (a typoed {VERSION}} must fail closed, not ship)", () => {
+    expect(() => renderWindowsPackagingTemplate("{VERSION}} stray", fixtureSums(), VERSION)).toThrow(
+      /Unfilled placeholder/,
+    );
+    expect(() => renderWindowsPackagingTemplate("{{VERSION}} tail }}", fixtureSums(), VERSION)).toThrow(
+      /Unfilled placeholder/,
+    );
+  });
 });

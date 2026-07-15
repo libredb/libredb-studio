@@ -82,6 +82,16 @@ describe("scripts/lib/pack-standalone-zip.sh (#114)", () => {
     expect(run.stderr.toString()).toContain("server.js");
   });
 
+  test("matches required entries as fixed strings, not regexes (serverXjs must not satisfy server.js)", () => {
+    const { payloadDir, zip } = makeFixturePayload();
+    rmSync(join(payloadDir, "server.js"));
+    writeFileSync(join(payloadDir, "serverXjs"), "// imposter");
+
+    const run = Bun.spawnSync(["bash", SCRIPT, payloadDir, zip], { stdout: "pipe", stderr: "pipe" });
+    expect(run.exitCode).not.toBe(0);
+    expect(run.stderr.toString()).toContain("server.js");
+  });
+
   test("fails loudly for a missing payload directory", () => {
     const { root, zip } = makeFixturePayload();
 
