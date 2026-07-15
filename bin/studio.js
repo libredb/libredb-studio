@@ -24,7 +24,7 @@ import { pipeline } from "node:stream/promises";
 import {
   artifactName,
   assessNodeRuntime,
-  extractTarball,
+  extractArchive,
   LauncherUsageError,
   parseLauncherArgs,
   parseSha256Sums,
@@ -41,21 +41,21 @@ const USAGE = `LibreDB Studio ${pkg.version} launcher
 Usage: npx @libredb/studio [options]
 
 Starts the LibreDB Studio standalone server. On first run the launcher
-downloads the release tarball for this platform from GitHub Releases,
-verifies its SHA256 checksum, and caches it in ~/.libredb-studio/${pkg.version}/.
-Later runs start straight from the cache.
+downloads the release archive for this platform (tar.gz; zip on Windows)
+from GitHub Releases, verifies its SHA256 checksum, and caches it in
+~/.libredb-studio/${pkg.version}/. Later runs start straight from the cache.
 
 Options:
   --port <n>        Port to listen on (default: $PORT or 3000)
   --host <addr>     Address to bind (default: $HOSTNAME or 127.0.0.1;
                     use --host 0.0.0.0 to expose on the network)
-  --archive <path>  Start from a local standalone tarball instead of
+  --archive <path>  Start from a local standalone archive instead of
                     downloading (env: LIBREDB_STUDIO_ARCHIVE). WARNING:
                     local archives skip checksum verification unless
-                    --archive-sha256 is given - only use tarballs you
+                    --archive-sha256 is given - only use archives you
                     built or obtained from a trusted source.
   --archive-sha256 <hex>
-                    Expected sha256 of the --archive tarball; mismatch
+                    Expected sha256 of the --archive file; mismatch
                     refuses to start
   --verify-cache    Re-verify the cached tarball checksum and re-extract
                     the payload before starting
@@ -163,24 +163,26 @@ async function download(url, destination) {
 }
 
 /**
- * Unpack a payload tarball into payloadDir (atomic: staging dir then rename).
- * `tar` exists on all supported POSIX platforms (linux, darwin). The tarball
- * is packed under a top-level libredb-studio-<version>/ root (issue #133),
- * which extractTarball strips. A previous payload's data/ dir (generated
+ * Unpack a payload archive into payloadDir (atomic: staging dir then rename).
+ * `tar` exists on all supported platforms: GNU/bsd tar on linux and darwin,
+ * the System32 bsdtar on win32 (which also reads the flat win32 .zip -
+ * see extractionCommand in lib/launcher-utils.mjs, issue #114). Tarballs
+ * are packed under a top-level libredb-studio-<version>/ root (issue #133),
+ * which extractArchive strips. A previous payload's data/ dir (generated
  * credentials, SQLite storage) is preserved across the swap - see
  * preservePayloadData (issue #132).
  *
- * @param {string} tarballPath
+ * @param {string} archivePath
  * @param {string} payloadDir
  */
-function extract(tarballPath, payloadDir) {
+function extract(archivePath, payloadDir) {
   console.log(`Unpacking into ${payloadDir}`);
   const staging = `${payloadDir}.extracting`;
   fs.rmSync(staging, { recursive: true, force: true });
   fs.mkdirSync(staging, { recursive: true });
-  const { status, error } = extractTarball(tarballPath, staging);
+  const { status, error } = extractArchive(archivePath, staging);
   if (error) fail(`Could not run tar: ${error.message}`);
-  if (status !== 0) fail(`tar exited with code ${status} while unpacking ${tarballPath}`);
+  if (status !== 0) fail(`tar exited with code ${status} while unpacking ${archivePath}`);
   preservePayloadData(payloadDir, staging);
   fs.rmSync(payloadDir, { recursive: true, force: true });
   fs.renameSync(staging, payloadDir);
@@ -264,17 +266,6 @@ async function main() {
     return;
   }
 
-  if (process.platform === "win32") {
-    fail(
-      [
-        "LibreDB Studio standalone tarballs are not available for Windows yet.",
-        "Run Studio with Docker instead:",
-        "  docker run -p 3000:3000 ghcr.io/libredb/libredb-studio:latest",
-        "Native Windows support is tracked in https://github.com/libredb/libredb-studio/issues/114",
-      ].join("\n"),
-    );
-  }
-
   // Refuse runtimes the payload cannot run on and surface degraded tiers
   // up front, before any download happens (see assessNodeRuntime).
   const runtime = assessNodeRuntime(process.versions.node);
@@ -314,7 +305,7 @@ async function main() {
   }
 
   if (!fs.existsSync(path.join(payloadDir, "server.js"))) {
-    fail(`Payload in ${payloadDir} has no server.js - not a LibreDB Studio standalone tarball`);
+    fail(`Payload in ${payloadDir} has no server.js - not a LibreDB Studio standalone archive`);
   }
   startServer(payloadDir, args.port, args.host);
 }

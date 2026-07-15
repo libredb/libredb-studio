@@ -87,13 +87,14 @@ Release tags carry **no `v` prefix** (tag `0.9.41` == package.json version). Eac
 | Artifact | Name | Targets |
 |---|---|---|
 | Standalone server tarball | `libredb-studio-standalone-<version>-<os>-<arch>.tar.gz` | `linux-x64`, `linux-arm64`, `darwin-x64`, `darwin-arm64` |
-| Checksums | `SHA256SUMS` | covers all tarballs |
+| Standalone server zip (Windows) | `libredb-studio-standalone-<version>-win32-x64.zip` | `win32-x64` (bundled Node runtime + `libredb-studio.exe` launcher) |
+| Checksums | `SHA256SUMS` | covers all standalone tarballs and the win32 zip |
 | Debian package | `libredb-studio_<version>_<arch>.deb` (+ `.sha256` sidecar) | `amd64`, `arm64` |
 | RPM package | `libredb-studio-<version>.<arch>.rpm` (+ `.sha256` sidecar) | `x86_64`, `aarch64` |
 | Snap | `libredb-studio_<version>_<arch>.snap` | `amd64`, `arm64` (also published to the Snap Store) |
 
-`SHA256SUMS` covers the standalone tarballs; each `.deb`/`.rpm` ships its own per-file
-`<artifact>.sha256` sidecar instead (the packages are built in a separate job).
+`SHA256SUMS` covers the standalone tarballs and the win32 zip; each `.deb`/`.rpm` ships its own
+per-file `<artifact>.sha256` sidecar instead (the packages are built in a separate job).
 
 Standalone tarball entries are rooted under a top-level `libredb-studio-<version>/` directory
 (not a tarbomb) - extract with `tar --strip-components=1` (`tar xzf <artifact>
@@ -101,6 +102,13 @@ Standalone tarball entries are rooted under a top-level `libredb-studio-<version
 `scripts/build-standalone-payload.sh`'s own `--smoke` self-test all do; Homebrew strips the single
 top-level directory automatically for its main `url`/`sha256` download, so the formula needs no
 extra flag.
+
+The **win32 zip is deliberately FLAT** (entries at the archive root, no versioned wrapper
+directory - `scripts/lib/pack-standalone-zip.sh`): winget resolves the manifest's
+`NestedInstallerFiles.RelativeFilePath` against the zip root and `wingetcreate update` never
+rewrites that path, so it must stay `libredb-studio.exe` across releases; Chocolatey likewise
+unzips straight into its package tools directory. Windows Explorer's "Extract All" already
+defaults to a folder named after the zip, so manual extraction stays tidy.
 
 The payload contains only the runtime (`server.js`, `package.json`, `.next`, `node_modules`,
 `public`, an empty `data/`, plus `LICENSE`/`README.md`): Next.js output file tracing sweeps the
@@ -113,9 +121,6 @@ repo root (CI release checkouts are clean; published artifacts are unaffected).
 
 Download URL pattern:
 `https://github.com/libredb/libredb-studio/releases/download/<version>/<artifact>`.
-
-There is no Windows standalone artifact yet — Windows users should run Docker; native Windows
-packaging is tracked in [issue #114](https://github.com/libredb/libredb-studio/issues/114).
 
 ## Docker
 
@@ -197,8 +202,8 @@ chart architecture: [`docs/HELM_CHART.md`](HELM_CHART.md).
 
 ## npx
 
-Requires Node.js 20.9+ on Linux or macOS (x64 / arm64); **Node 24 LTS is the recommended,
-fully supported runtime**. The launcher checks the runtime up front and spells out what an
+Requires Node.js 20.9+ on Linux, macOS (x64 / arm64), or Windows (x64); **Node 24 LTS is the
+recommended, fully supported runtime**. The launcher checks the runtime up front and spells out what an
 older Node cannot do (`scripts/engine-smoke.sh` tests every tier in CI):
 
 | Node | Support |
@@ -209,9 +214,9 @@ older Node cannot do (`scripts/engine-smoke.sh` tests every tier in CI):
 | < 20.9 | Refused with a clear error (Next.js 16 floor) - bare `npx` may also fall back to an ancient, bin-less package version here; those versions are npm-deprecated with pointers. |
 
 The npm package stays a pure library for
-libredb-platform; the launcher downloads the matching standalone tarball from the GitHub
-release, verifies it against the `SHA256SUMS` release asset, caches it under
-`~/.libredb-studio/<version>/`, and starts `node server.js`:
+libredb-platform; the launcher downloads the matching standalone archive (tar.gz; the flat zip
+on Windows) from the GitHub release, verifies it against the `SHA256SUMS` release asset, caches
+it under `~/.libredb-studio/<version>/`, and starts `node server.js`:
 
 ```bash
 npx @libredb/studio                # first run downloads + verifies, then starts
@@ -239,7 +244,8 @@ rebuilt archive never invalidates a previously printed admin password.
   instead of downloading — useful for testing a tarball built with
   `scripts/build-standalone-payload.sh` (checksum verification is skipped and the archive is
   re-extracted on every run).
-- On Windows the launcher exits with a pointer to Docker
+- On Windows the launcher downloads the win32 zip and extracts it with the built-in
+  `System32\tar.exe` (bsdtar); see [Windows](#windows-winget--chocolatey--portable-zip)
   ([issue #114](https://github.com/libredb/libredb-studio/issues/114)).
 - Versions released before the standalone tarballs existed have no artifacts; the launcher
   detects this (HTTP 404) and suggests `npx @libredb/studio@latest`.
@@ -441,9 +447,65 @@ to server-side Postgres, uncomment the `STORAGE_PROVIDER` / `STORAGE_POSTGRES_UR
 Full variable reference: [`.env.example`](../.env.example). OIDC setup details:
 [`docs/OIDC.md`](OIDC.md). Storage providers: [`docs/STORAGE.md`](STORAGE.md).
 
+## Windows (winget / Chocolatey / portable zip)
+
+> The winget/Chocolatey commands work once the first community listings land (see the
+> [first-listing checklist](#windows-first-listing-checklist)) — track
+> [issue #114](https://github.com/libredb/libredb-studio/issues/114). Until then, install from
+> the release zip (below) or run Docker.
+
+```powershell
+# winget (after the first listing merges in microsoft/winget-pkgs)
+winget install LibreDB.Studio
+
+# Chocolatey (after the first push clears community moderation)
+choco install libredb-studio
+
+# Then, from any terminal - first run prints the generated admin credentials
+libredb-studio
+```
+
+Open http://127.0.0.1:3000 and log in with the printed credentials. Both packages install the
+same standalone zip: the server payload, a bundled private Node.js runtime (`node\node.exe`),
+and the `libredb-studio.exe` launcher — nothing else to install.
+
+The launcher mirrors the Linux packages' contract:
+
+- **Local-first bind (issue #134):** the server binds `127.0.0.1` regardless of any inherited
+  `HOSTNAME`; set `LIBREDB_BIND=0.0.0.0` to expose it on the network.
+- **State:** server-side SQLite storage and generated first-run credentials live under
+  `%LOCALAPPDATA%\LibreDB\Studio\` (created on first run) unless `STORAGE_SQLITE_PATH` is set,
+  so upgrades and reinstalls never wipe state.
+- **Configuration:** environment variables only — the same set as Docker and the Linux packages
+  (`PORT`, `LIBREDB_BIND`, `JWT_SECRET`, `ADMIN_PASSWORD`, `LLM_*`, `OIDC_*`, `STORAGE_*`, ...).
+  See [Configuration](#configuration) above and [`.env.example`](../.env.example).
+
+### Portable zip (no package manager)
+
+Download `libredb-studio-standalone-<version>-win32-x64.zip` and `SHA256SUMS` from the
+[release](https://github.com/libredb/libredb-studio/releases), verify, extract, run:
+
+```powershell
+# Verify (compare against the SHA256SUMS line for the zip)
+Get-FileHash .\libredb-studio-standalone-<version>-win32-x64.zip -Algorithm SHA256
+
+# Extract (Explorer "Extract All...", or:)
+tar -xf .\libredb-studio-standalone-<version>-win32-x64.zip -C libredb-studio
+
+# Run from the extracted directory
+cd libredb-studio
+.\libredb-studio.exe
+```
+
+The zip is flat by design (see [Release artifact naming](#release-artifact-naming)). `npx
+@libredb/studio` also works on Windows (Node 20.9+): it downloads this zip, verifies it against
+`SHA256SUMS`, and runs the payload with your own Node runtime.
+
 ## Building a standalone payload locally
 
-The single source of truth for the release tarballs also works locally (Linux and macOS):
+The single source of truth for the release archives also works locally (Linux and macOS; on
+Windows it runs under Git Bash and produces the flat zip — the release job then adds the
+bundled Node runtime and launcher, see [`packaging/windows/README.md`](../packaging/windows/README.md)):
 
 ```bash
 bun install
@@ -463,10 +525,13 @@ Release publishing is driven by two workflows, both triggered on `release: publi
 - [`docker-build-push.yml`](../.github/workflows/docker-build-push.yml) — GHCR image
   (version + `latest` tags) and the Docker Hub mirror.
 - [`release-artifacts.yml`](../.github/workflows/release-artifacts.yml) — standalone tarballs +
-  `SHA256SUMS`, `.deb`/`.rpm` (nfpm, [`packaging/linux/`](../packaging/linux)), the Homebrew
-  formula ([`packaging/homebrew/`](../packaging/homebrew) rendered by
-  [`scripts/render-homebrew-formula.mjs`](../scripts/render-homebrew-formula.mjs)), and the snap
-  ([`snap/snapcraft.yaml`](../snap/snapcraft.yaml)).
+  the win32 zip + `SHA256SUMS`, `.deb`/`.rpm` (nfpm, [`packaging/linux/`](../packaging/linux)),
+  the Homebrew formula ([`packaging/homebrew/`](../packaging/homebrew) rendered by
+  [`scripts/render-homebrew-formula.mjs`](../scripts/render-homebrew-formula.mjs)), the snap
+  ([`snap/snapcraft.yaml`](../snap/snapcraft.yaml)), and — after the release publishes — the
+  Chocolatey push and winget update PR ([`packaging/chocolatey/`](../packaging/chocolatey) and
+  [`packaging/winget/`](../packaging/winget) rendered by
+  [`scripts/render-windows-packaging.mjs`](../scripts/render-windows-packaging.mjs)).
 - The npm package (`@libredb/studio`, which carries the npx launcher `bin/studio.js`) is
   published by the separate npm-publish workflow, also on `release: published`.
 
@@ -547,6 +612,50 @@ setups still publish the rest:
 | `TAP_GITHUB_TOKEN` | Rendering and pushing the Homebrew formula to `libredb/homebrew-tap` (needs write access to that repo) | Tap update skipped; tarballs still attach to the release |
 | `SNAPCRAFT_STORE_CREDENTIALS` | The entire snap build/publish job (exported via `snapcraft export-login`) | Snap job skipped |
 | `DOCKER_HUB_TOKEN` (+ `DOCKER_HUB_USERNAME` variable) | The Docker Hub mirror push | GHCR-only publish |
+| `CHOCO_API_KEY` | The chocolatey job: `choco pack` + `choco push` to `https://push.chocolatey.org/` (API key of the `libredb` community account) | Chocolatey publish skipped; the win32 zip still attaches to the release |
+| `WINGETCREATE_GITHUB_TOKEN` | The winget job: `wingetcreate update --submit` PRs to `microsoft/winget-pkgs`. Classic PAT with `public_repo` scope — wingetcreate does not support fine-grained PATs | winget submission skipped |
+
+The chocolatey and winget jobs run strictly **after** `publish-release`: both channels download
+the zip from the release URL, which is public only once the release is published. A failure
+there never blocks the release itself (same trust model as the npm/Docker dispatch chain).
+
+By contrast, the `windows-package` job (which builds the win32 zip) **is a hard release gate**,
+exactly like the POSIX build matrix: the zip is on the publish-release required-assets list, so
+a Windows build failure blocks the whole release train by design — a release without its
+Windows artifact would strand winget/Chocolatey (their manifests point at that exact asset) and
+npx on win32.
+
+### Windows first-listing checklist
+
+The release automation for winget and Chocolatey is secret-gated and ready — both
+`CHOCO_API_KEY` (API key of the `libredb` account on community.chocolatey.org) and
+`WINGETCREATE_GITHUB_TOKEN` are configured in the repo's Actions secrets. The FIRST listing in
+each community catalog is a one-time human step (same pattern as the Snap Store name
+registration). After the first release that ships the win32 zip:
+
+1. **Chocolatey** — the release's chocolatey job packs and pushes automatically. The first push
+   enters [human moderation](https://docs.chocolatey.org/en-us/community-repository/moderation/);
+   while a version sits in the moderation queue, pushing further versions can be rejected —
+   if a release-time push fails during that window, re-run the job after approval.
+2. **winget** — the first manifest cannot be submitted by `wingetcreate update` (the package id
+   does not exist yet; the release job detects this and skips with a notice). Render the
+   manifests locally from the release's `SHA256SUMS` and submit once by hand:
+
+   ```bash
+   gh release download <version> --pattern SHA256SUMS --dir dist
+   for t in packaging/winget/*.tmpl; do
+     out="manifests/l/LibreDB/Studio/<version>/$(basename "${t%.tmpl}")"
+     node scripts/render-windows-packaging.mjs "$t" dist/SHA256SUMS <version> "$out"
+   done
+   wingetcreate submit --token <classic-PAT> manifests/l/LibreDB/Studio/<version>
+   ```
+
+   (or open the PR against [microsoft/winget-pkgs](https://github.com/microsoft/winget-pkgs)
+   manually; sign the Microsoft CLA on that first PR). Once it merges, later releases submit
+   update PRs automatically.
+3. After each catalog goes live: flip its `distribution/channels.yaml` entry to `status: live`,
+   set `links.first_pr`, and add a measurable pin (winget-pkgs raw manifest / Chocolatey
+   community API).
 
 ### Channel inventory and drift check
 
@@ -602,8 +711,11 @@ until the first post-listing bump and is displayed, not auto-discovered.
 - **Website install docs**: the libredb-website documentation must be updated with the new
   channels (npx, Homebrew, .deb/.rpm, Snap) — a cross-repo step and part of issue #111's
   "README and website docs" acceptance criterion (and implicitly of #110/#112/#113).
-- **Windows**: no standalone payload / installer yet; winget/Chocolatey and the `win32-x64`
-  tarball are tracked in [issue #114](https://github.com/libredb/libredb-studio/issues/114).
+- **Windows first listings**: the `win32-x64` zip, launcher, winget/Chocolatey release
+  automation, and both gating secrets are in place; the one-time first submissions to both
+  community catalogs follow the
+  [Windows first-listing checklist](#windows-first-listing-checklist) —
+  tracked in [issue #114](https://github.com/libredb/libredb-studio/issues/114).
 - **Desktop app**: a native desktop wrapper (Tauri v2 sidecar; unlocks AppImage, Flathub, .dmg,
   Microsoft Store, brew cask) has a go recommendation —
   see [`docs/DESKTOP_WRAPPER_SPIKE.md`](DESKTOP_WRAPPER_SPIKE.md).
@@ -613,9 +725,10 @@ until the first post-listing bump and is displayed, not auto-discovered.
 Deviations and partial deliveries to record on the tracking issues when closing them, so the
 record matches the implementation:
 
-- **#110 (npx)**: the "Works on Linux, macOS, and Windows" acceptance criterion is NOT delivered
-  for Windows — the launcher exits on `win32` with a Docker pointer. Amend/re-scope that
-  criterion to [#114](https://github.com/libredb/libredb-studio/issues/114) before closing.
+- **#110 (npx)**: the "Works on Linux, macOS, and Windows" acceptance criterion was initially
+  NOT delivered for Windows (the launcher exited on `win32` with a Docker pointer); the win32
+  path shipped with [#114](https://github.com/libredb/libredb-studio/issues/114) — the npx
+  launcher now downloads the win32 zip and runs it with the user's Node runtime.
 - **#111 (Homebrew)**: the website half of "Install instructions added to README and website
   docs" is a cross-repo step (see Manual steps above).
 - **#113 (Snap)**: closed after the 0.9.52 live validation (store publish from release CI,

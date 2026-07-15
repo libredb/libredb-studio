@@ -10,6 +10,11 @@ name: Release Artifacts
 # it to libredb/homebrew-tap when TAP_GITHUB_TOKEN is configured (issue #111).
 # The snap job builds the server snap from the linux tarballs and publishes it
 # to the Snap Store when SNAPCRAFT_STORE_CREDENTIALS is configured (issue #113).
+# The windows-package job builds the win32-x64 standalone zip (bundled Node
+# runtime + Go launcher exe, issue #114); after the release is published the
+# chocolatey job pushes the package to the Chocolatey community repository
+# when CHOCO_API_KEY is configured, and the winget job submits an update PR
+# to microsoft/winget-pkgs when WINGETCREATE_GITHUB_TOKEN is configured.
 #
 # DRAFT-FIRST FLOW (issue #154): the repository uses immutable releases, which
 # freeze a release's assets the moment it is published - post-publish uploads
@@ -173,9 +178,144 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  windows-package:
+    name: Build win32-x64 standalone zip
+    # Builds the Windows release artifact (issue #114): the standalone
+    # payload (built natively on windows-latest), the pinned Node runtime
+    # (packaging/windows/fetch-node.sh), and the Go launcher
+    # (packaging/windows/launcher) assembled into ONE flat zip - the
+    # artifact winget and Chocolatey install and the npx launcher downloads
+    # on win32. Smoke: the final zip is extracted fresh and booted through
+    # libredb-studio.exe (the exact end-user path).
+    #
+    # DELIBERATELY a hard release gate: publish needs this job, exactly like
+    # the POSIX build matrix - the win32 zip is a core artifact on the
+    # publish-release required-assets list (#114), not an optional channel
+    # like snap. A failure here blocks the whole release train by design;
+    # a release without its Windows artifact would strand winget/Chocolatey
+    # (their manifests point at this exact asset) and npx on win32.
+    needs: guard
+    runs-on: windows-latest
+    defaults:
+      run:
+        # Git Bash: keeps the packaging scripts single-source with the POSIX
+        # jobs. Anything needing the System32 bsdtar addresses it absolutely
+        # (Git Bash's own tar is GNU tar, which cannot read zip).
+        shell: bash
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24'
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: "1.3.14"
+
+      - name: Setup Go (launcher toolchain)
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: packaging/windows/launcher/go.mod
+          # The launcher is dependency-free (no go.sum) - module caching
+          # would only emit restore warnings.
+          cache: false
+
+      - name: Vet and test the launcher
+        run: |
+          cd packaging/windows/launcher
+          gofmt -l . | tee /tmp/gofmt.out
+          test ! -s /tmp/gofmt.out
+          go vet ./...
+          go test ./...
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build the standalone payload zip
+        run: bash scripts/build-standalone-payload.sh dist
+
+      - name: Bundle the Node runtime and launcher, re-pack the zip
+        env:
+          VERSION: ${{ needs.guard.outputs.version }}
+        run: |
+          ZIP="dist/libredb-studio-standalone-${VERSION}-win32-x64.zip"
+          STAGING="$RUNNER_TEMP/win-payload"
+          mkdir -p "$STAGING"
+          # Env-var casing differs between shells (SystemRoot vs SYSTEMROOT);
+          # cover both before falling back to the canonical location.
+          "${SYSTEMROOT:-${SystemRoot:-C:\\Windows}}/System32/tar.exe" -xf "$ZIP" -C "$STAGING"
+          bash packaging/windows/fetch-node.sh "$STAGING"
+          (cd packaging/windows/launcher && \
+            CGO_ENABLED=0 GOOS=windows GOARCH=amd64 \
+            go build -trimpath -ldflags="-s -w" -o "$STAGING/libredb-studio.exe" .)
+          bash scripts/lib/pack-standalone-zip.sh "$STAGING" "$ZIP"
+
+      - name: Smoke test the final zip via libredb-studio.exe
+        env:
+          VERSION: ${{ needs.guard.outputs.version }}
+        run: |
+          SMOKE_DIR="$RUNNER_TEMP/win-smoke"
+          mkdir -p "$SMOKE_DIR"
+          "${SYSTEMROOT:-${SystemRoot:-C:\\Windows}}/System32/tar.exe" -xf "dist/libredb-studio-standalone-${VERSION}-win32-x64.zip" -C "$SMOKE_DIR"
+          test -f "$SMOKE_DIR/libredb-studio.exe"
+          test -f "$SMOKE_DIR/node/node.exe"
+          # Zero-config boot through the launcher: storage defaults under
+          # %LOCALAPPDATA%\LibreDB\Studio, bind defaults to loopback, and
+          # the first run must print generated admin credentials.
+          PORT=3900
+          # exec pins $! to the launcher itself (same pattern as the POSIX
+          # smoke in scripts/build-standalone-payload.sh), not a wrapper
+          # subshell.
+          (cd "$SMOKE_DIR" && PORT="$PORT" exec ./libredb-studio.exe) > /tmp/win-smoke.log 2>&1 &
+          LAUNCHER_PID=$!
+          HEALTHY=false
+          for _ in $(seq 1 60); do
+            if ! kill -0 "$LAUNCHER_PID" 2>/dev/null; then break; fi
+            CODE=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:${PORT}/api/db/health" || true)
+            if [ "$CODE" = "200" ]; then HEALTHY=true; break; fi
+            sleep 2
+          done
+          if [ "$HEALTHY" != "true" ]; then
+            echo "Smoke test FAILED: /api/db/health did not return 200" >&2
+            cat /tmp/win-smoke.log >&2 || true
+            exit 1
+          fi
+          grep -q "first run: generated admin credentials" /tmp/win-smoke.log
+          # The embedded SQLite sample seeds asynchronously into the storage
+          # directory (the launcher's %LOCALAPPDATA% default) - its absence
+          # means the zip shipped without seed-assets/.
+          SAMPLE_SEEDED=false
+          for _ in $(seq 1 30); do
+            if [ -f "${LOCALAPPDATA}/LibreDB/Studio/sample-employees.db" ]; then SAMPLE_SEEDED=true; break; fi
+            sleep 1
+          done
+          if [ "$SAMPLE_SEEDED" != "true" ]; then
+            echo "Smoke test FAILED: embedded SQLite sample was not seeded within 30s" >&2
+            cat /tmp/win-smoke.log >&2 || true
+            exit 1
+          fi
+          echo "Smoke: launcher booted, /api/db/health returned 200, first-run banner printed, sample seeded"
+          # Tear the whole tree down (launcher exe + its node.exe child) so
+          # nothing holds files open while the artifact uploads; the doubled
+          # slashes stop Git Bash's path mangling of taskkill's /flags.
+          taskkill //F //T //IM libredb-studio.exe 2>/dev/null || true
+          kill "$LAUNCHER_PID" 2>/dev/null || true
+
+      - name: Upload zip artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: standalone-win32-x64
+          path: dist/libredb-studio-standalone-*-win32-x64.zip
+          if-no-files-found: error
+          retention-days: 7
+
   publish:
     name: Attach artifacts to release
-    needs: [guard, build, draft]
+    needs: [guard, build, windows-package, draft]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -185,7 +325,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
-      - name: Download all tarballs
+      - name: Download all standalone archives
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: standalone-*
@@ -193,9 +333,11 @@ jobs:
           path: dist
 
       - name: Generate SHA256SUMS
+        # Covers the POSIX tarballs AND the win32 zip: winget, Chocolatey,
+        # and the npx launcher all verify against this one checksum file.
         run: |
           cd dist
-          sha256sum libredb-studio-standalone-*.tar.gz > SHA256SUMS
+          sha256sum libredb-studio-standalone-*.tar.gz libredb-studio-standalone-*.zip > SHA256SUMS
           cat SHA256SUMS
 
       - name: Upload artifacts to GitHub release
@@ -203,7 +345,8 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ needs.guard.outputs.version }}
         run: |
-          gh release upload "$TAG" dist/libredb-studio-standalone-*.tar.gz dist/SHA256SUMS \
+          gh release upload "$TAG" dist/libredb-studio-standalone-*.tar.gz \
+            dist/libredb-studio-standalone-*.zip dist/SHA256SUMS \
             --clobber --repo "$GITHUB_REPOSITORY"
 
       # The Homebrew tap update is optional: it only runs when TAP_GITHUB_TOKEN
@@ -557,6 +700,7 @@ jobs:
             "libredb-studio-standalone-${TAG}-linux-arm64.tar.gz" \
             "libredb-studio-standalone-${TAG}-darwin-x64.tar.gz" \
             "libredb-studio-standalone-${TAG}-darwin-arm64.tar.gz" \
+            "libredb-studio-standalone-${TAG}-win32-x64.zip" \
             "SHA256SUMS" \
             "libredb-studio_${TAG}_amd64.deb" \
             "libredb-studio_${TAG}_amd64.deb.sha256" \
@@ -609,3 +753,121 @@ jobs:
           gh workflow run docker-build-push.yml --ref "refs/tags/$TAG" \
             -f "version=$TAG" -f "publish_latest=true"
           echo "Dispatched npm-publish and docker-build-push for '$TAG'."
+
+  chocolatey:
+    name: Push Chocolatey package
+    # Renders the Chocolatey package from packaging/chocolatey/ templates and
+    # pushes it to the community repository (issue #114). Runs strictly AFTER
+    # the release is published: chocolateyinstall.ps1 downloads the zip from
+    # the release URL, which only becomes public at publish time (draft
+    # assets are not downloadable). Gated on CHOCO_API_KEY with the same
+    # pattern as the snap job; the first push enters human moderation - see
+    # docs/DISTRIBUTION.md ("Windows").
+    needs: [guard, publish-release]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check Chocolatey availability
+        id: choco
+        env:
+          CHOCO_API_KEY: ${{ secrets.CHOCO_API_KEY }}
+        run: |
+          if [ -n "$CHOCO_API_KEY" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::CHOCO_API_KEY is not configured - skipping the Chocolatey publish"
+          fi
+
+      - name: Checkout code
+        if: steps.choco.outputs.enabled == 'true'
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Download SHA256SUMS from the published release
+        if: steps.choco.outputs.enabled == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.guard.outputs.version }}
+        run: gh release download "$TAG" --pattern SHA256SUMS --dir dist --repo "$GITHUB_REPOSITORY"
+
+      - name: Render the package from templates
+        if: steps.choco.outputs.enabled == 'true'
+        env:
+          VERSION: ${{ needs.guard.outputs.version }}
+        run: |
+          node scripts/render-windows-packaging.mjs \
+            packaging/chocolatey/libredb-studio.nuspec.tmpl \
+            dist/SHA256SUMS "$VERSION" pkg/choco/libredb-studio.nuspec
+          node scripts/render-windows-packaging.mjs \
+            packaging/chocolatey/tools/chocolateyinstall.ps1.tmpl \
+            dist/SHA256SUMS "$VERSION" pkg/choco/tools/chocolateyinstall.ps1
+
+      - name: Pack and push with the official choco container
+        if: steps.choco.outputs.enabled == 'true'
+        env:
+          CHOCO_API_KEY: ${{ secrets.CHOCO_API_KEY }}
+          VERSION: ${{ needs.guard.outputs.version }}
+        run: |
+          # The image's `choco` wrapper already runs the Mono build with
+          # --allow-unofficial; do not pass it again.
+          docker run --rm -v "$PWD/pkg/choco:/wd" -w /wd -e CHOCO_API_KEY -e VERSION \
+            chocolatey/choco:latest-linux sh -c '
+              set -eu
+              choco pack
+              choco push "libredb-studio.${VERSION}.nupkg" \
+                --source https://push.chocolatey.org/ --api-key="$CHOCO_API_KEY"
+            '
+
+  winget:
+    name: Submit winget update PR
+    # Submits a version-update PR to microsoft/winget-pkgs (issue #114) via
+    # wingetcreate, strictly AFTER the release is published - the winget
+    # validation pipeline downloads InstallerUrl, which only becomes public
+    # at publish time. Gated on WINGETCREATE_GITHUB_TOKEN (classic PAT with
+    # public_repo scope; wingetcreate does not support fine-grained PATs).
+    # Skips cleanly when the package has no listing yet (the FIRST
+    # submission is manual, see docs/DISTRIBUTION.md) or when this version
+    # is already in the community repo (wingetcreate has no duplicate-PR
+    # detection of its own).
+    needs: [guard, publish-release]
+    runs-on: windows-latest
+    steps:
+      - name: Check winget submission availability
+        id: winget
+        shell: bash
+        env:
+          WINGETCREATE_GITHUB_TOKEN: ${{ secrets.WINGETCREATE_GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.guard.outputs.version }}
+        run: |
+          if [ -z "$WINGETCREATE_GITHUB_TOKEN" ]; then
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::WINGETCREATE_GITHUB_TOKEN is not configured - skipping the winget submission"
+            exit 0
+          fi
+          # wingetcreate update cannot create a first listing; it exits with
+          # a generic failure when the id is unknown, so pre-check instead.
+          if ! gh api "repos/microsoft/winget-pkgs/contents/manifests/l/LibreDB/Studio" --jq '.[0].name' >/dev/null 2>&1; then
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::LibreDB.Studio is not listed in microsoft/winget-pkgs yet - submit the first manifest manually (docs/DISTRIBUTION.md, Windows first-listing checklist)"
+            exit 0
+          fi
+          if gh api "repos/microsoft/winget-pkgs/contents/manifests/l/LibreDB/Studio/${VERSION}" --jq '.[0].name' >/dev/null 2>&1; then
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::winget already carries LibreDB.Studio ${VERSION} - nothing to submit"
+            exit 0
+          fi
+          echo "enabled=true" >> "$GITHUB_OUTPUT"
+
+      - name: Submit the update PR with wingetcreate
+        if: steps.winget.outputs.enabled == 'true'
+        shell: pwsh
+        env:
+          # Official CI pattern: wingetcreate reads the token from
+          # WINGET_CREATE_GITHUB_TOKEN, keeping it off the command line.
+          WINGET_CREATE_GITHUB_TOKEN: ${{ secrets.WINGETCREATE_GITHUB_TOKEN }}
+          VERSION: ${{ needs.guard.outputs.version }}
+        run: |
+          Invoke-WebRequest -Uri 'https://aka.ms/wingetcreate/latest' -OutFile wingetcreate.exe
+          $url = "https://github.com/libredb/libredb-studio/releases/download/$env:VERSION/libredb-studio-standalone-$env:VERSION-win32-x64.zip"
+          .\wingetcreate.exe update LibreDB.Studio --version $env:VERSION --urls "$url|x64" --submit
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

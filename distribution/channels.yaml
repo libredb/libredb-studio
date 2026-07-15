@@ -351,7 +351,7 @@ channels:
       strategy: none
 
   - id: winget
-    name: Windows distribution (winget / Chocolatey)
+    name: winget community repository (LibreDB.Studio)
     status: pending
     tier: 4
     kind: package-manager
@@ -360,6 +360,27 @@ channels:
       sla: every_release
     links:
       tracking_issue: https://github.com/libredb/libredb-studio/issues/114
+      upstream_repo: https://github.com/microsoft/winget-pkgs
+      docs: docs/DISTRIBUTION.md
     pin:
       strategy: none
-      note: Blocked on a Windows standalone payload.
+      note: Release CI submits update PRs via wingetcreate (WINGETCREATE_GITHUB_TOKEN gate); the
+        FIRST listing is a manual submission awaiting moderation. Flip to live and add a
+        winget-pkgs pin once it merges.
+
+  - id: chocolatey
+    name: Chocolatey community repository (libredb-studio)
+    status: pending
+    tier: 4
+    kind: package-manager
+    update:
+      method: ci_publish
+      sla: every_release
+    links:
+      tracking_issue: https://github.com/libredb/libredb-studio/issues/114
+      catalog: https://community.chocolatey.org/packages/libredb-studio
+      docs: docs/DISTRIBUTION.md
+    pin:
+      strategy: none
+      note: Release CI packs and pushes via the choco container (CHOCO_API_KEY gate); the first
+        push sits in human moderation. Flip to live and add a community-API pin once approved.

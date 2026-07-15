@@ -18,11 +18,15 @@
 #
 # Usage: scripts/build-standalone-payload.sh <output-dir> [--smoke]
 #
-#   <output-dir>  where the tarball is written:
+#   <output-dir>  where the archive is written:
 #                 libredb-studio-standalone-<version>-<os>-<arch>.tar.gz
-#                 Entries are rooted under a top-level libredb-studio-<version>/
-#                 directory (issue #133) - extract with --strip-components=1
-#                 (see scripts/lib/pack-standalone-tarball.sh).
+#                 (.zip on win32, issue #114).
+#                 Tarball entries are rooted under a top-level
+#                 libredb-studio-<version>/ directory (issue #133) - extract
+#                 with --strip-components=1 (scripts/lib/pack-standalone-tarball.sh).
+#                 The win32 zip is FLAT (no versioned root) so winget's
+#                 NestedInstallerFiles paths stay stable across versions
+#                 (scripts/lib/pack-standalone-zip.sh).
 #   --smoke       after packing, extract the tarball to a temp dir, boot
 #                 `node server.js` on a random port with a temp
 #                 STORAGE_SQLITE_PATH and require GET /api/db/health to
@@ -57,8 +61,9 @@ VERSION=$(node -p "require('./package.json').version")
 case "$(node -p 'process.platform')" in
   linux) OS=linux ;;
   darwin) OS=darwin ;;
+  win32) OS=win32 ;;
   *)
-    echo "Unsupported platform '$(node -p 'process.platform')' (expected linux or darwin)" >&2
+    echo "Unsupported platform '$(node -p 'process.platform')' (expected linux, darwin, or win32)" >&2
     exit 1
     ;;
 esac
@@ -72,7 +77,20 @@ case "$(node -p 'process.arch')" in
     ;;
 esac
 
-TARBALL="libredb-studio-standalone-${VERSION}-${OS}-${ARCH}.tar.gz"
+if [ "$OS" = "win32" ] && [ "$ARCH" != "x64" ]; then
+  echo "Unsupported Windows architecture '$ARCH' (only win32-x64 is released, issue #114)" >&2
+  exit 1
+fi
+
+# POSIX targets ship a tar.gz rooted under libredb-studio-<version>/ (issue
+# #133); win32 ships a FLAT .zip (issue #114) - winget extracts it in place
+# and NestedInstallerFiles.RelativeFilePath must stay stable across versions,
+# so the zip has no versioned root directory.
+if [ "$OS" = "win32" ]; then
+  ARCHIVE="libredb-studio-standalone-${VERSION}-${OS}-${ARCH}.zip"
+else
+  ARCHIVE="libredb-studio-standalone-${VERSION}-${OS}-${ARCH}.tar.gz"
+fi
 
 STAGE_DIR=$(mktemp -d)
 SERVER_PID=""
@@ -170,11 +188,16 @@ fi
 rm -rf "$PAYLOAD_DIR/seed-assets"
 cp -R seed-assets "$PAYLOAD_DIR/seed-assets"
 
-echo "==> Packing $TARBALL"
-# Wraps PAYLOAD_DIR in a top-level libredb-studio-<version>/ root instead of
-# a tarbomb (issue #133); consumers extract with --strip-components=1.
-"$ROOT_DIR/scripts/lib/pack-standalone-tarball.sh" "$PAYLOAD_DIR" "$VERSION" "$OUT_DIR/$TARBALL"
-echo "==> Wrote $OUT_DIR/$TARBALL ($(du -h "$OUT_DIR/$TARBALL" | cut -f1))"
+echo "==> Packing $ARCHIVE"
+if [ "$OS" = "win32" ]; then
+  # Flat zip (issue #114): entries at the archive root, no versioned wrapper.
+  "$ROOT_DIR/scripts/lib/pack-standalone-zip.sh" "$PAYLOAD_DIR" "$OUT_DIR/$ARCHIVE"
+else
+  # Wraps PAYLOAD_DIR in a top-level libredb-studio-<version>/ root instead of
+  # a tarbomb (issue #133); consumers extract with --strip-components=1.
+  "$ROOT_DIR/scripts/lib/pack-standalone-tarball.sh" "$PAYLOAD_DIR" "$VERSION" "$OUT_DIR/$ARCHIVE"
+fi
+echo "==> Wrote $OUT_DIR/$ARCHIVE ($(du -h "$OUT_DIR/$ARCHIVE" | cut -f1))"
 
 # ------------------------------------------------------------------------------
 # Smoke test: extract the tarball we just produced (not the staging dir), boot
@@ -184,10 +207,23 @@ if [ "$RUN_SMOKE" = "true" ]; then
   SMOKE_DIR="$STAGE_DIR/smoke"
   STORAGE_DIR="$STAGE_DIR/storage"
   mkdir -p "$SMOKE_DIR" "$STORAGE_DIR"
-  tar -xzf "$OUT_DIR/$TARBALL" -C "$SMOKE_DIR" --strip-components=1
+  # The native node.exe on Windows cannot resolve Git Bash's POSIX-style
+  # mktemp paths (/tmp/... would land on the current drive root), so every
+  # path handed to node goes through cygpath there; NODE_STORAGE_DIR stays
+  # the plain POSIX path everywhere else.
+  NODE_STORAGE_DIR="$STORAGE_DIR"
+  if [ "$OS" = "win32" ]; then
+    NODE_STORAGE_DIR="$(cygpath -w "$STORAGE_DIR")"
+    # Flat zip: nothing to strip. Use the System32 bsdtar explicitly - it
+    # reads zip natively, while Git Bash's own `tar` is GNU tar (no zip).
+    # Env-var casing differs between shells (SystemRoot vs SYSTEMROOT).
+    "${SYSTEMROOT:-${SystemRoot:-C:\\Windows}}/System32/tar.exe" -xf "$OUT_DIR/$ARCHIVE" -C "$SMOKE_DIR"
+  else
+    tar -xzf "$OUT_DIR/$ARCHIVE" -C "$SMOKE_DIR" --strip-components=1
+  fi
 
   echo "==> Smoke: better-sqlite3 native binding loads"
-  (cd "$SMOKE_DIR" && node -e "const db = require('better-sqlite3')('$STORAGE_DIR/probe.db'); db.exec('CREATE TABLE t (id INTEGER)'); db.close();")
+  (cd "$SMOKE_DIR" && NODE_PROBE_DB="$NODE_STORAGE_DIR/probe.db" node -e "const db = require('better-sqlite3')(process.env.NODE_PROBE_DB); db.exec('CREATE TABLE t (id INTEGER)'); db.close();")
 
   PORT=$(( (RANDOM % 20000) + 20001 ))
   echo "==> Smoke: booting node server.js on port $PORT"
@@ -198,7 +234,7 @@ if [ "$RUN_SMOKE" = "true" ]; then
       HOSTNAME=127.0.0.1 \
       PORT="$PORT" \
       STORAGE_PROVIDER=sqlite \
-      STORAGE_SQLITE_PATH="$STORAGE_DIR/storage.db" \
+      STORAGE_SQLITE_PATH="$NODE_STORAGE_DIR/storage.db" \
       node server.js
   ) >"$STAGE_DIR/server.log" 2>&1 &
   SERVER_PID=$!
@@ -247,4 +283,4 @@ if [ "$RUN_SMOKE" = "true" ]; then
   echo "==> Smoke: embedded SQLite sample seeded"
 fi
 
-echo "==> Done: $OUT_DIR/$TARBALL"
+echo "==> Done: $OUT_DIR/$ARCHIVE"

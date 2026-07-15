@@ -10,7 +10,8 @@ import {
   artifactName,
   assertReleaseVersion,
   assessNodeRuntime,
-  extractTarball,
+  extractArchive,
+  extractionCommand,
   LauncherUsageError,
   parseLauncherArgs,
   parseSha256Sums,
@@ -34,10 +35,57 @@ describe("artifactName", () => {
     expect(artifactName("1.0.0", "darwin", "arm64")).toBe("libredb-studio-standalone-1.0.0-darwin-arm64.tar.gz");
   });
 
+  test("maps win32-x64 to the release zip name (issue #114)", () => {
+    // Windows ships a .zip (winget InstallerType zip; bsdtar-extractable),
+    // not a .tar.gz - the extension is part of the artifact contract.
+    expect(artifactName("0.9.41", "win32", "x64")).toBe("libredb-studio-standalone-0.9.41-win32-x64.zip");
+  });
+
   test("throws for targets the release workflow does not build", () => {
-    expect(() => artifactName("0.9.41", "win32", "x64")).toThrow(/win32-x64/);
+    expect(() => artifactName("0.9.41", "win32", "arm64")).toThrow(/win32-arm64/);
     expect(() => artifactName("0.9.41", "linux", "ia32")).toThrow(/linux-ia32/);
     expect(() => artifactName("0.9.41", "freebsd", "arm64")).toThrow(/Supported targets/);
+    expect(() => artifactName("0.9.41", "freebsd", "arm64")).toThrow(/win32-x64/);
+  });
+});
+
+describe("extractionCommand", () => {
+  test("builds the strip-one-root tar command for .tar.gz archives", () => {
+    expect(extractionCommand("/tmp/payload.tar.gz", "/tmp/dest", "linux", {})).toEqual({
+      command: "tar",
+      args: ["-xzf", "/tmp/payload.tar.gz", "-C", "/tmp/dest", "--strip-components=1"],
+    });
+  });
+
+  test("uses the System32 bsdtar for .zip archives on win32 (Git Bash GNU tar cannot read zip)", () => {
+    // The win32 zip is flat (no versioned root - winget's RelativeFilePath
+    // must stay stable across versions), so no --strip-components here.
+    expect(extractionCommand("C:\\cache\\payload.zip", "C:\\cache\\dest", "win32", { SystemRoot: "D:\\Win" })).toEqual({
+      command: "D:\\Win\\System32\\tar.exe",
+      args: ["-xf", "C:\\cache\\payload.zip", "-C", "C:\\cache\\dest"],
+    });
+  });
+
+  test("falls back to C:\\Windows when SystemRoot is unset", () => {
+    expect(extractionCommand("a.zip", "dest", "win32", {}).command).toBe("C:\\Windows\\System32\\tar.exe");
+  });
+
+  test("uses plain tar for .zip archives on macOS (the system tar is bsdtar and reads zip natively)", () => {
+    expect(extractionCommand("/tmp/payload.zip", "/tmp/dest", "darwin", {})).toEqual({
+      command: "tar",
+      args: ["-xf", "/tmp/payload.zip", "-C", "/tmp/dest"],
+    });
+  });
+
+  test("refuses .zip archives on linux (GNU tar cannot read zip - fail loudly, not cryptically)", () => {
+    expect(() => extractionCommand("/tmp/payload.zip", "/tmp/dest", "linux", {})).toThrow(
+      /zip archives cannot be extracted on linux/,
+    );
+    expect(() => extractionCommand("/tmp/payload.zip", "/tmp/dest", "linux", {})).toThrow(/tar\.gz/);
+  });
+
+  test("is case-insensitive on the .zip extension", () => {
+    expect(extractionCommand("/tmp/PAYLOAD.ZIP", "/tmp/dest", "darwin", {}).args[0]).toBe("-xf");
   });
 });
 
@@ -330,12 +378,14 @@ describe("preservePayloadData", () => {
   });
 });
 
-describe("extractTarball", () => {
+describe("extractArchive", () => {
   // Release tarballs are packed with a top-level libredb-studio-<version>/
   // root (issue #133, scripts/lib/pack-standalone-tarball.sh) instead of a
-  // tarbomb; extractTarball must strip that one path component so the
+  // tarbomb; extractArchive must strip that one path component so the
   // payload (server.js, etc.) lands directly in destDir, matching every
-  // caller's expectation (e.g. `payloadDir/server.js`).
+  // caller's expectation (e.g. `payloadDir/server.js`). Windows .zip
+  // archives are flat by design (issue #114) and take the zip branch of
+  // extractionCommand, covered above.
   function buildFixtureTarball(rootName: string): string {
     const sourceDir = fs.mkdtempSync(path.join(tempDir, "extract-src-"));
     const versionedRoot = path.join(sourceDir, rootName);
@@ -356,7 +406,7 @@ describe("extractTarball", () => {
     const tarballPath = buildFixtureTarball("libredb-studio-9.9.9");
     const destDir = fs.mkdtempSync(path.join(tempDir, "extract-dest-"));
 
-    const { status, error } = extractTarball(tarballPath, destDir);
+    const { status, error } = extractArchive(tarballPath, destDir);
 
     expect(error).toBeNull();
     expect(status).toBe(0);

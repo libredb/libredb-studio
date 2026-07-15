@@ -11,13 +11,21 @@ import { createReadStream, existsSync, renameSync, rmSync } from "node:fs";
 import * as path from "node:path";
 
 /**
- * Platform/arch pairs the release workflow builds standalone tarballs for
- * (must mirror the matrix in .github/workflows/release-artifacts.yml).
+ * Platform/arch pairs the release workflow builds standalone payloads for
+ * (must mirror the build jobs in .github/workflows/release-artifacts.yml).
  */
 const SUPPORTED_TARGETS = {
   linux: ["x64", "arm64"],
   darwin: ["x64", "arm64"],
+  win32: ["x64"],
 };
+
+/**
+ * Archive extension per platform: POSIX targets ship .tar.gz; Windows ships
+ * a .zip (issue #114) because winget's InstallerType is zip and Windows has
+ * no gzip/tar toolchain guarantee outside the System32 bsdtar.
+ */
+const ARCHIVE_EXTENSION = { linux: ".tar.gz", darwin: ".tar.gz", win32: ".zip" };
 
 /** Thrown for user-facing CLI mistakes; the entry prints the message plus usage. */
 export class LauncherUsageError extends Error {}
@@ -47,7 +55,7 @@ export function assertReleaseVersion(version) {
 /**
  * Map a Node process.platform/process.arch pair to the release artifact name.
  * The naming must mirror scripts/build-standalone-payload.sh:
- * libredb-studio-standalone-<version>-<os>-<arch>.tar.gz
+ * libredb-studio-standalone-<version>-<os>-<arch>.tar.gz (.zip on win32).
  * Throws for targets the release workflow does not build.
  *
  * @param {string} version
@@ -61,10 +69,10 @@ export function artifactName(version, platform, arch) {
   if (!archs || !archs.includes(arch)) {
     throw new Error(
       `No standalone artifact is published for ${platform}-${arch}. ` +
-        "Supported targets: linux-x64, linux-arm64, darwin-x64, darwin-arm64.",
+        "Supported targets: linux-x64, linux-arm64, darwin-x64, darwin-arm64, win32-x64.",
     );
   }
-  return `libredb-studio-standalone-${version}-${platform}-${arch}.tar.gz`;
+  return `libredb-studio-standalone-${version}-${platform}-${arch}${ARCHIVE_EXTENSION[platform]}`;
 }
 
 /**
@@ -146,20 +154,53 @@ export function preservePayloadData(payloadDir, stagingDir) {
 }
 
 /**
- * Extract a tarball into destDir via the system `tar`. Release tarballs are
- * packed under a top-level libredb-studio-<version>/ root (issue #133,
- * scripts/lib/pack-standalone-tarball.sh) instead of a tarbomb, so every
- * entry is unwrapped one path component - the payload (server.js, etc.)
- * lands directly in destDir, matching every caller's expectation.
+ * Build the archive extraction command for extractArchive. Pure so the
+ * per-format/per-platform branches are unit-testable on any host:
+ * - .tar.gz: system `tar`, stripping the top-level libredb-studio-<version>/
+ *   root the tarballs are packed under (issue #133,
+ *   scripts/lib/pack-standalone-tarball.sh).
+ * - .zip (the win32-x64 payload, issue #114): flat by design - winget's
+ *   NestedInstallerFiles.RelativeFilePath must stay stable across versions,
+ *   so there is no versioned root and nothing to strip. On Windows the
+ *   command is the absolute System32 bsdtar (reads zip natively): a bare
+ *   `tar` could resolve to Git Bash's GNU tar, which cannot read zip. On
+ *   macOS the system tar IS bsdtar, so plain `tar -xf` handles zip there.
+ *   On linux GNU tar cannot read zip at all, so a zip --archive is refused
+ *   with a clear error instead of a cryptic tar failure (npx on linux only
+ *   ever downloads the .tar.gz artifact).
  *
- * @param {string} tarballPath
+ * @param {string} archivePath
+ * @param {string} destDir
+ * @param {string} platform value of process.platform
+ * @param {Record<string, string | undefined>} env process.env shape
+ * @returns {{ command: string, args: string[] }}
+ */
+export function extractionCommand(archivePath, destDir, platform, env) {
+  if (archivePath.toLowerCase().endsWith(".zip")) {
+    if (platform !== "win32" && platform !== "darwin") {
+      throw new Error(
+        `zip archives cannot be extracted on ${platform} (GNU tar has no zip support) - ` +
+          "use the .tar.gz artifact instead (the zip is the win32 artifact)",
+      );
+    }
+    const command = platform === "win32" ? `${env.SystemRoot || "C:\\Windows"}\\System32\\tar.exe` : "tar";
+    return { command, args: ["-xf", archivePath, "-C", destDir] };
+  }
+  return { command: "tar", args: ["-xzf", archivePath, "-C", destDir, "--strip-components=1"] };
+}
+
+/**
+ * Extract a release archive (tarball or win32 zip) into destDir - the
+ * payload (server.js, etc.) lands directly in destDir on every platform
+ * (see extractionCommand for the per-format layout contract).
+ *
+ * @param {string} archivePath
  * @param {string} destDir
  * @returns {{ status: number | null, error: Error | null }}
  */
-export function extractTarball(tarballPath, destDir) {
-  const result = spawnSync("tar", ["-xzf", tarballPath, "-C", destDir, "--strip-components=1"], {
-    stdio: "inherit",
-  });
+export function extractArchive(archivePath, destDir) {
+  const { command, args } = extractionCommand(archivePath, destDir, process.platform, process.env);
+  const result = spawnSync(command, args, { stdio: "inherit" });
   return { status: result.status, error: result.error ?? null };
 }
 

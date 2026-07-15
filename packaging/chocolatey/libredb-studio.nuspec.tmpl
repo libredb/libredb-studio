@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Chocolatey community package template for LibreDB Studio (issue #114).
+  Rendered by scripts/render-windows-packaging.mjs; packed and pushed by the
+  chocolatey job in .github/workflows/release-artifacts.yml. The payload zip
+  is NOT embedded: tools/chocolateyinstall.ps1 downloads it from the GitHub
+  release and verifies the pinned sha256 (moderation-friendly - the nupkg
+  stays small).
+-->
+<package xmlns="http://schemas.microsoft.com/packaging/2015/06/nuspec.xsd">
+  <metadata>
+    <id>libredb-studio</id>
+    <version>{{VERSION}}</version>
+    <packageSourceUrl>https://github.com/libredb/libredb-studio/tree/main/packaging/chocolatey</packageSourceUrl>
+    <owners>libredb</owners>
+    <title>LibreDB Studio</title>
+    <authors>LibreDB</authors>
+    <projectUrl>https://github.com/libredb/libredb-studio</projectUrl>
+    <!-- jsDelivr CDN (raw.githubusercontent.com is a moderation rejection,
+         CPMR0076), pinned to the immutable release tag. -->
+    <iconUrl>https://cdn.jsdelivr.net/gh/libredb/libredb-studio@{{VERSION}}/public/logo.svg</iconUrl>
+    <licenseUrl>https://github.com/libredb/libredb-studio/blob/main/LICENSE</licenseUrl>
+    <requireLicenseAcceptance>false</requireLicenseAcceptance>
+    <projectSourceUrl>https://github.com/libredb/libredb-studio</projectSourceUrl>
+    <docsUrl>https://github.com/libredb/libredb-studio/blob/main/docs/DISTRIBUTION.md</docsUrl>
+    <bugTrackerUrl>https://github.com/libredb/libredb-studio/issues</bugTrackerUrl>
+    <tags>libredb-studio database sql ide editor postgres postgresql mysql sqlite oracle mssql mongodb redis</tags>
+    <summary>Web-based SQL IDE for PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, and Redis.</summary>
+    <description><![CDATA[
+LibreDB Studio is an open-source, web-based SQL IDE for cloud-native teams. It connects to PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, and Redis, and ships a Monaco-powered editor with AI query assistance, schema browsing, ER diagrams, charts, and import/export tooling.
+
+This package installs the standalone server together with a bundled, private Node.js runtime - nothing else to install.
+
+### Usage
+
+```
+libredb-studio
+```
+
+Then open http://127.0.0.1:3000. The first run prints generated admin credentials to the terminal (zero-config bootstrap). The server binds to 127.0.0.1 by default; set `LIBREDB_BIND=0.0.0.0` to expose it on the network. Server-side state is stored under `%LOCALAPPDATA%\LibreDB\Studio`.
+
+### Configuration
+
+All configuration is environment-variable driven (same variables as the Docker image and the Linux packages) - see the [Distribution & Install Guide](https://github.com/libredb/libredb-studio/blob/main/docs/DISTRIBUTION.md).
+]]></description>
+    <releaseNotes>https://github.com/libredb/libredb-studio/releases/tag/{{VERSION}}</releaseNotes>
+  </metadata>
+  <files>
+    <!-- Forward slashes on purpose: this nuspec is packed by the Mono choco
+         build inside the Linux container (release-artifacts.yml). -->
+    <file src="tools/**" target="tools" />
+  </files>
+</package>

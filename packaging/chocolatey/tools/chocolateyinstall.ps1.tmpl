@@ -1,0 +1,25 @@
+# Chocolatey install script template for LibreDB Studio (issue #114).
+# Rendered by scripts/render-windows-packaging.mjs: {{VERSION}} and
+# {{SHA256_WIN32_X64}} come from the GitHub release and its SHA256SUMS.
+#
+# Downloads the win32-x64 standalone zip from the GitHub release (the nupkg
+# does not embed the multi-hundred-MB payload) and unzips it into the
+# package tools directory. The zip is flat (server.js, node\node.exe,
+# libredb-studio.exe at the root - scripts/lib/pack-standalone-zip.sh), so
+# the launcher lands directly in $toolsDir and Chocolatey shims it onto
+# PATH automatically.
+$ErrorActionPreference = 'Stop'
+$toolsDir = "$(Split-Path -Parent $MyInvocation.MyCommand.Definition)"
+
+$packageArgs = @{
+  packageName    = $env:ChocolateyPackageName
+  unzipLocation  = $toolsDir
+  url64bit       = 'https://github.com/libredb/libredb-studio/releases/download/{{VERSION}}/libredb-studio-standalone-{{VERSION}}-win32-x64.zip'
+  checksum64     = '{{SHA256_WIN32_X64}}'
+  checksumType64 = 'sha256'
+}
+Install-ChocolateyZipPackage @packageArgs
+
+# Shim ONLY libredb-studio.exe: node.exe is the bundled private runtime, not
+# a user-facing CLI - the .ignore sidecar tells shimgen to skip it.
+New-Item -ItemType File -Force -Path (Join-Path $toolsDir 'node\node.exe.ignore') | Out-Null

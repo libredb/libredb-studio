@@ -118,10 +118,9 @@ Per-OS native-module notes:
 - **Node runtime is bundled per platform**, pinned and checksum-verified against the official
   `SHASUMS256.txt` — the mechanism already implemented in `packaging/linux/fetch-node.sh`
   (Node 24.18.0); extend the same script pattern to darwin and win32 dist tarballs.
-- **Windows gap:** there is no Windows standalone tarball today (`bin/studio.js` points Windows
-  users to Docker and issue #114). The wrapper's Windows target therefore depends on adding a
-  `win32-x64` payload build to `release-artifacts.yml` first — this is the shared prerequisite
-  with winget/Chocolatey (#114, option 2 of which explicitly anticipates the wrapper installer).
+- **Windows gap (closed by #114):** `release-artifacts.yml` now builds the `win32-x64`
+  standalone zip (bundled Node runtime + Go launcher, `packaging/windows/`), and `bin/studio.js`
+  runs it via npx on Windows — the wrapper's Windows target can consume that payload directly.
 - **macOS:** everything inside the .app bundle (Node binary included) must be signed and
   notarized together; unsigned nested binaries fail Gatekeeper on first launch.
 
