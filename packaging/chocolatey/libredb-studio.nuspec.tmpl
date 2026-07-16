@@ -15,7 +15,10 @@
     <owners>libredb</owners>
     <title>LibreDB Studio</title>
     <authors>LibreDB</authors>
-    <projectUrl>https://github.com/libredb/libredb-studio</projectUrl>
+    <!-- projectUrl (product page) deliberately differs from projectSourceUrl
+         (source code) - duplicate URLs are a moderation guideline flag
+         (CPMR0041, raised on the 0.9.59 review). -->
+    <projectUrl>https://libredb.org</projectUrl>
     <!-- jsDelivr CDN (raw.githubusercontent.com is a moderation rejection,
          CPMR0076), pinned to the immutable release tag. -->
     <iconUrl>https://cdn.jsdelivr.net/gh/libredb/libredb-studio@{{VERSION}}/public/logo.svg</iconUrl>
@@ -37,7 +40,7 @@ This package installs the standalone server together with a bundled, private Nod
 libredb-studio
 ```
 
-Then open http://127.0.0.1:3000. The first run prints generated admin credentials to the terminal (zero-config bootstrap). The server binds to 127.0.0.1 by default; set `LIBREDB_BIND=0.0.0.0` to expose it on the network. Server-side state is stored under `%LOCALAPPDATA%\LibreDB\Studio`.
+Then browse to `localhost:3000`. The first run prints generated admin credentials to the terminal (zero-config bootstrap). The server binds to the loopback interface by default; set `LIBREDB_BIND=0.0.0.0` to expose it on the network. Server-side state is stored under `%LOCALAPPDATA%\LibreDB\Studio`.
 
 ### Configuration
 
