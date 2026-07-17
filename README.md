@@ -52,7 +52,7 @@ The test instance comes with a pre-configured PostgreSQL database via [Seed Conn
 
 ### Why LibreDB Studio?
 - **Zero Install**: Run a professional SQL IDE in your browser or private network.
-- **Multi-Platform**: Native-like experience on both **Web** and **Mobile** browsers.
+- **Multi-Platform**: Native-like experience on **Web**, **Mobile**, and **Windows** (native zip, winget, Chocolatey).
 - **AI-Native**: Multi-model support (Gemini, OpenAI, or Local LLMs) for NL2SQL.
 - **DevOps Ready**: Optimized for Kubernetes orchestration and Docker environments.
 - **Enterprise Grade**: Built-in RBAC, SSO (OIDC), query auditing, and live health monitoring.
@@ -201,10 +201,11 @@ The test instance comes with a pre-configured PostgreSQL database via [Seed Conn
   | **Homebrew** | `brew trust libredb/tap && brew install libredb/tap/libredb-studio` | `brew trust` is required once (Homebrew 6+; run `brew update` if unknown) |
   | **deb / rpm** | `sudo dpkg -i libredb-studio_<version>_amd64.deb` | Attached to each GitHub release; systemd service included |
   | **Snap** | `sudo snap install libredb-studio` | Zero-config: the admin password is printed to `sudo snap logs libredb-studio` on first run — [Snap Store listing](https://snapcraft.io/libredb-studio) |
-  | **winget (Windows)** | `winget install LibreDB.Studio` | Portable zip with a bundled Node.js runtime; run `libredb-studio` — available once the first community listing lands, track [#114](https://github.com/libredb/libredb-studio/issues/114) |
-  | **Chocolatey (Windows)** | `choco install libredb-studio` | Same standalone zip — available once the first community listing lands, track [#114](https://github.com/libredb/libredb-studio/issues/114) |
+  | **winget (Windows)** | `winget install LibreDB.Studio` | Portable zip with a bundled Node.js runtime; run `libredb-studio` — CI automation ready; first community listing pending ([#114](https://github.com/libredb/libredb-studio/issues/114)) |
+  | **Chocolatey (Windows)** | `choco install libredb-studio` | Same standalone zip — CI push ready; first push awaits community moderation ([#114](https://github.com/libredb/libredb-studio/issues/114)) |
+  | **Portable zip (Windows)** | `.\libredb-studio.exe` | Download from [GitHub Releases](https://github.com/libredb/libredb-studio/releases); bundled Node runtime, no package manager needed |
 
-  > Homebrew, deb/rpm, Snap, winget/Chocolatey, and the npx launcher consume standalone artifacts attached to each GitHub release. Full per-channel guide — commands, configuration, systemd usage, and the Docker image tag model — in [`docs/DISTRIBUTION.md`](docs/DISTRIBUTION.md).
+  > Homebrew, deb/rpm, Snap, the Windows portable zip, winget/Chocolatey, and the npx launcher consume standalone artifacts attached to each GitHub release. Full per-channel guide — commands, configuration, systemd usage, and the Docker image tag model — in [`docs/DISTRIBUTION.md`](docs/DISTRIBUTION.md).
 
   ### Quick Start (Docker)
 
