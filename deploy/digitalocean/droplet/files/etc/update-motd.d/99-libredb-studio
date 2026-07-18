@@ -1,0 +1,13 @@
+#!/bin/bash
+IP=$(hostname -I | awk '{print $1}')
+cat <<EOF
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  LibreDB Studio
+  Open-source SQL IDE for cloud-native teams
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  Access:   http://${IP}:3000
+  Admin:    admin@libredb.org
+  Password: (see /etc/libredb-studio.env)
+  Docs:     https://github.com/libredb/libredb-studio
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+EOF

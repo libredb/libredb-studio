@@ -1,0 +1,23 @@
+[Unit]
+Description=LibreDB Studio
+After=docker.service network-online.target
+BindsTo=docker.service
+Wants=network-online.target
+
+[Service]
+ExecStartPre=-/usr/bin/docker rm -f libredb-studio
+ExecStart=/usr/bin/docker run \
+  --name libredb-studio \
+  --init \
+  -p 3000:3000 \
+  --env-file /etc/libredb-studio.env \
+  -v /app/data:/app/data \
+  ghcr.io/libredb/libredb-studio:PINNED_VERSION
+ExecStop=/usr/bin/docker stop libredb-studio
+ExecStopPost=-/usr/bin/docker rm -f libredb-studio
+Restart=always
+RestartSec=10
+TimeoutStartSec=300
+
+[Install]
+WantedBy=multi-user.target

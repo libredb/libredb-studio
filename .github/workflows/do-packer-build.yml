@@ -1,0 +1,63 @@
+name: DO Packer Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag for snapshot name AND image pin — must exist on ghcr.io/libredb/libredb-studio (e.g. 0.9.59)'
+        required: true
+        default: '0.9.59'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: deploy/digitalocean/droplet
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-packer@v3
+
+      # DO's official validation scripts are fetched fresh on every build
+      - name: Fetch DO marketplace scripts
+        run: |
+          curl -fsSLo scripts/90-cleanup.sh   https://raw.githubusercontent.com/digitalocean/marketplace-partners/master/scripts/90-cleanup.sh
+          curl -fsSLo scripts/99-img-check.sh https://raw.githubusercontent.com/digitalocean/marketplace-partners/master/scripts/99-img-check.sh
+
+      - name: Validate version format
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::version must be semver (e.g. 0.9.59), got: $VERSION"
+            exit 1
+          fi
+
+      - name: Packer init & validate
+        env:
+          DIGITALOCEAN_TOKEN: ${{ secrets.DIGITALOCEAN_TOKEN }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          packer init .
+          packer validate -var "version=$VERSION" .
+
+      - name: Packer build
+        env:
+          DIGITALOCEAN_TOKEN: ${{ secrets.DIGITALOCEAN_TOKEN }}
+          VERSION: ${{ inputs.version }}
+        run: packer build -var "version=$VERSION" .
+
+      # DO artifact_id format is "region1,region2:snapshot_id" — the ID is after the colon
+      - name: Snapshot ID to job summary
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          SNAPSHOT_ID=$(jq -r '.builds[-1].artifact_id' packer-manifest.json | cut -d: -f2)
+          {
+            echo "## DigitalOcean Snapshot"
+            echo "| Field | Value |"
+            echo "|---|---|"
+            echo "| Snapshot ID | \`${SNAPSHOT_ID}\` |"
+            echo "| Version | \`${VERSION}\` |"
+          } >> "$GITHUB_STEP_SUMMARY"

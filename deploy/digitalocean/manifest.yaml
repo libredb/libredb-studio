@@ -1,0 +1,15 @@
+# Vendor Portal reference metadata — DO does not read this programmatically;
+# it mirrors what goes into the listing form.
+name: LibreDB Studio
+vendor: Sekoya Tech
+version: "1.0"
+os_distros:
+  - ubuntu-24.04
+summary: "Open-source SQL IDE with AI — PostgreSQL, MySQL, MongoDB, Redis & more"
+category:
+  - Databases
+  - Developer Tools
+pricing: free
+health_check: "GET http://localhost:3000/api/db/health"
+port: 3000
+support_email: yusuf.gundogdu@sekoya.tech
