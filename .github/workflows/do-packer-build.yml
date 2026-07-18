@@ -8,6 +8,9 @@ on:
         required: true
         default: '0.9.59'
 
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -17,7 +20,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: hashicorp/setup-packer@v3
+      - uses: hashicorp/setup-packer@ce93c3c08a6c2ff2275bf4b54ff0d9a75f6c9789 # v3
 
       # DO's official validation scripts are fetched fresh on every build
       - name: Fetch DO marketplace scripts
