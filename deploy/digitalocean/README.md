@@ -15,7 +15,7 @@ deploy/digitalocean/
     ├── template.pkr.hcl               # Packer template (manifest post-processor included)
     ├── scripts/
     │   ├── 01-install.sh              # Docker CE + compose plugin, droplet-agent purge, image pre-pull
-    │   └── 02-configure.sh            # UFW, exec bits (MOTD + first-boot!), /app/data, version pinning
+    │   └── 02-configure.sh            # UFW, exec bits (MOTD + first-boot!), /app/data, version pinning, application.info
     └── files/
         ├── etc/systemd/system/libredb-studio.service
         ├── etc/update-motd.d/99-libredb-studio
