@@ -1,38 +1,39 @@
-# fly.toml app configuration file generated for libredb-studio on 2026-03-04T03:50:40+03:00
+# Run LibreDB Studio on Fly.io from the prebuilt image.
+# Setup steps: docs/FLY.md
 #
-# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
-#
+# Credentials are NOT set here on purpose - put them in Fly secrets
+# (see docs/FLY.md), never in a committed file.
 
 app = 'libredb-studio'
 primary_region = 'ams'
 
 [build]
-  image = 'ghcr.io/libredb/libredb-studio:latest'
+  image = 'ghcr.io/libredb/libredb-studio:0.9.59'
 
 [env]
   NEXT_PUBLIC_AUTH_PROVIDER = 'local'
   NODE_ENV = 'production'
   PORT = '3000'
   STORAGE_PROVIDER = 'local'
-  ADMIN_EMAIL = 'admin@libredb.org'
-  ADMIN_PASSWORD = 'LibreDB.2026'
-  USER_EMAIL = 'user@libredb.org'
-  USER_PASSWORD = 'LibreDB.2026'
-  JWT_SECRET = 'LibreDB.2026'
+  STORAGE_SQLITE_PATH = '/app/data/libredb-storage.db'
 
+[mounts]
+  source = 'libredb_data'
+  destination = '/app/data'
 
 [http_service]
   internal_port = 3000
   force_https = true
   auto_stop_machines = 'stop'
   auto_start_machines = true
+  # SQLite on a single volume: keep this at one machine, don't scale out.
   min_machines_running = 0
   processes = ['app']
 
   [[http_service.checks]]
     interval = '30s'
     timeout = '5s'
-    grace_period = '10s'
+    grace_period = '20s'
     method = 'GET'
     path = '/api/db/health'
 
@@ -40,4 +41,3 @@ primary_region = 'ams'
   memory = '512mb'
   cpu_kind = 'shared'
   cpus = 1
-  memory_mb = 512

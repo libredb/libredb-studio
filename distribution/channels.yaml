@@ -229,6 +229,24 @@ channels:
       strategy: none
       note: The button deploys ghcr.io latest by design; there is no version pin.
 
+  - id: fly-io
+    name: Fly.io launch config (repo fly.toml)
+    status: live
+    tier: 2
+    kind: paas-template
+    update:
+      method: commit
+      sla: on_demand
+    links:
+      tracking_issue: https://github.com/libredb/libredb-studio/issues/218
+      docs: docs/FLY.md
+    pin:
+      strategy: local_file
+      files:
+        - fly.toml
+      extract: 'libredb-studio:(\d+\.\d+\.\d+)'
+      note: Users deploy straight from the repo file; bump the tag here on release when convenient.
+
   # ---- Tier 3: upstream community catalogs, bumped via PR -----------------
 
   - id: caprover-official
