@@ -418,7 +418,7 @@ Deploy your own instance of LibreDB Studio with a single click on Koyeb, Render,
 >
 > **Koyeb:** set a strong `JWT_SECRET` and credentials before deploying (Koyeb cannot auto-generate secrets). The button uses `STORAGE_PROVIDER=local` — connection metadata lives in the browser, which suits Koyeb's ephemeral filesystem. For persistence across redeploys, switch to `STORAGE_PROVIDER=postgres` and point `STORAGE_POSTGRES_URL` at a Koyeb managed Postgres or Neon database. See [`deploy/koyeb/`](deploy/koyeb/).
 >
-> **Fly.io:** the repo ships a ready [`fly.toml`](fly.toml) — clone, `fly launch --copy-config`, set your secrets, deploy. Steps in [`docs/FLY.md`](docs/FLY.md).
+> **Fly.io:** the repo ships a ready [`fly.toml`](fly.toml) — full steps (app name, volume, secrets) in [`docs/FLY.md`](docs/FLY.md).
 >
 > **Cosmos:** install in one click from the [Cosmos](https://cosmos-cloud.io) Marketplace — search for **LibreDB Studio**. Cosmos auto-generates secrets, provisions a persistent SQLite volume, and serves the app behind its SmartShield reverse proxy. See [`deploy/cosmos/`](deploy/cosmos/).
 

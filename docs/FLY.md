@@ -22,14 +22,17 @@ fly launch --copy-config --no-deploy --name my-libredb --region ams
 # Use the SAME region you passed above - volumes are region-bound.
 fly volumes create libredb_data --size 1 --region ams
 
-# Required credentials. Generate a strong JWT secret, choose your own
-# passwords.
+# Required credentials. Everything is generated - note the two passwords
+# printed below, you will log in with them.
+ADMIN_PASSWORD=$(openssl rand -base64 15)
+USER_PASSWORD=$(openssl rand -base64 15)
+echo "admin: $ADMIN_PASSWORD  user: $USER_PASSWORD"
 fly secrets set \
   JWT_SECRET=$(openssl rand -hex 32) \
   ADMIN_EMAIL=admin@libredb.org \
-  ADMIN_PASSWORD=change-me \
+  ADMIN_PASSWORD="$ADMIN_PASSWORD" \
   USER_EMAIL=user@libredb.org \
-  USER_PASSWORD=change-me-too
+  USER_PASSWORD="$USER_PASSWORD"
 
 fly deploy
 fly apps open
