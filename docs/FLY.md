@@ -13,13 +13,14 @@ You need [flyctl](https://fly.io/docs/flyctl/install/) and a Fly.io account.
 git clone https://github.com/libredb/libredb-studio
 cd libredb-studio
 
-# Creates the app from the bundled fly.toml. Pick your own app name and
-# region when prompted. --no-deploy because secrets are not set yet.
-fly launch --copy-config --no-deploy
+# Creates the app from the bundled fly.toml. --copy-config uses the file
+# as-is without prompting, so pass your own app name and region explicitly.
+# --no-deploy because secrets and the volume are not set up yet.
+fly launch --copy-config --no-deploy --name my-libredb --region ams
 
 # Persistent storage for saved connections and settings (1 GB is plenty).
-# Use the same region you picked above.
-fly volumes create libredb_data --size 1
+# Use the SAME region you passed above - volumes are region-bound.
+fly volumes create libredb_data --size 1 --region ams
 
 # Required credentials. Generate a strong JWT secret, choose your own
 # passwords.
@@ -39,8 +40,10 @@ Log in with the admin credentials you set above.
 ## Notes
 
 - The app state lives in SQLite on the mounted volume, so run a single
-  machine. Do not `fly scale count 2` — two writers on one SQLite file
-  will corrupt it. For multi-instance setups switch to
+  machine. A Fly volume attaches to one machine at a time: `fly scale
+  count 2` either fails for lack of a second volume or, with an extra
+  volume, gives the second machine its own empty database (divergent
+  state). For multi-instance setups switch to
   `STORAGE_PROVIDER=postgres` and set `STORAGE_POSTGRES_URL`.
 - `auto_stop_machines` is enabled: the machine stops when idle and wakes
   on the next request. First request after idle takes a few seconds.

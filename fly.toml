@@ -14,7 +14,7 @@ primary_region = 'ams'
   NEXT_PUBLIC_AUTH_PROVIDER = 'local'
   NODE_ENV = 'production'
   PORT = '3000'
-  STORAGE_PROVIDER = 'local'
+  STORAGE_PROVIDER = 'sqlite'
   STORAGE_SQLITE_PATH = '/app/data/libredb-storage.db'
 
 [mounts]
