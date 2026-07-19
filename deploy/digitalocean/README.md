@@ -24,7 +24,9 @@ deploy/digitalocean/
 
 DO's official `90-cleanup.sh` / `99-img-check.sh` are fetched at build time
 from [`digitalocean/marketplace-partners`](https://github.com/digitalocean/marketplace-partners)
-— they are not vendored here.
+— they are not vendored here. Both the workflow and the local build pin the
+same reviewed commit (the scripts run as root inside the image build); bump
+the pin deliberately, in both places, after reviewing upstream changes.
 
 ## Build
 
@@ -37,8 +39,9 @@ Requires the `DIGITALOCEAN_TOKEN` repo secret (read+write PAT).
 
 ```bash
 cd deploy/digitalocean/droplet
-curl -fsSLo scripts/90-cleanup.sh   https://raw.githubusercontent.com/digitalocean/marketplace-partners/master/scripts/90-cleanup.sh
-curl -fsSLo scripts/99-img-check.sh https://raw.githubusercontent.com/digitalocean/marketplace-partners/master/scripts/99-img-check.sh
+MP_SHA=b70878804ca27c01d5f5e882d26485defbaba210  # keep in sync with .github/workflows/do-packer-build.yml
+curl -fsSLo scripts/90-cleanup.sh   "https://raw.githubusercontent.com/digitalocean/marketplace-partners/${MP_SHA}/scripts/90-cleanup.sh"
+curl -fsSLo scripts/99-img-check.sh "https://raw.githubusercontent.com/digitalocean/marketplace-partners/${MP_SHA}/scripts/99-img-check.sh"
 export DIGITALOCEAN_TOKEN=dop_v1_...
 packer init .
 packer validate -var "version=0.9.59" .

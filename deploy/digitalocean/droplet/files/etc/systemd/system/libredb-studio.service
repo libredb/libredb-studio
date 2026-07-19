@@ -1,8 +1,11 @@
 [Unit]
 Description=LibreDB Studio
 After=docker.service network-online.target
-BindsTo=docker.service
-Wants=network-online.target
+# Wants= not BindsTo=/Requires=: dependency-triggered stops bypass
+# Restart=always, so a docker daemon restart (e.g. unattended-upgrades)
+# would leave the app down permanently. With Wants= the container process
+# simply dies and Restart= re-runs it until docker is back.
+Wants=network-online.target docker.service
 
 [Service]
 ExecStartPre=-/usr/bin/docker rm -f libredb-studio

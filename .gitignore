@@ -135,3 +135,7 @@ docs/summaries/
 # Maintainer loop runtime artifacts (not source)
 .loop/
 .tokens
+
+# DO marketplace scripts fetched at build time (see deploy/digitalocean/README.md)
+deploy/digitalocean/droplet/scripts/90-cleanup.sh
+deploy/digitalocean/droplet/scripts/99-img-check.sh

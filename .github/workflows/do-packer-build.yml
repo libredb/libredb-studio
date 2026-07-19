@@ -18,15 +18,20 @@ jobs:
       run:
         working-directory: deploy/digitalocean/droplet
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
       - uses: hashicorp/setup-packer@ce93c3c08a6c2ff2275bf4b54ff0d9a75f6c9789 # v3
 
-      # DO's official validation scripts are fetched fresh on every build
+      # DO's official validation scripts, pinned to a reviewed commit of
+      # digitalocean/marketplace-partners (they run as root inside the image
+      # build) — bump MP_SHA deliberately after reviewing upstream changes,
+      # and keep the copy in deploy/digitalocean/README.md in sync
       - name: Fetch DO marketplace scripts
+        env:
+          MP_SHA: b70878804ca27c01d5f5e882d26485defbaba210 # master @ 2026-07-16
         run: |
-          curl -fsSLo scripts/90-cleanup.sh   https://raw.githubusercontent.com/digitalocean/marketplace-partners/master/scripts/90-cleanup.sh
-          curl -fsSLo scripts/99-img-check.sh https://raw.githubusercontent.com/digitalocean/marketplace-partners/master/scripts/99-img-check.sh
+          curl -fsSLo scripts/90-cleanup.sh   "https://raw.githubusercontent.com/digitalocean/marketplace-partners/${MP_SHA}/scripts/90-cleanup.sh"
+          curl -fsSLo scripts/99-img-check.sh "https://raw.githubusercontent.com/digitalocean/marketplace-partners/${MP_SHA}/scripts/99-img-check.sh"
 
       - name: Validate version format
         env:

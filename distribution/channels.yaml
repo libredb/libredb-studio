@@ -347,6 +347,7 @@ channels:
       sla: on_demand
     links:
       tracking_issue: https://github.com/libredb/libredb-studio/issues/72
+      docs: deploy/digitalocean/README.md
     pin:
       strategy: none
 

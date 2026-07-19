@@ -10,7 +10,7 @@ LibreDB Studio gives you a full-featured database workspace in your browser — 
 - **AI-assisted SQL** — turn natural language into queries (NL2SQL)
 - **Modern editor** — autocomplete, syntax highlighting, query history
 - **Zero-config start** — this 1-Click App boots fully configured; credentials are generated uniquely for your Droplet on first boot
-- **Self-hosted & private** — your data never leaves your Droplet; storage is local SQLite by default
+- **Self-hosted & private** — the app and its configuration store run entirely on your Droplet (local SQLite by default); traffic to the databases and optional AI providers you configure flows directly from your Droplet to those services
 
 ## Getting started
 

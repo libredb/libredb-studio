@@ -1,5 +1,7 @@
 #!/bin/bash
-IP=$(hostname -I | awk '{print $1}')
+# Public IPv4 from the DO metadata service; hostname -I as fallback (its
+# first address may be a private/VPC one)
+IP=$(curl -fsm 2 http://169.254.169.254/metadata/v1/interfaces/public/0/ipv4/address 2>/dev/null || hostname -I | awk '{print $1}')
 cat <<EOF
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   LibreDB Studio
