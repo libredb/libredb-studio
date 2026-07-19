@@ -451,9 +451,10 @@ Full variable reference: [`.env.example`](../.env.example). OIDC setup details:
 ## Windows (winget / Chocolatey / portable zip)
 
 The win32-x64 standalone zip is built and attached to every
-[GitHub release](https://github.com/libredb/libredb-studio/releases) since v0.9.58. The
-winget/Chocolatey CI automation is in place and secret-gated; both are ready and waiting for
-their first community listings to clear moderation (see the
+[GitHub release](https://github.com/libredb/libredb-studio/releases) since 0.9.59. The
+winget/Chocolatey CI automation is in place and secret-gated; the first winget listing
+([microsoft/winget-pkgs#402985](https://github.com/microsoft/winget-pkgs/pull/402985)) and the
+first Chocolatey push are in community review (see the
 [first-listing checklist](#windows-first-listing-checklist) — track
 [issue #114](https://github.com/libredb/libredb-studio/issues/114)).
 
@@ -631,11 +632,14 @@ npx on win32.
 
 ### Windows first-listing checklist
 
-The win32 zip has shipped in every release since **v0.9.58**. The release automation for winget
+The win32 zip has shipped in every release since **0.9.59**. The release automation for winget
 and Chocolatey is secret-gated and ready — both `CHOCO_API_KEY` (API key of the `libredb`
 account on community.chocolatey.org) and `WINGETCREATE_GITHUB_TOKEN` are configured in the
 repo's Actions secrets. The FIRST listing in each community catalog is a one-time human step
-(same pattern as the Snap Store name registration):
+(same pattern as the Snap Store name registration). Both first submissions were made with
+0.9.59 — the Chocolatey push is in moderation and the winget listing is
+[microsoft/winget-pkgs#402985](https://github.com/microsoft/winget-pkgs/pull/402985); step 3
+below remains once each goes live:
 
 1. **Chocolatey** — the release's chocolatey job packs and pushes automatically. The first push
    enters [human moderation](https://docs.chocolatey.org/en-us/community-repository/moderation/);

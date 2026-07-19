@@ -364,9 +364,9 @@ channels:
       docs: docs/DISTRIBUTION.md
     pin:
       strategy: none
-      note: win32 zip ships in every release since v0.9.58. CI submits update PRs via wingetcreate
-        (WINGETCREATE_GITHUB_TOKEN gate); the FIRST listing is a manual submission not yet
-        submitted. Flip to live and add a winget-pkgs pin once it merges.
+      note: win32 zip ships in every release since 0.9.59. CI submits update PRs via wingetcreate
+        (WINGETCREATE_GITHUB_TOKEN gate); the FIRST listing is submitted and under review
+        (microsoft/winget-pkgs#402985). Flip to live and add a winget-pkgs pin once it merges.
 
   - id: chocolatey
     name: Chocolatey community repository (libredb-studio)
@@ -382,6 +382,6 @@ channels:
       docs: docs/DISTRIBUTION.md
     pin:
       strategy: none
-      note: win32 zip ships in every release since v0.9.58. CI packs and pushes via the choco
-        container (CHOCO_API_KEY gate); the first push has not been submitted yet. Flip to live
-        and add a community-API pin once approved.
+      note: win32 zip ships in every release since 0.9.59. CI packs and pushes via the choco
+        container (CHOCO_API_KEY gate); the first push (0.9.59) is in human moderation. Flip to
+        live and add a community-API pin once approved.
