@@ -6,6 +6,8 @@ metadata:
     capabilities: Basic Install
     categories: Database, Developer Tools
     containerImage: ghcr.io/libredb/libredb-studio-operator:0.0.0
+    description: Open-source web-based SQL IDE for PostgreSQL, MySQL, Oracle, SQL
+      Server, SQLite, MongoDB and Redis, with AI-powered query assistance.
     repository: https://github.com/libredb/libredb-studio
     support: LibreDB
   labels:
