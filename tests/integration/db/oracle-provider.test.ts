@@ -11,6 +11,7 @@ let mockConnCloseFn: () => Promise<void>;
 let mockBreakFn: () => Promise<void>;
 let mockPoolCloseFn: () => Promise<void>;
 let mockCreatePoolFn: () => Promise<unknown>;
+const mockInitOracleClientFn = mock((_opts?: Record<string, unknown>) => undefined);
 
 const createMockConnection = () => ({
   execute: (sql: string, params?: unknown[], opts?: unknown) => mockExecuteFn(sql, params, opts),
@@ -30,7 +31,7 @@ const createMockPool = () => ({
 mock.module("oracledb", () => {
   const oracledbMock = {
     OUT_FORMAT_OBJECT: 4002,
-    initOracleClient: undefined as unknown,
+    initOracleClient: mockInitOracleClientFn,
     outFormat: 0,
     autoCommit: false,
     createPool: () => mockCreatePoolFn(),
@@ -1328,6 +1329,33 @@ describe("OracleProvider", () => {
         expect(err.name).toBe("ConnectionError");
         expect(err.message).toContain("Oracle");
       }
+    });
+  });
+
+  // =========================================================================
+  // 21. Thick-mode opt-in (ORACLE_CLIENT_LIB_DIR)
+  // =========================================================================
+
+  describe("Thick-mode opt-in (ORACLE_CLIENT_LIB_DIR)", () => {
+    afterEach(() => {
+      delete process.env.ORACLE_CLIENT_LIB_DIR;
+    });
+
+    test("does not call initOracleClient when ORACLE_CLIENT_LIB_DIR is unset", () => {
+      // beforeEach already constructed one provider with the env var unset;
+      // construct another to be sure.
+      new OracleProvider(baseConfig);
+      expect(mockInitOracleClientFn).not.toHaveBeenCalled();
+    });
+
+    test("calls initOracleClient with libDir at most once, even across multiple providers", () => {
+      process.env.ORACLE_CLIENT_LIB_DIR = "/opt/oracle/instantclient";
+
+      new OracleProvider(baseConfig);
+      new OracleProvider(baseConfig);
+
+      expect(mockInitOracleClientFn).toHaveBeenCalledTimes(1);
+      expect(mockInitOracleClientFn).toHaveBeenCalledWith({ libDir: "/opt/oracle/instantclient" });
     });
   });
 });

@@ -34,7 +34,7 @@ providers, with several Oracle-isms that are worth knowing before reading the co
 
 | Aspect | PostgreSQL | Oracle |
 |--------|------------|--------|
-| Driver mode | `pg` | `oracledb` **Thin** (no Instant Client) |
+| Driver mode | `pg` | `oracledb` **Thin** by default (Thick opt-in via `ORACLE_CLIENT_LIB_DIR`) |
 | Pagination | `LIMIT … OFFSET` | `FETCH FIRST n ROWS ONLY` / `OFFSET m ROWS FETCH NEXT n` |
 | Schema scope | all non-system schemas | the connecting **user's** schema (`OWNER = USER`) |
 | Schema queries | 1 `MATERIALIZED`-CTE round-trip | **5 bulk** `ALL_*` queries grouped in memory |
@@ -47,10 +47,14 @@ providers, with several Oracle-isms that are worth knowing before reading the co
 
 ### Thin mode
 
-The constructor ([oracle.ts:48](../../src/lib/db/providers/sql/oracle.ts)) forces pure-JS Thin mode
-(`initOracleClient = undefined`), sets `outFormat = OUT_FORMAT_OBJECT` (rows as objects), and
-`autoCommit = true` globally. Thin mode means **no native Oracle client** has to be installed in the
-container — a real deployment win.
+The constructor ([oracle.ts:48](../../src/lib/db/providers/sql/oracle.ts)) uses pure-JS Thin mode by
+default, sets `outFormat = OUT_FORMAT_OBJECT` (rows as objects), and `autoCommit = true` globally.
+Thin mode means **no native Oracle client** has to be installed in the container — a real deployment
+win.
+
+> ⚠️ **Thin mode only supports Oracle Database 12.1 and later.** Connecting to an older server (11.2
+> and earlier) fails with the driver's `NJS-138` error. For those servers, opt into Thick mode via
+> `ORACLE_CLIENT_LIB_DIR` — see [§4.4](#44-thick-mode-opt-in-oracle_client_lib_dir).
 
 ---
 
@@ -176,6 +180,25 @@ exposes `{ total: connectionsOpen, idle, active: connectionsInUse, waiting: 0 }`
 
 Not handled by the provider — see [§3.5](#35-no-ssl-config-path). Use a `tcps://` connect string or
 an Oracle wallet for encrypted transport.
+
+### 4.4 Thick-mode opt-in (`ORACLE_CLIENT_LIB_DIR`)
+
+| Env var | Required | Effect |
+|---------|----------|--------|
+| `ORACLE_CLIENT_LIB_DIR` | No (default: unset, Thin mode) | Absolute path to an installed Oracle Instant Client `lib` directory. When set, the constructor calls `oracledb.initOracleClient({ libDir })` and the driver runs in Thick mode instead of Thin. |
+
+```bash
+# Only needed against a pre-12.1 Oracle server (see the Thin-mode caveat above).
+ORACLE_CLIENT_LIB_DIR=/opt/oracle/instantclient_21_1
+```
+
+node-oracledb's Thin/Thick choice is a **process-wide singleton** — `initOracleClient()` throws if
+called more than once, or after any connection/pool already exists. This is why the setting is a
+process-level env var rather than a per-connection config field: every `OracleProvider` in the
+process shares one driver mode. The constructor guards the call with a module-level flag so it runs
+at most once regardless of how many `OracleProvider` instances (i.e. connections) are created. The
+Oracle Instant Client itself must already be installed at the given path — this provider does not
+download or bundle it.
 
 ---
 

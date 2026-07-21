@@ -166,6 +166,13 @@ const STORAGE_USER_SEGMENTS_SQL = `SELECT TABLESPACE_NAME AS NAME,
 // Oracle Provider
 // ============================================================================
 
+// node-oracledb's Thin/Thick client mode is a process-wide singleton:
+// oracledb.initOracleClient() throws if called more than once, or after any
+// connection/pool already exists. Track it at module scope so it runs at most
+// once across every OracleProvider instance in this process, not once per
+// constructor call.
+let thickClientInitialized = false;
+
 export class OracleProvider extends SQLBaseProvider {
   private pool: oracledb.Pool | null = null;
 
@@ -178,8 +185,14 @@ export class OracleProvider extends SQLBaseProvider {
 
   constructor(config: DatabaseConnection, options: ProviderOptions = {}) {
     super(config, options);
-    // Use thin mode (pure JS, no Oracle Instant Client)
-    oracledb.initOracleClient = undefined as unknown as typeof oracledb.initOracleClient;
+    // Thin mode (pure JS, no Oracle Instant Client) is the unconditional default.
+    // Thick mode is an explicit opt-in for servers older than Oracle Database 12.1,
+    // which Thin mode cannot connect to (node-oracledb NJS-138).
+    const libDir = process.env.ORACLE_CLIENT_LIB_DIR;
+    if (libDir && !thickClientInitialized) {
+      oracledb.initOracleClient({ libDir });
+      thickClientInitialized = true;
+    }
     oracledb.outFormat = oracledb.OUT_FORMAT_OBJECT;
     oracledb.autoCommit = true;
     this.validate();

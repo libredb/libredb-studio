@@ -12,7 +12,7 @@
 
 ## Phase 1 — Oracle Thick-mode opt-in and honest error mapping (#228)
 
-- [ ] **#228a** — `ORACLE_CLIENT_LIB_DIR` env var opts into Thick mode; Thin mode stays the
+- [x] **#228a** — `ORACLE_CLIENT_LIB_DIR` env var opts into Thick mode; Thin mode stays the
   unconditional default.
   - Test first: a test asserting `initOracleClient` is called with `{ libDir: <env value> }`
     when `ORACLE_CLIENT_LIB_DIR` is set, is NOT called when unset (today's behavior — the
