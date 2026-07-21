@@ -461,6 +461,26 @@ describe("OracleProvider", () => {
       expect(provider.isConnected()).toBe(false);
     });
 
+    test("connect wraps NJS-138 (pre-12.1 server) as a non-retryable DatabaseConfigError, not ConnectionError", async () => {
+      mockCreatePoolFn = async () => {
+        throw new Error(
+          "NJS-138: connections to this database server version are not supported by node-oracledb in Thin mode",
+        );
+      };
+
+      let caught: unknown;
+      try {
+        await provider.connect();
+      } catch (error) {
+        caught = error;
+      }
+
+      expect(caught).toBeInstanceOf(DatabaseConfigError);
+      expect(caught).not.toBeInstanceOf(ConnectionError);
+      expect((caught as Error).message).toContain("ORACLE_CLIENT_LIB_DIR");
+      expect(provider.isConnected()).toBe(false);
+    });
+
     test("connect uses connectionString when provided", async () => {
       const p = new OracleProvider({
         ...baseConfig,

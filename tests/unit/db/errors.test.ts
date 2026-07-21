@@ -349,6 +349,16 @@ describe("mapDatabaseError", () => {
     expect(result).toBeInstanceOf(QueryError);
   });
 
+  test("Oracle NJS-138 (pre-12.1 server, Thin mode incompatible) maps to non-retryable DatabaseConfigError", () => {
+    const err = new Error(
+      "NJS-138: connections to this database server version are not supported by node-oracledb in Thin mode",
+    );
+    const result = mapDatabaseError(err, "oracle");
+    expect(result).toBeInstanceOf(DatabaseConfigError);
+    expect(isRetryableError(result)).toBe(false);
+    expect(result.message).toContain("ORACLE_CLIENT_LIB_DIR");
+  });
+
   test('MSSQL "login failed" maps to AuthenticationError', () => {
     const err = new Error('Login failed for user "sa"');
     const result = mapDatabaseError(err, "mssql");

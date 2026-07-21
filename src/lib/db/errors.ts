@@ -263,6 +263,13 @@ export function mapDatabaseError(error: unknown, provider: DatabaseType, query?:
   if (message.includes("ora-00942")) {
     return new QueryError(`Table or view does not exist: ${error.message}`, provider, query);
   }
+  if (message.includes("njs-138")) {
+    return new DatabaseConfigError(
+      `Oracle server version predates 12.1, which Thin mode does not support: ${error.message}. ` +
+        "Set ORACLE_CLIENT_LIB_DIR to an installed Oracle Instant Client directory to enable Thick mode for older servers.",
+      provider,
+    );
+  }
 
   // MSSQL errors
   if (message.includes("login failed")) {

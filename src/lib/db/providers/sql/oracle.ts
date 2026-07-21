@@ -280,6 +280,14 @@ export class OracleProvider extends SQLBaseProvider {
       this.setConnected(true);
     } catch (error) {
       this.setError(error instanceof Error ? error : new Error(String(error)));
+      // NJS-138 (server predates Oracle 12.1, incompatible with Thin mode) is a permanent
+      // configuration problem, not a transient connection failure — map it through
+      // mapDatabaseError() so it surfaces as a non-retryable DatabaseConfigError instead of
+      // the generic ConnectionError every other connect() failure falls back to below.
+      const mapped = mapDatabaseError(error, "oracle");
+      if (mapped instanceof DatabaseConfigError) {
+        throw mapped;
+      }
       throw new ConnectionError(
         `Failed to connect to Oracle: ${error instanceof Error ? error.message : error}`,
         "oracle",

@@ -130,3 +130,52 @@ Rules:
   64/0 oracle suite result, provider-triad completeness, and that the 9 unrelated failures share
   no import with Oracle code).
 - Next: #228b (NJS-138 → distinct non-retryable error), per the plan.
+
+### 2026-07-21 — #228b NJS-138 maps to a non-retryable DatabaseConfigError (DONE)
+
+- Tests first: one case in `tests/unit/db/errors.test.ts` (`mapDatabaseError` called directly
+  with the driver's real NJS-138 wording — verified against `node_modules/oracledb/lib/errors.js`
+  rather than guessed) and one in `tests/integration/db/oracle-provider.test.ts` (drives the real
+  `connect()` path via a mocked `createPool` rejection). Watched RED first: the errors.test.ts
+  case failed with `Received value: DatabaseError` (fell through to the generic catch-all, no
+  njs-138 branch existed); the oracle-provider.test.ts case failed with the caught error being
+  `ConnectionError` (`connect()`'s catch block never called `mapDatabaseError()` at all, so NJS-138
+  was structurally unreachable — exactly the spec's finding).
+- Built: `mapDatabaseError()` (`src/lib/db/errors.ts`) gained an `njs-138` branch returning
+  `DatabaseConfigError` (automatically non-retryable — `isRetryableError()` already excludes
+  `DatabaseConfigError`, no change needed there) with a message naming the pre-12.1
+  incompatibility and pointing at `ORACLE_CLIENT_LIB_DIR` (#228a). `oracle.ts`'s `connect()` catch
+  block now computes `mapDatabaseError(error, "oracle")` and throws it ONLY when the result is a
+  `DatabaseConfigError`; every other failure falls through unchanged to the pre-existing
+  `ConnectionError` construction (with host/port) — chosen specifically to avoid regressing the
+  other Oracle-specific classifications (`ORA-01017` → `AuthenticationError`, `ORA-12541`/
+  `ORA-12154`/`TNS:` → a host/port-less `ConnectionError`) that `mapDatabaseError()` already knows
+  about but that `connect()` has never surfaced — expanding those was explicitly out of scope for
+  #228b (spec/plan name only NJS-138), so this diff carves out exactly one new case rather than
+  rerouting `connect()`'s error handling wholesale.
+- Tri-sync in the same commit: `docs/providers/oracle.md` §11's error table gained the NJS-138 row
+  (linking §4.4, the Thick-mode section from #228a) and §14 Known limitations gained a matching
+  entry.
+- Ran into the same CRLF-on-edit artifact noted as a KNOWN LIMITATION in the #228a entry: after
+  editing `oracle.ts`/`errors.ts` via the tooling, both files were flipped entirely to CRLF on
+  disk (confirmed with `file`/`xxd`, not just the git autocrlf status noise), which `bun run
+  format` correctly flagged. Fixed with a SCOPED `biome format --write` limited to the four touched
+  source/test files (not the repo-wide `format:fix`, which would have touched the hundreds of
+  CRLF-drifted files unrelated to this task) — re-verified LF afterward with `file`.
+- loop-reviewer verdict: PASS. One LOW note (this PROGRESS.md entry didn't exist at review time —
+  addressed by this entry). The reviewer specifically re-verified the behavioral-preservation claim
+  end-to-end (confirmed `DatabaseConfigError` is returned by no other `mapDatabaseError()` branch,
+  so the new `instanceof` gate in `connect()` cannot leak an altered classification into any other
+  failure path) and independently reran both test files and the full `test:ci` 9-failure set,
+  including checking whether any of the 9 pre-existing-failure files import from the changed
+  `errors.ts` (one does — `sqlite-provider.test.ts` — confirmed its 3 failures are the
+  already-documented Windows-only path/EBUSY issues, unrelated to this diff).
+- Gate: `bun run format` clean (scoped fix applied), `bun run lint` 0 errors, `bun run typecheck`
+  clean, `bun run knip` clean, `bun run test:ci` → `oracle-provider.test.ts` 65/65 pass,
+  `errors.test.ts` 62/62 pass (both include this task's new cases); same 9/159 pre-existing,
+  Oracle-unrelated core-file failures as #228a (see that entry). `bun run build` exit 0.
+- Next: Phase F close-out — both #228a and #228b are now `[x]` in
+  `loop/IMPLEMENTATION_PLAN.md`, matching all `loop/ACCEPTANCE.md` Functional criteria; reconcile
+  PROGRESS.md/HANDOFF.md, verify every ACCEPTANCE.md line against actual repo state, and (per this
+  milestone's ACCEPTANCE.md — no functional-smoke requirement was added for this milestone beyond
+  the standard close-out checklist) create `.loop/COMPLETE` if everything holds.

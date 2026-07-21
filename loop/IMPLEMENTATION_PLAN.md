@@ -34,7 +34,7 @@
     repo (check `.env.example` conventions).
   - Out of scope: a per-connection `oracleClientLibDir` field (see spec rationale).
 
-- [ ] **#228b** — NJS-138 (pre-12.1 server, Thin-mode incompatible) maps to a distinct,
+- [x] **#228b** — NJS-138 (pre-12.1 server, Thin-mode incompatible) maps to a distinct,
   non-retryable error instead of a generic retryable `CONNECTION_ERROR`.
   - Test first: a test driving `connect()` (or `mapDatabaseError()` directly, whichever the
     existing test convention in `tests/integration/db/oracle-provider.test.ts` favors) with an

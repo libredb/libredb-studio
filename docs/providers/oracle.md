@@ -345,6 +345,7 @@ global labels (*"Gather Stats"*, *"Rebuild All Indexes"*).
 | `ORA-01017` / *invalid username/password* | `AuthenticationError` |
 | `ORA-12541` / `ORA-12154` / `TNS:` | `ConnectionError` |
 | `ORA-00942` (table or view does not exist) | `QueryError` |
+| `NJS-138` (server predates Oracle 12.1, Thin-mode incompatible) | `DatabaseConfigError`, **not retryable** — see [§4.4](#44-thick-mode-opt-in-oracle_client_lib_dir) |
 | Driver message contains *timeout* / *timed out* | `TimeoutError` |
 | `connection.break()`-interrupted query | maps via the generic path (the driver's `ORA-01013` / "user requested cancel"); other `ORA-*` codes fall through to `QueryError`/`DatabaseError` with the original message |
 
@@ -424,6 +425,10 @@ Over the API: `POST /api/db/query`, `POST /api/db/transaction`, `POST /api/db/ca
   per-query `fetchInfo`), and stream genuinely large LOBs instead of buffering.
 - **Large `NUMBER` precision loss** — returned as a JS `number`; `NUMBER` values beyond 2^53 should
   be fetched as strings to stay exact.
+- **`NJS-138` (pre-12.1 server) is a non-retryable configuration error, not a transient one.**
+  `mapDatabaseError()` maps it to `DatabaseConfigError` instead of the generic retryable
+  `ConnectionError` every other `connect()` failure produces — see [§4.4](#44-thick-mode-opt-in-oracle_client_lib_dir)
+  and [§11](#11-error-handling). The error message points the operator at `ORACLE_CLIENT_LIB_DIR`.
 - **`EXPLAIN` is intentionally disabled for Oracle until a dialect wrapper exists.**
   `getCapabilities().supportsExplain` is `false`, so the UI hides the *Explain* action. The UI's
   EXPLAIN builder only handles Postgres/MySQL; before the flag was flipped, the *Explain* action
