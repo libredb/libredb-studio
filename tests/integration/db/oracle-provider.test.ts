@@ -1357,6 +1357,16 @@ describe("OracleProvider", () => {
   // =========================================================================
 
   describe("Thick-mode opt-in (ORACLE_CLIENT_LIB_DIR)", () => {
+    // The init mock records call counts across the whole file; clear them per
+    // test so these assertions don't depend on execution order. The provider's
+    // module-level "already initialized" flag is a process-wide singleton that
+    // cannot be reset, so the tests that expect init to actually run (the
+    // failing-load case and the at-most-once case) must stay ordered before any
+    // test that lets a successful init flip that flag permanently.
+    beforeEach(() => {
+      mockInitOracleClientFn.mockClear();
+    });
+
     afterEach(() => {
       delete process.env.ORACLE_CLIENT_LIB_DIR;
     });
@@ -1366,6 +1376,25 @@ describe("OracleProvider", () => {
       // construct another to be sure.
       new OracleProvider(baseConfig);
       expect(mockInitOracleClientFn).not.toHaveBeenCalled();
+    });
+
+    test("surfaces a failed Instant Client load as a DatabaseConfigError pointing at ORACLE_CLIENT_LIB_DIR", () => {
+      process.env.ORACLE_CLIENT_LIB_DIR = "/nonexistent/instantclient";
+      mockInitOracleClientFn.mockImplementationOnce(() => {
+        throw new Error("DPI-1047: Cannot locate a 64-bit Oracle Client library");
+      });
+
+      let caught: unknown;
+      try {
+        new OracleProvider(baseConfig);
+      } catch (error) {
+        caught = error;
+      }
+
+      expect(caught).toBeInstanceOf(DatabaseConfigError);
+      expect((caught as Error).message).toContain("ORACLE_CLIENT_LIB_DIR");
+      expect((caught as Error).message).toContain("/nonexistent/instantclient");
+      expect((caught as Error).message).toContain("DPI-1047");
     });
 
     test("calls initOracleClient with libDir at most once, even across multiple providers", () => {

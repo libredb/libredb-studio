@@ -47,7 +47,7 @@ providers, with several Oracle-isms that are worth knowing before reading the co
 
 ### Thin mode
 
-The constructor ([oracle.ts:48](../../src/lib/db/providers/sql/oracle.ts)) uses pure-JS Thin mode by
+The constructor ([oracle.ts:186](../../src/lib/db/providers/sql/oracle.ts)) uses pure-JS Thin mode by
 default, sets `outFormat = OUT_FORMAT_OBJECT` (rows as objects), and `autoCommit = true` globally.
 Thin mode means **no native Oracle client** has to be installed in the container — a real deployment
 win.
@@ -189,7 +189,8 @@ an Oracle wallet for encrypted transport.
 
 ```bash
 # Only needed against a pre-12.1 Oracle server (see the Thin-mode caveat above).
-ORACLE_CLIENT_LIB_DIR=/opt/oracle/instantclient_21_1
+# The version matters: use Instant Client 19c for an Oracle 11.2 server (see below).
+ORACLE_CLIENT_LIB_DIR=/opt/oracle/instantclient_19_28
 ```
 
 node-oracledb's Thin/Thick choice is a **process-wide singleton** — `initOracleClient()` throws if
@@ -198,7 +199,49 @@ process-level env var rather than a per-connection config field: every `OraclePr
 process shares one driver mode. The constructor guards the call with a module-level flag so it runs
 at most once regardless of how many `OracleProvider` instances (i.e. connections) are created. The
 Oracle Instant Client itself must already be installed at the given path — this provider does not
-download or bundle it.
+download or bundle it. If the path is wrong (no client library there), the constructor fails fast
+with a `DatabaseConfigError` naming `ORACLE_CLIENT_LIB_DIR`, not a cryptic driver error.
+
+#### Pick the right Instant Client version
+
+Thick mode delegates to Oracle's native client, whose ability to reach an *older* server is bounded
+by [Oracle client/server interoperability](https://docs.oracle.com/en/database/oracle/oracle-database/19/mxcli/oracle-database-client-and-oracle-database-interoperability.html)
+(My Oracle Support Doc ID 207303.1). For the common "connect to Oracle 11g" case:
+
+| Target server | Instant Client to install |
+|---------------|---------------------------|
+| **Oracle 11.2** (11g) | **19c** — the newest client that still reaches 11.2 (11.2.0.3 / 11.2.0.4). **21c and 23ai cannot connect to 11.2.** |
+| Oracle 12.1+ | Any current Instant Client (19c / 21c / 23ai). Thin mode already covers these, so Thick is rarely needed. |
+
+#### Connecting to a pre-12.1 server (build your own image)
+
+The published image (`ghcr.io/libredb/libredb-studio`) ships **Thin only** — it does not bundle the
+Oracle Instant Client, because the native client is ~100 MB and only a minority of deployments need
+it. To reach an 11g server, build a derived image that layers Instant Client 19c on top and sets the
+env var. The runtime base is Debian 13 (`node:*-trixie-slim`), so install `libaio1t64` (trixie's
+renamed `libaio1`) and unpack the Basic package:
+
+```dockerfile
+FROM ghcr.io/libredb/libredb-studio:latest
+
+USER root
+# Instant Client 19c — reaches Oracle 11.2; 21c/23ai do not. Pin to a specific
+# 19.x build; check https://www.oracle.com/database/technologies/instant-client/linux-x86-64-downloads.html
+# for the current file name and update the version folder in ORACLE_CLIENT_LIB_DIR to match.
+RUN apt-get update && apt-get install -y --no-install-recommends libaio1t64 unzip curl \
+    && mkdir -p /opt/oracle && cd /opt/oracle \
+    && curl -fsSLO https://download.oracle.com/otn_software/linux/instantclient/1928000/instantclient-basic-linux.x64-19.28.0.0.0dbru.zip \
+    && unzip -q instantclient-basic-linux.x64-*.zip \
+    && rm instantclient-basic-linux.x64-*.zip \
+    && rm -rf /var/lib/apt/lists/*
+ENV ORACLE_CLIENT_LIB_DIR=/opt/oracle/instantclient_19_28
+USER nextjs
+```
+
+Instead of rebuilding, you can also mount an Instant Client directory from the host into the stock
+image and point `ORACLE_CLIENT_LIB_DIR` at the mount — whichever your deployment prefers. A
+first-class, separately-published Thick-mode image variant is a possible future addition; until then
+the derived image above is the supported path.
 
 ---
 

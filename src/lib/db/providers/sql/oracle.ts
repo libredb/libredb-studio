@@ -190,7 +190,20 @@ export class OracleProvider extends SQLBaseProvider {
     // which Thin mode cannot connect to (node-oracledb NJS-138).
     const libDir = process.env.ORACLE_CLIENT_LIB_DIR;
     if (libDir && !thickClientInitialized) {
-      oracledb.initOracleClient({ libDir });
+      try {
+        oracledb.initOracleClient({ libDir });
+      } catch (error) {
+        // A bad ORACLE_CLIENT_LIB_DIR (e.g. no Instant Client at that path) makes
+        // node-oracledb throw a raw driver error (DPI-1047). Surface it as a
+        // non-retryable configuration error that names the offending env var, so it
+        // is actionable rather than looking like a transient failure.
+        throw new DatabaseConfigError(
+          `Failed to load the Oracle Instant Client from ORACLE_CLIENT_LIB_DIR=${libDir}: ${String(error)}. ` +
+            "Verify the path points at an installed Oracle Instant Client 'lib' directory " +
+            "(Instant Client 19c is required to reach Oracle 11.2 servers).",
+          "oracle",
+        );
+      }
       thickClientInitialized = true;
     }
     oracledb.outFormat = oracledb.OUT_FORMAT_OBJECT;
