@@ -672,7 +672,7 @@ function FleetHealthSection({
             return (
               <motion.a
                 key={item.connectionId}
-                href="/admin?tab=monitoring"
+                href="/admin/monitoring"
                 variants={itemVariants}
                 whileHover={{ scale: 1.02, y: -2 }}
                 className={`group relative rounded-xl border-2 ${colors.border} bg-zinc-900/50 p-4 transition-all duration-200 hover:bg-white/[0.04] ${colors.glow} cursor-pointer block overflow-hidden`}
@@ -1005,7 +1005,7 @@ function QuickActionsSection() {
       label: "Maintenance",
       description: "VACUUM, ANALYZE, and optimize your databases",
       icon: Wrench,
-      href: "/admin?tab=operations",
+      href: "/admin/operations",
       gradient: "from-blue-500/20 to-cyan-500/20",
       iconColor: "text-blue-400",
       borderColor: "hover:border-blue-500/30",
@@ -1014,7 +1014,7 @@ function QuickActionsSection() {
       label: "Security & Masking",
       description: "Configure data masking rules and access control",
       icon: Shield,
-      href: "/admin?tab=security",
+      href: "/admin/security",
       gradient: "from-emerald-500/20 to-teal-500/20",
       iconColor: "text-emerald-400",
       borderColor: "hover:border-emerald-500/30",
@@ -1023,7 +1023,7 @@ function QuickActionsSection() {
       label: "Real-time Monitoring",
       description: "Live metrics, connection pools, and alert thresholds",
       icon: Activity,
-      href: "/admin?tab=monitoring",
+      href: "/admin/monitoring",
       gradient: "from-purple-500/20 to-pink-500/20",
       iconColor: "text-purple-400",
       borderColor: "hover:border-purple-500/30",

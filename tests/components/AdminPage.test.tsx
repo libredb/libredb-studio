@@ -1,35 +1,37 @@
 import "../setup-dom";
-import { mock } from "bun:test";
-import React from "react";
+import "../helpers/mock-navigation";
 
-// Mock AdminDashboard to avoid its massive dependency tree
-mock.module("@/components/admin/AdminDashboard", () => ({
-  default: () => React.createElement("div", { "data-testid": "admin-dashboard" }, "AdminDashboard Mock"),
-}));
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mockRedirect, resetMockPathname } from "../helpers/mock-navigation";
 
-const { default: AdminPage } = await import("@/app/admin/page");
+const { default: AdminIndexPage } = await import("@/app/admin/page");
 
-import { afterEach, describe, expect, test } from "bun:test";
-import { cleanup, render } from "@testing-library/react";
+describe("AdminIndexPage", () => {
+  beforeEach(() => {
+    mockRedirect.mockClear();
+  });
 
-describe("AdminPage", () => {
   afterEach(() => {
-    cleanup();
+    resetMockPathname();
   });
 
-  test("renders AdminDashboard component", () => {
-    const { getByTestId } = render(<AdminPage />);
-    expect(getByTestId("admin-dashboard")).not.toBeNull();
+  test("redirects bare /admin to /admin/overview", async () => {
+    await expect(AdminIndexPage({ searchParams: Promise.resolve({}) })).rejects.toThrow(
+      "NEXT_REDIRECT:/admin/overview",
+    );
+    expect(mockRedirect).toHaveBeenCalledWith("/admin/overview");
   });
 
-  test("renders AdminDashboard content", () => {
-    const { getByText } = render(<AdminPage />);
-    expect(getByText("AdminDashboard Mock")).not.toBeNull();
+  test("redirects legacy ?tab=operations to /admin/operations", async () => {
+    await expect(AdminIndexPage({ searchParams: Promise.resolve({ tab: "operations" }) })).rejects.toThrow(
+      "NEXT_REDIRECT:/admin/operations",
+    );
+    expect(mockRedirect).toHaveBeenCalledWith("/admin/operations");
   });
 
-  test("wraps AdminDashboard in Suspense", () => {
-    // Verify the component renders without throwing (Suspense boundary works)
-    const element = AdminPage();
-    expect(element.type).toBe(React.Suspense);
+  test("unknown tab falls back to overview", async () => {
+    await expect(AdminIndexPage({ searchParams: Promise.resolve({ tab: "nope" }) })).rejects.toThrow(
+      "NEXT_REDIRECT:/admin/overview",
+    );
   });
 });

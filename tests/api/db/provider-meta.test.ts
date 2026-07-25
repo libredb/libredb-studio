@@ -20,7 +20,7 @@ import {
 
 // ─── Mock provider ──────────────────────────────────────────────────────────
 const mockProvider = createMockProvider();
-const mockGetOrCreateProvider = mock(async () => mockProvider);
+const mockCreateDatabaseProvider = mock(async () => mockProvider);
 
 const mockGetSession = mock(
   async (): Promise<{ role: string; username: string } | null> => ({ role: "admin", username: "admin" }),
@@ -58,8 +58,8 @@ mock.module("@/lib/seed/resolve-connection", () => {
 
 // ─── Mock @/lib/db BEFORE importing the route ───────────────────────────────
 mock.module("@/lib/db", () => ({
-  getOrCreateProvider: mockGetOrCreateProvider,
-  createDatabaseProvider: mock(),
+  getOrCreateProvider: mock(),
+  createDatabaseProvider: mockCreateDatabaseProvider,
   removeProvider: mock(),
   clearProviderCache: mock(),
   getProviderCacheStats: mock(),
@@ -96,8 +96,8 @@ const validConnection = {
 // ─── Tests ──────────────────────────────────────────────────────────────────
 describe("POST /api/db/provider-meta", () => {
   beforeEach(() => {
-    mockGetOrCreateProvider.mockClear();
-    mockGetOrCreateProvider.mockImplementation(async () => mockProvider);
+    mockCreateDatabaseProvider.mockClear();
+    mockCreateDatabaseProvider.mockImplementation(async () => mockProvider);
     mockGetSession.mockClear();
     mockGetSession.mockImplementation(
       async (): Promise<{ role: string; username: string } | null> => ({ role: "admin", username: "admin" }),
@@ -145,6 +145,7 @@ describe("POST /api/db/provider-meta", () => {
     }>(res);
 
     expect(res.status).toBe(200);
+    expect(mockCreateDatabaseProvider).toHaveBeenCalled();
     expect(data.capabilities).toBeDefined();
     expect(data.labels).toBeDefined();
     expect(data.capabilities.queryLanguage).toBe("sql");
@@ -179,7 +180,7 @@ describe("POST /api/db/provider-meta", () => {
   });
 
   test("returns 503 for ConnectionError", async () => {
-    mockGetOrCreateProvider.mockRejectedValueOnce(new ConnectionError("Connection refused"));
+    mockCreateDatabaseProvider.mockRejectedValueOnce(new ConnectionError("Connection refused"));
 
     const req = createMockRequest("/api/db/provider-meta", {
       method: "POST",
@@ -194,7 +195,9 @@ describe("POST /api/db/provider-meta", () => {
   });
 
   test("returns 500 for DatabaseError", async () => {
-    mockGetOrCreateProvider.mockRejectedValueOnce(new DatabaseError("Internal failure", "postgres", "INTERNAL_ERROR"));
+    mockCreateDatabaseProvider.mockRejectedValueOnce(
+      new DatabaseError("Internal failure", "postgres", "INTERNAL_ERROR"),
+    );
 
     const req = createMockRequest("/api/db/provider-meta", {
       method: "POST",
@@ -210,7 +213,7 @@ describe("POST /api/db/provider-meta", () => {
   });
 
   test("returns 500 for generic error", async () => {
-    mockGetOrCreateProvider.mockRejectedValueOnce(new Error("Unexpected failure"));
+    mockCreateDatabaseProvider.mockRejectedValueOnce(new Error("Unexpected failure"));
 
     const req = createMockRequest("/api/db/provider-meta", {
       method: "POST",

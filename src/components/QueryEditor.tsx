@@ -111,12 +111,17 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
     const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
     const [hasSelection, setHasSelection] = useState(false);
 
-    // Line numbers toggle state (persisted in localStorage)
-    const [showLineNumbers, setShowLineNumbers] = useState<boolean>(() => {
-      if (typeof window === "undefined") return true;
+    // Line numbers toggle — default must be SSR-stable; localStorage is applied after mount.
+    const [showLineNumbers, setShowLineNumbers] = useState(true);
+    const [lineNumbersPreferenceReady, setLineNumbersPreferenceReady] = useState(false);
+
+    useEffect(() => {
       const saved = localStorage.getItem("editor-line-numbers");
-      return saved !== null ? saved === "true" : true; // default: true
-    });
+      if (saved !== null) {
+        setShowLineNumbers(saved === "true");
+      }
+      setLineNumbersPreferenceReady(true);
+    }, []);
 
     // Track last synced value to detect external changes
     const lastSyncedValueRef = useRef<string>(value);
@@ -146,10 +151,9 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
 
     // Persist line numbers preference to localStorage
     useEffect(() => {
-      if (typeof window !== "undefined") {
-        localStorage.setItem("editor-line-numbers", String(showLineNumbers));
-      }
-    }, [showLineNumbers]);
+      if (!lineNumbersPreferenceReady) return;
+      localStorage.setItem("editor-line-numbers", String(showLineNumbers));
+    }, [showLineNumbers, lineNumbersPreferenceReady]);
 
     const parsedSchema = useMemo((): ParsedTable[] => {
       if (!schemaContext) return [];

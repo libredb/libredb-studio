@@ -3,199 +3,126 @@ import "../../helpers/mock-sonner";
 import "../../helpers/mock-navigation";
 
 import { mock } from "bun:test";
-import { setupRechartssMock, setupFramerMotionMock } from "../../helpers/mock-monaco";
+import React from "react";
 
-setupRechartssMock();
-setupFramerMotionMock();
-
-// Mock child tab components to simplify
-mock.module("@/components/admin/tabs/OverviewTab", () => ({
-  OverviewTab: ({ user }: { user?: unknown }) => {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const React = require("react");
-    const u = user as { username?: string } | null;
-    return React.createElement("div", { "data-testid": "overview-tab" }, `OverviewTab${u ? ` - ${u.username}` : ""}`);
-  },
-}));
-
-mock.module("@/components/admin/tabs/OperationsTab", () => ({
-  OperationsTab: () => {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const React = require("react");
-    return React.createElement("div", { "data-testid": "operations-tab" }, "OperationsTab");
-  },
-}));
-
-mock.module("@/components/admin/tabs/MonitoringEmbed", () => ({
-  MonitoringEmbed: () => {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const React = require("react");
-    return React.createElement("div", { "data-testid": "monitoring-embed" }, "MonitoringEmbed");
-  },
-}));
-
-mock.module("@/components/admin/tabs/SecurityTab", () => ({
-  SecurityTab: () => {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const React = require("react");
-    return React.createElement("div", { "data-testid": "security-tab" }, "SecurityTab");
-  },
-}));
-
-mock.module("@/components/admin/tabs/AuditTab", () => ({
-  AuditTab: () => {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const React = require("react");
-    return React.createElement("div", { "data-testid": "audit-tab" }, "AuditTab");
+mock.module("next/link", () => ({
+  default: ({
+    href,
+    children,
+    className,
+    ...props
+  }: {
+    href: string;
+    children?: React.ReactNode;
+    className?: string;
+    [key: string]: unknown;
+  }) => {
+    return React.createElement("a", { href, className, ...props }, children);
   },
 }));
 
 import { describe, test, expect, beforeEach, afterEach, mock as bunMock } from "bun:test";
 import { render, fireEvent, waitFor, act, cleanup } from "@testing-library/react";
-import React from "react";
 
-import { mockGlobalFetch, restoreGlobalFetch } from "../../helpers/mock-fetch";
-import { mockRouterPush, mockRouterRefresh } from "../../helpers/mock-navigation";
+import { mockRouterPush, mockRouterRefresh, setMockPathname, resetMockPathname } from "../../helpers/mock-navigation";
 import { mockToastSuccess } from "../../helpers/mock-sonner";
 
-// Dynamic import AFTER mock.module registrations: static imports are hoisted,
-// which would evaluate the real tab modules (SecurityTab, OverviewTab, ...) in
-// this process and pollute their coverage with unexecuted 0-hit line records.
 const { default: AdminDashboard } = await import("@/components/admin/AdminDashboard");
-
-// =============================================================================
-// AdminDashboard Tests
-// =============================================================================
 
 describe("AdminDashboard", () => {
   afterEach(() => {
     cleanup();
+    resetMockPathname();
   });
-
-  let fetchMock: ReturnType<typeof mockGlobalFetch>;
 
   beforeEach(() => {
     mockRouterPush.mockClear();
     mockRouterRefresh.mockClear();
     mockToastSuccess.mockClear();
-
-    fetchMock = mockGlobalFetch({
-      "/api/auth/me": {
-        json: {
-          authenticated: true,
-          user: { username: "admin", role: "admin" },
-        },
-      },
-      "/api/auth/logout": { json: { success: true } },
-    });
-  });
-
-  afterEach(() => {
-    restoreGlobalFetch();
+    setMockPathname("/admin/overview");
+    globalThis.fetch = bunMock(() =>
+      Promise.resolve({
+        ok: true,
+        json: async () => ({ success: true }),
+      }),
+    ) as unknown as typeof fetch;
   });
 
   test("renders admin dashboard title", async () => {
     let renderResult: ReturnType<typeof render>;
     await act(async () => {
-      renderResult = render(<AdminDashboard />);
+      renderResult = render(
+        <AdminDashboard>
+          <div data-testid="admin-child">child</div>
+        </AdminDashboard>,
+      );
     });
-    const { queryByText } = renderResult!;
-
-    expect(queryByText("Admin Dashboard")).not.toBeNull();
+    expect(renderResult!.queryByText("Admin Dashboard")).not.toBeNull();
   });
 
-  test("fetches user on mount", async () => {
-    await act(async () => {
-      render(<AdminDashboard />);
-    });
-
-    await waitFor(() => {
-      const calls = fetchMock.mock.calls;
-      const authCall = calls.find((c: unknown[]) => {
-        const url = typeof c[0] === "string" ? c[0] : "";
-        return url.includes("/api/auth/me");
-      });
-      expect(authCall).not.toBeUndefined();
-    });
-  });
-
-  test("shows 5 tab triggers", async () => {
+  test("shows 5 section nav links with routes", async () => {
     let renderResult: ReturnType<typeof render>;
     await act(async () => {
-      renderResult = render(<AdminDashboard />);
+      renderResult = render(<AdminDashboard>content</AdminDashboard>);
     });
-    const { queryByText } = renderResult!;
+    const { getByText, getByRole } = renderResult!;
 
-    expect(queryByText("Overview")).not.toBeNull();
-    expect(queryByText("Operations")).not.toBeNull();
-    expect(queryByText("Monitoring")).not.toBeNull();
-    expect(queryByText("Security")).not.toBeNull();
-    expect(queryByText("Audit")).not.toBeNull();
+    expect(getByText("Overview").closest("a")?.getAttribute("href")).toBe("/admin/overview");
+    expect(getByText("Operations").closest("a")?.getAttribute("href")).toBe("/admin/operations");
+    expect(getByText("Monitoring").closest("a")?.getAttribute("href")).toBe("/admin/monitoring");
+    expect(getByText("Security").closest("a")?.getAttribute("href")).toBe("/admin/security");
+    expect(getByText("Audit").closest("a")?.getAttribute("href")).toBe("/admin/audit");
+    expect(getByRole("navigation", { name: "Admin sections" })).not.toBeNull();
   });
 
-  test("default tab is overview", async () => {
+  test("marks active section from pathname", async () => {
+    setMockPathname("/admin/operations");
     let renderResult: ReturnType<typeof render>;
     await act(async () => {
-      renderResult = render(<AdminDashboard />);
+      renderResult = render(<AdminDashboard>content</AdminDashboard>);
     });
-    const { queryByTestId } = renderResult!;
+    const operations = renderResult!.getByText("Operations").closest("a");
+    expect(operations?.getAttribute("aria-current")).toBe("page");
+    const overview = renderResult!.getByText("Overview").closest("a");
+    expect(overview?.getAttribute("aria-current")).toBeNull();
+  });
 
-    // The OverviewTab mock content should be visible (default tab content)
-    expect(queryByTestId("overview-tab")).not.toBeNull();
+  test("renders children in content area", async () => {
+    let renderResult: ReturnType<typeof render>;
+    await act(async () => {
+      renderResult = render(
+        <AdminDashboard>
+          <div data-testid="section-body">Operations body</div>
+        </AdminDashboard>,
+      );
+    });
+    expect(renderResult!.getByTestId("section-body").textContent).toBe("Operations body");
   });
 
   test("logout button present", async () => {
     let renderResult: ReturnType<typeof render>;
     await act(async () => {
-      renderResult = render(<AdminDashboard />);
+      renderResult = render(<AdminDashboard>content</AdminDashboard>);
     });
-    const { queryByText } = renderResult!;
-
-    expect(queryByText("Logout")).not.toBeNull();
+    expect(renderResult!.queryByText("Logout")).not.toBeNull();
   });
 
   test("editor button links to home", async () => {
     let renderResult: ReturnType<typeof render>;
     await act(async () => {
-      renderResult = render(<AdminDashboard />);
+      renderResult = render(<AdminDashboard>content</AdminDashboard>);
     });
-    const { queryByText, getByText } = renderResult!;
-
-    expect(queryByText("Editor")).not.toBeNull();
-
-    // Click the editor button
-    const editorButton = getByText("Editor").closest("button");
-    expect(editorButton).not.toBeNull();
+    const editorButton = renderResult!.getByText("Editor").closest("button");
     fireEvent.click(editorButton!);
-
     expect(mockRouterPush).toHaveBeenCalledWith("/");
-  });
-
-  test("shows username greeting after auth fetch", async () => {
-    let renderResult: ReturnType<typeof render>;
-    await act(async () => {
-      renderResult = render(<AdminDashboard />);
-    });
-    const { queryByTestId } = renderResult!;
-
-    // Wait for user data to be fetched and passed to OverviewTab
-    await waitFor(() => {
-      // The OverviewTab mock renders the username if user is provided
-      const overviewTab = queryByTestId("overview-tab");
-      expect(overviewTab).not.toBeNull();
-      expect(overviewTab!.textContent).toContain("admin");
-    });
   });
 
   test("logout button triggers logout flow", async () => {
     let renderResult: ReturnType<typeof render>;
     await act(async () => {
-      renderResult = render(<AdminDashboard />);
+      renderResult = render(<AdminDashboard>content</AdminDashboard>);
     });
-    const { getByText } = renderResult!;
-
-    const logoutButton = getByText("Logout").closest("button");
-    expect(logoutButton).not.toBeNull();
+    const logoutButton = renderResult!.getByText("Logout").closest("button");
 
     await act(async () => {
       fireEvent.click(logoutButton!);
@@ -204,30 +131,5 @@ describe("AdminDashboard", () => {
     await waitFor(() => {
       expect(mockRouterPush).toHaveBeenCalledWith("/login");
     });
-  });
-
-  test("logs error when auth fetch fails", async () => {
-    // Override the default fetch mock with one that rejects for /api/auth/me
-    mockGlobalFetch({
-      "/api/auth/me": () => {
-        throw new Error("network down");
-      },
-    });
-
-    const originalConsoleError = console.error;
-    const consoleErrorMock = bunMock(() => {});
-    console.error = consoleErrorMock;
-
-    try {
-      await act(async () => {
-        render(<AdminDashboard />);
-      });
-
-      await waitFor(() => {
-        expect(consoleErrorMock).toHaveBeenCalledWith("Failed to fetch user:", expect.any(Error));
-      });
-    } finally {
-      console.error = originalConsoleError;
-    }
   });
 });

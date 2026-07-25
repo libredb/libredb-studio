@@ -1,10 +1,7 @@
-import { Suspense } from "react";
-import AdminDashboard from "@/components/admin/AdminDashboard";
+import { redirect } from "next/navigation";
+import { resolveAdminRedirectPath } from "@/lib/admin-sections";
 
-export default function AdminPage() {
-  return (
-    <Suspense>
-      <AdminDashboard />
-    </Suspense>
-  );
+export default async function AdminIndexPage({ searchParams }: { searchParams: Promise<{ tab?: string }> }) {
+  const params = await searchParams;
+  redirect(resolveAdminRedirectPath(params.tab));
 }

@@ -15,6 +15,9 @@ export const mockRouterPush = mock(() => {});
 export const mockRouterRefresh = mock(() => {});
 export const mockRouterBack = mock(() => {});
 export const mockRouterForward = mock(() => {});
+export const mockRedirect = mock((url: string) => {
+  throw new Error(`NEXT_REDIRECT:${url}`);
+});
 
 // Mutable search params so tests can simulate query strings (e.g. ?error=...).
 // Defaults to empty; tests that set it MUST reset it in afterEach to avoid
@@ -27,6 +30,15 @@ export function resetMockSearchParams() {
   mockSearchParams = new URLSearchParams();
 }
 
+// Mutable pathname for route-aware UI (e.g. admin section nav).
+let mockPathname = "/";
+export function setMockPathname(pathname: string) {
+  mockPathname = pathname;
+}
+export function resetMockPathname() {
+  mockPathname = "/";
+}
+
 mock.module("next/navigation", () => ({
   useRouter: () => ({
     push: mockRouterPush,
@@ -34,6 +46,7 @@ mock.module("next/navigation", () => ({
     back: mockRouterBack,
     forward: mockRouterForward,
   }),
-  usePathname: () => "/",
+  usePathname: () => mockPathname,
   useSearchParams: () => mockSearchParams,
+  redirect: mockRedirect,
 }));

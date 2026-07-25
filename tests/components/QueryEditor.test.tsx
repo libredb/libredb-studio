@@ -217,7 +217,7 @@ mock.module("lucide-react", () => {
 
 // ── Imports AFTER mocks ─────────────────────────────────────────────────────
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { render, cleanup, fireEvent, act } from "@testing-library/react";
+import { render, cleanup, fireEvent, act, waitFor } from "@testing-library/react";
 import { QueryEditor } from "@/components/QueryEditor";
 import type { MaintenanceType } from "@/lib/db/types";
 
@@ -476,37 +476,47 @@ describe("QueryEditor", () => {
     expect(queryByText("Lines")).not.toBeNull();
   });
 
-  test("Lines button defaults to enabled (line numbers shown)", () => {
+  test("Lines button defaults to enabled (line numbers shown)", async () => {
     localStorage.clear();
     const { queryByText } = render(React.createElement(QueryEditor, createDefaultProps()));
-    const linesButton = queryByText("Lines")!.closest("button");
-    // Default state should have line numbers enabled (text-zinc-300 class)
-    expect(linesButton?.className).toContain("text-zinc-300");
+    await waitFor(() => {
+      const linesButton = queryByText("Lines")!.closest("button");
+      // Default state should have line numbers enabled (text-zinc-300 class)
+      expect(linesButton?.className).toContain("text-zinc-300");
+    });
   });
 
-  test("Lines button reads initial state from localStorage", () => {
+  test("Lines button reads initial state from localStorage", async () => {
     localStorage.setItem("editor-line-numbers", "false");
     const { queryByText } = render(React.createElement(QueryEditor, createDefaultProps()));
-    const linesButton = queryByText("Lines")!.closest("button");
-    // Should read false from localStorage and show disabled state (text-zinc-500)
-    expect(linesButton?.className).toContain("text-zinc-500");
+    await waitFor(() => {
+      const linesButton = queryByText("Lines")!.closest("button");
+      // Should read false from localStorage and show disabled state (text-zinc-500)
+      expect(linesButton?.className).toContain("text-zinc-500");
+    });
   });
 
-  test("LINES button saves state to localStorage when toggled", () => {
+  test("LINES button saves state to localStorage when toggled", async () => {
     localStorage.clear();
     const { queryByText } = render(React.createElement(QueryEditor, createDefaultProps()));
     const linesButton = queryByText("Lines");
 
     // Initial state should be 'true' (default)
-    expect(localStorage.getItem("editor-line-numbers")).toBe("true");
+    await waitFor(() => {
+      expect(localStorage.getItem("editor-line-numbers")).toBe("true");
+    });
 
     // Toggle to false
     fireEvent.click(linesButton!);
-    expect(localStorage.getItem("editor-line-numbers")).toBe("false");
+    await waitFor(() => {
+      expect(localStorage.getItem("editor-line-numbers")).toBe("false");
+    });
 
     // Toggle back to true
     fireEvent.click(linesButton!);
-    expect(localStorage.getItem("editor-line-numbers")).toBe("true");
+    await waitFor(() => {
+      expect(localStorage.getItem("editor-line-numbers")).toBe("true");
+    });
   });
 
   test("LINES button updates editor options when toggled", () => {
@@ -520,33 +530,40 @@ describe("QueryEditor", () => {
     expect(linesButton).not.toBeNull();
   });
 
-  test("Lines button shows correct visual state when enabled", () => {
+  test("Lines button shows correct visual state when enabled", async () => {
     localStorage.setItem("editor-line-numbers", "true");
     const { queryByText } = render(React.createElement(QueryEditor, createDefaultProps()));
-    const linesButton = queryByText("Lines")!.closest("button");
-
-    // Enabled state should have text-zinc-300
-    expect(linesButton?.className).toContain("text-zinc-300");
+    await waitFor(() => {
+      const linesButton = queryByText("Lines")!.closest("button");
+      // Enabled state should have text-zinc-300
+      expect(linesButton?.className).toContain("text-zinc-300");
+    });
   });
 
-  test("Lines button shows correct visual state when disabled", () => {
+  test("Lines button shows correct visual state when disabled", async () => {
     localStorage.setItem("editor-line-numbers", "false");
     const { queryByText } = render(React.createElement(QueryEditor, createDefaultProps()));
-    const linesButton = queryByText("Lines")!.closest("button");
-
-    // Disabled state should have text-zinc-500
-    expect(linesButton?.className).toContain("text-zinc-500");
+    await waitFor(() => {
+      const linesButton = queryByText("Lines")!.closest("button");
+      // Disabled state should have text-zinc-500
+      expect(linesButton?.className).toContain("text-zinc-500");
+    });
   });
 
-  test("LINES button has correct tooltip", () => {
+  test("LINES button has correct tooltip", async () => {
     localStorage.setItem("editor-line-numbers", "true");
     const { queryByText } = render(React.createElement(QueryEditor, createDefaultProps()));
-    const linesButton = queryByText("Lines")!.closest("button");
-    expect(linesButton?.getAttribute("title")).toBe("Hide line numbers");
+    await waitFor(() => {
+      const linesButton = queryByText("Lines")!.closest("button");
+      expect(linesButton?.getAttribute("title")).toBe("Hide line numbers");
+    });
 
+    const linesButton = queryByText("Lines")!.closest("button");
     // Toggle and check tooltip changes
     fireEvent.click(linesButton!);
-    expect(linesButton?.getAttribute("title")).toBe("Show line numbers");
+    await waitFor(() => {
+      expect(linesButton?.getAttribute("title")).toBe("Show line numbers");
+    });
   });
 
   // -----------------------------------------------------------------------

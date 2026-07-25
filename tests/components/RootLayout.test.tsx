@@ -81,4 +81,10 @@ describe("RootLayout", () => {
     expect(getByText("First")).not.toBeNull();
     expect(getByText("Second")).not.toBeNull();
   });
+
+  test("suppresses hydration warnings on html and body for extension-mutated attrs", () => {
+    const element = RootLayout({ children: React.createElement("span") });
+    expect(element.props.suppressHydrationWarning).toBe(true);
+    expect(element.props.children.props.suppressHydrationWarning).toBe(true);
+  });
 });

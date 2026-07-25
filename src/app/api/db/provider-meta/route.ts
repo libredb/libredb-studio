@@ -1,11 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getOrCreateProvider } from "@/lib/db";
+import { createDatabaseProvider } from "@/lib/db";
 import { createErrorResponse } from "@/lib/api/errors";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { getSession } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
+/**
+ * Return provider capabilities/labels without opening a live DB connection.
+ * Metadata methods are sync and type-driven; connecting would needlessly contend
+ * for exclusive file locks (SQLite / LibreDB) and network pools.
+ */
 export async function POST(req: NextRequest) {
   try {
     let body;
@@ -24,7 +29,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Authentication required" }, { status: 401 });
     }
 
-    // Support both formats: { connectionId: "seed:X" }, { connection: {...} }, or bare connection object
     const connection = await resolveConnection(
       body.connectionId ? body : body.connection ? body : { connection: body },
       session,
@@ -34,7 +38,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Valid connection configuration is required" }, { status: 400 });
     }
 
-    const provider = await getOrCreateProvider(connection);
+    const provider = await createDatabaseProvider(connection);
 
     return NextResponse.json({
       capabilities: provider.getCapabilities(),

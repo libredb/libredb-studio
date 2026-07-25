@@ -644,7 +644,7 @@ describe("Studio", () => {
     render(<Studio />);
     const fn = capturedSidebarProps.onOpenMaintenance as () => void;
     act(() => fn());
-    expect(mockRouterPush).toHaveBeenCalledWith("/admin?tab=operations");
+    expect(mockRouterPush).toHaveBeenCalledWith("/admin/operations");
   });
 
   test("openMaintenance navigates to monitoring when not admin", () => {
@@ -1183,7 +1183,7 @@ describe("Studio", () => {
     act(() => (capturedSchemaExplorerProps.onGenerateTestData as (n: string) => void)("users"));
     expect(queryByTestId("testdatagenerator")).not.toBeNull();
     act(() => (capturedSchemaExplorerProps.onOpenMaintenance as () => void)());
-    expect(mockRouterPush).toHaveBeenCalledWith("/admin?tab=operations");
+    expect(mockRouterPush).toHaveBeenCalledWith("/admin/operations");
   });
 
   // --- QueryToolbar execution/transaction callbacks ---

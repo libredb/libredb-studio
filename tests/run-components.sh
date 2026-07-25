@@ -14,8 +14,7 @@
 #   Group 2 — Sidebar.test.tsx (mocks ConnectionsList, schema-explorer)
 #   Group 3 — BottomPanel.test.tsx (mocks ResultsGrid, QueryHistory,
 #             DataCharts, SchemaDiff, SavedQueries, VisualExplain, etc.)
-#   Group 4 — AdminDashboard.test.tsx (mocks OverviewTab, OperationsTab,
-#             MonitoringEmbed, SecurityTab, AuditTab)
+#   Group 4 — AdminDashboard shell + admin section/layout/index pages
 #   Group 5 — SecurityTab.test.tsx (mocks MaskingSettings)
 #   Group 6 — All remaining files (safe together — only mock libraries,
 #             ui primitives, or sub-components with no test files)
@@ -105,9 +104,16 @@ run_group "Group 2/6: Sidebar" \
 run_group "Group 3/6: BottomPanel" \
   tests/components/studio/BottomPanel.test.tsx
 
-# Group 4: AdminDashboard (isolated — mocks OverviewTab, OperationsTab, SecurityTab, AuditTab)
+# Group 4: AdminDashboard shell + section pages
 run_group "Group 4/6: AdminDashboard" \
-  tests/components/admin/AdminDashboard.test.tsx
+  tests/components/admin/AdminDashboard.test.tsx \
+  tests/components/admin/AdminOverviewPage.test.tsx \
+  tests/components/admin/AdminSectionPages.test.tsx \
+  tests/components/AdminPage.test.tsx
+
+# Group 4b: AdminLayout (isolated — mocks AdminDashboard)
+run_group "Group 4b/6: AdminLayout" \
+  tests/components/admin/AdminLayout.test.tsx
 
 # Group 5: SecurityTab (isolated — mocks MaskingSettings)
 run_group "Group 5/6: SecurityTab" \
@@ -158,7 +164,6 @@ run_group "Group 11/12: Smoke tests" \
   tests/components/LoginPage.test.tsx \
   tests/components/LoginPageOIDC.test.tsx \
   tests/components/CommunitySection.test.tsx \
-  tests/components/AdminPage.test.tsx \
   tests/components/MonitoringPage.test.tsx \
   tests/components/monitoring/MetricChart.test.tsx
 

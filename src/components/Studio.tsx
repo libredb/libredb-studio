@@ -155,7 +155,7 @@ export default function Studio() {
 
   const openMaintenance = () => {
     if (isAdmin) {
-      router.push("/admin?tab=operations");
+      router.push("/admin/operations");
     } else {
       router.push("/monitoring");
     }
