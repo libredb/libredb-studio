@@ -7,48 +7,63 @@ test.describe("Admin Dashboard", () => {
     await page.locator('input[type="email"]').fill("admin@libredb.org");
     await page.locator('input[type="password"]').fill("test-admin");
     await page.getByRole("button", { name: /sign in/i }).click();
-    await page.waitForURL("**/admin**");
+    // /admin redirects to /admin/overview
+    await page.waitForURL("**/admin/**");
   });
 
   test("admin dashboard loads", async ({ page }) => {
     await expect(page.locator("text=Admin Dashboard")).toBeVisible({ timeout: 10000 });
   });
 
-  test("shows 5 tab triggers", async ({ page }) => {
-    await expect(page.getByRole("tab", { name: /Overview/i })).toBeVisible({ timeout: 10000 });
-    await expect(page.getByRole("tab", { name: /Operations/i })).toBeVisible();
-    await expect(page.getByRole("tab", { name: /Monitoring/i })).toBeVisible();
-    await expect(page.getByRole("tab", { name: /Security/i })).toBeVisible();
-    await expect(page.getByRole("tab", { name: /Audit/i })).toBeVisible();
+  test("shows 5 section nav links", async ({ page }) => {
+    const nav = page.getByRole("navigation", { name: "Admin sections" });
+    await expect(nav.getByRole("link", { name: /Overview/i })).toBeVisible({ timeout: 10000 });
+    await expect(nav.getByRole("link", { name: /Operations/i })).toBeVisible();
+    await expect(nav.getByRole("link", { name: /Monitoring/i })).toBeVisible();
+    await expect(nav.getByRole("link", { name: /Security/i })).toBeVisible();
+    await expect(nav.getByRole("link", { name: /Audit/i })).toBeVisible();
   });
 
-  test("default tab is overview", async ({ page }) => {
+  test("default section is overview", async ({ page }) => {
     // Overview content is mounted by default — assert on the content region, not
     // empty-state copy, so the test holds whether or not seed connections exist.
     await expect(page.getByTestId("admin-content-overview")).toBeVisible({ timeout: 10000 });
-    await expect(page.getByRole("tab", { name: /Overview/i })).toHaveAttribute("aria-selected", "true");
+    await expect(page).toHaveURL(/\/admin\/overview/);
+    const overviewLink = page.getByRole("navigation", { name: "Admin sections" }).getByRole("link", {
+      name: /Overview/i,
+    });
+    await expect(overviewLink).toHaveAttribute("aria-current", "page");
   });
 
-  test("can switch to operations tab", async ({ page }) => {
-    await page.locator('button:has-text("Operations"), [role="tab"]:has-text("Operations")').first().click();
+  test("can navigate to operations section", async ({ page }) => {
+    await page
+      .getByRole("navigation", { name: "Admin sections" })
+      .getByRole("link", { name: /Operations/i })
+      .click();
+    await expect(page).toHaveURL(/\/admin\/operations/);
     // Operations content region mounts regardless of connection state (empty
     // state or populated dashboard), so this is stable across environments.
     await expect(page.getByTestId("admin-content-operations")).toBeVisible({ timeout: 5000 });
-    await expect(page.getByRole("tab", { name: /Operations/i })).toHaveAttribute("aria-selected", "true");
+    await expect(
+      page.getByRole("navigation", { name: "Admin sections" }).getByRole("link", { name: /Operations/i }),
+    ).toHaveAttribute("aria-current", "page");
   });
 
-  test("can switch to security tab", async ({ page }) => {
-    await page.locator('button:has-text("Security"), [role="tab"]:has-text("Security")').first().click();
-    await page.waitForTimeout(500);
-    // Security tab should show Data Masking content
+  test("can navigate to security section", async ({ page }) => {
+    await page
+      .getByRole("navigation", { name: "Admin sections" })
+      .getByRole("link", { name: /Security/i })
+      .click();
+    await expect(page).toHaveURL(/\/admin\/security/);
+    // Security section should show Data Masking content
     await expect(page.locator("text=Data Masking").first()).toBeVisible({ timeout: 5000 });
   });
 
-  test("can switch to audit tab", async ({ page }) => {
-    await page.locator('button:has-text("Audit"), [role="tab"]:has-text("Audit")').first().click();
-    await page.waitForTimeout(500);
-    // Audit tab should show operations/queries
-    await expect(page.locator("text=Operations").first()).toBeVisible({ timeout: 5000 });
+  test("can navigate to audit section", async ({ page }) => {
+    await page.getByRole("navigation", { name: "Admin sections" }).getByRole("link", { name: /Audit/i }).click();
+    await expect(page).toHaveURL(/\/admin\/audit/);
+    // Audit section should show operations/queries headings
+    await expect(page.getByTestId("admin-content-audit")).toBeVisible({ timeout: 5000 });
   });
 
   test("editor button navigates to studio", async ({ page }) => {
