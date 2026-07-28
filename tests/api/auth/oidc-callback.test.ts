@@ -70,6 +70,9 @@ const mockCookieStore = {
 
 mock.module("next/headers", () => ({
   cookies: mock(async () => mockCookieStore),
+  // auth.ts also imports headers() (loopback-aware cookie flags); the mock
+  // replaces the module wholesale, so it has to expose every imported name.
+  headers: mock(async () => ({ get: () => null })),
 }));
 
 // ─── Import route handler AFTER mocking ─────────────────────────────────────
