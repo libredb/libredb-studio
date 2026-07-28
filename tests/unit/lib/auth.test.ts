@@ -1,5 +1,6 @@
-import { describe, test, expect, mock, beforeEach, spyOn } from "bun:test";
+import { describe, test, expect, mock, beforeEach, afterEach, spyOn } from "bun:test";
 import * as jose from "jose";
+import { logger } from "@/lib/logger";
 
 // ============================================================================
 // Mock State — only mock next/headers (cookies), NOT jose
@@ -39,7 +40,7 @@ mock.module("next/headers", () => ({
 // Import module under test (after mocks)
 // ============================================================================
 
-const { signJWT, verifyJWT, getSession, login, logout } = await import("@/lib/auth");
+const { signJWT, verifyJWT, getSession, login, logout, resetCookieSecurityWarning } = await import("@/lib/auth");
 
 // ============================================================================
 // Tests — use real jose sign/verify with JWT_SECRET from tests/setup.ts
@@ -223,6 +224,106 @@ describe("auth", () => {
           setNodeEnv(previous);
         }
         expect((mockSetCalls[0].opts as { secure: boolean }).secure).toBe(true);
+      });
+
+      // AUTH_COOKIE_SECURE is the escape hatch for a deployment that terminates
+      // TLS upstream and forwards plain http to the app on a host that is not
+      // loopback (umbrelOS: getumbrel/umbrel-apps#5847). The loopback exception
+      // above cannot cover that - the browser reaches the app on umbrel.local -
+      // so the operator has to declare it.
+      describe("AUTH_COOKIE_SECURE override", () => {
+        const setOverride = (value: string | undefined) => {
+          if (value === undefined) delete process.env.AUTH_COOKIE_SECURE;
+          else process.env.AUTH_COOKIE_SECURE = value;
+        };
+
+        afterEach(() => {
+          setOverride(undefined);
+          resetCookieSecurityWarning();
+        });
+
+        test("turns the flag off for a public host in production", async () => {
+          setOverride("false");
+          expect(await asProduction("studio.example.com")).toBe(false);
+        });
+
+        test("forces the flag on outside production", async () => {
+          setOverride("true");
+          mockRequestHeaders.host = "studio.example.com";
+          await login("admin", "admin");
+          expect((mockSetCalls[0].opts as { secure: boolean }).secure).toBe(true);
+        });
+
+        test("forces the flag on for loopback, overruling the desktop-shell exception", async () => {
+          setOverride("true");
+          expect(await asProduction("localhost:3000")).toBe(true);
+        });
+
+        // Same spellings AUTH_BOOTSTRAP accepts: a typo must never be the reason
+        // an operator thinks they turned the flag off while it is still on.
+        test("accepts the AUTH_BOOTSTRAP spellings, trimmed and case-insensitive", async () => {
+          for (const off of ["false", "0", "off", " FALSE "]) {
+            setOverride(off);
+            mockSetCalls = [];
+            expect(await asProduction("studio.example.com")).toBe(false);
+          }
+          for (const on of ["true", "1", "on", " TRUE "]) {
+            setOverride(on);
+            mockSetCalls = [];
+            expect(await asProduction("127.0.0.1:41234")).toBe(true);
+          }
+        });
+
+        test("warns and keeps the default when the value is unrecognized", async () => {
+          const warn = spyOn(logger, "warn").mockImplementation(() => {});
+          setOverride("yes-please");
+          try {
+            expect(await asProduction("studio.example.com")).toBe(true);
+            expect(warn).toHaveBeenCalledTimes(1);
+            expect(warn.mock.calls[0][0]).toContain("AUTH_COOKIE_SECURE");
+          } finally {
+            warn.mockRestore();
+          }
+        });
+
+        test("treats a blank value as unset, without warning", async () => {
+          const warn = spyOn(logger, "warn").mockImplementation(() => {});
+          setOverride("   ");
+          try {
+            expect(await asProduction("studio.example.com")).toBe(true);
+            expect(warn).not.toHaveBeenCalled();
+          } finally {
+            warn.mockRestore();
+          }
+        });
+
+        // Relaxing the flag in production is a deliberate weakening of the
+        // session cookie: it belongs in the log, once, not on every login.
+        test("warns once when it disables the flag in production", async () => {
+          const warn = spyOn(logger, "warn").mockImplementation(() => {});
+          setOverride("false");
+          try {
+            await asProduction("studio.example.com");
+            mockSetCalls = [];
+            await asProduction("studio.example.com");
+            expect(warn).toHaveBeenCalledTimes(1);
+            expect(warn.mock.calls[0][0]).toContain("AUTH_COOKIE_SECURE");
+          } finally {
+            warn.mockRestore();
+          }
+        });
+
+        test("stays quiet when it disables the flag outside production", async () => {
+          const warn = spyOn(logger, "warn").mockImplementation(() => {});
+          setOverride("false");
+          try {
+            await login("admin", "admin");
+            expect((mockSetCalls[0].opts as { secure: boolean }).secure).toBe(false);
+            expect(warn).not.toHaveBeenCalled();
+          } finally {
+            warn.mockRestore();
+          }
+        });
       });
     });
   });

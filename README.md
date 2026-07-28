@@ -459,6 +459,7 @@ Deploy your own instance of LibreDB Studio with a single click on DigitalOcean, 
 | `USER_PASSWORD` | ❌ | Optional; the lower-privilege user account exists only when set |
 | `JWT_SECRET` | ❌ | JWT secret (min 32 chars); auto-generated on first run unless `AUTH_BOOTSTRAP=off` |
 | `AUTH_BOOTSTRAP` | ❌ | `off` disables zero-config generation (strict mode; recommended for production) |
+| `AUTH_COOKIE_SECURE` | ❌ | `false` drops the `Secure` flag from auth cookies — needed only when the browser reaches the app over plain HTTP (LAN/home server); not for TLS terminated at an ingress |
 | `NEXT_PUBLIC_AUTH_PROVIDER` | ❌ | `local` (default) or `oidc` for SSO |
 | `OIDC_ISSUER` | ❌ | OIDC issuer URL (required when `oidc`) |
 | `OIDC_CLIENT_ID` | ❌ | OIDC client ID (required when `oidc`) |

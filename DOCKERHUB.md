@@ -132,6 +132,7 @@ A ready-to-use, fully-commented compose file is in the repo: [`docker-compose.ex
 | `USER_EMAIL` | ✅ | Standard user email (default `user@libredb.org`) |
 | `USER_PASSWORD` | ✅ | Standard user password |
 | `JWT_SECRET` | ✅ | JWT signing secret (min 32 chars) |
+| `AUTH_COOKIE_SECURE` | ❌ | `false` drops the `Secure` flag from auth cookies (browser reaches the app over plain HTTP, e.g. LAN/home server) |
 | `NEXT_PUBLIC_AUTH_PROVIDER` | ❌ | `local` (default) or `oidc` |
 | `OIDC_ISSUER` / `OIDC_CLIENT_ID` / `OIDC_CLIENT_SECRET` | ❌ | OIDC SSO (required when `oidc`) |
 | `OIDC_ROLE_CLAIM` / `OIDC_ADMIN_ROLES` / `OIDC_SCOPE` | ❌ | OIDC role mapping & scope |

@@ -57,6 +57,47 @@ export async function getSession() {
 /** Hosts whose traffic never leaves the machine (port is stripped before the check). */
 const LOOPBACK_HOSTNAMES = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
 
+const COOKIE_SECURE_OFF = new Set(["off", "false", "0"]);
+const COOKIE_SECURE_ON = new Set(["on", "true", "1"]);
+
+// Hoisted to module scope on one line: bun's line coverage under-counts the
+// continuation lines of a wrapped string, which then reads as uncovered code.
+const COOKIE_SECURE_DISABLED_MESSAGE =
+  "AUTH_COOKIE_SECURE=false: auth cookies drop the Secure flag and travel in cleartext; keep this to trusted networks";
+
+// Weakening the session cookie deserves a line in the log, but shouldMarkCookieSecure()
+// runs on every login, so the notice is latched to fire once per process.
+let cookieSecurityWarned = false;
+
+/** Test seam: clears the warn-once latch so each case observes a fresh process. */
+export function resetCookieSecurityWarning(): void {
+  cookieSecurityWarned = false;
+}
+
+function warnOnce(message: string): void {
+  if (cookieSecurityWarned) return;
+  cookieSecurityWarned = true;
+  logger.warn(message, { route: "auth" });
+}
+
+/**
+ * The operator's explicit AUTH_COOKIE_SECURE answer, or undefined to let the
+ * environment decide. Spellings follow AUTH_BOOTSTRAP ("off"/"false"/"0" and
+ * "on"/"true"/"1", trimmed, case-insensitive); anything else warns and falls
+ * through to the default, so a typo never silently flips the security posture.
+ */
+function readCookieSecureOverride(): boolean | undefined {
+  const raw = process.env.AUTH_COOKIE_SECURE;
+  const normalized = raw?.trim().toLowerCase();
+  if (!normalized) return undefined;
+  if (COOKIE_SECURE_OFF.has(normalized)) return false;
+  if (COOKIE_SECURE_ON.has(normalized)) return true;
+  // Single-line message: bun's line coverage under-counts the continuation
+  // lines of a wrapped call, which then reads as uncovered new code.
+  warnOnce(`Unrecognized AUTH_COOKIE_SECURE value "${raw}"; keeping the default (use "false" for plain HTTP)`);
+  return undefined;
+}
+
 function isLoopbackHost(host: string | null): boolean {
   if (!host) return false;
   // Strip the port, then the brackets of an IPv6 literal ("[::1]:3000" -> "::1").
@@ -68,9 +109,18 @@ function isLoopbackHost(host: string | null): boolean {
 }
 
 /**
- * Whether the session cookie should carry the Secure flag.
+ * Whether an auth cookie should carry the Secure flag.
  *
- * Secure in production, as before, with one exception: a request that arrived on
+ * AUTH_COOKIE_SECURE wins whenever it is set. It is needed when the browser's
+ * own connection is plain http on a host that is not loopback - a LAN or
+ * home-server deployment such as umbrelOS (getumbrel/umbrel-apps#5847), where
+ * the browser rejects the Secure cookie and login silently loops. Only the
+ * operator can state that: no request-scoped signal proves it, and
+ * x-forwarded-proto is attacker-supplied, so trusting it to *drop* the flag
+ * would be a downgrade vector. Note that TLS terminated at an ingress does not
+ * need this - the browser still speaks https, so it accepts a Secure cookie.
+ *
+ * Otherwise: Secure in production, with one exception: a request that arrived on
  * a loopback host over plain http. Marking that cookie Secure protects nothing
  * (the traffic never leaves the machine) and actively breaks the desktop shell,
  * because libsoup - the cookie store behind WebKitGTK - discards a Secure cookie
@@ -78,7 +128,12 @@ function isLoopbackHost(host: string | null): boolean {
  * localhost (issue #232). A proxy that terminated TLS and forwarded to loopback
  * still gets Secure, via x-forwarded-proto.
  */
-async function shouldMarkCookieSecure(): Promise<boolean> {
+export async function shouldMarkCookieSecure(): Promise<boolean> {
+  const override = readCookieSecureOverride();
+  if (override === false && process.env.NODE_ENV === "production") {
+    warnOnce(COOKIE_SECURE_DISABLED_MESSAGE);
+  }
+  if (override !== undefined) return override;
   if (process.env.NODE_ENV !== "production") return false;
   try {
     const headerStore = await headers();

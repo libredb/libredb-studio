@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { getOIDCConfig, discoverProvider, generateAuthUrl, encryptState, getPublicOrigin } from "@/lib/oidc";
+import { shouldMarkCookieSecure } from "@/lib/auth";
 import { logger } from "@/lib/logger";
 
 export async function GET(request: Request) {
@@ -13,12 +14,14 @@ export async function GET(request: Request) {
 
     const { url, state } = await generateAuthUrl(config, redirectUri, oidcConfig.scope);
 
-    // Store PKCE state in signed cookie
+    // Store PKCE state in signed cookie. The Secure flag follows the same rule
+    // as the session cookie: a state cookie the browser drops takes the PKCE
+    // verifier with it, and the callback fails on a missing state.
     const stateCookie = await encryptState(state);
     const cookieStore = await cookies();
     cookieStore.set("oidc-state", stateCookie, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
+      secure: await shouldMarkCookieSecure(),
       sameSite: "lax",
       maxAge: 300, // 5 minutes
       path: "/",

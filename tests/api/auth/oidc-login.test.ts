@@ -93,6 +93,27 @@ describe("GET /api/auth/oidc/login", () => {
     expect(options!.maxAge).toBe(300);
   });
 
+  // The state cookie has to follow the same Secure rule as the session cookie.
+  // If the browser drops it - plain http with a Secure flag - the PKCE verifier
+  // is gone by the time the provider redirects back, and the callback fails on
+  // a missing state instead of logging the user in.
+  test("applies the shared Secure rule to the oidc-state cookie", async () => {
+    for (const [override, expected] of [
+      ["true", true],
+      ["false", false],
+    ] as const) {
+      process.env.AUTH_COOKIE_SECURE = override;
+      mockCookieSet.mockClear();
+      try {
+        await GET(new Request("http://localhost:3000/api/auth/oidc/login"));
+      } finally {
+        delete process.env.AUTH_COOKIE_SECURE;
+      }
+      const [, , options] = mockCookieSet.mock.calls[0];
+      expect(options!.secure).toBe(expected);
+    }
+  });
+
   test("uses correct redirect URI based on request origin", async () => {
     const req = new Request("https://app.example.com/api/auth/oidc/login");
     await GET(req);

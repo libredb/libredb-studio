@@ -630,13 +630,20 @@ export async function login(role: Role, username?: string) {
   const cookieStore = await cookies();
   cookieStore.set('auth-token', token, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
+    secure: await shouldMarkCookieSecure(),
     sameSite: 'lax',
     maxAge: 86400,     // 24 hours
     path: '/',
   });
 }
 ```
+
+`shouldMarkCookieSecure()` also decides the flag on the `oidc-state` cookie, so both cookies of the flow always agree. It resolves in this order:
+
+1. `AUTH_COOKIE_SECURE` when set (`on`/`true`/`1` vs `off`/`false`/`0`) — the operator's explicit answer, needed when the browser itself reaches the app over plain HTTP on a non-loopback host (LAN or home server). TLS terminated at an ingress does not need it: the browser still speaks HTTPS.
+2. Off outside production.
+3. Off for a request that arrived on a loopback host over plain HTTP — WebKitGTK's cookie store discards a `Secure` cookie delivered over HTTP, which would break the desktop shell (issue #232). A proxy that forwarded HTTPS to loopback still gets the flag, via `x-forwarded-proto`.
+4. On otherwise.
 
 The optional `username` parameter was added for OIDC — local login passes the email, while the OIDC callback resolves it through a fallback chain: `claims.email || claims.preferred_username || claims.sub || role` (so a username is always set regardless of which claims the provider returns).
 
