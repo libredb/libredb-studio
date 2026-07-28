@@ -172,6 +172,19 @@
   cursor: pointer;
 }
 
+/*
+ * Disabled counterpart, unlayered for the same reason: the `cursor-default`
+ * utility on these items also outranks the `@layer base` not-allowed rule, so
+ * without this the disabled affordance declared above is silently inert on
+ * exactly the primitives it was written for.
+ */
+[role="menuitem"][aria-disabled="true"],
+[role="menuitemcheckbox"][aria-disabled="true"],
+[role="menuitemradio"][aria-disabled="true"],
+[role="option"][aria-disabled="true"] {
+  cursor: not-allowed;
+}
+
 @layer components {
   .glass-panel {
     background-color: rgba(9, 9, 11, 0.5);
