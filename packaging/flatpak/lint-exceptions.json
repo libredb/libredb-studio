@@ -1,0 +1,18 @@
+{
+  "_comment": [
+    "Local/upstream-CI exceptions for flatpak-builder-lint (issue #232).",
+    "Both checks verify that the metainfo's media has been mirrored to Flathub's own CDN,",
+    "which only Flathub's build infrastructure can do: it downloads the screenshots and",
+    "rewrites the catalogue to https://dl.flathub.org/media. A build outside that pipeline",
+    "can pass --mirror-screenshots-url and commit the screenshots ref (both are done here),",
+    "but the URLs still point at github.com, so these two errors always fire.",
+    "This file is NOT the Flathub exception list - it only relaxes our own verification runs.",
+    "Everything else the repo lint reports stays a hard failure."
+  ],
+  "org.libredb.Studio": {
+    "*": {
+      "appstream-external-screenshot-url": "Screenshot mirroring happens in Flathub's build pipeline, not in ours",
+      "appstream-remote-icon-not-mirrored": "Icon mirroring happens in Flathub's build pipeline, not in ours"
+    }
+  }
+}

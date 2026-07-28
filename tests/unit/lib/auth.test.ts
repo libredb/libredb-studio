@@ -14,6 +14,9 @@ let mockDeleteCalls: string[] = [];
 // Module Mocks — only next/headers
 // ============================================================================
 
+let mockRequestHeaders: Record<string, string> = {};
+let mockHeadersThrow: Error | null = null;
+
 mock.module("next/headers", () => ({
   cookies: async () => ({
     get: (name: string) => mockCookieStore[name],
@@ -26,6 +29,10 @@ mock.module("next/headers", () => ({
       delete mockCookieStore[name];
     },
   }),
+  headers: async () => {
+    if (mockHeadersThrow) throw mockHeadersThrow;
+    return { get: (name: string) => mockRequestHeaders[name.toLowerCase()] ?? null };
+  },
 }));
 
 // ============================================================================
@@ -43,6 +50,8 @@ describe("auth", () => {
     mockCookieStore = {};
     mockSetCalls = [];
     mockDeleteCalls = [];
+    mockRequestHeaders = {};
+    mockHeadersThrow = null;
   });
 
   // --------------------------------------------------------------------------
@@ -146,6 +155,75 @@ describe("auth", () => {
       const token = mockSetCalls[0].value;
       const payload = await verifyJWT(token);
       expect(payload!.role).toBe("user");
+    });
+
+    // The Secure flag is what makes a session survive - or not - in the desktop
+    // shell (issue #232): libsoup, the cookie store behind WebKitGTK, drops a
+    // Secure cookie delivered over http outright, so the loopback session the
+    // desktop app hands off would be discarded on arrival.
+    describe("Secure flag", () => {
+      // NODE_ENV is typed read-only by the Next.js env declarations.
+      const setNodeEnv = (value: string | undefined) => {
+        if (value === undefined) delete (process.env as Record<string, string>).NODE_ENV;
+        else (process.env as Record<string, string>).NODE_ENV = value;
+      };
+
+      const asProduction = async (host: string | undefined, extra: Record<string, string> = {}) => {
+        const previous = process.env.NODE_ENV;
+        setNodeEnv("production");
+        if (host !== undefined) mockRequestHeaders.host = host;
+        Object.assign(mockRequestHeaders, extra);
+        try {
+          await login("admin", "admin");
+        } finally {
+          setNodeEnv(previous);
+        }
+        return (mockSetCalls[0].opts as { secure: boolean }).secure;
+      };
+
+      test("is not set outside production", async () => {
+        mockRequestHeaders.host = "studio.example.com";
+        await login("admin", "admin");
+        expect((mockSetCalls[0].opts as { secure: boolean }).secure).toBe(false);
+      });
+
+      test("is set for a public host in production", async () => {
+        expect(await asProduction("studio.example.com")).toBe(true);
+      });
+
+      test("is set when the host header is missing", async () => {
+        expect(await asProduction(undefined)).toBe(true);
+      });
+
+      test("is not set for a loopback host", async () => {
+        expect(await asProduction("127.0.0.1:41234")).toBe(false);
+        mockSetCalls = [];
+        expect(await asProduction("localhost:3000")).toBe(false);
+        mockSetCalls = [];
+        expect(await asProduction("[::1]:3000")).toBe(false);
+        mockSetCalls = [];
+        expect(await asProduction("LOCALHOST")).toBe(false);
+      });
+
+      test("stays set when a proxy forwarded an https request to loopback", async () => {
+        expect(await asProduction("localhost:3000", { "x-forwarded-proto": "https, http" })).toBe(true);
+      });
+
+      test("is not set when a proxy forwarded plain http to loopback", async () => {
+        expect(await asProduction("localhost:3000", { "x-forwarded-proto": "http" })).toBe(false);
+      });
+
+      test("falls back to production defaults when headers are unavailable", async () => {
+        const previous = process.env.NODE_ENV;
+        setNodeEnv("production");
+        mockHeadersThrow = new Error("headers() called outside a request scope");
+        try {
+          await login("admin", "admin");
+        } finally {
+          setNodeEnv(previous);
+        }
+        expect((mockSetCalls[0].opts as { secure: boolean }).secure).toBe(true);
+      });
     });
   });
 

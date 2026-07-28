@@ -223,8 +223,9 @@ The test instance comes with a pre-configured PostgreSQL database via [Seed Conn
   | **winget (Windows)** | `winget install LibreDB.Studio` | Portable zip with a bundled Node.js runtime; run `libredb-studio` — CI automation ready; first community listing under review ([#114](https://github.com/libredb/libredb-studio/issues/114)) |
   | **Chocolatey (Windows)** | `choco install libredb-studio` | Same standalone zip — CI push ready; first push awaits community moderation ([#114](https://github.com/libredb/libredb-studio/issues/114)) |
   | **Portable zip (Windows)** | `.\libredb-studio.exe` | Download from [GitHub Releases](https://github.com/libredb/libredb-studio/releases); bundled Node runtime, no package manager needed |
+  | **Desktop app (Linux)** | `chmod +x libredb-studio-desktop-<version>-linux-x64.AppImage && ./libredb-studio-desktop-<version>-linux-x64.AppImage` | Native window, no browser tab and no login prompt; the server runs as a local sidecar. Flathub listing is in submission ([#232](https://github.com/libredb/libredb-studio/issues/232)) |
 
-  > Homebrew, deb/rpm, Snap, the Windows portable zip, winget/Chocolatey, and the npx launcher consume standalone artifacts attached to each GitHub release. Full per-channel guide — commands, configuration, systemd usage, and the Docker image tag model — in [`docs/DISTRIBUTION.md`](docs/DISTRIBUTION.md).
+  > Homebrew, deb/rpm, Snap, the Windows portable zip, winget/Chocolatey, the desktop AppImage, and the npx launcher consume standalone artifacts attached to each GitHub release. Full per-channel guide — commands, configuration, systemd usage, and the Docker image tag model — in [`docs/DISTRIBUTION.md`](docs/DISTRIBUTION.md).
 
   ### Quick Start (Docker)
 

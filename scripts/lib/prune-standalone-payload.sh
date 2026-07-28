@@ -55,6 +55,7 @@ PRUNE_LIST=(
   charts
   conductor
   deploy
+  desktop
   docker
   docs
   e2e

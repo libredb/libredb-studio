@@ -442,3 +442,22 @@ channels:
       note: win32 zip ships in every release since 0.9.59. CI packs and pushes via the choco
         container (CHOCO_API_KEY gate); the first push (0.9.59) is in human moderation. Flip to
         live and add a community-API pin once approved.
+
+  - id: flathub
+    name: Flathub community catalog (org.libredb.Studio)
+    status: pending
+    tier: 4
+    kind: package-manager
+    update:
+      method: upstream_pr
+      sla: every_release
+    links:
+      tracking_issue: https://github.com/libredb/libredb-studio/issues/232
+      upstream_repo: https://github.com/flathub/flathub
+      docs: packaging/flatpak/README.md
+    pin:
+      strategy: none
+      note: Desktop AppImage ships in every release from the desktop-appimage job; the manifest
+        template lives in packaging/flatpak and repacks that asset. Version bumps land as
+        External Data Checker PRs in flathub/org.libredb.Studio and are merged by hand. Flip to
+        live and add a pin once the first submission against flathub/flathub merges.

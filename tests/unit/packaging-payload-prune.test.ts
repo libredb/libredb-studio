@@ -45,6 +45,10 @@ const EXTRA_DIRS = [
   "conductor",
   "coverage",
   "deploy",
+  // The desktop shell's Tauri project - and, on a local build, its Rust target
+  // directory and the payload it stages for bundling (issue #232). Tracing it in
+  // would make the release tarball grow by a gigabyte.
+  "desktop",
   "dist",
   "docker",
   "docs",

@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>LibreDB Studio</title>
+    <!--
+      Splash screen shown while the bundled server boots. The shell replaces it
+      by navigating the webview to the served app once GET /api/db/health
+      answers 200; on failure it calls window.__libredbDesktopFailure with the
+      reason and the tail of the server log. Everything is inline: the webview
+      must render this with no network and no bundler.
+    -->
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #ffffff;
+        --fg: #0a0a0a;
+        --muted: #71717a;
+        --border: #e4e4e7;
+        --surface: #fafafa;
+        --brand-from: #4f46e5;
+        --brand-to: #9333ea;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #09090b;
+          --fg: #fafafa;
+          --muted: #a1a1aa;
+          --border: #27272a;
+          --surface: #111113;
+        }
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+      }
+      body {
+        display: grid;
+        place-items: center;
+        padding: 32px;
+        background: var(--bg);
+        color: var(--fg);
+        font: 14px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+        -webkit-user-select: none;
+        user-select: none;
+      }
+      main {
+        width: 100%;
+        max-width: 560px;
+        text-align: center;
+      }
+      .mark {
+        width: 72px;
+        height: 72px;
+        margin: 0 auto 20px;
+        border-radius: 18px;
+        background: linear-gradient(135deg, var(--brand-from), var(--brand-to));
+        display: grid;
+        place-items: center;
+        color: #fff;
+        font-size: 30px;
+        font-weight: 700;
+        letter-spacing: -0.02em;
+      }
+      h1 {
+        margin: 0 0 6px;
+        font-size: 19px;
+        font-weight: 600;
+        letter-spacing: -0.01em;
+      }
+      p {
+        margin: 0;
+        color: var(--muted);
+      }
+      .bar {
+        position: relative;
+        width: 176px;
+        height: 3px;
+        margin: 22px auto 0;
+        border-radius: 999px;
+        background: var(--border);
+        overflow: hidden;
+      }
+      .bar::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        width: 40%;
+        border-radius: 999px;
+        background: linear-gradient(90deg, var(--brand-from), var(--brand-to));
+        animation: slide 1.25s ease-in-out infinite;
+      }
+      @keyframes slide {
+        0% {
+          transform: translateX(-100%);
+        }
+        100% {
+          transform: translateX(250%);
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .bar::after {
+          animation: none;
+          width: 100%;
+        }
+      }
+      #failure {
+        display: none;
+        text-align: left;
+      }
+      #failure h1 {
+        text-align: center;
+      }
+      #failure-summary {
+        margin: 0 0 16px;
+        text-align: center;
+      }
+      #failure-detail {
+        max-height: 240px;
+        margin: 0;
+        padding: 12px 14px;
+        overflow: auto;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: var(--surface);
+        color: var(--muted);
+        font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+        font-size: 12px;
+        line-height: 1.5;
+        white-space: pre-wrap;
+        -webkit-user-select: text;
+        user-select: text;
+      }
+      .hint {
+        margin-top: 14px;
+        font-size: 12.5px;
+      }
+      .hint a {
+        color: inherit;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div id="booting">
+        <div class="mark" aria-hidden="true">L</div>
+        <h1>Starting LibreDB Studio</h1>
+        <p>Bringing up the local database workspace&hellip;</p>
+        <div class="bar" role="progressbar" aria-label="Starting LibreDB Studio"></div>
+      </div>
+
+      <div id="failure">
+        <div class="mark" aria-hidden="true">!</div>
+        <h1>LibreDB Studio could not start</h1>
+        <p id="failure-summary"></p>
+        <pre id="failure-detail" tabindex="0"></pre>
+        <p class="hint">
+          Report this with the log above at
+          <a href="https://github.com/libredb/libredb-studio/issues">github.com/libredb/libredb-studio/issues</a>.
+        </p>
+      </div>
+    </main>
+
+    <script>
+      // Called from Rust (see failure_script in src-tauri/src/lib.rs).
+      window.__libredbDesktopFailure = function (summary, detail) {
+        document.getElementById("booting").style.display = "none";
+        document.getElementById("failure-summary").textContent = summary || "";
+        document.getElementById("failure-detail").textContent = detail || "(no server output was captured)";
+        document.getElementById("failure").style.display = "block";
+      };
+    </script>
+  </body>
+</html>

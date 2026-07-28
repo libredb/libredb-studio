@@ -7,9 +7,23 @@ const eslintConfig = defineConfig([
   ...nextCoreWebVitals,
   ...nextTypescript,
   // snap-payload/ is the local snap-build scratch dir (see snap/snapcraft.yaml);
+  // desktop/src-tauri/{payload,target,bin}/ are the same kind of scratch for the
+  // desktop AppImage build (scripts/build-desktop-appimage.sh stages the whole
+  // standalone payload, node_modules included, in there);
   // .claude/ holds agent worktrees whose checkouts (and .next build output)
   // must not be linted from this checkout
-  globalIgnores([".next/**", "out/**", "build/**", "dist/**", "snap-payload/**", ".claude/**", "next-env.d.ts"]),
+  globalIgnores([
+    ".next/**",
+    "out/**",
+    "build/**",
+    "dist/**",
+    "snap-payload/**",
+    "desktop/src-tauri/payload/**",
+    "desktop/src-tauri/target/**",
+    "desktop/src-tauri/bin/**",
+    ".claude/**",
+    "next-env.d.ts",
+  ]),
   {
     rules: {
       "@typescript-eslint/no-explicit-any": "warn",

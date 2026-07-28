@@ -1,7 +1,26 @@
 # Desktop Wrapper Spike: Recommendation
 
-Deliverable for issue #115 (part of the distribution-channels epic #108). This is a written
-recommendation only: no store submissions, no build scaffolding in the repo yet.
+Deliverable for issue #115 (part of the distribution-channels epic #108). This was a written
+recommendation only: no store submissions, no build scaffolding in the repo.
+
+## Status
+
+The Linux half of this recommendation is implemented (issue #232). Follow-ups 1, 3 and 4 below are
+done for Linux: the Tauri v2 shell lives in [`desktop/`](../desktop/README.md), release CI attaches
+a desktop AppImage per architecture, and [`packaging/flatpak/`](../packaging/flatpak/README.md)
+repacks that AppImage for Flathub (the submission PR itself is a manual step). Follow-up 2 shipped
+with #114. Two decisions changed during implementation, both recorded where they apply:
+
+- **Flathub builds by repacking the release AppImage**, not from vendored cargo/npm sources - one
+  build pipeline, the same bytes as every other channel. The trade-off is discussed in
+  `packaging/flatpak/README.md`.
+- **The auth handoff uses the password the server persists**, not a one-shot password injected per
+  launch. Reusing the zero-config bootstrap file (#109) means no new secret-handling code, stable
+  sessions across restarts, and a documented fallback if the handoff fails. See
+  `desktop/README.md`.
+
+Still open, all needing paid signing identities: macOS `.dmg` plus brew cask, Windows code signing,
+the Microsoft Store MSIX, and the Tauri updater (follow-ups 5 to 8).
 
 ## Recommendation
 
@@ -131,7 +150,7 @@ Per-OS native-module notes:
 | AppImage | Tauri bundler output; attach to GitHub Releases | Yes | No store review; instant win once the wrapper exists |
 | .deb | Tauri bundler can emit one | Already covered | Native server .deb/.rpm ship via nfpm (`packaging/linux`, systemd service). Keep the server .deb canonical; a wrapper .deb would be a separate GUI package (e.g. `libredb-studio-desktop`) to avoid conflict |
 | .dmg / .app | Tauri bundler; Apple signing + notarization for a usable install | Yes | Unsigned dmg triggers "damaged/unverified" Gatekeeper flows; effectively requires the Apple Developer Program |
-| Flathub | Flatpak manifest; offline build with vendored cargo/npm sources; GUI app required | Yes | Free; review is technical, not commercial. Flathub rejects headless server apps, which is why the snap (a server daemon; store publish is wired in release CI but gated on `SNAPCRAFT_STORE_CREDENTIALS`) cannot be reused here |
+| Flathub | Flatpak manifest; GUI app required | Yes | Free; review is technical, not commercial. Flathub rejects headless server apps, which is why the snap (a server daemon; store publish is wired in release CI but gated on `SNAPCRAFT_STORE_CREDENTIALS`) cannot be reused here. **As implemented (#232) the manifest repacks the release AppImage** rather than doing an offline vendored build - see `packaging/flatpak/README.md` |
 | MSI / MSIX (Microsoft Store) | Tauri emits NSIS .exe and MSI (WiX); MSIX for the Store is a separate packaging step on top | Yes | Store distribution: Microsoft signs the MSIX, no own cert needed; direct-download MSI/NSIS needs code signing to avoid SmartScreen warnings |
 | brew cask | A notarized .dmg/.app plus a cask formula (own tap first, `homebrew/cask` once notable) | Yes | Complements the server formula that release CI renders and pushes to `libredb/homebrew-tap` (brew services; gated on `TAP_GITHUB_TOKEN`); cask is the GUI companion |
 

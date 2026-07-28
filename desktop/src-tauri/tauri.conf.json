@@ -1,0 +1,50 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "libredb-studio-desktop",
+  "version": "../../package.json",
+  "identifier": "org.libredb.Studio",
+  "build": {
+    "frontendDist": "../src"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "LibreDB Studio",
+        "url": "index.html",
+        "width": 1440,
+        "height": 900,
+        "minWidth": 960,
+        "minHeight": 620,
+        "resizable": true,
+        "center": true
+      }
+    ],
+    "security": {
+      "csp": null
+    },
+    "withGlobalTauri": false
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["appimage"],
+    "category": "DeveloperTool",
+    "shortDescription": "The open-source SQL IDE for cloud-native teams",
+    "longDescription": "LibreDB Studio is an open-source SQL IDE for PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB and Redis, with AI query assistance. The desktop build runs the same server LibreDB Studio ships everywhere else as a local sidecar and keeps all data on this machine.",
+    "homepage": "https://libredb.org",
+    "publisher": "LibreDB",
+    "license": "MIT",
+    "copyright": "Copyright (c) LibreDB",
+    "icon": ["icons/32x32.png", "icons/64x64.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.png"],
+    "externalBin": ["bin/node"],
+    "resources": ["payload"],
+    "linux": {
+      "appimage": {
+        "bundleMediaFramework": false
+      },
+      "deb": {
+        "desktopTemplate": "desktop-entry.hbs"
+      }
+    }
+  }
+}

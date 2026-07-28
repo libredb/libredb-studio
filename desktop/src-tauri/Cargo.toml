@@ -1,0 +1,40 @@
+[package]
+name = "libredb-studio-desktop"
+# Bundle metadata (AppImage file name, .desktop version) comes from
+# tauri.conf.json "version", which points at the repo-root package.json - this
+# crate version is never user-visible and stays fixed.
+version = "0.1.0"
+description = "LibreDB Studio desktop shell"
+authors = ["LibreDB"]
+license = "MIT"
+repository = "https://github.com/libredb/libredb-studio"
+edition = "2021"
+# Floor imposed by the tauri 2.11 dependency tree (darling/serde_with/time).
+rust-version = "1.88"
+publish = false
+
+[lib]
+# The shell logic lives in the library so `cargo test` can exercise it without
+# starting a webview; src/main.rs is a thin entry point.
+name = "libredb_studio_desktop"
+crate-type = ["lib"]
+
+[build-dependencies]
+tauri-build = { version = "2.6.3", features = [] }
+
+[dependencies]
+tauri = { version = "2.11.5", features = [] }
+serde_json = "1.0"
+
+# SIGTERM-then-SIGKILL shutdown and PR_SET_PDEATHSIG (so a killed shell cannot
+# leave an orphaned server holding the storage database open).
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[profile.release]
+# The shell is a thin process manager: optimize for size, not throughput.
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true

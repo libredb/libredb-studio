@@ -93,9 +93,10 @@ Release tags carry **no `v` prefix** (tag `0.9.41` == package.json version). Eac
 | Debian package | `libredb-studio_<version>_<arch>.deb` (+ `.sha256` sidecar) | `amd64`, `arm64` |
 | RPM package | `libredb-studio-<version>.<arch>.rpm` (+ `.sha256` sidecar) | `x86_64`, `aarch64` |
 | Snap | `libredb-studio_<version>_<arch>.snap` | `amd64`, `arm64` (also published to the Snap Store) |
+| Desktop AppImage | `libredb-studio-desktop-<version>-linux-<arch>.AppImage` (+ `.sha256` sidecar) | `x64`, `arm64` (the artifact the Flathub manifest repacks) |
 
-`SHA256SUMS` covers the standalone tarballs and the win32 zip; each `.deb`/`.rpm` ships its own
-per-file `<artifact>.sha256` sidecar instead (the packages are built in a separate job).
+`SHA256SUMS` covers the standalone tarballs and the win32 zip; each `.deb`/`.rpm`/`.AppImage`
+ships its own per-file `<artifact>.sha256` sidecar instead (those are built in separate jobs).
 
 Standalone tarball entries are rooted under a top-level `libredb-studio-<version>/` directory
 (not a tarbomb) - extract with `tar --strip-components=1` (`tar xzf <artifact>
@@ -591,6 +592,69 @@ The zip is flat by design (see [Release artifact naming](#release-artifact-namin
 @libredb/studio` also works on Windows (Node 20.9+): it downloads this zip, verifies it against
 `SHA256SUMS`, and runs the payload with your own Node runtime.
 
+## Desktop app (AppImage, Flathub)
+
+Every other channel on this page ships LibreDB Studio as a server you open in a browser. The
+desktop build ships it as an application window: a Tauri v2 shell starts the same standalone
+server as a local sidecar on a random loopback port, waits for it to become healthy, signs you in
+and shows the workspace. There is no browser tab, no port to remember and no password prompt for
+your own machine. Details of the shell itself are in
+[`desktop/README.md`](../desktop/README.md) (issue
+[#232](https://github.com/libredb/libredb-studio/issues/232)).
+
+State lives in the per-user data directory - `~/.local/share/org.libredb.Studio` for the
+AppImage, `~/.var/app/org.libredb.Studio/data/org.libredb.Studio` under Flatpak - and holds the
+SQLite storage database plus the generated admin credentials (`auth-bootstrap.json`, mode 0600).
+Deleting that directory resets the app.
+
+The session cookie is not marked `Secure` when a request arrives on a loopback host over plain
+http, which is what makes the desktop session work: the cookie store behind WebKitGTK discards
+a `Secure` cookie delivered over http instead of ignoring the flag the way Chromium does on
+localhost. Nothing changes for any other deployment - a request on a public host, or one a
+proxy forwarded with `x-forwarded-proto: https`, still gets `Secure`.
+
+### AppImage
+
+```bash
+# Download the AppImage and its checksum sidecar from the release, verify, run
+curl -fLO https://github.com/libredb/libredb-studio/releases/download/<version>/libredb-studio-desktop-<version>-linux-x64.AppImage
+curl -fLO https://github.com/libredb/libredb-studio/releases/download/<version>/libredb-studio-desktop-<version>-linux-x64.AppImage.sha256
+sha256sum -c libredb-studio-desktop-<version>-linux-x64.AppImage.sha256
+chmod +x libredb-studio-desktop-<version>-linux-x64.AppImage
+./libredb-studio-desktop-<version>-linux-x64.AppImage
+```
+
+The AppImage needs FUSE to mount itself; on a system without it (or in a container), run it with
+`--appimage-extract-and-run`. Built for `x64` and `arm64` against current desktop distributions -
+the server packages (.deb/.rpm, Snap, Docker) remain the path for headless or older systems.
+
+### Flathub
+
+```bash
+flatpak install flathub org.libredb.Studio
+flatpak run org.libredb.Studio
+```
+
+The Flatpak sandbox has network access and no filesystem access. Databases reachable over TCP -
+including a database on the host at `127.0.0.1` - work out of the box; opening local SQLite files
+or connecting through a Unix socket needs an explicit grant, the same trade-off the strictly
+confined Snap makes:
+
+```bash
+# Local Postgres over its unix socket
+flatpak override --user --filesystem=/run/postgresql:ro org.libredb.Studio
+# Local MySQL/MariaDB over its unix socket
+flatpak override --user --filesystem=/var/run/mysqld:ro org.libredb.Studio
+# A directory of SQLite database files
+flatpak override --user --filesystem=~/databases org.libredb.Studio
+# Revert every override
+flatpak override --user --reset org.libredb.Studio
+```
+
+The manifest, the local build flow and the submission checklist live in
+[`packaging/flatpak/README.md`](../packaging/flatpak/README.md). Flathub builds by repacking the
+release AppImage, so the desktop AppImage is a required release asset.
+
 ## Building a standalone payload locally
 
 The single source of truth for the release archives also works locally (Linux and macOS; on
@@ -770,7 +834,7 @@ pin or editing a channel entry is always a human commit.
 | 1 | Packaged formats owned by this repo, CI-published | Helm, Homebrew tap, Snap, .deb/.rpm |
 | 2 | LibreDB-owned copies and listings, bumped by hand | CapRover source/mirror, Railway, Koyeb button, Fly.io config, Render Blueprint |
 | 3 | Upstream community catalogs, bumped via PR | CapRover official, Dokploy, Cosmos, Kubero |
-| 4 | Partner or curated catalogs (not self-serve) | Rancher partner charts, Koyeb catalog, DO, winget |
+| 4 | Partner or curated catalogs (not self-serve) | Rancher partner charts, Koyeb catalog, DO, winget, Chocolatey, Flathub |
 
 **SLAs** (`update.sla`) state how quickly a channel is expected to follow a release:
 `every_release` (bumped as part of releasing), `minor_plus` (bumped for minor releases and
@@ -838,8 +902,16 @@ deliverable (`pin.strategy: local_file` for the version-pinned `fly.toml`; `none
   community catalogs follow the
   [Windows first-listing checklist](#windows-first-listing-checklist) —
   tracked in [issue #114](https://github.com/libredb/libredb-studio/issues/114).
-- **Desktop app**: a native desktop wrapper (Tauri v2 sidecar; unlocks AppImage, Flathub, .dmg,
-  Microsoft Store, brew cask) has a go recommendation —
+- **Flathub first submission**: the desktop shell, the AppImage release job and the Flatpak
+  manifest are in place and verified locally; the one-time submission PR against
+  [flathub/flathub](https://github.com/flathub/flathub) (base branch `new-pr`) and the
+  domain-verification token at `https://libredb.org/.well-known/org.flathub.VerifiedApps.txt`
+  are manual steps — the checklist is in
+  [`packaging/flatpak/README.md`](../packaging/flatpak/README.md), tracked in
+  [issue #232](https://github.com/libredb/libredb-studio/issues/232).
+- **Desktop app, remaining channels**: the Tauri v2 wrapper now ships as an AppImage on Linux
+  (see [Desktop app](#desktop-app-appimage-flathub)). The macOS `.dmg` plus brew cask, the
+  Microsoft Store MSIX and the Tauri updater are still open and need paid signing identities —
   see [`docs/DESKTOP_WRAPPER_SPIKE.md`](DESKTOP_WRAPPER_SPIKE.md).
 
 ### Issue close-out notes
