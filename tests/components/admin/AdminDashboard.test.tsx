@@ -21,9 +21,10 @@ mock.module("next/link", () => ({
   },
 }));
 
-import { describe, test, expect, beforeEach, afterEach, mock as bunMock } from "bun:test";
+import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import { render, fireEvent, waitFor, act, cleanup } from "@testing-library/react";
 
+import { mockGlobalFetch, restoreGlobalFetch } from "../../helpers/mock-fetch";
 import { mockRouterPush, mockRouterRefresh, setMockPathname, resetMockPathname } from "../../helpers/mock-navigation";
 import { mockToastSuccess } from "../../helpers/mock-sonner";
 
@@ -33,6 +34,10 @@ describe("AdminDashboard", () => {
   afterEach(() => {
     cleanup();
     resetMockPathname();
+    // Restore via the shared helper: this file shares a process with the other
+    // admin tests (run-components.sh Group 4), and an un-restored global fetch
+    // leaks into whichever file runs next.
+    restoreGlobalFetch();
   });
 
   beforeEach(() => {
@@ -40,12 +45,7 @@ describe("AdminDashboard", () => {
     mockRouterRefresh.mockClear();
     mockToastSuccess.mockClear();
     setMockPathname("/admin/overview");
-    globalThis.fetch = bunMock(() =>
-      Promise.resolve({
-        ok: true,
-        json: async () => ({ success: true }),
-      }),
-    ) as unknown as typeof fetch;
+    mockGlobalFetch({ "/api/auth/logout": { json: { success: true } } });
   });
 
   test("renders admin dashboard title", async () => {

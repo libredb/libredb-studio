@@ -1,15 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { OverviewTab } from "@/components/admin/tabs/OverviewTab";
-
-interface User {
-  username: string;
-  role: string;
-}
+import { OverviewTab, type AdminUser } from "@/components/admin/tabs/OverviewTab";
 
 export default function AdminOverviewPage() {
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<AdminUser | null>(null);
 
   useEffect(() => {
     fetch("/api/auth/me")

@@ -108,19 +108,26 @@
     font-feature-settings: "rlig" 1, "calt" 1;
   }
 
-  /* Interactive affordance: pointer cursor for clickable / selectable controls */
+  /*
+   * Interactive affordance: pointer cursor for clickable / selectable controls.
+   * Tailwind v4 dropped `cursor: pointer` from the button reset; this is the
+   * restore snippet from Tailwind's own v4 upgrade guide, widened to the ARIA
+   * roles our primitives render.
+   *
+   * Disabled is matched by `aria-disabled="true"` and `data-disabled=""` (the
+   * empty-string form Radix emits) — never by bare `[data-disabled]`, because
+   * cmdk renders `data-disabled="false"` on ENABLED items, which would make
+   * every command-palette row look disabled. shadcn's own command.tsx guards
+   * the same way with `data-[disabled=true]:`.
+   */
   button:not(:disabled):not([aria-disabled="true"]),
-  [role="button"]:not([aria-disabled="true"]):not([data-disabled]),
-  [role="menuitem"]:not([aria-disabled="true"]):not([data-disabled]),
-  [role="menuitemcheckbox"]:not([aria-disabled="true"]):not([data-disabled]),
-  [role="menuitemradio"]:not([aria-disabled="true"]):not([data-disabled]),
-  [role="option"]:not([aria-disabled="true"]):not([data-disabled]),
-  [role="tab"]:not([aria-disabled="true"]):not([data-disabled]),
-  [role="checkbox"]:not([aria-disabled="true"]):not([data-disabled]),
-  [role="radio"]:not([aria-disabled="true"]):not([data-disabled]),
-  [role="switch"]:not([aria-disabled="true"]):not([data-disabled]),
-  [role="combobox"]:not([aria-disabled="true"]):not([data-disabled]),
-  [role="treeitem"]:not([aria-disabled="true"]):not([data-disabled]),
+  [role="button"]:not([aria-disabled="true"]):not([data-disabled=""]),
+  [role="tab"]:not([aria-disabled="true"]):not([data-disabled=""]),
+  [role="checkbox"]:not([aria-disabled="true"]):not([data-disabled=""]),
+  [role="radio"]:not([aria-disabled="true"]):not([data-disabled=""]),
+  [role="switch"]:not([aria-disabled="true"]):not([data-disabled=""]),
+  [role="combobox"]:not([aria-disabled="true"]):not([data-disabled=""]),
+  [role="treeitem"]:not([aria-disabled="true"]):not([data-disabled=""]),
   summary,
   label[for],
   a[href],
@@ -136,11 +143,33 @@
 
   button:disabled,
   [aria-disabled="true"],
-  [data-disabled],
+  [data-disabled=""],
   select:disabled,
   input:disabled {
     cursor: not-allowed;
   }
+}
+
+/*
+ * Menu / listbox item affordance — deliberately UNLAYERED.
+ *
+ * shadcn/ui ships `cursor-default` on every menu, select and command item. That
+ * is a utility-layer class, so any `@layer base` rule loses to it regardless of
+ * specificity (layer order beats specificity). Unlayered declarations outrank
+ * every layer, so this is the only way to override those items without editing
+ * `src/components/ui/**`, which must stay upstream-pure so `shadcn add` re-syncs
+ * cleanly (see .oxlintrc.json and .claude/rules/platform-integration.md).
+ *
+ * Keyed on ARIA roles rather than `data-slot` so it survives upstream renames:
+ * Radix menu items render role="menuitem|menuitemcheckbox|menuitemradio",
+ * Radix Select.Item and cmdk CommandItem render role="option". Both set
+ * `aria-disabled="true"` when disabled, so one guard covers every primitive.
+ */
+[role="menuitem"]:not([aria-disabled="true"]),
+[role="menuitemcheckbox"]:not([aria-disabled="true"]),
+[role="menuitemradio"]:not([aria-disabled="true"]),
+[role="option"]:not([aria-disabled="true"]) {
+  cursor: pointer;
 }
 
 @layer components {

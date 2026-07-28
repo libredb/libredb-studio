@@ -79,7 +79,10 @@ export default function AdminDashboard({ children }: AdminDashboardProps) {
                   href={adminSectionPath(section)}
                   aria-current={isActive ? "page" : undefined}
                   className={cn(
-                    "flex flex-1 items-center justify-center gap-2 px-3 sm:px-4 h-11 border-b-2 text-xs sm:text-sm cursor-pointer transition-colors",
+                    // whitespace-nowrap keeps the longest labels on one line inside the
+                    // h-11 row; the nav's overflow-x-auto then scrolls instead of wrapping.
+                    "flex flex-1 items-center justify-center gap-2 px-3 sm:px-4 h-11 border-b-2 text-xs sm:text-sm whitespace-nowrap transition-colors",
+                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-400/60",
                     isActive ? "border-blue-400 text-blue-400" : "border-transparent text-zinc-500 hover:text-zinc-300",
                   )}
                 >

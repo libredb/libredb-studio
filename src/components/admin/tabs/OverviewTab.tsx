@@ -179,8 +179,14 @@ function useAnimatedCounter(target: number, duration = 1500) {
 
 // ─── Main Component ──────────────────────────────────────────────────────────
 
+/** Authenticated admin as returned by `/api/auth/me`. */
+export interface AdminUser {
+  username: string;
+  role: string;
+}
+
 interface OverviewTabProps {
-  user: { username: string; role: string } | null;
+  user: AdminUser | null;
 }
 
 export function OverviewTab({ user }: OverviewTabProps) {
@@ -398,7 +404,7 @@ function HeroStatusBanner({
   todayQueries: number;
   yesterdayQueries: number;
   totalDBSize: string;
-  user: { username: string; role: string } | null;
+  user: AdminUser | null;
   fleetLoading: boolean;
   onRefresh: () => void;
 }) {

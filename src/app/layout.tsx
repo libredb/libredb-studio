@@ -25,6 +25,10 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
+    // suppressHydrationWarning is scoped to <html>/<body> only: browser extensions
+    // (Grammarly, dark-mode injectors, ...) mutate attributes on these two elements
+    // before React hydrates. It suppresses attribute/text mismatches on THESE nodes
+    // alone — real hydration bugs inside {children} are still reported.
     <html lang="en" suppressHydrationWarning>
       <body
         suppressHydrationWarning

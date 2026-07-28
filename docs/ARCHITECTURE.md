@@ -201,7 +201,15 @@ src/
 │   │   ├── storage/        # Storage sync API (config, CRUD, migrate)
 │   │   ├── connections/    # managed/ — built-in (seeded) connections listing
 │   │   └── admin/          # Fleet health, audit
-│   ├── admin/              # Admin dashboard (RBAC protected)
+│   ├── admin/              # Admin dashboard (RBAC protected) — layout.tsx renders the
+│   │   │                   #   shell; one route per section, each independently
+│   │   │                   #   linkable/refreshable. `/admin` redirects to the default
+│   │   │                   #   section and maps legacy `?tab=` links (src/lib/admin-sections.ts)
+│   │   ├── overview/       # Fleet health, quick actions
+│   │   ├── operations/     # Maintenance operations
+│   │   ├── monitoring/     # Embedded monitoring dashboard
+│   │   ├── security/       # Data masking, access control
+│   │   └── audit/          # Audit log
 │   ├── monitoring/         # Monitoring dashboard page
 │   └── login/              # Login page
 ├── components/
@@ -212,7 +220,7 @@ src/
 │   ├── sidebar/             # ConnectionsList, ConnectionItem
 │   ├── studio/              # StudioTabBar, QueryToolbar, BottomPanel
 │   ├── results-grid/        # ResultCard, RowDetailSheet, StatsBar
-│   ├── admin/               # AdminDashboard (5 tabs)
+│   ├── admin/               # AdminDashboard shell (5 section routes) + tabs/ panels
 │   ├── monitoring/          # MonitoringDashboard + tabs
 │   ├── schema-explorer/     # SchemaExplorer
 │   └── ui/                  # Shadcn/UI primitives

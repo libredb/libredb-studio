@@ -43,6 +43,13 @@ Platform's `globals.css` must scan ALL studio dist files (tsup creates chunks):
 ```
 Without chunk scanning, responsive/utility classes in chunked components won't generate CSS.
 
+**Studio's `globals.css` is NOT shipped** (`package.json` `files` is `["dist","bin"]`), so anything
+expressed as a global CSS rule instead of a utility class exists in standalone studio only. Platform
+must replicate those rules in its own `globals.css`. Currently that means the cursor-affordance block
+(Tailwind v4 dropped `cursor: pointer` from the button reset) — studio deliberately uses plain
+`<button>` for small icon buttons per the Component Rules above, so without it embedded studio shows
+a text/default cursor on those. Keep this list in sync when adding global rules.
+
 ## Verification Workflow
 
 After any UI change in studio:
