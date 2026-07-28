@@ -156,6 +156,24 @@ channels:
       strategy: none
       note: Built by nfpm from the tag in release-artifacts.yml; nothing to drift.
 
+  - id: appimage
+    name: Desktop AppImage (release assets, x64 + arm64)
+    status: pending
+    tier: 1
+    kind: release-assets
+    update:
+      method: ci_publish
+      sla: every_release
+    links:
+      tracking_issue: https://github.com/libredb/libredb-studio/issues/232
+      first_pr: https://github.com/libredb/libredb-studio/pull/235
+      docs: desktop/README.md
+    pin:
+      strategy: none
+      note: Built per arch by the desktop-appimage job and required by publish-release, so it cannot
+        drift from the tag. Flip to live with the first release that ships it (0.9.59 predates the
+        job). This asset is also what the Flathub manifest repacks.
+
   # ---- Tier 2: LibreDB-owned copies and listings, bumped by hand ----------
 
   - id: caprover-local

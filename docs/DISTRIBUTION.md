@@ -13,6 +13,7 @@ how the release pipeline publishes each channel. For a one-line-per-channel over
 | .deb / .rpm | Debian/Ubuntu and RHEL/Fedora servers (systemd) | [Linux packages (.deb / .rpm)](#linux-packages-deb--rpm) |
 | Snap | Ubuntu and other snapd systems | [Snap](#snap) |
 | Windows (winget / Chocolatey / portable zip) | Windows workstations | [Windows](#windows-winget--chocolatey--portable-zip) |
+| Desktop app (AppImage, Flathub) | Linux desktops - an application window, no browser tab | [Desktop app](#desktop-app-appimage-flathub) |
 
 All non-Docker channels ship or download the same **standalone server payload** (Next.js
 standalone output, started with `node server.js`) built by
@@ -831,7 +832,7 @@ pin or editing a channel entry is always a human commit.
 | Tier | Meaning | Examples |
 |---|---|---|
 | 0 | Core registries, published directly by release CI | GitHub Releases, GHCR, Docker Hub, npm |
-| 1 | Packaged formats owned by this repo, CI-published | Helm, Homebrew tap, Snap, .deb/.rpm |
+| 1 | Packaged formats owned by this repo, CI-published | Helm, Homebrew tap, Snap, .deb/.rpm, desktop AppImage |
 | 2 | LibreDB-owned copies and listings, bumped by hand | CapRover source/mirror, Railway, Koyeb button, Fly.io config, Render Blueprint |
 | 3 | Upstream community catalogs, bumped via PR | CapRover official, Dokploy, Cosmos, Kubero |
 | 4 | Partner or curated catalogs (not self-serve) | Rancher partner charts, Koyeb catalog, DO, winget, Chocolatey, Flathub |
