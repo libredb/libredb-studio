@@ -237,6 +237,55 @@ generated `operator/bundle`) is checked in the Helm Chart Lint job whenever a
 PR touches `operator/`. The operator Makefile derives `VERSION` from
 `package.json`, so there is no fourth hand-maintained version string.
 
+### An FBC release is two upstream PRs
+
+A community-operators-prod release in FBC mode always takes two merges, and
+only the first one is triggered by the bundle:
+
+1. **Bundle PR** — `operators/libredb-studio-operator/<version>/` (a copy of
+   `operator/bundle`) plus `ci.yaml`, `Makefile` and `catalog-templates/`.
+   Merging it runs the release pipeline, which publishes
+   `quay.io/community-operator-pipeline-prod/libredb-studio-operator:<version>`.
+   The operator is released at this point but is in **no** catalog yet, so
+   nothing is installable from the OpenShift console.
+2. **Catalog PR** — the rendered
+   `catalogs/v4.15..v4.22/libredb-studio-operator/catalog.yaml` files, one per
+   OCP version in the `catalog_mapping`. Render them from a fork's checkout:
+
+   ```bash
+   cd operators/libredb-studio-operator
+   make catalogs           # opm alpha render-template, driven by ci.yaml
+   make validate-catalogs  # opm validate; must pass for every mapped version
+   ```
+
+   The renderer applies `--migrate-level bundle-object-to-csv-metadata` only
+   for v4.17+, which is why the pre-4.17 catalogs keep the base64
+   `olm.bundle.object` form and the newer ones do not.
+
+`rh-operator-bundle-bot` opens that second PR by itself (updating both the
+template and the rendered catalogs) **only when the bundle version directory
+carries a `release-config.yaml`**; otherwise the release pipeline just prints
+the manual instructions in its summary comment. 0.9.59 shipped without one, so
+its catalog PR
+([community-operators-prod#10581](https://github.com/redhat-openshift-ecosystem/community-operators-prod/pull/10581))
+was rendered and opened by hand. From 0.9.60 on, include this file in the
+bundle PR as `operators/libredb-studio-operator/<version>/release-config.yaml`:
+
+```yaml
+---
+catalog_templates:
+  - template_name: basic.yaml
+    channels: [alpha]
+    replaces: libredb-studio-operator.v<previous version>
+```
+
+`replaces` wires the new bundle into the update graph and is omitted only for
+a first submission. `version_promotion_strategy` in `ci.yaml` is a separate
+knob (promotion into each *newly added* OpenShift version's catalog) and does
+not substitute for `release-config.yaml`. The operatorhub.io submission
+(k8s-operatorhub/community-operators) has no such second step: its
+bundle-directory PR is the whole listing.
+
 ## npx
 
 Requires Node.js 20.9+ on Linux, macOS (x64 / arm64), or Windows (x64); **Node 24 LTS is the
@@ -761,19 +810,22 @@ deliverable (`pin.strategy: local_file` for the version-pinned `fly.toml`; `none
 
 ### Manual steps still open
 
-- **Operator first image + visibility**: release 0.9.59 predates the
-  operator, so `ghcr.io/libredb/libredb-studio-operator:0.9.59` must be built
-  once by manual `workflow_dispatch` (version `0.9.59`) **from the post-merge
-  `main` commit** — not from `refs/tags/0.9.59`: that tag contains neither
-  `operator/` nor the workflow file (GitHub only dispatches workflows that
-  exist on the chosen ref), while `main` still carries `package.json` 0.9.59,
-  so the workflow's version guard passes and the image wraps the merged
-  operator content. Afterwards the new GHCR package must be flipped to
-  **public** once (Org -> Packages -> libredb-studio-operator -> Package
-  settings) — community catalog CI cannot pull private images. From the next
-  app release on, the tag ref carries the operator and the normal
-  tag-pinned dispatch chain applies. Both steps gate the first OperatorHub
-  submission (#152).
+- **Operator first listings**: the controller image is done —
+  `ghcr.io/libredb/libredb-studio-operator:0.9.59` was built once by manual
+  `workflow_dispatch` from the post-merge `main` commit (the `0.9.59` tag
+  carries neither `operator/` nor the workflow file, and GitHub only dispatches
+  workflows that exist on the chosen ref) and the GHCR package is public, which
+  community catalog CI requires. From 0.9.60 on the tag ref carries the
+  operator and the normal tag-pinned dispatch chain applies. What is still open
+  is upstream: the operatorhub.io bundle PR
+  ([k8s-operatorhub/community-operators#8794](https://github.com/k8s-operatorhub/community-operators/pull/8794))
+  and the OpenShift catalog PR
+  ([community-operators-prod#10581](https://github.com/redhat-openshift-ecosystem/community-operators-prod/pull/10581),
+  the second half of the FBC release whose bundle merged as #10497) both wait
+  on maintainer review. Flip `operatorhub-community` in
+  `distribution/channels.yaml` from `pending` to `live` once the listings are
+  visible, and remember `release-config.yaml` for every later release (see
+  [An FBC release is two upstream PRs](#an-fbc-release-is-two-upstream-prs)).
 - **Snap Store listing screenshots**: the description and icon ship with the snap
   (`snap/snapcraft.yaml`, `public/logo.svg`), but screenshots are a manual upload in the
   Snap Store web UI (https://snapcraft.io/libredb-studio/listing). The snap name is registered

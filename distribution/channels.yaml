@@ -357,7 +357,7 @@ channels:
       files:
         - operator/bundle/manifests/libredb-studio-operator.clusterserviceversion.yaml
       extract: 'libredb-studio-operator:(\d+\.\d+\.\d+)'
-      note: Catalog submissions (k8s-operatorhub + community-operators-prod) start after the operator PR lands; the committed bundle is the source for both, with community-operators-prod contributed in FBC mode (fbc.enabled plus per-OCP-version catalog_mapping in ci.yaml).
+      note: Catalog submissions (k8s-operatorhub + community-operators-prod) start after the operator PR lands; the committed bundle is the source for both, with community-operators-prod contributed in FBC mode (fbc.enabled plus per-OCP-version catalog_mapping in ci.yaml). FBC releases in two upstream PRs - bundle first, then the rendered catalogs - and that second PR is only bot-created when the bundle directory ships a release-config.yaml, so every release must include one.
 
   # ---- Tier 4: partner and curated catalogs (not self-serve) --------------
 
