@@ -1,10 +1,14 @@
+import { GeistMono } from "geist/font/mono";
+// Self-hosted Geist (the `geist` package wraps next/font/local around the woff2
+// files it ships). next/font/google would fetch fonts.googleapis.com at BUILD
+// time, so `next build` failed in offline or egress-restricted environments;
+// the rendered output is identical since Next self-hosts either way. The CSS
+// variable names must stay --font-geist-sans/mono: globals.css maps them to
+// --font-sans/--font-mono.
+import { GeistSans } from "geist/font/sans";
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { Toaster } from "@/components/ui/sonner";
-
-const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
-const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] });
 
 export const metadata: Metadata = {
   title: "LibreDB Studio | Universal Database Editor",
@@ -32,7 +36,7 @@ export default function RootLayout({
     <html lang="en" suppressHydrationWarning>
       <body
         suppressHydrationWarning
-        className={`${geistSans.variable} ${geistMono.variable} antialiased dark font-sans`}
+        className={`${GeistSans.variable} ${GeistMono.variable} antialiased dark font-sans`}
       >
         {children}
         <Toaster position="bottom-right" theme="dark" />

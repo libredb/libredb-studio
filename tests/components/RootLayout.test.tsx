@@ -3,10 +3,13 @@ import { mock } from "bun:test";
 import React from "react";
 import ReactDOMServer from "react-dom/server";
 
-// Mock next/font/google
-mock.module("next/font/google", () => ({
-  Geist: () => ({ variable: "mock-geist-sans", className: "mock-geist-sans" }),
-  Geist_Mono: () => ({ variable: "mock-geist-mono", className: "mock-geist-mono" }),
+// Mock the self-hosted geist fonts (they wrap next/font/local, which only
+// resolves inside a Next build)
+mock.module("geist/font/sans", () => ({
+  GeistSans: { variable: "mock-geist-sans", className: "mock-geist-sans" },
+}));
+mock.module("geist/font/mono", () => ({
+  GeistMono: { variable: "mock-geist-mono", className: "mock-geist-mono" },
 }));
 
 // Mock @/components/ui/sonner directly to avoid sonner/next-themes/lucide-react chain
