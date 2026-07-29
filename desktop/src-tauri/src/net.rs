@@ -40,10 +40,13 @@ pub fn http_status(port: u16, path: &str, timeout: Duration) -> io::Result<u16> 
     let mut stream = TcpStream::connect_timeout(&addr, timeout)?;
     stream.set_read_timeout(Some(timeout))?;
     stream.set_write_timeout(Some(timeout))?;
-    write!(
-        stream,
-        "GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\nAccept: */*\r\n\r\n"
-    )?;
+    // Formatted first, then written once. `write!` on a TcpStream emits one
+    // write() syscall per format fragment, so the request leaves in pieces: a
+    // peer that answers and closes after reading only the first piece resets the
+    // connection, and the later pieces then fail with EPIPE before this function
+    // ever gets to read the status line.
+    let request = format!("GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\nAccept: */*\r\n\r\n");
+    stream.write_all(request.as_bytes())?;
     stream.flush()?;
 
     let mut line = String::new();
@@ -96,10 +99,27 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Read;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
     use std::thread;
+
+    /// Read request lines until the blank line that ends the headers.
+    ///
+    /// A double that answers after a partial read closes with request bytes still
+    /// queued, and the kernel resets such a connection instead of finishing it.
+    /// The client then fails on a write or a read rather than parsing the status
+    /// line it was handed - which is how these tests used to fail on arm64 while
+    /// passing on x86_64, purely on scheduling luck.
+    fn drain_request(stream: &TcpStream) {
+        let mut reader = BufReader::new(stream);
+        let mut line = String::new();
+        while let Ok(read) = reader.read_line(&mut line) {
+            if read == 0 || line == "\r\n" || line == "\n" {
+                return;
+            }
+            line.clear();
+        }
+    }
 
     /// Serve `count` requests with the given status line, then stop.
     fn serve(status: &'static str, count: usize) -> (u16, thread::JoinHandle<()>) {
@@ -108,8 +128,7 @@ mod tests {
         let handle = thread::spawn(move || {
             for _ in 0..count {
                 let Ok((mut stream, _)) = listener.accept() else { return };
-                let mut buf = [0u8; 512];
-                let _ = stream.read(&mut buf);
+                drain_request(&stream);
                 let _ = stream.write_all(format!("{status}\r\nContent-Length: 0\r\n\r\n").as_bytes());
             }
         });
@@ -152,6 +171,53 @@ mod tests {
     fn http_status_errors_when_nothing_listens() {
         let port = pick_free_port().expect("pick");
         assert!(http_status(port, HEALTH_PATH, Duration::from_millis(200)).is_err());
+    }
+
+    /// The server must receive a complete, well-formed request: the blank line
+    /// that ends the headers is what tells a real server to start answering.
+    /// Read to that terminator rather than counting bytes or reads - TCP is free
+    /// to split a write, and asserting otherwise is how a test starts flaking.
+    #[test]
+    fn http_status_sends_a_complete_request() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+        let handle = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept");
+            let mut request = String::new();
+            let mut reader = BufReader::new(stream.try_clone().expect("clone"));
+            let mut line = String::new();
+            while reader.read_line(&mut line).expect("read") > 0 {
+                request.push_str(&line);
+                if line == "\r\n" {
+                    break;
+                }
+                line.clear();
+            }
+            let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n");
+            request
+        });
+        assert_eq!(http_status(port, HEALTH_PATH, Duration::from_secs(2)).ok(), Some(200));
+        let request = handle.join().expect("join");
+        assert_eq!(
+            request,
+            format!("GET /api/db/health HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\nAccept: */*\r\n\r\n")
+        );
+    }
+
+    /// A peer that hangs up without answering must surface as an error, and the
+    /// assertion deliberately does not pin the `ErrorKind`: whether the loser of
+    /// that race sees `ConnectionReset`, `BrokenPipe` or `UnexpectedEof` depends
+    /// on scheduling, and pinning it is what made these tests flake.
+    #[test]
+    fn http_status_errors_when_the_peer_hangs_up_without_answering() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+        let handle = thread::spawn(move || {
+            let Ok((stream, _)) = listener.accept() else { return };
+            drop(stream);
+        });
+        assert!(http_status(port, HEALTH_PATH, Duration::from_secs(2)).is_err());
+        handle.join().expect("join");
     }
 
     #[test]
