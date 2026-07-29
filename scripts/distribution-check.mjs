@@ -26,6 +26,22 @@ const STRATEGIES = ["local_file", "remote_file", "none"];
 const METHODS = ["ci_publish", "commit", "upstream_pr", "manual_ui"];
 const SLAS = ["every_release", "minor_plus", "major_only", "on_demand"];
 
+/**
+ * Channels whose release-CI publish step may be switched off from this file via
+ * `update.ci_enabled`, because they can be unavailable for reasons outside this
+ * repository (a package awaiting community moderation, a listing still under
+ * review) and a channel that cannot publish must not paint a good release run
+ * red.
+ *
+ * The set is deliberately closed and deliberately small. The core release path
+ * - github-release, docker-ghcr, npm, helm - and the assets publish-release
+ * requires (deb/rpm, AppImage, the win32 zip) are absent on purpose: a switch
+ * there would be a way to ship a release with no npm package or no image, and
+ * one mistyped `false` would do it silently. parseChannels rejects the flag
+ * anywhere else, so that invariant is enforced, not merely documented.
+ */
+export const SWITCHABLE_CHANNEL_IDS = new Set(["docker-hub-mirror", "homebrew", "snap", "winget", "chocolatey"]);
+
 function countCaptureGroups(pattern) {
   // Appending an empty alternative makes the regex match the empty string, so
   // exec() always returns: array length - 1 == number of capture groups.
@@ -61,6 +77,18 @@ export function parseChannels(yamlText) {
     if (!SLAS.includes(channel.update.sla)) {
       throw new Error(`${CHANNELS_YAML}: ${id}: update.sla must be one of ${SLAS.join("|")}`);
     }
+    const ciEnabled = channel.update.ci_enabled;
+    if (SWITCHABLE_CHANNEL_IDS.has(id)) {
+      // Required, not defaulted: the release CI's behaviour for these channels
+      // has to be a stated decision in this file, never an omission.
+      if (typeof ciEnabled !== "boolean") {
+        throw new Error(`${CHANNELS_YAML}: ${id}: update.ci_enabled must be true or false`);
+      }
+    } else if (ciEnabled !== undefined) {
+      throw new Error(
+        `${CHANNELS_YAML}: ${id}: update.ci_enabled is only allowed on ${[...SWITCHABLE_CHANNEL_IDS].join(", ")}`,
+      );
+    }
     const pin = channel.pin;
     if (!pin || !STRATEGIES.includes(pin.strategy)) {
       throw new Error(`${CHANNELS_YAML}: ${id}: pin.strategy must be one of ${STRATEGIES.join("|")}`);
@@ -80,6 +108,17 @@ export function parseChannels(yamlText) {
     }
   }
   return doc.channels;
+}
+
+/**
+ * `<name>=<bool>` lines for $GITHUB_OUTPUT, one per switchable channel present.
+ * Dashes become underscores because a GitHub expression cannot dot-access an
+ * output name that contains one.
+ */
+export function ciEnabledOutputs(channels) {
+  return channels
+    .filter((channel) => SWITCHABLE_CHANNEL_IDS.has(channel.id))
+    .map((channel) => `${channel.id.replaceAll("-", "_")}=${channel.update.ci_enabled}`);
 }
 
 /**
@@ -227,6 +266,35 @@ async function main(argv) {
   }
   const root = rootIdx === -1 ? process.cwd() : path.resolve(rootArg);
   const timeoutMs = Number(process.env.DISTRIBUTION_CHECK_TIMEOUT_MS ?? 10_000);
+
+  // The release workflow's automation gates. They answer from the inventory
+  // alone - no package.json read, no network - so a gate check can never fail
+  // for an unrelated reason and take a working channel down with it.
+  const ciOutputs = argv.includes("--ci-outputs");
+  const ciIdx = argv.indexOf("--ci-enabled");
+  const ciId = ciIdx === -1 ? undefined : argv[ciIdx + 1];
+  if (ciIdx !== -1 && (ciId === undefined || ciId.startsWith("--"))) {
+    console.error("ERROR: --ci-enabled requires a channel id");
+    process.exit(2);
+  }
+  if (ciOutputs || ciIdx !== -1) {
+    const inventory = parseChannels(fs.readFileSync(path.join(root, CHANNELS_YAML), "utf8"));
+    if (ciOutputs) {
+      for (const line of ciEnabledOutputs(inventory)) console.log(line);
+      return;
+    }
+    if (!SWITCHABLE_CHANNEL_IDS.has(ciId)) {
+      console.error(`ERROR: '${ciId}' is not a switchable channel (${[...SWITCHABLE_CHANNEL_IDS].join(", ")})`);
+      process.exit(2);
+    }
+    const channel = inventory.find((entry) => entry.id === ciId);
+    if (!channel) {
+      console.error(`ERROR: channel '${ciId}' is not in ${CHANNELS_YAML}`);
+      process.exit(2);
+    }
+    console.log(String(channel.update.ci_enabled));
+    return;
+  }
 
   const pkgVersion = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).version;
   const channels = parseChannels(fs.readFileSync(path.join(root, CHANNELS_YAML), "utf8"));

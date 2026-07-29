@@ -546,11 +546,22 @@ Full variable reference: [`.env.example`](../.env.example). OIDC setup details:
 
 The win32-x64 standalone zip is built and attached to every
 [GitHub release](https://github.com/libredb/libredb-studio/releases) since 0.9.59. The
-winget/Chocolatey CI automation is in place and secret-gated; the first winget listing
+winget/Chocolatey CI automation is in place and gated; the first winget listing
 ([microsoft/winget-pkgs#402985](https://github.com/microsoft/winget-pkgs/pull/402985)) and the
 first Chocolatey push are in community review (see the
 [first-listing checklist](#windows-first-listing-checklist) — track
 [issue #114](https://github.com/libredb/libredb-studio/issues/114)).
+
+> **Both Windows package channels are switched off in the inventory until their reviews clear**
+> (`update.ci_enabled: false` in [`distribution/channels.yaml`](../distribution/channels.yaml) —
+> see [Turning a channel's automation off](#turning-a-channels-automation-off)). Chocolatey is the
+> reason the switch exists: `push.chocolatey.org` answers `403 Forbidden` for *every* version
+> while an account's first submission is unapproved, which failed the 0.9.60 and 0.9.61 release
+> runs even though both releases published correctly. **To re-enable:** set `ci_enabled: true` and
+> flip `status` to `live` in the same edit. The next release publishes the channel; do not
+> re-dispatch `release-artifacts` for an already-published version to backfill the feed, because
+> its asset steps would fight the immutable release — push a back version by hand with the same
+> choco container the job uses if the feed needs it.
 
 ```powershell
 # winget (after the first listing merges in microsoft/winget-pkgs)
@@ -775,11 +786,15 @@ setups still publish the rest:
 | `SNAPCRAFT_STORE_CREDENTIALS` | The entire snap build/publish job (exported via `snapcraft export-login`) | Snap job skipped |
 | `DOCKER_HUB_TOKEN` (+ `DOCKER_HUB_USERNAME` variable) | The Docker Hub mirror push | GHCR-only publish |
 | `CHOCO_API_KEY` | The chocolatey job: `choco pack` + `choco push` to `https://push.chocolatey.org/` (API key of the `libredb` community account) | Chocolatey publish skipped; the win32 zip still attaches to the release |
+| — | Every row above whose channel is switchable also needs `update.ci_enabled: true` in [`distribution/channels.yaml`](../distribution/channels.yaml): the secret says CI *can* publish, the flag says it *should*. See [Turning a channel's automation off](#turning-a-channels-automation-off) | Channel skipped with a notice; the release publishes normally |
 | `WINGETCREATE_GITHUB_TOKEN` | The winget job: `wingetcreate update --submit` PRs to `microsoft/winget-pkgs`. Classic PAT with `public_repo` scope — wingetcreate does not support fine-grained PATs | winget submission skipped |
 
 The chocolatey and winget jobs run strictly **after** `publish-release`: both channels download
-the zip from the release URL, which is public only once the release is published. A failure
-there never blocks the release itself (same trust model as the npm/Docker dispatch chain).
+the zip from the release URL, which is public only once the release is published. A failure there
+never *unpublishes* or blocks the release (same trust model as the npm/Docker dispatch chain) —
+but it does make the workflow run report `failure` overall, which reads as a failed release when
+it was not. That is why a channel known to be unable to publish is switched off in the inventory
+rather than left to fail: the run's colour has to mean something.
 
 By contrast, the `windows-package` job (which builds the win32 zip) **is a hard release gate**,
 exactly like the POSIX build matrix: the zip is on the publish-release required-assets list, so
@@ -861,6 +876,46 @@ channels with `sla: every_release` that are drifted or unmeasurable. Remote cata
 historical PaaS drift. For the Helm chart the enforcement remains the required `chart:check` CI
 gate (#138) — the matrix row is visibility, not a second gate. `--json` emits the rows for
 scripting.
+
+#### Turning a channel's automation off
+
+Some channels can be temporarily unable to publish for reasons outside this repository — a package
+waiting in community moderation, a listing still under review. Left to fail they make a *published*
+release report `failure`, which is worse than not publishing: the run's colour stops meaning
+anything. `update.ci_enabled` in `channels.yaml` is the switch:
+
+```yaml
+  - id: chocolatey
+    update:
+      method: ci_publish
+      sla: every_release
+      ci_enabled: false   # 403 for every version while the first push is in moderation
+```
+
+The release workflow reads it (`distribution-check.mjs --ci-outputs` in the `channels` job, whose
+outputs each channel's availability step consults), so **the edit is the whole switch** — no
+secret to delete, no workflow change, and the decision is reviewable in a diff next to the
+channel's `status` and note. A channel is published only when its flag says `true` *and* its
+secret is present.
+
+Three deliberate constraints:
+
+- **Only optional channels may carry the flag:** `docker-hub-mirror`, `homebrew`, `snap`,
+  `winget`, `chocolatey`. The core release path (`github-release`, `docker-ghcr`, `npm`, `helm`)
+  and the assets `publish-release` requires (`.deb`/`.rpm`, AppImage, the win32 zip) have no
+  switch, because one mistyped `false` there would silently ship a release with no npm package or
+  no image. `parseChannels` **rejects** the flag anywhere else, so this is enforced, not just
+  documented.
+- **It is required, never defaulted,** on those five: CI behaviour for a channel has to be a
+  stated decision in this file, not an omission.
+- **Failure leaves channels off, never the release blocked.** The `channels` job is
+  `continue-on-error`; if it cannot run, its outputs are empty, every gate reads "not true", and
+  the optional channels skip while the release publishes normally. A forgotten re-enable surfaces
+  in the weekly drift table rather than in a broken release.
+
+Do not confuse it with `status`: `status` describes the channel's listing (`appimage` is `pending`
+because its Flathub listing is, while its asset is built and required on every release), whereas
+`ci_enabled` describes only whether release CI may publish it.
 
 **Adding a channel** = one new entry in `channels.yaml` (copy a neighbour of the same tier; the
 schema is validated on every run). Set `links.first_pr` to the PR that landed the listing, and

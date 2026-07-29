@@ -11,6 +11,14 @@
 #   id/name/status/tier/kind  identity; status: live | pending | deprecated
 #   update.method             ci_publish | commit | upstream_pr | manual_ui
 #   update.sla                every_release | minor_plus | major_only | on_demand
+#   update.ci_enabled         REQUIRED on, and allowed ONLY on, the switchable
+#                             channels (docker-hub-mirror, homebrew, snap,
+#                             winget, chocolatey): may release CI publish this
+#                             channel? The release workflow reads it, so turning
+#                             a channel off here is the whole switch - no secret
+#                             to delete, no workflow edit. The core release path
+#                             (github-release, docker-ghcr, npm, helm) and the
+#                             required release assets have no flag on purpose.
 #   links                     tracking_issue / first_pr / last_bump_pr (nullable
 #                             until the first post-listing bump) / catalog /
 #                             upstream_repo / docs
@@ -61,6 +69,7 @@ channels:
     update:
       method: ci_publish
       sla: every_release
+      ci_enabled: true
     links:
       catalog: https://hub.docker.com/r/libredb/libredb-studio
     pin:
@@ -115,6 +124,7 @@ channels:
     update:
       method: ci_publish
       sla: every_release
+      ci_enabled: true
     links:
       tracking_issue: https://github.com/libredb/libredb-studio/issues/111
       first_pr: https://github.com/libredb/libredb-studio/pull/122
@@ -133,6 +143,7 @@ channels:
     update:
       method: ci_publish
       sla: every_release
+      ci_enabled: true
     links:
       tracking_issue: https://github.com/libredb/libredb-studio/issues/113
       first_pr: https://github.com/libredb/libredb-studio/pull/177
@@ -433,6 +444,9 @@ channels:
     update:
       method: ci_publish
       sla: every_release
+      # No listing to update yet: the first submission (winget-pkgs#402985) is
+      # still under review, and wingetcreate update cannot create one.
+      ci_enabled: false
     links:
       tracking_issue: https://github.com/libredb/libredb-studio/issues/114
       upstream_repo: https://github.com/microsoft/winget-pkgs
@@ -451,6 +465,10 @@ channels:
     update:
       method: ci_publish
       sla: every_release
+      # push.chocolatey.org answers 403 for EVERY version while an account's
+      # first submission is unapproved, which failed the 0.9.60 and 0.9.61
+      # release runs after the releases themselves had published fine.
+      ci_enabled: false
     links:
       tracking_issue: https://github.com/libredb/libredb-studio/issues/114
       catalog: https://community.chocolatey.org/packages/libredb-studio
@@ -458,8 +476,8 @@ channels:
     pin:
       strategy: none
       note: win32 zip ships in every release since 0.9.59. CI packs and pushes via the choco
-        container (CHOCO_API_KEY gate); the first push (0.9.59) is in human moderation. Flip to
-        live and add a community-API pin once approved.
+        container (CHOCO_API_KEY gate) once ci_enabled is flipped; the first push (0.9.59) is in
+        human moderation. When approved, set ci_enabled true, flip to live, add a community-API pin.
 
   - id: flathub
     name: Flathub community catalog (org.libredb.Studio)

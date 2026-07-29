@@ -104,6 +104,44 @@ jobs:
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "Version: ${VERSION}"
 
+  channels:
+    # Reads update.ci_enabled out of distribution/channels.yaml so the optional
+    # channels below can be switched off in one reviewable place, without
+    # deleting a secret or editing this workflow. A channel that is known to be
+    # unable to publish (a package in community moderation, a listing still
+    # under review) must not paint a good release run red.
+    #
+    # continue-on-error is the fail-safe: if this job cannot run, its outputs
+    # come out empty, every gate below reads "not true" and the optional
+    # channels skip - the release itself is never blocked by the switchboard.
+    # The weekly distribution:check drift table is what notices a channel that
+    # stopped publishing.
+    name: Resolve channel automation
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    outputs:
+      docker_hub_mirror: ${{ steps.flags.outputs.docker_hub_mirror }}
+      homebrew: ${{ steps.flags.outputs.homebrew }}
+      snap: ${{ steps.flags.outputs.snap }}
+      winget: ${{ steps.flags.outputs.winget }}
+      chocolatey: ${{ steps.flags.outputs.chocolatey }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: "1.3.14"
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Read update.ci_enabled from distribution/channels.yaml
+        id: flags
+        # tee: the resolved switchboard is visible in the log, not just consumed.
+        run: node scripts/distribution-check.mjs --ci-outputs | tee -a "$GITHUB_OUTPUT"
+
   draft:
     # Immutable releases (issue #154): assets can only be attached while the
     # release is a draft. Reuse a hand-written draft when one exists for the
@@ -327,7 +365,7 @@ jobs:
 
   publish:
     name: Attach artifacts to release
-    needs: [guard, build, windows-package, draft]
+    needs: [guard, build, windows-package, draft, channels]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -369,8 +407,15 @@ jobs:
         id: tap
         env:
           TAP_GITHUB_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
+          # Both gates must pass: the secret says CI *can* publish, the
+          # inventory flag says it *should*. Secrets cannot be read in a
+          # job-level if, which is why this stays a step gate.
+          CI_ENABLED: ${{ needs.channels.outputs.homebrew }}
         run: |
-          if [ -n "$TAP_GITHUB_TOKEN" ]; then
+          if [ "$CI_ENABLED" != "true" ]; then
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::homebrew update.ci_enabled is '${CI_ENABLED:-<unresolved>}' in distribution/channels.yaml - skipping the Homebrew tap update"
+          elif [ -n "$TAP_GITHUB_TOKEN" ]; then
             echo "enabled=true" >> "$GITHUB_OUTPUT"
           else
             echo "enabled=false" >> "$GITHUB_OUTPUT"
@@ -641,7 +686,7 @@ jobs:
     # SNAPCRAFT_STORE_CREDENTIALS with the same pattern as Docker Hub in
     # docker-build-push.yml: without the secret every step is skipped and
     # the job succeeds cleanly (secrets are unavailable in job-level if).
-    needs: [guard, build, draft]
+    needs: [guard, build, draft, channels]
     permissions:
       contents: write
     strategy:
@@ -660,8 +705,12 @@ jobs:
         id: snapstore
         env:
           SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+          CI_ENABLED: ${{ needs.channels.outputs.snap }}
         run: |
-          if [ -n "$SNAPCRAFT_STORE_CREDENTIALS" ]; then
+          if [ "$CI_ENABLED" != "true" ]; then
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::snap update.ci_enabled is '${CI_ENABLED:-<unresolved>}' in distribution/channels.yaml - skipping the Snap build and publish"
+          elif [ -n "$SNAPCRAFT_STORE_CREDENTIALS" ]; then
             echo "enabled=true" >> "$GITHUB_OUTPUT"
           else
             echo "enabled=false" >> "$GITHUB_OUTPUT"
@@ -864,17 +913,23 @@ jobs:
     # the release is published: chocolateyinstall.ps1 downloads the zip from
     # the release URL, which only becomes public at publish time (draft
     # assets are not downloadable). Gated on CHOCO_API_KEY with the same
-    # pattern as the snap job; the first push enters human moderation - see
-    # docs/DISTRIBUTION.md ("Windows").
-    needs: [guard, publish-release]
+    # pattern as the snap job, and on update.ci_enabled - push.chocolatey.org
+    # answers 403 for every version while the first submission sits in human
+    # moderation, which failed the 0.9.60 and 0.9.61 runs after both releases
+    # had published fine. See docs/DISTRIBUTION.md ("Windows").
+    needs: [guard, publish-release, channels]
     runs-on: ubuntu-latest
     steps:
       - name: Check Chocolatey availability
         id: choco
         env:
           CHOCO_API_KEY: ${{ secrets.CHOCO_API_KEY }}
+          CI_ENABLED: ${{ needs.channels.outputs.chocolatey }}
         run: |
-          if [ -n "$CHOCO_API_KEY" ]; then
+          if [ "$CI_ENABLED" != "true" ]; then
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::chocolatey update.ci_enabled is '${CI_ENABLED:-<unresolved>}' in distribution/channels.yaml - skipping the Chocolatey publish. Flip it to true once the package clears moderation."
+          elif [ -n "$CHOCO_API_KEY" ]; then
             echo "enabled=true" >> "$GITHUB_OUTPUT"
           else
             echo "enabled=false" >> "$GITHUB_OUTPUT"
@@ -933,7 +988,7 @@ jobs:
     # submission is manual, see docs/DISTRIBUTION.md) or when this version
     # is already in the community repo (wingetcreate has no duplicate-PR
     # detection of its own).
-    needs: [guard, publish-release]
+    needs: [guard, publish-release, channels]
     runs-on: windows-latest
     steps:
       - name: Check winget submission availability
@@ -943,7 +998,13 @@ jobs:
           WINGETCREATE_GITHUB_TOKEN: ${{ secrets.WINGETCREATE_GITHUB_TOKEN }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ needs.guard.outputs.version }}
+          CI_ENABLED: ${{ needs.channels.outputs.winget }}
         run: |
+          if [ "$CI_ENABLED" != "true" ]; then
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::winget update.ci_enabled is '${CI_ENABLED:-<unresolved>}' in distribution/channels.yaml - skipping the winget submission. Flip it to true once the first listing merges."
+            exit 0
+          fi
           if [ -z "$WINGETCREATE_GITHUB_TOKEN" ]; then
             echo "enabled=false" >> "$GITHUB_OUTPUT"
             echo "::notice::WINGETCREATE_GITHUB_TOKEN is not configured - skipping the winget submission"

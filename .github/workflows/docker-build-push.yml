@@ -136,7 +136,16 @@ jobs:
         env:
           DOCKER_HUB_TOKEN: ${{ secrets.DOCKER_HUB_TOKEN }}
         run: |
-          if [ -n "$DOCKER_HUB_TOKEN" ]; then
+          # Two gates: the secret says CI *can* push, update.ci_enabled in
+          # distribution/channels.yaml says it *should*. Read here rather than
+          # in a separate job because this one already has the dependencies
+          # installed - and an unreadable inventory leaves the mirror off
+          # instead of failing the canonical GHCR publish alongside it.
+          ci_enabled=$(node scripts/distribution-check.mjs --ci-enabled docker-hub-mirror 2>/dev/null || echo unresolved)
+          if [ "$ci_enabled" != "true" ]; then
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::docker-hub-mirror update.ci_enabled is '$ci_enabled' in distribution/channels.yaml - skipping the Docker Hub mirror"
+          elif [ -n "$DOCKER_HUB_TOKEN" ]; then
             echo "enabled=true" >> "$GITHUB_OUTPUT"
           else
             echo "enabled=false" >> "$GITHUB_OUTPUT"

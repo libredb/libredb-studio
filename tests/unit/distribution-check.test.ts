@@ -11,6 +11,8 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  SWITCHABLE_CHANNEL_IDS,
+  ciEnabledOutputs,
   evaluateChannel,
   extractPin,
   linkLabel,
@@ -272,6 +274,77 @@ describe("renderTable", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// update.ci_enabled - the release CI's per-channel automation switch
+// ---------------------------------------------------------------------------
+
+function switchableRow(id: string, enabled: boolean): string {
+  return `  - id: ${id}
+    name: ${id} channel
+    status: live
+    tier: 1
+    kind: package-manager
+    update:
+      method: ci_publish
+      sla: every_release
+      ci_enabled: ${enabled}
+    pin:
+      strategy: none
+      note: Publishing is gated on ci_enabled.
+`;
+}
+
+describe("update.ci_enabled", () => {
+  test("the switchable set is exactly the optional channels", () => {
+    // The core release path (github-release, docker-ghcr, npm, helm) and the
+    // required release assets are deliberately absent: a flag there would be a
+    // way to publish a release with no npm package or no image.
+    expect([...SWITCHABLE_CHANNEL_IDS].sort()).toEqual([
+      "chocolatey",
+      "docker-hub-mirror",
+      "homebrew",
+      "snap",
+      "winget",
+    ]);
+  });
+
+  test("accepts a boolean flag on a switchable channel", () => {
+    const channels = parseChannels(channelsYaml(switchableRow("snap", true) + switchableRow("chocolatey", false)));
+    expect(channels[0].update.ci_enabled).toBe(true);
+    expect(channels[1].update.ci_enabled).toBe(false);
+  });
+
+  test("throws when a switchable channel omits the flag", () => {
+    const row = switchableRow("snap", true).replace("      ci_enabled: true\n", "");
+    expect(() => parseChannels(channelsYaml(row))).toThrow(/snap.*ci_enabled/);
+  });
+
+  test("throws when the flag is not a boolean", () => {
+    const row = switchableRow("snap", true).replace("ci_enabled: true", 'ci_enabled: "on"');
+    expect(() => parseChannels(channelsYaml(row))).toThrow(/ci_enabled/);
+  });
+
+  test("throws when the flag appears on a channel that must not be switchable", () => {
+    const row = NONE_ROW.replace("      sla: every_release\n", "      sla: every_release\n      ci_enabled: false\n");
+    expect(() => parseChannels(channelsYaml(row))).toThrow(/npm.*ci_enabled/);
+  });
+
+  test("ciEnabledOutputs emits one GITHUB_OUTPUT line per switchable channel", () => {
+    const channels = parseChannels(
+      channelsYaml(switchableRow("snap", true) + switchableRow("docker-hub-mirror", false) + NONE_ROW),
+    );
+    // Dashes become underscores: a GitHub expression cannot dot-access an
+    // output name containing a dash.
+    expect(ciEnabledOutputs(channels)).toEqual(["snap=true", "docker_hub_mirror=false"]);
+  });
+
+  test("the real inventory declares the flag for every switchable channel", () => {
+    const channels = parseChannels(readFileSync(join(import.meta.dir, "../../distribution/channels.yaml"), "utf8"));
+    const declared = channels.filter((c: { update: { ci_enabled?: boolean } }) => c.update.ci_enabled !== undefined);
+    expect(declared.map((c: { id: string }) => c.id).sort()).toEqual([...SWITCHABLE_CHANNEL_IDS].sort());
+  });
+});
+
 const SCRIPT = join(import.meta.dir, "../../scripts/distribution-check.mjs");
 
 function writeFixture(root: string, pkgVersion: string, channels: string): void {
@@ -381,6 +454,42 @@ describe("CLI (subprocess against temp fixtures)", () => {
     const result = Bun.spawnSync(["node", SCRIPT, "--root"], { stdout: "pipe", stderr: "pipe" });
     expect(result.exitCode).toBe(2);
     expect(result.stderr.toString()).toContain("--root requires");
+  });
+
+  // The release workflow reads these modes; they must answer from the inventory
+  // alone - no package.json, no network - so a gate check cannot fail for an
+  // unrelated reason and take a channel down with it.
+  test("--ci-outputs prints the flag of every switchable channel", () => {
+    const root = mkdtempSync(join(tmpdir(), "dist-check-"));
+    fixtureRoots.push(root);
+    mkdirSync(join(root, "distribution"), { recursive: true });
+    writeFileSync(
+      join(root, "distribution/channels.yaml"),
+      channelsYaml(switchableRow("snap", true) + switchableRow("chocolatey", false)),
+    );
+    const result = runCheck(root, ["--ci-outputs"]);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.toString().trim().split("\n")).toEqual(["snap=true", "chocolatey=false"]);
+  });
+
+  test("--ci-enabled <id> prints the flag alone", () => {
+    const root = makeFixture("0.9.61", channelsYaml(switchableRow("chocolatey", false)));
+    const result = runCheck(root, ["--ci-enabled", "chocolatey"]);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.toString().trim()).toBe("false");
+  });
+
+  test("--ci-enabled rejects a channel that is not switchable", () => {
+    const root = makeFixture("0.9.61", channelsYaml(NONE_ROW));
+    const result = runCheck(root, ["--ci-enabled", "npm"]);
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr.toString()).toContain("npm");
+  });
+
+  test("--ci-enabled with no value exits 2 with usage", () => {
+    const result = Bun.spawnSync(["node", SCRIPT, "--ci-enabled"], { stdout: "pipe", stderr: "pipe" });
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr.toString()).toContain("--ci-enabled requires");
   });
 });
 
