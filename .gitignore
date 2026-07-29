@@ -135,6 +135,14 @@ desktop/src-tauri/bin/
 desktop/src-tauri/gen/schemas/
 *.AppImage
 *.AppImage.sha256
+# Desktop GUI Debian package (issue #241) and the default local output dir.
+# Narrow patterns: the headless server package is libredb-studio_<version>_*.deb
+# and is produced by a different job, but neither belongs in the repo either.
+libredb-studio-desktop_*.deb
+libredb-studio-desktop_*.deb.sha256
+/dist-desktop/
+# scripts/build-flatpark-local.sh working directory
+/build/
 
 # deploy test results
 deploy/rancher/results/

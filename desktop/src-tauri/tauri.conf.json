@@ -27,7 +27,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["appimage"],
+    "targets": ["appimage", "deb"],
     "category": "DeveloperTool",
     "shortDescription": "The open-source SQL IDE for cloud-native teams",
     "longDescription": "LibreDB Studio is an open-source SQL IDE for PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB and Redis, with AI query assistance. The desktop build runs the same server LibreDB Studio ships everywhere else as a local sidecar and keeps all data on this machine.",
@@ -36,7 +36,7 @@
     "license": "MIT",
     "copyright": "Copyright (c) LibreDB",
     "icon": ["icons/32x32.png", "icons/64x64.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.png"],
-    "externalBin": ["bin/node"],
+    "externalBin": ["bin/libredb-studio-node"],
     "resources": ["payload"],
     "linux": {
       "appimage": {

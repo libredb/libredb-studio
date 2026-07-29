@@ -13,7 +13,7 @@ how the release pipeline publishes each channel. For a one-line-per-channel over
 | .deb / .rpm | Debian/Ubuntu and RHEL/Fedora servers (systemd) | [Linux packages (.deb / .rpm)](#linux-packages-deb--rpm) |
 | Snap | Ubuntu and other snapd systems | [Snap](#snap) |
 | Windows (winget / Chocolatey / portable zip) | Windows workstations | [Windows](#windows-winget--chocolatey--portable-zip) |
-| Desktop app (AppImage, Flathub) | Linux desktops - an application window, no browser tab | [Desktop app](#desktop-app-appimage-flathub) |
+| Desktop app (AppImage, .deb, Flathub, FlatPark) | Linux desktops - an application window, no browser tab | [Desktop app](#desktop-app-appimage-debian-package-flathub-flatpark) |
 
 All non-Docker channels ship or download the same **standalone server payload** (Next.js
 standalone output, started with `node server.js`) built by
@@ -95,9 +95,17 @@ Release tags carry **no `v` prefix** (tag `0.9.41` == package.json version). Eac
 | RPM package | `libredb-studio-<version>.<arch>.rpm` (+ `.sha256` sidecar) | `x86_64`, `aarch64` |
 | Snap | `libredb-studio_<version>_<arch>.snap` | `amd64`, `arm64` (also published to the Snap Store) |
 | Desktop AppImage | `libredb-studio-desktop-<version>-linux-<arch>.AppImage` (+ `.sha256` sidecar) | `x64`, `arm64` (the artifact the Flathub manifest repacks) |
+| Desktop Debian package | `libredb-studio-desktop_<version>_<arch>.deb` (+ `.sha256` sidecar) | `amd64`, `arm64` (from 0.9.62; the artifact FlatPark pins as extra-data) |
 
 `SHA256SUMS` covers the standalone tarballs and the win32 zip; each `.deb`/`.rpm`/`.AppImage`
 ships its own per-file `<artifact>.sha256` sidecar instead (those are built in separate jobs).
+
+**Two different `.deb`s ship per release and they are not interchangeable.**
+`libredb-studio_<version>_<arch>.deb` is the headless server: it installs a systemd unit and is
+built by nfpm from `packaging/linux/nfpm.yaml`. `libredb-studio-desktop_<version>_<arch>.deb` is the
+GUI app: a desktop entry, the Tauri shell, the pinned Node sidecar and the server payload, built by
+the Tauri bundler in the same job as the AppImage. Different file names and different dpkg package
+names (`libredb-studio` vs `libredb-studio-desktop`), so both can be installed on one machine.
 
 Standalone tarball entries are rooted under a top-level `libredb-studio-<version>/` directory
 (not a tarbomb) - extract with `tar --strip-components=1` (`tar xzf <artifact>
@@ -611,7 +619,7 @@ The zip is flat by design (see [Release artifact naming](#release-artifact-namin
 @libredb/studio` also works on Windows (Node 20.9+): it downloads this zip, verifies it against
 `SHA256SUMS`, and runs the payload with your own Node runtime.
 
-## Desktop app (AppImage, Flathub)
+## Desktop app (AppImage, Debian package, Flathub, FlatPark)
 
 Every other channel on this page ships LibreDB Studio as a server you open in a browser. The
 desktop build ships it as an application window: a Tauri v2 shell starts the same standalone
@@ -646,6 +654,28 @@ chmod +x libredb-studio-desktop-<version>-linux-x64.AppImage
 The AppImage needs FUSE to mount itself; on a system without it (or in a container), run it with
 `--appimage-extract-and-run`. Built for `x64` and `arm64` against current desktop distributions -
 the server packages (.deb/.rpm, Snap, Docker) remain the path for headless or older systems.
+
+### Debian package (GUI)
+
+```bash
+curl -fLO https://github.com/libredb/libredb-studio/releases/download/<version>/libredb-studio-desktop_<version>_amd64.deb
+curl -fLO https://github.com/libredb/libredb-studio/releases/download/<version>/libredb-studio-desktop_<version>_amd64.deb.sha256
+sha256sum -c libredb-studio-desktop_<version>_amd64.deb.sha256
+sudo apt install ./libredb-studio-desktop_<version>_amd64.deb
+```
+
+Ships from 0.9.62 for `amd64` and `arm64`. Unlike the AppImage it needs no FUSE, integrates with
+the desktop menu on install, and takes `libwebkit2gtk-4.1-0` and `libgtk-3-0` from the distribution
+rather than bundling them - so it is the smaller, better-behaved choice on a Debian or Ubuntu
+desktop, and the older-distro caveat that applies to the AppImage applies here too.
+
+This is **not** the server package. `libredb-studio_<version>_<arch>.deb` installs a systemd
+service; this one installs an application. They have different dpkg package names and can be
+installed side by side.
+
+The bundled Node sidecar is installed as `/usr/bin/libredb-studio-node`, not `/usr/bin/node`:
+that path belongs to the distribution's `nodejs` package and dpkg refuses to let a second package
+claim it.
 
 ### Flathub
 
@@ -973,7 +1003,7 @@ deliverable (`pin.strategy: local_file` for the version-pinned `fly.toml`; `none
   [`packaging/flatpak/README.md`](../packaging/flatpak/README.md), tracked in
   [issue #232](https://github.com/libredb/libredb-studio/issues/232).
 - **Desktop app, remaining channels**: the Tauri v2 wrapper now ships as an AppImage on Linux
-  (see [Desktop app](#desktop-app-appimage-flathub)). The macOS `.dmg` plus brew cask, the
+  (see [Desktop app](#desktop-app-appimage-debian-package-flathub-flatpark)). The macOS `.dmg` plus brew cask, the
   Microsoft Store MSIX and the Tauri updater are still open and need paid signing identities —
   see [`docs/DESKTOP_WRAPPER_SPIKE.md`](DESKTOP_WRAPPER_SPIKE.md).
 

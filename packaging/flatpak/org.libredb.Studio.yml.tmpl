@@ -74,7 +74,22 @@ modules:
       # directory as <exe dir>/../lib/<product name>, hence usr/bin next to
       # usr/lib/libredb-studio-desktop.
       - install -Dm755 squashfs-root/usr/bin/libredb-studio-desktop ${FLATPAK_DEST}/libredb-studio/usr/bin/libredb-studio-desktop
-      - install -Dm755 squashfs-root/usr/bin/node ${FLATPAK_DEST}/libredb-studio/usr/bin/node
+
+      # 0.9.62 renamed the bundled Node sidecar to libredb-studio-node so the
+      # sibling GUI .deb does not claim /usr/bin/node, which the distro nodejs
+      # package owns (issue #241). Either name is accepted so this manifest also
+      # builds against an AppImage from before the rename; the shell probes both
+      # (desktop/src-tauri/src/layout.rs).
+      - |
+        for candidate in libredb-studio-node node; do
+          if [ -f "squashfs-root/usr/bin/$candidate" ]; then
+            install -Dm755 "squashfs-root/usr/bin/$candidate" \
+              "${FLATPAK_DEST}/libredb-studio/usr/bin/$candidate"
+            exit 0
+          fi
+        done
+        echo "no bundled Node sidecar found in the AppImage" >&2
+        exit 1
       - install -d ${FLATPAK_DEST}/libredb-studio/usr/lib
       - cp -r squashfs-root/usr/lib/libredb-studio-desktop ${FLATPAK_DEST}/libredb-studio/usr/lib/libredb-studio-desktop
 

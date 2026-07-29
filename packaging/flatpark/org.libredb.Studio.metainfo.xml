@@ -1,0 +1,139 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  AppStream metainfo for the FlatPark listing (issue #241).
+
+  A sibling of packaging/flatpak/org.libredb.Studio.metainfo.xml, not a copy:
+  the two channels ship different artifacts (FlatPark pins the GUI .deb as
+  extra-data, Flathub repacks the AppImage at build time), so the sandbox notes
+  and the release list differ.
+
+  Installed as ${FLATPAK_ID}.metainfo.xml by packaging/flatpark/org.libredb.Studio.yml.
+  Validated by scripts/build-flatpark-local.sh (appstreamcli validate).
+
+  The newest <release> below must match the version pinned in the manifest's
+  managed extra-data block: FlatPark compares resolve-update.sh's resolved
+  version against this list. Both are provisional until 0.9.62 is tagged - see
+  packaging/flatpark/README.md before opening the upstream PR.
+-->
+<component type="desktop-application">
+  <id>org.libredb.Studio</id>
+  <name>LibreDB Studio</name>
+  <summary>AI-powered SQL IDE for PostgreSQL, MySQL, MongoDB and more</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+
+  <developer id="org.libredb">
+    <name>LibreDB</name>
+  </developer>
+
+  <description>
+    <p>
+      This package is maintained by the LibreDB project itself. It repackages the official
+      upstream desktop build unmodified.
+    </p>
+    <p>
+      LibreDB Studio is an open-source SQL IDE for developers and data teams. The desktop
+      app runs entirely on your machine: it starts a local LibreDB Studio server in the
+      background and shows it in a native window. Nothing is sent to a cloud service.
+    </p>
+    <p>Databases it speaks:</p>
+    <ul>
+      <li>PostgreSQL</li>
+      <li>MySQL and MariaDB</li>
+      <li>SQLite</li>
+      <li>Microsoft SQL Server</li>
+      <li>Oracle Database</li>
+      <li>MongoDB</li>
+      <li>Redis</li>
+    </ul>
+    <p>What you get:</p>
+    <ul>
+      <li>A Monaco-based SQL editor with schema-aware completion and formatting</li>
+      <li>A virtualized results grid built for large result sets, with CSV and JSON export</li>
+      <li>Schema browser, entity-relationship diagrams and index advice</li>
+      <li>Query plans, slow-query and session monitoring</li>
+      <li>Optional AI assistance (natural language to SQL, query explanation) using your own API key</li>
+      <li>An embedded sample database, so there is something to query on first launch</li>
+    </ul>
+    <p>
+      Connections are made over TCP, which covers a database running on this machine as well
+      as a remote one, and those need no extra permission. The sandbox has no access to your
+      home directory by default, so the cases that read a path from disk have to be granted
+      once: a SQLite database file with
+      "flatpak override --user --filesystem=/path/to/db.sqlite org.libredb.Studio", a database
+      listening on a Unix socket with "--filesystem=/run/postgresql:ro", and the SSH-tunnel
+      feature with "--filesystem=~/.ssh:ro".
+    </p>
+    <p>
+      Updates arrive through "flatpak update": FlatPark re-pins this package whenever a new
+      LibreDB Studio release is published on GitHub.
+    </p>
+  </description>
+
+  <launchable type="desktop-id">org.libredb.Studio.desktop</launchable>
+
+  <url type="homepage">https://libredb.org</url>
+  <url type="bugtracker">https://github.com/libredb/libredb-studio/issues</url>
+  <url type="vcs-browser">https://github.com/libredb/libredb-studio</url>
+  <url type="help">https://github.com/libredb/libredb-studio/tree/main/docs</url>
+  <url type="contribute">https://github.com/libredb/libredb-studio/blob/main/CONTRIBUTING.md</url>
+
+  <categories>
+    <category>Development</category>
+    <category>Database</category>
+  </categories>
+
+  <keywords>
+    <keyword>SQL</keyword>
+    <keyword>database</keyword>
+    <keyword>PostgreSQL</keyword>
+    <keyword>MySQL</keyword>
+    <keyword>SQLite</keyword>
+    <keyword>MongoDB</keyword>
+    <keyword>Redis</keyword>
+    <keyword>Oracle</keyword>
+    <keyword>IDE</keyword>
+  </keywords>
+
+  <screenshots>
+    <screenshot type="default">
+      <image>https://github.com/libredb/libredb-studio/raw/cb74378ddef24ec543a7b84154fadd8b7e1f8694/public/screenshots/hero-editor.png</image>
+      <caption>Running a query and browsing results in the SQL editor</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://github.com/libredb/libredb-studio/raw/cb74378ddef24ec543a7b84154fadd8b7e1f8694/public/screenshots/connection-modal.png</image>
+      <caption>Adding a database connection</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://github.com/libredb/libredb-studio/raw/cb74378ddef24ec543a7b84154fadd8b7e1f8694/public/screenshots/erd-diagram.png</image>
+      <caption>Entity-relationship diagram of a schema</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://github.com/libredb/libredb-studio/raw/cb74378ddef24ec543a7b84154fadd8b7e1f8694/public/screenshots/nl2sql.png</image>
+      <caption>Turning a question in plain language into SQL</caption>
+    </screenshot>
+  </screenshots>
+
+  <content_rating type="oars-1.1" />
+
+  <releases>
+    <release version="0.9.62" date="2026-07-29">
+      <description>
+        <p>First release with the desktop Debian package this Flatpak repackages.</p>
+      </description>
+      <url type="details">https://github.com/libredb/libredb-studio/releases/tag/0.9.62</url>
+    </release>
+    <release version="0.9.61" date="2026-07-29">
+      <description>
+        <p>Auth cookies can now drop the Secure flag on a deployment the browser reaches over plain HTTP, so a login holds on a trusted local network.</p>
+      </description>
+      <url type="details">https://github.com/libredb/libredb-studio/releases/tag/0.9.61</url>
+    </release>
+    <release version="0.9.60" date="2026-07-28">
+      <description>
+        <p>First release with the desktop application.</p>
+      </description>
+      <url type="details">https://github.com/libredb/libredb-studio/releases/tag/0.9.60</url>
+    </release>
+  </releases>
+</component>

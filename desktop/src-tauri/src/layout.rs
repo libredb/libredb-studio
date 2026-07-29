@@ -47,13 +47,29 @@ impl fmt::Display for MissingPiece {
     }
 }
 
+/// Name the bundled Node runtime ships under.
+///
+/// Namespaced rather than plain `node` because the .deb installs it into the
+/// real `/usr/bin`, where `node` is owned by the distro's `nodejs` package -
+/// `dpkg` refuses to unpack a second package claiming the same path, which
+/// would make the desktop package uninstallable on most developer machines
+/// (issue #241).
+pub const NODE_BIN: &str = "libredb-studio-node";
+
 /// Candidate paths for the bundled Node runtime.
 ///
 /// Tauri strips the target triple from `bundle.externalBin` entries when it
-/// installs them next to the app binary, so the bundled name is plain `node`
-/// while the checked-in file keeps its triple suffix for `tauri dev`.
+/// installs them next to the app binary, so the bundled name is [`NODE_BIN`]
+/// while the checked-in file keeps its triple suffix for `tauri dev`. The plain
+/// `node` names are still probed last: AppImages built before the rename carry
+/// them, and a stale AppDir should degrade to working rather than to a dialog.
 pub fn node_candidates(exe_dir: &Path, resource_dir: &Path, target_triple: &str) -> Vec<PathBuf> {
     vec![
+        exe_dir.join(NODE_BIN),
+        exe_dir.join(format!("{NODE_BIN}-{target_triple}")),
+        resource_dir.join(NODE_BIN),
+        resource_dir.join("bin").join(NODE_BIN),
+        exe_dir.join("bin").join(format!("{NODE_BIN}-{target_triple}")),
         exe_dir.join("node"),
         exe_dir.join(format!("node-{target_triple}")),
         resource_dir.join("node"),
@@ -182,10 +198,48 @@ mod tests {
         let err = resolve_with(Path::new("/app/bin"), Path::new("/app/lib"), TRIPLE, &fake_exists(&[]))
             .expect_err("must fail");
         assert_eq!(err.what, "Node.js runtime");
-        assert_eq!(err.tried.len(), 5);
+        // Five shapes for the current sidecar name, five legacy `node` ones.
+        assert_eq!(err.tried.len(), 10);
         let rendered = err.to_string();
         assert!(rendered.contains("could not locate the bundled Node.js runtime"));
-        assert!(rendered.contains("/app/bin/node-x86_64-unknown-linux-gnu"));
+        assert!(rendered.contains("/app/bin/libredb-studio-node-x86_64-unknown-linux-gnu"));
+    }
+
+    #[test]
+    fn resolves_the_installed_deb_layout_with_the_namespaced_sidecar() {
+        // The .deb installs into the real /usr, where a sidecar called plain
+        // `node` would collide with the distro nodejs package - so it ships as
+        // libredb-studio-node and this is the layout FlatPark's apply_extra
+        // stages under /app/extra (issue #241).
+        let exe_dir = Path::new("/app/extra/usr/bin");
+        let resource_dir = Path::new("/app/extra/usr/lib/libredb-studio-desktop");
+        let layout = resolve_with(
+            exe_dir,
+            resource_dir,
+            TRIPLE,
+            &fake_exists(&[
+                "/app/extra/usr/bin/libredb-studio-node",
+                "/app/extra/usr/lib/libredb-studio-desktop/payload/server.js",
+            ]),
+        )
+        .expect("layout");
+        assert_eq!(layout.node, exe_dir.join("libredb-studio-node"));
+        assert_eq!(layout.payload_dir, resource_dir.join("payload"));
+    }
+
+    #[test]
+    fn the_namespaced_sidecar_wins_over_a_stray_node_next_to_it() {
+        // Belt and braces: an AppDir left over from an older build could still
+        // carry a plain `node`. Prefer the name we now ship.
+        let exe_dir = Path::new("/app/bin");
+        let layout = resolve_with(
+            exe_dir,
+            Path::new("/app/lib"),
+            TRIPLE,
+            &fake_exists(&["/app/bin/node", "/app/bin/libredb-studio-node", "/app/lib/payload/server.js"]),
+        )
+        .expect("layout");
+        assert_eq!(layout.node, exe_dir.join("libredb-studio-node"));
     }
 
     #[test]

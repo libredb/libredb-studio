@@ -15,9 +15,10 @@ name: Release Artifacts
 # chocolatey job pushes the package to the Chocolatey community repository
 # when CHOCO_API_KEY is configured, and the winget job submits an update PR
 # to microsoft/winget-pkgs when WINGETCREATE_GITHUB_TOKEN is configured.
-# The desktop-appimage job turns the linux tarballs into the desktop AppImage
-# (Tauri v2 shell + payload sidecar, issue #232) - the artifact the Flathub
-# manifest in packaging/flatpak/ repacks.
+# The desktop-appimage job turns the linux tarballs into the two desktop
+# artifacts (Tauri v2 shell + payload sidecar, issues #232 and #241): the
+# AppImage the Flathub manifest in packaging/flatpak/ repacks, and the GUI .deb
+# the FlatPark descriptor in packaging/flatpark/ pins as extra-data.
 #
 # DRAFT-FIRST FLOW (issue #154): the repository uses immutable releases, which
 # freeze a release's assets the moment it is published - post-publish uploads
@@ -603,16 +604,19 @@ jobs:
         run: gh release upload "$TAG" pkgs/* --clobber --repo "$GITHUB_REPOSITORY"
 
   desktop-appimage:
-    name: Build desktop AppImage (${{ matrix.arch }})
-    # Turns the linux standalone tarball into the desktop AppImage (issue #232):
-    # the Tauri v2 shell in desktop/ bundles the payload plus the pinned Node
-    # runtime as a sidecar. Built natively per architecture - the shell is a Rust
-    # binary linking the runner's WebKitGTK, so there is no cross-compile path.
+    name: Build desktop AppImage and .deb (${{ matrix.arch }})
+    # Turns the linux standalone tarball into the two desktop artifacts (issues
+    # #232, #241): the Tauri v2 shell in desktop/ bundles the payload plus the
+    # pinned Node runtime as a sidecar, and one bundler run emits both the
+    # AppImage and the GUI .deb. Built natively per architecture - the shell is a
+    # Rust binary linking the runner's WebKitGTK, so there is no cross-compile
+    # path.
     #
-    # A hard release gate (like windows-package, unlike snap): the AppImage needs
-    # no credentials, and the Flathub manifest's update checker resolves this
-    # exact asset name on every release (packaging/flatpak/), so a release
-    # missing it would strand the Flathub channel.
+    # A hard release gate (like windows-package, unlike snap): neither artifact
+    # needs credentials, and both feed a downstream catalog whose update checker
+    # resolves the exact asset name on every release - the AppImage for Flathub
+    # (packaging/flatpak/) and the .deb for FlatPark (packaging/flatpark/) - so a
+    # release missing either would strand that channel.
     needs: [guard, build, draft]
     runs-on: ${{ matrix.runner }}
     permissions:
@@ -661,20 +665,25 @@ jobs:
           name: standalone-linux-${{ matrix.arch }}
           path: dist
 
-      - name: Build AppImage and smoke test the bundled server
+      - name: Build the AppImage and GUI .deb, and smoke test the bundled server
         env:
           VERSION: ${{ needs.guard.outputs.version }}
           ARCH: ${{ matrix.arch }}
+        # dist-desktop, never desktop: the latter is the checked-out Tauri source
+        # tree, and the upload glob below would then hand gh the repo's own
+        # README.md and src/ directories.
         run: |
-          bash scripts/build-desktop-appimage.sh appimage \
+          bash scripts/build-desktop-appimage.sh dist-desktop \
             --payload "dist/libredb-studio-standalone-${VERSION}-linux-${ARCH}.tar.gz" \
             --smoke
 
-      - name: Upload AppImage to GitHub release
+      - name: Upload the desktop artifacts to the GitHub release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ needs.guard.outputs.version }}
-        run: gh release upload "$TAG" appimage/* --clobber --repo "$GITHUB_REPOSITORY"
+        # Both artifacts plus their .sha256 sidecars, and nothing else, land in
+        # dist-desktop/ - the script writes only those four files there.
+        run: gh release upload "$TAG" dist-desktop/* --clobber --repo "$GITHUB_REPOSITORY"
 
   snap:
     name: Build and publish Snap (${{ matrix.arch }})
@@ -844,7 +853,11 @@ jobs:
             "libredb-studio-desktop-${TAG}-linux-x64.AppImage" \
             "libredb-studio-desktop-${TAG}-linux-x64.AppImage.sha256" \
             "libredb-studio-desktop-${TAG}-linux-arm64.AppImage" \
-            "libredb-studio-desktop-${TAG}-linux-arm64.AppImage.sha256"; do
+            "libredb-studio-desktop-${TAG}-linux-arm64.AppImage.sha256" \
+            "libredb-studio-desktop_${TAG}_amd64.deb" \
+            "libredb-studio-desktop_${TAG}_amd64.deb.sha256" \
+            "libredb-studio-desktop_${TAG}_arm64.deb" \
+            "libredb-studio-desktop_${TAG}_arm64.deb.sha256"; do
             if ! grep -Fqx "$asset" /tmp/assets.txt; then
               echo "::error::draft release '$TAG' is missing required asset '$asset' - refusing to publish an incomplete immutable release"
               missing=1

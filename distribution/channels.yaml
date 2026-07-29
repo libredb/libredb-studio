@@ -168,7 +168,8 @@ channels:
       note: Built by nfpm from the tag in release-artifacts.yml; nothing to drift.
 
   - id: appimage
-    name: Desktop AppImage (release assets, x64 + arm64)
+    # Quoted: an unquoted scalar containing ": " is a YAML mapping, not a string.
+    name: "Desktop app (release assets: AppImage and GUI .deb, x64 + arm64)"
     status: pending
     tier: 1
     kind: release-assets
@@ -181,9 +182,11 @@ channels:
       docs: desktop/README.md
     pin:
       strategy: none
-      note: Built per arch by the desktop-appimage job and required by publish-release, so it cannot
-        drift from the tag. Flip to live with the first release that ships it (0.9.59 predates the
-        job). This asset is also what the Flathub manifest repacks.
+      note: Both artifacts come per arch out of the one desktop-appimage job and are required by
+        publish-release, so they cannot drift from the tag. Flip to live with the first release that
+        ships them (0.9.59 predates the job). The AppImage is what the Flathub manifest repacks; the
+        GUI .deb (libredb-studio-desktop_<version>_<arch>.deb, distinct from the headless server
+        package) is what FlatPark pins as extra-data and ships from 0.9.62.
 
   # ---- Tier 2: LibreDB-owned copies and listings, bumped by hand ----------
 
@@ -499,3 +502,27 @@ channels:
         references. Version bumps then land as External Data Checker PRs in
         flathub/org.libredb.Studio and are merged by hand. Flip to live and add a pin once the
         submission merges.
+
+  - id: flatpark
+    name: FlatPark signed Flatpak remote (org.libredb.Studio)
+    status: pending
+    tier: 4
+    kind: package-manager
+    update:
+      method: upstream_pr
+      sla: every_release
+    links:
+      tracking_issue: https://github.com/libredb/libredb-studio/issues/241
+      upstream_repo: https://github.com/flatpark/flatpark
+      catalog: https://flatpark.org/
+      docs: packaging/flatpark/README.md
+    pin:
+      strategy: none
+      note: Repackages the GUI .deb as Flatpak extra-data - the artifact is fetched on the user's
+        machine at install time, not built by FlatPark, and AppImages are not accepted there. The
+        descriptor set is staged in packaging/flatpark and copied into a flatpark/flatpark fork as
+        registry/org.libredb.Studio. Blocked until 0.9.62 publishes the GUI .deb the manifest pins.
+        After the first merge FlatPark's own bot re-pins every release from resolve-update.sh, so
+        the staged copy drifts by design and must stay out of release gates. Sequencing - FlatPark
+        asks that an app not already be on Flathub, so revisit this listing if flathub/flathub#9538
+        is accepted. Flip to live and add a pin once the submission merges.

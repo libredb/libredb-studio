@@ -1,0 +1,24 @@
+#!/bin/sh
+set -eu
+
+# FlatPark entry point for LibreDB Studio (issue #241).
+#
+# The desktop shell is a Tauri (WebKitGTK) binary that apply_extra stages at
+# /app/extra/usr/bin/libredb-studio-desktop. On launch it starts the bundled
+# Node runtime as a sidecar, serving the standalone Next.js payload on a
+# loopback port, and points the webview at it. Every library it links against -
+# webkit2gtk-4.1, gtk-3, libsoup-3 - comes from org.gnome.Platform, and the app
+# declares no tray icon, so the Ayatana appindicator stack is not needed.
+#
+# The whole usr tree is kept because the relative layout is load-bearing: the
+# shell resolves its resources as <exe dir>/../lib/<product name>, so usr/bin
+# must stay next to usr/lib/libredb-studio-desktop.
+#
+# The server writes its SQLite storage and generated credentials under
+# $XDG_DATA_HOME, which Flatpak points at ~/.var/app/org.libredb.Studio/data.
+
+# WebKitGTK's DMABUF renderer paints a blank window under many drivers inside the
+# Flatpak sandbox. Disabling it is the reliable default for a WebKitGTK app.
+export WEBKIT_DISABLE_DMABUF_RENDERER=1
+
+exec /app/extra/usr/bin/libredb-studio-desktop "$@"

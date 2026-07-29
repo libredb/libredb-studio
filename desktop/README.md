@@ -99,10 +99,22 @@ cd desktop/src-tauri && cargo test
 
 ## Packaging
 
-- **AppImage:** `scripts/build-desktop-appimage.sh` produces
-  `libredb-studio-desktop-<version>-linux-<arch>.AppImage` plus a `.sha256`
-  sidecar, and `--smoke` boots the bundled server out of the extracted AppDir
-  (no display needed) to prove the bundle is complete. Release CI runs it per
-  architecture in `.github/workflows/release-artifacts.yml`.
+- **AppImage and GUI .deb:** one `scripts/build-desktop-appimage.sh` run produces
+  both `libredb-studio-desktop-<version>-linux-<arch>.AppImage` and
+  `libredb-studio-desktop_<version>_<debarch>.deb`, each with a `.sha256`
+  sidecar. `--smoke` checks the .deb's layout and boots the bundled server out of
+  the extracted AppDir (no display needed) to prove the bundle is complete.
+  Release CI runs it per architecture in
+  `.github/workflows/release-artifacts.yml`; both artifacts are required release
+  assets. `--deb-only` skips the AppImage, which is the way to build on a host
+  without the linuxdeploy GTK toolchain (`librsvg2-dev` and friends).
+- **The bundled Node sidecar is named `libredb-studio-node`, not `node`.** The
+  .deb installs it into the real `/usr/bin`, where `node` is owned by the distro
+  `nodejs` package and dpkg would refuse the install. `externalBin` in
+  `tauri.conf.json`, `NODE_BIN` in the build script and `NODE_BIN` in
+  `src/layout.rs` all have to agree; `layout.rs` still probes the old name so an
+  AppDir built before the rename keeps working.
 - **Flatpak / Flathub:** [`packaging/flatpak/`](../packaging/flatpak/) repacks
   that AppImage. See its README for the local build and the submission steps.
+- **FlatPark:** [`packaging/flatpark/`](../packaging/flatpark/) pins the GUI .deb
+  as Flatpak extra-data instead, because FlatPark does not accept AppImages.

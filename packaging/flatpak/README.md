@@ -111,3 +111,19 @@ release exists still exercises what Flathub will build. Outputs land in
    truth, Flathub holds the rendered copy. Only Flathub org actions and
    `peter-evans/create-pull-request` may run in that repository, and `flat-manager`
    is never wired from here.
+
+## Not to be confused with packaging/flatpark
+
+[`packaging/flatpark/`](../flatpark/) is a second, independent Flatpak channel
+(issue [#241](https://github.com/libredb/libredb-studio/issues/241)). It targets
+the [FlatPark](https://flatpark.org/) remote, which does not build anything: it
+pins the GUI `.deb` as `extra-data` and the user's own machine downloads and
+unpacks it at install time. Flathub, by contrast, repacks the **AppImage** at
+build time on Flathub's infrastructure. Different artifact, different fetch
+model, different review policy - so the two manifests are deliberately separate
+files rather than one shared template.
+
+One shared constraint: from 0.9.62 the bundled Node sidecar inside the AppImage
+is named `libredb-studio-node` rather than `node` (the GUI `.deb` cannot claim
+`/usr/bin/node`). The manifest template here accepts either name, so it still
+builds against an AppImage from before the rename.

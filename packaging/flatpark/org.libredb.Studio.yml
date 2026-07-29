@@ -1,0 +1,67 @@
+id: org.libredb.Studio
+runtime: org.gnome.Platform
+runtime-version: "50"
+sdk: org.gnome.Sdk
+command: libredb-studio
+separate-locales: false
+build-options:
+  no-debuginfo: true
+finish-args:
+  # Tauri/WebKitGTK SQL IDE. The window is a WebKitGTK view onto a server the
+  # app starts itself on 127.0.0.1, so ipc and the loopback interface are both
+  # in play; dri gives WebKit hardware-accelerated rendering.
+  - --share=ipc
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --device=dri
+  # network is the core function: LibreDB Studio connects to PostgreSQL, MySQL,
+  # SQL Server, Oracle, MongoDB and Redis over TCP, and to an AI provider when
+  # the user configures one with their own API key. It also covers 127.0.0.1,
+  # so a database running on the host is reachable without any filesystem
+  # permission.
+  - --share=network
+  # No --filesystem=home. Connections, query history and the generated
+  # credentials live in the app's own per-app data directory, and every network
+  # database is reached over TCP - including one on the host at 127.0.0.1.
+  #
+  # The two things that DO need a grant, because a SQLite path and a Unix socket
+  # path are typed into the connection form rather than chosen through the
+  # file-chooser portal:
+  #   flatpak override --user --filesystem=/path/to/db.sqlite org.libredb.Studio
+  #   flatpak override --user --filesystem=/run/postgresql:ro org.libredb.Studio
+  # No ~/.ssh either: the SSH-tunnel feature reads private keys, which are too
+  # sensitive to expose unasked. Users who need tunnels can opt in with
+  #   flatpak override --user --filesystem=~/.ssh:ro org.libredb.Studio
+modules:
+  - name: libredb-studio
+    buildsystem: simple
+    build-commands:
+      - install -Dm755 apply_extra.sh /app/bin/apply_extra
+      - install -Dm755 libredb-studio-wrapper /app/bin/libredb-studio
+      - install -Dm644 org.libredb.Studio.desktop /app/share/applications/org.libredb.Studio.desktop
+      - install -Dm644 org.libredb.Studio.metainfo.xml /app/share/metainfo/org.libredb.Studio.metainfo.xml
+      - install -Dm644 org.libredb.Studio.png /app/share/icons/hicolor/256x256/apps/org.libredb.Studio.png
+    sources:
+      # BEGIN MANAGED EXTRA-DATA
+      - type: extra-data
+        filename: libredb-studio-desktop.deb
+        only-arches:
+          - x86_64
+        url: https://github.com/libredb/libredb-studio/releases/download/0.9.62/libredb-studio-desktop_0.9.62_amd64.deb
+        # Placeholder: the GUI .deb first ships in 0.9.62. Replace the digest and
+        # the size together with the published values before opening the
+        # upstream PR - packaging/flatpark/README.md. Quoted because an all-digit
+        # digest would otherwise parse as a number rather than a string.
+        sha256: "0000000000000000000000000000000000000000000000000000000000000000"
+        size: 0
+      # END MANAGED EXTRA-DATA
+      - type: file
+        path: apply_extra.sh
+      - type: file
+        path: libredb-studio-wrapper
+      - type: file
+        path: org.libredb.Studio.desktop
+      - type: file
+        path: org.libredb.Studio.metainfo.xml
+      - type: file
+        path: org.libredb.Studio.png
