@@ -171,6 +171,13 @@ Published by [`.github/workflows/docker-build-push.yml`](../.github/workflows/do
 Use `<version>` or `sha-<commit>` for reproducible deployments; `main` / `dev` are for testing
 unreleased code.
 
+**Architectures:** every tag published from `main`, a release or a manual dispatch is a
+`linux/amd64` + `linux/arm64` manifest. Branch previews (`dev` and the `sha-` tag of a
+`feat/**` / `fix/**` push) are `linux/amd64` only — the build job has no native arm64 runner, so
+arm64 goes through QEMU and dominates the job's runtime; spending that on every commit of an open
+PR buys nothing, since the only consumer of `dev` is the amd64 Channel E2E gate. Pull `main` (or a
+released version) when you need arm64 from an unreleased line.
+
 ## Helm (Kubernetes)
 
 ```bash

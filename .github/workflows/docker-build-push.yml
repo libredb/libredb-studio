@@ -91,7 +91,31 @@ jobs:
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
           echo "Version: ${VERSION}"
 
+      - name: Resolve build platforms
+        id: platforms
+        # arm64 has no native runner in this job, so buildx emulates it through
+        # QEMU: native module compilation in the deps stage plus a full
+        # `next build` run under emulation, which is most of this job's runtime.
+        # A feature-branch push only produces the mutable "dev" tag, consumed by
+        # the amd64 Channel E2E job below and nothing else, so paying for arm64
+        # on every commit of a PR buys nothing. main, releases and manual
+        # dispatches (the release chain) always build the full manifest.
+        # Single source of truth: the QEMU step and the build step below both
+        # read this output, so they cannot drift into "two arches, no emulator".
+        env:
+          # Via env, not inline interpolation: a branch name reaches this step
+          # and git allows characters a shell would reinterpret.
+          EVENT_NAME: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+        run: |
+          if [ "$EVENT_NAME" = "push" ] && [ "$REF" != "refs/heads/main" ]; then
+            echo "list=linux/amd64" >> "$GITHUB_OUTPUT"
+          else
+            echo "list=linux/amd64,linux/arm64" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Set up QEMU for multi-platform builds
+        if: contains(steps.platforms.outputs.list, 'arm64')
         uses: docker/setup-qemu-action@06116385d9baf250c9f4dcb4858b16962ea869c3 # v4.1.0
 
       - name: Set up Docker Buildx
@@ -184,7 +208,7 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          platforms: linux/amd64,linux/arm64
+          platforms: ${{ steps.platforms.outputs.list }}
           build-args: |
             JWT_SECRET_BUILD=build-time-placeholder-secret-32ch
             ADMIN_PASSWORD_BUILD=build
@@ -197,6 +221,7 @@ jobs:
           echo "**Branch:** ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
           echo "**Version:** ${{ steps.extract-version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
           echo "**Docker Hub mirror:** ${{ steps.dockerhub.outputs.enabled }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Platforms:** ${{ steps.platforms.outputs.list }}" >> $GITHUB_STEP_SUMMARY
           echo "**Image:** ${{ steps.image.outputs.name }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Tags:" >> $GITHUB_STEP_SUMMARY

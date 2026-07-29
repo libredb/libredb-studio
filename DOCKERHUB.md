@@ -77,10 +77,10 @@ A ready-to-use, fully-commented compose file is in the repo: [`docker-compose.ex
 |-----|-------------|-----|
 | `latest` | `main` | Latest stable build |
 | `X.Y.Z` | `main` / release | Pin an exact version, e.g. `docker pull libredb/libredb-studio:0.9.16` (recommended for production) |
-| `dev` | `feat/**`, `fix/**` branches | Bleeding-edge / preview |
+| `dev` | `feat/**`, `fix/**` branches | Bleeding-edge / preview (`linux/amd64` only) |
 | `sha-<commit>` | every build | Exact immutable commit |
 
-- **Architectures:** `linux/amd64`, `linux/arm64` (multi-arch manifest).
+- **Architectures:** `linux/amd64` and `linux/arm64` as a multi-arch manifest for `latest`, `X.Y.Z`, `main` and their `sha-` tags. Preview builds from `feat/**` / `fix/**` branches (`dev` and their `sha-` tags) are `linux/amd64` only: CI has no native arm64 runner for this job, so arm64 is emulated, and paying for that on every branch commit is not worth it for an image no arm64 consumer pins.
 - **Primary registry:** `ghcr.io/libredb/libredb-studio` (GitHub Container Registry — no pull rate limits, preferred for Kubernetes/CI). This Docker Hub repository is a convenience mirror for discoverability; both registries serve the identical multi-arch image.
 
 ---
