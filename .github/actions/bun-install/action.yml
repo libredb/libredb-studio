@@ -1,0 +1,38 @@
+name: Install dependencies
+description: A warm Bun dependency cache plus a retrying bun install - the one place every workflow gets both.
+
+# Why a composite action: this repository installs dependencies in 17 places
+# across 7 workflows. `bun install` has no retry, and one failed package
+# download fails the step ("error: Fail extracting tarball for <package>") - on
+# 2026-07-29 that broke three runs in one day, one of them the npm publish of
+# release 0.9.61, which left the release published while npm sat on the previous
+# version. Retry and cache policy belongs in one reviewable place rather than
+# duplicated 17 times, where it would drift immediately.
+#
+# The cache is the other half of the fix: a warm ~/.bun/install/cache means the
+# packages are not fetched at all, removing the exposure instead of retrying
+# through it. A cache miss is not a failure - it just downloads.
+#
+# Deliberately does NOT set up Bun: the caller's existing `Setup Bun` step keeps
+# owning the pinned version, and this action makes no assumption about being
+# adjacent to it. Requires bun on PATH and the repository checked out.
+
+runs:
+  using: composite
+  steps:
+    - name: Restore the Bun dependency cache
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      with:
+        # bun's global package cache - same path on Linux, macOS and Windows.
+        path: ~/.bun/install/cache
+        # Keyed on the lockfile so a dependency change starts a fresh entry;
+        # restore-keys still warms it from the previous lockfile, which is what
+        # keeps a lockfile bump cheap instead of a full cold download.
+        key: bun-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('bun.lock') }}
+        restore-keys: |
+          bun-${{ runner.os }}-${{ runner.arch }}-
+
+    - name: Install dependencies (with retry)
+      shell: bash
+      # Absolute path: some jobs set a working-directory of their own.
+      run: bash "$GITHUB_WORKSPACE/scripts/ci-install.sh"

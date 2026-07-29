@@ -202,6 +202,36 @@ check (`bun run format`), linters (`bun run lint`, i.e. oxlint then ESLint), typ
 hook (`.claude/settings.json`) runs `lint && typecheck && test && build` and now transitively enforces oxlint
 and the type-aware layer via `bun run lint`.
 
+### Dependency installation in CI
+
+Every workflow job installs dependencies through the local composite action
+[`.github/actions/bun-install`](../.github/actions/bun-install/action.yml), never with a bare
+`bun install`:
+
+```yaml
+      - name: Install dependencies
+        uses: ./.github/actions/bun-install
+```
+
+It restores bun's global package cache (`~/.bun/install/cache`, keyed on `bun.lock` with a
+`restore-keys` prefix so a lockfile bump warms from the previous entry) and then runs
+[`scripts/ci-install.sh`](../scripts/ci-install.sh), which retries `bun install --frozen-lockfile`
+with a linear backoff and logs a `::warning::` per failed attempt.
+
+**Why:** `bun install` has no retry of its own, so one failed package download fails the step with
+`error: Fail extracting tarball for <package>`. On 2026-07-29 that broke three runs in a single day
+— two CI runs and the **npm publish of release 0.9.61**, which left the release published on GitHub
+while npm still served the previous version. Nothing was reproducible or code-related; a re-run of
+the same commit passed. The cache is the other half of the fix: warm, the packages are not fetched
+at all, which removes the exposure rather than retrying through it.
+
+The action deliberately does **not** set up Bun — each job's existing `Setup Bun` step keeps owning
+the pinned version, so the action makes no assumption about being adjacent to it. It requires bun on
+`PATH` and the repository checked out. The retry policy lives in one place because there are 17
+install sites across 7 workflows; duplicated, it would drift immediately.
+`tests/unit/ci-install.test.ts` covers the policy against a stub `bun` (first-try success, retry then
+success, exhaustion, custom attempt count, no dead sleep after the final attempt).
+
 ## Rollout order and per-phase gate
 
 1. Biome formatter + `.editorconfig` (one-shot reformat PR).
