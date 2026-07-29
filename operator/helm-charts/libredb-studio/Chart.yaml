@@ -2,8 +2,8 @@ apiVersion: v2
 name: libredb-studio
 description: Web-based SQL IDE for cloud-native teams supporting PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, and Redis
 type: application
-version: 0.1.21
-appVersion: "0.9.60"
+version: 0.1.22
+appVersion: "0.9.61"
 kubeVersion: ">=1.26.0-0"
 home: https://github.com/libredb/libredb-studio
 icon: https://raw.githubusercontent.com/libredb/libredb-studio/main/public/logo.svg
@@ -31,7 +31,7 @@ annotations:
   artifacthub.io/containsSecurityUpdates: "false"
   artifacthub.io/images: |
     - name: libredb-studio
-      image: ghcr.io/libredb/libredb-studio:0.9.60
+      image: ghcr.io/libredb/libredb-studio:0.9.61
       platforms:
         - linux/amd64
         - linux/arm64
@@ -43,9 +43,8 @@ annotations:
     - name: Source
       url: https://github.com/libredb/libredb-studio
   artifacthub.io/changes: |
-    - "OpenShift compatibility - global.compatibility.openshift.adaptSecurityContext (auto/force/disabled, default auto) drops the fixed runAsUser/runAsGroup/fsGroup so pods pass the restricted-v2 SCC; the Bitnami postgresql subchart honours the same value"
-    - "PostgreSQL subchart - default image redirected to docker.io/bitnamilegacy/postgresql after the Bitnami catalog freeze removed the pinned tag from docker.io/bitnami; global.security.allowInsecureImages is set accordingly"
-    - "seedConnections.enabled without inline config or an existing ConfigMap now fails the render instead of shipping a Deployment that mounts a ConfigMap that does not exist"
+    - "Application updated to 0.9.61 - AUTH_COOKIE_SECURE controls the Secure flag on the auth cookies, so a deployment the browser reaches over plain HTTP can hold a session; set it via extraEnv"
+    - "No chart template changes - the rendered manifests are identical to 0.1.21"
 dependencies:
   - name: postgresql
     version: "16.x.x"

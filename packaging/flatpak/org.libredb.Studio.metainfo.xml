@@ -100,6 +100,12 @@
   <content_rating type="oars-1.1" />
 
   <releases>
+    <release version="0.9.61" date="2026-07-29">
+      <description>
+        <p>Auth cookies can now drop the Secure flag on a deployment the browser reaches over plain HTTP, so a login holds on a trusted local network.</p>
+      </description>
+      <url type="details">https://github.com/libredb/libredb-studio/releases/tag/0.9.61</url>
+    </release>
     <release version="0.9.60" date="2026-07-28">
       <description>
         <p>First release with the desktop application: the AppImage this Flatpak repacks.</p>
