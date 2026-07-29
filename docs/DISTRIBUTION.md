@@ -704,6 +704,73 @@ The manifest, the local build flow and the submission checklist live in
 [`packaging/flatpak/README.md`](../packaging/flatpak/README.md). Flathub builds by repacking the
 release AppImage, so the desktop AppImage is a required release asset.
 
+### FlatPark
+
+[FlatPark](https://flatpark.org/) is a second, signed Flatpak remote. **Not live yet** - tracked in
+[#241](https://github.com/libredb/libredb-studio/issues/241); once the listing lands the install
+flow is:
+
+```bash
+flatpak --user remote-add --if-not-exists flatpark https://dl.flatpark.org/flatpark.flatpakrepo
+flatpak --user remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+flatpak --user install flatpark org.libredb.Studio
+```
+
+It differs from Flathub in what it ships and when. Flathub repacks the **AppImage at build time** on
+its own infrastructure; FlatPark pins the **GUI `.deb` as `extra-data`**, so the user's machine
+downloads that exact release asset at install time and unpacks it inside the sandbox. FlatPark does
+not accept AppImages at all - its runtime has no libfuse. Same app id, same sandbox policy, same
+`flatpak override` commands as above.
+
+The two channels are deliberately independent, and FlatPark's guidance is that an app already on
+Flathub should be installed from there - so if the Flathub submission is accepted, revisit whether
+to keep both listings rather than running them silently in parallel.
+
+The descriptor set, the local build flow and the submission checklist live in
+[`packaging/flatpark/README.md`](../packaging/flatpark/README.md).
+
+### Building and running either Flatpak locally
+
+Neither channel needs a published release to test. Both take a locally built artifact:
+
+```bash
+# FlatPark: build the GUI .deb, then the Flatpak that pins it.
+# --deb-only skips the AppImage, so the linuxdeploy GTK toolchain (librsvg2-dev
+# and friends) is not needed.
+gh release download <version> --repo libredb/libredb-studio \
+  --pattern "libredb-studio-standalone-<version>-linux-x64.tar.gz"
+bash scripts/build-desktop-appimage.sh dist-desktop \
+  --payload libredb-studio-standalone-<version>-linux-x64.tar.gz --deb-only --smoke
+bash scripts/build-flatpark-local.sh \
+  dist-desktop/libredb-studio-desktop_<version>_amd64.deb --install
+flatpak run org.libredb.Studio//stable
+
+# Flathub: build the AppImage, then the Flatpak that repacks it.
+bash scripts/build-desktop-appimage.sh dist-desktop --payload <tarball> --smoke
+bash scripts/build-flatpak-local.sh \
+  dist-desktop/libredb-studio-desktop-<version>-linux-x64.AppImage --install
+flatpak run org.libredb.Studio
+```
+
+Drop `--payload` to build the payload from the working tree instead of a released tarball - slower,
+but it tests the code you actually have.
+
+Both need the builder and the runtime the manifests declare:
+
+```bash
+flatpak install -y flathub org.flatpak.Builder org.gnome.Platform//50 org.gnome.Sdk//50
+```
+
+The FlatPark script builds on branch `stable`, so its ref does not collide with a Flathub-style
+local build of the same app id. Note that **both share `~/.var/app/org.libredb.Studio/`** - the app
+id is the same - so deleting that directory resets connections and query history for whichever
+builds you have installed. To remove a local FlatPark build:
+
+```bash
+flatpak --user uninstall -y org.libredb.Studio//stable
+flatpak --user remote-delete libredb-flatpark-local
+```
+
 ## Building a standalone payload locally
 
 The single source of truth for the release archives also works locally (Linux and macOS; on

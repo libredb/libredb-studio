@@ -38,14 +38,49 @@ Different file name *and* different dpkg package name (`libredb-studio-desktop` 
 resolves its resources as `<exe dir>/../lib/<product name>`, so `usr/bin` has to stay next to
 `usr/lib/libredb-studio-desktop`.
 
-## Local verification
+## Build and run it locally
 
-    scripts/build-flatpark-local.sh dist-desktop/libredb-studio-desktop_<version>_amd64.deb --install
+No published release is needed. One-time setup:
+
+    flatpak install -y flathub org.flatpak.Builder org.gnome.Platform//50 org.gnome.Sdk//50
+
+Then two steps - build the artifact, then the Flatpak that pins it:
+
+    # 1. The GUI .deb. --deb-only skips the AppImage, so the linuxdeploy GTK
+    #    toolchain (librsvg2-dev and friends) is not required.
+    gh release download <version> --repo libredb/libredb-studio \
+      --pattern "libredb-studio-standalone-<version>-linux-x64.tar.gz"
+    bash scripts/build-desktop-appimage.sh dist-desktop \
+      --payload libredb-studio-standalone-<version>-linux-x64.tar.gz --deb-only --smoke
+
+    # 2. The Flatpak, then run it.
+    bash scripts/build-flatpark-local.sh \
+      dist-desktop/libredb-studio-desktop_<version>_amd64.deb --install
     flatpak run org.libredb.Studio//stable
+
+Drop `--payload` to build the payload from the working tree instead of a released tarball - slower,
+but it tests the code you actually have. Building the `.deb` still needs bun, node, Rust >= 1.88 and
+the Tauri Linux dependencies listed in [`desktop/README.md`](../../desktop/README.md).
 
 The script serves the local `.deb` over HTTP (extra-data accepts only `http`/`https`, never
 `file://`), rewrites the managed block to point at it with the real digest and size, validates the
-metainfo, builds, and optionally installs into an isolated Flatpak installation.
+metainfo, builds on branch `stable`, and optionally installs. The install step is the one that
+matters most: extra-data is fetched and `apply_extra` runs there, so a successful install is what
+proves the `bsdtar` unpack works - the build alone only proves the manifest parses.
+
+`--installation <name>` targets a named Flatpak installation instead of the per-user one. It must be
+registered in `/etc/flatpak/installations.d`; do **not** improvise isolation with `FLATPAK_USER_DIR`,
+which produces an installation `flatpak-spawn` and the GNOME image decoder cannot see, and the app
+then aborts at startup in a way that looks exactly like a packaging bug.
+
+To remove a local build:
+
+    flatpak --user uninstall -y org.libredb.Studio//stable
+    flatpak --user remote-delete libredb-flatpark-local
+
+`~/.var/app/org.libredb.Studio/` is keyed on the app id, so it is **shared with any other local
+build of this app** (for example the Flathub AppImage repack on a different branch). Deleting it
+resets connections and query history for all of them.
 
 FlatPark's own validators must also pass, run from a checkout of `flatpark/flatpark` with this
 directory copied to `registry/org.libredb.Studio/` (their playbook calls these mandatory on every
