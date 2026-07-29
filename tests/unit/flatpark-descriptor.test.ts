@@ -301,11 +301,17 @@ describe("release wiring for the pinned artifact (#241)", () => {
     )?.[1];
     expect(outDir).toBeTruthy();
     expect(uploadDir).toBe(outDir);
-    // Ignored, not merely absent: it exists on any machine that has run the
-    // build, so "does it exist" proves nothing. git check-ignore exits 0 only
-    // for a path git would refuse to track.
     const root = path.join(__dirname, "../..");
-    const ignored = Bun.spawnSync(["git", "check-ignore", "-q", outDir as string], { cwd: root });
+    // Nothing tracked lives under it. This is the hazard itself - a glob over a
+    // directory holding checked-in files hands gh the repo's own sources - and
+    // it reads the index, so it does not care whether the directory exists.
+    const tracked = Bun.spawnSync(["git", "ls-files", "--", outDir as string], { cwd: root });
+    expect(tracked.stdout.toString().trim()).toBe("");
+    // And git is configured to keep it that way. The trailing slash is
+    // load-bearing: .gitignore lists a directory-only pattern, and without it
+    // check-ignore treats the argument as a file and misses on a fresh checkout
+    // where the build has not run yet.
+    const ignored = Bun.spawnSync(["git", "check-ignore", "-q", `${outDir}/`], { cwd: root });
     expect(ignored.exitCode).toBe(0);
   });
 
