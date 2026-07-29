@@ -41,11 +41,36 @@ resolves its resources as `<exe dir>/../lib/<product name>`, so `usr/bin` has to
 ## Local verification
 
     scripts/build-flatpark-local.sh dist-desktop/libredb-studio-desktop_<version>_amd64.deb --install
-    flatpak run org.libredb.Studio
+    flatpak run org.libredb.Studio//stable
 
 The script serves the local `.deb` over HTTP (extra-data accepts only `http`/`https`, never
 `file://`), rewrites the managed block to point at it with the real digest and size, validates the
 metainfo, builds, and optionally installs into an isolated Flatpak installation.
+
+FlatPark's own validators must also pass, run from a checkout of `flatpark/flatpark` with this
+directory copied to `registry/org.libredb.Studio/` (their playbook calls these mandatory on every
+run):
+
+    node scripts/read-descriptor.mjs registry/org.libredb.Studio/flatpark.yml
+    node scripts/audit-descriptor.mjs registry/org.libredb.Studio/flatpark.yml
+    scripts/build-app.sh org.libredb.Studio          # appstreamcli compose must print Success
+    scripts/check-apply-extra.sh org.libredb.Studio  # unpack as root with capabilities dropped
+
+`read-descriptor.mjs` passes today. `audit-descriptor.mjs` reports exactly one failure - the
+placeholder pin below - and passes cleanly once a real published digest and size are substituted.
+
+## Two deliberate deviations, both worth raising in the PR
+
+**The file set follows the playbook, not the contributing page.** `flatpark.org/contributing/` lists
+five files and names an `<app-id>.svg`; `docs/packaging-playbook.md` lists the eight files shipped
+here and names an `<app-id>.png`. The playbook wins: 43 of the 47 catalog entries ship a PNG and
+only 4 ship an SVG. Do not "fix" the icon to SVG.
+
+**The metainfo does not call this a community package.** The playbook asks for that wording, but it
+would be false: LibreDB packages its own application. The required "repackages the official upstream
+build unmodified" claim is kept verbatim, and the first paragraph says who maintains it instead.
+This is the same situation as `io.github.todevelopers.GseProfiler` and `dev.adonm.zuko`, both
+recorded upstream as "approved by construction - submitted and maintained by its own developer".
 
 ## Before opening the upstream PR
 
@@ -57,9 +82,18 @@ metainfo, builds, and optionally installs into an isolated Flatpak installation.
 3. Copy this directory into a fork of `flatpark/flatpark` as `registry/org.libredb.Studio/`,
    dropping this README, on branch `add/org.libredb.Studio`. A maintainer merges it; never
    self-merge.
-4. Disclose the pending Flathub submission (flathub/flathub#9538) in the PR body. FlatPark's
-   playbook asks that an app not already be on Flathub; ours is not, but the submission is open
-   and the maintainer may want to weigh in.
+4. **Claim the developer-approved badge.** LibreDB packages its own app, which is FlatPark's
+   "approved by construction" case. Set `catalog.upstream_approved: true` in `flatpark.yml` **and**
+   add a row to their `docs/upstream-approvals.md` citing this submission PR, in the same PR - their
+   `scripts/check-approvals.sh` fails a `true` flag with no matching row. The PR link is the
+   evidence, so this lands as a follow-up commit once the PR number exists.
+5. Record in the PR body what was exercised and what was not - they ask for this explicitly. The
+   walkthrough in issue #241 covers GUI rendering on a real session, the embedded SQLite sample and
+   a PostgreSQL TCP connection returning rows.
+6. Disclose the pending Flathub submission (flathub/flathub#9538) in the PR body. Their gate is
+   "not *already* on Flathub", which we satisfy (`flathub.org/api/v2/appstream/org.libredb.Studio`
+   404s), and `docs/discovery-pipeline.md` treats a stalled Flathub PR as FlatPark's opening - but
+   say so plainly and let the maintainer judge.
 
 ## After it merges, this copy drifts
 

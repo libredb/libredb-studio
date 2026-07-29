@@ -18,6 +18,12 @@ build:
   mode: extra-data
 catalog:
   category: Development
+  # upstream_approved: true belongs here - LibreDB packages its own app, which is
+  # FlatPark's "approved by construction" case and earns the developer-approved
+  # badge. It is deliberately NOT set yet: their CI (scripts/check-approvals.sh)
+  # fails a true flag that has no matching row in docs/upstream-approvals.md, and
+  # that row has to cite the submission PR, which does not exist until the PR is
+  # opened. Set the flag and add the row in the same PR - see README.md.
   tags:
     - Database
     - SQL
