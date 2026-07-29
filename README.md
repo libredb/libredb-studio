@@ -18,7 +18,7 @@
 <p align="center">
   <a href="https://nextjs.org/"><img src="https://img.shields.io/badge/Next.js-16-black?logo=next.js" alt="Next.js 16"></a>
   <a href="https://react.dev/"><img src="https://img.shields.io/badge/React-19-61DAFB?logo=react" alt="React 19"></a>
-  <a href="https://www.docker.com/"><img src="https://img.shields.io/badge/Docker-Ready-2496ED?logo=docker" alt="Docker Support"></a>
+  <a href="https://hub.docker.com/r/libredb/libredb-studio?tag=latest"><img src="https://img.shields.io/badge/Docker-Ready-2496ED?logo=docker" alt="Docker Support"></a>
   <a href="https://kubernetes.io/"><img src="https://img.shields.io/badge/Kubernetes-Compatible-326CE5?logo=kubernetes" alt="Kubernetes Compatible"></a>
 </p>
 
@@ -243,7 +243,7 @@ docker run -d \
   ghcr.io/libredb/libredb-studio:latest
 ```
 
-  > **Registry**: `ghcr.io/libredb/libredb-studio` is the primary image (no pull rate limits — preferred for Kubernetes/CI). The same image is also mirrored to Docker Hub as [`libredb/libredb-studio`](https://hub.docker.com/r/libredb/libredb-studio) for convenience.
+  > **Registry**: `ghcr.io/libredb/libredb-studio` is the primary image (no pull rate limits — preferred for Kubernetes/CI). The same image is also mirrored to Docker Hub as [`libredb/libredb-studio`](https://hub.docker.com/r/libredb/libredb-studio?tag=latest) for convenience.
 
   Open [http://localhost:3000](http://localhost:3000) and login with `admin@libredb.org` / `LibreDB.2026`.
 
