@@ -361,11 +361,42 @@ rebuilt archive never invalidates a previously printed admin password.
   npm i @libredb/studio && npm audit signatures   # "verified registry signatures / attestations"
   ```
 
-  This covers the package you install from npm. The standalone archive the launcher then
-  downloads from the GitHub release carries its own SLSA attestation, which the launcher does
-  not yet check for you - verify it by hand if you care:
-  `gh attestation verify ~/.libredb-studio/<version>/<archive> --repo libredb/libredb-studio`.
-  See [Artifact provenance roadmap](#artifact-provenance-roadmap).
+  This covers the package you install from npm. The standalone archive the launcher downloads
+  from the GitHub release carries its own SLSA attestation, and from 0.9.63 the launcher checks
+  it - see below.
+
+### Launcher provenance check
+
+After the checksum passes, the launcher runs `gh attestation verify` on the archive, pinned to the
+workflow that signs releases (`--signer-workflow …/release-artifacts.yml`, so an attestation from
+any other workflow or a branch build fails the policy). It runs where checksum verification runs:
+on a fresh download and on `--verify-cache`, never on a plain cache hit, and never for `--archive`
+(a local build was never claimed to come from a release).
+
+The policy is tri-state, and the distinction is deliberate:
+
+| Outcome | Launcher |
+|---|---|
+| Verified | prints `Provenance verified …` and starts |
+| Cannot verify - no `gh`, not authenticated (`gh auth login`), no network, API rate limit, or a release older than 0.9.63 | prints a warning naming the reason and starts on checksum alone |
+| Rejected - the attestation fails the signer policy, or a release from 0.9.63 on has **no** attestation for the archive's digest | refuses to start (exit 1) |
+
+The last row is the case the whole feature exists for. An attacker who can replace a release asset
+can replace its `SHA256SUMS` line too, so the checksum still matches - but they cannot forge an
+attestation. For a release that must have one, "GitHub holds no attestation for this digest" is the
+tampering signal itself, not missing information.
+
+`gh` stays optional: the package's contract is zero runtime dependencies, so everything that merely
+*prevents* verification warns and continues. To start anyway after a rejection (accepting the risk,
+e.g. during a GitHub attestation outage): `LIBREDB_STUDIO_SKIP_PROVENANCE=1`.
+
+Verify by hand at any time:
+
+```bash
+gh attestation verify ~/.libredb-studio/<version>/libredb-studio-standalone-<version>-<os>-<arch>.tar.gz \
+  --repo libredb/libredb-studio \
+  --signer-workflow libredb/libredb-studio/.github/workflows/release-artifacts.yml
+```
 
 ## Homebrew
 
@@ -890,16 +921,16 @@ replace an asset can replace its checksum line too. The `.snap` release asset sh
 (`--dangerous` installs skip the Snap Store's own verification).
 
 Signed provenance moves the trust root out of the release — the signer is the workflow's GitHub
-OIDC identity (repo + workflow + commit), recorded in a public transparency log. Rollout is
-incremental, tracked in [issue #123](https://github.com/libredb/libredb-studio/issues/123):
+OIDC identity (repo + workflow + commit), recorded in a public transparency log. All three steps of
+[issue #123](https://github.com/libredb/libredb-studio/issues/123) landed for 0.9.63:
 
 | Step | Scope | State |
 |---|---|---|
 | npm provenance | npm tarball (`npm publish --provenance`, Sigstore bundle held by npmjs) | **done** (0.9.63) — verify with `npm audit signatures` |
 | SLSA build provenance | standalone tarballs, win32 zip, `.deb`/`.rpm`, desktop AppImage + GUI `.deb`, `.snap`, GHCR image (`actions/attest-build-provenance`) | **done** (0.9.63) — verify with `gh attestation verify` |
-| Launcher-side verification | `bin/studio.js` checks the downloaded archive's attestation when `gh` is present | planned |
+| Launcher-side verification | `bin/studio.js` checks the downloaded archive's attestation when `gh` is present | **done** (0.9.63) — see [Launcher provenance check](#launcher-provenance-check) |
 
-Neither step needed a new secret: the attestations live in GitHub's attestation store, not in the
+No step needed a new secret: the attestations live in GitHub's attestation store, not in the
 release, so nothing an attacker can reach by replacing a release asset also lets them forge a
 signature.
 

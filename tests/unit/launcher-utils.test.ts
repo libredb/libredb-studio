@@ -10,6 +10,7 @@ import {
   artifactName,
   assertReleaseVersion,
   assessNodeRuntime,
+  assessProvenance,
   extractArchive,
   extractionCommand,
   LauncherUsageError,
@@ -413,5 +414,147 @@ describe("extractArchive", () => {
     expect(fs.readFileSync(path.join(destDir, "server.js"), "utf8")).toBe("// stub server");
     expect(fs.readFileSync(path.join(destDir, "nested", "file.txt"), "utf8")).toBe("nested contents");
     expect(fs.existsSync(path.join(destDir, "libredb-studio-9.9.9"))).toBe(false);
+  });
+});
+
+/**
+ * Provenance verification policy (issue #123, step 3).
+ *
+ * The stderr fixtures below are verbatim `gh attestation verify` output,
+ * captured from the real CLI against this repo's first live attestation - not
+ * invented. gh exits 1 for every failure, so the message is the only signal
+ * that separates "cannot verify" from "verification says no".
+ */
+const ATTESTATION_404 =
+  "\nError: HTTP 404: Not Found (https://api.github.com/repos/libredb/libredb-studio/attestations/" +
+  "sha256:ebac3f4cf5b31b3d64b5336aa194a4810e5ae45373e5efbb47ffde837fa24dc1?per_page=30&" +
+  "predicate_type=https://slsa.dev/provenance/v1)\n";
+const ATTESTATION_401 =
+  "\nError: HTTP 401: Bad credentials (https://api.github.com/repos/libredb/libredb-studio/attestations/" +
+  "sha256:ebac3f4cf5b31b3d64b5336aa194a4810e5ae45373e5efbb47ffde837fa24dc1)\n";
+const POLICY_MISMATCH = '\nError: verifying with issuer "sigstore.dev"\n';
+const GH_NEVER_LOGGED_IN =
+  "To get started with GitHub CLI, please run:  gh auth login\n" +
+  "Alternatively, populate the GH_TOKEN environment variable with a GitHub API authentication token.\n";
+const ARTIFACT = "libredb-studio-standalone-0.9.63-linux-x64.tar.gz";
+
+const assess = (overrides: Record<string, unknown> = {}) =>
+  assessProvenance({
+    spawnError: null,
+    exitCode: 1,
+    stderr: "",
+    version: "0.9.63",
+    artifactName: ARTIFACT,
+    ...overrides,
+  });
+
+describe("assessProvenance", () => {
+  test("a clean exit is the only success", () => {
+    const result = assess({ exitCode: 0 });
+    expect(result.action).toBe("ok");
+    expect(result.message).toContain("Provenance verified");
+  });
+
+  test("a missing gh binary warns instead of blocking startup", () => {
+    // The launcher's contract is zero dependencies; gh is an optional bonus.
+    const result = assess({ spawnError: Object.assign(new Error("spawn gh ENOENT"), { code: "ENOENT" }) });
+    expect(result.action).toBe("warn");
+    expect(result.message).toContain("gh");
+    expect(result.message).toContain("checksum");
+  });
+
+  test("a gh that hangs is not allowed to hold the server hostage", () => {
+    const result = assess({ spawnError: Object.assign(new Error("timeout"), { code: "ETIMEDOUT" }) });
+    expect(result.action).toBe("warn");
+  });
+
+  test("an unauthenticated gh warns and points at the fix", () => {
+    const result = assess({ stderr: ATTESTATION_401 });
+    expect(result.action).toBe("warn");
+    expect(result.message).toContain("gh auth login");
+  });
+
+  test("a gh that was never logged in warns with the actual fix (exit 4)", () => {
+    // Captured live: gh writes this to stderr and exits 4 - the most common
+    // real-world "cannot verify", and it never mentions HTTP at all.
+    const result = assess({ exitCode: 4, stderr: GH_NEVER_LOGGED_IN });
+    expect(result.action).toBe("warn");
+    expect(result.message).toContain("not authenticated");
+    expect(result.message).toContain("gh auth login");
+  });
+
+  test("exit code 4 alone is enough to read as an auth problem", () => {
+    // Defence against a gh release that rewords the hint or moves it to stdout.
+    const result = assess({ exitCode: 4, stderr: "" });
+    expect(result.action).toBe("warn");
+    expect(result.message).toContain("not authenticated");
+  });
+
+  test("no network warns", () => {
+    const result = assess({ stderr: "error connecting to api.github.com: no such host\n" });
+    expect(result.action).toBe("warn");
+  });
+
+  test("a rate-limited API warns and names the reason", () => {
+    // Hit for real while testing: repeated attestation lookups tripped the
+    // API limit, and the opaque fallback below made it undiagnosable.
+    const result = assess({ stderr: "\nError: HTTP 429: You have exceeded a secondary rate limit\n" });
+    expect(result.action).toBe("warn");
+    expect(result.message).toContain("rate limit");
+  });
+
+  test("an unrecognised failure warns - the policy fails open", () => {
+    const result = assess({ stderr: "Error: something nobody has seen before\n" });
+    expect(result.action).toBe("warn");
+    expect(result.message).toContain("checksum");
+  });
+
+  test("an unrecognised failure quotes gh so the next person can diagnose it", () => {
+    // "gh attestation verify exited 1" alone cost a debugging round: the whole
+    // point of failing open is that someone can still find out why.
+    const result = assess({ stderr: "\nError: something nobody has seen before\n" });
+    expect(result.message).toContain("something nobody has seen before");
+  });
+
+  test("an unrecognised failure with no output at least reports the exit code", () => {
+    const result = assess({ exitCode: 7, stderr: "" });
+    expect(result.action).toBe("warn");
+    expect(result.message).toContain("7");
+  });
+
+  describe("a missing attestation", () => {
+    test("REFUSES to start for a release that must have one", () => {
+      // This is the attack the whole issue is about: an attacker who can swap
+      // the tarball can swap its SHA256SUMS line too, so the checksum passes.
+      // What they cannot do is forge an attestation, so for an attested-era
+      // release "no attestation for this digest" IS the tampering signal -
+      // treating it as merely "unverifiable" would make the check decorative.
+      const result = assess({ stderr: ATTESTATION_404, version: "0.9.63" });
+      expect(result.action).toBe("fail");
+      expect(result.message).toContain(ARTIFACT);
+      expect(result.message).toContain("LIBREDB_STUDIO_SKIP_PROVENANCE");
+    });
+
+    test.each(["0.9.63", "0.9.64", "0.10.0", "1.0.0"])("refuses for %s (numeric compare, not string)", (version) => {
+      expect(assess({ stderr: ATTESTATION_404, version }).action).toBe("fail");
+    });
+
+    test.each(["0.9.62", "0.9.0", "0.8.99"])("warns for %s - the release predates attestations", (version) => {
+      const result = assess({ stderr: ATTESTATION_404, version });
+      expect(result.action).toBe("warn");
+      expect(result.message).toContain("predates");
+    });
+
+    test("refuses for a prerelease of an attested version - the same CI signs it", () => {
+      expect(assess({ stderr: ATTESTATION_404, version: "0.9.63-rc.1" }).action).toBe("fail");
+    });
+  });
+
+  test("a signer-policy mismatch refuses regardless of the release age", () => {
+    // An attestation exists but was not produced by the release workflow -
+    // e.g. a branch build's image. Definite negative, era is irrelevant.
+    const result = assess({ stderr: POLICY_MISMATCH, version: "0.9.0" });
+    expect(result.action).toBe("fail");
+    expect(result.message).toContain(ARTIFACT);
   });
 });

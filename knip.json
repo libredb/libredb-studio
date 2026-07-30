@@ -17,7 +17,8 @@
     "tailwindcss"
   ],
   "ignoreBinaries": [
-    "genhtml"
+    "genhtml",
+    "gh"
   ],
   "ignoreExportsUsedInFile": {
     "interface": true,

@@ -15,7 +15,7 @@
  * directory only - the root package.json must stay typeless because the
  * library dist ships CJS .js files consumed via require().
  */
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -24,11 +24,14 @@ import { pipeline } from "node:stream/promises";
 import {
   artifactName,
   assessNodeRuntime,
+  assessProvenance,
   extractArchive,
   LauncherUsageError,
   parseLauncherArgs,
   parseSha256Sums,
   preservePayloadData,
+  PROVENANCE_REPO,
+  PROVENANCE_SIGNER_WORKFLOW,
   releaseDownloadUrl,
   resolveCacheDir,
   sha256File,
@@ -44,6 +47,11 @@ Starts the LibreDB Studio standalone server. On first run the launcher
 downloads the release archive for this platform (tar.gz; zip on Windows)
 from GitHub Releases, verifies its SHA256 checksum, and caches it in
 ~/.libredb-studio/${pkg.version}/. Later runs start straight from the cache.
+
+When the GitHub CLI (gh) is installed and authenticated, the launcher also
+verifies the archive's signed build provenance. Missing gh, no login or no
+network only prints a warning; an archive whose provenance is actively
+rejected stops the launcher (override: LIBREDB_STUDIO_SKIP_PROVENANCE=1).
 
 Options:
   --port <n>        Port to listen on (default: $PORT or 3000)
@@ -220,7 +228,50 @@ async function preparePayload(cacheDir, payloadDir) {
   // Log-line contract: "Checksum verified" is asserted verbatim by the
   // post-release npx-engine-smoke workflow - keep the wording stable.
   console.log("Checksum verified");
+  verifyProvenance(tarballPath, name);
   extract(tarballPath, payloadDir);
+}
+
+/** How long the launcher waits for gh before giving up and warning. */
+const PROVENANCE_TIMEOUT_MS = 15_000;
+
+/**
+ * Check the downloaded archive's SLSA attestation with the GitHub CLI, then
+ * apply the launcher's tri-state policy (issue #123, step 3).
+ *
+ * Runs only where preparePayload runs: on a fresh download and on
+ * --verify-cache, never on a cache hit and never for --archive (a local
+ * archive was never claimed to come from a release).
+ *
+ * gh is optional - the package's contract is zero dependencies - so anything
+ * that merely prevents verification (no gh, not logged in, no network) warns
+ * and continues. Only a definite negative refuses to start; assessProvenance
+ * owns that distinction and is where the reasoning lives.
+ *
+ * @param {string} archivePath
+ * @param {string} name
+ */
+function verifyProvenance(archivePath, name) {
+  if (process.env.LIBREDB_STUDIO_SKIP_PROVENANCE) {
+    console.warn("Provenance verification skipped (LIBREDB_STUDIO_SKIP_PROVENANCE is set)");
+    return;
+  }
+  const run = spawnSync(
+    "gh",
+    // prettier-ignore
+    ["attestation", "verify", archivePath, "--repo", PROVENANCE_REPO, "--signer-workflow", PROVENANCE_SIGNER_WORKFLOW],
+    { encoding: "utf8", timeout: PROVENANCE_TIMEOUT_MS },
+  );
+  const { action, message } = assessProvenance({
+    spawnError: run.error ?? null,
+    exitCode: run.status,
+    stderr: run.stderr ?? "",
+    version: pkg.version,
+    artifactName: name,
+  });
+  if (action === "fail") fail(message);
+  if (action === "warn") console.warn(message);
+  else console.log(message);
 }
 
 /**

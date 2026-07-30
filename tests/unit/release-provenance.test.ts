@@ -18,6 +18,7 @@ import { describe, expect, test } from "bun:test";
 import * as fs from "fs";
 import * as path from "path";
 import { parse as parseYaml } from "yaml";
+import { PROVENANCE_SIGNER_WORKFLOW } from "../../bin/lib/launcher-utils.mjs";
 
 interface Step {
   name?: string;
@@ -158,6 +159,30 @@ describe("docker-build-push.yml attestation", () => {
     // Branch pushes publish the mutable main/dev tags; signing those would fill
     // the transparency log with images no user installs.
     expect(dockerAttest?.if).toContain("github.event_name");
+  });
+});
+
+describe("the launcher's pinned signer workflow", () => {
+  // bin/studio.js pins --signer-workflow, so a renamed or moved workflow file
+  // would make every npx user's verification fail the signer policy - and that
+  // classifies as a definite negative, i.e. a refusal to start. This test turns
+  // that runtime break into a CI break at rename time.
+  const [, , ...workflowPath] = PROVENANCE_SIGNER_WORKFLOW.split("/");
+  const fileName = workflowPath[workflowPath.length - 1];
+
+  test("names a workflow file that exists at the pinned path", () => {
+    expect(workflowPath.join("/")).toBe(`.github/workflows/${fileName}`);
+    expect(fs.existsSync(path.join(__dirname, "../..", ...workflowPath))).toBe(true);
+  });
+
+  test("names the workflow that actually attests the standalone archives", () => {
+    expect(fileName).toBe("release-artifacts.yml");
+    const subjects = (releaseArtifacts.jobs.publish?.steps ?? []).filter(isAttestStep).map(subjectPathOf).join("\n");
+    expect(subjects).toContain("libredb-studio-standalone-*.tar.gz");
+  });
+
+  test("is scoped to this repository", () => {
+    expect(PROVENANCE_SIGNER_WORKFLOW.startsWith("libredb/libredb-studio/")).toBe(true);
   });
 });
 

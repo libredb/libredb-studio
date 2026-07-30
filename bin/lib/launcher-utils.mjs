@@ -266,6 +266,134 @@ export function assessNodeRuntime(version) {
 }
 
 /**
+ * First release whose artifacts carry signed SLSA build provenance
+ * (release-artifacts.yml attests them, issue #123). Anything older has no
+ * attestation to find, so "not found" says nothing about that download.
+ */
+const FIRST_ATTESTED_VERSION = { major: 0, minor: 9, patch: 63 };
+
+/** The repository whose attestations are trusted for release archives. */
+export const PROVENANCE_REPO = "libredb/libredb-studio";
+
+/**
+ * The only workflow allowed to have signed a release archive - passed to
+ * `gh attestation verify --signer-workflow`, so an attestation minted by any
+ * other workflow in this repo (or a branch build) fails the policy instead of
+ * passing a repo-level check.
+ *
+ * Renaming or moving that workflow would make every launcher refuse to start,
+ * so tests/unit/release-provenance.test.ts asserts this path still exists and
+ * still attests the standalone archives - a rename breaks CI, not users.
+ */
+export const PROVENANCE_SIGNER_WORKFLOW = `${PROVENANCE_REPO}/.github/workflows/release-artifacts.yml`;
+
+/**
+ * Whether GitHub should hold an attestation for this release's artifacts.
+ * Numeric triple compare (0.10.0 > 0.9.63, which a string compare gets
+ * wrong); a prerelease suffix is ignored because the same CI signs it.
+ * An unparseable version answers "no" - a corrupted manifest must not
+ * manufacture a refusal to start.
+ *
+ * @param {string} version
+ * @returns {boolean}
+ */
+function attestationsExpected(version) {
+  const match = /^(\d+)\.(\d+)\.(\d+)/.exec(version);
+  if (!match) return false;
+  const [major, minor, patch] = [Number(match[1]), Number(match[2]), Number(match[3])];
+  const first = FIRST_ATTESTED_VERSION;
+  if (major !== first.major) return major > first.major;
+  if (minor !== first.minor) return minor > first.minor;
+  return patch >= first.patch;
+}
+
+/**
+ * Turn a `gh attestation verify` run into a launcher decision (issue #123).
+ *
+ * gh exits non-zero for every failure, so the stderr text is the only thing
+ * separating "this machine cannot verify" from "verification says no". The
+ * policy is tri-state and fails OPEN on the first kind: the launcher's
+ * contract is zero dependencies, so a missing or unauthenticated gh, or no
+ * network, must never stop a server from starting.
+ *
+ * It fails CLOSED on the second kind, and the important case there is a
+ * missing attestation for a release that should have one. An attacker who can
+ * replace a release asset can replace its SHA256SUMS line too - the checksum
+ * still matches - but they cannot forge an attestation. So for an
+ * attested-era release, "GitHub has no attestation for this digest" is the
+ * tampering signal itself, not an absence of information. Treating it as
+ * merely unverifiable would leave the check decorative against the one attack
+ * it exists to catch.
+ *
+ * Pure and injectable: never spawns anything, never reads process state.
+ *
+ * @param {{ spawnError: (Error & { code?: string }) | null, exitCode: number | null, stderr: string, version: string, artifactName: string }} run
+ * @returns {{ action: "ok" | "warn" | "fail", message: string }}
+ */
+export function assessProvenance({ spawnError, exitCode, stderr, version, artifactName }) {
+  if (exitCode === 0) {
+    return { action: "ok", message: `Provenance verified for ${artifactName}` };
+  }
+  const text = stderr || "";
+  /** @param {string} reason */
+  const cannotVerify = (reason) => ({
+    action: /** @type {const} */ ("warn"),
+    message:
+      `Provenance not verified (${reason}) - continuing on checksum verification alone. ` +
+      "The archive matched its published SHA256, which detects corruption but not substitution.",
+  });
+  /** @param {string} reason */
+  const refuse = (reason) => ({
+    action: /** @type {const} */ ("fail"),
+    message:
+      `Provenance REJECTED for ${artifactName}: ${reason}.\n` +
+      "Refusing to start - the archive matches its published checksum but its origin cannot be " +
+      "established, which is what a replaced release asset looks like.\n" +
+      "  - delete the cache and retry: rm -rf ~/.libredb-studio && npx @libredb/studio@latest\n" +
+      "  - if it persists, please report it: https://github.com/libredb/libredb-studio/issues\n" +
+      "  - to start anyway (accepting the risk): LIBREDB_STUDIO_SKIP_PROVENANCE=1",
+  });
+
+  if (spawnError) {
+    if (spawnError.code === "ENOENT") return cannotVerify("the GitHub CLI (gh) is not installed");
+    return cannotVerify(`gh could not be run: ${spawnError.message}`);
+  }
+  // Auth shows up three ways, all captured from the live CLI: an HTTP 401/403
+  // when a token exists but is rejected, gh's own "please run: gh auth login"
+  // hint when none exists at all, and exit code 4 - gh's documented auth
+  // status, matched on its own so a reworded hint still reads as auth.
+  if (exitCode === 4 || /HTTP 40[13]|Bad credentials|gh auth login|GH_TOKEN/.test(text)) {
+    return cannotVerify("gh is not authenticated - run `gh auth login`");
+  }
+  if (/no such host|connection refused|network is unreachable|i\/o timeout|dial tcp|EAI_AGAIN/i.test(text)) {
+    return cannotVerify("GitHub is unreachable from this machine");
+  }
+  if (/HTTP 429|rate limit/i.test(text)) {
+    return cannotVerify("the GitHub API rate limit is exhausted - retry later");
+  }
+  if (/HTTP 404/.test(text)) {
+    if (!attestationsExpected(version)) {
+      return cannotVerify(`release ${version} predates signed provenance`);
+    }
+    return refuse("GitHub holds no attestation for this file's digest");
+  }
+  if (/verifying with issuer|signature|does not match|verification failed/i.test(text)) {
+    return refuse("the attestation exists but does not satisfy the expected signer policy");
+  }
+  // Unknown failure: fail open. A gh version that changes its wording must
+  // degrade to a warning, never to a launcher that refuses to start - but quote
+  // gh's own first line, because an opaque "exited 1" is undiagnosable (it cost
+  // a debugging round while this was being written).
+  const firstLine = text
+    .split("\n")
+    .map((line) => line.trim())
+    .find((line) => line.length > 0);
+  return cannotVerify(
+    firstLine ? `gh attestation verify exited ${exitCode}: ${firstLine}` : `gh attestation verify exited ${exitCode}`,
+  );
+}
+
+/**
  * Parse launcher CLI arguments. Returns { help, port, host, archive,
  * verifyCache }; port/host stay null when not given (the server then falls
  * back to $PORT / 3000 and the launcher's loopback default). Throws
