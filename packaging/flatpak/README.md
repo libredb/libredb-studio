@@ -1,6 +1,21 @@
 # Flathub packaging (org.libredb.Studio)
 
-Everything needed to publish the LibreDB Studio desktop app on
+> **Status: dormant. LibreDB Studio is not on Flathub, and this is not being pursued.**
+> The submission ([flathub/flathub#9538](https://github.com/flathub/flathub/pull/9538)) was
+> declined on 2026-07-30 under Flathub's [generative AI
+> policy](https://docs.flathub.org/docs/for-app-authors/requirements#generative-ai-policy): the
+> reviewer's position was that developing with an AI assistant disqualifies the app. We closed the
+> PR ourselves rather than argue it - the [closing
+> comment](https://github.com/flathub/flathub/pull/9538#issuecomment-5136879185) leaves the
+> maintenance record on the thread. **Point Flatpak users at
+> [FlatPark](../flatpark/README.md)**, which is live and ships the same app id.
+>
+> This directory stays because it still earns its keep: `flatpak-smoke.yml` builds the AppImage and
+> repacks it with this manifest whenever the paths it watches change, which is real coverage of the
+> desktop artifact. Read the checklist below as a record of how the submission was made, not as a
+> to-do - a resubmission would have to clear the from-source requirement as well.
+
+The manifest and metadata for publishing the LibreDB Studio desktop app on
 [Flathub](https://flathub.org). Issue
 [#232](https://github.com/libredb/libredb-studio/issues/232).
 
@@ -31,11 +46,15 @@ Two deliberate choices worth knowing before changing anything:
   is our own MIT-licensed release artifact, already built and smoke-tested for
   every version, so Flathub ships the exact bytes every other channel ships and
   there is a single build pipeline. This is the pattern Beekeeper Studio (and
-  Signal, Element) use on Flathub. It is accepted practice, but Flathub's written
-  guidance still prefers source builds and a reviewer may ask why - say so
-  up front in the submission PR rather than waiting to be asked. A from-source
-  alternative exists (`flatpak-cargo-generator` plus `flatpak-node-generator`) at
-  the cost of a second, offline-vendored build of the whole Next.js app.
+  Signal, Element) use on Flathub. Note how #9538 actually went: the AI policy
+  ended the review before the repack was ever discussed, so this remains an
+  untested argument and an open blocker, not a settled one. Flathub's written
+  requirements say submissions must be built entirely from source and that
+  "niche tooling or uncommon build setups" is not itself grounds for an
+  exception. A from-source alternative exists on paper
+  (`flatpak-cargo-generator` plus `flatpak-node-generator`) at the cost of a
+  second, offline-vendored build of the whole Next.js app - and it is not
+  turnkey, because the node generator has no Bun support.
 
 ## Sandbox
 
@@ -79,7 +98,9 @@ and validates the metainfo, then builds the *local* variant, so a run before any
 release exists still exercises what Flathub will build. Outputs land in
 `build/flatpak/` (git-ignored).
 
-## First submission checklist
+## Submission checklist (as executed for #9538)
+
+Kept as a record. Nothing here is scheduled; see the status note at the top.
 
 1. Ship a release whose assets include
    `libredb-studio-desktop-<version>-linux-x64.AppImage` and the `arm64` one

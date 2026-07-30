@@ -13,7 +13,7 @@ how the release pipeline publishes each channel. For a one-line-per-channel over
 | .deb / .rpm | Debian/Ubuntu and RHEL/Fedora servers (systemd) | [Linux packages (.deb / .rpm)](#linux-packages-deb--rpm) |
 | Snap | Ubuntu and other snapd systems | [Snap](#snap) |
 | Windows (winget / Chocolatey / portable zip) | Windows workstations | [Windows](#windows-winget--chocolatey--portable-zip) |
-| Desktop app (AppImage, .deb, Flathub, FlatPark) | Linux desktops - an application window, no browser tab | [Desktop app](#desktop-app-appimage-debian-package-flathub-flatpark) |
+| Desktop app (AppImage, .deb, FlatPark) | Linux desktops - an application window, no browser tab | [Desktop app](#desktop-app-appimage-debian-package-flatpark) |
 
 All non-Docker channels ship or download the same **standalone server payload** (Next.js
 standalone output, started with `node server.js`) built by
@@ -94,7 +94,7 @@ Release tags carry **no `v` prefix** (tag `0.9.41` == package.json version). Eac
 | Debian package | `libredb-studio_<version>_<arch>.deb` (+ `.sha256` sidecar) | `amd64`, `arm64` |
 | RPM package | `libredb-studio-<version>.<arch>.rpm` (+ `.sha256` sidecar) | `x86_64`, `aarch64` |
 | Snap | `libredb-studio_<version>_<arch>.snap` | `amd64`, `arm64` (also published to the Snap Store) |
-| Desktop AppImage | `libredb-studio-desktop-<version>-linux-<arch>.AppImage` (+ `.sha256` sidecar) | `x64`, `arm64` (the artifact the Flathub manifest repacks) |
+| Desktop AppImage | `libredb-studio-desktop-<version>-linux-<arch>.AppImage` (+ `.sha256` sidecar) | `x64`, `arm64` (also the artifact the in-repo Flatpak manifest repacks) |
 | Desktop Debian package | `libredb-studio-desktop_<version>_<arch>.deb` (+ `.sha256` sidecar) | `amd64`, `arm64` (from 0.9.62; the artifact FlatPark pins as extra-data) |
 
 `SHA256SUMS` covers the standalone tarballs and the win32 zip; each `.deb`/`.rpm`/`.AppImage`
@@ -633,7 +633,7 @@ The zip is flat by design (see [Release artifact naming](#release-artifact-namin
 @libredb/studio` also works on Windows (Node 20.9+): it downloads this zip, verifies it against
 `SHA256SUMS`, and runs the payload with your own Node runtime.
 
-## Desktop app (AppImage, Debian package, Flathub, FlatPark)
+## Desktop app (AppImage, Debian package, FlatPark)
 
 Every other channel on this page ships LibreDB Studio as a server you open in a browser. The
 desktop build ships it as an application window: a Tauri v2 shell starts the same standalone
@@ -691,12 +691,22 @@ The bundled Node sidecar is installed as `/usr/bin/libredb-studio-node`, not `/u
 that path belongs to the distribution's `nodejs` package and dpkg refuses to let a second package
 claim it.
 
-### Flathub
+### FlatPark (Flatpak)
+
+[FlatPark](https://flatpark.org/) is a signed Flatpak remote and **the** Flatpak channel for
+LibreDB Studio, live since 0.9.62 ([#241](https://github.com/libredb/libredb-studio/issues/241)):
 
 ```bash
-flatpak install flathub org.libredb.Studio
+flatpak --user remote-add --if-not-exists flatpark https://dl.flatpark.org/flatpark.flatpakrepo
+# Flathub is added for the org.gnome.Platform runtime only - the app itself is not published there
+flatpak --user remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+flatpak --user install flatpark org.libredb.Studio
 flatpak run org.libredb.Studio
 ```
+
+FlatPark pins the **GUI `.deb` as `extra-data`**: it builds nothing itself, so your own machine
+downloads that exact release asset at install time and unpacks it inside the sandbox. It does not
+accept AppImages at all - its runtime has no libfuse.
 
 The Flatpak sandbox has network access and no filesystem access. Databases reachable over TCP -
 including a database on the host at `127.0.0.1` - work out of the box; opening local SQLite files
@@ -714,33 +724,29 @@ flatpak override --user --filesystem=~/databases org.libredb.Studio
 flatpak override --user --reset org.libredb.Studio
 ```
 
-The manifest, the local build flow and the submission checklist live in
-[`packaging/flatpak/README.md`](../packaging/flatpak/README.md). Flathub builds by repacking the
-release AppImage, so the desktop AppImage is a required release asset.
-
-### FlatPark
-
-[FlatPark](https://flatpark.org/) is a second, signed Flatpak remote, live since 0.9.62
-([#241](https://github.com/libredb/libredb-studio/issues/241)):
-
-```bash
-flatpak --user remote-add --if-not-exists flatpark https://dl.flatpark.org/flatpark.flatpakrepo
-flatpak --user remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
-flatpak --user install flatpark org.libredb.Studio
-```
-
-It differs from Flathub in what it ships and when. Flathub repacks the **AppImage at build time** on
-its own infrastructure; FlatPark pins the **GUI `.deb` as `extra-data`**, so the user's machine
-downloads that exact release asset at install time and unpacks it inside the sandbox. FlatPark does
-not accept AppImages at all - its runtime has no libfuse. Same app id, same sandbox policy, same
-`flatpak override` commands as above.
-
-The two channels are deliberately independent, and FlatPark's guidance is that an app already on
-Flathub should be installed from there - so if the Flathub submission is accepted, revisit whether
-to keep both listings rather than running them silently in parallel.
-
 The descriptor set, the local build flow and the submission checklist live in
 [`packaging/flatpark/README.md`](../packaging/flatpark/README.md).
+
+### Flathub (submission declined)
+
+**LibreDB Studio is not on Flathub, and `flatpak install flathub org.libredb.Studio` will not
+work.** Install from the FlatPark remote above - same app id, same sandbox policy, same
+`flatpak override` commands.
+
+The submission ([flathub/flathub#9538](https://github.com/flathub/flathub/pull/9538)) was declined
+on 2026-07-30 under Flathub's [generative AI
+policy](https://docs.flathub.org/docs/for-app-authors/requirements#generative-ai-policy). The
+reviewer's position was that developing with an AI assistant disqualifies the app, irrespective of
+who designed, reviewed and released it. We closed the PR ourselves rather than argue the point; the
+[closing comment](https://github.com/flathub/flathub/pull/9538#issuecomment-5136879185) leaves the
+verifiable maintenance record on the thread.
+
+[`packaging/flatpak/`](../packaging/flatpak/) stays in the tree and stays honest: the manifest
+still renders, and [`flatpak-smoke.yml`](../.github/workflows/flatpak-smoke.yml) still builds the
+AppImage and repacks it whenever those paths change. But a resubmission would also have to be built
+from source - repacking a released AppImage is a second, independent blocker under Flathub's
+requirements - so treat that directory as dormant rather than as pending work
+([#232](https://github.com/libredb/libredb-studio/issues/232)).
 
 ### Building and running either Flatpak locally
 
@@ -758,7 +764,7 @@ bash scripts/build-flatpark-local.sh \
   dist-desktop/libredb-studio-desktop_<version>_amd64.deb --install
 flatpak run org.libredb.Studio//stable
 
-# Flathub: build the AppImage, then the Flatpak that repacks it.
+# packaging/flatpak (dormant, see above): build the AppImage, then the Flatpak that repacks it.
 bash scripts/build-desktop-appimage.sh dist-desktop --payload <tarball> --smoke
 bash scripts/build-flatpak-local.sh \
   dist-desktop/libredb-studio-desktop-<version>-linux-x64.AppImage --install
@@ -1078,9 +1084,10 @@ Three deliberate constraints:
   the optional channels skip while the release publishes normally. A forgotten re-enable surfaces
   in the weekly drift table rather than in a broken release.
 
-Do not confuse it with `status`: `status` describes the channel's listing (`appimage` is `pending`
-because its Flathub listing is, while its asset is built and required on every release), whereas
-`ci_enabled` describes only whether release CI may publish it.
+Do not confuse it with `status`: `status` describes the channel's listing (`winget` is `pending`
+because its first listing PR has not merged, while the zip it points at is built and required on
+every release), whereas `ci_enabled` describes only whether release CI may publish it. A channel
+whose listing will never happen is `deprecated`, not `pending` — `flathub` is the worked example.
 
 **Adding a channel** = one new entry in `channels.yaml` (copy a neighbour of the same tier; the
 schema is validated on every run). Set `links.first_pr` to the PR that landed the listing, and
@@ -1130,15 +1137,16 @@ deliverable (`pin.strategy: local_file` for the version-pinned `fly.toml`; `none
   community catalogs follow the
   [Windows first-listing checklist](#windows-first-listing-checklist) —
   tracked in [issue #114](https://github.com/libredb/libredb-studio/issues/114).
-- **Flathub first submission**: the desktop shell, the AppImage release job and the Flatpak
-  manifest are in place and verified locally; the one-time submission PR against
-  [flathub/flathub](https://github.com/flathub/flathub) (base branch `new-pr`) and the
-  domain-verification token at `https://libredb.org/.well-known/org.flathub.VerifiedApps.txt`
-  are manual steps — the checklist is in
-  [`packaging/flatpak/README.md`](../packaging/flatpak/README.md), tracked in
+- **Flathub submission — closed, not shipping.**
+  [flathub/flathub#9538](https://github.com/flathub/flathub/pull/9538) was declined on 2026-07-30
+  under Flathub's generative AI policy and closed from our side; see
+  [Flathub (submission declined)](#flathub-submission-declined). The Flatpak channel is
+  [FlatPark](#flatpark-flatpak), live since 0.9.62. The domain-verification file at
+  `https://libredb.org/.well-known/org.flathub.VerifiedApps.txt` is served but carries no token,
+  since Flathub only issues one after publication. Tracked in
   [issue #232](https://github.com/libredb/libredb-studio/issues/232).
 - **Desktop app, remaining channels**: the Tauri v2 wrapper now ships as an AppImage on Linux
-  (see [Desktop app](#desktop-app-appimage-debian-package-flathub-flatpark)). The macOS `.dmg` plus brew cask, the
+  (see [Desktop app](#desktop-app-appimage-debian-package-flatpark)). The macOS `.dmg` plus brew cask, the
   Microsoft Store MSIX and the Tauri updater are still open and need paid signing identities —
   see [`docs/DESKTOP_WRAPPER_SPIKE.md`](DESKTOP_WRAPPER_SPIKE.md).
 

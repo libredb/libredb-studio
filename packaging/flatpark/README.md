@@ -154,7 +154,8 @@ this one.
 6. Disclose the pending Flathub submission (flathub/flathub#9538) in the PR body. Their gate is
    "not *already* on Flathub", which we satisfy (`flathub.org/api/v2/appstream/org.libredb.Studio`
    404s), and `docs/discovery-pipeline.md` treats a stalled Flathub PR as FlatPark's opening - but
-   say so plainly and let the maintainer judge.
+   say so plainly and let the maintainer judge. Moot since 2026-07-30: #9538 was declined, so there
+   is no Flathub listing to disclose against.
 
 ## Troubleshooting a local build
 
@@ -186,7 +187,9 @@ as documentation of the packaging decisions, not as the live descriptor.
 ## Relationship to Flathub
 
 `packaging/flatpak/` is the Flathub manifest, which repacks the **AppImage** at build time on
-Flathub's infrastructure. The two channels are deliberately independent: different artifact,
-different fetch model, different review policy. FlatPark's guidance is that an app already on
-Flathub should be installed from there, so if flathub/flathub#9538 is accepted, revisit whether to
-keep this listing.
+Flathub's infrastructure. The two were always deliberately independent: different artifact,
+different fetch model, different review policy. The sequencing question is settled -
+flathub/flathub#9538 was declined on 2026-07-30 under Flathub's generative AI policy, so **FlatPark
+is the only Flatpak channel for LibreDB Studio** and there is no dual listing to revisit. The
+Flathub manifest stays in the tree as smoke coverage for the AppImage; the status note is in
+[`../flatpak/README.md`](../flatpak/README.md).

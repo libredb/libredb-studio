@@ -184,8 +184,9 @@ channels:
       strategy: none
       note: Both artifacts come per arch out of the one desktop-appimage job and are required by
         publish-release, so they cannot drift from the tag - hence no pin. The AppImage has shipped
-        since 0.9.60 and the GUI .deb since 0.9.62. The AppImage is what the Flathub manifest
-        repacks; the GUI .deb (libredb-studio-desktop_<version>_<arch>.deb, distinct from the
+        since 0.9.60 and the GUI .deb since 0.9.62. The AppImage is also what the in-repo Flatpak
+        manifest repacks in flatpak-smoke.yml (packaging/flatpak, dormant - see the flathub
+        channel); the GUI .deb (libredb-studio-desktop_<version>_<arch>.deb, distinct from the
         headless server package) is what FlatPark pins as extra-data.
 
   # ---- Tier 2: LibreDB-owned copies and listings, bumped by hand ----------
@@ -484,24 +485,30 @@ channels:
 
   - id: flathub
     name: Flathub community catalog (org.libredb.Studio)
-    status: pending
+    status: deprecated
     tier: 4
     kind: package-manager
     update:
       method: upstream_pr
-      sla: every_release
+      sla: on_demand
     links:
       tracking_issue: https://github.com/libredb/libredb-studio/issues/232
       upstream_repo: https://github.com/flathub/flathub
+      first_pr: https://github.com/flathub/flathub/pull/9538
       docs: packaging/flatpak/README.md
     pin:
       strategy: none
-      note: Desktop AppImage ships in every release from the desktop-appimage job; the manifest
-        template lives in packaging/flatpak and repacks that asset. The first submission is open
-        as a draft (flathub/flathub#9538) and leaves draft once a release carries the AppImage it
-        references. Version bumps then land as External Data Checker PRs in
-        flathub/org.libredb.Studio and are merged by hand. Flip to live and add a pin once the
-        submission merges.
+      note: Not shipped, and not being pursued. The submission (flathub/flathub#9538) was declined
+        on 2026-07-30 under Flathub's generative AI policy - the reviewer's position was that
+        developing with an AI assistant disqualifies the app, and the PR carries their AI Slop
+        label. We closed it ourselves rather than argue the point; the closing comment, which
+        leaves the verifiable maintenance record on the thread, is at
+        https://github.com/flathub/flathub/pull/9538#issuecomment-5136879185. Linux desktop users
+        get the same app id from the flatpark channel, which is live - route every Flatpak
+        instruction there. packaging/flatpak stays in the tree because the manifest still renders
+        and flatpak-smoke.yml still builds it, but a resubmission would additionally have to be
+        built from source (the AppImage repack is a second, independent blocker), so treat this as
+        dormant rather than as work in progress.
 
   - id: flatpark
     name: FlatPark signed Flatpak remote (org.libredb.Studio)
@@ -526,5 +533,6 @@ channels:
         carrying the developer-approved flag - LibreDB packages its own app. FlatPark's bot now
         re-pins every release from resolve-update.sh, so the staged copy drifts by design and must
         stay out of release gates; a released version reaching the catalog is their CI's job, not
-        ours, which is why there is no pin here. Sequencing - FlatPark asks that an app not already
-        be on Flathub, so revisit this listing if flathub/flathub#9538 is accepted.
+        ours, which is why there is no pin here. Sequencing question settled 2026-07-30 - FlatPark
+        asks that an app not already be on Flathub, and the Flathub submission was declined, so
+        this is now the only Flatpak channel and there is nothing to revisit.
