@@ -362,8 +362,10 @@ rebuilt archive never invalidates a previously printed admin password.
   ```
 
   This covers the package you install from npm. The standalone archive the launcher then
-  downloads from the GitHub release is still checksum-only - see
-  [Artifact provenance roadmap](#artifact-provenance-roadmap).
+  downloads from the GitHub release carries its own SLSA attestation, which the launcher does
+  not yet check for you - verify it by hand if you care:
+  `gh attestation verify ~/.libredb-studio/<version>/<archive> --repo libredb/libredb-studio`.
+  See [Artifact provenance roadmap](#artifact-provenance-roadmap).
 
 ## Homebrew
 
@@ -872,6 +874,12 @@ All channels have now had their first live run (the Snap publish completed its f
 4. Download the `.deb` on Debian/Ubuntu: `dpkg -i`, `systemctl start libredb-studio`, health 200
    on `127.0.0.1:3000`; verify the arm64 package on an arm64 machine (the CI smoke covers amd64
    only; the bundled node arch is statically asserted for both).
+5. Spot-check provenance on one downloaded asset and the image - a green release job proves the
+   attestation step ran, not that the published asset is the one it covers:
+   `gh attestation verify <asset> --repo libredb/libredb-studio` and
+   `gh attestation verify oci://ghcr.io/libredb/libredb-studio:<version> --repo libredb/libredb-studio`,
+   plus `npm audit signatures` after installing the package (see
+   [Verifying a release artifact](#verifying-a-release-artifact)).
 
 ### Artifact provenance roadmap
 
@@ -888,15 +896,49 @@ incremental, tracked in [issue #123](https://github.com/libredb/libredb-studio/i
 | Step | Scope | State |
 |---|---|---|
 | npm provenance | npm tarball (`npm publish --provenance`, Sigstore bundle held by npmjs) | **done** (0.9.63) — verify with `npm audit signatures` |
-| SLSA build provenance | standalone tarballs, win32 zip, `.deb`/`.rpm`/`.AppImage`, GHCR image (`actions/attest-build-provenance`) | planned — will verify with `gh attestation verify` |
+| SLSA build provenance | standalone tarballs, win32 zip, `.deb`/`.rpm`, desktop AppImage + GUI `.deb`, `.snap`, GHCR image (`actions/attest-build-provenance`) | **done** (0.9.63) — verify with `gh attestation verify` |
 | Launcher-side verification | `bin/studio.js` checks the downloaded archive's attestation when `gh` is present | planned |
 
-Until step 2 lands, the GitHub release assets carry checksums only. Steps 2 and 3 need no new
-secret: GitHub's attestation store, not the release, holds the bundles.
+Neither step needed a new secret: the attestations live in GitHub's attestation store, not in the
+release, so nothing an attacker can reach by replacing a release asset also lets them forge a
+signature.
 
-**Failure mode to expect on release day:** `npm publish --provenance` hard-fails if the job lacks
-`id-token: write` or if Sigstore is unreachable. A failed publish cannot be retried on the same
-tag — follow the usual rule and cut the next patch version.
+#### Verifying a release artifact
+
+```bash
+# Any release asset (tarball, zip, .deb, .rpm, .AppImage, .snap)
+gh attestation verify libredb-studio-standalone-0.9.63-linux-x64.tar.gz \
+  --repo libredb/libredb-studio
+
+# The container image, by digest or by tag
+gh attestation verify oci://ghcr.io/libredb/libredb-studio:0.9.63 \
+  --repo libredb/libredb-studio
+```
+
+A pass prints the workflow and commit that produced the artifact. `gh attestation verify` reaches
+GitHub for the bundle, so it needs network access; `--bundle` verifies a previously downloaded
+one offline.
+
+Notes on what is and is not covered:
+
+- The `.snap` attestation only exists when the release actually built one (the job is gated on
+  `SNAPCRAFT_STORE_CREDENTIALS`); Snap Store installs are verified by the store instead.
+- `SHA256SUMS` and the `.sha256` sidecars are deliberately **not** attested — a signature over a
+  checksum file proves nothing about the artifact it describes. The artifacts are the subjects.
+- Images built from branch pushes (the mutable `main` / `dev` tags) are not attested; only
+  release-context builds are.
+- The image attestation is not pushed to GHCR as an OCI referrer, so `cosign`-style registry-only
+  verification will not find it — fetch it from GitHub with `gh attestation verify oci://…`.
+- Buildx's own inline provenance on the manifest is unrelated and unsigned; it is left at the
+  action's defaults on purpose (changing it rewrites the manifest structure, which the Docker Hub
+  mirror's immutable-tag rules are sensitive to).
+
+**Failure modes to expect on release day:** `npm publish --provenance` hard-fails if the job lacks
+`id-token: write` or if Sigstore is unreachable, and `actions/attest-build-provenance` fails the
+same way — with a job-level `attestations: write` missing, or if the GitHub attestation API is
+down. A failed npm publish cannot be retried on the same tag (follow the usual rule and cut the
+next patch version); a failed attestation happens before `gh release upload` in the same job, so
+re-running that job is safe — the release is still a draft at that point.
 
 ### CI secrets that gate publishing
 

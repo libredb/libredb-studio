@@ -44,6 +44,12 @@ jobs:
     permissions:
       contents: read
       packages: write
+      # SLSA build provenance for the image (issue #123). Separate from the
+      # inline provenance buildx attaches to the manifest: that one is
+      # unsigned, this one is signed with the job's GitHub OIDC identity and
+      # verifiable with `gh attestation verify oci://...`.
+      id-token: write
+      attestations: write
     outputs:
       version: ${{ steps.extract-version.outputs.version }}
       image: ${{ steps.meta.outputs.tags }}
@@ -209,6 +215,7 @@ jobs:
             type=sha,prefix=sha-
 
       - name: Build and push Docker image
+        id: build
         uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5
         with:
           context: .
@@ -222,6 +229,25 @@ jobs:
             JWT_SECRET_BUILD=build-time-placeholder-secret-32ch
             ADMIN_PASSWORD_BUILD=build
             USER_PASSWORD_BUILD=build
+
+      # Release-context builds only, matching the version-tag condition above:
+      # branch pushes move the mutable main/dev tags, and signing an image no
+      # user installs only adds noise to the transparency log.
+      #
+      # Subject is the digest, never a tag - latest/main move, and the manifest
+      # list digest is the image's only stable identity. The Docker Hub mirror
+      # publishes the same digest, so `gh attestation verify` resolves it there
+      # too; GHCR is the name recorded because it is the canonical registry.
+      #
+      # push-to-registry stays off on purpose: writing an OCI referrer back to
+      # GHCR is a second failure mode on the release path, and the attestation
+      # is already retrievable from GitHub without it.
+      - name: Attest the pushed image
+        if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        with:
+          subject-name: ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}
+          subject-digest: ${{ steps.build.outputs.digest }}
 
       - name: Generate build summary
         run: |

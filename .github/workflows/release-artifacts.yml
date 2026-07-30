@@ -370,6 +370,12 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      # SLSA build provenance (issue #123): id-token mints the OIDC identity
+      # the attestation is signed with, attestations writes it to GitHub's
+      # attestation store - deliberately NOT the release, so the signature and
+      # the asset it covers no longer share a trust domain.
+      id-token: write
+      attestations: write
     steps:
       # Checkout provides the Homebrew formula template and its render script;
       # it must run before download-artifact so it cannot clobber dist/.
@@ -390,6 +396,17 @@ jobs:
           cd dist
           sha256sum libredb-studio-standalone-*.tar.gz libredb-studio-standalone-*.zip > SHA256SUMS
           cat SHA256SUMS
+
+      # Sign before shipping: the action hashes the files itself, so the attested
+      # digest is the artifact's own - not whatever SHA256SUMS claims. Only the
+      # artifacts are subjects; attesting the checksum file would prove nothing
+      # about what it describes.
+      - name: Attest the standalone archives
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        with:
+          subject-path: |
+            dist/libredb-studio-standalone-*.tar.gz
+            dist/libredb-studio-standalone-*.zip
 
       - name: Upload artifacts to GitHub release
         env:
@@ -469,6 +486,9 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      # SLSA build provenance (issue #123) - one attestation per matrix arch.
+      id-token: write
+      attestations: write
     strategy:
       fail-fast: false
       matrix:
@@ -597,6 +617,15 @@ jobs:
           RPM_ARCH: ${{ matrix.rpm_arch }}
         run: bash scripts/channel-embedded-sample-e2e.sh rpm "pkgs/libredb-studio-${VERSION}.${RPM_ARCH}.rpm"
 
+      # The packages only - pkgs/ also holds the .sha256 sidecars, and a
+      # checksum file is not a subject worth a signature.
+      - name: Attest the .deb and .rpm
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        with:
+          subject-path: |
+            pkgs/*.deb
+            pkgs/*.rpm
+
       - name: Upload packages to GitHub release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -621,6 +650,11 @@ jobs:
     runs-on: ${{ matrix.runner }}
     permissions:
       contents: write
+      # SLSA build provenance (issue #123). Flathub and FlatPark both repack
+      # these artifacts, so a verifiable origin matters more here than anywhere
+      # else in the release: their users never see this repo.
+      id-token: write
+      attestations: write
     strategy:
       fail-fast: false
       matrix:
@@ -677,6 +711,13 @@ jobs:
             --payload "dist/libredb-studio-standalone-${VERSION}-linux-${ARCH}.tar.gz" \
             --smoke
 
+      - name: Attest the AppImage and GUI .deb
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        with:
+          subject-path: |
+            dist-desktop/*.AppImage
+            dist-desktop/*.deb
+
       - name: Upload the desktop artifacts to the GitHub release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -698,6 +739,12 @@ jobs:
     needs: [guard, build, draft, channels]
     permissions:
       contents: write
+      # SLSA build provenance (issue #123). The .snap is the one release asset
+      # that ships no checksum sidecar at all - a `--dangerous` local install
+      # skips the Snap Store's own signature check, so until now nothing about
+      # the GitHub-release copy was verifiable.
+      id-token: write
+      attestations: write
     strategy:
       fail-fast: false
       matrix:
@@ -800,6 +847,14 @@ jobs:
         with:
           snap: ${{ steps.snapcraft.outputs.snap }}
           release: stable
+
+      # Same gate as the upload below: with no store credentials nothing is
+      # built or attached, so there is nothing to attest.
+      - name: Attest the snap
+        if: steps.snapstore.outputs.enabled == 'true'
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        with:
+          subject-path: ${{ steps.snapcraft.outputs.snap }}
 
       - name: Upload snap to GitHub release
         if: steps.snapstore.outputs.enabled == 'true'
