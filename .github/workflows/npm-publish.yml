@@ -78,6 +78,13 @@ jobs:
     name: Publish to NPM
     runs-on: ubuntu-latest
     needs: validate
+    permissions:
+      contents: read
+      # npm --provenance mints a Sigstore attestation from this job's GitHub
+      # OIDC identity (repo + workflow + commit), so the tarball's trust root
+      # sits outside the release it ships with. Job-level permissions replace
+      # the workflow-level block entirely — contents: read must be repeated.
+      id-token: write
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -110,15 +117,21 @@ jobs:
           echo "Package name: $(node -p "require('./package.json').name")"
           echo "Package version: $(node -p "require('./package.json').version")"
 
+      # --provenance is deliberately absent here: a dry run publishes nothing,
+      # so there is nothing to attest, and npm still tries to contact Sigstore
+      # for it (a failure mode that would break the manual dry-run fallback).
       - name: Publish (dry run)
         if: inputs.dry_run == true
         run: npm publish --access public --dry-run
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPMJS_TOKEN }}
 
+      # --provenance requires id-token: write (above), a public package, and a
+      # resolvable package.json repository field. npm generates and uploads the
+      # Sigstore bundle itself; no extra secret and no cosign install needed.
       - name: Publish
         if: inputs.dry_run != true
-        run: npm publish --access public
+        run: npm publish --access public --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPMJS_TOKEN }}
 

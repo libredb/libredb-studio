@@ -352,6 +352,18 @@ rebuilt archive never invalidates a previously printed admin password.
   ([issue #114](https://github.com/libredb/libredb-studio/issues/114)).
 - Versions released before the standalone tarballs existed have no artifacts; the launcher
   detects this (HTTP 404) and suggests `npx @libredb/studio@latest`.
+- The npm package is published with **npm provenance** (`npm publish --provenance` in
+  `npm-publish.yml`, from 0.9.63). npmjs stores a Sigstore attestation naming the repo, workflow
+  and commit that built the tarball, so `npm audit signatures` verifies the package against a
+  trust root outside the release:
+
+  ```bash
+  npm i @libredb/studio && npm audit signatures   # "verified registry signatures / attestations"
+  ```
+
+  This covers the package you install from npm. The standalone archive the launcher then
+  downloads from the GitHub release is still checksum-only - see
+  [Artifact provenance roadmap](#artifact-provenance-roadmap).
 
 ## Homebrew
 
@@ -865,11 +877,26 @@ All channels have now had their first live run (the Snap publish completed its f
 
 Standalone tarballs and `.deb`/`.rpm` packages are checksum-verified against `SHA256SUMS` /
 per-package `.sha256` sidecars (see [Release artifact naming](#release-artifact-naming)) — both
-from the same GitHub release. The `.snap` release asset ships no sidecar (`--dangerous` installs
-skip the Snap Store's own verification), and the npm package tarball is verified separately
-through npm's own registry integrity metadata — a different trust domain than the GitHub release.
-Signed provenance (Sigstore/cosign signatures or SLSA attestations) across every channel is
-tracked as a follow-up issue.
+from the same GitHub release. That pairing detects corruption, not substitution: whoever can
+replace an asset can replace its checksum line too. The `.snap` release asset ships no sidecar
+(`--dangerous` installs skip the Snap Store's own verification).
+
+Signed provenance moves the trust root out of the release — the signer is the workflow's GitHub
+OIDC identity (repo + workflow + commit), recorded in a public transparency log. Rollout is
+incremental, tracked in [issue #123](https://github.com/libredb/libredb-studio/issues/123):
+
+| Step | Scope | State |
+|---|---|---|
+| npm provenance | npm tarball (`npm publish --provenance`, Sigstore bundle held by npmjs) | **done** (0.9.63) — verify with `npm audit signatures` |
+| SLSA build provenance | standalone tarballs, win32 zip, `.deb`/`.rpm`/`.AppImage`, GHCR image (`actions/attest-build-provenance`) | planned — will verify with `gh attestation verify` |
+| Launcher-side verification | `bin/studio.js` checks the downloaded archive's attestation when `gh` is present | planned |
+
+Until step 2 lands, the GitHub release assets carry checksums only. Steps 2 and 3 need no new
+secret: GitHub's attestation store, not the release, holds the bundles.
+
+**Failure mode to expect on release day:** `npm publish --provenance` hard-fails if the job lacks
+`id-token: write` or if Sigstore is unreachable. A failed publish cannot be retried on the same
+tag — follow the usual rule and cut the next patch version.
 
 ### CI secrets that gate publishing
 
