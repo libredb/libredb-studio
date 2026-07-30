@@ -12,7 +12,12 @@ import { registerSQLCompletionProvider } from "@/lib/editor/sql-completions";
 import type { SchemaCompletionCache, SchemaColumnItem } from "@/lib/editor/sql-completions";
 import { registerMongoDBCompletionProvider } from "@/lib/editor/mongodb-completions";
 import { registerLibreDBLanguage } from "@/lib/editor/libredb-language";
+import { configureMonacoLoader } from "@/lib/editor/monaco-loader";
 import { useAiChat } from "@/hooks/use-ai-chat";
+
+// Serve Monaco from our own origin rather than @monaco-editor/react's jsdelivr default.
+// Runs at module load so it is in place before the first <Editor> mounts.
+configureMonacoLoader();
 
 export interface QueryEditorRef {
   getSelectedText: () => string;

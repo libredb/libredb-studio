@@ -30,7 +30,9 @@ ENV JWT_SECRET=$JWT_SECRET_BUILD
 ENV ADMIN_PASSWORD=$ADMIN_PASSWORD_BUILD
 ENV USER_PASSWORD=$USER_PASSWORD_BUILD
 
-RUN npx next build
+# Stage Monaco from node_modules into public/ so the editor is served from our own
+# origin (issue #247). Explicit here: this bypasses the package.json build script.
+RUN node scripts/copy-monaco.mjs && npx next build
 
 # Production image - use Node.js slim for lower memory footprint
 # trixie-slim: glibc must match the stage where native modules were built (see builder).
