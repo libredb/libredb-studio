@@ -331,7 +331,19 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     setTestResult({ success: true, message: "Connection string parsed successfully. Review the fields and connect." });
   }, [pasteInput, name]);
 
-  const selectableTypes: DatabaseType[] = ["postgres", "mysql", "oracle", "mssql", "mongodb", "redis", "libredb"];
+  // Ordered for display (the modal renders these as a 2-column grid), and covering the whole
+  // DatabaseType union — the same form edits existing connections, so an omitted type leaves the
+  // picker with nothing selected. tests/hooks/use-connection-form.test.ts enforces the coverage.
+  const selectableTypes: DatabaseType[] = [
+    "postgres",
+    "mysql",
+    "sqlite",
+    "oracle",
+    "mssql",
+    "mongodb",
+    "redis",
+    "libredb",
+  ];
   const dbTypes = selectableTypes.map((t) => {
     const cfg = getDBConfig(t);
     return { value: t, label: cfg.label, icon: cfg.icon, color: cfg.color };

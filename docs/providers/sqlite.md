@@ -198,6 +198,26 @@ or `connectionString` (else "Database file path is required … or `:memory:`").
 path by `getDatabasePath()` — the flag reflects that there is no network DSN, not that the field is
 ignored.
 
+**From the UI.** SQLite is offered in the connection modal's type picker
+([`src/hooks/use-connection-form.ts`](../../src/hooks/use-connection-form.ts)). Because its
+`connectionFields` entry is just `["database"]`, `isFileBased()`
+([`src/lib/db-ui-config.ts`](../../src/lib/db-ui-config.ts)) collapses the form to a single
+**"Database File Path"** input — no host, port, user, or password. Two things to be clear about with
+users:
+
+- **The path is resolved on the server, not in the browser.** It is passed through to
+  `getDatabasePath()` in the Studio process, so `/data/app.db` means that path on the machine
+  running Studio. A remote user of a hosted deployment cannot reach a file on their own laptop —
+  see [Deployment constraint](#deployment-constraint-the-strategic-bit).
+- **`:memory:` is accepted here too**, which makes the modal a zero-setup way to get a scratch
+  database for trying out the editor.
+
+Exposing the type in the picker grants no new server-side reach: the connection travels in the
+request body and `resolveConnection()` accepts `type: "sqlite"` regardless of what the form offers,
+so the picker was never a security control. Restricting *which* paths are resolvable is tracked
+separately as [issue #125](https://github.com/libredb/libredb-studio/issues/125) — see
+[Known limitations](#13-known-limitations--future-work).
+
 ### 4.1 Embedded sample database (standalone mode)
 
 On standalone startup (never when embedded in libredb-platform),
