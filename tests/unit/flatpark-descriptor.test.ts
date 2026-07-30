@@ -87,6 +87,37 @@ describe("flatpark.yml catalog descriptor (#241)", () => {
     expect(stat.mode & 0o111).toBeGreaterThan(0);
   });
 
+  test("stays readable by a line scanner, not just by a YAML parser", () => {
+    // FlatPark's read-descriptor.mjs scans lines with regexes rather than
+    // parsing YAML, so constructs a real parser accepts - flow style, anchors,
+    // block scalars - would round-trip fine here and still read as empty
+    // upstream. The file says so in a comment; this is what enforces it.
+    const raw = read("flatpark.yml");
+    const body = raw.split("\n").filter((line) => line.trim() !== "" && !line.trimStart().startsWith("#"));
+
+    for (const line of body) {
+      // Anchors and aliases.
+      expect(line).not.toMatch(/:\s*[&*]/);
+      // Flow style with content. A bare `[]` is fine and is what the reference
+      // descriptors use for an empty dangerous_permissions.
+      expect(line).not.toMatch(/:\s*\[\s*[^\]\s]/);
+      expect(line).not.toMatch(/:\s*\{/);
+      // Block scalars.
+      expect(line).not.toMatch(/:\s*[|>][-+]?\s*$/);
+      // Two-space block indentation only: a tab, or an odd indent, is exactly
+      // what a naive scanner misreads.
+      expect(line).not.toContain("\t");
+      expect((line.match(/^ */) as RegExpMatchArray)[0].length % 2).toBe(0);
+    }
+
+    // The keys their scanner extracts must each sit on their own plain line.
+    expect(raw).toMatch(/^id: org\.libredb\.Studio$/m);
+    expect(raw).toMatch(/^name: .+$/m);
+    expect(raw).toMatch(/^summary: .+$/m);
+    expect(raw).toMatch(/^ {2}manifest: .+$/m);
+    expect(raw).toMatch(/^ {2}command: \.\/.+$/m);
+  });
+
   test("claims no dangerous permissions, matching finish-args", () => {
     expect(descriptor.policy.proprietary).toBe(false);
     expect(descriptor.policy.extra_data_first).toBe(true);

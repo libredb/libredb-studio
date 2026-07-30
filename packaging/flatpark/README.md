@@ -38,6 +38,15 @@ Different file name *and* different dpkg package name (`libredb-studio-desktop` 
 resolves its resources as `<exe dir>/../lib/<product name>`, so `usr/bin` has to stay next to
 `usr/lib/libredb-studio-desktop`.
 
+## x86_64 only, deliberately
+
+The manifest pins `only-arches: [x86_64]` and `resolve-update.sh` matches `_amd64.deb`, so **the
+arm64 GUI `.deb` is a normal release asset that FlatPark does not consume**. This matches the
+catalog: 46 of its 47 entries are x86_64-only. Releases publish both arches regardless, so adding
+arm64 later is a second `extra-data` source plus a resolver that emits two entries in `sources` -
+no new release wiring. Do not treat the arm64 asset as dead weight or drop it from the required
+release assets.
+
 ## Build and run it locally
 
 No published release is needed. One-time setup:

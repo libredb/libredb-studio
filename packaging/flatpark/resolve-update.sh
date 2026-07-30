@@ -25,6 +25,11 @@ date="$(jq -r '.published_at' <<< "$rel" | cut -c1-10)"
 # similarly named `libredb-studio_<version>_amd64.deb` is the headless systemd
 # server package; the .AppImage, the .rpm, the .snap and the standalone
 # tarballs are all skipped.
+#
+# amd64 only, matching `only-arches: [x86_64]` in the manifest - releases also
+# publish an arm64 GUI .deb that this listing does not consume. Supporting it
+# means emitting a second `sources` entry here AND a second extra-data block
+# there; the two must change together.
 url="$(jq -r '.assets[] | select(.name | test("^libredb-studio-desktop_.*_amd64\\.deb$")) | .browser_download_url' \
   <<< "$rel" | head -n1)"
 

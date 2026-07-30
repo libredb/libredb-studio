@@ -1,6 +1,16 @@
 #!/bin/sh
 set -eu
 
+# The unpack below is a pipeline, and a plain `set -e` only sees the exit status
+# of its LAST command - a first-stage failure part-way through would hand the
+# second stage a truncated stream, which can still exit 0 and leave a partial
+# tree. Flatpak verifies the extra-data digest before this script runs, so a
+# corrupt download cannot get here, but a full disk mid-unpack can. /bin/sh is
+# bash in org.gnome.Platform; the subshell probe keeps this a no-op rather than
+# a hard failure on a shell without pipefail.
+# shellcheck disable=SC3040
+(set -o pipefail) 2> /dev/null && set -o pipefail || true
+
 # Runs offline at install time inside org.gnome.Platform (issue #241).
 #
 # The upstream Debian package is a plain FHS tree holding three things: the
