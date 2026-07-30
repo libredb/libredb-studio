@@ -21,7 +21,7 @@ mock.module("@/lib/db-ui-config", () => ({
 }));
 
 import { useConnectionForm } from "@/hooks/use-connection-form";
-import type { DatabaseConnection } from "@/lib/types";
+import type { DatabaseConnection, DatabaseType } from "@/lib/types";
 
 // =============================================================================
 // useConnectionForm Tests
@@ -320,6 +320,51 @@ describe("useConnectionForm", () => {
     expect(first).toHaveProperty("label");
     expect(first).toHaveProperty("icon");
     expect(first).toHaveProperty("color");
+  });
+
+  // ── Every connectable type is offered by the picker (#127) ─────────────────
+
+  // The picker must cover the whole DatabaseType union, because this form is also the EDIT
+  // form: a type missing here renders the edit dialog with no tile selected. Keyed by
+  // DatabaseType, so adding a provider to the union fails `typecheck` on the missing key
+  // instead of silently dropping it from the UI. Set an entry to false only to hide a type
+  // on purpose — and say why.
+  const PICKER_COVERAGE: Record<DatabaseType, boolean> = {
+    postgres: true,
+    mysql: true,
+    sqlite: true,
+    oracle: true,
+    mssql: true,
+    mongodb: true,
+    redis: true,
+    libredb: true,
+  };
+
+  test("dbTypes offers every database type a connection can carry", () => {
+    const { result } = renderHook(() => useConnectionForm(defaultProps));
+
+    const offered = result.current.dbTypes.map((t: { value: string }) => t.value).sort();
+    const expected = Object.entries(PICKER_COVERAGE)
+      .filter(([, selectable]) => selectable)
+      .map(([type]) => type)
+      .sort();
+
+    expect(offered).toEqual(expected);
+  });
+
+  test("dbTypes includes sqlite so the seeded sample connection can be edited", () => {
+    const sampleConn: DatabaseConnection = {
+      id: "seed:sqlite-embedded-sample",
+      name: "Sample (Employees)",
+      type: "sqlite",
+      database: "/var/lib/libredb/sample-employees.db",
+      createdAt: new Date(),
+    };
+
+    const { result } = renderHook(() => useConnectionForm({ ...defaultProps, editConnection: sampleConn }));
+
+    expect(result.current.type).toBe("sqlite");
+    expect(result.current.dbTypes.some((t: { value: string }) => t.value === "sqlite")).toBe(true);
   });
 
   // ── handleTestConnection handles network error ─────────────────────────────

@@ -43,6 +43,20 @@ Platform's `globals.css` must scan ALL studio dist files (tsup creates chunks):
 ```
 Without chunk scanning, responsive/utility classes in chunked components won't generate CSS.
 
+**Monaco assets are NOT shipped either** (same `files` restriction). Standalone studio stages
+`node_modules/monaco-editor/min/vs` into `public/monaco/vs` at build time (`scripts/copy-monaco.mjs`,
+issue #247) and points the loader at `/monaco/vs`; embedded studio resolves that path against
+*platform's* origin, so platform must serve it too:
+
+```bash
+# platform build step — monaco-editor arrives transitively with @libredb/studio
+cp -r node_modules/monaco-editor/min/vs public/monaco/vs
+```
+
+Serving them from a different path instead is fine — set `NEXT_PUBLIC_MONACO_VS_PATH` in platform.
+Skipping both leaves the editor pane a spinner that never resolves (404s on `/monaco/vs/loader.js`),
+in embedded mode only.
+
 **Studio's `globals.css` is NOT shipped** (`package.json` `files` is `["dist","bin"]`), so anything
 expressed as a global CSS rule instead of a utility class exists in standalone studio only. Platform
 must replicate those rules in its own `globals.css`. Currently that means the cursor-affordance block

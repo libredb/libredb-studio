@@ -26,6 +26,9 @@
 /out/
 .next
 
+# Monaco AMD bundle staged from node_modules by scripts/copy-monaco.mjs (issue #247)
+/public/monaco/
+
 # production
 /build
 dist

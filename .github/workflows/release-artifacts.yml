@@ -17,8 +17,11 @@ name: Release Artifacts
 # to microsoft/winget-pkgs when WINGETCREATE_GITHUB_TOKEN is configured.
 # The desktop-appimage job turns the linux tarballs into the two desktop
 # artifacts (Tauri v2 shell + payload sidecar, issues #232 and #241): the
-# AppImage the Flathub manifest in packaging/flatpak/ repacks, and the GUI .deb
-# the FlatPark descriptor in packaging/flatpark/ pins as extra-data.
+# AppImage, which users download straight from the release, and the GUI .deb the
+# FlatPark descriptor in packaging/flatpark/ pins as extra-data. The Flatpak
+# manifest in packaging/flatpak/ repacks the AppImage too, but only in
+# flatpak-smoke.yml now that the Flathub submission was declined - see that
+# directory's README.
 #
 # DRAFT-FIRST FLOW (issue #154): the repository uses immutable releases, which
 # freeze a release's assets the moment it is published - post-publish uploads
@@ -642,17 +645,17 @@ jobs:
     # path.
     #
     # A hard release gate (like windows-package, unlike snap): neither artifact
-    # needs credentials, and both feed a downstream catalog whose update checker
-    # resolves the exact asset name on every release - the AppImage for Flathub
-    # (packaging/flatpak/) and the .deb for FlatPark (packaging/flatpark/) - so a
-    # release missing either would strand that channel.
+    # needs credentials, and both are consumed by exact asset name after the
+    # release - the AppImage is the Linux desktop download itself, and the .deb
+    # is what FlatPark's update checker (packaging/flatpark/) resolves on every
+    # release - so a release missing either would strand that path.
     needs: [guard, build, draft]
     runs-on: ${{ matrix.runner }}
     permissions:
       contents: write
-      # SLSA build provenance (issue #123). Flathub and FlatPark both repack
-      # these artifacts, so a verifiable origin matters more here than anywhere
-      # else in the release: their users never see this repo.
+      # SLSA build provenance (issue #123). Users run the AppImage directly and
+      # FlatPark repacks the .deb, so a verifiable origin matters more here than
+      # anywhere else in the release: those users never see this repo.
       id-token: write
       attestations: write
     strategy:

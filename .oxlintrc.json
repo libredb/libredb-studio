@@ -56,5 +56,5 @@
       }
     }
   ],
-  "ignorePatterns": ["dist/**", ".next/**", "out/**", "build/**", "coverage/**", "node_modules/**", "snap-payload/**", "desktop/src-tauri/payload/**", "desktop/src-tauri/target/**", "desktop/src-tauri/bin/**", ".claude/**", "next-env.d.ts"]
+  "ignorePatterns": ["dist/**", ".next/**", "public/monaco/**", "out/**", "build/**", "coverage/**", "node_modules/**", "snap-payload/**", "desktop/src-tauri/payload/**", "desktop/src-tauri/target/**", "desktop/src-tauri/bin/**", ".claude/**", "next-env.d.ts"]
 }

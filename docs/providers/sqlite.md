@@ -198,6 +198,34 @@ or `connectionString` (else "Database file path is required … or `:memory:`").
 path by `getDatabasePath()` — the flag reflects that there is no network DSN, not that the field is
 ignored.
 
+**From the UI.** SQLite is offered in the connection modal's type picker
+([`src/hooks/use-connection-form.ts`](../../src/hooks/use-connection-form.ts)). Because its
+`connectionFields` entry is just `["database"]`, `isFileBased()`
+([`src/lib/db-ui-config.ts`](../../src/lib/db-ui-config.ts)) collapses the form to a single
+**"Database File Path"** input — no host, port, user, or password. Two things to be clear about with
+users:
+
+- **The path is resolved on the server, not in the browser.** It is passed through to
+  `getDatabasePath()` in the Studio process, so `/data/app.db` means that path on the machine
+  running Studio. A remote user of a hosted deployment cannot reach a file on their own laptop —
+  see [Deployment constraint](#deployment-constraint-the-strategic-bit).
+- **`:memory:` is accepted here too**, which makes the modal a zero-setup way to get a scratch
+  database for trying out the editor.
+
+Exposing the type in the picker grants no new server-side reach: the connection travels in the
+request body and `resolveConnection()` accepts `type: "sqlite"` regardless of what the form offers,
+so the picker was never a security control. What it does change is **discoverability**. On a shared
+self-hosted instance, every authenticated user now sees a field for typing an arbitrary server-side
+path, where reaching the same capability previously took a hand-crafted API call. The reachable set
+of files is identical either way — see
+[No path sandboxing](#13-known-limitations--future-work) — but operators of multi-user deployments
+should treat "any logged-in user can open any SQLite file the Studio process can read" as an
+explicit assumption to check against their threat model, not a corner case. Where that assumption
+does not hold, the mitigations available today are OS-level: run Studio as a user with a narrow
+read scope, or isolate it in a container whose mounts contain only the databases it should serve.
+An optional in-app base-dir allowlist is tracked in
+[issue #125](https://github.com/libredb/libredb-studio/issues/125).
+
 ### 4.1 Embedded sample database (standalone mode)
 
 On standalone startup (never when embedded in libredb-platform),
@@ -415,9 +443,15 @@ not apply to SQLite ([§3.4](#34-no-transactions-api-no-cancellation-no-pool)).
 - **Single schema (`main`)** — `ATTACH`ed databases are not surfaced.
 - **No path sandboxing (by design).** `getDatabasePath()` validates only that the path contains
   no NUL byte; the resolved absolute path — `..` segments included — is used as-is. This grants an
-  untrusted client no access: the path comes from an authenticated user's connection config, and
-  reading arbitrary server-side files by path is the feature. *Future:* an optional base-dir
-  allowlist restricting resolvable paths (proposed in
+  *unauthenticated* client no access: the path comes from an authenticated user's connection config,
+  and reading arbitrary server-side files by path is the feature. The distinction that matters for
+  multi-user installs is the next one down: **authenticated does not imply trusted with the host
+  filesystem.** Since the type became selectable in the connection modal (#127), that path field is
+  directly discoverable by every logged-in user — the reachable set of files did not grow, but the
+  effort needed to reach it dropped from an API call to typing in a form. On a single-operator
+  install this is the intended feature; on a shared instance it is a deployment decision, and until
+  #125 lands the controls are OS-level (process user, container mounts). *Future:* an optional
+  base-dir allowlist restricting resolvable paths (proposed in
   [issue #125](https://github.com/libredb/libredb-studio/issues/125)) was deliberately left out of
   this honesty fix — new security-configuration surface needs its own issue.
 

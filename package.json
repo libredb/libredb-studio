@@ -80,8 +80,8 @@
   },
   "packageManager": "bun@1.3.14",
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
+    "dev": "node scripts/copy-monaco.mjs && next dev",
+    "build": "node scripts/copy-monaco.mjs && next build",
     "build:lib": "tsup",
     "attw": "rm -rf .attw && bun pm pack --quiet --destination .attw && attw .attw/*.tgz --profile node16",
     "prepublishOnly": "tsup && bun run attw",

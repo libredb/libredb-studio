@@ -1,16 +1,18 @@
 name: Flatpak Smoke
 
 # Builds the desktop AppImage from the current tree and repacks it with the
-# in-repo Flatpak manifest (issue #232) - the same two-step chain Flathub runs,
-# minus publishing. It deliberately does NOT depend on a released asset: the
-# manifest is rendered against the locally built AppImage
+# in-repo Flatpak manifest (issue #232) - the same two-step chain Flathub would
+# run, minus publishing. It deliberately does NOT depend on a released asset:
+# the manifest is rendered against the locally built AppImage
 # (scripts/render-flatpak-manifest.mjs --local), so the packaging is verifiable
 # before a release exists and stays verified afterwards.
 #
-# Nothing here publishes to Flathub. There is no flat-manager step and no
-# Flathub credential: the app repository (flathub/org.libredb.Studio) may only
-# run Flathub org actions plus peter-evans/create-pull-request, and version
-# bumps there come from the External Data Checker.
+# This is now the only consumer of packaging/flatpak/. The Flathub submission
+# (flathub/flathub#9538) was declined in 2026-07 under their generative AI
+# policy, so flathub/org.libredb.Studio was never created and there is no
+# External Data Checker bumping anything. The job is kept because it is real
+# coverage of the desktop AppImage - see packaging/flatpak/README.md. Nothing
+# here publishes anywhere: no flat-manager step and no credential.
 #
 # Path-filtered on purpose - a Next.js build, a Rust release build and a
 # flatpak-builder run per architecture is expensive.

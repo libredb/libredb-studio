@@ -23,7 +23,7 @@ set -e
 
 PASS=0
 FAIL=0
-TOTAL_GROUPS=20
+TOTAL_GROUPS=21
 EXTRA_BUN_ARGS=("$@")
 GROUP_INDEX=0
 COVERAGE_MODE=0
@@ -91,6 +91,14 @@ run_group "Group 0b: Factory singleton" \
 # which would inject load-only zero-hit lcov records for files other groups cover.
 run_group "Group 0c: Exports shim" --nocov \
   tests/isolated/exports-shim.test.ts
+
+# Group 0d: Monaco loader wiring (isolated — mocks @monaco-editor/react and must observe
+# the loader call QueryEditor makes at module-evaluation time, so it dynamic-imports the
+# component after the mock is registered).
+# --nocov: same load-only concern as Group 0c — importing QueryEditor pulls its whole
+# module chain without rendering it.
+run_group "Group 0d: Monaco loader wiring" --nocov \
+  tests/isolated/monaco-loader-wiring.test.ts
 
 # Group 1: Studio (isolated — mocks almost every child component)
 run_group "Group 1/6: Studio" \
