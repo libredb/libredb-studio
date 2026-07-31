@@ -19,6 +19,11 @@ import { useAiChat } from "@/hooks/use-ai-chat";
 // Runs at module load so it is in place before the first <Editor> mounts.
 configureMonacoLoader();
 
+// Context key gating the "Explain Plan" context-menu action. Monaco evaluates an action's
+// precondition when the menu opens, so the key — not the mounting render — decides whether
+// the affordance is offered (see the explain-capability gate below).
+const CAN_EXPLAIN_CONTEXT_KEY = "libredbCanExplain";
+
 export interface QueryEditorRef {
   getSelectedText: () => string;
   getEffectiveQuery: () => string;
@@ -115,6 +120,21 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
     const monaco = useMonaco();
     const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
     const [hasSelection, setHasSelection] = useState(false);
+
+    // Explain capability gate, shared by the toolbar button and the context-menu action.
+    const canExplain = Boolean(onExplain) && Boolean(capabilities?.supportsExplain);
+    // The context-menu action is registered once, in onMount, so it must not close over the
+    // mounting render: `onExplain` is undefined until /api/db/provider-meta resolves, and it
+    // changes again on every connection switch. Both the handler and the visibility key are
+    // therefore read at invocation time (#200).
+    const explainHandlerRef = useRef<(() => void) | undefined>(canExplain ? onExplain : undefined);
+    const canExplainKeyRef = useRef<Monaco.editor.IContextKey<boolean> | null>(null);
+
+    useEffect(() => {
+      explainHandlerRef.current = canExplain ? onExplain : undefined;
+      // Null until the editor mounts; onMount seeds the key from the ref instead.
+      canExplainKeyRef.current?.set(canExplain);
+    }, [canExplain, onExplain]);
 
     // Line numbers toggle — default must be SSR-stable; localStorage is applied after mount.
     const [showLineNumbers, setShowLineNumbers] = useState(true);
@@ -584,7 +604,7 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
           <div className="flex-1" />
 
           <div className="flex items-center gap-2 opacity-50 hover:opacity-100 transition-opacity">
-            {onExplain && capabilities?.supportsExplain && (
+            {canExplain && (
               <Button
                 variant="ghost"
                 size="sm"
@@ -751,15 +771,18 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
                 run: () => handleExecute(),
               });
 
-              if (onExplain) {
-                editor.addAction({
-                  id: "explain-query",
-                  label: "Explain Plan",
-                  contextMenuGroupId: "navigation",
-                  contextMenuOrder: 2,
-                  run: () => onExplain(),
-                });
-              }
+              canExplainKeyRef.current = editor.createContextKey<boolean>(
+                CAN_EXPLAIN_CONTEXT_KEY,
+                Boolean(explainHandlerRef.current),
+              );
+              editor.addAction({
+                id: "explain-query",
+                label: "Explain Plan",
+                precondition: CAN_EXPLAIN_CONTEXT_KEY,
+                contextMenuGroupId: "navigation",
+                contextMenuOrder: 2,
+                run: () => explainHandlerRef.current?.(),
+              });
 
               editor.addAction({
                 id: "format-sql",

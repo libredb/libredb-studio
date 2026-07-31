@@ -9,7 +9,8 @@ import React from "react";
 let capturedBlurCb: (() => void) | null = null;
 let capturedSelectionCb: (() => void) | null = null;
 let capturedCommands: Array<{ keybinding: number; handler: () => void }> = [];
-let capturedActions: Array<{ id: string; run: () => void }> = [];
+let capturedActions: Array<{ id: string; precondition?: string; run: () => void }> = [];
+let capturedContextKeys: Record<string, boolean> = {};
 let mockSelectionReturn: { isEmpty: () => boolean } | null = null;
 let mockSelectedText = "";
 let mockUseMonacoReturn: unknown = null;
@@ -95,8 +96,23 @@ mock.module("@monaco-editor/react", () => ({
         addCommand: (_keybinding: number, handler: () => void) => {
           capturedCommands.push({ keybinding: _keybinding, handler });
         },
-        addAction: (action: { id: string; run: () => void }) => {
+        addAction: (action: { id: string; precondition?: string; run: () => void }) => {
           capturedActions.push(action);
+        },
+        // Real Monaco resolves an action's `precondition` against context keys at
+        // invocation time, which is how an action registered once at mount can still
+        // follow the current render's capabilities.
+        createContextKey: (key: string, defaultValue: boolean) => {
+          capturedContextKeys[key] = defaultValue;
+          return {
+            set: (value: boolean) => {
+              capturedContextKeys[key] = value;
+            },
+            get: () => capturedContextKeys[key],
+            reset: () => {
+              delete capturedContextKeys[key];
+            },
+          };
         },
         focus: mock(() => {}),
         updateOptions: (...args: unknown[]) => mockUpdateOptions(...args),
@@ -276,6 +292,7 @@ describe("QueryEditor", () => {
     capturedSelectionCb = null;
     capturedCommands = [];
     capturedActions = [];
+    capturedContextKeys = {};
     mockSelectionReturn = null;
     mockSelectedText = "";
     mockUseMonacoReturn = null;
@@ -1164,6 +1181,88 @@ describe("QueryEditor", () => {
     );
     const actionIds = capturedActions.map((a) => a.id);
     expect(actionIds).toContain("explain-query");
+  });
+
+  // Monaco fires onMount exactly once, so anything the explain action needs must be
+  // read at invocation time rather than captured from the mounting render (#200).
+
+  test("explain action is registered even when capability metadata has not arrived yet", () => {
+    render(React.createElement(QueryEditor, createDefaultProps({ onExplain: undefined, capabilities: undefined })));
+
+    expect(capturedActions.map((a) => a.id)).toContain("explain-query");
+    expect(capturedContextKeys["libredbCanExplain"]).toBe(false);
+  });
+
+  test("explain action becomes usable when capability metadata arrives after mount", () => {
+    const onExplain = mock(() => {});
+    const props = createDefaultProps({ onExplain: undefined, capabilities: undefined });
+    const { rerender } = render(React.createElement(QueryEditor, props));
+
+    rerender(React.createElement(QueryEditor, { ...props, onExplain, capabilities: defaultCapabilities }));
+
+    expect(capturedContextKeys["libredbCanExplain"]).toBe(true);
+    const explainAction = capturedActions.find((a) => a.id === "explain-query");
+    act(() => {
+      explainAction!.run();
+    });
+    expect(onExplain).toHaveBeenCalledTimes(1);
+  });
+
+  test("explain action invokes the current handler after a connection switch", () => {
+    const firstOnExplain = mock(() => {});
+    const secondOnExplain = mock(() => {});
+    const props = createDefaultProps({ onExplain: firstOnExplain, capabilities: defaultCapabilities });
+    const { rerender } = render(React.createElement(QueryEditor, props));
+
+    rerender(React.createElement(QueryEditor, { ...props, onExplain: secondOnExplain }));
+
+    const explainAction = capturedActions.find((a) => a.id === "explain-query");
+    act(() => {
+      explainAction!.run();
+    });
+    expect(secondOnExplain).toHaveBeenCalledTimes(1);
+    expect(firstOnExplain).not.toHaveBeenCalled();
+  });
+
+  test("explain action is hidden and inert after switching to a provider without explain", () => {
+    const onExplain = mock(() => {});
+    const props = createDefaultProps({ onExplain, capabilities: defaultCapabilities });
+    const { rerender } = render(React.createElement(QueryEditor, props));
+    expect(capturedContextKeys["libredbCanExplain"]).toBe(true);
+
+    // e.g. PostgreSQL -> Redis: the parent drops the handler along with the capability.
+    rerender(
+      React.createElement(QueryEditor, {
+        ...props,
+        onExplain: undefined,
+        capabilities: { ...defaultCapabilities, supportsExplain: false },
+      }),
+    );
+
+    expect(capturedContextKeys["libredbCanExplain"]).toBe(false);
+    const explainAction = capturedActions.find((a) => a.id === "explain-query");
+    expect(explainAction!.precondition).toBe("libredbCanExplain");
+    act(() => {
+      explainAction!.run();
+    });
+    expect(onExplain).not.toHaveBeenCalled();
+  });
+
+  test("explain action stays inert when the provider declares no explain support at mount", () => {
+    const onExplain = mock(() => {});
+    render(
+      React.createElement(
+        QueryEditor,
+        createDefaultProps({ onExplain, capabilities: { ...defaultCapabilities, supportsExplain: false } }),
+      ),
+    );
+
+    expect(capturedContextKeys["libredbCanExplain"]).toBe(false);
+    const explainAction = capturedActions.find((a) => a.id === "explain-query");
+    act(() => {
+      explainAction!.run();
+    });
+    expect(onExplain).not.toHaveBeenCalled();
   });
 
   test("run-query context action dispatches execute event", () => {
