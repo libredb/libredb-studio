@@ -16,7 +16,11 @@ Web-based SQL IDE for cloud-native teams: PostgreSQL, MySQL, SQLite, Oracle, SQL
 > version (#138), and a second gate fails when `operator/bundle` / `operator/config` still carry the
 > previous version (the OLM CSV takes its version and controller image tag from `package.json`).
 > Tag only after both are committed: the tag ref is what the operator image and bundle are built
-> from, so a bundle refreshed later lives on `main` only.
+> from, so a bundle refreshed later lives on `main` only. A PR that changes any packaged file under
+> `charts/libredb-studio/` must ALSO bump `Chart.yaml version` whenever the current chart version is
+> already released — the same required check enforces it (#167), and `chart:bump` will not do it for
+> you while `appVersion` is already in sync, so bump `version:` and the README `--version` examples
+> by hand.
 
 ## GitHub
 

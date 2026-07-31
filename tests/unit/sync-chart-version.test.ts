@@ -17,6 +17,7 @@ import {
   checkSync,
   listChartFiles,
   operatorCopyViolations,
+  packagedChartChanges,
   parseChart,
   parseImageTag,
   parseReadmeVersion,
@@ -248,6 +249,59 @@ describe("checkSync", () => {
     expect(violations.some((v) => v.includes("already released"))).toBe(true);
   });
 
+  test("changing the packaged chart under an already-released version is a violation (#167)", () => {
+    const violations = checkSync({
+      pkgVersion: "0.9.44",
+      chartYaml: chartYaml(),
+      readme: readme(),
+      baseChart: { version: "0.1.3", appVersion: "0.9.44" },
+      chartChanges: ["charts/libredb-studio/templates/deployment.yaml"],
+      chartTagExists: true,
+    });
+    expect(violations).toHaveLength(1);
+    expect(violations[0]).toContain("templates/deployment.yaml");
+    expect(violations[0]).toContain("already-released");
+    expect(violations[0]).toContain("#167");
+  });
+
+  test("the #167 violation names at most three changed files and counts the rest", () => {
+    const violations = checkSync({
+      pkgVersion: "0.9.44",
+      chartYaml: chartYaml(),
+      readme: readme(),
+      baseChart: { version: "0.1.3", appVersion: "0.9.44" },
+      chartChanges: ["a.yaml", "b.yaml", "c.yaml", "d.yaml", "e.yaml"],
+      chartTagExists: true,
+    });
+    expect(violations[0]).toContain("a.yaml, b.yaml, c.yaml");
+    expect(violations[0]).toContain("(+2 more)");
+    expect(violations[0]).not.toContain("d.yaml");
+  });
+
+  test("changing the packaged chart under an unreleased version is fine (#167)", () => {
+    const violations = checkSync({
+      pkgVersion: "0.9.44",
+      chartYaml: chartYaml(),
+      readme: readme(),
+      baseChart: { version: "0.1.3", appVersion: "0.9.44" },
+      chartChanges: ["charts/libredb-studio/values.yaml"],
+      chartTagExists: false,
+    });
+    expect(violations).toEqual([]);
+  });
+
+  test("a released version with no packaged-chart change is fine (#167)", () => {
+    const violations = checkSync({
+      pkgVersion: "0.9.44",
+      chartYaml: chartYaml(),
+      readme: readme(),
+      baseChart: { version: "0.1.3", appVersion: "0.9.44" },
+      chartChanges: [],
+      chartTagExists: true,
+    });
+    expect(violations).toEqual([]);
+  });
+
   test("unknown tag state (offline) skips the released-version check", () => {
     const violations = checkSync({
       pkgVersion: "0.9.45",
@@ -278,6 +332,38 @@ describe("tagQueryNeeded", () => {
   test("true when appVersion changed and the chart version moved off the base's", () => {
     const baseChart = { version: "0.1.3", appVersion: "0.9.44" };
     expect(tagQueryNeeded({ baseChart, version: "0.1.4", appVersion: "0.9.45" })).toBe(true);
+  });
+
+  test("true when the packaged chart changed under an unchanged chart version (#167)", () => {
+    const baseChart = { version: "0.1.3", appVersion: "0.9.44" };
+    const input = { baseChart, version: "0.1.3", appVersion: "0.9.44" };
+    expect(tagQueryNeeded({ ...input, chartChanges: ["charts/libredb-studio/values.yaml"] })).toBe(true);
+    expect(tagQueryNeeded(input)).toBe(false);
+  });
+
+  test("false when the packaged chart changed and the version was bumped (#167)", () => {
+    // The bumped version is unreleased by construction: it is the chart-only
+    // release path, already covered by the appVersion/chart-releaser rules.
+    const baseChart = { version: "0.1.3", appVersion: "0.9.44" };
+    const chartChanges = ["charts/libredb-studio/values.yaml"];
+    expect(tagQueryNeeded({ baseChart, version: "0.1.4", appVersion: "0.9.44", chartChanges })).toBe(false);
+  });
+});
+
+describe("packagedChartChanges", () => {
+  test("keeps files that end up in the packaged tgz", () => {
+    const paths = [
+      "charts/libredb-studio/Chart.yaml",
+      "charts/libredb-studio/templates/deployment.yaml",
+      "charts/libredb-studio/values.schema.json",
+    ];
+    expect(packagedChartChanges(paths)).toEqual(paths);
+  });
+
+  test("drops .helmignore'd ci values and empty lines", () => {
+    expect(
+      packagedChartChanges(["charts/libredb-studio/ci/default-values.yaml", "", "charts/libredb-studio/values.yaml"]),
+    ).toEqual(["charts/libredb-studio/values.yaml"]);
   });
 });
 
@@ -421,7 +507,7 @@ describe("CLI (--check via subprocess)", () => {
   });
 });
 
-describe("CLI (--check against git fixtures, #151)", () => {
+describe("CLI (--check against git fixtures, #151/#167)", () => {
   const fixtureRoots: string[] = [];
 
   afterEach(() => {
@@ -520,6 +606,64 @@ describe("CLI (--check against git fixtures, #151)", () => {
     expect(runGit(root, "show", "origin/main:charts/libredb-studio/Chart.yaml")).toContain("appVersion");
 
     const result = runCheck(root, { CHART_SYNC_STRICT: "1" });
+    expect(result.stderr.toString()).toBe("");
+    expect(result.exitCode).toBe(0);
+  });
+
+  /**
+   * Upstream with a released chart 0.1.3 (tag libredb-studio-0.1.3) plus a template file,
+   * cloned so `origin` is a real remote whose tags `git ls-remote` can see. Returns the
+   * clone root; callers then mutate its working tree.
+   */
+  function makeReleasedChartClone(): string {
+    const upstream = makeDir("chart-sync-upstream-");
+    runGit(upstream, "init", "-q", "-b", "main");
+    writeTree(upstream, "0.9.44", chartYaml(), readme());
+    mkdirSync(join(upstream, "charts/libredb-studio/templates"), { recursive: true });
+    writeFileSync(join(upstream, "charts/libredb-studio/templates/deployment.yaml"), "kind: Deployment\n");
+    runGit(upstream, "add", "-A");
+    runGit(upstream, "commit", "-q", "-m", "chart 0.1.3");
+    runGit(upstream, "tag", "libredb-studio-0.1.3", runGit(upstream, "rev-parse", "HEAD"));
+
+    const root = makeDir("chart-sync-");
+    runGit(root, "clone", "-q", upstream, ".");
+    return root;
+  }
+
+  test("changing a chart template without a version bump fails once the version is released (#167)", () => {
+    const root = makeReleasedChartClone();
+    writeFileSync(
+      join(root, "charts/libredb-studio/templates/deployment.yaml"),
+      "kind: Deployment\n# zero-config default\n",
+    );
+
+    const result = runCheck(root);
+    expect(result.exitCode).toBe(1);
+    const stderr = result.stderr.toString();
+    expect(stderr).toContain("charts/libredb-studio/templates/deployment.yaml");
+    expect(stderr).toContain("already-released");
+    expect(stderr).toContain("#167");
+  });
+
+  test("the same template change passes once the chart version is bumped (#167)", () => {
+    const root = makeReleasedChartClone();
+    writeFileSync(
+      join(root, "charts/libredb-studio/templates/deployment.yaml"),
+      "kind: Deployment\n# zero-config default\n",
+    );
+    writeFileSync(join(root, "charts/libredb-studio/Chart.yaml"), chartYaml({ version: "0.1.4" }));
+    writeFileSync(join(root, "charts/libredb-studio/README.md"), readme("0.1.4"));
+
+    const result = runCheck(root);
+    expect(result.stderr.toString()).toBe("");
+    expect(result.exitCode).toBe(0);
+  });
+
+  test("a change outside the chart directory never demands a chart bump (#167)", () => {
+    const root = makeReleasedChartClone();
+    writeFileSync(join(root, "unrelated.md"), "docs only\n");
+
+    const result = runCheck(root);
     expect(result.stderr.toString()).toBe("");
     expect(result.exitCode).toBe(0);
   });

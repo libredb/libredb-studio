@@ -6,6 +6,14 @@ on:
     paths:
       - "charts/**"
   workflow_dispatch:
+    inputs:
+      force_republish:
+        description: >-
+          Republish this chart version even though it is already released. ONLY for
+          repairing a failed index/OCI push whose chart content is unchanged since the
+          release - it overwrites the published index digest and OCI tag (#167).
+        type: boolean
+        default: false
 
 # Serialize helm-release runs: overlapping runs would race on the shared
 # gh-pages index/release state, so queue them instead. Defense-in-depth -
@@ -24,6 +32,10 @@ permissions:
 
 jobs:
   preflight:
+    # Two gates decide whether this run may publish at all: the image gate
+    # below (may the chart be released yet?) and the publish gate in the last
+    # step (is this chart version already published, #167?).
+    #
     # Image gate: the chart deploys ghcr.io/libredb/libredb-studio:<appVersion>
     # by default, so nothing here may run (or publish) before that image
     # exists. A version-bump merge fires this workflow ~25-35 minutes before
@@ -34,19 +46,21 @@ jobs:
     # pointless). Chart-only releases pass instantly: their appVersion image
     # is already published. No polling by design: a wait would burn 45 min on
     # an image that a failed Docker run will never produce.
-    name: Image gate
+    name: Preflight gates
     runs-on: ubuntu-latest
     # A registry query is near-instant; never let a network hang hold a
     # runner.
     timeout-minutes: 5
-    # The gate only reads Chart.yaml and queries the registry anonymously -
-    # this relies on the GHCR package being PUBLIC (if visibility ever
-    # changes, this step fails loudly and needs a registry login). Do not
-    # inherit the workflow-level write scopes.
+    # The image gate only reads Chart.yaml and queries the registry
+    # anonymously - this relies on the GHCR package being PUBLIC (if
+    # visibility ever changes, this step fails loudly and needs a registry
+    # login). The already-published check reads releases, which contents:read
+    # covers. Do not inherit the workflow-level write scopes.
     permissions:
       contents: read
     outputs:
       proceed: ${{ steps.gate.outputs.proceed }}
+      chart_published: ${{ steps.published.outputs.chart_published }}
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -95,6 +109,76 @@ jobs:
             echo ""
             echo "\`${image}\` is not on GHCR yet. This push-triggered run is a no-op;"
             echo "the release chain re-dispatches helm-release after the image is published."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Publish gate (#167): the release-asset step is guarded against an
+      # already-released version, but the gh-pages index push and the OCI push
+      # re-package whatever charts/** currently holds, unconditionally. So a
+      # charts/** merge that changed chart content WITHOUT bumping the chart
+      # version rewrote the released version's index digest and its OCI copy
+      # while the (immutable) release asset kept the original bytes - a live
+      # index-vs-asset mismatch, and silent digest drift on OCI. Decide the
+      # state once here and gate both publish jobs on it, so such a merge is a
+      # full no-op after lint-test.
+      #
+      # Only "published AND carrying the chart asset" counts as done: no
+      # release yet or a leftover draft must still publish, and a published
+      # release WITHOUT its asset must still reach the release job, whose loud
+      # #154 error is the right output there. Publishing chart CHANGES always
+      # means bumping the chart version - never re-running this workflow.
+      # A failed query is treated as "not published": the release job re-checks
+      # authoritatively, so that case is no worse than the pre-guard behaviour.
+      #
+      # The one legitimate reason to publish over a released version is repairing
+      # a run whose asset upload succeeded but whose index or OCI push failed
+      # (it happened to chart 0.1.5, hand-patched at the time). Bumping the chart
+      # version cannot fix that - the released version would stay missing from
+      # the index - so the force_republish dispatch input exists for exactly this
+      # case and is loud about it. The release chain's dispatch passes no inputs,
+      # so it can never take this path.
+      - name: Check whether this chart version is already published
+        id: published
+        if: steps.gate.outputs.proceed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          FORCE_REPUBLISH: ${{ github.event.inputs.force_republish }}
+        run: |
+          set -euo pipefail
+          # grep/awk for the same reason as the appVersion read above: yq is not
+          # preinstalled and this job stays lean. '^version:' cannot match the
+          # indented dependency versions or appVersion.
+          version=$(grep '^version:' charts/libredb-studio/Chart.yaml | awk '{print $2}' | tr -d '"')
+          if [ -z "$version" ]; then
+            echo "::error::could not read version from charts/libredb-studio/Chart.yaml"
+            exit 1
+          fi
+          tag="libredb-studio-${version}"
+          asset="${tag}.tgz"
+          if [ "${FORCE_REPUBLISH:-}" = "true" ]; then
+            echo "chart_published=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::force_republish requested - publishing over '${tag}' if it already exists. Valid ONLY when charts/** is unchanged since that release; otherwise the published index/OCI digest drifts from the release asset (#167)."
+            exit 0
+          fi
+          if ! is_draft=$(gh release view "$tag" --json isDraft --jq .isDraft 2>/dev/null); then
+            echo "chart_published=false" >> "$GITHUB_OUTPUT"
+            echo "No release '${tag}' yet - publishing may proceed."
+            exit 0
+          fi
+          if [ "$is_draft" = "true" ] || ! gh release view "$tag" --json assets --jq '.assets[].name' | grep -Fqx "$asset"; then
+            echo "chart_published=false" >> "$GITHUB_OUTPUT"
+            echo "Release '${tag}' exists but is not published with '${asset}' - publishing may proceed."
+            exit 0
+          fi
+          echo "chart_published=true" >> "$GITHUB_OUTPUT"
+          echo "::notice::${tag} is already published with ${asset} - skipping the index and OCI publishes (#167). Bump the chart version to publish chart changes."
+          {
+            echo "## Chart publish skipped"
+            echo ""
+            echo "\`${tag}\` is already released with \`${asset}\`, so this run touches neither the"
+            echo "gh-pages index nor the OCI registry: re-packaging would change the published"
+            echo "digest of an immutable release (#167). Bump \`version:\` in"
+            echo "\`charts/libredb-studio/Chart.yaml\` to publish chart changes."
           } >> "$GITHUB_STEP_SUMMARY"
 
   lint-test:
@@ -149,7 +233,12 @@ jobs:
             --charts charts/libredb-studio
 
   release-github-pages:
-    needs: lint-test
+    needs: [preflight, lint-test]
+    # Publish gate (#167): skip entirely when this chart version is already
+    # released with its asset - see the preflight step for the rationale. The
+    # expression carries no status-check function, so the implicit success()
+    # keeps the existing "skipped when lint-test is skipped or fails" chaining.
+    if: needs.preflight.outputs.chart_published != 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -291,7 +380,11 @@ jobs:
           exit 1
 
   release-oci:
-    needs: lint-test
+    needs: [preflight, lint-test]
+    # Publish gate (#167): `helm push` overwrites an existing OCI tag silently,
+    # so this job is the other half of the guard. Immutable releases cover only
+    # the release asset; the OCI copy and the index are mutable surfaces.
+    if: needs.preflight.outputs.chart_published != 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout

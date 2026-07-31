@@ -220,13 +220,16 @@ Push to main (charts/** changed)   OR   dispatched by docker-build-push
 ┌─────────────────────────────────────────┐
 │  helm-release.yml                       │
 │                                         │
-│  Job 0: preflight (image gate)          │
+│  Job 0: preflight gates                 │
 │    ghcr image <appVersion> published?   │
 │    ├── yes → proceed                    │
 │    ├── no + push event → green no-op    │
 │    │   (the release chain re-dispatches │
 │    │    after the image is published)   │
 │    └── no + dispatch → fail fast        │
+│                                         │
+│    chart <version> already released     │
+│    with its .tgz? → skip jobs 2 and 3   │
 │                                         │
 │  Job 1: lint-test                       │
 │    ├── ct lint (chart-testing)          │
@@ -255,6 +258,29 @@ image is on GHCR - the gate fails fast by design. A failed image build
 dispatches nothing, so the chart correctly stays unpublished. The gate
 queries GHCR anonymously and relies on the image package being public.
 
+The second preflight gate protects the published surfaces from re-publication
+(#167). Immutable releases freeze the release asset, but the gh-pages index and
+the OCI tag are mutable: both publish jobs re-package whatever `charts/**`
+currently holds, so a `charts/**` merge that changed chart content without
+bumping the chart version used to rewrite the released version's index digest
+and its OCI copy while the asset kept the original bytes. When the release for
+`libredb-studio-<version>` already exists, is published, and carries its
+`.tgz`, jobs 2 and 3 are skipped and the run is a full no-op after `lint-test`.
+A missing release, a leftover draft, or a published release without its asset
+all still publish - the last one so the release job's loud immutability error
+(#154) is what the run reports. Publishing chart changes therefore always means
+bumping `version:`; `bun run chart:check` now refuses the un-bumped state at PR
+time, so this gate is the backstop rather than the first line of defence.
+
+The gate has one escape hatch, the `force_republish` dispatch input, for the
+single case a version bump cannot fix: a run whose asset upload succeeded but
+whose index or OCI push failed, leaving a released version missing from the
+index (this happened to chart 0.1.5 and was hand-patched at the time). Dispatch
+`helm-release.yml` with `force_republish=true` **on the released version's ref**
+and only while `charts/**` is byte-identical to what that version shipped -
+otherwise it does exactly the damage the gate exists to prevent. The release
+chain's automated dispatch passes no inputs, so it can never take this path.
+
 ### Version Management
 
 - `Chart.yaml version` (e.g., `0.1.4`): the chart's own SemVer. Chart-only fixes bump it
@@ -270,6 +296,14 @@ queries GHCR anonymously and relies on the image package being public.
   `--version` example in step. The `artifacthub.io/changes` line is written by
   `chart:bump` but deliberately not checked, so hand-written changelog entries for
   chart-only releases never trip the guard.
+- Guard (#167): a PR that changes any packaged file under `charts/libredb-studio/`
+  while leaving the chart `version` at an **already-released** value fails the same
+  check - re-publishing that version would mutate its gh-pages/OCI digest. Fix it by
+  bumping `version:` (and the README `--version` examples) by hand: `chart:bump` only
+  moves the chart version when `appVersion` is out of sync, so a chart-only content
+  change needs the manual bump. Paths matched by the chart's `.helmignore` (`ci/`) are
+  excluded because they never reach the packaged `.tgz`, and a version that has not
+  been released yet stays freely editable.
 - Base comparisons read main's `Chart.yaml` at the merge-base of `HEAD` and `origin/main`,
   so a release merged to `main` after your branch point cannot false-positive the
   already-released check on a stale branch (issue #151); in shallow checkouts with no
