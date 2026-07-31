@@ -262,6 +262,11 @@ docker run -d \
   set environment variables always take precedence. Set `AUTH_BOOTSTRAP=off` to require
   explicit configuration instead (recommended for production deployments).
 
+  A `JWT_SECRET` you set yourself must be at least 32 characters. A shorter one is a
+  hard error at startup: the server prints what is wrong and exits with code 1, instead
+  of booting into a state where the health check reports healthy but every login returns
+  503. Unset the variable to let the first run generate a strong secret for you.
+
   ### Linux packages (.deb / .rpm)
 
   Native packages for Debian/Ubuntu and RHEL/Fedora (amd64 and arm64) are attached to every
@@ -430,7 +435,7 @@ bun run test:coverage
 
 Deploy your own instance of LibreDB Studio with a single click on DigitalOcean, Koyeb, Render, Railway, CapRover, or Dokploy:
 
- [![Deploy to Koyeb](https://www.koyeb.com/static/images/deploy/button.svg)](https://app.koyeb.com/deploy?name=libredb-studio&type=docker&image=ghcr.io%2Flibredb%2Flibredb-studio%3Alatest&instance_type=free&regions=fra&instances_min=0&autoscaling_sleep_idle_delay=3900&env%5BADMIN_EMAIL%5D=admin%40libredb.org&env%5BADMIN_PASSWORD%5D=LibreDB.2026&env%5BJWT_SECRET%5D=your_secure_pass%3D&env%5BLLM_API_KEY%5D=your_GEMINI_API_KEY&env%5BLLM_MODEL%5D=gemini-2.5-flash&env%5BLLM_PROVIDER%5D=gemini&env%5BNEXT_PUBLIC_AUTH_PROVIDER%5D=local&env%5BSTORAGE_PROVIDER%5D=local&env%5BUSER_EMAIL%5D=user%40libredb.org&env%5BUSER_PASSWORD%5D=LibreDB.2026&ports=3000%3Bhttp%3B%2F&hc_protocol%5B3000%5D=tcp&hc_grace_period%5B3000%5D=5&hc_interval%5B3000%5D=30&hc_restart_limit%5B3000%5D=3&hc_timeout%5B3000%5D=5&hc_path%5B3000%5D=%2F&hc_method%5B3000%5D=get)  
+ [![Deploy to Koyeb](https://www.koyeb.com/static/images/deploy/button.svg)](https://app.koyeb.com/deploy?name=libredb-studio&type=docker&image=ghcr.io%2Flibredb%2Flibredb-studio%3Alatest&instance_type=free&regions=fra&instances_min=0&autoscaling_sleep_idle_delay=3900&env%5BADMIN_EMAIL%5D=admin%40libredb.org&env%5BADMIN_PASSWORD%5D=LibreDB.2026&env%5BJWT_SECRET%5D=replace_with_openssl_rand_base64_32&env%5BLLM_API_KEY%5D=your_GEMINI_API_KEY&env%5BLLM_MODEL%5D=gemini-2.5-flash&env%5BLLM_PROVIDER%5D=gemini&env%5BNEXT_PUBLIC_AUTH_PROVIDER%5D=local&env%5BSTORAGE_PROVIDER%5D=local&env%5BUSER_EMAIL%5D=user%40libredb.org&env%5BUSER_PASSWORD%5D=LibreDB.2026&ports=3000%3Bhttp%3B%2F&hc_protocol%5B3000%5D=tcp&hc_grace_period%5B3000%5D=5&hc_interval%5B3000%5D=30&hc_restart_limit%5B3000%5D=3&hc_timeout%5B3000%5D=5&hc_path%5B3000%5D=%2F&hc_method%5B3000%5D=get)  
 
  [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/libredb/libredb-studio)  
  [![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/libredb-studio?referralCode=libredb&utm_medium=integration&utm_source=template&utm_campaign=generic)  
@@ -443,7 +448,7 @@ Deploy your own instance of LibreDB Studio with a single click on DigitalOcean, 
 >
 > **CapRover:** open your CapRover dashboard → **Apps → One-Click Apps/Databases**, search for **LibreDB Studio**, and deploy.
 >
-> **Koyeb:** set a strong `JWT_SECRET` and credentials before deploying (Koyeb cannot auto-generate secrets). The button uses `STORAGE_PROVIDER=local` — connection metadata lives in the browser, which suits Koyeb's ephemeral filesystem. For persistence across redeploys, switch to `STORAGE_PROVIDER=postgres` and point `STORAGE_POSTGRES_URL` at a Koyeb managed Postgres or Neon database. See [`deploy/koyeb/`](deploy/koyeb/).
+> **Koyeb:** set a strong `JWT_SECRET` (at least 32 characters — `openssl rand -base64 32`) and credentials before deploying (Koyeb cannot auto-generate secrets); the prefilled values are placeholders, and a secret under 32 characters makes the app exit at startup. The button uses `STORAGE_PROVIDER=local` — connection metadata lives in the browser, which suits Koyeb's ephemeral filesystem. For persistence across redeploys, switch to `STORAGE_PROVIDER=postgres` and point `STORAGE_POSTGRES_URL` at a Koyeb managed Postgres or Neon database. See [`deploy/koyeb/`](deploy/koyeb/).
 >
 > **Fly.io:** the repo ships a ready [`fly.toml`](fly.toml) — full steps (app name, volume, secrets) in [`docs/FLY.md`](docs/FLY.md).
 >
@@ -460,7 +465,7 @@ Deploy your own instance of LibreDB Studio with a single click on DigitalOcean, 
 | `ADMIN_PASSWORD` | ❌ | Admin password; auto-generated on first run unless `AUTH_BOOTSTRAP=off` |
 | `USER_EMAIL` | ❌ | Optional user account email (default: `user@libredb.org`) |
 | `USER_PASSWORD` | ❌ | Optional; the lower-privilege user account exists only when set |
-| `JWT_SECRET` | ❌ | JWT secret (min 32 chars); auto-generated on first run unless `AUTH_BOOTSTRAP=off` |
+| `JWT_SECRET` | ❌ | JWT secret (min 32 chars); auto-generated on first run unless `AUTH_BOOTSTRAP=off`. A shorter value is fatal: the server refuses to start rather than serve a deployment where every login fails |
 | `AUTH_BOOTSTRAP` | ❌ | `off` disables zero-config generation (strict mode; recommended for production) |
 | `AUTH_COOKIE_SECURE` | ❌ | `false` drops the `Secure` flag from auth cookies — needed only when the browser reaches the app over plain HTTP (LAN/home server); not for TLS terminated at an ingress |
 | `NEXT_PUBLIC_AUTH_PROVIDER` | ❌ | `local` (default) or `oidc` for SSO |

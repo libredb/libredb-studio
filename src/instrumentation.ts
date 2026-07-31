@@ -13,6 +13,13 @@ export async function register(): Promise<void> {
   const { bootstrapAuth } = await import("@/lib/auth-bootstrap");
   bootstrapAuth();
 
+  // Auth-config preflight (#227): a set-but-too-short JWT_SECRET makes every
+  // login 503 while the health check stays green, so refuse to boot instead of
+  // serving a deployment that only looks healthy. Runs AFTER bootstrap so a
+  // generated secret is validated too.
+  const { verifyAuthEnvAtBoot } = await import("@/lib/config/auth-preflight");
+  if (!verifyAuthEnvAtBoot()) return;
+
   const { logger } = await import("@/lib/logger");
 
   // LibreDB sample: programmatic and fast — seeded synchronously as before.

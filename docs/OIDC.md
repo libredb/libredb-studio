@@ -696,7 +696,7 @@ The OIDC login flow requires carrying three values from the login route to the c
 - JWT signing with `JWT_SECRET` provides integrity verification without needing server-side storage
 - The 5-minute expiry prevents stale state cookies from accumulating
 
-> **`JWT_SECRET` is mandatory for OIDC state signing — no development fallback.** Secret reading is centralized in `src/lib/config/auth-env.ts`. The state signer calls `getJwtSecret({ allowDevFallback: false })`, so a missing `JWT_SECRET` throws in *every* environment (unlike `auth.ts`, which permits a dev fallback outside production). A `JWT_SECRET` shorter than 32 characters is rejected everywhere. This is why an OIDC deployment must always set a real `JWT_SECRET` (zero-config boot generates one automatically).
+> **`JWT_SECRET` is mandatory for OIDC state signing — no development fallback.** Secret reading is centralized in `src/lib/config/auth-env.ts`. The state signer calls `getJwtSecret({ allowDevFallback: false })`, so a missing `JWT_SECRET` throws in *every* environment (unlike `auth.ts`, which permits a dev fallback outside production). A `JWT_SECRET` shorter than 32 characters is rejected everywhere — and rejected earliest of all at boot: `src/lib/config/auth-preflight.ts` exits the process with code 1 on a standalone start, so the misconfiguration surfaces in the server log instead of only in the first login attempt (issue #227). This is why an OIDC deployment must always set a real `JWT_SECRET` (zero-config boot generates one automatically).
 
 **Lifecycle:**
 1. Created in `/api/auth/oidc/login` via `encryptState()`

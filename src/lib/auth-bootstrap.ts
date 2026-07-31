@@ -9,6 +9,7 @@ import { randomBytes } from "crypto";
 import * as fs from "fs";
 import * as path from "path";
 import { getDataDir } from "@/lib/data-dir";
+import { JWT_SECRET_MIN_LENGTH } from "@/lib/config/auth-env";
 
 export const BOOTSTRAP_FILE_NAME = "auth-bootstrap.json";
 
@@ -57,10 +58,10 @@ function readBootstrapFile(filePath: string): BootstrapFile {
       throw new Error("bootstrap file does not contain a JSON object");
     }
     const { jwtSecret, adminPassword } = parsed as BootstrapFile;
-    // Mirror the >= 32 chars minimum enforced by auth.ts getJwtSecret(): a
+    // Mirror the minimum enforced by getJwtSecret() and the boot preflight: a
     // hand-edited short secret must regenerate here instead of being injected
     // and wedging every login on a misleading "JWT_SECRET too short" 503.
-    if (jwtSecret !== undefined && (typeof jwtSecret !== "string" || jwtSecret.length < 32)) {
+    if (jwtSecret !== undefined && (typeof jwtSecret !== "string" || jwtSecret.length < JWT_SECRET_MIN_LENGTH)) {
       throw new Error("bootstrap file jwtSecret is not a string of at least 32 chars");
     }
     if (adminPassword !== undefined && typeof adminPassword !== "string") {

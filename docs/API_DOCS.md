@@ -1024,7 +1024,7 @@ async function streamAIQuery(prompt: string) {
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `JWT_SECRET` | Recommended | JWT signing secret (min 32 chars). Auto-generated at boot if unset unless `AUTH_BOOTSTRAP=off` (see `.env.example`) |
+| `JWT_SECRET` | Recommended | JWT signing secret (min 32 chars). Auto-generated at boot if unset unless `AUTH_BOOTSTRAP=off` (see `.env.example`). Set but shorter than 32 chars: the server exits at startup with code 1 rather than serving a deployment whose logins all fail with 503 |
 | `ADMIN_PASSWORD` | Recommended | Admin account password. Auto-generated and printed once at boot if unset unless `AUTH_BOOTSTRAP=off` |
 | `ADMIN_EMAIL` | No | Admin login email (default `admin@libredb.org`) |
 | `USER_PASSWORD` | No | Optional lower-privilege account password; the `user` account exists only when this is set |

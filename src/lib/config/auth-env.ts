@@ -22,6 +22,13 @@ export const JWT_SECRET_MISSING_MESSAGE =
 export const JWT_SECRET_TOO_SHORT_MESSAGE =
   "Login is unavailable: the server's JWT_SECRET is too short; it must be at least 32 characters. Update JWT_SECRET and restart the server.";
 
+/**
+ * Minimum accepted JWT_SECRET length. Single source of truth: the boot preflight
+ * (auth-preflight.ts) and the bootstrap file reader (auth-bootstrap.ts) enforce
+ * the same number, so a secret that passes startup can never fail at login.
+ */
+export const JWT_SECRET_MIN_LENGTH = 32;
+
 const DEV_FALLBACK_SECRET = "development-fallback-secret-32ch";
 
 export interface JwtSecretOptions {
@@ -56,7 +63,7 @@ export function getJwtSecret(options: JwtSecretOptions = {}): Uint8Array {
     return new TextEncoder().encode(DEV_FALLBACK_SECRET);
   }
 
-  if (secret.length < 32) {
+  if (secret.length < JWT_SECRET_MIN_LENGTH) {
     throw new AuthConfigError(JWT_SECRET_TOO_SHORT_MESSAGE);
   }
 

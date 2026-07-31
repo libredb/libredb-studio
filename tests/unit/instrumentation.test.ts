@@ -80,6 +80,39 @@ describe("instrumentation register()", () => {
     expect(getSqliteSampleSeedState()).toBe("idle");
   });
 
+  test("hard-exits before seeding when JWT_SECRET is set but too short (#227)", async () => {
+    process.env.NEXT_RUNTIME = "nodejs";
+    process.env.JWT_SECRET = "x".repeat(24); // Cosmos randomString(24)
+    process.env.ADMIN_PASSWORD = "set-so-bootstrap-has-nothing-to-do";
+    process.env.LIBREDB_EMBEDDED_SAMPLE_PATH = path.join(tmpDir, "sample.libredb");
+    process.env.SQLITE_EMBEDDED_SAMPLE_PATH = path.join(tmpDir, "sample-employees.db");
+
+    const originalExit = process.exit;
+    const exitCalls: Array<number | undefined> = [];
+    process.exit = ((code?: number) => {
+      exitCalls.push(code);
+    }) as unknown as typeof process.exit;
+    const errorSpy = spyOn(console, "error").mockImplementation(() => {});
+    let banner = "";
+    try {
+      await register();
+      // Read the recorded calls before mockRestore(): bun clears them on restore.
+      banner = errorSpy.mock.calls.flat().join("\n");
+    } finally {
+      process.exit = originalExit;
+      errorSpy.mockRestore();
+    }
+
+    expect(exitCalls).toEqual([1]);
+    expect(banner).toContain("JWT_SECRET is too short");
+    // register() must abandon the rest of boot: no sample seeding is started,
+    // and the short secret is left exactly as the operator set it.
+    expect(getSqliteSampleSeedState()).toBe("idle");
+    expect(fs.existsSync(path.join(tmpDir, "sample.libredb"))).toBe(false);
+    expect(fs.existsSync(path.join(tmpDir, "sample-employees.db"))).toBe(false);
+    expect(process.env.JWT_SECRET).toBe("x".repeat(24));
+  });
+
   test("seeds the sample file on a nodejs boot", async () => {
     process.env.NEXT_RUNTIME = "nodejs";
     process.env.AUTH_BOOTSTRAP = "off";
