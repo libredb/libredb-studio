@@ -2,8 +2,8 @@ apiVersion: v2
 name: libredb-studio
 description: Web-based SQL IDE for cloud-native teams supporting PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, and Redis
 type: application
-version: 0.1.23
-appVersion: "0.9.62"
+version: 0.1.24
+appVersion: "0.9.63"
 kubeVersion: ">=1.26.0-0"
 home: https://github.com/libredb/libredb-studio
 icon: https://raw.githubusercontent.com/libredb/libredb-studio/main/public/logo.svg
@@ -31,7 +31,7 @@ annotations:
   artifacthub.io/containsSecurityUpdates: "false"
   artifacthub.io/images: |
     - name: libredb-studio
-      image: ghcr.io/libredb/libredb-studio:0.9.62
+      image: ghcr.io/libredb/libredb-studio:0.9.63
       platforms:
         - linux/amd64
         - linux/arm64
@@ -43,8 +43,8 @@ annotations:
     - name: Source
       url: https://github.com/libredb/libredb-studio
   artifacthub.io/changes: |
-    - "Application updated to 0.9.62 - the desktop build now also ships a GUI Debian package, and the bundled Node sidecar is named libredb-studio-node so it cannot collide with the distribution's nodejs package"
-    - "No chart template changes - the rendered manifests are identical to 0.1.22"
+    - "Application updated to 0.9.63 - every release download now carries a signed provenance attestation, the npx launcher verifies it before starting, and the SQL editor serves its own Monaco assets so the workspace opens with no internet access"
+    - "No chart template changes - the rendered manifests are identical to 0.1.23"
 dependencies:
   - name: postgresql
     version: "16.x.x"

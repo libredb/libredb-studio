@@ -100,6 +100,12 @@
   <content_rating type="oars-1.1" />
 
   <releases>
+    <release version="0.9.63" date="2026-07-31">
+      <description>
+        <p>Every download for this release is now cryptographically attested, and the npx launcher verifies that attestation before it starts the app. The SQL editor also serves its own Monaco assets, so the workspace opens on a machine with no internet access.</p>
+      </description>
+      <url type="details">https://github.com/libredb/libredb-studio/releases/tag/0.9.63</url>
+    </release>
     <release version="0.9.62" date="2026-07-30">
       <description>
         <p>The desktop build now also ships a GUI Debian package alongside the AppImage, and the bundled Node runtime is installed as libredb-studio-node so it cannot claim a path the distribution's nodejs package owns.</p>
