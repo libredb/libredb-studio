@@ -40,7 +40,7 @@ docker run -d \
 
 Open <http://localhost:3000> and log in with the `ADMIN_EMAIL` / `ADMIN_PASSWORD` you set above. **Use your own strong passwords and a random `JWT_SECRET`** — the values here are placeholders.
 
-> With the local auth provider, `ADMIN_PASSWORD` is required — without it the login screen reports a clear configuration error instead of authenticating. `USER_EMAIL` / `USER_PASSWORD` are optional — omit them to run admin-only. They are not used when `NEXT_PUBLIC_AUTH_PROVIDER=oidc`.
+> **None of these auth variables are mandatory.** With the local provider, `ADMIN_PASSWORD` and `JWT_SECRET` are required only when you opt into strict mode (`AUTH_BOOTSTRAP=off`); otherwise both are generated on first start and the admin password is printed once to the container log. `USER_EMAIL` / `USER_PASSWORD` are always optional — omit them to run admin-only, since no default user password is ever assumed. None of them are used when `NEXT_PUBLIC_AUTH_PROVIDER=oidc`.
 
 > **Enable AI:** add `-e LLM_PROVIDER=gemini -e LLM_API_KEY=your_key -e LLM_MODEL=gemini-2.5-flash`.
 
@@ -127,11 +127,12 @@ A ready-to-use, fully-commented compose file is in the repo: [`docker-compose.ex
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `ADMIN_EMAIL` | ✅ | Admin email (default `admin@libredb.org`) |
-| `ADMIN_PASSWORD` | ✅ | Admin password |
-| `USER_EMAIL` | ✅ | Standard user email (default `user@libredb.org`) |
-| `USER_PASSWORD` | ✅ | Standard user password |
-| `JWT_SECRET` | ✅ | JWT signing secret (min 32 chars) |
+| `ADMIN_EMAIL` | ❌ | Admin email (default `admin@libredb.org`) |
+| `ADMIN_PASSWORD` | ❌ | Admin password. Required only in strict mode (`AUTH_BOOTSTRAP=off`) with the local provider; otherwise generated on first start |
+| `USER_EMAIL` | ❌ | Email of the optional non-admin account (default `user@libredb.org`; only read when `USER_PASSWORD` is set) |
+| `USER_PASSWORD` | ❌ | Password of the optional non-admin account. Never generated - the account exists only when you set it |
+| `JWT_SECRET` | ❌ | JWT signing secret (min 32 chars). Required only in strict mode; otherwise generated on first start |
+| `AUTH_BOOTSTRAP` | ❌ | `on` (default) generates missing auth secrets on first start and prints the admin password once to the container log; `off` requires them explicitly |
 | `AUTH_COOKIE_SECURE` | ❌ | `false` drops the `Secure` flag from auth cookies (browser reaches the app over plain HTTP, e.g. LAN/home server) |
 | `NEXT_PUBLIC_AUTH_PROVIDER` | ❌ | `local` (default) or `oidc` |
 | `OIDC_ISSUER` / `OIDC_CLIENT_ID` / `OIDC_CLIENT_SECRET` | ❌ | OIDC SSO (required when `oidc`) |

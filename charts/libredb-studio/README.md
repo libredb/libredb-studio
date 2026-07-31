@@ -40,7 +40,7 @@ helm install libredb libredb/libredb-studio \
 
 ```bash
 helm install libredb oci://ghcr.io/libredb/charts/libredb-studio \
-  --version 0.1.24 \
+  --version 0.1.25 \
   --set secrets.jwtSecret=$(openssl rand -base64 32) \
   --set secrets.adminPassword=MyAdmin123
 ```
@@ -107,7 +107,24 @@ Notes on the zero-config default:
 - Generated credentials appear once in the pod log. If your logs are collected centrally, prefer explicit secrets or strict mode.
 - Zero-config is single-replica only: each pod would generate its own JWT secret, breaking sessions across replicas, so the chart refuses to render with `replicaCount > 1` or `autoscaling.enabled` unless `secrets.jwtSecret` (or `secrets.existingSecret`) is set.
 
-**Strict mode** (`--set config.authBootstrap=off`) restores fail-closed behavior: `secrets.jwtSecret` and `secrets.adminPassword` are required (or use `secrets.existingSecret`) and the install fails fast with a clear message when either is missing; with an existing secret the pod will not start until the referenced keys exist. Recommended for production. `secrets.userPassword` stays optional in every mode. Setting `config.authBootstrap=on` is equivalent to the default `""`, just explicit.
+### Retrieving the generated credentials
+
+The banner is printed once, by the container that ran the first start. The pod log is therefore not always where you will find it:
+
+```bash
+# 1. The usual case
+kubectl logs deployment/libredb-libredb-studio | grep -A 4 "generated admin credentials"
+
+# 2. The container has restarted since first start - the banner is in the previous log
+kubectl logs deployment/libredb-libredb-studio --previous | grep -A 4 "generated admin credentials"
+
+# 3. Or read the file the app stored them in (mode 0600, survives restarts)
+kubectl exec deploy/libredb-libredb-studio -- cat /app/data/auth-bootstrap.json
+```
+
+`kubectl logs deployment/...` picks **one** pod arbitrarily, so with more than one replica name the pod that started first explicitly (`kubectl get pods --sort-by=.status.startTime`, then `kubectl logs <pod>`). Deleting `auth-bootstrap.json` makes the next start generate a fresh set.
+
+**Strict mode** (`--set config.authBootstrap=off`) restores fail-closed behavior: `secrets.jwtSecret` is required, and `secrets.adminPassword` is required as well while `authProvider=local` (or use `secrets.existingSecret`); the install fails fast with a clear message when either is missing, and with an existing secret the pod will not start until the referenced keys exist. Under `authProvider=oidc` the admin password is neither required nor referenced as a mandatory Secret key - the issuer authenticates users, so an OIDC `existingSecret` needs no `admin-password` entry. Recommended for production. `secrets.userPassword` stays optional in every mode. Setting `config.authBootstrap=on` is equivalent to the default `""`, just explicit.
 
 ## OIDC SSO
 
@@ -117,9 +134,10 @@ helm install libredb libredb/libredb-studio \
   --set config.oidcIssuer=https://dev-xxx.auth0.com \
   --set secrets.oidcClientId=your-client-id \
   --set secrets.oidcClientSecret=your-client-secret \
-  --set secrets.jwtSecret=$(openssl rand -base64 32) \
-  --set secrets.adminPassword=MyAdmin123
+  --set secrets.jwtSecret=$(openssl rand -base64 32)
 ```
+
+`secrets.adminPassword` is not part of an OIDC install: the issuer authenticates every user, and the app still signs its own session cookie with `secrets.jwtSecret`. Strict mode (`config.authBootstrap=off`) therefore requires only the JWT secret here.
 
 ## AI Configuration
 
@@ -223,6 +241,8 @@ helm uninstall libredb
 | `config.llmProvider` | AI provider | `""` |
 | `persistence.enabled` | Enable PVC | `false` |
 | `persistence.size` | PVC size | `1Gi` |
+| `persistence.emptyDirSizeLimit` | Cap the `/app/data` emptyDir used when persistence is off (e.g. `512Mi`); empty means unlimited | `""` |
+| `persistence.fixPermissions` | Chown the mounted volume to `runAsUser:fsGroup` in a root init container (hostPath / static PVs the kubelet does not `fsGroup`; rejected by OpenShift's restricted-v2 SCC) | `false` |
 | `service.type` | Service type | `ClusterIP` |
 | `service.port` | Service port | `80` |
 | `ingress.enabled` | Enable Ingress | `false` |

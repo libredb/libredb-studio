@@ -55,12 +55,14 @@ secrets:
   # -- JWT signing secret (min 32 chars). Required in strict mode (config.authBootstrap=off);
   # otherwise generated on first start.
   jwtSecret: ""
-  # -- Admin account email
+  # -- Admin account email. Mirrors the app's own default; set to "" to let the app apply it
+  # instead (no ADMIN_EMAIL is then written to the Secret or the pod).
   adminEmail: "admin@libredb.org"
   # -- Admin account password. Required in strict mode (config.authBootstrap=off);
   # otherwise generated on first start.
   adminPassword: ""
-  # -- Regular user account email (used only when userPassword is set)
+  # -- Regular user account email (used only when userPassword is set). Mirrors the app's own
+  # default; set to "" to let the app apply it instead.
   userEmail: "user@libredb.org"
   # -- Regular user account password. Optional: the non-admin account exists only when set;
   # it is never generated.
@@ -127,6 +129,16 @@ persistence:
   existingClaim: ""
   # -- Annotations for the PVC
   annotations: {}
+  # -- Size limit for the /app/data emptyDir used when persistence is disabled (e.g. "512Mi").
+  # Empty means unlimited, which is the historical behaviour; a limit makes the kubelet evict
+  # the pod once the volume grows past it, so set it only if you know the workload's ceiling.
+  emptyDirSizeLimit: ""
+  # -- Chown the mounted /app/data volume to podSecurityContext.runAsUser:fsGroup before the app
+  # starts, via a short root init container. Only for statically provisioned volumes the kubelet
+  # does not apply fsGroup to (hostPath, some local PVs), where the app otherwise hits EACCES.
+  # Requires a volume (persistence.enabled or storageProvider=sqlite) and a cluster that permits
+  # a root container - the restricted-v2 SCC on OpenShift does not.
+  fixPermissions: false
 
 # =============================================================================
 # Security

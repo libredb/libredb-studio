@@ -2,7 +2,7 @@ apiVersion: v2
 name: libredb-studio
 description: Web-based SQL IDE for cloud-native teams supporting PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, and Redis
 type: application
-version: 0.1.24
+version: 0.1.25
 appVersion: "0.9.63"
 kubeVersion: ">=1.26.0-0"
 home: https://github.com/libredb/libredb-studio
@@ -43,8 +43,10 @@ annotations:
     - name: Source
       url: https://github.com/libredb/libredb-studio
   artifacthub.io/changes: |
-    - "Application updated to 0.9.63 - every release download now carries a signed provenance attestation, the npx launcher verifies it before starting, and the SQL editor serves its own Monaco assets so the workspace opens with no internet access"
-    - "No chart template changes - the rendered manifests are identical to 0.1.23"
+    - "Strict mode no longer demands secrets.adminPassword when authProvider=oidc, and an OIDC existingSecret no longer needs an admin-password key"
+    - "The admin-email Secret key is written only when secrets.adminEmail is set, like every sibling key"
+    - "New persistence.emptyDirSizeLimit caps the /app/data emptyDir used when persistence is disabled (empty keeps it unlimited)"
+    - "New persistence.fixPermissions chowns a mounted volume in a root init container, for hostPath and static PVs the kubelet does not apply fsGroup to"
 dependencies:
   - name: postgresql
     version: "16.x.x"

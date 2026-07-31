@@ -61,7 +61,11 @@ bun dev
 
 ### Environment Variables
 
-Required for development:
+None are required: `bun dev` starts with an empty `.env.local` and the app's
+zero-config first run generates the admin credentials and the JWT secret, printing
+the password once to the dev-server output. Set them to pin known values instead
+(`USER_PASSWORD` additionally creates the optional non-admin account, which is
+never generated):
 ```env
 ADMIN_PASSWORD=admin123
 USER_PASSWORD=user123

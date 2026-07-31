@@ -87,8 +87,8 @@
         },
         "adminEmail": {
           "type": "string",
-          "format": "email",
-          "description": "Admin account email"
+          "anyOf": [{ "maxLength": 0 }, { "format": "email" }],
+          "description": "Admin account email: empty means the app's own default (admin@libredb.org), otherwise a valid address"
         },
         "adminPassword": {
           "type": "string",
@@ -96,8 +96,8 @@
         },
         "userEmail": {
           "type": "string",
-          "format": "email",
-          "description": "User account email"
+          "anyOf": [{ "maxLength": 0 }, { "format": "email" }],
+          "description": "User account email: empty means the app's own default (user@libredb.org), otherwise a valid address"
         },
         "userPassword": {
           "type": "string",
@@ -204,6 +204,15 @@
         "annotations": {
           "type": "object",
           "description": "Annotations for the PVC"
+        },
+        "emptyDirSizeLimit": {
+          "type": "string",
+          "anyOf": [{ "maxLength": 0 }, { "pattern": "^[0-9]+(Ki|Mi|Gi|Ti)$" }],
+          "description": "Size limit for the /app/data emptyDir used when persistence is disabled: empty (unlimited) or a quantity such as 512Mi"
+        },
+        "fixPermissions": {
+          "type": "boolean",
+          "description": "Chown the mounted /app/data volume to runAsUser:fsGroup in a root init container (statically provisioned volumes the kubelet does not fsGroup, e.g. hostPath)"
         }
       }
     },

@@ -48,6 +48,39 @@ spec:
       serviceAccountName: {{ include "libredb-studio.serviceAccountName" . }}
       securityContext:
         {{- include "libredb-studio.podSecurityContext" . | nindent 8 }}
+      {{- /* The kubelet does not apply fsGroup to hostPath (and some local) volumes, so a
+             statically provisioned PV leaves /app/data unwritable until someone chowns it.
+             Opt-in, and only with a real volume: it needs a root container, which the
+             restricted-v2 SCC on OpenShift rejects, and an emptyDir gets fsGroup anyway (#170). */}}
+      {{- if and (include "libredb-studio.persistenceEnabled" .) .Values.persistence.fixPermissions }}
+      initContainers:
+        - name: fix-data-permissions
+          image: {{ include "libredb-studio.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - sh
+            - -c
+            - chown -R {{ .Values.podSecurityContext.runAsUser }}:{{ .Values.podSecurityContext.fsGroup }} /app/data
+          securityContext:
+            runAsUser: 0
+            runAsNonRoot: false
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+              add:
+                - CHOWN
+                - FOWNER
+                - DAC_OVERRIDE
+          volumeMounts:
+            - name: data
+              mountPath: /app/data
+          {{- with .Values.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      {{- end }}
       containers:
         - name: {{ .Chart.Name }}
           securityContext:
@@ -89,7 +122,10 @@ spec:
                 secretKeyRef:
                   name: {{ include "libredb-studio.secretName" . }}
                   key: {{ .Values.secrets.existingSecretKeys.adminPassword }}
-                  {{- if not (include "libredb-studio.authStrict" .) }}
+                  {{- /* A hard ref only where a missing password really is an error: strict
+                         mode AND the local provider. Under OIDC the app never reads it, so an
+                         existingSecret built for OIDC must not keep the pod from starting (#170). */}}
+                  {{- if not (and (include "libredb-studio.authStrict" .) (include "libredb-studio.localAuth" .)) }}
                   optional: true
                   {{- end }}
             {{- end }}
@@ -193,7 +229,15 @@ spec:
             claimName: {{ include "libredb-studio.pvcName" . }}
         {{- else }}
         - name: data
+          {{- /* /app/data is the one volume a user can grow (SQLite storage, seeded samples),
+                 so it is the one worth capping. Empty stays uncapped: a retroactive limit
+                 would start evicting pods that are fine today (#170). */}}
+          {{- if .Values.persistence.emptyDirSizeLimit }}
+          emptyDir:
+            sizeLimit: {{ .Values.persistence.emptyDirSizeLimit | quote }}
+          {{- else }}
           emptyDir: {}
+          {{- end }}
         {{- end }}
         {{- if .Values.seedConnections.enabled }}
         - name: seed-config

@@ -311,6 +311,45 @@ jobs:
       - name: Lint Helm chart
         run: helm lint charts/libredb-studio --strict
 
+      # Deployability with DEFAULT values is a certified-catalog requirement
+      # (Rancher partner-charts) and the chart's zero-config promise, but until
+      # now only helm-release's lint-test job proved it - and that job runs on
+      # main pushes, so a regression first surfaced post-merge (#170). Run the
+      # same install here, skipped when the PR leaves charts/ alone: a kind
+      # cluster is not worth several minutes on unrelated PRs. Same skip shape
+      # as the operator-bundle step below.
+      - name: Detect chart changes
+        id: chart-changes
+        run: |
+          git fetch --no-tags --depth=1 origin +refs/heads/main:refs/remotes/origin/main
+          if [ "${{ github.event_name }}" = "pull_request" ] && git diff --quiet origin/main...HEAD -- charts/; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "charts/ unchanged - skipping the default-values install"
+            exit 0
+          fi
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Python (for chart-testing)
+        if: steps.chart-changes.outputs.changed == 'true'
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up chart-testing
+        if: steps.chart-changes.outputs.changed == 'true'
+        uses: helm/chart-testing-action@6ec842c01de15ebb84c8627d2744a0c2f2755c9f # v2.8.0
+
+      - name: Create Kind cluster
+        if: steps.chart-changes.outputs.changed == 'true'
+        uses: helm/kind-action@ef37e7f390d99f746eb8b610417061a60e82a6cc # v1.14.0
+
+      - name: Run chart-testing install (default values, zero-config)
+        if: steps.chart-changes.outputs.changed == 'true'
+        run: |
+          ct install \
+            --target-branch ${{ github.event.repository.default_branch }} \
+            --charts charts/libredb-studio
+
       # The operator embeds a copy of the chart (checked by the required
       # chart:check gate) and commits the OLM bundle generated from
       # operator/config. This step catches bundle drift: config edited without

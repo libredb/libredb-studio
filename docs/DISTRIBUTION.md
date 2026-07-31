@@ -54,9 +54,9 @@ server log:
 
 **Strict mode:** set `AUTH_BOOTSTRAP=off` to disable generation and require explicit
 `JWT_SECRET` and `ADMIN_PASSWORD` (recommended for production; missing values then surface as a
-clear error on the login page instead of silently generated credentials in collected logs). The
-Helm chart defaults to strict mode; all other channels default to zero-config. Unrecognized
-`AUTH_BOOTSTRAP` values log a warning and keep bootstrap on.
+clear error on the login page instead of silently generated credentials in collected logs). Every
+channel, the Helm chart included, defaults to zero-config; strict mode is always opt-in.
+Unrecognized `AUTH_BOOTSTRAP` values log a warning and keep bootstrap on.
 
 ## Network exposure (bind address)
 
@@ -203,20 +203,16 @@ helm install libredb oci://ghcr.io/libredb/charts/libredb-studio \
   --set secrets.adminPassword=MyAdmin123
 ```
 
-**The chart defaults to zero-config bootstrap** (`config.authBootstrap: ""` — the variable is
-omitted and the app default, on, applies): `helm install` works with no values; missing
-`JWT_SECRET`/`ADMIN_PASSWORD` are generated on first start, printed once to the pod log, and
-stored in `/app/data/auth-bootstrap.json` (an emptyDir when persistence is off, so pod
-recreation regenerates them — set `persistence.enabled=true` or explicit secrets for stable
-credentials). This keeps the chart deployable with default values, as certified catalogs such
-as the Rancher partner-charts repository require. For production, inject real secrets as above,
-or enforce them with strict mode (`--set config.authBootstrap=off`), which makes
-`secrets.jwtSecret` and `secrets.adminPassword` required and fails the install fast when
-either is missing — preferable when pod logs are collected centrally. `secrets.userPassword`
-is optional in every mode (the non-admin account exists only when it is set).
+**The chart defaults to zero-config bootstrap** like every other channel (`config.authBootstrap: ""`
+omits the variable, so the app default applies): `helm install` works with no values at all. For
+production, inject real secrets as above, or enforce them with strict mode
+(`--set config.authBootstrap=off`).
 
-Full values reference: [`charts/libredb-studio/README.md`](../charts/libredb-studio/README.md);
-chart architecture: [`docs/HELM_CHART.md`](HELM_CHART.md).
+The chart's own [`README.md`](../charts/libredb-studio/README.md#auth-bootstrap-zero-config-vs-strict)
+is the canonical description of that behaviour — credential retrieval, what strict mode requires per
+auth provider, persistence and the single-replica constraint. Full values reference:
+[`charts/libredb-studio/README.md`](../charts/libredb-studio/README.md); chart architecture:
+[`docs/HELM_CHART.md`](HELM_CHART.md).
 
 ## OpenShift operator (OperatorHub)
 

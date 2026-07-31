@@ -54,6 +54,16 @@ First-run credentials (zero-config bootstrap):
 
     kubectl --namespace {{ .Release.Namespace }} logs deployment/{{ include "libredb-studio.fullname" . }} | grep -A 4 "generated admin credentials"
 
+  Nothing printed? The banner appears once, in the log of the container that ran
+  the first start:
+  - after a container restart, add --previous to the command above
+  - or read the file the app stored them in:
+      kubectl --namespace {{ .Release.Namespace }} exec deploy/{{ include "libredb-studio.fullname" . }} -- cat /app/data/auth-bootstrap.json
+{{- if gt (int .Values.replicaCount) 1 }}
+  - with {{ .Values.replicaCount }} replicas, `logs deployment/...` reads one pod
+    chosen arbitrarily; list pods by start time and read the oldest one instead
+{{- end }}
+
   - The default install is admin-only. Set secrets.userPassword to enable the
     second, non-admin user account.
 {{- if include "libredb-studio.persistenceEnabled" . }}

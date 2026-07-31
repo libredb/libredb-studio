@@ -33,6 +33,14 @@ constraint, not by distribution features.
    kubectl --namespace <namespace> logs deployment/<release>-libredb-studio | grep -A 4 "generated admin credentials"
    ```
 
+   The banner is printed once, by the container that ran the first start. If it
+   is not in the current log, add `--previous`, or read the file the app stored
+   the credentials in:
+
+   ```bash
+   kubectl --namespace <namespace> exec deploy/<release>-libredb-studio -- cat /app/data/auth-bootstrap.json
+   ```
+
 5. Expose the UI with a port-forward (or enable `ingress.*` values):
 
    ```bash
@@ -40,22 +48,22 @@ constraint, not by distribution features.
    # open http://localhost:3000
    ```
 
-The default install is admin-only; set `secrets.userPassword` to enable the
-second, non-admin account. Generated credentials survive container restarts
-but are regenerated when the pod is recreated — set `persistence.enabled=true`
-or provide your own `secrets.*` values for stable credentials. For production
-installs prefer explicit secrets, or strict mode
-(`config.authBootstrap=off`), which requires `secrets.jwtSecret` and
-`secrets.adminPassword` and fails fast when either is missing. See the [chart README](../charts/libredb-studio/README.md) for the
-full values reference.
+For production installs prefer explicit secrets, or strict mode
+(`config.authBootstrap=off`). What the bootstrap generates, how long it lasts and
+what strict mode requires per auth provider is documented once, in the
+[chart README](../charts/libredb-studio/README.md#auth-bootstrap-zero-config-vs-strict);
+that section is canonical, and the same README carries the
+[full values reference](../charts/libredb-studio/README.md#configuration-reference).
 
 > **Persistence needs a StorageClass.** `persistence.enabled=true` creates a PVC,
 > so the cluster must offer a StorageClass — standard on K3s and RKE2 (the
 > `local-path` provisioner), but absent in Rancher's built-in `local` cluster
 > when Rancher runs as a single Docker container. If you fall back to a
 > statically provisioned `hostPath` PersistentVolume there, note that the
-> kubelet does not apply the pod's `fsGroup` to hostPath volumes: the host
-> directory must be made writable for uid/gid 1001 yourself.
+> kubelet does not apply the pod's `fsGroup` to hostPath volumes: either make the
+> host directory writable for uid/gid 1001 yourself, or set
+> `persistence.fixPermissions=true`, which chowns the volume in a short root init
+> container before the app starts.
 
 ## Installing with Helm
 

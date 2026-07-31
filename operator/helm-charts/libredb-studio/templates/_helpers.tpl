@@ -115,6 +115,22 @@ chart and the app instead of splitting into a half-strict state.
 {{- end }}
 
 {{/*
+Determine if the local email/password provider is in use (issue #170). Only
+that provider logs anybody in with ADMIN_PASSWORD: under authProvider=oidc the
+app authenticates against the issuer and the password is never read, so
+requiring it - or referencing it from a Secret that has no such key - would
+block an OIDC install for no reason. Anything other than "local" is treated as
+"not local", so an unknown provider never silently re-enables the password
+requirements. JWT_SECRET is deliberately NOT scoped: both providers end up
+issuing the app's own session cookie.
+*/}}
+{{- define "libredb-studio.localAuth" -}}
+{{- if eq (.Values.authProvider | toString | trim | lower) "local" }}
+{{- true }}
+{{- end }}
+{{- end }}
+
+{{/*
 Return the effective storage provider.
 If postgresql subchart is enabled and storageProvider is "local", auto-switch to "postgres".
 */}}

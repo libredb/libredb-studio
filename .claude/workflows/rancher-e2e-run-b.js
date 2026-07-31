@@ -1,6 +1,6 @@
 export const meta = {
   name: 'rancher-e2e-run-b',
-  description: 'Rancher E2E validation Run B: scenario matrix S2-S9, adversarial FAIL verification, UI evidence, report, mandatory cleanup',
+  description: 'Rancher E2E validation Run B: scenario matrix S2-S9 plus the S1-UI Apps-UI install, adversarial FAIL verification, UI evidence, report, mandatory cleanup. Parameterized: pass repoRoot + environmentContext (chartVersion pinned to the release under validation).',
   phases: [
     { title: 'Phase 3 - Scenario matrix' },
     { title: 'Verification - adversarial FAIL repro' },
@@ -11,9 +11,25 @@ export const meta = {
   ],
 }
 
-const REPO_ROOT = '/home/cevheri/projects/libredb/libredb-studio'
+// Everything machine- and release-specific arrives through args, so the same
+// script re-runs for any release from any checkout (#170). Expected shape:
+//   { repoRoot, s1, environmentContext: { chartVersion, appVersion, kubeconfigPath,
+//     adminTokenPath, httpPort, httpsPort, rancherVersion, k3sVersion, k8sVersion } }
+const ctx = args?.environmentContext
+const REPO_ROOT = args?.repoRoot ?? ctx?.repoRoot
+const REQUIRED_CTX = ['chartVersion', 'appVersion', 'kubeconfigPath', 'adminTokenPath', 'httpPort', 'httpsPort']
+const missing = [
+  ...(REPO_ROOT ? [] : ['repoRoot']),
+  ...(ctx ? REQUIRED_CTX.filter((key) => !ctx[key]) : ['environmentContext']),
+]
+if (missing.length > 0) {
+  throw new Error(
+    `rancher-e2e-run-b: missing args: ${missing.join(', ')}. ` +
+      `Invoke with {repoRoot, s1, environmentContext: {${REQUIRED_CTX.join(', ')}, rancherVersion, k3sVersion, k8sVersion}} ` +
+      `- pin chartVersion to the release under validation.`
+  )
+}
 const RESULTS_DIR = `${REPO_ROOT}/deploy/rancher/results`
-const ctx = args.environmentContext
 
 const GROUND_RULES = `
 GROUND RULES (mandatory, from deploy/rancher/E2E_VALIDATION_TASK.md):
@@ -151,6 +167,34 @@ const S9 = {
 - Cleanup: \`kubectl delete clusterrepo partner-charts-preview --ignore-not-found\` at the end of this scenario (separate from the main "libredb" ClusterRepo, which stays for now).`,
 }
 
+// S1 in Run A installed with helm and only photographed the catalog card and the
+// install form. The path a Rancher user actually takes - Install from the Apps UI
+// with default values - was never exercised, so a form/schema regression could
+// pass the whole matrix (#170). This variant walks that path and keeps the
+// screenshots as catalog-listing evidence.
+const S1_UI = {
+  id: 'S1-UI',
+  ns: 's1ui',
+  title: 'Zero-config install through the Rancher Apps UI (browser)',
+  spec: `- Requires browser automation. If it is unavailable to you, return verdict="BLOCKED" immediately with that reason in notes - do not fall back to a helm install and call it a UI test, and do not spend time forcing the tooling.
+- Log in to Rancher at https://localhost:${ctx.httpsPort} (self-signed cert: accept/bypass the warning). The admin password file path is recorded in the Phase 1 bootstrap transcript at ${RESULTS_DIR}/phase1-bootstrap.txt - read the path from there, never inline a password into your response.
+- Install the chart the way a user would, taking a screenshot into ${RESULTS_DIR}/s1ui/ at each step (name them 01-catalog.png, 02-chart-detail.png, ... in order):
+  1. Apps > Charts, "libredb" repo, the LibreDB Studio card visible.
+  2. The chart detail page, with version ${ctx.chartVersion} selected.
+  3. The install form step 1 (metadata): namespace s1ui, release name s1ui.
+  4. The install form step 2 (values) LEFT AT DEFAULTS - change nothing. Capture the rendered form, and also the "Edit YAML" view so the defaults are on record.
+  5. The install progress/log drawer.
+  6. Apps > Installed showing the release as Deployed.
+  7. The installed app's detail page, including the post-install notes if the UI shows them.
+- Then verify from the CLI (this is what decides the verdict; the screenshots are evidence, not proof):
+  - \`helm list -n s1ui\` shows s1ui with the chart version ${ctx.chartVersion} and status deployed.
+  - \`kubectl rollout status deploy/s1ui-libredb-studio -n s1ui --timeout=150s\` succeeds and the pod is 1/1 Ready.
+  - The zero-config credentials are retrievable exactly as the chart NOTES instruct: the pod-log banner, and \`kubectl exec deploy/s1ui-libredb-studio -n s1ui -- cat /app/data/auth-bootstrap.json\`. Write the retrieved credentials to ${RESULTS_DIR}/s1ui/credentials.txt (chmod 600) and report only that path.
+  - Port-forward the service and log in once with those credentials: HTTP 200.
+- Report any place the UI form contradicted the chart (a value marked required that the schema treats as optional, a rendered default that differs from values.yaml) - that mismatch is a FAIL, and it is the specific class of bug this scenario exists to catch.
+- Cleanup: \`helm uninstall s1ui -n s1ui\` then \`kubectl delete ns s1ui\`, and confirm both are gone.`,
+}
+
 function buildWorkerPrompt(scenario, priorFailureNotes) {
   const retryNote = priorFailureNotes
     ? `\nNOTE: a previous fresh attempt at this exact scenario returned BLOCKED with these notes: "${priorFailureNotes}". You are a NEW fresh agent - try again from scratch, working around that specific blocker if possible.\n`
@@ -198,13 +242,19 @@ for (const batch of batches) {
   log(`Batch done: ${batch.map((s) => s.id).join(', ')} -> ${batchResults.map((r) => (r ? r.verdict : 'ERROR')).join(', ')}`)
 }
 
-log('Running S9 (optional, best-effort)...')
-const s9Result = await agent(buildWorkerPrompt(S9, null), {
-  phase: 'Phase 3 - Scenario matrix',
-  label: 'S9',
-  schema: VERDICT_SCHEMA,
-})
-matrixResults.push(s9Result)
+log('Running S9 (optional, best-effort) and S1-UI (Apps UI install) in parallel...')
+const [s9Result, s1UiResult] = await parallel([
+  () =>
+    agent(buildWorkerPrompt(S9, null), {
+      phase: 'Phase 3 - Scenario matrix',
+      label: 'S9',
+      schema: VERDICT_SCHEMA,
+    }),
+  // Its own namespace and its own browser session, so it does not contend with
+  // S9's ClusterRepo work on the shared single-node cluster.
+  () => runScenario(S1_UI),
+])
+matrixResults.push(s9Result, s1UiResult)
 
 const allResults = matrixResults.filter(Boolean)
 const fails = allResults.filter((r) => r.verdict === 'FAIL')
