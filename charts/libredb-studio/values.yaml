@@ -136,8 +136,10 @@ persistence:
   # -- Chown the mounted /app/data volume to podSecurityContext.runAsUser:fsGroup before the app
   # starts, via a short root init container. Only for statically provisioned volumes the kubelet
   # does not apply fsGroup to (hostPath, some local PVs), where the app otherwise hits EACCES.
-  # Requires a volume (persistence.enabled or storageProvider=sqlite) and a cluster that permits
-  # a root container - the restricted-v2 SCC on OpenShift does not.
+  # Requires a volume (persistence.enabled or storageProvider=sqlite). Rendering FAILS when the
+  # OpenShift security-context adaptation is active: restricted-v2 rejects a root container, and
+  # there the pod's UID/GID come from the namespace range, so the chown would target the wrong
+  # owner. Use a storage class whose volumes get fsGroup applied instead.
   fixPermissions: false
 
 # =============================================================================

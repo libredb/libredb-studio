@@ -40,7 +40,7 @@ GROUND RULES (mandatory, from deploy/rancher/E2E_VALIDATION_TASK.md):
 - If you need a timestamp, run \`date -u\` as a shell command - never reason about "today" yourself.
 - Max 2 retries per step before you report FAILED/BLOCKED and move on - do not loop indefinitely.
 - You are a fresh agent with no memory of any other agent's work in this run - rely only on the context given to you below.
-- The cluster's kubeconfig is at ${ctx.kubeconfigPath} - always \`export KUBECONFIG=${ctx.kubeconfigPath}\` first. The "libredb" helm repo alias (https://libredb.org/libredb-studio/) is already registered locally. Chart version to pin everywhere: ${ctx.chartVersion} (appVersion ${ctx.appVersion}). Rancher admin token file (if you need the Rancher API, most scenarios don't): ${ctx.adminTokenPath}, Rancher HTTPS port: ${ctx.httpsPort}.
+- The cluster's kubeconfig is at ${ctx.kubeconfigPath} - always \`export KUBECONFIG=${ctx.kubeconfigPath}\` first. The "libredb" helm repo alias (https://libredb.org/libredb-studio/) should already be registered locally; if \`helm repo list\` does not show it, register it yourself (\`helm repo add libredb https://libredb.org/libredb-studio/ && helm repo update\`) instead of reporting BLOCKED - this run must work on a machine that has never run it before. Chart version to pin everywhere: ${ctx.chartVersion} (appVersion ${ctx.appVersion}). Rancher admin token file (if you need the Rancher API, most scenarios don't): ${ctx.adminTokenPath}, Rancher HTTPS port: ${ctx.httpsPort}.
 - This is a SHARED single-node cluster other scenario workers are using concurrently - use ONLY your assigned namespace, never touch other namespaces, never run cluster-wide destructive commands.
 `
 

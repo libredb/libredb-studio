@@ -14,6 +14,16 @@ that does not exist and never start. Refuse the combination instead.
 {{- if and .Values.seedConnections.enabled (not .Values.seedConnections.config) (not .Values.seedConnections.existingConfigMap) }}
 {{- fail "seedConnections.enabled requires either seedConnections.config (inline) or seedConnections.existingConfigMap - with neither, the pod would mount a ConfigMap that does not exist" }}
 {{- end }}
+{{- /*
+The permission-fix init container needs root, which OpenShift's restricted-v2
+SCC rejects - and where the SCC applies, the pod's UID/GID come from the
+namespace range instead of podSecurityContext, so chowning to the configured
+runAsUser/fsGroup would target the wrong owner anyway. Refuse the combination
+rather than render a manifest that cannot work (#170).
+*/}}
+{{- if and .Values.persistence.fixPermissions (include "libredb-studio.adaptOpenShiftSecurityContext" .) }}
+{{- fail "persistence.fixPermissions cannot be combined with the OpenShift security-context adaptation: restricted-v2 rejects the root init container, and the pod's UID/GID come from the namespace range rather than podSecurityContext, so the chown would target the wrong owner. On OpenShift, use a storage class whose volumes the kubelet applies fsGroup to (or pre-chown the volume) and leave persistence.fixPermissions=false; set global.compatibility.openshift.adaptSecurityContext=disabled only if this is not an OpenShift cluster" }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:

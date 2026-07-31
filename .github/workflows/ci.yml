@@ -318,13 +318,15 @@ jobs:
       # same install here, skipped when the PR leaves charts/ alone: a kind
       # cluster is not worth several minutes on unrelated PRs. Same skip shape
       # as the operator-bundle step below.
+      # This file is in the path set on purpose: otherwise a PR that edits the
+      # install step below would be the one PR that never runs it.
       - name: Detect chart changes
         id: chart-changes
         run: |
           git fetch --no-tags --depth=1 origin +refs/heads/main:refs/remotes/origin/main
-          if [ "${{ github.event_name }}" = "pull_request" ] && git diff --quiet origin/main...HEAD -- charts/; then
+          if [ "${{ github.event_name }}" = "pull_request" ] && git diff --quiet origin/main...HEAD -- charts/ .github/workflows/ci.yml; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
-            echo "charts/ unchanged - skipping the default-values install"
+            echo "charts/ and this workflow unchanged - skipping the default-values install"
             exit 0
           fi
           echo "changed=true" >> "$GITHUB_OUTPUT"

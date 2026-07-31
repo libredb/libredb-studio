@@ -242,7 +242,7 @@ helm uninstall libredb
 | `persistence.enabled` | Enable PVC | `false` |
 | `persistence.size` | PVC size | `1Gi` |
 | `persistence.emptyDirSizeLimit` | Cap the `/app/data` emptyDir used when persistence is off (e.g. `512Mi`); empty means unlimited | `""` |
-| `persistence.fixPermissions` | Chown the mounted volume to `runAsUser:fsGroup` in a root init container (hostPath / static PVs the kubelet does not `fsGroup`; rejected by OpenShift's restricted-v2 SCC) | `false` |
+| `persistence.fixPermissions` | Chown the mounted volume to `runAsUser:fsGroup` in a root init container (hostPath / static PVs the kubelet does not `fsGroup`). Rendering fails when the OpenShift security-context adaptation is active - restricted-v2 rejects a root container and the UID/GID come from the namespace range there | `false` |
 | `service.type` | Service type | `ClusterIP` |
 | `service.port` | Service port | `80` |
 | `ingress.enabled` | Enable Ingress | `false` |

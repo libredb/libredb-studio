@@ -135,4 +135,41 @@ describe("persistence.fixPermissions (#170)", () => {
   test("is ignored without a real volume - an emptyDir already gets fsGroup", () => {
     expect(podSpec(["--set", "persistence.fixPermissions=true"]).initContainers).toBeUndefined();
   });
+
+  test("refuses the OpenShift security-context adaptation instead of rendering a wrong chown", () => {
+    // With the adaptation on, the SCC assigns the pod's UID/GID from the
+    // namespace range and podSecurityContext.runAsUser/fsGroup are dropped - so
+    // a chown to those values targets the wrong owner, and restricted-v2 rejects
+    // the root init container regardless. Fail at render, loudly.
+    const run = Bun.spawnSync(
+      [
+        "helm",
+        "template",
+        "release-under-test",
+        CHART_DIR,
+        "--set",
+        "persistence.enabled=true",
+        "--set",
+        "persistence.fixPermissions=true",
+        "--set",
+        "global.compatibility.openshift.adaptSecurityContext=force",
+      ],
+      { stdout: "pipe", stderr: "pipe" },
+    );
+    expect(run.exitCode).not.toBe(0);
+    expect(run.stderr.toString()).toContain("persistence.fixPermissions");
+    expect(run.stderr.toString()).toContain("OpenShift");
+  });
+
+  test("stays available when the OpenShift adaptation is explicitly disabled", () => {
+    const spec = podSpec([
+      "--set",
+      "persistence.enabled=true",
+      "--set",
+      "persistence.fixPermissions=true",
+      "--set",
+      "global.compatibility.openshift.adaptSecurityContext=disabled",
+    ]);
+    expect(spec.initContainers?.[0].name).toBe("fix-data-permissions");
+  });
 });
