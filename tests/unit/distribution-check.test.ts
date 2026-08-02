@@ -1182,7 +1182,20 @@ describe("renderScorecard / renderChannelMatrix", () => {
     expect(scorecard).toContain("| Registries & releases | 1 | 0 | 0 |");
     expect(scorecard).toContain("| Package managers | 0 | 1 | 0 |");
     expect(scorecard).toContain("| Closed / declined | 0 | 0 | 1 |");
-    expect(scorecard).toContain("Coverage: Registries & releases; Package managers; Closed / declined.");
+  });
+
+  test("scorecard counts live channels per platform, once per platform", () => {
+    // Only `npm` is live in the fixture, and it lists three platforms.
+    expect(renderScorecard(channels)).toContain("Live channels by platform: **Linux 1 · macOS 1 · Windows 1**");
+  });
+
+  test("scorecard no longer emits the category coverage sentence", () => {
+    expect(renderScorecard(channels)).not.toContain("Coverage:");
+  });
+
+  test("scorecard omits the platform line when nothing is live", () => {
+    const noLive = parseChannels(MATRIX_FIXTURE.replace("status: live", "status: pending"));
+    expect(renderScorecard(noLive)).not.toContain("Live channels by platform");
   });
 
   test("matrix table columns, order, and links", () => {

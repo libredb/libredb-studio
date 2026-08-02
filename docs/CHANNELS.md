@@ -25,6 +25,8 @@ To propose a new channel, add an entry to `distribution/channels.yaml` (with a
 
 **27 channels · 22 live · 4 pending · 1 deprecated**
 
+Live channels by platform: **Linux 7 · macOS 3 · Windows 3 · Container 2 · Kubernetes 1 · Cloud 11**
+
 | Category | Live | Pending | Deprecated |
 | --- | ---: | ---: | ---: |
 | Registries & releases | 2 | 0 | 0 |
@@ -35,8 +37,6 @@ To propose a new channel, add an entry to `distribution/channels.yaml` (with a
 | PaaS & one-click | 10 | 0 | 0 |
 | Marketplaces & partners | 1 | 1 | 0 |
 | Closed / declined | 0 | 0 | 1 |
-
-Coverage: Registries & releases; Containers; Kubernetes & operators; Package managers; OS / desktop packages; PaaS & one-click; Marketplaces & partners; Closed / declined.
 
 <!-- END:CHANNEL-SCORECARD -->
 

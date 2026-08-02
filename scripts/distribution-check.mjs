@@ -588,6 +588,15 @@ function sortedMatrixChannels(channels) {
   });
 }
 
+/** Live channels per platform, canonical order, zero-count platforms dropped. */
+function livePlatformCounts(channels) {
+  const live = channels.filter((c) => c.status === "live");
+  return PLATFORMS.map((platform) => ({
+    label: PLATFORM_LABELS[platform],
+    count: live.filter((c) => c.platforms.includes(platform)).length,
+  })).filter((entry) => entry.count > 0);
+}
+
 /** Business scorecard for docs/CHANNELS.md. */
 export function renderScorecard(channels) {
   const total = channels.length;
@@ -600,17 +609,23 @@ export function renderScorecard(channels) {
     "",
     `**${total} channels · ${live} live · ${pending} pending · ${deprecated} deprecated**`,
     "",
-    "| Category | Live | Pending | Deprecated |",
-    "| --- | ---: | ---: | ---: |",
   ];
 
-  const coverageLabels = [];
+  // A multi-platform channel is counted once per platform, so these overlap and
+  // do not sum to the total. Live only: pending and declined are not coverage.
+  const platforms = livePlatformCounts(channels)
+    .map((entry) => `${entry.label} ${entry.count}`)
+    .join(" · ");
+  if (platforms) {
+    lines.push(`Live channels by platform: **${platforms}**`, "");
+  }
+
+  lines.push("| Category | Live | Pending | Deprecated |", "| --- | ---: | ---: | ---: |");
   for (const category of CHANNEL_CATEGORIES) {
     const inCat = channels.filter((c) => c.category === category);
     if (inCat.length === 0) {
       continue;
     }
-    coverageLabels.push(CATEGORY_LABELS[category]);
     lines.push(
       `| ${CATEGORY_LABELS[category]} | ${inCat.filter((c) => c.status === "live").length} | ` +
         `${inCat.filter((c) => c.status === "pending").length} | ` +
@@ -618,7 +633,7 @@ export function renderScorecard(channels) {
     );
   }
 
-  lines.push("", `Coverage: ${coverageLabels.join("; ")}.`, "");
+  lines.push("");
   return `${lines.join("\n")}\n`;
 }
 
