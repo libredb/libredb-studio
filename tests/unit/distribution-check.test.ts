@@ -1169,6 +1169,88 @@ describe("renderScorecard / renderChannelMatrix", () => {
   });
 });
 
+// MATRIX_FIXTURE above puts every channel in its own category, so a table
+// render never falls past the category comparator: the status and id
+// tie-breaks inside sortedMatrixChannels never execute against it. This
+// fixture isolates both tie-breaks with a separate, deliberately scrambled
+// input order.
+const MATRIX_TIEBREAK_FIXTURE = `channels:
+  - id: ctr-mike
+    name: Mike Deprecated
+    status: deprecated
+    category: containers
+    update:
+      method: upstream_pr
+      sla: on_demand
+    pin:
+      strategy: none
+      note: x
+  - id: ctr-zulu
+    name: Zulu Live
+    status: live
+    category: containers
+    update:
+      method: ci_publish
+      sla: every_release
+    pin:
+      strategy: none
+      note: x
+  - id: ctr-alpha
+    name: Alpha Pending
+    status: pending
+    category: containers
+    update:
+      method: ci_publish
+      sla: every_release
+    pin:
+      strategy: none
+      note: x
+  - id: desk-bravo
+    name: Bravo Desktop
+    status: live
+    category: os-desktop
+    update:
+      method: manual_ui
+      sla: on_demand
+    pin:
+      strategy: none
+      note: x
+  - id: desk-alpha
+    name: Alpha Desktop
+    status: live
+    category: os-desktop
+    update:
+      method: manual_ui
+      sla: on_demand
+    pin:
+      strategy: none
+      note: x
+`;
+
+describe("sortedMatrixChannels tie-breaks (via renderChannelMatrix)", () => {
+  const channels = parseChannels(MATRIX_TIEBREAK_FIXTURE);
+  const table = renderChannelMatrix(channels);
+
+  test("same category, different status: live before pending before deprecated", () => {
+    const liveAt = table.indexOf("Zulu Live");
+    const pendingAt = table.indexOf("Alpha Pending");
+    const deprecatedAt = table.indexOf("Mike Deprecated");
+    expect(liveAt).toBeGreaterThan(-1);
+    expect(pendingAt).toBeGreaterThan(-1);
+    expect(deprecatedAt).toBeGreaterThan(-1);
+    expect(liveAt).toBeLessThan(pendingAt);
+    expect(pendingAt).toBeLessThan(deprecatedAt);
+  });
+
+  test("same category and status: falls back to id.localeCompare", () => {
+    const alphaAt = table.indexOf("Alpha Desktop");
+    const bravoAt = table.indexOf("Bravo Desktop");
+    expect(alphaAt).toBeGreaterThan(-1);
+    expect(bravoAt).toBeGreaterThan(-1);
+    expect(alphaAt).toBeLessThan(bravoAt);
+  });
+});
+
 describe("applyMatrixMarkers / buildChannelsDoc", () => {
   const skeleton = `# Title
 
