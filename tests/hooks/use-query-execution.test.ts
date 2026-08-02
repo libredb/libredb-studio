@@ -716,8 +716,14 @@ describe("useQueryExecution", () => {
 
   // ── executeQuery shows toast when EXPLAIN not supported ────────────────
 
-  test("executeQuery shows toast when EXPLAIN not supported", async () => {
-    mockGlobalFetch({});
+  test("executeQuery executes nothing when EXPLAIN not supported", async () => {
+    // A reachable route must be mocked: with no route the query would fail and
+    // toast anyway, which cannot distinguish the capability bail-out from a
+    // network error. `explainFormat` deliberately stays set, so a strategy
+    // exists and could build EXPLAIN SQL — the capability denial must still win.
+    const fetchMock = mockGlobalFetch({
+      "/api/db/query": { ok: true, json: mockQueryResult },
+    });
     const noExplainMetadata: ProviderMetadata = {
       ...mockMetadata,
       capabilities: { ...mockMetadata.capabilities, supportsExplain: false },
@@ -730,7 +736,13 @@ describe("useQueryExecution", () => {
       await result.current.executeQuery("SELECT * FROM users", undefined, true); // isExplain = true
     });
 
-    expect(mockToastError).toHaveBeenCalled();
+    const queryCall = fetchMock.mock.calls.find(
+      (call) => typeof call[0] === "string" && call[0].includes("/api/db/query"),
+    );
+    expect(queryCall).toBeUndefined();
+    expect(mockToastError).toHaveBeenCalledWith("Not Supported", {
+      description: "EXPLAIN is not available for this database type.",
+    });
   });
 
   // ── executeQuery in playground mode begins + rollbacks transaction ─────
@@ -1081,7 +1093,9 @@ describe("useQueryExecution", () => {
       (call) => typeof call[0] === "string" && call[0].includes("/api/db/query"),
     );
     expect(queryCall).toBeUndefined();
-    expect(mockToastError).toHaveBeenCalled();
+    expect(mockToastError).toHaveBeenCalledWith("Not Supported", {
+      description: "Only SELECT statements can be explained.",
+    });
   });
 
   // ── executeQuery load more appends rows ────────────────────────────────
@@ -1158,12 +1172,15 @@ describe("useQueryExecution", () => {
 
     // Metadata is the sole source of dialect knowledge (no falling back to
     // connection.type), so no EXPLAIN SQL exists to run — and the original
-    // statement must not run in its place (#201).
+    // statement must not run in its place (#201). Absent metadata means "not
+    // loaded yet", which must not be reported as an unsupported database.
     const queryCall = fetchMock.mock.calls.find(
       (call) => typeof call[0] === "string" && call[0].includes("/api/db/query"),
     );
     expect(queryCall).toBeUndefined();
-    expect(mockToastError).toHaveBeenCalled();
+    expect(mockToastError).toHaveBeenCalledWith("Not Ready", {
+      description: "Connection metadata is still loading. Try again in a moment.",
+    });
   });
 
   // ── no EXPLAIN without explainFormat, even if supportsExplain is true ──
@@ -1191,7 +1208,9 @@ describe("useQueryExecution", () => {
       (call) => typeof call[0] === "string" && call[0].includes("/api/db/query"),
     );
     expect(queryCall).toBeUndefined();
-    expect(mockToastError).toHaveBeenCalled();
+    expect(mockToastError).toHaveBeenCalledWith("Not Supported", {
+      description: "EXPLAIN is not available for this database type.",
+    });
   });
 
   // ── handleLoadMore uses result.rows.length when currentOffset undefined ─

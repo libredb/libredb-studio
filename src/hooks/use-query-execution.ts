@@ -149,10 +149,14 @@ export function useQueryExecution({
       const directExplainSql =
         isExplain && explainSupported ? (explainStrategy?.buildSql(queryToExecute, "analyze") ?? null) : null;
       if (isExplain && !directExplainSql) {
+        // Absent metadata means "not loaded yet", not "unsupported" — blaming
+        // the database type there would be misleading.
+        const metadataPending = !metadata;
         toast({
-          title: "Not Supported",
-          description:
-            explainSupported && explainStrategy
+          title: metadataPending ? "Not Ready" : "Not Supported",
+          description: metadataPending
+            ? "Connection metadata is still loading. Try again in a moment."
+            : explainStrategy && explainSupported
               ? "Only SELECT statements can be explained."
               : "EXPLAIN is not available for this database type.",
           variant: "destructive",
