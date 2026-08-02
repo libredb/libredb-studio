@@ -13,8 +13,6 @@
 #                             registries-releases | containers | kubernetes-operators |
 #                             package-managers | os-desktop | paas-one-click |
 #                             marketplaces-partners | closed
-#   platforms                 non-empty list of platforms this channel serves:
-#                             linux | macos | windows | container | kubernetes | cloud
 #   update.method             ci_publish | commit | upstream_pr | manual_ui
 #   update.sla                every_release | minor_plus | major_only | on_demand
 #   update.ci_enabled         REQUIRED on, and allowed ONLY on, the switchable
