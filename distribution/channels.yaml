@@ -22,10 +22,17 @@
 #   links                     tracking_issue / first_pr / last_bump_pr (nullable
 #                             until the first post-listing bump) / catalog /
 #                             upstream_repo / docs
-#   pin.strategy              local_file | remote_file | none
-#   pin.extract               regex with ONE capture group; all matches in a
-#                             source must agree (ambiguity is reported, never
-#                             resolved to the first hit)
+#   pin.strategy              local_file | remote_file | probe | none
+#   pin.probe                 required when strategy == probe; one of the probe ids
+#                             defined in scripts/distribution-check.mjs
+#   pin.urls                  required when strategy == probe; URL template(s) the
+#                             probe uses (see the probe's requiredUrls)
+#   pin.architectures         required for the snap-store-channel probe; list of
+#                             architectures to measure independently
+#   pin.extract               regex with ONE capture group; required for
+#                             local_file / remote_file; all matches in a source
+#                             must agree (ambiguity is reported, never resolved
+#                             to the first hit)
 
 channels:
   # ---- Tier 0: core registries, published directly by release CI ----------

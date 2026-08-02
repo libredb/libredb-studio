@@ -116,6 +116,11 @@ const PROBES = {
   "winget-max-version": {
     requiredUrls: ["versions"],
     async run({ pin, timeoutMs }) {
+      // A directory listing is not paginated: the contents API returns the whole
+      // directory in one response and ignores per_page (verified against
+      // winget-pkgs, 785 entries in a single body). Its documented ceiling is
+      // 1,000 entries, above which GitHub directs callers to the Git Trees API -
+      // 1,000 published winget versions is not a reachable horizon here.
       const listing = await fetchJson(pin.urls.versions, timeoutMs, githubAuthHeaders(pin.urls.versions));
       if (!Array.isArray(listing.body)) {
         return { error: `catalog listing unavailable (status ${listing.status})` };
