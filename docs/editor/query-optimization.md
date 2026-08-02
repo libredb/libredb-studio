@@ -164,7 +164,14 @@ Every SELECT query automatically runs EXPLAIN in the background (parallel execut
 |----------|---------------|
 | PostgreSQL | `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)` |
 | MySQL | `EXPLAIN FORMAT=JSON` |
-| SQLite | Not supported (no JSON format) |
+| SQLite | `EXPLAIN QUERY PLAN` (tree, no cost/timing metrics) |
+
+### Non-SELECT Statements
+
+EXPLAIN is built for SELECT statements only. Clicking **Explain** with anything else
+(`UPDATE`, `INSERT`, DDL, …) executes nothing and reports "Only SELECT statements can
+be explained" — an explain run never falls back to running the original statement,
+because it deliberately bypasses the dangerous-query confirmation dialog.
 
 ### How It Works
 

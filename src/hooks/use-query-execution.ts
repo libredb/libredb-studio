@@ -138,11 +138,23 @@ export function useQueryExecution({
       );
       setBottomPanelMode(isExplain ? "explain" : "results");
 
-      // Check EXPLAIN support via capabilities
-      if (isExplain && metadata && !metadata.capabilities.supportsExplain) {
+      const explainStrategy = getExplainStrategy(metadata?.capabilities.explainFormat);
+
+      // An explain run skips the dangerous-query gate above, so it may only ever
+      // send SQL the dialect actually built for it — whether the provider denies
+      // EXPLAIN outright, ships no strategy, or the statement is not a SELECT.
+      // Falling back to the original statement would execute e.g. an UPDATE
+      // unguarded (#201).
+      const explainSupported = !metadata || metadata.capabilities.supportsExplain;
+      const directExplainSql =
+        isExplain && explainSupported ? (explainStrategy?.buildSql(queryToExecute, "analyze") ?? null) : null;
+      if (isExplain && !directExplainSql) {
         toast({
           title: "Not Supported",
-          description: "EXPLAIN is not available for this database type.",
+          description:
+            explainSupported && explainStrategy
+              ? "Only SELECT statements can be explained."
+              : "EXPLAIN is not available for this database type.",
           variant: "destructive",
         });
         setTabs((prev) =>
@@ -150,8 +162,6 @@ export function useQueryExecution({
         );
         return;
       }
-
-      const explainStrategy = getExplainStrategy(metadata?.capabilities.explainFormat);
 
       const startTime = Date.now();
       // Set up abort controller for query cancellation
@@ -176,13 +186,7 @@ export function useQueryExecution({
         }
 
         // If isExplain mode, run the dialect's EXPLAIN query instead
-        let queryToRun = queryToExecute;
-        if (isExplain && explainStrategy) {
-          const explainSql = explainStrategy.buildSql(queryToExecute, "analyze");
-          if (explainSql) {
-            queryToRun = explainSql;
-          }
-        }
+        const queryToRun = directExplainSql || queryToExecute;
 
         // Detect multi-statement queries (not for EXPLAIN or load-more or transaction)
         const useMultiQuery =
