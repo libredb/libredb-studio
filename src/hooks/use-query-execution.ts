@@ -34,6 +34,21 @@ interface UseQueryExecutionParams {
   queryEditorRef: RefObject<QueryEditorRef | null>;
 }
 
+/**
+ * Why an explain run cannot proceed, phrased for the user. Absent metadata means
+ * "not loaded yet", not "unsupported" — blaming the database type there would be
+ * misleading.
+ */
+function explainRefusal(metadata: ProviderMetadata | null, hasStrategy: boolean) {
+  if (!metadata) {
+    return { title: "Not Ready", description: "Connection metadata is still loading. Try again in a moment." };
+  }
+  if (hasStrategy && metadata.capabilities.supportsExplain) {
+    return { title: "Not Supported", description: "Only SELECT statements can be explained." };
+  }
+  return { title: "Not Supported", description: "EXPLAIN is not available for this database type." };
+}
+
 export function useQueryExecution({
   activeConnection,
   metadata,
@@ -149,18 +164,7 @@ export function useQueryExecution({
       const directExplainSql =
         isExplain && explainSupported ? (explainStrategy?.buildSql(queryToExecute, "analyze") ?? null) : null;
       if (isExplain && !directExplainSql) {
-        // Absent metadata means "not loaded yet", not "unsupported" — blaming
-        // the database type there would be misleading.
-        const metadataPending = !metadata;
-        toast({
-          title: metadataPending ? "Not Ready" : "Not Supported",
-          description: metadataPending
-            ? "Connection metadata is still loading. Try again in a moment."
-            : explainStrategy && explainSupported
-              ? "Only SELECT statements can be explained."
-              : "EXPLAIN is not available for this database type.",
-          variant: "destructive",
-        });
+        toast({ ...explainRefusal(metadata, Boolean(explainStrategy)), variant: "destructive" });
         setTabs((prev) =>
           prev.map((t) => (t.id === targetTabId ? { ...t, isExecuting: false, isLoadingMore: false } : t)),
         );
