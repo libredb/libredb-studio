@@ -228,7 +228,7 @@ The test instance comes with a pre-configured PostgreSQL database via [Seed Conn
   | **Desktop app (Debian/Ubuntu)** | `sudo apt install ./libredb-studio-desktop-<version>_amd64.deb` | Same desktop app, installed into the menu; needs no FUSE and takes WebKitGTK from the distribution. Not the server package — that one is `libredb-studio_<version>_<arch>.deb` |
   | **Desktop app (Flatpak)** | `flatpak --user remote-add --if-not-exists flatpark https://dl.flatpark.org/flatpark.flatpakrepo`<br>`flatpak --user install flatpark org.libredb.Studio` | Sandboxed desktop app from the [FlatPark](https://flatpark.org/) remote — no filesystem access at all; databases are reached over TCP. Developer-approved listing ([#241](https://github.com/libredb/libredb-studio/issues/241)) |
 
-  > Homebrew, deb/rpm, Snap, the Windows portable zip, winget/Chocolatey, the desktop AppImage and Debian package, and the npx launcher consume standalone artifacts attached to each GitHub release. Full per-channel guide — commands, configuration, systemd usage, and the Docker image tag model — in [`docs/DISTRIBUTION.md`](docs/DISTRIBUTION.md).
+  > Homebrew, deb/rpm, Snap, the Windows portable zip, winget/Chocolatey, the desktop AppImage and Debian package, and the npx launcher consume standalone artifacts attached to each GitHub release. Full per-channel guide — commands, configuration, systemd usage, and the Docker image tag model — in [`docs/DISTRIBUTION.md`](docs/DISTRIBUTION.md). Channel coverage scorecard (live / pending / categories) — [`docs/CHANNELS.md`](docs/CHANNELS.md).
 
   ### Quick Start (Docker)
 

@@ -2,13 +2,18 @@
 
 [`channels.yaml`](channels.yaml) is the human-maintained inventory of every place users can
 obtain LibreDB Studio - registries, package managers, PaaS catalogs, partner listings - with
-each channel's update policy, provenance links, and (where measurable) where its pinned
-version lives.
+each channel's business `category`, update policy, provenance links, and (where measurable)
+where its pinned version lives.
+
+Business / investment coverage (scorecard + full table): [`docs/CHANNELS.md`](../docs/CHANNELS.md)
+(`bun run distribution:matrix` to regenerate; `-- --check` for freshness).
 
 ```bash
 bun run distribution:check           # drift table for every live channel
 bun run distribution:check --strict  # gates owned every_release pins only
 bun run distribution:check --json    # machine-readable rows
+bun run distribution:matrix          # refresh docs/CHANNELS.md scorecard + table
+bun run distribution:matrix -- --check
 ```
 
 The weekly [`distribution-check.yml`](../.github/workflows/distribution-check.yml) workflow

@@ -12,15 +12,21 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   SWITCHABLE_CHANNEL_IDS,
+  applyMatrixMarkers,
+  buildChannelsDoc,
   ciEnabledOutputs,
   digestVerdict,
+  docsHref,
   evaluateChannel,
   extractPin,
   githubAuthHeaders,
+  humanizeSla,
   linkLabel,
   maxPublishedVersion,
   parseChannels,
   parseSnapVersions,
+  renderChannelMatrix,
+  renderScorecard,
   renderTable,
   strictFailures,
 } from "../../scripts/distribution-check.mjs";
@@ -32,6 +38,7 @@ function channelsYaml(rows: string): string {
 const HELM_ROW = `  - id: helm
     name: Helm chart
     status: live
+    category: kubernetes-operators
     tier: 1
     kind: chart
     update:
@@ -49,6 +56,7 @@ const HELM_ROW = `  - id: helm
 const NONE_ROW = `  - id: npm
     name: npm package
     status: live
+    category: registries-releases
     tier: 0
     kind: package-registry
     update:
@@ -62,6 +70,7 @@ const NONE_ROW = `  - id: npm
 const PROBE_ROW = `  - id: docker-ghcr
     name: Docker image (GHCR, canonical)
     status: live
+    category: containers
     tier: 0
     kind: container-image
     update:
@@ -100,6 +109,21 @@ describe("parseChannels", () => {
   test("throws on an unknown status", () => {
     const bad = HELM_ROW.replace("status: live", "status: shipped");
     expect(() => parseChannels(channelsYaml(bad))).toThrow(/status/);
+  });
+
+  test("throws when category is missing", () => {
+    const bad = HELM_ROW.replace("    category: kubernetes-operators\n", "");
+    expect(() => parseChannels(channelsYaml(bad))).toThrow(/category/);
+  });
+
+  test("throws on an unknown category", () => {
+    const bad = HELM_ROW.replace("category: kubernetes-operators", "category: not-a-real-bucket");
+    expect(() => parseChannels(channelsYaml(bad))).toThrow(/category/);
+  });
+
+  test("accepts a known category", () => {
+    const channels = parseChannels(channelsYaml(HELM_ROW));
+    expect(channels[0].category).toBe("kubernetes-operators");
   });
 
   test("throws when a local_file channel has no files", () => {
@@ -533,6 +557,7 @@ function switchableRow(id: string, enabled: boolean): string {
   return `  - id: ${id}
     name: ${id} channel
     status: live
+    category: package-managers
     tier: 1
     kind: package-manager
     update:
@@ -630,6 +655,7 @@ describe("CLI (subprocess against temp fixtures)", () => {
     return `  - id: railway
     name: Railway template
     status: live
+    category: paas-one-click
     tier: 2
     kind: paas-template
     update:
@@ -762,6 +788,7 @@ describe("CLI (remote pins against a local server)", () => {
     const row = `  - id: dokploy
     name: Dokploy template
     status: live
+    category: paas-one-click
     tier: 3
     kind: paas-template
     update:
@@ -864,6 +891,7 @@ describe("CLI (probes against a local registry/store/catalog)", () => {
     return `  - id: docker-ghcr
     name: Docker image (GHCR)
     status: live
+    category: containers
     tier: 0
     kind: container-image
     update:
@@ -931,6 +959,7 @@ describe("CLI (probes against a local registry/store/catalog)", () => {
     const row = `  - id: docker-hub-mirror
     name: Docker Hub mirror
     status: live
+    category: containers
     tier: 0
     kind: container-image
     update:
@@ -952,6 +981,7 @@ describe("CLI (probes against a local registry/store/catalog)", () => {
     return `  - id: snap
     name: Snap Store
     status: live
+    category: package-managers
     tier: 1
     kind: package-manager
     update:
@@ -1011,6 +1041,7 @@ describe("CLI (probes against a local registry/store/catalog)", () => {
     return `  - id: winget
     name: winget community repository
     status: live
+    category: package-managers
     tier: 4
     kind: package-manager
     update:
@@ -1043,5 +1074,206 @@ describe("CLI (probes against a local registry/store/catalog)", () => {
     const result = await runCheckAsync(probeFixture(wingetRow(base)));
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("| UNKNOWN | winget |");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Business visibility matrix (docs/CHANNELS.md)
+// ---------------------------------------------------------------------------
+
+const MATRIX_FIXTURE = `channels:
+  - id: npm
+    name: npm package
+    status: live
+    category: registries-releases
+    tier: 0
+    kind: package-registry
+    update:
+      method: ci_publish
+      sla: every_release
+    links:
+      catalog: https://www.npmjs.com/package/@libredb/studio
+      docs: docs/DISTRIBUTION.md
+    pin:
+      strategy: none
+      note: x
+  - id: chocolatey
+    name: Chocolatey
+    status: pending
+    category: package-managers
+    tier: 4
+    kind: package-manager
+    update:
+      method: ci_publish
+      sla: every_release
+      ci_enabled: false
+    pin:
+      strategy: none
+      note: x
+  - id: flathub
+    name: Flathub
+    status: deprecated
+    category: closed
+    tier: 4
+    kind: package-manager
+    update:
+      method: upstream_pr
+      sla: on_demand
+    links:
+      docs: packaging/flatpak/README.md
+    pin:
+      strategy: none
+      note: x
+`;
+
+describe("humanizeSla / docsHref", () => {
+  test("humanizeSla maps known SLAs", () => {
+    expect(humanizeSla("every_release")).toBe("Every release");
+    expect(humanizeSla("on_demand")).toBe("On demand");
+    expect(humanizeSla("custom")).toBe("custom");
+  });
+
+  test("docsHref rewrites paths relative to docs/CHANNELS.md", () => {
+    expect(docsHref(undefined)).toBe("DISTRIBUTION.md");
+    expect(docsHref("docs/HELM_CHART.md")).toBe("HELM_CHART.md");
+    expect(docsHref("desktop/README.md")).toBe("../desktop/README.md");
+  });
+});
+
+describe("renderScorecard / renderChannelMatrix", () => {
+  const channels = parseChannels(MATRIX_FIXTURE);
+
+  test("scorecard totals and category rows", () => {
+    const scorecard = renderScorecard(channels);
+    expect(scorecard).toContain("**3 channels · 1 live · 1 pending · 1 deprecated**");
+    expect(scorecard).toContain("| Registries & releases | 1 | 0 | 0 |");
+    expect(scorecard).toContain("| Package managers | 0 | 1 | 0 |");
+    expect(scorecard).toContain("| Closed / declined | 0 | 0 | 1 |");
+    expect(scorecard).toContain("Coverage: Registries & releases; Package managers; Closed / declined.");
+  });
+
+  test("matrix table columns, order, and links", () => {
+    const table = renderChannelMatrix(channels);
+    expect(table).toContain("| Channel | Category | Status | Update | Catalog | Docs |");
+    expect(table).toContain("| npm package | Registries & releases | live | Every release |");
+    expect(table).toContain("[link](https://www.npmjs.com/package/@libredb/studio)");
+    expect(table).toContain("[DISTRIBUTION.md](DISTRIBUTION.md)");
+    expect(table).toContain("| Chocolatey | Package managers | pending | Every release | — |");
+    expect(table).toContain("[../packaging/flatpak/README.md](../packaging/flatpak/README.md)");
+    const npmAt = table.indexOf("npm package");
+    const chocoAt = table.indexOf("Chocolatey");
+    const flatAt = table.indexOf("Flathub");
+    expect(npmAt).toBeLessThan(chocoAt);
+    expect(chocoAt).toBeLessThan(flatAt);
+    expect(table).not.toMatch(/[\u{1F300}-\u{1FAFF}]/u);
+  });
+});
+
+describe("applyMatrixMarkers / buildChannelsDoc", () => {
+  const skeleton = `# Title
+
+intro
+
+<!-- BEGIN:CHANNEL-SCORECARD -->
+
+old scorecard
+
+<!-- END:CHANNEL-SCORECARD -->
+
+mid
+
+<!-- BEGIN:CHANNEL-TABLE -->
+
+old table
+
+<!-- END:CHANNEL-TABLE -->
+
+footer
+`;
+
+  test("rewrites only marker regions", () => {
+    const next = applyMatrixMarkers(skeleton, "SCORE\n", "TABLE\n");
+    expect(next).toContain("# Title");
+    expect(next).toContain("intro");
+    expect(next).toContain("mid");
+    expect(next).toContain("footer");
+    expect(next).toContain("SCORE");
+    expect(next).toContain("TABLE");
+    expect(next).not.toContain("old scorecard");
+    expect(next).not.toContain("old table");
+  });
+
+  test("throws when markers are missing", () => {
+    expect(() => applyMatrixMarkers("# no markers\n", "a", "b")).toThrow(/missing markers/);
+  });
+
+  test("buildChannelsDoc is idempotent", () => {
+    const channels = parseChannels(MATRIX_FIXTURE);
+    const once = buildChannelsDoc(skeleton, channels);
+    const twice = buildChannelsDoc(once, channels);
+    expect(twice).toBe(once);
+  });
+});
+
+describe("CLI --matrix", () => {
+  const fixtureRoots: string[] = [];
+
+  afterEach(() => {
+    for (const root of fixtureRoots.splice(0)) rmSync(root, { recursive: true, force: true });
+  });
+
+  function matrixRoot(): string {
+    const root = mkdtempSync(join(tmpdir(), "dist-matrix-"));
+    fixtureRoots.push(root);
+    mkdirSync(join(root, "distribution"), { recursive: true });
+    mkdirSync(join(root, "docs"), { recursive: true });
+    writeFileSync(join(root, "distribution/channels.yaml"), MATRIX_FIXTURE);
+    writeFileSync(
+      join(root, "docs/CHANNELS.md"),
+      `# Channels\n\n<!-- BEGIN:CHANNEL-SCORECARD -->\n\n<!-- END:CHANNEL-SCORECARD -->\n\n<!-- BEGIN:CHANNEL-TABLE -->\n\n<!-- END:CHANNEL-TABLE -->\n`,
+    );
+    return root;
+  }
+
+  test("--matrix writes scorecard and table regions", () => {
+    const root = matrixRoot();
+    const result = Bun.spawnSync(["node", SCRIPT, "--matrix", "--root", root], {
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(result.exitCode).toBe(0);
+    const doc = readFileSync(join(root, "docs/CHANNELS.md"), "utf8");
+    expect(doc).toContain("**3 channels · 1 live · 1 pending · 1 deprecated**");
+    expect(doc).toContain("| npm package | Registries & releases | live |");
+  });
+
+  test("--matrix --check exits 0 when fresh and 1 when stale", () => {
+    const root = matrixRoot();
+    const write = Bun.spawnSync(["node", SCRIPT, "--matrix", "--root", root], {
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(write.exitCode).toBe(0);
+    const ok = Bun.spawnSync(["node", SCRIPT, "--matrix", "--check", "--root", root], {
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(ok.exitCode).toBe(0);
+    writeFileSync(
+      join(root, "docs/CHANNELS.md"),
+      readFileSync(join(root, "docs/CHANNELS.md"), "utf8").replace("1 live", "0 live"),
+    );
+    const stale = Bun.spawnSync(["node", SCRIPT, "--matrix", "--check", "--root", root], {
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(stale.exitCode).toBe(1);
+    expect(stale.stderr.toString()).toContain("stale");
+  });
+
+  test("--check without --matrix exits 2", () => {
+    const result = Bun.spawnSync(["node", SCRIPT, "--check"], { stdout: "pipe", stderr: "pipe" });
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr.toString()).toContain("--matrix");
   });
 });

@@ -26,6 +26,38 @@ const STRATEGIES = ["local_file", "remote_file", "probe", "none"];
 const METHODS = ["ci_publish", "commit", "upstream_pr", "manual_ui"];
 const SLAS = ["every_release", "minor_plus", "major_only", "on_demand"];
 
+/** Business-facing buckets for docs/CHANNELS.md (not the maintainer tier axis). */
+export const CHANNEL_CATEGORIES = [
+  "registries-releases",
+  "containers",
+  "kubernetes-operators",
+  "package-managers",
+  "os-desktop",
+  "paas-one-click",
+  "marketplaces-partners",
+  "closed",
+];
+
+export const CATEGORY_LABELS = {
+  "registries-releases": "Registries & releases",
+  containers: "Containers",
+  "kubernetes-operators": "Kubernetes & operators",
+  "package-managers": "Package managers",
+  "os-desktop": "OS / desktop packages",
+  "paas-one-click": "PaaS & one-click",
+  "marketplaces-partners": "Marketplaces & partners",
+  closed: "Closed / declined",
+};
+
+const SLA_LABELS = {
+  every_release: "Every release",
+  minor_plus: "Minor+",
+  major_only: "Major only",
+  on_demand: "On demand",
+};
+
+const STATUS_ORDER = { live: 0, pending: 1, deprecated: 2 };
+
 /**
  * Channels whose release-CI publish step may be switched off from this file via
  * `update.ci_enabled`, because they can be unavailable for reasons outside this
@@ -285,6 +317,9 @@ export function parseChannels(yamlText) {
     if (!STATUSES.includes(channel.status)) {
       throw new Error(`${CHANNELS_YAML}: ${id}: status must be one of ${STATUSES.join("|")}`);
     }
+    if (!CHANNEL_CATEGORIES.includes(channel.category)) {
+      throw new Error(`${CHANNELS_YAML}: ${id}: category must be one of ${CHANNEL_CATEGORIES.join("|")}`);
+    }
     if (!channel.update || !METHODS.includes(channel.update.method)) {
       throw new Error(`${CHANNELS_YAML}: ${id}: update.method must be one of ${METHODS.join("|")}`);
     }
@@ -499,6 +534,113 @@ export function renderTable(rows, pkgVersion) {
   return `${lines.join("\n")}\n`;
 }
 
+export function humanizeSla(sla) {
+  return SLA_LABELS[sla] ?? sla;
+}
+
+/** Resolve a channels.yaml docs path for links from docs/CHANNELS.md. */
+export function docsHref(docsPath) {
+  if (!docsPath) {
+    return "DISTRIBUTION.md";
+  }
+  if (docsPath.startsWith("docs/")) {
+    return docsPath.slice("docs/".length);
+  }
+  return `../${docsPath}`;
+}
+
+function sortedMatrixChannels(channels) {
+  return [...channels].sort((a, b) => {
+    const cat = CHANNEL_CATEGORIES.indexOf(a.category) - CHANNEL_CATEGORIES.indexOf(b.category);
+    if (cat !== 0) {
+      return cat;
+    }
+    const status = (STATUS_ORDER[a.status] ?? 99) - (STATUS_ORDER[b.status] ?? 99);
+    if (status !== 0) {
+      return status;
+    }
+    return a.id.localeCompare(b.id);
+  });
+}
+
+/** Business scorecard for docs/CHANNELS.md. */
+export function renderScorecard(channels) {
+  const total = channels.length;
+  const live = channels.filter((c) => c.status === "live").length;
+  const pending = channels.filter((c) => c.status === "pending").length;
+  const deprecated = channels.filter((c) => c.status === "deprecated").length;
+
+  const lines = [
+    "### Coverage snapshot",
+    "",
+    `**${total} channels · ${live} live · ${pending} pending · ${deprecated} deprecated**`,
+    "",
+    "| Category | Live | Pending | Deprecated |",
+    "| --- | ---: | ---: | ---: |",
+  ];
+
+  const coverageLabels = [];
+  for (const category of CHANNEL_CATEGORIES) {
+    const inCat = channels.filter((c) => c.category === category);
+    if (inCat.length === 0) {
+      continue;
+    }
+    coverageLabels.push(CATEGORY_LABELS[category]);
+    lines.push(
+      `| ${CATEGORY_LABELS[category]} | ${inCat.filter((c) => c.status === "live").length} | ` +
+        `${inCat.filter((c) => c.status === "pending").length} | ` +
+        `${inCat.filter((c) => c.status === "deprecated").length} |`,
+    );
+  }
+
+  lines.push("", `Coverage: ${coverageLabels.join("; ")}.`, "");
+  return `${lines.join("\n")}\n`;
+}
+
+/** Full channel inventory table for docs/CHANNELS.md. */
+export function renderChannelMatrix(channels) {
+  const lines = ["| Channel | Category | Status | Update | Catalog | Docs |", "| --- | --- | --- | --- | --- | --- |"];
+  for (const channel of sortedMatrixChannels(channels)) {
+    const catalog = channel.links?.catalog ? `[${linkLabel(channel.links.catalog)}](${channel.links.catalog})` : "—";
+    const docsPath = channel.links?.docs;
+    const href = docsHref(docsPath);
+    const docs = `[${href}](${href})`;
+    lines.push(
+      `| ${channel.name ?? channel.id} | ${CATEGORY_LABELS[channel.category]} | ${channel.status} | ` +
+        `${humanizeSla(channel.update.sla)} | ${catalog} | ${docs} |`,
+    );
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+const SCORECARD_BEGIN = "<!-- BEGIN:CHANNEL-SCORECARD -->";
+const SCORECARD_END = "<!-- END:CHANNEL-SCORECARD -->";
+const TABLE_BEGIN = "<!-- BEGIN:CHANNEL-TABLE -->";
+const TABLE_END = "<!-- END:CHANNEL-TABLE -->";
+
+function replaceMarkerRegion(doc, begin, end, body) {
+  const start = doc.indexOf(begin);
+  const stop = doc.indexOf(end);
+  if (start === -1 || stop === -1 || stop < start) {
+    throw new Error(`docs/CHANNELS.md is missing markers ${begin} / ${end}`);
+  }
+  const before = doc.slice(0, start + begin.length);
+  const after = doc.slice(stop);
+  const trimmed = body.replace(/^\n+/, "").replace(/\n+$/, "");
+  return `${before}\n\n${trimmed}\n\n${after}`;
+}
+
+/** Rewrite scorecard + table marker regions; leave narrative untouched. */
+export function applyMatrixMarkers(doc, scorecard, table) {
+  let next = replaceMarkerRegion(doc, SCORECARD_BEGIN, SCORECARD_END, scorecard);
+  next = replaceMarkerRegion(next, TABLE_BEGIN, TABLE_END, table);
+  return next;
+}
+
+export function buildChannelsDoc(doc, channels) {
+  return applyMatrixMarkers(doc, renderScorecard(channels), renderChannelMatrix(channels));
+}
+
 async function fetchText(url, timeoutMs) {
   const headers = githubAuthHeaders(url);
   try {
@@ -515,6 +657,8 @@ async function fetchText(url, timeoutMs) {
 async function main(argv) {
   const strict = argv.includes("--strict");
   const json = argv.includes("--json");
+  const matrix = argv.includes("--matrix");
+  const checkOnly = argv.includes("--check");
   const rootIdx = argv.indexOf("--root");
   const rootArg = rootIdx === -1 ? undefined : argv[rootIdx + 1];
   if (rootIdx !== -1 && (rootArg === undefined || rootArg.startsWith("--"))) {
@@ -523,6 +667,29 @@ async function main(argv) {
   }
   const root = rootIdx === -1 ? process.cwd() : path.resolve(rootArg);
   const timeoutMs = Number(process.env.DISTRIBUTION_CHECK_TIMEOUT_MS ?? 10_000);
+
+  if (checkOnly && !matrix) {
+    console.error("ERROR: --check requires --matrix (use: bun run distribution:matrix -- --check)");
+    process.exit(2);
+  }
+
+  if (matrix) {
+    const docPath = path.join(root, "docs/CHANNELS.md");
+    const channels = parseChannels(fs.readFileSync(path.join(root, CHANNELS_YAML), "utf8"));
+    const current = fs.readFileSync(docPath, "utf8");
+    const next = buildChannelsDoc(current, channels);
+    if (checkOnly) {
+      if (current !== next) {
+        console.error("ERROR: docs/CHANNELS.md is stale; run: bun run distribution:matrix");
+        process.exit(1);
+      }
+      console.log("docs/CHANNELS.md matrix regions are up to date");
+      return;
+    }
+    fs.writeFileSync(docPath, next);
+    console.log("Updated docs/CHANNELS.md matrix regions");
+    return;
+  }
 
   // The release workflow's automation gates. They answer from the inventory
   // alone - no package.json read, no network - so a gate check can never fail

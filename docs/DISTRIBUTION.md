@@ -1050,8 +1050,13 @@ Chocolatey push is still in moderation.
 
 ### Channel inventory and drift check
 
+For a **business / investment coverage view** (live counts by category, full channel
+table with catalog links), see [`docs/CHANNELS.md`](CHANNELS.md). Regenerate it with
+`bun run distribution:matrix` after editing the inventory; `bun run distribution:matrix -- --check`
+fails when the generated regions are stale.
+
 [`distribution/channels.yaml`](../distribution/channels.yaml) is the machine-readable inventory
-of every distribution channel: identity, update policy, provenance links, and (where measurable)
+of every distribution channel: identity, business `category`, update policy, provenance links, and (where measurable)
 where its pinned version lives. `bun run distribution:check`
 ([`scripts/distribution-check.mjs`](../scripts/distribution-check.mjs)) compares every live
 channel's pin against `package.json` and prints a markdown drift table; the weekly
@@ -1069,6 +1074,11 @@ pin or editing a channel entry is always a human commit.
 | 2 | LibreDB-owned copies and listings, bumped by hand | CapRover source/mirror, Railway, Koyeb button, Fly.io config, Render Blueprint |
 | 3 | Upstream community catalogs, bumped via PR | CapRover official, Dokploy, Cosmos, Kubero |
 | 4 | Partner or curated catalogs (not self-serve) | Rancher partner charts, Koyeb catalog, DO, winget, Chocolatey, Flathub |
+
+**Categories** (`category` on every channel) are the business-facing buckets rendered in
+[`docs/CHANNELS.md`](CHANNELS.md): `registries-releases`, `containers`,
+`kubernetes-operators`, `package-managers`, `os-desktop`, `paas-one-click`,
+`marketplaces-partners`, `closed`. They are independent of tier (who publishes).
 
 **SLAs** (`update.sla`) state how quickly a channel is expected to follow a release:
 `every_release` (bumped as part of releasing), `minor_plus` (bumped for minor releases and

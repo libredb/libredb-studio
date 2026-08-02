@@ -6,6 +6,10 @@ name: Distribution Check
 # routine and must never block anything; per-channel enforcement lives where
 # it is owned (e.g. the required chart:check gate for Helm).
 #
+# Also freshness-checks docs/CHANNELS.md (the audience matrix). Path-filtered
+# pull_request runs catch a forgotten `bun run distribution:matrix` before merge;
+# only that offline step runs on a PR, never the networked drift report.
+#
 # Deliberately NOT triggered on release: published - releases are published
 # by release-artifacts.yml under GITHUB_TOKEN, whose events never trigger
 # other workflows (see the explicit dispatch chain in that file). A weekly
@@ -15,9 +19,17 @@ on:
   schedule:
     - cron: "41 6 * * 1"
   workflow_dispatch:
+  pull_request:
+    paths:
+      - "distribution/channels.yaml"
+      - "docs/CHANNELS.md"
+      - "scripts/distribution-check.mjs"
+      - ".github/workflows/distribution-check.yml"
 
 concurrency:
-  group: distribution-check
+  # Keyed by ref: without this, a pull_request run and the weekly cron run share
+  # one group and cancel each other, leaving a cancelled check on the PR.
+  group: distribution-check-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -39,7 +51,13 @@ jobs:
       - name: Install dependencies
         uses: ./.github/actions/bun-install
 
+      - name: Check CHANNELS.md matrix freshness
+        run: bun run distribution:matrix -- --check
+
+      # Warn-only by design and it talks to GHCR, Docker Hub, Snap and winget.
+      # Keep it out of PR status; the freshness check above is offline and cheap.
       - name: Check distribution channels
+        if: github.event_name != 'pull_request'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: bun run distribution:check
