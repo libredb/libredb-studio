@@ -39,6 +39,7 @@ const HELM_ROW = `  - id: helm
     name: Helm chart
     status: live
     category: kubernetes-operators
+    platforms: [kubernetes]
     tier: 1
     kind: chart
     update:
@@ -57,6 +58,7 @@ const NONE_ROW = `  - id: npm
     name: npm package
     status: live
     category: registries-releases
+    platforms: [linux, macos, windows]
     tier: 0
     kind: package-registry
     update:
@@ -71,6 +73,7 @@ const PROBE_ROW = `  - id: docker-ghcr
     name: Docker image (GHCR, canonical)
     status: live
     category: containers
+    platforms: [container]
     tier: 0
     kind: container-image
     update:
@@ -124,6 +127,26 @@ describe("parseChannels", () => {
   test("accepts a known category", () => {
     const channels = parseChannels(channelsYaml(HELM_ROW));
     expect(channels[0].category).toBe("kubernetes-operators");
+  });
+
+  test("throws when platforms is missing", () => {
+    const bad = HELM_ROW.replace("    platforms: [kubernetes]\n", "");
+    expect(() => parseChannels(channelsYaml(bad))).toThrow(/platforms must be a non-empty list/);
+  });
+
+  test("throws when platforms is empty", () => {
+    const bad = HELM_ROW.replace("platforms: [kubernetes]", "platforms: []");
+    expect(() => parseChannels(channelsYaml(bad))).toThrow(/platforms must be a non-empty list/);
+  });
+
+  test("throws on an unknown platform id", () => {
+    const bad = HELM_ROW.replace("platforms: [kubernetes]", "platforms: [kubernetes, plan9]");
+    expect(() => parseChannels(channelsYaml(bad))).toThrow(/platforms entries must be one of/);
+  });
+
+  test("accepts a multi-valued platforms list", () => {
+    const row = HELM_ROW.replace("platforms: [kubernetes]", "platforms: [macos, linux]");
+    expect(parseChannels(channelsYaml(row))[0].platforms).toEqual(["macos", "linux"]);
   });
 
   test("throws when a local_file channel has no files", () => {
@@ -558,6 +581,7 @@ function switchableRow(id: string, enabled: boolean): string {
     name: ${id} channel
     status: live
     category: package-managers
+    platforms: [linux]
     tier: 1
     kind: package-manager
     update:
@@ -656,6 +680,7 @@ describe("CLI (subprocess against temp fixtures)", () => {
     name: Railway template
     status: live
     category: paas-one-click
+    platforms: [cloud]
     tier: 2
     kind: paas-template
     update:
@@ -789,6 +814,7 @@ describe("CLI (remote pins against a local server)", () => {
     name: Dokploy template
     status: live
     category: paas-one-click
+    platforms: [cloud]
     tier: 3
     kind: paas-template
     update:
@@ -892,6 +918,7 @@ describe("CLI (probes against a local registry/store/catalog)", () => {
     name: Docker image (GHCR)
     status: live
     category: containers
+    platforms: [container]
     tier: 0
     kind: container-image
     update:
@@ -960,6 +987,7 @@ describe("CLI (probes against a local registry/store/catalog)", () => {
     name: Docker Hub mirror
     status: live
     category: containers
+    platforms: [container]
     tier: 0
     kind: container-image
     update:
@@ -982,6 +1010,7 @@ describe("CLI (probes against a local registry/store/catalog)", () => {
     name: Snap Store
     status: live
     category: package-managers
+    platforms: [linux]
     tier: 1
     kind: package-manager
     update:
@@ -1042,6 +1071,7 @@ describe("CLI (probes against a local registry/store/catalog)", () => {
     name: winget community repository
     status: live
     category: package-managers
+    platforms: [windows]
     tier: 4
     kind: package-manager
     update:
@@ -1086,6 +1116,7 @@ const MATRIX_FIXTURE = `channels:
     name: npm package
     status: live
     category: registries-releases
+    platforms: [linux, macos, windows]
     tier: 0
     kind: package-registry
     update:
@@ -1101,6 +1132,7 @@ const MATRIX_FIXTURE = `channels:
     name: Chocolatey
     status: pending
     category: package-managers
+    platforms: [windows]
     tier: 4
     kind: package-manager
     update:
@@ -1114,6 +1146,7 @@ const MATRIX_FIXTURE = `channels:
     name: Flathub
     status: deprecated
     category: closed
+    platforms: [linux]
     tier: 4
     kind: package-manager
     update:
@@ -1179,6 +1212,7 @@ const MATRIX_TIEBREAK_FIXTURE = `channels:
     name: Mike Deprecated
     status: deprecated
     category: containers
+    platforms: [container]
     update:
       method: upstream_pr
       sla: on_demand
@@ -1189,6 +1223,7 @@ const MATRIX_TIEBREAK_FIXTURE = `channels:
     name: Zulu Live
     status: live
     category: containers
+    platforms: [container]
     update:
       method: ci_publish
       sla: every_release
@@ -1199,6 +1234,7 @@ const MATRIX_TIEBREAK_FIXTURE = `channels:
     name: Alpha Pending
     status: pending
     category: containers
+    platforms: [container]
     update:
       method: ci_publish
       sla: every_release
@@ -1209,6 +1245,7 @@ const MATRIX_TIEBREAK_FIXTURE = `channels:
     name: Bravo Desktop
     status: live
     category: os-desktop
+    platforms: [linux]
     update:
       method: manual_ui
       sla: on_demand
@@ -1219,6 +1256,7 @@ const MATRIX_TIEBREAK_FIXTURE = `channels:
     name: Alpha Desktop
     status: live
     category: os-desktop
+    platforms: [linux]
     update:
       method: manual_ui
       sla: on_demand

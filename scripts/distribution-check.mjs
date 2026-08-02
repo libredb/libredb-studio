@@ -49,6 +49,23 @@ export const CATEGORY_LABELS = {
   closed: "Closed / declined",
 };
 
+/**
+ * Platforms a channel serves. This order is canonical: the matrix renders and
+ * counts in it regardless of the order written in yaml, so output is stable.
+ * Not derivable from `kind` - `package-manager` alone spans Homebrew (macOS +
+ * Linux), Snap (Linux) and winget (Windows).
+ */
+export const PLATFORMS = ["linux", "macos", "windows", "container", "kubernetes", "cloud"];
+
+export const PLATFORM_LABELS = {
+  linux: "Linux",
+  macos: "macOS",
+  windows: "Windows",
+  container: "Container",
+  kubernetes: "Kubernetes",
+  cloud: "Cloud",
+};
+
 const SLA_LABELS = {
   every_release: "Every release",
   minor_plus: "Minor+",
@@ -319,6 +336,14 @@ export function parseChannels(yamlText) {
     }
     if (!CHANNEL_CATEGORIES.includes(channel.category)) {
       throw new Error(`${CHANNELS_YAML}: ${id}: category must be one of ${CHANNEL_CATEGORIES.join("|")}`);
+    }
+    if (!Array.isArray(channel.platforms) || channel.platforms.length === 0) {
+      throw new Error(`${CHANNELS_YAML}: ${id}: platforms must be a non-empty list`);
+    }
+    for (const platform of channel.platforms) {
+      if (!PLATFORMS.includes(platform)) {
+        throw new Error(`${CHANNELS_YAML}: ${id}: platforms entries must be one of ${PLATFORMS.join("|")}`);
+      }
     }
     if (!channel.update || !METHODS.includes(channel.update.method)) {
       throw new Error(`${CHANNELS_YAML}: ${id}: update.method must be one of ${METHODS.join("|")}`);

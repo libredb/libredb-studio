@@ -13,6 +13,8 @@
 #                             registries-releases | containers | kubernetes-operators |
 #                             package-managers | os-desktop | paas-one-click |
 #                             marketplaces-partners | closed
+#   platforms                 non-empty list of platforms this channel serves:
+#                             linux | macos | windows | container | kubernetes | cloud
 #   update.method             ci_publish | commit | upstream_pr | manual_ui
 #   update.sla                every_release | minor_plus | major_only | on_demand
 #   update.ci_enabled         REQUIRED on, and allowed ONLY on, the switchable
@@ -45,6 +47,7 @@ channels:
     name: GitHub Releases (standalone tarballs, deb/rpm, snap assets)
     status: live
     category: registries-releases
+    platforms: [linux, macos, windows]
     tier: 0
     kind: release-assets
     update:
@@ -63,6 +66,7 @@ channels:
     name: Docker image (GHCR, canonical)
     status: live
     category: containers
+    platforms: [container]
     tier: 0
     kind: container-image
     update:
@@ -83,6 +87,7 @@ channels:
     name: Docker Hub mirror (discoverability only)
     status: live
     category: containers
+    platforms: [container]
     tier: 0
     kind: container-image
     update:
@@ -103,6 +108,7 @@ channels:
     name: npm package @libredb/studio (library + npx launcher)
     status: live
     category: registries-releases
+    platforms: [linux, macos, windows]
     tier: 0
     kind: package-registry
     update:
@@ -124,6 +130,7 @@ channels:
     name: Helm chart (libredb.org repo + GHCR OCI + ArtifactHub)
     status: live
     category: kubernetes-operators
+    platforms: [kubernetes]
     tier: 1
     kind: helm-chart
     update:
@@ -145,6 +152,7 @@ channels:
     name: Homebrew tap (libredb/tap/libredb-studio)
     status: live
     category: package-managers
+    platforms: [macos, linux]
     tier: 1
     kind: package-manager
     update:
@@ -165,6 +173,7 @@ channels:
     name: Snap Store (stable channel, amd64+arm64)
     status: live
     category: package-managers
+    platforms: [linux]
     tier: 1
     kind: package-manager
     update:
@@ -190,6 +199,7 @@ channels:
     name: Linux .deb / .rpm packages (release assets)
     status: live
     category: os-desktop
+    platforms: [linux]
     tier: 1
     kind: os-package
     update:
@@ -207,6 +217,7 @@ channels:
     name: "Desktop app (release assets: AppImage and GUI .deb, x64 + arm64)"
     status: live
     category: os-desktop
+    platforms: [linux]
     tier: 1
     kind: release-assets
     update:
@@ -231,6 +242,7 @@ channels:
     name: CapRover one-click template (in-repo source of truth)
     status: live
     category: paas-one-click
+    platforms: [cloud]
     tier: 2
     kind: one-click-template
     update:
@@ -250,6 +262,7 @@ channels:
     name: CapRover 3rd-party repo (libredb.org/caprover-one-click-apps)
     status: live
     category: paas-one-click
+    platforms: [cloud]
     tier: 2
     kind: one-click-template
     update:
@@ -268,6 +281,7 @@ channels:
     name: Railway one-click template
     status: live
     category: paas-one-click
+    platforms: [cloud]
     tier: 2
     kind: paas-template
     update:
@@ -291,6 +305,7 @@ channels:
     name: Koyeb deploy button (repo README)
     status: live
     category: paas-one-click
+    platforms: [cloud]
     tier: 2
     kind: deploy-button
     update:
@@ -306,6 +321,7 @@ channels:
     name: Fly.io launch config (repo fly.toml)
     status: live
     category: paas-one-click
+    platforms: [cloud]
     tier: 2
     kind: paas-template
     update:
@@ -326,6 +342,7 @@ channels:
     name: Render Blueprint (repo render.yaml)
     status: live
     category: paas-one-click
+    platforms: [cloud]
     tier: 2
     kind: paas-template
     update:
@@ -344,6 +361,7 @@ channels:
     name: CapRover official one-click apps
     status: live
     category: paas-one-click
+    platforms: [cloud]
     tier: 3
     kind: one-click-template
     update:
@@ -362,6 +380,7 @@ channels:
     name: Dokploy template catalog
     status: live
     category: paas-one-click
+    platforms: [cloud]
     tier: 3
     kind: paas-template
     update:
@@ -383,6 +402,7 @@ channels:
     name: Cosmos servapp marketplace
     status: live
     category: paas-one-click
+    platforms: [cloud]
     tier: 3
     kind: one-click-template
     update:
@@ -402,6 +422,7 @@ channels:
     name: Kubero template catalog
     status: live
     category: paas-one-click
+    platforms: [cloud]
     tier: 3
     kind: paas-template
     update:
@@ -422,6 +443,7 @@ channels:
     name: OperatorHub / OpenShift community operator catalogs
     status: pending
     category: kubernetes-operators
+    platforms: [kubernetes]
     tier: 3
     kind: operator-catalog
     update:
@@ -445,6 +467,7 @@ channels:
     name: Rancher Partner Charts
     status: pending
     category: kubernetes-operators
+    platforms: [kubernetes]
     tier: 4
     kind: partner-catalog
     update:
@@ -462,6 +485,7 @@ channels:
     name: Koyeb One-Click Apps catalog (curated by Koyeb)
     status: pending
     category: marketplaces-partners
+    platforms: [cloud]
     tier: 4
     kind: curated-catalog
     update:
@@ -477,6 +501,7 @@ channels:
     name: DigitalOcean Marketplace
     status: live
     category: marketplaces-partners
+    platforms: [cloud]
     tier: 4
     kind: marketplace
     update:
@@ -494,6 +519,7 @@ channels:
     name: winget community repository (LibreDB.Studio)
     status: live
     category: package-managers
+    platforms: [windows]
     tier: 4
     kind: package-manager
     update:
@@ -523,6 +549,7 @@ channels:
     name: Chocolatey community repository (libredb-studio)
     status: pending
     category: package-managers
+    platforms: [windows]
     tier: 4
     kind: package-manager
     update:
@@ -546,6 +573,7 @@ channels:
     name: Flathub community catalog (org.libredb.Studio)
     status: deprecated
     category: closed
+    platforms: [linux]
     tier: 4
     kind: package-manager
     update:
@@ -574,6 +602,7 @@ channels:
     name: FlatPark signed Flatpak remote (org.libredb.Studio)
     status: live
     category: package-managers
+    platforms: [linux]
     tier: 4
     kind: package-manager
     update:
