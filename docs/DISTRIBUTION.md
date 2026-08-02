@@ -1043,10 +1043,10 @@ Chocolatey push is still in moderation.
    verifies `InstallerSha256`, so the release must already be published.
 3. After each catalog goes live: flip its `distribution/channels.yaml` entry to `status: live`,
    set `links.first_pr`, and add a measurable pin where one exists (Chocolatey community API).
-   **winget is deliberately unpinned** (`pin.strategy: none`): it publishes no floating "latest"
-   document — the winget-pkgs contents listing and the storefront REST source both enumerate
-   every published version, and the checker requires all matches in a source to agree, so any
-   regex over them would report ambiguity forever.
+   **winget is measured by a probe, not a regex pin** (`pin.strategy: probe`, `winget-max-version`):
+   it publishes no floating "latest" document — the winget-pkgs contents listing enumerates every
+   published version — so the checker takes the highest version enumerated there. A regex pin
+   cannot express that, because it requires all matches in a source to agree.
 
 ### Channel inventory and drift check
 
@@ -1077,9 +1077,27 @@ catalog templates).
 
 **Pin strategies:** `local_file` (version lives in files in this repo), `remote_file` (fetched
 from an upstream raw URL, best-effort — fetch failures degrade to UNKNOWN and never fail the
-run), `none` (nothing to measure, stated explicitly with a `note`). Measurable pins carry an
-`extract` regex with exactly one capture group; when a source yields multiple *different*
-matches the channel is reported instead of silently using the first hit.
+run), `probe` (see below), `none` (nothing to measure, stated explicitly with a `note`). The two
+regex strategies carry an `extract` pattern with exactly one capture group; when a source yields
+multiple *different* matches the channel is reported instead of silently using the first hit.
+
+**Probes** (#182) measure the channels whose served state is not one document a single regex can
+read. Each names a `probe` and the `urls` it needs; the URLs live in the inventory rather than in
+the script so the unit tests can point them at a local server and the suite never touches the
+real network. Probe failures degrade to UNKNOWN exactly like a failed `remote_file` fetch — but a
+tag that is *genuinely absent* is DRIFT, not UNKNOWN, which is the whole point: a publish step
+that skipped silently must not read as "could not measure".
+
+| Probe | Channel | What it measures |
+|---|---|---|
+| `ghcr-tag-digest` | `docker-ghcr` | that the digest `:latest` resolves to equals the released version tag's (anonymous pull token — no secret, works from a fork) |
+| `dockerhub-tag-digest` | `docker-hub-mirror` | the same digest equality on the mirror; an absent version tag is how an expired `DOCKER_HUB_TOKEN` (whose push step skips silently) becomes visible |
+| `snap-store-channel` | `snap` | the `stable` version of every listed architecture, each as its own source, so one lagging build is drift rather than a pass; `edge` may legitimately differ and is ignored |
+| `winget-max-version` | `winget` | the highest version the catalog enumerates, because winget publishes no floating "latest" document |
+
+Because a probe resolves versions in code, a channel measured this way needs no `extract`. A
+probe that reports several sources (Snap's architectures) reuses the same rule as a multi-file
+`local_file` pin: disagreeing sources are drift, with every source shown.
 
 **Strict mode:** `bun run distribution:check --strict` exits non-zero only for `local_file`
 channels with `sla: every_release` that are drifted or unmeasurable. Remote catalogs and

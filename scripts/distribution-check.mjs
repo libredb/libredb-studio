@@ -22,7 +22,7 @@ import { parse as parseYaml } from "yaml";
 
 const CHANNELS_YAML = "distribution/channels.yaml";
 const STATUSES = ["live", "pending", "deprecated"];
-const STRATEGIES = ["local_file", "remote_file", "none"];
+const STRATEGIES = ["local_file", "remote_file", "probe", "none"];
 const METHODS = ["ci_publish", "commit", "upstream_pr", "manual_ui"];
 const SLAS = ["every_release", "minor_plus", "major_only", "on_demand"];
 
@@ -41,6 +41,215 @@ const SLAS = ["every_release", "minor_plus", "major_only", "on_demand"];
  * anywhere else, so that invariant is enforced, not merely documented.
  */
 export const SWITCHABLE_CHANNEL_IDS = new Set(["docker-hub-mirror", "homebrew", "snap", "winget", "chocolatey"]);
+
+/**
+ * Probes measure channels whose served state is not one document a single
+ * regex can read: a registry that answers "which digest does this tag point
+ * at" rather than "which version", or a catalog that enumerates every
+ * published version with no floating "latest" entry.
+ *
+ * Each entry declares the pin.urls keys it needs (validated at parse time, so
+ * a typo in the inventory is a startup error and never a silent UNKNOWN) and
+ * a `run` that resolves the served version. Probe URLs live in channels.yaml
+ * rather than in this file on purpose: the unit tests point them at a local
+ * server, so the checker's own suite never touches the real network.
+ */
+const PROBES = {
+  "ghcr-tag-digest": {
+    requiredUrls: ["token", "manifest"],
+    async run({ pin, expected, timeoutMs }) {
+      // Public packages need no secret, only the anonymous pull token GHCR
+      // hands out to anyone who asks - so this probe works in a fork's CI too.
+      const token = await fetchJson(pin.urls.token, timeoutMs);
+      if (typeof token.body?.token !== "string") {
+        return { error: `ghcr token exchange failed (status ${token.status})` };
+      }
+      const headers = {
+        authorization: `Bearer ${token.body.token}`,
+        // Without these the registry answers with a single-platform manifest
+        // and the digests of two multi-arch tags would never compare equal.
+        accept: [
+          "application/vnd.oci.image.index.v1+json",
+          "application/vnd.docker.distribution.manifest.list.v2+json",
+        ].join(","),
+      };
+      const [latest, tagged] = await Promise.all([
+        fetchDigest(pin.urls.manifest.replace("{ref}", "latest"), timeoutMs, headers),
+        fetchDigest(pin.urls.manifest.replace("{ref}", expected), timeoutMs, headers),
+      ]);
+      return digestVerdict({ latest, tagged, expected });
+    },
+  },
+
+  "dockerhub-tag-digest": {
+    requiredUrls: ["tag"],
+    async run({ pin, expected, timeoutMs }) {
+      // The per-tag endpoint carries the digest inline, so the mirror needs no
+      // pagination walk: a push that silently skipped leaves the version tag
+      // absent, which digestVerdict reports as drift rather than unknown.
+      const [latest, tagged] = await Promise.all([
+        fetchJson(pin.urls.tag.replace("{ref}", "latest"), timeoutMs),
+        fetchJson(pin.urls.tag.replace("{ref}", expected), timeoutMs),
+      ]);
+      return digestVerdict({
+        latest: { status: latest.status, digest: latest.body?.digest ?? null },
+        tagged: { status: tagged.status, digest: tagged.body?.digest ?? null },
+        expected,
+      });
+    },
+  },
+
+  "snap-store-channel": {
+    requiredUrls: ["info"],
+    requiredArrays: ["architectures"],
+    async run({ pin, timeoutMs }) {
+      // The store rejects the request without a device series, whatever the
+      // snap name, so this header is part of the probe and not a nicety.
+      const info = await fetchJson(pin.urls.info, timeoutMs, { "snap-device-series": "16" });
+      if (info.status !== 200) {
+        return { error: `snap store unreachable (status ${info.status})` };
+      }
+      return parseSnapVersions(info.body, pin.architectures);
+    },
+  },
+
+  "winget-max-version": {
+    requiredUrls: ["versions"],
+    async run({ pin, timeoutMs }) {
+      const listing = await fetchJson(pin.urls.versions, timeoutMs, githubAuthHeaders(pin.urls.versions));
+      if (!Array.isArray(listing.body)) {
+        return { error: `catalog listing unavailable (status ${listing.status})` };
+      }
+      return maxPublishedVersion(listing.body.map((entry) => entry.name));
+    },
+  },
+};
+
+/**
+ * api.github.com rate-limits anonymous callers hard enough to turn a weekly
+ * check into a coin flip; raw.githubusercontent.com needs no auth at all, so
+ * the token is attached there and nowhere else.
+ */
+export function githubAuthHeaders(url) {
+  if (url.startsWith("https://api.github.com/") && process.env.GITHUB_TOKEN) {
+    return { authorization: `Bearer ${process.env.GITHUB_TOKEN}` };
+  }
+  return {};
+}
+
+async function fetchJson(url, timeoutMs, headers = {}) {
+  try {
+    const response = await fetch(url, { signal: AbortSignal.timeout(timeoutMs), headers });
+    if (!response.ok) {
+      return { status: response.status, body: null };
+    }
+    return { status: response.status, body: await response.json() };
+  } catch {
+    return { status: null, body: null };
+  }
+}
+
+/** A registry reports which image a tag resolves to in a header, not a body. */
+async function fetchDigest(url, timeoutMs, headers) {
+  try {
+    const response = await fetch(url, { method: "HEAD", signal: AbortSignal.timeout(timeoutMs), headers });
+    return { status: response.status, digest: response.headers.get("docker-content-digest") };
+  } catch {
+    return { status: null, digest: null };
+  }
+}
+
+/**
+ * A probe result is either `{ versions: [{ source, version }], detail? }` -
+ * fed through the same agree/compare path as a multi-file local pin - or
+ * `{ error }`, which degrades that row to UNKNOWN. The distinction is load
+ * bearing: "the registry did not answer" must never render as drift, and
+ * "the tag is genuinely absent" must never render as unknown.
+ *
+ * @typedef {{ source: string, version: string }} ProbedVersion
+ * @typedef {{ versions?: ProbedVersion[], detail?: string, error?: string }} ProbeResult
+ */
+
+/**
+ * Container registries answer "which digest does this tag point at", not
+ * "which version". Equal digests for `latest` and the expected version tag
+ * mean the channel serves that version; anything else yields a version string
+ * that cannot compare equal, so the caller reports drift and the digests land
+ * in the detail column.
+ *
+ * @returns {ProbeResult}
+ */
+export function digestVerdict({ latest, tagged, expected }) {
+  const drift = (detail) => ({ versions: [{ source: "latest", version: `!=${expected}` }], detail });
+  if (latest.status === 404) {
+    return drift("latest tag is missing from the registry");
+  }
+  if (tagged.status === 404) {
+    return drift(`no ${expected} tag published`);
+  }
+  if (latest.status !== 200 || tagged.status !== 200) {
+    return { error: `registry unreachable (latest=${latest.status}, ${expected}=${tagged.status})` };
+  }
+  if (latest.digest !== tagged.digest) {
+    return drift(`latest -> ${latest.digest}, ${expected} -> ${tagged.digest}`);
+  }
+  return { versions: [{ source: "latest", version: expected }] };
+}
+
+/**
+ * The Snap Store reports one version per channel and architecture. Only the
+ * stable risk of the default track is the served state - edge may legitimately
+ * run ahead or behind - and each architecture is measured separately so a
+ * single lagging build shows up as disagreeing sources rather than a pass.
+ *
+ * @returns {ProbeResult}
+ */
+export function parseSnapVersions(info, architectures) {
+  const map = info?.["channel-map"];
+  if (!Array.isArray(map)) {
+    return { error: "store response has no channel-map" };
+  }
+  const versions = [];
+  for (const architecture of architectures) {
+    const entry = map.find(
+      (item) =>
+        item?.channel?.track === "latest" &&
+        item?.channel?.risk === "stable" &&
+        item?.channel?.architecture === architecture,
+    );
+    if (!entry) {
+      return { error: `no stable channel entry for ${architecture}` };
+    }
+    versions.push({ source: architecture, version: entry.version });
+  }
+  return { versions };
+}
+
+/**
+ * Catalogs that publish every version as its own entry and no floating
+ * "latest" document (winget-pkgs) are measured by the highest version they
+ * list. Comparison is numeric per component: 0.9.64 is newer than 0.9.9,
+ * which a string sort gets backwards.
+ *
+ * @returns {ProbeResult}
+ */
+export function maxPublishedVersion(names) {
+  const parsed = names
+    .filter((name) => /^\d+\.\d+\.\d+$/.test(name))
+    .map((name) => ({ name, parts: name.split(".").map(Number) }));
+  if (parsed.length === 0) {
+    return { error: "no published version in the catalog listing" };
+  }
+  const newest = parsed.reduce((best, candidate) => {
+    for (let i = 0; i < 3; i++) {
+      if (candidate.parts[i] !== best.parts[i]) {
+        return candidate.parts[i] > best.parts[i] ? candidate : best;
+      }
+    }
+    return best;
+  });
+  return { versions: [{ source: "catalog", version: newest.name }] };
+}
 
 function countCaptureGroups(pattern) {
   // Appending an empty alternative makes the regex match the empty string, so
@@ -99,9 +308,27 @@ export function parseChannels(yamlText) {
     if (pin.strategy === "remote_file" && typeof pin.url !== "string") {
       throw new Error(`${CHANNELS_YAML}: ${id}: remote_file pin needs a 'url'`);
     }
-    if (pin.strategy !== "none") {
-      // Exactly one: extractPin reads m[1] only, so a second capture group
-      // would be measured or ignored silently. Use (?:...) for grouping.
+    if (pin.strategy === "probe") {
+      const probe = PROBES[pin.probe];
+      if (!probe) {
+        throw new Error(`${CHANNELS_YAML}: ${id}: pin.probe must be one of ${Object.keys(PROBES).join("|")}`);
+      }
+      for (const key of probe.requiredUrls) {
+        if (typeof pin.urls?.[key] !== "string") {
+          throw new Error(`${CHANNELS_YAML}: ${id}: probe '${pin.probe}' needs pin.urls.${key}`);
+        }
+      }
+      for (const key of probe.requiredArrays ?? []) {
+        if (!Array.isArray(pin[key]) || pin[key].length === 0) {
+          throw new Error(`${CHANNELS_YAML}: ${id}: probe '${pin.probe}' needs a non-empty pin.${key} list`);
+        }
+      }
+    }
+    // Probes resolve a version in code, so only the regex strategies carry an
+    // extract - and theirs must have exactly one capture group: extractPin
+    // reads m[1] only, so a second group would be measured or ignored
+    // silently. Use (?:...) for grouping.
+    if (pin.strategy === "local_file" || pin.strategy === "remote_file") {
       if (typeof pin.extract !== "string" || countCaptureGroups(pin.extract) !== 1) {
         throw new Error(`${CHANNELS_YAML}: ${id}: pin.extract must be a regex with exactly one capture group`);
       }
@@ -163,6 +390,26 @@ export function evaluateChannel(channel, pkgVersion, sources) {
   if (channel.status !== "live" || channel.pin.strategy === "none") {
     return { ...row, status: "skip", expected: "-" };
   }
+  const { problems, versions, detail } =
+    channel.pin.strategy === "probe" ? readProbe(channel, sources[probeKey(channel)]) : readPins(channel, sources);
+  if (problems.length > 0) {
+    return { ...row, status: "unknown", observed: "?", detail: problems.join("; ") };
+  }
+  const unique = [...new Set(versions.map((v) => v.version))];
+  if (unique.length > 1) {
+    const disagreement = versions.map((v) => `${v.key}=${v.version}`).join(", ");
+    return { ...row, status: "drift", observed: unique.join(", "), detail: `sources disagree: ${disagreement}` };
+  }
+  const observed = unique[0];
+  return { ...row, status: observed === pkgVersion ? "ok" : "drift", observed, detail: detail ?? row.detail };
+}
+
+/** Where the CLI parks a channel's probe result for evaluateChannel to read. */
+export function probeKey(channel) {
+  return `probe:${channel.id}`;
+}
+
+function readPins(channel, sources) {
   const keys = channel.pin.strategy === "local_file" ? channel.pin.files : [channel.pin.url];
   const problems = [];
   const versions = [];
@@ -178,16 +425,26 @@ export function evaluateChannel(channel, pkgVersion, sources) {
       problems.push(error.message);
     }
   }
-  if (problems.length > 0) {
-    return { ...row, status: "unknown", observed: "?", detail: problems.join("; ") };
+  return { problems, versions };
+}
+
+/**
+ * Adapts a probe result onto the same shape a file pin produces, so a lagging
+ * Snap architecture reaches the caller as two disagreeing sources - exactly
+ * how two disagreeing pin files already do.
+ */
+function readProbe(channel, result) {
+  if (!result) {
+    return { problems: [`probe '${channel.pin.probe}' did not run`], versions: [] };
   }
-  const unique = [...new Set(versions.map((v) => v.version))];
-  if (unique.length > 1) {
-    const detail = versions.map((v) => `${v.key}=${v.version}`).join(", ");
-    return { ...row, status: "drift", observed: unique.join(", "), detail: `pin files disagree: ${detail}` };
+  if (result.error) {
+    return { problems: [result.error], versions: [] };
   }
-  const observed = unique[0];
-  return { ...row, status: observed === pkgVersion ? "ok" : "drift", observed };
+  return {
+    problems: [],
+    versions: result.versions.map((entry) => ({ key: entry.source, version: entry.version })),
+    detail: result.detail,
+  };
 }
 
 /**
@@ -238,12 +495,7 @@ export function renderTable(rows, pkgVersion) {
 }
 
 async function fetchText(url, timeoutMs) {
-  const headers = {};
-  // raw.githubusercontent.com needs no auth for public repos; the token only
-  // helps api.github.com rate limits, so it is attached there and nowhere else.
-  if (url.startsWith("https://api.github.com/") && process.env.GITHUB_TOKEN) {
-    headers.authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
-  }
+  const headers = githubAuthHeaders(url);
   try {
     const response = await fetch(url, { signal: AbortSignal.timeout(timeoutMs), headers });
     if (!response.ok) {
@@ -316,6 +568,9 @@ async function main(argv) {
     } else if (channel.pin.strategy === "remote_file") {
       const { url } = channel.pin;
       fetches.push(fetchText(url, timeoutMs).then((content) => (sources[url] = content)));
+    } else if (channel.pin.strategy === "probe") {
+      const run = PROBES[channel.pin.probe].run({ pin: channel.pin, expected: pkgVersion, timeoutMs });
+      fetches.push(run.then((result) => (sources[probeKey(channel)] = result)));
     }
   }
   await Promise.all(fetches);

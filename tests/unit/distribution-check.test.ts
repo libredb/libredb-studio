@@ -13,10 +13,14 @@ import { join } from "node:path";
 import {
   SWITCHABLE_CHANNEL_IDS,
   ciEnabledOutputs,
+  digestVerdict,
   evaluateChannel,
   extractPin,
+  githubAuthHeaders,
   linkLabel,
+  maxPublishedVersion,
   parseChannels,
+  parseSnapVersions,
   renderTable,
   strictFailures,
 } from "../../scripts/distribution-check.mjs";
@@ -53,6 +57,22 @@ const NONE_ROW = `  - id: npm
     pin:
       strategy: none
       note: Published by npm-publish.yml on every release.
+`;
+
+const PROBE_ROW = `  - id: docker-ghcr
+    name: Docker image (GHCR, canonical)
+    status: live
+    tier: 0
+    kind: container-image
+    update:
+      method: ci_publish
+      sla: every_release
+    pin:
+      strategy: probe
+      probe: ghcr-tag-digest
+      urls:
+        token: https://ghcr.io/token?service=ghcr.io&scope=repository:libredb/libredb-studio:pull
+        manifest: https://ghcr.io/v2/libredb/libredb-studio/manifests/{ref}
 `;
 
 describe("parseChannels", () => {
@@ -106,6 +126,187 @@ describe("parseChannels", () => {
       "",
     );
     expect(() => parseChannels(channelsYaml(bad))).toThrow(/url/);
+  });
+
+  test("parses a probe channel", () => {
+    const channels = parseChannels(channelsYaml(PROBE_ROW));
+    expect(channels[0].pin.strategy).toBe("probe");
+    expect(channels[0].pin.probe).toBe("ghcr-tag-digest");
+    expect(channels[0].pin.urls.manifest).toContain("{ref}");
+  });
+
+  test("a probe pin needs no extract pattern", () => {
+    expect(() => parseChannels(channelsYaml(PROBE_ROW))).not.toThrow();
+  });
+
+  test("throws on an unknown probe id", () => {
+    const bad = PROBE_ROW.replace("probe: ghcr-tag-digest", "probe: guess-the-version");
+    expect(() => parseChannels(channelsYaml(bad))).toThrow(/pin\.probe must be one of/);
+  });
+
+  test("throws when a probe channel omits a url its probe requires", () => {
+    const bad = PROBE_ROW.replace(/ {8}manifest: [^\n]+\n/, "");
+    expect(() => parseChannels(channelsYaml(bad))).toThrow(/needs pin\.urls\.manifest/);
+  });
+
+  test("throws when a probe channel has no urls block at all", () => {
+    const bad = PROBE_ROW.replace(/ {6}urls:\n(?: {8}[^\n]+\n)+/, "");
+    expect(() => parseChannels(channelsYaml(bad))).toThrow(/needs pin\.urls/);
+  });
+});
+
+describe("githubAuthHeaders", () => {
+  const original = process.env.GITHUB_TOKEN;
+
+  afterEach(() => {
+    if (original === undefined) {
+      delete process.env.GITHUB_TOKEN;
+    } else {
+      process.env.GITHUB_TOKEN = original;
+    }
+  });
+
+  test("attaches the token to api.github.com, where the anonymous rate limit bites", () => {
+    process.env.GITHUB_TOKEN = "ghp_example";
+    expect(githubAuthHeaders("https://api.github.com/repos/microsoft/winget-pkgs/contents/x")).toEqual({
+      authorization: "Bearer ghp_example",
+    });
+  });
+
+  test("never leaks the token to another host", () => {
+    process.env.GITHUB_TOKEN = "ghp_example";
+    expect(githubAuthHeaders("https://hub.docker.com/v2/repositories/libredb/libredb-studio/tags/latest")).toEqual({});
+  });
+
+  test("sends no authorization at all when no token is configured", () => {
+    delete process.env.GITHUB_TOKEN;
+    expect(githubAuthHeaders("https://api.github.com/repos/microsoft/winget-pkgs/contents/x")).toEqual({});
+  });
+});
+
+describe("digestVerdict (GHCR / Docker Hub served-tag comparison)", () => {
+  test("equal digests report the expected version", () => {
+    const result = digestVerdict({
+      latest: { status: 200, digest: "sha256:aaa" },
+      tagged: { status: 200, digest: "sha256:aaa" },
+      expected: "0.9.64",
+    });
+    expect(result.versions).toEqual([{ source: "latest", version: "0.9.64" }]);
+  });
+
+  test("differing digests report a version that cannot equal the expected one", () => {
+    const result = digestVerdict({
+      latest: { status: 200, digest: "sha256:old" },
+      tagged: { status: 200, digest: "sha256:new" },
+      expected: "0.9.64",
+    });
+    expect(result.versions?.[0]?.version).toBe("!=0.9.64");
+    expect(result.detail).toContain("sha256:old");
+    expect(result.detail).toContain("sha256:new");
+  });
+
+  test("a missing version tag is drift, not unknown - this is the silently-skipped mirror push", () => {
+    const result = digestVerdict({
+      latest: { status: 200, digest: "sha256:aaa" },
+      tagged: { status: 404, digest: null },
+      expected: "0.9.64",
+    });
+    expect(result.error).toBeUndefined();
+    expect(result.versions?.[0]?.version).toBe("!=0.9.64");
+    expect(result.detail).toMatch(/0\.9\.64.*not published|no 0\.9\.64/i);
+  });
+
+  test("a missing latest tag is drift - nobody can pull :latest", () => {
+    const result = digestVerdict({
+      latest: { status: 404, digest: null },
+      tagged: { status: 200, digest: "sha256:aaa" },
+      expected: "0.9.64",
+    });
+    expect(result.versions?.[0]?.version).toBe("!=0.9.64");
+    expect(result.detail).toMatch(/latest/i);
+  });
+
+  test("a transient registry error degrades to UNKNOWN rather than inventing drift", () => {
+    const result = digestVerdict({
+      latest: { status: 500, digest: null },
+      tagged: { status: 200, digest: "sha256:aaa" },
+      expected: "0.9.64",
+    });
+    expect(result.error).toMatch(/unreachable/i);
+    expect(result.versions).toBeUndefined();
+  });
+
+  test("a network failure degrades to UNKNOWN rather than inventing drift", () => {
+    const result = digestVerdict({
+      latest: { status: null, digest: null },
+      tagged: { status: 200, digest: "sha256:aaa" },
+      expected: "0.9.64",
+    });
+    expect(result.error).toMatch(/unreachable/i);
+    expect(result.versions).toBeUndefined();
+  });
+});
+
+describe("parseSnapVersions", () => {
+  const info = {
+    "channel-map": [
+      { channel: { track: "latest", risk: "stable", architecture: "amd64" }, version: "0.9.64" },
+      { channel: { track: "latest", risk: "stable", architecture: "arm64" }, version: "0.9.64" },
+      { channel: { track: "latest", risk: "edge", architecture: "amd64" }, version: "0.9.52" },
+    ],
+  };
+
+  test("reads the stable version of every requested architecture", () => {
+    expect(parseSnapVersions(info, ["amd64", "arm64"])).toEqual({
+      versions: [
+        { source: "amd64", version: "0.9.64" },
+        { source: "arm64", version: "0.9.64" },
+      ],
+    });
+  });
+
+  test("ignores the edge channel, which may legitimately differ from stable", () => {
+    const result = parseSnapVersions(info, ["amd64"]);
+    expect(result.versions).toEqual([{ source: "amd64", version: "0.9.64" }]);
+  });
+
+  test("a stale architecture surfaces as two disagreeing sources, not a silent pass", () => {
+    const lagging = {
+      "channel-map": [
+        { channel: { track: "latest", risk: "stable", architecture: "amd64" }, version: "0.9.64" },
+        { channel: { track: "latest", risk: "stable", architecture: "arm64" }, version: "0.9.63" },
+      ],
+    };
+    expect(parseSnapVersions(lagging, ["amd64", "arm64"]).versions).toEqual([
+      { source: "amd64", version: "0.9.64" },
+      { source: "arm64", version: "0.9.63" },
+    ]);
+  });
+
+  test("an architecture missing from the stable channel is an error", () => {
+    expect(parseSnapVersions(info, ["amd64", "riscv64"]).error).toMatch(/riscv64/);
+  });
+
+  test("a response without a channel-map is an error", () => {
+    expect(parseSnapVersions({}, ["amd64"]).error).toMatch(/channel-map/);
+  });
+});
+
+describe("maxPublishedVersion (winget enumerates every version, with no floating latest)", () => {
+  test("picks the highest version", () => {
+    expect(maxPublishedVersion(["0.9.59", "0.9.64"]).versions).toEqual([{ source: "catalog", version: "0.9.64" }]);
+  });
+
+  test("compares numerically, not lexicographically", () => {
+    expect(maxPublishedVersion(["0.9.9", "0.9.64", "0.10.0"]).versions?.[0]?.version).toBe("0.10.0");
+  });
+
+  test("ignores entries that are not versions", () => {
+    expect(maxPublishedVersion([".validation", "0.9.64"]).versions?.[0]?.version).toBe("0.9.64");
+  });
+
+  test("an enumeration with no version at all is an error", () => {
+    expect(maxPublishedVersion([".validation"]).error).toMatch(/no published version/i);
   });
 });
 
@@ -176,6 +377,56 @@ describe("evaluateChannel", () => {
     expect(row.status).toBe("drift");
     expect(row.observed).toContain("0.9.53");
     expect(row.observed).toContain("0.9.22");
+  });
+
+  test("a probe whose resolved version matches is ok", () => {
+    const channel = parseChannels(channelsYaml(PROBE_ROW))[0];
+    const row = evaluateChannel(channel, "0.9.64", {
+      "probe:docker-ghcr": { versions: [{ source: "latest", version: "0.9.64" }] },
+    });
+    expect(row.status).toBe("ok");
+    expect(row.observed).toBe("0.9.64");
+  });
+
+  test("a probe verdict that cannot equal the expected version is drift, and its detail is kept", () => {
+    const channel = parseChannels(channelsYaml(PROBE_ROW))[0];
+    const row = evaluateChannel(channel, "0.9.65", {
+      "probe:docker-ghcr": {
+        versions: [{ source: "latest", version: "!=0.9.65" }],
+        detail: "latest -> sha256:old, 0.9.65 -> sha256:new",
+      },
+    });
+    expect(row.status).toBe("drift");
+    expect(row.detail).toBe("latest -> sha256:old, 0.9.65 -> sha256:new");
+  });
+
+  test("a probe error is unknown, never drift", () => {
+    const channel = parseChannels(channelsYaml(PROBE_ROW))[0];
+    const row = evaluateChannel(channel, "0.9.64", {
+      "probe:docker-ghcr": { error: "registry unreachable (latest=500, 0.9.64=200)" },
+    });
+    expect(row.status).toBe("unknown");
+    expect(row.detail).toContain("unreachable");
+  });
+
+  test("a probe that never ran is unknown", () => {
+    const channel = parseChannels(channelsYaml(PROBE_ROW))[0];
+    expect(evaluateChannel(channel, "0.9.64", {}).status).toBe("unknown");
+  });
+
+  test("probe sources that disagree are drift with every source visible", () => {
+    const channel = parseChannels(channelsYaml(PROBE_ROW))[0];
+    const row = evaluateChannel(channel, "0.9.64", {
+      "probe:docker-ghcr": {
+        versions: [
+          { source: "amd64", version: "0.9.64" },
+          { source: "arm64", version: "0.9.63" },
+        ],
+      },
+    });
+    expect(row.status).toBe("drift");
+    expect(row.detail).toContain("amd64=0.9.64");
+    expect(row.detail).toContain("arm64=0.9.63");
   });
 
   test("an unreadable source is unknown, not a crash", () => {
@@ -567,5 +818,230 @@ describe("CLI (remote pins against a local server)", () => {
     const result = await runCheckAsync(remoteFixture("http://127.0.0.1:1/pin.yml"));
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("UNKNOWN");
+  });
+});
+
+describe("CLI (probes against a local registry/store/catalog)", () => {
+  const fixtureRoots: string[] = [];
+  const servers: Array<{ stop: () => void }> = [];
+
+  afterEach(() => {
+    for (const root of fixtureRoots.splice(0)) rmSync(root, { recursive: true, force: true });
+  });
+
+  afterAll(() => {
+    for (const server of servers.splice(0)) server.stop();
+  });
+
+  function serveBase(handler: (req: Request) => Response): string {
+    const server = Bun.serve({ port: 0, fetch: handler });
+    servers.push(server);
+    return `http://127.0.0.1:${server.port}`;
+  }
+
+  function probeFixture(row: string): string {
+    const root = mkdtempSync(join(tmpdir(), "dist-check-probe-"));
+    fixtureRoots.push(root);
+    writeFixture(root, "0.9.53", channelsYaml(row));
+    return root;
+  }
+
+  async function runCheckAsync(root: string) {
+    const proc = Bun.spawn(["node", SCRIPT, "--root", root], {
+      env: { ...process.env, GITHUB_STEP_SUMMARY: "", DISTRIBUTION_CHECK_TIMEOUT_MS: "3000" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+    return { stdout, stderr, exitCode };
+  }
+
+  function ghcrRow(base: string): string {
+    return `  - id: docker-ghcr
+    name: Docker image (GHCR)
+    status: live
+    tier: 0
+    kind: container-image
+    update:
+      method: ci_publish
+      sla: every_release
+    pin:
+      strategy: probe
+      probe: ghcr-tag-digest
+      urls:
+        token: ${base}/token
+        manifest: ${base}/v2/libredb/libredb-studio/manifests/{ref}
+`;
+  }
+
+  /** Digest per tag; a tag absent from the map answers 404, as a registry does. */
+  function registry(digests: Record<string, string>): string {
+    return serveBase((req) => {
+      const { pathname } = new URL(req.url);
+      if (pathname === "/token") {
+        return Response.json({ token: "anonymous-token" });
+      }
+      const ref = pathname.split("/").pop() as string;
+      const digest = digests[ref];
+      if (!digest) {
+        return new Response("not found", { status: 404 });
+      }
+      return new Response(null, { headers: { "docker-content-digest": digest } });
+    });
+  }
+
+  test("GHCR latest pointing at the released version is OK", async () => {
+    const base = registry({ latest: "sha256:same", "0.9.53": "sha256:same" });
+    const result = await runCheckAsync(probeFixture(ghcrRow(base)));
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("| OK | docker-ghcr |");
+    expect(result.stdout).toContain("0.9.53");
+  });
+
+  test("GHCR latest still pointing at the previous image is DRIFT with both digests", async () => {
+    const base = registry({ latest: "sha256:previous", "0.9.53": "sha256:current" });
+    const result = await runCheckAsync(probeFixture(ghcrRow(base)));
+    expect(result.stdout).toContain("| DRIFT | docker-ghcr |");
+    expect(result.stdout).toContain("sha256:previous");
+    expect(result.stdout).toContain("sha256:current");
+  });
+
+  test("a GHCR token exchange that fails degrades to UNKNOWN", async () => {
+    const base = serveBase(() => new Response("no token for you", { status: 403 }));
+    const result = await runCheckAsync(probeFixture(ghcrRow(base)));
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("| UNKNOWN | docker-ghcr |");
+  });
+
+  test("an unreachable registry degrades to UNKNOWN, never drift", async () => {
+    const result = await runCheckAsync(probeFixture(ghcrRow("http://127.0.0.1:1")));
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("| UNKNOWN | docker-ghcr |");
+  });
+
+  test("a Docker Hub mirror missing the released tag is DRIFT - the silently skipped push", async () => {
+    const base = serveBase((req) => {
+      const ref = new URL(req.url).pathname.split("/").pop();
+      return ref === "latest" ? Response.json({ digest: "sha256:stale" }) : new Response("not found", { status: 404 });
+    });
+    const row = `  - id: docker-hub-mirror
+    name: Docker Hub mirror
+    status: live
+    tier: 0
+    kind: container-image
+    update:
+      method: ci_publish
+      sla: every_release
+      ci_enabled: true
+    pin:
+      strategy: probe
+      probe: dockerhub-tag-digest
+      urls:
+        tag: ${base}/v2/repositories/libredb/libredb-studio/tags/{ref}
+`;
+    const result = await runCheckAsync(probeFixture(row));
+    expect(result.stdout).toContain("| DRIFT | docker-hub-mirror |");
+    expect(result.stdout).toContain("no 0.9.53 tag published");
+  });
+
+  function snapRow(base: string): string {
+    return `  - id: snap
+    name: Snap Store
+    status: live
+    tier: 1
+    kind: package-manager
+    update:
+      method: ci_publish
+      sla: every_release
+      ci_enabled: true
+    pin:
+      strategy: probe
+      probe: snap-store-channel
+      architectures:
+        - amd64
+        - arm64
+      urls:
+        info: ${base}/v2/snaps/info/libredb-studio
+`;
+  }
+
+  test("the Snap Store stable channel is measured per architecture and the device-series header is sent", async () => {
+    const seenHeaders: Array<string | null> = [];
+    const base = serveBase((req) => {
+      seenHeaders.push(req.headers.get("snap-device-series"));
+      return Response.json({
+        "channel-map": [
+          { channel: { track: "latest", risk: "stable", architecture: "amd64" }, version: "0.9.53" },
+          { channel: { track: "latest", risk: "stable", architecture: "arm64" }, version: "0.9.53" },
+          { channel: { track: "latest", risk: "edge", architecture: "amd64" }, version: "0.9.40" },
+        ],
+      });
+    });
+    const result = await runCheckAsync(probeFixture(snapRow(base)));
+    expect(seenHeaders).toEqual(["16"]);
+    expect(result.stdout).toContain("| OK | snap |");
+  });
+
+  test("one lagging Snap architecture is DRIFT even though the other is current", async () => {
+    const base = serveBase(() =>
+      Response.json({
+        "channel-map": [
+          { channel: { track: "latest", risk: "stable", architecture: "amd64" }, version: "0.9.53" },
+          { channel: { track: "latest", risk: "stable", architecture: "arm64" }, version: "0.9.40" },
+        ],
+      }),
+    );
+    const result = await runCheckAsync(probeFixture(snapRow(base)));
+    expect(result.stdout).toContain("| DRIFT | snap |");
+    expect(result.stdout).toContain("arm64=0.9.40");
+  });
+
+  test("a Snap Store error degrades to UNKNOWN", async () => {
+    const base = serveBase(() => new Response("maintenance", { status: 503 }));
+    const result = await runCheckAsync(probeFixture(snapRow(base)));
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("| UNKNOWN | snap |");
+  });
+
+  function wingetRow(base: string): string {
+    return `  - id: winget
+    name: winget community repository
+    status: live
+    tier: 4
+    kind: package-manager
+    update:
+      method: ci_publish
+      sla: every_release
+      ci_enabled: true
+    pin:
+      strategy: probe
+      probe: winget-max-version
+      urls:
+        versions: ${base}/repos/microsoft/winget-pkgs/contents/manifests/l/LibreDB/Studio
+`;
+  }
+
+  test("winget is measured by the highest version its catalog enumerates", async () => {
+    const base = serveBase(() => Response.json([{ name: ".validation" }, { name: "0.9.40" }, { name: "0.9.53" }]));
+    const result = await runCheckAsync(probeFixture(wingetRow(base)));
+    expect(result.stdout).toContain("| OK | winget |");
+  });
+
+  test("a winget catalog stuck on an older version is DRIFT", async () => {
+    const base = serveBase(() => Response.json([{ name: "0.9.40" }]));
+    const result = await runCheckAsync(probeFixture(wingetRow(base)));
+    expect(result.stdout).toContain("| DRIFT | winget |");
+    expect(result.stdout).toContain("0.9.40");
+  });
+
+  test("a winget catalog listing that cannot be read degrades to UNKNOWN", async () => {
+    const base = serveBase(() => new Response("rate limited", { status: 429 }));
+    const result = await runCheckAsync(probeFixture(wingetRow(base)));
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("| UNKNOWN | winget |");
   });
 });

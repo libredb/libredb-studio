@@ -58,8 +58,13 @@ channels:
     links:
       catalog: https://github.com/libredb/libredb-studio/pkgs/container/libredb-studio
     pin:
-      strategy: none
-      note: Version and latest tags pushed by docker-build-push.yml on release; served-state probe tracked in issue 182.
+      strategy: probe
+      probe: ghcr-tag-digest
+      urls:
+        token: https://ghcr.io/token?service=ghcr.io&scope=repository:libredb/libredb-studio:pull
+        manifest: https://ghcr.io/v2/libredb/libredb-studio/manifests/{ref}
+      note: Compares the image :latest resolves to against the released version tag. Anonymous pull token,
+        no secret, so the probe also works from a fork.
 
   - id: docker-hub-mirror
     name: Docker Hub mirror (discoverability only)
@@ -73,8 +78,12 @@ channels:
     links:
       catalog: https://hub.docker.com/r/libredb/libredb-studio
     pin:
-      strategy: none
-      note: Mirror of GHCR; immutable-tag rules must stay semver-only. Push is secret-gated and skips silently; served-state probe tracked in issue 182.
+      strategy: probe
+      probe: dockerhub-tag-digest
+      urls:
+        tag: https://hub.docker.com/v2/repositories/libredb/libredb-studio/tags/{ref}
+      note: Mirror of GHCR; immutable-tag rules must stay semver-only. The push is secret-gated and skips
+        silently, so an absent version tag here is how an expired DOCKER_HUB_TOKEN becomes visible.
 
   - id: npm
     name: npm package @libredb/studio (library + npx launcher)
@@ -149,8 +158,15 @@ channels:
       first_pr: https://github.com/libredb/libredb-studio/pull/177
       catalog: https://snapcraft.io/libredb-studio
     pin:
-      strategy: none
-      note: Store-published by the release-artifacts snap job; store API probe tracked in issue 182.
+      strategy: probe
+      probe: snap-store-channel
+      architectures:
+        - amd64
+        - arm64
+      urls:
+        info: https://api.snapcraft.io/v2/snaps/info/libredb-studio
+      note: Reads the stable channel of each architecture separately, so one lagging build is drift rather
+        than a pass. Edge may legitimately differ from stable and is ignored.
 
   - id: linux-deb-rpm
     name: Linux .deb / .rpm packages (release assets)
@@ -458,13 +474,15 @@ channels:
       upstream_repo: https://github.com/microsoft/winget-pkgs
       docs: docs/DISTRIBUTION.md
     pin:
-      strategy: none
-      note: Listed since 0.9.59 (winget install LibreDB.Studio). Deliberately unpinned - winget
-        publishes no floating "latest" document. The winget-pkgs contents listing and the
-        storefront REST source both enumerate every published version, and this checker requires
-        all matches in a source to agree, so any regex over them would report ambiguity forever.
-        The release job's own pre-check (package listed / version already merged / update PR
-        already open) is the real guard; listed versions live under manifests/l/LibreDB/Studio/.
+      strategy: probe
+      probe: winget-max-version
+      urls:
+        versions: https://api.github.com/repos/microsoft/winget-pkgs/contents/manifests/l/LibreDB/Studio
+      note: Listed since 0.9.59 (winget install LibreDB.Studio). winget publishes no floating "latest"
+        document - the contents listing enumerates every published version - so the highest version it
+        enumerates is the served state. A regex pin cannot express that (all matches in a source must
+        agree), which is why this is a probe. The release job's own pre-check (package listed / version
+        already merged / update PR already open) remains the publish-time guard.
 
   - id: chocolatey
     name: Chocolatey community repository (libredb-studio)
