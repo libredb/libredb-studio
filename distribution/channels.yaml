@@ -256,32 +256,10 @@ channels:
 
   # ---- Tier 2: LibreDB-owned copies and listings, bumped by hand ----------
 
-  - id: caprover-local
-    name: CapRover one-click template (in-repo source of truth)
-    short_name: CapRover template (in-repo)
-    status: live
-    category: paas-one-click
-    platforms: [cloud]
-    tier: 2
-    kind: one-click-template
-    update:
-      method: commit
-      sla: on_demand
-    links:
-      tracking_issue: https://github.com/libredb/libredb-studio/issues/56
-      first_pr: https://github.com/libredb/libredb-studio/pull/57
-      get: https://github.com/libredb/libredb-studio/tree/main/deploy/caprover
-      docs: deploy/caprover/README.md
-    pin:
-      strategy: local_file
-      files:
-        - deploy/caprover/libredb-studio.yml
-      extract: "defaultValue: '(\\d+\\.\\d+\\.\\d+)'"
-
   - id: caprover-mirror
     name: CapRover 3rd-party repo (libredb.org/caprover-one-click-apps)
     short_name: CapRover 3rd-party repo
-    status: live
+    status: deprecated
     category: paas-one-click
     platforms: [cloud]
     tier: 2
@@ -291,13 +269,14 @@ channels:
       sla: on_demand
     links:
       tracking_issue: https://github.com/libredb/libredb-studio/issues/56
-      get: https://github.com/libredb/caprover-one-click-apps
       catalog: https://libredb.org/caprover-one-click-apps
       upstream_repo: https://github.com/libredb/caprover-one-click-apps
     pin:
-      strategy: remote_file
-      url: https://raw.githubusercontent.com/libredb/caprover-one-click-apps/main/public/v4/apps/libredb-studio.yml
-      extract: "defaultValue: '(\\d+\\.\\d+\\.\\d+)'"
+      strategy: none
+      note: This was a LibreDB-owned CapRover repo, published while the official catalog submission
+        (#56) was in review. The official listing (caprover-official) is now live, so this
+        fallback is retired. The libredb.org/caprover-one-click-apps path it was served from is not
+        currently published.
 
   - id: railway-template
     name: Railway one-click template

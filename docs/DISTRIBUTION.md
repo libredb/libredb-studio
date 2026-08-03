@@ -1071,7 +1071,7 @@ pin or editing a channel entry is always a human commit.
 |---|---|---|
 | 0 | Core registries, published directly by release CI | GitHub Releases, GHCR, Docker Hub, npm |
 | 1 | Packaged formats owned by this repo, CI-published | Helm, Homebrew tap, Snap, .deb/.rpm, desktop AppImage |
-| 2 | LibreDB-owned copies and listings, bumped by hand | CapRover source/mirror, Railway, Koyeb button, Fly.io config, Render Blueprint |
+| 2 | LibreDB-owned copies and listings, bumped by hand | CapRover mirror (deprecated), Railway, Koyeb button, Fly.io config, Render Blueprint |
 | 3 | Upstream community catalogs, bumped via PR | CapRover official, Dokploy, Cosmos, Kubero |
 | 4 | Partner or curated catalogs (not self-serve) | Rancher partner charts, Koyeb catalog, DO, winget, Chocolatey, Flathub |
 

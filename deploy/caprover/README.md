@@ -10,32 +10,19 @@ This folder is the **source of truth** for deploying LibreDB Studio on
 | `libredb-studio.yml` | CapRover `captainVersion: 4` template (Docker-Compose + `caproverOneClickApp` block). |
 | `libredb-studio.png` | 256×256 app logo used by the CapRover one-click UI. |
 
-The same two files are published to two places:
+Both files are submitted as a PR to
+[`caprover/one-click-apps`](https://github.com/caprover/one-click-apps)
+(`public/v4/apps/libredb-studio.yml` + `public/v4/logos/libredb-studio.png`) —
+the official listing, merged and live.
 
-1. **Official repo** — submitted as a PR to
-   [`caprover/one-click-apps`](https://github.com/caprover/one-click-apps)
-   (`public/v4/apps/libredb-studio.yml` + `public/v4/logos/libredb-studio.png`).
-2. **LibreDB 3rd-party repo** — hosted by LibreDB so users can install
-   immediately, independent of the official repo's review queue.
-
-## Install (official repo, once merged)
+## Install (official one-click apps catalog)
 
 CapRover dashboard → **Apps → One-Click Apps/Databases** → search **LibreDB Studio**.
+No third-party repo to add.
 
-## Install (LibreDB 3rd-party repo, available now)
-
-CapRover dashboard → **Apps → One-Click Apps/Databases** → scroll to
-**3rd party repositories** → paste the URL below → **Connect New Repository** →
-search **LibreDB Studio**:
-
-```
-https://raw.githubusercontent.com/libredb/caprover-one-click-apps/main/public/
-```
-
-This raw URL is a stand-in while `https://libredb.org/caprover-one-click-apps` is
-not published (GitHub Pages is not enabled for that repo yet).
-
-Source for that repo: <https://github.com/libredb/caprover-one-click-apps>.
+The LibreDB 3rd-party repo that served this app while the official submission was
+in review is now retired. Source for that repo:
+<https://github.com/libredb/caprover-one-click-apps>.
 
 ## Install (manual template — works today, no repo needed)
 
@@ -67,8 +54,8 @@ Set these under the app's **App Configs** tab to extend the deployment:
 ## Maintaining this template
 
 When a new Studio version is released, bump the `defaultValue` of
-`$$cap_version` in `libredb-studio.yml` and re-publish to both repos. Validate
-locally with the CapRover repo's tooling:
+`$$cap_version` in `libredb-studio.yml` and submit an update PR to the official
+repo. Validate locally with the CapRover repo's tooling:
 
 ```bash
 npm ci && npm run validate_apps && npm run formatter

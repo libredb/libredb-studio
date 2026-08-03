@@ -150,7 +150,7 @@ Health check endpoint: `GET /api/db/health` · Container HTTP port: `3000`.
 
 - **Docker / Compose** — see Quick start above.
 - **Kubernetes (Helm)** — `oci://ghcr.io/libredb/charts/libredb-studio` · [Artifact Hub](https://artifacthub.io/packages/search?repo=libredb-studio)
-- **CapRover** — one-click app: add repo `https://raw.githubusercontent.com/libredb/caprover-one-click-apps/main/public/`, then install **LibreDB Studio**.
+- **CapRover** — built into the official One-Click Apps catalog: **Apps → One-Click Apps/Databases** → search **LibreDB Studio**. No third-party repo to add.
 - **PaaS** — one-click buttons for Koyeb & Render in the [GitHub README](https://github.com/libredb/libredb-studio#one-click-deploy).
 
 ---

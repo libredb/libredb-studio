@@ -31,9 +31,9 @@ channel count.
 
 ## Coverage snapshot
 
-**27 channels · 22 live · 4 pending · 1 deprecated**
+**26 channels · 20 live · 4 pending · 2 deprecated**
 
-Live channels by platform: **Linux 7 · macOS 3 · Windows 3 · Container 2 · Kubernetes 1 · Cloud 11**
+Live channels by platform: **Linux 7 · macOS 3 · Windows 3 · Container 2 · Kubernetes 1 · Cloud 9**
 
 | Category | Live | Pending | Deprecated |
 | --- | ---: | ---: | ---: |
@@ -42,7 +42,7 @@ Live channels by platform: **Linux 7 · macOS 3 · Windows 3 · Container 2 · K
 | Kubernetes & operators | 1 | 2 | 0 |
 | Package managers | 4 | 1 | 0 |
 | OS / desktop packages | 2 | 0 | 0 |
-| PaaS & one-click | 10 | 0 | 0 |
+| PaaS & one-click | 8 | 0 | 1 |
 | Marketplaces & partners | 1 | 1 | 0 |
 | Closed / declined | 0 | 0 | 1 |
 
@@ -68,8 +68,6 @@ Live channels by platform: **Linux 7 · macOS 3 · Windows 3 · Container 2 · K
 | [Chocolatey](https://community.chocolatey.org/packages/libredb-studio) | Package managers | Windows | pending | Automated (paused), every release | [DISTRIBUTION.md](DISTRIBUTION.md) |
 | [Desktop app (AppImage, .deb)](https://github.com/libredb/libredb-studio/releases/latest) | OS / desktop packages | Linux | live | Automated, every release | [desktop/README.md](../desktop/README.md) |
 | [Linux .deb / .rpm](https://github.com/libredb/libredb-studio/releases/latest) | OS / desktop packages | Linux | live | Automated, every release | [DISTRIBUTION.md](DISTRIBUTION.md) |
-| [CapRover template (in-repo)](https://github.com/libredb/libredb-studio/tree/main/deploy/caprover) | PaaS & one-click | Cloud | live | Manual, on demand | [deploy/caprover/README.md](../deploy/caprover/README.md) |
-| [CapRover 3rd-party repo](https://github.com/libredb/caprover-one-click-apps) | PaaS & one-click | Cloud | live | Manual, on demand | [DISTRIBUTION.md](DISTRIBUTION.md) |
 | [CapRover official](https://github.com/caprover/one-click-apps) | PaaS & one-click | Cloud | live | Manual, on demand | [DISTRIBUTION.md](DISTRIBUTION.md) |
 | [Cosmos servapp marketplace](https://github.com/azukaar/cosmos-servapps-official) | PaaS & one-click | Cloud | live | Manual, on demand | [deploy/cosmos/README.md](../deploy/cosmos/README.md) |
 | [Dokploy template catalog](https://templates.dokploy.com) | PaaS & one-click | Cloud | live | Manual, on demand | [deploy/dokploy/README.md](../deploy/dokploy/README.md) |
@@ -78,6 +76,7 @@ Live channels by platform: **Linux 7 · macOS 3 · Windows 3 · Container 2 · K
 | [Kubero template catalog](https://www.kubero.dev/templates) | PaaS & one-click | Cloud | live | Manual, on demand | [deploy/kubero/README.md](../deploy/kubero/README.md) |
 | [Railway one-click template](https://railway.com/deploy/libredb-studio) | PaaS & one-click | Cloud | live | Manual, on demand | [deploy/railway/PUBLISH.md](../deploy/railway/PUBLISH.md) |
 | [Render Blueprint](https://render.com/deploy?repo=https://github.com/libredb/libredb-studio) | PaaS & one-click | Cloud | live | Manual, on demand | [DISTRIBUTION.md](DISTRIBUTION.md) |
+| CapRover 3rd-party repo | PaaS & one-click | Cloud | deprecated | — | [DISTRIBUTION.md](DISTRIBUTION.md) |
 | [DigitalOcean Marketplace](https://marketplace.digitalocean.com/apps/libredb-studio) | Marketplaces & partners | Cloud | live | Manual, on demand | [deploy/digitalocean/README.md](../deploy/digitalocean/README.md) |
 | [Koyeb One-Click Apps catalog](https://www.koyeb.com/deploy) | Marketplaces & partners | Cloud | pending | Manual, on demand | [deploy/koyeb/CATALOG_SUBMISSION.md](../deploy/koyeb/CATALOG_SUBMISSION.md) |
 | Flathub | Closed / declined | Linux | deprecated | — | [packaging/flatpak/README.md](../packaging/flatpak/README.md) |
