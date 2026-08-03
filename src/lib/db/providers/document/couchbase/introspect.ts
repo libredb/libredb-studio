@@ -152,7 +152,7 @@ function propertyTypes(property: Record<string, unknown>): string[] {
 
 /** Render a union of observed types the way the MongoDB provider does. */
 function formatType(types: Set<string>): string {
-  const names = [...types].sort();
+  const names = [...types].sort((a, b) => a.localeCompare(b));
   return names.length === 1 ? names[0] : `mixed(${names.join("|")})`;
 }
 
