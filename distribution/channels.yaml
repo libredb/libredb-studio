@@ -604,6 +604,7 @@ channels:
       sla: on_demand
     links:
       tracking_issue: https://github.com/libredb/libredb-studio/issues/232
+      upstream_repo: https://github.com/flathub/flathub
       first_pr: https://github.com/flathub/flathub/pull/9538
       docs: packaging/flatpak/README.md
     pin:

@@ -583,8 +583,18 @@ function displayName(channel) {
  * Where a user actually obtains this channel. Undefined when the inventory has
  * nothing to point at - deliberately not a heuristic, because a fallback chain
  * invented here would be a rule nobody reading channels.yaml can see.
+ *
+ * A deprecated channel is never a place to get the product - a link there
+ * would tell a user to go install something that is not being shipped - so it
+ * renders as plain text even when the inventory still records where its
+ * submission went (e.g. Flathub's upstream_repo). That is a property of the
+ * status, not of any one channel, so it is a status guard here rather than a
+ * data deletion in channels.yaml.
  */
 export function channelHref(channel) {
+  if (channel.status === "deprecated") {
+    return undefined;
+  }
   return channel.links?.get ?? channel.links?.catalog ?? channel.links?.upstream_repo;
 }
 

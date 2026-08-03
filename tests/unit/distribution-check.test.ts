@@ -1186,6 +1186,11 @@ describe("matrix cell helpers", () => {
     expect(channelHref({})).toBeUndefined();
   });
 
+  test("channelHref returns nothing for a deprecated channel that still has links", () => {
+    expect(channelHref({ status: "deprecated", links: { upstream_repo: "U" } })).toBeUndefined();
+    expect(channelHref({ status: "live", links: { upstream_repo: "U" } })).toBe("U");
+  });
+
   test("platformCell renders canonical order regardless of yaml order", () => {
     expect(platformCell(["macos", "linux"])).toBe("Linux, macOS");
     expect(platformCell(["cloud"])).toBe("Cloud");
