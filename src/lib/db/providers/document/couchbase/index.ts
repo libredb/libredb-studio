@@ -75,6 +75,12 @@ const MONITORING_TIMEOUT_MS = 10000;
  */
 const KV_DEFAULT_MAX_CONNECTIONS = 65536;
 
+/**
+ * Column a SELECT RAW / SELECT VALUE scalar is wrapped in. Named like the
+ * document-key column so the two synthetic columns read as a pair.
+ */
+const COUCHBASE_RAW_VALUE_COLUMN = "__value";
+
 /** SQL++ codes this provider translates into a specific error class. */
 const NO_INDEX_CODE = 4000;
 const REQUEST_TIMEOUT_CODE = 1080;
@@ -233,6 +239,22 @@ function deriveFields(rows: CouchbaseRow[]): string[] {
     for (const key of Object.keys(row)) fields.add(key);
   }
   return [...fields];
+}
+
+/**
+ * SELECT RAW and SELECT VALUE project bare values, so a row can be a scalar, an
+ * array, or null rather than the object the grid's row contract assumes. Passed
+ * through unchanged, Object.keys turns a string into one column per character
+ * index and throws outright on null. Everything that is not a plain object is
+ * therefore wrapped in a single named column.
+ *
+ * This lives at the provider boundary rather than in the transport on purpose:
+ * INFER returns its flavour array as rows[0], and introspection reads that raw
+ * payload (see introspect.ts). Reshaping in the transport would break it.
+ */
+function normalizeRow(row: CouchbaseRow): CouchbaseRow {
+  if (typeof row === "object" && row !== null && !Array.isArray(row)) return row;
+  return { [COUCHBASE_RAW_VALUE_COLUMN]: row };
 }
 
 /**
@@ -427,11 +449,12 @@ export class CouchbaseProvider extends BaseDatabaseProvider {
    */
   private toQueryResult(result: CouchbaseQueryResult, measuredMs: number): QueryResult {
     const reportedMs = Math.round(result.executionTimeMs);
+    const rows = result.rows.map(normalizeRow);
     return {
-      rows: result.rows,
-      fields: result.fieldNames ?? deriveFields(result.rows),
+      rows,
+      fields: result.fieldNames ?? deriveFields(rows),
       // A mutation returns no rows; its row count is what it changed.
-      rowCount: result.rows.length > 0 ? result.rows.length : result.mutationCount,
+      rowCount: rows.length > 0 ? rows.length : result.mutationCount,
       executionTime: reportedMs > 0 ? reportedMs : measuredMs,
     };
   }

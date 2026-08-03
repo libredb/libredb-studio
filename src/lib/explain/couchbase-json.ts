@@ -110,12 +110,15 @@ function toTreeNode(op: CouchbaseOperator): ExplainTreeNode {
 
 export const couchbaseJsonStrategy: ExplainStrategy = {
   format: "couchbase-json",
-  // EXPLAIN produces the plan without executing the statement. There is no
-  // EXPLAIN ANALYZE in SQL++ — real timings come only from the request-level
-  // profile parameter, which ExplainStrategy cannot set (it emits SQL only), so
-  // analyze reports "unavailable" rather than silently returning an estimate.
-  buildSql(sql, mode) {
-    if (mode === "analyze") return null;
+  // EXPLAIN produces the plan without executing the statement. SQL++ has no
+  // EXPLAIN ANALYZE - real timings come only from the request-level profile
+  // parameter, which ExplainStrategy cannot set because it emits SQL only - so
+  // both modes return the estimate, exactly as the SQLite strategy does for
+  // EXPLAIN QUERY PLAN. Declining analyze instead would disable the feature
+  // entirely rather than narrow it: the direct Explain action always builds with
+  // mode "analyze" (use-query-execution.ts:165) and refuses the run when the
+  // strategy returns null.
+  buildSql(sql) {
     if (!SELECT_ONLY.test(sql.trim())) return null;
     return `EXPLAIN ${sql}`;
   },

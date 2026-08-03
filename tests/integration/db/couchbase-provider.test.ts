@@ -399,6 +399,31 @@ describe("CouchbaseProvider query", () => {
     expect(result.fields).toEqual(["hotel", "__id"]);
   });
 
+  test("wraps SELECT RAW scalars so the grid gets one honest column", async () => {
+    // SELECT RAW / SELECT VALUE return bare scalars, not objects. Handing those
+    // through unchanged makes deriveFields call Object.keys on a string, which
+    // yields one column per character index.
+    const provider = await connectProvider();
+    queryHandler = () => queryPayload(["Grand Plaza", "Seaside Inn"] as unknown as Record<string, unknown>[]);
+
+    const result = await provider.query("SELECT RAW h.name FROM `travel`.`inventory`.`hotel` AS h");
+
+    expect(result.rows).toEqual([{ __value: "Grand Plaza" }, { __value: "Seaside Inn" }]);
+    expect(result.fields).toEqual(["__value"]);
+  });
+
+  test("wraps null and array rows rather than crashing on them", async () => {
+    // A RAW projection of a missing field yields null, and Object.keys(null)
+    // throws - the whole request used to fail with a 500.
+    const provider = await connectProvider();
+    queryHandler = () => queryPayload([null, [1, 2]] as unknown as Record<string, unknown>[]);
+
+    const result = await provider.query("SELECT RAW h.missing FROM `travel`.`inventory`.`hotel` AS h");
+
+    expect(result.rows).toEqual([{ __value: null }, { __value: [1, 2] }]);
+    expect(result.fields).toEqual(["__value"]);
+  });
+
   test("reports the mutation count as the row count when a statement returns no rows", async () => {
     const provider = await connectProvider();
     queryHandler = () => queryPayload([], { metrics: { elapsedTime: "5ms", executionTime: "4ms", mutationCount: 3 } });

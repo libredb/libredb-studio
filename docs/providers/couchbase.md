@@ -371,12 +371,18 @@ uses. `~meta` becomes the leading `__id` column, marked primary.
 ([`src/lib/db/types.ts:93`](../../src/lib/db/types.ts)), with the strategy in
 [`src/lib/explain/couchbase-json.ts`](../../src/lib/explain/couchbase-json.ts):
 
-- `buildSql(sql, 'estimate')` returns `EXPLAIN ${sql}` for `SELECT` statements — it produces the plan
-  without executing anything.
-- `buildSql(sql, 'analyze')` returns `null`. SQL++ has no `EXPLAIN ANALYZE`; real timings come only
-  from the request-level `profile: "timings"` parameter, which `ExplainStrategy` cannot set by
-  design (it emits SQL only). Returning `null` hides the toggle — the honesty rule established in
-  #201 — rather than offering an "analyze" mode that silently degrades to an estimate.
+- `buildSql()` returns `EXPLAIN ${sql}` for `SELECT` statements, in **both** modes — it produces the
+  plan without executing anything. SQL++ has no `EXPLAIN ANALYZE`; real timings come only from the
+  request-level `profile: "timings"` parameter, which `ExplainStrategy` cannot set by design (it
+  emits SQL only), so the estimate is the best available answer for either mode. This mirrors
+  [`sqlite-queryplan.ts`](../../src/lib/explain/sqlite-queryplan.ts), which ignores the mode for the
+  same reason.
+
+  Returning `null` for analyze would not narrow the feature, it would disable it: the direct Explain
+  action always builds with mode `analyze`
+  ([`use-query-execution.ts:165`](../../src/hooks/use-query-execution.ts)) and refuses the run when
+  the strategy declines, so the button would be dead while only the background pre-warm worked.
+  A non-`SELECT` is still declined in both modes.
 - `toRenderModel()` walks `#operator` into the existing `{ kind: "tree" }` model.
 
 **Both child shapes are walked.** Couchbase plans use `~children` (an array, on `Sequence` and
@@ -507,8 +513,8 @@ What still needs an index is *discovering* keys you do not already know
 ### 5.4 EXPLAIN
 
 The EXPLAIN button is available (`supportsExplain: true`) and renders the plan tree described in
-[§3.11](#311-explain-reuses-the-shared-tree-model). There is no analyze mode; the toggle is hidden
-rather than degraded.
+[§3.11](#311-explain-reuses-the-shared-tree-model). Couchbase has no analyze mode, so both the
+direct action and the background pre-warm show the estimated plan.
 
 ---
 

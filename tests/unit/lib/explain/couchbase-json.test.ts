@@ -47,10 +47,18 @@ describe("couchbaseJsonStrategy", () => {
     expect(couchbaseJsonStrategy.buildSql("  SELECT 1", "estimate")).toBe("EXPLAIN   SELECT 1");
   });
 
-  // SQL++ has no EXPLAIN ANALYZE: real timings come only from the request-level
-  // profile parameter, which ExplainStrategy cannot set (it emits SQL only).
-  test("buildSql returns null in analyze mode instead of downgrading to an estimate", () => {
-    expect(couchbaseJsonStrategy.buildSql("SELECT * FROM hotel", "analyze")).toBeNull();
+  // SQL++ has no EXPLAIN ANALYZE, and ExplainStrategy emits SQL only so it cannot
+  // reach the request-level profile parameter that would carry real timings. The
+  // estimate is therefore returned for both modes, exactly as the SQLite strategy
+  // does for EXPLAIN QUERY PLAN. Returning null for analyze instead would kill the
+  // direct Explain action outright: use-query-execution.ts:165 builds that action
+  // with mode "analyze" and refuses the run when the strategy declines it.
+  test("buildSql returns the estimate plan in analyze mode, matching the SQLite strategy", () => {
+    expect(couchbaseJsonStrategy.buildSql("SELECT * FROM hotel", "analyze")).toBe("EXPLAIN SELECT * FROM hotel");
+  });
+
+  test("buildSql declines a non-SELECT in analyze mode too", () => {
+    expect(couchbaseJsonStrategy.buildSql("UPDATE hotel SET city = 'Bursa'", "analyze")).toBeNull();
   });
 
   test("buildSql returns null for non-SELECT statements", () => {
