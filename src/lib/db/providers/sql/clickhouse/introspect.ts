@@ -212,16 +212,53 @@ function readDefault(kind: string, expression: string): string | undefined {
  * expression comes back as `(lower(b))`. The depth walk is what refuses
  * `(a), (b)`, where the first parenthesis closes long before the end.
  */
+/** The quote characters ClickHouse opens a span with: identifiers, then literals. */
+const QUOTES = new Set(["`", '"', "'"]);
+
+/**
+ * The index just past the quoted span opening at `open`.
+ *
+ * Needed because a quoted span may legally contain the very characters the scans
+ * below treat as syntax: `` `region,code` `` is one identifier, and `` `a(b` ``
+ * contains a parenthesis that must not move the depth counter. Both a backslash and
+ * a doubled quote escape the quote rather than closing it. An unterminated span
+ * consumes the rest of the string, which is the reading that cannot mis-split.
+ */
+function endOfQuoted(text: string, open: number): number {
+  const quote = text[open];
+  for (let index = open + 1; index < text.length; index += 1) {
+    if (text[index] === "\\") {
+      index += 1;
+      continue;
+    }
+    if (text[index] === quote) {
+      if (text[index + 1] === quote) {
+        index += 1;
+        continue;
+      }
+      return index + 1;
+    }
+  }
+  return text.length;
+}
+
 function unwrapOuterParens(expression: string): string {
   if (!expression.startsWith("(") || !expression.endsWith(")")) return expression;
 
   let depth = 0;
-  for (let index = 0; index < expression.length; index += 1) {
-    if (expression[index] === "(") depth += 1;
-    else if (expression[index] === ")") {
+  let index = 0;
+  while (index < expression.length) {
+    const char = expression[index];
+    if (QUOTES.has(char)) {
+      index = endOfQuoted(expression, index);
+      continue;
+    }
+    if (char === "(") depth += 1;
+    else if (char === ")") {
       depth -= 1;
       if (depth === 0 && index < expression.length - 1) return expression;
     }
+    index += 1;
   }
   return expression.slice(1, -1).trim();
 }
@@ -242,14 +279,20 @@ function splitKeyExpression(expression: string): string[] {
   const elements: string[] = [];
   let depth = 0;
   let start = 0;
-  for (let index = 0; index < listed.length; index += 1) {
+  let index = 0;
+  while (index < listed.length) {
     const char = listed[index];
+    if (QUOTES.has(char)) {
+      index = endOfQuoted(listed, index);
+      continue;
+    }
     if (char === "(") depth += 1;
     else if (char === ")") depth -= 1;
     else if (char === "," && depth === 0) {
       elements.push(listed.slice(start, index).trim());
       start = index + 1;
     }
+    index += 1;
   }
   elements.push(listed.slice(start).trim());
   return elements.filter((element) => element !== "");

@@ -209,6 +209,31 @@ describe("clickhouseJsonStrategy", () => {
     );
   });
 
+  // prepareQuery already treats both of these as carrying a trailing FORMAT (its own
+  // tests cover "a trailing FORMAT clause and a semicolon" and "FORMAT followed by
+  // SETTINGS"), so the explain builder has to recognise the same shapes or the plan
+  // comes back as TSV and no tree can be built.
+  test("buildSql drops a trailing FORMAT that is followed by a semicolon", () => {
+    expect(clickhouseJsonStrategy.buildSql("SELECT id FROM users FORMAT TSV;", "estimate")).toBe(
+      "EXPLAIN json = 1, indexes = 1 SELECT id FROM users;",
+    );
+  });
+
+  // The SETTINGS clause is kept: it applies to the inner statement and is
+  // semantically meaningful (max_execution_time and friends). Only FORMAT changes
+  // the shape of the EXPLAIN output itself.
+  test("buildSql drops a trailing FORMAT but keeps a SETTINGS clause after it", () => {
+    expect(
+      clickhouseJsonStrategy.buildSql("SELECT id FROM users FORMAT TSV SETTINGS max_threads = 1", "estimate"),
+    ).toBe("EXPLAIN json = 1, indexes = 1 SELECT id FROM users SETTINGS max_threads = 1");
+  });
+
+  test("buildSql drops a trailing FORMAT before SETTINGS and a semicolon together", () => {
+    expect(
+      clickhouseJsonStrategy.buildSql("SELECT id FROM users FORMAT JSONEachRow SETTINGS max_threads=2;", "analyze"),
+    ).toBe("EXPLAIN json = 1, indexes = 1 SELECT id FROM users SETTINGS max_threads=2;");
+  });
+
   test("buildSql keeps a statement whose FORMAT is not a trailing clause intact", () => {
     expect(clickhouseJsonStrategy.buildSql("SELECT formatDateTime(d, '%Y') FROM t", "estimate")).toBe(
       "EXPLAIN json = 1, indexes = 1 SELECT formatDateTime(d, '%Y') FROM t",

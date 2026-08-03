@@ -372,7 +372,7 @@ export class ClickHouseHttpTransport implements ClickHouseTransport {
   }
 
   public async query(sql: string, opts: ClickHouseQueryOptions = {}): Promise<ClickHouseQueryResult> {
-    const outcome = await this.send(this.endpoint(opts), sql);
+    const outcome = await this.send(this.endpoint(opts), sql, opts.timeoutMs);
     if (!outcome.ok) throw statementError(outcome);
 
     return toQueryResult(outcome);
@@ -407,12 +407,19 @@ export class ClickHouseHttpTransport implements ClickHouseTransport {
     return `${this.origin}/?${params.toString()}`;
   }
 
-  private async send(url: string, sql: string): Promise<HttpOutcome> {
+  private async send(url: string, sql: string, timeoutMs?: number): Promise<HttpOutcome> {
+    // One signal for the request AND the body read: a response whose headers
+    // arrive promptly can still stall mid-body, and awaiting text() below is
+    // otherwise unbounded. Passing the signal to fetch covers both, which a
+    // timer around fetch alone would not.
+    const signal = timeoutMs === undefined ? undefined : AbortSignal.timeout(timeoutMs);
+
     try {
       const response = await fetch(url, {
         method: "POST",
         headers: this.authorization ? { authorization: this.authorization } : {},
         body: sql,
+        ...(signal ? { signal } : {}),
       });
 
       return { ok: response.ok, status: response.status, headers: response.headers, text: await response.text() };

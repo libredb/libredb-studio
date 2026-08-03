@@ -494,6 +494,82 @@ describe("indexes", () => {
     ]);
   });
 
+  // A backtick-quoted identifier may legally contain a comma or a parenthesis, and
+  // splitting on those blindly reports one column as two - or, worse, an unbalanced
+  // paren inside quotes corrupts the depth counter and swallows every later
+  // top-level comma.
+  test("keeps a quoted identifier containing a comma as one key column", async () => {
+    const { transport } = createTransport({
+      tables: [tableRow({ sorting_key: "`region,code`, id", primary_key: "`region,code`, id" })],
+    });
+
+    const [table] = await getSchema(transport, PINNED);
+
+    expect(table.indexes).toEqual([
+      { name: CLICKHOUSE_PRIMARY_INDEX_NAME, columns: ["`region,code`", "id"], unique: false },
+    ]);
+  });
+
+  test("does not let an unbalanced parenthesis inside quotes swallow later commas", async () => {
+    const { transport } = createTransport({
+      tables: [tableRow({ sorting_key: "`a(b`, c", primary_key: "`a(b`, c" })],
+    });
+
+    const [table] = await getSchema(transport, PINNED);
+
+    expect(table.indexes[0].columns).toEqual(["`a(b`", "c"]);
+  });
+
+  test("treats a doubled quote as an escape rather than the end of the span", async () => {
+    const key = "`a``b,c`, d";
+    const { transport } = createTransport({ tables: [tableRow({ sorting_key: key, primary_key: key })] });
+
+    const [table] = await getSchema(transport, PINNED);
+
+    expect(table.indexes[0].columns).toEqual(["`a``b,c`", "d"]);
+  });
+
+  test("treats a backslash as escaping the next character inside a literal", async () => {
+    const key = "concat(a, 'x\\', y'), b";
+    const { transport } = createTransport({ tables: [tableRow({ sorting_key: key, primary_key: key })] });
+
+    const [table] = await getSchema(transport, PINNED);
+
+    expect(table.indexes[0].columns).toEqual(["concat(a, 'x\\', y')", "b"]);
+  });
+
+  // An unterminated span is malformed input that cannot be split sensibly; consuming
+  // the rest is the reading that at least never reports a fragment as a column.
+  test("treats an unterminated quote as running to the end", async () => {
+    const key = "`a, b";
+    const { transport } = createTransport({ tables: [tableRow({ sorting_key: key, primary_key: key })] });
+
+    const [table] = await getSchema(transport, PINNED);
+
+    expect(table.indexes[0].columns).toEqual(["`a, b"]);
+  });
+
+  // The outer-paren unwrap runs the same scan, so a quoted paren must not fool it
+  // into thinking the wrapper closes early.
+  test("unwraps an outer paren list whose quoted identifier contains a parenthesis", async () => {
+    const key = "(`a(b`, c)";
+    const { transport } = createTransport({ tables: [tableRow({ sorting_key: key, primary_key: key })] });
+
+    const [table] = await getSchema(transport, PINNED);
+
+    expect(table.indexes[0].columns).toEqual(["`a(b`", "c"]);
+  });
+
+  test("keeps a comma inside a string literal out of the split", async () => {
+    const { transport } = createTransport({
+      tables: [tableRow({ sorting_key: "concat(a, 'x, y'), b", primary_key: "concat(a, 'x, y'), b" })],
+    });
+
+    const [table] = await getSchema(transport, PINNED);
+
+    expect(table.indexes[0].columns).toEqual(["concat(a, 'x, y')", "b"]);
+  });
+
   test("does not repeat the key when the sorting key and the primary key agree", async () => {
     const { transport } = createTransport({ tables: [tableRow({ sorting_key: "id", primary_key: "id" })] });
 

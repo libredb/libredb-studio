@@ -101,10 +101,17 @@ const UNKNOWN_VERSION = "unknown";
  */
 const RAW_TEXT_COLUMN = "__text";
 
+const MILLISECONDS_PER_SECOND = 1000;
+
 /** Server-side deadline for a monitoring read, in `max_execution_time`'s unit. */
 const MONITORING_TIMEOUT_SECONDS = 10;
 
-const MILLISECONDS_PER_SECOND = 1000;
+/**
+ * The same deadline as a client-side one. A monitoring panel that hangs on a
+ * stalled socket is worse than an empty one, and `max_execution_time` cannot bound
+ * a connection that never gets as far as executing anything.
+ */
+const MONITORING_TIMEOUT_MS = MONITORING_TIMEOUT_SECONDS * MILLISECONDS_PER_SECOND;
 
 const DEFAULT_SLOW_QUERY_LIMIT = 10;
 const DEFAULT_SESSION_LIMIT = 50;
@@ -120,6 +127,9 @@ const UNKNOWN_USER = "unknown";
 
 /** The scheme that makes the transport speak TLS and default to the https port. */
 const TLS_SCHEME = "https:";
+
+/** The scheme that explicitly asks for plaintext, as opposed to not saying. */
+const PLAINTEXT_SCHEME = "http:";
 
 /**
  * Codes this file branches on that the shared table does not carry, because
@@ -412,8 +422,24 @@ function resolveConnection(config: DatabaseConnection): DatabaseConnection {
     user: decodeURIComponent(url.username) || config.user,
     password: decodeURIComponent(url.password) || config.password,
     database: decodeURIComponent(url.pathname.slice(1)) || config.database,
-    ssl: url.protocol === TLS_SCHEME ? { mode: "require" } : config.ssl,
+    ssl: sslForScheme(url, config.ssl),
   };
+}
+
+/**
+ * TLS as the URL's scheme states it, falling back to the connection's own setting
+ * only when the scheme does not say.
+ *
+ * The scheme is the more specific statement: it names the transport, while `ssl` is
+ * a separate field that can be left over from an earlier edit. So an explicit
+ * `http://` has to be able to turn TLS OFF - deferring would send HTTPS to a
+ * plaintext endpoint and fail with a bare "fetch failed" - while `clickhouse://`
+ * names no transport and is the one scheme that must defer.
+ */
+function sslForScheme(url: URL, configured: DatabaseConnection["ssl"]): DatabaseConnection["ssl"] {
+  if (url.protocol === TLS_SCHEME) return { mode: "require" };
+  if (url.protocol === PLAINTEXT_SCHEME) return undefined;
+  return configured;
 }
 
 /**
@@ -543,7 +569,7 @@ export class ClickHouseProvider extends SQLBaseProvider {
       // live-verified, a non-existent one fails 404 / code 81 on the FIRST
       // statement - so the cheapest possible statement proves the server, the
       // credentials and the database together, here, where the user is looking.
-      await transport.query(CONNECT_PROBE_SQL);
+      await transport.query(CONNECT_PROBE_SQL, { timeoutMs: this.queryTimeout });
     } catch (error) {
       await transport.close();
       const failure = this.describeConnectFailure(error);
@@ -606,7 +632,13 @@ export class ClickHouseProvider extends SQLBaseProvider {
     return this.trackQuery(async () => {
       const { result, executionTime } = await this.measureExecution(async () => {
         try {
-          return await transport.query(sql, { settings: { max_execution_time: this.deadlineSeconds() } });
+          // Both halves of the same promise: max_execution_time bounds the server
+          // once it has accepted the statement, timeoutMs bounds everything before
+          // and after that - connect, handshake, and the body still arriving.
+          return await transport.query(sql, {
+            settings: { max_execution_time: this.deadlineSeconds() },
+            timeoutMs: this.queryTimeout,
+          });
         } catch (error) {
           throw this.mapClickHouseError(error, sql);
         }
@@ -706,7 +738,10 @@ export class ClickHouseProvider extends SQLBaseProvider {
     const transport = this.requireTransport();
 
     try {
-      const result = await transport.query(sql, { settings: { max_execution_time: MONITORING_TIMEOUT_SECONDS } });
+      const result = await transport.query(sql, {
+        settings: { max_execution_time: MONITORING_TIMEOUT_SECONDS },
+        timeoutMs: MONITORING_TIMEOUT_MS,
+      });
       return result.rows;
     } catch (error) {
       if (error instanceof ClickHouseTransportError && error.isMonitoringUnavailable()) return [];
@@ -995,6 +1030,7 @@ export class ClickHouseProvider extends SQLBaseProvider {
       : `database = ${literal(database)}`;
     const result = await transport.query(`${PART_SUMMARY_SELECT_SQL} ${where}`, {
       settings: { max_execution_time: MONITORING_TIMEOUT_SECONDS },
+      timeoutMs: MONITORING_TIMEOUT_MS,
     });
     const row = result.rows[0];
     const parts = asNumber(row?.partCount);

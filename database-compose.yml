@@ -130,9 +130,9 @@ services:
         echo "couchbase-init: the query service never accepted CREATE PRIMARY INDEX" >&2
         exit 1
   clickhouse:
-    # Pinned to the exact build the design spec (docs/superpowers/specs/2026-08-03-clickhouse-provider-design.md)
-    # was live-verified against, so status codes, header names and the mid-stream-failure
-    # trailer documented there stay reproducible for the next person.
+    # Pinned to the exact build the provider was live-verified against, so the status
+    # codes, header names and mid-stream-failure trailer recorded in
+    # docs/providers/clickhouse.md stay reproducible for the next person.
     image: clickhouse/clickhouse-server:26.7.1.1315
     container_name: libredb-clickhouse
     restart: unless-stopped

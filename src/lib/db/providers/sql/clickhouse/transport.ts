@@ -101,6 +101,19 @@ export interface ClickHouseQueryOptions {
    * the server takes `true`/`false` for boolean settings (live-verified).
    */
   settings?: Record<string, string | number | boolean>;
+
+  /**
+   * Wall-clock deadline for the whole exchange, client side.
+   *
+   * Distinct from a server-side execution limit, and not a duplicate of one: an
+   * execution limit only starts counting once the server has accepted the
+   * statement, so it cannot bound a stalled connect, handshake, or a response body
+   * that stops arriving part-way. The provider advertises a query timeout, and this
+   * is what makes that promise cover the transport rather than only the query.
+   *
+   * Neutral rather than HTTP-specific: any implementation can honour a deadline.
+   */
+  timeoutMs?: number;
 }
 
 /**

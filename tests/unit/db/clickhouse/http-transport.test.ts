@@ -188,6 +188,50 @@ describe("ClickHouseHttpTransport request", () => {
     expect(lastParam("log_comment")).toBe("probe");
   });
 
+  // max_execution_time only bounds execution AFTER ClickHouse has accepted the
+  // statement. A stalled DNS/TCP/TLS handshake, or a response body that never
+  // finishes arriving, is not covered by it, so the deadline the provider
+  // advertises has to be armed on the client too.
+  test("arms a client-side deadline when one is given", async () => {
+    await makeTransport().query("SELECT 1", { timeoutMs: 5000 });
+
+    const signal = lastCall().init?.signal;
+    expect(signal).toBeInstanceOf(AbortSignal);
+    expect(signal?.aborted).toBe(false);
+  });
+
+  test("sends no signal when no deadline is given", async () => {
+    await makeTransport().query("SELECT 1");
+
+    expect(lastCall().init?.signal).toBeUndefined();
+  });
+
+  test("reports a client-side timeout as a timeout, so the shared mapping classifies it", async () => {
+    // src/lib/db/errors.ts keys on "timeout"/"timed out" in the message, and a
+    // transport-level stall has no ClickHouse exception code to key on instead.
+    handler = () => {
+      throw new DOMException("The operation timed out.", "TimeoutError");
+    };
+
+    const error = await captureError(() => makeTransport().query("SELECT 1", { timeoutMs: 5 }));
+
+    expect(error.code).toBe(0);
+    expect(error.message.toLowerCase()).toContain("timed out");
+  });
+
+  test("aborts the in-flight request once the deadline passes", async () => {
+    // Proves the signal is live rather than merely attached: the handler waits on
+    // it instead of answering.
+    handler = (_url, init) =>
+      new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(init.signal?.reason));
+      }) as unknown as Response;
+
+    const error = await captureError(() => makeTransport().query("SELECT 1", { timeoutMs: 10 }));
+
+    expect(error.message.toLowerCase()).toContain("timed out");
+  });
+
   // The parser below assumes the envelope it asked for. A caller that could set
   // the format through settings would silently turn every result into raw text.
   test("does not let a setting hijack the response format", async () => {

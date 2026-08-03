@@ -27,8 +27,11 @@
 
 ## 1. Overview
 
-ClickHouse is a column-oriented analytical database whose primary interface is a first-class HTTP
-API — the same one its own `clickhouse-client` and every third-party tool use. That makes it an
+ClickHouse is a column-oriented analytical database with a **first-class HTTP interface** — a
+documented, fully-featured peer of the native protocol rather than a bolt-on, and the surface the
+Play UI and most third-party integrations speak. (Its own `clickhouse-client` uses the *native*
+protocol on `9000`, which this provider deliberately does not implement — see
+[§3.1](#31-http-transport-only--no-native-dependency).) That makes it an
 easier fit for this codebase than Couchbase was: the SQL dialect is close enough to standard that
 the provider extends `SQLBaseProvider` directly and inherits identifier quoting and `LIMIT`
 injection for free, tables have a real declared schema (no sampling or inference step), and the
@@ -554,8 +557,19 @@ Two consequences worth stating plainly:
 ### 5.1 Execution
 
 `query(sql, params?)` ([index.ts:593](../../src/lib/db/providers/sql/clickhouse/index.ts)) sends one
-statement with a server-side deadline (`max_execution_time`, derived from `queryTimeout`, default 60
-seconds) so a runaway statement cannot hang the editor indefinitely:
+statement under **two** deadlines, both derived from `queryTimeout` (default 60 seconds), because
+neither covers the other:
+
+- **`max_execution_time`**, server-side, so a runaway statement cannot hang the editor. It only
+  starts counting once ClickHouse has *accepted* the statement.
+- **`timeoutMs` on the transport seam**, client-side, armed as an `AbortSignal` on the request. This
+  is what bounds everything the server-side limit cannot: a stalled DNS lookup, TCP connect or TLS
+  handshake, and a response body that stops arriving part-way. The same signal covers the body read,
+  since a response whose headers arrive promptly can still stall mid-stream. Without it the advertised
+  query timeout would quietly not apply to transport failures at all.
+
+Monitoring reads carry the same pair at a shorter 10-second bound — a hanging panel is worse than an
+empty one.
 
 ```ts
 await provider.query('SELECT id, email FROM users');
@@ -853,8 +867,11 @@ await provider.disconnect();
 ### 12.2 Over the API
 
 `POST /api/db/query` with the SQL statement in the `sql` field — the same contract every SQL
-provider uses. `POST /api/db/maintenance` (admin) accepts `optimize` / `analyze` / `kill`, each with
-a target. Transaction and cancel routes do not apply — see [§13](#13-known-limitations--future-work).
+provider uses. `POST /api/db/maintenance` (admin) accepts `optimize` / `analyze` / `kill`;
+`optimize` and `kill` require a `target`, while `analyze` treats a missing one as "the whole pinned
+database" ([§8](#8-maintenance)) — so a client should omit it rather than invent one for
+database-wide statistics. Transaction and cancel routes do not apply — see
+[§13](#13-known-limitations--future-work).
 
 ---
 
@@ -900,6 +917,14 @@ a target. Transaction and cancel routes do not apply — see [§13](#13-known-li
 - **Multi-statement SQL is rejected by the server itself** (`Multi-statements are not allowed`,
   code `62`), so the provider does no client-side statement splitting; a single trailing semicolon is
   accepted.
+- **A dot inside a database or table name cannot be told apart from the qualifier separator.**
+  ClickHouse accepts `` CREATE DATABASE `a.b` `` (verified), but a table outside the pinned database
+  is displayed and generated as `database.table`, so `a.b` + `c` renders as `a.b.c` and every consumer
+  that splits on the dot reads it as three parts. Introspection is internally safe — the grouping key
+  joins on `NUL`, not a dot — so only the *display name* is ambiguous. This is the same limitation
+  `postgres.ts` carries for schema-qualified names; removing it means giving `TableSchema` structured
+  segments instead of one string, which is a cross-provider change rather than a ClickHouse one.
+  Dotted database names are vanishingly rare in practice.
 
 ---
 

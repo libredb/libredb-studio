@@ -74,15 +74,19 @@ export function parseConnectionString(input: string): ParsedConnection | null {
   // protocol the CLI's clickhouse:// URIs point at; https:// defaults to the server's
   // https_port instead. The result is field-based (no connectionString), so the pasted
   // URL never has to be re-parsed at connect time.
-  if (trimmed.startsWith("clickhouse://") || trimmed.startsWith("http://")) {
+  // The three schemes differ in what they say about TLS, and each has to be able to
+  // OVERWRITE a mode the form already carries - pasting is not a merge:
+  //   clickhouse:// names no transport  -> say nothing, defer to the form
+  //   http://       explicitly plaintext -> disable, or a stale "require" survives
+  //   https://      explicitly TLS       -> require, or a Cloud endpoint gets plain HTTP
+  if (trimmed.startsWith("clickhouse://")) {
     return parseGenericURL(trimmed, "clickhouse", "8123");
   }
+  if (trimmed.startsWith("http://")) {
+    return withSSLMode(parseGenericURL(trimmed, "clickhouse", "8123"), "disable");
+  }
   if (trimmed.startsWith("https://")) {
-    // sslMode is what stops a pasted Cloud endpoint becoming a plaintext POST to
-    // the TLS port; the fields on their own cannot say "use TLS". A malformed URL
-    // must still parse to null, so this cannot spread the result unconditionally.
-    const parsed = parseGenericURL(trimmed, "clickhouse", "8443");
-    return parsed && { ...parsed, sslMode: "require" };
+    return withSSLMode(parseGenericURL(trimmed, "clickhouse", "8443"), "require");
   }
 
   // ADO.NET format: Server=host;Database=db;User Id=user;Password=pass;
@@ -91,6 +95,13 @@ export function parseConnectionString(input: string): ParsedConnection | null {
   }
 
   return null;
+}
+
+/**
+ * Attach a scheme's TLS intent, preserving the null a malformed URL parses to.
+ */
+function withSSLMode(parsed: ParsedConnection | null, sslMode: SSLMode): ParsedConnection | null {
+  return parsed && { ...parsed, sslMode };
 }
 
 function parseMongoDBString(uri: string): ParsedConnection {

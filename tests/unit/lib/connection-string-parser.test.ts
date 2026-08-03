@@ -360,8 +360,16 @@ describe("parseConnectionString", () => {
       expect(parseConnectionString("https://ch.example.clickhouse.cloud/default")!.sslMode).toBe("require");
     });
 
-    test("leaves the TLS intent unset for the plaintext schemes", () => {
-      expect(parseConnectionString("http://ch-host:8123/demo")!.sslMode).toBeUndefined();
+    // http:// is an explicit choice, not an absent one: pasting it must be able to
+    // turn TLS OFF, or a form still holding "require" from a previous edit would
+    // send HTTPS to a plaintext endpoint.
+    test("carries the plaintext intent of an http:// endpoint", () => {
+      expect(parseConnectionString("http://ch-host:8123/demo")!.sslMode).toBe("disable");
+    });
+
+    // clickhouse:// names no transport, so it is the one scheme that must defer to
+    // whatever TLS setting the form already carries.
+    test("leaves the TLS intent unset for the scheme-neutral clickhouse:// form", () => {
       expect(parseConnectionString("clickhouse://ch-host:8123/demo")!.sslMode).toBeUndefined();
     });
 

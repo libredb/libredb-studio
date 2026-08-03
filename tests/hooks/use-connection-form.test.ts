@@ -290,6 +290,41 @@ describe("useConnectionForm", () => {
     expect(result.current.sslMode).toBe("disable");
   });
 
+  // Pasting is an overwrite, not a merge. After editing a TLS connection the form
+  // still holds "require", and an explicit http:// URL that left it alone would be
+  // saved as HTTPS against a plaintext endpoint.
+  test("handlePasteConnectionString clears a stale TLS mode when the pasted URL is plaintext", () => {
+    const { result } = renderHook(() => useConnectionForm(defaultProps));
+
+    act(() => {
+      result.current.setSSLMode("require");
+    });
+    act(() => {
+      result.current.setPasteInput("http://ch-host:8123/demo");
+    });
+    act(() => {
+      result.current.handlePasteConnectionString();
+    });
+
+    expect(result.current.sslMode).toBe("disable");
+  });
+
+  test("handlePasteConnectionString keeps the form's TLS mode for the scheme-neutral clickhouse:// form", () => {
+    const { result } = renderHook(() => useConnectionForm(defaultProps));
+
+    act(() => {
+      result.current.setSSLMode("require");
+    });
+    act(() => {
+      result.current.setPasteInput("clickhouse://ch-host:8123/demo");
+    });
+    act(() => {
+      result.current.handlePasteConnectionString();
+    });
+
+    expect(result.current.sslMode).toBe("require");
+  });
+
   // ── handlePasteConnectionString shows error for invalid string ─────────────
 
   test("handlePasteConnectionString shows error for invalid string", () => {

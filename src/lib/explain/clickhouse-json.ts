@@ -3,15 +3,26 @@ import type { ExplainStrategy, ExplainTreeNode } from "./types";
 const SELECT_ONLY = /^\s*SELECT\b/i;
 
 /**
- * `FORMAT <Name>` as the last thing in the statement.
+ * `FORMAT <Name>` where nothing but a `SETTINGS` clause or a semicolon follows it.
  *
- * Anchored at the end so it cannot match a `formatDateTime(...)` call or the words
- * inside a string literal, which end in a quote. The provider carries the same
- * pattern for its own reason (it must not append a LIMIT past this clause); the
- * duplication is deliberate, since an explain strategy importing from one provider
- * would tie the registry to it.
+ * The tail is a lookahead rather than part of the match, so only the FORMAT clause
+ * is removed. `SETTINGS` is deliberately kept: it applies to the inner statement and
+ * carries real meaning (`max_execution_time` and friends), whereas FORMAT would
+ * reformat the EXPLAIN output itself and leave no JSON cell to parse.
+ *
+ * The tail is also why this is not simply anchored to the end: `... FORMAT TSV;` and
+ * `... FORMAT TSV SETTINGS max_threads=1` are both statements `prepareQuery` already
+ * treats as carrying a trailing FORMAT, so an end-anchored pattern silently disagreed
+ * with it and left the plan unparseable.
+ *
+ * It still cannot match `formatDateTime(...)` (no whitespace after the word) or the
+ * words inside a string literal (a quote is not an accepted tail). The provider
+ * carries a related pattern for its own reason - it must not append a LIMIT past this
+ * clause - and the duplication is deliberate: an explain strategy importing from one
+ * provider would tie the registry to it.
  */
-const TRAILING_FORMAT = /\s*\bFORMAT\s+[A-Za-z][A-Za-z0-9_]*\s*$/i;
+const TRAILING_FORMAT =
+  /\s*\bFORMAT\s+[A-Za-z][A-Za-z0-9_]*(?=\s*(?:SETTINGS\s+[A-Za-z_][A-Za-z0-9_]*\s*=[\s\S]*?)?;?\s*$)/i;
 
 /** The one column of the one row EXPLAIN returns; its value is the plan as JSON text. */
 const EXPLAIN_COLUMN = "explain";
@@ -162,7 +173,9 @@ export const clickhouseJsonStrategy: ExplainStrategy = {
     // wrapped `... FORMAT TSV` comes back as TSV text and the tree can never be
     // built. The clause describes the statement's own result, which an EXPLAIN never
     // produces, so dropping it is what makes the intent survive.
-    return `EXPLAIN json = 1, indexes = 1 ${sql.replace(TRAILING_FORMAT, "")}`;
+    // trimEnd because the tail above is a lookahead: whitespace that sat between the
+    // format name and the end of the statement is not part of the match.
+    return `EXPLAIN json = 1, indexes = 1 ${sql.replace(TRAILING_FORMAT, "").trimEnd()}`;
   },
   // The envelope parse leaves the cell as a String whose value is JSON, so the plan
   // needs a second parse. It happens here rather than at render time so the stored

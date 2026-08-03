@@ -507,6 +507,35 @@ describe("ClickHouseProvider validation", () => {
     await provider.disconnect();
   });
 
+  // The scheme is the more specific statement of intent: it names the transport,
+  // while the ssl setting is a separate field that may be left over from an earlier
+  // edit. An explicit http:// URL that deferred to it would send HTTPS to a
+  // plaintext endpoint and fail with a bare "fetch failed".
+  test("an explicit http connection string overrides a leftover TLS setting", async () => {
+    const provider = await connectProvider({
+      host: undefined,
+      port: undefined,
+      ssl: { mode: "require" },
+      connectionString: "http://ch.internal:8123/demo",
+    });
+
+    expect(urlWith("SELECT 1")).toContain("http://ch.internal:8123/");
+    await provider.disconnect();
+  });
+
+  // clickhouse:// names no transport, so it is the one scheme that must defer.
+  test("a clickhouse:// connection string defers to the configured TLS setting", async () => {
+    const provider = await connectProvider({
+      host: undefined,
+      port: undefined,
+      ssl: { mode: "require" },
+      connectionString: "clickhouse://ch.internal/demo",
+    });
+
+    expect(urlWith("SELECT 1")).toContain("https://ch.internal:8443/");
+    await provider.disconnect();
+  });
+
   test("keeps the configured fields when the connection string is unparsable", async () => {
     const provider = await connectProvider({ connectionString: "not a url" });
 
