@@ -44,35 +44,35 @@ Live channels by platform: **Linux 7 · macOS 3 · Windows 3 · Container 2 · K
 
 <!-- BEGIN:CHANNEL-TABLE -->
 
-| Channel | Category | Status | Update | Catalog | Docs |
+| Channel | Category | Platform | Status | Updates | Guide |
 | --- | --- | --- | --- | --- | --- |
-| GitHub Releases (standalone tarballs, deb/rpm, snap assets) | Registries & releases | live | Every release | [link](https://github.com/libredb/libredb-studio/releases) | [DISTRIBUTION.md](DISTRIBUTION.md) |
-| npm package @libredb/studio (library + npx launcher) | Registries & releases | live | Every release | [link](https://www.npmjs.com/package/@libredb/studio) | [DISTRIBUTION.md](DISTRIBUTION.md) |
-| Docker image (GHCR, canonical) | Containers | live | Every release | [link](https://github.com/libredb/libredb-studio/pkgs/container/libredb-studio) | [DISTRIBUTION.md](DISTRIBUTION.md) |
-| Docker Hub mirror (discoverability only) | Containers | live | Every release | [link](https://hub.docker.com/r/libredb/libredb-studio) | [DISTRIBUTION.md](DISTRIBUTION.md) |
-| Helm chart (libredb.org repo + GHCR OCI + ArtifactHub) | Kubernetes & operators | live | Every release | [link](https://artifacthub.io/packages/helm/libredb-studio/libredb-studio) | [HELM_CHART.md](HELM_CHART.md) |
-| OperatorHub / OpenShift community operator catalogs | Kubernetes & operators | pending | Every release | — | [DISTRIBUTION.md](DISTRIBUTION.md) |
-| Rancher Partner Charts | Kubernetes & operators | pending | On demand | — | [DISTRIBUTION.md](DISTRIBUTION.md) |
-| FlatPark signed Flatpak remote (org.libredb.Studio) | Package managers | live | Every release | [link](https://flatpark.org/) | [../packaging/flatpark/README.md](../packaging/flatpark/README.md) |
-| Homebrew tap (libredb/tap/libredb-studio) | Package managers | live | Every release | — | [DISTRIBUTION.md](DISTRIBUTION.md) |
-| Snap Store (stable channel, amd64+arm64) | Package managers | live | Every release | [link](https://snapcraft.io/libredb-studio) | [DISTRIBUTION.md](DISTRIBUTION.md) |
-| winget community repository (LibreDB.Studio) | Package managers | live | Every release | [link](https://github.com/microsoft/winget-pkgs/tree/master/manifests/l/LibreDB/Studio) | [DISTRIBUTION.md](DISTRIBUTION.md) |
-| Chocolatey community repository (libredb-studio) | Package managers | pending | Every release | [link](https://community.chocolatey.org/packages/libredb-studio) | [DISTRIBUTION.md](DISTRIBUTION.md) |
-| Desktop app (release assets: AppImage and GUI .deb, x64 + arm64) | OS / desktop packages | live | Every release | — | [../desktop/README.md](../desktop/README.md) |
-| Linux .deb / .rpm packages (release assets) | OS / desktop packages | live | Every release | — | [DISTRIBUTION.md](DISTRIBUTION.md) |
-| CapRover one-click template (in-repo source of truth) | PaaS & one-click | live | On demand | — | [../deploy/caprover/README.md](../deploy/caprover/README.md) |
-| CapRover 3rd-party repo (libredb.org/caprover-one-click-apps) | PaaS & one-click | live | On demand | [link](https://libredb.org/caprover-one-click-apps) | [DISTRIBUTION.md](DISTRIBUTION.md) |
-| CapRover official one-click apps | PaaS & one-click | live | On demand | — | [DISTRIBUTION.md](DISTRIBUTION.md) |
-| Cosmos servapp marketplace | PaaS & one-click | live | On demand | — | [../deploy/cosmos/README.md](../deploy/cosmos/README.md) |
-| Dokploy template catalog | PaaS & one-click | live | On demand | [link](https://templates.dokploy.com) | [../deploy/dokploy/README.md](../deploy/dokploy/README.md) |
-| Fly.io launch config (repo fly.toml) | PaaS & one-click | live | On demand | — | [FLY.md](FLY.md) |
-| Koyeb deploy button (repo README) | PaaS & one-click | live | On demand | — | [../deploy/koyeb/README.md](../deploy/koyeb/README.md) |
-| Kubero template catalog | PaaS & one-click | live | On demand | [link](https://www.kubero.dev/templates) | [../deploy/kubero/README.md](../deploy/kubero/README.md) |
-| Railway one-click template | PaaS & one-click | live | On demand | [link](https://railway.com/deploy/libredb-studio) | [../deploy/railway/PUBLISH.md](../deploy/railway/PUBLISH.md) |
-| Render Blueprint (repo render.yaml) | PaaS & one-click | live | On demand | [link](https://render.com/deploy?repo=https://github.com/libredb/libredb-studio) | [DISTRIBUTION.md](DISTRIBUTION.md) |
-| DigitalOcean Marketplace | Marketplaces & partners | live | On demand | [link](https://marketplace.digitalocean.com/apps/libredb-studio) | [../deploy/digitalocean/README.md](../deploy/digitalocean/README.md) |
-| Koyeb One-Click Apps catalog (curated by Koyeb) | Marketplaces & partners | pending | On demand | [link](https://www.koyeb.com/deploy) | [../deploy/koyeb/CATALOG_SUBMISSION.md](../deploy/koyeb/CATALOG_SUBMISSION.md) |
-| Flathub community catalog (org.libredb.Studio) | Closed / declined | deprecated | On demand | — | [../packaging/flatpak/README.md](../packaging/flatpak/README.md) |
+| [GitHub Releases](https://github.com/libredb/libredb-studio/releases) | Registries & releases | Linux, macOS, Windows | live | Automated, every release | [DISTRIBUTION.md](DISTRIBUTION.md) |
+| [npm @libredb/studio](https://www.npmjs.com/package/@libredb/studio) | Registries & releases | Linux, macOS, Windows | live | Automated, every release | [DISTRIBUTION.md](DISTRIBUTION.md) |
+| [Docker image (GHCR)](https://github.com/libredb/libredb-studio/pkgs/container/libredb-studio) | Containers | Container | live | Automated, every release | [DISTRIBUTION.md](DISTRIBUTION.md) |
+| [Docker Hub mirror](https://hub.docker.com/r/libredb/libredb-studio) | Containers | Container | live | Automated, every release | [DISTRIBUTION.md](DISTRIBUTION.md) |
+| [Helm chart](https://artifacthub.io/packages/helm/libredb-studio/libredb-studio) | Kubernetes & operators | Kubernetes | live | Automated, every release | [HELM_CHART.md](HELM_CHART.md) |
+| [OperatorHub / OpenShift](https://github.com/redhat-openshift-ecosystem/community-operators-prod) | Kubernetes & operators | Kubernetes | pending | Manual, every release | [DISTRIBUTION.md](DISTRIBUTION.md) |
+| [Rancher Partner Charts](https://github.com/rancher/partner-charts) | Kubernetes & operators | Kubernetes | pending | Manual, on demand | [DISTRIBUTION.md](DISTRIBUTION.md) |
+| [FlatPark (Flatpak)](https://flatpark.org/) | Package managers | Linux | live | Manual, every release | [packaging/flatpark/README.md](../packaging/flatpark/README.md) |
+| [Homebrew tap](https://github.com/libredb/homebrew-tap) | Package managers | Linux, macOS | live | Automated, every release | [DISTRIBUTION.md](DISTRIBUTION.md) |
+| [Snap Store](https://snapcraft.io/libredb-studio) | Package managers | Linux | live | Automated, every release | [DISTRIBUTION.md](DISTRIBUTION.md) |
+| [winget](https://github.com/microsoft/winget-pkgs/tree/master/manifests/l/LibreDB/Studio) | Package managers | Windows | live | Automated, every release | [DISTRIBUTION.md](DISTRIBUTION.md) |
+| [Chocolatey](https://community.chocolatey.org/packages/libredb-studio) | Package managers | Windows | pending | Automated, every release | [DISTRIBUTION.md](DISTRIBUTION.md) |
+| [Desktop app (AppImage, .deb)](https://github.com/libredb/libredb-studio/releases/latest) | OS / desktop packages | Linux | live | Automated, every release | [desktop/README.md](../desktop/README.md) |
+| [Linux .deb / .rpm](https://github.com/libredb/libredb-studio/releases/latest) | OS / desktop packages | Linux | live | Automated, every release | [DISTRIBUTION.md](DISTRIBUTION.md) |
+| [CapRover template (in-repo)](https://github.com/libredb/libredb-studio/tree/main/deploy/caprover) | PaaS & one-click | Cloud | live | Manual, on demand | [deploy/caprover/README.md](../deploy/caprover/README.md) |
+| [CapRover 3rd-party repo](https://libredb.org/caprover-one-click-apps) | PaaS & one-click | Cloud | live | Manual, on demand | [DISTRIBUTION.md](DISTRIBUTION.md) |
+| [CapRover official](https://github.com/caprover/one-click-apps) | PaaS & one-click | Cloud | live | Manual, on demand | [DISTRIBUTION.md](DISTRIBUTION.md) |
+| [Cosmos servapp marketplace](https://github.com/azukaar/cosmos-servapps-official) | PaaS & one-click | Cloud | live | Manual, on demand | [deploy/cosmos/README.md](../deploy/cosmos/README.md) |
+| [Dokploy template catalog](https://templates.dokploy.com) | PaaS & one-click | Cloud | live | Manual, on demand | [deploy/dokploy/README.md](../deploy/dokploy/README.md) |
+| [Fly.io launch config](https://github.com/libredb/libredb-studio/blob/main/fly.toml) | PaaS & one-click | Cloud | live | Manual, on demand | [FLY.md](FLY.md) |
+| [Koyeb deploy button](https://github.com/libredb/libredb-studio/tree/main/deploy/koyeb) | PaaS & one-click | Cloud | live | Manual, on demand | [deploy/koyeb/README.md](../deploy/koyeb/README.md) |
+| [Kubero template catalog](https://www.kubero.dev/templates) | PaaS & one-click | Cloud | live | Manual, on demand | [deploy/kubero/README.md](../deploy/kubero/README.md) |
+| [Railway one-click template](https://railway.com/deploy/libredb-studio) | PaaS & one-click | Cloud | live | Manual, on demand | [deploy/railway/PUBLISH.md](../deploy/railway/PUBLISH.md) |
+| [Render Blueprint](https://render.com/deploy?repo=https://github.com/libredb/libredb-studio) | PaaS & one-click | Cloud | live | Manual, on demand | [DISTRIBUTION.md](DISTRIBUTION.md) |
+| [DigitalOcean Marketplace](https://marketplace.digitalocean.com/apps/libredb-studio) | Marketplaces & partners | Cloud | live | Manual, on demand | [deploy/digitalocean/README.md](../deploy/digitalocean/README.md) |
+| [Koyeb One-Click Apps catalog](https://www.koyeb.com/deploy) | Marketplaces & partners | Cloud | pending | Manual, on demand | [deploy/koyeb/CATALOG_SUBMISSION.md](../deploy/koyeb/CATALOG_SUBMISSION.md) |
+| Flathub | Closed / declined | Linux | deprecated | — | [packaging/flatpak/README.md](../packaging/flatpak/README.md) |
 
 <!-- END:CHANNEL-TABLE -->
 

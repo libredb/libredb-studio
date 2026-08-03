@@ -14,21 +14,25 @@ import {
   SWITCHABLE_CHANNEL_IDS,
   applyMatrixMarkers,
   buildChannelsDoc,
+  channelHref,
   ciEnabledOutputs,
   digestVerdict,
   docsHref,
   evaluateChannel,
   extractPin,
   githubAuthHeaders,
+  guideLabel,
   humanizeSla,
   linkLabel,
   maxPublishedVersion,
   parseChannels,
   parseSnapVersions,
+  platformCell,
   renderChannelMatrix,
   renderScorecard,
   renderTable,
   strictFailures,
+  updateSummary,
 } from "../../scripts/distribution-check.mjs";
 
 function channelsYaml(rows: string): string {
@@ -1173,6 +1177,41 @@ describe("humanizeSla / docsHref", () => {
   });
 });
 
+describe("matrix cell helpers", () => {
+  test("channelHref resolves get, then catalog, then upstream_repo", () => {
+    expect(channelHref({ links: { get: "G", catalog: "C", upstream_repo: "U" } })).toBe("G");
+    expect(channelHref({ links: { catalog: "C", upstream_repo: "U" } })).toBe("C");
+    expect(channelHref({ links: { upstream_repo: "U" } })).toBe("U");
+    expect(channelHref({ links: {} })).toBeUndefined();
+    expect(channelHref({})).toBeUndefined();
+  });
+
+  test("platformCell renders canonical order regardless of yaml order", () => {
+    expect(platformCell(["macos", "linux"])).toBe("Linux, macOS");
+    expect(platformCell(["cloud"])).toBe("Cloud");
+    expect(platformCell(["windows", "container", "linux"])).toBe("Linux, Windows, Container");
+  });
+
+  test("updateSummary separates automated from manual and retires deprecated", () => {
+    expect(updateSummary({ status: "live", update: { method: "ci_publish", sla: "every_release" } })).toBe(
+      "Automated, every release",
+    );
+    expect(updateSummary({ status: "live", update: { method: "upstream_pr", sla: "on_demand" } })).toBe(
+      "Manual, on demand",
+    );
+    expect(updateSummary({ status: "pending", update: { method: "manual_ui", sla: "minor_plus" } })).toBe(
+      "Manual, minor+",
+    );
+    expect(updateSummary({ status: "deprecated", update: { method: "upstream_pr", sla: "on_demand" } })).toBe("—");
+  });
+
+  test("guideLabel strips the relative prefix", () => {
+    expect(guideLabel("DISTRIBUTION.md")).toBe("DISTRIBUTION.md");
+    expect(guideLabel("HELM_CHART.md")).toBe("HELM_CHART.md");
+    expect(guideLabel("../deploy/railway/PUBLISH.md")).toBe("deploy/railway/PUBLISH.md");
+  });
+});
+
 describe("renderScorecard / renderChannelMatrix", () => {
   const channels = parseChannels(MATRIX_FIXTURE);
 
@@ -1198,20 +1237,35 @@ describe("renderScorecard / renderChannelMatrix", () => {
     expect(renderScorecard(noLive)).not.toContain("Live channels by platform");
   });
 
-  test("matrix table columns, order, and links", () => {
+  test("matrix table renders six columns, ordered by category then status", () => {
     const table = renderChannelMatrix(channels);
-    expect(table).toContain("| Channel | Category | Status | Update | Catalog | Docs |");
-    expect(table).toContain("| npm package | Registries & releases | live | Every release |");
-    expect(table).toContain("[link](https://www.npmjs.com/package/@libredb/studio)");
-    expect(table).toContain("[DISTRIBUTION.md](DISTRIBUTION.md)");
-    expect(table).toContain("| Chocolatey | Package managers | pending | Every release | — |");
-    expect(table).toContain("[../packaging/flatpak/README.md](../packaging/flatpak/README.md)");
+    expect(table).toContain("| Channel | Category | Platform | Status | Updates | Guide |");
+    expect(table).toContain(
+      "| [npm package](https://www.npmjs.com/package/@libredb/studio) | Registries & releases | " +
+        "Linux, macOS, Windows | live | Automated, every release | [DISTRIBUTION.md](DISTRIBUTION.md) |",
+    );
+    expect(table).toContain(
+      "| Chocolatey | Package managers | Windows | pending | Automated, every release | " +
+        "[DISTRIBUTION.md](DISTRIBUTION.md) |",
+    );
+    expect(table).toContain(
+      "| Flathub | Closed / declined | Linux | deprecated | — | " +
+        "[packaging/flatpak/README.md](../packaging/flatpak/README.md) |",
+    );
     const npmAt = table.indexOf("npm package");
     const chocoAt = table.indexOf("Chocolatey");
     const flatAt = table.indexOf("Flathub");
     expect(npmAt).toBeLessThan(chocoAt);
     expect(chocoAt).toBeLessThan(flatAt);
+    expect(table).not.toContain("[link](");
     expect(table).not.toMatch(/[\u{1F300}-\u{1FAFF}]/u);
+  });
+
+  test("short_name wins over name in the table", () => {
+    const withShort = parseChannels(
+      MATRIX_FIXTURE.replace("    name: npm package\n", "    name: npm package\n    short_name: npm\n"),
+    );
+    expect(renderChannelMatrix(withShort)).toContain("| [npm](https://www.npmjs.com/package/@libredb/studio) |");
   });
 });
 
@@ -1377,7 +1431,10 @@ describe("CLI --matrix", () => {
     expect(result.exitCode).toBe(0);
     const doc = readFileSync(join(root, "docs/CHANNELS.md"), "utf8");
     expect(doc).toContain("**3 channels · 1 live · 1 pending · 1 deprecated**");
-    expect(doc).toContain("| npm package | Registries & releases | live |");
+    expect(doc).toContain(
+      "| [npm package](https://www.npmjs.com/package/@libredb/studio) | Registries & releases | " +
+        "Linux, macOS, Windows | live | Automated, every release | [DISTRIBUTION.md](DISTRIBUTION.md) |",
+    );
   });
 
   test("--matrix --check exits 0 when fresh and 1 when stale", () => {

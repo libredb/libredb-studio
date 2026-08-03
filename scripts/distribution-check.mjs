@@ -574,6 +574,41 @@ export function docsHref(docsPath) {
   return `../${docsPath}`;
 }
 
+/** Table display name: the short one when the inventory name is too long to scan. */
+function displayName(channel) {
+  return channel.short_name ?? channel.name ?? channel.id;
+}
+
+/**
+ * Where a user actually obtains this channel. Undefined when the inventory has
+ * nothing to point at - deliberately not a heuristic, because a fallback chain
+ * invented here would be a rule nobody reading channels.yaml can see.
+ */
+export function channelHref(channel) {
+  return channel.links?.get ?? channel.links?.catalog ?? channel.links?.upstream_repo;
+}
+
+/** Platform labels in canonical order, whatever order the yaml used. */
+export function platformCell(platforms) {
+  return PLATFORMS.filter((platform) => platforms.includes(platform))
+    .map((platform) => PLATFORM_LABELS[platform])
+    .join(", ");
+}
+
+/** Who bumps this channel and how fast. A dash for retired channels. */
+export function updateSummary(channel) {
+  if (channel.status === "deprecated") {
+    return "—";
+  }
+  const automation = channel.update.method === "ci_publish" ? "Automated" : "Manual";
+  return `${automation}, ${humanizeSla(channel.update.sla).toLowerCase()}`;
+}
+
+/** Guide column label: the href without its relative prefix. */
+export function guideLabel(href) {
+  return href.startsWith("../") ? href.slice("../".length) : href;
+}
+
 function sortedMatrixChannels(channels) {
   return [...channels].sort((a, b) => {
     const cat = CHANNEL_CATEGORIES.indexOf(a.category) - CHANNEL_CATEGORIES.indexOf(b.category);
@@ -639,15 +674,18 @@ export function renderScorecard(channels) {
 
 /** Full channel inventory table for docs/CHANNELS.md. */
 export function renderChannelMatrix(channels) {
-  const lines = ["| Channel | Category | Status | Update | Catalog | Docs |", "| --- | --- | --- | --- | --- | --- |"];
+  const lines = [
+    "| Channel | Category | Platform | Status | Updates | Guide |",
+    "| --- | --- | --- | --- | --- | --- |",
+  ];
   for (const channel of sortedMatrixChannels(channels)) {
-    const catalog = channel.links?.catalog ? `[${linkLabel(channel.links.catalog)}](${channel.links.catalog})` : "—";
-    const docsPath = channel.links?.docs;
-    const href = docsHref(docsPath);
-    const docs = `[${href}](${href})`;
+    const href = channelHref(channel);
+    const name = displayName(channel);
+    const guide = docsHref(channel.links?.docs);
     lines.push(
-      `| ${channel.name ?? channel.id} | ${CATEGORY_LABELS[channel.category]} | ${channel.status} | ` +
-        `${humanizeSla(channel.update.sla)} | ${catalog} | ${docs} |`,
+      `| ${href ? `[${name}](${href})` : name} | ${CATEGORY_LABELS[channel.category]} | ` +
+        `${platformCell(channel.platforms)} | ${channel.status} | ${updateSummary(channel)} | ` +
+        `[${guideLabel(guide)}](${guide}) |`,
     );
   }
   return `${lines.join("\n")}\n`;

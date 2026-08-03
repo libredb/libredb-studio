@@ -43,6 +43,7 @@ channels:
 
   - id: github-release
     name: GitHub Releases (standalone tarballs, deb/rpm, snap assets)
+    short_name: GitHub Releases
     status: live
     category: registries-releases
     platforms: [linux, macos, windows]
@@ -62,6 +63,7 @@ channels:
 
   - id: docker-ghcr
     name: Docker image (GHCR, canonical)
+    short_name: Docker image (GHCR)
     status: live
     category: containers
     platforms: [container]
@@ -83,6 +85,7 @@ channels:
 
   - id: docker-hub-mirror
     name: Docker Hub mirror (discoverability only)
+    short_name: Docker Hub mirror
     status: live
     category: containers
     platforms: [container]
@@ -104,6 +107,7 @@ channels:
 
   - id: npm
     name: npm package @libredb/studio (library + npx launcher)
+    short_name: npm @libredb/studio
     status: live
     category: registries-releases
     platforms: [linux, macos, windows]
@@ -126,6 +130,7 @@ channels:
 
   - id: helm
     name: Helm chart (libredb.org repo + GHCR OCI + ArtifactHub)
+    short_name: Helm chart
     status: live
     category: kubernetes-operators
     platforms: [kubernetes]
@@ -148,6 +153,7 @@ channels:
 
   - id: homebrew
     name: Homebrew tap (libredb/tap/libredb-studio)
+    short_name: Homebrew tap
     status: live
     category: package-managers
     platforms: [macos, linux]
@@ -169,6 +175,7 @@ channels:
 
   - id: snap
     name: Snap Store (stable channel, amd64+arm64)
+    short_name: Snap Store
     status: live
     category: package-managers
     platforms: [linux]
@@ -195,6 +202,7 @@ channels:
 
   - id: linux-deb-rpm
     name: Linux .deb / .rpm packages (release assets)
+    short_name: Linux .deb / .rpm
     status: live
     category: os-desktop
     platforms: [linux]
@@ -206,6 +214,7 @@ channels:
     links:
       tracking_issue: https://github.com/libredb/libredb-studio/issues/112
       first_pr: https://github.com/libredb/libredb-studio/pull/122
+      get: https://github.com/libredb/libredb-studio/releases/latest
     pin:
       strategy: none
       note: Built by nfpm from the tag in release-artifacts.yml; nothing to drift.
@@ -213,6 +222,7 @@ channels:
   - id: appimage
     # Quoted: an unquoted scalar containing ": " is a YAML mapping, not a string.
     name: "Desktop app (release assets: AppImage and GUI .deb, x64 + arm64)"
+    short_name: Desktop app (AppImage, .deb)
     status: live
     category: os-desktop
     platforms: [linux]
@@ -224,6 +234,7 @@ channels:
     links:
       tracking_issue: https://github.com/libredb/libredb-studio/issues/232
       first_pr: https://github.com/libredb/libredb-studio/pull/235
+      get: https://github.com/libredb/libredb-studio/releases/latest
       docs: desktop/README.md
     pin:
       strategy: none
@@ -238,6 +249,7 @@ channels:
 
   - id: caprover-local
     name: CapRover one-click template (in-repo source of truth)
+    short_name: CapRover template (in-repo)
     status: live
     category: paas-one-click
     platforms: [cloud]
@@ -249,6 +261,7 @@ channels:
     links:
       tracking_issue: https://github.com/libredb/libredb-studio/issues/56
       first_pr: https://github.com/libredb/libredb-studio/pull/57
+      get: https://github.com/libredb/libredb-studio/tree/main/deploy/caprover
       docs: deploy/caprover/README.md
     pin:
       strategy: local_file
@@ -258,6 +271,7 @@ channels:
 
   - id: caprover-mirror
     name: CapRover 3rd-party repo (libredb.org/caprover-one-click-apps)
+    short_name: CapRover 3rd-party repo
     status: live
     category: paas-one-click
     platforms: [cloud]
@@ -301,6 +315,7 @@ channels:
 
   - id: koyeb-deploy-button
     name: Koyeb deploy button (repo README)
+    short_name: Koyeb deploy button
     status: live
     category: paas-one-click
     platforms: [cloud]
@@ -310,6 +325,7 @@ channels:
       method: commit
       sla: on_demand
     links:
+      get: https://github.com/libredb/libredb-studio/tree/main/deploy/koyeb
       docs: deploy/koyeb/README.md
     pin:
       strategy: none
@@ -317,6 +333,7 @@ channels:
 
   - id: fly-io
     name: Fly.io launch config (repo fly.toml)
+    short_name: Fly.io launch config
     status: live
     category: paas-one-click
     platforms: [cloud]
@@ -328,6 +345,7 @@ channels:
     links:
       tracking_issue: https://github.com/libredb/libredb-studio/issues/218
       first_pr: https://github.com/libredb/libredb-studio/pull/219
+      get: https://github.com/libredb/libredb-studio/blob/main/fly.toml
       docs: docs/FLY.md
     pin:
       strategy: local_file
@@ -338,6 +356,7 @@ channels:
 
   - id: render
     name: Render Blueprint (repo render.yaml)
+    short_name: Render Blueprint
     status: live
     category: paas-one-click
     platforms: [cloud]
@@ -357,6 +376,7 @@ channels:
 
   - id: caprover-official
     name: CapRover official one-click apps
+    short_name: CapRover official
     status: live
     category: paas-one-click
     platforms: [cloud]
@@ -439,6 +459,7 @@ channels:
 
   - id: operatorhub-community
     name: OperatorHub / OpenShift community operator catalogs
+    short_name: OperatorHub / OpenShift
     status: pending
     category: kubernetes-operators
     platforms: [kubernetes]
@@ -481,6 +502,7 @@ channels:
 
   - id: koyeb-catalog
     name: Koyeb One-Click Apps catalog (curated by Koyeb)
+    short_name: Koyeb One-Click Apps catalog
     status: pending
     category: marketplaces-partners
     platforms: [cloud]
@@ -515,6 +537,7 @@ channels:
 
   - id: winget
     name: winget community repository (LibreDB.Studio)
+    short_name: winget
     status: live
     category: package-managers
     platforms: [windows]
@@ -545,6 +568,7 @@ channels:
 
   - id: chocolatey
     name: Chocolatey community repository (libredb-studio)
+    short_name: Chocolatey
     status: pending
     category: package-managers
     platforms: [windows]
@@ -569,6 +593,7 @@ channels:
 
   - id: flathub
     name: Flathub community catalog (org.libredb.Studio)
+    short_name: Flathub
     status: deprecated
     category: closed
     platforms: [linux]
@@ -579,7 +604,6 @@ channels:
       sla: on_demand
     links:
       tracking_issue: https://github.com/libredb/libredb-studio/issues/232
-      upstream_repo: https://github.com/flathub/flathub
       first_pr: https://github.com/flathub/flathub/pull/9538
       docs: packaging/flatpak/README.md
     pin:
@@ -598,6 +622,7 @@ channels:
 
   - id: flatpark
     name: FlatPark signed Flatpak remote (org.libredb.Studio)
+    short_name: FlatPark (Flatpak)
     status: live
     category: package-managers
     platforms: [linux]
