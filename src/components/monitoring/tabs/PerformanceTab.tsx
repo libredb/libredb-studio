@@ -55,7 +55,15 @@ export function PerformanceTab({ data, loading, history = [] }: PerformanceTabPr
   );
 
   // Build trend data from history
-  const cacheHistory = history.map((h) => ({ timestamp: h.timestamp, value: h.data.performance?.cacheHitRatio ?? 0 }));
+  // Missing samples are DROPPED, not zeroed. An engine that cannot measure a cache hit
+  // ratio (Druid) reports none, and mapping that to 0 would plot a measured 0% trend -
+  // exactly the fabricated metric the current-value card above withholds. Dropping
+  // leaves an empty series, which the chart renders as no data rather than as a floor.
+  const cacheHistory = history.flatMap((h) =>
+    h.data.performance?.cacheHitRatio === undefined
+      ? []
+      : [{ timestamp: h.timestamp, value: h.data.performance.cacheHitRatio }],
+  );
   const bufferHistory = history.map((h) => ({
     timestamp: h.timestamp,
     value: h.data.performance?.bufferPoolUsage ?? 0,
@@ -157,7 +165,11 @@ export function PerformanceTab({ data, loading, history = [] }: PerformanceTabPr
               <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">Cache Hit Trend</CardTitle>
             </CardHeader>
             <CardContent className="p-2 sm:p-3 pt-0">
-              <MetricChart data={cacheHistory} color="#22c55e" title="Cache Hit" unit="%" />
+              {cacheHistory.length === 0 ? (
+                <p className="text-xs sm:text-xs text-muted-foreground">Not measured</p>
+              ) : (
+                <MetricChart data={cacheHistory} color="#22c55e" title="Cache Hit" unit="%" />
+              )}
             </CardContent>
           </Card>
           <Card className="p-0">

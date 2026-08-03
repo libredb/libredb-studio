@@ -328,7 +328,13 @@ describe("getSchema", () => {
     expect(demo.columns.map((column) => column.type)).toEqual(["OTHER", "OTHER"]);
   });
 
-  test("marks __time as the primary column and nothing else", async () => {
+  // Nothing in a Druid datasource is a primary key, `__time` included. It is
+  // mandatory, it is the partition and sort key, and it is the only column Druid
+  // reports NOT NULL - but it is not UNIQUE, and `isPrimary` is read as PRIMARY KEY by
+  // autocomplete ("(PK)"), by the AI schema context (", PK") and by the schema differ
+  // ("Primary key changed"). Live-verified on the fixture datasource: 50 rows carry 30
+  // distinct `__time` values.
+  test("marks no column as primary, not even __time", async () => {
     const { runner } = createRunner({
       rows: {
         tableList: [tableRow()],
@@ -338,14 +344,17 @@ describe("getSchema", () => {
 
     const [demo] = await getSchema(runner);
 
-    expect(demo.columns.filter((column) => column.isPrimary).map((column) => column.name)).toEqual([DRUID_TIME_COLUMN]);
+    expect(demo.columns.filter((column) => column.isPrimary)).toEqual([]);
+    // The time column is still recognisable by name and by being the one NOT NULL
+    // column, which is the honest way to find it.
+    expect(demo.columns.find((column) => column.name === DRUID_TIME_COLUMN)?.nullable).toBe(false);
   });
 
   // isPrimary is keyed on the NAME, not on IS_NULLABLE = 'NO'. Today __time is
   // the only column Druid reports as NOT NULL, but that is a consequence of it
   // being mandatory rather than the definition of the key - so a Druid that ever
   // marks a second column NOT NULL must not grow a second primary column.
-  test("does not promote another NOT NULL column to primary", async () => {
+  test("does not promote a NOT NULL column to primary either", async () => {
     const { runner } = createRunner({
       rows: {
         tableList: [tableRow()],
@@ -355,9 +364,9 @@ describe("getSchema", () => {
 
     const [demo] = await getSchema(runner);
 
-    expect(demo.columns.map((column) => [column.name, column.isPrimary])).toEqual([
-      [DRUID_TIME_COLUMN, true],
-      ["id", false],
+    expect(demo.columns.map((column) => [column.name, column.isPrimary, column.nullable])).toEqual([
+      [DRUID_TIME_COLUMN, false, false],
+      ["id", false, false],
     ]);
   });
 

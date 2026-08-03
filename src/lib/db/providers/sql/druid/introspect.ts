@@ -459,11 +459,22 @@ function readColumn(row: DruidRow): OwnedColumn | null {
       // column but `__time` as YES, and a wrongly-mandatory marker on a column
       // that accepts nulls is the more misleading of the two mistakes.
       nullable: readText(row.isNullable) !== NOT_NULLABLE,
-      // Keyed on the NAME, not on IS_NULLABLE = 'NO'. Today `__time` is the only
-      // column Druid reports as NOT NULL, but that is a consequence of it being
-      // mandatory rather than the definition of the key - so a Druid that ever
-      // marks a second column NOT NULL must not grow a second primary column.
-      isPrimary: name === DRUID_TIME_COLUMN,
+      // NEVER primary, `__time` included.
+      //
+      // `__time` is tempting: it is mandatory, it is the partition and sort key, and
+      // it is the only column Druid reports as NOT NULL. But `isPrimary` means
+      // PRIMARY KEY to every consumer of this field, and a primary key is UNIQUE,
+      // which `__time` is not - live-verified on the fixture datasource, 50 rows
+      // carry 30 distinct `__time` values. Nothing in a Druid datasource is unique.
+      //
+      // Claiming otherwise is not cosmetic, because three places state it as fact:
+      // `sql-completions.ts` appends "(PK)" in autocomplete, `use-ai-chat.ts` puts
+      // ", PK" in the schema context the model reasons from, and
+      // `schema-diff/diff-engine.ts` reports "Primary key changed" - so two Druid
+      // datasources that differ only in this would diff as a key change. A
+      // partition/time-key concept distinct from a primary key is what this would
+      // need, and `ColumnSchema` has no such field.
+      isPrimary: false,
     },
   };
 }

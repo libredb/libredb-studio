@@ -1054,20 +1054,24 @@ describe("DruidProvider schema", () => {
 
     expect(schema.map((table) => table.name)).toEqual(["libredb_demo", "libredb_rollup"]);
     expect(schema[1].columns).toEqual([
-      { name: "__time", type: "TIMESTAMP", nullable: false, isPrimary: true },
+      { name: "__time", type: "TIMESTAMP", nullable: false, isPrimary: false },
       { name: "id", type: "BIGINT", nullable: true, isPrimary: false },
       { name: "qty", type: "BIGINT", nullable: true, isPrimary: false },
     ]);
   });
 
-  test("getSchema marks __time as the one primary column", async () => {
-    // It is mandatory, it is the partitioning and sort key, and it is the only
-    // column Druid reports as IS_NULLABLE = 'NO'.
+  test("getSchema marks no column primary, and __time is the one NOT NULL column", async () => {
+    // `__time` is mandatory, it is the partitioning and sort key, and it is the only
+    // column Druid reports as IS_NULLABLE = 'NO' - but it is not UNIQUE (50 rows, 30
+    // distinct values live), and `isPrimary` is read as PRIMARY KEY by autocomplete,
+    // by the AI schema context and by the schema differ. Nullability is how the time
+    // column is identified instead.
     const provider = await connectProvider();
 
     const schema = await provider.getSchema();
 
-    expect(schema[0].columns.filter((column) => column.isPrimary).map((column) => column.name)).toEqual(["__time"]);
+    expect(schema[0].columns.filter((column) => column.isPrimary)).toEqual([]);
+    expect(schema[0].columns.filter((column) => !column.nullable).map((column) => column.name)).toEqual(["__time"]);
     expect(schema[0].columns.map((column) => column.name)).toEqual([
       "__time",
       "snowflake_id",

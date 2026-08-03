@@ -158,47 +158,34 @@ interface HttpOutcome {
 }
 
 /**
- * Marks a value that must reach the server as a raw, unquoted JSON literal.
+ * Serialize the parameters array by hand, so a bigint reaches Druid as a bare
+ * literal.
  *
- * A NUL, because `JSON.stringify` is required to escape it and always emits it as
- * the six characters `\u0000`. That makes the serialized form of this marker exact
- * and predictable, which is what lets `spliceRawLiterals` find it reliably.
- */
-const RAW_LITERAL_MARK = "\u0000";
-
-/** How `RAW_LITERAL_MARK` appears once `JSON.stringify` has escaped it. */
-const ESCAPED_MARK = "\\u0000";
-
-/**
- * `ESCAPED_MARK` with its backslash escaped for a regular expression.
+ * `JSON.stringify` cannot help: it throws outright on a bigint, and it has no way to
+ * emit an unquoted literal wider than a double. `JSON.rawJSON` can, but it is the
+ * ES2025 JSON source-text proposal - V8 12.4 / Node 22.2 - while this package declares
+ * `engines.node: ">=20.9.0"`, so depending on it would throw a bare TypeError on a
+ * runtime the package claims to support.
  *
- * Not the same string: inside a pattern, `\u0000` is the NUL CHARACTER escape, while
- * the serialized body holds the six literal characters, so matching them needs the
- * backslash doubled. Getting this wrong produces a pattern that silently never
- * matches, which sends the bigint as a quoted string and Druid answers
- * "Cannot handle query".
- */
-const ESCAPED_MARK_PATTERN = "\\\\u0000";
-
-/**
- * A quoted, marked, optionally negative integer literal as it appears in the
- * serialized body. Anchored on both marks and restricted to digits, so it can only
- * match something `bigintParameter` produced.
- */
-const RAW_LITERAL_PATTERN = new RegExp(`"${ESCAPED_MARK_PATTERN}(-?\\d+)${ESCAPED_MARK_PATTERN}"`, "g");
-
-/**
- * Unquote every marked literal, so a bigint parameter reaches Druid as a bare
- * number.
+ * Building the array as text is what remains, and it is deliberately STRUCTURAL rather
+ * than a marker-and-substitute pass. An earlier version wrapped the digits in a
+ * sentinel and unquoted it with a regex over the finished body; that is unsound,
+ * because the sentinel is only as private as the values flowing through it - a caller
+ * whose VARCHAR parameter happened to contain the sentinel would have had that string
+ * silently unquoted into a number. Emitting the literal in the first place cannot
+ * collide with anything, because no marker ever exists.
  *
- * This is what replaces `JSON.rawJSON` - see `bigintParameter` for why that API
- * cannot be used. It runs over the ALREADY-serialized body, so both marks are in
- * their escaped six-character form, and the only way a caller's own string could be
- * caught is by being exactly a signed digit run between two NUL bytes, a value
- * `bigintParameter` is the sole producer of.
+ * Everything that is not a bigint still goes through `JSON.stringify`, so the escaping
+ * of user strings is the runtime's, not ours.
  */
-function spliceRawLiterals(json: string): string {
-  return json.includes(ESCAPED_MARK) ? json.replace(RAW_LITERAL_PATTERN, "$1") : json;
+function serializeParameters(parameters: readonly DruidParameter[]): string {
+  const encoded = parameters.map((parameter) =>
+    typeof parameter.value === "bigint"
+      ? `{"type":${JSON.stringify(parameter.type)},"value":${parameter.value.toString()}}`
+      : JSON.stringify(parameter),
+  );
+
+  return `[${encoded.join(",")}]`;
 }
 
 // ============================================================================
@@ -281,12 +268,22 @@ function toRow(fieldNames: readonly string[], row: unknown): DruidRow {
 
 function toQueryResult(payload: unknown[], executionTimeMs: number): DruidQueryResult {
   const names = payload[NAME_ROW];
-  // A result set with no rows still carries all three header rows, so a payload
-  // shorter than the header cannot be data - it is an empty answer or a response
-  // something between here and the Broker rewrote. Either way there is nothing to
-  // describe, and guessing names off the first data row would be worse.
+  // A payload shorter than the header, or one whose first row is not the name array,
+  // CANNOT be a healthy answer to the request this transport sends - and it must not
+  // be reported as an empty one.
+  //
+  // Live-verified: with all three header flags set, even a result set with no rows
+  // answers exactly `[["id"],["LONG"],["BIGINT"]]`, and a bare `SET` (the only other
+  // statement form Druid's grammar accepts) is rejected outright rather than answering
+  // short. So there is no legitimate way to receive fewer than three rows.
+  //
+  // What can produce one is a truncated body, or a proxy that rewrote the response.
+  // Returning `{ rows: [] }` there would render the most convincing possible lie: a
+  // successful query over the right datasource that happens to have found nothing.
+  // Data loss has to surface as a failure, which is the same reason the streamed
+  // mid-response case above raises rather than returns.
   if (payload.length < HEADER_ROW_COUNT || !Array.isArray(names)) {
-    return { rows: [], ...UNDESCRIBED, executionTimeMs };
+    throw new DruidTransportError(UNREADABLE_PAYLOAD);
   }
 
   const fieldNames = disambiguate((names as unknown[]).map(String));
@@ -385,9 +382,20 @@ function unmappable(detail: string): DruidTransportError {
  * `Infinity` and `NaN` have no JSON form: `JSON.stringify` turns both into `null`,
  * which the server would read as a null comparison. Refusing beats sending a value
  * it will misread.
+ *
+ * An integral `number` outside the safe range is refused for a subtler reason: by the
+ * time it arrives here it is ALREADY wrong. A caller writing `9007199254740993`
+ * as a number literal handed us `9007199254740992` - JavaScript rounded it before the
+ * transport existed - and there is nothing here that can recover the digit. Sending it
+ * would filter on a value the user never wrote and return a plausible wrong row set,
+ * so the refusal names the fix: pass a `bigint`, which this transport binds exactly.
+ * The same check catches an integral double far past Druid's own BIGINT range.
  */
 function numberParameter(value: number): DruidParameter {
   if (!Number.isFinite(value)) throw unmappable(`the non-finite number ${value}`);
+  if (Number.isInteger(value) && !Number.isSafeInteger(value)) {
+    throw unmappable(`the integer ${value}, which JavaScript has already rounded - pass a bigint instead`);
+  }
 
   return Number.isInteger(value) ? { type: PARAMETER_TYPES.BIGINT, value } : { type: PARAMETER_TYPES.DOUBLE, value };
 }
@@ -411,16 +419,12 @@ function timestampParameter(value: Date): DruidParameter {
  * one line of the spec the live cluster contradicts, so the unquoted form is what
  * is implemented and this is the record of why.
  *
- * `JSON.stringify` cannot emit an unquoted literal wider than a double, and it
- * throws outright on a bigint. `JSON.rawJSON` can, but it is the ES2025 JSON
- * source-text proposal: it shipped in V8 12.4 (Node 22.2) while this package
- * declares `engines.node: ">=20.9.0"`, so relying on it would throw a bare
- * TypeError on a runtime the package claims to support. So the value travels as a
- * marked placeholder that `spliceRawLiterals` unquotes after serialization, which
- * works on every runtime.
+ * The bigint is carried through as a bigint and emitted as a literal by
+ * `serializeParameters`, which is where the reason `JSON.stringify` and
+ * `JSON.rawJSON` are both unusable is recorded.
  */
 function bigintParameter(value: bigint): DruidParameter {
-  return { type: PARAMETER_TYPES.BIGINT, value: `${RAW_LITERAL_MARK}${value.toString()}${RAW_LITERAL_MARK}` };
+  return { type: PARAMETER_TYPES.BIGINT, value };
 }
 
 function toParameter(value: unknown): DruidParameter {
@@ -490,20 +494,24 @@ export class DruidHttpTransport implements DruidTransport {
 
   private requestBody(sql: string, opts: DruidQueryOptions): string {
     const parameters = (opts.parameters ?? []).map(toParameter);
+    const envelope = JSON.stringify({
+      query: sql,
+      resultFormat: RESULT_FORMAT,
+      ...HEADER_FLAGS,
+      // Spec section 6, first half: verified, a `timeout` of 1 ms answers 504 with
+      // `category: TIMEOUT` on a statement that otherwise takes milliseconds.
+      // Asking the server to stop is what actually frees the cluster's resources;
+      // abandoning the request client-side leaves the query running.
+      ...(opts.timeoutMs === undefined ? {} : { context: { timeout: opts.timeoutMs } }),
+    });
 
-    return spliceRawLiterals(
-      JSON.stringify({
-        query: sql,
-        resultFormat: RESULT_FORMAT,
-        ...HEADER_FLAGS,
-        // Spec section 6, first half: verified, a `timeout` of 1 ms answers 504 with
-        // `category: TIMEOUT` on a statement that otherwise takes milliseconds.
-        // Asking the server to stop is what actually frees the cluster's resources;
-        // abandoning the request client-side leaves the query running.
-        ...(opts.timeoutMs === undefined ? {} : { context: { timeout: opts.timeoutMs } }),
-        ...(parameters.length === 0 ? {} : { parameters }),
-      }),
-    );
+    if (parameters.length === 0) return envelope;
+
+    // Spliced structurally - at the envelope's closing brace, whose position is known
+    // because `JSON.stringify` just produced it - rather than by matching anything in
+    // the text. `parameters` is the only member that can contain a bigint, and
+    // `serializeParameters` records why that cannot go through `JSON.stringify`.
+    return `${envelope.slice(0, -1)},"parameters":${serializeParameters(parameters)}}`;
   }
 
   private async send(body: string, clientDeadlineMs?: number): Promise<HttpOutcome> {

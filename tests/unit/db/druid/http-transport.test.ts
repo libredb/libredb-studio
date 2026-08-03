@@ -393,33 +393,29 @@ describe("DruidHttpTransport results", () => {
     expect(result.sqlTypes).toEqual({ id: "BIGINT" });
   });
 
-  // An empty array carries no header at all. It cannot come from a statement that
-  // asked for headers, so it is something between here and the Broker - but it
-  // must not crash, and it must not be reported as a described result.
-  test("survives an empty array with nothing to describe", async () => {
+  // An empty array carries no header at all, and with all three flags set even a
+  // zero-row result answers `[["id"],["LONG"],["BIGINT"]]` (live-verified). So this
+  // cannot be a healthy answer - it is a truncated body or a proxy rewrite - and
+  // reporting it as `{ rows: [] }` would render the most convincing possible lie: a
+  // successful query over the right datasource that simply found nothing.
+  test("raises on an empty array rather than reporting an empty result", async () => {
     handler = () => respond("[]");
 
-    const result = await makeTransport().query("SELECT 1");
-
-    expect(result.rows).toEqual([]);
-    expect(result.fieldNames).toBeNull();
-    expect(result.sqlTypes).toBeNull();
-    expect(result.nativeTypes).toBeNull();
+    await expect(makeTransport().query("SELECT 1")).rejects.toThrow(/incomplete/i);
   });
 
-  // A result set with no rows still carries all three header rows, so a shorter
-  // payload cannot be data. Guessing names off it would be worse than saying so.
+  // Same reasoning as the empty array: a result set with no rows still carries all
+  // three header rows, and a bare `SET` - the only other statement form Druid's
+  // grammar accepts - is rejected outright rather than answering short. There is no
+  // legitimate way to receive fewer than three, so data loss surfaces as a failure.
   test.each<[string, string]>([
     ["one row", '[["id"]]'],
     ["two rows", '[["id"],["LONG"]]'],
     ["a header that is not a row", '["id",["LONG"],["BIGINT"],[1]]'],
-  ])("describes nothing when the header is %s", async (_label, body) => {
+  ])("raises when the header is %s", async (_label, body) => {
     handler = () => respond(body);
 
-    const result = await makeTransport().query("SELECT id FROM libredb_demo");
-
-    expect(result.rows).toEqual([]);
-    expect(result.fieldNames).toBeNull();
+    await expect(makeTransport().query("SELECT id FROM libredb_demo")).rejects.toThrow(/incomplete/i);
   });
 
   test("fills a short data row with nulls rather than dropping the row", async () => {
@@ -849,6 +845,69 @@ describe("DruidHttpTransport parameters", () => {
     await makeTransport().query("SELECT 1 WHERE n = ?", { parameters: [BigInt("-9007199254740993")] });
 
     expect(lastBodyText()).toContain('{"type":"BIGINT","value":-9007199254740993}');
+  });
+
+  /**
+   * The parameters array is serialized structurally, not by marking the digits and
+   * substituting them back over the finished body. A marker is only as private as the
+   * values flowing through it: a caller whose VARCHAR parameter happened to contain the
+   * sentinel would have had that string silently unquoted into a number, changing its
+   * JSON type. These are the exact strings the previous NUL-marker version would have
+   * corrupted, and they must now survive as strings.
+   */
+  test.each<[string, string]>([
+    ["a NUL-wrapped digit run", "\u0000123\u0000"],
+    ["a NUL-wrapped negative digit run", "\u0000-9007199254740993\u0000"],
+    ["the literal escape text", "\\u0000123\\u0000"],
+  ])("keeps %s as a VARCHAR string rather than unquoting it into a number", async (_label, value) => {
+    const sent = await sendParameters(value);
+
+    expect(sent).toEqual([{ type: "VARCHAR", value }]);
+    // Round-trips as JSON, so nothing downstream sees a malformed body.
+    expect(JSON.parse(lastBodyText())).toBeTruthy();
+  });
+
+  test("still emits a bigint literal when a marker-looking string travels beside it", async () => {
+    await makeTransport().query("SELECT 1 WHERE a = ? AND b = ?", {
+      parameters: ["\u0000123\u0000", BigInt("9007199254740993")],
+    });
+
+    expect(lastBodyText()).toContain('{"type":"BIGINT","value":9007199254740993}');
+    // Number("...") rather than a literal: oxlint's no-loss-of-precision is right that
+    // a literal this wide cannot be held exactly, and JSON.parse produces the same
+    // rounded double, so this compares like with like. The EXACT value is asserted
+    // against the wire TEXT above, which is the only place it survives.
+    expect(lastBody().parameters).toEqual([
+      { type: "VARCHAR", value: "\u0000123\u0000" },
+      { type: "BIGINT", value: Number("9007199254740993") },
+    ]);
+  });
+
+  /**
+   * An integral `number` outside the safe range is ALREADY wrong by the time it
+   * arrives: `9007199254740993` written as a number literal is `...992` before the
+   * transport sees it, and no code here can recover the digit. Sending it would filter
+   * on a value the user never wrote and return a plausible wrong row set, so the
+   * refusal names the fix. `bigint` is the exact path and is unaffected.
+   */
+  // Built with Number("...") rather than literals: oxlint's no-loss-of-precision flags
+  // a literal this wide, and it is correct - which is precisely the point being tested.
+  // The parse yields the same already-rounded double a caller's literal would have.
+  test.each<[string, number]>([
+    ["2^53 + 1 rounded down by the parser", Number("9007199254740993")],
+    ["a negative unsafe integer", Number("-9007199254740993")],
+    ["an integral double far past Druid's BIGINT range", 1e21],
+  ])("refuses %s rather than filtering on a value the caller never wrote", async (_label, value) => {
+    const error = await captureError(() => makeTransport().query("SELECT 1 WHERE x = ?", { parameters: [value] }));
+
+    expect(error.message).toContain("already rounded");
+    expect(error.message).toContain("pass a bigint instead");
+    expect(calls).toEqual([]);
+  });
+
+  // The boundary itself is exact, so it must still go through.
+  test("accepts the largest safe integer", async () => {
+    expect(await sendParameters(Number.MAX_SAFE_INTEGER)).toEqual([{ type: "BIGINT", value: 9007199254740991 }]);
   });
 
   // Refusing beats sending a value the server would misread: JSON.stringify turns

@@ -61,7 +61,7 @@ Three things are Druid-shaped, and nearly every decision below flows from one of
 | "Table" (`TableSchema`) | A **datasource**, displayed by its bare name | `INFORMATION_SCHEMA.TABLES` where `TABLE_SCHEMA = 'druid'` |
 | "Row" | One result row | One positional array element behind the header rows |
 | Columns | The datasource's column list, SQL types verbatim | `INFORMATION_SCHEMA.COLUMNS` / the query response's header rows |
-| Primary key | `__time`, the mandatory primary timestamp | `isPrimary: true` on `__time` and nothing else ([§6](#6-schema-introspection)) |
+| Primary key | none — nothing in a datasource is unique | `isPrimary: false` on every column, `__time` included ([§6](#6-schema-introspection)) |
 | `query(sql)` | One SQL statement, with `?` parameters bound | `POST /druid/v2/sql` |
 | Indexes | none — every dimension is indexed inside its segment, with no index *object* | always `[]` |
 | Foreign keys | none (Druid has none) | always `[]` |
@@ -299,9 +299,17 @@ that order:
 ```
 
 **A result set with no rows still carries all three header rows** (live-verified:
-`SELECT id FROM libredb_demo WHERE id = -1` answers `[["id"],["LONG"],["BIGINT"]]`), which is why a
-payload *shorter* than the header cannot be data — the transport reports no rows and no column
-description for one rather than guessing names off the first data row.
+`SELECT id, name FROM libredb_demo WHERE 1=0` answers exactly
+`[["id","name"],["LONG","STRING"],["BIGINT","VARCHAR"]]`), and a bare `SET` — the only other statement
+form the grammar accepts — is rejected outright rather than answering short. So there is **no
+legitimate way to receive fewer than three rows**, and the transport treats a shorter payload as a
+failure rather than as an empty result.
+
+That distinction matters more than it looks. What actually produces a short payload is a truncated
+body or a proxy that rewrote the response, and answering `{ rows: [] }` there would render the most
+convincing possible lie: a successful query, over the right datasource, that happens to have found
+nothing. Data loss has to surface as an error, which is the same reason the mid-response truncation
+case above raises instead of returning what it managed to read.
 
 Rows are rebuilt from the declared names, and a repeat is **disambiguated rather than overwritten**:
 `SELECT 1 AS c, 2 AS c` reaches the grid as columns `c` and `c (2)`, both with their values. The
@@ -539,7 +547,7 @@ mapping:
 | JS value | Druid parameter type | Note |
 |---|---|---|
 | `string` | `VARCHAR` | |
-| `number`, integral | `BIGINT` | |
+| `number`, integral and safe | `BIGINT` | refused outside `Number.MAX_SAFE_INTEGER` — see below |
 | `number`, non-integral | `DOUBLE` | |
 | `bigint` | `BIGINT` | sent as a **raw unquoted literal** — see below |
 | `boolean` | `BOOLEAN` | |
@@ -558,10 +566,29 @@ server would read as a null comparison. Refusing beats sending a value the serve
 {"type":"BIGINT","value":9007199254740993}     -> matches the row exactly
 ```
 
-So the transport emits the unquoted literal through `JSON.rawJSON`, the ES2025 JSON source-text API
-(present on both runtimes this package supports, verified on Bun 1.3.14 and Node 24.14). The design
-plan for this provider said "as a string value"; that is the one line of it the live cluster
-disproved, and this is the record of why the code differs.
+So the literal has to reach the body unquoted. `JSON.rawJSON` would do it, but it is the ES2025 JSON
+source-text proposal — V8 12.4 / Node 22.2 — while `package.json` declares
+`engines.node: ">=20.9.0"`, so depending on it would throw a bare `TypeError` on a runtime the
+package claims to support. Instead the **parameters array is serialized by hand** and spliced into the
+envelope at its closing brace, whose position is known because `JSON.stringify` just produced it.
+Everything that is not a `bigint` still goes through `JSON.stringify`, so user strings are escaped by
+the runtime rather than by us.
+
+That is deliberately structural rather than a marker-and-substitute pass. An earlier revision wrapped
+the digits in a NUL sentinel and unquoted it with a regex over the finished body, which is unsound: a
+sentinel is only as private as the values flowing through it, so a caller whose `VARCHAR` parameter
+happened to contain that sentinel would have had their string silently unquoted into a number.
+Emitting the literal in the first place cannot collide with anything, because no marker ever exists.
+
+**An integral `number` outside the safe range is refused,** which looks strict until you notice the
+value is already wrong. A caller writing `9007199254740993` as a number literal handed the transport
+`9007199254740992` — JavaScript rounded it before any of this code ran — and nothing here can recover
+the digit. Sending it would filter on a value the user never wrote and return a plausible wrong row
+set, so the error names the fix: pass a `bigint`, which binds exactly. The same check catches an
+integral double past Druid's own `BIGINT` range.
+
+The design plan for this provider said a bigint travels "as a string value"; that is the one line of
+it the live cluster disproved, and this is the record of why the code differs.
 
 ### 3.11 The three `false` capabilities are each impossible, not merely unimplemented
 
@@ -907,8 +934,8 @@ is lost, only unlisted.
 **`TableSchema.name` is the bare datasource name.** `druid` is the default schema, so
 `SELECT * FROM "libredb_demo"` resolves without qualification. No prefix is added and none is needed.
 
-**`__time` is the only primary column.** It is mandatory in every datasource, it is the partitioning
-key and the sort key within a segment, and it is the only column Druid reports as
+**No column is primary — `__time` included.** It is mandatory in every datasource, it is the
+partitioning key and the sort key within a segment, and it is the only column Druid reports as
 `IS_NULLABLE = 'NO'`. Live, for `libredb_demo`:
 
 ```
@@ -918,9 +945,21 @@ key and the sort key within a segment, and it is the only column Druid reports a
 ...
 ```
 
-The `isPrimary` flag is keyed on the **name**, not on `IS_NULLABLE = 'NO'`: today the two coincide,
-but that is a consequence of `__time` being mandatory rather than the definition of the key, so a
-future Druid that marks a second column `NOT NULL` must not grow a second primary column.
+All of which makes `__time` tempting to mark `isPrimary`, and an earlier revision did. It is wrong,
+because **a primary key is unique and `__time` is not**:
+
+```
+$ SELECT COUNT(*) AS total, COUNT(DISTINCT __time) AS distinct_times FROM libredb_demo
+{"total":50,"distinct_times":30}
+```
+
+Nothing in a Druid datasource is unique, and `isPrimary` is not a hint — three consumers state it as
+fact. `sql-completions.ts` appends `(PK)` in autocomplete, `use-ai-chat.ts` puts `, PK` into the
+schema context the model reasons from, and `schema-diff/diff-engine.ts` reports
+`Primary key changed` — so two datasources differing only in this would diff as a key change. What
+`__time` actually is would need a partition/time-key concept distinct from a primary key, and
+`ColumnSchema` has no such field. It stays identifiable the honest way: by name, and by being the one
+column with `nullable: false`.
 `COLUMN_DEFAULT` is `""` for every column of every datasource — a Druid column has no default (an
 absent dimension is null) — so it is not read at all. `ORDINAL_POSITION` orders the read rather than
 appearing in it: it *is* the declared column order, so it has no separate value to carry.
@@ -1234,7 +1273,7 @@ process-wide contamination risk:
   introspection and monitoring module through a hand-built query runner — the payoff of the seam in
   [§3.2](#32-the-transport-seam-one-interface-one-implementation): no fetch mocking, no server. It
   covers the absent-row aggregate, the `duration = -1` task, the `max_size = 0` denominator, the
-  quoted-vs-unquoted `SUM`, the `__time` primary flag, a malformed row costing one column instead of
+  quoted-vs-unquoted `SUM`, the `__time` nullability flag, a malformed row costing one column instead of
   the tree, and every degradation path.
 - [`tests/unit/db/druid/transport.test.ts`](../../tests/unit/db/druid/transport.test.ts) pins the
   frozen category table and the normalized error — including `is()` and
