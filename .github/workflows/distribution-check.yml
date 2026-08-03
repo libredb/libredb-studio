@@ -51,13 +51,16 @@ jobs:
       - name: Install dependencies
         uses: ./.github/actions/bun-install
 
-      - name: Check CHANNELS.md matrix freshness
-        run: bun run distribution:matrix -- --check
-
       # Warn-only by design and it talks to GHCR, Docker Hub, Snap and winget.
-      # Keep it out of PR status; the freshness check above is offline and cheap.
+      # Runs first so the drift table still reaches the Job Summary even if the
+      # freshness check below fails main - that table is this workflow's actual
+      # reason to exist. Kept out of PR status; the freshness check is offline
+      # and cheap.
       - name: Check distribution channels
         if: github.event_name != 'pull_request'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: bun run distribution:check
+
+      - name: Check CHANNELS.md matrix freshness
+        run: bun run distribution:matrix --check

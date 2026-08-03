@@ -1112,7 +1112,7 @@ describe("CLI (probes against a local registry/store/catalog)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Business visibility matrix (docs/CHANNELS.md)
+// Coverage matrix for users, developers and buyers (docs/CHANNELS.md)
 // ---------------------------------------------------------------------------
 
 const MATRIX_FIXTURE = `channels:
@@ -1210,6 +1210,18 @@ describe("matrix cell helpers", () => {
     expect(updateSummary({ status: "deprecated", update: { method: "upstream_pr", sla: "on_demand" } })).toBe("—");
   });
 
+  test("updateSummary marks a switched-off channel as paused", () => {
+    expect(
+      updateSummary({ status: "pending", update: { method: "ci_publish", sla: "every_release", ci_enabled: false } }),
+    ).toBe("Automated (paused), every release");
+    expect(
+      updateSummary({ status: "live", update: { method: "ci_publish", sla: "every_release", ci_enabled: true } }),
+    ).toBe("Automated, every release");
+    expect(updateSummary({ status: "live", update: { method: "ci_publish", sla: "every_release" } })).toBe(
+      "Automated, every release",
+    );
+  });
+
   test("guideLabel strips the relative prefix", () => {
     expect(guideLabel("DISTRIBUTION.md")).toBe("DISTRIBUTION.md");
     expect(guideLabel("HELM_CHART.md")).toBe("HELM_CHART.md");
@@ -1250,7 +1262,7 @@ describe("renderScorecard / renderChannelMatrix", () => {
         "Linux, macOS, Windows | live | Automated, every release | [DISTRIBUTION.md](DISTRIBUTION.md) |",
     );
     expect(table).toContain(
-      "| Chocolatey | Package managers | Windows | pending | Automated, every release | " +
+      "| Chocolatey | Package managers | Windows | pending | Automated (paused), every release | " +
         "[DISTRIBUTION.md](DISTRIBUTION.md) |",
     );
     expect(table).toContain(

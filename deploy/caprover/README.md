@@ -29,8 +29,11 @@ CapRover dashboard → **Apps → One-Click Apps/Databases** → scroll to
 search **LibreDB Studio**:
 
 ```
-https://libredb.org/caprover-one-click-apps
+https://raw.githubusercontent.com/libredb/caprover-one-click-apps/main/public/
 ```
+
+This raw URL is a stand-in while `https://libredb.org/caprover-one-click-apps` is
+not published (GitHub Pages is not enabled for that repo yet).
 
 Source for that repo: <https://github.com/libredb/caprover-one-click-apps>.
 

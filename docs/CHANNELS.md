@@ -29,7 +29,7 @@ channel count.
 
 <!-- BEGIN:CHANNEL-SCORECARD -->
 
-### Coverage snapshot
+## Coverage snapshot
 
 **27 channels · 22 live · 4 pending · 1 deprecated**
 
@@ -65,11 +65,11 @@ Live channels by platform: **Linux 7 · macOS 3 · Windows 3 · Container 2 · K
 | [Homebrew tap](https://github.com/libredb/homebrew-tap) | Package managers | Linux, macOS | live | Automated, every release | [DISTRIBUTION.md](DISTRIBUTION.md) |
 | [Snap Store](https://snapcraft.io/libredb-studio) | Package managers | Linux | live | Automated, every release | [DISTRIBUTION.md](DISTRIBUTION.md) |
 | [winget](https://github.com/microsoft/winget-pkgs/tree/master/manifests/l/LibreDB/Studio) | Package managers | Windows | live | Automated, every release | [DISTRIBUTION.md](DISTRIBUTION.md) |
-| [Chocolatey](https://community.chocolatey.org/packages/libredb-studio) | Package managers | Windows | pending | Automated, every release | [DISTRIBUTION.md](DISTRIBUTION.md) |
+| [Chocolatey](https://community.chocolatey.org/packages/libredb-studio) | Package managers | Windows | pending | Automated (paused), every release | [DISTRIBUTION.md](DISTRIBUTION.md) |
 | [Desktop app (AppImage, .deb)](https://github.com/libredb/libredb-studio/releases/latest) | OS / desktop packages | Linux | live | Automated, every release | [desktop/README.md](../desktop/README.md) |
 | [Linux .deb / .rpm](https://github.com/libredb/libredb-studio/releases/latest) | OS / desktop packages | Linux | live | Automated, every release | [DISTRIBUTION.md](DISTRIBUTION.md) |
 | [CapRover template (in-repo)](https://github.com/libredb/libredb-studio/tree/main/deploy/caprover) | PaaS & one-click | Cloud | live | Manual, on demand | [deploy/caprover/README.md](../deploy/caprover/README.md) |
-| [CapRover 3rd-party repo](https://libredb.org/caprover-one-click-apps) | PaaS & one-click | Cloud | live | Manual, on demand | [DISTRIBUTION.md](DISTRIBUTION.md) |
+| [CapRover 3rd-party repo](https://github.com/libredb/caprover-one-click-apps) | PaaS & one-click | Cloud | live | Manual, on demand | [DISTRIBUTION.md](DISTRIBUTION.md) |
 | [CapRover official](https://github.com/caprover/one-click-apps) | PaaS & one-click | Cloud | live | Manual, on demand | [DISTRIBUTION.md](DISTRIBUTION.md) |
 | [Cosmos servapp marketplace](https://github.com/azukaar/cosmos-servapps-official) | PaaS & one-click | Cloud | live | Manual, on demand | [deploy/cosmos/README.md](../deploy/cosmos/README.md) |
 | [Dokploy template catalog](https://templates.dokploy.com) | PaaS & one-click | Cloud | live | Manual, on demand | [deploy/dokploy/README.md](../deploy/dokploy/README.md) |

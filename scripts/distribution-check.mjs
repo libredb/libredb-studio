@@ -9,6 +9,11 @@
  * `--strict` exits 1 only for owned local_file pins whose update SLA is
  * every_release - remote catalogs are upstream-owned and never gate.
  *
+ * `--matrix` is this file's second job: it regenerates the marker regions of
+ * docs/CHANNELS.md (the audience coverage matrix) from the same channel
+ * inventory. `--check` alongside it verifies those regions are up to date
+ * without writing, for use as a freshness gate.
+ *
  * The checker only ever READS channels.yaml; version bumps in pin files and
  * inventory edits are human work (see docs/DISTRIBUTION.md). Mirrors the
  * style of scripts/sync-chart-version.mjs; the pure functions below are unit
@@ -610,7 +615,12 @@ export function updateSummary(channel) {
   if (channel.status === "deprecated") {
     return "—";
   }
-  const automation = channel.update.method === "ci_publish" ? "Automated" : "Manual";
+  const automation =
+    channel.update.method === "ci_publish"
+      ? channel.update.ci_enabled === false
+        ? "Automated (paused)"
+        : "Automated"
+      : "Manual";
   return `${automation}, ${humanizeSla(channel.update.sla).toLowerCase()}`;
 }
 
@@ -642,7 +652,7 @@ function livePlatformCounts(channels) {
   })).filter((entry) => entry.count > 0);
 }
 
-/** Business scorecard for docs/CHANNELS.md. */
+/** Coverage scorecard for docs/CHANNELS.md: users, developers and buyers in one snapshot. */
 export function renderScorecard(channels) {
   const total = channels.length;
   const live = channels.filter((c) => c.status === "live").length;
@@ -650,7 +660,7 @@ export function renderScorecard(channels) {
   const deprecated = channels.filter((c) => c.status === "deprecated").length;
 
   const lines = [
-    "### Coverage snapshot",
+    "## Coverage snapshot",
     "",
     `**${total} channels · ${live} live · ${pending} pending · ${deprecated} deprecated**`,
     "",
@@ -757,7 +767,7 @@ async function main(argv) {
   const timeoutMs = Number(process.env.DISTRIBUTION_CHECK_TIMEOUT_MS ?? 10_000);
 
   if (checkOnly && !matrix) {
-    console.error("ERROR: --check requires --matrix (use: bun run distribution:matrix -- --check)");
+    console.error("ERROR: --check requires --matrix (use: bun run distribution:matrix --check)");
     process.exit(2);
   }
 
