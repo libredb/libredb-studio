@@ -706,7 +706,7 @@ extraEnvFrom:
 | `defaults` | No | Default values merged into all connections |
 | `connections[].id` | Yes | Unique slug (`[a-z0-9-]+`, max 64 chars) |
 | `connections[].name` | Yes | Display name in UI |
-| `connections[].type` | Yes | `postgres`, `mysql`, `sqlite`, `mongodb`, `couchbase`, `redis`, `oracle`, `mssql` |
+| `connections[].type` | Yes | `postgres`, `mysql`, `sqlite`, `mongodb`, `redis`, `oracle`, `mssql`, `libredb`, `couchbase` |
 | `connections[].roles` | Yes | `["*"]` (everyone), `["admin"]`, `["user"]`, or `["admin", "user"]` |
 | `connections[].managed` | No | `true` = read-only (default), `false` = editable copy for user |
 | `connections[].password` | No | Use `${ENV_VAR}` syntax for secrets |

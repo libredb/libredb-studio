@@ -4,7 +4,7 @@ This document outlines the architectural patterns, tech stack, and system design
 
 ## System Overview
 
-LibreDB Studio is a hybrid, cloud-native database management tool that provides an IDE-like experience in the browser. It supports **8 database backends** via a Strategy Pattern abstraction: PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, Couchbase, Redis.
+LibreDB Studio is a hybrid, cloud-native database management tool that provides an IDE-like experience in the browser. It supports **9 database backends** via a Strategy Pattern abstraction: PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, Couchbase, Redis, LibreDB.
 
 It runs in two modes: as a **standalone Next.js app** and as an **embedded npm package** (`@libredb/studio`) consumed by libredb-platform. See [§4.6](#46-workspace-abstraction-npm-package-embedding).
 

@@ -763,7 +763,7 @@ interface DatabaseConnection {
   createdAt: Date;         // Creation timestamp
 }
 
-type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'mongodb' | 'couchbase' | 'redis' | 'oracle' | 'mssql';
+type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'mongodb' | 'redis' | 'oracle' | 'mssql' | 'libredb' | 'couchbase';
 ```
 
 ### TableSchema
