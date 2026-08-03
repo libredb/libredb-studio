@@ -96,10 +96,16 @@ CouchbaseProvider (couchbase/index.ts)
 ```
 
 `CouchbaseProvider` extends `BaseDatabaseProvider` directly — the same pattern as `MongoDBProvider`
-and `RedisProvider`. It is **not** a `SQLBaseProvider`: that base owns pooled-driver mechanics
-(identifier escaping per dialect, placeholder generation, transactions, `cancelQuery`) that a
-stateless HTTP transport does not have. SQL++ being a SQL dialect is expressed through
-`queryLanguage: "sql"`, not through the class hierarchy.
+and `RedisProvider`. It is **not** a `SQLBaseProvider`, and the reason is the dialect rather than the
+transport: that base is pure SQL text helpers keyed off `this.type`
+([sql-base.ts](../../src/lib/db/providers/sql/sql-base.ts)) with nothing driver- or pool-bound in it,
+so an HTTP transport alone would be no reason to skip it. What does not fit is the quoting —
+`escapeIdentifier()` emits double quotes for every type except MySQL and SQL Server, while SQL++
+needs doubled backticks, which this provider owns in `keyspace.ts`.
+
+The cost of that choice is one duplication: `prepareQuery()` is re-implemented here to apply the
+shared query limiter that `SQLBaseProvider.prepareQuery()` would otherwise have supplied. SQL++ being
+a SQL dialect is expressed through `queryLanguage: "sql"`, not through the class hierarchy.
 
 ### 2.3 What the base class gives you for free
 

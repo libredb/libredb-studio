@@ -6,14 +6,16 @@
 > [`DATABASE_PROVIDERS.md`](./DATABASE_PROVIDERS.md). For the per-provider reference index, see
 > [`providers/README.md`](./providers/README.md).
 >
-> Because the architecture follows the Strategy Pattern, adding a database requires **no changes** to
-> routes, components or existing providers — you register a new self-contained provider class.
+> The Strategy Pattern keeps provider *logic* self-contained: no route, no shared component and no
+> existing provider needs to know your engine exists. It does not remove the integration work. The
+> union, the exhaustive UI maps, the factory, the connection-string parser, the query generators and
+> the explain registry each carry one entry per provider, and Couchbase touched every one of them.
 
 ---
 
 ## Prerequisites
 
-Three decisions, and the third one is the consequential one — take it first.
+Three decisions. The first is the consequential one, which is why it is first.
 
 1. **Does it need a driver at all?** Score the engine against the rubric below. A database with a
    first-class HTTP API can be supported with no dependency at all, and that is worth real effort to
@@ -23,12 +25,21 @@ Three decisions, and the third one is the consequential one — take it first.
    If it does need one, it will be something like `pg`, `mysql2`, `mongodb`, `ioredis`, `oracledb`
    or `mssql`.
 
-2. **SQL or non-SQL?**
-   - SQL databases → extend `SQLBaseProvider` (you get LIMIT injection, identifier escaping, placeholder generation for free)
-   - Non-SQL databases → extend `BaseDatabaseProvider` directly (like MongoDB)
-   - A driver-free provider reached over HTTP extends `BaseDatabaseProvider` even when it speaks SQL:
-     `SQLBaseProvider` owns pooled-driver mechanics a stateless HTTP transport does not have. That is
-     why Couchbase declares `queryLanguage: 'sql'` without extending it.
+2. **Which base class?**
+   - **SQL databases → extend `SQLBaseProvider`.** It is
+     [153 lines](../src/lib/db/providers/sql/sql-base.ts) of pure SQL text helpers keyed off
+     `this.type` — identifier and string escaping, `LIMIT` clause building, placeholder style,
+     read-only and DDL detection — plus a `prepareQuery()` that applies the shared query limiter.
+     None of it touches a pool, a driver or a connection, so **an HTTP transport is no reason to
+     avoid it.** A standard-SQL engine reached over HTTP, such as ClickHouse, should extend it and
+     get all of that for free.
+   - **Non-SQL databases → extend `BaseDatabaseProvider`** directly, like MongoDB and Redis.
+   - The one reason a SQL-speaking provider extends `BaseDatabaseProvider` anyway is a dialect the
+     shared helpers cannot express. Couchbase is that case: SQL++ quotes identifiers with doubled
+     backticks, which `escapeIdentifier()` produces for no existing type, so it owns its quoting in
+     `keyspace.ts`. The cost is that it re-implements `prepareQuery()` to get the limiter back
+     ([index.ts:336](../src/lib/db/providers/document/couchbase/index.ts)) — duplication worth
+     avoiding if your dialect does fit.
 
 3. **Query language?**
    - `'sql'` → Monaco editor uses SQL mode with autocomplete
@@ -64,7 +75,7 @@ Score a candidate before writing code. Each criterion you fail becomes code you 
 | # | Question | Why it matters |
 |---|----------|----------------|
 | 1 | **Is HTTP a first-class interface?** Do the vendor's own tools use it, or is it a bolt-on? | A bolt-on API lags the real protocol and loses features |
-| 2 | **Is the query language SQL-shaped?** | `queryLanguage: "sql"` inherits Monaco highlighting, the shared query limiter, the `sql` tab type, NL2SQL and saved queries at no cost |
+| 2 | **Is the query language SQL-shaped?** | `queryLanguage: "sql"` gives Monaco highlighting, the `sql` tab type, NL2SQL and saved queries at no cost. The shared query limiter is separate — it comes from `SQLBaseProvider.prepareQuery()`, or you override `prepareQuery()` yourself; the base class default is a pass-through |
 | 3 | **Is there catalog introspection over the same surface?** | Otherwise `getSchema()` has nothing to read |
 | 4 | **Is there monitoring data over the same surface?** | Decides how much of the monitoring panel is real rather than honestly empty |
 | 5 | **Is there an EXPLAIN?** | Decides `supportsExplain` and whether a strategy is needed |
@@ -86,7 +97,8 @@ See [`couchbase/transport.ts:87`](../src/lib/db/providers/document/couchbase/tra
 
 ```ts
 interface XTransport {
-  readonly kind: "http";
+  readonly kind: "http" | "native";   // widen as implementations appear
+
   query(stmt: string, o?: QueryOpts): Promise<XQueryResult>;
   manage<T>(path: string): Promise<T>;
   close(): Promise<void>;
@@ -100,13 +112,20 @@ produce without inventing anything ([`transport.ts:45`](../src/lib/db/providers/
 
 ```ts
 interface XQueryResult {
-  rows: Record<string, unknown>[];
+  rows: unknown[];               // a wire row is not always an object - see the traps below
   fieldNames: string[] | null;   // null when the source cannot describe the rows
   executionTimeMs: number;
   mutationCount: number;
   warnings: XWarning[];
 }
 ```
+
+`rows` is `unknown[]` because a wire row is genuinely not always an object: `SELECT RAW` and
+`SELECT VALUE` style projections return scalars, arrays or `null`. The provider narrows it to
+`Record<string, unknown>[]` when it builds its `QueryResult`. The Couchbase transport currently
+declares the narrower type and casts, which is unsound in exactly this way — the provider's
+`normalizeRow()` is what makes it safe in practice, and tightening the declaration is a known
+follow-up.
 
 Errors follow the same rule: the transport throws one normalized error carrying a numeric code, so
 the provider switches on a code instead of sniffing message strings.
@@ -173,7 +192,11 @@ is kept in sync with its per-provider doc). Don't copy a skeleton from this guid
 **Implement the abstract methods** from the `DatabaseProvider` interface: `connect`, `disconnect`,
 `query`, `getSchema`, `getHealth`, `runMaintenance`, plus the monitoring set (`getOverview`,
 `getPerformanceMetrics`, `getSlowQueries`, `getActiveSessions`, `getTableStats`, `getIndexStats`,
-`getStorageStats`). Return `[]` from the monitoring methods that don't apply to your engine.
+`getStorageStats`). None can be omitted, but a method whose data your engine does not expose returns
+a neutral value rather than throwing. Mind the return types: the list-valued ones
+(`getSlowQueries`, `getActiveSessions`, `getTableStats`, `getIndexStats`, `getStorageStats`) return
+`[]`, while `getOverview()` and `getPerformanceMetrics()` return DTOs and need a zeroed object.
+`libredb.ts` is the reference for doing this honestly.
 
 **Override the metadata hooks** so the shared UI renders correctly:
 
@@ -266,8 +289,10 @@ Then add the type to the selectable list that drives the ConnectionModal picker:
 **File:** `src/hooks/use-connection-form.ts`
 
 ```typescript
+// Append to the existing list - do not retype it, or you will drop a provider from the picker.
 const selectableTypes: DatabaseType[] = [
-  'postgres', 'mysql', 'oracle', 'mssql', 'mongodb', 'couchbase', 'redis', 'libredb', 'cockroachdb'
+  'postgres', 'mysql', 'sqlite', 'oracle', 'mssql', 'mongodb', 'couchbase', 'redis', 'libredb',
+  'cockroachdb',
 ];
 ```
 
@@ -377,12 +402,27 @@ Add a service to `database-compose.yml` so the next person can repeat this.
 
 ## Step 6: Verify
 
-### Build & Lint
+### Local gates
+
+All six are mandatory before a commit, and they match CI:
 
 ```bash
-bun run build    # Must pass with 0 errors
-bun run lint     # Must pass with 0 new warnings
+bun run format     # Biome, lineWidth 120
+bun run lint       # oxlint, then ESLint - 0 errors
+bun run typecheck  # tsc --noEmit
+bun run knip       # fails on unused files, exports and dependencies
+bun run test       # every layer
+bun run build      # production build
 ```
+
+If your change adds executable lines, the coverage gate applies too — it is a required CI check and
+it demands 100%:
+
+```bash
+bun run test:coverage && bun run coverage:check
+```
+
+Work test-first. Retrofitting tests afterwards is how coverage-gate fights start.
 
 ### Grep Check
 
@@ -420,6 +460,7 @@ Every field and what it controls:
 | `queryLanguage` | `'sql' \| 'json'` | Monaco editor language mode, AI prompt style, query template format |
 | `queryDialect` | `'libredb' \| undefined` | Optional. Opts a provider's tables into a custom client-side query generator (see `query-generators.ts`); left undefined by SQL/Mongo/Redis |
 | `supportsExplain` | `boolean` | EXPLAIN button visibility in QueryEditor toolbar |
+| `explainFormat` | `ExplainFormat \| undefined` | **Required whenever `supportsExplain` is true.** Selects the strategy in `src/lib/explain/index.ts`. Setting the flag without the format leaves the control visible and dead — the UI resets out of explain mode when metadata lacks it |
 | `supportsExternalQueryLimiting` | `boolean` | Whether route applies LIMIT to queries (SQL) or provider handles it (MongoDB) |
 | `supportsCreateTable` | `boolean` | "Create Table" button in SchemaExplorer |
 | `supportsMaintenance` | `boolean` | Whether maintenance API accepts requests for this provider |
@@ -500,7 +541,8 @@ reviewable PR.
 
 ## Quick Reference Checklist
 
-When adding a new database, ensure you've touched **exactly these files**:
+The integration points, all of which need an entry. This is the list the Strategy Pattern does
+*not* spare you — provider logic stays self-contained, registration does not:
 
 - [ ] `src/lib/types.ts` — Add to `DatabaseType` union (if not already there)
 - [ ] `src/lib/db/providers/<category>/<name>.ts` — **New file:** provider class
