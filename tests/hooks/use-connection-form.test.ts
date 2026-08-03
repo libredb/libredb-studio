@@ -414,6 +414,7 @@ describe("useConnectionForm", () => {
     libredb: true,
     couchbase: true,
     clickhouse: true,
+    druid: true,
   };
 
   test("dbTypes offers every database type a connection can carry", () => {

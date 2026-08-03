@@ -4,6 +4,9 @@ import type { ColumnSchema } from "@/lib/types";
 /** Couchbase management port, the capability signal for the SQL++ dialect. */
 const COUCHBASE_PORT = 8091;
 
+/** Apache Druid Router port, the capability signal for the Druid SQL dialect. */
+const DRUID_PORT = 8888;
+
 /**
  * Alias every generated Couchbase statement binds its keyspace to. SQL++ needs a
  * name to hang `META()` and field references off, and the generator has only the
@@ -45,6 +48,7 @@ const COUCHBASE_KEY_PROJECTION = `META(${COUCHBASE_ALIAS}).id AS ${COUCHBASE_DOC
  *  - SQL Server (1433): case-insensitive          → bracket-quote only specials
  *  - MySQL (3306): case-preserving                → backtick-quote only specials
  *  - Couchbase (8091): SQL++                      → always backtick-quote
+ *  - Druid (8888): Calcite SQL                    → always double-quote
  *  - PostgreSQL (5432) / SQLite / ClickHouse (8123) / default: unquoted folds to
  *    lowercase (pg)                                → quote unless plain lower
  *
@@ -62,6 +66,16 @@ export function quoteIdentifier(name: string, capabilities: ProviderCapabilities
     // ...) are a syntax error unquoted, and a schemaless document may name a field
     // anything at all, so there is no safe unquoted subset worth detecting.
     return couchbaseQuote(name);
+  }
+  if (capabilities.defaultPort === DRUID_PORT) {
+    // Druid (Calcite SQL): quote unconditionally, same reasoning as Couchbase above.
+    // A bare reserved word is a SYNTAX error, not a column-not-found: `SELECT count
+    // FROM libredb_demo` fails with "Received an unexpected token [count FROM]",
+    // while `SELECT "count" FROM libredb_demo` parses (issue #265). `count` is
+    // Druid's conventional rollup metric name, so the standard rollup ingestion
+    // produces a datasource that has one. Calcite's reserved list is large and
+    // version-dependent, so no safe unquoted subset is worth detecting.
+    return `"${name.replaceAll('"', '""')}"`;
   }
   if (capabilities.defaultPort === 1521) {
     // Oracle

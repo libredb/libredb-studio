@@ -30,6 +30,7 @@ const SeedDatabaseType = z.enum([
   "libredb",
   "couchbase",
   "clickhouse",
+  "druid",
 ]);
 
 export const SeedDefaultsSchema = z.object({

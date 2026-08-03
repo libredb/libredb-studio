@@ -64,6 +64,7 @@ import {
   type TableSchema,
   type TableStats,
 } from "@/lib/db/types";
+import { formatCacheHitRatio } from "@/lib/monitoring-cache-ratio";
 import { formatBytes } from "@/lib/db/utils/pool-manager";
 import { ClickHouseHttpTransport } from "./http-transport";
 import {
@@ -937,7 +938,7 @@ export class ClickHouseProvider extends SQLBaseProvider {
     return {
       activeConnections: overview.activeConnections,
       databaseSize: overview.databaseSize,
-      cacheHitRatio: performance.cacheHitRatio.toFixed(1),
+      cacheHitRatio: formatCacheHitRatio(performance.cacheHitRatio),
       slowQueries: slow,
       activeSessions: active,
     };

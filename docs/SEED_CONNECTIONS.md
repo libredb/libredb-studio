@@ -58,7 +58,7 @@ defaults:                    # Optional — merged into every connection
 connections:
   - id: "analytics-pg"       # Required, unique, lowercase slug [a-z0-9-]
     name: "Analytics DB"      # Required, display name in UI
-    type: postgres            # Required: postgres|mysql|sqlite|mongodb|redis|oracle|mssql|libredb
+    type: postgres            # Required: postgres|mysql|sqlite|mongodb|redis|oracle|mssql|libredb|couchbase|clickhouse|druid
     host: "${PG_HOST}"
     port: 5432
     database: analytics
@@ -86,6 +86,18 @@ connections:
     roles: ["*"]              # Everyone can see this
     managed: false            # User gets an editable copy
     environment: development
+
+  - id: "events-druid"
+    name: "Druid Events"
+    type: druid
+    host: "${DRUID_HOST}"
+    port: 8888                # Router. The Broker's 8082 serves the same endpoint
+    roles: ["*"]
+    environment: production
+    # No `database`: Druid reports exactly one catalog, always `druid`, so there is
+    # nothing to select. No `connectionString` either - its HTTP SQL API has no URI
+    # convention, so host and port are the whole address.
+    # user/password are optional and only reach a cluster running druid-basic-security.
 ```
 
 ### Field Reference
@@ -100,13 +112,13 @@ connections:
 | `connections` | Yes | — | Array of connection definitions (min 1) |
 | `connections[].id` | Yes | — | Unique slug: `[a-z0-9-]+`, max 64 chars |
 | `connections[].name` | Yes | — | Display name, max 128 chars |
-| `connections[].type` | Yes | — | Database type: `postgres`, `mysql`, `sqlite`, `mongodb`, `redis`, `oracle`, `mssql`, `libredb`, `couchbase`, `clickhouse` |
+| `connections[].type` | Yes | — | Database type: `postgres`, `mysql`, `sqlite`, `mongodb`, `redis`, `oracle`, `mssql`, `libredb`, `couchbase`, `clickhouse`, `druid` |
 | `connections[].host` | No | — | Hostname or IP |
 | `connections[].port` | No | — | Port number (1-65535) |
-| `connections[].database` | No | — | Database name |
+| `connections[].database` | No | — | Database name (Couchbase: the bucket. Druid has one catalog and ignores it) |
 | `connections[].user` | No | — | Username |
 | `connections[].password` | No | — | Password (use `${ENV_VAR}` syntax) |
-| `connections[].connectionString` | No | — | Full connection string (use `${ENV_VAR}`) |
+| `connections[].connectionString` | No | — | Full connection string (use `${ENV_VAR}`). Druid has no URI form — a `druid` connection needs `host` and is addressed by host and port only |
 | `connections[].roles` | Yes | — | Access control: `["*"]`, `["admin"]`, `["user"]`, `["admin", "user"]` |
 | `connections[].managed` | No | from defaults | `true` = read-only, `false` = editable copy |
 | `connections[].environment` | No | from defaults | Environment badge |

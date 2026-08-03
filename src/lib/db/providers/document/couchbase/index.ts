@@ -46,6 +46,7 @@ import {
   type TableSchema,
   type TableStats,
 } from "@/lib/db/types";
+import { formatCacheHitRatio } from "@/lib/monitoring-cache-ratio";
 import { formatBytes } from "@/lib/db/utils/pool-manager";
 import { applyQueryLimit, DEFAULT_QUERY_LIMIT, MAX_UNLIMITED_ROWS } from "@/lib/db/utils/query-limiter";
 import { CouchbaseHttpTransport } from "./http-transport";
@@ -739,7 +740,7 @@ export class CouchbaseProvider extends BaseDatabaseProvider {
     return {
       activeConnections: overview.activeConnections,
       databaseSize: overview.databaseSize,
-      cacheHitRatio: performance.cacheHitRatio.toFixed(1),
+      cacheHitRatio: formatCacheHitRatio(performance.cacheHitRatio),
       slowQueries: slow,
       activeSessions: active,
     };

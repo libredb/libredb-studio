@@ -78,6 +78,7 @@ describe("SeedConnectionSchema", () => {
       "libredb",
       "couchbase",
       "clickhouse",
+      "druid",
     ];
     for (const type of allTypes) {
       const result = SeedConnectionSchema.safeParse({ ...validConn, type });

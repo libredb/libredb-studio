@@ -5,6 +5,7 @@ import { mysqlJsonStrategy } from "./mysql-json";
 import { sqliteQueryplanStrategy } from "./sqlite-queryplan";
 import { couchbaseJsonStrategy } from "./couchbase-json";
 import { clickhouseJsonStrategy } from "./clickhouse-json";
+import { druidNativeStrategy } from "./druid-native";
 
 export type { ExplainMode, ExplainStrategy } from "./types";
 export type { ExplainPlanInput, ExplainTreeNode, StoredExplainPlan } from "./types";
@@ -17,6 +18,7 @@ const registry: Record<ExplainFormat, ExplainStrategy> = {
   "sqlite-queryplan": sqliteQueryplanStrategy,
   "couchbase-json": couchbaseJsonStrategy,
   "clickhouse-json": clickhouseJsonStrategy,
+  "druid-native": druidNativeStrategy,
 };
 
 export function getExplainStrategy(format: ExplainFormat | undefined): ExplainStrategy | null {

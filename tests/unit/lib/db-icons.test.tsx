@@ -12,6 +12,7 @@ import {
   LibreDBIcon,
   CouchbaseIcon,
   ClickHouseIcon,
+  DruidIcon,
 } from "@/components/icons/db-icons";
 
 describe("db-icons", () => {
@@ -26,6 +27,7 @@ describe("db-icons", () => {
     { name: "LibreDBIcon", Component: LibreDBIcon },
     { name: "CouchbaseIcon", Component: CouchbaseIcon },
     { name: "ClickHouseIcon", Component: ClickHouseIcon },
+    { name: "DruidIcon", Component: DruidIcon },
   ];
 
   for (const { name, Component } of icons) {

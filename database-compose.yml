@@ -1,3 +1,39 @@
+# Shared configuration for every Druid process. Druid is configured entirely through
+# `druid_*` environment variables (the image's entrypoint translates them into
+# runtime.properties), so one anchor keeps the five processes provably identical - a cluster
+# whose processes disagree about ZooKeeper or the metadata store fails in confusing ways.
+x-druid-env: &druid-env
+  # Sizes every process for a laptop. Without it each one claims cluster-scale heap and
+  # direct memory, and the five together will not fit.
+  DRUID_SINGLE_NODE_CONF: micro-quickstart
+  # druid-multi-stage-query is included on purpose: it is what makes `INSERT INTO ... SELECT`
+  # (MSQ) available on /druid/v2/sql/task. The provider does not use that endpoint - the point
+  # is that the live pass can prove the *synchronous* endpoint rejects INSERT even when the
+  # engine is fully capable of it, which is the honest reason supportsCreateTable is false.
+  druid_extensions_loadList: '["druid-histogram", "druid-datasketches", "druid-lookups-cached-global", "postgresql-metadata-storage", "druid-multi-stage-query"]'
+  druid_zk_service_host: druid-zookeeper
+  druid_metadata_storage_host: ""
+  druid_metadata_storage_type: postgresql
+  druid_metadata_storage_connector_connectURI: jdbc:postgresql://druid-metadata:5432/druid
+  druid_metadata_storage_connector_user: druid
+  druid_metadata_storage_connector_password: druid
+  # Deep storage on a shared local volume. Real deployments use S3/HDFS; local is what makes
+  # this a single-machine fixture, and the historical and middlemanager must see the same files.
+  druid_storage_type: local
+  druid_storage_storageDirectory: /opt/shared/segments
+  druid_indexer_logs_type: file
+  druid_indexer_logs_directory: /opt/shared/indexing-logs
+  druid_indexer_runner_javaOptsArray: '["-server", "-Xmx1g", "-Xms1g", "-XX:MaxDirectMemorySize=1g", "-Duser.timezone=UTC", "-Dfile.encoding=UTF-8", "-Djava.util.logging.manager=org.apache.logging.log4j.jul.LogManager"]'
+  druid_indexer_fork_property_druid_processing_buffer_sizeBytes: 100MiB
+  druid_processing_numThreads: "2"
+  druid_processing_numMergeBuffers: "2"
+  # Lets the Router at 8888 proxy Coordinator and Overlord APIs, so the whole cluster is
+  # reachable through the one port the provider targets.
+  druid_router_managementProxy_enabled: "true"
+  # info, not the upstream compose's debug: the debug logger emits one line per internal
+  # request and buries the errors a live pass is looking for.
+  druid_emitter_logging_logLevel: info
+
 services:
   postgres:
     image: postgres:18
@@ -163,3 +199,172 @@ services:
     # No seed sidecar: CLICKHOUSE_DB above creates `demo` on first boot, and unlike Couchbase
     # there is no index prerequisite - a SELECT against a freshly created table works
     # immediately. Do not add one.
+
+  # ---------------------------------------------------------------------------------------
+  # Apache Druid. Unlike every other service here, Druid is a distributed system and has no
+  # single-container mode: five Druid processes plus ZooKeeper plus a metadata database is
+  # the minimum that can answer a SQL query. That is why all seven carry `profiles: [druid]`
+  # - a bare `docker compose -f database-compose.yml up -d` would otherwise grow from 7
+  # containers to 14 and from roughly 6 GB of RAM to 12. Start it explicitly:
+  #
+  #   docker compose -f database-compose.yml --profile druid up -d
+  #
+  # The provider only ever talks to the Router (8888) or the Broker (8082); the other five
+  # processes are cluster internals and deliberately publish no host port. 8091, the
+  # MiddleManager's usual port, is already taken by couchbase above - another reason not to.
+  # ---------------------------------------------------------------------------------------
+  druid-metadata:
+    # Druid's metadata store (segment table, task history, supervisors, config). Distinct
+    # from the `postgres` service above on purpose: sharing it would put Druid's ~20 internal
+    # tables into the demo database the studio's own postgres connection browses.
+    image: postgres:17.6
+    container_name: libredb-druid-metadata
+    profiles: ["druid"]
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: druid
+      POSTGRES_PASSWORD: druid
+      POSTGRES_DB: druid
+    # No published port: only the Druid Coordinator/Overlord reads it, over the compose
+    # network. Publishing it would collide with the `postgres` service on 5432.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U druid -d druid"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+  druid-zookeeper:
+    # Druid's cluster coordination: process discovery, segment load queues, task assignment.
+    image: zookeeper:3.9.3
+    container_name: libredb-druid-zookeeper
+    profiles: ["druid"]
+    restart: unless-stopped
+    environment:
+      ZOO_MY_ID: "1"
+      # zkServer.sh's own status check uses the `srvr` four-letter word, which 3.9 refuses
+      # unless it is whitelisted.
+      ZOO_4LW_COMMANDS_WHITELIST: "srvr,ruok,conf"
+    healthcheck:
+      test: ["CMD-SHELL", "echo ruok | nc -w 2 localhost 2181 | grep -q imok"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+  druid-coordinator:
+    # Coordinator + Overlord in one process (the image's coordinator config sets
+    # druid.coordinator.asOverlord.enabled), so segment balancing and task management both
+    # live here. This is what accepts an ingestion task, which is how a datasource is
+    # created at all - Druid has no CREATE TABLE.
+    image: apache/druid:37.0.0
+    container_name: libredb-druid-coordinator
+    profiles: ["druid"]
+    restart: unless-stopped
+    command: ["coordinator"]
+    environment: *druid-env
+    volumes:
+      - druid_shared:/opt/shared
+      - druid_coordinator_var:/opt/druid/var
+    depends_on:
+      druid-metadata:
+        condition: service_healthy
+      druid-zookeeper:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8081/status/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 40
+  druid-historical:
+    # Serves published segments. Without it a datasource exists in the metadata store but
+    # returns no rows, which is the "datasource with no segments" case the provider has to
+    # render honestly.
+    image: apache/druid:37.0.0
+    container_name: libredb-druid-historical
+    profiles: ["druid"]
+    restart: unless-stopped
+    command: ["historical"]
+    environment: *druid-env
+    volumes:
+      - druid_shared:/opt/shared
+      - druid_historical_var:/opt/druid/var
+    depends_on:
+      druid-coordinator:
+        condition: service_started
+      druid-zookeeper:
+        condition: service_healthy
+  druid-middlemanager:
+    # Runs ingestion tasks as forked peon processes. Needed for the live pass to load data.
+    image: apache/druid:37.0.0
+    container_name: libredb-druid-middlemanager
+    profiles: ["druid"]
+    restart: unless-stopped
+    command: ["middleManager"]
+    environment: *druid-env
+    volumes:
+      - druid_shared:/opt/shared
+      - druid_middlemanager_var:/opt/druid/var
+    depends_on:
+      druid-coordinator:
+        condition: service_started
+      druid-zookeeper:
+        condition: service_healthy
+  druid-broker:
+    # Plans and merges queries. POST /druid/v2/sql here is the same API the Router proxies,
+    # so the provider works against 8082 directly too - published so that can be proven
+    # rather than assumed.
+    image: apache/druid:37.0.0
+    container_name: libredb-druid-broker
+    profiles: ["druid"]
+    restart: unless-stopped
+    command: ["broker"]
+    environment: *druid-env
+    volumes:
+      - druid_broker_var:/opt/druid/var
+    ports:
+      - "8082:8082"
+    depends_on:
+      druid-coordinator:
+        condition: service_started
+      druid-zookeeper:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8082/status/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 40
+  druid-router:
+    # The provider's default target. It fronts the SQL API, the web console and - because
+    # druid_router_managementProxy_enabled is set - the Coordinator and Overlord APIs, so a
+    # single port is enough for both querying and loading data.
+    image: apache/druid:37.0.0
+    container_name: libredb-druid-router
+    profiles: ["druid"]
+    restart: unless-stopped
+    command: ["router"]
+    environment: *druid-env
+    volumes:
+      - druid_router_var:/opt/druid/var
+    ports:
+      - "8888:8888"
+    depends_on:
+      druid-broker:
+        condition: service_started
+      druid-coordinator:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8888/status/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 40
+
+volumes:
+  # Named volumes only for Druid: it is the one service here whose processes must share
+  # state (deep storage) and whose task history is worth surviving a restart. Everything
+  # above uses the image's own anonymous volumes.
+  #
+  # druid_shared is the deep-storage + indexing-log volume, mounted by the three processes
+  # that write or read segments. A `down -v` resets the cluster to empty.
+  druid_shared: {}
+  druid_coordinator_var: {}
+  druid_historical_var: {}
+  druid_middlemanager_var: {}
+  druid_broker_var: {}
+  druid_router_var: {}

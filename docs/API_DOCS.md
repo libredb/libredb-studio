@@ -24,12 +24,12 @@
 
 ## Overview
 
-LibreDB Studio provides a RESTful API for database management operations. The API supports PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, Couchbase, ClickHouse, and Redis.
+LibreDB Studio provides a RESTful API for database management operations. The API supports PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, Couchbase, ClickHouse, Apache Druid, and Redis.
 
 ### Key Features
 
 - **JWT Authentication** - Secure token-based authentication stored in HTTP-only cookies
-- **Multi-Database Support** - PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, Couchbase, ClickHouse, Redis
+- **Multi-Database Support** - PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, Couchbase, ClickHouse, Apache Druid, Redis
 - **AI-Powered Queries** - Natural language to SQL with streaming responses
 - **Real-time Health Monitoring** - Database metrics and performance insights
 
@@ -417,6 +417,50 @@ providers:
 
 ---
 
+##### Apache Druid Query Format
+
+Druid speaks SQL over `POST /druid/v2/sql`, so the `sql` field carries a plain statement. Three
+things differ from the other SQL providers:
+
+- **There is no `database` and no `connectionString`.** `INFORMATION_SCHEMA.SCHEMATA` reports exactly
+  one catalog, always `druid`, so a connection is `host` + `port` alone. `user`/`password` are
+  optional and are sent as HTTP basic auth for a cluster running `druid-basic-security`; a default
+  install ignores the `Authorization` header entirely. `port` is the Router's `8888`; the Broker's
+  `8082` serves the identical endpoint and needs no other change.
+- **Druid SQL cannot write.** `UPDATE` and `DELETE` are not in the grammar, `CREATE TABLE` is a
+  syntax error, and `INSERT` / `REPLACE` are refused by the native engine ("consider using MSQ").
+  Each comes back as `400` / `QUERY_ERROR` carrying Druid's own message, which names the reason and
+  the alternative. `POST /api/db/maintenance` accepts no operation at all for a `druid` connection.
+- **A statement ending in `OFFSET n` with no `LIMIT` is sent unchanged**, so `wasLimited` is `false`:
+  Druid rejects `OFFSET n LIMIT m` ("'OFFSET start LIMIT count' is not allowed under the current SQL
+  conformance level"), so the auto-limiter must not append one there. Every other statement is
+  limited normally.
+
+```json
+{
+  "connection": {
+    "type": "druid",
+    "host": "localhost",
+    "port": 8888
+  },
+  "sql": "SELECT * FROM \"libredb_demo\" LIMIT 50"
+}
+```
+
+**Notes:**
+- A duplicate output name (a join projecting two `id`s, say) is disambiguated rather than dropped:
+  `fields` carries `id` and `id (2)`, and both columns reach the grid.
+- `ORDER BY` on a non-`__time` column of a plain table scan is refused by the planner ("SQL query
+  requires ordering a table by non-time column"). Order by `__time`, or aggregate with `GROUP BY`.
+- Druid uses Calcite's reserved-word list, which is large and surprising — `SELECT 1 AS one` is a
+  syntax error — so every generated identifier is double-quoted.
+- Integers wider than 2^53 are returned as exact strings rather than as JSON numbers, so no value is
+  silently rounded on the way to the grid. `ARRAY` columns arrive as JSON strings (`"[1,2]"`), which
+  is what Druid's own clients show.
+- Full reference: [`docs/providers/druid.md`](providers/druid.md).
+
+---
+
 ##### Redis Query Format
 
 Redis is a key-value store, so the `sql` field carries a Redis command instead of SQL. Two interchangeable formats are accepted.
@@ -615,6 +659,8 @@ Run database maintenance operations.
 
 The handler validates against the target provider's capabilities: `type` is required (`{ "error": "Maintenance type is required" }`), the provider must support maintenance at all, and the requested operation must be in that provider's supported set (see the matrix above) — otherwise a `400` is returned listing what the provider does support.
 
+A `druid` connection fails the second check whatever the `type` is, with `{ "error": "Maintenance operations not supported for this database" }`: no maintenance operation is reachable from Druid SQL, so its supported set is empty by design. Compaction and retention are Coordinator and task concerns, and Druid publishes no catalog of running queries, so there is no id for `kill` to name.
+
 ---
 
 ### AI API
@@ -792,12 +838,12 @@ interface DatabaseConnection {
   port?: number;           // Port number
   user?: string;           // Username
   password?: string;       // Password
-  database?: string;       // Database name (Couchbase: the bucket)
-  connectionString?: string; // Full connection string (alternative)
+  database?: string;       // Database name (Couchbase: the bucket; Druid: unused, it has one catalog)
+  connectionString?: string; // Full connection string (alternative; Druid has no URI form, host + port only)
   createdAt: Date;         // Creation timestamp
 }
 
-type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'mongodb' | 'redis' | 'oracle' | 'mssql' | 'libredb' | 'couchbase' | 'clickhouse';
+type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'mongodb' | 'redis' | 'oracle' | 'mssql' | 'libredb' | 'couchbase' | 'clickhouse' | 'druid';
 ```
 
 ### TableSchema

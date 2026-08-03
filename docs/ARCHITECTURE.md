@@ -4,7 +4,7 @@ This document outlines the architectural patterns, tech stack, and system design
 
 ## System Overview
 
-LibreDB Studio is a hybrid, cloud-native database management tool that provides an IDE-like experience in the browser. It supports **10 database backends** via a Strategy Pattern abstraction: PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, Couchbase, ClickHouse, Redis, LibreDB.
+LibreDB Studio is a hybrid, cloud-native database management tool that provides an IDE-like experience in the browser. It supports **11 database backends** via a Strategy Pattern abstraction: PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, Couchbase, ClickHouse, Apache Druid, Redis, LibreDB.
 
 It runs in two modes: as a **standalone Next.js app** and as an **embedded npm package** (`@libredb/studio`) consumed by libredb-platform. See [§4.6](#46-workspace-abstraction-npm-package-embedding).
 
@@ -48,6 +48,7 @@ graph TD
         SQL --> Oracle[(Oracle)]
         SQL --> MSSQL[(SQL Server)]
         SQL --> ClickHouse[(ClickHouse)]
+        SQL --> Druid[(Apache Druid)]
         Document --> MongoDB[(MongoDB)]
         Document --> Couchbase[(Couchbase)]
         KeyValue --> Redis[(Redis)]
@@ -101,6 +102,7 @@ classDiagram
     SQLBaseProvider <|-- OracleProvider
     SQLBaseProvider <|-- MSSQLProvider
     SQLBaseProvider <|-- ClickHouseProvider
+    SQLBaseProvider <|-- DruidProvider
 ```
 
 Each provider implements:
@@ -110,7 +112,7 @@ Each provider implements:
 
 Adding a new database type requires: **1 provider class** + **1 entry in `db-ui-config.ts`**.
 
-`CouchbaseProvider` extends `BaseDatabaseProvider` even though SQL++ is a SQL dialect: `SQLBaseProvider` owns pooled-driver mechanics (per-dialect escaping, placeholders, transactions, `cancelQuery`) that its stateless HTTP transport does not have, so the SQL-ness is declared through `queryLanguage: 'sql'` instead. It is also the only provider with no driver dependency — the cluster is reached over the documented Query and management REST APIs. See [`docs/providers/couchbase.md`](providers/couchbase.md).
+`CouchbaseProvider` extends `BaseDatabaseProvider` even though SQL++ is a SQL dialect: SQL++ quotes identifiers with doubled backticks, which `escapeIdentifier()` produces for no existing type, so it owns its quoting and declares its SQL-ness through `queryLanguage: 'sql'` instead. Being reached over HTTP is **not** the reason — `ClickHouseProvider` and `DruidProvider` add no driver either, and both extend `SQLBaseProvider`, because double-quoted identifiers and `LIMIT n OFFSET m` are correct in both dialects. Each of the three is a directory rather than a single file, with its wire format behind a transport seam that provider logic never bypasses. See [`docs/providers/couchbase.md`](providers/couchbase.md), [`clickhouse.md`](providers/clickhouse.md) and [`druid.md`](providers/druid.md).
 
 ## 4. Key Architectural Patterns
 
@@ -237,7 +239,7 @@ src/
 └── lib/
     ├── db/                  # Database provider module
     │   ├── providers/
-    │   │   ├── sql/         # postgres, mysql, sqlite (+ sqlite-driver runtime adapter), oracle, mssql, clickhouse/ (transport seam + SQL over HTTP)
+    │   │   ├── sql/         # postgres, mysql, sqlite (+ sqlite-driver runtime adapter), oracle, mssql, clickhouse/ (transport seam + SQL over HTTP), druid/ (transport seam + SQL over POST /druid/v2/sql)
     │   │   ├── document/    # mongodb, couchbase/ (transport seam + SQL++ over REST)
     │   │   ├── keyvalue/    # redis
     │   │   └── embedded/    # libredb (built-in embedded provider for the sample connection)

@@ -8,7 +8,8 @@ export type DatabaseType =
   | "mssql"
   | "libredb"
   | "couchbase"
-  | "clickhouse";
+  | "clickhouse"
+  | "druid";
 
 export type ConnectionEnvironment = "production" | "staging" | "development" | "local" | "other";
 

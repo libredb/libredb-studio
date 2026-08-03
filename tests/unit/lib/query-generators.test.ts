@@ -298,6 +298,107 @@ describe("ClickHouse (8123) generation", () => {
 });
 
 // ============================================================================
+// Apache Druid (issue #265) — Druid has a dialect branch of its own that quotes
+// UNCONDITIONALLY, and that is the claim under test: every string below was run
+// against Apache Druid 37.0.0 through POST /druid/v2/sql and accepted.
+// ============================================================================
+
+describe("Druid (8888) generation", () => {
+  const druidCaps = makeCaps({ defaultPort: 8888 });
+
+  test("generateTableQuery quotes the datasource and uses the plain LIMIT form", () => {
+    expect(generateTableQuery("libredb_demo", druidCaps)).toBe('SELECT * FROM "libredb_demo" LIMIT 50;');
+  });
+
+  // The trap that makes the default branch correct for Druid rather than merely
+  // adequate: Druid rejects ORDER BY on a non-__time column of a plain table scan
+  // with 400 "SQL query requires ordering a table by non-time column [[qty]], which
+  // is not supported." A generator that ordered by the primary key - the obvious
+  // thing to do for a "top 50" - would produce a query that cannot be planned on
+  // any Druid datasource. So no provider-generated scan may ever carry ORDER BY.
+  test("no generated Druid statement carries ORDER BY", () => {
+    expect(generateTableQuery("libredb_demo", druidCaps)).not.toContain("ORDER BY");
+    expect(generateSelectQuery("libredb_demo", sampleColumns, druidCaps)).not.toContain("ORDER BY");
+  });
+
+  test("generateSelectQuery emits a double-quoted column list and LIMIT 100", () => {
+    const cols: ColumnSchema[] = [
+      { name: "id", type: "BIGINT", nullable: true, isPrimary: false },
+      { name: "region", type: "VARCHAR", nullable: true, isPrimary: false },
+    ];
+    expect(generateSelectQuery("libredb_demo", cols, druidCaps)).toBe(
+      'SELECT\n  "id",\n  "region"\nFROM "libredb_demo"\nWHERE 1=1\nLIMIT 100;',
+    );
+  });
+
+  test("the __time column is quoted like every other column", () => {
+    // __time is mandatory on every datasource, so it is in almost every generated
+    // projection. It parses both bare and quoted; quoting it needs no exception.
+    const cols: ColumnSchema[] = [{ name: "__time", type: "TIMESTAMP", nullable: false, isPrimary: true }];
+    expect(generateSelectQuery("libredb_demo", cols, druidCaps)).toContain('  "__time"');
+  });
+
+  // The defect this branch exists for (issue #265 review): Calcite reserves a large
+  // set of plain lowercase words, so a bare one is a SYNTAX error, not a
+  // column-not-found. Verified against Apache Druid 37.0.0:
+  //   SELECT count FROM libredb_demo LIMIT 1
+  //     -> 400 "Received an unexpected token [count FROM] (line [1], column [8])"
+  //   SELECT "count" FROM libredb_demo LIMIT 1
+  //     -> 400 "Column 'count' not found in any table"   (syntax fine, no such column)
+  // `count` matters most: it is Druid's conventional rollup metric name, so the
+  // standard rollup ingestion produces a datasource that has one.
+  test("quoteIdentifier quotes reserved words, so a rollup metric column parses", () => {
+    for (const word of [
+      "count",
+      "value",
+      "start",
+      "end",
+      "date",
+      "time",
+      "year",
+      "rows",
+      "result",
+      "system",
+      "window",
+      "position",
+      "language",
+      "period",
+      "range",
+    ]) {
+      expect(quoteIdentifier(word, druidCaps)).toBe(`"${word}"`);
+    }
+  });
+
+  test("quoteIdentifier quotes unconditionally, reserved or not", () => {
+    // No safe unquoted subset is worth detecting: Calcite's reserved list is large
+    // and version-dependent, so an ordinary-looking name gets the same treatment.
+    expect(quoteIdentifier("libredb_demo", druidCaps)).toBe('"libredb_demo"');
+    expect(quoteIdentifier("snowflake_id", druidCaps)).toBe('"snowflake_id"');
+    expect(quoteIdentifier("Region", druidCaps)).toBe('"Region"');
+    expect(quoteIdentifier("weird name", druidCaps)).toBe('"weird name"');
+  });
+
+  test("quoteIdentifier doubles an embedded double quote so it cannot terminate its quoting", () => {
+    // Verified via `SELECT 1 AS "we""ird"`, which returns the column name `we"ird`.
+    expect(quoteIdentifier('we"ird', druidCaps)).toBe('"we""ird"');
+  });
+
+  test("quoteQualifiedName quotes each segment and keeps the schema separator intact", () => {
+    // Druid's single catalog exposes one user schema, `druid`, and both the bare and
+    // the schema-qualified form resolve, so the dot must stay a separator:
+    // `SELECT * FROM "druid"."libredb_demo" LIMIT 1` -> HTTP 200.
+    expect(quoteQualifiedName("druid.libredb_demo", druidCaps)).toBe('"druid"."libredb_demo"');
+  });
+
+  test("generateSelectQuery with no columns falls back to a bare star, not a quoted one", () => {
+    // `SELECT "*"` would be a column literally named `*`; the star must stay bare.
+    expect(generateSelectQuery("libredb_demo", [], druidCaps)).toBe(
+      'SELECT\n  *\nFROM "libredb_demo"\nWHERE 1=1\nLIMIT 100;',
+    );
+  });
+});
+
+// ============================================================================
 // quoteIdentifier (dialect-aware, quote-only-when-needed)
 // ============================================================================
 

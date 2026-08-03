@@ -278,6 +278,7 @@ describe("createDatabaseProvider", () => {
     const conn = makeConnection("unknown");
     await expect(createDatabaseProvider(conn)).rejects.toThrow(/couchbase/);
     await expect(createDatabaseProvider(conn)).rejects.toThrow(/clickhouse/);
+    await expect(createDatabaseProvider(conn)).rejects.toThrow(/druid/);
   });
 
   test('creates provider for type "postgres"', async () => {
@@ -342,6 +343,15 @@ describe("createDatabaseProvider", () => {
     const provider = await createDatabaseProvider(conn);
     expect(provider).toBeDefined();
     expect(provider.type).toBe("clickhouse");
+  });
+
+  test('creates provider for type "druid"', async () => {
+    // No `database` field: Druid reports exactly one catalog, always named
+    // `druid`, so the provider ignores the connection's database entirely.
+    const conn = makeConnection("druid", { port: 8888 });
+    const provider = await createDatabaseProvider(conn);
+    expect(provider).toBeDefined();
+    expect(provider.type).toBe("druid");
   });
 
   test('creates provider for type "libredb"', async () => {

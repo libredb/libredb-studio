@@ -71,6 +71,41 @@ describe("OverviewTab", () => {
     expect(queryByText("Quick Stats")).not.toBeNull();
   });
 
+  // An engine with no connection pool reports maxConnections 0, which means "no
+  // limit published" rather than "no capacity" - Apache Druid and, per its own
+  // comment, SQL Server both do. Dividing by it used to render the literal
+  // "NaN% used" and an NaN-width progress bar.
+  test("reports no limit instead of NaN when the engine publishes no connection ceiling", () => {
+    const base = makeData();
+    const { queryByText, container } = render(
+      <OverviewTab
+        data={{ ...base, overview: { ...base.overview, activeConnections: 3, maxConnections: 0 } } as MonitoringData}
+        loading={false}
+      />,
+    );
+
+    expect(container.textContent).not.toContain("NaN");
+    expect(queryByText("no limit published")).not.toBeNull();
+    // The count is still shown; only the meaningless share is withheld.
+    expect(container.textContent).toContain("3");
+    expect(container.textContent).not.toContain("3/0");
+  });
+
+  // Absence must not be displayed as a measured 0%, and must not be scored as the
+  // critical cache fault that a real 0 would be.
+  test("withholds the cache ratio card's percentage and rating when the engine cannot measure one", () => {
+    const base = makeData();
+    const { queryByText, container } = render(
+      <OverviewTab
+        data={{ ...base, performance: { ...base.performance, cacheHitRatio: undefined } } as MonitoringData}
+        loading={false}
+      />,
+    );
+
+    expect(container.textContent).not.toContain("0.0%");
+    expect(queryByText("Poor")).toBeNull();
+  });
+
   test("renders connection trend when history has enough points", () => {
     const { queryByText, queryByTestId } = render(
       <OverviewTab data={makeData()} loading={false} history={makeHistory()} />,
@@ -89,5 +124,35 @@ describe("OverviewTab", () => {
     const data = { ...makeData(), performance: { ...makeData().performance, cacheHitRatio: 72 } } as MonitoringData;
     const { queryByText } = render(<OverviewTab data={data} loading={false} />);
     expect(queryByText("Needs tuning")).not.toBeNull();
+  });
+
+  test("renders the measured cache hit ratio with a bar and a rating", () => {
+    const { queryByText } = render(<OverviewTab data={makeData()} loading={false} />);
+    const card = queryByText("Cache Hit")!.closest('[data-slot="card"]')!;
+    expect(card.textContent).toContain("95.7%");
+    expect(card.querySelectorAll('[data-slot="progress"]').length).toBe(1);
+    expect(queryByText("Excellent")).not.toBeNull();
+  });
+
+  test("reports an unmeasured cache hit ratio as unavailable instead of 0.0%", () => {
+    const data = { ...makeData(), performance: { bufferPoolUsage: 62, deadlocks: 0 } } as MonitoringData;
+    const { queryByText, container } = render(<OverviewTab data={data} loading={false} />);
+
+    // The card, its title and the 4-card grid all stay put.
+    expect(queryByText("Cache Hit")).not.toBeNull();
+    expect(container.querySelectorAll('[data-slot="card"]').length).toBe(6);
+
+    const card = queryByText("Cache Hit")!.closest('[data-slot="card"]')!;
+    expect(card.textContent).toContain("N/A");
+    expect(card.textContent).toContain("Not measured");
+    // No fabricated measurement: no percentage, no bar, no rating.
+    expect(card.textContent).not.toContain("%");
+    expect(card.querySelectorAll('[data-slot="progress"]').length).toBe(0);
+    expect(queryByText("Excellent")).toBeNull();
+    expect(queryByText("Good")).toBeNull();
+    expect(queryByText("Needs tuning")).toBeNull();
+    // Absence is not a fault: nothing red or yellow on the card.
+    expect(card.className).not.toContain("red");
+    expect(card.className).not.toContain("yellow");
   });
 });

@@ -19,11 +19,12 @@ Three decisions. The first is the consequential one, which is why it is first.
 
 1. **Does it need a driver at all?** Score the engine against the rubric below. A database with a
    first-class HTTP API can be supported with no dependency at all, and that is worth real effort to
-   establish before you start. Three shipped providers need no driver: SQLite uses the built-in
-   `bun:sqlite`/`node:sqlite` via `sqlite-driver.ts`, Couchbase talks to the cluster over
-   documented REST endpoints with `fetch`/`node:https` ([couchbase.md](./providers/couchbase.md)),
-   and ClickHouse speaks SQL over its HTTP interface the same way
-   ([clickhouse.md](./providers/clickhouse.md)). If it does need one, it will be something like `pg`,
+   establish before you start. Four shipped providers need no driver: SQLite uses the built-in
+   `bun:sqlite`/`node:sqlite` via `sqlite-driver.ts`, and three reach the engine over HTTP with
+   nothing but `fetch`/`node:https` — Couchbase over the documented REST endpoints
+   ([couchbase.md](./providers/couchbase.md)), ClickHouse over its HTTP interface
+   ([clickhouse.md](./providers/clickhouse.md)), and Apache Druid over `POST /druid/v2/sql`
+   ([druid.md](./providers/druid.md)). If it does need one, it will be something like `pg`,
    `mysql2`, `mongodb`, `ioredis`, `oracledb` or `mssql`.
 
 2. **Which base class?**
@@ -32,8 +33,11 @@ Three decisions. The first is the consequential one, which is why it is first.
      `this.type` — identifier and string escaping, `LIMIT` clause building, placeholder style,
      read-only and DDL detection — plus a `prepareQuery()` that applies the shared query limiter.
      None of it touches a pool, a driver or a connection, so **an HTTP transport is no reason to
-     avoid it.** A standard-SQL engine reached over HTTP, such as ClickHouse, should extend it and
-     get all of that for free.
+     avoid it.** A standard-SQL engine reached over HTTP, such as ClickHouse or Apache Druid, should
+     extend it and get all of that for free. Druid is the clearest case of how little is left over:
+     double-quoted identifiers and `LIMIT n OFFSET m` are both correct Druid SQL, so
+     `escapeIdentifier()`, `buildLimitClause()` and `getPlaceholder()` are inherited unchanged and
+     `prepareQuery()` is the only override — for a single dialect trap, not for the transport.
    - **Non-SQL databases → extend `BaseDatabaseProvider`** directly, like MongoDB and Redis.
    - The one reason a SQL-speaking provider extends `BaseDatabaseProvider` anyway is a dialect the
      shared helpers cannot express. Couchbase is that case: SQL++ quotes identifiers with doubled
@@ -151,10 +155,10 @@ directly; reshaping rows inside the transport would have broken schema loading. 
 
 ```typescript
 // Before:
-export type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'mongodb' | 'redis' | 'oracle' | 'mssql' | 'libredb' | 'couchbase';
+export type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'mongodb' | 'redis' | 'oracle' | 'mssql' | 'libredb' | 'couchbase' | 'clickhouse' | 'druid';
 
 // After (example: adding CockroachDB):
-export type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'mongodb' | 'redis' | 'oracle' | 'mssql' | 'libredb' | 'couchbase' | 'cockroachdb';
+export type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'mongodb' | 'redis' | 'oracle' | 'mssql' | 'libredb' | 'couchbase' | 'clickhouse' | 'druid' | 'cockroachdb';
 ```
 
 ### 1.2 — Add to `QueryTab.type` if needed
@@ -185,7 +189,7 @@ is kept in sync with its per-provider doc). Don't copy a skeleton from this guid
 |-------------------|--------|------------------|-----------|
 | Pooled SQL (wire-protocol DB) | `SQLBaseProvider` | `postgres.ts` / `mysql.ts` | [postgres.md](./providers/postgres.md) · [mysql.md](./providers/mysql.md) |
 | Embedded / file SQL | `SQLBaseProvider` | `sqlite.ts` | [sqlite.md](./providers/sqlite.md) |
-| SQL database reached over HTTP (no driver) | `SQLBaseProvider` | `sql/clickhouse/` | [clickhouse.md](./providers/clickhouse.md) |
+| SQL database reached over HTTP (no driver) | `SQLBaseProvider` | `sql/clickhouse/` or `sql/druid/` | [clickhouse.md](./providers/clickhouse.md) · [druid.md](./providers/druid.md) |
 | Document store | `BaseDatabaseProvider` | `mongodb.ts` | [mongodb.md](./providers/mongodb.md) |
 | Document store reached over HTTP/REST (no driver) | `BaseDatabaseProvider` | `document/couchbase/` | [couchbase.md](./providers/couchbase.md) |
 | Key-value store | `BaseDatabaseProvider` | `redis.ts` | [redis.md](./providers/redis.md) |
@@ -294,6 +298,7 @@ Then add the type to the selectable list that drives the ConnectionModal picker:
 // Append to the existing list - do not retype it, or you will drop a provider from the picker.
 const selectableTypes: DatabaseType[] = [
   'postgres', 'mysql', 'sqlite', 'oracle', 'mssql', 'mongodb', 'couchbase', 'redis', 'libredb',
+  'clickhouse', 'druid',
   'cockroachdb',
 ];
 ```
@@ -312,6 +317,8 @@ bun add <driver-package>
 # bun add ioredis             (Redis)
 # SQLite needs no driver — bun:sqlite / node:sqlite are runtime built-ins (see sqlite-driver.ts)
 # Couchbase needs no driver — it speaks the Query and management REST APIs over fetch/node:https
+# ClickHouse needs no driver — plain SQL over its HTTP interface (port 8123)
+# Apache Druid needs no driver — plain SQL over POST /druid/v2/sql (Router 8888 or Broker 8082)
 ```
 
 If your engine exposes a documented HTTP API, weigh it against the native driver before adding a
@@ -326,8 +333,32 @@ rather than a mock.
 **HTTP 200 does not mean success.** Couchbase returns syntax and semantic errors inside a 200
 response with `status: "errors"`, and Trino does the same with a `QueryError` field. Check the
 payload before the HTTP status, or a failed statement reads as "0 rows". This is not universal —
-Apache Druid uses real 400/500 codes — so establish which behaviour applies before writing the error
-path.
+Apache Druid does use real 400 / 500 / 504 codes — so establish which behaviour applies before
+writing the error path.
+
+**Real status codes still misclassify.** Druid answers `SELECT 1/0` with **HTTP 500**,
+`persona: "ADMIN"` and `category: "UNCATEGORIZED"`, message "/ by zero" — an ordinary user mistake
+reported as an admin-facing server failure, so reading 5xx as "the cluster is broken" would tell the
+user something false. ClickHouse has the same hazard: a denied grant is a 500 rather than a 403, and
+its message says "Not enough privileges" while containing neither "access denied" nor "permission
+denied". **Classify on the engine's own error category or code, never on the status and never by
+sniffing message text.** Druid's `category` is present in both of the envelopes it uses (the
+structured `druidException` and the legacy wrapper) and is a closed enum; ClickHouse's numeric
+exception code is in its plain-text error body. Each provider branches on that one field and on
+nothing else.
+
+**64-bit integers can arrive as unquoted JSON numbers, and `JSON.parse` rounds them silently.**
+ClickHouse turns `18446744073709551615` into `...552000`; Druid turns `9007199254740993` into
+`9007199254740992`. No error is raised in either case, so the wrong number reaches the grid looking
+exactly like the right one. Ask the server to quote them if it can — ClickHouse takes
+`output_format_json_quote_64bit_integers=1` — and if it cannot, own the fix: Druid has no such
+setting, so its transport runs a string-aware pass over the **raw body** before parsing and quotes
+every integer literal outside `Number.MIN_SAFE_INTEGER … Number.MAX_SAFE_INTEGER`. String-aware is
+the load-bearing part; a naive digit-run rewrite corrupts `"id: 9007199254740993"` inside a value.
+Either way the number reaches the UI as an exact string, which is what the `pg` driver already does
+for `int8`. The generalisable lesson: check the widest integer type your engine supports against
+`Number.MAX_SAFE_INTEGER` before trusting `JSON.parse`, and expect to write the fix yourself when the
+server offers no switch.
 
 **The response envelope does not always describe the rows.** Couchbase's `signature` is `"*"` for
 `SELECT *`, and `{ id, "*" }` for a wildcard mixed with named projections. Taking those keys
@@ -373,6 +404,14 @@ control that only emits invalid input. That is the defect class
   strategy declines, so the button is dead while only the background pre-warm works. When the engine
   has no analyze equivalent, return the estimate for both modes — `sqlite-queryplan.ts` and
   `couchbase-json.ts` both do exactly that.
+- A capability can be absent because the **grammar** lacks it rather than because nobody implemented
+  it, and the flag reads the same either way — so check, and then say so. Druid answers
+  `CREATE TABLE t (id BIGINT)` with a syntax error, because `CREATE` is not one of its statements at
+  all (a datasource comes into existence by being ingested into), so `supportsCreateTable` is
+  `false`. Nothing in `MaintenanceType` has a SQL-reachable Druid analogue either — compaction and
+  retention are Coordinator and task concerns, and `kill` has nowhere to get a query id from because
+  Druid publishes no catalog of running queries — so `supportsMaintenance` is `false` with an empty
+  operation list, rather than true with nothing behind it.
 
 The same honesty rule governs monitoring: **a source the connected user cannot read returns empty,
 it never throws.** Monitoring catalogs are frequently permission-gated, so a denial is the normal
@@ -385,12 +424,16 @@ case for a restricted user and must not break an otherwise working connection.
 Mock-based tests are the repo standard and they are **not sufficient on their own**. On the
 Couchbase provider a live pass against a real cluster disproved a design decision — un-indexed
 collections turned out to be queryable on Server 7.6+ through a sequential scan — and found three
-defects the mocks had accepted without complaint.
+defects the mocks had accepted without complaint. On Druid it overturned a verdict recorded in **this
+guide** (see [Driver-free candidates](#driver-free-candidates)): the EXPLAIN output was predicted not
+to fit the tree render model, and the real plan turned out to be a genuine nested tree.
 
 Before opening the PR, drive the provider through the running application against a real server:
 
 - full `INSERT` / `UPDATE` / `SELECT` / `DELETE`, including a `SELECT` immediately after a write, to
-  catch read-your-writes problems
+  catch read-your-writes problems — or establish that the engine has no write statement to test.
+  Druid SQL has neither `UPDATE` nor `DELETE` in its grammar and rejects `INSERT`/`REPLACE` on the
+  native engine, and each of those is a claim only an actual attempt can settle
 - both error paths — a syntax error and a missing object — confirming each surfaces as an error
   rather than as zero rows
 - schema introspection, checking column types and the object-naming rule
@@ -398,7 +441,11 @@ Before opening the PR, drive the provider through the running application agains
   a broken direct action
 - every monitoring panel, and each maintenance operation
 
-Add a service to `database-compose.yml` so the next person can repeat this.
+Add a service to `database-compose.yml` so the next person can repeat this — or a profile-gated set of
+them, which is what a distributed engine needs. Druid has no single-container mode, so its seven
+services all carry `profiles: ["druid"]`: a default `docker compose up -d` must not double for
+everyone who is not working on Druid, and `docker compose --profile druid down` is then needed to
+remove them again.
 
 ---
 
@@ -516,27 +563,43 @@ For the authoritative, code-verified reference for each shipped provider (extend
 driver, pooling, capabilities, labels, `prepareQuery` behaviour, and limitations), see the prime
 docs — they are the single source of truth and are kept in sync with the code:
 
-**[docs/providers/](./providers/README.md)** → postgres · mysql · oracle · mssql · sqlite · redis · mongodb · couchbase · clickhouse · libredb
+**[docs/providers/](./providers/README.md)** → postgres · mysql · oracle · mssql · sqlite · redis · mongodb · couchbase · clickhouse · druid · libredb
 
 When implementing a new provider, the closest existing analogue is the best template: a pooled SQL
 provider (postgres/mysql), an embedded SQL provider (sqlite), a non-SQL provider (mongodb/redis), or
-a driverless provider reached over HTTP (couchbase).
+a driverless provider reached over HTTP (clickhouse or druid for SQL, couchbase for a document
+store).
 
 ## Driver-free candidates
 
 Assessed against the rubric in [Prerequisites](#prerequisites). Anything not listed almost certainly needs a driver.
 
+**Shipped since this list was written:** Couchbase
+([#263](https://github.com/libredb/libredb-studio/issues/263)), ClickHouse
+([#264](https://github.com/libredb/libredb-studio/issues/264)) and Apache Druid
+([#265](https://github.com/libredb/libredb-studio/issues/265)).
+
+Druid is worth a paragraph, because it **corrected this table's own verdict**. The entry that stood
+here rated it strong but predicted that `EXPLAIN PLAN FOR` "returns a native-query translation rather
+than an operator tree, so it does not fit the existing tree render model". The live plan disproved
+that: `query.dataSource` recurses — `join` carries `left` and `right`, `query` carries one child,
+`union` carries a list — so the native query **is** a nested tree, and it renders as
+`{ kind: "tree" }` with nothing forced. What keeps that honest is the omission: Druid's planner emits
+no cost and no row estimate, so no node carries `metrics`, and node labels name Druid's own query
+types (`groupBy`, `scan`, `timeseries`, `topN`) rather than borrowing a relational-plan vocabulary.
+The lesson for the next candidate is to read the engine's real EXPLAIN output before predicting the
+render model from its documentation. See [druid.md](./providers/druid.md).
+
 | Candidate | Verdict |
 |---|---|
-| **Apache Druid** ([#265](https://github.com/libredb/libredb-studio/issues/265)) | Strong, and it returns errors with real HTTP status codes. `EXPLAIN PLAN FOR` returns a native-query translation rather than an operator tree, so it does not fit the existing tree render model |
 | **Trino / Starburst** | Highest strategic value — one provider fronts S3, Iceberg, Delta and Hive. Unscheduled on purpose: a catalog is another *system*, so what a connection pins is a product question. Also a `nextUri` polling protocol and a fragmented auth matrix |
 | **OpenSearch / Elasticsearch** | HTTP is the only protocol. Needs a dialect decision first: the SQL endpoint is a subset, the native DSL is JSON. OpenSearch is Apache 2.0 and the cleaner primary target |
 | **Snowflake / BigQuery / Databricks SQL** | REST SQL APIs exist and the data model fits; auth is the wall (key-pair JWT, service-account signing, OAuth) and that is where the no-dependency promise ends |
 | **CouchDB, ArangoDB, SurrealDB, Qdrant, Weaviate** | All HTTP, all non-SQL or only partially SQL. Feasible, but each needs its own query grammar the way MongoDB and LibreDB do |
 
 Contributions are welcome for any of these. Open an issue with the rubric score first, so the design
-decisions are settled before code exists — that is what let the Couchbase provider land as a single
-reviewable PR.
+decisions are settled before code exists — that is what let the Couchbase, ClickHouse and Druid
+providers each land as a single reviewable PR.
 
 ---
 
@@ -554,8 +617,11 @@ The integration points, all of which need an entry. This is the list the Strateg
 - [ ] `src/hooks/use-connection-form.ts` — **append** to `selectableTypes` (do not retype the array)
 - [ ] `src/components/icons/db-icons.tsx` — the engine's mark (`strokeWidth={1.5}`, no HTML size attrs)
 - [ ] `src/lib/seed/types.ts` — the seed-config `type` enum, or seeded connections fail validation
-- [ ] `package.json` — the driver, **if** it needs one. A driver-free provider leaves it untouched
-- [ ] `database-compose.yml` — a service, so the next person can repeat the live pass
+- [ ] `package.json` — the driver, **if** it needs one. A driver-free provider leaves it untouched, and
+      three shipped ones do: `couchbase`, `clickhouse` and `druid` each add nothing here
+- [ ] `database-compose.yml` — a service, so the next person can repeat the live pass. A distributed
+      engine contributes a `profiles: [...]` set instead, as Druid's seven services do, so the default
+      stack does not grow for everyone
 
 **Conditionally, and each one is easy to miss because the code still compiles without it:**
 
@@ -578,7 +644,7 @@ connection-form test), so the compiler and those tests refuse to pass until each
 > **`git grep -l <the-previous-provider-type-id> -- src/ tests/` is the authoritative checklist.**
 > This list is maintained by hand and has been wrong before: it long claimed "no other files should
 > need changes", while Couchbase (#263) and ClickHouse (#264) each touched 27 files under `src/` and
-> `tests/`. Trust the grep over this list.
+> `tests/`, and Druid (#265) roughly two dozen of its own. Trust the grep over this list.
 
 What the Strategy Pattern *does* spare you is **provider logic**: no route, no shared component and no
 existing provider needs to know your engine exists. If you find yourself adding a `=== '<type-id>'`

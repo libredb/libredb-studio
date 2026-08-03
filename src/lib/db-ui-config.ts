@@ -10,6 +10,7 @@ import {
   LibreDBIcon,
   CouchbaseIcon,
   ClickHouseIcon,
+  DruidIcon,
 } from "@/components/icons/db-icons";
 import type { DatabaseType } from "@/lib/types";
 
@@ -110,6 +111,27 @@ const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
     defaultPort: "8123",
     showConnectionStringToggle: true,
     connectionFields: ["host", "port", "user", "password", "database", "connectionString"],
+  },
+  druid: {
+    icon: DruidIcon,
+    // Issue #265 specified text-sky-400, which mssql already owns; the distinct-colour
+    // assertion in tests/unit/lib/db-ui-config.test.ts rules a duplicate out. teal-400
+    // is the nearest free shade and is closer to Druid's own petrol-teal mark anyway.
+    color: "text-teal-400",
+    label: "Apache Druid",
+    // The Router port. The Broker on 8082 serves the identical POST /druid/v2/sql and
+    // needs no different configuration (live-verified, issue #265); the Router is the
+    // default only because it also fronts the console and the management-proxied APIs.
+    defaultPort: "8888",
+    // No URI convention exists for Druid's HTTP SQL API - its JDBC driver addresses
+    // Avatica (jdbc:avatica:remote:url=...), and http:// / https:// already resolve to
+    // ClickHouse in connection-string-parser.ts. There is nothing to paste.
+    showConnectionStringToggle: false,
+    // Deliberately no "database": INFORMATION_SCHEMA.SCHEMATA reports exactly one
+    // catalog, always named `druid`, so a database selector would be a control with no
+    // effect. Credentials stay offered because a cluster running druid-basic-security
+    // needs them; a default install ignores the Authorization header entirely.
+    connectionFields: ["host", "port", "user", "password"],
   },
   libredb: {
     icon: LibreDBIcon,

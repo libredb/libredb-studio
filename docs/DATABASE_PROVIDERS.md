@@ -29,11 +29,16 @@ src/lib/db/
 │   │   ├── sqlite-driver.ts    # SQLite runtime driver adapter (bun:sqlite | node:sqlite)
 │   │   ├── oracle.ts           # Oracle Strategy
 │   │   ├── mssql.ts            # SQL Server Strategy
-│   │   └── clickhouse/         # ClickHouse Strategy (SQL over HTTP, no driver)
-│   │       ├── index.ts        #   ClickHouseProvider
-│   │       ├── transport.ts    #   ClickHouseTransport seam + neutral result types
+│   │   ├── clickhouse/         # ClickHouse Strategy (SQL over HTTP, no driver)
+│   │   │   ├── index.ts        #   ClickHouseProvider
+│   │   │   ├── transport.ts    #   ClickHouseTransport seam + neutral result types
+│   │   │   ├── http-transport.ts # The one HTTP implementation (fetch)
+│   │   │   └── introspect.ts   #   system.* catalogs (databases/tables/columns/data_skipping_indices)
+│   │   └── druid/              # Apache Druid Strategy (SQL over POST /druid/v2/sql, no driver)
+│   │       ├── index.ts        #   DruidProvider
+│   │       ├── transport.ts    #   DruidTransport seam + neutral result types + error categories
 │   │       ├── http-transport.ts # The one HTTP implementation (fetch)
-│   │       └── introspect.ts   #   system.* catalogs (databases/tables/columns/data_skipping_indices)
+│   │       └── introspect.ts   #   INFORMATION_SCHEMA datasources + sys.servers/segments/tasks
 │   ├── document/               # Document Database Providers
 │   │   ├── mongodb.ts          # MongoDB Strategy
 │   │   └── couchbase/          # Couchbase Strategy (SQL++ over REST, no driver)
@@ -61,7 +66,8 @@ BaseDatabaseProvider (abstract)
 │   ├── SQLiteProvider                      │ (shared SQL utilities)
 │   ├── OracleProvider                      │
 │   ├── MSSQLProvider                       │
-│   └── ClickHouseProvider                  │
+│   ├── ClickHouseProvider                  │
+│   └── DruidProvider                       │
 ├── MongoDBProvider ────────────────────────┤ Document Database
 ├── CouchbaseProvider ──────────────────────┤ Document Database (SQL++ over REST)
 ├── RedisProvider ──────────────────────────┤ Key-Value Store
@@ -70,7 +76,9 @@ BaseDatabaseProvider (abstract)
 
 `SQLBaseProvider` provides SQL-specific helpers (LIMIT injection, identifier escaping, placeholder generation). Non-SQL databases like MongoDB, Redis, and LibreDB extend `BaseDatabaseProvider` directly. LibreDB is embedded (opened in-process from a file, like SQLite) but, having no SQL, it is a key-value-style provider rather than a SQL one.
 
-Couchbase is the one provider that speaks a SQL dialect (SQL++) without extending `SQLBaseProvider`: that base owns pooled-driver mechanics — per-dialect escaping, placeholder generation, transactions, `cancelQuery` — that a stateless HTTP transport does not have. Its SQL-ness is expressed through `queryLanguage: 'sql'` in the capabilities instead. See [providers/couchbase.md](./providers/couchbase.md).
+Couchbase is the one provider that speaks a SQL dialect (SQL++) without extending `SQLBaseProvider`: SQL++ quotes identifiers with doubled backticks, which `escapeIdentifier()` produces for no existing type, so it owns its quoting and expresses its SQL-ness through `queryLanguage: 'sql'` in the capabilities instead. See [providers/couchbase.md](./providers/couchbase.md).
+
+Being driver-free and reached over HTTP is not what decides the base class. `ClickHouseProvider` and `DruidProvider` add no driver either, and both extend `SQLBaseProvider`: double-quoted identifiers and `LIMIT n OFFSET m` are correct in both dialects, so identifier escaping, the `LIMIT` builder and the placeholder style are inherited rather than rewritten. Druid overrides only `prepareQuery()`, and only because it rejects `OFFSET n LIMIT m` — a statement that already ends in an `OFFSET` is therefore sent unlimited instead of being rewritten into a syntax error. See [providers/clickhouse.md](./providers/clickhouse.md) and [providers/druid.md](./providers/druid.md).
 
 The `SQLiteProvider` loads its embedded driver at runtime through `sqlite-driver.ts`: `bun:sqlite` under Bun, `node:sqlite` under plain Node (Node >= 24 built-in). Set `LIBREDB_SQLITE_DRIVER=bun|node` to force a driver. `better-sqlite3` is **not** used by the DB provider — it is only the SQLite driver for the storage layer (`src/lib/storage/`).
 
@@ -111,7 +119,7 @@ QueryEditor                      /api/db/query
 
 ## Supported Databases
 
-Ten providers are supported. For the per-provider reference (driver, pooling, query format,
+Eleven providers are supported. For the per-provider reference (driver, pooling, query format,
 monitoring, limitations, …) see the prime docs in **[`docs/providers/`](./providers/README.md)**:
 
 | Provider | type-id | Family | Reference |
@@ -125,6 +133,7 @@ monitoring, limitations, …) see the prime docs in **[`docs/providers/`](./prov
 | MongoDB | `mongodb` | Document | [providers/mongodb.md](./providers/mongodb.md) |
 | Couchbase | `couchbase` | Document (SQL++) | [providers/couchbase.md](./providers/couchbase.md) |
 | ClickHouse | `clickhouse` | SQL | [providers/clickhouse.md](./providers/clickhouse.md) |
+| Apache Druid | `druid` | SQL (read-only) | [providers/druid.md](./providers/druid.md) |
 | LibreDB | `libredb` | Embedded (key-value) | [providers/libredb.md](./providers/libredb.md) |
 
 ## Core Interface
@@ -297,7 +306,14 @@ DatabaseError (base)
 Provider-specific behaviour — pooling model, SSL/encryption, pagination, monitoring sources,
 maintenance operations, and known limitations — is documented per provider under
 [`docs/providers/`](./providers/README.md). Start there for anything specific to PostgreSQL, MySQL,
-Oracle, SQL Server, SQLite, Redis, MongoDB, Couchbase, ClickHouse, or LibreDB.
+Oracle, SQL Server, SQLite, Redis, MongoDB, Couchbase, ClickHouse, Apache Druid, or LibreDB.
+
+Not every provider has every feature, and the docs record the absences rather than glossing over
+them. Druid is the sharpest case: its SQL has no `UPDATE`, no `DELETE` and no `CREATE TABLE`, no
+maintenance operation is reachable from SQL, it has no user-defined indexes and no foreign keys, and
+it keeps no query log — so `supportsCreateTable` and `supportsMaintenance` are `false`, and
+`getIndexStats()`, `getSlowQueries()` and `getPerformanceMetrics()` return empty or zeroed values
+that are the truth about the engine rather than a fallback.
 
 ## Security Considerations
 

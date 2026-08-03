@@ -90,7 +90,13 @@ export interface MaintenanceResult {
  * Each id selects one strategy module in `src/lib/explain`. Extended per
  * provider as explain support lands.
  */
-export type ExplainFormat = "postgres-json" | "mysql-json" | "sqlite-queryplan" | "couchbase-json" | "clickhouse-json";
+export type ExplainFormat =
+  | "postgres-json"
+  | "mysql-json"
+  | "sqlite-queryplan"
+  | "couchbase-json"
+  | "clickhouse-json"
+  | "druid-native";
 
 export interface ProviderCapabilities {
   queryLanguage: "sql" | "json";
@@ -334,8 +340,20 @@ export interface DatabaseOverview {
  * Performance metrics for the database
  */
 export interface PerformanceMetrics {
-  /** Cache hit ratio as percentage (0-100) */
-  cacheHitRatio: number;
+  /**
+   * Cache hit ratio as percentage (0-100), or absent when the engine does not
+   * measure one.
+   *
+   * Optional because "not measured" and "measured as zero" are different facts
+   * and only one of them should raise an alarm. `DEFAULT_THRESHOLDS` treats this
+   * metric as `direction: "below"` with `critical: 80`, so a provider that has no
+   * ratio to report and substitutes a neutral-looking `0` makes every healthy
+   * cluster show a red critical cache fault. Apache Druid is that case - its cache
+   * statistics reach a metrics emitter and never a SQL-readable table - and the
+   * monitoring tabs already read this field as optional, defaulting the THRESHOLD
+   * to a healthy 100 when it is absent.
+   */
+  cacheHitRatio?: number;
   /** Transactions per second */
   transactionsPerSecond?: number;
   /** Queries per second */

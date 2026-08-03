@@ -392,6 +392,30 @@ describe("parseConnectionString", () => {
     });
   });
 
+  // ── Apache Druid: deliberately no scheme (issue #265) ───────────────────
+
+  describe("Druid has no connection-string form", () => {
+    // Druid's capabilities set supportsConnectionString: false and its UI config sets
+    // showConnectionStringToggle: false, so nothing in the product ever produces or
+    // consumes a Druid URI. There is no convention to parse either: Druid's own JDBC
+    // driver addresses Avatica (jdbc:avatica:remote:url=http://host:8888/druid/v2/sql/avatica/),
+    // which is not a URL this parser could round-trip into host/port/user/password.
+    // These tests pin that absence so a future reader does not read it as an omission.
+    test("does not invent a druid:// scheme", () => {
+      expect(parseConnectionString("druid://localhost:8888")).toBeNull();
+      expect(detectConnectionStringType("druid://localhost:8888")).toBeNull();
+    });
+
+    test("http:// and https:// stay ClickHouse, even on Druid's Router port", () => {
+      // The consequence of the decision above, recorded rather than hidden: the generic
+      // HTTP schemes were claimed by ClickHouse first (issue #264), so pasting a Druid
+      // Router URL selects ClickHouse. A Druid connection is made through the form
+      // fields instead, which is why its form has no paste toggle at all.
+      expect(detectConnectionStringType("http://localhost:8888")).toBe("clickhouse");
+      expect(parseConnectionString("http://localhost:8888")!.type).toBe("clickhouse");
+    });
+  });
+
   // ── ADO.NET format ──────────────────────────────────────────────────────
 
   describe("ADO.NET format", () => {

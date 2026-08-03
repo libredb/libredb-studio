@@ -9,6 +9,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import type { MonitoringData } from "@/lib/db/types";
 import type { TimeSeriesPoint } from "@/lib/time-series-buffer";
 import { evaluateThreshold, getThresholdColor, DEFAULT_THRESHOLDS } from "@/lib/monitoring-thresholds";
+import { CACHE_HIT_RATIO_UNAVAILABLE } from "@/lib/monitoring-cache-ratio";
 import { MetricChart } from "./MetricChart";
 
 interface OverviewTabProps {
@@ -25,15 +26,26 @@ export function OverviewTab({ data, loading, history = [] }: OverviewTabProps) {
   const overview = data?.overview;
   const performance = data?.performance;
 
-  const connectionPercent = overview ? Math.round((overview.activeConnections / overview.maxConnections) * 100) : 0;
+  // Optional on purpose: an engine that cannot measure its cache (Druid) reports
+  // nothing, and that must not be displayed as a measured 0%.
+  const cacheHitRatio = performance?.cacheHitRatio;
 
-  // Evaluate thresholds
+  // A limit of 0 means "no limit published", not "no capacity": mssql.ts says so in
+  // as many words, and Druid genuinely has no connection pool and no SQL-readable
+  // limit. Dividing by it produced NaN, which rendered as the literal "NaN% used"
+  // and an NaN-width progress bar, so a usage share only exists when a limit does.
+  const connectionLimit = overview?.maxConnections ?? 0;
+  const connectionPercent =
+    overview && connectionLimit > 0 ? Math.round((overview.activeConnections / connectionLimit) * 100) : null;
+
+  // Evaluate thresholds. No published limit cannot be near a limit, so it scores as
+  // healthy rather than as the 0 that a missing reading would once have implied.
   const connThreshold = evaluateThreshold(
-    connectionPercent,
+    connectionPercent ?? 0,
     DEFAULT_THRESHOLDS.find((t) => t.metric === "connectionPercent")!,
   );
   const cacheThreshold = evaluateThreshold(
-    performance?.cacheHitRatio ?? 100,
+    cacheHitRatio ?? 100,
     DEFAULT_THRESHOLDS.find((t) => t.metric === "cacheHitRatio")!,
   );
 
@@ -73,12 +85,18 @@ export function OverviewTab({ data, loading, history = [] }: OverviewTabProps) {
           <CardContent className="p-3 sm:p-4 pt-0">
             <div className="text-lg sm:text-2xl font-medium">
               {overview?.activeConnections ?? 0}
-              <span className="text-xs sm:text-xs font-normal text-muted-foreground">
-                /{overview?.maxConnections ?? 0}
-              </span>
+              {connectionLimit > 0 && (
+                <span className="text-xs sm:text-xs font-normal text-muted-foreground">/{connectionLimit}</span>
+              )}
             </div>
-            <Progress value={connectionPercent} className="h-1 mt-1 sm:mt-2" />
-            <p className="text-xs sm:text-xs text-muted-foreground mt-1">{connectionPercent}% used</p>
+            {connectionPercent === null ? (
+              <p className="text-xs sm:text-xs text-muted-foreground mt-1">no limit published</p>
+            ) : (
+              <>
+                <Progress value={connectionPercent} className="h-1 mt-1 sm:mt-2" />
+                <p className="text-xs sm:text-xs text-muted-foreground mt-1">{connectionPercent}% used</p>
+              </>
+            )}
           </CardContent>
         </Card>
 
@@ -101,15 +119,22 @@ export function OverviewTab({ data, loading, history = [] }: OverviewTabProps) {
             <Activity strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4 text-green-500" />
           </CardHeader>
           <CardContent className="p-3 sm:p-4 pt-0">
-            <div className="text-lg sm:text-2xl font-medium">{performance?.cacheHitRatio?.toFixed(1) ?? 0}%</div>
-            <Progress value={performance?.cacheHitRatio ?? 0} className="h-1 mt-1 sm:mt-2" />
-            <p className="text-xs sm:text-xs text-muted-foreground mt-1 truncate">
-              {(performance?.cacheHitRatio ?? 0) >= 90
-                ? "Excellent"
-                : (performance?.cacheHitRatio ?? 0) >= 80
-                  ? "Good"
-                  : "Needs tuning"}
-            </p>
+            {cacheHitRatio === undefined ? (
+              <>
+                <div className="text-lg sm:text-2xl font-medium text-muted-foreground">
+                  {CACHE_HIT_RATIO_UNAVAILABLE}
+                </div>
+                <p className="text-xs sm:text-xs text-muted-foreground mt-1 truncate">Not measured</p>
+              </>
+            ) : (
+              <>
+                <div className="text-lg sm:text-2xl font-medium">{cacheHitRatio.toFixed(1)}%</div>
+                <Progress value={cacheHitRatio} className="h-1 mt-1 sm:mt-2" />
+                <p className="text-xs sm:text-xs text-muted-foreground mt-1 truncate">
+                  {cacheHitRatio >= 90 ? "Excellent" : cacheHitRatio >= 80 ? "Good" : "Needs tuning"}
+                </p>
+              </>
+            )}
           </CardContent>
         </Card>
 

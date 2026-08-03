@@ -27,7 +27,7 @@
 ### 4. Visual EXPLAIN (Query Analyzer)
 *   **Performance Visualization:** Visual execution plan to identify performance bottlenecks.
 *   **Detailed Metrics:** Graphical representation of database scan types, join operations, costs, and execution times.
-*   **Multi-DB Support:** PostgreSQL and MySQL JSON plans, SQLite `EXPLAIN QUERY PLAN`, Couchbase SQL++ plan trees, and ClickHouse JSON plan trees. Providers without a real analyze mode hide the toggle instead of degrading to an estimate.
+*   **Multi-DB Support:** PostgreSQL and MySQL JSON plans, SQLite `EXPLAIN QUERY PLAN`, Couchbase SQL++ plan trees, ClickHouse JSON plan trees, and Apache Druid native-query plan trees. Providers without a real analyze mode hide the toggle instead of degrading to an estimate. A plan also shows only the numbers its planner actually reports: Druid emits no cost and no row estimate, so its nodes carry structure and no metrics rather than invented ones.
 
 ### 5. AI Query Assistant (Multi-Provider LLM)
 *   **Natural Language to SQL:** Convert natural language requests into high-precision SQL code.
@@ -47,6 +47,7 @@
     *   **Oracle:** Full support with connection pooling (`oracledb`); introspection/monitoring via the `ALL_*`/`DBA_*` data-dictionary views.
     *   **SQL Server:** Full support with connection pooling (`mssql`); monitoring via DMVs (`sys.dm_*`).
     *   **ClickHouse:** Full support with **no driver dependency** — SQL over the documented HTTP interface, so the SQL editor, limiter and NL2SQL all apply. Column types read verbatim from `system.columns`, JSON EXPLAIN plan trees, and `OPTIMIZE TABLE` / table-statistics / query-kill maintenance.
+    *   **Apache Druid:** Read-only support with **no driver dependency** — SQL over `POST /druid/v2/sql` on the Router (8888) or the Broker (8082), so the SQL editor, limiter and NL2SQL all apply. Datasources and column types from `INFORMATION_SCHEMA`, native-query EXPLAIN plan trees, and monitoring from `sys.segments` / `sys.servers` / `sys.tasks`. Read-only is the engine, not the integration: Druid SQL has no `UPDATE`, no `DELETE` and no `CREATE TABLE`, and no maintenance operation is reachable from SQL, so those controls are reported as unsupported instead of failing when used.
 *   **Document Databases:**
     *   **MongoDB:** Full support with official driver, JSON-based MQL queries, automatic schema inference, and aggregation pipelines.
     *   **Couchbase:** Full support with **no driver dependency** — SQL++ over the documented Query and management REST APIs, so the SQL editor, limiter and NL2SQL all apply. Buckets/scopes/collections flattened into the schema explorer, `INFER`-based column inference, visual EXPLAIN plans, and read-your-writes query consistency by default.

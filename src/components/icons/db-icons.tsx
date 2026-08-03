@@ -195,6 +195,27 @@ export const ClickHouseIcon: React.FC<IconProps> = ({ className, ...props }) => 
   </svg>
 );
 
+/**
+ * Apache Druid five-pointed angular mark, reduced to its outline. The brand mark's
+ * interior is segmented; those segments collapse into mush at the 14px (`w-3.5`)
+ * size the sidebar renders a DB icon at, so only the silhouette survives — the
+ * five points are what makes it identifiable at that size.
+ */
+export const DruidIcon: React.FC<IconProps> = ({ className, ...props }) => (
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.5"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={className}
+    {...props}
+  >
+    <path d="M12 3L14.65 8.36L20.56 9.22L16.28 13.39L17.29 19.28L12 16.5L6.71 19.28L7.72 13.39L3.44 9.22L9.35 8.36Z" />
+  </svg>
+);
+
 /** LibreDB database cylinder with L marker */
 export const LibreDBIcon: React.FC<IconProps> = ({ className, ...props }) => (
   <svg

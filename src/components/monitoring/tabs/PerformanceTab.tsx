@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import type { MonitoringData } from "@/lib/db/types";
 import type { TimeSeriesPoint } from "@/lib/time-series-buffer";
 import { evaluateThreshold, getThresholdColor, DEFAULT_THRESHOLDS } from "@/lib/monitoring-thresholds";
+import { CACHE_HIT_RATIO_UNAVAILABLE } from "@/lib/monitoring-cache-ratio";
 import { MetricChart } from "./MetricChart";
 
 interface PerformanceTabProps {
@@ -31,12 +32,17 @@ export function PerformanceTab({ data, loading, history = [] }: PerformanceTabPr
     return { label: "Poor", color: "text-red-500", bg: "bg-red-500" };
   };
 
-  const cacheStatus = getHealthStatus(performance?.cacheHitRatio ?? 0);
+  // Optional on purpose: an engine that cannot measure its cache (Druid) reports
+  // nothing, and a rating - or a red icon - for a number that does not exist would
+  // be an invented verdict. No ratio, no status.
+  const cacheHitRatio = performance?.cacheHitRatio;
+  const cacheStatus =
+    cacheHitRatio === undefined ? undefined : { ratio: cacheHitRatio, ...getHealthStatus(cacheHitRatio) };
   const bufferStatus = getHealthStatus(performance?.bufferPoolUsage ?? 0);
 
   // Threshold evaluations
   const cacheThreshold = evaluateThreshold(
-    performance?.cacheHitRatio ?? 100,
+    cacheHitRatio ?? 100,
     DEFAULT_THRESHOLDS.find((t) => t.metric === "cacheHitRatio")!,
   );
   const bufferThreshold = evaluateThreshold(
@@ -64,20 +70,36 @@ export function PerformanceTab({ data, loading, history = [] }: PerformanceTabPr
         <Card className={`p-0 border-2 transition-colors ${getThresholdColor(cacheThreshold)}`}>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 p-2 sm:p-4 pb-1 sm:pb-2">
             <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">Cache Hit</CardTitle>
-            <Activity className={`h-3 w-3 sm:h-4 sm:w-4 ${cacheStatus.color}`} />
+            <Activity
+              strokeWidth={1.5}
+              className={`h-3 w-3 sm:h-4 sm:w-4 ${cacheStatus?.color ?? "text-muted-foreground"}`}
+            />
           </CardHeader>
           <CardContent className="p-2 sm:p-4 pt-0">
-            <div className="flex items-end gap-1">
-              <span className="text-lg sm:text-3xl font-medium">{performance?.cacheHitRatio?.toFixed(1) ?? 0}</span>
-              <span className="text-xs sm:text-xl text-muted-foreground">%</span>
-            </div>
-            <Progress value={performance?.cacheHitRatio ?? 0} className="h-1 sm:h-2 mt-1 sm:mt-3" />
-            <div className="flex items-center justify-between mt-1 sm:mt-2">
-              <Badge variant="outline" className={`${cacheStatus.color} text-xs sm:text-xs`}>
-                {cacheStatus.label}
-              </Badge>
-              <span className="text-xs sm:text-xs text-muted-foreground hidden sm:inline">95%+</span>
-            </div>
+            {cacheStatus === undefined ? (
+              <>
+                <div className="flex items-end gap-1">
+                  <span className="text-lg sm:text-3xl font-medium text-muted-foreground">
+                    {CACHE_HIT_RATIO_UNAVAILABLE}
+                  </span>
+                </div>
+                <p className="text-xs sm:text-xs text-muted-foreground mt-1 sm:mt-3">Not measured</p>
+              </>
+            ) : (
+              <>
+                <div className="flex items-end gap-1">
+                  <span className="text-lg sm:text-3xl font-medium">{cacheStatus.ratio.toFixed(1)}</span>
+                  <span className="text-xs sm:text-xl text-muted-foreground">%</span>
+                </div>
+                <Progress value={cacheStatus.ratio} className="h-1 sm:h-2 mt-1 sm:mt-3" />
+                <div className="flex items-center justify-between mt-1 sm:mt-2">
+                  <Badge variant="outline" className={`${cacheStatus.color} text-xs sm:text-xs`}>
+                    {cacheStatus.label}
+                  </Badge>
+                  <span className="text-xs sm:text-xs text-muted-foreground hidden sm:inline">95%+</span>
+                </div>
+              </>
+            )}
           </CardContent>
         </Card>
 
@@ -187,7 +209,9 @@ export function PerformanceTab({ data, loading, history = [] }: PerformanceTabPr
             </CardTitle>
           </CardHeader>
           <CardContent className="p-3 sm:p-4 pt-0 space-y-2 sm:space-y-3">
-            {(performance?.cacheHitRatio ?? 100) < 90 && (
+            {/* Guarded on the ratio existing, not on a stand-in value: there is
+                nothing to advise about a cache nobody measured. */}
+            {cacheHitRatio !== undefined && cacheHitRatio < 90 && (
               <div className="flex items-start gap-2 p-2 bg-yellow-500/10 rounded-md">
                 <AlertTriangle
                   strokeWidth={1.5}
@@ -208,7 +232,7 @@ export function PerformanceTab({ data, loading, history = [] }: PerformanceTabPr
                 </div>
               </div>
             )}
-            {(performance?.cacheHitRatio ?? 0) >= 90 && !performance?.deadlocks && (
+            {cacheHitRatio !== undefined && cacheHitRatio >= 90 && !performance?.deadlocks && (
               <div className="flex items-center gap-2 p-2 bg-green-500/10 rounded-md">
                 <Activity strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4 text-green-500 flex-shrink-0" />
                 <p className="text-xs sm:text-xs">Performing well!</p>

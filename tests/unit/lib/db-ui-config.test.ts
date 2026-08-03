@@ -13,6 +13,7 @@ const ALL_TYPES: DatabaseType[] = [
   "libredb",
   "couchbase",
   "clickhouse",
+  "druid",
 ];
 
 describe("db-ui-config", () => {
@@ -42,7 +43,9 @@ describe("db-ui-config", () => {
     test("exposes the connection string toggle only for the URI-addressed providers", () => {
       // MongoDB (mongodb+srv), Couchbase (couchbase://, couchbases://) and ClickHouse
       // (its HTTP endpoint is itself a URL) are the providers a user routinely has a
-      // full URI for; everything else is field-based.
+      // full URI for; everything else is field-based. Druid is field-based on purpose:
+      // it has no URI convention for its HTTP SQL API (its JDBC driver uses
+      // `jdbc:avatica:remote:url=...`), so there is no string a user could paste.
       const withToggle = new Set<DatabaseType>(["mongodb", "couchbase", "clickhouse"]);
       for (const type of ALL_TYPES) {
         expect(getDBConfig(type).showConnectionStringToggle).toBe(withToggle.has(type));
@@ -73,6 +76,19 @@ describe("db-ui-config", () => {
         "database",
         "connectionString",
       ]);
+    });
+
+    test("druid exposes its label, Router port and connection fields", () => {
+      expect(getDBConfig("druid").label).toBe("Apache Druid");
+      expect(getDBConfig("druid").defaultPort).toBe("8888");
+      expect(getDBConfig("druid").connectionFields).toEqual(["host", "port", "user", "password"]);
+    });
+
+    test("druid offers no database field, because Druid has exactly one catalog", () => {
+      // INFORMATION_SCHEMA.SCHEMATA reports exactly one catalog, always named `druid`
+      // (issue #265, live-verified against Druid 37.0.0). A database selector would be
+      // a control with no effect, so the field is absent rather than ignored.
+      expect(getDBConfig("druid").connectionFields).not.toContain("database");
     });
 
     test("every provider carries a distinct colour class", () => {
@@ -116,6 +132,7 @@ describe("db-ui-config", () => {
       expect(isFileBased("mssql")).toBe(false);
       expect(isFileBased("couchbase")).toBe(false);
       expect(isFileBased("clickhouse")).toBe(false);
+      expect(isFileBased("druid")).toBe(false);
     });
   });
 });

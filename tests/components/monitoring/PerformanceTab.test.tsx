@@ -75,6 +75,44 @@ describe("PerformanceTab", () => {
     expect(queryByText("Attention")).not.toBeNull();
   });
 
+  test("renders the measured cache hit ratio with a bar and a rating", () => {
+    const { queryByText } = render(<PerformanceTab data={makeData()} loading={false} />);
+    const card = queryByText("Cache Hit")!.closest('[data-slot="card"]')!;
+    expect(card.textContent).toContain("98.2");
+    expect(card.textContent).toContain("%");
+    expect(card.querySelectorAll('[data-slot="progress"]').length).toBe(1);
+    expect(card.textContent).toContain("Excellent");
+    expect(card.querySelector("svg")?.getAttribute("class")).toContain("text-green-500");
+  });
+
+  test("reports an unmeasured cache hit ratio as unavailable instead of 0%", () => {
+    const data = {
+      ...makeData(),
+      performance: { bufferPoolUsage: 65, deadlocks: 0, checkpointWriteTime: "12ms" },
+    } as MonitoringData;
+    const { queryByText, container } = render(<PerformanceTab data={data} loading={false} />);
+
+    // The card, its title and the 3-card grid all stay put.
+    expect(queryByText("Cache Hit")).not.toBeNull();
+    expect(container.querySelectorAll('[data-slot="card"]').length).toBe(5);
+
+    const card = queryByText("Cache Hit")!.closest('[data-slot="card"]')!;
+    expect(card.textContent).toContain("N/A");
+    expect(card.textContent).toContain("Not measured");
+    // No fabricated measurement: no percentage, no bar, no rating.
+    expect(card.textContent).not.toContain("%");
+    expect(card.querySelectorAll('[data-slot="progress"]').length).toBe(0);
+    for (const rating of ["Excellent", "Good", "Fair", "Poor"]) {
+      expect(card.textContent).not.toContain(rating);
+    }
+    // Absence is not a fault: no red icon, no red or yellow border, no advice.
+    expect(card.querySelector("svg")?.getAttribute("class")).toContain("text-muted-foreground");
+    expect(card.className).not.toContain("red");
+    expect(card.className).not.toContain("yellow");
+    expect(queryByText("Low Cache Hit")).toBeNull();
+    expect(queryByText("Performing well!")).toBeNull();
+  });
+
   test("shows trend charts when history has at least 2 points", () => {
     const { queryByText, queryAllByTestId } = render(
       <PerformanceTab data={makeData()} loading={false} history={makeHistory()} />,

@@ -79,7 +79,7 @@ The test instance comes with a pre-configured PostgreSQL database via [Seed Conn
 
 <p align="center">
   <img src="public/screenshots/connection-modal.png" alt="Multi-Database Connection Manager" width="100%" />
-  <br/><em>Connect to PostgreSQL, MySQL, Oracle, SQL Server, MongoDB, Couchbase, ClickHouse, Redis, or SQLite with SSL/TLS and SSH Tunnel support.</em>
+  <br/><em>Connect to PostgreSQL, MySQL, Oracle, SQL Server, MongoDB, Couchbase, ClickHouse, Apache Druid, Redis, or SQLite with SSL/TLS and SSH Tunnel support.</em>
 </p>
 
 ---
@@ -185,9 +185,10 @@ The test instance comes with a pre-configured PostgreSQL database via [Seed Conn
 | **MongoDB** | `mongodb` | JSON query editor, collection operations (find, aggregate, insert, update, delete) |
 | **Couchbase** | none — HTTP (Query + management REST) | Full SQL++ IDE, EXPLAIN plans, bucket/scope/collection explorer, `INFER` column inference, read-your-writes consistency, `UPDATE STATISTICS` / `BUILD INDEX` / request kill |
 | **ClickHouse** | none — HTTP (SQL interface, port 8123) | Full SQL IDE, JSON EXPLAIN plan trees, system-table schema introspection, `OPTIMIZE TABLE` / table statistics / query kill maintenance |
+| **Apache Druid** | none — HTTP (`POST /druid/v2/sql`, Router port 8888 or Broker 8082) | Read-only SQL IDE, native-query EXPLAIN plan trees, `INFORMATION_SCHEMA` datasource introspection, `sys.*` monitoring (segments, servers, ingestion tasks). Druid SQL has no `UPDATE`, no `DELETE` and no `CREATE TABLE`, and nothing it can do counts as a maintenance operation — a datasource changes through ingestion, not from the editor |
 | **Redis** | `ioredis` | Command editor, key browser, INFO-based monitoring |
 
-> All SQL databases share: schema explorer, ER diagrams, schema diff & migration, display masking (preview), monitoring dashboard, and connection string import.
+> All SQL databases share: schema explorer, ER diagrams, schema diff & migration, display masking (preview), monitoring dashboard, and connection string import. Druid is the exception twice over: its HTTP SQL API has no URI convention to paste, so it is configured by host and port only, and generated migration SQL has nothing to apply against an engine whose SQL contains no DDL.
 
 > **Provider reference docs:** each database has an in-depth reference (design, connection, query format, monitoring, limitations) under [`docs/providers/`](docs/providers/README.md). For the provider architecture see [`docs/DATABASE_PROVIDERS.md`](docs/DATABASE_PROVIDERS.md), and to add a new database see [`docs/ADDING_A_PROVIDER.md`](docs/ADDING_A_PROVIDER.md).
 
@@ -203,7 +204,7 @@ The test instance comes with a pre-configured PostgreSQL database via [Seed Conn
 | **Editor** | Monaco Editor (VS Code Engine) | Web |
 | **AI** | Multi-Model (Gemini, OpenAI, Ollama, Custom) | Web, Mobile |
 | **Auth** | JWT (`jose`) + OIDC (`openid-client`), PKCE, Role Mapping | Web, Mobile |
-| **Database** | PostgreSQL, MySQL, Oracle, SQL Server, SQLite, MongoDB, Couchbase, ClickHouse, Redis | Web, Mobile |
+| **Database** | PostgreSQL, MySQL, Oracle, SQL Server, SQLite, MongoDB, Couchbase, ClickHouse, Apache Druid, Redis | Web, Mobile |
 | **Charts** | Recharts (Bar, Line, Pie, Area, Scatter, Histogram, Stacked) | Web, Mobile |
 | **ERD** | React Flow, ELK.js (auto-layout) | Web |
 | **State/Grid** | TanStack Table & Virtual | Web, Mobile |
@@ -294,7 +295,7 @@ journalctl -u libredb-studio
 
   ### Prerequisites
   - [Bun](https://bun.sh/) (Recommended) or Node.js 24+
-  - A target database to query (PostgreSQL, MySQL, Oracle, SQL Server, SQLite, MongoDB, Couchbase, ClickHouse, or Redis)
+  - A target database to query (PostgreSQL, MySQL, Oracle, SQL Server, SQLite, MongoDB, Couchbase, ClickHouse, Apache Druid, or Redis)
 
   ### Quick Start (Local)
   1. **Clone & Install**
@@ -340,13 +341,20 @@ journalctl -u libredb-studio
 Need databases to test with? We provide ready-to-use containers for all supported engines:
 
 ```bash
-# Start all development databases (PostgreSQL, MySQL, MongoDB, SQL Server, Oracle)
+# Start every default-profile database (PostgreSQL, MySQL, MongoDB, SQL Server, Oracle, ...)
 docker compose -f database-compose.yml up -d
 
 # Or start a specific database
 docker compose -f database-compose.yml up -d postgres
 docker compose -f database-compose.yml up -d mssql
 docker compose -f database-compose.yml up -d oracle
+
+# Apache Druid: profile-gated, so a bare `up -d` does NOT start it. Druid is a distributed
+# system with no single-container mode - five Druid processes plus ZooKeeper plus its own
+# metadata database is the minimum that can answer a SQL query, so all seven services carry
+# `profiles: [druid]` rather than doubling the default stack. Connect to the Router on 8888
+# (or the Broker on 8082 - the same endpoint, no different configuration).
+docker compose -f database-compose.yml --profile druid up -d
 
 # Start PostgreSQL with sample e-commerce data
 docker compose -f docker/postgres.yml up -d
@@ -356,6 +364,9 @@ docker compose -f database-compose.yml down
 
 # Stop and remove all data
 docker compose -f database-compose.yml down -v
+
+# The Druid containers need the profile flag here too - without it `down` leaves them running
+docker compose -f database-compose.yml --profile druid down -v
 ```
 
 ### Connection Details
@@ -367,6 +378,7 @@ docker compose -f database-compose.yml down -v
 | **SQL Server** | localhost | 1433 | sa | Password123! | master |
 | **Oracle** | localhost | 1521 | system | Password123! | freepdb1 |
 | **MongoDB** | localhost | 27017 | admin | admin | — |
+| **Apache Druid** | localhost | 8888 (Router) or 8082 (Broker) | — | — | — (one catalog, always `druid`) |
 
 ### PostgreSQL Sample Data
 
@@ -416,7 +428,7 @@ bun run test:coverage
 |-------|-----------|--------|-------|----------------|
 | **Unit** | `tests/unit/` | `bun:test` | ~1,609 | Pure functions: SQL parser, connection strings, data masking, query limiter, schema diff, error classes, DB icons, showcase queries |
 | **API** | `tests/api/` | `bun:test` | ~279 | Route handlers: auth, query, transaction, maintenance, AI endpoints, middleware |
-| **Integration** | `tests/integration/` | `bun:test` | ~346 | Database providers: PG, MySQL, SQLite, MongoDB, Couchbase, Redis, Oracle, MSSQL, ClickHouse|
+| **Integration** | `tests/integration/` | `bun:test` | ~346 | Database providers: PG, MySQL, SQLite, MongoDB, Couchbase, Redis, Oracle, MSSQL, ClickHouse, Druid|
 | **Hooks** | `tests/hooks/` | `bun:test` | ~251 | React hooks: auth, connections, tabs, query execution, transactions, inline editing, AI chat, monitoring |
 | **Components** | `tests/components/` | `bun:test` + happy-dom | ~570 | UI components: Studio, Sidebar, QueryEditor, ResultsGrid, Admin Dashboard, Charts, ERD |
 | **E2E** | `e2e/` | Playwright | ~32 | Full browser flows: login, connections, query execution, tabs, export, admin |
@@ -707,7 +719,7 @@ extraEnvFrom:
 | `defaults` | No | Default values merged into all connections |
 | `connections[].id` | Yes | Unique slug (`[a-z0-9-]+`, max 64 chars) |
 | `connections[].name` | Yes | Display name in UI |
-| `connections[].type` | Yes | `postgres`, `mysql`, `sqlite`, `mongodb`, `redis`, `oracle`, `mssql`, `libredb`, `couchbase`, `clickhouse` |
+| `connections[].type` | Yes | `postgres`, `mysql`, `sqlite`, `mongodb`, `redis`, `oracle`, `mssql`, `libredb`, `couchbase`, `clickhouse`, `druid` |
 | `connections[].roles` | Yes | `["*"]` (everyone), `["admin"]`, `["user"]`, or `["admin", "user"]` |
 | `connections[].managed` | No | `true` = read-only (default), `false` = editable copy for user |
 | `connections[].password` | No | Use `${ENV_VAR}` syntax for secrets |
@@ -745,7 +757,7 @@ extraEnvFrom:
 - [ ] **Phase 17**: Enterprise Collaboration (User Identity, Shared Workspaces, SAML 2.0).
 - [ ] **Phase 18**: Server-Enforced Data Masking (SQL output-lineage, deployment-global policy, fail-closed API masking, alias/aggregate coverage).
 - [x] **Phase 19**: Driver-Free Providers — Couchbase (SQL++ over the Query REST API), the first provider that adds no runtime dependency. Pattern documented in [Adding a Provider](docs/ADDING_A_PROVIDER.md).
-- [ ] **Phase 20**: Analytics Databases — ClickHouse ([#264](https://github.com/libredb/libredb-studio/issues/264)) and Apache Druid ([#265](https://github.com/libredb/libredb-studio/issues/265)), both driver-free over HTTP.
+- [x] **Phase 20**: Analytics Databases — ClickHouse ([#264](https://github.com/libredb/libredb-studio/issues/264)) and Apache Druid ([#265](https://github.com/libredb/libredb-studio/issues/265)), both driver-free over HTTP. Druid is read-only by nature — no `UPDATE`, no `DELETE`, no `CREATE TABLE` — so it also demonstrates a provider that reports absent capabilities honestly instead of offering controls that can only fail.
 - [ ] **Phase 21**: Federated Query — Trino/Starburst. Deliberately unscheduled: a Trino catalog is another *system*, so what a connection pins is a product question that has to be answered before the work can be specified.
 
 ---

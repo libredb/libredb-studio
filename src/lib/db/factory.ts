@@ -92,6 +92,14 @@ export async function createDatabaseProvider(
       return new ClickHouseProvider(connection, options);
     }
 
+    case "druid": {
+      // The explicit /index specifier keeps this dynamic import statically
+      // analysable: a bare directory resolves only at runtime, which the bundler
+      // cannot trace into a chunk.
+      const { DruidProvider } = await import("./providers/sql/druid/index");
+      return new DruidProvider(connection, options);
+    }
+
     // Document Databases - dynamically imported
     case "mongodb": {
       const { MongoDBProvider } = await import("./providers/document/mongodb");
@@ -120,7 +128,7 @@ export async function createDatabaseProvider(
 
     default:
       throw new DatabaseConfigError(
-        `Unknown database type: ${connection.type}. Supported types: postgres, mysql, sqlite, oracle, mssql, clickhouse, mongodb, couchbase, redis, libredb`,
+        `Unknown database type: ${connection.type}. Supported types: postgres, mysql, sqlite, oracle, mssql, clickhouse, druid, mongodb, couchbase, redis, libredb`,
         connection.type,
       );
   }
