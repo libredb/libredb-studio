@@ -32,7 +32,9 @@
 #                             until the first post-listing bump) / catalog /
 #                             upstream_repo / docs / get (user-facing "where do I
 #                             get it"; docs/CHANNELS.md resolves it as
-#                             get > catalog > upstream_repo)
+#                             get > catalog > upstream_repo, except a deprecated
+#                             channel renders no link at all, whatever these
+#                             fields hold)
 #   pin.strategy              local_file | remote_file | probe | none
 #   pin.probe                 required when strategy == probe; one of the probe ids
 #                             defined in scripts/distribution-check.mjs

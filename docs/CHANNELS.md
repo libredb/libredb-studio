@@ -7,10 +7,11 @@ machine-readable inventory behind this page is
 [`distribution/channels.yaml`](../distribution/channels.yaml).
 
 **Users** — find your platform in the Platform column, then follow the Guide link
-for the exact command.
+for the install or deploy steps.
 
 **Developers** — the Updates column says whether release CI publishes the channel
-or a human opens a pull request. New channels are added in
+or a human updates it by hand, and how quickly it is expected to follow a release.
+New channels are added in
 [`distribution/channels.yaml`](../distribution/channels.yaml).
 
 **Buyers, investors, supporters** — the snapshot below is the coverage claim.
@@ -22,8 +23,9 @@ or a human opens a pull request. New channels are added in
 | `pending` | Submission or first listing in progress |
 | `deprecated` | Closed or declined — kept for honesty (for example Flathub) |
 
-A channel that serves several platforms is counted once per platform, so the
-platform numbers overlap and do not sum to the channel total.
+Platform counts cover live channels only, and a channel serving several
+platforms is counted once for each — so they overlap, and their sum is not a
+channel count.
 
 <!-- BEGIN:CHANNEL-SCORECARD -->
 

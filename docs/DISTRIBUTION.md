@@ -1050,8 +1050,8 @@ Chocolatey push is still in moderation.
 
 ### Channel inventory and drift check
 
-For a **business / investment coverage view** (live counts by category, full channel
-table with catalog links), see [`docs/CHANNELS.md`](CHANNELS.md). Regenerate it with
+For the **coverage matrix** (live counts by category and platform, full channel
+table), see [`docs/CHANNELS.md`](CHANNELS.md). Regenerate it with
 `bun run distribution:matrix` after editing the inventory; `bun run distribution:matrix --check`
 fails when the generated regions are stale.
 

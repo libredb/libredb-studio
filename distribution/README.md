@@ -5,7 +5,7 @@ obtain LibreDB Studio - registries, package managers, PaaS catalogs, partner lis
 each channel's business `category`, update policy, provenance links, and (where measurable)
 where its pinned version lives.
 
-Business / investment coverage (scorecard + full table): [`docs/CHANNELS.md`](../docs/CHANNELS.md)
+Coverage matrix for users, developers and buyers (scorecard + full table): [`docs/CHANNELS.md`](../docs/CHANNELS.md)
 (`bun run distribution:matrix` to regenerate; `--check` for freshness).
 
 ```bash
