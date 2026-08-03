@@ -151,6 +151,25 @@ export const MSSQLIcon: React.FC<IconProps> = ({ className, ...props }) => (
   </svg>
 );
 
+/** Couchbase bucket with its scope/collection dividers (simplified) */
+export const CouchbaseIcon: React.FC<IconProps> = ({ className, ...props }) => (
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.5"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={className}
+    {...props}
+  >
+    <path d="M4 7l1.5-3h13L20 7" />
+    <path d="M4 7h16l-1.5 12a2 2 0 01-2 1.8H7.5a2 2 0 01-2-1.8L4 7z" />
+    <path d="M7.5 11h9" />
+    <path d="M7.5 15h9" />
+  </svg>
+);
+
 /** LibreDB database cylinder with L marker */
 export const LibreDBIcon: React.FC<IconProps> = ({ className, ...props }) => (
   <svg

@@ -90,6 +90,14 @@ export async function createDatabaseProvider(
       return new MongoDBProvider(connection, options);
     }
 
+    case "couchbase": {
+      // The explicit /index specifier keeps this dynamic import statically
+      // analysable: a bare directory resolves only at runtime, which the bundler
+      // cannot trace into a chunk.
+      const { CouchbaseProvider } = await import("./providers/document/couchbase/index");
+      return new CouchbaseProvider(connection, options);
+    }
+
     // Key-Value Stores - dynamically imported
     case "redis": {
       const { RedisProvider } = await import("./providers/keyvalue/redis");
@@ -104,7 +112,7 @@ export async function createDatabaseProvider(
 
     default:
       throw new DatabaseConfigError(
-        `Unknown database type: ${connection.type}. Supported types: postgres, mysql, sqlite, oracle, mssql, mongodb, redis, libredb`,
+        `Unknown database type: ${connection.type}. Supported types: postgres, mysql, sqlite, oracle, mssql, mongodb, couchbase, redis, libredb`,
         connection.type,
       );
   }

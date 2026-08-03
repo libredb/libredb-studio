@@ -10,6 +10,7 @@ import {
   OracleIcon,
   MSSQLIcon,
   LibreDBIcon,
+  CouchbaseIcon,
 } from "@/components/icons/db-icons";
 
 describe("db-icons", () => {
@@ -22,6 +23,7 @@ describe("db-icons", () => {
     { name: "OracleIcon", Component: OracleIcon },
     { name: "MSSQLIcon", Component: MSSQLIcon },
     { name: "LibreDBIcon", Component: LibreDBIcon },
+    { name: "CouchbaseIcon", Component: CouchbaseIcon },
   ];
 
   for (const { name, Component } of icons) {

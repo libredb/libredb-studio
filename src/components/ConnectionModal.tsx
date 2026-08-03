@@ -134,6 +134,14 @@ export function ConnectionModal({
     dbTypes,
   } = useConnectionForm({ isOpen, onClose, onConnect, editConnection, onTestConnection });
 
+  // Couchbase pins one bucket per connection (issue #262, decision 4), so the shared
+  // `database` field holds a bucket name and the form must say so.
+  const isCouchbase = type === "couchbase";
+  const databaseFieldLabel = isCouchbase ? "Bucket" : "Database";
+  const connectionUriPlaceholder = isCouchbase
+    ? "couchbase://localhost:8091/travel-sample  or  couchbases://cb.<id>.cloud.couchbase.com/..."
+    : "mongodb://localhost:27017/mydb  or  mongodb+srv://...";
+
   const formContent = (
     <>
       {/* Progress bar — fixed top */}
@@ -327,7 +335,7 @@ export function ConnectionModal({
                       id="connectionString"
                       value={connectionString}
                       onChange={(e) => setConnectionString(e.target.value)}
-                      placeholder="mongodb://localhost:27017/mydb  or  mongodb+srv://..."
+                      placeholder={connectionUriPlaceholder}
                       className="h-10 bg-zinc-900/50 border-white/5 focus:border-blue-500/50 transition-all text-xs font-mono"
                     />
                   </div>
@@ -335,7 +343,7 @@ export function ConnectionModal({
                     <div className="flex items-center gap-2 mb-1">
                       <Database strokeWidth={1.5} className="w-3 h-3 text-zinc-500" />
                       <Label htmlFor="database" className="text-xs font-mediumr text-zinc-500">
-                        Database Name (optional override)
+                        {databaseFieldLabel} Name (optional override)
                       </Label>
                     </div>
                     <Input
@@ -427,7 +435,7 @@ export function ConnectionModal({
                     <div className="flex items-center gap-2 mb-1">
                       <Database strokeWidth={1.5} className="w-3 h-3 text-zinc-500" />
                       <Label htmlFor="database" className="text-xs font-mediumr text-zinc-500">
-                        Database Name
+                        {databaseFieldLabel} Name
                       </Label>
                     </div>
                     <Input

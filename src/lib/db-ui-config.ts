@@ -8,6 +8,7 @@ import {
   OracleIcon,
   MSSQLIcon,
   LibreDBIcon,
+  CouchbaseIcon,
 } from "@/components/icons/db-icons";
 import type { DatabaseType } from "@/lib/types";
 
@@ -88,6 +89,16 @@ const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
     defaultPort: "1433",
     showConnectionStringToggle: false,
     connectionFields: ["host", "port", "user", "password", "database", "instanceName"],
+  },
+  couchbase: {
+    icon: CouchbaseIcon,
+    color: "text-orange-400",
+    label: "Couchbase",
+    // Management port. The query ports are discovered from the cluster at connect
+    // time (issue #262, decision 3), so only this one is ever stored.
+    defaultPort: "8091",
+    showConnectionStringToggle: true,
+    connectionFields: ["host", "port", "user", "password", "database", "connectionString"],
   },
   libredb: {
     icon: LibreDBIcon,

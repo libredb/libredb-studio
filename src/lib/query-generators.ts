@@ -1,6 +1,38 @@
 import type { ProviderCapabilities } from "@/lib/db/types";
 import type { ColumnSchema } from "@/lib/types";
 
+/** Couchbase management port, the capability signal for the SQL++ dialect. */
+const COUCHBASE_PORT = 8091;
+
+/**
+ * Alias every generated Couchbase statement binds its keyspace to. SQL++ needs a
+ * name to hang `META()` and field references off, and the generator has only the
+ * collection name to work from, so the alias is fixed rather than derived: `d`
+ * for document. It never collides with a field, because fields are only ever
+ * referenced through it.
+ */
+const COUCHBASE_ALIAS = "d";
+
+/**
+ * Column carrying the document key. Kept in step with
+ * `COUCHBASE_DOCUMENT_KEY_COLUMN` in the provider's introspection: the schema tree
+ * and the generated projection must name the key identically, or the grid shows a
+ * column the query never produces.
+ */
+const COUCHBASE_DOCUMENT_KEY_COLUMN = "__id";
+
+/** Backtick-quote a SQL++ identifier, doubling any backtick it contains. */
+function couchbaseQuote(name: string): string {
+  return `\`${name.replaceAll("`", "``")}\``;
+}
+
+/**
+ * The document key projection. `SELECT *` nests whole documents under the
+ * keyspace name and never yields the key at all (issue #262, decision 5), so
+ * every generated statement projects it explicitly through the alias.
+ */
+const COUCHBASE_KEY_PROJECTION = `META(${COUCHBASE_ALIAS}).id AS ${COUCHBASE_DOCUMENT_KEY_COLUMN}`;
+
 /**
  * Quote a SQL identifier (table/column) for the target dialect, but ONLY when
  * needed. Plain identifiers that round-trip unquoted are left as-is so generated
@@ -12,6 +44,7 @@ import type { ColumnSchema } from "@/lib/types";
  *  - Oracle (1521): unquoted folds to UPPERCASE  → quote unless plain UPPER
  *  - SQL Server (1433): case-insensitive          → bracket-quote only specials
  *  - MySQL (3306): case-preserving                → backtick-quote only specials
+ *  - Couchbase (8091): SQL++                      → always backtick-quote
  *  - PostgreSQL (5432) / SQLite / default: unquoted folds to lowercase (pg)
  *                                                  → quote unless plain lower
  */
@@ -19,6 +52,12 @@ export function quoteIdentifier(name: string, capabilities: ProviderCapabilities
   // Document stores (MongoDB) don't use SQL identifier quoting.
   if (capabilities.queryLanguage === "json") return name;
 
+  if (capabilities.defaultPort === COUCHBASE_PORT) {
+    // Couchbase (SQL++): quote unconditionally. Reserved words (`bucket`, `scope`,
+    // ...) are a syntax error unquoted, and a schemaless document may name a field
+    // anything at all, so there is no safe unquoted subset worth detecting.
+    return couchbaseQuote(name);
+  }
   if (capabilities.defaultPort === 1521) {
     // Oracle
     return /^[A-Z_][A-Z0-9_$#]*$/.test(name) ? name : `"${name.replaceAll('"', '""')}"`;
@@ -107,6 +146,10 @@ export function generateTableQuery(tableName: string, capabilities: ProviderCapa
     return JSON.stringify({ collection: tableName, operation: "find", filter: {}, options: { limit: 50 } }, null, 2);
   }
   const table = quoteQualifiedName(tableName, capabilities);
+  // Couchbase (SQL++)
+  if (capabilities.defaultPort === COUCHBASE_PORT) {
+    return `SELECT ${COUCHBASE_KEY_PROJECTION}, ${COUCHBASE_ALIAS}.* FROM ${table} AS ${COUCHBASE_ALIAS} LIMIT 50;`;
+  }
   // Oracle
   if (capabilities.defaultPort === 1521) {
     return `SELECT * FROM ${table} FETCH FIRST 50 ROWS ONLY;`;
@@ -182,6 +225,17 @@ export function generateSelectQuery(
     );
   }
   const table = quoteQualifiedName(tableName, capabilities);
+  // Couchbase (SQL++): every field is reached through the keyspace alias, and the
+  // document key comes from META() rather than from the document body.
+  if (capabilities.defaultPort === COUCHBASE_PORT) {
+    const fields = columns.filter((c) => c.name !== COUCHBASE_DOCUMENT_KEY_COLUMN);
+    const projected =
+      fields.length > 0
+        ? fields.map((c) => `  ${COUCHBASE_ALIAS}.${quoteIdentifier(c.name, capabilities)}`)
+        : [`  ${COUCHBASE_ALIAS}.*`];
+    const projection = [`  ${COUCHBASE_KEY_PROJECTION}`, ...projected].join(",\n");
+    return `SELECT\n${projection}\nFROM ${table} AS ${COUCHBASE_ALIAS}\nWHERE 1=1\nLIMIT 100;`;
+  }
   const cols = columns.map((c) => `  ${quoteIdentifier(c.name, capabilities)}`).join(",\n") || "  *";
   // Oracle
   if (capabilities.defaultPort === 1521) {

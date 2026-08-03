@@ -301,7 +301,7 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
       setTestResult({
         success: false,
         message:
-          "Could not parse connection string. Supported formats: postgres://, mysql://, mongodb://, redis://, oracle://, mssql://",
+          "Could not parse connection string. Supported formats: postgres://, mysql://, mongodb://, couchbase://, redis://, oracle://, mssql://",
       });
       return;
     }
@@ -314,8 +314,10 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     if (parsed.password) setPassword(parsed.password);
     if (parsed.database) setDatabase(parsed.database);
 
-    // For MongoDB, also set connection string mode
-    if (parsed.type === "mongodb" && parsed.connectionString) {
+    // A provider whose form offers the URI mode (MongoDB, Couchbase) switches to it,
+    // so the pasted string is what gets connected with rather than a lossy re-assembly
+    // of the fields parsed out of it.
+    if (getDBConfig(parsed.type).showConnectionStringToggle && parsed.connectionString) {
       setConnectionString(parsed.connectionString);
       setMongoConnectionMode("connectionString");
     }
@@ -341,6 +343,7 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     "oracle",
     "mssql",
     "mongodb",
+    "couchbase",
     "redis",
     "libredb",
   ];

@@ -19,7 +19,17 @@ const ConnectionEnvironmentSchema = z.enum(["production", "staging", "developmen
 // Allowed roles in current iteration (matches JWT role: 'admin' | 'user' + wildcard)
 const AllowedRoleSchema = z.enum(["*", "admin", "user"]);
 
-const SeedDatabaseType = z.enum(["postgres", "mysql", "sqlite", "mongodb", "redis", "oracle", "mssql", "libredb"]);
+const SeedDatabaseType = z.enum([
+  "postgres",
+  "mysql",
+  "sqlite",
+  "mongodb",
+  "redis",
+  "oracle",
+  "mssql",
+  "libredb",
+  "couchbase",
+]);
 
 export const SeedDefaultsSchema = z.object({
   managed: z.boolean().optional(),

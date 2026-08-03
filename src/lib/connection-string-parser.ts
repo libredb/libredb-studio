@@ -12,7 +12,8 @@ export interface ParsedConnection {
 
 /**
  * Parse a database connection string URL into its components.
- * Supports: postgres://, postgresql://, mysql://, mongodb://, mongodb+srv://, redis://
+ * Supports: postgres://, postgresql://, mysql://, mongodb://, mongodb+srv://, redis://,
+ * couchbase://, couchbases://
  */
 export function parseConnectionString(input: string): ParsedConnection | null {
   const trimmed = input.trim();
@@ -46,6 +47,14 @@ export function parseConnectionString(input: string): ParsedConnection | null {
   // MSSQL / SQL Server
   if (trimmed.startsWith("mssql://") || trimmed.startsWith("sqlserver://")) {
     return parseGenericURL(trimmed, "mssql", "1433");
+  }
+
+  // Couchbase — the TLS scheme is checked first, it is not a prefix of the plain one
+  if (trimmed.startsWith("couchbases://")) {
+    return parseCouchbaseString(trimmed, "18091");
+  }
+  if (trimmed.startsWith("couchbase://")) {
+    return parseCouchbaseString(trimmed, "8091");
   }
 
   // ADO.NET format: Server=host;Database=db;User Id=user;Password=pass;
@@ -107,6 +116,46 @@ function parseMongoDBString(uri: string): ParsedConnection {
   return result;
 }
 
+/**
+ * Percent-decode a component, keeping it verbatim when it is not a valid escape
+ * sequence. Couchbase bucket names may legally contain a literal "%".
+ */
+function safeDecodeURIComponent(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+/**
+ * Parse a Couchbase connection string. Only the management port is stored — 8091 for
+ * couchbase://, 18091 for couchbases:// — because the query ports are discovered from the
+ * cluster at connect time. A Capella endpoint (couchbases://cb.<id>.cloud.couchbase.com)
+ * carries neither a port nor a bucket path, so both stay at their defaults and no bucket
+ * is invented. The full original string is always preserved.
+ */
+function parseCouchbaseString(uri: string, defaultPort: string): ParsedConnection | null {
+  try {
+    const url = new URL(uri);
+    // Multi-node connection strings list hosts comma-separated; take the first one.
+    const [firstHost] = url.hostname.split(",");
+    const bucket = url.pathname.slice(1); // remove leading /
+
+    return {
+      type: "couchbase",
+      host: firstHost || "localhost",
+      port: url.port || defaultPort,
+      user: url.username ? decodeURIComponent(url.username) : undefined,
+      password: url.password ? decodeURIComponent(url.password) : undefined,
+      database: bucket ? safeDecodeURIComponent(bucket) : undefined,
+      connectionString: uri,
+    };
+  } catch {
+    return null;
+  }
+}
+
 function parseADONetString(input: string): ParsedConnection | null {
   try {
     const params: Record<string, string> = {};
@@ -163,6 +212,7 @@ export function detectConnectionStringType(input: string): DatabaseType | null {
   if (trimmed.startsWith("redis://") || trimmed.startsWith("rediss://")) return "redis";
   if (trimmed.startsWith("oracle://")) return "oracle";
   if (trimmed.startsWith("mssql://") || trimmed.startsWith("sqlserver://")) return "mssql";
+  if (trimmed.startsWith("couchbase://") || trimmed.startsWith("couchbases://")) return "couchbase";
   if (/^server\s*=/i.test(trimmed)) return "mssql";
   return null;
 }

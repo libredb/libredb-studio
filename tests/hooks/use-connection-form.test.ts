@@ -9,13 +9,21 @@ import { mockToastSuccess, mockToastError } from "../helpers/mock-sonner";
 import "../helpers/mock-navigation";
 
 // ── Mock @/lib/db-ui-config ─────────────────────────────────────────────────
+const DEFAULT_PORTS: Record<string, string> = {
+  mysql: "3306",
+  mongodb: "27017",
+  redis: "6379",
+  couchbase: "8091",
+};
+
 mock.module("@/lib/db-ui-config", () => ({
   getDBConfig: (type: string) => ({
     label: type.charAt(0).toUpperCase() + type.slice(1),
     icon: "Database",
     color: "#000",
-    defaultPort: type === "mysql" ? "3306" : type === "mongodb" ? "27017" : type === "redis" ? "6379" : "5432",
-    showConnectionStringToggle: type === "mongodb",
+    defaultPort: DEFAULT_PORTS[type] ?? "5432",
+    // Mirrors the real config: the URI-addressed providers offer the toggle.
+    showConnectionStringToggle: type === "mongodb" || type === "couchbase",
     connectionFields: ["host", "port", "user", "password", "database"],
   }),
 }));
@@ -338,6 +346,7 @@ describe("useConnectionForm", () => {
     mongodb: true,
     redis: true,
     libredb: true,
+    couchbase: true,
   };
 
   test("dbTypes offers every database type a connection can carry", () => {
@@ -742,6 +751,28 @@ describe("useConnectionForm", () => {
 
     expect(result.current.type).toBe("mongodb");
     expect(result.current.connectionString).toBe("mongodb://admin:pass@mongo.example.com:27017/mydb");
+    expect(result.current.mongoConnectionMode).toBe("connectionString");
+  });
+
+  // ── handlePasteConnectionString for Couchbase ──────────────────────────
+
+  test("handlePasteConnectionString sets Couchbase bucket and connectionString mode", () => {
+    const { result } = renderHook(() => useConnectionForm(defaultProps));
+
+    act(() => {
+      result.current.setPasteInput("couchbase://admin:pass@cb.example.com:8091/travel");
+    });
+
+    act(() => {
+      result.current.handlePasteConnectionString();
+    });
+
+    expect(result.current.type).toBe("couchbase");
+    expect(result.current.host).toBe("cb.example.com");
+    expect(result.current.port).toBe("8091");
+    // The bucket rides in the `database` field.
+    expect(result.current.database).toBe("travel");
+    expect(result.current.connectionString).toBe("couchbase://admin:pass@cb.example.com:8091/travel");
     expect(result.current.mongoConnectionMode).toBe("connectionString");
   });
 

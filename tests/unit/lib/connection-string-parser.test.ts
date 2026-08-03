@@ -204,6 +204,107 @@ describe("parseConnectionString", () => {
     });
   });
 
+  // ── Couchbase ───────────────────────────────────────────────────────────
+
+  describe("couchbase:// and couchbases:// URLs", () => {
+    test("parses full couchbase URL", () => {
+      const uri = "couchbase://Administrator:password123@127.0.0.1:8091/travel";
+      const result = parseConnectionString(uri);
+      expect(result).not.toBeNull();
+      expect(result!.type).toBe("couchbase");
+      expect(result!.host).toBe("127.0.0.1");
+      expect(result!.port).toBe("8091");
+      expect(result!.user).toBe("Administrator");
+      expect(result!.password).toBe("password123");
+      expect(result!.database).toBe("travel");
+      expect(result!.connectionString).toBe(uri);
+    });
+
+    test("uses default management port 8091 when port is omitted", () => {
+      const result = parseConnectionString("couchbase://Administrator:pass@cb-host/travel");
+      expect(result!.type).toBe("couchbase");
+      expect(result!.host).toBe("cb-host");
+      expect(result!.port).toBe("8091");
+    });
+
+    test("uses default TLS management port 18091 for couchbases URLs", () => {
+      const result = parseConnectionString("couchbases://Administrator:pass@secure-host/travel");
+      expect(result!.type).toBe("couchbase");
+      expect(result!.host).toBe("secure-host");
+      expect(result!.port).toBe("18091");
+      expect(result!.database).toBe("travel");
+    });
+
+    test("respects an explicit port on a couchbases URL", () => {
+      const result = parseConnectionString("couchbases://user:pass@host:18092/travel");
+      expect(result!.port).toBe("18092");
+    });
+
+    test("parses a Capella endpoint with no port and no bucket path", () => {
+      const uri = "couchbases://cb.abc123.cloud.couchbase.com";
+      const result = parseConnectionString(uri);
+      expect(result).not.toBeNull();
+      expect(result!.type).toBe("couchbase");
+      expect(result!.host).toBe("cb.abc123.cloud.couchbase.com");
+      expect(result!.port).toBe("18091");
+      expect(result!.database).toBeUndefined();
+      expect(result!.connectionString).toBe(uri);
+    });
+
+    test("parses a Capella endpoint with credentials and a trailing slash", () => {
+      const result = parseConnectionString("couchbases://app%40corp:s3cret@cb.abc123.cloud.couchbase.com/");
+      expect(result!.host).toBe("cb.abc123.cloud.couchbase.com");
+      expect(result!.user).toBe("app@corp");
+      expect(result!.password).toBe("s3cret");
+      expect(result!.database).toBeUndefined();
+    });
+
+    test("preserves the full original string including query parameters", () => {
+      const uri = "couchbase://user:pass@cb-host:8091/travel?ssl=no_verify";
+      const result = parseConnectionString(uri);
+      expect(result!.connectionString).toBe(uri);
+      expect(result!.database).toBe("travel");
+    });
+
+    test("takes the first host from a multi-node connection string", () => {
+      const result = parseConnectionString("couchbase://user:pass@node1,node2,node3:8091/travel");
+      expect(result!.host).toBe("node1");
+      expect(result!.port).toBe("8091");
+      expect(result!.database).toBe("travel");
+    });
+
+    test("handles couchbase URL without credentials", () => {
+      const result = parseConnectionString("couchbase://cb-host:8091/travel");
+      expect(result!.user).toBeUndefined();
+      expect(result!.password).toBeUndefined();
+      expect(result!.database).toBe("travel");
+    });
+
+    test("decodes URL-encoded credentials and bucket name", () => {
+      const result = parseConnectionString("couchbase://user%40corp:p%40ss%23word@cb-host/my%20bucket");
+      expect(result!.user).toBe("user@corp");
+      expect(result!.password).toBe("p@ss#word");
+      expect(result!.database).toBe("my bucket");
+    });
+
+    test("keeps a bucket name containing a literal percent sign", () => {
+      // "%" is legal in Couchbase bucket names and is not always a valid escape sequence.
+      const result = parseConnectionString("couchbase://cb-host/100%");
+      expect(result!.database).toBe("100%");
+    });
+
+    test("falls back to localhost when the URL carries no host", () => {
+      const result = parseConnectionString("couchbase:///travel");
+      expect(result!.host).toBe("localhost");
+      expect(result!.database).toBe("travel");
+    });
+
+    test("returns null for a malformed couchbase URL", () => {
+      expect(parseConnectionString("couchbase://:::bad")).toBeNull();
+      expect(parseConnectionString("couchbases://:::bad")).toBeNull();
+    });
+  });
+
   // ── ADO.NET format ──────────────────────────────────────────────────────
 
   describe("ADO.NET format", () => {
@@ -313,6 +414,14 @@ describe("detectConnectionStringType", () => {
 
   test("detects sqlserver://", () => {
     expect(detectConnectionStringType("sqlserver://host")).toBe("mssql");
+  });
+
+  test("detects couchbase://", () => {
+    expect(detectConnectionStringType("couchbase://host")).toBe("couchbase");
+  });
+
+  test("detects couchbases://", () => {
+    expect(detectConnectionStringType("couchbases://cb.abc123.cloud.couchbase.com")).toBe("couchbase");
   });
 
   test("detects ADO.NET Server= format", () => {

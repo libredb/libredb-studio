@@ -189,6 +189,66 @@ describe("generateSelectQuery", () => {
 });
 
 // ============================================================================
+// Couchbase (SQL++) — issue #262, decision 5
+// ============================================================================
+
+describe("Couchbase (SQL++) generation", () => {
+  const couchbaseCaps = makeCaps({ defaultPort: 8091 });
+
+  // A collection's fields as the INFER-based introspection reports them: the
+  // document key first, under the same "__id" alias the generated projection uses.
+  const hotelColumns: ColumnSchema[] = [
+    { name: "__id", type: "string", nullable: false, isPrimary: true },
+    { name: "city", type: "string", nullable: true, isPrimary: false },
+  ];
+
+  test("generateTableQuery aliases the keyspace and projects the document key", () => {
+    expect(generateTableQuery("hotel", couchbaseCaps)).toBe(
+      "SELECT META(d).id AS __id, d.* FROM `hotel` AS d LIMIT 50;",
+    );
+  });
+
+  test("generateTableQuery quotes every segment of a scope-qualified collection", () => {
+    expect(generateTableQuery("inventory.hotel", couchbaseCaps)).toBe(
+      "SELECT META(d).id AS __id, d.* FROM `inventory`.`hotel` AS d LIMIT 50;",
+    );
+  });
+
+  test("generateSelectQuery projects fields through the alias and the key through META", () => {
+    expect(generateSelectQuery("inventory.hotel", hotelColumns, couchbaseCaps)).toBe(
+      "SELECT\n  META(d).id AS __id,\n  d.`city`\nFROM `inventory`.`hotel` AS d\nWHERE 1=1\nLIMIT 100;",
+    );
+  });
+
+  test("generateSelectQuery falls back to the wildcard when no columns are known", () => {
+    expect(generateSelectQuery("hotel", [], couchbaseCaps)).toBe(
+      "SELECT\n  META(d).id AS __id,\n  d.*\nFROM `hotel` AS d\nWHERE 1=1\nLIMIT 100;",
+    );
+  });
+
+  test("generateSelectQuery adds the key projection even when the columns carry no key", () => {
+    const cityOnly: ColumnSchema[] = [{ name: "city", type: "string", nullable: true, isPrimary: false }];
+    const out = generateSelectQuery("hotel", cityOnly, couchbaseCaps);
+    expect(out).toContain("META(d).id AS __id");
+    expect(out).not.toContain("d.`__id`");
+  });
+
+  test("quoteIdentifier always backtick-quotes, so SQL++ reserved words parse", () => {
+    // `bucket` and `scope` are reserved words: unquoted they are a syntax error.
+    expect(quoteIdentifier("bucket", couchbaseCaps)).toBe("`bucket`");
+    expect(quoteIdentifier("city", couchbaseCaps)).toBe("`city`");
+  });
+
+  test("quoteIdentifier doubles an embedded backtick so it cannot terminate its quoting", () => {
+    expect(quoteIdentifier("we`ird", couchbaseCaps)).toBe("`we``ird`");
+  });
+
+  test("quoteQualifiedName quotes each segment independently", () => {
+    expect(quoteQualifiedName("inventory.hotel", couchbaseCaps)).toBe("`inventory`.`hotel`");
+  });
+});
+
+// ============================================================================
 // quoteIdentifier (dialect-aware, quote-only-when-needed)
 // ============================================================================
 
