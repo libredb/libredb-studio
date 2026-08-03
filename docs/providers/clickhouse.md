@@ -659,6 +659,15 @@ keep surfacing.
 | `getStorageStats()` | `system.disks` | Name, path, total/free bytes, and a usage percentage per configured disk |
 | `getHealth()` | the four above, composed | connections, size, cache-hit ratio, top-5 slow queries, top-10 sessions |
 
+Two honest zeroes in the overview, so neither reads as a measurement:
+
+- **`maxConnections` is `0` where `system.server_settings` is unavailable.** It is an ordinary system
+  table on self-managed builds (verified present on OSS 26.7.1), but it is recent enough that an older
+  server may not have it, and it is grant-gated like every other `system.*` read. Either way the read
+  degrades rather than failing the panel.
+- **Index scan counts are always `0`**, because ClickHouse publishes no per-index usage counter that
+  the HTTP interface can reach.
+
 ---
 
 ## 8. Maintenance

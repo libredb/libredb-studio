@@ -1308,6 +1308,26 @@ describe("ClickHouseProvider maintenance", () => {
     expect(sqlWith("KILL QUERY")).toBe("KILL QUERY WHERE query_id = 'a'' OR 1 = 1 --' SYNC");
   });
 
+  // A backslash is the other escape character in a ClickHouse literal, and doubling
+  // the quote alone would leave `\'` reading as an escaped quote rather than a
+  // terminator. Live-verified on 26.7.1: with the doubled backslash,
+  // `name = 'back\\slash'` matches a table genuinely named `back\slash`.
+  test("escapes a backslash in a target, not only the quote", async () => {
+    const provider = await connectProvider();
+
+    await provider.runMaintenance("analyze", "back\\slash");
+
+    expect(sqlWith("partCount")).toContain("table = 'back\\\\slash'");
+  });
+
+  test("escapes a target combining a backslash and a quote", async () => {
+    const provider = await connectProvider();
+
+    await provider.runMaintenance("kill", "a\\' OR 1 = 1");
+
+    expect(sqlWith("KILL QUERY")).toBe("KILL QUERY WHERE query_id = 'a\\\\'' OR 1 = 1' SYNC");
+  });
+
   test("an operation without a target is refused", async () => {
     const provider = await connectProvider();
 
