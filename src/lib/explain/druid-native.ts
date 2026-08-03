@@ -20,13 +20,25 @@ import type { ExplainStrategy, ExplainTreeNode } from "./types";
  * The SHAPE of this pattern matters as much as what it accepts, and it is deliberately
  * not the obvious `^\s*(--...|\/*...*\/|\s)*` spelling:
  *
+ * Every one of the three alternatives had to be made unambiguous, because each is
+ * inside a `*` quantifier and any way of matching the same text twice is a way for a
+ * non-matching input to backtrack. All three were measured, with a tail that never
+ * reaches SELECT:
+ *
  * - there is no leading `\s*`, because whitespace is already one alternative below.
- *   Having both gives two ways to match the same run of spaces, and that ambiguity is
- *   quadratic: measured 0ms -> 958ms on 20k leading spaces with a non-matching tail.
+ *   Having both gives two ways to match the same run of spaces: quadratic, 958ms on
+ *   20k leading spaces.
+ * - the line comment must end at a newline OR at end-of-input. Without that tail,
+ *   `[^\n]*` can give characters back and let a later iteration match `--` again, so a
+ *   run of bare dashes partitions exponentially - 634ms on a FORTY-NINE character
+ *   input, which is by far the cheapest of the three to trigger. Requiring the tail
+ *   forces the branch to run to the newline or to the end, so there is nothing to give
+ *   back. Found by CodeQL after the first two were fixed.
  * - the block-comment body is TEMPERED (`[^*]|\*(?!\/)`) rather than a lazy
  *   `[\s\S]*?\*\/`, which inside a `*` quantifier can extend past the first `*\/` and
- *   let one iteration swallow several comments. Measured 852ms on a 4 KB run of
- *   `/**\/` with a non-matching tail; tempered, the same input is 0.0ms.
+ *   let one iteration swallow several comments: 852ms on a 4 KB run of `/**\/`.
+ *
+ * All three now answer in well under a millisecond.
  *
  * Both forms accept and reject exactly the same statements - the difference is only
  * how much backtracking a non-matching input costs. `buildSql` runs on whatever is in
@@ -35,7 +47,7 @@ import type { ExplainStrategy, ExplainTreeNode } from "./types";
  * anti-backtracking care that made `query-limiter.ts` hand-write its semicolon strip
  * "without regex to avoid ReDoS".
  */
-const SELECT_ONLY = /^(?:\s|--[^\n]*|\/\*(?:[^*]|\*(?!\/))*\*\/)*(?:SELECT|WITH)\b/i;
+const SELECT_ONLY = /^(?:\s|--[^\n]*(?:\n|$)|\/\*(?:[^*]|\*(?!\/))*\*\/)*(?:SELECT|WITH)\b/i;
 
 /**
  * Druid's EXPLAIN is a statement prefix, not a modifier with options, and it never

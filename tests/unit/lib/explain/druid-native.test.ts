@@ -378,6 +378,14 @@ describe("druidNativeStrategy", () => {
       `${" ".repeat(20000)}UPDATE t SET a = 1`,
       `${"-- a\n".repeat(1000)}UPDATE t SET a = 1`,
       `${"/**/ -- a\n ".repeat(1000)}DELETE FROM t`,
+      // The cheapest of the lot, and the one the first two fixes missed: a run of BARE
+      // dashes with no newline. Without the `(?:\n|$)` tail on the line-comment branch
+      // this alone cost 634ms at FORTY-NINE characters, growing about fourfold per two
+      // extra dashes. CodeQL found it; `-- a\n` above cannot, because the newline makes
+      // that branch unambiguous.
+      `${"--".repeat(24)}X`,
+      `${"--".repeat(2000)}UPDATE t SET a = 1`,
+      `${"-".repeat(20000)}X`,
     ];
 
     for (const sql of adversarial) {
