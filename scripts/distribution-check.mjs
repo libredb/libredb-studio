@@ -41,7 +41,6 @@ export const CHANNEL_CATEGORIES = [
   "paas-catalogs",
   "deploy-recipes",
   "cloud-marketplaces",
-  "closed",
 ];
 
 export const CATEGORY_LABELS = {
@@ -53,8 +52,33 @@ export const CATEGORY_LABELS = {
   "paas-catalogs": "PaaS catalogs (listed)",
   "deploy-recipes": "Deploy recipes",
   "cloud-marketplaces": "Cloud marketplaces",
-  closed: "Closed / declined",
 };
+
+/**
+ * Technical shape of the artefact a channel actually is - independent of
+ * `category` (the audience-facing bucket several kinds can share). Neither
+ * axis determines the other: `kubernetes-operators` (category) spans
+ * `helm-chart`, `operator-catalog` and `partner-catalog` (kind), while
+ * `paas-template` (kind) spans both `paas-catalogs` and `deploy-recipes`
+ * (category). Exactly the 13 values in use across the inventory - a closed
+ * enum so a typo becomes a startup error instead of an unvalidated label
+ * that nothing ever reads.
+ */
+export const CHANNEL_KINDS = [
+  "release-assets",
+  "container-image",
+  "package-registry",
+  "helm-chart",
+  "package-manager",
+  "os-package",
+  "one-click-template",
+  "paas-template",
+  "deploy-button",
+  "operator-catalog",
+  "partner-catalog",
+  "curated-catalog",
+  "marketplace",
+];
 
 /**
  * Platforms a channel serves. This order is canonical: the matrix renders and
@@ -343,6 +367,9 @@ export function parseChannels(yamlText) {
     }
     if (!CHANNEL_CATEGORIES.includes(channel.category)) {
       throw new Error(`${CHANNELS_YAML}: ${id}: category must be one of ${CHANNEL_CATEGORIES.join("|")}`);
+    }
+    if (!CHANNEL_KINDS.includes(channel.kind)) {
+      throw new Error(`${CHANNELS_YAML}: ${id}: kind must be one of ${CHANNEL_KINDS.join("|")}`);
     }
     if (!Array.isArray(channel.platforms) || channel.platforms.length === 0) {
       throw new Error(`${CHANNELS_YAML}: ${id}: platforms must be a non-empty list`);

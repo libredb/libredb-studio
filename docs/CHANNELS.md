@@ -40,12 +40,11 @@ Live channels by platform: **Linux 7 · macOS 3 · Windows 3 · Container 2 · K
 | Registries & releases | 2 | 0 | 0 |
 | Containers | 2 | 0 | 0 |
 | Kubernetes & operators | 1 | 2 | 0 |
-| Package managers | 4 | 1 | 0 |
+| Package managers | 4 | 1 | 1 |
 | OS / desktop packages | 2 | 0 | 0 |
 | PaaS catalogs (listed) | 5 | 0 | 1 |
 | Deploy recipes | 3 | 0 | 0 |
 | Cloud marketplaces | 1 | 1 | 0 |
-| Closed / declined | 0 | 0 | 1 |
 
 <!-- END:CHANNEL-SCORECARD -->
 
@@ -67,6 +66,7 @@ Live channels by platform: **Linux 7 · macOS 3 · Windows 3 · Container 2 · K
 | [Snap Store](https://snapcraft.io/libredb-studio) | Package managers | Linux | live | Automated, every release | [DISTRIBUTION.md](DISTRIBUTION.md) |
 | [winget](https://github.com/microsoft/winget-pkgs/tree/master/manifests/l/LibreDB/Studio) | Package managers | Windows | live | Automated, every release | [DISTRIBUTION.md](DISTRIBUTION.md) |
 | [Chocolatey](https://community.chocolatey.org/packages/libredb-studio) | Package managers | Windows | pending | Automated (paused), every release | [DISTRIBUTION.md](DISTRIBUTION.md) |
+| Flathub | Package managers | Linux | deprecated | — | [packaging/flatpak/README.md](../packaging/flatpak/README.md) |
 | [Desktop app (AppImage, .deb)](https://github.com/libredb/libredb-studio/releases/latest) | OS / desktop packages | Linux | live | Automated, every release | [desktop/README.md](../desktop/README.md) |
 | [Linux .deb / .rpm](https://github.com/libredb/libredb-studio/releases/latest) | OS / desktop packages | Linux | live | Automated, every release | [DISTRIBUTION.md](DISTRIBUTION.md) |
 | [CapRover official](https://github.com/caprover/one-click-apps) | PaaS catalogs (listed) | Cloud | live | Manual, on demand | [DISTRIBUTION.md](DISTRIBUTION.md) |
@@ -80,7 +80,6 @@ Live channels by platform: **Linux 7 · macOS 3 · Windows 3 · Container 2 · K
 | [Render Blueprint](https://github.com/libredb/libredb-studio/blob/main/render.yaml) | Deploy recipes | Cloud | live | Manual, on demand | [DISTRIBUTION.md](DISTRIBUTION.md) |
 | [DigitalOcean Marketplace](https://marketplace.digitalocean.com/apps/libredb-studio) | Cloud marketplaces | Cloud | live | Manual, on demand | [deploy/digitalocean/README.md](../deploy/digitalocean/README.md) |
 | [Koyeb One-Click Apps catalog](https://www.koyeb.com/deploy) | Cloud marketplaces | Cloud | pending | Manual, on demand | [deploy/koyeb/CATALOG_SUBMISSION.md](../deploy/koyeb/CATALOG_SUBMISSION.md) |
-| Flathub | Closed / declined | Linux | deprecated | — | [packaging/flatpak/README.md](../packaging/flatpak/README.md) |
 
 <!-- END:CHANNEL-TABLE -->
 

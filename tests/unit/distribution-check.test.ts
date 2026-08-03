@@ -45,7 +45,7 @@ const HELM_ROW = `  - id: helm
     category: kubernetes-operators
     platforms: [kubernetes]
     tier: 1
-    kind: chart
+    kind: helm-chart
     update:
       method: ci_publish
       sla: every_release
@@ -131,6 +131,21 @@ describe("parseChannels", () => {
   test("accepts a known category", () => {
     const channels = parseChannels(channelsYaml(HELM_ROW));
     expect(channels[0].category).toBe("kubernetes-operators");
+  });
+
+  test("throws when kind is missing", () => {
+    const bad = HELM_ROW.replace(/ {4}kind: [^\n]+\n/, "");
+    expect(() => parseChannels(channelsYaml(bad))).toThrow(/kind/);
+  });
+
+  test("throws on an unknown kind", () => {
+    const bad = HELM_ROW.replace(/kind: [^\n]+/, "kind: not-a-real-kind");
+    expect(() => parseChannels(channelsYaml(bad))).toThrow(/kind/);
+  });
+
+  test("accepts a known kind", () => {
+    const channels = parseChannels(channelsYaml(NONE_ROW));
+    expect(channels[0].kind).toBe("package-registry");
   });
 
   test("throws when platforms is missing", () => {
@@ -1149,7 +1164,7 @@ const MATRIX_FIXTURE = `channels:
   - id: flathub
     name: Flathub
     status: deprecated
-    category: closed
+    category: package-managers
     platforms: [linux]
     tier: 4
     kind: package-manager
@@ -1236,8 +1251,7 @@ describe("renderScorecard / renderChannelMatrix", () => {
     const scorecard = renderScorecard(channels);
     expect(scorecard).toContain("**3 channels · 1 live · 1 pending · 1 deprecated**");
     expect(scorecard).toContain("| Registries & releases | 1 | 0 | 0 |");
-    expect(scorecard).toContain("| Package managers | 0 | 1 | 0 |");
-    expect(scorecard).toContain("| Closed / declined | 0 | 0 | 1 |");
+    expect(scorecard).toContain("| Package managers | 0 | 1 | 1 |");
   });
 
   test("scorecard counts live channels per platform, once per platform", () => {
@@ -1266,7 +1280,7 @@ describe("renderScorecard / renderChannelMatrix", () => {
         "[DISTRIBUTION.md](DISTRIBUTION.md) |",
     );
     expect(table).toContain(
-      "| Flathub | Closed / declined | Linux | deprecated | — | " +
+      "| Flathub | Package managers | Linux | deprecated | — | " +
         "[packaging/flatpak/README.md](../packaging/flatpak/README.md) |",
     );
     const npmAt = table.indexOf("npm package");
@@ -1297,6 +1311,7 @@ const MATRIX_TIEBREAK_FIXTURE = `channels:
     status: deprecated
     category: containers
     platforms: [container]
+    kind: container-image
     update:
       method: upstream_pr
       sla: on_demand
@@ -1308,6 +1323,7 @@ const MATRIX_TIEBREAK_FIXTURE = `channels:
     status: live
     category: containers
     platforms: [container]
+    kind: container-image
     update:
       method: ci_publish
       sla: every_release
@@ -1319,6 +1335,7 @@ const MATRIX_TIEBREAK_FIXTURE = `channels:
     status: pending
     category: containers
     platforms: [container]
+    kind: container-image
     update:
       method: ci_publish
       sla: every_release
@@ -1330,6 +1347,7 @@ const MATRIX_TIEBREAK_FIXTURE = `channels:
     status: live
     category: os-desktop
     platforms: [linux]
+    kind: os-package
     update:
       method: manual_ui
       sla: on_demand
@@ -1341,6 +1359,7 @@ const MATRIX_TIEBREAK_FIXTURE = `channels:
     status: live
     category: os-desktop
     platforms: [linux]
+    kind: os-package
     update:
       method: manual_ui
       sla: on_demand

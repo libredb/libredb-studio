@@ -8,11 +8,18 @@
 # check").
 #
 # Field summary:
-#   id/name/status/tier/kind  identity; status: live | pending | deprecated
+#   id/name/status/tier       identity; status: live | pending | deprecated
+#   kind                      the technical shape of the artefact (what it
+#                             literally is), independent of category (the audience-facing
+#                             bucket several kinds can share): one of release-assets |
+#                             container-image | package-registry | helm-chart |
+#                             package-manager | os-package | one-click-template |
+#                             paas-template | deploy-button | operator-catalog |
+#                             partner-catalog | curated-catalog | marketplace
 #   category                  business bucket for docs/CHANNELS.md:
 #                             registries-releases | containers | kubernetes-operators |
 #                             package-managers | os-desktop | paas-catalogs |
-#                             deploy-recipes | cloud-marketplaces | closed
+#                             deploy-recipes | cloud-marketplaces
 #   platforms                 REQUIRED, non-empty list. Rendered and counted in
 #                             this canonical order in docs/CHANNELS.md:
 #                             linux | macos | windows | container | kubernetes | cloud
@@ -584,7 +591,7 @@ channels:
     name: Flathub community catalog (org.libredb.Studio)
     short_name: Flathub
     status: deprecated
-    category: closed
+    category: package-managers
     platforms: [linux]
     tier: 4
     kind: package-manager

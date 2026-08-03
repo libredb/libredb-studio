@@ -1078,12 +1078,25 @@ pin or editing a channel entry is always a human commit.
 **Categories** (`category` on every channel) are the business-facing buckets rendered in
 [`docs/CHANNELS.md`](CHANNELS.md): `registries-releases`, `containers`,
 `kubernetes-operators`, `package-managers`, `os-desktop`, `paas-catalogs`,
-`deploy-recipes`, `cloud-marketplaces`, `closed`. They are independent of tier (who
+`deploy-recipes`, `cloud-marketplaces`. They are independent of tier (who
 publishes). `paas-catalogs` and `deploy-recipes` look similar but answer different
 questions: `paas-catalogs` means the platform itself lists LibreDB Studio in its own
 catalog, so a user browsing that platform discovers it without visiting this repo;
 `deploy-recipes` means we publish a config file or instructions and the platform does
-not list us anywhere, so discovery only happens through our repo.
+not list us anywhere, so discovery only happens through our repo. There is no `closed`
+category: a declined or retired channel is `status: deprecated` with its `category`
+unchanged (Flathub is `category: package-managers`, `status: deprecated`) — `category`
+describes what the channel technically is, `status` describes its lifecycle, and an
+earlier revision that conflated the two (Flathub filed under a `closed` category) is
+what produced a false coverage claim in the scorecard.
+
+**Kind** (`kind` on every channel) is the technical shape of the artefact — a Helm
+chart, a container image, a curated marketplace listing — and is validated against a
+fixed enum in `scripts/distribution-check.mjs` (`CHANNEL_KINDS`). It is independent of
+`category`: `kubernetes-operators` (category) spans `helm-chart`, `operator-catalog`
+and `partner-catalog` (kind), and `paas-template` (kind) spans both `paas-catalogs` and
+`deploy-recipes` (category). Neither axis determines the other, so both are kept and
+validated separately rather than collapsed into one.
 
 **Platforms** (`platforms` on every channel, at least one) are the user-facing axis rendered
 in [`docs/CHANNELS.md`](CHANNELS.md): `linux`, `macos`, `windows`, `container`, `kubernetes`,
