@@ -13,6 +13,11 @@
 #                             registries-releases | containers | kubernetes-operators |
 #                             package-managers | os-desktop | paas-one-click |
 #                             marketplaces-partners | closed
+#   platforms                 REQUIRED, non-empty list. Rendered and counted in
+#                             this canonical order in docs/CHANNELS.md:
+#                             linux | macos | windows | container | kubernetes | cloud
+#   short_name                optional; the display name docs/CHANNELS.md uses when
+#                             `name` is too long to scan. Falls back to `name`.
 #   update.method             ci_publish | commit | upstream_pr | manual_ui
 #   update.sla                every_release | minor_plus | major_only | on_demand
 #   update.ci_enabled         REQUIRED on, and allowed ONLY on, the switchable
@@ -25,7 +30,9 @@
 #                             required release assets have no flag on purpose.
 #   links                     tracking_issue / first_pr / last_bump_pr (nullable
 #                             until the first post-listing bump) / catalog /
-#                             upstream_repo / docs
+#                             upstream_repo / docs / get (user-facing "where do I
+#                             get it"; docs/CHANNELS.md resolves it as
+#                             get > catalog > upstream_repo)
 #   pin.strategy              local_file | remote_file | probe | none
 #   pin.probe                 required when strategy == probe; one of the probe ids
 #                             defined in scripts/distribution-check.mjs

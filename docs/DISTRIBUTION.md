@@ -1052,7 +1052,7 @@ Chocolatey push is still in moderation.
 
 For a **business / investment coverage view** (live counts by category, full channel
 table with catalog links), see [`docs/CHANNELS.md`](CHANNELS.md). Regenerate it with
-`bun run distribution:matrix` after editing the inventory; `bun run distribution:matrix -- --check`
+`bun run distribution:matrix` after editing the inventory; `bun run distribution:matrix --check`
 fails when the generated regions are stale.
 
 [`distribution/channels.yaml`](../distribution/channels.yaml) is the machine-readable inventory
@@ -1079,6 +1079,11 @@ pin or editing a channel entry is always a human commit.
 [`docs/CHANNELS.md`](CHANNELS.md): `registries-releases`, `containers`,
 `kubernetes-operators`, `package-managers`, `os-desktop`, `paas-one-click`,
 `marketplaces-partners`, `closed`. They are independent of tier (who publishes).
+
+**Platforms** (`platforms` on every channel, at least one) are the user-facing axis rendered
+in [`docs/CHANNELS.md`](CHANNELS.md): `linux`, `macos`, `windows`, `container`, `kubernetes`,
+`cloud`. They are independent of both tier (who publishes) and category (which business
+bucket). A channel may list several; the matrix always renders them in that canonical order.
 
 **SLAs** (`update.sla`) state how quickly a channel is expected to follow a release:
 `every_release` (bumped as part of releasing), `minor_plus` (bumped for minor releases and

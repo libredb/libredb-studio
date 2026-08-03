@@ -1,23 +1,29 @@
 # Distribution channels
 
-This page is the **business / investment visibility matrix** for LibreDB Studio:
-how many places the product can be obtained from, which are live today, and how
-they group by audience-facing category.
-
-It is aimed at buyers evaluating coverage, investors and supporters assessing
-distribution footprint, and curious users who want a single overview. For
-install and operate instructions, use [DISTRIBUTION.md](DISTRIBUTION.md). The
-machine-readable inventory (and drift checker) lives in
+This page is the coverage matrix for LibreDB Studio: every place the product can
+be obtained from, which of them are live today, and which platforms they serve.
+For install and operate instructions, use [DISTRIBUTION.md](DISTRIBUTION.md). The
+machine-readable inventory behind this page is
 [`distribution/channels.yaml`](../distribution/channels.yaml).
+
+**Users** — find your platform in the Platform column, then follow the Guide link
+for the exact command.
+
+**Developers** — the Updates column says whether release CI publishes the channel
+or a human opens a pull request. New channels are added in
+[`distribution/channels.yaml`](../distribution/channels.yaml).
+
+**Buyers, investors, supporters** — the snapshot below is the coverage claim.
+`pending` and `deprecated` rows are listed on purpose, not hidden.
 
 | Status | Meaning |
 | --- | --- |
 | `live` | Listed and installable (or deployable) through that channel |
 | `pending` | Submission or first listing in progress |
-| `deprecated` | Closed / declined — kept for honesty (e.g. Flathub) |
+| `deprecated` | Closed or declined — kept for honesty (for example Flathub) |
 
-To propose a new channel, add an entry to `distribution/channels.yaml` (with a
-`category`) and regenerate this page with `bun run distribution:matrix`.
+A channel that serves several platforms is counted once per platform, so the
+platform numbers overlap and do not sum to the channel total.
 
 <!-- BEGIN:CHANNEL-SCORECARD -->
 
@@ -76,6 +82,8 @@ Live channels by platform: **Linux 7 · macOS 3 · Windows 3 · Container 2 · K
 
 <!-- END:CHANNEL-TABLE -->
 
-The scorecard and table above are generated from `distribution/channels.yaml`.
-Do not edit them by hand — run `bun run distribution:matrix` after inventory
-changes. Freshness is checked with `bun run distribution:matrix -- --check`.
+The scorecard and table above are generated from
+[`distribution/channels.yaml`](../distribution/channels.yaml). Do not edit them by
+hand. To propose a new channel, add an entry with a `category` and a `platforms`
+list, then run `bun run distribution:matrix`. Freshness is enforced on pull
+requests with `bun run distribution:matrix --check`.
