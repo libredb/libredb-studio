@@ -301,7 +301,7 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
       setTestResult({
         success: false,
         message:
-          "Could not parse connection string. Supported formats: postgres://, mysql://, mongodb://, couchbase://, redis://, oracle://, mssql://",
+          "Could not parse connection string. Supported formats: postgres://, mysql://, mongodb://, couchbase://, clickhouse://, http(s)://, redis://, oracle://, mssql://",
       });
       return;
     }
@@ -313,6 +313,10 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     if (parsed.user) setUser(parsed.user);
     if (parsed.password) setPassword(parsed.password);
     if (parsed.database) setDatabase(parsed.database);
+    // A scheme that IS the transport (https:// for ClickHouse) carries TLS that no
+    // field can express. Without this the form keeps its "disable" default and the
+    // connection goes out as plaintext HTTP to a TLS port.
+    if (parsed.sslMode) setSSLMode(parsed.sslMode);
 
     // A provider whose form offers the URI mode (MongoDB, Couchbase) switches to it,
     // so the pasted string is what gets connected with rather than a lossy re-assembly
@@ -346,6 +350,7 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     "couchbase",
     "redis",
     "libredb",
+    "clickhouse",
   ];
   const dbTypes = selectableTypes.map((t) => {
     const cfg = getDBConfig(t);

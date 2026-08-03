@@ -4,6 +4,7 @@ import { postgresJsonStrategy } from "./postgres-json";
 import { mysqlJsonStrategy } from "./mysql-json";
 import { sqliteQueryplanStrategy } from "./sqlite-queryplan";
 import { couchbaseJsonStrategy } from "./couchbase-json";
+import { clickhouseJsonStrategy } from "./clickhouse-json";
 
 export type { ExplainMode, ExplainStrategy } from "./types";
 export type { ExplainPlanInput, ExplainTreeNode, StoredExplainPlan } from "./types";
@@ -15,6 +16,7 @@ const registry: Record<ExplainFormat, ExplainStrategy> = {
   "mysql-json": mysqlJsonStrategy,
   "sqlite-queryplan": sqliteQueryplanStrategy,
   "couchbase-json": couchbaseJsonStrategy,
+  "clickhouse-json": clickhouseJsonStrategy,
 };
 
 export function getExplainStrategy(format: ExplainFormat | undefined): ExplainStrategy | null {

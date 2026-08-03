@@ -84,6 +84,14 @@ export async function createDatabaseProvider(
       return new MSSQLProvider(connection, options);
     }
 
+    case "clickhouse": {
+      // The explicit /index specifier keeps this dynamic import statically
+      // analysable: a bare directory resolves only at runtime, which the bundler
+      // cannot trace into a chunk.
+      const { ClickHouseProvider } = await import("./providers/sql/clickhouse/index");
+      return new ClickHouseProvider(connection, options);
+    }
+
     // Document Databases - dynamically imported
     case "mongodb": {
       const { MongoDBProvider } = await import("./providers/document/mongodb");
@@ -112,7 +120,7 @@ export async function createDatabaseProvider(
 
     default:
       throw new DatabaseConfigError(
-        `Unknown database type: ${connection.type}. Supported types: postgres, mysql, sqlite, oracle, mssql, mongodb, couchbase, redis, libredb`,
+        `Unknown database type: ${connection.type}. Supported types: postgres, mysql, sqlite, oracle, mssql, clickhouse, mongodb, couchbase, redis, libredb`,
         connection.type,
       );
   }

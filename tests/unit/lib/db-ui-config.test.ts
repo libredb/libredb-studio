@@ -12,6 +12,7 @@ const ALL_TYPES: DatabaseType[] = [
   "mssql",
   "libredb",
   "couchbase",
+  "clickhouse",
 ];
 
 describe("db-ui-config", () => {
@@ -39,9 +40,10 @@ describe("db-ui-config", () => {
     });
 
     test("exposes the connection string toggle only for the URI-addressed providers", () => {
-      // MongoDB (mongodb+srv) and Couchbase (couchbase://, couchbases://) are the
-      // providers a user routinely has a full URI for; everything else is field-based.
-      const withToggle = new Set<DatabaseType>(["mongodb", "couchbase"]);
+      // MongoDB (mongodb+srv), Couchbase (couchbase://, couchbases://) and ClickHouse
+      // (its HTTP endpoint is itself a URL) are the providers a user routinely has a
+      // full URI for; everything else is field-based.
+      const withToggle = new Set<DatabaseType>(["mongodb", "couchbase", "clickhouse"]);
       for (const type of ALL_TYPES) {
         expect(getDBConfig(type).showConnectionStringToggle).toBe(withToggle.has(type));
       }
@@ -51,6 +53,19 @@ describe("db-ui-config", () => {
       expect(getDBConfig("couchbase").label).toBe("Couchbase");
       expect(getDBConfig("couchbase").defaultPort).toBe("8091");
       expect(getDBConfig("couchbase").connectionFields).toEqual([
+        "host",
+        "port",
+        "user",
+        "password",
+        "database",
+        "connectionString",
+      ]);
+    });
+
+    test("clickhouse exposes its label, HTTP port and connection fields", () => {
+      expect(getDBConfig("clickhouse").label).toBe("ClickHouse");
+      expect(getDBConfig("clickhouse").defaultPort).toBe("8123");
+      expect(getDBConfig("clickhouse").connectionFields).toEqual([
         "host",
         "port",
         "user",
@@ -100,6 +115,7 @@ describe("db-ui-config", () => {
       expect(isFileBased("oracle")).toBe(false);
       expect(isFileBased("mssql")).toBe(false);
       expect(isFileBased("couchbase")).toBe(false);
+      expect(isFileBased("clickhouse")).toBe(false);
     });
   });
 });

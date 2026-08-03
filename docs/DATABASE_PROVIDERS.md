@@ -28,7 +28,12 @@ src/lib/db/
 │   │   ├── sqlite.ts           # SQLite Strategy
 │   │   ├── sqlite-driver.ts    # SQLite runtime driver adapter (bun:sqlite | node:sqlite)
 │   │   ├── oracle.ts           # Oracle Strategy
-│   │   └── mssql.ts            # SQL Server Strategy
+│   │   ├── mssql.ts            # SQL Server Strategy
+│   │   └── clickhouse/         # ClickHouse Strategy (SQL over HTTP, no driver)
+│   │       ├── index.ts        #   ClickHouseProvider
+│   │       ├── transport.ts    #   ClickHouseTransport seam + neutral result types
+│   │       ├── http-transport.ts # The one HTTP implementation (fetch)
+│   │       └── introspect.ts   #   system.* catalogs (databases/tables/columns/data_skipping_indices)
 │   ├── document/               # Document Database Providers
 │   │   ├── mongodb.ts          # MongoDB Strategy
 │   │   └── couchbase/          # Couchbase Strategy (SQL++ over REST, no driver)
@@ -55,7 +60,8 @@ BaseDatabaseProvider (abstract)
 │   ├── MySQLProvider                       │ SQL Databases
 │   ├── SQLiteProvider                      │ (shared SQL utilities)
 │   ├── OracleProvider                      │
-│   └── MSSQLProvider                       │
+│   ├── MSSQLProvider                       │
+│   └── ClickHouseProvider                  │
 ├── MongoDBProvider ────────────────────────┤ Document Database
 ├── CouchbaseProvider ──────────────────────┤ Document Database (SQL++ over REST)
 ├── RedisProvider ──────────────────────────┤ Key-Value Store
@@ -105,7 +111,7 @@ QueryEditor                      /api/db/query
 
 ## Supported Databases
 
-Nine providers are supported. For the per-provider reference (driver, pooling, query format,
+Ten providers are supported. For the per-provider reference (driver, pooling, query format,
 monitoring, limitations, …) see the prime docs in **[`docs/providers/`](./providers/README.md)**:
 
 | Provider | type-id | Family | Reference |
@@ -118,6 +124,7 @@ monitoring, limitations, …) see the prime docs in **[`docs/providers/`](./prov
 | Redis | `redis` | Key-Value | [providers/redis.md](./providers/redis.md) |
 | MongoDB | `mongodb` | Document | [providers/mongodb.md](./providers/mongodb.md) |
 | Couchbase | `couchbase` | Document (SQL++) | [providers/couchbase.md](./providers/couchbase.md) |
+| ClickHouse | `clickhouse` | SQL | [providers/clickhouse.md](./providers/clickhouse.md) |
 | LibreDB | `libredb` | Embedded (key-value) | [providers/libredb.md](./providers/libredb.md) |
 
 ## Core Interface
@@ -290,7 +297,7 @@ DatabaseError (base)
 Provider-specific behaviour — pooling model, SSL/encryption, pagination, monitoring sources,
 maintenance operations, and known limitations — is documented per provider under
 [`docs/providers/`](./providers/README.md). Start there for anything specific to PostgreSQL, MySQL,
-Oracle, SQL Server, SQLite, Redis, MongoDB, Couchbase, or LibreDB.
+Oracle, SQL Server, SQLite, Redis, MongoDB, Couchbase, ClickHouse, or LibreDB.
 
 ## Security Considerations
 

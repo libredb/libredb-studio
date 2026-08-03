@@ -9,6 +9,7 @@ import {
   MSSQLIcon,
   LibreDBIcon,
   CouchbaseIcon,
+  ClickHouseIcon,
 } from "@/components/icons/db-icons";
 import type { DatabaseType } from "@/lib/types";
 
@@ -97,6 +98,16 @@ const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
     // Management port. The query ports are discovered from the cluster at connect
     // time (issue #262, decision 3), so only this one is ever stored.
     defaultPort: "8091",
+    showConnectionStringToggle: true,
+    connectionFields: ["host", "port", "user", "password", "database", "connectionString"],
+  },
+  clickhouse: {
+    icon: ClickHouseIcon,
+    color: "text-yellow-400",
+    label: "ClickHouse",
+    // The HTTP interface port. The provider speaks HTTP only, so the native
+    // protocol port 9000 is never a valid value here (issue #264).
+    defaultPort: "8123",
     showConnectionStringToggle: true,
     connectionFields: ["host", "port", "user", "password", "database", "connectionString"],
   },

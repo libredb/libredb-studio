@@ -27,7 +27,7 @@
 ### 4. Visual EXPLAIN (Query Analyzer)
 *   **Performance Visualization:** Visual execution plan to identify performance bottlenecks.
 *   **Detailed Metrics:** Graphical representation of database scan types, join operations, costs, and execution times.
-*   **Multi-DB Support:** PostgreSQL and MySQL JSON plans, SQLite `EXPLAIN QUERY PLAN`, and Couchbase SQL++ plan trees. Providers without a real analyze mode hide the toggle instead of degrading to an estimate.
+*   **Multi-DB Support:** PostgreSQL and MySQL JSON plans, SQLite `EXPLAIN QUERY PLAN`, Couchbase SQL++ plan trees, and ClickHouse JSON plan trees. Providers without a real analyze mode hide the toggle instead of degrading to an estimate.
 
 ### 5. AI Query Assistant (Multi-Provider LLM)
 *   **Natural Language to SQL:** Convert natural language requests into high-precision SQL code.
@@ -46,6 +46,7 @@
     *   **SQLite:** File-based database support via the runtime's built-in driver — `bun:sqlite` under Bun, `node:sqlite` under Node (the storage layer uses `better-sqlite3`).
     *   **Oracle:** Full support with connection pooling (`oracledb`); introspection/monitoring via the `ALL_*`/`DBA_*` data-dictionary views.
     *   **SQL Server:** Full support with connection pooling (`mssql`); monitoring via DMVs (`sys.dm_*`).
+    *   **ClickHouse:** Full support with **no driver dependency** — SQL over the documented HTTP interface, so the SQL editor, limiter and NL2SQL all apply. Column types read verbatim from `system.columns`, JSON EXPLAIN plan trees, and `OPTIMIZE TABLE` / table-statistics / query-kill maintenance.
 *   **Document Databases:**
     *   **MongoDB:** Full support with official driver, JSON-based MQL queries, automatic schema inference, and aggregation pipelines.
     *   **Couchbase:** Full support with **no driver dependency** — SQL++ over the documented Query and management REST APIs, so the SQL editor, limiter and NL2SQL all apply. Buckets/scopes/collections flattened into the schema explorer, `INFER`-based column inference, visual EXPLAIN plans, and read-your-writes query consistency by default.

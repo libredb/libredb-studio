@@ -19,11 +19,12 @@ Three decisions. The first is the consequential one, which is why it is first.
 
 1. **Does it need a driver at all?** Score the engine against the rubric below. A database with a
    first-class HTTP API can be supported with no dependency at all, and that is worth real effort to
-   establish before you start. Two shipped providers need no driver: SQLite uses the built-in
-   `bun:sqlite`/`node:sqlite` via `sqlite-driver.ts`, and Couchbase talks to the cluster over
-   documented REST endpoints with `fetch`/`node:https` ([couchbase.md](./providers/couchbase.md)).
-   If it does need one, it will be something like `pg`, `mysql2`, `mongodb`, `ioredis`, `oracledb`
-   or `mssql`.
+   establish before you start. Three shipped providers need no driver: SQLite uses the built-in
+   `bun:sqlite`/`node:sqlite` via `sqlite-driver.ts`, Couchbase talks to the cluster over
+   documented REST endpoints with `fetch`/`node:https` ([couchbase.md](./providers/couchbase.md)),
+   and ClickHouse speaks SQL over its HTTP interface the same way
+   ([clickhouse.md](./providers/clickhouse.md)). If it does need one, it will be something like `pg`,
+   `mysql2`, `mongodb`, `ioredis`, `oracledb` or `mssql`.
 
 2. **Which base class?**
    - **SQL databases → extend `SQLBaseProvider`.** It is
@@ -184,6 +185,7 @@ is kept in sync with its per-provider doc). Don't copy a skeleton from this guid
 |-------------------|--------|------------------|-----------|
 | Pooled SQL (wire-protocol DB) | `SQLBaseProvider` | `postgres.ts` / `mysql.ts` | [postgres.md](./providers/postgres.md) · [mysql.md](./providers/mysql.md) |
 | Embedded / file SQL | `SQLBaseProvider` | `sqlite.ts` | [sqlite.md](./providers/sqlite.md) |
+| SQL database reached over HTTP (no driver) | `SQLBaseProvider` | `sql/clickhouse/` | [clickhouse.md](./providers/clickhouse.md) |
 | Document store | `BaseDatabaseProvider` | `mongodb.ts` | [mongodb.md](./providers/mongodb.md) |
 | Document store reached over HTTP/REST (no driver) | `BaseDatabaseProvider` | `document/couchbase/` | [couchbase.md](./providers/couchbase.md) |
 | Key-value store | `BaseDatabaseProvider` | `redis.ts` | [redis.md](./providers/redis.md) |
@@ -514,7 +516,7 @@ For the authoritative, code-verified reference for each shipped provider (extend
 driver, pooling, capabilities, labels, `prepareQuery` behaviour, and limitations), see the prime
 docs — they are the single source of truth and are kept in sync with the code:
 
-**[docs/providers/](./providers/README.md)** → postgres · mysql · oracle · mssql · sqlite · redis · mongodb · couchbase · libredb
+**[docs/providers/](./providers/README.md)** → postgres · mysql · oracle · mssql · sqlite · redis · mongodb · couchbase · clickhouse · libredb
 
 When implementing a new provider, the closest existing analogue is the best template: a pooled SQL
 provider (postgres/mysql), an embedded SQL provider (sqlite), a non-SQL provider (mongodb/redis), or
@@ -526,7 +528,6 @@ Assessed against the rubric in [Prerequisites](#prerequisites). Anything not lis
 
 | Candidate | Verdict |
 |---|---|
-| **ClickHouse** ([#264](https://github.com/libredb/libredb-studio/issues/264)) | Scores on all seven, and easier than Couchbase was: a real declared schema so no inference step, a two-level model needing no flattening, and column types carried in the response |
 | **Apache Druid** ([#265](https://github.com/libredb/libredb-studio/issues/265)) | Strong, and it returns errors with real HTTP status codes. `EXPLAIN PLAN FOR` returns a native-query translation rather than an operator tree, so it does not fit the existing tree render model |
 | **Trino / Starburst** | Highest strategic value — one provider fronts S3, Iceberg, Delta and Hive. Unscheduled on purpose: a catalog is another *system*, so what a connection pins is a product question. Also a `nextUri` polling protocol and a fragmented auth matrix |
 | **OpenSearch / Elasticsearch** | HTTP is the only protocol. Needs a dialect decision first: the SQL endpoint is a subset, the native DSL is JSON. OpenSearch is Apache 2.0 and the cleaner primary target |

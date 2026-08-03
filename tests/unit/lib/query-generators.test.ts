@@ -249,6 +249,55 @@ describe("Couchbase (SQL++) generation", () => {
 });
 
 // ============================================================================
+// ClickHouse (issue #264) — no dialect branch of its own, and that is the claim
+// under test: every string below was run against ClickHouse 26.7.1 and accepted.
+// ============================================================================
+
+describe("ClickHouse (8123) generation", () => {
+  const clickhouseCaps = makeCaps({ defaultPort: 8123 });
+
+  test("generateTableQuery uses the plain LIMIT form", () => {
+    expect(generateTableQuery("events", clickhouseCaps)).toBe("SELECT * FROM events LIMIT 50;");
+  });
+
+  test("generateTableQuery qualifies and quotes a database-scoped table per segment", () => {
+    // Cross-database tables are addressed as `database.table`, so the dot must stay
+    // a separator; ClickHouse is case-sensitive, so a mixed-case name needs quoting.
+    expect(generateTableQuery("demo.Events", clickhouseCaps)).toBe('SELECT * FROM demo."Events" LIMIT 50;');
+  });
+
+  test("generateSelectQuery emits a double-quoted column list and LIMIT 100", () => {
+    const cols: ColumnSchema[] = [
+      { name: "id", type: "Int32", nullable: false, isPrimary: true },
+      { name: "Name", type: "Nullable(String)", nullable: true, isPrimary: false },
+    ];
+    expect(generateSelectQuery("demo.regtest", cols, clickhouseCaps)).toBe(
+      'SELECT\n  id,\n  "Name"\nFROM demo.regtest\nWHERE 1=1\nLIMIT 100;',
+    );
+  });
+
+  test("the trailing LIMIT is the last clause, so a user-appended FORMAT stays legal", () => {
+    // `... FORMAT TSV LIMIT 1` is a syntax error; `... LIMIT 1 FORMAT TSV` is not.
+    const out = generateTableQuery("events", clickhouseCaps);
+    expect(out.trimEnd().endsWith("LIMIT 50;")).toBe(true);
+  });
+
+  test("quoteIdentifier keeps plain lowercase bare and double-quotes anything else", () => {
+    // ClickHouse never folds case, so quoting is only about parseability, and its
+    // quote character is the double quote the default branch already emits.
+    expect(quoteIdentifier("events", clickhouseCaps)).toBe("events");
+    expect(quoteIdentifier("Events", clickhouseCaps)).toBe('"Events"');
+    expect(quoteIdentifier("weird name", clickhouseCaps)).toBe('"weird name"');
+    expect(quoteIdentifier('we"ird', clickhouseCaps)).toBe('"we""ird"');
+  });
+
+  test("quoteQualifiedName keeps the database separator intact", () => {
+    expect(quoteQualifiedName("demo.regtest", clickhouseCaps)).toBe("demo.regtest");
+    expect(quoteQualifiedName("demo.Events", clickhouseCaps)).toBe('demo."Events"');
+  });
+});
+
+// ============================================================================
 // quoteIdentifier (dialect-aware, quote-only-when-needed)
 // ============================================================================
 

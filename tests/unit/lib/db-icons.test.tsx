@@ -11,6 +11,7 @@ import {
   MSSQLIcon,
   LibreDBIcon,
   CouchbaseIcon,
+  ClickHouseIcon,
 } from "@/components/icons/db-icons";
 
 describe("db-icons", () => {
@@ -24,6 +25,7 @@ describe("db-icons", () => {
     { name: "MSSQLIcon", Component: MSSQLIcon },
     { name: "LibreDBIcon", Component: LibreDBIcon },
     { name: "CouchbaseIcon", Component: CouchbaseIcon },
+    { name: "ClickHouseIcon", Component: ClickHouseIcon },
   ];
 
   for (const { name, Component } of icons) {
@@ -38,6 +40,16 @@ describe("db-icons", () => {
         React.createElement(Component, { "data-testid": `icon-${name}` } as React.SVGAttributes<SVGSVGElement>),
       );
       expect(html).toContain(`data-testid="icon-${name}"`);
+    });
+
+    test(`${name} follows the embedded-mode icon contract`, () => {
+      // .claude/rules/platform-integration.md: DB marks scale from the className alone
+      // at stroke weight 1.5. An HTML width/height attribute would win over platform's
+      // size classes, so the icon would render at 24px inside libredb-platform only.
+      const html = renderToStaticMarkup(React.createElement(Component, { className: "w-3.5 h-3.5" }));
+      expect(html).toContain('stroke-width="1.5"');
+      expect(html).not.toMatch(/\swidth="/);
+      expect(html).not.toMatch(/\sheight="/);
     });
   }
 });

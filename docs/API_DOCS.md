@@ -24,12 +24,12 @@
 
 ## Overview
 
-LibreDB Studio provides a RESTful API for database management operations. The API supports PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, Couchbase, and Redis.
+LibreDB Studio provides a RESTful API for database management operations. The API supports PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, Couchbase, ClickHouse, and Redis.
 
 ### Key Features
 
 - **JWT Authentication** - Secure token-based authentication stored in HTTP-only cookies
-- **Multi-Database Support** - PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, Couchbase, Redis
+- **Multi-Database Support** - PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, Couchbase, ClickHouse, Redis
 - **AI-Powered Queries** - Natural language to SQL with streaming responses
 - **Real-time Health Monitoring** - Database metrics and performance insights
 
@@ -380,6 +380,40 @@ is no JSON envelope. Two things differ from the other SQL providers:
 - `POST /api/db/maintenance` accepts `analyze` (`UPDATE STATISTICS`, Enterprise Edition only),
   `reindex` (`BUILD INDEX` over deferred indexes) and `kill` (a request id), each requiring a target.
 - Full reference: [`docs/providers/couchbase.md`](providers/couchbase.md).
+
+---
+
+##### ClickHouse Query Format
+
+ClickHouse speaks ordinary SQL over its HTTP interface, so the `sql` field carries a plain
+statement — no JSON envelope, the same as PostgreSQL or MySQL. Two things differ from the other SQL
+providers:
+
+- A statement ending in an explicit `FORMAT ...` or `SETTINGS ...` clause is sent unchanged: the
+  server rejects a `LIMIT` appended after either, so the auto-limiter skips injection and
+  `wasLimited` is `false` for those statements.
+- `written_rows` is the only mutation count the server reports, so `rowCount` on an
+  `ALTER TABLE ... UPDATE` or a lightweight `DELETE FROM` is `0` even though the statement applied —
+  this mirrors the server's own reporting, it is not a bug.
+
+```json
+{
+  "connection": {
+    "type": "clickhouse",
+    "host": "localhost",
+    "port": 8123,
+    "user": "default",
+    "password": "",
+    "database": "default"
+  },
+  "sql": "SELECT * FROM events LIMIT 50"
+}
+```
+
+**Notes:**
+- `POST /api/db/maintenance` accepts `optimize` (`OPTIMIZE TABLE ... FINAL`), `analyze` (statistics
+  from `system.parts`) and `kill` (`KILL QUERY WHERE query_id = ... SYNC`).
+- Full reference: [`docs/providers/clickhouse.md`](providers/clickhouse.md).
 
 ---
 
@@ -763,7 +797,7 @@ interface DatabaseConnection {
   createdAt: Date;         // Creation timestamp
 }
 
-type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'mongodb' | 'redis' | 'oracle' | 'mssql' | 'libredb' | 'couchbase';
+type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'mongodb' | 'redis' | 'oracle' | 'mssql' | 'libredb' | 'couchbase' | 'clickhouse';
 ```
 
 ### TableSchema

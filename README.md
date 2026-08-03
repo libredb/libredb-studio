@@ -79,7 +79,7 @@ The test instance comes with a pre-configured PostgreSQL database via [Seed Conn
 
 <p align="center">
   <img src="public/screenshots/connection-modal.png" alt="Multi-Database Connection Manager" width="100%" />
-  <br/><em>Connect to PostgreSQL, MySQL, Oracle, SQL Server, MongoDB, Couchbase, Redis, or SQLite with SSL/TLS and SSH Tunnel support.</em>
+  <br/><em>Connect to PostgreSQL, MySQL, Oracle, SQL Server, MongoDB, Couchbase, ClickHouse, Redis, or SQLite with SSL/TLS and SSH Tunnel support.</em>
 </p>
 
 ---
@@ -184,6 +184,7 @@ The test instance comes with a pre-configured PostgreSQL database via [Seed Conn
 | **SQLite** | `bun:sqlite` / `node:sqlite` (runtime-selected) | Full SQL IDE, file-based or in-memory databases (server-local file) |
 | **MongoDB** | `mongodb` | JSON query editor, collection operations (find, aggregate, insert, update, delete) |
 | **Couchbase** | none — HTTP (Query + management REST) | Full SQL++ IDE, EXPLAIN plans, bucket/scope/collection explorer, `INFER` column inference, read-your-writes consistency, `UPDATE STATISTICS` / `BUILD INDEX` / request kill |
+| **ClickHouse** | none — HTTP (SQL interface, port 8123) | Full SQL IDE, JSON EXPLAIN plan trees, system-table schema introspection, `OPTIMIZE TABLE` / table statistics / query kill maintenance |
 | **Redis** | `ioredis` | Command editor, key browser, INFO-based monitoring |
 
 > All SQL databases share: schema explorer, ER diagrams, schema diff & migration, display masking (preview), monitoring dashboard, and connection string import.
@@ -202,7 +203,7 @@ The test instance comes with a pre-configured PostgreSQL database via [Seed Conn
 | **Editor** | Monaco Editor (VS Code Engine) | Web |
 | **AI** | Multi-Model (Gemini, OpenAI, Ollama, Custom) | Web, Mobile |
 | **Auth** | JWT (`jose`) + OIDC (`openid-client`), PKCE, Role Mapping | Web, Mobile |
-| **Database** | PostgreSQL, MySQL, Oracle, SQL Server, SQLite, MongoDB, Couchbase, Redis | Web, Mobile |
+| **Database** | PostgreSQL, MySQL, Oracle, SQL Server, SQLite, MongoDB, Couchbase, ClickHouse, Redis | Web, Mobile |
 | **Charts** | Recharts (Bar, Line, Pie, Area, Scatter, Histogram, Stacked) | Web, Mobile |
 | **ERD** | React Flow, ELK.js (auto-layout) | Web |
 | **State/Grid** | TanStack Table & Virtual | Web, Mobile |
@@ -293,7 +294,7 @@ journalctl -u libredb-studio
 
   ### Prerequisites
   - [Bun](https://bun.sh/) (Recommended) or Node.js 24+
-  - A target database to query (PostgreSQL, MySQL, Oracle, SQL Server, SQLite, MongoDB, Couchbase, or Redis)
+  - A target database to query (PostgreSQL, MySQL, Oracle, SQL Server, SQLite, MongoDB, Couchbase, ClickHouse, or Redis)
 
   ### Quick Start (Local)
   1. **Clone & Install**
@@ -415,7 +416,7 @@ bun run test:coverage
 |-------|-----------|--------|-------|----------------|
 | **Unit** | `tests/unit/` | `bun:test` | ~1,609 | Pure functions: SQL parser, connection strings, data masking, query limiter, schema diff, error classes, DB icons, showcase queries |
 | **API** | `tests/api/` | `bun:test` | ~279 | Route handlers: auth, query, transaction, maintenance, AI endpoints, middleware |
-| **Integration** | `tests/integration/` | `bun:test` | ~346 | Database providers: PG, MySQL, SQLite, MongoDB, Couchbase, Redis, Oracle, MSSQL|
+| **Integration** | `tests/integration/` | `bun:test` | ~346 | Database providers: PG, MySQL, SQLite, MongoDB, Couchbase, Redis, Oracle, MSSQL, ClickHouse|
 | **Hooks** | `tests/hooks/` | `bun:test` | ~251 | React hooks: auth, connections, tabs, query execution, transactions, inline editing, AI chat, monitoring |
 | **Components** | `tests/components/` | `bun:test` + happy-dom | ~570 | UI components: Studio, Sidebar, QueryEditor, ResultsGrid, Admin Dashboard, Charts, ERD |
 | **E2E** | `e2e/` | Playwright | ~32 | Full browser flows: login, connections, query execution, tabs, export, admin |
@@ -706,7 +707,7 @@ extraEnvFrom:
 | `defaults` | No | Default values merged into all connections |
 | `connections[].id` | Yes | Unique slug (`[a-z0-9-]+`, max 64 chars) |
 | `connections[].name` | Yes | Display name in UI |
-| `connections[].type` | Yes | `postgres`, `mysql`, `sqlite`, `mongodb`, `redis`, `oracle`, `mssql`, `libredb`, `couchbase` |
+| `connections[].type` | Yes | `postgres`, `mysql`, `sqlite`, `mongodb`, `redis`, `oracle`, `mssql`, `libredb`, `couchbase`, `clickhouse` |
 | `connections[].roles` | Yes | `["*"]` (everyone), `["admin"]`, `["user"]`, or `["admin", "user"]` |
 | `connections[].managed` | No | `true` = read-only (default), `false` = editable copy for user |
 | `connections[].password` | No | Use `${ENV_VAR}` syntax for secrets |

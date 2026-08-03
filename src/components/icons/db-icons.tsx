@@ -170,6 +170,31 @@ export const CouchbaseIcon: React.FC<IconProps> = ({ className, ...props }) => (
   </svg>
 );
 
+/**
+ * ClickHouse bar-chart mark: a horizontal rule over five columns, the last one
+ * half height. That short column is the distinguishing feature of the brand mark,
+ * so it is not simplified away.
+ */
+export const ClickHouseIcon: React.FC<IconProps> = ({ className, ...props }) => (
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.5"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={className}
+    {...props}
+  >
+    <path d="M4 4h16" />
+    <path d="M4 8v12" />
+    <path d="M8 8v12" />
+    <path d="M12 8v12" />
+    <path d="M16 8v12" />
+    <path d="M20 8v6" />
+  </svg>
+);
+
 /** LibreDB database cylinder with L marker */
 export const LibreDBIcon: React.FC<IconProps> = ({ className, ...props }) => (
   <svg

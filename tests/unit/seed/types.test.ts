@@ -61,8 +61,25 @@ describe("SeedConnectionSchema", () => {
     expect(result.success).toBe(false);
   });
 
+  it("rejects a database type outside the DatabaseType union", () => {
+    const result = SeedConnectionSchema.safeParse({ ...validConn, type: "clickhous" });
+    expect(result.success).toBe(false);
+  });
+
   it("accepts every valid database type", () => {
-    for (const type of ["postgres", "mysql", "sqlite", "mongodb", "redis", "oracle", "mssql", "libredb", "couchbase"]) {
+    const allTypes = [
+      "postgres",
+      "mysql",
+      "sqlite",
+      "mongodb",
+      "redis",
+      "oracle",
+      "mssql",
+      "libredb",
+      "couchbase",
+      "clickhouse",
+    ];
+    for (const type of allTypes) {
       const result = SeedConnectionSchema.safeParse({ ...validConn, type });
       expect(result.success).toBe(true);
     }

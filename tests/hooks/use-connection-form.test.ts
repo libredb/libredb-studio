@@ -259,6 +259,37 @@ describe("useConnectionForm", () => {
     expect(result.current.testResult!.message).toContain("parsed successfully");
   });
 
+  test("handlePasteConnectionString keeps the TLS intent of a pasted https ClickHouse URL", () => {
+    // A ClickHouse Cloud endpoint is the common case. Losing the scheme here sends a
+    // plaintext POST to the TLS port, which fails with a bare "fetch failed".
+    const { result } = renderHook(() => useConnectionForm(defaultProps));
+
+    act(() => {
+      result.current.setPasteInput("https://user:pass@abc.clickhouse.cloud/default");
+    });
+    act(() => {
+      result.current.handlePasteConnectionString();
+    });
+
+    expect(result.current.type).toBe("clickhouse");
+    expect(result.current.port).toBe("8443");
+    expect(result.current.sslMode).toBe("require");
+  });
+
+  test("handlePasteConnectionString leaves TLS off for a plaintext ClickHouse URL", () => {
+    const { result } = renderHook(() => useConnectionForm(defaultProps));
+
+    act(() => {
+      result.current.setPasteInput("http://ch-host:8123/demo");
+    });
+    act(() => {
+      result.current.handlePasteConnectionString();
+    });
+
+    expect(result.current.type).toBe("clickhouse");
+    expect(result.current.sslMode).toBe("disable");
+  });
+
   // ── handlePasteConnectionString shows error for invalid string ─────────────
 
   test("handlePasteConnectionString shows error for invalid string", () => {
@@ -347,6 +378,7 @@ describe("useConnectionForm", () => {
     redis: true,
     libredb: true,
     couchbase: true,
+    clickhouse: true,
   };
 
   test("dbTypes offers every database type a connection can carry", () => {

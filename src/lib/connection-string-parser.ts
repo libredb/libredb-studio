@@ -1,4 +1,4 @@
-import { DatabaseType } from "@/lib/types";
+import { DatabaseType, type SSLMode } from "@/lib/types";
 
 export interface ParsedConnection {
   type: DatabaseType;
@@ -8,12 +8,23 @@ export interface ParsedConnection {
   password?: string;
   database?: string;
   connectionString?: string;
+  /**
+   * TLS the scheme asked for, when the fields alone could not express it.
+   *
+   * Only set by schemes that ARE the transport, currently `https://` for
+   * ClickHouse: dropping it would leave the form on its "disable" default and the
+   * provider would post plaintext HTTP to a TLS port, which fails with a bare
+   * "fetch failed" and nothing pointing at the scheme. Schemes that carry TLS in
+   * their own connection string (`couchbases://`, `mongodb+srv://`) keep using
+   * `connectionString` instead, because the provider re-reads the scheme there.
+   */
+  sslMode?: SSLMode;
 }
 
 /**
  * Parse a database connection string URL into its components.
  * Supports: postgres://, postgresql://, mysql://, mongodb://, mongodb+srv://, redis://,
- * couchbase://, couchbases://
+ * couchbase://, couchbases://, clickhouse://, http://, https://
  */
 export function parseConnectionString(input: string): ParsedConnection | null {
   const trimmed = input.trim();
@@ -55,6 +66,23 @@ export function parseConnectionString(input: string): ParsedConnection | null {
   }
   if (trimmed.startsWith("couchbase://")) {
     return parseCouchbaseString(trimmed, "8091");
+  }
+
+  // ClickHouse — the HTTP endpoint IS the connection target, so a bare http(s) URL is
+  // as canonical as the clickhouse:// scheme and no other provider claims those
+  // schemes. 8123 rather than 9000 because the provider speaks HTTP, never the native
+  // protocol the CLI's clickhouse:// URIs point at; https:// defaults to the server's
+  // https_port instead. The result is field-based (no connectionString), so the pasted
+  // URL never has to be re-parsed at connect time.
+  if (trimmed.startsWith("clickhouse://") || trimmed.startsWith("http://")) {
+    return parseGenericURL(trimmed, "clickhouse", "8123");
+  }
+  if (trimmed.startsWith("https://")) {
+    // sslMode is what stops a pasted Cloud endpoint becoming a plaintext POST to
+    // the TLS port; the fields on their own cannot say "use TLS". A malformed URL
+    // must still parse to null, so this cannot spread the result unconditionally.
+    const parsed = parseGenericURL(trimmed, "clickhouse", "8443");
+    return parsed && { ...parsed, sslMode: "require" };
   }
 
   // ADO.NET format: Server=host;Database=db;User Id=user;Password=pass;
@@ -213,6 +241,8 @@ export function detectConnectionStringType(input: string): DatabaseType | null {
   if (trimmed.startsWith("oracle://")) return "oracle";
   if (trimmed.startsWith("mssql://") || trimmed.startsWith("sqlserver://")) return "mssql";
   if (trimmed.startsWith("couchbase://") || trimmed.startsWith("couchbases://")) return "couchbase";
+  if (trimmed.startsWith("clickhouse://") || trimmed.startsWith("http://") || trimmed.startsWith("https://"))
+    return "clickhouse";
   if (/^server\s*=/i.test(trimmed)) return "mssql";
   return null;
 }

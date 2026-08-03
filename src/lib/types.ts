@@ -7,7 +7,8 @@ export type DatabaseType =
   | "oracle"
   | "mssql"
   | "libredb"
-  | "couchbase";
+  | "couchbase"
+  | "clickhouse";
 
 export type ConnectionEnvironment = "production" | "staging" | "development" | "local" | "other";
 

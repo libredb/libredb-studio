@@ -45,8 +45,13 @@ const COUCHBASE_KEY_PROJECTION = `META(${COUCHBASE_ALIAS}).id AS ${COUCHBASE_DOC
  *  - SQL Server (1433): case-insensitive          → bracket-quote only specials
  *  - MySQL (3306): case-preserving                → backtick-quote only specials
  *  - Couchbase (8091): SQL++                      → always backtick-quote
- *  - PostgreSQL (5432) / SQLite / default: unquoted folds to lowercase (pg)
- *                                                  → quote unless plain lower
+ *  - PostgreSQL (5432) / SQLite / ClickHouse (8123) / default: unquoted folds to
+ *    lowercase (pg)                                → quote unless plain lower
+ *
+ * ClickHouse deliberately has no branch of its own: it never folds case and its
+ * quote character is the double quote, so the default branch is already exactly
+ * right — both `SELECT "id" FROM "probe"` and the bare form parse (issue #264).
+ * Adding a branch would only duplicate it.
  */
 export function quoteIdentifier(name: string, capabilities: ProviderCapabilities): string {
   // Document stores (MongoDB) don't use SQL identifier quoting.
@@ -158,6 +163,10 @@ export function generateTableQuery(tableName: string, capabilities: ProviderCapa
   if (capabilities.defaultPort === 1433) {
     return `SELECT TOP 50 * FROM ${table};`;
   }
+  // PostgreSQL / MySQL / SQLite / ClickHouse. The trailing LIMIT matters for
+  // ClickHouse specifically: it also accepts `FORMAT x` and `SETTINGS ...` as
+  // trailing clauses, and a LIMIT placed after either is a syntax error, so the
+  // limit must stay last (issue #264).
   return `SELECT * FROM ${table} LIMIT 50;`;
 }
 

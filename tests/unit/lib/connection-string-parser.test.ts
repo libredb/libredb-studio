@@ -305,6 +305,85 @@ describe("parseConnectionString", () => {
     });
   });
 
+  // ── ClickHouse ──────────────────────────────────────────────────────────
+
+  describe("clickhouse://, http:// and https:// URLs", () => {
+    test("parses a full clickhouse:// URL", () => {
+      const result = parseConnectionString("clickhouse://libredb:password123@127.0.0.1:8123/demo");
+      expect(result).not.toBeNull();
+      expect(result!.type).toBe("clickhouse");
+      expect(result!.host).toBe("127.0.0.1");
+      expect(result!.port).toBe("8123");
+      expect(result!.user).toBe("libredb");
+      expect(result!.password).toBe("password123");
+      expect(result!.database).toBe("demo");
+    });
+
+    test("uses the HTTP port 8123 when clickhouse:// omits it, not the native 9000", () => {
+      const result = parseConnectionString("clickhouse://libredb:pass@ch-host/demo");
+      expect(result!.type).toBe("clickhouse");
+      expect(result!.host).toBe("ch-host");
+      expect(result!.port).toBe("8123");
+    });
+
+    test("parses a plain http:// endpoint as ClickHouse", () => {
+      const result = parseConnectionString("http://libredb:password123@localhost:18123/demo");
+      expect(result!.type).toBe("clickhouse");
+      expect(result!.port).toBe("18123");
+      expect(result!.database).toBe("demo");
+    });
+
+    test("uses 8123 for an http:// endpoint with no port", () => {
+      const result = parseConnectionString("http://ch-host/demo");
+      expect(result!.type).toBe("clickhouse");
+      expect(result!.port).toBe("8123");
+      expect(result!.user).toBeUndefined();
+      expect(result!.password).toBeUndefined();
+    });
+
+    test("uses 8443 for an https:// endpoint with no port", () => {
+      const result = parseConnectionString("https://ch.example.clickhouse.cloud/default");
+      expect(result!.type).toBe("clickhouse");
+      expect(result!.host).toBe("ch.example.clickhouse.cloud");
+      expect(result!.port).toBe("8443");
+      expect(result!.database).toBe("default");
+    });
+
+    test("respects an explicit port on an https:// endpoint", () => {
+      const result = parseConnectionString("https://user:pass@ch.example.clickhouse.cloud:9440/default");
+      expect(result!.port).toBe("9440");
+    });
+
+    // Without this the fields alone cannot express TLS, so a pasted ClickHouse Cloud
+    // URL would connect as plaintext HTTP to an https port and fail opaquely.
+    test("carries the TLS intent of an https:// endpoint", () => {
+      expect(parseConnectionString("https://ch.example.clickhouse.cloud/default")!.sslMode).toBe("require");
+    });
+
+    test("leaves the TLS intent unset for the plaintext schemes", () => {
+      expect(parseConnectionString("http://ch-host:8123/demo")!.sslMode).toBeUndefined();
+      expect(parseConnectionString("clickhouse://ch-host:8123/demo")!.sslMode).toBeUndefined();
+    });
+
+    test("leaves the database undefined when the URL carries no path", () => {
+      const result = parseConnectionString("clickhouse://ch-host:8123");
+      expect(result!.type).toBe("clickhouse");
+      expect(result!.database).toBeUndefined();
+    });
+
+    test("decodes URL-encoded credentials", () => {
+      const result = parseConnectionString("https://user%40corp:p%40ss%23word@ch-host/demo");
+      expect(result!.user).toBe("user@corp");
+      expect(result!.password).toBe("p@ss#word");
+    });
+
+    test("returns null for a malformed ClickHouse URL", () => {
+      expect(parseConnectionString("clickhouse://:::bad")).toBeNull();
+      expect(parseConnectionString("http://:::bad")).toBeNull();
+      expect(parseConnectionString("https://:::bad")).toBeNull();
+    });
+  });
+
   // ── ADO.NET format ──────────────────────────────────────────────────────
 
   describe("ADO.NET format", () => {
@@ -422,6 +501,17 @@ describe("detectConnectionStringType", () => {
 
   test("detects couchbases://", () => {
     expect(detectConnectionStringType("couchbases://cb.abc123.cloud.couchbase.com")).toBe("couchbase");
+  });
+
+  test("detects clickhouse://", () => {
+    expect(detectConnectionStringType("clickhouse://host")).toBe("clickhouse");
+  });
+
+  test("detects a bare http:// and https:// endpoint as clickhouse", () => {
+    // ClickHouse is the only provider addressed over plain HTTP, so the generic
+    // schemes are unambiguous.
+    expect(detectConnectionStringType("http://host:8123/demo")).toBe("clickhouse");
+    expect(detectConnectionStringType("https://ch.example.clickhouse.cloud")).toBe("clickhouse");
   });
 
   test("detects ADO.NET Server= format", () => {

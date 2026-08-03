@@ -129,3 +129,37 @@ services:
         done
         echo "couchbase-init: the query service never accepted CREATE PRIMARY INDEX" >&2
         exit 1
+  clickhouse:
+    # Pinned to the exact build the design spec (docs/superpowers/specs/2026-08-03-clickhouse-provider-design.md)
+    # was live-verified against, so status codes, header names and the mid-stream-failure
+    # trailer documented there stay reproducible for the next person.
+    image: clickhouse/clickhouse-server:26.7.1.1315
+    container_name: libredb-clickhouse
+    restart: unless-stopped
+    environment:
+      CLICKHOUSE_USER: libredb
+      CLICKHOUSE_PASSWORD: password123
+      CLICKHOUSE_DB: demo
+      # Lets the live pass GRANT/REVOKE a second, restricted user (needed to reproduce the
+      # ACCESS_DENIED-arrives-as-500 finding, spec section 2.5) without hand-editing users.xml.
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+    ports:
+      # 8123 is HTTP, the only protocol the provider speaks. 9000 (native TCP) is deliberately
+      # NOT exposed: there is no native-protocol transport in this codebase to connect with it.
+      - "8123:8123"
+    ulimits:
+      # ClickHouse warns at every start below this and degrades under load, same class of
+      # issue as the couchbase nofile setting above.
+      nofile:
+        soft: 262144
+        hard: 262144
+    healthcheck:
+      # /ping needs no auth and returns "Ok." once the server can accept queries. The image has
+      # no curl (unlike couchbase's), so this uses wget, which it does ship.
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8123/ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 40
+    # No seed sidecar: CLICKHOUSE_DB above creates `demo` on first boot, and unlike Couchbase
+    # there is no index prerequisite - a SELECT against a freshly created table works
+    # immediately. Do not add one.

@@ -4,7 +4,7 @@ This document outlines the architectural patterns, tech stack, and system design
 
 ## System Overview
 
-LibreDB Studio is a hybrid, cloud-native database management tool that provides an IDE-like experience in the browser. It supports **9 database backends** via a Strategy Pattern abstraction: PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, Couchbase, Redis, LibreDB.
+LibreDB Studio is a hybrid, cloud-native database management tool that provides an IDE-like experience in the browser. It supports **10 database backends** via a Strategy Pattern abstraction: PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, Couchbase, ClickHouse, Redis, LibreDB.
 
 It runs in two modes: as a **standalone Next.js app** and as an **embedded npm package** (`@libredb/studio`) consumed by libredb-platform. See [§4.6](#46-workspace-abstraction-npm-package-embedding).
 
@@ -47,6 +47,7 @@ graph TD
         SQL --> SQLite[(SQLite)]
         SQL --> Oracle[(Oracle)]
         SQL --> MSSQL[(SQL Server)]
+        SQL --> ClickHouse[(ClickHouse)]
         Document --> MongoDB[(MongoDB)]
         Document --> Couchbase[(Couchbase)]
         KeyValue --> Redis[(Redis)]
@@ -99,6 +100,7 @@ classDiagram
     SQLBaseProvider <|-- SQLiteProvider
     SQLBaseProvider <|-- OracleProvider
     SQLBaseProvider <|-- MSSQLProvider
+    SQLBaseProvider <|-- ClickHouseProvider
 ```
 
 Each provider implements:
@@ -235,7 +237,7 @@ src/
 └── lib/
     ├── db/                  # Database provider module
     │   ├── providers/
-    │   │   ├── sql/         # postgres, mysql, sqlite (+ sqlite-driver runtime adapter), oracle, mssql
+    │   │   ├── sql/         # postgres, mysql, sqlite (+ sqlite-driver runtime adapter), oracle, mssql, clickhouse/ (transport seam + SQL over HTTP)
     │   │   ├── document/    # mongodb, couchbase/ (transport seam + SQL++ over REST)
     │   │   ├── keyvalue/    # redis
     │   │   └── embedded/    # libredb (built-in embedded provider for the sample connection)

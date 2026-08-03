@@ -277,6 +277,7 @@ describe("createDatabaseProvider", () => {
   test("the unknown-type error lists every supported type", async () => {
     const conn = makeConnection("unknown");
     await expect(createDatabaseProvider(conn)).rejects.toThrow(/couchbase/);
+    await expect(createDatabaseProvider(conn)).rejects.toThrow(/clickhouse/);
   });
 
   test('creates provider for type "postgres"', async () => {
@@ -334,6 +335,13 @@ describe("createDatabaseProvider", () => {
     const provider = await createDatabaseProvider(conn);
     expect(provider).toBeDefined();
     expect(provider.type).toBe("couchbase");
+  });
+
+  test('creates provider for type "clickhouse"', async () => {
+    const conn = makeConnection("clickhouse", { port: 8123, database: "demo" });
+    const provider = await createDatabaseProvider(conn);
+    expect(provider).toBeDefined();
+    expect(provider.type).toBe("clickhouse");
   });
 
   test('creates provider for type "libredb"', async () => {

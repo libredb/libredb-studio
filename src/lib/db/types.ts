@@ -90,7 +90,7 @@ export interface MaintenanceResult {
  * Each id selects one strategy module in `src/lib/explain`. Extended per
  * provider as explain support lands.
  */
-export type ExplainFormat = "postgres-json" | "mysql-json" | "sqlite-queryplan" | "couchbase-json";
+export type ExplainFormat = "postgres-json" | "mysql-json" | "sqlite-queryplan" | "couchbase-json" | "clickhouse-json";
 
 export interface ProviderCapabilities {
   queryLanguage: "sql" | "json";
