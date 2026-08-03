@@ -227,7 +227,8 @@ mock.module("@/lib/db-ui-config", () => ({
     color: "text-blue-400",
     label: type,
     defaultPort: type === "mysql" ? "3306" : type === "mongodb" ? "27017" : "5432",
-    showConnectionStringToggle: type === "mongodb",
+    // Mirrors the real config: the URI-addressed providers offer the toggle.
+    showConnectionStringToggle: type === "mongodb" || type === "couchbase",
     connectionFields: ["host", "port", "user", "password", "database"],
   }),
   getDBIcon: () => () => null,
@@ -644,5 +645,35 @@ describe("ConnectionModal", () => {
     expect(passphraseInput).not.toBeNull();
     fireEvent.change(passphraseInput as HTMLInputElement, { target: { value: "secret-pass" } });
     expect(mockSetSSHPassphrase).toHaveBeenCalledWith("secret-pass");
+  });
+
+  // ── 34. Couchbase labels the database field as the bucket it actually is ──
+
+  test("Couchbase type labels the database field Bucket Name", () => {
+    mockFormOverrides = { type: "couchbase" };
+    const props = createDefaultProps();
+    const { queryByText } = render(React.createElement(ConnectionModal, props));
+
+    expect(queryByText("Bucket Name")).not.toBeNull();
+    expect(queryByText("Database Name")).toBeNull();
+  });
+
+  test("Couchbase connection-string mode labels the override Bucket and shows a couchbase:// example", () => {
+    mockFormOverrides = { type: "couchbase", mongoConnectionMode: "connectionString" };
+    const props = createDefaultProps();
+    const { queryByText, container } = render(React.createElement(ConnectionModal, props));
+
+    expect(queryByText("Bucket Name (optional override)")).not.toBeNull();
+    const uriInput = container.querySelector("#connectionString") as HTMLInputElement | null;
+    expect(uriInput).not.toBeNull();
+    expect(uriInput!.placeholder).toContain("couchbase://");
+  });
+
+  test("non-Couchbase types keep the Database Name label", () => {
+    const props = createDefaultProps();
+    const { queryByText } = render(React.createElement(ConnectionModal, props));
+
+    expect(queryByText("Database Name")).not.toBeNull();
+    expect(queryByText("Bucket Name")).toBeNull();
   });
 });

@@ -4,7 +4,7 @@ This document outlines the architectural patterns, tech stack, and system design
 
 ## System Overview
 
-LibreDB Studio is a hybrid, cloud-native database management tool that provides an IDE-like experience in the browser. It supports **7 database backends** via a Strategy Pattern abstraction: PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, Redis.
+LibreDB Studio is a hybrid, cloud-native database management tool that provides an IDE-like experience in the browser. It supports **9 database backends** via a Strategy Pattern abstraction: PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, Couchbase, Redis, LibreDB.
 
 It runs in two modes: as a **standalone Next.js app** and as an **embedded npm package** (`@libredb/studio`) consumed by libredb-platform. See [§4.6](#46-workspace-abstraction-npm-package-embedding).
 
@@ -48,6 +48,7 @@ graph TD
         SQL --> Oracle[(Oracle)]
         SQL --> MSSQL[(SQL Server)]
         Document --> MongoDB[(MongoDB)]
+        Document --> Couchbase[(Couchbase)]
         KeyValue --> Redis[(Redis)]
     end
 
@@ -90,6 +91,7 @@ classDiagram
 
     BaseDatabaseProvider <|-- SQLBaseProvider
     BaseDatabaseProvider <|-- MongoDBProvider
+    BaseDatabaseProvider <|-- CouchbaseProvider
     BaseDatabaseProvider <|-- RedisProvider
 
     SQLBaseProvider <|-- PostgresProvider
@@ -105,6 +107,8 @@ Each provider implements:
 - **`prepareQuery()`** - handles query limiting per-provider (SQL LIMIT injection vs MongoDB native)
 
 Adding a new database type requires: **1 provider class** + **1 entry in `db-ui-config.ts`**.
+
+`CouchbaseProvider` extends `BaseDatabaseProvider` even though SQL++ is a SQL dialect: `SQLBaseProvider` owns pooled-driver mechanics (per-dialect escaping, placeholders, transactions, `cancelQuery`) that its stateless HTTP transport does not have, so the SQL-ness is declared through `queryLanguage: 'sql'` instead. It is also the only provider with no driver dependency — the cluster is reached over the documented Query and management REST APIs. See [`docs/providers/couchbase.md`](providers/couchbase.md).
 
 ## 4. Key Architectural Patterns
 
@@ -232,7 +236,7 @@ src/
     ├── db/                  # Database provider module
     │   ├── providers/
     │   │   ├── sql/         # postgres, mysql, sqlite (+ sqlite-driver runtime adapter), oracle, mssql
-    │   │   ├── document/    # mongodb
+    │   │   ├── document/    # mongodb, couchbase/ (transport seam + SQL++ over REST)
     │   │   ├── keyvalue/    # redis
     │   │   └── embedded/    # libredb (built-in embedded provider for the sample connection)
     │   ├── factory.ts       # Provider factory

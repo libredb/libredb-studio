@@ -274,6 +274,11 @@ describe("createDatabaseProvider", () => {
     await expect(createDatabaseProvider(conn)).rejects.toThrow(/Unknown database type: unknown/);
   });
 
+  test("the unknown-type error lists every supported type", async () => {
+    const conn = makeConnection("unknown");
+    await expect(createDatabaseProvider(conn)).rejects.toThrow(/couchbase/);
+  });
+
   test('creates provider for type "postgres"', async () => {
     const conn = makeConnection("postgres");
     const provider = await createDatabaseProvider(conn);
@@ -321,6 +326,14 @@ describe("createDatabaseProvider", () => {
     const provider = await createDatabaseProvider(conn);
     expect(provider).toBeDefined();
     expect(provider.type).toBe("mssql");
+  });
+
+  test('creates provider for type "couchbase"', async () => {
+    // The bucket is the `database` field; the provider refuses a connection without one.
+    const conn = makeConnection("couchbase", { port: 8091, database: "travel" });
+    const provider = await createDatabaseProvider(conn);
+    expect(provider).toBeDefined();
+    expect(provider.type).toBe("couchbase");
   });
 
   test('creates provider for type "libredb"', async () => {

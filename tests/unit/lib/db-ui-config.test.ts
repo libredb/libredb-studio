@@ -2,7 +2,17 @@ import { describe, test, expect } from "bun:test";
 import { getDBConfig, getDBIcon, getDBColor, isFileBased } from "@/lib/db-ui-config";
 import type { DatabaseType } from "@/lib/types";
 
-const ALL_TYPES: DatabaseType[] = ["postgres", "mysql", "sqlite", "mongodb", "redis", "oracle", "mssql", "libredb"];
+const ALL_TYPES: DatabaseType[] = [
+  "postgres",
+  "mysql",
+  "sqlite",
+  "mongodb",
+  "redis",
+  "oracle",
+  "mssql",
+  "libredb",
+  "couchbase",
+];
 
 describe("db-ui-config", () => {
   describe("getDBConfig", () => {
@@ -28,10 +38,31 @@ describe("db-ui-config", () => {
       expect(getDBConfig("sqlite").defaultPort).toBe("");
     });
 
-    test("only mongodb exposes the connection string toggle", () => {
+    test("exposes the connection string toggle only for the URI-addressed providers", () => {
+      // MongoDB (mongodb+srv) and Couchbase (couchbase://, couchbases://) are the
+      // providers a user routinely has a full URI for; everything else is field-based.
+      const withToggle = new Set<DatabaseType>(["mongodb", "couchbase"]);
       for (const type of ALL_TYPES) {
-        expect(getDBConfig(type).showConnectionStringToggle).toBe(type === "mongodb");
+        expect(getDBConfig(type).showConnectionStringToggle).toBe(withToggle.has(type));
       }
+    });
+
+    test("couchbase exposes its label, management port and connection fields", () => {
+      expect(getDBConfig("couchbase").label).toBe("Couchbase");
+      expect(getDBConfig("couchbase").defaultPort).toBe("8091");
+      expect(getDBConfig("couchbase").connectionFields).toEqual([
+        "host",
+        "port",
+        "user",
+        "password",
+        "database",
+        "connectionString",
+      ]);
+    });
+
+    test("every provider carries a distinct colour class", () => {
+      const colors = ALL_TYPES.map((type) => getDBConfig(type).color);
+      expect(new Set(colors).size).toBe(colors.length);
     });
   });
 
@@ -68,6 +99,7 @@ describe("db-ui-config", () => {
       expect(isFileBased("redis")).toBe(false);
       expect(isFileBased("oracle")).toBe(false);
       expect(isFileBased("mssql")).toBe(false);
+      expect(isFileBased("couchbase")).toBe(false);
     });
   });
 });

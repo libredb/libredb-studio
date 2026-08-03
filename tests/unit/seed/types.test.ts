@@ -61,8 +61,8 @@ describe("SeedConnectionSchema", () => {
     expect(result.success).toBe(false);
   });
 
-  it("accepts all 7 valid database types", () => {
-    for (const type of ["postgres", "mysql", "sqlite", "mongodb", "redis", "oracle", "mssql"]) {
+  it("accepts every valid database type", () => {
+    for (const type of ["postgres", "mysql", "sqlite", "mongodb", "redis", "oracle", "mssql", "libredb", "couchbase"]) {
       const result = SeedConnectionSchema.safeParse({ ...validConn, type });
       expect(result.success).toBe(true);
     }

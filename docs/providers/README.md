@@ -13,13 +13,15 @@ in lockstep with the code (see the tri-sync rule in [`../../CLAUDE.md`](../../CL
 | SQLite | `sqlite` | SQL (embedded) | `bun:sqlite` (Bun) / `node:sqlite` (Node) | SQL | [sqlite.md](./sqlite.md) |
 | Redis | `redis` | Key-Value | `ioredis` | JSON | [redis.md](./redis.md) |
 | MongoDB | `mongodb` | Document | `mongodb` | JSON (MQL) | [mongodb.md](./mongodb.md) |
+| Couchbase | `couchbase` | Document | none (HTTP: Query + management REST) | SQL (SQL++) | [couchbase.md](./couchbase.md) |
 | LibreDB | `libredb` | Embedded (Key-Value) | `@libredb/libredb` | JSON (command grammar) | [libredb.md](./libredb.md) |
 
 ## Conventions
 
 - **Filename = canonical type-id** (`postgres.md`, `mssql.md`, …), mirroring the source file
-  (`src/lib/db/providers/<family>/<type-id>.ts`). The official product name (e.g. "SQL Server") is
-  used only in each doc's title and prose.
+  (`src/lib/db/providers/<family>/<type-id>.ts`, or a `<type-id>/` directory when a provider is
+  split across modules, as Couchbase is). The official product name (e.g. "SQL Server") is used only
+  in each doc's title and prose.
 - **Each doc mirrors the code.** Every `file:line` citation is verified, and the per-provider triad
   — code, this doc, and `tests/integration/db/<type-id>-provider.test.ts` — must stay in sync in the
   same PR (the *provider tri-sync invariant*).
@@ -29,8 +31,10 @@ in lockstep with the code (see the tri-sync rule in [`../../CLAUDE.md`](../../CL
 
 ## Cross-cutting docs
 
-- **Provider architecture & how to add a new provider:** [`../DATABASE_PROVIDERS.md`](../DATABASE_PROVIDERS.md)
-  — the Strategy-Pattern architecture, the provider hierarchy, the shared interface/base classes, and
-  a step-by-step guide to adding a new database type.
+- **Provider architecture:** [`../DATABASE_PROVIDERS.md`](../DATABASE_PROVIDERS.md) — the
+  Strategy-Pattern architecture, the provider hierarchy, and the shared interface/base classes.
+- **Adding a new provider:** [`../ADDING_A_PROVIDER.md`](../ADDING_A_PROVIDER.md) — the step-by-step
+  guide, plus the rubric for deciding whether a database needs a driver at all, the transport seam,
+  and the traps of talking to one over HTTP. Couchbase is the worked example.
 - **HTTP API contract** (request/response for `/api/db/query`, schema, maintenance, …):
   [`../API_DOCS.md`](../API_DOCS.md).

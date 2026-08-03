@@ -24,12 +24,12 @@
 
 ## Overview
 
-LibreDB Studio provides a RESTful API for database management operations. The API supports PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, and Redis.
+LibreDB Studio provides a RESTful API for database management operations. The API supports PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, Couchbase, and Redis.
 
 ### Key Features
 
 - **JWT Authentication** - Secure token-based authentication stored in HTTP-only cookies
-- **Multi-Database Support** - PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, Redis
+- **Multi-Database Support** - PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, Couchbase, Redis
 - **AI-Powered Queries** - Natural language to SQL with streaming responses
 - **Real-time Health Monitoring** - Database metrics and performance insights
 
@@ -344,6 +344,44 @@ For MongoDB connections, the `sql` field should contain a JSON query:
 - `aggregate` - Aggregation pipeline
 - `count` - Count documents matching a filter (runs `countDocuments` internally)
 - `distinct` - Distinct values for a field (the field is taken from the first key of `options.projection`)
+
+##### Couchbase Query Format
+
+Couchbase speaks **SQL++**, a SQL dialect, so the `sql` field carries an ordinary statement — there
+is no JSON envelope. Two things differ from the other SQL providers:
+
+- `connection.database` carries the **bucket** (one bucket per connection), and `connection.port` is
+  the **management** port (`8091`, or `18091` with TLS). The query port is discovered from
+  `GET /pools/default/nodeServices` at connect time and is never configured.
+- Keyspaces are backtick-quoted three-part paths. `SELECT *` nests the document under the keyspace
+  name and never yields the document key, so generated statements alias and project it explicitly.
+
+```json
+{
+  "connection": {
+    "type": "couchbase",
+    "host": "127.0.0.1",
+    "port": 8091,
+    "user": "Administrator",
+    "password": "password123",
+    "database": "travel"
+  },
+  "sql": "SELECT META(d).id AS __id, d.* FROM `travel`.`inventory`.`hotel` AS d LIMIT 50"
+}
+```
+
+**Notes:**
+- Every statement is sent with `scan_consistency: request_plus`, so a `SELECT` issued right after an
+  `INSERT` sees the new rows (the cluster default, `not_bounded`, does not).
+- A statement against a keyspace with no usable index returns `400 Bad Request` with code
+  `QUERY_ERROR`, and the message carries the runnable remedy
+  (``CREATE PRIMARY INDEX ON `travel`.`inventory`.`hotel` ``). A document whose key is known needs no
+  index at all: `SELECT d.* FROM ... AS d USE KEYS ["hotel::1"]`.
+- `POST /api/db/maintenance` accepts `analyze` (`UPDATE STATISTICS`, Enterprise Edition only),
+  `reindex` (`BUILD INDEX` over deferred indexes) and `kill` (a request id), each requiring a target.
+- Full reference: [`docs/providers/couchbase.md`](providers/couchbase.md).
+
+---
 
 ##### Redis Query Format
 
@@ -720,12 +758,12 @@ interface DatabaseConnection {
   port?: number;           // Port number
   user?: string;           // Username
   password?: string;       // Password
-  database?: string;       // Database name
+  database?: string;       // Database name (Couchbase: the bucket)
   connectionString?: string; // Full connection string (alternative)
   createdAt: Date;         // Creation timestamp
 }
 
-type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'mongodb' | 'redis' | 'oracle' | 'mssql';
+type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'mongodb' | 'redis' | 'oracle' | 'mssql' | 'libredb' | 'couchbase';
 ```
 
 ### TableSchema
