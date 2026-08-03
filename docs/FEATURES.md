@@ -27,7 +27,7 @@
 ### 4. Visual EXPLAIN (Query Analyzer)
 *   **Performance Visualization:** Visual execution plan to identify performance bottlenecks.
 *   **Detailed Metrics:** Graphical representation of database scan types, join operations, costs, and execution times.
-*   **Multi-DB Support:** Optimized for PostgreSQL and MySQL query plans.
+*   **Multi-DB Support:** PostgreSQL and MySQL JSON plans, SQLite `EXPLAIN QUERY PLAN`, and Couchbase SQL++ plan trees. Providers without a real analyze mode hide the toggle instead of degrading to an estimate.
 
 ### 5. AI Query Assistant (Multi-Provider LLM)
 *   **Natural Language to SQL:** Convert natural language requests into high-precision SQL code.
@@ -48,6 +48,7 @@
     *   **SQL Server:** Full support with connection pooling (`mssql`); monitoring via DMVs (`sys.dm_*`).
 *   **Document Databases:**
     *   **MongoDB:** Full support with official driver, JSON-based MQL queries, automatic schema inference, and aggregation pipelines.
+    *   **Couchbase:** Full support with **no driver dependency** — SQL++ over the documented Query and management REST APIs, so the SQL editor, limiter and NL2SQL all apply. Buckets/scopes/collections flattened into the schema explorer, `INFER`-based column inference, visual EXPLAIN plans, and read-your-writes query consistency by default.
 *   **Key-Value Stores:**
     *   **Redis:** Full support via the official `ioredis` driver — plain-command and JSON query styles, prefix-grouped key "schema" through a non-blocking `SCAN`, and `INFO`/`SLOWLOG`/`CLIENT LIST`-derived health and metrics.
 *   **Embedded Stores:**

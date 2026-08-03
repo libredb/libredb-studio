@@ -30,7 +30,13 @@ src/lib/db/
 │   │   ├── oracle.ts           # Oracle Strategy
 │   │   └── mssql.ts            # SQL Server Strategy
 │   ├── document/               # Document Database Providers
-│   │   └── mongodb.ts          # MongoDB Strategy
+│   │   ├── mongodb.ts          # MongoDB Strategy
+│   │   └── couchbase/          # Couchbase Strategy (SQL++ over REST, no driver)
+│   │       ├── index.ts        #   CouchbaseProvider
+│   │       ├── transport.ts    #   CouchbaseTransport seam + neutral result types
+│   │       ├── http-transport.ts #  Query REST + management REST (the one implementation)
+│   │       ├── keyspace.ts     #   display name <-> backtick-quoted keyspace path
+│   │       └── introspect.ts   #   system:* catalogs + INFER
 │   ├── keyvalue/               # Key-Value Providers
 │   │   └── redis.ts            # Redis Strategy
 │   └── embedded/               # Embedded (in-process) Providers
@@ -51,11 +57,14 @@ BaseDatabaseProvider (abstract)
 │   ├── OracleProvider                      │
 │   └── MSSQLProvider                       │
 ├── MongoDBProvider ────────────────────────┤ Document Database
+├── CouchbaseProvider ──────────────────────┤ Document Database (SQL++ over REST)
 ├── RedisProvider ──────────────────────────┤ Key-Value Store
 └── LibreDBProvider ────────────────────────┘ Embedded (key-value)
 ```
 
 `SQLBaseProvider` provides SQL-specific helpers (LIMIT injection, identifier escaping, placeholder generation). Non-SQL databases like MongoDB, Redis, and LibreDB extend `BaseDatabaseProvider` directly. LibreDB is embedded (opened in-process from a file, like SQLite) but, having no SQL, it is a key-value-style provider rather than a SQL one.
+
+Couchbase is the one provider that speaks a SQL dialect (SQL++) without extending `SQLBaseProvider`: that base owns pooled-driver mechanics — per-dialect escaping, placeholder generation, transactions, `cancelQuery` — that a stateless HTTP transport does not have. Its SQL-ness is expressed through `queryLanguage: 'sql'` in the capabilities instead. See [providers/couchbase.md](./providers/couchbase.md).
 
 The `SQLiteProvider` loads its embedded driver at runtime through `sqlite-driver.ts`: `bun:sqlite` under Bun, `node:sqlite` under plain Node (Node >= 24 built-in). Set `LIBREDB_SQLITE_DRIVER=bun|node` to force a driver. `better-sqlite3` is **not** used by the DB provider — it is only the SQLite driver for the storage layer (`src/lib/storage/`).
 
@@ -96,7 +105,7 @@ QueryEditor                      /api/db/query
 
 ## Supported Databases
 
-Eight providers are supported. For the per-provider reference (driver, pooling, query format,
+Nine providers are supported. For the per-provider reference (driver, pooling, query format,
 monitoring, limitations, …) see the prime docs in **[`docs/providers/`](./providers/README.md)**:
 
 | Provider | type-id | Family | Reference |
@@ -108,6 +117,7 @@ monitoring, limitations, …) see the prime docs in **[`docs/providers/`](./prov
 | SQLite | `sqlite` | SQL (embedded) | [providers/sqlite.md](./providers/sqlite.md) |
 | Redis | `redis` | Key-Value | [providers/redis.md](./providers/redis.md) |
 | MongoDB | `mongodb` | Document | [providers/mongodb.md](./providers/mongodb.md) |
+| Couchbase | `couchbase` | Document (SQL++) | [providers/couchbase.md](./providers/couchbase.md) |
 | LibreDB | `libredb` | Embedded (key-value) | [providers/libredb.md](./providers/libredb.md) |
 
 ## Core Interface
@@ -206,6 +216,11 @@ examples live in their prime docs:
   [`API_DOCS.md` MongoDB Query Format](./API_DOCS.md) section.
 - **Redis** (plain command or `{command, args}`): [providers/redis.md](./providers/redis.md).
 
+Couchbase is deliberately **not** in that list: SQL++ is a SQL dialect, so a Couchbase connection
+takes ordinary SQL in the `sql` field and inherits the SQL editor, the shared limiter, and NL2SQL.
+Its keyspaces are backtick-quoted three-part paths (`` `bucket`.`scope`.`collection` ``) — see
+[providers/couchbase.md](./providers/couchbase.md).
+
 ## Configuration
 
 ### Pool Configuration
@@ -275,7 +290,7 @@ DatabaseError (base)
 Provider-specific behaviour — pooling model, SSL/encryption, pagination, monitoring sources,
 maintenance operations, and known limitations — is documented per provider under
 [`docs/providers/`](./providers/README.md). Start there for anything specific to PostgreSQL, MySQL,
-Oracle, SQL Server, SQLite, Redis, MongoDB, or LibreDB.
+Oracle, SQL Server, SQLite, Redis, MongoDB, Couchbase, or LibreDB.
 
 ## Security Considerations
 
@@ -311,7 +326,7 @@ Before you start, decide:
    - `'sql'` → Monaco editor uses SQL mode with autocomplete
    - `'json'` → Monaco editor uses JSON mode with MQL-style autocomplete
 
-3. **Which npm driver?** (e.g., `pg`, `mysql2`, `mongodb`, `ioredis`, `oracledb`, `mssql`). SQLite is a special case — it uses the built-in `bun:sqlite`/`node:sqlite` via `sqlite-driver.ts` and needs no driver install.
+3. **Which npm driver?** (e.g., `pg`, `mysql2`, `mongodb`, `ioredis`, `oracledb`, `mssql`). Two providers need none: SQLite uses the built-in `bun:sqlite`/`node:sqlite` via `sqlite-driver.ts`, and Couchbase talks to the cluster over documented REST endpoints with `fetch`/`node:https` — a deliberate choice, since a native driver would be inherited by every distribution channel and by `@libredb/studio` ([couchbase.md](./providers/couchbase.md)).
 
 ## Step 1: Register the Database Type
 
@@ -321,10 +336,10 @@ Before you start, decide:
 
 ```typescript
 // Before:
-export type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'mongodb' | 'redis' | 'oracle' | 'mssql' | 'libredb';
+export type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'mongodb' | 'couchbase' | 'redis' | 'oracle' | 'mssql' | 'libredb';
 
 // After (example: adding CockroachDB):
-export type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'mongodb' | 'redis' | 'oracle' | 'mssql' | 'libredb' | 'cockroachdb';
+export type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'mongodb' | 'couchbase' | 'redis' | 'oracle' | 'mssql' | 'libredb' | 'cockroachdb';
 ```
 
 ### 1.2 — Add to `QueryTab.type` if needed
@@ -356,6 +371,7 @@ is kept in sync with its per-provider doc). Don't copy a skeleton from this guid
 | Pooled SQL (wire-protocol DB) | `SQLBaseProvider` | `postgres.ts` / `mysql.ts` | [postgres.md](./providers/postgres.md) · [mysql.md](./providers/mysql.md) |
 | Embedded / file SQL | `SQLBaseProvider` | `sqlite.ts` | [sqlite.md](./providers/sqlite.md) |
 | Document store | `BaseDatabaseProvider` | `mongodb.ts` | [mongodb.md](./providers/mongodb.md) |
+| Document store reached over HTTP/REST (no driver) | `BaseDatabaseProvider` | `document/couchbase/` | [couchbase.md](./providers/couchbase.md) |
 | Key-value store | `BaseDatabaseProvider` | `redis.ts` | [redis.md](./providers/redis.md) |
 | Embedded (in-process, no wire protocol) | `BaseDatabaseProvider` | `embedded/libredb.ts` | [libredb.md](./providers/libredb.md) |
 
@@ -456,7 +472,7 @@ Then add the type to the selectable list that drives the ConnectionModal picker:
 
 ```typescript
 const selectableTypes: DatabaseType[] = [
-  'postgres', 'mysql', 'oracle', 'mssql', 'mongodb', 'redis', 'libredb', 'cockroachdb'
+  'postgres', 'mysql', 'oracle', 'mssql', 'mongodb', 'couchbase', 'redis', 'libredb', 'cockroachdb'
 ];
 ```
 
@@ -473,7 +489,12 @@ bun add <driver-package>
 # bun add mongodb             (MongoDB)
 # bun add ioredis             (Redis)
 # SQLite needs no driver — bun:sqlite / node:sqlite are runtime built-ins (see sqlite-driver.ts)
+# Couchbase needs no driver — it speaks the Query and management REST APIs over fetch/node:https
 ```
+
+If your engine exposes a documented HTTP API, weigh it against the native driver before adding a
+dependency: a native module lands in the Docker image, every native distribution channel, and the
+`@libredb/studio` package that libredb-platform consumes.
 
 ## Step 6: Verify
 
@@ -573,11 +594,11 @@ For the authoritative, code-verified reference for each shipped provider (extend
 driver, pooling, capabilities, labels, `prepareQuery` behaviour, and limitations), see the prime
 docs — they are the single source of truth and are kept in sync with the code:
 
-**[docs/providers/](./providers/README.md)** → postgres · mysql · oracle · mssql · sqlite · redis · mongodb · libredb
+**[docs/providers/](./providers/README.md)** → postgres · mysql · oracle · mssql · sqlite · redis · mongodb · couchbase · libredb
 
 When implementing a new provider, the closest existing analogue is the best template: a pooled SQL
-provider (postgres/mysql), an embedded SQL provider (sqlite), or a non-SQL provider
-(mongodb/redis).
+provider (postgres/mysql), an embedded SQL provider (sqlite), a non-SQL provider (mongodb/redis), or
+a driverless provider reached over HTTP (couchbase).
 
 ## Quick Reference Checklist
 

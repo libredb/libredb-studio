@@ -53,3 +53,79 @@ services:
       ORACLE_PASSWORD: Password123!
     ports:
       - "1521:1521"
+  couchbase:
+    # The image ships an uninitialized node: the cluster, the credentials below,
+    # the bucket and its primary index are all applied by the couchbase-init
+    # sidecar that follows.
+    image: couchbase:community-8.0.2
+    container_name: libredb-couchbase
+    restart: unless-stopped
+    environment:
+      COUCHBASE_USER: Administrator
+      COUCHBASE_PASSWORD: password123
+    ports:
+      # 8091 management REST, 8093 query service (SQL++). Those are the only two
+      # the provider needs: it speaks HTTP, never the binary KV protocol (11210).
+      - "8091:8091"
+      - "8093:8093"
+    ulimits:
+      # Couchbase warns at every start below this and degrades under load.
+      nofile:
+        soft: 200000
+        hard: 200000
+    healthcheck:
+      # Authenticated on purpose: /pools answers anonymously only until the
+      # cluster is initialized, and returns 401 for every later start, which
+      # would leave an initialized node permanently "unhealthy". With
+      # credentials it answers 200 in both states.
+      test:
+        - CMD-SHELL
+        - 'curl -sf -o /dev/null -u "$$COUCHBASE_USER:$$COUCHBASE_PASSWORD" http://localhost:8091/pools'
+      interval: 5s
+      timeout: 5s
+      retries: 40
+  couchbase-init:
+    # One-shot sidecar. A fresh node has no cluster, no bucket and no index, and
+    # SQL++ rejects a SELECT against an un-indexed keyspace with error 4000, so
+    # without this the service would come up unusable.
+    image: couchbase:community-8.0.2
+    container_name: libredb-couchbase-init
+    restart: "no"
+    depends_on:
+      couchbase:
+        condition: service_healthy
+    environment:
+      COUCHBASE_HOST: couchbase
+      COUCHBASE_USER: Administrator
+      COUCHBASE_PASSWORD: password123
+      COUCHBASE_BUCKET: travel
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      # $$ escapes compose interpolation: these expand in the container's shell.
+      - |
+        set -eu
+        couchbase-cli cluster-init -c "$$COUCHBASE_HOST" \
+          --cluster-username "$$COUCHBASE_USER" --cluster-password "$$COUCHBASE_PASSWORD" \
+          --cluster-name libredb --services data,index,query \
+          --cluster-ramsize 1024 --cluster-index-ramsize 512 --index-storage-setting default \
+          || echo "cluster already initialized - existing settings left untouched"
+        # Community Edition rejects Magma, which bucket-create defaults to, and a
+        # single node cannot honour a replica.
+        couchbase-cli bucket-create -c "$$COUCHBASE_HOST" \
+          -u "$$COUCHBASE_USER" -p "$$COUCHBASE_PASSWORD" \
+          --bucket "$$COUCHBASE_BUCKET" --bucket-type couchbase --storage-backend couchstore \
+          --bucket-ramsize 256 --bucket-replica 0 --wait \
+          || echo "bucket already exists - existing data left untouched"
+        # The query service accepts statements a few seconds after the node is
+        # initialized, so the index creation is retried rather than assumed.
+        for _ in $$(seq 1 30); do
+          if curl -sf -o /dev/null -u "$$COUCHBASE_USER:$$COUCHBASE_PASSWORD" \
+            "http://$$COUCHBASE_HOST:8093/query/service" \
+            --data-urlencode "statement=CREATE PRIMARY INDEX IF NOT EXISTS ON \`$$COUCHBASE_BUCKET\`"; then
+            echo "couchbase ready: bucket $$COUCHBASE_BUCKET has a primary index"
+            exit 0
+          fi
+          sleep 2
+        done
+        echo "couchbase-init: the query service never accepted CREATE PRIMARY INDEX" >&2
+        exit 1
