@@ -11,8 +11,8 @@
 #   id/name/status/tier/kind  identity; status: live | pending | deprecated
 #   category                  business bucket for docs/CHANNELS.md:
 #                             registries-releases | containers | kubernetes-operators |
-#                             package-managers | os-desktop | paas-one-click |
-#                             marketplaces-partners | closed
+#                             package-managers | os-desktop | paas-catalogs |
+#                             deploy-recipes | cloud-marketplaces | closed
 #   platforms                 REQUIRED, non-empty list. Rendered and counted in
 #                             this canonical order in docs/CHANNELS.md:
 #                             linux | macos | windows | container | kubernetes | cloud
@@ -260,7 +260,7 @@ channels:
     name: CapRover 3rd-party repo (libredb.org/caprover-one-click-apps)
     short_name: CapRover 3rd-party repo
     status: deprecated
-    category: paas-one-click
+    category: paas-catalogs
     platforms: [cloud]
     tier: 2
     kind: one-click-template
@@ -281,7 +281,7 @@ channels:
   - id: railway-template
     name: Railway one-click template
     status: live
-    category: paas-one-click
+    category: paas-catalogs
     platforms: [cloud]
     tier: 2
     kind: paas-template
@@ -306,7 +306,7 @@ channels:
     name: Koyeb deploy button (repo README)
     short_name: Koyeb deploy button
     status: live
-    category: paas-one-click
+    category: deploy-recipes
     platforms: [cloud]
     tier: 2
     kind: deploy-button
@@ -324,7 +324,7 @@ channels:
     name: Fly.io launch config (repo fly.toml)
     short_name: Fly.io launch config
     status: live
-    category: paas-one-click
+    category: deploy-recipes
     platforms: [cloud]
     tier: 2
     kind: paas-template
@@ -347,7 +347,7 @@ channels:
     name: Render Blueprint (repo render.yaml)
     short_name: Render Blueprint
     status: live
-    category: paas-one-click
+    category: deploy-recipes
     platforms: [cloud]
     tier: 2
     kind: paas-template
@@ -355,7 +355,7 @@ channels:
       method: commit
       sla: on_demand
     links:
-      catalog: https://render.com/deploy?repo=https://github.com/libredb/libredb-studio
+      get: https://github.com/libredb/libredb-studio/blob/main/render.yaml
       docs: docs/DISTRIBUTION.md
     pin:
       strategy: none
@@ -367,7 +367,7 @@ channels:
     name: CapRover official one-click apps
     short_name: CapRover official
     status: live
-    category: paas-one-click
+    category: paas-catalogs
     platforms: [cloud]
     tier: 3
     kind: one-click-template
@@ -386,7 +386,7 @@ channels:
   - id: dokploy
     name: Dokploy template catalog
     status: live
-    category: paas-one-click
+    category: paas-catalogs
     platforms: [cloud]
     tier: 3
     kind: paas-template
@@ -408,7 +408,7 @@ channels:
   - id: cosmos
     name: Cosmos servapp marketplace
     status: live
-    category: paas-one-click
+    category: paas-catalogs
     platforms: [cloud]
     tier: 3
     kind: one-click-template
@@ -428,7 +428,7 @@ channels:
   - id: kubero
     name: Kubero template catalog
     status: live
-    category: paas-one-click
+    category: paas-catalogs
     platforms: [cloud]
     tier: 3
     kind: paas-template
@@ -493,7 +493,7 @@ channels:
     name: Koyeb One-Click Apps catalog (curated by Koyeb)
     short_name: Koyeb One-Click Apps catalog
     status: pending
-    category: marketplaces-partners
+    category: cloud-marketplaces
     platforms: [cloud]
     tier: 4
     kind: curated-catalog
@@ -509,7 +509,7 @@ channels:
   - id: digitalocean
     name: DigitalOcean Marketplace
     status: live
-    category: marketplaces-partners
+    category: cloud-marketplaces
     platforms: [cloud]
     tier: 4
     kind: marketplace

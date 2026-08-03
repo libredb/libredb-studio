@@ -42,8 +42,9 @@ Live channels by platform: **Linux 7 · macOS 3 · Windows 3 · Container 2 · K
 | Kubernetes & operators | 1 | 2 | 0 |
 | Package managers | 4 | 1 | 0 |
 | OS / desktop packages | 2 | 0 | 0 |
-| PaaS & one-click | 8 | 0 | 1 |
-| Marketplaces & partners | 1 | 1 | 0 |
+| PaaS catalogs (listed) | 5 | 0 | 1 |
+| Deploy recipes | 3 | 0 | 0 |
+| Cloud marketplaces | 1 | 1 | 0 |
 | Closed / declined | 0 | 0 | 1 |
 
 <!-- END:CHANNEL-SCORECARD -->
@@ -68,17 +69,17 @@ Live channels by platform: **Linux 7 · macOS 3 · Windows 3 · Container 2 · K
 | [Chocolatey](https://community.chocolatey.org/packages/libredb-studio) | Package managers | Windows | pending | Automated (paused), every release | [DISTRIBUTION.md](DISTRIBUTION.md) |
 | [Desktop app (AppImage, .deb)](https://github.com/libredb/libredb-studio/releases/latest) | OS / desktop packages | Linux | live | Automated, every release | [desktop/README.md](../desktop/README.md) |
 | [Linux .deb / .rpm](https://github.com/libredb/libredb-studio/releases/latest) | OS / desktop packages | Linux | live | Automated, every release | [DISTRIBUTION.md](DISTRIBUTION.md) |
-| [CapRover official](https://github.com/caprover/one-click-apps) | PaaS & one-click | Cloud | live | Manual, on demand | [DISTRIBUTION.md](DISTRIBUTION.md) |
-| [Cosmos servapp marketplace](https://github.com/azukaar/cosmos-servapps-official) | PaaS & one-click | Cloud | live | Manual, on demand | [deploy/cosmos/README.md](../deploy/cosmos/README.md) |
-| [Dokploy template catalog](https://templates.dokploy.com) | PaaS & one-click | Cloud | live | Manual, on demand | [deploy/dokploy/README.md](../deploy/dokploy/README.md) |
-| [Fly.io launch config](https://github.com/libredb/libredb-studio/blob/main/fly.toml) | PaaS & one-click | Cloud | live | Manual, on demand | [FLY.md](FLY.md) |
-| [Koyeb deploy button](https://github.com/libredb/libredb-studio/tree/main/deploy/koyeb) | PaaS & one-click | Cloud | live | Manual, on demand | [deploy/koyeb/README.md](../deploy/koyeb/README.md) |
-| [Kubero template catalog](https://www.kubero.dev/templates) | PaaS & one-click | Cloud | live | Manual, on demand | [deploy/kubero/README.md](../deploy/kubero/README.md) |
-| [Railway one-click template](https://railway.com/deploy/libredb-studio) | PaaS & one-click | Cloud | live | Manual, on demand | [deploy/railway/PUBLISH.md](../deploy/railway/PUBLISH.md) |
-| [Render Blueprint](https://render.com/deploy?repo=https://github.com/libredb/libredb-studio) | PaaS & one-click | Cloud | live | Manual, on demand | [DISTRIBUTION.md](DISTRIBUTION.md) |
-| CapRover 3rd-party repo | PaaS & one-click | Cloud | deprecated | — | [DISTRIBUTION.md](DISTRIBUTION.md) |
-| [DigitalOcean Marketplace](https://marketplace.digitalocean.com/apps/libredb-studio) | Marketplaces & partners | Cloud | live | Manual, on demand | [deploy/digitalocean/README.md](../deploy/digitalocean/README.md) |
-| [Koyeb One-Click Apps catalog](https://www.koyeb.com/deploy) | Marketplaces & partners | Cloud | pending | Manual, on demand | [deploy/koyeb/CATALOG_SUBMISSION.md](../deploy/koyeb/CATALOG_SUBMISSION.md) |
+| [CapRover official](https://github.com/caprover/one-click-apps) | PaaS catalogs (listed) | Cloud | live | Manual, on demand | [DISTRIBUTION.md](DISTRIBUTION.md) |
+| [Cosmos servapp marketplace](https://github.com/azukaar/cosmos-servapps-official) | PaaS catalogs (listed) | Cloud | live | Manual, on demand | [deploy/cosmos/README.md](../deploy/cosmos/README.md) |
+| [Dokploy template catalog](https://templates.dokploy.com) | PaaS catalogs (listed) | Cloud | live | Manual, on demand | [deploy/dokploy/README.md](../deploy/dokploy/README.md) |
+| [Kubero template catalog](https://www.kubero.dev/templates) | PaaS catalogs (listed) | Cloud | live | Manual, on demand | [deploy/kubero/README.md](../deploy/kubero/README.md) |
+| [Railway one-click template](https://railway.com/deploy/libredb-studio) | PaaS catalogs (listed) | Cloud | live | Manual, on demand | [deploy/railway/PUBLISH.md](../deploy/railway/PUBLISH.md) |
+| CapRover 3rd-party repo | PaaS catalogs (listed) | Cloud | deprecated | — | [DISTRIBUTION.md](DISTRIBUTION.md) |
+| [Fly.io launch config](https://github.com/libredb/libredb-studio/blob/main/fly.toml) | Deploy recipes | Cloud | live | Manual, on demand | [FLY.md](FLY.md) |
+| [Koyeb deploy button](https://github.com/libredb/libredb-studio/tree/main/deploy/koyeb) | Deploy recipes | Cloud | live | Manual, on demand | [deploy/koyeb/README.md](../deploy/koyeb/README.md) |
+| [Render Blueprint](https://github.com/libredb/libredb-studio/blob/main/render.yaml) | Deploy recipes | Cloud | live | Manual, on demand | [DISTRIBUTION.md](DISTRIBUTION.md) |
+| [DigitalOcean Marketplace](https://marketplace.digitalocean.com/apps/libredb-studio) | Cloud marketplaces | Cloud | live | Manual, on demand | [deploy/digitalocean/README.md](../deploy/digitalocean/README.md) |
+| [Koyeb One-Click Apps catalog](https://www.koyeb.com/deploy) | Cloud marketplaces | Cloud | pending | Manual, on demand | [deploy/koyeb/CATALOG_SUBMISSION.md](../deploy/koyeb/CATALOG_SUBMISSION.md) |
 | Flathub | Closed / declined | Linux | deprecated | — | [packaging/flatpak/README.md](../packaging/flatpak/README.md) |
 
 <!-- END:CHANNEL-TABLE -->
@@ -88,3 +89,6 @@ The scorecard and table above are generated from
 hand. To propose a new channel, add an entry with a `category` and a `platforms`
 list, then run `bun run distribution:matrix`. Freshness is enforced on pull
 requests with `bun run distribution:matrix --check`.
+
+Planned and deliberately not counted here until a listing exists: GCP, Azure, AWS
+and Alibaba cloud marketplaces, and Coolify, Portainer and Dokku deploy support.

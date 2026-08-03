@@ -683,7 +683,7 @@ describe("CLI (subprocess against temp fixtures)", () => {
     return `  - id: railway
     name: Railway template
     status: live
-    category: paas-one-click
+    category: paas-catalogs
     platforms: [cloud]
     tier: 2
     kind: paas-template
@@ -817,7 +817,7 @@ describe("CLI (remote pins against a local server)", () => {
     const row = `  - id: dokploy
     name: Dokploy template
     status: live
-    category: paas-one-click
+    category: paas-catalogs
     platforms: [cloud]
     tier: 3
     kind: paas-template

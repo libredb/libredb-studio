@@ -1077,8 +1077,13 @@ pin or editing a channel entry is always a human commit.
 
 **Categories** (`category` on every channel) are the business-facing buckets rendered in
 [`docs/CHANNELS.md`](CHANNELS.md): `registries-releases`, `containers`,
-`kubernetes-operators`, `package-managers`, `os-desktop`, `paas-one-click`,
-`marketplaces-partners`, `closed`. They are independent of tier (who publishes).
+`kubernetes-operators`, `package-managers`, `os-desktop`, `paas-catalogs`,
+`deploy-recipes`, `cloud-marketplaces`, `closed`. They are independent of tier (who
+publishes). `paas-catalogs` and `deploy-recipes` look similar but answer different
+questions: `paas-catalogs` means the platform itself lists LibreDB Studio in its own
+catalog, so a user browsing that platform discovers it without visiting this repo;
+`deploy-recipes` means we publish a config file or instructions and the platform does
+not list us anywhere, so discovery only happens through our repo.
 
 **Platforms** (`platforms` on every channel, at least one) are the user-facing axis rendered
 in [`docs/CHANNELS.md`](CHANNELS.md): `linux`, `macos`, `windows`, `container`, `kubernetes`,

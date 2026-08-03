@@ -38,8 +38,9 @@ export const CHANNEL_CATEGORIES = [
   "kubernetes-operators",
   "package-managers",
   "os-desktop",
-  "paas-one-click",
-  "marketplaces-partners",
+  "paas-catalogs",
+  "deploy-recipes",
+  "cloud-marketplaces",
   "closed",
 ];
 
@@ -49,8 +50,9 @@ export const CATEGORY_LABELS = {
   "kubernetes-operators": "Kubernetes & operators",
   "package-managers": "Package managers",
   "os-desktop": "OS / desktop packages",
-  "paas-one-click": "PaaS & one-click",
-  "marketplaces-partners": "Marketplaces & partners",
+  "paas-catalogs": "PaaS catalogs (listed)",
+  "deploy-recipes": "Deploy recipes",
+  "cloud-marketplaces": "Cloud marketplaces",
   closed: "Closed / declined",
 };
 
