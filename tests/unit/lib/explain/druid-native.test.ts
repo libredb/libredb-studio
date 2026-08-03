@@ -317,6 +317,80 @@ describe("druidNativeStrategy", () => {
     expect(druidNativeStrategy.buildSql("SELECT 1 AS c1;", "analyze")).toBe("EXPLAIN PLAN FOR SELECT 1 AS c1;");
   });
 
+  // Live-verified accepted by Druid 37.0.0, and `analyzeQuery` already treats
+  // `WITH ... SELECT` as a SELECT, so declining it here contradicted the pipeline and
+  // left the Explain button dead on any CTE.
+  test("buildSql accepts CTEs that lead to SELECT", () => {
+    expect(druidNativeStrategy.buildSql("WITH t AS (SELECT 1) SELECT * FROM t", "estimate")).toBe(
+      "EXPLAIN PLAN FOR WITH t AS (SELECT 1) SELECT * FROM t",
+    );
+  });
+
+  test("buildSql accepts SELECT preceded by SQL comments", () => {
+    expect(druidNativeStrategy.buildSql("-- note\nSELECT 1", "estimate")).toBe("EXPLAIN PLAN FOR -- note\nSELECT 1");
+    expect(druidNativeStrategy.buildSql("/* multi\nline */ SELECT 1", "analyze")).toBe(
+      "EXPLAIN PLAN FOR /* multi\nline */ SELECT 1",
+    );
+  });
+
+  test("buildSql accepts comments and whitespace interleaved, and stacked ahead of a CTE", () => {
+    expect(druidNativeStrategy.buildSql("/*a*//*b*/SELECT 1", "estimate")).toBe("EXPLAIN PLAN FOR /*a*//*b*/SELECT 1");
+    expect(druidNativeStrategy.buildSql("--\nSELECT 1", "estimate")).toBe("EXPLAIN PLAN FOR --\nSELECT 1");
+    const stacked = "-- a\n-- b\n  /* c */ WITH t AS (SELECT 1) SELECT * FROM t";
+    expect(druidNativeStrategy.buildSql(stacked, "analyze")).toBe(`EXPLAIN PLAN FOR ${stacked}`);
+  });
+
+  // The near misses. Broadening the prefix must not turn it into "starts with
+  // anything": a comment is not a statement, and the word boundary is what keeps
+  // SELECTED and WITHER out.
+  test("buildSql still declines comment-only input, empty input and words that merely start with the keywords", () => {
+    expect(druidNativeStrategy.buildSql("-- only a comment", "estimate")).toBeNull();
+    expect(druidNativeStrategy.buildSql("/* only a comment */", "analyze")).toBeNull();
+    expect(druidNativeStrategy.buildSql("", "estimate")).toBeNull();
+    expect(druidNativeStrategy.buildSql("   ", "analyze")).toBeNull();
+    expect(druidNativeStrategy.buildSql("SELECTED 1", "estimate")).toBeNull();
+    expect(druidNativeStrategy.buildSql("WITHER", "analyze")).toBeNull();
+    // An unterminated block comment never closes, so nothing after it is reached.
+    expect(druidNativeStrategy.buildSql("/* unterminated SELECT 1", "estimate")).toBeNull();
+  });
+
+  /**
+   * Regression guard on the SHAPE of SELECT_ONLY, not on what it accepts.
+   *
+   * The obvious spelling of this pattern - a leading `\s*` in front of an alternation
+   * that also contains `\s`, plus a lazy `[\s\S]*?` block-comment body inside a `*`
+   * quantifier - is ambiguous twice over, and a non-matching input pays for it by
+   * backtracking. Measured on the ambiguous form: 852ms for the 4 KB input below, and
+   * 958ms for 20k leading spaces. The tempered form used here answers both in well
+   * under a millisecond.
+   *
+   * `buildSql` runs on the editor's contents every time a query is executed, so a
+   * buffer that opens with a large commented-out block and then a non-SELECT is a
+   * reachable input. The bound is deliberately loose - three orders of magnitude above
+   * what the correct pattern needs - so it cannot flake on a slow runner while still
+   * failing outright if the ambiguity comes back.
+   */
+  test("buildSql does not backtrack on a long comment or whitespace run that never reaches a SELECT", () => {
+    const BOUND_MS = 200;
+    const adversarial = [
+      `${"/**/".repeat(1000)}UPDATE t SET a = 1`,
+      `${"/*a*/".repeat(1000)}DELETE FROM t`,
+      `${" ".repeat(20000)}UPDATE t SET a = 1`,
+      `${"-- a\n".repeat(1000)}UPDATE t SET a = 1`,
+      `${"/**/ -- a\n ".repeat(1000)}DELETE FROM t`,
+    ];
+
+    for (const sql of adversarial) {
+      const started = performance.now();
+      const result = druidNativeStrategy.buildSql(sql, "analyze");
+      const elapsed = performance.now() - started;
+
+      // Correct answer AND a bounded one: a fast wrong answer is not a pass.
+      expect(result).toBeNull();
+      expect(elapsed).toBeLessThan(BOUND_MS);
+    }
+  });
+
   // Druid rejects UPDATE and DELETE outright and routes INSERT/REPLACE to the MSQ
   // task engine, so none of them is explainable through this endpoint.
   test("buildSql returns null for non-SELECT statements in both modes", () => {

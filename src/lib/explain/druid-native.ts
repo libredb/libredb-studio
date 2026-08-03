@@ -3,7 +3,39 @@
 import { quoteUnsafeIntegers } from "@/lib/db/utils/json-integers";
 import type { ExplainStrategy, ExplainTreeNode } from "./types";
 
-const SELECT_ONLY = /^\s*SELECT\b/i;
+/**
+ * Does this statement lead to a SELECT, so that `EXPLAIN PLAN FOR` can wrap it?
+ *
+ * Broader than the bare `/^\s*SELECT\b/` the other strategies still use, because two
+ * ordinary things a user types are genuinely explainable on Druid and were being
+ * refused - which left the Explain button dead rather than merely narrow:
+ *
+ * - a CTE: `EXPLAIN PLAN FOR WITH t AS (...) SELECT * FROM t` is live-verified as
+ *   accepted, and the shared `analyzeQuery` already classifies `WITH ... SELECT` as a
+ *   SELECT (it injects a LIMIT into one), so refusing it here contradicted the rest of
+ *   the pipeline;
+ * - a leading comment: `-- note`, or a `/* ... *\/` licence header, before the SELECT.
+ *   Live-verified as accepted too, both as a prefix and combined with a CTE.
+ *
+ * The SHAPE of this pattern matters as much as what it accepts, and it is deliberately
+ * not the obvious `^\s*(--...|\/*...*\/|\s)*` spelling:
+ *
+ * - there is no leading `\s*`, because whitespace is already one alternative below.
+ *   Having both gives two ways to match the same run of spaces, and that ambiguity is
+ *   quadratic: measured 0ms -> 958ms on 20k leading spaces with a non-matching tail.
+ * - the block-comment body is TEMPERED (`[^*]|\*(?!\/)`) rather than a lazy
+ *   `[\s\S]*?\*\/`, which inside a `*` quantifier can extend past the first `*\/` and
+ *   let one iteration swallow several comments. Measured 852ms on a 4 KB run of
+ *   `/**\/` with a non-matching tail; tempered, the same input is 0.0ms.
+ *
+ * Both forms accept and reject exactly the same statements - the difference is only
+ * how much backtracking a non-matching input costs. `buildSql` runs on whatever is in
+ * the editor when a query is executed, so a buffer that opens with a large commented
+ * block and then a non-SELECT is a reachable input, and this file follows the same
+ * anti-backtracking care that made `query-limiter.ts` hand-write its semicolon strip
+ * "without regex to avoid ReDoS".
+ */
+const SELECT_ONLY = /^(?:\s|--[^\n]*|\/\*(?:[^*]|\*(?!\/))*\*\/)*(?:SELECT|WITH)\b/i;
 
 /**
  * Druid's EXPLAIN is a statement prefix, not a modifier with options, and it never
