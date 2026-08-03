@@ -188,7 +188,7 @@ The test instance comes with a pre-configured PostgreSQL database via [Seed Conn
 
 > All SQL databases share: schema explorer, ER diagrams, schema diff & migration, display masking (preview), monitoring dashboard, and connection string import.
 
-> **Provider reference docs:** each database has an in-depth reference (design, connection, query format, monitoring, limitations) under [`docs/providers/`](docs/providers/README.md). For the provider architecture and a guide to adding a new database, see [`docs/DATABASE_PROVIDERS.md`](docs/DATABASE_PROVIDERS.md).
+> **Provider reference docs:** each database has an in-depth reference (design, connection, query format, monitoring, limitations) under [`docs/providers/`](docs/providers/README.md). For the provider architecture see [`docs/DATABASE_PROVIDERS.md`](docs/DATABASE_PROVIDERS.md), and to add a new database see [`docs/ADDING_A_PROVIDER.md`](docs/ADDING_A_PROVIDER.md).
 
 ---
 
@@ -743,6 +743,9 @@ extraEnvFrom:
 - [ ] **Phase 16**: DBA & Monitoring (Lock Dependency Graph, Vacuum Scheduler, Prometheus Export).
 - [ ] **Phase 17**: Enterprise Collaboration (User Identity, Shared Workspaces, SAML 2.0).
 - [ ] **Phase 18**: Server-Enforced Data Masking (SQL output-lineage, deployment-global policy, fail-closed API masking, alias/aggregate coverage).
+- [x] **Phase 19**: Driver-Free Providers — Couchbase (SQL++ over the Query REST API), the first provider that adds no runtime dependency. Pattern documented in [Adding a Provider](docs/ADDING_A_PROVIDER.md).
+- [ ] **Phase 20**: Analytics Databases — ClickHouse ([#264](https://github.com/libredb/libredb-studio/issues/264)) and Apache Druid ([#265](https://github.com/libredb/libredb-studio/issues/265)), both driver-free over HTTP.
+- [ ] **Phase 21**: Federated Query — Trino/Starburst. Deliberately unscheduled: a Trino catalog is another *system*, so what a connection pins is a product question that has to be answered before the work can be specified.
 
 ---
 
@@ -758,6 +761,7 @@ extraEnvFrom:
 | [Login Page](docs/ui/login-page.md) | Login page layout, OIDC/local modes, and design system |
 | [Editor Docs](docs/editor/) | SQL editor internals — completion, performance, query optimization |
 | [Architecture](docs/ARCHITECTURE.md) | System architecture and design patterns |
+| [Adding a Provider](docs/ADDING_A_PROVIDER.md) | Step-by-step guide to adding a database, and how to tell whether it needs a driver at all |
 
 ---
 

@@ -31,8 +31,10 @@ in lockstep with the code (see the tri-sync rule in [`../../CLAUDE.md`](../../CL
 
 ## Cross-cutting docs
 
-- **Provider architecture & how to add a new provider:** [`../DATABASE_PROVIDERS.md`](../DATABASE_PROVIDERS.md)
-  — the Strategy-Pattern architecture, the provider hierarchy, the shared interface/base classes, and
-  a step-by-step guide to adding a new database type.
+- **Provider architecture:** [`../DATABASE_PROVIDERS.md`](../DATABASE_PROVIDERS.md) — the
+  Strategy-Pattern architecture, the provider hierarchy, and the shared interface/base classes.
+- **Adding a new provider:** [`../ADDING_A_PROVIDER.md`](../ADDING_A_PROVIDER.md) — the step-by-step
+  guide, plus the rubric for deciding whether a database needs a driver at all, the transport seam,
+  and the traps of talking to one over HTTP. Couchbase is the worked example.
 - **HTTP API contract** (request/response for `/api/db/query`, schema, maintenance, …):
   [`../API_DOCS.md`](../API_DOCS.md).
