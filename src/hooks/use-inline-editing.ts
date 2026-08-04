@@ -4,6 +4,7 @@ import { useState, useCallback } from "react";
 import type { DatabaseConnection, QueryTab } from "@/lib/types";
 import type { CellChange } from "@/components/ResultsGrid";
 import { useToast } from "@/hooks/use-toast";
+import { isBareIdentifier, quoteIdentifier } from "@/lib/sql/identifier";
 
 interface UseInlineEditingParams {
   activeConnection: DatabaseConnection | null;
@@ -71,6 +72,22 @@ export function useInlineEditing({ activeConnection, currentTab, executeQuery }:
     const tableName =
       currentTab.name.replace(/^Query[:  ]*/, "") || currentTab.query.match(/FROM\s+(\S+)/i)?.[1] || "table_name";
 
+    // The table name is a GUESS (a tab title, or the first word after FROM), so it
+    // is validated rather than quoted: quoting would change its case semantics and
+    // break a hand-typed lowercase name on Oracle, while interpolating an arbitrary
+    // string would let a tab title carry statement text. A guess that is not a bare
+    // identifier is not usable, so say so instead of building SQL from it.
+    if (!isBareIdentifier(tableName)) {
+      toast({
+        title: "Cannot Apply Changes",
+        description: `Could not read a table name from this tab ("${tableName}"). Edit the SQL manually.`,
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const quote = (identifier: string) => quoteIdentifier(identifier, activeConnection.type);
+
     // Generate UPDATE statements
     const statements: string[] = [];
     for (const [rowIndex, changes] of changesByRow) {
@@ -79,14 +96,17 @@ export function useInlineEditing({ activeConnection, currentTab, executeQuery }:
       const setClauses = changes.map((c) => {
         const val =
           c.newValue === "" || c.newValue.toUpperCase() === "NULL" ? "NULL" : `'${c.newValue.replace(/'/g, "''")}'`;
-        return `${c.columnId} = ${val}`;
+        // Column names come from the result's own field list, so they are exactly
+        // what the engine reports and can be quoted: that keeps a name holding a
+        // space or a reserved word legal, and keeps one that spells SQL inert.
+        return `${quote(c.columnId)} = ${val}`;
       });
       const pkVal = typeof pkValue === "number" ? pkValue : `'${pkValue}'`;
       // No trailing semicolon: it only ever served to join the statements, and each
       // one now goes to /api/db/query verbatim rather than through
       // `splitStatements`, which used to strip it. oracledb rejects a plain
       // statement that carries one (ORA-00933).
-      statements.push(`UPDATE ${tableName} SET ${setClauses.join(", ")} WHERE ${pkColumn} = ${pkVal}`);
+      statements.push(`UPDATE ${tableName} SET ${setClauses.join(", ")} WHERE ${quote(pkColumn)} = ${pkVal}`);
     }
 
     // One request per row (issue #269), sequentially and with the safety dialog

@@ -1,19 +1,9 @@
 import type { DatabaseType } from "@/lib/types";
+// The shared quoter, which also escapes an embedded closing quote character — this
+// file used to carry its own copy that did not, so a schema object named with one
+// produced SQL that ended the quoted span early (PR #289 review).
+import { quoteIdentifier as escapeIdentifier } from "@/lib/sql/identifier";
 import type { SchemaDiff, TableDiff, ColumnDiff } from "./types";
-
-function escapeIdentifier(name: string, dialect: DatabaseType): string {
-  switch (dialect) {
-    case "mysql":
-      return `\`${name}\``;
-    case "mssql":
-      return `[${name.replace(/\]/g, "]]")}]`;
-    case "oracle":
-    case "postgres":
-    case "sqlite":
-    default:
-      return `"${name}"`;
-  }
-}
 
 /**
  * ClickHouse column-default kinds as `system.columns.default_kind` reports them, and as

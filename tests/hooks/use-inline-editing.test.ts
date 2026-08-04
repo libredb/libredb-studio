@@ -210,8 +210,10 @@ describe("useInlineEditing", () => {
     const sql = (mockExecuteQuery as ReturnType<typeof mock>).mock.calls[0][0] as string;
     expect(sql).toContain("UPDATE");
     expect(sql).toContain("users");
-    expect(sql).toContain("name = 'Alice Updated'");
-    expect(sql).toContain("WHERE id = 1");
+    // Column identifiers are quoted (PR #289 review): a result field is named by
+    // whatever the query aliased it to, so it reaches SQL as arbitrary text.
+    expect(sql).toContain(`"name" = 'Alice Updated'`);
+    expect(sql).toContain(`WHERE "id" = 1`);
 
     // Changes should be cleared after apply
     expect(result.current.pendingChanges).toEqual([]);
@@ -256,8 +258,8 @@ describe("useInlineEditing", () => {
       expect(sql.match(/UPDATE/g)).toHaveLength(1);
       expect(sql.endsWith(";")).toBe(false);
     }
-    expect(sent[0]).toBe("UPDATE users SET name = 'Alice Updated' WHERE id = 1");
-    expect(sent[1]).toBe("UPDATE users SET email = 'bob@new.test' WHERE id = 2");
+    expect(sent[0]).toBe(`UPDATE users SET "name" = 'Alice Updated' WHERE "id" = 1`);
+    expect(sent[1]).toBe(`UPDATE users SET "email" = 'bob@new.test' WHERE "id" = 2`);
   });
 
   test("handleApplyChanges runs each row past the safety dialog, so every row is applied", async () => {
@@ -339,7 +341,7 @@ describe("useInlineEditing", () => {
     });
 
     // The second row must not have been sent while the first is still in flight.
-    expect(order).toEqual(["start:UPDATE users SET name = 'A2' WHERE id = 1"]);
+    expect(order).toEqual([`start:UPDATE users SET "name" = 'A2' WHERE "id" = 1`]);
 
     await act(async () => {
       resolveFirst?.();
@@ -347,10 +349,10 @@ describe("useInlineEditing", () => {
     });
 
     expect(order).toEqual([
-      "start:UPDATE users SET name = 'A2' WHERE id = 1",
-      "end:UPDATE users SET name = 'A2' WHERE id = 1",
-      "start:UPDATE users SET name = 'B2' WHERE id = 2",
-      "end:UPDATE users SET name = 'B2' WHERE id = 2",
+      `start:UPDATE users SET "name" = 'A2' WHERE "id" = 1`,
+      `end:UPDATE users SET "name" = 'A2' WHERE "id" = 1`,
+      `start:UPDATE users SET "name" = 'B2' WHERE "id" = 2`,
+      `end:UPDATE users SET "name" = 'B2' WHERE "id" = 2`,
     ]);
   });
 
@@ -458,5 +460,102 @@ describe("useInlineEditing", () => {
     });
 
     expect(result.current.pendingChanges).toEqual([]);
+  });
+
+  // ── Generated SQL must stay one statement (PR #289 review) ────────────────
+  //
+  // A result field is named by whatever the query aliased it to, so a column id is
+  // arbitrary text that reaches the generated UPDATE as an identifier. Applying
+  // edits skips the dangerous-query dialog, so nothing shows the user that SQL
+  // first — the statement has to be inert by construction.
+
+  test("quotes a column name that spells SQL instead of emitting it bare", async () => {
+    const hostile = "x = 1; DELETE FROM users; --";
+    const { result } = renderHook(() =>
+      useInlineEditing({
+        activeConnection: makeConnection(),
+        currentTab: makeTab({
+          result: makeResult({ fields: ["id", hostile], rows: [{ id: 1, [hostile]: "v" }] }),
+        }),
+        executeQuery: mockExecuteQuery as (sql: string) => void,
+      }),
+    );
+
+    act(() => {
+      result.current.handleCellChange(makeChange({ columnId: hostile, originalValue: "v", newValue: "w" }));
+    });
+    await act(async () => {
+      await result.current.handleApplyChanges();
+    });
+
+    expect(mockExecuteQuery).toHaveBeenCalledTimes(1);
+    const sql = mockExecuteQuery.mock.calls[0][0] as string;
+    expect(sql).toBe(`UPDATE users SET "${hostile}" = 'w' WHERE "id" = 1`);
+    // Nothing outside the quoted identifier ends the statement.
+    expect(sql.replace(/"[^"]*"/g, "")).not.toContain(";");
+  });
+
+  test("quotes an ordinary column name that needs quoting to be legal", async () => {
+    const { result } = renderHook(() =>
+      useInlineEditing({
+        activeConnection: makeConnection({ type: "mysql" }),
+        currentTab: makeTab({
+          result: makeResult({ fields: ["id", "first name"], rows: [{ id: 1, "first name": "Alice" }] }),
+        }),
+        executeQuery: mockExecuteQuery as (sql: string) => void,
+      }),
+    );
+
+    act(() => {
+      result.current.handleCellChange(makeChange({ columnId: "first name", originalValue: "Alice", newValue: "Bob" }));
+    });
+    await act(async () => {
+      await result.current.handleApplyChanges();
+    });
+
+    expect(mockExecuteQuery.mock.calls[0][0]).toBe("UPDATE users SET `first name` = 'Bob' WHERE `id` = 1");
+  });
+
+  test("refuses to apply when the table name could not be read as an identifier", async () => {
+    // The table name is GUESSED from the tab name or a FROM match, so unlike a
+    // column it cannot be quoted safely: quoting a hand-typed lowercase name would
+    // break Oracle, where the real table is upper-cased. An unusable guess is
+    // therefore refused rather than interpolated.
+    const { result } = renderHook(() =>
+      useInlineEditing({
+        activeConnection: makeConnection(),
+        currentTab: makeTab({ name: "users; DROP TABLE users; --", query: "" }),
+        executeQuery: mockExecuteQuery as (sql: string) => void,
+      }),
+    );
+
+    act(() => {
+      result.current.handleCellChange(makeChange());
+    });
+    await act(async () => {
+      await result.current.handleApplyChanges();
+    });
+
+    expect(mockExecuteQuery).not.toHaveBeenCalled();
+    expect(result.current.pendingChanges).toHaveLength(1);
+  });
+
+  test("accepts a schema-qualified table name", async () => {
+    const { result } = renderHook(() =>
+      useInlineEditing({
+        activeConnection: makeConnection(),
+        currentTab: makeTab({ name: "public.users" }),
+        executeQuery: mockExecuteQuery as (sql: string) => void,
+      }),
+    );
+
+    act(() => {
+      result.current.handleCellChange(makeChange());
+    });
+    await act(async () => {
+      await result.current.handleApplyChanges();
+    });
+
+    expect(mockExecuteQuery.mock.calls[0][0]).toBe(`UPDATE public.users SET "name" = 'Alice Updated' WHERE "id" = 1`);
   });
 });
