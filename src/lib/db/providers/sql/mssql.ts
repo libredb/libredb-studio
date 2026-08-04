@@ -30,9 +30,38 @@ import {
 import { DatabaseConfigError, ConnectionError, QueryError, mapDatabaseError } from "../../errors";
 import { formatBytes } from "../../utils/pool-manager";
 import { analyzeQuery, DEFAULT_QUERY_LIMIT, MAX_UNLIMITED_ROWS } from "../../utils/query-limiter";
+import { readLeadingKeyword } from "@/lib/sql/leading-keyword";
 
 // Row shape used to group foreign keys per table in getSchema().
 type ForeignKeyInfo = { columnName: string; referencedTable: string; referencedColumn: string };
+
+/**
+ * `SELECT ... ` with `TOP n` spliced in where T-SQL wants it, or `null` when this
+ * statement has no leading `SELECT` to splice after.
+ *
+ * The insertion point comes from `readLeadingKeyword` rather than from a
+ * `^\s*SELECT\s+` rewrite, because that pattern silently matched nothing behind a
+ * leading comment while the caller had already committed to `wasLimited: true`
+ * (#275). `DISTINCT` is found the same way, so `SELECT /* c *\/ DISTINCT a` places
+ * `TOP` after the `DISTINCT` and not between the two - `SELECT TOP n DISTINCT ...`
+ * is a syntax error in T-SQL.
+ */
+function injectTop(sql: string, limit: number): string | null {
+  const select = readLeadingKeyword(sql);
+  if (select === null || select.keyword !== "SELECT") return null;
+
+  const next = readLeadingKeyword(sql.slice(select.end));
+  const insertAt = next?.keyword === "DISTINCT" ? select.end + next.end : select.end;
+
+  // A `TOP` already sitting where this one would go means the statement carries its
+  // own bound and `analyzeQuery`'s probe missed it - that probe wants literal
+  // whitespace between the two words, so a comment between them defeats it, as does
+  // a `DISTINCT`. Splicing anyway yields `SELECT TOP 50 TOP 10` and a syntax error,
+  // so decline and let the caller report that nothing was limited.
+  if (readLeadingKeyword(sql.slice(insertAt))?.keyword === "TOP") return null;
+
+  return `${sql.slice(0, insertAt)} TOP ${limit}${sql.slice(insertAt)}`;
+}
 
 // ============================================================================
 // SQL Statements
@@ -544,7 +573,17 @@ export class MSSQLProvider extends SQLBaseProvider {
         modifiedSql = `${modifiedSql} OFFSET ${offset} ROWS FETCH NEXT ${effectiveLimit} ROWS ONLY`;
       } else {
         // Inject TOP N after SELECT
-        modifiedSql = modifiedSql.replace(/^(\s*SELECT\s+)(DISTINCT\s+)?/i, `$1$2TOP ${effectiveLimit} `);
+        const injected = injectTop(modifiedSql, effectiveLimit);
+
+        // Nothing to inject into: report the truth rather than a limit that is not
+        // there. `analyzeQuery` also calls a CTE a SELECT, and `TOP` belongs to the
+        // SELECT at its tail, which finding needs a parser this provider does not
+        // have. The old head-rewrite silently produced this same non-edit behind a
+        // leading comment while still claiming `wasLimited: true` (#275).
+        if (injected === null) {
+          return { query, wasLimited: false, limit: effectiveLimit, offset };
+        }
+        modifiedSql = injected;
       }
 
       if (hasSemicolon) modifiedSql += ";";

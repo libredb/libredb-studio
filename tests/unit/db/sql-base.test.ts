@@ -405,6 +405,42 @@ describe("SQLBaseProvider", () => {
       const p = new TestSQLProvider(makeConfig("postgres"));
       expect(p.callIsReadOnlyQuery("  SELECT 1")).toBe(true);
     });
+
+    // A comment is not whitespace. The SQLite provider routes on this predicate
+    // (`sqlite.ts` picks `all()` vs `run()`), so a commented SELECT misread as a
+    // write came back with zero rows and zero changes rather than its data (#275).
+    describe("leading comments", () => {
+      test.each<[string, string]>([
+        ["a line comment", "-- annotated\nSELECT 1"],
+        ["a block comment", "/* annotated */ SELECT 1"],
+        ["a hash comment", "# annotated\nSELECT 1"],
+        ["stacked comments", "-- a\n/* b */\nSHOW DATABASES"],
+      ])("sees a read-only statement behind %s", (_label, sql) => {
+        const p = new TestSQLProvider(makeConfig("postgres"));
+        expect(p.callIsReadOnlyQuery(sql)).toBe(true);
+      });
+
+      test("a commented write is still not read-only", () => {
+        const p = new TestSQLProvider(makeConfig("postgres"));
+        expect(p.callIsReadOnlyQuery("-- annotated\nINSERT INTO users VALUES (1)")).toBe(false);
+      });
+
+      test("a keyword inside the comment body does not make a write read-only", () => {
+        const p = new TestSQLProvider(makeConfig("postgres"));
+        expect(p.callIsReadOnlyQuery("-- SELECT the rows first\nUPDATE users SET name = 'x'")).toBe(false);
+      });
+    });
+
+    // Deliberate strictness change that came with reading the leading keyword as a
+    // whole word: `trim().startsWith("select")` counted any statement whose first
+    // word merely BEGINS with a keyword, so an identifier-led statement was
+    // reported read-only. Nothing valid opens this way, but the honest answer for
+    // an unrecognised statement is "not read-only", not a false safe.
+    test("a word that merely begins with a keyword is not that keyword", () => {
+      const p = new TestSQLProvider(makeConfig("postgres"));
+      expect(p.callIsReadOnlyQuery("selected_rows_view AS x")).toBe(false);
+      expect(p.callIsReadOnlyQuery("explains_table")).toBe(false);
+    });
   });
 
   // --------------------------------------------------------------------------
@@ -446,6 +482,31 @@ describe("SQLBaseProvider", () => {
       const p = new TestSQLProvider(makeConfig("postgres"));
       expect(p.callIsSchemaModifyingQuery("create table t(id int)")).toBe(true);
     });
+
+    describe("leading comments", () => {
+      test.each<[string, string]>([
+        ["CREATE", "-- annotated\nCREATE TABLE users (id int)"],
+        ["DROP", "/* annotated */ DROP TABLE users"],
+        ["ALTER", "# annotated\nALTER TABLE users ADD col text"],
+        ["TRUNCATE", "-- a\n/* b */\nTRUNCATE TABLE users"],
+      ])("sees a commented %s as schema-modifying", (_label, sql) => {
+        const p = new TestSQLProvider(makeConfig("postgres"));
+        expect(p.callIsSchemaModifyingQuery(sql)).toBe(true);
+      });
+
+      test("a commented SELECT is not schema-modifying", () => {
+        const p = new TestSQLProvider(makeConfig("postgres"));
+        expect(p.callIsSchemaModifyingQuery("-- CREATE this later\nSELECT * FROM users")).toBe(false);
+      });
+    });
+
+    // Same strictness change as `isReadOnlyQuery` above: `startsWith("create")`
+    // counted a statement led by an identifier that happens to begin with a keyword.
+    test("a word that merely begins with a keyword is not that keyword", () => {
+      const p = new TestSQLProvider(makeConfig("postgres"));
+      expect(p.callIsSchemaModifyingQuery("created_at_report")).toBe(false);
+      expect(p.callIsSchemaModifyingQuery("dropped_rows AS x")).toBe(false);
+    });
   });
 
   // --------------------------------------------------------------------------
@@ -484,6 +545,14 @@ describe("SQLBaseProvider", () => {
       const p = new TestSQLProvider(makeConfig("postgres"));
       const result = p.prepareQuery("SELECT * FROM users", { unlimited: true });
       expect(result.limit).toBeGreaterThan(500);
+    });
+
+    test("a commented SELECT gets its LIMIT applied", () => {
+      const p = new TestSQLProvider(makeConfig("postgres"));
+      const result = p.prepareQuery("-- annotated\nSELECT * FROM users", { limit: 50 });
+
+      expect(result.query).toBe("-- annotated\nSELECT * FROM users LIMIT 50");
+      expect(result.wasLimited).toBe(true);
     });
   });
 });

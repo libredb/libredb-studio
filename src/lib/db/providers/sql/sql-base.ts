@@ -11,6 +11,21 @@ import {
   type QueryPrepareOptions,
 } from "../../types";
 import { analyzeQuery, applyQueryLimit, DEFAULT_QUERY_LIMIT, MAX_UNLIMITED_ROWS } from "../../utils/query-limiter";
+import { readLeadingKeyword } from "@/lib/sql/leading-keyword";
+
+// ============================================================================
+// Statement vocabularies
+// ============================================================================
+
+/**
+ * Statements that only read. Wider than the query limiter's SELECT set on purpose:
+ * `SHOW`, `DESCRIBE`, `EXPLAIN` and `PRAGMA` return rows without a `SELECT`, and the
+ * SQLite provider needs all of them on its `all()` branch.
+ */
+const READ_ONLY_KEYWORDS = new Set(["SELECT", "SHOW", "DESCRIBE", "EXPLAIN", "PRAGMA"]);
+
+/** Statements that change the schema rather than the data in it. */
+const SCHEMA_MODIFYING_KEYWORDS = new Set(["CREATE", "DROP", "ALTER", "TRUNCATE"]);
 
 // ============================================================================
 // SQL Base Provider
@@ -104,29 +119,26 @@ export abstract class SQLBaseProvider extends BaseDatabaseProvider {
 
   /**
    * Check if query is read-only (SELECT, SHOW, DESCRIBE, EXPLAIN)
+   *
+   * Both predicates below read the leading keyword through
+   * `lib/sql/leading-keyword` rather than `trim().startsWith(...)`, for two
+   * reasons. A comment is not whitespace, so an annotated SELECT used to answer
+   * false here - and the SQLite provider routes on this predicate, so it took the
+   * write branch and returned no rows for a query that has data (#275). And
+   * `startsWith` has no word boundary, so a statement led by an identifier that
+   * merely begins with a keyword answered true; reading the whole word ends that.
    */
   protected isReadOnlyQuery(sql: string): boolean {
-    const trimmed = sql.trim().toLowerCase();
-    return (
-      trimmed.startsWith("select") ||
-      trimmed.startsWith("show") ||
-      trimmed.startsWith("describe") ||
-      trimmed.startsWith("explain") ||
-      trimmed.startsWith("pragma")
-    );
+    const keyword = readLeadingKeyword(sql)?.keyword;
+    return keyword !== undefined && READ_ONLY_KEYWORDS.has(keyword);
   }
 
   /**
    * Check if query modifies schema (CREATE, DROP, ALTER, TRUNCATE)
    */
   protected isSchemaModifyingQuery(sql: string): boolean {
-    const trimmed = sql.trim().toLowerCase();
-    return (
-      trimmed.startsWith("create") ||
-      trimmed.startsWith("drop") ||
-      trimmed.startsWith("alter") ||
-      trimmed.startsWith("truncate")
-    );
+    const keyword = readLeadingKeyword(sql)?.keyword;
+    return keyword !== undefined && SCHEMA_MODIFYING_KEYWORDS.has(keyword);
   }
 
   // ============================================================================

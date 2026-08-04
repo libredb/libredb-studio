@@ -268,6 +268,12 @@ and, **only for `SELECT`/CTE-`SELECT` queries that don't already have a `LIMIT`*
 - Existing `LIMIT` / `FETCH FIRST … ROWS ONLY` / `TOP n` / `ROWNUM` is detected and respected
   (not double-limited).
 - Non-`SELECT` statements (INSERT/UPDATE/DELETE/DDL) are returned unchanged.
+- The statement type is read from its first keyword that is neither whitespace nor a **comment**
+  ([`leading-keyword.ts`](../../src/lib/sql/leading-keyword.ts)), so `-- note`, `/* note */` and
+  MySQL's `# note` before a `SELECT` are skipped and the limit is still applied — as is the
+  already-limited check, so an annotated bounded query is not bounded twice. Before this, an
+  annotated `SELECT` classified as an unknown statement type and returned **every** row while the
+  UI badge reported it as not limited (#275).
 
 `prepareQuery()` is a *preparation* step (the UI calls it before `query()`); `query()` itself runs
 exactly the SQL it is handed.

@@ -964,6 +964,15 @@ describe("DruidProvider query preparation", () => {
     expect(prepared.limit).toBe(25);
   });
 
+  // Druid's override only decides whether the shared limiter's answer survives, so
+  // it inherits the comment tolerance rather than implementing any of its own (#275).
+  test("applies the external row limit to a comment-led SELECT", () => {
+    const prepared = provider().prepareQuery('-- annotated\nSELECT * FROM "libredb_demo"', { limit: 25 });
+
+    expect(prepared.query).toBe('-- annotated\nSELECT * FROM "libredb_demo" LIMIT 25');
+    expect(prepared.wasLimited).toBe(true);
+  });
+
   test("keeps a trailing semicolon, which Druid accepts", () => {
     const prepared = provider().prepareQuery('SELECT * FROM "libredb_demo";', { limit: 25 });
 

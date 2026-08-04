@@ -203,6 +203,11 @@ The shared `analyzeQuery()` recognises both standard `LIMIT n [OFFSET m]` and My
 `LIMIT offset, count` form, so an already-limited MySQL query is respected rather than double-limited.
 Default page size `DEFAULT_QUERY_LIMIT = 500`; unlimited caps at `MAX_UNLIMITED_ROWS = 100000`.
 
+MySQL's `#` line comment is skipped when the statement type is read, alongside `--` and `/* … */`
+([`leading-keyword.ts`](../../src/lib/sql/leading-keyword.ts)). This is the dialect that marker exists
+for: a `# note`-led `SELECT` used to classify as an unknown statement type and reach the server with
+no `LIMIT` at all (#275).
+
 ### 5.3 Query cancellation
 
 A query issued with a `queryId` records its connection `threadId`. `cancelQuery(queryId)`

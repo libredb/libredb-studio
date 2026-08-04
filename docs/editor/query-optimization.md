@@ -81,11 +81,19 @@ const result = applyQueryLimit('SELECT * FROM users', 500, 0);
 | Query Type | Auto-Limit Applied |
 |------------|-------------------|
 | SELECT | Yes |
+| SELECT behind a leading comment | Yes |
 | SELECT with LIMIT | No (preserved) |
 | SELECT with UNION | Yes (LIMIT appended after the last statement) |
 | SELECT with CTE | Yes |
 | INSERT/UPDATE/DELETE | No |
 | DDL (CREATE, ALTER) | No |
+
+The statement's type is read from its first keyword that is neither whitespace nor a comment
+(`src/lib/sql/leading-keyword.ts`), so `-- note`, `/* note */` and MySQL's `# note` before a `SELECT`
+are skipped and the limit is still applied. Before this, an annotated `SELECT` was classified as an
+unknown statement type and returned **every** row while the badge reported it as not limited.
+An already-bounded annotated statement (`LIMIT n`, `FETCH FIRST n ROWS ONLY`, `SELECT TOP n`) is
+still recognised as bounded and is not limited twice.
 
 ---
 

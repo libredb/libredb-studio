@@ -1,5 +1,11 @@
 import { describe, test, expect } from "bun:test";
-import { analyzeQuery, applyQueryLimit, hasQueryLimit, isSelectQuery } from "@/lib/db/utils/query-limiter";
+import {
+  analyzeQuery,
+  applyQueryLimit,
+  hasQueryLimit,
+  isSelectQuery,
+  type ParsedQueryInfo,
+} from "@/lib/db/utils/query-limiter";
 
 // ─── analyzeQuery ───────────────────────────────────────────────────────────
 
@@ -174,6 +180,157 @@ describe("analyzeQuery", () => {
       const info = analyzeQuery(sql);
       expect(info.hasCTE).toBe(true);
       expect(info.hasSubquery).toBe(true); // CTE body + outer SELECT = 2 SELECTs
+    });
+  });
+});
+
+// ─── Leading comments (#275) ────────────────────────────────────────────────
+//
+// A comment is not whitespace, so the leading-keyword tests used to miss behind
+// one and every annotated statement fell through to `OTHER`. For a SELECT that
+// meant no LIMIT was injected and the whole result set came back, with the UI
+// badge reporting "not limited"; for the rest it meant a write was classified as
+// something the pipeline knows nothing about.
+
+describe("classification behind a leading comment", () => {
+  describe("type detection", () => {
+    test.each<[string, string]>([
+      ["a line comment", "-- annotated\nSELECT * FROM users"],
+      ["a block comment", "/* annotated */ SELECT * FROM users"],
+      ["a hash comment (MySQL)", "# annotated\nSELECT * FROM users"],
+      ["stacked comments of all three styles", "# a\n-- b\n/* c */\nSELECT * FROM users"],
+      ["a comment, then a blank line", "/* annotated */\n\nSELECT * FROM users"],
+      ["a comment, then whitespace", "-- annotated\n\t  SELECT * FROM users"],
+    ])("classifies a SELECT behind %s as SELECT", (_label, sql) => {
+      expect(analyzeQuery(sql).type).toBe("SELECT");
+    });
+
+    test.each<[string, ParsedQueryInfo["type"], string]>([
+      ["INSERT", "INSERT", "-- annotated\nINSERT INTO users VALUES (1, 'a')"],
+      ["UPDATE", "UPDATE", "/* annotated */ UPDATE users SET name = 'x' WHERE id = 1"],
+      ["DELETE", "DELETE", "# annotated\nDELETE FROM users WHERE id = 1"],
+      ["CREATE", "DDL", "-- annotated\nCREATE TABLE foo (id int)"],
+      ["ALTER", "DDL", "-- annotated\nALTER TABLE foo ADD col int"],
+      ["DROP", "DDL", "/* annotated */ DROP TABLE foo"],
+      ["TRUNCATE", "DDL", "# annotated\nTRUNCATE TABLE foo"],
+    ])("classifies a commented %s as %s", (_keyword, expected, sql) => {
+      expect(analyzeQuery(sql).type).toBe(expected);
+    });
+
+    test("classifies a commented CTE as SELECT and flags it as a CTE", () => {
+      const info = analyzeQuery("-- annotated\nWITH cte AS (SELECT 1) SELECT * FROM cte");
+
+      expect(info.type).toBe("SELECT");
+      expect(info.hasCTE).toBe(true);
+    });
+
+    test("does not flag a commented plain SELECT as a CTE", () => {
+      expect(analyzeQuery("-- annotated\nSELECT * FROM users").hasCTE).toBe(false);
+    });
+
+    test("leaves a commented statement it does not know as OTHER", () => {
+      expect(analyzeQuery("-- annotated\nGRANT SELECT ON t TO someone").type).toBe("OTHER");
+    });
+
+    // The keyword has to be the statement's own, not one mentioned in the comment:
+    // classifying this as a SELECT would inject a LIMIT into an UPDATE.
+    test("ignores a keyword that only appears inside the comment body", () => {
+      expect(analyzeQuery("-- remember to SELECT first\nUPDATE users SET name = 'x'").type).toBe("UPDATE");
+    });
+
+    // Same principle, on the one branch that reads more than the leading keyword:
+    // `WITH` is a SELECT only when the statement also CONTAINS a SELECT, and that
+    // search has to start past the trivia too. A LEADING comment could not reach this
+    // branch before the classifier saw behind one, which is what makes this the
+    // task's own regression to guard. An INTERIOR comment has always been able to
+    // answer for the statement here (`WITH t AS (UPDATE …) /* SELECT */ INSERT …`
+    // still classifies as SELECT) - same pre-existing family as the trailing-comment
+    // swallow, out of this task's scope. Below: a CTE that writes, annotated with a
+    // comment that happens to say SELECT.
+    const writingCTE =
+      "-- remember to SELECT afterwards\nWITH t AS (UPDATE x SET a = 1 RETURNING id) INSERT INTO y VALUES (1)";
+
+    test("does not let a SELECT inside the comment body turn a writing CTE into a SELECT", () => {
+      const info = analyzeQuery(writingCTE);
+
+      expect(info.type).toBe("OTHER");
+      expect(info.hasCTE).toBe(true);
+    });
+
+    test("leaves that writing CTE unmodified rather than appending a LIMIT to it", () => {
+      const result = applyQueryLimit(writingCTE, 500);
+
+      expect(result.sql).toBe(writingCTE);
+      expect(result.wasLimited).toBe(false);
+    });
+
+    // The comment must not be able to hide a real SELECT either - a genuine
+    // CTE-SELECT behind a comment mentioning nothing still classifies as SELECT
+    // (the `slice` starts at the keyword, so the statement's own text is intact).
+    test("still finds the statement's own SELECT when the comment mentions none", () => {
+      expect(analyzeQuery("-- annotated\nWITH t AS (SELECT 1) SELECT * FROM t").type).toBe("SELECT");
+    });
+  });
+
+  // ── Already-bounded statements ────────────────────────────────────────────
+  //
+  // The three "already limited" probes have to see behind a comment too. The
+  // `TOP` one is the dangerous one: missing it means a second `TOP` is injected
+  // into a statement that already has one, which is invalid SQL rather than
+  // merely too many rows.
+
+  describe("existing bounds are still detected", () => {
+    test.each<[string, string, number]>([
+      ["LIMIT", "-- annotated\nSELECT * FROM users LIMIT 10", 10],
+      ["FETCH FIRST", "/* annotated */ SELECT * FROM users FETCH FIRST 25 ROWS ONLY", 25],
+      ["SELECT TOP", "-- annotated\nSELECT TOP 10 * FROM users", 10],
+      ["SELECT TOP behind a block comment", "/* annotated */ SELECT TOP 10 * FROM users", 10],
+    ])("detects a commented %s as already limited", (_label, sql, expected) => {
+      const info = analyzeQuery(sql);
+
+      expect(info.hasLimit).toBe(true);
+      expect(info.existingLimit).toBe(expected);
+    });
+
+    test("does not bound a commented, already-bounded SELECT a second time", () => {
+      const sql = "-- annotated\nSELECT * FROM users LIMIT 10";
+
+      const result = applyQueryLimit(sql, 500);
+
+      expect(result.sql).toBe(sql);
+      expect(result.wasLimited).toBe(false);
+      expect(result.appliedLimit).toBe(10);
+    });
+  });
+
+  // ── The limit actually gets applied ───────────────────────────────────────
+
+  describe("limiting", () => {
+    test("adds a LIMIT to a commented SELECT and keeps the comment", () => {
+      const result = applyQueryLimit("-- annotated\nSELECT * FROM users", 500);
+
+      expect(result.sql).toBe("-- annotated\nSELECT * FROM users LIMIT 500");
+      expect(result.wasLimited).toBe(true);
+      expect(result.appliedLimit).toBe(500);
+    });
+
+    test("leaves a commented INSERT unmodified", () => {
+      const sql = "-- annotated\nINSERT INTO users VALUES (1, 'a')";
+
+      const result = applyQueryLimit(sql, 500);
+
+      expect(result.sql).toBe(sql);
+      expect(result.wasLimited).toBe(false);
+    });
+
+    test("reports a commented SELECT as a SELECT through isSelectQuery", () => {
+      expect(isSelectQuery("/* annotated */ SELECT 1")).toBe(true);
+      expect(isSelectQuery("-- annotated\nINSERT INTO t VALUES (1)")).toBe(false);
+    });
+
+    test("reports a commented bound through hasQueryLimit", () => {
+      expect(hasQueryLimit("-- annotated\nSELECT TOP 10 * FROM users")).toBe(true);
+      expect(hasQueryLimit("-- annotated\nSELECT * FROM users")).toBe(false);
     });
   });
 });

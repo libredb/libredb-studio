@@ -885,6 +885,19 @@ describe("CouchbaseProvider query preparation", () => {
     expect(prepared.limit).toBe(25);
   });
 
+  // Couchbase delegates to the shared limiter, so a comment-led SELECT is bounded
+  // through the same fix rather than through anything of this provider's own (#275).
+  test("applies the external row limit to a comment-led SELECT", () => {
+    const provider = new CouchbaseProvider(makeConnection());
+
+    const prepared = provider.prepareQuery("/* annotated */ SELECT * FROM `travel`.`inventory`.`hotel`", {
+      limit: 25,
+    });
+
+    expect(prepared.query).toBe("/* annotated */ SELECT * FROM `travel`.`inventory`.`hotel` LIMIT 25");
+    expect(prepared.wasLimited).toBe(true);
+  });
+
   test("leaves a mutation untouched", () => {
     const provider = new CouchbaseProvider(makeConnection());
 

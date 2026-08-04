@@ -168,6 +168,10 @@ concurrency, NORMAL sync for a speed/durability balance.
 and return `{ changes }`. `rowCount = rows.length || changes`. Both drivers are **synchronous** —
 the provider wraps them in the async signature but there is no real concurrency or cancellation.
 
+The inherited predicate reads the statement's first keyword past any leading comment
+(`src/lib/sql/leading-keyword.ts`), so an annotated `SELECT` takes the read branch. It previously
+took the **write** branch and returned an empty result with `changes: 0` for a query that has rows.
+
 ### 3.4 No transactions API, no cancellation, no pool
 
 Unlike every networked SQL provider, SQLite exposes **no** `beginTransaction`/`commit`/`rollback`/

@@ -91,10 +91,26 @@ explicit-`ssl` overrides and the [security caveat](#14-known-limitations--future
 
 ### 3.2 T-SQL pagination: `TOP` and `OFFSET … FETCH`
 
-`prepareQuery()` ([mssql.ts:264](../../src/lib/db/providers/sql/mssql.ts)) overrides the base. For a
+`prepareQuery()` ([mssql.ts:557](../../src/lib/db/providers/sql/mssql.ts)) overrides the base. For a
 limit-less `SELECT`: with no offset it injects `TOP n` right after `SELECT [DISTINCT]`; with an
 offset it appends `OFFSET m ROWS FETCH NEXT n ROWS ONLY` — and because T-SQL requires an `ORDER BY`
 for `OFFSET … FETCH`, it injects `ORDER BY (SELECT NULL)` when the query has none.
+
+The `SELECT` it splices after is located with `src/lib/sql/leading-keyword.ts`, so a T-SQL comment
+before the statement (`-- note` or `/* note */`) is skipped rather than defeating the injection. That
+shared helper also skips `#`, which is a comment in MySQL only; T-SQL rejects a statement opening with
+one either way, so skipping it changes which syntax error the server reports and nothing else.
+
+`prepareQuery` **declines** rather than splicing in two cases, reporting `wasLimited: false` and
+returning the statement untouched. It never reports a limit while handing back the statement unchanged.
+
+- **No leading `SELECT`** — with no offset, a CTE, whose `TOP` belongs to the trailing `SELECT` that
+  finding would need a parser. (With an offset a CTE takes the `OFFSET … FETCH` branch, which appends
+  and so is genuinely bounded.)
+- **A `TOP` already at the insertion point** — the statement is bounded but the shared already-bounded
+  probe missed it, because that probe wants literal whitespace between `SELECT` and `TOP`, which both a
+  comment (`SELECT/* c */TOP 10 …`) and a `DISTINCT` defeat. Splicing would emit `SELECT TOP n TOP 10`
+  and a syntax error.
 
 ### 3.3 Five-query schema introspection, cross-schema
 

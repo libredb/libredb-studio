@@ -580,6 +580,92 @@ describe("MSSQLProvider", () => {
       const result = provider.prepareQuery(sql);
       expect(result.wasLimited).toBe(false);
     });
+
+    // ── Leading comments (#275) ─────────────────────────────────────────────
+    //
+    // This path is the reason the classifier could not be fixed on its own. It
+    // commits to `wasLimited: true` and then splices `TOP` in after the leading
+    // `SELECT`; behind a comment the old `^(\s*SELECT\s+)` replace matched
+    // nothing, so a comment-tolerant classifier alone would have made MSSQL
+    // report a limit it never applied - worse than not limiting at all, because
+    // the UI stops warning about the unbounded result set.
+
+    describe("leading comments", () => {
+      test.each<[string, string, string]>([
+        ["a line comment", "-- annotated\nSELECT * FROM users", "-- annotated\nSELECT TOP 50 * FROM users"],
+        ["a block comment", "/* annotated */ SELECT * FROM users", "/* annotated */ SELECT TOP 50 * FROM users"],
+        ["a hash comment", "# annotated\nSELECT * FROM users", "# annotated\nSELECT TOP 50 * FROM users"],
+        ["stacked comments", "-- a\n/* b */\nSELECT name FROM users", "-- a\n/* b */\nSELECT TOP 50 name FROM users"],
+      ])("injects TOP after the real SELECT behind %s", (_label, sql, expected) => {
+        const result = provider.prepareQuery(sql, { limit: 50 });
+
+        expect(result.query).toBe(expected);
+        expect(result.wasLimited).toBe(true);
+      });
+
+      test("keeps TOP after DISTINCT, which is where T-SQL wants it", () => {
+        const result = provider.prepareQuery("/* annotated */ SELECT DISTINCT name FROM users", { limit: 50 });
+
+        expect(result.query).toBe("/* annotated */ SELECT DISTINCT TOP 50 name FROM users");
+        expect(result.wasLimited).toBe(true);
+      });
+
+      test("does not inject a second TOP into a commented, already-bounded SELECT", () => {
+        const sql = "-- annotated\nSELECT TOP 10 * FROM users";
+
+        const result = provider.prepareQuery(sql, { limit: 50 });
+
+        expect(result.query).toBe(sql);
+        expect(result.wasLimited).toBe(false);
+        expect(result.query.match(/\bTOP\b/gi)).toHaveLength(1);
+      });
+
+      // A comment BETWEEN `SELECT` and `TOP` defeats the already-bounded probe,
+      // which still wants literal whitespace there, so this path is reached with a
+      // statement that is in fact bounded. Splicing here would produce
+      // `SELECT TOP 50/*c*/TOP 10 ...` - two TOPs and a server-side syntax error,
+      // where before this task the same input came back unchanged. Refusing to
+      // splice is the honest answer: the statement already carries its own bound.
+      test.each<[string, string]>([
+        ["a comment between SELECT and TOP", "SELECT/* c */TOP 10 * FROM users"],
+        ["a comment between SELECT and TOP, with DISTINCT", "SELECT/* c */DISTINCT TOP 10 name FROM users"],
+        ["DISTINCT before an existing TOP", "SELECT DISTINCT TOP 10 name FROM users"],
+      ])("does not splice a second TOP past %s", (_label, sql) => {
+        const result = provider.prepareQuery(sql, { limit: 50 });
+
+        expect(result.query).toBe(sql);
+        expect(result.wasLimited).toBe(false);
+        expect(result.query.match(/\bTOP\b/gi)).toHaveLength(1);
+      });
+
+      test("appends OFFSET FETCH to a commented SELECT, which needs no head rewrite", () => {
+        const result = provider.prepareQuery("-- annotated\nSELECT * FROM users", { limit: 50, offset: 10 });
+
+        expect(result.query).toContain("-- annotated\n");
+        expect(result.query).toContain("OFFSET 10 ROWS");
+        expect(result.query).toContain("FETCH NEXT 50 ROWS ONLY");
+        expect(result.wasLimited).toBe(true);
+      });
+    });
+
+    // The honesty invariant behind all of the above, asserted directly: there is no
+    // input for which this path claims a limit while handing back the statement it
+    // was given. A CTE is the case that is NOT rewritable here - `TOP` belongs to
+    // the trailing SELECT, which finding would need a parser - so it must report
+    // false rather than lie.
+    test.each<[string, string]>([
+      ["a CTE", "WITH cte AS (SELECT 1 AS n) SELECT * FROM cte"],
+      ["a commented CTE", "-- annotated\nWITH cte AS (SELECT 1 AS n) SELECT * FROM cte"],
+      ["a statement opening with a parenthesis", "(SELECT 1) UNION (SELECT 2)"],
+    ])("never reports a limit it did not apply, for %s", (_label, sql) => {
+      const result = provider.prepareQuery(sql, { limit: 50 });
+
+      if (result.wasLimited) {
+        expect(result.query).not.toBe(sql);
+      } else {
+        expect(result.query).toBe(sql);
+      }
+    });
   });
 
   // =========================================================================

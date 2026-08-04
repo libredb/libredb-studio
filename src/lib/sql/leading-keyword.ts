@@ -8,8 +8,10 @@
  * the primitive - `lib/db` importing from `lib/explain` inverts today's dependency
  * direction, and a second copy of the pattern below would eventually lose the
  * reasoning attached to it - so it lives here, beside the other dialect-agnostic
- * SQL-text utilities, with both layers above it. `lib/explain` is the only caller
- * until the query-limiter side of #275 lands.
+ * SQL-text utilities, with both layers above it. Callers: `lib/explain`'s prefix
+ * classifier, `db/utils/query-limiter`'s statement typing and already-bounded
+ * probes, `sql-base`'s read-only and schema-modifying predicates, and the MSSQL
+ * `TOP` splice.
  *
  * The answer is deliberately NOT checked against a keyword list. Callers
  * disagree about the list - the query limiter cares about
@@ -44,11 +46,13 @@ export interface LeadingKeyword {
  * - No leading `\s*`. Whitespace is already an alternative below; having both
  *   gives two ways to match one run of spaces. Quadratic - 958ms on 20k leading
  *   spaces.
- * - The line comment is anchored to a newline OR end-of-input. Without that tail
- *   `[^\n]*` can give characters back and let a later iteration match `--` again,
- *   so a run of bare dashes partitions exponentially - 634ms on a FORTY-NINE
- *   character input, by far the cheapest of the three to trigger. Found by CodeQL
- *   (`js/redos`) after the other two were already fixed.
+ * - Both line-comment forms are anchored to a newline OR end-of-input. Without
+ *   that tail `[^\n]*` can give characters back and let a later iteration match
+ *   `--` again, so a run of bare dashes partitions exponentially - 634ms on a
+ *   FORTY-NINE character input, by far the cheapest of the three to trigger.
+ *   Found by CodeQL (`js/redos`) after the other two were already fixed. A run of
+ *   single `#` characters partitions even more freely than a run of `--` pairs, so
+ *   the anchor is load-bearing there too.
  * - The block-comment body is TEMPERED (`[^*]|\*(?!\/)`) rather than a lazy
  *   `[\s\S]*?\*\/`, which inside a `*` quantifier can run past the first `*\/`
  *   and let one iteration swallow several comments - 852ms on a 4 KB run of
@@ -63,8 +67,15 @@ export interface LeadingKeyword {
  * letter or underscore, so the first one ends the trivia run outright. Consuming
  * the whole word is what makes `SELECTED` fail a caller's `=== "SELECT"` test,
  * the job `\b` did when this pattern named its keywords inline.
+ *
+ * `#` is here because it is MySQL's and MariaDB's second line-comment marker, and
+ * leaving it out left #275's reported bug live on that provider: `# note` before a
+ * SELECT is an ordinary annotation there, and an unrecognised one meant no LIMIT.
+ * It is NOT a comment in PostgreSQL, Oracle, SQL Server or SQLite - but no
+ * statement in those dialects can OPEN with `#` either, so skipping it changes
+ * which syntax error the server reports and never a result set.
  */
-const LEADING_KEYWORD = /^(?:\s|--[^\n]*(?:\n|$)|\/\*(?:[^*]|\*(?!\/))*\*\/)*([A-Za-z_]\w*)/;
+const LEADING_KEYWORD = /^(?:\s|(?:--|#)[^\n]*(?:\n|$)|\/\*(?:[^*]|\*(?!\/))*\*\/)*([A-Za-z_]\w*)/;
 
 /**
  * The keyword this statement leads with, or `null` when it leads with none -

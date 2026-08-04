@@ -2,7 +2,16 @@
  * Query Limiter Utility
  * SELECT sorgularına otomatik LIMIT ekleyerek büyük result set'lerin
  * sistemi kilitlemesini önler.
+ *
+ * The statement's type comes from `lib/sql/leading-keyword`, which skips comments
+ * as well as whitespace. It used to come from `^\s*KEYWORD\b` tests here, and a
+ * leading comment is not whitespace: an annotated SELECT fell through to `OTHER`,
+ * so no LIMIT was injected and the entire result set came back while the UI badge
+ * reported the query as unlimited (#275). Every dialect here accepts a comment
+ * before a statement, so every dialect had the defect.
  */
+
+import { readLeadingKeyword } from "@/lib/sql/leading-keyword";
 
 // ============================================================================
 // Constants
@@ -10,6 +19,9 @@
 
 export const DEFAULT_QUERY_LIMIT = 500;
 export const MAX_UNLIMITED_ROWS = 100000;
+
+/** The four keywords this module reports as `DDL`, as `readLeadingKeyword` spells them. */
+const DDL_KEYWORDS = new Set(["CREATE", "ALTER", "DROP", "TRUNCATE"]);
 
 // ============================================================================
 // Types
@@ -61,15 +73,24 @@ export function analyzeQuery(sql: string): ParsedQueryInfo {
   const trimmed = stripTrailingSemicolon(sql.trim());
   const normalized = trimmed.replace(/\s+/g, " ").toUpperCase();
 
-  // Query type detection
+  // Query type detection - from the first keyword that is not whitespace or a comment
+  const leading = readLeadingKeyword(trimmed);
+  const keyword = leading?.keyword;
+  // The statement from its own first keyword onward. Anything that searches the
+  // statement's TEXT rather than just its leading keyword has to start here, or a
+  // word written in the leading comment answers for the statement itself.
+  const fromKeyword = leading === null ? trimmed : trimmed.slice(leading.start);
+
   let type: ParsedQueryInfo["type"] = "OTHER";
-  if (/^\s*SELECT\b/i.test(trimmed)) type = "SELECT";
-  else if (/^\s*INSERT\b/i.test(trimmed)) type = "INSERT";
-  else if (/^\s*UPDATE\b/i.test(trimmed)) type = "UPDATE";
-  else if (/^\s*DELETE\b/i.test(trimmed)) type = "DELETE";
-  else if (/^\s*(CREATE|ALTER|DROP|TRUNCATE)\b/i.test(trimmed)) type = "DDL";
-  // CTE (WITH clause) that leads to SELECT
-  else if (/^\s*WITH\b/i.test(trimmed) && /\bSELECT\b/i.test(trimmed)) {
+  if (keyword === "SELECT") type = "SELECT";
+  else if (keyword === "INSERT") type = "INSERT";
+  else if (keyword === "UPDATE") type = "UPDATE";
+  else if (keyword === "DELETE") type = "DELETE";
+  else if (keyword !== undefined && DDL_KEYWORDS.has(keyword)) type = "DDL";
+  // CTE (WITH clause) that leads to SELECT - searched from the keyword, so a
+  // `SELECT` mentioned in the leading comment cannot make a writing CTE look like
+  // one and earn it a LIMIT it would choke on
+  else if (keyword === "WITH" && /\bSELECT\b/i.test(fromKeyword)) {
     type = "SELECT";
   }
 
@@ -103,9 +124,11 @@ export function analyzeQuery(sql: string): ParsedQueryInfo {
     }
   }
 
-  // MSSQL: SELECT TOP N
-  if (!hasLimit) {
-    const topMatch = trimmed.match(/^\s*SELECT\s+TOP\s+(\d+)\b/i);
+  // MSSQL: SELECT TOP N - anchored at the real SELECT rather than at the start of
+  // the string, so an annotated `SELECT TOP 10` is still seen as bounded. Missing
+  // it would inject a second TOP and hand the server invalid SQL.
+  if (!hasLimit && keyword === "SELECT") {
+    const topMatch = fromKeyword.match(/^SELECT\s+TOP\s+(\d+)\b/i);
     if (topMatch) {
       hasLimit = true;
       existingLimit = parseInt(topMatch[1]);
@@ -128,8 +151,9 @@ export function analyzeQuery(sql: string): ParsedQueryInfo {
   // UNION detection
   const isUnion = /\bUNION\b/i.test(normalized);
 
-  // CTE detection (WITH clause)
-  const hasCTE = /^\s*WITH\b/i.test(trimmed);
+  // CTE detection (WITH clause) - from the same reading as the type above, so the
+  // two cannot disagree about what the statement leads with
+  const hasCTE = keyword === "WITH";
 
   // Subquery detection (nested SELECT - birden fazla SELECT var mı)
   const selectCount = (normalized.match(/\bSELECT\b/g) || []).length;

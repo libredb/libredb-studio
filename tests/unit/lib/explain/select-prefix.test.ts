@@ -12,10 +12,32 @@ describe("classifySelectPrefix", () => {
     ["a multi-line block comment", "/* one\n   two */ SELECT 1"],
     ["two adjacent block comments", "/*a*//*b*/SELECT 1"],
     ["comments and whitespace interleaved", "-- a\n  /* b */\n\t-- c\nSELECT 1"],
+    ["a MySQL hash line comment", "# note\nSELECT 1"],
     ["lower case", "select 1"],
     ["mixed case", "SeLeCt 1"],
   ])("classifies %s as select", (_label, sql) => {
     expect(classifySelectPrefix(sql)).toBe("select");
+  });
+
+  // The `#` case above is a DELIBERATE widening, not inherited behaviour: it arrived
+  // when the query limiter needed the same comment tolerance (#275) and `#` went into
+  // the shared trivia pattern for MySQL's and MariaDB's sake. It answered `null` here
+  // before, so all six strategies used to hide the Explain button for a `#`-annotated
+  // statement and now build one.
+  //
+  // Accepted, because the widening cannot cost more than an error message. On MySQL
+  // and MariaDB a `#`-led statement is exactly as explainable as a `--`-led one. On the
+  // dialects that do NOT treat `#` as a comment, no statement can OPEN with one either,
+  // so what used to be a missing button becomes a button that surfaces the same syntax
+  // error the server would have raised for the unwrapped statement. No dialect gains a
+  // statement that runs when it should not - that policy lives in
+  // `hasDataModifyingStatement`, which scans the whole statement and is unaffected by
+  // what counts as trivia.
+  test("classifies a hash-annotated CTE as with, so the write guard still screens it", () => {
+    const sql = "# note\nWITH t AS (INSERT INTO probe(id) VALUES (42) RETURNING id) SELECT * FROM t";
+
+    expect(classifySelectPrefix(sql)).toBe("with");
+    expect(hasDataModifyingStatement(sql)).toBe(true);
   });
 
   // Distinguished from `select` rather than collapsed into a boolean, because a WITH

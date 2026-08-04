@@ -24,8 +24,21 @@ describe("readLeadingKeyword", () => {
       ["two adjacent block comments", "/*a*//*b*/SELECT 1"],
       ["stacked comments of both styles", "-- a\n  /* b */\n\t-- c\nSELECT 1"],
       ["a comment, then a newline, then the keyword", "/* note */\n\nSELECT 1"],
+      ["a MySQL hash line comment", "# note\nSELECT 1"],
+      ["an empty hash comment", "#\nSELECT 1"],
+      ["stacked comments of all three styles", "# a\n-- b\n/* c */\nSELECT 1"],
     ])("finds the keyword behind %s", (_label, sql) => {
       expect(keywordOf(sql)).toBe("SELECT");
+    });
+
+    // `#` is MySQL's and MariaDB's second line-comment marker, and it is here for
+    // the same reason `--` is: without it a `# note`-led SELECT reaches the server
+    // with no LIMIT on the provider this project's users reach for second most
+    // (#275). It is not a comment in PostgreSQL, Oracle, SQL Server or SQLite - but
+    // a statement that OPENS with `#` is a syntax error on all four, so skipping it
+    // there only changes which error the server reports, never a result.
+    test("treats a hash comment as trivia on every dialect, because a statement cannot open with one", () => {
+      expect(keywordOf("# note\nUPDATE t SET a = 1")).toBe("UPDATE");
     });
   });
 
@@ -117,6 +130,8 @@ describe("readLeadingKeyword", () => {
       ["whitespace only", "   \n\t "],
       ["a line comment alone", "-- only a comment"],
       ["a line comment alone, newline-terminated", "-- only a comment\n"],
+      ["a hash comment alone", "# only a comment"],
+      ["a hash comment alone, newline-terminated", "# only a comment\n"],
       ["a block comment alone", "/* only a comment */"],
       ["several comments and nothing else", "-- a\n/* b */\n-- c"],
       ["an unterminated block comment", "/* unterminated SELECT 1"],
@@ -136,6 +151,7 @@ describe("readLeadingKeyword", () => {
   describe("is not fooled by a keyword that is not the leading one", () => {
     test.each<[string, string, string]>([
       ["inside a line comment body", "-- remember to UPDATE this\nSELECT 1", "SELECT"],
+      ["inside a hash comment body", "# remember to UPDATE this\nSELECT 1", "SELECT"],
       ["inside a block comment body", "/* was a DELETE once */ SELECT 1", "SELECT"],
       ["inside a string literal", "SELECT 'update' FROM t", "SELECT"],
       ["later in the statement", "SELECT * FROM t WHERE a IN (SELECT 1)", "SELECT"],
@@ -161,6 +177,10 @@ describe("readLeadingKeyword", () => {
    *   a leading `\s*` beside a `\s` alternative      quadratic    958ms / 20k spaces
    *   a lazy `[\s\S]*?\*\/` spanning two comments    quadratic    852ms / 4 KB
    *   `--[^\n]*` with no `(?:\n|$)` tail             EXPONENTIAL  634ms / 49 chars
+   *
+   * The hash alternative carries the same anchor requirement as the dash one, and a
+   * run of single `#` characters partitions even more freely than a run of `--`
+   * pairs, so it is guarded on the same shapes.
    *
    * EVERY input here ends in a character that cannot open a word, which is what makes
    * this a TIMING guard rather than a correctness one: the match has to fail, so a
@@ -193,10 +213,13 @@ describe("readLeadingKeyword", () => {
       ["4 KB of empty block comments", `${"/**/".repeat(1000)}(1)`],
       ["block comments with bodies", `${"/*a*/".repeat(1000)}(1)`],
       ["line comments with newlines", `${"-- a\n".repeat(1000)}(1)`],
-      ["mixed comments and whitespace", `${"/**/ -- a\n ".repeat(1000)}(1)`],
+      ["hash comments with newlines", `${"# a\n".repeat(1000)}(1)`],
+      ["mixed comments and whitespace", `${"/**/ -- a\n # b\n ".repeat(1000)}(1)`],
       ["24 bare dash pairs", `${"--".repeat(24)}(`],
       ["2k bare dash pairs", `${"--".repeat(2000)}(`],
       ["20k bare dashes", `${"-".repeat(20000)}(`],
+      ["24 bare hashes", `${"#".repeat(24)}(`],
+      ["2k bare hashes", `${"#".repeat(2000)}(`],
     ];
 
     for (const [label, sql] of adversarial) {

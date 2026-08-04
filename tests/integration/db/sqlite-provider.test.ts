@@ -227,6 +227,25 @@ describe("SQLiteProvider", () => {
       expect(result.rowCount).toBe(0);
     });
 
+    // The provider picks `all()` vs `run()` from `isReadOnlyQuery`, so a SELECT
+    // misread as a write used to come back with no rows and `changes: 0` - the
+    // same comment-blind classification as the missing LIMIT in #275, with a
+    // worse symptom: the user sees an empty grid for a query that has data.
+    test("a comment-led SELECT returns its rows instead of an empty write result", async () => {
+      provider = new SQLiteProvider(makeSQLiteConfig());
+      await provider.connect();
+
+      await provider.query("CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT)");
+      await provider.query("INSERT INTO notes VALUES (1, 'first'), (2, 'second')");
+
+      const result = await provider.query("-- annotated\nSELECT * FROM notes ORDER BY id");
+
+      expect(result.rows.length).toBe(2);
+      expect(result.fields).toEqual(["id", "body"]);
+      expect(result.rowCount).toBe(2);
+      expect((result.rows[0] as Record<string, unknown>).body).toBe("first");
+    });
+
     test("query against a missing table is mapped through mapDatabaseError", async () => {
       provider = new SQLiteProvider(makeSQLiteConfig());
       await provider.connect();
