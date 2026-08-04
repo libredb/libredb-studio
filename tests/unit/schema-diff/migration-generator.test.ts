@@ -1,6 +1,7 @@
 import { describe, test, expect } from "bun:test";
 import { generateMigrationSQL } from "@/lib/schema-diff/migration-generator";
-import type { SchemaDiff } from "@/lib/schema-diff/types";
+import type { ColumnDiff, SchemaDiff } from "@/lib/schema-diff/types";
+import type { DatabaseType } from "@/lib/types";
 
 // ============================================================================
 // Helpers
@@ -635,6 +636,153 @@ describe("generateMigrationSQL: MSSQL/Oracle ALTER edge cases", () => {
     expect(sql).toContain("MODIFY");
     expect(sql).toContain("DEFAULT 'active'");
   });
+});
+
+// ============================================================================
+// Dialects the modified-column path had no branch for (#269)
+// ============================================================================
+
+function makeModifiedColumnDiff(col: Partial<ColumnDiff>): SchemaDiff {
+  return {
+    tables: [
+      {
+        action: "modified",
+        tableName: "events",
+        columns: [{ action: "modified", columnName: "note", changes: ["Changed"], ...col }],
+        indexes: [],
+        foreignKeys: [],
+      },
+    ],
+    summary: { added: 0, removed: 0, modified: 1 },
+    hasChanges: true,
+  };
+}
+
+describe("generateMigrationSQL: ClickHouse ALTER", () => {
+  test("modified column uses MODIFY COLUMN, not PostgreSQL ALTER COLUMN", () => {
+    const sql = generateMigrationSQL(makeModifiedTableDiff(), "clickhouse");
+    expect(sql).toContain('ALTER TABLE "users" MODIFY COLUMN "name" varchar(255) DEFAULT \'unknown\';');
+    expect(sql).not.toContain("ALTER COLUMN");
+    expect(sql).not.toContain("SET NOT NULL");
+  });
+
+  test("a nullability change rides in the declared type instead of a NULL modifier", () => {
+    const sql = generateMigrationSQL(
+      makeModifiedColumnDiff({
+        sourceType: "String",
+        targetType: "Nullable(String)",
+        sourceNullable: false,
+        targetNullable: true,
+      }),
+      "clickhouse",
+    );
+    expect(sql).toContain('ALTER TABLE "events" MODIFY COLUMN "note" Nullable(String);');
+    expect(sql).not.toContain("DROP NOT NULL");
+    expect(sql).not.toContain("NOT NULL");
+  });
+
+  test("dropping a default emits the explicit REMOVE DEFAULT form", () => {
+    const sql = generateMigrationSQL(
+      makeModifiedColumnDiff({ sourceType: "String", targetType: "String", sourceDefault: "'n/a'" }),
+      "clickhouse",
+    );
+    expect(sql).toContain('ALTER TABLE "events" MODIFY COLUMN "note" String;');
+    expect(sql).toContain('ALTER TABLE "events" MODIFY COLUMN "note" REMOVE DEFAULT;');
+    expect(sql).not.toContain("DROP DEFAULT");
+  });
+
+  test("modified column falls back to String when neither type is known", () => {
+    const sql = generateMigrationSQL(makeModifiedColumnDiff({}), "clickhouse");
+    expect(sql).toContain('MODIFY COLUMN "note" String;');
+    expect(sql).not.toContain("REMOVE DEFAULT");
+  });
+
+  // `clickhouse/introspect.ts:readDefault` reports a computed column's default as
+  // "<KIND> <expression>", so the DEFAULT keyword must not be prefixed onto it. Live-probed against
+  // clickhouse-server 26.7.1.1315: `DEFAULT MATERIALIZED toYear(d)` is a syntax error (code 62).
+  test("a MATERIALIZED default is emitted verbatim, never behind the DEFAULT keyword", () => {
+    const sql = generateMigrationSQL(
+      makeModifiedColumnDiff({ targetType: "Int32", targetDefault: "MATERIALIZED toYear(d)" }),
+      "clickhouse",
+    );
+    expect(sql).toContain('ALTER TABLE "events" MODIFY COLUMN "note" Int32 MATERIALIZED toYear(d);');
+    expect(sql).not.toContain("DEFAULT MATERIALIZED");
+  });
+
+  test("dropping a MATERIALIZED property removes that kind, not DEFAULT", () => {
+    const sql = generateMigrationSQL(
+      makeModifiedColumnDiff({ targetType: "Int32", sourceDefault: "MATERIALIZED toYear(d)" }),
+      "clickhouse",
+    );
+    expect(sql).toContain('ALTER TABLE "events" MODIFY COLUMN "note" REMOVE MATERIALIZED;');
+    expect(sql).not.toContain("REMOVE DEFAULT");
+  });
+
+  test("dropping an ALIAS property removes that kind", () => {
+    const sql = generateMigrationSQL(
+      makeModifiedColumnDiff({ targetType: "Int32", sourceDefault: "ALIAS toYear(d)" }),
+      "clickhouse",
+    );
+    expect(sql).toContain('ALTER TABLE "events" MODIFY COLUMN "note" REMOVE ALIAS;');
+  });
+
+  // Introducing an ephemeral property IS valid (live-probed: accepted as long as the table keeps a
+  // physical column) — it is only its removal that ClickHouse has no syntax for, see the next case.
+  test("an EPHEMERAL target default is emitted as its own clause", () => {
+    const sql = generateMigrationSQL(
+      makeModifiedColumnDiff({ targetType: "String", targetDefault: "EPHEMERAL 'e'" }),
+      "clickhouse",
+    );
+    expect(sql).toContain('ALTER TABLE "events" MODIFY COLUMN "note" String EPHEMERAL \'e\';');
+    expect(sql).not.toContain("DEFAULT EPHEMERAL");
+  });
+
+  // REMOVE accepts DEFAULT, MATERIALIZED or ALIAS only — live-probed, EPHEMERAL is rejected with
+  // code 62 — so the honest answer is a comment rather than a statement that cannot run.
+  test("an EPHEMERAL property cannot be removed, so it is reported instead of emitted", () => {
+    const sql = generateMigrationSQL(
+      makeModifiedColumnDiff({ targetType: "String", sourceDefault: "EPHEMERAL 'e'" }),
+      "clickhouse",
+    );
+    expect(sql).toContain('-- ClickHouse: Cannot remove the EPHEMERAL property of column "note".');
+    expect(sql).not.toContain("REMOVE EPHEMERAL");
+    expect(sql).not.toContain('MODIFY COLUMN "note" REMOVE');
+  });
+});
+
+/**
+ * Exhaustive by construction, in the spirit of `PICKER_COVERAGE` in
+ * `tests/hooks/use-connection-form.test.ts`: a new `DatabaseType` fails typecheck here until it is
+ * classified, so it cannot silently re-inherit the generator's PostgreSQL branch — which is the whole
+ * of #269. `"has-own-branch"` means the modified-column chain answers that id in its own dialect.
+ */
+const MODIFIED_COLUMN_COVERAGE: Record<DatabaseType, { label: string; reason: string } | "has-own-branch"> = {
+  postgres: "has-own-branch",
+  mysql: "has-own-branch",
+  sqlite: "has-own-branch",
+  oracle: "has-own-branch",
+  mssql: "has-own-branch",
+  clickhouse: "has-own-branch",
+  couchbase: { label: "Couchbase", reason: "schemaless JSON documents" },
+  druid: { label: "Apache Druid", reason: "no ALTER TABLE" },
+  mongodb: { label: "MongoDB", reason: "schemaless" },
+  redis: { label: "Redis", reason: "no column definitions" },
+  libredb: { label: "LibreDB", reason: "JSON command grammar" },
+};
+
+describe("generateMigrationSQL: dialects that cannot modify a column", () => {
+  for (const [dialect, expected] of Object.entries(MODIFIED_COLUMN_COVERAGE)) {
+    if (expected === "has-own-branch") continue;
+
+    test(`${dialect}: modified column emits a comment naming the limitation, never PostgreSQL DDL`, () => {
+      const sql = generateMigrationSQL(makeModifiedTableDiff(), dialect as DatabaseType);
+      expect(sql).toContain(`-- ${expected.label}: Cannot alter column "name".`);
+      expect(sql).toContain(expected.reason);
+      expect(sql).not.toContain("ALTER COLUMN");
+      expect(sql).not.toContain("MODIFY COLUMN");
+      expect(sql).not.toContain("MODIFY (");
+    });
+  }
 });
 
 // ============================================================================

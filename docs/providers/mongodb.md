@@ -350,6 +350,11 @@ Over the API: `POST /api/db/query` (JSON MQL in the `sql` field) and `POST /api/
   provider exposes no begin/commit/rollback API.
 - **No `cancelQuery`.** A running operation can only be terminated via maintenance `killOp` (needs the
   opid and privileges).
+- **No column modification in a generated migration.** Since
+  [#269](https://github.com/libredb/libredb-studio/issues/269) the schema-diff migration generator
+  answers a modified column per dialect; collections are schemaless, so it emits
+  `-- MongoDB: Cannot alter column "<name>". ...` where it previously emitted PostgreSQL
+  `ALTER TABLE ... ALTER COLUMN` DDL that means nothing here.
 - **`collStats` is deprecated** in MongoDB 6.2+ (in favour of the `$collStats` aggregation stage);
   size/stats calls may warn or change on newer servers.
 - **Monitoring needs privileges.** `serverStatus`/`currentOp`/`$indexStats` and the profiler require

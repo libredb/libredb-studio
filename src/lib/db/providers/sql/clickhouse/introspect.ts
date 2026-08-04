@@ -191,9 +191,12 @@ function isNullableType(type: string): boolean {
 /**
  * The column default as the explorer should show it.
  *
- * Live-verified kinds are `DEFAULT`, `MATERIALIZED` and `ALIAS`. Only the first
- * is a default an INSERT may override; the other two are computed columns, and
- * printing their expression bare would read as a value the user could supply.
+ * Live-verified kinds are `DEFAULT`, `MATERIALIZED`, `ALIAS` and `EPHEMERAL`
+ * (the last confirmed while #269 gave the migration generator a ClickHouse
+ * branch, which consumes these strings). Only the first
+ * is a default an INSERT may override; the other three are not values the user
+ * supplies — `MATERIALIZED` and `ALIAS` are computed, `EPHEMERAL` is insert-only
+ * and never stored — so printing their expression bare would misread as one.
  */
 function readDefault(kind: string, expression: string): string | undefined {
   if (kind === "" || expression === "") return undefined;

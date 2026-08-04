@@ -15,6 +15,64 @@ function escapeIdentifier(name: string, dialect: DatabaseType): string {
   }
 }
 
+/**
+ * ClickHouse column-default kinds as `system.columns.default_kind` reports them, and as
+ * `clickhouse/introspect.ts:readDefault` prefixes them onto the expression it hands the diff engine.
+ * `DEFAULT` is the only kind that arrives bare, so a value starting with one of these already names
+ * its own clause and must not be put behind another `DEFAULT` keyword.
+ *
+ * Live-probed against the pinned `clickhouse-server:26.7.1.1315` build:
+ * `MODIFY COLUMN "y" Int32 DEFAULT MATERIALIZED toYear(d)` is a syntax error (code 62) while
+ * `MODIFY COLUMN "y" Int32 MATERIALIZED toYear(d)` is accepted, and switching kind in one statement
+ * works. `REMOVE` takes `DEFAULT`, `MATERIALIZED` or `ALIAS` only — `REMOVE EPHEMERAL` is rejected
+ * (code 62, "Expected one of: DEFAULT, MATERIALIZED, ALIAS, COMMENT, CODEC, TTL, SETTINGS") — and
+ * `REMOVE DEFAULT` against a column that has none is an error too (code 36), which is why the branch
+ * below only emits it for a default that existed.
+ */
+const CLICKHOUSE_DEFAULT_KINDS = ["MATERIALIZED", "ALIAS", "EPHEMERAL"];
+const CLICKHOUSE_REMOVABLE_KINDS = ["DEFAULT", "MATERIALIZED", "ALIAS"];
+
+function clickhouseDefaultKind(value: string): string {
+  return CLICKHOUSE_DEFAULT_KINDS.find((kind) => value.startsWith(`${kind} `)) ?? "DEFAULT";
+}
+
+/**
+ * Canonical type ids whose engine has no column-modification statement at all.
+ *
+ * The modified-column path below branches per dialect and ends in a PostgreSQL `else`, so every id
+ * without a branch used to be handed `ALTER TABLE ... ALTER COLUMN` no matter what it can run
+ * (#269). Naming the limitation in a comment instead is this generator's own precedent — the SQLite
+ * branch already answers an inexpressible change that way, because a comment a human can read beats
+ * DDL the target engine can only reject.
+ *
+ * The value completes `-- <label>: Cannot alter column "<name>". <reason>`. The labels deliberately
+ * repeat `db-ui-config.ts`'s display names instead of reading them from it: that registry carries React
+ * icon components, which this pure SQL module must not pull in, and the `SQLite` comments elsewhere in
+ * this file spell their engine out the same way.
+ */
+const NO_COLUMN_MODIFICATION: Partial<Record<DatabaseType, { label: string; reason: string }>> = {
+  couchbase: {
+    label: "Couchbase",
+    reason: "Collections hold schemaless JSON documents, so there is no column definition to change.",
+  },
+  druid: {
+    label: "Apache Druid",
+    reason: "Druid SQL has no ALTER TABLE; rewrite the datasource with REPLACE INTO through an MSQ task.",
+  },
+  mongodb: {
+    label: "MongoDB",
+    reason: "Collections are schemaless, so there is no column definition to change.",
+  },
+  redis: {
+    label: "Redis",
+    reason: "Keys are not tables and have no column definitions to change.",
+  },
+  libredb: {
+    label: "LibreDB",
+    reason: "The embedded engine speaks a JSON command grammar, not SQL DDL.",
+  },
+};
+
 function generateColumnDef(col: ColumnDiff, dialect: DatabaseType): string {
   const type = col.targetType || col.sourceType || "TEXT";
   const nullable = col.targetNullable === false ? " NOT NULL" : "";
@@ -88,6 +146,7 @@ function generateAlterTable(table: TableDiff, dialect: DatabaseType): string {
     });
 
   // Modified columns
+  const inexpressible = NO_COLUMN_MODIFICATION[dialect];
   table.columns
     .filter((c) => c.action === "modified")
     .forEach((col) => {
@@ -116,6 +175,32 @@ function generateAlterTable(table: TableDiff, dialect: DatabaseType): string {
             `ALTER TABLE ${id} ADD DEFAULT ${col.targetDefault} FOR ${escapeIdentifier(col.columnName, dialect)};`,
           );
         }
+      } else if (dialect === "clickhouse") {
+        // Nullability is part of the type here (`Nullable(T)`) — which is exactly what this
+        // provider's introspection reports (`clickhouse/introspect.ts`) — so restating the declared
+        // type covers a nullability change too; there is no `SET NOT NULL`. Dropping a default needs
+        // the explicit `REMOVE <kind>` form: omitting the clause leaves the old default in place
+        // (live-probed). See CLICKHOUSE_DEFAULT_KINDS for the kind vocabulary and its traps.
+        const column = escapeIdentifier(col.columnName, dialect);
+        const type = col.targetType || col.sourceType || "String";
+        let declared = "";
+        if (col.targetDefault) {
+          const kind = clickhouseDefaultKind(col.targetDefault);
+          declared = kind === "DEFAULT" ? ` DEFAULT ${col.targetDefault}` : ` ${col.targetDefault}`;
+        }
+        lines.push(`ALTER TABLE ${id} MODIFY COLUMN ${column} ${type}${declared};`);
+        if (col.sourceDefault && !col.targetDefault) {
+          const kind = clickhouseDefaultKind(col.sourceDefault);
+          if (CLICKHOUSE_REMOVABLE_KINDS.includes(kind)) {
+            lines.push(`ALTER TABLE ${id} MODIFY COLUMN ${column} REMOVE ${kind};`);
+          } else {
+            lines.push(
+              `-- ClickHouse: Cannot remove the ${kind} property of column "${col.columnName}". REMOVE accepts DEFAULT, MATERIALIZED or ALIAS only; recreate the column.`,
+            );
+          }
+        }
+      } else if (inexpressible) {
+        lines.push(`-- ${inexpressible.label}: Cannot alter column "${col.columnName}". ${inexpressible.reason}`);
       } else {
         // PostgreSQL
         if (col.sourceType !== col.targetType) {

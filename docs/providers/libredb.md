@@ -666,6 +666,11 @@ await provider.disconnect();
   as "tables". This is a deliberate bound, not a bug.
 - **File must be on the Studio server's filesystem.** There is no remote LibreDB connection model.
   The database has no server or wire protocol; embedded-in-process is the only supported mode.
+- **No column modification in a generated migration.** Since
+  [#269](https://github.com/libredb/libredb-studio/issues/269) the schema-diff migration generator
+  answers a modified column per dialect; this engine speaks a JSON command grammar rather than SQL DDL,
+  so it emits `-- LibreDB: Cannot alter column "<name>". ...` where it previously emitted PostgreSQL
+  `ALTER TABLE ... ALTER COLUMN` DDL the command parser would reject.
 
 ---
 

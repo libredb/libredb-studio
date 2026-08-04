@@ -887,8 +887,8 @@ database-wide statistics. Transaction and cancel routes do not apply — see
 - **`ALTER TABLE ... UPDATE` and lightweight `DELETE FROM` report zero rows changed even on
   success.** This is the server's own number, not a provider limitation to fix — see
   [§3.6](#36-writes-return-an-empty-200-body-the-row-count-lives-in-a-header).
-- **Two shared SQL-generating features are not dialect-aware.** Both live outside this provider's
-  files, both are pre-existing rather than introduced by it, and both are tracked in
+- **Two shared SQL-generating features were not dialect-aware.** Both live outside this provider's
+  files, both were pre-existing rather than introduced by it, and both were tracked in
   [#269](https://github.com/libredb/libredb-studio/issues/269):
   - The results grid's **inline row editing** generated a bare `UPDATE ... SET ... WHERE`, which
     ClickHouse rejects outright (`NOT_IMPLEMENTED`, code `48`, HTTP `501`) rather than running as an
@@ -897,11 +897,28 @@ database-wide statistics. Transaction and cancel routes do not apply — see
     of offering an edit that can only fail. Use `ALTER TABLE ... UPDATE` in the editor instead. (The
     same change also stopped the hook joining several row updates into one request, which this server
     rejected on its own; see the multi-statement note at the end of this section.)
-  - The **schema-diff migration generator** has no ClickHouse branch, so a nullability or type change
-    emits PostgreSQL's `ALTER TABLE ... ALTER COLUMN ... SET NOT NULL` where ClickHouse wants
-    `ALTER TABLE ... MODIFY COLUMN <col> Nullable(T)`. Identifier quoting is already correct (both
-    dialects use `"`); only the statement shape is wrong. Oracle falls through the same branch and is
-    approximate for the same reason, so this is a gap in that generator rather than in this provider.
+  - The **schema-diff migration generator** emitted PostgreSQL's
+    `ALTER TABLE ... ALTER COLUMN ... TYPE` / `SET NOT NULL` for a modified column, because every type
+    id without its own branch fell into that generator's PostgreSQL `else`. Since #269 it has a
+    ClickHouse branch: a modified column becomes
+    `ALTER TABLE "t" MODIFY COLUMN "c" <declared type>[ <default clause>]`, and a dropped default
+    becomes a second `MODIFY COLUMN "c" REMOVE <kind>`. A nullability change needs no separate
+    statement — nullability lives inside the type here (`Nullable(T)`), which is what
+    [§3.9](#39-column-types-are-the-declared-strings-verbatim) reports for the column, so restating the
+    declared type carries it. Identifier quoting was already correct (both dialects use `"`).
+    Live-probed against the pinned build while that branch was written, all four worth knowing:
+    a computed column's default is carried kind-first (`MATERIALIZED toYear(d)`, as this provider reads
+    `system.columns.default_kind` / `default_expression` into one string), so the generator emits that
+    clause verbatim — `DEFAULT MATERIALIZED toYear(d)` is a syntax error
+    (code `62`); `MODIFY COLUMN` with no default clause leaves the previous default in place, which is
+    why the explicit `REMOVE` is emitted at all; `REMOVE` accepts `DEFAULT`, `MATERIALIZED` and `ALIAS`
+    but not `EPHEMERAL`, so an ephemeral property carrying an expression is reported in a comment instead
+    (a bare `x String EPHEMERAL` has no expression, so it reaches the diff as no default at all and the
+    generator never sees it); and `REMOVE DEFAULT`
+    against a column that has none is itself an error (code `36`), so it is emitted only for a default
+    that existed. Still approximate: the generator wraps its output in `BEGIN` / `COMMIT`, which this
+    server has no transaction model for, so drop those two lines before running a generated migration
+    here.
 - **No native protocol.** Port `9000` and everything that needs it — the native wire format, some
   server-side settings only exposed there — is out of scope; see
   [§3.1](#31-http-transport-only--no-native-dependency).

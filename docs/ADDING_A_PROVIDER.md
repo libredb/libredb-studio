@@ -655,6 +655,9 @@ The integration points, all of which need an entry. This is the list the Strateg
 - [ ] `src/lib/connection-string-parser.ts` — the scheme(s), if `supportsConnectionString`
 - [ ] `src/lib/query-generators.ts` — only if the dialect needs its own branch; the default is
       PostgreSQL-shaped, so check before assuming it fits
+- [ ] `src/lib/schema-diff/migration-generator.ts` — same shape, same hazard: the modified-column
+      chain's trailing `else` is PostgreSQL DDL, so an unlisted id silently inherits it (#269). Give the
+      dialect a branch, or list it in `NO_COLUMN_MODIFICATION` to emit an honest comment instead
 
 **And the tests for every exhaustive map**, which are the real checklist — several are exhaustive
 *by construction* (`Record<DatabaseType, …>` in `db-ui-config`, `PICKER_COVERAGE` in the
@@ -662,7 +665,9 @@ connection-form test), so the compiler and those tests refuse to pass until each
 `tests/unit/db/factory.test.ts`, `tests/unit/lib/db-ui-config.test.ts`,
 `tests/unit/lib/db-icons.test.tsx`, `tests/unit/lib/connection-string-parser.test.ts`,
 `tests/unit/lib/query-generators.test.ts`, `tests/unit/seed/types.test.ts`,
-`tests/hooks/use-connection-form.test.ts`.
+`tests/hooks/use-connection-form.test.ts`,
+`tests/unit/schema-diff/migration-generator.test.ts` (`MODIFIED_COLUMN_COVERAGE` — classify the new id
+as having its own dialect branch or as unable to express a column modification).
 
 > **`git grep -l <the-previous-provider-type-id> -- src/ tests/` is the authoritative checklist.**
 > This list is maintained by hand and has been wrong before: it long claimed "no other files should

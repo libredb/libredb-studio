@@ -786,6 +786,10 @@ native dependency, and they are listed first so nobody discovers them by acciden
   document needs `META(d).id` or `USE KEYS`, i.e. per-dialect statement building
   ([#279](https://github.com/libredb/libredb-studio/issues/279)). Until then the control is not
   offered here and a document is edited with a hand-written SQL++ statement.
+- **No column modification in a generated migration.** #269 also gave the schema-diff migration
+  generator a per-dialect answer for a modified column; a collection has no column definition to
+  change, so it emits `-- Couchbase: Cannot alter column "<name>". ...` where it previously emitted
+  PostgreSQL `ALTER TABLE ... ALTER COLUMN` DDL the query service would reject.
 
 A follow-up issue gets opened if a real user reports one of: browsing collections that have no
 index, viewing non-JSON documents, or a policy requiring the official SDK. At that point the work is

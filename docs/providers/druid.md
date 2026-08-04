@@ -1500,13 +1500,18 @@ cancellation as unsupported because the provider exposes no `cancelQuery`
 - **No connection string**, deliberately ([§4.2](#42-there-is-no-connection-string-and-that-is-deliberate)).
 - **The whole result body is buffered** before it is parsed, so a deliberately huge result set is
   expensive in a way a streaming client would not be ([§3.1](#31-http-only--no-driver-and-what-that-costs)).
-- **Two shared SQL-generating features are not dialect-aware**, both pre-existing and both tracked in
+- **Two shared SQL-generating features were not dialect-aware**, both pre-existing and both tracked in
   [#269](https://github.com/libredb/libredb-studio/issues/269): the results grid's **inline row
   editing** emitted `UPDATE ... SET`, which Druid rejects as `Unsupported SQL statement [UPDATE]` —
   there is no Druid equivalent to substitute, so editing a Druid row is not possible at all, and since
   #269 this provider declares `supportsInlineRowEdit: false` so the control is not offered here (no
-  EDIT toggle, no editable cell) — and the **schema-diff migration generator** has no Druid branch,
-  which is moot here since Druid has no DDL to migrate.
+  EDIT toggle, no editable cell) — and the **schema-diff migration generator** used to hand a modified
+  column PostgreSQL's `ALTER TABLE ... ALTER COLUMN`, which Druid has no statement for at all; since
+  #269 it emits `-- Apache Druid: Cannot alter column "<name>". Druid SQL has no ALTER TABLE; rewrite
+  the datasource with REPLACE INTO through an MSQ task.` in that statement's place. That advice names
+  the MSQ task endpoint on purpose: `REPLACE INTO` through the interactive endpoint this provider uses
+  is rejected ([§5.5](#55-druid-sql-cannot-write-and-the-server-says-so-clearly)), so a
+  generated migration is run through Druid's own task API rather than pasted into the editor.
 
 ---
 
