@@ -1,53 +1,8 @@
 // db/utils, not the Druid provider directory: an explain strategy that imported from
 // a provider would tie the registry to it (the rule clickhouse-json.ts records).
 import { quoteUnsafeIntegers } from "@/lib/db/utils/json-integers";
+import { classifySelectPrefix } from "./select-prefix";
 import type { ExplainStrategy, ExplainTreeNode } from "./types";
-
-/**
- * Does this statement lead to a SELECT, so that `EXPLAIN PLAN FOR` can wrap it?
- *
- * Broader than the bare `/^\s*SELECT\b/` the other strategies still use, because two
- * ordinary things a user types are genuinely explainable on Druid and were being
- * refused - which left the Explain button dead rather than merely narrow:
- *
- * - a CTE: `EXPLAIN PLAN FOR WITH t AS (...) SELECT * FROM t` is live-verified as
- *   accepted, and the shared `analyzeQuery` already classifies `WITH ... SELECT` as a
- *   SELECT (it injects a LIMIT into one), so refusing it here contradicted the rest of
- *   the pipeline;
- * - a leading comment: `-- note`, or a `/* ... *\/` licence header, before the SELECT.
- *   Live-verified as accepted too, both as a prefix and combined with a CTE.
- *
- * The SHAPE of this pattern matters as much as what it accepts, and it is deliberately
- * not the obvious `^\s*(--...|\/*...*\/|\s)*` spelling:
- *
- * Every one of the three alternatives had to be made unambiguous, because each is
- * inside a `*` quantifier and any way of matching the same text twice is a way for a
- * non-matching input to backtrack. All three were measured, with a tail that never
- * reaches SELECT:
- *
- * - there is no leading `\s*`, because whitespace is already one alternative below.
- *   Having both gives two ways to match the same run of spaces: quadratic, 958ms on
- *   20k leading spaces.
- * - the line comment must end at a newline OR at end-of-input. Without that tail,
- *   `[^\n]*` can give characters back and let a later iteration match `--` again, so a
- *   run of bare dashes partitions exponentially - 634ms on a FORTY-NINE character
- *   input, which is by far the cheapest of the three to trigger. Requiring the tail
- *   forces the branch to run to the newline or to the end, so there is nothing to give
- *   back. Found by CodeQL after the first two were fixed.
- * - the block-comment body is TEMPERED (`[^*]|\*(?!\/)`) rather than a lazy
- *   `[\s\S]*?\*\/`, which inside a `*` quantifier can extend past the first `*\/` and
- *   let one iteration swallow several comments: 852ms on a 4 KB run of `/**\/`.
- *
- * All three now answer in well under a millisecond.
- *
- * Both forms accept and reject exactly the same statements - the difference is only
- * how much backtracking a non-matching input costs. `buildSql` runs on whatever is in
- * the editor when a query is executed, so a buffer that opens with a large commented
- * block and then a non-SELECT is a reachable input, and this file follows the same
- * anti-backtracking care that made `query-limiter.ts` hand-write its semicolon strip
- * "without regex to avoid ReDoS".
- */
-const SELECT_ONLY = /^(?:\s|--[^\n]*(?:\n|$)|\/\*(?:[^*]|\*(?!\/))*\*\/)*(?:SELECT|WITH)\b/i;
 
 /**
  * Druid's EXPLAIN is a statement prefix, not a modifier with options, and it never
@@ -342,7 +297,9 @@ export const druidNativeStrategy: ExplainStrategy = {
   // (use-query-execution.ts:165) and refuses the run when the strategy returns null -
   // so both modes return the same plan, as the SQLite and Couchbase strategies do.
   buildSql(sql) {
-    if (!SELECT_ONLY.test(sql.trim())) return null;
+    // Druid's EXPLAIN never executes the statement, and its SQL cannot write at all
+    // on this endpoint, so classification alone is the whole policy here.
+    if (classifySelectPrefix(sql) === null) return null;
     return `${EXPLAIN_PREFIX}${sql}`;
   },
   // Parsing all three columns here rather than at render time is what gives the raw

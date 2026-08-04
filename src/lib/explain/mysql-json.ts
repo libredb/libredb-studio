@@ -1,11 +1,11 @@
+import { classifySelectPrefix } from "./select-prefix";
 import type { ExplainPlanResult, ExplainStrategy } from "./types";
-
-const SELECT_ONLY = /^\s*SELECT\b/i;
 
 export const mysqlJsonStrategy: ExplainStrategy = {
   format: "mysql-json",
   buildSql(sql) {
-    if (!SELECT_ONLY.test(sql.trim())) return null;
+    // MySQL's `EXPLAIN FORMAT=JSON` describes without running, so a CTE is safe to explain.
+    if (classifySelectPrefix(sql) === null) return null;
     return `EXPLAIN FORMAT=JSON ${sql}`;
   },
   // Legacy extraction preserved on purpose (bug B4): MySQL output has an

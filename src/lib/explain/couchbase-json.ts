@@ -1,6 +1,5 @@
+import { classifySelectPrefix } from "./select-prefix";
 import type { ExplainStrategy, ExplainTreeNode } from "./types";
-
-const SELECT_ONLY = /^\s*SELECT\b/i;
 
 /** How many wrapper layers ({ plan }, row arrays) toPlanRoot peels before giving up. */
 const MAX_UNWRAP_DEPTH = 4;
@@ -119,7 +118,8 @@ export const couchbaseJsonStrategy: ExplainStrategy = {
   // mode "analyze" (use-query-execution.ts:165) and refuses the run when the
   // strategy returns null.
   buildSql(sql) {
-    if (!SELECT_ONLY.test(sql.trim())) return null;
+    // Couchbase's `EXPLAIN` describes without running, so a `WITH` binding is safe to explain.
+    if (classifySelectPrefix(sql) === null) return null;
     return `EXPLAIN ${sql}`;
   },
   extractPlan(result) {

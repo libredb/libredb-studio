@@ -404,6 +404,21 @@ control that only emits invalid input. That is the defect class
   strategy declines, so the button is dead while only the background pre-warm works. When the engine
   has no analyze equivalent, return the estimate for both modes — `sqlite-queryplan.ts` and
   `couchbase-json.ts` both do exactly that.
+- **Decide what is explainable with `classifySelectPrefix()`**
+  ([`explain/select-prefix.ts`](../src/lib/explain/select-prefix.ts)), never with a fresh regex. It
+  accepts a leading CTE and leading SQL comments as well as a bare `SELECT`, which every dialect here
+  was live-verified to explain, and it returns `"select"` or `"with"` so a strategy can treat the two
+  differently. Each of the six strategies used to carry its own `/^\s*SELECT\b/i`, and every one of
+  them refused a CTE — while the shared `analyzeQuery` already classified `WITH … SELECT` as a SELECT
+  and injected a `LIMIT` into one.
+- **Ask whether your engine's EXPLAIN executes what it explains before widening anything.** This is
+  the one place the six strategies genuinely differ. PostgreSQL's emits
+  `EXPLAIN (ANALYZE, …)`, which runs the statement — so a data-modifying CTE is a write wearing a
+  `WITH`, and explaining one performs it (verified: the row really landed). `postgres-json.ts`
+  therefore pairs the shared classification with `hasDataModifyingStatement()`, and it applies that
+  screen **only** to the `"with"` case, because a statement leading with `SELECT` cannot carry such a
+  CTE and screening it too would strip the button off anything that merely mentions `insert`. The
+  other five engines describe without running and need no screen.
 - A capability can be absent because the **grammar** lacks it rather than because nobody implemented
   it, and the flag reads the same either way — so check, and then say so. Druid answers
   `CREATE TABLE t (id BIGINT)` with a syntax error, because `CREATE` is not one of its statements at

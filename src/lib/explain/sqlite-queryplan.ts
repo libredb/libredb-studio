@@ -1,6 +1,5 @@
+import { classifySelectPrefix } from "./select-prefix";
 import type { ExplainStrategy, ExplainTreeNode } from "./types";
-
-const SELECT_ONLY = /^\s*SELECT\b/i;
 
 interface QueryPlanRow {
   id: number;
@@ -23,7 +22,8 @@ export const sqliteQueryplanStrategy: ExplainStrategy = {
   // EXPLAIN QUERY PLAN (not bare EXPLAIN, which dumps VDBE opcodes) and it
   // never executes the statement, so estimate and analyze are identical.
   buildSql(sql) {
-    if (!SELECT_ONLY.test(sql.trim())) return null;
+    // `EXPLAIN QUERY PLAN` describes without running, so a CTE is safe to explain.
+    if (classifySelectPrefix(sql) === null) return null;
     return `EXPLAIN QUERY PLAN ${sql}`;
   },
   extractPlan(result) {

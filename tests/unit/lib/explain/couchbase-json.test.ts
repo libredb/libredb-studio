@@ -150,4 +150,22 @@ describe("couchbaseJsonStrategy", () => {
     // Unwrapping is depth-bounded so a pathological wrapper chain cannot loop.
     expect(couchbaseJsonStrategy.toRenderModel({ plan: { plan: { plan: { plan: PLAN } } } })).toBeNull();
   });
+
+  // SQL++ spells a CTE differently - `WITH alias AS (<expression>)` binds a value
+  // rather than a subquery - and both forms were live-verified accepted behind
+  // `EXPLAIN` on Couchbase 8.0.2. Couchbase's EXPLAIN describes without running, so
+  // there is no write that could hide in a binding.
+  test("buildSql explains a WITH binding and a commented SELECT", () => {
+    const withBinding = "WITH t AS ([{'x':1}]) SELECT * FROM t";
+    expect(couchbaseJsonStrategy.buildSql(withBinding, "analyze")).toBe(`EXPLAIN ${withBinding}`);
+    expect(couchbaseJsonStrategy.buildSql("-- note\nSELECT RAW 1", "estimate")).toBe("EXPLAIN -- note\nSELECT RAW 1");
+    expect(couchbaseJsonStrategy.buildSql("/* note */ SELECT RAW 1", "estimate")).toBe(
+      "EXPLAIN /* note */ SELECT RAW 1",
+    );
+  });
+
+  test("buildSql still declines a comment with no statement behind it", () => {
+    expect(couchbaseJsonStrategy.buildSql("-- only a comment", "analyze")).toBeNull();
+    expect(couchbaseJsonStrategy.buildSql("/* only a comment */", "analyze")).toBeNull();
+  });
 });

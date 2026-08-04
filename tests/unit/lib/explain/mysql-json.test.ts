@@ -22,4 +22,20 @@ describe("mysqlJsonStrategy", () => {
     const rows = [{ EXPLAIN: '{"query_block":{}}' }];
     expect(mysqlJsonStrategy.extractPlan({ rows })).toEqual(rows);
   });
+
+  // Both live-verified accepted through this exact prefix, and MySQL's EXPLAIN FORMAT=JSON describes without running,
+  // so a CTE is safe to explain here - no write can hide inside one.
+  test("buildSql explains a CTE and a commented SELECT", () => {
+    const cte = "WITH t AS (SELECT 1 AS x) SELECT * FROM t";
+    expect(mysqlJsonStrategy.buildSql(cte, "analyze")).toBe(`EXPLAIN FORMAT=JSON ${cte}`);
+    expect(mysqlJsonStrategy.buildSql("-- note\nSELECT 1", "estimate")).toBe("EXPLAIN FORMAT=JSON -- note\nSELECT 1");
+    expect(mysqlJsonStrategy.buildSql("/* note */ SELECT 1", "estimate")).toBe(
+      "EXPLAIN FORMAT=JSON /* note */ SELECT 1",
+    );
+  });
+
+  test("buildSql still declines a comment with no statement behind it", () => {
+    expect(mysqlJsonStrategy.buildSql("-- only a comment", "analyze")).toBeNull();
+    expect(mysqlJsonStrategy.buildSql("/* only a comment */", "analyze")).toBeNull();
+  });
 });

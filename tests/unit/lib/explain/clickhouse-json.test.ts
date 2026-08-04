@@ -393,4 +393,22 @@ describe("clickhouseJsonStrategy", () => {
       clickhouseJsonStrategy.toRenderModel([{ Plan: [{ Plan: [{ Plan: { "Node Type": "Limit" } }] }] }]),
     ).toBeNull();
   });
+
+  // Both live-verified accepted through this exact prefix, and ClickHouse's EXPLAIN describes without running,
+  // so a CTE is safe to explain here - no write can hide inside one.
+  test("buildSql explains a CTE and a commented SELECT", () => {
+    const cte = "WITH t AS (SELECT 1 AS x) SELECT * FROM t";
+    expect(clickhouseJsonStrategy.buildSql(cte, "analyze")).toBe(`EXPLAIN json = 1, indexes = 1 ${cte}`);
+    expect(clickhouseJsonStrategy.buildSql("-- note\nSELECT 1", "estimate")).toBe(
+      "EXPLAIN json = 1, indexes = 1 -- note\nSELECT 1",
+    );
+    expect(clickhouseJsonStrategy.buildSql("/* note */ SELECT 1", "estimate")).toBe(
+      "EXPLAIN json = 1, indexes = 1 /* note */ SELECT 1",
+    );
+  });
+
+  test("buildSql still declines a comment with no statement behind it", () => {
+    expect(clickhouseJsonStrategy.buildSql("-- only a comment", "analyze")).toBeNull();
+    expect(clickhouseJsonStrategy.buildSql("/* only a comment */", "analyze")).toBeNull();
+  });
 });

@@ -354,49 +354,15 @@ describe("druidNativeStrategy", () => {
     expect(druidNativeStrategy.buildSql("/* unterminated SELECT 1", "estimate")).toBeNull();
   });
 
-  /**
-   * Regression guard on the SHAPE of SELECT_ONLY, not on what it accepts.
-   *
-   * The obvious spelling of this pattern - a leading `\s*` in front of an alternation
-   * that also contains `\s`, plus a lazy `[\s\S]*?` block-comment body inside a `*`
-   * quantifier - is ambiguous twice over, and a non-matching input pays for it by
-   * backtracking. Measured on the ambiguous form: 852ms for the 4 KB input below, and
-   * 958ms for 20k leading spaces. The tempered form used here answers both in well
-   * under a millisecond.
-   *
-   * `buildSql` runs on the editor's contents every time a query is executed, so a
-   * buffer that opens with a large commented-out block and then a non-SELECT is a
-   * reachable input. The bound is deliberately loose - three orders of magnitude above
-   * what the correct pattern needs - so it cannot flake on a slow runner while still
-   * failing outright if the ambiguity comes back.
-   */
-  test("buildSql does not backtrack on a long comment or whitespace run that never reaches a SELECT", () => {
-    const BOUND_MS = 200;
-    const adversarial = [
-      `${"/**/".repeat(1000)}UPDATE t SET a = 1`,
-      `${"/*a*/".repeat(1000)}DELETE FROM t`,
-      `${" ".repeat(20000)}UPDATE t SET a = 1`,
-      `${"-- a\n".repeat(1000)}UPDATE t SET a = 1`,
-      `${"/**/ -- a\n ".repeat(1000)}DELETE FROM t`,
-      // The cheapest of the lot, and the one the first two fixes missed: a run of BARE
-      // dashes with no newline. Without the `(?:\n|$)` tail on the line-comment branch
-      // this alone cost 634ms at FORTY-NINE characters, growing about fourfold per two
-      // extra dashes. CodeQL found it; `-- a\n` above cannot, because the newline makes
-      // that branch unambiguous.
-      `${"--".repeat(24)}X`,
-      `${"--".repeat(2000)}UPDATE t SET a = 1`,
-      `${"-".repeat(20000)}X`,
-    ];
+  // The prefix check now lives in `select-prefix.ts`, shared by all six strategies, and
+  // so does its backtracking guard - the ReDoS property belongs to the regex, not to
+  // this dialect. What stays here is that Druid ROUTES through it: a statement it
+  // cannot explain still declines, cheaply.
+  test("buildSql declines a long comment run that never reaches a SELECT, without backtracking", () => {
+    const started = performance.now();
 
-    for (const sql of adversarial) {
-      const started = performance.now();
-      const result = druidNativeStrategy.buildSql(sql, "analyze");
-      const elapsed = performance.now() - started;
-
-      // Correct answer AND a bounded one: a fast wrong answer is not a pass.
-      expect(result).toBeNull();
-      expect(elapsed).toBeLessThan(BOUND_MS);
-    }
+    expect(druidNativeStrategy.buildSql(`${"--".repeat(2000)}UPDATE t SET a = 1`, "analyze")).toBeNull();
+    expect(performance.now() - started).toBeLessThan(200);
   });
 
   // Druid rejects UPDATE and DELETE outright and routes INSERT/REPLACE to the MSQ

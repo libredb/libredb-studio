@@ -58,4 +58,22 @@ describe("sqliteQueryplanStrategy", () => {
     expect(sqliteQueryplanStrategy.toRenderModel([])).toBeNull();
     expect(sqliteQueryplanStrategy.toRenderModel([{ nope: 1 }])).toBeNull();
   });
+
+  // Both live-verified accepted through this exact prefix, and EXPLAIN QUERY PLAN describes without running,
+  // so a CTE is safe to explain here - no write can hide inside one.
+  test("buildSql explains a CTE and a commented SELECT", () => {
+    const cte = "WITH t AS (SELECT 1 AS x) SELECT * FROM t";
+    expect(sqliteQueryplanStrategy.buildSql(cte, "analyze")).toBe(`EXPLAIN QUERY PLAN ${cte}`);
+    expect(sqliteQueryplanStrategy.buildSql("-- note\nSELECT 1", "estimate")).toBe(
+      "EXPLAIN QUERY PLAN -- note\nSELECT 1",
+    );
+    expect(sqliteQueryplanStrategy.buildSql("/* note */ SELECT 1", "estimate")).toBe(
+      "EXPLAIN QUERY PLAN /* note */ SELECT 1",
+    );
+  });
+
+  test("buildSql still declines a comment with no statement behind it", () => {
+    expect(sqliteQueryplanStrategy.buildSql("-- only a comment", "analyze")).toBeNull();
+    expect(sqliteQueryplanStrategy.buildSql("/* only a comment */", "analyze")).toBeNull();
+  });
 });

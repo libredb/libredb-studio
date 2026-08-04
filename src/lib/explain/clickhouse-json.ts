@@ -1,6 +1,5 @@
+import { classifySelectPrefix } from "./select-prefix";
 import type { ExplainStrategy, ExplainTreeNode } from "./types";
-
-const SELECT_ONLY = /^\s*SELECT\b/i;
 
 /**
  * `FORMAT <Name>` where nothing but a `SETTINGS` clause or a semicolon follows it.
@@ -168,7 +167,8 @@ export const clickhouseJsonStrategy: ExplainStrategy = {
   // (use-query-execution.ts:165) and refuses the run when the strategy returns null -
   // so both modes return the estimate, as the SQLite and Couchbase strategies do.
   buildSql(sql) {
-    if (!SELECT_ONLY.test(sql.trim())) return null;
+    // ClickHouse's `EXPLAIN` describes without running, so a CTE is safe to explain.
+    if (classifySelectPrefix(sql) === null) return null;
     // A trailing FORMAT would reformat the PLAN, not the statement's rows: live, a
     // wrapped `... FORMAT TSV` comes back as TSV text and the tree can never be
     // built. The clause describes the statement's own result, which an EXPLAIN never

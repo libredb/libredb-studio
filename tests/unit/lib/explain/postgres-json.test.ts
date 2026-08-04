@@ -31,6 +31,44 @@ describe("postgresJsonStrategy", () => {
     expect(postgresJsonStrategy.buildSql("EXPLAIN SELECT 1", "analyze")).toBeNull();
   });
 
+  test("buildSql explains a read-only CTE and a commented SELECT", () => {
+    const cte = "WITH t AS (SELECT 1 AS x) SELECT * FROM t";
+    expect(postgresJsonStrategy.buildSql(cte, "analyze")).toBe(`EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ${cte}`);
+    expect(postgresJsonStrategy.buildSql("-- note\nSELECT 1", "analyze")).toBe(
+      "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) -- note\nSELECT 1",
+    );
+  });
+
+  /**
+   * The reason this strategy screens more than the shared classification does.
+   *
+   * `EXPLAIN (ANALYZE, ...)` RUNS the statement, and a data-modifying CTE is a write
+   * wearing a `WITH`. Live-verified on PostgreSQL 18: explaining
+   * `WITH t AS (INSERT INTO probe(id) VALUES (42) RETURNING id) SELECT * FROM t`
+   * left the row really inserted - 0 rows before, 1 row after. Declining costs an
+   * Explain button; accepting performs a write the user only asked to see.
+   */
+  test.each<[string, string]>([
+    ["an INSERT CTE", "WITH t AS (INSERT INTO probe(id) VALUES (42) RETURNING id) SELECT * FROM t"],
+    ["an UPDATE CTE", "WITH t AS (UPDATE probe SET id = 1 RETURNING id) SELECT * FROM t"],
+    ["a DELETE CTE", "WITH t AS (DELETE FROM probe RETURNING id) SELECT * FROM t"],
+  ])("buildSql refuses %s, because ANALYZE would execute it", (_label, sql) => {
+    expect(postgresJsonStrategy.buildSql(sql, "analyze")).toBeNull();
+    expect(postgresJsonStrategy.buildSql(sql, "estimate")).toBeNull();
+  });
+
+  // The screen is scoped to the WITH form on purpose. A statement leading with SELECT
+  // cannot carry a data-modifying CTE (PostgreSQL allows one only at the top level), so
+  // screening those too would only strip the button off queries that mention a keyword.
+  test("buildSql still explains a SELECT that merely mentions a writing keyword", () => {
+    expect(postgresJsonStrategy.buildSql("SELECT 'insert' AS word", "analyze")).toBe(
+      "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) SELECT 'insert' AS word",
+    );
+    expect(postgresJsonStrategy.buildSql("SELECT updated_at FROM t", "analyze")).toBe(
+      "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) SELECT updated_at FROM t",
+    );
+  });
+
   test("extractPlan prefers the QUERY PLAN column", () => {
     const plan = [{ Plan: { "Node Type": "Seq Scan" } }];
     expect(postgresJsonStrategy.extractPlan({ rows: [{ "QUERY PLAN": plan }] })).toEqual(plan);
