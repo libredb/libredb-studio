@@ -908,6 +908,65 @@ describe("ResultsGrid", () => {
     });
   });
 
+  // ── Declared column types (#273) ──────────────────────────────────────────
+
+  describe("declared column types", () => {
+    test("shows the type the engine declared for a column beside its name", () => {
+      const result: QueryResult = { ...mockResult, columnTypes: { name: "Nullable(String)" } };
+      const { getAllByRole, container } = render(React.createElement(ResultsGrid, { result }));
+
+      // The type is part of the header's accessible name, not sighted-only.
+      const header = getAllByRole("button", { name: "name, Nullable(String)" })[0];
+      expect(header.textContent).toContain("Nullable(String)");
+      // Reachable in both headers: the desktop span and the compact mobile one,
+      // which carries the type as a tooltip only (its columns are content-width).
+      expect(container.querySelectorAll('[title="Nullable(String)"]').length).toBe(2);
+    });
+
+    test("leaves a column the engine declared no type for exactly as it was", () => {
+      const result: QueryResult = { ...mockResult, columnTypes: { name: "Nullable(String)" } };
+      const { getAllByRole } = render(React.createElement(ResultsGrid, { result }));
+
+      expect(getAllByRole("button", { name: "id" })[0].textContent).toBe("id");
+    });
+
+    test("renders headers unchanged when the result declares no types at all", () => {
+      const { getAllByRole, container } = render(React.createElement(ResultsGrid, { result: mockResult }));
+
+      expect(getAllByRole("button", { name: "name" })[0].textContent).toBe("name");
+      // No header gains a tooltip it did not have before ("Filter column" is pre-existing).
+      expect(container.querySelectorAll('[title]:not([title="Filter column"])').length).toBe(0);
+    });
+  });
+
+  // ── Engine warnings on a result with no rows (#273) ───────────────────────
+
+  test("surfaces the engine's warnings when the result has no rows", () => {
+    // An analytics engine can answer 200 with EVERY segment unavailable: zero rows
+    // plus a warning. Reporting "no data" alone would call missing data absent data.
+    const result: QueryResult = {
+      ...mockEmptyResult,
+      warnings: [{ message: "2 segments of the queried data were unavailable." }],
+    };
+    const { container } = render(React.createElement(ResultsGrid, { result }));
+
+    const text = container.textContent ?? "";
+    expect(text).toContain("Query returned no data");
+    expect(text).toContain("2 segments of the queried data were unavailable.");
+    // The warning has to come before the "operation was successful" reassurance -
+    // a reader who stops at the reassurance is back to being told the data is absent.
+    expect(text.indexOf("2 segments of the queried data were unavailable.")).toBeLessThan(
+      text.indexOf("The operation was successful"),
+    );
+  });
+
+  test("keeps the empty state unchanged when the engine reported no warnings", () => {
+    const { container } = render(React.createElement(ResultsGrid, { result: mockEmptyResult }));
+
+    expect(container.textContent).toContain("Query returned no data");
+    expect(container.querySelector("ul")).toBeNull();
+  });
+
   // ── A11y semantics (#100): keyboard-reachable interactive elements ────────
 
   describe("a11y semantics", () => {

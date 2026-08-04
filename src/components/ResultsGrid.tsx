@@ -25,7 +25,7 @@ import {
 import { ResultCard } from "@/components/results-grid/ResultCard";
 import { RowDetailSheet } from "@/components/results-grid/RowDetailSheet";
 import { StatsBar, LoadMoreFooter } from "@/components/results-grid/StatsBar";
-import { formatCellValue } from "@/components/results-grid/utils";
+import { describeWarning, formatCellValue } from "@/components/results-grid/utils";
 
 export interface CellChange {
   rowIndex: number;
@@ -36,6 +36,7 @@ export interface CellChange {
 
 const CLEAR_FILTER_LABEL = "Clear filter";
 const EMPTY_RESULT_HINT = "The operation was successful, but the result set is currently empty.";
+const ENGINE_WARNINGS_LABEL = "The engine reported:";
 
 interface ResultsGridProps {
   result: QueryResult;
@@ -184,17 +185,25 @@ export function ResultsGrid({
       header: ({ column }) => {
         const hasFilter = columnFilters.has(field) && !!columnFilters.get(field);
         const isSensitive = effectiveMaskingEnabled && sensitiveColumns.has(field);
+        // The type the wire format declared for THIS result - the only source for a
+        // computed column, which has no catalog entry the schema tree could answer with.
+        const declaredType = result.columnTypes?.[field];
         return (
           <div className="flex items-center gap-1 select-none group/header w-full">
             <button
               type="button"
-              aria-label={`${field}${
+              aria-label={`${field}${declaredType ? `, ${declaredType}` : ""}${
                 column.getIsSorted() ? `, sorted ${column.getIsSorted() === "asc" ? "ascending" : "descending"}` : ""
               }`}
               className="flex items-center gap-1 cursor-pointer flex-1 min-w-0 text-left"
               onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
             >
               <span className="truncate">{field}</span>
+              {declaredType && (
+                <span className="text-[0.625rem] normal-case truncate" title={declaredType}>
+                  {declaredType}
+                </span>
+              )}
               {isSensitive && (
                 <span title="Masked column">
                   <Lock strokeWidth={1.5} className="w-3 h-3 text-purple-400 shrink-0" />
@@ -374,6 +383,7 @@ export function ResultsGrid({
     }));
   }, [
     result.fields,
+    result.columnTypes,
     editingCell,
     editValue,
     effectiveMaskingEnabled,
@@ -428,12 +438,26 @@ export function ResultsGrid({
   });
 
   if (!result || result.rows.length === 0) {
+    // A warning here is the whole story: an engine can answer 200 with every
+    // segment unavailable, and the stats bar that normally carries the badge is
+    // not rendered in this state - so the notices are shown outright.
+    const emptyWarnings = result?.warnings ?? [];
     return (
       <div className="h-full flex flex-col items-center justify-center p-8 text-center text-zinc-600 animate-in fade-in zoom-in-95 duration-500">
         <div className="w-16 h-16 rounded-2xl bg-zinc-900/50 flex items-center justify-center mb-6 border border-white/5 shadow-2xl">
           <span className="text-2xl text-zinc-500">&#x2205;</span>
         </div>
         <p className="text-xs font-medium text-zinc-400">Query returned no data</p>
+        {emptyWarnings.length > 0 && (
+          <div className="mt-3 max-w-[280px] text-xs text-amber-400 leading-relaxed">
+            <p className="font-medium">{ENGINE_WARNINGS_LABEL}</p>
+            <ul className="mt-1 space-y-1">
+              {emptyWarnings.map((warning, idx) => (
+                <li key={idx}>{describeWarning(warning)}</li>
+              ))}
+            </ul>
+          </div>
+        )}
         <p className="text-xs text-zinc-600 mt-2 max-w-[280px] leading-relaxed">{EMPTY_RESULT_HINT}</p>
       </div>
     );
@@ -499,6 +523,10 @@ export function ResultsGrid({
               return (
                 <div
                   key={field}
+                  // Tooltip only: this table sizes header and body cells from their own
+                  // content, so visible type text here would push the header out of step
+                  // with the rows below it. The desktop table shares one measured width.
+                  title={result.columnTypes?.[field]}
                   className={cn(
                     "h-10 px-4 flex items-center gap-1 border-r border-b border-white/5 text-xs uppercase font-mono text-zinc-500 bg-[#0d0d0d] whitespace-nowrap",
                     idx === 0 && "sticky left-0 z-30 bg-[#0d0d0d] shadow-[2px_0_8px_rgba(0,0,0,0.3)]",

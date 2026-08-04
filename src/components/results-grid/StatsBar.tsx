@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils";
 import { ChevronDown, LayoutGrid, Table2, Loader2, EyeOff, Eye, Save, X, Filter, Lock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { CellChange } from "@/components/ResultsGrid";
+import { describeWarning } from "@/components/results-grid/utils";
 
 const MASKED_LABEL = "MASKED";
 const LOADING_LABEL = "Loading...";
@@ -49,6 +50,9 @@ export function StatsBar({
   onApplyChanges,
   onDiscardChanges,
 }: StatsBarProps) {
+  const warnings = result.warnings ?? [];
+  const warningDetail = warnings.map(describeWarning).join("\n");
+
   return (
     <div className="flex items-center justify-between px-4 py-2 border-b border-white/5 bg-[#0a0a0a] text-xs text-zinc-500 font-mono">
       <div className="flex items-center gap-4">
@@ -71,6 +75,12 @@ export function StatsBar({
         )}
         {result.pagination?.wasLimited && (
           <span className="text-blue-400 text-xs bg-blue-500/10 px-2 py-0.5 rounded">AUTO-LIMITED</span>
+        )}
+        {warnings.length > 0 && (
+          <span className="text-amber-400 text-xs bg-amber-500/10 px-2 py-0.5 rounded" title={warningDetail}>
+            {warnings.length} WARNING{warnings.length > 1 ? "S" : ""}
+            <span className="sr-only">: {warningDetail}</span>
+          </span>
         )}
       </div>
 

@@ -1,5 +1,5 @@
 import { describe, test, expect } from "bun:test";
-import { formatCellValue } from "@/components/results-grid/utils";
+import { describeWarning, formatCellValue } from "@/components/results-grid/utils";
 
 // =============================================================================
 // formatCellValue — output parity pins (#96)
@@ -70,5 +70,24 @@ describe("formatCellValue parity", () => {
   test("pretty-printed JSON string display survives byte-for-byte", () => {
     const pretty = '{\n  "id": "1",\n  "name": "Ada"\n}';
     expect(formatCellValue(pretty)).toEqual({ display: pretty, className: "text-zinc-300" });
+  });
+});
+
+// =============================================================================
+// describeWarning — how one engine notice reads (#273)
+// =============================================================================
+
+describe("describeWarning", () => {
+  test("uses the engine's own wording when it reported a message", () => {
+    expect(describeWarning({ message: "index advice available", code: "01000" })).toBe("index advice available");
+  });
+
+  test("falls back to the code when the message is empty, including code 0", () => {
+    expect(describeWarning({ message: "", code: 0 })).toBe("Warning 0");
+    expect(describeWarning({ message: "", code: "01000" })).toBe("Warning 01000");
+  });
+
+  test("still reports an entry that carries neither message nor code", () => {
+    expect(describeWarning({ message: "" })).toBe("Warning");
   });
 });

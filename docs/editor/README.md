@@ -7,7 +7,7 @@ execution pipeline behind it.
 |-----|--------|
 | [Monaco Performance](monaco-performance.md) | Editor responsiveness — uncontrolled component pattern, RAF-buffered AI streaming, memoized schema props, completion caching |
 | [SQL Alias Completion](sql-alias-completion.md) | Context-aware autocompletion with table-alias resolution (`FROM`/`JOIN`/CTE), the completion provider, and the alias extractor |
-| [Query Optimization](query-optimization.md) | Query pagination, silent auto-limiting, Load More, background `EXPLAIN`, and performance insights |
+| [Query Optimization](query-optimization.md) | Query pagination, silent auto-limiting, Load More, result-level signals (engine warnings, declared column types), background `EXPLAIN`, and performance insights |
 
 ## Asset loading
 

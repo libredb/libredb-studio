@@ -105,6 +105,108 @@ describe("results-grid/StatsBar", () => {
     expect(queryByText("MASKED")).not.toBeNull();
   });
 
+  test("renders no warnings badge when the engine reported none", () => {
+    const { container, rerender } = render(
+      <StatsBar
+        result={makeResult()}
+        filteredRowCount={2}
+        activeFilterCount={0}
+        onClearFilters={mock(() => {})}
+        viewMode="card"
+        onSetViewMode={mock(() => {})}
+        hasSensitive={false}
+        effectiveMaskingEnabled={false}
+        userCanToggle={false}
+      />,
+    );
+    expect(container.textContent).not.toContain("WARNING");
+
+    // An empty array must not render an empty affordance either.
+    rerender(
+      <StatsBar
+        result={{ ...makeResult(), warnings: [] }}
+        filteredRowCount={2}
+        activeFilterCount={0}
+        onClearFilters={mock(() => {})}
+        viewMode="card"
+        onSetViewMode={mock(() => {})}
+        hasSensitive={false}
+        effectiveMaskingEnabled={false}
+        userCanToggle={false}
+      />,
+    );
+    expect(container.textContent).not.toContain("WARNING");
+  });
+
+  test("renders a warnings badge whose message is reachable by tooltip and by screen reader", () => {
+    const { getByTitle } = render(
+      <StatsBar
+        result={{
+          ...makeResult(),
+          warnings: [{ message: "2 segments of the queried data were unavailable." }],
+        }}
+        filteredRowCount={2}
+        activeFilterCount={0}
+        onClearFilters={mock(() => {})}
+        viewMode="card"
+        onSetViewMode={mock(() => {})}
+        hasSensitive={false}
+        effectiveMaskingEnabled={false}
+        userCanToggle={false}
+      />,
+    );
+
+    const badge = getByTitle("2 segments of the queried data were unavailable.");
+    expect(badge.textContent).toContain("1 WARNING");
+    expect(badge.querySelector(".sr-only")?.textContent).toContain("2 segments of the queried data were unavailable.");
+  });
+
+  test("counts several warnings and carries every message", () => {
+    const { getByTitle } = render(
+      <StatsBar
+        result={{
+          ...makeResult(),
+          warnings: [{ message: "index advice available", code: "01000" }, { message: "rows were sampled" }],
+        }}
+        filteredRowCount={2}
+        activeFilterCount={0}
+        onClearFilters={mock(() => {})}
+        viewMode="card"
+        onSetViewMode={mock(() => {})}
+        hasSensitive={false}
+        effectiveMaskingEnabled={false}
+        userCanToggle={false}
+      />,
+    );
+
+    // Matchers normalize whitespace, so the newline-separated tooltip is asserted
+    // on the raw attribute.
+    const badge = getByTitle(/index advice available/);
+    expect(badge.getAttribute("title")).toBe("index advice available\nrows were sampled");
+    expect(badge.textContent).toContain("2 WARNINGS");
+  });
+
+  test("falls back to the engine's code when a warning carries no message", () => {
+    // `0` is a legal code, so absence must be tested as absence - not as falsiness.
+    const { getByTitle } = render(
+      <StatsBar
+        result={{ ...makeResult(), warnings: [{ message: "", code: 0 }, { message: "" }] }}
+        filteredRowCount={2}
+        activeFilterCount={0}
+        onClearFilters={mock(() => {})}
+        viewMode="card"
+        onSetViewMode={mock(() => {})}
+        hasSensitive={false}
+        effectiveMaskingEnabled={false}
+        userCanToggle={false}
+      />,
+    );
+
+    const badge = getByTitle(/Warning 0/);
+    expect(badge.getAttribute("title")).toBe("Warning 0\nWarning");
+    expect(badge.textContent).toContain("2 WARNINGS");
+  });
+
   test("shows pending changes actions and executes callbacks", () => {
     const onApplyChanges = mock(() => {});
     const onDiscardChanges = mock(() => {});

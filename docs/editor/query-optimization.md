@@ -7,6 +7,7 @@ LibreDB Studio includes enterprise-grade query optimization features to prevent 
 - [Query Pagination System](#query-pagination-system)
 - [Silent Auto-Limiting](#silent-auto-limiting)
 - [Load More Functionality](#load-more-functionality)
+- [Result-Level Signals](#result-level-signals)
 - [Query EXPLAIN Integration](#query-explain-integration)
 - [Performance Insights](#performance-insights)
 - [Architecture](#architecture)
@@ -157,6 +158,42 @@ For advanced users, a "Load All" button triggers an unlimited query (max 100K ro
 │  [Cancel]          [Load All]        │
 └──────────────────────────────────────┘
 ```
+
+---
+
+## Result-Level Signals
+
+Two things a result can say about itself, both optional and both filled by the provider that ran
+the statement (issue #273). Neither has anything to do with auto-limiting.
+
+### Engine Warnings
+
+`QueryResult.warnings` carries the notices an engine attached to a run it **completed** — a
+Couchbase query-service advisory, or a Druid answer admitting that some segments of the queried
+data were unavailable while still answering 200. The field is **absent** when the engine reported
+none, so its presence alone decides whether anything renders.
+
+- With rows: an amber **WARNINGS badge** sits beside the AUTO-LIMITED badge in the stats bar. The
+  messages are in its tooltip and are also read out by assistive technology.
+- With no rows: the messages are listed outright under "Query returned no data". A result that is
+  empty *because* the data was unreachable must not read as a result that is empty because the data
+  is not there.
+
+This is not the plan analysis in [Automatic Warning Detection](#automatic-warning-detection): those
+are derived by the client from EXPLAIN output, these are the engine's own words about the run.
+
+### Declared Column Types
+
+`QueryResult.columnTypes` carries the type the wire format declared for each column of *this*
+result, keyed by its name in `fields` and spelled the way the engine spells it
+(`Nullable(String)`, `BIGINT`). For a computed column or an ad-hoc projection it is the only
+source of a type at all — the schema tree has no catalog entry to answer with.
+
+The type is shown beside the column name in the desktop table's header, and is part of that
+header's accessible name. The compact table shown below the `md` breakpoint carries it as a
+tooltip only: that table sizes its header and body cells from their own content, so visible text
+in the header alone would push it out of step with the rows. A column the engine declared no type
+for renders exactly as it did before.
 
 ---
 
