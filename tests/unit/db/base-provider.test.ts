@@ -16,6 +16,7 @@ import type {
   TableStats,
   IndexStats,
   StorageStats,
+  ProviderCapabilities,
 } from "@/lib/db/types";
 
 // ============================================================================
@@ -223,6 +224,23 @@ describe("BaseDatabaseProvider", () => {
       expect(caps.supportsExternalQueryLimiting).toBe(true);
       expect(caps.supportsCreateTable).toBe(true);
       expect(caps.supportsInlineRowEdit).toBe(true);
+      // Compile-time pin, checked by `bun run typecheck`: `ProviderCapabilities` is
+      // published (`src/exports/types.ts`), so a capability added later must be
+      // OPTIONAL or every external implementer of the type stops compiling. Omitting
+      // it here is the whole assertion; the UI gates on `=== true`, so an absent
+      // flag reads as unsupported. Reported by review on PR #289.
+      const externalImplementer: ProviderCapabilities = {
+        queryLanguage: "sql",
+        supportsExplain: false,
+        supportsExternalQueryLimiting: false,
+        supportsCreateTable: false,
+        supportsMaintenance: false,
+        maintenanceOperations: [],
+        supportsConnectionString: false,
+        defaultPort: null,
+        schemaRefreshPattern: "",
+      };
+      expect(externalImplementer.supportsInlineRowEdit).toBeUndefined();
       expect(caps.supportsMaintenance).toBe(true);
       expect(caps.maintenanceOperations).toBeArray();
       expect(caps.maintenanceOperations).toContain("vacuum");

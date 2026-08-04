@@ -537,3 +537,43 @@ describe("isSelectQuery", () => {
     expect(isSelectQuery("EXPLAIN SELECT * FROM t")).toBe(false);
   });
 });
+
+// ─── leading trivia must not answer whole-statement probes ──────────────────
+//
+// The leading keyword is read past comments (#275), but three probes still
+// searched the WHOLE text: the Oracle ROWNUM bound, UNION detection and the
+// subquery count. A word written in a leading comment then answered for the
+// statement — and for ROWNUM that means "already bounded", so the query runs
+// unbounded, which is the exact symptom #275 removed. Reported by review on
+// PR #289.
+
+describe("analyzeQuery: leading comments cannot answer for the statement body", () => {
+  test("a ROWNUM bound mentioned in a leading comment does not mark the query bounded", () => {
+    const info = analyzeQuery("-- switch to ROWNUM <= 10 on oracle\nSELECT * FROM huge_table");
+    expect(info.type).toBe("SELECT");
+    expect(info.hasLimit).toBe(false);
+
+    const limited = applyQueryLimit("-- switch to ROWNUM <= 10 on oracle\nSELECT * FROM huge_table", 500);
+    expect(limited.wasLimited).toBe(true);
+    expect(limited.sql).toContain("LIMIT 500");
+  });
+
+  test("a ROWNUM bound mentioned in a leading block comment does not mark the query bounded", () => {
+    expect(analyzeQuery("/* ROWNUM <= 5 */ SELECT * FROM huge_table").hasLimit).toBe(false);
+  });
+
+  test("a real ROWNUM bound is still detected", () => {
+    expect(analyzeQuery("SELECT * FROM t WHERE ROWNUM <= 10").hasLimit).toBe(true);
+    expect(analyzeQuery("-- annotated\nSELECT * FROM t WHERE ROWNUM <= 10").hasLimit).toBe(true);
+  });
+
+  test("UNION mentioned in a leading comment does not mark the query a union", () => {
+    expect(analyzeQuery("-- consider UNION ALL here\nSELECT 1").isUnion).toBe(false);
+    expect(analyzeQuery("SELECT 1 UNION SELECT 2").isUnion).toBe(true);
+  });
+
+  test("SELECT mentioned in a leading comment does not count as a nested SELECT", () => {
+    expect(analyzeQuery("-- SELECT was here\nSELECT 1").hasSubquery).toBe(false);
+    expect(analyzeQuery("SELECT (SELECT 1) AS x").hasSubquery).toBe(true);
+  });
+});

@@ -29,7 +29,13 @@ export function useProviderMetadata(connection: DatabaseConnection | null): {
       return;
     }
 
-    lastConnectionId.current = connection.id;
+    const requestedId = connection.id;
+    lastConnectionId.current = requestedId;
+    // Callers gate controls on these capabilities (the inline-edit affordance, the
+    // maintenance actions), so the previous connection's answer must not stand in
+    // for this one while the new answer is in flight - that offers a control the
+    // engine rejects. Absent capabilities read as unsupported everywhere.
+    setMetadata(null);
     setIsLoading(true);
 
     const controller = new AbortController();
@@ -45,16 +51,22 @@ export function useProviderMetadata(connection: DatabaseConnection | null): {
         if (!res.ok) throw new Error("Failed to fetch provider metadata");
         return res.json();
       })
+      // Requests can land out of order, so every settle path checks that this
+      // connection is still the selected one before it answers for it. The check
+      // is against the ref rather than an effect-cleanup flag on purpose: a
+      // cleanup that fires for the SAME connection (React re-running the effect)
+      // would otherwise discard the only response, and the id guard above means
+      // no refetch would follow.
       .then((data: ProviderMetadata) => {
-        setMetadata(data);
+        if (lastConnectionId.current === requestedId) setMetadata(data);
       })
       .catch((err) => {
         console.error("[useProviderMetadata]", err);
-        setMetadata(null);
+        if (lastConnectionId.current === requestedId) setMetadata(null);
       })
       .finally(() => {
         clearTimeout(timeoutId);
-        setIsLoading(false);
+        if (lastConnectionId.current === requestedId) setIsLoading(false);
       });
   }, [connection]);
 

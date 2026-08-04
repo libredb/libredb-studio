@@ -71,7 +71,6 @@ function stripTrailingSemicolon(s: string): string {
 export function analyzeQuery(sql: string): ParsedQueryInfo {
   // Strip trailing whitespace and semicolons upfront to avoid ReDoS-prone patterns
   const trimmed = stripTrailingSemicolon(sql.trim());
-  const normalized = trimmed.replace(/\s+/g, " ").toUpperCase();
 
   // Query type detection - from the first keyword that is not whitespace or a comment
   const leading = readLeadingKeyword(trimmed);
@@ -80,6 +79,11 @@ export function analyzeQuery(sql: string): ParsedQueryInfo {
   // statement's TEXT rather than just its leading keyword has to start here, or a
   // word written in the leading comment answers for the statement itself.
   const fromKeyword = leading === null ? trimmed : trimmed.slice(leading.start);
+  // Whitespace-collapsed, upper-cased body for the probes that scan text. Built
+  // from `fromKeyword`, NOT from `trimmed`: a leading comment reading
+  // "switch to ROWNUM <= 10" once marked the statement already bounded, which
+  // left the query unbounded - the very symptom #275 removed (PR #289 review).
+  const normalized = fromKeyword.replace(/\s+/g, " ").toUpperCase();
 
   let type: ParsedQueryInfo["type"] = "OTHER";
   if (keyword === "SELECT") type = "SELECT";

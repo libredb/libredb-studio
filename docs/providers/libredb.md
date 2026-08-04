@@ -457,7 +457,8 @@ This is reflected in `getCapabilities().supportsMaintenance = false` and
 `maintenanceOperations = []`. The monitoring **Tables** tab hides the maintenance actions for this
 provider: it renders no per-row maintenance control when a provider declares maintenance unsupported
 (issue #272). The admin **Operations** tab does not read capabilities yet, so its maintenance buttons
-still appear here and answer HTTP 400 — a known gap, not yet filed, outside #272's bar.
+still appear here and answer HTTP 400 — tracked as
+[#282](https://github.com/libredb/libredb-studio/issues/282), outside #272's bar.
 
 ---
 

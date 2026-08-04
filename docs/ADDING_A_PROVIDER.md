@@ -542,7 +542,7 @@ Every field and what it controls:
 | `explainFormat` | `ExplainFormat \| undefined` | **Required whenever `supportsExplain` is true.** Selects the strategy in `src/lib/explain/index.ts`. Setting the flag without the format leaves the control visible and dead — the UI resets out of explain mode when metadata lacks it |
 | `supportsExternalQueryLimiting` | `boolean` | Whether route applies LIMIT to queries (SQL) or provider handles it (MongoDB) |
 | `supportsCreateTable` | `boolean` | "Create Table" button in SchemaExplorer |
-| `supportsInlineRowEdit` | `boolean` | Whether the results grid offers inline row editing. `false` hides the EDIT toggle and every editable cell — set it where the engine has no `UPDATE <table> SET <col> = <val> WHERE <pk> = <val>` statement, which is what `use-inline-editing.ts` builds |
+| `supportsInlineRowEdit` | `boolean?` | Whether the results grid offers inline row editing. `false` hides the EDIT toggle and every editable cell — set it where the engine has no `UPDATE <table> SET <col> = <val> WHERE <pk> = <val>` statement, which is what `use-inline-editing.ts` builds. Optional only because the interface is published and a required addition breaks external implementers; every provider here declares it, and an absent flag reads as unsupported |
 | `supportsMaintenance` | `boolean` | Whether maintenance API accepts requests for this provider |
 | `maintenanceOperations` | `MaintenanceType[]` | Which operation cards show in MaintenanceModal (vacuum, analyze, reindex, etc.) |
 | `supportsConnectionString` | `boolean` | Used for future connection validation logic |

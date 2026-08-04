@@ -698,8 +698,10 @@ a target; `analyze` does not.
 | `kill` | `KILL QUERY WHERE query_id = '<target>' SYNC` | `SYNC` so the result is reported after the query has actually stopped, not after the kill was merely queued |
 
 `vacuum`, `reindex` and `check` have no ClickHouse equivalent, so they are absent from
-`maintenanceOperations` and the UI never offers them; calling `runMaintenance` with one directly
-throws a `QueryError` naming the three supported operations. A target is qualified through
+`maintenanceOperations` and the monitoring Tables tab never offers them (#272); the admin Operations
+tab still does not read capabilities ([#282](https://github.com/libredb/libredb-studio/issues/282)).
+Calling `runMaintenance` with one directly throws a `QueryError` naming the three supported
+operations. A target is qualified through
 `escapeIdentifier()` (`"database"."table"`, defaulting the database to the pinned one when the
 target names none), so a hostile or oddly-named table cannot break out of the generated statement.
 

@@ -55,6 +55,17 @@ interface ResultsGridProps {
 }
 
 // Detect primary column (first text-like column that's not an ID)
+/**
+ * The type the source declared for `field`, or undefined when it declared none.
+ *
+ * Own-key check rather than a direct lookup: a column name is arbitrary SQL output
+ * and `SELECT 1 AS constructor` is legal, so `columnTypes[field]` would otherwise
+ * answer from `Object.prototype` - handing React a function as header content.
+ */
+function declaredTypeOf(columnTypes: Record<string, string> | undefined, field: string): string | undefined {
+  return columnTypes !== undefined && Object.hasOwn(columnTypes, field) ? columnTypes[field] : undefined;
+}
+
 function detectPrimaryColumn(fields: string[], rows: Record<string, unknown>[]): string {
   const preferredNames = ["name", "title", "label", "username", "email", "description"];
 
@@ -187,7 +198,7 @@ export function ResultsGrid({
         const isSensitive = effectiveMaskingEnabled && sensitiveColumns.has(field);
         // The type the wire format declared for THIS result - the only source for a
         // computed column, which has no catalog entry the schema tree could answer with.
-        const declaredType = result.columnTypes?.[field];
+        const declaredType = declaredTypeOf(result.columnTypes, field);
         return (
           <div className="flex items-center gap-1 select-none group/header w-full">
             <button
@@ -520,13 +531,15 @@ export function ResultsGrid({
           <div className="sticky top-0 z-20 bg-[#0d0d0d] flex">
             {result.fields.map((field, idx) => {
               const isSensitive = effectiveMaskingEnabled && sensitiveColumns.has(field);
+              const declaredType = declaredTypeOf(result.columnTypes, field);
               return (
                 <div
                   key={field}
-                  // Tooltip only: this table sizes header and body cells from their own
-                  // content, so visible type text here would push the header out of step
-                  // with the rows below it. The desktop table shares one measured width.
-                  title={result.columnTypes?.[field]}
+                  // The type stays a tooltip here: this table sizes header and body cells
+                  // from their own content, so visible type text would push the header out
+                  // of step with the rows below it. The desktop table shares one measured
+                  // width and can afford the visible span.
+                  title={declaredType}
                   className={cn(
                     "h-10 px-4 flex items-center gap-1 border-r border-b border-white/5 text-xs uppercase font-mono text-zinc-500 bg-[#0d0d0d] whitespace-nowrap",
                     idx === 0 && "sticky left-0 z-30 bg-[#0d0d0d] shadow-[2px_0_8px_rgba(0,0,0,0.3)]",
@@ -534,6 +547,10 @@ export function ResultsGrid({
                   )}
                 >
                   {field}
+                  {/* A title on a non-focusable element is unreachable by touch and
+                      unreliable for assistive tech, so the type also ships as
+                      screen-reader text - same treatment as the warnings badge. */}
+                  {declaredType && <span className="sr-only">, {declaredType}</span>}
                   {isSensitive && <Lock strokeWidth={1.5} className="w-2.5 h-2.5 text-purple-400" />}
                 </div>
               );

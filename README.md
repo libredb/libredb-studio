@@ -96,7 +96,7 @@ The test instance comes with a pre-configured PostgreSQL database via [Seed Conn
 - **Multi-Tab Workspace**: Handle parallel tasks with independent execution states.
 - **Visual EXPLAIN**: Graphical execution plans to identify performance bottlenecks.
 - **Interactive ER Diagrams**: Visual schema graph with real foreign key edges, cardinality labels, MiniMap navigation, table search/filter, compact mode, and PNG/SVG export. Automatic hierarchical layout powered by ELK.js.
-- **Schema Diff & Migration**: Compare schema snapshots or cross-connection schemas side-by-side. Color-coded diff view (added/removed/modified) with automatic migration SQL generation for PostgreSQL, MySQL, SQLite, Oracle, SQL Server, and ClickHouse.
+- **Schema Diff & Migration**: Compare schema snapshots or cross-connection schemas side-by-side. Color-coded diff view (added/removed/modified) with automatic migration SQL generation for PostgreSQL, MySQL, SQLite, Oracle, and SQL Server, plus ClickHouse column modifications.
 - **Snapshot Timeline**: Visual horizontal timeline of schema snapshots. Click any two points to instantly compare and track schema evolution over time.
 
 <p align="center">
@@ -748,7 +748,7 @@ extraEnvFrom:
 - [x] **Phase 8**: Analyst & Developer Tools (Data Profiler, Code Generator, Test Data Generator, Pivot Table, Column Filtering, Database Docs).
 - [x] **Phase 9**: Display Masking — Preview (column-name pattern matching, configurable rules, RBAC UI controls, client-side export/clipboard masking).
 - [x] **Phase 10**: Advanced ERD (Real FK Edges, ELK.js Auto-Layout, MiniMap, PNG/SVG Export, Compact Mode, Table Search).
-- [x] **Phase 11**: Schema Diff & Migration (Snapshot Timeline, Cross-Connection Diff, Migration SQL Generation for PostgreSQL, MySQL, SQLite, Oracle, SQL Server, and ClickHouse).
+- [x] **Phase 11**: Schema Diff & Migration (Snapshot Timeline, Cross-Connection Diff, Migration SQL Generation for PostgreSQL, MySQL, SQLite, Oracle, and SQL Server, plus ClickHouse column modifications).
 - [x] **Phase 12**: Advanced Charting (Scatter, Histogram, Stacked Charts, Aggregation, Date Grouping, Chart Save/Load, Chart Dashboard).
 - [x] **Phase 13**: Monitoring Enhancement (Time-Series Trends, Threshold Alerting, Connection Pool Stats, Configurable Polling).
 - [x] **Phase 14**: Enterprise Database Support (Oracle Database via oracledb Thin mode, Microsoft SQL Server via mssql/tedious).

@@ -1155,7 +1155,8 @@ dead buttons, so the fix landed once in shared UI for every provider.
 **The admin Operations tab still has the same gap.** `src/components/admin/tabs/OperationsTab.tsx`
 renders its global `Run Analyze` / `Run Vacuum` / `Run Reindex` controls and its per-table
 Analyze/Vacuum buttons without reading `getCapabilities()`, so those still answer 400 here. #272's
-bar covers the monitoring Tables tab only; the Operations tab is a known gap, not yet filed. Stated
+bar covers the monitoring Tables tab only; the Operations tab is tracked as
+[#282](https://github.com/libredb/libredb-studio/issues/282). Stated
 explicitly because a doc claiming "no control offers any operation" would be describing the intent
 instead of the software.
 

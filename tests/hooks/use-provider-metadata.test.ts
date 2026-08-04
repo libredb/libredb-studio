@@ -226,4 +226,104 @@ describe("useProviderMetadata", () => {
       expect(result.current.metadata).toBeNull();
     });
   });
+  // ── Capability gates must never see another connection's answer (PR #289) ──
+  //
+  // Studio gates the inline-edit affordance and MonitoringDashboard gates the
+  // maintenance controls on these capabilities, so answering for connection B
+  // with connection A's capabilities offers a control the engine will reject.
+
+  test("clears metadata immediately when the connection changes", async () => {
+    const first = makeConnection();
+    const second = makeConnection({ id: "conn-2", type: "clickhouse" });
+
+    let resolveSecond!: (value: Response) => void;
+    let call = 0;
+    globalThis.fetch = mock(async () => {
+      call += 1;
+      if (call === 1) {
+        return new Response(JSON.stringify(mockMetadata), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Promise<Response>((resolve) => {
+        resolveSecond = resolve;
+      });
+    }) as unknown as typeof fetch;
+
+    const { result, rerender } = renderHook(({ conn }) => useProviderMetadata(conn), {
+      initialProps: { conn: first as DatabaseConnection | null },
+    });
+
+    await waitFor(() => {
+      expect(result.current.metadata).not.toBeNull();
+    });
+
+    rerender({ conn: second });
+
+    // The second connection's answer has not arrived, so there is nothing to
+    // report - the first connection's capabilities must not stand in for it.
+    await waitFor(() => {
+      expect(result.current.metadata).toBeNull();
+    });
+
+    resolveSecond(
+      new Response(JSON.stringify(mockMetadata), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+
+    await waitFor(() => {
+      expect(result.current.metadata).not.toBeNull();
+    });
+  });
+
+  test("ignores a response that arrives after its connection was replaced", async () => {
+    const first = makeConnection();
+    const second = makeConnection({ id: "conn-2", type: "clickhouse" });
+    const secondMetadata: ProviderMetadata = {
+      ...mockMetadata,
+      capabilities: { ...mockMetadata.capabilities, supportsInlineRowEdit: false },
+    };
+
+    let resolveFirst!: (value: Response) => void;
+    let call = 0;
+    globalThis.fetch = mock(async () => {
+      call += 1;
+      if (call === 1) {
+        return new Promise<Response>((resolve) => {
+          resolveFirst = resolve;
+        });
+      }
+      return new Response(JSON.stringify(secondMetadata), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }) as unknown as typeof fetch;
+
+    const { result, rerender } = renderHook(({ conn }) => useProviderMetadata(conn), {
+      initialProps: { conn: first as DatabaseConnection | null },
+    });
+
+    rerender({ conn: second });
+
+    await waitFor(() => {
+      expect(result.current.metadata?.capabilities.supportsInlineRowEdit).toBe(false);
+    });
+
+    // The first connection's request lands late. It must not overwrite the answer
+    // for the connection actually selected.
+    resolveFirst(
+      new Response(JSON.stringify(mockMetadata), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+
+    await waitFor(() => {
+      expect(result.current.isLoading).toBe(false);
+    });
+    expect(result.current.metadata?.capabilities.supportsInlineRowEdit).toBe(false);
+  });
 });

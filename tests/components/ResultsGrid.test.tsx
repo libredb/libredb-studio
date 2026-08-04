@@ -930,6 +930,40 @@ describe("ResultsGrid", () => {
       expect(getAllByRole("button", { name: "id" })[0].textContent).toBe("id");
     });
 
+    test("does not read a declared type off the prototype chain", () => {
+      // A column name is arbitrary SQL output and `SELECT 1 AS constructor` is
+      // legal. `columnTypes` is a plain object, so a direct lookup answers with
+      // `Object.prototype.constructor` - a FUNCTION handed to React as header
+      // content. Reported by review on PR #289.
+      const result: QueryResult = {
+        ...mockResult,
+        rows: [{ id: 1, constructor: "x", toString: "y" }],
+        fields: ["id", "constructor", "toString"],
+        columnTypes: { id: "BIGINT" },
+      };
+      const { getAllByRole, container } = render(React.createElement(ResultsGrid, { result }));
+
+      // Accessible name is the bare field, and no inherited value is rendered.
+      expect(getAllByRole("button", { name: "constructor" })[0].textContent).toBe("constructor");
+      expect(getAllByRole("button", { name: "toString" })[0].textContent).toBe("toString");
+      expect(container.textContent).not.toContain("function");
+      expect(container.textContent).not.toContain("[object");
+      // The column that DOES declare a type is unaffected.
+      expect(getAllByRole("button", { name: "id, BIGINT" })[0].textContent).toContain("BIGINT");
+    });
+
+    test("makes the compact header's declared type reachable without a pointer", () => {
+      // The compact table carries the type as a tooltip only, because visible
+      // text there desyncs header and body widths. `title` on a non-focusable
+      // element is unavailable to touch and unreliable for assistive tech, so the
+      // type also ships as screen-reader text. Reported by review on PR #289.
+      const result: QueryResult = { ...mockResult, columnTypes: { name: "Nullable(String)" } };
+      const { container } = render(React.createElement(ResultsGrid, { result }));
+
+      const srOnly = Array.from(container.querySelectorAll(".sr-only")).map((n) => n.textContent);
+      expect(srOnly.some((text) => text?.includes("Nullable(String)"))).toBe(true);
+    });
+
     test("renders headers unchanged when the result declares no types at all", () => {
       const { getAllByRole, container } = render(React.createElement(ResultsGrid, { result: mockResult }));
 

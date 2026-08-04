@@ -896,6 +896,20 @@ describe("Studio", () => {
     expect(capturedBottomPanelProps.editingEnabled).toBe(false);
   });
 
+  test("withholds every editing affordance when the capability is absent entirely", () => {
+    // The flag is optional on the published `ProviderCapabilities` (PR #289
+    // review: making it required broke every external implementer of the type),
+    // so a capability set that omits it must read as unsupported rather than
+    // inheriting the base provider's default.
+    capabilitiesOverride = { supportsInlineRowEdit: undefined };
+    editingOverride = { editingEnabled: true };
+    render(<Studio />);
+
+    expect(capturedQueryToolbarProps.onToggleEditing).toBeUndefined();
+    expect(capturedQueryToolbarProps.editingEnabled).toBe(false);
+    expect(capturedBottomPanelProps.editingEnabled).toBe(false);
+  });
+
   test("passes the editing affordance through when supportsInlineRowEdit is true", () => {
     editingOverride = { editingEnabled: true };
     render(<Studio />);
