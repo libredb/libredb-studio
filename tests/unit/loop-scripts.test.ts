@@ -40,7 +40,12 @@ function read(root: string, rel: string): string {
 }
 
 function run(cmd: string[], cwd?: string) {
-  return Bun.spawnSync(cmd, { cwd, stdout: "pipe", stderr: "pipe" });
+  // Fixtures must be hermetic. LOOP_ENV_FILE is a real input to loop.sh/pipeline.sh,
+  // so an inherited one (a shell that ran a stage by hand) would point a fixture at
+  // the LIVE loop config instead of its stub agent.
+  const env = { ...process.env };
+  delete env.LOOP_ENV_FILE;
+  return Bun.spawnSync(cmd, { cwd, env, stdout: "pipe", stderr: "pipe" });
 }
 
 // --- new-milestone.sh --------------------------------------------------------
@@ -304,6 +309,9 @@ function makePipelineFixture({ planningViolation = false } = {}): string {
       "set -eu",
       "mkdir -p .loop",
       'printf "%s\\n" "$1" >> .loop/stub.log',
+      // Records what the AGENT process sees, which is what everything the agent
+      // spawns (this repo's own gate included) inherits.
+      'printf "%s\\n" "${LOOP_ENV_FILE:-unset}" >> .loop/stub-env.log',
       'case "$1" in',
       "  *TRIAGE*) touch .loop/COMPLETE ;;",
       "  *PLANNING*) if [ -f planning-completes.flag ]; then touch .loop/COMPLETE; fi ;;",
@@ -356,6 +364,22 @@ describe("loop/scripts/pipeline.sh", () => {
     expect(stages[0]).toContain("TRIAGE");
     expect(stages[1]).toContain("PLANNING");
     expect(stages[stages.length - 1]).toContain("BUILD");
+  });
+
+  test("never leaks the runner's env-file pointer into the agent process", () => {
+    // pipeline.sh hands each stage its own env file via LOOP_ENV_FILE. That pointer
+    // must stop at loop.sh: the agent inherits loop.sh's environment, and this
+    // repo's gate shells out to these same scripts against throwaway fixtures. A
+    // leaked pointer sends those fixtures at the live config and starts a REAL
+    // agent - observed as a fixture case hanging for minutes inside the loop's own
+    // gate, with a stray iteration running in the fixture repo.
+    const root = makePipelineFixture();
+    const result = run(["bash", join(root, "loop/scripts/pipeline.sh"), "3", "3"], root);
+    expect(result.exitCode).toBe(0);
+
+    const seen = read(root, ".loop/stub-env.log").trim().split("\n");
+    expect(seen.length).toBeGreaterThanOrEqual(3); // one line per stage invocation
+    expect([...new Set(seen)]).toEqual(["unset"]);
   });
 
   test("aborts when planning creates the completion marker (contract violation)", () => {

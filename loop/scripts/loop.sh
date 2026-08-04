@@ -32,6 +32,12 @@ if [[ -f "$ENV_FILE" ]]; then
   # shellcheck disable=SC1090
   source "$ENV_FILE"
 fi
+# Consumed here, and it must go no further: the agent inherits this environment,
+# and so does everything the agent spawns - including this repo's gate, whose
+# unit tests run loop.sh/pipeline.sh against throwaway fixtures. A pointer that
+# survives sends those fixtures at the LIVE config and starts a real agent
+# (observed: a fixture case hanging for minutes inside the loop's own gate).
+unset LOOP_ENV_FILE
 
 MAX_ITERATIONS="${1:-${LOOP_MAX_ITERATIONS:-50}}"
 PROMPT_FILE="${LOOP_PROMPT_FILE:-loop/PROMPT.md}"
