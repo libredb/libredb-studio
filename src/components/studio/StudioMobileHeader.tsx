@@ -60,7 +60,8 @@ interface StudioMobileHeaderProps {
   onCommitTransaction: () => void;
   onRollbackTransaction: () => void;
   onTogglePlayground: () => void;
-  onToggleEditing: () => void;
+  /** Omitted where the provider declares no inline row editing (issue #269). */
+  onToggleEditing?: () => void;
   onImport: () => void;
   onExplain?: () => void;
 }
@@ -281,10 +282,12 @@ export function StudioMobileHeader({
                   {playgroundMode ? "Disable Sandbox" : "Enable Sandbox"}
                 </DropdownMenuItem>
 
-                <DropdownMenuItem onClick={onToggleEditing} className="cursor-pointer text-xs">
-                  <Edit3 strokeWidth={1.5} className="w-3.5 h-3.5 mr-2" />
-                  {editingEnabled ? "Disable Editing" : "Enable Editing"}
-                </DropdownMenuItem>
+                {onToggleEditing && (
+                  <DropdownMenuItem onClick={onToggleEditing} className="cursor-pointer text-xs">
+                    <Edit3 strokeWidth={1.5} className="w-3.5 h-3.5 mr-2" />
+                    {editingEnabled ? "Disable Editing" : "Enable Editing"}
+                  </DropdownMenuItem>
+                )}
 
                 <DropdownMenuItem onClick={onImport} className="cursor-pointer text-xs" disabled={!activeConnection}>
                   <Upload strokeWidth={1.5} className="w-3.5 h-3.5 mr-2" /> Import Data

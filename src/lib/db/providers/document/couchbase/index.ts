@@ -305,6 +305,15 @@ export class CouchbaseProvider extends BaseDatabaseProvider {
       // Collections are schemaless and CREATE COLLECTION takes no columns, so a
       // column-list modal could only ever emit invalid SQL++ (decision 7).
       supportsCreateTable: false,
+      // SQL++ does have `UPDATE <keyspace> SET ... WHERE ...`, but the statement the
+      // shared inline row editor builds cannot address a document with it: the
+      // collection-open query projects the key as `META(d).id AS __id`
+      // (`src/lib/query-generators.ts`), the editor's primary-key heuristic picks
+      // `__id` because it ends in `_id`, and the resulting `WHERE __id = '<key>'`
+      // filters on a field no document actually has - so it would match nothing and
+      // report success. Addressing a document needs `META(d).id` or `USE KEYS`, i.e.
+      // per-dialect statement building, which is issue #279.
+      supportsInlineRowEdit: false,
       supportsMaintenance: true,
       maintenanceOperations: ["analyze", "reindex", "kill"],
       supportsConnectionString: true,

@@ -8,7 +8,16 @@ import { useToast } from "@/hooks/use-toast";
 interface UseInlineEditingParams {
   activeConnection: DatabaseConnection | null;
   currentTab: QueryTab;
-  executeQuery: (sql: string) => void;
+  /**
+   * `useQueryExecution`'s `executeQuery`. `handleApplyChanges` awaits it between
+   * rows and passes its execution options, so the signature carries both.
+   */
+  executeQuery: (
+    sql: string,
+    tabId?: string,
+    isExplain?: boolean,
+    options?: { skipSafety?: boolean },
+  ) => void | Promise<unknown>;
 }
 
 export function useInlineEditing({ activeConnection, currentTab, executeQuery }: UseInlineEditingParams) {
@@ -73,17 +82,40 @@ export function useInlineEditing({ activeConnection, currentTab, executeQuery }:
         return `${c.columnId} = ${val}`;
       });
       const pkVal = typeof pkValue === "number" ? pkValue : `'${pkValue}'`;
-      statements.push(`UPDATE ${tableName} SET ${setClauses.join(", ")} WHERE ${pkColumn} = ${pkVal};`);
+      // No trailing semicolon: it only ever served to join the statements, and each
+      // one now goes to /api/db/query verbatim rather than through
+      // `splitStatements`, which used to strip it. oracledb rejects a plain
+      // statement that carries one (ORA-00933).
+      statements.push(`UPDATE ${tableName} SET ${setClauses.join(", ")} WHERE ${pkColumn} = ${pkVal}`);
     }
 
-    const sql = statements.join("\n");
-    // Execute the UPDATE(s)
-    executeQuery(sql);
+    // One request per row (issue #269), sequentially and with the safety dialog
+    // skipped. Each part matters:
+    //  - per row, because a joined payload reaches the engine as ONE string whenever
+    //    a transaction or sandbox run is active, and because a failure is only
+    //    attributable to a row when the row is its own request. (On the default path
+    //    `/api/db/multi-query` did split it, so this is about the other path and
+    //    about error attribution, not about every engine rejecting the join.)
+    //  - sequentially, because executeQuery mutates the active tab's result and
+    //    isExecuting, so concurrent calls would race on that state (the tab ends up
+    //    showing the last row's result);
+    //  - skipSafety, because isDangerousQuery matches every `UPDATE ... SET` and the
+    //    gate returns WITHOUT executing while remembering only the last query it was
+    //    handed — so an unflagged loop would apply nothing but the row the user then
+    //    confirms, silently dropping the rest. Apply is the confirmation here: these
+    //    statements are generated rather than typed, each carries a WHERE on the
+    //    detected key, and the pending changes were reviewed in the grid first.
+    for (const statement of statements) {
+      await executeQuery(statement, undefined, false, { skipSafety: true });
+    }
     setPendingChanges([]);
     setEditingEnabled(false);
     toast({
+      // "submitted", not "executed": executeQuery reports a failing row itself and
+      // returns, so the loop runs on and a partial application is possible now that
+      // each row is its own request. Claiming all N ran would be the dishonest half.
       title: "Changes Applied",
-      description: `${statements.length} UPDATE statement(s) executed.`,
+      description: `${statements.length} UPDATE statement(s) submitted; check the results panel for each row.`,
     });
   }, [activeConnection, currentTab, pendingChanges, executeQuery, toast]);
 

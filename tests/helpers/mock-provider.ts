@@ -59,6 +59,7 @@ const defaultCapabilities: ProviderCapabilities = {
   supportsExplain: true,
   supportsExternalQueryLimiting: true,
   supportsCreateTable: true,
+  supportsInlineRowEdit: true,
   supportsMaintenance: true,
   maintenanceOperations: ["vacuum", "analyze", "reindex"],
   supportsConnectionString: true,

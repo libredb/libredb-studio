@@ -479,6 +479,7 @@ describe("DruidProvider metadata", () => {
       explainFormat: "druid-native",
       supportsExternalQueryLimiting: true,
       supportsCreateTable: false,
+      supportsInlineRowEdit: false,
       supportsMaintenance: false,
       maintenanceOperations: [],
       supportsConnectionString: false,
@@ -493,6 +494,13 @@ describe("DruidProvider metadata", () => {
     // line 1, column 1" - the parser lists the statements it expected, and no
     // form of CREATE is among them. Datasources are created by ingestion.
     expect(new DruidProvider(makeConnection()).getCapabilities().supportsCreateTable).toBe(false);
+  });
+
+  test("keeps supportsInlineRowEdit false because UPDATE is not in Druid's grammar either", () => {
+    // Same class of answer as CREATE: `UPDATE t SET ...` is rejected as
+    // `Unsupported SQL statement [UPDATE]`, so the inline row editor's statement
+    // could never run. Druid SQL has no row-level DML at all.
+    expect(new DruidProvider(makeConnection()).getCapabilities().supportsInlineRowEdit).toBe(false);
   });
 
   test("offers no maintenance operation, because SQL reaches none of them", () => {

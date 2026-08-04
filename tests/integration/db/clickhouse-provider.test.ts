@@ -413,6 +413,7 @@ describe("ClickHouseProvider metadata", () => {
       explainFormat: "clickhouse-json",
       supportsExternalQueryLimiting: true,
       supportsCreateTable: false,
+      supportsInlineRowEdit: false,
       supportsMaintenance: true,
       maintenanceOperations: ["optimize", "analyze", "kill"],
       supportsConnectionString: true,
@@ -426,6 +427,13 @@ describe("ClickHouseProvider metadata", () => {
     // default column emits `id SERIAL PRIMARY KEY` (code 50, unknown data type
     // family) and its UNIQUE checkbox emits `UNIQUE` (code 62, syntax error).
     expect(new ClickHouseProvider(makeConnection()).getCapabilities().supportsCreateTable).toBe(false);
+  });
+
+  test("keeps supportsInlineRowEdit false because a bare UPDATE ... SET is not implemented here", () => {
+    // ClickHouse spells a row mutation `ALTER TABLE t UPDATE c = v WHERE ...`; the
+    // bare `UPDATE ... SET` the inline row editor builds answers code 48
+    // NOT_IMPLEMENTED (documented in docs/providers/clickhouse.md §13).
+    expect(new ClickHouseProvider(makeConnection()).getCapabilities().supportsInlineRowEdit).toBe(false);
   });
 
   test("labels the maintenance actions ClickHouse actually has", () => {

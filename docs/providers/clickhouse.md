@@ -715,6 +715,7 @@ target names none), so a hostile or oddly-named table cannot break out of the ge
 | `explainFormat` | `clickhouse-json` |
 | `supportsExternalQueryLimiting` | `true` |
 | `supportsCreateTable` | `false` |
+| `supportsInlineRowEdit` | `false` — a bare `UPDATE ... SET` is code `48` `NOT_IMPLEMENTED` here ([§13](#13-known-limitations--future-work)) |
 | `supportsMaintenance` | `true` |
 | `maintenanceOperations` | `['optimize', 'analyze', 'kill']` |
 | `supportsConnectionString` | `true` |
@@ -886,14 +887,16 @@ database-wide statistics. Transaction and cancel routes do not apply — see
 - **`ALTER TABLE ... UPDATE` and lightweight `DELETE FROM` report zero rows changed even on
   success.** This is the server's own number, not a provider limitation to fix — see
   [§3.6](#36-writes-return-an-empty-200-body-the-row-count-lives-in-a-header).
-- **Two shared SQL-generating features are not dialect-aware, and neither is fixed here.** Both live
-  outside this provider's files, both are pre-existing rather than introduced by it, and both are
-  tracked in [#269](https://github.com/libredb/libredb-studio/issues/269):
-  - The results grid's **inline row editing** generates a bare `UPDATE ... SET ... WHERE`, which
+- **Two shared SQL-generating features are not dialect-aware.** Both live outside this provider's
+  files, both are pre-existing rather than introduced by it, and both are tracked in
+  [#269](https://github.com/libredb/libredb-studio/issues/269):
+  - The results grid's **inline row editing** generated a bare `UPDATE ... SET ... WHERE`, which
     ClickHouse rejects outright (`NOT_IMPLEMENTED`, code `48`, HTTP `501`) rather than running as an
-    `ALTER TABLE ... UPDATE`. It also emits several statements separated by `;`, which the server
-    rejects on its own (see the multi-statement note at the end of this section). Use
-    `ALTER TABLE ... UPDATE` in the editor instead.
+    `ALTER TABLE ... UPDATE`. Since #269 this provider declares `supportsInlineRowEdit: false`, so the
+    control is no longer offered here at all — neither the EDIT toggle nor an editable cell — instead
+    of offering an edit that can only fail. Use `ALTER TABLE ... UPDATE` in the editor instead. (The
+    same change also stopped the hook joining several row updates into one request, which this server
+    rejected on its own; see the multi-statement note at the end of this section.)
   - The **schema-diff migration generator** has no ClickHouse branch, so a nullability or type change
     emits PostgreSQL's `ALTER TABLE ... ALTER COLUMN ... SET NOT NULL` where ClickHouse wants
     `ALTER TABLE ... MODIFY COLUMN <col> Nullable(T)`. Identifier quoting is already correct (both

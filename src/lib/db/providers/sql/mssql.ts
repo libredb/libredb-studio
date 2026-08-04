@@ -353,6 +353,7 @@ export class MSSQLProvider extends SQLBaseProvider {
       // session-level SET SHOWPLAN_*, which the single-statement explain path cannot express.
       supportsExplain: false,
       supportsConnectionString: true,
+      supportsInlineRowEdit: true,
       maintenanceOperations: ["analyze", "check", "optimize", "kill"],
     };
   }

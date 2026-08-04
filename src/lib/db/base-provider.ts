@@ -176,6 +176,7 @@ export abstract class BaseDatabaseProvider implements DatabaseProvider {
       supportsExplain: true,
       supportsExternalQueryLimiting: true,
       supportsCreateTable: true,
+      supportsInlineRowEdit: true,
       supportsMaintenance: true,
       maintenanceOperations: ["vacuum", "analyze", "reindex", "kill", "optimize", "check"],
       supportsConnectionString: false,

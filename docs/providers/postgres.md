@@ -378,6 +378,7 @@ Overrides the SQL base defaults:
 | `explainFormat` | `postgres-json` |
 | `supportsExternalQueryLimiting` | `true` |
 | `supportsCreateTable` | `true` |
+| `supportsInlineRowEdit` | `true` — `UPDATE t SET c = v WHERE pk = v` is core PostgreSQL DML |
 | `supportsMaintenance` | `true` |
 | `maintenanceOperations` | `['vacuum', 'analyze', 'reindex', 'kill']` |
 | `supportsConnectionString` | `true` |

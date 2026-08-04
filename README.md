@@ -120,7 +120,7 @@ The test instance comes with a pre-configured PostgreSQL database via [Seed Conn
 
 ### Pro Data Management
 - **Universal Data Grid**: Virtualized rendering (TanStack) for millions of rows.
-- **Inline Editing**: Double-click to update values directly in the grid.
+- **Inline Editing**: Double-click to update values directly in the grid, on engines whose SQL has a single-table row update (the control is hidden elsewhere).
 - **Column Filtering**: Per-column text filters on query results for instant data exploration.
 - **Interactive Pivot Table**: Client-side pivoting with 5 aggregation functions (COUNT, SUM, AVG, MIN, MAX) and SQL generation.
 - **Expert Exporter**: Instant CSV and JSON exports for reporting.

@@ -170,6 +170,10 @@ export class DruidProvider extends SQLBaseProvider {
       // statements it expected, with no form of CREATE among them. A datasource
       // comes into existence by being ingested into.
       supportsCreateTable: false,
+      // Same class of answer as CREATE, for the same reason: `UPDATE t SET ...` is
+      // rejected with `Unsupported SQL statement [UPDATE]`. Druid SQL has no
+      // row-level DML at all - a datasource changes through ingestion.
+      supportsInlineRowEdit: false,
       // Nothing in MaintenanceType has a Druid analogue reachable from SQL:
       // compaction and retention are Coordinator and task concerns, and `kill` is
       // impossible for a second reason - there is no `sys.queries` catalog, so

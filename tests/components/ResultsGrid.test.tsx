@@ -667,6 +667,32 @@ describe("ResultsGrid", () => {
       expect(findEditInput(container)).not.toBeUndefined();
     });
 
+    test("double-clicking a cell does nothing when editing is disabled (#269)", () => {
+      // With the provider declaring no inline row editing, Studio passes
+      // editingEnabled false — and then a cell must not open an editor at all. It
+      // used to open one whose edit was silently discarded on Enter, which is the
+      // dead affordance the capability gate exists to remove.
+      const onCellChange = mock(() => {});
+      const { container } = render(
+        React.createElement(ResultsGrid, {
+          result: mockResult,
+          editingEnabled: false,
+          onCellChange,
+          pendingChanges: [],
+        }),
+      );
+
+      // The grid renders the value in both the desktop table and the mobile one, so
+      // every cell showing it is double-clicked rather than guessing which is which.
+      const labels = Array.from(container.querySelectorAll("span")).filter((s) => s.textContent === "Alice");
+      expect(labels.length).toBeGreaterThan(0);
+      for (const label of labels) fireEvent.doubleClick(label.parentElement!);
+
+      expect(findEditInput(container)).toBeUndefined();
+      expect(onCellChange).not.toHaveBeenCalled();
+      expect(container.querySelectorAll(".cursor-text").length).toBe(0);
+    });
+
     test("Enter key commits edit and calls onCellChange", () => {
       const onCellChange = mock(() => {});
       const { container } = render(

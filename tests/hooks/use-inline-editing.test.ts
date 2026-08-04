@@ -218,6 +218,142 @@ describe("useInlineEditing", () => {
     expect(result.current.editingEnabled).toBe(false);
   });
 
+  // ── handleApplyChanges one request per edited row (#269) ──────────────────
+
+  test("handleApplyChanges executes one statement per edited row, never a joined payload", async () => {
+    // A joined payload reaches the engine as one string whenever a transaction or
+    // sandbox run is active, and it makes a failure unattributable to a row even on
+    // the split path. Each row is therefore sent on its own, without the trailing
+    // semicolon that only ever served to join them — `splitStatements` used to strip
+    // it on the multi-statement route, and oracledb rejects a plain statement that
+    // carries one.
+    const { result } = renderHook(() =>
+      useInlineEditing({
+        activeConnection: makeConnection(),
+        currentTab: makeTab(),
+        executeQuery: mockExecuteQuery as (sql: string) => void,
+      }),
+    );
+
+    act(() => {
+      result.current.handleCellChange(
+        makeChange({ rowIndex: 0, columnId: "name", originalValue: "Alice", newValue: "Alice Updated" }),
+      );
+      result.current.handleCellChange(
+        makeChange({ rowIndex: 1, columnId: "email", originalValue: "bob@test.com", newValue: "bob@new.test" }),
+      );
+    });
+
+    await act(async () => {
+      await result.current.handleApplyChanges();
+    });
+
+    expect(mockExecuteQuery).toHaveBeenCalledTimes(2);
+
+    const sent = (mockExecuteQuery as ReturnType<typeof mock>).mock.calls.map((call) => call[0] as string);
+    for (const sql of sent) {
+      expect(sql).not.toContain("\n");
+      expect(sql.match(/UPDATE/g)).toHaveLength(1);
+      expect(sql.endsWith(";")).toBe(false);
+    }
+    expect(sent[0]).toBe("UPDATE users SET name = 'Alice Updated' WHERE id = 1");
+    expect(sent[1]).toBe("UPDATE users SET email = 'bob@new.test' WHERE id = 2");
+  });
+
+  test("handleApplyChanges runs each row past the safety dialog, so every row is applied", async () => {
+    // useQueryExecution's safety gate returns WITHOUT executing for any
+    // `UPDATE ... SET` and only remembers the last query it was handed, so an
+    // unflagged per-row loop would apply nothing but the row the user then
+    // confirms. Apply is itself the confirmation here: the statements are
+    // generated, single-row and primary-key scoped, and the pending changes were
+    // reviewed in the grid before the click.
+    const { result } = renderHook(() =>
+      useInlineEditing({
+        activeConnection: makeConnection(),
+        currentTab: makeTab(),
+        executeQuery: mockExecuteQuery as (sql: string) => void,
+      }),
+    );
+
+    act(() => {
+      result.current.handleCellChange(
+        makeChange({ rowIndex: 0, columnId: "name", originalValue: "Alice", newValue: "Alice Updated" }),
+      );
+      result.current.handleCellChange(
+        makeChange({ rowIndex: 1, columnId: "name", originalValue: "Bob", newValue: "Bob Updated" }),
+      );
+    });
+
+    await act(async () => {
+      await result.current.handleApplyChanges();
+    });
+
+    const calls = (mockExecuteQuery as ReturnType<typeof mock>).mock.calls;
+    expect(calls).toHaveLength(2);
+    for (const call of calls) {
+      expect(call[3]).toEqual({ skipSafety: true });
+    }
+  });
+
+  test("handleApplyChanges awaits each row before sending the next", async () => {
+    // executeQuery mutates the active tab's result and isExecuting, so concurrent
+    // calls would race on that state; the order below is what proves it is
+    // sequential rather than fired in parallel.
+    const order: string[] = [];
+    let resolveFirst: (() => void) | undefined;
+    const sequential = mock((sql: string) => {
+      order.push(`start:${sql}`);
+      if (!resolveFirst) {
+        return new Promise<void>((resolve) => {
+          resolveFirst = () => {
+            order.push(`end:${sql}`);
+            resolve();
+          };
+        });
+      }
+      order.push(`end:${sql}`);
+      return Promise.resolve();
+    });
+
+    const { result } = renderHook(() =>
+      useInlineEditing({
+        activeConnection: makeConnection(),
+        currentTab: makeTab(),
+        executeQuery: sequential,
+      }),
+    );
+
+    act(() => {
+      result.current.handleCellChange(
+        makeChange({ rowIndex: 0, columnId: "name", originalValue: "Alice", newValue: "A2" }),
+      );
+      result.current.handleCellChange(
+        makeChange({ rowIndex: 1, columnId: "name", originalValue: "Bob", newValue: "B2" }),
+      );
+    });
+
+    let applied: Promise<void> | undefined;
+    await act(async () => {
+      applied = result.current.handleApplyChanges();
+      await Promise.resolve();
+    });
+
+    // The second row must not have been sent while the first is still in flight.
+    expect(order).toEqual(["start:UPDATE users SET name = 'A2' WHERE id = 1"]);
+
+    await act(async () => {
+      resolveFirst?.();
+      await applied;
+    });
+
+    expect(order).toEqual([
+      "start:UPDATE users SET name = 'A2' WHERE id = 1",
+      "end:UPDATE users SET name = 'A2' WHERE id = 1",
+      "start:UPDATE users SET name = 'B2' WHERE id = 2",
+      "end:UPDATE users SET name = 'B2' WHERE id = 2",
+    ]);
+  });
+
   // ── handleApplyChanges no primary key ─────────────────────────────────────
 
   test("handleApplyChanges shows toast when no primary key column found", async () => {

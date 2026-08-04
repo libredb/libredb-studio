@@ -246,6 +246,7 @@ const defaultCapabilities = {
   supportsExplain: true,
   supportsExternalQueryLimiting: true,
   supportsCreateTable: true,
+  supportsInlineRowEdit: true,
   supportsMaintenance: false,
   maintenanceOperations: [] as MaintenanceType[],
   supportsConnectionString: false,

@@ -114,6 +114,9 @@ describe("LibreDBProvider — lifecycle & metadata", () => {
     expect(caps.queryLanguage).toBe("json");
     expect(caps.queryDialect).toBe("libredb");
     expect(caps.supportsCreateTable).toBe(false);
+    // The query language is a small JSON command grammar, not SQL, so the inline
+    // row editor's `UPDATE ... SET` cannot be expressed here (#269).
+    expect(caps.supportsInlineRowEdit).toBe(false);
     expect(caps.supportsExplain).toBe(false);
     expect(caps.explainFormat).toBeUndefined();
     expect(caps.supportsExplain).toBe(caps.explainFormat !== undefined);

@@ -223,6 +223,7 @@ export class OracleProvider extends SQLBaseProvider {
       // EXPLAIN PLAN FOR + DBMS_XPLAN, which the single-statement explain path cannot express.
       supportsExplain: false,
       supportsConnectionString: true,
+      supportsInlineRowEdit: true,
       maintenanceOperations: ["analyze", "optimize", "kill"],
     };
   }

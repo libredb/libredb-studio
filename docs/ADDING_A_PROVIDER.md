@@ -398,6 +398,12 @@ control that only emits invalid input. That is the defect class
 
 - `supportsCreateTable` must be `false` for schemaless engines. `CreateTableModal` builds
   `CREATE TABLE` from a column list, which a schemaless collection cannot consume.
+- `supportsInlineRowEdit` must be `false` unless the engine accepts
+  `UPDATE <table> SET <col> = <val> WHERE <pk> = <val>` — the one statement shape
+  [`use-inline-editing.ts`](../src/hooks/use-inline-editing.ts) builds. ClickHouse was the trap
+  ([#269](https://github.com/libredb/libredb-studio/issues/269)): it answers that statement with code
+  `48` `NOT_IMPLEMENTED` because a row mutation there is `ALTER TABLE ... UPDATE`, and Druid has no
+  row-level DML at all, so both offered an editor that could only fail.
 - If `supportsExplain` is `true`, `buildSql()` **must not** return `null` for the `analyze` mode. The
   direct Explain action always builds with `analyze`
   ([`use-query-execution.ts:165`](../src/hooks/use-query-execution.ts)) and refuses the run when the
@@ -508,6 +514,7 @@ If it appears in routes, components, or utilities — you're doing it wrong. Use
 | Query execution | Write a query, press Ctrl+Enter, verify results |
 | EXPLAIN | If `supportsExplain: true`, verify EXPLAIN button works |
 | Create Table | If `supportsCreateTable: true`, verify the + button appears |
+| Inline row edit | If `supportsInlineRowEdit: true`, verify the EDIT toggle appears and one edited row runs one statement the engine accepts |
 | Maintenance | Open Database Maintenance, verify correct operations show |
 | AI Assistant | Open AI in QueryEditor, ask a question, verify correct syntax |
 | Labels | Check all UI text uses your labels (entity names, actions, etc.) |
@@ -527,6 +534,7 @@ Every field and what it controls:
 | `explainFormat` | `ExplainFormat \| undefined` | **Required whenever `supportsExplain` is true.** Selects the strategy in `src/lib/explain/index.ts`. Setting the flag without the format leaves the control visible and dead — the UI resets out of explain mode when metadata lacks it |
 | `supportsExternalQueryLimiting` | `boolean` | Whether route applies LIMIT to queries (SQL) or provider handles it (MongoDB) |
 | `supportsCreateTable` | `boolean` | "Create Table" button in SchemaExplorer |
+| `supportsInlineRowEdit` | `boolean` | Whether the results grid offers inline row editing. `false` hides the EDIT toggle and every editable cell — set it where the engine has no `UPDATE <table> SET <col> = <val> WHERE <pk> = <val>` statement, which is what `use-inline-editing.ts` builds |
 | `supportsMaintenance` | `boolean` | Whether maintenance API accepts requests for this provider |
 | `maintenanceOperations` | `MaintenanceType[]` | Which operation cards show in MaintenanceModal (vacuum, analyze, reindex, etc.) |
 | `supportsConnectionString` | `boolean` | Used for future connection validation logic |

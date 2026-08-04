@@ -20,7 +20,7 @@
 
 ### 3. Pro Data Grid (Excel-Style)
 *   **High Performance:** Virtualized rendering using TanStack Virtual for smooth scrolling through millions of rows.
-*   **Inline Editing:** Double-click any cell to edit data directly; batch-apply pending cell changes as grouped `UPDATE` statements or discard them.
+*   **Inline Editing:** Double-click any cell to edit data directly; apply pending cell changes as one `UPDATE` per edited row or discard them. Offered only where the provider declares `supportsInlineRowEdit`. ClickHouse, Druid, MongoDB, Redis and LibreDB show no editing control at all because they have no single-table row update; Couchbase shows none because the document key reaches the grid as a projection alias the generated `WHERE` cannot address.
 *   **Data-Type Formatting:** Specialized rendering for Numbers, Booleans, and Nulls.
 *   **Column Management:** Resizable columns and advanced sorting.
 

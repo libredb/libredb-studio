@@ -77,6 +77,8 @@ let tabMgrOverride: Record<string, unknown> = {};
 let queryExecOverride: Record<string, unknown> = {};
 let authOverride: Record<string, unknown> = {};
 let editingOverride: Record<string, unknown> = {};
+let capabilitiesOverride: Record<string, unknown> = {};
+let metadataOverride: Record<string, unknown> = {};
 
 // ---- Mock all hooks ----
 
@@ -116,6 +118,8 @@ mock.module("@/hooks/use-provider-metadata", () => ({
         supportsTransactions: true,
         maintenanceOperations: ["vacuum"],
         schemaRefreshPattern: "^(CREATE|DROP)\\b",
+        supportsInlineRowEdit: true,
+        ...capabilitiesOverride,
       },
       labels: {
         entityName: "Table",
@@ -125,6 +129,7 @@ mock.module("@/hooks/use-provider-metadata", () => ({
         editorLanguage: "sql",
       },
     },
+    ...metadataOverride,
   })),
 }));
 
@@ -465,6 +470,8 @@ describe("Studio", () => {
     queryExecOverride = {};
     authOverride = {};
     editingOverride = {};
+    capabilitiesOverride = {};
+    metadataOverride = {};
 
     // Clear trackable mocks
     mockHandleLogout.mockClear();
@@ -872,6 +879,42 @@ describe("Studio", () => {
     act(() => fn());
     expect(mockSetEditingEnabled).toHaveBeenCalledWith(false);
     expect(mockHandleDiscardChanges).toHaveBeenCalled();
+  });
+
+  // --- Inline-edit capability gate (#269) ---
+  test("withholds every editing affordance when supportsInlineRowEdit is false", () => {
+    capabilitiesOverride = { supportsInlineRowEdit: false };
+    // Even with editing already switched on in the hook, no editable cell wiring
+    // may reach the grid — the gate is not just the toggle.
+    editingOverride = { editingEnabled: true };
+    render(<Studio />);
+
+    expect(capturedQueryToolbarProps.onToggleEditing).toBeUndefined();
+    expect(capturedMobileHeaderProps.onToggleEditing).toBeUndefined();
+    expect(capturedQueryToolbarProps.editingEnabled).toBe(false);
+    expect(capturedMobileHeaderProps.editingEnabled).toBe(false);
+    expect(capturedBottomPanelProps.editingEnabled).toBe(false);
+  });
+
+  test("passes the editing affordance through when supportsInlineRowEdit is true", () => {
+    editingOverride = { editingEnabled: true };
+    render(<Studio />);
+
+    expect(typeof capturedQueryToolbarProps.onToggleEditing).toBe("function");
+    expect(typeof capturedMobileHeaderProps.onToggleEditing).toBe("function");
+    expect(capturedQueryToolbarProps.editingEnabled).toBe(true);
+    expect(capturedMobileHeaderProps.editingEnabled).toBe(true);
+    expect(capturedBottomPanelProps.editingEnabled).toBe(true);
+  });
+
+  test("withholds the editing affordance while provider metadata is unresolved", () => {
+    // metadata is also null when /api/db/provider-meta fails, so unknown must
+    // hide the control rather than fall open (the T3 precedent).
+    metadataOverride = { metadata: null };
+    render(<Studio />);
+
+    expect(capturedQueryToolbarProps.onToggleEditing).toBeUndefined();
+    expect(capturedBottomPanelProps.editingEnabled).toBe(false);
   });
 
   test("QueryToolbar onImport opens import modal", () => {

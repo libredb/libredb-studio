@@ -84,6 +84,7 @@ function makeCapabilities(overrides: Partial<ProviderCapabilities> = {}): Provid
     supportsExplain: false,
     supportsExternalQueryLimiting: true,
     supportsCreateTable: true,
+    supportsInlineRowEdit: true,
     supportsMaintenance: true,
     maintenanceOperations: ["vacuum", "analyze", "reindex", "kill"],
     supportsConnectionString: true,

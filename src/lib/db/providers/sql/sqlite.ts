@@ -137,6 +137,7 @@ export class SQLiteProvider extends SQLBaseProvider {
       supportsExplain: true,
       explainFormat: "sqlite-queryplan",
       supportsConnectionString: false,
+      supportsInlineRowEdit: true,
       maintenanceOperations: ["vacuum", "analyze", "reindex", "check"],
     };
   }

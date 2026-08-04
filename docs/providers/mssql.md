@@ -329,6 +329,7 @@ validates the target parses as an integer SPID.
 | `supportsExplain` | **`false`** (intentionally disabled — see [Known limitations](#14-known-limitations--future-work)) |
 | `supportsExternalQueryLimiting` | `true` (from base) |
 | `supportsCreateTable` | `true` (from base) |
+| `supportsInlineRowEdit` | `true` — `UPDATE t SET c = v WHERE pk = v` is core T-SQL DML |
 | `supportsMaintenance` | `true` |
 | `maintenanceOperations` | `['analyze', 'check', 'optimize', 'kill']` |
 | `supportsConnectionString` | `true` (UI-only — see [§4.4](#44-connection-string-nuance)) |

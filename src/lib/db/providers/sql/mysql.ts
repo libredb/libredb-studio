@@ -271,6 +271,7 @@ export class MySQLProvider extends SQLBaseProvider {
       supportsExplain: true,
       explainFormat: "mysql-json",
       supportsConnectionString: true,
+      supportsInlineRowEdit: true,
       maintenanceOperations: ["analyze", "optimize", "check", "kill"],
     };
   }

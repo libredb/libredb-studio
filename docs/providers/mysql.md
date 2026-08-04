@@ -303,6 +303,7 @@ validates that the target parses as an integer connection id.
 | `explainFormat` | `mysql-json` |
 | `supportsExternalQueryLimiting` | `true` (from base) |
 | `supportsCreateTable` | `true` (from base) |
+| `supportsInlineRowEdit` | `true` — `UPDATE t SET c = v WHERE pk = v` is core MySQL DML |
 | `supportsMaintenance` | `true` |
 | `maintenanceOperations` | `['analyze', 'optimize', 'check', 'kill']` |
 | `supportsConnectionString` | `true` |

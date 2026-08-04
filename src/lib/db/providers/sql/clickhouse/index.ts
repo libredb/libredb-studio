@@ -500,6 +500,12 @@ export class ClickHouseProvider extends SQLBaseProvider {
       // produce invalid input is not a supported capability. DDL typed into the
       // editor works normally, which is how a ClickHouse user creates a table.
       supportsCreateTable: false,
+      // Live-verified against 26.7.1 and the reason issue #269 exists: a bare
+      // `UPDATE ... SET`, which is what the inline row editor builds, answers code
+      // 48 NOT_IMPLEMENTED (HTTP 501). ClickHouse spells a row mutation
+      // `ALTER TABLE t UPDATE c = v WHERE ...`, an asynchronous mutation rather
+      // than a statement the shared hook can emit, so the control is hidden here.
+      supportsInlineRowEdit: false,
       supportsMaintenance: true,
       maintenanceOperations: ["optimize", "analyze", "kill"],
       supportsConnectionString: true,

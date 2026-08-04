@@ -344,6 +344,18 @@ export function ResultsGrid({
         const displayVal = pendingChange !== undefined ? pendingChange.newValue : val;
         const { display, className } = formatCellValue(displayVal);
 
+        // No editor is opened unless editing is on: the commit paths above already
+        // required it, so without this a cell offered an input whose edit was
+        // silently discarded — including where the provider declares no inline row
+        // editing at all (issue #269).
+        if (!editingEnabled) {
+          return (
+            <div className={cn("truncate w-full h-full", pendingChange && "bg-amber-500/10 rounded px-0.5")}>
+              <span className={cn(className, pendingChange && "text-amber-400")}>{display}</span>
+            </div>
+          );
+        }
+
         return (
           <div
             className={cn("truncate w-full h-full cursor-text", pendingChange && "bg-amber-500/10 rounded px-0.5")}

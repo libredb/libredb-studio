@@ -218,6 +218,15 @@ describe("StudioMobileHeader", () => {
     expect(mockOnToggleEditing).toHaveBeenCalledTimes(1);
   });
 
+  test("Enable Editing not rendered when onToggleEditing is undefined (#269)", () => {
+    // Same shape as Explain Plan above: Studio withholds the callback where the
+    // provider declares no single-table row-update statement.
+    const { queryByText } = render(<StudioMobileHeader {...defaults} onToggleEditing={undefined} />);
+    expect(queryByText("Enable Editing")).toBeNull();
+    expect(queryByText("Enable Sandbox")).not.toBeNull();
+    expect(queryByText("Import Data")).not.toBeNull();
+  });
+
   test("Import Data click calls onImport", () => {
     const { queryByText } = render(<StudioMobileHeader {...defaults} />);
     const item = queryByText("Import Data");

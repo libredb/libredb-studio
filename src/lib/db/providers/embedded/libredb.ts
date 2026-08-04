@@ -99,6 +99,10 @@ export class LibreDBProvider extends BaseDatabaseProvider {
       supportsExplain: false,
       supportsExternalQueryLimiting: false,
       supportsCreateTable: false,
+      // The query language is a small JSON command grammar
+      // (get/put/delete/prefix/range), so there is no `UPDATE ... SET` for the
+      // inline row editor to emit (issue #269).
+      supportsInlineRowEdit: false,
       supportsMaintenance: false,
       maintenanceOperations: [],
       supportsConnectionString: false,

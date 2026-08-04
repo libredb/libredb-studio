@@ -246,6 +246,7 @@ three, though `runMaintenance` also accepts `optimize`/`kill`/`reindex` when inv
 | `supportsExplain` | `false` |
 | `supportsExternalQueryLimiting` | `false` |
 | `supportsCreateTable` | `false` |
+| `supportsInlineRowEdit` | `false` — the query language is JSON commands, so there is no `UPDATE ... SET` for the results grid's inline editor to emit |
 | `supportsMaintenance` | `true` |
 | `maintenanceOperations` | `['vacuum', 'analyze', 'check']` |
 | `supportsConnectionString` | `true` |

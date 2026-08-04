@@ -334,6 +334,7 @@ Minimal by nature — SQLite keeps almost no server-style runtime statistics.
 | `explainFormat` | `"sqlite-queryplan"` |
 | `supportsExternalQueryLimiting` | `true` (from base) |
 | `supportsCreateTable` | `true` (from base) |
+| `supportsInlineRowEdit` | `true` — `UPDATE t SET c = v WHERE pk = v` is core SQLite DML |
 | `supportsMaintenance` | `true` |
 | `maintenanceOperations` | `['vacuum', 'analyze', 'reindex', 'check']` |
 | `supportsConnectionString` | **`false`** |

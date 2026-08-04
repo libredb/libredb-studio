@@ -278,12 +278,24 @@ describe("CouchbaseProvider metadata", () => {
       explainFormat: "couchbase-json",
       supportsExternalQueryLimiting: true,
       supportsCreateTable: false,
+      supportsInlineRowEdit: false,
       supportsMaintenance: true,
       maintenanceOperations: ["analyze", "reindex", "kill"],
       supportsConnectionString: true,
       defaultPort: 8091,
       schemaRefreshPattern: "\\b(CREATE|DROP|ALTER)\\s+(COLLECTION|SCOPE|INDEX)\\b",
     });
+  });
+
+  test("declares supportsInlineRowEdit false because the grid's key column is a projection alias", () => {
+    // SQL++ does have `UPDATE <keyspace> SET ... WHERE ...`, but the statement the
+    // shared hook builds cannot address a document here: the collection-open query
+    // projects the key as `META(d).id AS __id` (`src/lib/query-generators.ts`), and
+    // the hook's primary-key heuristic picks `__id` up because it ends in `_id`. The
+    // emitted `WHERE __id = '<key>'` filters on a field no document has, so it
+    // matches nothing. Addressing a document needs `META(d).id` or `USE KEYS`, which
+    // is per-dialect statement building - deferred to issue #279.
+    expect(new CouchbaseProvider(makeConnection()).getCapabilities().supportsInlineRowEdit).toBe(false);
   });
 
   test("labels collections and documents", () => {

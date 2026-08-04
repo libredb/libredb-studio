@@ -533,6 +533,7 @@ export class PostgresProvider extends SQLBaseProvider {
       supportsExplain: true,
       explainFormat: "postgres-json",
       supportsConnectionString: true,
+      supportsInlineRowEdit: true,
       maintenanceOperations: ["vacuum", "analyze", "reindex", "kill"],
     };
   }

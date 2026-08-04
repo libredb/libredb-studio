@@ -313,6 +313,7 @@ actions for Redis via `getLabels()` (e.g. *"Memory Doctor"*, *"Run Info"*).
 | `supportsExplain` | `false` |
 | `supportsExternalQueryLimiting` | `false` |
 | `supportsCreateTable` | `false` |
+| `supportsInlineRowEdit` | `false` — Redis commands are not SQL, so there is no `UPDATE ... SET` for the results grid's inline editor to emit |
 | `supportsMaintenance` | `true` |
 | `maintenanceOperations` | `['analyze']` |
 | `supportsConnectionString` | `false` |

@@ -472,6 +472,7 @@ still appear here and answer HTTP 400 — a known gap, not yet filed, outside #2
 | `supportsExplain` | `false` |
 | `supportsExternalQueryLimiting` | `false` |
 | `supportsCreateTable` | `false` |
+| `supportsInlineRowEdit` | `false` — the command grammar (`get`/`put`/`delete`/`prefix`/`range`) has no `UPDATE ... SET` for the results grid's inline editor to emit |
 | `supportsMaintenance` | `false` |
 | `maintenanceOperations` | `[]` |
 | `supportsConnectionString` | `false` |

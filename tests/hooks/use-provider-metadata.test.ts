@@ -29,6 +29,7 @@ const mockMetadata: ProviderMetadata = {
     supportsExplain: true,
     supportsExternalQueryLimiting: true,
     supportsCreateTable: true,
+    supportsInlineRowEdit: true,
     supportsMaintenance: true,
     maintenanceOperations: [],
     supportsConnectionString: true,

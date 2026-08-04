@@ -105,6 +105,19 @@ export default function Studio() {
     executeQuery: queryExec.executeQuery,
   });
 
+  // Inline row editing is offered only where the provider declares the row-update
+  // statement it needs (issue #269). Unknown hides it, like Explain below: metadata
+  // is also null when /api/db/provider-meta fails, and offering a control that can
+  // only error is the defect this gate exists to fix.
+  const canEditRows = metadata?.capabilities.supportsInlineRowEdit === true;
+  const editingEnabled = canEditRows && editing.editingEnabled;
+  const onToggleEditing = canEditRows
+    ? () => {
+        editing.setEditingEnabled(!editing.editingEnabled);
+        if (editing.editingEnabled) editing.handleDiscardChanges();
+      }
+    : undefined;
+
   // === Cross-hook orchestration: connection-change effect ===
   useEffect(() => {
     if (conn.activeConnection) {
@@ -317,7 +330,7 @@ export default function Studio() {
               queryEditorRef={queryEditorRef}
               transactionActive={txn.transactionActive}
               playgroundMode={txn.playgroundMode}
-              editingEnabled={editing.editingEnabled}
+              editingEnabled={editingEnabled}
               onSelectConnection={conn.setActiveConnection}
               onAddConnection={() => setIsConnectionModalOpen(true)}
               onLogout={handleLogout}
@@ -329,10 +342,7 @@ export default function Studio() {
               onCommitTransaction={() => txn.handleTransaction("commit")}
               onRollbackTransaction={() => txn.handleTransaction("rollback")}
               onTogglePlayground={() => txn.setPlaygroundMode(!txn.playgroundMode)}
-              onToggleEditing={() => {
-                editing.setEditingEnabled(!editing.editingEnabled);
-                if (editing.editingEnabled) editing.handleDiscardChanges();
-              }}
+              onToggleEditing={onToggleEditing}
               onImport={() => setIsImportModalOpen(true)}
               onExplain={
                 metadata?.capabilities.supportsExplain
@@ -439,7 +449,7 @@ export default function Studio() {
                           isExecuting={tabMgr.currentTab.isExecuting}
                           playgroundMode={txn.playgroundMode}
                           transactionActive={txn.transactionActive}
-                          editingEnabled={editing.editingEnabled}
+                          editingEnabled={editingEnabled}
                           onSaveQuery={() => setIsSaveQueryModalOpen(true)}
                           onExecuteQuery={() => queryExec.executeQuery()}
                           onCancelQuery={queryExec.cancelQuery}
@@ -447,10 +457,7 @@ export default function Studio() {
                           onCommitTransaction={() => txn.handleTransaction("commit")}
                           onRollbackTransaction={() => txn.handleTransaction("rollback")}
                           onTogglePlayground={() => txn.setPlaygroundMode(!txn.playgroundMode)}
-                          onToggleEditing={() => {
-                            editing.setEditingEnabled(!editing.editingEnabled);
-                            if (editing.editingEnabled) editing.handleDiscardChanges();
-                          }}
+                          onToggleEditing={onToggleEditing}
                           onImport={() => setIsImportModalOpen(true)}
                         />
 
@@ -507,7 +514,7 @@ export default function Studio() {
                         }
                         userRole={user?.role}
                         maskingConfig={maskingConfig}
-                        editingEnabled={editing.editingEnabled}
+                        editingEnabled={editingEnabled}
                         pendingChanges={editing.pendingChanges}
                         onCellChange={editing.handleCellChange}
                         onApplyChanges={editing.handleApplyChanges}

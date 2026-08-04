@@ -20,6 +20,7 @@ const sqlMetadata: ProviderMetadata = {
     supportsExplain: true,
     supportsExternalQueryLimiting: true,
     supportsCreateTable: true,
+    supportsInlineRowEdit: true,
     supportsMaintenance: false,
     maintenanceOperations: [],
     supportsConnectionString: false,
@@ -129,6 +130,18 @@ describe("QueryToolbar", () => {
     const editButton = editText!.closest("button");
     expect(editButton).not.toBeNull();
     expect(editButton?.className.includes("text-amber-400")).toBe(true);
+  });
+
+  test("No EDIT button when onToggleEditing is not provided (#269)", () => {
+    // Studio withholds the callback where the provider declares no single-table
+    // row-update statement, exactly as it withholds onExplain. The neighbouring
+    // controls must keep rendering.
+    const { queryByText } = render(<QueryToolbar {...createDefaultProps({ onToggleEditing: undefined })} />);
+
+    expect(queryByText("EDIT")).toBeNull();
+    expect(queryByText("SANDBOX")).not.toBeNull();
+    expect(queryByText("IMPORT")).not.toBeNull();
+    expect(queryByText("BEGIN")).not.toBeNull();
   });
 
   test("Run button disabled when no activeConnection", () => {

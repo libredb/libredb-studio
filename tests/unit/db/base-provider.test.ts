@@ -222,6 +222,7 @@ describe("BaseDatabaseProvider", () => {
       expect(caps.supportsExplain).toBe(true);
       expect(caps.supportsExternalQueryLimiting).toBe(true);
       expect(caps.supportsCreateTable).toBe(true);
+      expect(caps.supportsInlineRowEdit).toBe(true);
       expect(caps.supportsMaintenance).toBe(true);
       expect(caps.maintenanceOperations).toBeArray();
       expect(caps.maintenanceOperations).toContain("vacuum");

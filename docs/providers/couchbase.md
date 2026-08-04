@@ -605,6 +605,7 @@ throws a `QueryError` naming the three supported operations.
 | `explainFormat` | `couchbase-json` |
 | `supportsExternalQueryLimiting` | `true` |
 | `supportsCreateTable` | `false` |
+| `supportsInlineRowEdit` | `false` — SQL++ has `UPDATE <keyspace> SET ... WHERE ...`, but the shared editor's `WHERE <pk> = <value>` would filter on `__id`, the key **projection alias**, which is not a document field ([§13](#13-known-limitations--future-work)) |
 | `supportsMaintenance` | `true` |
 | `maintenanceOperations` | `['analyze', 'reindex', 'kill']` |
 | `supportsConnectionString` | `true` |
@@ -777,6 +778,14 @@ native dependency, and they are listed first so nobody discovers them by acciden
   without fetching it) has no REST equivalent. SQL++ projection covers reading a path; targeted
   in-place path mutation does not exist here — an `UPDATE ... SET` rewrites through the query
   service instead.
+- **No inline row editing in the results grid**, declared as `supportsInlineRowEdit: false`
+  ([#269](https://github.com/libredb/libredb-studio/issues/269)). The obstacle is not `UPDATE` — SQL++
+  has it — but the document key: the collection-open query projects it as `META(d).id AS __id`, and
+  the shared editor's key heuristic picks that alias up and emits `WHERE __id = '<key>'`, a predicate
+  no document satisfies, so the edit would match zero documents and still report success. Addressing a
+  document needs `META(d).id` or `USE KEYS`, i.e. per-dialect statement building
+  ([#279](https://github.com/libredb/libredb-studio/issues/279)). Until then the control is not
+  offered here and a document is edited with a hand-written SQL++ statement.
 
 A follow-up issue gets opened if a real user reports one of: browsing collections that have no
 index, viewing non-JSON documents, or a policy requiring the official SDK. At that point the work is

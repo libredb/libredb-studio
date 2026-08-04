@@ -1188,6 +1188,7 @@ Both halves of that are real constraints, not scope cuts made lightly:
 | `explainFormat` | `druid-native` | The strategy id in `src/lib/explain/index.ts` |
 | `supportsExternalQueryLimiting` | `true` | `LIMIT n` / `LIMIT n OFFSET m` are both correct Druid SQL |
 | `supportsCreateTable` | **`false`** | `CREATE` is not in the grammar; a datasource is created by ingestion ([§3.11](#311-the-three-false-capabilities-are-each-impossible-not-merely-unimplemented)) |
+| `supportsInlineRowEdit` | **`false`** | `UPDATE t SET ...` answers `Unsupported SQL statement [UPDATE]`; Druid SQL has no row-level DML ([§5.5](#55-druid-sql-cannot-write-and-the-server-says-so-clearly)) |
 | `supportsMaintenance` | **`false`** | Nothing in `MaintenanceType` is reachable from Druid SQL ([§8](#8-maintenance)) |
 | `maintenanceOperations` | `[]` | Consequence of the above |
 | `supportsConnectionString` | **`false`** | Druid has no URI convention, and `http(s)://` is ClickHouse's ([§4.2](#42-there-is-no-connection-string-and-that-is-deliberate)) |
@@ -1501,10 +1502,11 @@ cancellation as unsupported because the provider exposes no `cancelQuery`
   expensive in a way a streaming client would not be ([§3.1](#31-http-only--no-driver-and-what-that-costs)).
 - **Two shared SQL-generating features are not dialect-aware**, both pre-existing and both tracked in
   [#269](https://github.com/libredb/libredb-studio/issues/269): the results grid's **inline row
-  editing** emits `UPDATE ... SET`, which Druid rejects as `Unsupported SQL statement [UPDATE]` — there
-  is no Druid equivalent to substitute, so editing a Druid row is not possible at all — and the
-  **schema-diff migration generator** has no Druid branch, which is moot here since Druid has no DDL
-  to migrate.
+  editing** emitted `UPDATE ... SET`, which Druid rejects as `Unsupported SQL statement [UPDATE]` —
+  there is no Druid equivalent to substitute, so editing a Druid row is not possible at all, and since
+  #269 this provider declares `supportsInlineRowEdit: false` so the control is not offered here (no
+  EDIT toggle, no editable cell) — and the **schema-diff migration generator** has no Druid branch,
+  which is moot here since Druid has no DDL to migrate.
 
 ---
 

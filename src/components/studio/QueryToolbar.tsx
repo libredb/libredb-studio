@@ -21,7 +21,8 @@ interface QueryToolbarProps {
   onCommitTransaction: () => void;
   onRollbackTransaction: () => void;
   onTogglePlayground: () => void;
-  onToggleEditing: () => void;
+  /** Omitted where the provider declares no inline row editing (issue #269). */
+  onToggleEditing?: () => void;
   onImport: () => void;
 }
 
@@ -144,21 +145,23 @@ export function QueryToolbar({
               SANDBOX
             </Button>
 
-            <Button
-              size="sm"
-              variant="ghost"
-              className={cn(
-                "h-7 text-xs font-medium gap-1",
-                editingEnabled
-                  ? "text-amber-400 bg-amber-500/10 hover:bg-amber-500/20"
-                  : "text-zinc-500 hover:text-white",
-              )}
-              onClick={onToggleEditing}
-              title="Enable inline data editing"
-            >
-              <Pencil strokeWidth={1.5} className="w-3 h-3" />
-              EDIT
-            </Button>
+            {onToggleEditing && (
+              <Button
+                size="sm"
+                variant="ghost"
+                className={cn(
+                  "h-7 text-xs font-medium gap-1",
+                  editingEnabled
+                    ? "text-amber-400 bg-amber-500/10 hover:bg-amber-500/20"
+                    : "text-zinc-500 hover:text-white",
+                )}
+                onClick={onToggleEditing}
+                title="Enable inline data editing"
+              >
+                <Pencil strokeWidth={1.5} className="w-3 h-3" />
+                EDIT
+              </Button>
+            )}
 
             <Button
               size="sm"

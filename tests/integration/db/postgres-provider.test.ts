@@ -1680,6 +1680,9 @@ describe("PostgresProvider", () => {
       expect(caps.explainFormat).toBe("postgres-json");
       expect(caps.supportsExplain).toBe(caps.explainFormat !== undefined);
       expect(caps.supportsConnectionString).toBe(true);
+      // `UPDATE t SET c = v WHERE pk = v` is core PostgreSQL DML — exactly the
+      // statement shape the inline row editor builds (#269).
+      expect(caps.supportsInlineRowEdit).toBe(true);
       expect(caps.maintenanceOperations).toContain("vacuum");
       expect(caps.maintenanceOperations).toContain("analyze");
       expect(caps.maintenanceOperations).toContain("reindex");
