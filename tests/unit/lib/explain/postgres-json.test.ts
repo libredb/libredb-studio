@@ -57,6 +57,22 @@ describe("postgresJsonStrategy", () => {
     expect(postgresJsonStrategy.buildSql(sql, "estimate")).toBeNull();
   });
 
+  // The over-reach, pinned at the STRATEGY boundary rather than only on the helper.
+  // The screen is textual, so a keyword inside a string literal counts and this
+  // harmless read-only CTE loses its Explain button. That is the direction this has to
+  // err in - the other one performs a write the user only asked to see - and it is the
+  // documented behaviour, so it belongs in a test rather than in prose alone.
+  test("buildSql refuses a read-only CTE that merely mentions a writing keyword", () => {
+    expect(postgresJsonStrategy.buildSql("WITH t AS (SELECT 'insert' AS x) SELECT * FROM t", "analyze")).toBeNull();
+  });
+
+  // And the limit of that over-reach: the word boundary is what keeps it from swallowing
+  // every CTE that touches an `updated_at` column, which would be most of them.
+  test("buildSql still explains a CTE over a column whose name merely contains a keyword", () => {
+    const cte = "WITH t AS (SELECT updated_at FROM u) SELECT * FROM t";
+    expect(postgresJsonStrategy.buildSql(cte, "estimate")).toBe(`EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ${cte}`);
+  });
+
   // The screen is scoped to the WITH form on purpose. A statement leading with SELECT
   // cannot carry a data-modifying CTE (PostgreSQL allows one only at the top level), so
   // screening those too would only strip the button off queries that mention a keyword.

@@ -109,14 +109,34 @@ describe("classifySelectPrefix", () => {
 describe("hasDataModifyingStatement", () => {
   // Exists for PostgreSQL alone, whose EXPLAIN (ANALYZE) executes what it explains, so
   // a data-modifying CTE would be PERFORMED by a button that claims to describe.
+  // All four are real carriers. MERGE especially is not a defensive guess: live on
+  // PostgreSQL 18, `EXPLAIN (ANALYZE, FORMAT JSON) WITH t AS (MERGE INTO probe ...
+  // RETURNING id) SELECT * FROM t` really inserted the row.
   test.each<[string, string]>([
     ["an INSERT CTE", "WITH t AS (INSERT INTO probe(id) VALUES (1) RETURNING id) SELECT * FROM t"],
     ["an UPDATE CTE", "WITH t AS (UPDATE probe SET id = 1 RETURNING id) SELECT * FROM t"],
     ["a DELETE CTE", "WITH t AS (DELETE FROM probe RETURNING id) SELECT * FROM t"],
-    ["a MERGE CTE", "WITH t AS (MERGE INTO probe USING x ON true WHEN MATCHED THEN DO NOTHING) SELECT 1"],
+    [
+      "a MERGE CTE",
+      "WITH t AS (MERGE INTO probe p USING (SELECT 99 AS mid) s ON p.id = s.mid " +
+        "WHEN NOT MATCHED THEN INSERT (id) VALUES (s.mid) RETURNING p.id) SELECT * FROM t",
+    ],
     ["lower case", "with t as (insert into probe values (1) returning id) select * from t"],
   ])("detects %s", (_label, sql) => {
     expect(hasDataModifyingStatement(sql)).toBe(true);
+  });
+
+  // TRUNCATE is deliberately absent: it cannot ride inside a WITH at all (live,
+  // `WITH t AS (TRUNCATE probe) SELECT 1` is a SYNTAX error), and a statement leading
+  // with it never reaches this function because `classifySelectPrefix` already answers
+  // null for anything but SELECT or WITH. Same for the other DDL verbs.
+  test.each<[string, string]>([
+    ["TRUNCATE", "TRUNCATE probe"],
+    ["DROP", "DROP TABLE probe"],
+    ["CREATE", "CREATE TABLE probe (id INT)"],
+  ])("leaves %s to the prefix classification, which refuses it outright", (_label, sql) => {
+    expect(hasDataModifyingStatement(sql)).toBe(false);
+    expect(classifySelectPrefix(sql)).toBeNull();
   });
 
   test.each<[string, string]>([

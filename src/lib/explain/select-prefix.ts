@@ -58,6 +58,17 @@ const LEADING_KEYWORD = /^(?:\s|--[^\n]*(?:\n|$)|\/\*(?:[^*]|\*(?!\/))*\*\/)*(SE
  * Statements that write. Used only to keep a dialect whose EXPLAIN EXECUTES from
  * executing one - see `hasDataModifyingStatement`.
  *
+ * These four and no others, because the list only has to cover what can ride inside a
+ * `WITH`. Both halves of that were verified on PostgreSQL 18 rather than assumed:
+ *
+ * - `MERGE` belongs here. It is a real carrier, not a defensive guess:
+ *   `EXPLAIN (ANALYZE, FORMAT JSON) WITH t AS (MERGE INTO probe ... RETURNING id)
+ *   SELECT * FROM t` really inserted the row.
+ * - `TRUNCATE` does NOT belong here, and its absence is deliberate. It cannot be a
+ *   carrier at all - `WITH t AS (TRUNCATE probe) SELECT 1` is a *syntax* error - and a
+ *   statement that leads with it is already refused by `classifySelectPrefix`, which
+ *   only ever answers for `SELECT` or `WITH`. Same for `CREATE`, `DROP` and `ALTER`.
+ *
  * Flat, with no nested quantifier, so it carries none of the backtracking risk the
  * pattern above had to be shaped around.
  */
