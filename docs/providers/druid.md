@@ -1132,15 +1132,22 @@ counts live in `getTableStats()`, where a denial costs one panel instead of the 
 **There is none.** `supportsMaintenance` is `false` and `maintenanceOperations` is `[]`, so the
 Maintenance panel offers no operation for a Druid connection.
 
-**One control does still appear, and it cannot work.** The monitoring **Tables** tab renders
-`Analyze` / `Vacuum` / `Reindex` per row unconditionally — `TablesTab.tsx` never reads
-`getCapabilities()` — so those three buttons are present for Druid and every click answers
-`HTTP 400 {"error":"Maintenance operations not supported for this database"}`. Verified live in the
-running application. This is **not** specific to Druid: `libredb.ts` also sets
-`supportsMaintenance: false` and has exactly the same dead buttons today, so it is a pre-existing gap
-in shared UI rather than something this provider introduced, and gating that tab on capabilities is a
-change for every provider at once. Filed as a follow-up; recorded here because a doc that claimed
-"no control offers any operation" would be describing the intent instead of the software.
+**The monitoring Tables tab no longer offers one (issue #272).** It used to render
+`Analyze` / `Vacuum` / `Reindex` per row unconditionally — `TablesTab.tsx` never read
+`getCapabilities()` — so those three buttons were present for Druid and every click answered
+`HTTP 400 {"error":"Maintenance operations not supported for this database"}`. That tab now takes the
+connected provider's capabilities (`MonitoringDashboard.tsx` passes them down from
+`useProviderMetadata`) and renders no maintenance control where `supportsMaintenance` is `false`, only
+the declared operations where it is `true`, and none at all until the metadata has resolved. That was
+never Druid-specific: `libredb.ts` also sets `supportsMaintenance: false` and had exactly the same
+dead buttons, so the fix landed once in shared UI for every provider.
+
+**The admin Operations tab still has the same gap.** `src/components/admin/tabs/OperationsTab.tsx`
+renders its global `Run Analyze` / `Run Vacuum` / `Run Reindex` controls and its per-table
+Analyze/Vacuum buttons without reading `getCapabilities()`, so those still answer 400 here. #272's
+bar covers the monitoring Tables tab only; the Operations tab is a known gap, not yet filed. Stated
+explicitly because a doc claiming "no control offers any operation" would be describing the intent
+instead of the software.
 
 `runMaintenance(type)` ([index.ts:471](../../src/lib/db/providers/sql/druid/index.ts)) exists because
 the `DatabaseProvider` interface obliges every provider to implement it, and **not** because any

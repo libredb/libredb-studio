@@ -139,12 +139,51 @@ mock.module("@/components/monitoring/tabs/SessionsTab", () => ({
   },
 }));
 
+// Captures the props the dashboard hands the tables tab, so the capability wiring
+// can be asserted while the tab itself stays mocked out.
+const tablesTabProps: Array<Record<string, unknown>> = [];
+
 mock.module("@/components/monitoring/tabs/TablesTab", () => ({
-  TablesTab: () => {
+  TablesTab: (props: Record<string, unknown>) => {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const React = require("react");
+    tablesTabProps.push(props);
     return React.createElement("div", { "data-testid": "monitoring-tablestab" }, "TablesTab");
   },
+}));
+
+const mockCapabilities = {
+  queryLanguage: "sql",
+  supportsExplain: true,
+  supportsExternalQueryLimiting: true,
+  supportsCreateTable: true,
+  supportsMaintenance: true,
+  maintenanceOperations: ["vacuum", "analyze"],
+  supportsConnectionString: true,
+  defaultPort: 5432,
+  schemaRefreshPattern: "^(CREATE|DROP)\\b",
+};
+
+// Records which connection the dashboard asks metadata for, so the wiring test can
+// assert the lookup follows the selection rather than firing on null.
+const providerMetadataCalls: Array<{ id?: string } | null> = [];
+
+mock.module("@/hooks/use-provider-metadata", () => ({
+  useProviderMetadata: mock((connection: { id?: string } | null) => {
+    providerMetadataCalls.push(connection);
+    return {
+      metadata: {
+        capabilities: mockCapabilities,
+        labels: {
+          entityName: "Table",
+          entityNamePlural: "Tables",
+          rowName: "Row",
+          rowNamePlural: "Rows",
+        },
+      },
+      isLoading: false,
+    };
+  }),
 }));
 
 mock.module("@/components/monitoring/tabs/StorageTab", () => ({
@@ -371,5 +410,39 @@ describe("MonitoringDashboard", () => {
     await waitFor(() => {
       expect(queryByTestId("monitoring-performancetab")).not.toBeNull();
     });
+  });
+
+  test("hands the selected connection's declared capabilities to the tables tab", async () => {
+    const user = userEvent.setup();
+    tablesTabProps.length = 0;
+    providerMetadataCalls.length = 0;
+
+    let renderResult: ReturnType<typeof render>;
+    await act(async () => {
+      renderResult = render(<MonitoringDashboard />);
+    });
+    const { queryByTestId, container } = renderResult!;
+
+    const allTriggers = container.querySelectorAll('[role="tab"]');
+    const tablesTrigger = Array.from(allTriggers).find((t) => t.textContent?.includes("Tables")) as HTMLElement;
+    await user.click(tablesTrigger);
+
+    await waitFor(() => {
+      expect(queryByTestId("monitoring-tablestab")).not.toBeNull();
+    });
+
+    expect(tablesTabProps.length).toBeGreaterThan(0);
+    expect(tablesTabProps[tablesTabProps.length - 1].capabilities).toEqual(mockCapabilities);
+    expect(providerMetadataCalls[providerMetadataCalls.length - 1]?.id).toBe("c1");
+
+    // ...and the lookup follows the selection rather than the first connection:
+    // switching connections re-asks for the newly selected one.
+    const onConnectionChange = selectCallbacks.get("c1");
+    expect(onConnectionChange).toBeDefined();
+    await act(async () => {
+      onConnectionChange!("c2");
+    });
+
+    expect(providerMetadataCalls[providerMetadataCalls.length - 1]?.id).toBe("c2");
   });
 });

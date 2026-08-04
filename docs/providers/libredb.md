@@ -454,7 +454,10 @@ QueryError: Maintenance operation "<type>" is not supported for LibreDB
 ```
 
 This is reflected in `getCapabilities().supportsMaintenance = false` and
-`maintenanceOperations = []`. The UI disables the maintenance actions for this provider.
+`maintenanceOperations = []`. The monitoring **Tables** tab hides the maintenance actions for this
+provider: it renders no per-row maintenance control when a provider declares maintenance unsupported
+(issue #272). The admin **Operations** tab does not read capabilities yet, so its maintenance buttons
+still appear here and answer HTTP 400 — a known gap, not yet filed, outside #272's bar.
 
 ---
 

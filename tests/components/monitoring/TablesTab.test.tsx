@@ -6,7 +6,7 @@ import React from "react";
 import { describe, test, expect, mock, afterEach } from "bun:test";
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { TablesTab } from "@/components/monitoring/tabs/TablesTab";
-import type { MonitoringData } from "@/lib/db/types";
+import type { MonitoringData, ProviderCapabilities } from "@/lib/db/types";
 
 function makeData(): MonitoringData {
   return {
@@ -78,6 +78,21 @@ function makeData(): MonitoringData {
   } as unknown as MonitoringData;
 }
 
+function makeCapabilities(overrides: Partial<ProviderCapabilities> = {}): ProviderCapabilities {
+  return {
+    queryLanguage: "sql",
+    supportsExplain: false,
+    supportsExternalQueryLimiting: true,
+    supportsCreateTable: true,
+    supportsMaintenance: true,
+    maintenanceOperations: ["vacuum", "analyze", "reindex", "kill"],
+    supportsConnectionString: true,
+    defaultPort: 5432,
+    schemaRefreshPattern: "^(CREATE|DROP)\\b",
+    ...overrides,
+  };
+}
+
 describe("TablesTab", () => {
   afterEach(() => {
     cleanup();
@@ -115,7 +130,13 @@ describe("TablesTab", () => {
   test("runs maintenance actions when admin clicks action buttons", async () => {
     const onRunMaintenance = mock(async () => true);
     const { container } = render(
-      <TablesTab data={makeData()} loading={false} onRunMaintenance={onRunMaintenance} isAdmin />,
+      <TablesTab
+        data={makeData()}
+        loading={false}
+        onRunMaintenance={onRunMaintenance}
+        isAdmin
+        capabilities={makeCapabilities()}
+      />,
     );
 
     const analyzeButton = container.querySelector('button[title="Analyze"]');
@@ -146,6 +167,100 @@ describe("TablesTab", () => {
     const { queryAllByText } = render(
       <TablesTab data={makeData()} loading={false} onRunMaintenance={mock(async () => true)} isAdmin={false} />,
     );
+    expect(queryAllByText("-").length).toBeGreaterThan(0);
+  });
+
+  test("renders no maintenance control until the provider metadata has resolved", () => {
+    // Undefined capabilities is also what a failed /api/db/provider-meta leaves
+    // behind, so failing open here would restore the dead buttons #272 removes.
+    const { container, queryByText } = render(
+      <TablesTab data={makeData()} loading={false} onRunMaintenance={mock(async () => true)} isAdmin />,
+    );
+
+    expect(container.querySelector('button[title="Analyze"]')).toBeNull();
+    expect(container.querySelector('button[title="Vacuum"]')).toBeNull();
+    expect(container.querySelector('button[title="Reindex"]')).toBeNull();
+    expect(queryByText("users")).not.toBeNull();
+  });
+
+  test("renders no maintenance control when the provider declares maintenance unsupported", () => {
+    const { container, queryByText } = render(
+      <TablesTab
+        data={makeData()}
+        loading={false}
+        onRunMaintenance={mock(async () => true)}
+        isAdmin
+        capabilities={makeCapabilities({ supportsMaintenance: false, maintenanceOperations: [] })}
+      />,
+    );
+
+    expect(container.querySelector('button[title="Analyze"]')).toBeNull();
+    expect(container.querySelector('button[title="Vacuum"]')).toBeNull();
+    expect(container.querySelector('button[title="Reindex"]')).toBeNull();
+
+    // The row itself is untouched — only the controls are gated.
+    expect(queryByText("users")).not.toBeNull();
+    expect(queryByText("events")).not.toBeNull();
+    expect(queryByText("20 MB")).not.toBeNull(); // the users row's index-size cell
+  });
+
+  test("renders only the maintenance operations the provider declares", () => {
+    const { container, queryByText } = render(
+      <TablesTab
+        data={makeData()}
+        loading={false}
+        onRunMaintenance={mock(async () => true)}
+        isAdmin
+        capabilities={makeCapabilities({ maintenanceOperations: ["analyze", "kill"] })}
+      />,
+    );
+
+    expect(container.querySelector('button[title="Analyze"]')).not.toBeNull();
+    expect(container.querySelector('button[title="Vacuum"]')).toBeNull();
+    expect(container.querySelector('button[title="Reindex"]')).toBeNull();
+    expect(queryByText("users")).not.toBeNull();
+  });
+
+  test("renders every declared maintenance control and still runs it", async () => {
+    const onRunMaintenance = mock(async () => true);
+    const { container } = render(
+      <TablesTab
+        data={makeData()}
+        loading={false}
+        onRunMaintenance={onRunMaintenance}
+        isAdmin
+        capabilities={makeCapabilities({ maintenanceOperations: ["vacuum", "analyze", "reindex"] })}
+      />,
+    );
+
+    const analyzeButton = container.querySelector('button[title="Analyze"]');
+    const vacuumButton = container.querySelector('button[title="Vacuum"]');
+    const reindexButton = container.querySelector('button[title="Reindex"]');
+
+    expect(analyzeButton).not.toBeNull();
+    expect(vacuumButton).not.toBeNull();
+    expect(reindexButton).not.toBeNull();
+
+    fireEvent.click(reindexButton!);
+    await waitFor(() => {
+      expect(onRunMaintenance).toHaveBeenCalledWith("reindex", "users");
+    });
+  });
+
+  test("keeps the non-admin path unchanged whatever the provider declares", () => {
+    const { container, queryAllByText } = render(
+      <TablesTab
+        data={makeData()}
+        loading={false}
+        onRunMaintenance={mock(async () => true)}
+        isAdmin={false}
+        capabilities={makeCapabilities({ maintenanceOperations: ["vacuum", "analyze", "reindex"] })}
+      />,
+    );
+
+    expect(container.querySelector('button[title="Analyze"]')).toBeNull();
+    expect(container.querySelector('button[title="Vacuum"]')).toBeNull();
+    expect(container.querySelector('button[title="Reindex"]')).toBeNull();
     expect(queryAllByText("-").length).toBeGreaterThan(0);
   });
 });

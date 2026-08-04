@@ -475,9 +475,9 @@ export class DruidProvider extends SQLBaseProvider {
    * This exists because the interface obliges every provider to implement it, and
    * it is reached only by a programmatic caller of the package: `/api/db/maintenance`
    * checks `supportsMaintenance` and answers 400 before it would call this, so no
-   * HTTP request gets here. (The monitoring Tables tab does still render Analyze /
-   * Vacuum / Reindex per row for every provider - it never reads capabilities - so
-   * those buttons hit that 400. Pre-existing and shared with `libredb.ts`; see
+   * HTTP request gets here. (The monitoring Tables tab now reads `getCapabilities()`
+   * and offers no maintenance control here, #272; the admin Operations tab still
+   * does not read them, so its buttons keep hitting that 400. See
    * docs/providers/druid.md section 8.)
    *
    * Compaction and retention are Coordinator and task concerns, out of scope for

@@ -21,6 +21,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useMonitoringData } from "@/hooks/use-monitoring-data";
 import { storage } from "@/lib/storage";
 import { useAllConnections } from "@/hooks/use-all-connections";
+import { useProviderMetadata } from "@/hooks/use-provider-metadata";
 import type { DatabaseConnection } from "@/lib/types";
 
 import { OverviewTab } from "./tabs/OverviewTab";
@@ -65,6 +66,10 @@ export function MonitoringDashboard({ isEmbedded = false }: MonitoringDashboardP
     killSession,
     runMaintenance,
   } = useMonitoringData(selectedConnection, monitoringOptions);
+
+  // Declared provider capabilities, so tabs can hide controls the provider cannot
+  // perform (issue #272). Same hook Studio uses — no new API surface.
+  const { metadata } = useProviderMetadata(selectedConnection);
 
   // Load connections (user + managed seed connections)
   const { connections: allConns } = useAllConnections();
@@ -293,7 +298,12 @@ export function MonitoringDashboard({ isEmbedded = false }: MonitoringDashboardP
                 <SessionsTab data={data} loading={loading} onKillSession={killSession} />
               </TabsContent>
               <TabsContent value="tables" className="h-full m-0 p-0">
-                <TablesTab data={data} loading={loading} onRunMaintenance={runMaintenance} />
+                <TablesTab
+                  data={data}
+                  loading={loading}
+                  onRunMaintenance={runMaintenance}
+                  capabilities={metadata?.capabilities}
+                />
               </TabsContent>
               <TabsContent value="storage" className="h-full m-0 p-0">
                 <StorageTab data={data} loading={loading} />

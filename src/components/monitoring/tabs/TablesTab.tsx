@@ -1,23 +1,44 @@
 "use client";
 
 import React, { useState } from "react";
-import { Table2, Search, AlertTriangle, Loader2, RefreshCw, Zap } from "lucide-react";
+import { Table2, Search, AlertTriangle, Loader2, RefreshCw, Zap, type LucideIcon } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import type { MonitoringData } from "@/lib/db/types";
+import type { MaintenanceType, MonitoringData, ProviderCapabilities } from "@/lib/db/types";
+
+/**
+ * The per-row maintenance controls this tab can render, each keyed to the
+ * `MaintenanceType` vocabulary a provider declares in `maintenanceOperations`
+ * rather than to a loose string — a typo would then be a type error instead of
+ * a silently missing control.
+ */
+const MAINTENANCE_ACTIONS: { type: MaintenanceType; label: string; Icon: LucideIcon; className: string }[] = [
+  { type: "analyze", label: "Analyze", Icon: Search, className: "h-6 w-6 sm:h-8 sm:w-8" },
+  { type: "vacuum", label: "Vacuum", Icon: RefreshCw, className: "h-6 w-6 sm:h-8 sm:w-8" },
+  { type: "reindex", label: "Reindex", Icon: Zap, className: "h-6 w-6 sm:h-8 sm:w-8 hidden sm:inline-flex" },
+];
 
 interface TablesTabProps {
   data: MonitoringData | null;
   loading: boolean;
   onRunMaintenance: (type: string, target?: string) => Promise<boolean>;
   isAdmin?: boolean;
+  /**
+   * The connected provider's declared capabilities (issue #272). Undefined while
+   * the provider metadata is still resolving, and if that request fails — no
+   * maintenance control renders until a provider has declared what it supports,
+   * matching how `Studio.tsx` gates Explain on `supportsExplain`. Failing open
+   * here would put the dead buttons back on exactly the connections this gate
+   * exists for whenever `/api/db/provider-meta` errors.
+   */
+  capabilities?: ProviderCapabilities;
 }
 
-export function TablesTab({ data, loading, onRunMaintenance, isAdmin = true }: TablesTabProps) {
+export function TablesTab({ data, loading, onRunMaintenance, isAdmin = true, capabilities }: TablesTabProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [actionLoading, setActionLoading] = useState<string | null>(null);
 
@@ -52,11 +73,17 @@ export function TablesTab({ data, loading, onRunMaintenance, isAdmin = true }: T
     return new Date(date).toLocaleDateString();
   };
 
-  const handleMaintenance = async (type: string, tableName: string) => {
+  const handleMaintenance = async (type: MaintenanceType, tableName: string) => {
     setActionLoading(`${type}-${tableName}`);
     await onRunMaintenance(type, tableName);
     setActionLoading(null);
   };
+
+  // Offer only the maintenance a provider declares it can perform: /api/db/maintenance
+  // rejects everything else with 400, so an ungated button can only produce an error.
+  const availableActions = capabilities?.supportsMaintenance
+    ? MAINTENANCE_ACTIONS.filter((action) => capabilities.maintenanceOperations.includes(action.type))
+    : [];
 
   return (
     <div className="p-3 sm:p-6 space-y-4 sm:space-y-6">
@@ -175,50 +202,25 @@ export function TablesTab({ data, loading, onRunMaintenance, isAdmin = true }: T
                         {formatDate(table.lastVacuum)}
                       </TableCell>
                       <TableCell className="text-right py-2">
-                        {isAdmin ? (
+                        {isAdmin && availableActions.length > 0 ? (
                           <div className="flex justify-end gap-0.5">
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-6 w-6 sm:h-8 sm:w-8"
-                              onClick={() => handleMaintenance("analyze", table.tableName)}
-                              disabled={!!actionLoading}
-                              title="Analyze"
-                            >
-                              {actionLoading === `analyze-${table.tableName}` ? (
-                                <Loader2 strokeWidth={1.5} className="h-3 w-3 animate-spin" />
-                              ) : (
-                                <Search strokeWidth={1.5} className="h-3 w-3" />
-                              )}
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-6 w-6 sm:h-8 sm:w-8"
-                              onClick={() => handleMaintenance("vacuum", table.tableName)}
-                              disabled={!!actionLoading}
-                              title="Vacuum"
-                            >
-                              {actionLoading === `vacuum-${table.tableName}` ? (
-                                <Loader2 strokeWidth={1.5} className="h-3 w-3 animate-spin" />
-                              ) : (
-                                <RefreshCw strokeWidth={1.5} className="h-3 w-3" />
-                              )}
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-6 w-6 sm:h-8 sm:w-8 hidden sm:inline-flex"
-                              onClick={() => handleMaintenance("reindex", table.tableName)}
-                              disabled={!!actionLoading}
-                              title="Reindex"
-                            >
-                              {actionLoading === `reindex-${table.tableName}` ? (
-                                <Loader2 strokeWidth={1.5} className="h-3 w-3 animate-spin" />
-                              ) : (
-                                <Zap strokeWidth={1.5} className="h-3 w-3" />
-                              )}
-                            </Button>
+                            {availableActions.map(({ type, label, Icon, className }) => (
+                              <Button
+                                key={type}
+                                variant="ghost"
+                                size="icon"
+                                className={className}
+                                onClick={() => handleMaintenance(type, table.tableName)}
+                                disabled={!!actionLoading}
+                                title={label}
+                              >
+                                {actionLoading === `${type}-${table.tableName}` ? (
+                                  <Loader2 strokeWidth={1.5} className="h-3 w-3 animate-spin" />
+                                ) : (
+                                  <Icon strokeWidth={1.5} className="h-3 w-3" />
+                                )}
+                              </Button>
+                            ))}
                           </div>
                         ) : (
                           <span className="text-xs text-muted-foreground">-</span>
