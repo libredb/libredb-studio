@@ -16,7 +16,13 @@
  *
  * The classification is shared but the POLICY is not - see `hasDataModifyingStatement`
  * for the one dialect that has to be stricter.
+ *
+ * The comment skipping itself is no longer done here: it moved to
+ * `lib/sql/leading-keyword.ts` once the query limiter turned out to need the same
+ * tolerance (#275), and the ReDoS reasoning that shapes the pattern moved with it.
  */
+
+import { readLeadingKeyword } from "@/lib/sql/leading-keyword";
 
 /**
  * Which keyword a statement leads with, ignoring whitespace and comments, or `null`
@@ -27,32 +33,6 @@
  * dialect's EXPLAIN executes what it explains.
  */
 export type SelectPrefix = "select" | "with";
-
-/**
- * Leading whitespace and SQL comments, then `SELECT` or `WITH`.
- *
- * The SHAPE of this pattern matters as much as what it accepts. Each of the three
- * alternatives sits inside a `*` quantifier, so any way of matching the same text
- * twice is a way for a NON-matching input to backtrack, and all three had to be made
- * unambiguous independently. Measured on this file's predecessors, with a tail that
- * never reaches a keyword:
- *
- * - No leading `\s*`. Whitespace is already an alternative below; having both gives
- *   two ways to match one run of spaces. Quadratic - 958ms on 20k leading spaces.
- * - The line comment is anchored to a newline OR end-of-input. Without that tail
- *   `[^\n]*` can give characters back and let a later iteration match `--` again, so a
- *   run of bare dashes partitions exponentially - 634ms on a FORTY-NINE character
- *   input, by far the cheapest of the three to trigger. Found by CodeQL (`js/redos`)
- *   after the other two were already fixed.
- * - The block-comment body is TEMPERED (`[^*]|\*(?!\/)`) rather than a lazy
- *   `[\s\S]*?\*\/`, which inside a `*` quantifier can run past the first `*\/` and let
- *   one iteration swallow several comments - 852ms on a 4 KB run of `/**\/`.
- *
- * All three now answer in well under a millisecond, and `select-prefix.test.ts` keeps
- * them that way with a bounded-time guard. This is the same care that made
- * `query-limiter.ts` hand-write its semicolon strip "without regex to avoid ReDoS".
- */
-const LEADING_KEYWORD = /^(?:\s|--[^\n]*(?:\n|$)|\/\*(?:[^*]|\*(?!\/))*\*\/)*(SELECT|WITH)\b/i;
 
 /**
  * Statements that write. Used only to keep a dialect whose EXPLAIN EXECUTES from
@@ -69,8 +49,8 @@ const LEADING_KEYWORD = /^(?:\s|--[^\n]*(?:\n|$)|\/\*(?:[^*]|\*(?!\/))*\*\/)*(SE
  *   statement that leads with it is already refused by `classifySelectPrefix`, which
  *   only ever answers for `SELECT` or `WITH`. Same for `CREATE`, `DROP` and `ALTER`.
  *
- * Flat, with no nested quantifier, so it carries none of the backtracking risk the
- * pattern above had to be shaped around.
+ * Flat, with no nested quantifier, so it carries none of the backtracking risk that
+ * the trivia pattern in `lib/sql/leading-keyword.ts` had to be shaped around.
  */
 const DATA_MODIFYING = /\b(?:INSERT|UPDATE|DELETE|MERGE)\b/i;
 
@@ -78,13 +58,16 @@ const DATA_MODIFYING = /\b(?:INSERT|UPDATE|DELETE|MERGE)\b/i;
  * The keyword this statement leads with, or `null` if it leads with neither.
  *
  * `null` is the "not explainable" answer every strategy turns into a `null` from
- * `buildSql`. A comment on its own is `null`: a comment is not a statement.
+ * `buildSql`. A comment on its own is `null`: a comment is not a statement. So is any
+ * other leading keyword - `readLeadingKeyword` reports what it finds, and only these
+ * two are explainable.
  */
 export function classifySelectPrefix(sql: string): SelectPrefix | null {
-  const match = LEADING_KEYWORD.exec(sql);
-  if (match === null) return null;
+  const leading = readLeadingKeyword(sql)?.keyword;
 
-  return match[1]?.toUpperCase() === "WITH" ? "with" : "select";
+  if (leading === "SELECT") return "select";
+  if (leading === "WITH") return "with";
+  return null;
 }
 
 /**
