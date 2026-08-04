@@ -139,6 +139,22 @@ const PARAMETER_TYPES = Object.freeze({
 const UNREADABLE_PAYLOAD = "Druid ended the response before it was complete, so the result is incomplete";
 const NOT_AN_ARRAY = "Druid answered a SQL result that is not the array it was asked for";
 
+/**
+ * Where the cluster reports how much of the queried data it could actually reach
+ * (issue #273), and the one field of it this transport reads.
+ *
+ * Recorded live on 37.0.0 while #265 was built: every successful answer carries
+ * this header, and its segment list is EMPTY for a complete result. A non-empty
+ * list means the rows are a partial answer while the status is still 200 - the one
+ * condition a client cannot infer from the body, since a short row set looks
+ * exactly like a correct one.
+ *
+ * Read case-insensitively by `Headers.get`, so the wire's own spelling is used
+ * here without making that spelling load-bearing.
+ */
+const RESPONSE_CONTEXT_HEADER = "X-Druid-Response-Context";
+const MISSING_SEGMENTS_FIELD = "missingSegments";
+
 // ============================================================================
 // Wire shapes
 // ============================================================================
@@ -155,6 +171,8 @@ interface HttpOutcome {
   ok: boolean;
   status: number;
   text: string;
+  /** As `unavailableSegments` on the neutral result: null when the answer said nothing. */
+  unavailableSegments: number | null;
 }
 
 /**
@@ -217,6 +235,27 @@ function textField(envelope: Record<string, unknown>, field: string): string | n
   return typeof value === "string" && value !== "" ? value : null;
 }
 
+/**
+ * How many segments the answer says the cluster could not reach, or null when it
+ * said nothing readable about that.
+ *
+ * Only the LENGTH of the list is read, never an entry - the descriptors name
+ * intervals, versions and partition numbers of segments this client has no other
+ * business knowing, and a Druid that respells one must not change what a partial
+ * answer reports.
+ *
+ * Anything unreadable - no header, a proxy's own text, a context without the list
+ * - answers null rather than zero. A zero here would state that the cluster
+ * confirmed a complete result, which is precisely the claim the source did not
+ * make.
+ */
+function unavailableSegmentCount(headers: Headers): number | null {
+  const context = asRecord(parseJson(headers.get(RESPONSE_CONTEXT_HEADER) ?? ""));
+  const missing = context?.[MISSING_SEGMENTS_FIELD];
+
+  return Array.isArray(missing) ? missing.length : null;
+}
+
 // ============================================================================
 // The result (spec section 2)
 // ============================================================================
@@ -266,7 +305,11 @@ function toRow(fieldNames: readonly string[], row: unknown): DruidRow {
   return Object.fromEntries(fieldNames.map((name, column) => [name, values[column] ?? null]));
 }
 
-function toQueryResult(payload: unknown[], executionTimeMs: number): DruidQueryResult {
+function toQueryResult(
+  payload: unknown[],
+  executionTimeMs: number,
+  unavailableSegments: number | null,
+): DruidQueryResult {
   const names = payload[NAME_ROW];
   // A payload shorter than the header, or one whose first row is not the name array,
   // CANNOT be a healthy answer to the request this transport sends - and it must not
@@ -293,6 +336,7 @@ function toQueryResult(payload: unknown[], executionTimeMs: number): DruidQueryR
     sqlTypes: typesByName(fieldNames, payload[SQL_TYPE_ROW]),
     nativeTypes: typesByName(fieldNames, payload[NATIVE_TYPE_ROW]),
     executionTimeMs,
+    unavailableSegments,
   };
 }
 
@@ -481,7 +525,7 @@ export class DruidHttpTransport implements DruidTransport {
 
     if (!outcome.ok) throw envelopeError(parseJson(outcome.text), `Druid request failed with HTTP ${outcome.status}`);
 
-    return toQueryResult(parseRows(outcome.text), executionTimeMs);
+    return toQueryResult(parseRows(outcome.text), executionTimeMs, outcome.unavailableSegments);
   }
 
   /**
@@ -532,7 +576,12 @@ export class DruidHttpTransport implements DruidTransport {
         ...(signal ? { signal } : {}),
       });
 
-      return { ok: response.ok, status: response.status, text: await response.text() };
+      return {
+        ok: response.ok,
+        status: response.status,
+        text: await response.text(),
+        unavailableSegments: unavailableSegmentCount(response.headers),
+      };
     } catch (error) {
       // A refused socket, an abort and a truncated body all arrive here, and all
       // have to leave as the seam's own error type.

@@ -195,7 +195,7 @@ interface CouchbaseQueryResult {
   fieldNames: string[] | null;   // null when the source cannot tell (SELECT *)
   executionTimeMs: number;
   mutationCount: number;
-  warnings: CouchbaseWarning[];
+  warnings: CouchbaseWarning[];   // { message, code? } - no code is left out, never zeroed
 }
 ```
 
@@ -502,6 +502,7 @@ The request carries `metrics: true`, the effective statement timeout, and
 | signature | `fields` | `null` for a wildcard signature, in which case columns are the union of the keys the rows carry, first seen first |
 | — | `rowCount` | `rows.length`, or the mutation count when a statement returned no rows |
 | metrics `executionTime` | `executionTime` | The cluster's own time (excludes network latency); falls back to the measured wall clock when the cluster reported none |
+| `warnings` | `warnings` | The notices the cluster attached to a statement it completed, each carrying its message and the cluster's own code **when it reported one** — an entry with no code arrives without one rather than with a substituted `0`, which is itself a legal code. **Absent** when the cluster reported no warnings at all — never an empty array, so the result UI decides from the field's presence alone (issue #273) |
 
 ### 5.3 `USE KEYS` reads a document with no index at all
 

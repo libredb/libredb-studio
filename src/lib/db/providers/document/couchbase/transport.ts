@@ -28,9 +28,15 @@ export interface Keyspace {
   collection: string;
 }
 
-/** A non-fatal notice the cluster attached to a completed statement. */
+/**
+ * A non-fatal notice the cluster attached to a completed statement.
+ *
+ * The code is OPTIONAL because it reaches the user (#273): substituting a zero for
+ * an entry that carried none would put a code on screen the cluster never sent,
+ * and zero is a legal code, so nothing downstream could tell the two apart.
+ */
 export interface CouchbaseWarning {
-  code: number;
+  code?: number;
   message: string;
 }
 

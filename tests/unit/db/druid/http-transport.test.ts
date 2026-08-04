@@ -465,7 +465,81 @@ describe("DruidHttpTransport results", () => {
   test("describes exactly the neutral result and nothing else", async () => {
     const result = await makeTransport().query("SELECT 1");
 
-    expect(Object.keys(result).sort()).toEqual(["executionTimeMs", "fieldNames", "nativeTypes", "rows", "sqlTypes"]);
+    expect(Object.keys(result).sort()).toEqual([
+      "executionTimeMs",
+      "fieldNames",
+      "nativeTypes",
+      "rows",
+      "sqlTypes",
+      "unavailableSegments",
+    ]);
+  });
+});
+
+// ============================================================================
+// Segment availability (#273)
+// ============================================================================
+
+/**
+ * A 200 whose row set is INCOMPLETE. Druid reports that in the response context
+ * header rather than in the body, so a transport that reads only the body
+ * cannot tell this apart from a complete answer that found fewer rows.
+ *
+ * Only the LENGTH of the array is read, never an entry's shape - the descriptor
+ * below is illustrative, and a future Druid that spells one differently must not
+ * change what this reports.
+ */
+const MISSING_SEGMENTS_CONTEXT =
+  '{"missingSegments":[{"itvl":"2026-08-01T00:00:00.000Z/2026-08-02T00:00:00.000Z","ver":"v1","part":0},' +
+  '{"itvl":"2026-08-02T00:00:00.000Z/2026-08-03T00:00:00.000Z","ver":"v1","part":0}]}';
+
+describe("DruidHttpTransport segment availability", () => {
+  function respondWithContext(context: string): void {
+    handler = () => respond(SELECT_BODY, { headers: { "x-druid-response-context": context } });
+  }
+
+  test("counts the segments the cluster could not reach", async () => {
+    respondWithContext(MISSING_SEGMENTS_CONTEXT);
+
+    const result = await makeTransport().query("SELECT * FROM libredb_demo");
+
+    expect(result.unavailableSegments).toBe(2);
+    // The rows still arrive: the answer is partial, not failed.
+    expect(result.rows).toHaveLength(1);
+  });
+
+  test("reports zero when the cluster said every segment was there", async () => {
+    respondWithContext('{"missingSegments":[]}');
+
+    const result = await makeTransport().query("SELECT * FROM libredb_demo");
+
+    expect(result.unavailableSegments).toBe(0);
+  });
+
+  test("reports nothing rather than zero when the answer said nothing about availability", async () => {
+    // "The source did not say" and "the source said none" are different facts,
+    // and only the second one licenses calling a result complete.
+    handler = () => respond(SELECT_BODY);
+
+    const result = await makeTransport().query("SELECT * FROM libredb_demo");
+
+    expect(result.unavailableSegments).toBeNull();
+  });
+
+  test("reports nothing when the response context is not readable", async () => {
+    respondWithContext("<html>proxied</html>");
+
+    const result = await makeTransport().query("SELECT * FROM libredb_demo");
+
+    expect(result.unavailableSegments).toBeNull();
+  });
+
+  test("reports nothing when the context carries no segment list", async () => {
+    respondWithContext('{"queryId":"abc-123"}');
+
+    const result = await makeTransport().query("SELECT * FROM libredb_demo");
+
+    expect(result.unavailableSegments).toBeNull();
   });
 });
 

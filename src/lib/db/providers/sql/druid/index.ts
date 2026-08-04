@@ -55,6 +55,7 @@ import {
   type ProviderOptions,
   type QueryPrepareOptions,
   type QueryResult,
+  type QueryWarning,
   type SlowQueryStats,
   type StorageStats,
   type TableSchema,
@@ -134,12 +135,47 @@ const CLIENT_DEADLINE_GRACE_MS = DRUID_CLIENT_DEADLINE_GRACE_MS;
  *   overwriting - which is exactly what the wire format was chosen for.
  */
 function toQueryResult(result: DruidQueryResult): QueryResult {
+  // The SQL type is the half a column may be LABELLED with (#273). The native
+  // type is carried beside it through the seam and stops here on purpose: it lies
+  // for an expression - `CURRENT_TIMESTAMP` is native LONG for an ISO string,
+  // `(1 = 1)` is native LONG for `true` - so putting it on screen would describe
+  // a column as something it is not. An empty map means the payload declared no
+  // types, which stays absent rather than shipping a `{}`.
+  const columnTypes = result.sqlTypes ?? {};
+  const warnings = incompleteResultWarning(result.unavailableSegments);
+
   return {
     rows: result.rows,
     fields: result.fieldNames ?? [],
     rowCount: result.rows.length,
     executionTime: Math.round(result.executionTimeMs),
+    ...(Object.keys(columnTypes).length > 0 ? { columnTypes } : {}),
+    ...(warnings ? { warnings } : {}),
   };
+}
+
+/**
+ * The notice a partial answer deserves, or null when the answer was whole.
+ *
+ * Druid serves a query over unreachable segments as an ordinary success: the
+ * status is 200, the rows arrive, and part of the data is not in them. Nothing
+ * downstream can detect that - a short row set is indistinguishable from a
+ * correct one - so the fact is stated in words here rather than left to the grid
+ * to infer.
+ *
+ * A null count is NOT a warning: it means the answer said nothing about
+ * availability, and inventing a caveat for every such answer would train users to
+ * ignore the ones that mean something.
+ */
+function incompleteResultWarning(unavailableSegments: number | null): QueryWarning[] | null {
+  if (unavailableSegments === null || unavailableSegments === 0) return null;
+
+  const [segment, was] = unavailableSegments === 1 ? ["segment", "was"] : ["segments", "were"];
+  return [
+    {
+      message: `This result is incomplete: ${unavailableSegments} ${segment} of the queried data ${was} unavailable.`,
+    },
+  ];
 }
 
 // ============================================================================

@@ -594,6 +594,7 @@ that is how the rest of the application calls every provider uniformly.
 | — | `rowCount` | `rows.length` when there are rows; otherwise `mutationCount` from `X-ClickHouse-Summary`, verbatim, zero included ([§3.6](#36-writes-return-an-empty-200-body-the-row-count-lives-in-a-header)) |
 | `X-ClickHouse-Summary.elapsed_ns` | `executionTime` | The server's own duration, preferred because it excludes network latency; falls back to the envelope's `statistics.elapsed` (seconds), then to the measured wall clock when neither source reported anything |
 | a non-JSON `X-ClickHouse-Format` | `rows` / `fields` | One synthetic row `{ __text: "<raw body>" }` under the single column `__text` ([§3.4](#34-default_formatjson-as-a-url-parameter-never-appended-to-the-sql)) |
+| `meta` array | `columnTypes` | The declared type per column, keyed by its name in `fields` and spelled exactly as ClickHouse spells it — `Nullable(String)`, `LowCardinality(String)`, `Enum8('x' = 1)` — because the wrapper is what tells the user the column is nullable or low-cardinality. **Absent** when the envelope described no columns: a write, a format the user chose, or a statement with no result set. For a computed column such as `count()` this is the only source of a type at all, since no catalog entry exists for it (issue #273) |
 
 ### 5.3 EXPLAIN
 

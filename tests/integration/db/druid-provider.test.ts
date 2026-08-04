@@ -103,6 +103,14 @@ const DUPLICATE_COLUMN_BODY = '[["c","c"],["LONG","LONG"],["INTEGER","INTEGER"],
 /** `SELECT id FROM libredb_demo WHERE id = -1` - all three headers, no data. */
 const NO_ROWS_BODY = '[["id"],["LONG"],["BIGINT"]]';
 
+/**
+ * Three header rows, but the SQL type row is not the array it has to be - what a
+ * proxy that rewrote the response, or a Druid that stopped sending the flag,
+ * would produce. The transport omits a type it was not told rather than
+ * inventing one, so nothing downstream may label the column.
+ */
+const UNTYPED_BODY = '[["id"],["LONG"],"nope",[1000]]';
+
 /** `INFORMATION_SCHEMA.TABLES` filtered to the `druid` schema. */
 const TABLE_LIST_BODY = '[["tableName"],["STRING"],["VARCHAR"],["libredb_demo"],["libredb_rollup"]]';
 
@@ -326,10 +334,22 @@ const CANCELED_BODY = JSON.stringify({
 interface Reply {
   status?: number;
   body: string;
+  /** Response headers beyond the content type every answer carries. */
+  headers?: Record<string, string>;
 }
 
 function ok(body: string): Reply {
   return { body };
+}
+
+/**
+ * A 200 whose row set is INCOMPLETE: Druid reports unreachable segments in the
+ * response context header, never in the body. Only the array's LENGTH is read,
+ * so the descriptor below is illustrative.
+ */
+function withUnavailableSegments(body: string, count: number): Reply {
+  const missing = Array.from({ length: count }, (_unused, index) => ({ itvl: "2026-08-0/2026-08-0", part: index }));
+  return { body, headers: { "x-druid-response-context": JSON.stringify({ missingSegments: missing }) } };
 }
 
 function fail(status: number, body: string): Reply {
@@ -401,7 +421,7 @@ function installFetch(): void {
     return new Response(reply.body, {
       status: reply.status ?? 200,
       // Live-verified: every answer, success and failure alike, is JSON.
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", ...reply.headers },
     });
   }) as typeof fetch;
 }
@@ -825,6 +845,76 @@ describe("DruidProvider query", () => {
     const result = await provider.query('SELECT id FROM "libredb_demo"');
 
     expect(result.rowCount).toBe(result.rows.length);
+  });
+
+  test("labels each column with its SQL type, the trustworthy half of the pair (#273)", async () => {
+    // The native type LIES for an expression - `CURRENT_TIMESTAMP` is native LONG
+    // for an ISO string and `(1 = 1)` is native LONG for a boolean - so the SQL
+    // type is the one a column may be labelled with. The two disagree even here
+    // (native LONG against SQL BIGINT), which is what proves which map travels.
+    const provider = await connectProvider();
+
+    const result = await provider.query('SELECT id, region, qty FROM "libredb_demo"');
+
+    expect(result.columnTypes).toEqual({ id: "BIGINT", region: "VARCHAR", qty: "BIGINT" });
+    expect(Object.values(result.columnTypes ?? {})).not.toContain("LONG");
+    expect(Object.keys(result.columnTypes ?? {})).toEqual(result.fields);
+  });
+
+  test("leaves the type channel absent when the payload declared no types", async () => {
+    const provider = await connectProvider();
+    replyFor = () => ok(UNTYPED_BODY);
+
+    const result = await provider.query("SELECT id FROM libredb_demo");
+
+    expect(result.fields).toEqual(["id"]);
+    expect(result.columnTypes).toBeUndefined();
+    expect("columnTypes" in result).toBe(false);
+  });
+
+  test("warns that a 200 is incomplete when the cluster could not reach every segment (#273)", async () => {
+    // The hazard this channel exists for: the status is 200, the rows look like a
+    // complete answer, and part of the data was simply not there. Needs a
+    // multi-server cluster to provoke live, so the declaring response is fed here.
+    const provider = await connectProvider();
+    replyFor = () => withUnavailableSegments(DEMO_BODY, 2);
+
+    const result = await provider.query('SELECT id, region, qty FROM "libredb_demo"');
+
+    expect(result.warnings).toEqual([
+      { message: "This result is incomplete: 2 segments of the queried data were unavailable." },
+    ]);
+    expect(result.rows).toHaveLength(2);
+  });
+
+  test("says one segment in the singular", async () => {
+    const provider = await connectProvider();
+    replyFor = () => withUnavailableSegments(DEMO_BODY, 1);
+
+    const result = await provider.query('SELECT id FROM "libredb_demo"');
+
+    expect(result.warnings).toEqual([
+      { message: "This result is incomplete: 1 segment of the queried data was unavailable." },
+    ]);
+  });
+
+  test("leaves the warnings channel absent when the cluster answered completely", async () => {
+    const provider = await connectProvider();
+    replyFor = () => withUnavailableSegments(DEMO_BODY, 0);
+
+    const result = await provider.query('SELECT id FROM "libredb_demo"');
+
+    expect(result.warnings).toBeUndefined();
+    expect("warnings" in result).toBe(false);
+  });
+
+  test("leaves the warnings channel absent when the answer said nothing about availability", async () => {
+    const provider = await connectProvider();
+    replyFor = () => ok(DEMO_BODY);
+
+    const result = await provider.query('SELECT id FROM "libredb_demo"');
+
+    expect(result.warnings).toBeUndefined();
   });
 });
 

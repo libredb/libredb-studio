@@ -199,8 +199,11 @@ function toWarnings(value: unknown): CouchbaseWarning[] {
   return value.map((entry) => {
     const record = asRecord(entry) ?? {};
     return {
-      code: typeof record.code === "number" ? record.code : 0,
       message: readMessage(record, ""),
+      // Left out entirely when the entry reported none, rather than defaulted:
+      // the code is shown to the user now (#273) and 0 is a code the cluster can
+      // genuinely send.
+      ...(typeof record.code === "number" ? { code: record.code } : {}),
     };
   });
 }

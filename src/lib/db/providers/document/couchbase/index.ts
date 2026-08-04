@@ -466,6 +466,11 @@ export class CouchbaseProvider extends BaseDatabaseProvider {
       // A mutation returns no rows; its row count is what it changed.
       rowCount: rows.length > 0 ? rows.length : result.mutationCount,
       executionTime: reportedMs > 0 ? reportedMs : measuredMs,
+      // A statement the cluster completed can still carry advice about itself
+      // (#273). The neutral warning is already `{ code, message }`, so nothing is
+      // reshaped here. The field stays ABSENT for a clean run rather than
+      // becoming an empty array: absence is what tells the UI to render nothing.
+      ...(result.warnings.length > 0 ? { warnings: result.warnings } : {}),
     };
   }
 

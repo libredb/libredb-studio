@@ -52,6 +52,12 @@ const WIRE_TOKENS = [
   "errorMessage",
   "errorClass",
   "authorization",
+  // The availability report (#273): the header the cluster states it in and the
+  // one field of it the transport reads. Provider logic reads the counted answer
+  // (`unavailableSegments`) off the neutral result instead, so a second
+  // implementation that learns availability another way needs no change above it.
+  "X-Druid-Response-Context",
+  "missingSegments",
 ];
 
 /**
@@ -82,12 +88,13 @@ const SEAM_RULE = [
   `Druid's HTTP wire format leaked out of ${TRANSPORT_FILE}.`,
   "",
   "Druid's SQL endpoint asks for rows through resultFormat/header/typesHeader/sqlTypesHeader, answers with",
-  "three HEADER ROWS in front of positional data, and reports a failure in one of two envelopes whose",
-  "`error` field is a discriminator rather than a message. Issue #265 keeps all of that inside the",
-  "transport: provider logic reads the neutral DruidQueryResult (rows, fieldNames, sqlTypes, nativeTypes,",
-  "executionTimeMs) and the classified DruidTransportError through the DruidTransport seam. That is what",
-  "makes adopting Druid's Avatica JDBC driver later one new file implementing the same interface, instead",
-  "of a rewrite of the provider, the introspection and the explain strategy.",
+  "three HEADER ROWS in front of positional data, states in a response-context header how much of the data",
+  "it could reach, and reports a failure in one of two envelopes whose `error` field is a discriminator",
+  "rather than a message. Issue #265 keeps all of that inside the transport: provider logic reads the neutral",
+  "DruidQueryResult (rows, fieldNames, sqlTypes, nativeTypes, executionTimeMs, unavailableSegments) and the",
+  "classified DruidTransportError through the DruidTransport seam. That is what makes adopting Druid's",
+  "Avatica JDBC driver later one new file implementing the same interface, instead of a rewrite of the",
+  "provider, the introspection and the explain strategy.",
   "",
   `Fix an access below by mapping the field inside ${TRANSPORT_FILE} and widening DruidQueryResult when the`,
   "value is genuinely needed. If you tripped this on a local name rather than on the wire, rename it to the",
@@ -232,7 +239,8 @@ const TASKS = 'SELECT task_id, datasource, status, error_msg FROM sys.tasks';
 export async function storage(transport: DruidTransport, sql: string) {
   try {
     const result = await transport.query(sql, { timeoutMs: 30000, clientDeadlineMs: 35000, parameters: [] });
-    const { rows, fieldNames, sqlTypes, nativeTypes, executionTimeMs } = result;
+    const { rows, fieldNames, sqlTypes, nativeTypes, executionTimeMs, unavailableSegments } = result;
+    if (unavailableSegments !== null && unavailableSegments > 0) return null;
     const stats = await fetchTableStats(transport);
     await prefetchSchema(transport);
     return { rows, fieldNames, sqlTypes, nativeTypes, executionTimeMs, stats, SERVERS, TASKS };
@@ -291,6 +299,8 @@ export async function readRows(origin: string, sql: string) {
     ["an envelope message read by key", 'const text = body["errorMessage"];', "errorMessage"],
     ["the legacy exception class", "const cause = payload.errorClass;", "errorClass"],
     ["the persona field spelled as a string", 'const who = body["persona"];', "persona"],
+    ["the response-context header", 'const ctx = headers.get("X-Druid-Response-Context");', "X-Druid-Response-Context"],
+    ["a segment-availability read", "const gaps = context.missingSegments;", "missingSegments"],
     ["an auth header", "const headers = { authorization: basic };", "authorization"],
     ["an auth header spelled for HTTP", 'headers.set("Authorization", basic);', "authorization"],
     ["a direct fetch", 'await fetch(url, { method: "POST" });', "fetch"],
@@ -322,6 +332,7 @@ export async function readRows(origin: string, sql: string) {
     ["the connection's own host", "const host = this.connection.host;"],
     // Neutral seam vocabulary that reads like the wire and is not.
     ["the neutral result's fields", "const { rows, fieldNames, sqlTypes, nativeTypes } = result;"],
+    ["the counted availability answer", "if (result.unavailableSegments) return [];"],
     ["the neutral options", "await transport.query(sql, { timeoutMs: 30000, clientDeadlineMs: 35000 });"],
     ["a local holding the neutral message", "const message = error.message;"],
     ["a SQL header-ish column name", 'const q = "SELECT header FROM sys.segments";'],

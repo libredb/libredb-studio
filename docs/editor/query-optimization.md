@@ -329,6 +329,8 @@ interface QueryResult {
   executionTime: number;
   explainPlan?: any;
   pagination?: QueryPagination;
+  warnings?: QueryWarning[];             // notices the engine attached; absent when it reported none
+  columnTypes?: Record<string, string>;  // declared type per column, keyed by its name in `fields`
 }
 
 // Query tab state

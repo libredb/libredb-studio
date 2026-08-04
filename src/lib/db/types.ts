@@ -13,6 +13,7 @@ export type {
   IndexSchema,
   ForeignKeySchema,
   QueryResult,
+  QueryWarning,
 } from "../types";
 
 import type { DatabaseType, DatabaseConnection, TableSchema, TableRelations, QueryResult } from "../types";

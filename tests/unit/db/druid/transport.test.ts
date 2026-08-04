@@ -229,6 +229,8 @@ describe("the DruidTransport contract", () => {
     sqlTypes: { __time: "TIMESTAMP", id: "BIGINT", ok: "BOOLEAN" },
     nativeTypes: { __time: "LONG", id: "LONG", ok: "LONG" },
     executionTimeMs: 7,
+    // A whole answer: the source reported that no segment was out of reach.
+    unavailableSegments: 0,
   };
 
   test("a result describes its rows, their order and both type vocabularies", async () => {
@@ -268,6 +270,7 @@ describe("the DruidTransport contract", () => {
       sqlTypes: { c: "INTEGER", "c (2)": "INTEGER" },
       nativeTypes: { c: "LONG", "c (2)": "LONG" },
       executionTimeMs: 2,
+      unavailableSegments: 0,
     };
     const transport = new RecordingTransport(duplicated);
 
@@ -291,6 +294,7 @@ describe("the DruidTransport contract", () => {
       sqlTypes: null,
       nativeTypes: null,
       executionTimeMs: 1,
+      unavailableSegments: null,
     });
 
     const received = await transport.query("SELECT 1");
@@ -299,6 +303,21 @@ describe("the DruidTransport contract", () => {
     expect(received.fieldNames).toBeNull();
     expect(received.sqlTypes).toBeNull();
     expect(received.nativeTypes).toBeNull();
+  });
+
+  /**
+   * Issue #273: Druid answers a query it could only partly serve with an ordinary
+   * success, so the count is the only evidence the rows are incomplete. Zero and
+   * null are different claims - "the source confirmed a whole answer" against "the
+   * source said nothing" - and only the first one licenses trusting the row set.
+   */
+  test("a partial answer counts the unreachable segments, and a silent source stays null", async () => {
+    const partial = new RecordingTransport({ ...result, unavailableSegments: 2 });
+    const silent = new RecordingTransport({ ...result, unavailableSegments: null });
+
+    expect((await partial.query("SELECT 1")).unavailableSegments).toBe(2);
+    expect((await silent.query("SELECT 1")).unavailableSegments).toBeNull();
+    expect(result.unavailableSegments).toBe(0);
   });
 
   // Spec sections 6 and 13: the two deadlines are independent halves, and

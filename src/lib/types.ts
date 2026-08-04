@@ -121,6 +121,27 @@ export interface QueryPagination {
   wasLimited: boolean;
 }
 
+/**
+ * A non-fatal notice an engine attached to a statement it completed.
+ *
+ * The point of the channel is a response that succeeded and is still not the
+ * whole truth: an analytics engine can answer 200 with rows missing, and a query
+ * service can answer with advice about the statement it just ran. Without
+ * somewhere to put those, a provider has to drop them and the result looks
+ * complete.
+ */
+export interface QueryWarning {
+  /** The notice itself, as the engine worded it. */
+  message: string;
+  /**
+   * The engine's own identifier for the notice, when it reported one. Carried
+   * verbatim rather than normalized - Couchbase numbers its warnings while other
+   * engines label them with a string - and omitted entirely by an engine that
+   * reports no identifier, rather than claiming a zero.
+   */
+  code?: number | string;
+}
+
 export interface QueryResult {
   rows: Record<string, unknown>[];
   fields: string[];
@@ -128,6 +149,21 @@ export interface QueryResult {
   executionTime: number;
   explainPlan?: unknown;
   pagination?: QueryPagination;
+  /**
+   * Notices the engine attached to this run. **Absent** when it reported none -
+   * never an empty array, so the UI can decide whether to render anything from
+   * the field's presence alone.
+   */
+  warnings?: QueryWarning[];
+  /**
+   * The declared type of each column, keyed by its name in `fields`, spelled the
+   * way the engine spells it (`Nullable(String)`, `BIGINT`).
+   *
+   * This is the type the wire format declared for THIS result, which is the only
+   * source for a computed column or an ad-hoc projection - the schema tree has no
+   * catalog entry to answer with. Absent when the source declared none.
+   */
+  columnTypes?: Record<string, string>;
 }
 
 export interface QueryTab {

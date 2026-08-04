@@ -135,6 +135,14 @@ follow-up.
 Errors follow the same rule: the transport throws one normalized error carrying a numeric code, so
 the provider switches on a code instead of sniffing message strings.
 
+**Carry what the source declares into the shared result.** `QueryResult` has two optional channels
+for exactly this (issue #273): `warnings` for notices the engine attached to a statement it completed
+— including a success that admits part of the data was unreachable — and `columnTypes` for the
+declared type per column, keyed by its name in `fields`. If your source knows either, map it in
+`toQueryResult()` instead of dropping it at the seam. **Absence is the signal** in both cases: omit
+the field rather than sending an empty array or `{}`, so the UI never renders an affordance for
+nothing.
+
 **Guard the seam with a test.** The boundary is only worth something if it holds. Assert that the
 wire-envelope identifiers appear in the transport file and nowhere else in the provider directory —
 see `tests/unit/db/couchbase/seam-guard.test.ts`. Without that, the envelope leaks one field at a

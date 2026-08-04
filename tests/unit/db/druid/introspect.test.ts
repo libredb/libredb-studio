@@ -128,6 +128,9 @@ function createRunner(options: FakeOptions = {}) {
         sqlTypes: null,
         nativeTypes: null,
         executionTimeMs: 1,
+        // The seam requires an answer about segment availability from every
+        // source; a fake that never speaks HTTP has nothing to report (#273).
+        unavailableSegments: null,
       };
     },
   };

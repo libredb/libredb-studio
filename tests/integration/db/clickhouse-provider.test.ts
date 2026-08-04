@@ -698,6 +698,58 @@ describe("ClickHouseProvider query", () => {
 
     await expect(provider.query("SELECT 1", [])).resolves.toBeDefined();
   });
+
+  test("carries the declared type of each column, keyed by the field name it reported (#273)", async () => {
+    // The wrapper is the point: `Nullable(String)` is what tells the user the
+    // column accepts nulls, and the schema tree cannot answer for a computed
+    // column like `count()` because no catalog entry exists for it.
+    const provider = await connectProvider();
+    replyFor = () =>
+      jsonReply(
+        [{ id: 1, email: null, total: "7" }],
+        [
+          { name: "id", type: "UInt32" },
+          { name: "email", type: "Nullable(String)" },
+          { name: "total", type: "UInt64" },
+        ],
+      );
+
+    const result = await provider.query("SELECT id, email, count() AS total FROM users GROUP BY id, email");
+
+    expect(result.columnTypes).toEqual({ id: "UInt32", email: "Nullable(String)", total: "UInt64" });
+    expect(Object.keys(result.columnTypes ?? {})).toEqual(result.fields);
+  });
+
+  test("leaves the type channel absent for a write, which declares no columns", async () => {
+    const provider = await connectProvider();
+    replyFor = () => writeReply("2");
+
+    const result = await provider.query("INSERT INTO users VALUES (1, 'a@b.c'), (2, 'd@e.f')");
+
+    expect(result.columnTypes).toBeUndefined();
+    expect("columnTypes" in result).toBe(false);
+  });
+
+  test("leaves the type channel absent for a format the user chose", async () => {
+    // The synthetic `__text` column is this provider's own invention, so there is
+    // no declared type to report for it.
+    const provider = await connectProvider();
+    replyFor = () => ({ body: "1\ta@b.c\n", format: "TSV" });
+
+    const result = await provider.query("SELECT id, email FROM users FORMAT TSV");
+
+    expect(result.fields).toEqual(["__text"]);
+    expect(result.columnTypes).toBeUndefined();
+  });
+
+  test("leaves the type channel absent when the envelope described no columns at all", async () => {
+    const provider = await connectProvider();
+    replyFor = () => ({ body: JSON.stringify({ meta: [], data: [] }) });
+
+    const result = await provider.query("SELECT 1");
+
+    expect(result.columnTypes).toBeUndefined();
+  });
 });
 
 // ============================================================================

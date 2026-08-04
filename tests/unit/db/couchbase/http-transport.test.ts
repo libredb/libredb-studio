@@ -225,15 +225,17 @@ describe("CouchbaseHttpTransport.query", () => {
     expect(result.warnings).toEqual([{ code: 3239, message: "advisor is unavailable" }]);
   });
 
-  test("normalizes warnings that are not objects or carry no code", async () => {
+  test("omits a code the cluster did not report instead of reporting zero", async () => {
+    // The code is now published to the user (#273), so a substituted zero would
+    // put a code on screen that the cluster never sent - and 0 is a legal code,
+    // so nothing downstream could tell it apart from a real one.
     handler = routeQuery(successPayload({ warnings: [null, { message: "no code here" }] }));
 
     const result = await makeTransport().query("SELECT 1");
 
-    expect(result.warnings).toEqual([
-      { code: 0, message: "" },
-      { code: 0, message: "no code here" },
-    ]);
+    expect(result.warnings).toEqual([{ message: "" }, { message: "no code here" }]);
+    // toEqual treats an explicit undefined as absent, so the key itself is checked.
+    expect(result.warnings.every((warning) => !("code" in warning))).toBe(true);
   });
 
   test("returns an empty warning list when the cluster sends none", async () => {

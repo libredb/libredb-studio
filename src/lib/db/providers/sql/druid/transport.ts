@@ -104,6 +104,23 @@ export interface DruidQueryResult {
    * pretend the number came from the server.
    */
   executionTimeMs: number;
+
+  /**
+   * How many segments of the queried data the cluster could not reach while
+   * answering, or null when the source reported nothing about availability.
+   *
+   * Druid answers a query it could only PARTLY serve with an ordinary success:
+   * the rows arrive, the status is fine, and part of the data is simply not in
+   * them (issue #273). That makes it the one fact a caller cannot recover on its
+   * own - a short row set is indistinguishable from a correct one - so it belongs
+   * in the neutral result rather than in whichever implementation happened to see
+   * it. Any Druid client can learn it: the availability report travels beside the
+   * rows in every protocol the cluster speaks.
+   *
+   * Null and zero are deliberately different: "the source did not say" must not
+   * license calling a result complete, which is exactly what a zero would do.
+   */
+  unavailableSegments: number | null;
 }
 
 /** Per-statement options. */

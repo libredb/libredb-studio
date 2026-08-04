@@ -220,6 +220,7 @@ interface DruidQueryResult {
   sqlTypes: Record<string, string> | null;      // BIGINT, VARCHAR, TIMESTAMP, ARRAY, ... - the trustworthy pair
   nativeTypes: Record<string, string> | null;   // LONG, DOUBLE, ARRAY<STRING>, COMPLEX<HLLSketch>, ...
   executionTimeMs: number;                      // MEASURED here, never reported by the server
+  unavailableSegments: number | null;           // how much of the data was out of reach; null = the source did not say
 }
 ```
 
@@ -235,8 +236,16 @@ Three things this type says by what it omits:
 - **`fieldNames` is required to be unique**, which is the transport's obligation rather than the
   wire's ([§3.4](#34-resultformat-array-because-the-object-form-loses-columns)).
 
+And one thing it says by what it *includes*: **`unavailableSegments` is not optional and its null is
+not a zero** (issue #273). Druid serves a query over data it cannot fully reach as an ordinary
+success, so a short row set and a correct one are indistinguishable from the body alone — which makes
+this the one fact only the source can supply. `0` means the source confirmed a whole answer, `null`
+means it said nothing about availability, and only the first licenses trusting the row count. The
+provider turns a positive count into a result warning ([§5.2](#52-result-shaping)).
+
 > **Seam rule.** The wire vocabulary (`resultFormat`, `typesHeader`, `sqlTypesHeader`,
-> `/druid/v2/sql`, `druidException`, `errorMessage`, `errorClass`, the `authorization` header, and
+> `/druid/v2/sql`, `druidException`, `errorMessage`, `errorClass`, the `authorization` header, the
+> `X-Druid-Response-Context` header with its `missingSegments` list, and
 > `fetch` itself) must appear **only** in `http-transport.ts`.
 > [`seam-guard.test.ts`](../../tests/unit/db/druid/seam-guard.test.ts) parses every source file in the
 > directory with the TypeScript compiler API — not a grep — and fails the build the moment any of that
@@ -334,18 +343,17 @@ in the neutral result rather than dropped: it is the vocabulary a Druid user rea
 and in a segment's dimension list, so discarding it would make the editor describe columns in words
 the user's other tools never use. It is *carried*, not trusted.
 
-**Where each type actually reaches the screen**, because the two halves differ and it is easy to
-assume otherwise:
+**Where each type actually travels**, because the two halves differ and it is easy to assume
+otherwise:
 
 - **The schema tree** shows `INFORMATION_SCHEMA.COLUMNS.DATA_TYPE` — also a SQL type — which
-  introspection puts on `ColumnSchema.type`. This is the type a user sees today.
-- **The result grid shows no per-column type at all**, for any provider. `QueryResult`
-  ([src/lib/types.ts](../../src/lib/types.ts)) is `{ rows, fields, rowCount, executionTime,
-  explainPlan?, pagination? }` — there is no channel a column type could travel in — so
-  `toQueryResult` drops both maps. They are collected because every Druid client knows them and
-  because the transport is the only place that *can* know them, not because something consumes them
-  yet. Giving `QueryResult` a type channel would serve every provider and is a follow-up, not part of
-  this one.
+  introspection puts on `ColumnSchema.type`. That is the type a user sees on a catalogued column.
+- **The result carries the SQL type per column** since issue #273 gave `QueryResult`
+  ([src/lib/types.ts](../../src/lib/types.ts)) an optional `columnTypes` channel, keyed by the name in
+  `fields`. `toQueryResult` maps `sqlTypes` into it and stops the native map here on purpose: the
+  native type is the one that lies for an expression, and a column may only be labelled with the
+  accurate half. The native map stays in the neutral result for the reason above — it is the
+  vocabulary a Druid user reads elsewhere — and has no consumer today.
 
 Full observed surface: native `LONG`, `DOUBLE`, `FLOAT`, `STRING`, `ARRAY<LONG>`, `ARRAY<STRING>`,
 `COMPLEX<HLLSketch>` against SQL `BIGINT`, `INTEGER`, `DOUBLE`, `FLOAT`, `DECIMAL`, `VARCHAR`, `CHAR`,
@@ -796,6 +804,8 @@ both the reason and the alternative, which is more useful than anything this pro
 | header row 0 | `fields` | Declared column order, made unique (`c`, `c (2)`); `[]` when the payload carried no header |
 | — | `rowCount` | `rows.length`. There is no second number: no Druid statement mutates, so a mutation count could only ever be zero |
 | the measured exchange | `executionTime` | Rounded milliseconds, **measured by the transport**. The endpoint reports no timing whatsoever, so there is no server-side number this could be preferred over ([§3.2](#32-the-transport-seam-one-interface-one-implementation)) |
+| header row 2 (SQL types) | `columnTypes` | Keyed by the same disambiguated names; **absent** when the payload declared no types. The native types (header row 1) deliberately do not travel — they lie for an expression ([§3.5](#35-the-sql-type-labels-the-column-because-the-native-type-lies)) |
+| `X-Druid-Response-Context.missingSegments` | `warnings` | One warning naming how many segments were unavailable, and **absent** for a whole answer or an answer that said nothing about availability ([§13](#13-known-limitations--future-work)) |
 
 ### 5.3 `ARRAY` cells arrive as JSON strings
 
@@ -1449,16 +1459,20 @@ cancellation as unsupported because the provider exposes no `cancelQuery`
 
 ## 13. Known limitations & future work
 
-- **A partially-unavailable result is not flagged.** Every successful response carries
-  `X-Druid-Response-Context: {"missingSegments":[]}`, and a non-empty array there means the row set is
-  **incomplete** while the status is still 200. The provider does not surface it, for a structural
-  reason rather than an oversight: `QueryResult` has no warnings channel at all — the Couchbase
-  transport collects `warnings` at its own seam and its provider discards them for exactly the same
-  reason — so there is nowhere to put the fact without changing a shared type and the result UI. A
-  query-warnings channel would serve both providers and is the follow-up. Note that the fixture
-  cluster cannot reproduce a non-empty array: with a single Historical, losing it removes the
-  datasource from the catalog instead ([§6](#the-catalog-is-a-view-of-what-is-servable-not-of-what-exists)),
-  so the partial case needs a multi-server cluster where only *some* segments are unavailable.
+- **A partially-unavailable result is flagged as a warning** (issue #273 — this was a known gap until
+  then). Every successful response carries `X-Druid-Response-Context: {"missingSegments":[]}`, and a
+  non-empty array there means the row set is **incomplete** while the status is still 200. The
+  transport counts that list into `unavailableSegments` and the provider turns a positive count into
+  one `QueryResult` warning; a whole answer, and an answer that reported nothing about availability,
+  carry none ([§5.2](#52-result-shaping)). Only the list's *length* is read — the descriptors name
+  intervals, versions and partition numbers a client has no other business knowing, so respelling one
+  cannot change what a partial answer reports. Note that the fixture cluster cannot reproduce a
+  non-empty array: with a single Historical, losing it removes the datasource from the catalog instead
+  ([§6](#the-catalog-is-a-view-of-what-is-servable-not-of-what-exists)), so the partial case needs a
+  multi-server cluster where only *some* segments are unavailable — which is why the behaviour is
+  pinned by feeding the declaring response
+  ([tests/unit/db/druid/http-transport.test.ts](../../tests/unit/db/druid/http-transport.test.ts))
+  rather than by a live probe.
 - **No writes at all through this endpoint.** No `UPDATE`, no `DELETE`, no `CREATE TABLE`; `INSERT`
   and `REPLACE` need the MSQ task engine. This is Druid, not the provider — see
   [§5.5](#55-druid-sql-cannot-write-and-the-server-says-so-clearly), which also documents how data is

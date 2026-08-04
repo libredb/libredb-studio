@@ -470,6 +470,40 @@ describe("CouchbaseProvider query", () => {
 
     expect(bodyOf("country = $1").args).toEqual(["France"]);
   });
+
+  test("carries the notices the cluster attached to a completed statement (#273)", async () => {
+    // The cluster answers `status: success` and appends advice about the
+    // statement it just ran; those notices used to stop at the transport seam,
+    // so a user never learned their query had been answered with a caveat.
+    const provider = await connectProvider();
+    queryHandler = () =>
+      queryPayload([{ id: "hotel::1" }], {
+        signature: { id: "string" },
+        warnings: [
+          { code: 4321, msg: "The index advisor recommends an index on `city`" },
+          { code: 3230, msg: "This statement uses a full keyspace scan" },
+        ],
+      });
+
+    const result = await provider.query("SELECT id FROM `travel`.`inventory`.`hotel`");
+
+    expect(result.warnings).toEqual([
+      { code: 4321, message: "The index advisor recommends an index on `city`" },
+      { code: 3230, message: "This statement uses a full keyspace scan" },
+    ]);
+  });
+
+  test("leaves the warnings channel absent when the cluster reported none", async () => {
+    // Absence is the signal, so a clean run must not carry an empty array: the
+    // result UI decides whether to render anything at all from this field.
+    const provider = await connectProvider();
+    queryHandler = () => queryPayload([{ id: "hotel::1" }], { signature: { id: "string" } });
+
+    const result = await provider.query("SELECT id FROM `travel`.`inventory`.`hotel`");
+
+    expect(result.warnings).toBeUndefined();
+    expect("warnings" in result).toBe(false);
+  });
 });
 
 // ============================================================================

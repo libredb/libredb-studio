@@ -888,8 +888,21 @@ interface QueryResult {
   rowCount: number;        // Number of rows returned
   executionTime: number;   // Execution time in ms
   explainPlan?: any;       // Query execution plan (if requested)
+  warnings?: QueryWarning[];             // Notices the engine attached; ABSENT when it reported none
+  columnTypes?: Record<string, string>;  // Declared type per column, keyed by its name in `fields`
+}
+
+interface QueryWarning {
+  message: string;         // The notice, as the engine worded it
+  code?: number | string;  // The engine's own identifier, when it reported one
 }
 ```
+
+Both optional channels are filled only by providers whose source declares them, and **absence is the
+signal**: a run that produced no warnings omits the field rather than sending `[]`, so a client can
+decide what to render from the field's presence alone. `columnTypes` is the declared type of *this*
+result, which is the only source for a computed column or an ad-hoc projection — the schema has no
+catalog entry to answer with.
 
 ### HealthInfo
 
