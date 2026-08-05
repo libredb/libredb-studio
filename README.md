@@ -776,6 +776,7 @@ extraEnvFrom:
 | [Editor Docs](docs/editor/) | SQL editor internals — completion, performance, query optimization |
 | [Architecture](docs/ARCHITECTURE.md) | System architecture and design patterns |
 | [Adding a Provider](docs/ADDING_A_PROVIDER.md) | Step-by-step guide to adding a database, and how to tell whether it needs a driver at all |
+| [Backlog](docs/BACKLOG.md) | Known defects and deferred work that is not yet filed as an issue |
 
 ---
 
