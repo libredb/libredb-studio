@@ -368,6 +368,34 @@ channels:
       strategy: none
       note: Render builds from the repo Dockerfile (render.yaml dockerfilePath) on push, so there is no image tag to pin - the deployed version tracks whatever main builds. Like fly.toml, render.yaml is auto-detected at the repo root, so users deploy straight from the repo Blueprint.
 
+  - id: unraid-ca
+    name: Unraid Community Applications (libredb/unraid-templates)
+    short_name: Unraid Community Apps
+    status: live
+    category: paas-catalogs
+    platforms: [container]
+    tier: 2
+    kind: one-click-template
+    update:
+      method: commit
+      sla: on_demand
+    links:
+      tracking_issue: https://github.com/libredb/libredb-studio/issues/283
+      catalog: https://ca.unraid.net/apps/libredb-studio-0a5x41a1cy1kay
+      upstream_repo: https://github.com/libredb/unraid-templates
+      docs: docs/DISTRIBUTION.md
+    pin:
+      strategy: remote_file
+      url: https://raw.githubusercontent.com/libredb/unraid-templates/main/templates/libredb-studio.xml
+      extract: 'libredb-studio:(\d+\.\d+\.\d+)'
+      note: The container template is LibreDB-owned (libredb/unraid-templates), so a version bump is a commit
+        in THAT repo - not a PR here and not an upstream PR - which is why this is tier 2 with a remote_file
+        pin rather than local_file. Community Applications only serves what its own periodic catalog build
+        picked up, so a bump reaches users one CA build after the commit. Submitted via ca.unraid.net/submit
+        on 2026-08-04 and auto-approved (a non-duplicate Docker app with no plugin needs no human review).
+        The `container` platform is deliberate and not a stand-in for cloud - the user installs a Docker
+        container on their own Unraid server.
+
   # ---- Tier 3: upstream community catalogs, bumped via PR -----------------
 
   - id: caprover-official
@@ -452,6 +480,34 @@ channels:
       strategy: remote_file
       url: https://raw.githubusercontent.com/kubero-dev/kubero/main/services/libredb-studio/app.yaml
       extract: 'ghcr\.io/libredb/libredb-studio\s+tag:\s*(\d+\.\d+\.\d+)'
+
+  - id: sealos
+    name: Sealos App Store template
+    status: live
+    category: paas-catalogs
+    platforms: [cloud]
+    tier: 3
+    kind: one-click-template
+    update:
+      method: upstream_pr
+      sla: on_demand
+    links:
+      tracking_issue: https://github.com/libredb/libredb-studio/issues/276
+      first_pr: https://github.com/labring-actions/templates/pull/739
+      catalog: https://sealos.io/products/app-store/libredb-studio
+      upstream_repo: https://github.com/labring-actions/templates
+      docs: docs/DISTRIBUTION.md
+    pin:
+      strategy: remote_file
+      url: https://raw.githubusercontent.com/labring-actions/templates/kb-0.9/template/libredb-studio/index.yaml
+      extract: 'libredb-studio:(\d+\.\d+\.\d+)'
+      note: Sealos app-store templates live in labring-actions/templates (labring is the company behind
+        Sealos) and go in as a direct template PR - no upstream issue first. That repo's default branch is
+        `kb-0.9`, NOT main or master, so both the pin URL above and any bump PR must target it; a
+        raw.githubusercontent URL on `main` 404s, and `master` carries a copy that can lag. The template
+        pins the image twice (deploy plus the rendered docs block), which is why the shared
+        all-matches-must-agree rule matters here. Deploys SQLite on a 1 GiB PVC by default, with
+        KubeBlocks-managed PostgreSQL as an opt-in storage backend.
 
   - id: operatorhub-community
     name: OperatorHub / OpenShift community operator catalogs
