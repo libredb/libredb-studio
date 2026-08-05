@@ -65,6 +65,47 @@ function injectTop(sql: string, limit: number): string | null {
   return `${sql.slice(0, insertAt)} TOP ${limit}${sql.slice(insertAt)}`;
 }
 
+/**
+ * A T-SQL page written as `OFFSET n ROW[S]`, at the end of the statement.
+ *
+ * That is a complete page here - "skip n rows and return the rest" - and it is
+ * the one bound form the shared probes in `query-limiter.ts` cannot see: they
+ * want a `FETCH … ROWS ONLY` tail or a bare `OFFSET n`, and `OFFSET 10 ROWS` is
+ * neither. Unseen, the statement looked unbounded and collected a clause beside
+ * its own page, which SQL Server rejects outright (Msg 10741) - so the statement
+ * FAILED rather than returning too many rows, and this method reported a limit
+ * for it. The form belongs to this dialect, so it is read here rather than in the
+ * shared limiter, where it would move every other dialect's probes (#293).
+ *
+ * Anchored at the end of the statement for the same reason the shared probes
+ * are: an `OFFSET` inside a subquery (`… FROM (SELECT … OFFSET 10 ROWS) x`) is a
+ * different query expression, which a `TOP` on the outer one may legally join,
+ * and one written in a trailing comment is not a page at all. A digit count only,
+ * as the shared probes read: `OFFSET @skip ROWS` is not recognised, which is the
+ * limitation `docs/providers/mssql.md` records.
+ */
+const TSQL_PAGE_TAIL = /\bOFFSET\s+\d+\s+ROWS?\s*$/i;
+
+/**
+ * Whether text mentions a clause a row-count clause may not sit beside.
+ *
+ * Consulted ONLY where the statement's end may not be cut. Every already-bounded
+ * probe - the shared ones and `TSQL_PAGE_TAIL` above - is anchored at the end of
+ * the statement's own text, and where the cut is refused that text still carries
+ * the trailing trivia: a real page written before a trailing comment then sits
+ * away from the anchor and reads as absent. An anchor that may be reading trivia
+ * is not an answer a decision that ADDS a clause may rest on, so this asks the
+ * weaker question the situation allows - is there anything here that could be a
+ * page? - and the branch declines when there is.
+ *
+ * Unanchored and deliberately blunt: it also fires on a column named `offset`
+ * and on a subquery's own page, so such a statement loses its bound. That is the
+ * trade the whole of `src/lib/sql/` makes for text it cannot resolve - an
+ * over-large read reported honestly as unbounded, never a statement the server
+ * refuses - and both halves are pinned in this provider's suite.
+ */
+const TSQL_ROW_BOUND_MENTION = /\b(?:OFFSET|FETCH)\b/i;
+
 // ============================================================================
 // SQL Statements
 // ============================================================================
@@ -580,15 +621,23 @@ export class MSSQLProvider extends SQLBaseProvider {
       // table an ordinary statement here rather than the special case it used to
       // be: `SELECT * FROM #tmp` is cuttable, so BOTH branches are reachable for
       // it, and the already-bounded probe sees a `FETCH NEXT` written after the
-      // `#` even when trailing trivia follows it - which is where a `TOP` used to
-      // be spliced alongside an `OFFSET … FETCH` that SQL Server rejects
-      // outright. What still declines is a statement whose end cannot be cut for
-      // a reason that is not the hash, such as a literal behind an odd backslash
-      // run; that class is #293's remaining half.
+      // `#` even when trailing trivia follows it.
       const source = query.trim();
       const { end, rewritable } = readStatementEnd(source, resolveSqlGrammar(this.type));
       let modifiedSql = source.slice(0, end);
       const trailing = source.slice(end);
+
+      // Two pages the shared probes cannot see, and a clause beside either is a
+      // statement SQL Server refuses (Msg 10741) rather than one that returns too
+      // many rows - so both decline here, before either branch commits to a
+      // `wasLimited: true` (#293). The first is this dialect's own `OFFSET n ROWS`
+      // form; the second is every statement whose end may not be cut, where no
+      // end anchor is reading the statement's real tail and the honest answer is
+      // that a page cannot be ruled out. Neither is the hash the paragraph above
+      // describes: that half is closed at the root by naming the dialect.
+      if (TSQL_PAGE_TAIL.test(modifiedSql) || (!rewritable && TSQL_ROW_BOUND_MENTION.test(modifiedSql))) {
+        return { query, wasLimited: false, limit: effectiveLimit, offset };
+      }
 
       if (offset > 0) {
         if (!rewritable) {

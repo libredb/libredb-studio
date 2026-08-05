@@ -807,6 +807,140 @@ describe("MSSQLProvider", () => {
       });
     });
 
+    // ── A statement that already carries a page (#293) ───────────────────────
+    //
+    // `TOP` and `OFFSET … FETCH` may not both appear in one query expression, so
+    // adding a row-count clause to a statement that already carries a page does
+    // not return too many rows - SQL Server rejects the statement outright
+    // (Msg 10741) while this method reports `wasLimited: true`. Two shapes reach
+    // that, and neither of them is the hash #292 closed at the root:
+    //
+    // 1. The statement's end may not be CUT. The already-bounded probes in the
+    //    shared limiter are anchored at the end of the statement's own text, and
+    //    where the cut is refused that text still carries the trailing trivia -
+    //    so a real page written BEFORE a trailing comment sits away from the
+    //    anchor and reads as absent.
+    // 2. `OFFSET n ROWS` with no `FETCH` tail is a complete T-SQL page that the
+    //    shared probes do not recognise at all: they want a `FETCH … ROWS ONLY`
+    //    tail or a bare `OFFSET n` at the very end, and this form is neither.
+    describe("statements that already carry a page", () => {
+      // Shape 1. Every row carries a real page AND real trailing trivia; what
+      // differs is only the reason the end cannot be cut. The emitted text is
+      // asserted whole, because what this closes is an emitted statement the
+      // server refuses rather than one that returns too many rows.
+      test.each<[string, string]>([
+        [
+          "a literal whose end is undeterminable",
+          "SELECT id FROM users WHERE path = 'C:\\' ORDER BY id OFFSET 0 ROWS FETCH NEXT 10 ROWS ONLY -- daily",
+        ],
+        [
+          "an unterminated block comment",
+          "SELECT id FROM users ORDER BY id OFFSET 0 ROWS FETCH NEXT 10 ROWS ONLY /* daily",
+        ],
+        [
+          "an unterminated bracket-quoted name",
+          "SELECT [abc FROM users ORDER BY id OFFSET 0 ROWS FETCH NEXT 10 ROWS ONLY -- daily",
+        ],
+      ])("adds no TOP to a paged read whose end cannot be cut for %s", (_label, sql) => {
+        const result = provider.prepareQuery(sql, { limit: 50 });
+
+        expect(result.query).toBe(sql);
+        expect(result.wasLimited).toBe(false);
+        expect(result.query).not.toMatch(/\bTOP\b/i);
+      });
+
+      // Shape 2. The `#tmp` row is this task's fixture-discipline input: a
+      // temp-table name and a block comment after the page, two constructs the
+      // shared scanner reads only because this provider names its dialect.
+      test.each<[string, string]>([
+        ["with no FETCH tail", "SELECT * FROM users ORDER BY id OFFSET 10 ROWS"],
+        ["spelled ROW rather than ROWS", "SELECT * FROM users ORDER BY id OFFSET 1 ROW"],
+        ["before a trailing line comment", "SELECT * FROM users ORDER BY id OFFSET 10 ROWS -- daily"],
+        ["before a terminator", "SELECT * FROM users ORDER BY id OFFSET 10 ROWS;"],
+        ["with a FETCH tail", "SELECT * FROM users ORDER BY id OFFSET 10 ROWS FETCH NEXT 5 ROWS ONLY"],
+        ["on a temp table, before a block comment", "SELECT * FROM #tmp ORDER BY id OFFSET 10 ROWS /* daily */"],
+      ])("recognises a T-SQL page %s and adds no clause beside it", (_label, sql) => {
+        const result = provider.prepareQuery(sql, { limit: 50 });
+
+        expect(result.query).toBe(sql);
+        expect(result.wasLimited).toBe(false);
+        expect(result.query).not.toMatch(/\bTOP\b/i);
+      });
+
+      // The pagination branch reaches the same statement, and appending there
+      // emits `… OFFSET 10 ROWS OFFSET 10 ROWS FETCH NEXT 50 ROWS ONLY`.
+      test("appends no second page to a T-SQL page when an offset is requested", () => {
+        const sql = "SELECT * FROM users ORDER BY id OFFSET 10 ROWS";
+
+        const result = provider.prepareQuery(sql, { limit: 50, offset: 10 });
+
+        expect(result.query).toBe(sql);
+        expect(result.wasLimited).toBe(false);
+      });
+
+      // The page probe is anchored at the end of the statement, exactly as the
+      // shared ones are: an `OFFSET` belonging to a subquery is a different query
+      // expression, which a `TOP` on the outer one may legally join, and one
+      // written in text the statement merely carries is no page at all.
+      test.each<[string, string, string]>([
+        [
+          "an OFFSET inside a subquery",
+          "SELECT * FROM (SELECT id FROM t ORDER BY id OFFSET 10 ROWS) x",
+          "SELECT TOP 50 * FROM (SELECT id FROM t ORDER BY id OFFSET 10 ROWS) x",
+        ],
+        [
+          "a page spelled inside a trailing comment",
+          "SELECT * FROM users -- OFFSET 10 ROWS",
+          "SELECT TOP 50 * FROM users -- OFFSET 10 ROWS",
+        ],
+        [
+          "a page spelled inside a bracket-quoted name",
+          "SELECT [OFFSET 5 ROWS] FROM users",
+          "SELECT TOP 50 [OFFSET 5 ROWS] FROM users",
+        ],
+        [
+          "a column whose name merely begins with the word",
+          "SELECT offset_id FROM users WHERE path = 'C:\\'",
+          "SELECT TOP 50 offset_id FROM users WHERE path = 'C:\\'",
+        ],
+      ])("still bounds a read carrying %s", (_label, sql, expected) => {
+        const result = provider.prepareQuery(sql, { limit: 50 });
+
+        expect(result.query).toBe(expected);
+        expect(result.wasLimited).toBe(true);
+      });
+
+      // A head `TOP` is found by a probe anchored at the statement's own
+      // `SELECT`, so no trailing trivia and no unreadable tail can hide it. This
+      // is today's answer on both rows; it is asserted because the refusal added
+      // here must not turn a recognised bound into a silent second one.
+      test.each<[string, string]>([
+        ["before a trailing comment", "SELECT TOP 10 * FROM users -- daily"],
+        ["in a statement whose end cannot be cut", "SELECT TOP 10 id FROM users WHERE path = 'C:\\'"],
+      ])("keeps a head TOP %s and collects no second clause", (_label, sql) => {
+        const result = provider.prepareQuery(sql, { limit: 50 });
+
+        expect(result.query).toBe(sql);
+        expect(result.wasLimited).toBe(false);
+        expect(result.query.match(/\bTOP\b/gi)).toHaveLength(1);
+      });
+
+      // The blunt half of the rule, pinned so it stays a decision rather than a
+      // surprise: where the end cannot be cut, no anchor is trustworthy, so the
+      // WORD alone is enough to decline - and a statement that merely names a
+      // column `offset` beside an unreadable literal loses its bound. It is
+      // reported honestly (`wasLimited: false`), which is the trade every reader
+      // in `src/lib/sql/` makes for text it cannot resolve.
+      test("declines where an unreadable end sits beside a column named like a clause", () => {
+        const sql = "SELECT [offset] FROM users WHERE path = 'C:\\'";
+
+        const result = provider.prepareQuery(sql, { limit: 50 });
+
+        expect(result.query).toBe(sql);
+        expect(result.wasLimited).toBe(false);
+      });
+    });
+
     // The honesty invariant behind all of the above, asserted directly: there is no
     // input for which this path claims a limit while handing back the statement it
     // was given. A CTE is the case that is NOT rewritable here - `TOP` belongs to

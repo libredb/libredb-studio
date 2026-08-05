@@ -124,8 +124,28 @@ own text, the end is cuttable, and both halves close together:
 
 See
 [Which dialect the readers are reading](../editor/query-optimization.md#which-dialect-the-readers-are-reading).
-This closes the common half of #293; the remaining case — a statement whose end cannot be cut for a
-reason that is *not* the hash, such as a literal behind an odd backslash run — is tracked there.
+
+That closed the common half of the same hazard. The other half is not about the hash at all: **wherever
+the end may not be cut, no already-bounded probe is reading the statement's real tail.** Those probes
+are anchored at the end of the statement's own text, and a refused cut reports the terminator strip as
+that text — trailing whitespace and `;` removed and nothing else — so a real page written *before* a
+trailing comment sits away from the anchor and reads as absent. A `TOP` was then spliced beside it and
+SQL Server rejected the statement (Msg 10741): the query **failed** while this method reported a limit.
+Reading a page that is not there is harmless (the statement is left alone); missing one that is there
+is not, so where the cut is refused this provider asks the weaker question the situation allows — does
+the text mention an `OFFSET` or a `FETCH` at all? — and declines when it does. The check is unanchored
+and deliberately blunt: a column named `offset`, or a page belonging to a subquery, is enough to
+decline, so such a statement keeps its full result set and is reported honestly as unbounded (#293).
+
+One page form was invisible even where the end **is** cuttable: **`OFFSET n ROWS` with no `FETCH`
+tail** is a complete T-SQL page, and the shared probes recognise only a `FETCH … ROWS ONLY` tail or a
+bare `OFFSET n`. `SELECT … ORDER BY id OFFSET 10 ROWS` therefore collected a `TOP` — and with an offset
+requested, a second `OFFSET … FETCH` appended beside the first. It is now read here rather than in the
+shared limiter, since the form is this dialect's own and no other dialect's probes should move for it:
+`OFFSET n ROW` and `OFFSET n ROWS` at the end of the statement are a page, and the statement is
+returned untouched. The count must be a literal, exactly as the shared probes read — `OFFSET @skip
+ROWS` is not recognised, so a parameterised page still collects a `TOP`, which is a known limitation
+rather than a decision.
 
 The same channel carries this dialect's bracket reading, and T-SQL's is the one the shared reader always
 applied: **`[…]` is a delimited identifier**, everything between the brackets is the name (apostrophe,
@@ -150,10 +170,15 @@ returning the statement untouched. It never reports a limit while handing back t
   probe missed it, because that probe wants literal whitespace between `SELECT` and `TOP`, which both a
   comment (`SELECT/* c */TOP 10 …`) and a `DISTINCT` defeat. Splicing would emit `SELECT TOP n TOP 10`
   and a syntax error.
+- **A T-SQL page at the end of the statement** (`… ORDER BY id OFFSET 10 ROWS`) — a bound the shared
+  probes do not recognise, and a clause beside it is a rejected statement.
+- **An end that may not be cut, in a statement mentioning `OFFSET` or `FETCH`** — the already-bounded
+  probes cannot be trusted there, so a page cannot be ruled out.
 
-The `OFFSET … FETCH` branch declines in one further case of its own: **an end that may not be cut** —
-a trailing `#` run, or a quote behind an odd backslash run, which T-SQL and MySQL close in different
-places. It has nowhere to append; the `TOP` branch, which does not append, is unaffected.
+The `OFFSET … FETCH` branch declines in one further case of its own: **any end that may not be cut** —
+a trailing `#` run under the dialect-less reading, a quote behind an odd backslash run, an unterminated
+comment or bracket. It has nowhere to append; the `TOP` branch, which splices into the head, keeps
+bounding such a statement unless the rule above applies to it.
 
 ### 3.3 Five-query schema introspection, cross-schema
 
@@ -494,6 +519,11 @@ Over the API: `POST /api/db/query`, `POST /api/db/transaction`, `POST /api/db/ca
   can lose precision; they would need to be fetched as strings to stay exact ([§5.3](#53-data-type--parameter-handling)).
 - **Parameters bound without explicit types** — relies on `mssql` type inference, which can mis-type
   `null`/large-integer/`NVARCHAR` values ([§5.3](#53-data-type--parameter-handling)).
+- **A parameterised page is not recognised as one.** The already-bounded probes read a literal count,
+  so `… OFFSET @skip ROWS [FETCH NEXT @take ROWS ONLY]` still looks unbounded and collects a `TOP`,
+  which SQL Server rejects beside it (Msg 10741) — the statement fails rather than returning too many
+  rows ([§3.2](#32-t-sql-pagination-top-and-offset--fetch)). *Future:* accept a variable or an
+  expression as the count.
 - **No Always On / high-availability options.** `MultiSubnetFailover` (fast failover to an
   availability-group listener) and `ApplicationIntent=ReadOnly` (read-only routing to a readable
   secondary) are not set — both are common requirements for enterprise HA SQL Server. *Future:*

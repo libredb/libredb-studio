@@ -265,14 +265,30 @@ written after a `#` is still found and never doubled — which is also why MSSQL
 into the head, keeps bounding `SELECT * FROM #tmp` even without a dialect. Under the dialect-less
 reading that is not airtight — trailing trivia written *after* an existing bound hides it from the
 end-anchored probe, so a `TOP` is spliced alongside an `OFFSET … FETCH` that SQL Server rejects — and
-naming the dialect is what closes it: `#` is never a comment in T-SQL, so the probe sees the bound
-that is there. Likewise the one shape that stays wrong without a dialect, a bound commented out with
-`#` (`… # LIMIT 10`), is read correctly under MySQL's grammar: the commented-out clause is not a
-clause, and a real bound is added before it.
+naming the dialect is what closes it *for a hash*: `#` is never a comment in T-SQL, so the probe sees
+the bound that is there. Every other route to a refused cut reached that provider the same way, and
+what closes those is the rule in the next paragraph. Likewise the one shape that stays wrong without a
+dialect, a bound commented out with `#` (`… # LIMIT 10`), is read correctly under MySQL's grammar: the
+commented-out clause is not a clause, and a real bound is added before it.
+
+A refused cut costs more than the bound, and this is the part that is easy to miss: it also makes every
+**already-bounded probe** unreliable. Those probes read the statement's own text, and where the cut is
+refused that text is the terminator strip — trailing whitespace and `;` removed and nothing else — so a
+real bound written *before* a trailing comment sits away from the end anchor and reads as absent. For a
+caller that responds to "not bounded" by leaving the statement alone, that is harmless. For a caller
+that responds by ADDING a clause, it is not: the clause lands beside a bound the probe could not see,
+and engines reject the pair outright rather than returning too many rows. So a provider that adds its
+own clause has to treat those probes as non-authoritative wherever the cut was refused. MSSQL is the
+one that adds a clause the refusal does not otherwise stop — `TOP n` goes into the head, which no
+trailing comment can reach — and it now declines whenever such a statement mentions an `OFFSET` or a
+`FETCH` at all, blunt on purpose, since a page cannot be ruled out from text nothing can read (#293).
 
 Providers that append a clause of their own follow the same rule: Oracle's `FETCH FIRST` and
 `OFFSET … FETCH NEXT`, and MSSQL's `OFFSET … FETCH NEXT` pagination branch. MSSQL's `SELECT TOP n`
-splices into the head, which no trailing comment can reach, and is unchanged. ClickHouse's refusal to
+splices into the head, which no trailing comment can reach, so it keeps bounding a statement whose end
+may not be cut — with the one exception above. MSSQL also recognises a page form of its own that the
+shared probes above do not, `OFFSET n ROWS` with no `FETCH` tail; it is read in that provider, because
+the form is T-SQL's alone and no other dialect's probes should move for it. ClickHouse's refusal to
 rewrite a statement ending in `FORMAT`/`SETTINGS`, and Druid's refusal to rewrite one ending in an
 `OFFSET`, both read the same end — otherwise a trailing comment would hide the clause from them and
 the bound placed before that comment would turn a working statement into a server-side syntax error.
