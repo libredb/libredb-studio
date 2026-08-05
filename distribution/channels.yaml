@@ -491,9 +491,10 @@ channels:
         Sealos) and go in as a direct template PR - no upstream issue first. That repo's default branch is
         `kb-0.9`, NOT main or master, so both the pin URL above and any bump PR must target it; a
         raw.githubusercontent URL on `main` 404s, and `master` carries a copy that can lag. The template
-        pins the image twice (deploy plus the rendered docs block), which is why the shared
-        all-matches-must-agree rule matters here. Deploys SQLite on a 1 GiB PVC by default, with
-        KubeBlocks-managed PostgreSQL as an opt-in storage backend.
+        pins the image in TWO places - the StatefulSet's `originImageName` annotation and the container
+        `image` - so the shared all-matches-must-agree rule is what catches a half-finished bump here.
+        Deploys SQLite on a 1 GiB PVC by default, with KubeBlocks-managed PostgreSQL as an opt-in
+        storage backend, and ships AUTH_BOOTSTRAP=off so the deployment starts in strict mode.
 
   - id: operatorhub-community
     name: OperatorHub / OpenShift community operator catalogs

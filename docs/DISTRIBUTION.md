@@ -34,7 +34,8 @@ have Docker images only.
 
 ## Zero-config first run
 
-Every channel works with no configuration. When `JWT_SECRET` / `ADMIN_PASSWORD` are not set
+Every channel works with no configuration, except the two catalog templates that collect
+credentials in their own install form (see the last bullet). When `JWT_SECRET` / `ADMIN_PASSWORD` are not set
 (and the auth provider is not OIDC), the server generates them on first start, persists them in
 `<data dir>/auth-bootstrap.json` (file mode 0600), and prints the admin password **once** to the
 server log:
@@ -53,12 +54,19 @@ server log:
 - Explicitly set environment variables always take precedence; only missing values are generated.
 - If the data dir is not persisted (ephemeral container, no volume), new credentials are
   generated on every recreate.
+- **The two catalog templates are the exception**, because their install form asks for the
+  credentials up front: the [Unraid](#unraid-community-applications) template requires
+  `ADMIN_PASSWORD` and `JWT_SECRET`, and the [Sealos](#sealos-app-store) template collects an admin
+  password and sets `AUTH_BOOTSTRAP=off`. Both therefore start with credentials you chose, print no
+  generated-password banner, and write no `auth-bootstrap.json`. Zero-config describes what the
+  server does when a channel leaves those variables unset.
 
 **Strict mode:** set `AUTH_BOOTSTRAP=off` to disable generation and require explicit
 `JWT_SECRET` and `ADMIN_PASSWORD` (recommended for production; missing values then surface as a
 clear error on the login page instead of silently generated credentials in collected logs). Every
-channel, the Helm chart included, defaults to zero-config; strict mode is always opt-in.
-Unrecognized `AUTH_BOOTSTRAP` values log a warning and keep bootstrap on.
+channel that starts the server itself, the Helm chart included, defaults to zero-config and takes
+strict mode as an opt-in; the [Sealos](#sealos-app-store) template is the one channel that ships
+with it already on. Unrecognized `AUTH_BOOTSTRAP` values log a warning and keep bootstrap on.
 
 ## Network exposure (bind address)
 
@@ -845,13 +853,16 @@ web UI: **Apps** tab, search for **LibreDB Studio**, then **Install**.
 
 - **The web UI host port defaults to 3006**, mapped to container port 3000. Any free host port
   works; the template steers away from 3000 because it commonly collides with other apps.
-- **App Data** is `/mnt/user/appdata/libredb-studio` mapped to `/app/data` - the server-side SQLite
-  storage (`STORAGE_SQLITE_PATH=/app/data/libredb-storage.db`) and the generated credentials file
-  live there, so both survive container updates and recreation.
+- **App Data** is `/mnt/user/appdata/libredb-studio` mapped to `/app/data`, holding the server-side
+  SQLite storage (`STORAGE_SQLITE_PATH=/app/data/libredb-storage.db`) - that database is what
+  survives container updates and recreation. **No `auth-bootstrap.json` is written here**, because
+  the template always supplies `ADMIN_PASSWORD` and `JWT_SECRET` and generation short-circuits when
+  both are set: back up the database, and keep the credentials you typed into the template.
 - **Credentials are entered in the Add Container form**, not read back from a log: the template
   marks `ADMIN_EMAIL`, `ADMIN_PASSWORD` (minimum 8 characters) and `JWT_SECRET` (minimum 32
-  characters) as required fields. That is a template choice for a NAS audience - the app's own
-  [zero-config first run](#zero-config-first-run) still applies to every other channel.
+  characters) as required fields. That is a template choice for a NAS audience, not an app
+  requirement - see the exception noted under
+  [Zero-config first run](#zero-config-first-run).
 - `AUTH_COOKIE_SECURE=false` ships as the default because a LAN install is served over plain HTTP.
   Set it to `true` once the app sits behind HTTPS (a reverse proxy); leaving it `false` on a
   public host sends the session cookie in cleartext.
@@ -873,6 +884,9 @@ provisions compute, networking, storage and ingress, so there is nothing to inst
 - **Storage** defaults to SQLite on a 1 GiB PVC. The template also offers **Use PostgreSQL
   storage**, which provisions a KubeBlocks-managed PostgreSQL instance and points
   `STORAGE_PROVIDER` / `STORAGE_POSTGRES_URL` at it - see [`docs/STORAGE.md`](STORAGE.md).
+- The template sets **`AUTH_BOOTSTRAP=off`** and generates `JWT_SECRET` itself, so the deployment
+  starts in [strict mode](#zero-config-first-run) with the password you entered - there is no
+  generated-credentials banner to read from the pod log.
 - Bumps go in as a template PR to `labring-actions/templates`. That repo's default branch is
   **`kb-0.9`**, not `main` or `master`, which is what both the drift-check pin URL and any bump PR
   must target.
