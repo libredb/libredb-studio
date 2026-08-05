@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getOrCreateProvider } from "@/lib/db";
 import { splitStatements } from "@/lib/sql/statement-splitter";
+import { isSelectQuery } from "@/lib/db/utils/query-limiter";
 import { createErrorResponse } from "@/lib/api/errors";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { getSession } from "@/lib/auth";
@@ -48,8 +49,16 @@ export async function POST(req: NextRequest) {
       const startTime = performance.now();
 
       try {
-        // For the last statement that is a SELECT, apply limit
-        const isLastSelect = i === statements.length - 1 && /^\s*SELECT\b/i.test(stmt.sql);
+        // For the last statement that is a SELECT, apply limit. "Last statement
+        // only" is this route's own policy; whether the statement IS a SELECT is
+        // not — that reading is shared, and this route used to re-derive it with
+        // `/^\s*SELECT\b/i`. `splitStatements` keeps each statement's leading
+        // comments, so an annotated final SELECT failed that pattern and reached
+        // the engine unprepared, which is the unbounded read the shared classifier
+        // was made comment-tolerant to close (#281, #275). The shared reading also
+        // types a `WITH` by the keyword its CTE list operates (#287), so a
+        // read-only CTE is bounded here and a data-modifying one is not.
+        const isLastSelect = i === statements.length - 1 && isSelectQuery(stmt.sql);
         const prepared = isLastSelect
           ? provider.prepareQuery(stmt.sql, options)
           : { query: stmt.sql, wasLimited: false, limit: 0, offset: 0 };

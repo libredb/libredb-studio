@@ -306,6 +306,104 @@ describe("POST /api/db/multi-query", () => {
     expect(mockProvider.prepareQuery).not.toHaveBeenCalled();
   });
 
+  // ─── Which final statement gets bounded (#281) ─────────────────────────────
+  // The route used to answer "is this a SELECT" with its own `/^\s*SELECT\b/i`,
+  // which tolerates whitespace but not a comment, so an annotated final SELECT
+  // reached the engine unprepared. It now reads the shared classifier.
+  //
+  // The ` LIMIT 50` these assert on is the mock provider's marker, not the real
+  // limiter's output: what is under test here is WHICH statement the route hands
+  // to `prepareQuery` and that it executes the prepared text. The bound a real
+  // provider produces for these same statements is pinned at the shared seam, in
+  // `tests/unit/db/query-limiter.test.ts` and `tests/unit/db/sql-base.test.ts`.
+  describe("final-statement classification", () => {
+    test("comment-led final SELECT is prepared and the bounded SQL reaches the engine", async () => {
+      const finalStatement = "-- final read\nSELECT * FROM users";
+
+      const req = createMockRequest("/api/db/multi-query", {
+        method: "POST",
+        body: {
+          connection: validConnection,
+          sql: `INSERT INTO users (name) VALUES ('a');\n${finalStatement}`,
+          options: { limit: 50 },
+        },
+      });
+
+      await POST(req as never);
+
+      expect(mockProvider.prepareQuery).toHaveBeenCalledWith(finalStatement, { limit: 50 });
+      // The response echoes the original text, so the engine-visible bound is the
+      // only honest assertion that the statement was actually limited.
+      expect(mockProvider.query).toHaveBeenCalledWith(`${finalStatement} LIMIT 50`);
+    });
+
+    test("final statement that is not a SELECT is executed unprepared", async () => {
+      const req = createMockRequest("/api/db/multi-query", {
+        method: "POST",
+        body: {
+          connection: validConnection,
+          sql: "SELECT * FROM users;\n-- annotated write\nUPDATE users SET name = 'b'",
+        },
+      });
+
+      await POST(req as never);
+
+      expect(mockProvider.prepareQuery).not.toHaveBeenCalled();
+      expect(mockProvider.query).toHaveBeenCalledWith("-- annotated write\nUPDATE users SET name = 'b'");
+    });
+
+    test("non-final SELECT is executed unprepared", async () => {
+      const req = createMockRequest("/api/db/multi-query", {
+        method: "POST",
+        body: {
+          connection: validConnection,
+          sql: "-- first read\nSELECT * FROM a;\nINSERT INTO b VALUES (1)",
+        },
+      });
+
+      await POST(req as never);
+
+      expect(mockProvider.prepareQuery).not.toHaveBeenCalled();
+      expect(mockProvider.query).toHaveBeenCalledWith("-- first read\nSELECT * FROM a");
+    });
+
+    test("comment-led final read-only CTE is prepared", async () => {
+      const finalStatement = "-- read\nWITH c AS (SELECT 1 AS a) SELECT * FROM c";
+
+      const req = createMockRequest("/api/db/multi-query", {
+        method: "POST",
+        body: {
+          connection: validConnection,
+          sql: `INSERT INTO t VALUES (1);\n${finalStatement}`,
+        },
+      });
+
+      await POST(req as never);
+
+      expect(mockProvider.query).toHaveBeenCalledWith(`${finalStatement} LIMIT 50`);
+    });
+
+    test("comment-led final data-modifying CTE is executed unprepared", async () => {
+      // The shared classifier types a `WITH` by the keyword its CTE list operates
+      // (#287), so the `SELECT` this statement supplies itself must not win it a
+      // bound - that bound would cap the rows it WRITES.
+      const finalStatement = "-- write\nWITH c AS (DELETE FROM logs RETURNING id) INSERT INTO audit SELECT id FROM c";
+
+      const req = createMockRequest("/api/db/multi-query", {
+        method: "POST",
+        body: {
+          connection: validConnection,
+          sql: `SELECT 1;\n${finalStatement}`,
+        },
+      });
+
+      await POST(req as never);
+
+      expect(mockProvider.prepareQuery).not.toHaveBeenCalled();
+      expect(mockProvider.query).toHaveBeenCalledWith(finalStatement);
+    });
+  });
+
   test("QueryError from getOrCreateProvider returns 400", async () => {
     mockGetOrCreateProvider.mockImplementation(async () => {
       throw new QueryError("Bad query", "postgres");

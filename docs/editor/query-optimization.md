@@ -180,6 +180,31 @@ rewrite a statement ending in `FORMAT`/`SETTINGS`, and Druid's refusal to rewrit
 `OFFSET`, both read the same end — otherwise a trailing comment would hide the clause from them and
 the bound placed before that comment would turn a working statement into a server-side syntax error.
 
+### Multi-statement runs
+
+In standalone studio, a script holding several statements is split
+(`src/lib/sql/statement-splitter.ts`) and sent to `POST /api/db/multi-query`, which bounds the **last**
+statement only, and only when it is a `SELECT`. Embedded in a host application the query goes to the
+host's own executor and none of this route applies.
+
+Whether that last statement *is* a `SELECT` is the shared reading described above (`isSelectQuery`),
+not a pattern belonging to the route. It used to be `/^\s*SELECT\b/i`, which tolerates whitespace but
+not a comment — and the splitter keeps each statement's leading comments — so a final `SELECT` behind a
+`-- note` was not recognised and reached the engine unbounded, the one place the comment-tolerant
+classifier had not been adopted (#281). The CTE typing applies here too: a final read-only CTE is
+bounded, a final data-modifying one is not.
+
+Last-only is that route's own policy, and it leaves a hole this section does not close: a non-final
+`SELECT` runs exactly as written, and its **entire** result set travels back in `statements[i].rows`.
+That is also what the grid displays whenever the final statement returns no rows of its own
+(`SELECT * FROM huge; INSERT INTO t VALUES (1)`), since the response picks the last result that *has*
+rows. Noted here rather than claimed closed.
+
+Two indicators do not follow the bound onto this route, because it returns no pagination metadata at
+all: the **AUTO-LIMITED badge does not appear** for a multi-statement run, and **Load More is not
+offered** even when rows were capped. The bound itself is real and applied — re-run the final statement
+on its own to page through it.
+
 ---
 
 ## Load More Functionality

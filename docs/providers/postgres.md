@@ -297,6 +297,14 @@ and, **only for `SELECT`/CTE-`SELECT` queries that don't already have a `LIMIT`*
 `prepareQuery()` is a *preparation* step (the UI calls it before `query()`); `query()` itself runs
 exactly the SQL it is handed.
 
+Which routes call it is a caller policy, not the provider's: `POST /api/db/query` and the transaction
+route's `query` action prepare every statement they are given, while `POST /api/db/multi-query` prepares
+the **last** statement of a script and only when it is a `SELECT` — so a non-final `SELECT` returns its
+full result set, which that route's own
+[section](../editor/query-optimization.md#multi-statement-runs) records rather than claims closed. It
+decided "is this a `SELECT`" with its own `/^\s*SELECT\b/i` until #281 and so skipped preparation for a
+comment-led final `SELECT`; it now reads `isSelectQuery()` from the same classifier as everything above.
+
 ### 5.3 Query cancellation
 
 A query issued with a `queryId` records its backend PID in a `Map`. `cancelQuery(queryId)`
