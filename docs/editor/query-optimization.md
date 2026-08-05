@@ -99,25 +99,40 @@ An already-bounded annotated statement (`LIMIT n`, `FETCH FIRST n ROWS ONLY`, `S
 still recognised as bounded and is not limited twice.
 
 A statement leading with `WITH` is typed by the keyword its CTE list **operates** — the first one
-after the list, read by walking the list's grammar in `src/lib/sql/operative-keyword.ts`. Asking
+after the list, read by walking the list's grammar in `src/lib/sql/operative-keyword.ts`. A list
+element is read in either of the two shapes the supported dialects use: the standard
+`name [(cols)] AS [[NOT] MATERIALIZED] (body)`, and ClickHouse's `<expr> AS <alias>`
+(`WITH now() AS ts SELECT …`, `WITH 1 AS one SELECT …`) — an element the walker cannot cross ends the
+reading, and the statement then loses its bound, which is what happened to ClickHouse's own CTE idiom
+between the two fixes. The shapes are told apart by whether the element's head reads as a name and by
+what follows its `AS`: a body or one of PostgreSQL's inlining hints can only be the standard shape,
+anything else is an alias. Asking
 instead whether the text contained `SELECT` let the `INSERT INTO … SELECT` idiom answer for its own
 statement: a data-modifying CTE was typed `SELECT`, received a `LIMIT`, and in PostgreSQL that bound
 applies to the rows the statement **writes** — it committed at most 500 of them while the badge
-reported a truncated result set. Where the CTE list's shape cannot be determined, the statement is
-not treated as a `SELECT` and is not bounded: an over-large read can be re-run, a partly committed
-write cannot be undone.
+reported a truncated result set. Where the reader cannot cross the CTE list, the statement is not
+treated as a `SELECT` and is not bounded: an over-large read can be re-run, a partly committed write
+cannot be undone.
 
-That covers malformed input (an unclosed body, a missing `AS`, an unterminated comment or literal)
-and, deliberately, two **well-formed** forms the reader does not walk — so they lose their bound and
-return every row:
+That covers most malformed input (an unclosed body, a missing `AS`, an unterminated comment or
+literal) and, deliberately, two **well-formed** forms the reader does not walk — so they lose their
+bound and return every row:
 
 | Form | Why it is not read | Effect |
 |------|--------------------|--------|
-| ClickHouse's `WITH <expr> AS <alias>` (`WITH now() AS ts SELECT …`) | puts an expression where the standard form puts a CTE name; reading it needs an expression parser | idiomatic on ClickHouse, and a regression there — tracked for follow-up |
 | PostgreSQL's `SEARCH` / `CYCLE` clause after a recursive CTE list | sits between the list and the operative keyword; the reader stops at the first word after the list | rare |
+| An expression element aliased with an inlining hint (`WITH col AS materialized SELECT …`) | the hint commits the element to the standard shape, which then expects a body | rare, and the alternative reading would let `WITH t AS NOT LAZY (…)` report `LAZY` as the operative keyword |
 
 Both are reads, so the cost is an unbounded result set rather than a partial write, and both are
 pinned by tests in `tests/unit/sql/operative-keyword.test.ts` so the gap stays a decision.
+
+The reverse also has a narrow case, pinned in the same file: reading an expression element means
+knowing where it ends only by its `AS`, so any element the standard shape **declines** — a head that is
+not a name, or an `AS` with no body after it — is re-read as an expression that ends at the first
+`AS <name>` at depth 0, however far away. `WITH 2 INSERT INTO users AS u SELECT 1` and
+`WITH x AS DELETE, foo AS (SELECT 1) SELECT 1` therefore answer `SELECT` and receive a bound. No
+supported dialect accepts such text, so what the server receives is a rejected statement either way
+rather than a partly limited write.
 
 ### Where the bound is placed
 

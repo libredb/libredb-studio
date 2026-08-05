@@ -389,6 +389,17 @@ positive is only a missing row limit — the statement still runs and still retu
 whereas the other direction would produce a hard syntax error, which is why the bias sits where it
 does.
 
+**Expression-form CTEs are limited too.** A CTE is ordinarily written `WITH <expr> AS <alias>` here —
+`WITH 1 AS one SELECT one, count(*) FROM events GROUP BY one`, `WITH now() AS t SELECT * FROM events
+WHERE ts < t` — which is not the `name AS (body)` shape the other dialects use. The shared statement
+typer (`src/lib/sql/operative-keyword.ts`) walks a CTE-list element in both shapes, so these type
+`SELECT` and receive the inherited bound. While it walked only the standard shape they typed `OTHER`
+and reached the server unbounded ([#291](https://github.com/libredb/libredb-studio/issues/291)) — on
+the one engine here whose ordinary result set is larger than a browser can hold. Nothing is made
+unsafe by reading the form: ClickHouse has no data-modifying CTE, so a missing bound was the whole
+cost. Detection and typing still agree on the same statement — `WITH 1 AS one SELECT one FORMAT TSV`
+comes back untouched, because the trailing-clause refusal above reads it as well.
+
 ### 3.9 Column types are the declared strings, verbatim
 
 Types come back exactly as declared, with no normalization attempted:

@@ -936,6 +936,39 @@ describe("ClickHouseProvider query preparation", () => {
     expect(prepared.wasLimited).toBe(true);
   });
 
+  // ── Expression-form CTEs (#291) ───────────────────────────────────────────
+  //
+  // `WITH <expr> AS <alias>` is how a CTE is ordinarily written here, and it is
+  // not the `name AS (body)` shape the statement typer walks. While that walk
+  // recognised only the standard shape, these statements typed OTHER and reached
+  // the server with no bound at all - on the engine whose whole point is scanning
+  // more rows than a browser can hold. ClickHouse has no data-modifying CTE, so
+  // the missing bound was the entire cost, and the entire fix.
+  test.each([
+    ["a scalar alias", "WITH 1 AS one SELECT one, count(*) FROM events GROUP BY one"],
+    ["a function alias", "WITH now() AS t SELECT * FROM events WHERE ts < t"],
+    ["an array alias", "WITH [1, 2, 3] AS arr SELECT arrayJoin(arr)"],
+    ["a subquery alias", "WITH (SELECT max(id) FROM events) AS m SELECT m"],
+    ["a mixed CTE list", "WITH 1 AS one, t AS (SELECT 2 AS two) SELECT one, two FROM t"],
+    ["a standard read-only CTE", "WITH t AS (SELECT 1 AS one) SELECT one FROM t"],
+  ])("bounds a CTE written with %s", (_label, sql) => {
+    const prepared = provider().prepareQuery(sql, { limit: 25 });
+
+    expect(prepared.query).toBe(`${sql} LIMIT 25`);
+    expect(prepared.wasLimited).toBe(true);
+  });
+
+  test("keeps a trailing FORMAT clause safe on an expression CTE", () => {
+    // The two readings have to agree on the same statement: typed as a SELECT by
+    // the CTE reader, refused by the trailing-clause override.
+    const sql = "WITH 1 AS one SELECT one FORMAT TSV";
+
+    const prepared = provider().prepareQuery(sql, { limit: 25 });
+
+    expect(prepared.query).toBe(sql);
+    expect(prepared.wasLimited).toBe(false);
+  });
+
   test("leaves a write untouched", () => {
     const prepared = provider().prepareQuery("INSERT INTO users VALUES (1, 'a@b.c')");
 

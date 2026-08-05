@@ -400,6 +400,25 @@ describe("a CTE is typed by the keyword its list operates", () => {
       expect(analyzeQuery(sql).type).toBe("SELECT");
     });
 
+    // #291. A CTE element may also be `<expr> AS <alias>`, which is how ClickHouse
+    // ordinarily writes one. The walker introduced above read only the standard
+    // `name AS (body)` shape, so these typed OTHER and streamed unbounded off an
+    // analytics engine - a protection switched off by the change that closed #287.
+    test.each<[string, string]>([
+      ["a scalar alias", "WITH 1 AS one SELECT one, count(*) FROM events GROUP BY one"],
+      ["a function alias", "WITH now() AS t SELECT * FROM events WHERE ts < t"],
+      ["an array alias", "WITH [1, 2, 3] AS arr SELECT arrayJoin(arr)"],
+      ["a mixed CTE list", "WITH 1 AS one, t AS (SELECT 2) SELECT one, * FROM t"],
+    ])("types an expression CTE with %s as SELECT", (_label, sql) => {
+      expect(analyzeQuery(sql).type).toBe("SELECT");
+    });
+
+    // And the direction that may not move with it: an expression element in front
+    // of a write is still a write.
+    test("types a write after an expression CTE as the write", () => {
+      expect(analyzeQuery("WITH 1 AS x INSERT INTO t VALUES (x)").type).toBe("INSERT");
+    });
+
     // Not being able to tell must never resolve to SELECT: an unbounded read is
     // recoverable, a partially committed write is not.
     test.each<[string, string]>([
@@ -446,6 +465,24 @@ describe("a CTE is typed by the keyword its list operates", () => {
 
       expect(result.sql).toBe(`${sql} LIMIT 500`);
       expect(result.wasLimited).toBe(true);
+    });
+
+    test("bounds an expression CTE (#291)", () => {
+      const sql = "WITH 1 AS one SELECT one, count(*) FROM events GROUP BY one";
+
+      const result = applyQueryLimit(sql, 500);
+
+      expect(result.sql).toBe(`${sql} LIMIT 500`);
+      expect(result.wasLimited).toBe(true);
+    });
+
+    test("leaves a write after an expression CTE byte-identical", () => {
+      const sql = "WITH 1 AS x INSERT INTO t VALUES (x)";
+
+      const result = applyQueryLimit(sql, 500);
+
+      expect(result.sql).toBe(sql);
+      expect(result.wasLimited).toBe(false);
     });
 
     test("reports a writing CTE as not a SELECT through isSelectQuery", () => {

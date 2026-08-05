@@ -73,6 +73,11 @@ describe("readOperativeKeyword", () => {
       ["a non-ASCII name among several CTEs", "WITH t AS (SELECT 1), ürün AS (SELECT 2) SELECT * FROM t, ürün"],
       ["a dollar in a CTE name (MySQL)", "WITH t$x AS (SELECT 1) SELECT * FROM t$x"],
       ["a subquery inside the definition", "WITH t AS (SELECT * FROM (SELECT 1) inner_q) SELECT * FROM t"],
+      // A CTE named with a word that is also a statement keyword. Reading the
+      // list's grammar answers this; the alternative considered for #291 - "the
+      // first statement keyword at paren depth 0" - would have read the NAME as
+      // the operative keyword and cost this read its bound.
+      ["a CTE named with a statement keyword", "WITH insert AS (SELECT 1) SELECT * FROM insert"],
       ["comments around the CTE list", "WITH /* a */ t AS /* b */ (SELECT 1) -- c\nSELECT * FROM t"],
       ["a newline before the operative keyword", "WITH t AS (\n  SELECT 1\n)\nSELECT * FROM t"],
       ["parens written inside a string literal", "WITH t AS (SELECT ') ) )' AS s) SELECT * FROM t"],
@@ -143,6 +148,56 @@ describe("readOperativeKeyword", () => {
     });
   });
 
+  // ── ClickHouse's expression form ─────────────────────────────────────────
+  //
+  // `WITH <expr> AS <alias>` puts an expression where the standard form puts a
+  // name, and on ClickHouse it is how a CTE is ordinarily written. The walker
+  // #287 introduced recognised only the standard shape and answered null for
+  // these, so the statement typed OTHER and lost its bound on the one engine
+  // where an unbounded read hurts most (#291).
+  //
+  // The two shapes are told apart by what follows the element's `AS`: a body or
+  // one of PostgreSQL's inlining hints can only be the standard form, anything
+  // else is an alias. The expression itself is never parsed - the reader only has
+  // to find where the element stops.
+
+  describe("a CTE whose element is an expression", () => {
+    test.each<[string, string]>([
+      ["a scalar", "WITH 1 AS x SELECT x FROM t"],
+      ["a negative scalar", "WITH -1 AS x SELECT x FROM t"],
+      ["a string", "WITH 'nope' AS s SELECT s FROM t"],
+      ["an array", "WITH [1, 2, 3] AS arr SELECT arrayJoin(arr)"],
+      ["a function call", "WITH now() AS ts SELECT ts FROM t"],
+      ["a function call with several arguments", "WITH concat(a, b) AS c SELECT c FROM t"],
+      ["an arithmetic expression", "WITH x + 1 AS y SELECT y FROM t"],
+      ["a parenthesised subquery", "WITH (SELECT max(id) FROM t) AS m SELECT m"],
+      // `CAST`'s own `AS` sits inside its parens, so only a depth-aware reader
+      // finds the element's own `AS` rather than that one.
+      ["a CAST whose own AS is nested", "WITH CAST(1 AS Int32) AS n SELECT n"],
+      ["several expression elements", "WITH 1 AS one, 2 AS two SELECT one + two"],
+      ["an expression element after a standard one", "WITH t AS (SELECT 1), 2 AS two SELECT * FROM t"],
+      ["a standard element after an expression one", "WITH 2 AS two, t AS (SELECT 1) SELECT * FROM t"],
+      ["an aggregate over the alias", "WITH 1 AS one SELECT one, count(*) FROM events GROUP BY one"],
+      ["a quoted alias", 'WITH now() AS "ts" SELECT * FROM events'],
+      ["a comment before the operative keyword", "WITH 1 AS x /* note */ SELECT x"],
+      ["a comment inside the expression", "WITH now() /* clock */ AS ts SELECT ts"],
+    ])("reports SELECT for %s", (_label, sql) => {
+      expect(operativeOf(sql)).toBe("SELECT");
+    });
+
+    // The direction that must not move: reading a new element shape may not let a
+    // statement that WRITES be typed as a read. #287's whole cost was a bound
+    // appended to a write, so each of these is asserted here as well as through
+    // the standard-form fixtures above.
+    test.each<[string, string, string]>([
+      ["an INSERT after an expression element", "WITH 1 AS x INSERT INTO t VALUES (x)", "INSERT"],
+      ["a DELETE after an expression element", "WITH now() AS ts DELETE FROM logs WHERE at < ts", "DELETE"],
+      ["an UPDATE after a mixed CTE list", "WITH 1 AS x, s AS (SELECT id FROM t) UPDATE u SET a = x FROM s", "UPDATE"],
+    ])("reports the write keyword for %s", (_label, sql, expected) => {
+      expect(operativeOf(sql)).toBe(expected);
+    });
+  });
+
   // ── Undeterminable input biases to "not a read" ──────────────────────────
   //
   // Every caller of this primitive uses "is it SELECT" to decide whether to
@@ -168,6 +223,24 @@ describe("readOperativeKeyword", () => {
       ["an unterminated bracket CTE name", "WITH [never closed AS (SELECT 1) SELECT 2"],
       ["a string literal where the CTE name belongs", "WITH 'nope' AS (SELECT 1) SELECT 2"],
       ["a comma with no further CTE", "WITH a AS (SELECT 1), SELECT 2"],
+      // PostgreSQL's inlining hints exist only in the standard shape, so reading
+      // one COMMITS the element to it: what follows must be a body, and a failure
+      // there is malformed input rather than an expression element whose alias
+      // happens to be the word `MATERIALIZED`.
+      ["MATERIALIZED with no body", "WITH t AS MATERIALIZED SELECT 1"],
+      ["NOT MATERIALIZED with no body", "WITH t AS NOT MATERIALIZED SELECT 1"],
+      // The expression shape's own failures, each answering "cannot tell" rather
+      // than guessing (#291).
+      ["an expression element with no AS at all", "WITH 1 SELECT 2"],
+      ["an expression element whose alias is missing", "WITH 1 AS"],
+      ["an expression element whose alias is a literal", "WITH 1 AS 2 SELECT 3"],
+      ["nothing after an expression element", "WITH now() AS ts"],
+      ["an unclosed paren inside an expression", "WITH now( AS ts SELECT ts"],
+      ["an unbalanced closing paren inside an expression", "WITH 1) AS x SELECT 2"],
+      ["an unterminated string where an expression belongs", "WITH 'unclosed AS x SELECT 1"],
+      ["an unterminated bracket where an expression belongs", "WITH [1, 2 AS arr SELECT 1"],
+      ["an expression element that reaches a comma with no AS", "WITH 1, 2 AS two SELECT 1"],
+      ["a comma with no further element after an expression one", "WITH 1 AS x, SELECT 2"],
       // Where a string literal ends is dialect-dependent when a backslash sits
       // before its closing quote, and the two readings disagree about the rest of
       // the statement. Under the MySQL reading this text is a DELETE, so guessing
@@ -198,26 +271,27 @@ describe("readOperativeKeyword", () => {
       expect(operativeOf(sql)).toBe("SEARCH");
     });
 
-    // KNOWN LIMITATION, pinned for the same reason: ClickHouse's `WITH <expr> AS
-    // <alias>` puts an EXPRESSION where the standard form puts a name, and reading
-    // one needs an expression parser rather than a grammar walk. These are reads,
-    // and they lose their bound - a cost, not a hazard, and ClickHouse has no
-    // data-modifying CTE for the safe direction to protect anything from.
+    // KNOWN LIMITATION, pinned for the same reason: an expression element whose
+    // head reads as a NAME and whose alias is one of PostgreSQL's inlining hints
+    // (`WITH col AS materialized …`) is committed to the standard shape by that
+    // word, so it is expected to carry a body and answers "cannot tell" without
+    // one. A read loses its bound; nothing is made unsafe, and the alternative -
+    // accepting the hint as an alias - would let `WITH t AS NOT LAZY (…)` read
+    // `LAZY` as the keyword that operates the statement.
     test.each<[string, string]>([
-      ["a scalar", "WITH 1 AS x SELECT x FROM t"],
-      ["an array", "WITH [1, 2, 3] AS arr SELECT arr FROM t"],
-      ["a function call", "WITH now() AS ts SELECT ts FROM t"],
-    ])("does not read ClickHouse's %s CTE form", (_label, sql) => {
+      ["MATERIALIZED", "WITH col AS materialized SELECT materialized FROM t"],
+      ["NOT", "WITH col AS not SELECT not FROM t"],
+    ])("does not read %s used as an expression alias", (_label, sql) => {
       expect(readOperativeKeyword(sql)).toBeNull();
     });
   });
 
   // ── Recorded gaps in the UNSAFE direction ────────────────────────────────
   //
-  // Everything above errs toward "cannot tell", which costs a bound. These two
-  // inputs go the other way - they answer SELECT for text that writes - so they
-  // are pinned here rather than left to be discovered. Neither is reachable in
-  // ordinary use, and each is paid for on purpose; the reasoning lives in
+  // Everything above errs toward "cannot tell", which costs a bound. The inputs
+  // below go the other way - they answer SELECT for text that writes - so they are
+  // pinned here rather than left to be discovered. None is reachable in ordinary
+  // use, and each is paid for on purpose; the reasoning lives in
   // `operative-keyword.ts` and `spans.ts`. A test that starts failing here means
   // someone closed a gap, which is welcome - update the expectation and say so.
 
@@ -249,6 +323,24 @@ describe("readOperativeKeyword", () => {
 
       expect(operativeOf(sql)).toBe("DELETE");
     });
+
+    // Reading an expression means knowing where it ends only by its `AS`, so any
+    // element the standard read DECLINES - a head that is not a name, or an `AS`
+    // with no body after it - is re-read as an expression that ends at the first
+    // `AS <name>` at depth 0, however far away. Each of these mentions a write and
+    // answers SELECT, which is why it is pinned here - but none is accepted by any
+    // dialect supported here (a CTE element is a name or an expression, and neither
+    // is a statement), so the cost is a bound appended to text the server rejects
+    // anyway, not a partial write (#291).
+    test.each<[string, string]>([
+      ["a literal head", "WITH 2 INSERT INTO users AS u SELECT 1"],
+      ["a string head", "WITH 'a' INSERT INTO users AS u SELECT 1"],
+      ["an empty parenthesised head", "WITH () INSERT INTO users AS u SELECT 1"],
+      ["a name head whose AS never comes", "WITH 1 AS one, INSERT INTO t AS u SELECT one"],
+      ["a statement keyword read as an alias", "WITH x AS DELETE, foo AS (SELECT 1) SELECT 1"],
+    ])("reads %s as an expression element and answers for what follows", (_label, sql) => {
+      expect(operativeOf(sql)).toBe("SELECT");
+    });
   });
 
   // ── Bounded time ────────────────────────────────────────────────────────
@@ -276,6 +368,16 @@ describe("readOperativeKeyword", () => {
         "SELECT",
       ],
       ["20k whitespace inside the CTE list", `WITH t AS ${" ".repeat(20000)}(SELECT 1) SELECT 2`, "SELECT"],
+      // The expression shape is scanned from the element's start after the standard
+      // read declines it, so every element is walked at most twice - a constant,
+      // not a second dimension (#291).
+      [
+        "5k expression elements",
+        `WITH ${Array.from({ length: 5000 }, (_v, i) => `${i} AS a${i}`).join(", ")} SELECT 1`,
+        "SELECT",
+      ],
+      ["20k open parens inside an expression", `WITH now(${"(".repeat(20000)} AS ts SELECT ts`, null],
+      ["20k close parens after an expression", `WITH 1 ${")".repeat(20000)} AS x SELECT 2`, null],
     ];
 
     for (const [label, sql, expected] of adversarial) {
