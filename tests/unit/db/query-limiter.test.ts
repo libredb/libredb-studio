@@ -1037,6 +1037,35 @@ describe("a named dialect changes the reading; naming none does not", () => {
     expect(result.wasLimited).toBe(true);
   });
 
+  // Oracle's alternate quoting (`q'{it's}'`) is the second grammar this channel
+  // carries, and the only dialect that has the form is the only one that reads it.
+  // Both inputs below are Oracle text, so the dialect-less answers are what
+  // reading Oracle as something else costs: the first loses its bound, and the
+  // second - whose literal also carries a `--` - has the clause placed before what
+  // that reading calls a trailing comment, i.e. inside the literal. That answer is
+  // correct FOR the grammar being read (there `q` is a name and `'[it'` a string)
+  // and wrong for the statement, which is the whole point of naming the dialect.
+  test.each<[string, string, string, string]>([
+    [
+      "a CTE body holding an apostrophe",
+      "WITH t AS (SELECT q'{it's}' AS s FROM dual) SELECT * FROM t",
+      "WITH t AS (SELECT q'{it's}' AS s FROM dual) SELECT * FROM t",
+      "WITH t AS (SELECT q'{it's}' AS s FROM dual) SELECT * FROM t LIMIT 500",
+    ],
+    [
+      "a literal holding an apostrophe and a comment marker",
+      "SELECT q'[it's a -- note )]' AS s FROM dual",
+      "SELECT q'[it's a LIMIT 500 -- note )]' AS s FROM dual",
+      "SELECT q'[it's a -- note )]' AS s FROM dual LIMIT 500",
+    ],
+  ])("%s is read as a literal under Oracle's grammar only", (_label, sql, withoutDialect, underOracle) => {
+    expect(applyQueryLimit(sql, 500).sql).toBe(withoutDialect);
+
+    const result = applyQueryLimit(sql, 500, 0, {}, "oracle");
+    expect(result.sql).toBe(underOracle);
+    expect(result.wasLimited).toBe(true);
+  });
+
   test("isSelectQuery takes the dialect too, so the multi-statement route agrees with the provider", () => {
     expect(isSelectQuery(HIDDEN_DELETE)).toBe(true);
     expect(isSelectQuery(HIDDEN_DELETE, "mysql")).toBe(false);

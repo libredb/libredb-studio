@@ -21,8 +21,12 @@
  * to change:
  *
  * - `statement-splitter.ts` inlines the same scan, wound together with the line
- *   counting it needs, and treats `#` as ordinary code - so a MySQL hash comment
- *   containing a `;` still splits there. Reusing this module would move statement
+ *   counting it needs, and knows neither of the dialect facts below: it treats `#`
+ *   as ordinary code, so a MySQL hash comment containing a `;` still splits there,
+ *   and it has no alternate-quoting branch, so an Oracle `q'{a'b;c}'` body splits
+ *   at that `;` while every reader over this module sees one literal. Both
+ *   divergences are safe in the same direction - the fragments lose a bound rather
+ *   than gaining a misplaced one - and reusing this module would move statement
  *   boundaries: a separate bug with its own tests.
  * - `alias-extractor.ts:134-135` blanks literals with a regex that honours
  *   BACKSLASH escapes, which this module reports as undeterminable instead (see
@@ -168,6 +172,82 @@ function readBracketed(sql: string, index: number): SqlSpan {
   return { kind: "quoted-identifier", end: sql.length, terminated: false };
 }
 
+/**
+ * The closer Oracle pairs with an alternate-quote opener, or the opener itself.
+ *
+ * From node-oracledb's own SQL tokenizer (`lib/thin/statement.js`,
+ * `_parseQstring`): the four bracket forms close with their partner, and every
+ * other delimiter closes with itself.
+ */
+const ALTERNATE_QUOTE_CLOSERS: Record<string, string> = { "[": "]", "{": "}", "(": ")", "<": ">" };
+
+/**
+ * The length of an alternate-quote tag at `index`, or 0 when none opens there.
+ *
+ * `q'` and `Q'` open one, and the same form spelled `nq'` / `NQ'` (any case
+ * mixture) is the national-character-set literal - Oracle's SQL Language
+ * Reference gives `nq'#…#'` as the NCHAR/NVARCHAR2 spelling. Both are read,
+ * because the body rules are identical and reading only one of them would leave
+ * the other's body walked as code, which is the defect this branch exists to fix.
+ */
+function measureAlternateQuoteTag(sql: string, index: number): number {
+  let i = index;
+  if (sql[i] === "n" || sql[i] === "N") i++;
+  if (sql[i] !== "q" && sql[i] !== "Q") return 0;
+  if (sql[i + 1] !== "'") return 0;
+  return i + 2 - index;
+}
+
+/**
+ * An Oracle alternate-quoted literal: `q'{it's}'`, `Q'<body>'`, `nq'!body!'`.
+ *
+ * The delimiter after the tag opens the body and the matching one FOLLOWED BY a
+ * quote closes it, which is what lets the body carry apostrophes - and the
+ * delimiter character itself (`q'{a}b}'` is one literal) - with nothing escaped.
+ * So there is no doubling rule and no backslash question here: the search is for
+ * the two characters that end it.
+ *
+ * Any character may be the delimiter, which needs no check of its own: Oracle
+ * refuses a whitespace delimiter where this reads a literal - and an opaque span
+ * moves the reading around it, so such a body can also swallow a `)` or a write
+ * keyword - but only in text Oracle rejects outright, so nothing that reaches a
+ * server depends on it. Half of a surrogate pair can never match its own closer, so
+ * that body reads as unterminated: the answer that costs a bound rather than
+ * misplacing one.
+ */
+function readAlternateQuoted(sql: string, index: number, tagLength: number): SqlSpan {
+  const body = index + tagLength + 1;
+  const opener = sql[index + tagLength];
+  // The tag at the very end of the input: no delimiter, so nothing can close it.
+  if (opener === undefined) return { kind: "string", end: sql.length, terminated: false };
+
+  const close = sql.indexOf(`${ALTERNATE_QUOTE_CLOSERS[opener] ?? opener}'`, body);
+  if (close === -1) return { kind: "string", end: sql.length, terminated: false };
+  return { kind: "string", end: close + 2, terminated: true };
+}
+
+/**
+ * Whether the character before `index` continues a word, i.e. `index` is inside
+ * one.
+ *
+ * Only the alternate-quote tag needs this: it is the one span whose first
+ * character is also an identifier character. Oracle's lexer reads a name greedily,
+ * so `freq'x'` there is a name followed by an ordinary string, and without the
+ * check the two kinds of reader in this folder would disagree about such text as
+ * well - the ones that read whole words step over the name and never ask here,
+ * while the ones that walk character by character would ask at its last letter.
+ * Two readings of one construct is what this folder exists to stop.
+ *
+ * node-oracledb's tokenizer has no equivalent check (it parses a q-string at any
+ * `'` preceded by `q`/`Q`), so this is deliberately stricter than the driver and
+ * closer to the server. What it excludes is text no dialect here accepts, and it
+ * excludes it in the safe direction: an ordinary string reading, as today.
+ */
+function continuesWord(sql: string, index: number): boolean {
+  const before = index === 0 ? undefined : sql[index - 1];
+  return before !== undefined && (IDENTIFIER_PART.test(before) || before === "$");
+}
+
 function readQuoted(sql: string, index: number, quote: string, kind: SqlSpanKind, backslashEscapes: boolean): SqlSpan {
   let i = index + 1;
 
@@ -229,6 +309,11 @@ function measureDollarTag(sql: string, index: number): number {
  * `grammar` is the dialect's reading of the characters the engines disagree about.
  * Omitting it is a real answer, not a missing one: it means "no dialect was
  * named", and the compatibility default applies.
+ *
+ * Pass the whole statement, not a suffix of it: the alternate-quote branch looks at
+ * the character BEFORE `index` to tell a tag from the tail of a name, so a slice
+ * that cuts a name in half can answer differently than the same text in place. A
+ * PREFIX slice is safe, which is what the callers here take (`sql.slice(0, end)`).
  */
 export function readSqlSpan(sql: string, index: number, grammar: SqlGrammar = DEFAULT_SQL_GRAMMAR): SqlSpan | null {
   const ch = sql[index];
@@ -264,6 +349,21 @@ export function readSqlSpan(sql: string, index: number, grammar: SqlGrammar = DE
     const close = sql.indexOf("*/", index + 2);
     if (close === -1) return { kind: "block-comment", end: sql.length, terminated: false };
     return { kind: "block-comment", end: close + 2, terminated: true };
+  }
+
+  // Oracle writes a literal that carries apostrophes as `q'{it's}'` (`nq'…'` for
+  // the national character set), and it is the only dialect here with the form.
+  // Read as code - all any reader here could do before it was told the dialect -
+  // the first apostrophe INSIDE the body opens a string and everything after it is
+  // read one construct out of step, which costs in both of this folder's
+  // directions: a `)` in the body ended a CTE body early, so the statement was
+  // typed by a keyword written inside the literal and lost its bound, and a `--` in
+  // the body made the rest of the literal look like trailing trivia, so the bound
+  // was inserted INSIDE the literal and the statement Oracle received was corrupt
+  // while the caller was told it was limited (#292).
+  if (grammar.alternateQuoting) {
+    const tagLength = measureAlternateQuoteTag(sql, index);
+    if (tagLength > 0 && !continuesWord(sql, index)) return readAlternateQuoted(sql, index, tagLength);
   }
 
   if (ch === "'") return readQuoted(sql, index, "'", "string", true);

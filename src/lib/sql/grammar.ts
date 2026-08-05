@@ -48,6 +48,17 @@ export type HashGrammar = "comment" | "code" | "comment-unless-operator";
 /** The grammar facts that differ between the engines this product supports. */
 export interface SqlGrammar {
   readonly hash: HashGrammar;
+  /**
+   * Whether `q'…'` opens a string literal - Oracle's alternate quoting.
+   *
+   * Not a disagreement about a character like `hash` is, but a form ONE dialect
+   * has: `q'{it's}'` is how Oracle writes a literal carrying apostrophes without
+   * doubling them, and everywhere else those characters really are a name
+   * followed by an ordinary string. So the fact is whether the reader has the
+   * form at all, and reading it where the dialect does not have it would take a
+   * literal out of ordinary code.
+   */
+  readonly alternateQuoting: boolean;
 }
 
 /**
@@ -61,10 +72,11 @@ export interface SqlGrammar {
  * pinning the old behaviour. Pinned by its own tests instead, so it is a decision
  * rather than an accident.
  */
-export const DEFAULT_SQL_GRAMMAR: SqlGrammar = { hash: "comment-unless-operator" };
+export const DEFAULT_SQL_GRAMMAR: SqlGrammar = { hash: "comment-unless-operator", alternateQuoting: false };
 
-const COMMENT_HASH: SqlGrammar = { hash: "comment" };
-const CODE_HASH: SqlGrammar = { hash: "code" };
+const COMMENT_HASH: SqlGrammar = { hash: "comment", alternateQuoting: false };
+const CODE_HASH: SqlGrammar = { hash: "code", alternateQuoting: false };
+const ORACLE_GRAMMAR: SqlGrammar = { hash: "code", alternateQuoting: true };
 
 /**
  * The established readings, one row per fact per dialect.
@@ -90,7 +102,15 @@ const CODE_HASH: SqlGrammar = { hash: "code" };
  *   path, `#` is integer XOR).
  * - `oracle` - node-oracledb's own SQL tokenizer (`lib/thin/statement.js`)
  *   accepts `#` as an identifier character and opens comments on `--` and `/*`
- *   only.
+ *   only. The same tokenizer's `_parseQstring` is where the alternate-quoting
+ *   row comes from: a `'` preceded by `q`/`Q` opens a q-string, `[ ] { } ( ) < >`
+ *   are the paired delimiters, and any other character closes with itself. The
+ *   `nq'…'` spelling of the same form, for `NCHAR`/`NVARCHAR2`, and the same
+ *   delimiter-pairing rule are in Oracle's SQL Language Reference ("Literals" →
+ *   text literals, docs.oracle.com; checked 2026-08-05). The driver corroborates
+ *   the spelling behaviourally: its tokenizer opens a q-string at any `'` whose
+ *   previous character is `q`/`Q`, `nq'` included. No other dialect here has the
+ *   form, so Oracle is the only row that carries it.
  * - `sqlite` - the SQLite amalgamation bundled with `better-sqlite3` classifies
  *   `#` as `CC_VARALPHA`, an alphabetic bind-variable prefix, and opens comments
  *   on `--` and `/*` only.
@@ -101,7 +121,7 @@ const SQL_GRAMMARS: Partial<Record<DatabaseType, SqlGrammar>> = {
   mysql: COMMENT_HASH,
   clickhouse: COMMENT_HASH,
   postgres: CODE_HASH,
-  oracle: CODE_HASH,
+  oracle: ORACLE_GRAMMAR,
   mssql: CODE_HASH,
   sqlite: CODE_HASH,
 };

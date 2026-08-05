@@ -271,6 +271,95 @@ describe("readSqlSpan", () => {
     });
   });
 
+  // ── Alternate quoting (Oracle's `q'…'`) ─────────────────────────────────
+  //
+  // The form exists so that a literal can carry apostrophes without doubling
+  // them, which is exactly what makes reading it as code so damaging: the first
+  // apostrophe INSIDE the body opens a string, and everything after it is read one
+  // construct out of step. A `)` there ends a CTE body early and a `--` there
+  // turns the rest of the literal into what looks like trailing trivia (#292).
+  //
+  // Oracle is the only dialect here with the form, so the branch is reached only
+  // under its grammar; every other dialect reads the same characters as a name
+  // followed by an ordinary string, which is what they are there.
+
+  describe("alternate quoting (`q'…'`, Oracle)", () => {
+    const ORACLE = resolveSqlGrammar("oracle");
+
+    // The delimiter pairs node-oracledb's own tokenizer accepts: the four bracket
+    // forms close with their partner, every other character with itself.
+    test.each<[string, string, string]>([
+      ["a brace-delimited body", "q'{it's}' x", "string|q'{it's}'"],
+      ["a bracket-delimited body", "q'[it's]' x", "string|q'[it's]'"],
+      ["a paren-delimited body", "q'(it's)' x", "string|q'(it's)'"],
+      ["an angle-delimited body", "q'<it's>' x", "string|q'<it's>'"],
+      ["an arbitrary delimiter closing with itself", "q'!it's!' x", "string|q'!it's!'"],
+      ["an upper-case tag", "Q'{it's}' x", "string|Q'{it's}'"],
+      // The national-character-set spelling of the same form, whose body rules are
+      // identical - Oracle's SQL Language Reference gives `nq'#…#'` for NCHAR.
+      ["the national-charset tag", "nq'{it's}' x", "string|nq'{it's}'"],
+      ["an upper-case national-charset tag", "NQ'{it's}' x", "string|NQ'{it's}'"],
+      ["a mixed-case national-charset tag", "nQ'{it's}' x", "string|nQ'{it's}'"],
+    ])("reads %s as one literal", (_label, sql, expected) => {
+      expect(spanOf(sql, 0, ORACLE)).toBe(expected);
+    });
+
+    // The closer ends the body only where a quote follows it, which is what lets
+    // the delimiter character itself appear inside the literal.
+    test("a closing delimiter with no quote after it does not end the body", () => {
+      expect(spanOf("q'{a}b}' x", 0, ORACLE)).toBe("string|q'{a}b}'");
+      expect(spanOf("q'!a!b!' x", 0, ORACLE)).toBe("string|q'!a!b!'");
+    });
+
+    test("a paren, a comment marker and a write keyword inside the body belong to the body", () => {
+      expect(spanOf("q'{it's ) -- DELETE FROM users}' x", 0, ORACLE)).toBe("string|q'{it's ) -- DELETE FROM users}'");
+    });
+
+    // A body that never closes hides whatever follows it, so the reader says so
+    // rather than picking one of the two places the literal could end.
+    test.each<[string, string, number]>([
+      ["a body that never closes", "q'{abc", 6],
+      ["a tag with nothing after it", "q'", 2],
+      ["a national-charset body that never closes", "nq'{abc", 7],
+    ])("reports %s as undeterminable", (_label, sql, end) => {
+      expect(readSqlSpan(sql, 0, ORACLE)).toEqual({ kind: "string", end, terminated: false });
+    });
+
+    test.each<[string, string]>([
+      ["the plain tag", "q'{it's}' x"],
+      ["the national-charset tag", "nq'{it's}' x"],
+    ])("a grammar without the form reads %s as code", (_label, sql) => {
+      expect(readSqlSpan(sql, 0)).toBeNull();
+      expect(readSqlSpan(sql, 0, resolveSqlGrammar("postgres"))).toBeNull();
+    });
+
+    // The tag has to START a token. Oracle's lexer reads a name greedily, so
+    // `freq'x'` is a name followed by a string there too - and without the check
+    // the two kinds of reader in this folder would disagree about it: the ones that
+    // read whole words step over the name and never ask here, while the ones that
+    // walk character by character would ask at its last letter.
+    test.each<[string, string, number]>([
+      ["inside a longer name", "SELECT freq'{x}'", 10],
+      ["whose national-charset spelling sits inside a longer name", "SELECT frenq'{x}'", 10],
+      ["at the `q` of a national-charset tag, which the span starts one earlier", "nq'{it's}'", 1],
+    ])("a tag %s does not open the form", (_label, sql, index) => {
+      expect(readSqlSpan(sql, index, ORACLE)).toBeNull();
+    });
+
+    // The body search is an `indexOf` for two characters, so it cannot backtrack -
+    // and this guard is what stops anyone replacing it with a pattern that can.
+    test("answers in bounded time on a long body that never closes", () => {
+      const sql = `q'{${"a".repeat(20000)}`;
+
+      const started = performance.now();
+      const span = readSqlSpan(sql, 0, ORACLE);
+      const elapsed = performance.now() - started;
+
+      expect(span).toEqual({ kind: "string", end: sql.length, terminated: false });
+      expect(elapsed, `took ${elapsed.toFixed(1)}ms`).toBeLessThan(200);
+    });
+  });
+
   // ── Bounded time ────────────────────────────────────────────────────────
   //
   // This module exists partly because the regex alternative is a ReDoS trap:

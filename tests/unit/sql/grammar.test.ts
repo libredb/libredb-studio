@@ -59,6 +59,35 @@ describe("resolveSqlGrammar", () => {
   test("the compatibility default is today's reading, not one of the honest two", () => {
     expect(DEFAULT_SQL_GRAMMAR.hash).toBe("comment-unless-operator");
   });
+
+  // ── `q'…'`: Oracle's alternate quoting ──────────────────────────────────
+  //
+  // Unlike `#`, this fact is not two engines disagreeing about a character: only
+  // Oracle has the form at all, so every other dialect's reading of that text is
+  // "a name followed by an ordinary string". Established from node-oracledb's own
+  // SQL tokenizer (`lib/thin/statement.js`, `_parseQstring`), which parses a `'`
+  // preceded by `q`/`Q` as a q-string, and from Oracle's SQL Language Reference
+  // for the delimiter pairing and the `nq'…'` spelling.
+
+  test("oracle is the only dialect that reads `q'…'` as a literal", () => {
+    expect(resolveSqlGrammar("oracle").alternateQuoting).toBe(true);
+  });
+
+  test.each<DatabaseType>([
+    "mysql",
+    "clickhouse",
+    "postgres",
+    "mssql",
+    "sqlite",
+  ])("%s does not read `q'…'` as a literal", (type) => {
+    expect(resolveSqlGrammar(type).alternateQuoting).toBe(false);
+  });
+
+  test("a call that names no dialect does not read the form either", () => {
+    // The compatibility default: before the channel existed no reader here had a
+    // branch for the form, so keeping it out is what keeps those answers still.
+    expect(DEFAULT_SQL_GRAMMAR.alternateQuoting).toBe(false);
+  });
 });
 
 describe("hashRunIsAmbiguous", () => {

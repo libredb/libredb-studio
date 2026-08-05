@@ -297,11 +297,35 @@ describe("readOperativeKeyword", () => {
   // someone closed a gap, which is welcome - update the expectation and say so.
 
   describe("known gaps that answer SELECT for a statement that writes", () => {
-    // Oracle's alternative quoting is not a literal to `readSqlSpan`, so the `)`
-    // inside this one closes the CTE body early. Unreachable in Oracle itself,
-    // which has no `WITH … DELETE`, and no other dialect here has the form.
-    test("walks an Oracle q-quoted literal as code", () => {
+    // Oracle's alternate quoting is not a literal under a grammar that does not
+    // have the form - which is every dialect but Oracle, and the compatibility
+    // default - so the `)` inside this one closes the CTE body early and the
+    // `SELECT` written inside the literal answers for the whole statement.
+    test("walks an Oracle q-quoted literal as code where the grammar has no such form", () => {
       expect(operativeOf("WITH t AS (SELECT q'{it's ) SELECT x}' FROM dual) DELETE FROM users")).toBe("SELECT");
+    });
+
+    // …and that closes under Oracle's own grammar (#292). This is the direction
+    // that matters: read as code, the statement types `SELECT` and the limiter
+    // appends a bound to a `DELETE`; read as the literal it is, the keyword after
+    // the CTE list is the one the statement operates.
+    test("an alternate-quoting grammar reads the q-quoted body as the literal it is", () => {
+      const oracle = resolveSqlGrammar("oracle");
+
+      expect(operativeOf("WITH t AS (SELECT q'{it's ) SELECT x}' FROM dual) DELETE FROM users", oracle)).toBe("DELETE");
+      expect(operativeOf("WITH t AS (SELECT q'{it's}' AS s FROM dual) SELECT * FROM t", oracle)).toBe("SELECT");
+    });
+
+    // The national-charset spelling reads the same way, asserted on the direction
+    // that costs a partial write rather than a bound: a `SELECT` written inside the
+    // literal must not answer for a statement that DELETEs.
+    test("the national-charset spelling is read as a literal too", () => {
+      const oracle = resolveSqlGrammar("oracle");
+
+      expect(operativeOf("WITH t AS (SELECT nq'{it's ) SELECT x}' FROM dual) DELETE FROM users", oracle)).toBe(
+        "DELETE",
+      );
+      expect(operativeOf("WITH t AS (SELECT NQ'{it's}' AS s FROM dual) SELECT * FROM t", oracle)).toBe("SELECT");
     });
 
     // `#-` is a PostgreSQL jsonb operator and a MySQL comment opener at once.

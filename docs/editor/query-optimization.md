@@ -152,6 +152,8 @@ id, so no reader can grow a dialect test of its own.
 |-----------|--------------------|----------|
 | `#` | opens a line comment | MySQL, MariaDB, ClickHouse (which also has `#!`) |
 | `#` | ordinary code — a jsonb/geometric operator, an identifier character, a temp-table name, a bind-variable prefix | PostgreSQL, Oracle, SQL Server, SQLite |
+| `q'…'` | a string literal (alternate quoting): the delimiter after the tag opens the body and its partner followed by `'` closes it, so the body carries apostrophes unescaped — `[ ] { } ( ) < >` pair up, any other character closes with itself, either letter case of the tag, and `nq'…'` is the same form for the national character set | Oracle only |
+| `q'…'` | not a form at all — a name followed by an ordinary string, which is what those characters are there | everything else, including the default |
 
 Each row was established from an authoritative source: the engine's own documentation, or its
 driver's own tokenizer under `node_modules` (node-oracledb accepts `#` inside an identifier; the
@@ -162,9 +164,15 @@ Druid and the embedded LibreDB provider** (MongoDB and Redis never reach these r
 
 **A call that names no dialect keeps today's reading**, and that is a decision with its own tests, not
 an accident: `#` opens a comment unless the next character makes a PostgreSQL operator (`#>`, `#>>`,
-`#-`, `##`). It is neither of the honest readings — it is what this folder did for every engine before
-the channel existed, kept so that the fixtures written for #275, #280, #287, #291 and #294 keep
-asserting the behaviour they were written for.
+`#-`, `##`) — neither of the honest readings, but what this folder did for every engine before the
+channel existed, kept so that the fixtures written for #275, #280, #287, #291 and #294 keep asserting
+the behaviour they were written for. The default has no alternate-quoting form either, which is the
+same reading every non-Oracle dialect gets and the correct one for all of them.
+
+The alternate-quote tag has to **start** a word: Oracle's lexer reads a name greedily, so `freq'x'` is
+a name followed by an ordinary string there, and this reader answers the same. That makes the tag the
+one span in `src/lib/sql/spans.ts` whose reading depends on the character *before* it, so callers pass
+a whole statement (or a prefix of one), never a suffix.
 
 What changes for a caller that does name one:
 
@@ -174,6 +182,8 @@ What changes for a caller that does name one:
 | `SELECT * FROM t # LIMIT 10` | MySQL | the commented-out bound read as real, statement unbounded | bound added before the comment |
 | `SELECT * FROM #tmp` | SQL Server | end not cuttable, appending branch declines | `#tmp` is the statement's own text, the statement is bounded |
 | `SELECT * FROM EMP WHERE ID# = 1` | Oracle | not bounded | bounded |
+| `WITH t AS (SELECT q'{it's}' …) SELECT * FROM t` | Oracle | the apostrophe inside the literal opened a string, the CTE list could not be read, not bounded | the literal is a literal, statement typed `SELECT`, bounded |
+| `SELECT q'[it's a -- note )]' FROM dual` | Oracle | the `--` inside the literal read as a trailing comment, so the bound was inserted **inside** the literal and the statement was reported limited | the whole literal is the statement's text, bound appended after it |
 | `SELECT * FROM users # daily` | ClickHouse | not bounded | bound added before the comment |
 | `SELECT meta #> '{a}' FROM docs` | PostgreSQL | bounded (the default already read this correctly) | unchanged |
 

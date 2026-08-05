@@ -324,10 +324,13 @@ function readKeywordAfterCteList(sql: string, afterWith: number, grammar: SqlGra
  *   reading the shape at all. No dialect here accepts such text - a CTE element is a
  *   name or an expression, and neither is a statement - so the cost is a bound
  *   appended to text the server rejects either way, not a partially committed write.
- * - Oracle's alternative quoting (`q'{…}'`) is not a literal to `readSqlSpan`, so
- *   its body is walked as code, and a `)` or a keyword written inside one moves the
- *   reading. Unreachable in Oracle itself, which has no `WITH … DELETE`, and no
- *   other dialect here has the form.
+ * - Oracle's alternate quoting (`q'{…}'`) is a literal only under a grammar that
+ *   has the form, which is Oracle's alone (#292). Under any other - including the
+ *   compatibility default - the body is walked as code, so a `)` or a keyword
+ *   written inside one moves the reading. That is the honest answer there: no other
+ *   dialect spells a literal that way, so those characters really are a name
+ *   followed by an ordinary string - which is also how Oracle itself reads a name
+ *   that merely ends in the tag's letters (`freq'x'`).
  * - A MySQL line comment whose first character makes a PostgreSQL operator (`#-`,
  *   `#>`) is code to a reader that was given NO dialect, so a paren inside such a
  *   comment can end a CTE body early. That is now only the dialect-less reading:
