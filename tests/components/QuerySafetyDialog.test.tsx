@@ -707,6 +707,38 @@ describe("isDangerousQuery", () => {
     expect(isDangerousQuery(query)).toBe(expected);
   });
 
+  // ── The dialect decides what the statement says (#292) ──────────────────
+  //
+  // This predicate is the last check before a destructive statement runs, and it
+  // was reading `#` by a rule that belongs to PostgreSQL. On MySQL that rule let
+  // a comment hide the `)` that closes a CTE body, so the reader reported the
+  // `SELECT` inside the comment's reach and the `DELETE` after the list ran with
+  // no confirmation at all. Both callers hold the active connection's type, so
+  // the predicate is told which dialect it is reading.
+
+  test("prompts for a DELETE a hash comment hid, once the dialect is named", () => {
+    const query = "WITH t AS (\n  #- drop the ) SELECT here\n  SELECT id FROM logs\n) DELETE FROM users";
+
+    expect(isDangerousQuery(query)).toBe(false);
+    expect(isDangerousQuery(query, "mysql")).toBe(true);
+  });
+
+  // The other direction, which is why the dialect and not a blanket "a hash is a
+  // comment" is the fix: in MySQL the write really is commented out and prompting
+  // would be a false alarm, while in PostgreSQL those characters are an operator
+  // and the write is the statement's own code.
+  test("reads a write written after a hash as the dialect reads it", () => {
+    const query = "SELECT 1 # UPDATE t SET x = 1";
+
+    expect(isDangerousQuery(query, "mysql")).toBe(false);
+    expect(isDangerousQuery(query, "postgres")).toBe(true);
+  });
+
+  test("a dialect changes nothing for a statement carrying no hash", () => {
+    expect(isDangerousQuery("DROP TABLE users", "postgres")).toBe(true);
+    expect(isDangerousQuery("SELECT * FROM users", "mysql")).toBe(false);
+  });
+
   // ── Shape of the scan ───────────────────────────────────────────────────
 
   /**

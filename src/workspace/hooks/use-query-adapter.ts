@@ -75,7 +75,10 @@ export function useQueryAdapter({
       }
 
       // Safety check for dangerous queries (skip for force-execute via forceExecuteQuery)
-      if (isDangerousQuery(queryToExecute)) {
+      // Read under the active connection's dialect, as the standalone path does
+      // (#292): the same characters are a comment in one engine and code in
+      // another, and only the connection says which.
+      if (isDangerousQuery(queryToExecute, activeConnection.type)) {
         setSafetyCheckQuery(queryToExecute);
         return;
       }

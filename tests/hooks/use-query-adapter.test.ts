@@ -353,6 +353,27 @@ describe("useQueryAdapter", () => {
     expect(params.onQueryExecute).not.toHaveBeenCalled();
   });
 
+  /**
+   * The gate reads the statement under the ACTIVE CONNECTION's dialect (#292).
+   *
+   * This file uses the real predicate, so it is where the embedded path's dialect
+   * channel is provable end to end: the same text is a commented-out note under
+   * one connection's grammar and a `DELETE` the statement operates under
+   * another's, and only the connection says which.
+   */
+  test("executeQuery reads the statement under the active connection's dialect", async () => {
+    const hidden = "WITH t AS (\n  #- drop the ) SELECT here\n  SELECT id FROM logs\n) DELETE FROM users";
+
+    const onMysql = makeHookParams({ activeConnection: makeConnection({ type: "mysql" }) });
+    const { result: mysql } = renderHook(() => useQueryAdapter(onMysql));
+    await act(async () => {
+      await mysql.current.executeQuery(hidden);
+    });
+
+    expect(mysql.current.safetyCheckQuery).toBe(hidden);
+    expect(onMysql.onQueryExecute).not.toHaveBeenCalled();
+  });
+
   // ── executeQuery leaves other tabs untouched ────────────────────────────────
 
   test("executeQuery updates only the target tab when multiple tabs exist", async () => {

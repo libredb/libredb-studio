@@ -1,4 +1,5 @@
 import { describe, test, expect } from "bun:test";
+import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import { findCodeWord, readSqlWord } from "@/lib/sql/words";
 
 /** The word at an index as its text alone - the shape most assertions want. */
@@ -119,6 +120,20 @@ describe("findCodeWord", () => {
     ["an unterminated block comment", "SELECT 1 /* note\nUPDATE t SET y = 1"],
   ])("does not read code past %s", (_label, sql) => {
     expect(findAt(sql, "UPDATE")).toBe(-1);
+  });
+
+  // ── What counts as "not code" is the dialect's answer (#292) ────────────
+  //
+  // The safety predicate is this module's caller, and a `#` decides whether a
+  // write after it is the statement's own code. Both directions matter here: in
+  // MySQL the write really is commented out and prompting would be a false alarm,
+  // while in PostgreSQL those characters are an operator and the write is real.
+
+  test("a hash hides a write under a comment grammar and does not under a code grammar", () => {
+    const sql = "SELECT 1 # UPDATE t SET x";
+
+    expect(findCodeWord(sql, "UPDATE", 0, resolveSqlGrammar("mysql"))).toBeNull();
+    expect(findCodeWord(sql, "UPDATE", 0, resolveSqlGrammar("postgres"))).toEqual({ start: 11, end: 17 });
   });
 
   // ── Shape of the scan ──────────────────────────────────────────────────

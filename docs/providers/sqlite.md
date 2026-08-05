@@ -268,6 +268,15 @@ Homebrew). Each channel is browser-verified by
 `query(sql, params?)` — positional params via the driver's `all()`/`run()`. There is no
 `prepareQuery()` override, so the inherited base injects a `LIMIT` into bare `SELECT`s
 (`DEFAULT_QUERY_LIMIT = 500`). No transactions, no cancellation ([§3.4](#34-no-transactions-api-no-cancellation-no-pool)).
+
+The inherited path reads the statement under **SQLite's** grammar, which the base passes down from the
+provider's own `type` ([`grammar.ts`](../../src/lib/sql/grammar.ts)). SQLite has two comment forms,
+`--` and `/* … */`; `#` opens neither. Its own tokenizer (the amalgamation bundled with
+`better-sqlite3` classifies `#` as `CC_VARALPHA`) reads `#name` as a bind variable, i.e. code. The
+shared reader used to guess MySQL's rule here, which swallowed the rest of the line and cost the
+statement its bound, so `SELECT * FROM users WHERE id = #id` returned every row; it is now bounded,
+emitted intact (#292). See
+[Which dialect the readers are reading](../editor/query-optimization.md#which-dialect-the-readers-are-reading).
 `EXPLAIN QUERY PLAN` is supported (`supportsExplain: true`, `explainFormat: "sqlite-queryplan"`) — the UI renders the plan as a tree; SQLite reports no per-node cost or timing metrics, so none are shown.
 
 ---

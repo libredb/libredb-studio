@@ -1,11 +1,12 @@
 import { describe, test, expect } from "bun:test";
+import { resolveSqlGrammar, type SqlGrammar } from "@/lib/sql/grammar";
 import { readSqlSpan } from "@/lib/sql/spans";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 /** The span at index 0, as `kind|text` (or `null`), which is what most cases assert. */
-function spanOf(sql: string, index = 0): string | null {
-  const span = readSqlSpan(sql, index);
+function spanOf(sql: string, index = 0, grammar?: SqlGrammar): string | null {
+  const span = readSqlSpan(sql, index, grammar);
   return span === null ? null : `${span.kind}|${sql.slice(index, span.end)}`;
 }
 
@@ -100,6 +101,42 @@ describe("readSqlSpan", () => {
 
     test("an empty line comment is still a span", () => {
       expect(spanOf("--\nSELECT")).toBe("line-comment|--\n");
+    });
+  });
+
+  // ── The `#` reading is the dialect's, when a dialect is named (#292) ─────
+  //
+  // Every case above is a call that names NO dialect, and all of them keep their
+  // answers: the default is today's hybrid reading, pinned as a decision in
+  // `grammar.test.ts`. A call that DOES name one gets that dialect's rule, which
+  // is what removes the "the module takes one engine's side" trade above - not
+  // for the default, but for every caller that knows which engine it is talking
+  // to, and after #292 that is all of them.
+
+  describe("a named dialect decides what `#` means", () => {
+    const MYSQL = resolveSqlGrammar("mysql");
+    const POSTGRES = resolveSqlGrammar("postgres");
+
+    test("a comment grammar reads an operator-tailed hash as a comment", () => {
+      expect(spanOf("#- note\nSELECT 1", 0, MYSQL)).toBe("line-comment|#- note\n");
+      expect(spanOf("SELECT 1 #> note", 9, MYSQL)).toBe("line-comment|#> note");
+    });
+
+    test("a code grammar reads even a plainly-written hash comment as code", () => {
+      expect(readSqlSpan("# note\nSELECT 1", 0, POSTGRES)).toBeNull();
+      expect(readSqlSpan("SELECT * FROM #tmp", 14, POSTGRES)).toBeNull();
+    });
+
+    test("a dialect changes nothing about the `--` comment, which no dialect disputes", () => {
+      expect(spanOf("-- note\nSELECT 1", 0, POSTGRES)).toBe("line-comment|-- note\n");
+      expect(spanOf("-- note\nSELECT 1", 0, MYSQL)).toBe("line-comment|-- note\n");
+    });
+
+    // A `#` inside a literal is the literal's, whatever the dialect says about a
+    // bare one - the branch order has to keep the quote reader in front.
+    test("a hash inside a quoted run is not read as a comment under any grammar", () => {
+      expect(spanOf("`a#b` FROM t", 0, MYSQL)).toBe("quoted-identifier|`a#b`");
+      expect(spanOf("'# not a comment'", 0, POSTGRES)).toBe("string|'# not a comment'");
     });
   });
 

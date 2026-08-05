@@ -669,6 +669,22 @@ describe("SQLiteProvider", () => {
       expect(result.query).toBe(sql);
       expect(result.wasLimited).toBe(false);
     });
+
+    // ── The `#` grammar is SQLite's here (#292) ──────────────────────────
+    //
+    // SQLite has two comment forms, `--` and `/* */`. Its own tokenizer (the
+    // bundled amalgamation classifies `#` as `CC_VARALPHA`) reads `#name` as a
+    // bind variable, i.e. code. The shared reader used to guess MySQL's rule
+    // here, which swallowed the rest of the line and cost the statement its
+    // bound; naming the dialect bounds it instead, emitted text intact.
+    test("bounds a statement carrying a hash-prefixed bind variable", () => {
+      provider = new SQLiteProvider(makeSQLiteConfig());
+
+      const result = provider.prepareQuery("SELECT * FROM users WHERE id = #id");
+
+      expect(result.query).toBe("SELECT * FROM users WHERE id = #id LIMIT 500");
+      expect(result.wasLimited).toBe(true);
+    });
   });
 
   // --------------------------------------------------------------------------

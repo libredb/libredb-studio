@@ -66,6 +66,7 @@ import {
 } from "@/lib/db/types";
 import { formatCacheHitRatio } from "@/lib/monitoring-cache-ratio";
 import { formatBytes } from "@/lib/db/utils/pool-manager";
+import { resolveSqlGrammar, type SqlGrammar } from "@/lib/sql/grammar";
 import { readStatementEnd } from "@/lib/sql/statement-end";
 import { ClickHouseHttpTransport } from "./http-transport";
 import {
@@ -392,8 +393,8 @@ function splitTarget(target: string, pinnedDatabase: string): [database: string,
  * -- note` and turn a working statement into the 400 / code 62 this override
  * exists to prevent (#280).
  */
-function hasTrailingClause(sql: string): boolean {
-  const statement = sql.slice(0, readStatementEnd(sql).end);
+function hasTrailingClause(sql: string, grammar: SqlGrammar): boolean {
+  const statement = sql.slice(0, readStatementEnd(sql, grammar).end);
   return TRAILING_FORMAT.test(statement) || TRAILING_SETTINGS.test(statement);
 }
 
@@ -561,7 +562,7 @@ export class ClickHouseProvider extends SQLBaseProvider {
    */
   public override prepareQuery(query: string, options: QueryPrepareOptions = {}): PreparedQuery {
     const prepared = super.prepareQuery(query, options);
-    if (!hasTrailingClause(query)) return prepared;
+    if (!hasTrailingClause(query, resolveSqlGrammar(this.type))) return prepared;
 
     return { ...prepared, query, wasLimited: false };
   }

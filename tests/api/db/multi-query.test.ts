@@ -402,6 +402,29 @@ describe("POST /api/db/multi-query", () => {
       expect(mockProvider.prepareQuery).not.toHaveBeenCalled();
       expect(mockProvider.query).toHaveBeenCalledWith(finalStatement);
     });
+
+    // The route resolves its connection before it asks the classifier, so it asks
+    // under THAT connection's dialect (#292). Without the dialect this statement
+    // types `SELECT` - the `#-` reads as a PostgreSQL jsonb operator, so the `)`
+    // inside the comment closes the CTE body early - and the route would hand a
+    // `DELETE` to `prepareQuery`. Pinned here because this is the one caller layer
+    // where the route, not the provider, decides whether the statement is a read.
+    test("the final statement is classified under the connection's own dialect", async () => {
+      const finalStatement = "WITH t AS (\n  #- drop the ) SELECT here\n  SELECT id FROM logs\n) DELETE FROM users";
+
+      const req = createMockRequest("/api/db/multi-query", {
+        method: "POST",
+        body: {
+          connection: { ...validConnection, type: "mysql" },
+          sql: `SELECT 1;\n${finalStatement}`,
+        },
+      });
+
+      await POST(req as never);
+
+      expect(mockProvider.prepareQuery).not.toHaveBeenCalled();
+      expect(mockProvider.query).toHaveBeenCalledWith(finalStatement);
+    });
   });
 
   test("QueryError from getOrCreateProvider returns 400", async () => {

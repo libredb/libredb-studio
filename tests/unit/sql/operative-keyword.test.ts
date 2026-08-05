@@ -1,10 +1,11 @@
 import { describe, test, expect } from "bun:test";
+import { resolveSqlGrammar, type SqlGrammar } from "@/lib/sql/grammar";
 import { readOperativeKeyword } from "@/lib/sql/operative-keyword";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-function operativeOf(sql: string): string | null {
-  return readOperativeKeyword(sql)?.keyword ?? null;
+function operativeOf(sql: string, grammar?: SqlGrammar): string | null {
+  return readOperativeKeyword(sql, grammar)?.keyword ?? null;
 }
 
 // ─── readOperativeKeyword ───────────────────────────────────────────────────
@@ -322,6 +323,25 @@ describe("readOperativeKeyword", () => {
       const sql = "WITH t AS (\n  # drop the ) SELECT here\n  SELECT id FROM logs\n) DELETE FROM users";
 
       expect(operativeOf(sql)).toBe("DELETE");
+    });
+
+    // …and the gap CLOSES for a caller that names its dialect (#292). This is the
+    // one shape in this family that costs a partially committed write - MySQL 8
+    // accepts both `WITH … DELETE` and a `LIMIT` on a `DELETE` - so it is asserted
+    // in both directions: the write is typed as a write under MySQL's grammar, and
+    // the jsonb operator that the hybrid reading exists to protect still reads as
+    // code under PostgreSQL's.
+    test("a comment grammar reads the same statement as the DELETE it operates", () => {
+      const sql = "WITH t AS (\n  #- drop the ) SELECT here\n  SELECT id FROM logs\n) DELETE FROM users";
+
+      expect(operativeOf(sql, resolveSqlGrammar("mysql"))).toBe("DELETE");
+    });
+
+    test("a code grammar keeps a jsonb-operator CTE readable", () => {
+      const postgres = resolveSqlGrammar("postgres");
+
+      expect(operativeOf("WITH t AS (SELECT meta #> '{a}' AS v FROM docs) SELECT * FROM t", postgres)).toBe("SELECT");
+      expect(operativeOf("WITH t AS (SELECT meta #- '{a}' AS v FROM docs) DELETE FROM users", postgres)).toBe("DELETE");
     });
 
     // Reading an expression means knowing where it ends only by its `AS`, so any

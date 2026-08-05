@@ -701,20 +701,68 @@ describe("MSSQLProvider", () => {
           expect(result.wasLimited).toBe(false);
         });
 
-        test.each<[string, string]>([
-          ["a temp table", "SELECT * FROM #tmp ORDER BY id"],
-          ["a literal whose end is undeterminable", "SELECT id FROM users WHERE path = 'C:\\';"],
-        ])("the offset branch declines on %s, which it cannot append to", (_label, sql) => {
+        test("the offset branch declines on a literal whose end is undeterminable", () => {
+          const sql = "SELECT id FROM users WHERE path = 'C:\\';";
+
           const result = provider.prepareQuery(sql, { limit: 50, offset: 10 });
 
           expect(result.query).toBe(sql);
           expect(result.wasLimited).toBe(false);
         });
 
+        // A temp table used to reach the same refusal, and it no longer does: this
+        // provider now tells the shared reader that `#` is code in T-SQL (#292), so
+        // `#tmp` is the statement's own text, the end is cuttable and the page is
+        // appended where T-SQL wants it. The refusal was never about temp tables
+        // being unsafe to page - it was the price of a reader that could not tell
+        // `#tmp` from `# note`.
+        test("the offset branch now pages a temp-table read, which T-SQL accepts", () => {
+          const result = provider.prepareQuery("SELECT * FROM #tmp ORDER BY id", { limit: 50, offset: 10 });
+
+          expect(result.query).toBe("SELECT * FROM #tmp ORDER BY id OFFSET 10 ROWS FETCH NEXT 50 ROWS ONLY");
+          expect(result.wasLimited).toBe(true);
+        });
+
         test("the TOP head splice is unchanged by a trailing comment", () => {
           const result = provider.prepareQuery("SELECT * FROM users -- daily check", { limit: 50 });
 
           expect(result.query).toBe("SELECT TOP 50 * FROM users -- daily check");
+          expect(result.wasLimited).toBe(true);
+        });
+
+        // ── The `#` grammar is T-SQL's here (#292) ──────────────────────────
+        //
+        // This block records the shape the trailing-comment note above had to
+        // leave open: put trivia AFTER the bound of a temp-table page and the
+        // whole line vanished into a "comment" that starts at `#tmp`, so the
+        // end-anchored probe saw no bound and a `TOP` was spliced alongside an
+        // `OFFSET … FETCH` that SQL Server rejects outright (Msg 10741). Naming
+        // the dialect closes it at the root: `#` is never a comment in T-SQL.
+        test.each<[string, string]>([
+          ["a trailing line comment", "SELECT * FROM #tmp ORDER BY id OFFSET 0 ROWS FETCH NEXT 10 ROWS ONLY -- daily"],
+          [
+            "a trailing block comment",
+            "SELECT * FROM #tmp ORDER BY id OFFSET 0 ROWS FETCH NEXT 10 ROWS ONLY /* daily */",
+          ],
+          [
+            "a terminator and a comment",
+            "SELECT * FROM #tmp ORDER BY id OFFSET 0 ROWS FETCH NEXT 10 ROWS ONLY; -- daily",
+          ],
+        ])("does not splice TOP into an already-paged temp-table read carrying %s", (_label, sql) => {
+          const result = provider.prepareQuery(sql, { limit: 50 });
+
+          expect(result.query).toBe(sql);
+          expect(result.wasLimited).toBe(false);
+        });
+
+        // Fixture discipline: a bracket-quoted NAME carrying a hash, read from a
+        // temp table - two constructs the scanner does not model as a unit. The
+        // emitted text is asserted whole, because the failure mode this milestone
+        // shipped last time was a bound spliced INTO a bracketed name.
+        test("splices TOP ahead of a bracket-quoted name carrying a hash", () => {
+          const result = provider.prepareQuery("SELECT [a#b] FROM #tmp", { limit: 50 });
+
+          expect(result.query).toBe("SELECT TOP 50 [a#b] FROM #tmp");
           expect(result.wasLimited).toBe(true);
         });
       });

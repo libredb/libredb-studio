@@ -31,6 +31,7 @@
  * failures of exactly that kind.
  */
 
+import { DEFAULT_SQL_GRAMMAR, hashRunIsAmbiguous, type SqlGrammar } from "./grammar";
 import { readSqlSpan } from "./spans";
 
 export interface StatementEnd {
@@ -92,31 +93,37 @@ function isTrailingSpace(ch: string): boolean {
  *    never closes.) Inserting on a guess emits `… 'O\'Brien'; LIMIT 500`, a bound
  *    after the statement's own `;`, which is a syntax error rather than too many
  *    rows.
- * 2. **A `#` line comment in the trailing run.** `spans.ts` reads `#` as MySQL's
- *    second comment marker, but it is ordinary code in three other dialects this
- *    project supports - `#tmp` is a T-SQL temp table, `ID#` a legal Oracle
- *    identifier, `flags # 5` a PostgreSQL XOR - and nothing in the text tells the
- *    two apart (`#note` and `#tmp` are the same characters). Cutting there emits
- *    `SELECT * FROM LIMIT 500 #tmp`. The `#` run is reported as part of the
- *    statement rather than trimmed off it, because the reading that costs least
- *    when wrong is the LONGER one: a bound written after a `#` is then still
- *    found (`… FROM #tmp ORDER BY id FETCH NEXT 10 ROWS ONLY` is a bounded T-SQL
- *    page, and a caller that could not see that bound would add a second), while
- *    the opposite mistake only reports a bound the caller responds to by leaving
- *    the statement alone - which is what it does here anyway.
+ * 2. **A `#` line comment in the trailing run, and ONLY where no dialect was
+ *    named.** `#` is a comment marker in MySQL, MariaDB and ClickHouse and
+ *    ordinary code in the rest - `#tmp` is a T-SQL temp table, `ID#` a legal
+ *    Oracle identifier, `flags # 5` a PostgreSQL XOR, `#id` a SQLite bind
+ *    variable - and nothing in the TEXT tells the two apart (`#note` and `#tmp`
+ *    are the same characters). Cutting on the wrong one emits
+ *    `SELECT * FROM LIMIT 500 #tmp`. A caller that names its dialect has told
+ *    them apart, so this refusal applies to the dialect-less reading alone
+ *    (#292); there the `#` run is reported as part of the statement rather than
+ *    trimmed off it, because the reading that costs least when wrong is the
+ *    LONGER one: a bound written after a `#` is then still found
+ *    (`… FROM #tmp ORDER BY id FETCH NEXT 10 ROWS ONLY` is a bounded T-SQL page,
+ *    and a caller that could not see that bound would add a second), while the
+ *    opposite mistake only reports a bound the caller responds to by leaving the
+ *    statement alone - which is what it does here anyway.
  *
  * A `#` comment with code after it on a later line is unaffected: the end then
  * advances past it, and inserting at the end of the statement is correct under
  * both readings.
  */
-export function readStatementEnd(sql: string): StatementEnd {
+export function readStatementEnd(sql: string, grammar: SqlGrammar = DEFAULT_SQL_GRAMMAR): StatementEnd {
   let end = 0;
   let i = 0;
-  // Whether the run since the last code character contains a `#` line comment.
+  // Whether the run since the last code character contains a `#` line comment
+  // whose meaning is undecided. Under a named dialect there is nothing to be
+  // wrong about: the comment is a comment (cut before it) or the run is the
+  // statement's own code (the end has already advanced past it).
   let hashInTrailingRun = false;
 
   while (i < sql.length) {
-    const span = readSqlSpan(sql, i);
+    const span = readSqlSpan(sql, i, grammar);
 
     if (span !== null) {
       if (!span.terminated) return { end: endBeforeTerminator(sql), rewritable: false };
@@ -126,7 +133,7 @@ export function readStatementEnd(sql: string): StatementEnd {
       if (span.kind === "string" || span.kind === "quoted-identifier" || span.kind === "dollar-string") {
         end = span.end;
         hashInTrailingRun = false;
-      } else if (span.kind === "line-comment" && sql[i] === "#") {
+      } else if (span.kind === "line-comment" && sql[i] === "#" && hashRunIsAmbiguous(grammar)) {
         hashInTrailingRun = true;
       }
       i = span.end;

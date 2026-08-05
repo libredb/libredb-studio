@@ -104,19 +104,28 @@ as `src/lib/sql/statement-end.ts` delimits it, before any trailing comment and b
 of which are re-attached verbatim. Whitespace written before the terminator is now preserved rather
 than dropped, which is the only emitted-SQL difference on the `TOP` branch.
 
-That reader also answers whether the end may be **cut**, and the two branches differ there too. A
-statement ending in a `#` run — `SELECT * FROM #tmp`, everyday T-SQL, which the shared scanner reads
-as a MySQL comment because nothing in the text distinguishes the two — may not be cut, so the
-appending branch declines. The `TOP` splice writes into the head and rejoins the tail verbatim, so it
-still bounds such a statement, and `SELECT * FROM #tmp` comes back as `SELECT TOP 500 * FROM #tmp`.
-What makes that tolerable is that a refused cut still reports the statement's whole text as its end:
-the shared already-bounded probe therefore sees a `FETCH NEXT` written after the `#`, so a temp-table
-page the user already bounded is left alone rather than collecting a `TOP` — which SQL Server rejects
-outright alongside `OFFSET … FETCH`. It is not airtight. Put trailing trivia after that bound
-(`… FETCH NEXT 10 ROWS ONLY -- daily`) and the end-anchored probe stops seeing it, so the `TOP` is
-spliced anyway. That shape behaves exactly as it did before — the probe was end-anchored on the raw
-text then too — and closing it needs the `#` end re-read under a hash-is-code scan, which is a change
-of its own.
+That reader also answers whether the end may be **cut**, and until #292 it could not answer it for a
+statement ending in a `#` run — `SELECT * FROM #tmp` is everyday T-SQL, and the shared scanner had to
+read it as a MySQL comment because nothing in the *text* distinguishes the two. The appending branch
+therefore declined, and a temp-table page whose bound was followed by trailing trivia
+(`… FETCH NEXT 10 ROWS ONLY -- daily`) hid that bound from the end-anchored probe, so a `TOP` was
+spliced alongside an `OFFSET … FETCH` — which SQL Server rejects outright (Msg 10741).
+
+`prepareQuery()` now passes its own `type` to the shared readers, and under T-SQL's grammar `#` is
+never a comment: `#name` and `##name` are local and global temp tables. So the run is the statement's
+own text, the end is cuttable, and both halves close together:
+
+- `SELECT * FROM #tmp` still comes back as `SELECT TOP 500 * FROM #tmp` (the `TOP` splice writes into
+  the head and never depended on the cut);
+- `SELECT * FROM #tmp ORDER BY id` now takes a real page —
+  `… OFFSET 10 ROWS FETCH NEXT 50 ROWS ONLY` — instead of being returned untouched;
+- `SELECT * FROM #tmp … FETCH NEXT 10 ROWS ONLY -- daily` is recognised as already bounded and
+  collects no `TOP`.
+
+See
+[Which dialect the readers are reading](../editor/query-optimization.md#which-dialect-the-readers-are-reading).
+This closes the common half of #293; the remaining case — a statement whose end cannot be cut for a
+reason that is *not* the hash, such as a literal behind an odd backslash run — is tracked there.
 
 The `SELECT` it splices after is located with `src/lib/sql/leading-keyword.ts`, so a T-SQL comment
 before the statement (`-- note` or `/* note */`) is skipped rather than defeating the injection. That

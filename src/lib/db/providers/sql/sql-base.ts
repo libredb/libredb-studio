@@ -148,10 +148,13 @@ export abstract class SQLBaseProvider extends BaseDatabaseProvider {
   public override prepareQuery(query: string, options: QueryPrepareOptions = {}): PreparedQuery {
     const { limit = DEFAULT_QUERY_LIMIT, offset = 0, unlimited = false } = options;
     const effectiveLimit = unlimited ? MAX_UNLIMITED_ROWS : limit;
-    const queryInfo = analyzeQuery(query);
+    // `this.type` is the dialect channel (#292): the shared readers resolve `#`
+    // and the other characters the engines disagree about the way THIS engine
+    // does, rather than taking one engine's side for all of them.
+    const queryInfo = analyzeQuery(query, this.type);
 
     if (queryInfo.type === "SELECT") {
-      const limitResult = applyQueryLimit(query, effectiveLimit, offset);
+      const limitResult = applyQueryLimit(query, effectiveLimit, offset, {}, this.type);
       return {
         query: limitResult.sql,
         wasLimited: limitResult.wasLimited,

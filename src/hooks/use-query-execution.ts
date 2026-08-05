@@ -128,7 +128,9 @@ export function useQueryExecution({
         !isExplain &&
         !executionOptions?.offset &&
         !playgroundMode &&
-        isDangerousQuery(queryToExecute)
+        // The connection's type is the dialect the statement is about to run
+        // under, and the gate reads the statement under it (#292).
+        isDangerousQuery(queryToExecute, activeConnection.type)
       ) {
         setSafetyCheckQuery(queryToExecute);
         return;

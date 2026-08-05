@@ -1,5 +1,7 @@
 import { describe, test, expect } from "bun:test";
+import { resolveSqlGrammar, type SqlGrammar } from "@/lib/sql/grammar";
 import { readStatementEnd } from "@/lib/sql/statement-end";
+import type { DatabaseType } from "@/lib/types";
 
 /**
  * `[statement, trailing]` - the split this reader exists to produce.
@@ -8,8 +10,8 @@ import { readStatementEnd } from "@/lib/sql/statement-end";
  * readable and pins BOTH sides: a reader that loses characters would still return
  * a plausible-looking number.
  */
-function split(sql: string): [string, string] {
-  const { end } = readStatementEnd(sql);
+function split(sql: string, grammar?: SqlGrammar): [string, string] {
+  const { end } = readStatementEnd(sql, grammar);
   return [sql.slice(0, end), sql.slice(end)];
 }
 
@@ -141,6 +143,40 @@ describe("readStatementEnd", () => {
     ])("refuses a cut but reports the whole statement for %s", (_label, sql, statement) => {
       expect(readStatementEnd(sql).rewritable).toBe(false);
       expect(split(sql)[0]).toBe(statement);
+    });
+
+    // ── …unless the caller says which dialect it is (#292) ────────────────
+    //
+    // The refusal above exists because "nothing in the text tells them apart".
+    // A caller that names its dialect has told them apart, so the refusal is
+    // lifted in BOTH directions - and the two directions produce different
+    // ends, which is why each is asserted whole rather than by its flag.
+
+    test("a comment grammar cuts before the trailing hash comment", () => {
+      const mysql = resolveSqlGrammar("mysql");
+
+      expect(readStatementEnd("SELECT 1 # note", mysql)).toEqual({ end: 8, rewritable: true });
+      expect(split("SELECT 1 # note", mysql)).toEqual(["SELECT 1", " # note"]);
+      expect(split("SELECT 1 # note\n;", mysql)).toEqual(["SELECT 1", " # note\n;"]);
+    });
+
+    test.each<[string, string, DatabaseType]>([
+      ["a T-SQL temp table", "SELECT * FROM #tmp", "mssql"],
+      ["an Oracle identifier carrying a hash", "SELECT * FROM EMP WHERE ID# = 1", "oracle"],
+      ["a PostgreSQL XOR operator", "SELECT flags # 5 AS x FROM t", "postgres"],
+      ["a SQLite bind variable", "SELECT * FROM t WHERE id = #id", "sqlite"],
+    ])("a code grammar keeps %s as the statement's own text and allows the cut", (_label, sql, type) => {
+      expect(readStatementEnd(sql, resolveSqlGrammar(type))).toEqual({ end: sql.length, rewritable: true });
+    });
+
+    test("a code grammar still splits off the trivia that dialect does have", () => {
+      const mssql = resolveSqlGrammar("mssql");
+
+      expect(split("SELECT * FROM #tmp -- daily", mssql)).toEqual(["SELECT * FROM #tmp", " -- daily"]);
+      expect(split("SELECT * FROM #t FETCH NEXT 10 ROWS ONLY;", mssql)).toEqual([
+        "SELECT * FROM #t FETCH NEXT 10 ROWS ONLY",
+        ";",
+      ]);
     });
   });
 

@@ -135,6 +135,48 @@ not a name, or an `AS` with no body after it — is re-read as an expression tha
 supported dialect accepts such text, so what the server receives is a rejected statement either way
 rather than a partly limited write.
 
+### Which dialect the readers are reading
+
+Every reader above answers from characters alone, and a few characters mean different things in
+different engines. Where they do, a reader with no dialect has to take one engine's side, and the
+wrong side moves where a construct ends — a `)` that closes a CTE body, a comment that hides a bound,
+the keyword that types the statement.
+
+The dialect was always available at the callers: every provider knows its own `type`, the
+multi-statement route resolves its provider before it asks, and both client-side execution paths hold
+the active connection. It is now passed down (`src/lib/sql/grammar.ts`), and **exactly one place**
+maps a database type to grammar facts — the readers receive the resolved record and never see a type
+id, so no reader can grow a dialect test of its own.
+
+| Character | Established reading | Dialects |
+|-----------|--------------------|----------|
+| `#` | opens a line comment | MySQL, MariaDB, ClickHouse (which also has `#!`) |
+| `#` | ordinary code — a jsonb/geometric operator, an identifier character, a temp-table name, a bind-variable prefix | PostgreSQL, Oracle, SQL Server, SQLite |
+
+Each row was established from an authoritative source: the engine's own documentation, or its
+driver's own tokenizer under `node_modules` (node-oracledb accepts `#` inside an identifier; the
+SQLite amalgamation classifies it as a bind-variable prefix). A rule that could **not** be
+established is not guessed from a neighbouring dialect — the dialect stays at the compatibility
+default below, and it is listed here rather than left implicit. Currently at the default: **Couchbase,
+Druid and the embedded LibreDB provider** (MongoDB and Redis never reach these readers).
+
+**A call that names no dialect keeps today's reading**, and that is a decision with its own tests, not
+an accident: `#` opens a comment unless the next character makes a PostgreSQL operator (`#>`, `#>>`,
+`#-`, `##`). It is neither of the honest readings — it is what this folder did for every engine before
+the channel existed, kept so that the fixtures written for #275, #280, #287, #291 and #294 keep
+asserting the behaviour they were written for.
+
+What changes for a caller that does name one:
+
+| Statement | Dialect | Before | Now |
+|-----------|---------|--------|-----|
+| `WITH t AS (` + `#- note )` + `SELECT 1) DELETE FROM users` | MySQL | typed `SELECT`, bound appended to a `DELETE` | typed `DELETE`, not bounded |
+| `SELECT * FROM t # LIMIT 10` | MySQL | the commented-out bound read as real, statement unbounded | bound added before the comment |
+| `SELECT * FROM #tmp` | SQL Server | end not cuttable, appending branch declines | `#tmp` is the statement's own text, the statement is bounded |
+| `SELECT * FROM EMP WHERE ID# = 1` | Oracle | not bounded | bounded |
+| `SELECT * FROM users # daily` | ClickHouse | not bounded | bound added before the comment |
+| `SELECT meta #> '{a}' FROM docs` | PostgreSQL | bounded (the default already read this correctly) | unchanged |
+
 ### Where the bound is placed
 
 The clause is inserted **between the statement and its trailing trivia** — whitespace, comments and
@@ -171,23 +213,29 @@ branch of "never `true` alongside a bound the engine cannot see":
 | Shape | Why the cut is refused |
 |-------|------------------------|
 | An unterminated comment or literal, or a quote behind an odd backslash run (`… WHERE name = 'O\'Brien'`) | MySQL escapes with backslashes and PostgreSQL does not, so the two close the literal in different places; inserting on a guess puts the bound after the statement's own `;` |
-| A `#` run at the end of the statement (`SELECT * FROM #tmp`, `… WHERE ID# = 1`, `SELECT flags # 5`) | `#` is MySQL's second comment marker and ordinary code elsewhere — a T-SQL temp table, an Oracle identifier, a PostgreSQL XOR — and nothing in the text tells them apart (`#note` and `#tmp` are the same characters) |
+| A `#` run at the end of the statement (`SELECT * FROM #tmp`, `… WHERE ID# = 1`, `SELECT flags # 5`), **when no dialect was named** | `#` is a comment marker in MySQL and ClickHouse and ordinary code elsewhere — a T-SQL temp table, an Oracle identifier, a PostgreSQL XOR — and nothing in the *text* tells them apart (`#note` and `#tmp` are the same characters) |
 
 Both are a **deliberate loss of a bound**: appending after everything, as the limiter used to, was
 valid SQL for the dialect in which those characters are code, and is exactly what put the clause
 inside a trailing comment for the dialect in which they are not. Not bounding costs an over-large
 read the user can re-run, which is the trade every reader in `src/lib/sql/` makes.
 
+The second row applies to the **dialect-less** reading only. A caller that names its dialect has told
+the two apart, so the refusal is lifted in whichever direction that dialect requires: MySQL and
+ClickHouse cut before the comment, PostgreSQL, Oracle, SQL Server and SQLite read the run as the
+statement's own text and cut after it. Every caller in this project names one, so the row describes
+the compatibility default rather than everyday behaviour.
+
 A `#` comment with code after it on a later line is unaffected. Where the cut is refused, the
 statement's *text* is still read to its very end (trailing whitespace and `;` aside), so a bound
 written after a `#` is still found and never doubled — which is also why MSSQL's `TOP` splice, writing
-into the head, keeps bounding `SELECT * FROM #tmp` while leaving a temp-table page that already
-carries a `FETCH NEXT` alone. That last part is not airtight: trailing trivia written *after* such a
-bound hides it from the end-anchored probe, so the `TOP` is spliced anyway — unchanged from before
-this section existed, and noted here rather than claimed closed. The
-one shape that stays wrong is a bound commented out with `#` (`… # LIMIT 10`): it is still read as
-real, so that statement is left alone instead of being bounded. The `--` form, which is unambiguous,
-is fixed.
+into the head, keeps bounding `SELECT * FROM #tmp` even without a dialect. Under the dialect-less
+reading that is not airtight — trailing trivia written *after* an existing bound hides it from the
+end-anchored probe, so a `TOP` is spliced alongside an `OFFSET … FETCH` that SQL Server rejects — and
+naming the dialect is what closes it: `#` is never a comment in T-SQL, so the probe sees the bound
+that is there. Likewise the one shape that stays wrong without a dialect, a bound commented out with
+`#` (`… # LIMIT 10`), is read correctly under MySQL's grammar: the commented-out clause is not a
+clause, and a real bound is added before it.
 
 Providers that append a clause of their own follow the same rule: Oracle's `FETCH FIRST` and
 `OFFSET … FETCH NEXT`, and MSSQL's `OFFSET … FETCH NEXT` pagination branch. MSSQL's `SELECT TOP n`
@@ -208,7 +256,14 @@ not a pattern belonging to the route. It used to be `/^\s*SELECT\b/i`, which tol
 not a comment — and the splitter keeps each statement's leading comments — so a final `SELECT` behind a
 `-- note` was not recognised and reached the engine unbounded, the one place the comment-tolerant
 classifier had not been adopted (#281). The CTE typing applies here too: a final read-only CTE is
-bounded, a final data-modifying one is not.
+bounded, a final data-modifying one is not. The route resolves its connection before it asks, so the
+reading is done under **that connection's dialect** and this route and the provider that runs the
+statement cannot disagree about what the statement is.
+
+The splitter itself is a separate, still dialect-blind scan: it inlines its own span walk and reads
+`#` as ordinary code, so a MySQL hash comment carrying a `;` still splits a statement there. Changing
+that moves statement boundaries, which is its own change with its own tests — recorded here rather
+than folded in.
 
 Last-only is that route's own policy, and it leaves a hole this section does not close: a non-final
 `SELECT` runs exactly as written, and its **entire** result set travels back in `statements[i].rows`.
@@ -236,6 +291,14 @@ same reading the auto-limiter uses, so the two cannot disagree about where a sta
 | A `WITH` whose CTE list precedes one (`WITH x AS (…) DELETE FROM …`) | Yes |
 | A `WITH` whose CTE list *contains* an `UPDATE … SET` (PostgreSQL's data-modifying CTE) | Yes |
 | `SELECT`, including one naming a destructive keyword in a string or a comment | No |
+
+The reading is done under the **active connection's dialect** on both execution paths, because what
+counts as a comment decides what the statement says. On MySQL, a `#` comment inside a CTE list used to
+hide the `)` that closes it, so the reader answered with the `SELECT` inside the comment's reach and
+the `DELETE` after the list ran with no confirmation at all; under MySQL's grammar the comment is a
+comment and the `DELETE` is seen. The other direction matters as much: `SELECT 1 # UPDATE t SET x = 1`
+is a commented-out note on MySQL — prompting there would be a false alarm — and is the statement's own
+code on PostgreSQL, where those characters are an operator.
 
 The statement's own keyword is read with `src/lib/sql/operative-keyword.ts` and tested against a
 keyword set. It used to be re-derived here as six anchored patterns (`/^\s*DROP\b/i`, …), which

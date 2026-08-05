@@ -25,9 +25,11 @@
  * injected at all (#280).
  */
 
+import { resolveSqlGrammar, type SqlGrammar } from "@/lib/sql/grammar";
 import { readLeadingKeyword } from "@/lib/sql/leading-keyword";
 import { readOperativeKeyword } from "@/lib/sql/operative-keyword";
 import { readStatementEnd } from "@/lib/sql/statement-end";
+import type { DatabaseType } from "@/lib/types";
 
 // ============================================================================
 // Constants
@@ -86,7 +88,21 @@ function classifyKeyword(keyword: string | undefined): ParsedQueryInfo["type"] {
   return "OTHER";
 }
 
-export function analyzeQuery(sql: string): ParsedQueryInfo {
+/**
+ * The statement's shape, read under a dialect's grammar.
+ *
+ * `type` names the engine the statement is about to run on, so the readers below
+ * resolve the characters the dialects disagree about - today `#`, which is a
+ * comment marker in MySQL and ClickHouse and ordinary code everywhere else - the
+ * way that engine does. Omitting it means "no dialect named" and keeps the
+ * reading these functions had before the channel existed (#292); every caller in
+ * this project has one to pass.
+ */
+export function analyzeQuery(sql: string, type?: DatabaseType): ParsedQueryInfo {
+  return analyzeUnderGrammar(sql, resolveSqlGrammar(type));
+}
+
+function analyzeUnderGrammar(sql: string, grammar: SqlGrammar): ParsedQueryInfo {
   // The statement's own text, with its trailing trivia and terminator removed.
   // Every end-anchored probe below reads THIS rather than the raw input: the
   // anchor is what keeps them off a statement that merely mentions a bound, and
@@ -98,7 +114,7 @@ export function analyzeQuery(sql: string): ParsedQueryInfo {
   // clause. Where the cut is refused this end is the terminator strip, which is
   // what these probes read before the reader existed, so none of them answers
   // differently than it used to.
-  const statement = sql.slice(0, readStatementEnd(sql).end);
+  const statement = sql.slice(0, readStatementEnd(sql, grammar).end);
 
   // Query type detection - from the first keyword that is not whitespace or a comment
   const leading = readLeadingKeyword(statement);
@@ -124,7 +140,7 @@ export function analyzeQuery(sql: string): ParsedQueryInfo {
   // module - `sql-base.ts`, `oracle.ts` and `mssql.ts` - test `=== "SELECT"` and
   // nothing else, so the honest answer costs nothing.
   // `MERGE`, which the union cannot name, falls through to OTHER.
-  const typingKeyword = keyword === "WITH" ? readOperativeKeyword(statement)?.keyword : keyword;
+  const typingKeyword = keyword === "WITH" ? readOperativeKeyword(statement, grammar)?.keyword : keyword;
   const type = classifyKeyword(typingKeyword);
 
   // LIMIT/OFFSET detection - en dıştaki sorgunun LIMIT'ini bul
@@ -218,9 +234,13 @@ export function applyQueryLimit(
   limit: number,
   offset: number = 0,
   options: Partial<QueryLimitOptions> = {},
+  type?: DatabaseType,
 ): LimitedQueryResult {
   const { forceLimit = false } = options;
-  const info = analyzeQuery(sql);
+  // Resolved once and passed down, so the type it came from stops here: no reader
+  // below this line ever sees a database type id.
+  const grammar = resolveSqlGrammar(type);
+  const info = analyzeUnderGrammar(sql, grammar);
 
   // SELECT değilse, limit ekleme
   if (info.type !== "SELECT") {
@@ -251,13 +271,14 @@ export function applyQueryLimit(
   // carries no trailing trivia, which is nearly all of them.
   //
   // A statement whose end may not be cut is returned untouched: there is nowhere
-  // honest to put the clause, and `wasLimited: false` says so. The two shapes are
-  // a literal MySQL and PostgreSQL would close in different places
+  // honest to put the clause, and `wasLimited: false` says so. One shape always
+  // reaches that - a literal MySQL and PostgreSQL would close in different places
   // (`… WHERE name = 'O\'Brien';`, where inserting on a guess puts the bound after
-  // the `;`) and a trailing `#` run, which is a comment in MySQL and a temp table,
-  // an identifier or an operator elsewhere.
+  // the `;`). A trailing `#` run reaches it only when NO dialect was named, since
+  // it is a comment in MySQL and ClickHouse and a temp table, an identifier or an
+  // operator in the rest, and a named dialect has already told them apart.
   const source = sql.trim();
-  const { end, rewritable } = readStatementEnd(source);
+  const { end, rewritable } = readStatementEnd(source, grammar);
 
   if (!rewritable) {
     return { sql, wasLimited: false, originalLimit: info.existingLimit, appliedLimit: 0, appliedOffset: 0 };
@@ -298,8 +319,12 @@ export function hasQueryLimit(sql: string): boolean {
 
 /**
  * Sorgunun SELECT türünde olup olmadığını kontrol eder.
+ *
+ * `type` is the dialect, as on `analyzeQuery`. The multi-statement route passes
+ * its resolved connection's, so the route and the provider that runs the
+ * statement cannot disagree about what the statement is.
  */
-export function isSelectQuery(sql: string): boolean {
-  const info = analyzeQuery(sql);
+export function isSelectQuery(sql: string, type?: DatabaseType): boolean {
+  const info = analyzeQuery(sql, type);
   return info.type === "SELECT";
 }

@@ -30,7 +30,14 @@
  *   suggestion; here a wrong literal boundary costs a bound on a write.
  *
  * This module is what every NEW reader builds on, so the count does not grow.
+ *
+ * Where the dialects genuinely disagree about a character, the reading comes from
+ * the caller's grammar record (`grammar.ts`) rather than from this file taking one
+ * engine's side. A call that names no dialect keeps the reading this module had
+ * before the record existed.
  */
+
+import { DEFAULT_SQL_GRAMMAR, type SqlGrammar } from "./grammar";
 
 /**
  * What kind of non-code run a span is.
@@ -75,6 +82,24 @@ function isWhitespace(ch: string): boolean {
 /** The characters that turn a `#` into a PostgreSQL operator rather than a comment. */
 function isHashOperatorTail(ch: string | undefined): boolean {
   return ch === ">" || ch === "-" || ch === "#";
+}
+
+/**
+ * Whether a line comment opens at `index`.
+ *
+ * `--` opens one in every dialect here and needs no grammar. `#` is the one this
+ * module could not answer on its own, so it asks the grammar record: MySQL and
+ * ClickHouse open a comment on any `#`, PostgreSQL, Oracle, SQL Server and SQLite
+ * open none, and a caller that named no dialect keeps the hybrid reading this
+ * module used to apply to everyone (see `DEFAULT_SQL_GRAMMAR`).
+ */
+function opensLineComment(sql: string, index: number, grammar: SqlGrammar): boolean {
+  const ch = sql[index];
+  if (ch === "-") return sql[index + 1] === "-";
+  if (ch !== "#") return false;
+  if (grammar.hash === "code") return false;
+  if (grammar.hash === "comment") return true;
+  return !isHashOperatorTail(sql[index + 1]);
 }
 
 /**
@@ -200,8 +225,12 @@ function measureDollarTag(sql: string, index: number): number {
  *
  * Callers walk a statement by asking at every position: is this a span? If yes,
  * jump to `end`; if no, this character is the statement's own code.
+ *
+ * `grammar` is the dialect's reading of the characters the engines disagree about.
+ * Omitting it is a real answer, not a missing one: it means "no dialect was
+ * named", and the compatibility default applies.
  */
-export function readSqlSpan(sql: string, index: number): SqlSpan | null {
+export function readSqlSpan(sql: string, index: number, grammar: SqlGrammar = DEFAULT_SQL_GRAMMAR): SqlSpan | null {
   const ch = sql[index];
   if (ch === undefined) return null;
 
@@ -211,27 +240,21 @@ export function readSqlSpan(sql: string, index: number): SqlSpan | null {
     return { kind: "whitespace", end, terminated: true };
   }
 
-  // `#` is MySQL's and MariaDB's second line-comment marker. Unlike
-  // `leading-keyword.ts`, which only ever looks at a statement's LEADING trivia,
-  // this reader is asked about every position - and mid-statement `#` is a live
-  // PostgreSQL operator: `#>` and `#>>` walk a jsonb path, `#-` deletes one, `##`
-  // is geometric. Reading `SELECT meta #> '{a}'` as a comment swallows the rest of
-  // the line and costs an everyday jsonb query its bound, so a `#` that opens one
-  // of those operators is code.
+  // `#` is MySQL's, MariaDB's and ClickHouse's second line-comment marker, and it
+  // is ordinary code in PostgreSQL, Oracle, SQL Server and SQLite - a jsonb or
+  // geometric operator (`#>`, `#>>`, `#-`, `##`), an identifier character, a temp
+  // table, a bind-variable prefix. Unlike `leading-keyword.ts`, which only ever
+  // looks at a statement's LEADING trivia, this reader is asked about every
+  // position, so mid-statement `#` is exactly where the disagreement bites.
   //
-  // The trade is stated exactly, because this is the one place the module takes a
-  // dialect's SIDE instead of reporting that the dialects disagree. A MySQL comment
-  // whose first character is one of those (`#- note`) reads as code here, so the
-  // rest of that line is read as SQL where MySQL reads it as comment - and if that
-  // text contains a paren, the two readings end a construct in different places.
-  // `WITH t AS (\n #- note )\n SELECT 1) DELETE FROM users` is a DELETE in MySQL and
-  // reads as a SELECT here, which is the direction `operative-keyword.ts` otherwise
-  // promises to avoid. Reporting it undeterminable would close that, at the price of
-  // every PostgreSQL jsonb-operator CTE losing its bound: a certain cost against a
-  // contrived one. So the reading stands, the gap is recorded rather than hidden
-  // (`operative-keyword.ts`, and a test pins it), and `# note` - how comments are
-  // actually written - is unaffected either way.
-  if ((ch === "-" && sql[index + 1] === "-") || (ch === "#" && !isHashOperatorTail(sql[index + 1]))) {
+  // This used to be resolved here, by taking PostgreSQL's side: a `#` that opens
+  // one of those operators is code. That kept `SELECT meta #> '{a}'` bounded and
+  // cost the other direction - a MySQL comment written `#- note` read as SQL, so a
+  // `)` inside it ended a CTE body early and `WITH t AS (\n #- note )\n SELECT 1)
+  // DELETE FROM users` was typed a read and handed a bound, which MySQL applies to
+  // the rows the DELETE removes. The grammar record answers it now (#292), and the
+  // hybrid survives only as what a caller that named no dialect gets.
+  if (opensLineComment(sql, index, grammar)) {
     const newline = sql.indexOf("\n", index);
     // The newline belongs to the comment: it is what closes it.
     return { kind: "line-comment", end: newline === -1 ? sql.length : newline + 1, terminated: true };
@@ -267,8 +290,10 @@ export function readSqlSpan(sql: string, index: number): SqlSpan | null {
   // ClickHouse spells an array with the same characters and nests them, so
   // `[[1,2],[3,4]]` closes at the first single `]` under this reading and the rest
   // is undeterminable. That costs a bound on a form which already lost it before
-  // this change (see the array note in `operative-keyword.ts`); telling the two
-  // apart needs the dialect, which this module does not have.
+  // this change (see the array note in `operative-keyword.ts`). Telling the two
+  // apart needs a BRACKET fact on the grammar record, which it does not carry yet
+  // - the record exists and reaches this reader, but issue #295 is what puts the
+  // second row on it.
   if (ch === "[") return readBracketed(sql, index);
 
   if (ch === "$") {

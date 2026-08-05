@@ -373,6 +373,16 @@ or `SETTINGS` clause is expressing intent the editor must not silently rewrite, 
 favour not rewriting: rewriting wrongly turns a working statement into a syntax error, while leaving
 it alone at worst returns more rows than the page size.
 
+Both the detection and the inherited limiter read the statement under **ClickHouse's** grammar, which
+this provider passes down from its own `type` ([`grammar.ts`](../../src/lib/sql/grammar.ts)).
+ClickHouse's syntax reference lists `#` and `#!` beside `--` as single-line comment forms, and the
+shared reader used to guess PostgreSQL's rule instead — a hash followed by `>`, `-` or `#` is an
+operator — so a comment written that way was read as SQL, and an ordinary one at the end of a
+statement made the bound unplaceable. `SELECT * FROM users # daily check` is now bounded before the
+comment, exactly as the `--` form is, and `SELECT * FROM users # FORMAT TSV` is read as what it is: a
+commented-out clause, not a trailing one (#292). See
+[Which dialect the readers are reading](../editor/query-optimization.md#which-dialect-the-readers-are-reading).
+
 A hand-rolled semicolon strip used to stand in for that reading, so `... FORMAT TSV -- note` read as
 carrying no trailing clause at all. That was harmless only while the inherited limiter appended its
 bound after the comment, where the server never saw it; now that the bound is placed **before** the

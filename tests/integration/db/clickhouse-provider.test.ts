@@ -936,6 +936,43 @@ describe("ClickHouseProvider query preparation", () => {
     expect(prepared.wasLimited).toBe(true);
   });
 
+  // ── The `#` grammar is ClickHouse's here (#292) ────────────────────────────
+  //
+  // ClickHouse's syntax reference lists `#` and `#!` alongside `--` as line
+  // comments. The shared reader had to guess, and the rule it guessed was
+  // PostgreSQL's - a hash followed by an operator character is code - so a
+  // ClickHouse comment written that way was read as SQL, and an ordinary one at
+  // the end of a statement made the bound unplaceable. Named, the dialect gets
+  // the bound written before the comment, exactly as the `--` form does.
+
+  test.each<[string, string, string]>([
+    ["a plain hash comment", "SELECT * FROM users # daily check", "SELECT * FROM users LIMIT 25 # daily check"],
+    ["a hashbang comment", "SELECT * FROM users #! daily check", "SELECT * FROM users LIMIT 25 #! daily check"],
+    // The clause commented out with a hash is not a clause: reading it as one
+    // would leave the statement unbounded, and reading the comment as code would
+    // put the bound after a `FORMAT` this provider refuses to write past.
+    ["a commented-out FORMAT", "SELECT * FROM users # FORMAT TSV", "SELECT * FROM users LIMIT 25 # FORMAT TSV"],
+  ])("bounds a statement ending in %s, before the comment", (_label, sql, expected) => {
+    const prepared = provider().prepareQuery(sql, { limit: 25 });
+
+    expect(prepared.query).toBe(expected);
+    expect(prepared.wasLimited).toBe(true);
+  });
+
+  // Fixture discipline: a hash beside ClickHouse's array literal, which the span
+  // reader models as SQL Server's bracket-quoted NAME rather than as an array —
+  // two constructs it does not model as a unit. The bound must land before the
+  // comment and leave the array untouched; a bound spliced into `[…]` is the
+  // statement-corrupting shape this suite exists to catch. (A NESTED array still
+  // costs the statement its bound: that is the bracket grammar, issue #295, and
+  // this asserts today's answer rather than pretending it is closed.)
+  test("bounds a statement carrying an array literal and a trailing hash comment", () => {
+    const prepared = provider().prepareQuery("SELECT [1,2] AS a FROM t # daily", { limit: 25 });
+
+    expect(prepared.query).toBe("SELECT [1,2] AS a FROM t LIMIT 25 # daily");
+    expect(prepared.wasLimited).toBe(true);
+  });
+
   // ── Expression-form CTEs (#291) ───────────────────────────────────────────
   //
   // `WITH <expr> AS <alias>` is how a CTE is ordinarily written here, and it is

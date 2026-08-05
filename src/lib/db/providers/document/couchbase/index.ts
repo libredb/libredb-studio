@@ -346,7 +346,7 @@ export class CouchbaseProvider extends BaseDatabaseProvider {
   public override prepareQuery(query: string, options: QueryPrepareOptions = {}): PreparedQuery {
     const { limit = DEFAULT_QUERY_LIMIT, offset = 0, unlimited = false } = options;
     const effectiveLimit = unlimited ? MAX_UNLIMITED_ROWS : limit;
-    const limited = applyQueryLimit(query, effectiveLimit, offset);
+    const limited = applyQueryLimit(query, effectiveLimit, offset, {}, this.type);
     return { query: limited.sql, wasLimited: limited.wasLimited, limit: effectiveLimit, offset };
   }
 

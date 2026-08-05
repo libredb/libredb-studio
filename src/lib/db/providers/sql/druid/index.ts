@@ -270,7 +270,7 @@ export class DruidProvider extends SQLBaseProvider {
    */
   public override prepareQuery(query: string, options: QueryPrepareOptions = {}): PreparedQuery {
     const prepared = super.prepareQuery(query, options);
-    const parsed = analyzeQuery(query);
+    const parsed = analyzeQuery(query, this.type);
     if (!parsed.hasOffset || parsed.hasLimit) return prepared;
 
     return { ...prepared, query, wasLimited: false };

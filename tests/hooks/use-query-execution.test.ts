@@ -280,7 +280,10 @@ describe("useQueryExecution", () => {
       await result.current.executeQuery(annotated);
     });
 
-    expect(isDangerousQueryMock).toHaveBeenCalledWith(annotated);
+    // The active connection's type travels with the text: the predicate reads a
+    // statement per dialect (#292), and this call site is one of the two places
+    // that knows which dialect the statement is about to run on.
+    expect(isDangerousQueryMock).toHaveBeenCalledWith(annotated, "postgres");
     expect(result.current.safetyCheckQuery).toBe(annotated);
   });
 

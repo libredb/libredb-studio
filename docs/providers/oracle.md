@@ -111,13 +111,19 @@ result capped. A statement with no trailing comment is emitted exactly as it was
 reading answers whether the statement already carries a `FETCH FIRST`, so
 `SELECT … FETCH FIRST 10 ROWS ONLY -- deliberate` is still honoured and never gets a second clause.
 A statement whose end may not be **cut** is returned untouched with `wasLimited: false` rather than
-bounded on a guess. Two shapes reach that on Oracle: a literal Oracle and MySQL would close in
-different places (a quote behind an odd backslash run), and `#` inside an identifier (`ID#`, common
-in legacy schemas), which the shared scanner has to read as MySQL's comment marker because nothing in
-the text distinguishes the two. Both are a **deliberate loss of a bound**: appending after the whole
-text, as this method used to, happened to be valid Oracle for these two shapes, and is what puts the
-clause inside a trailing comment everywhere else. They now return every row rather than being bounded
-on a reading that is right for Oracle and wrong for the dialect the scanner cannot rule out.
+bounded on a guess. One shape reaches that on Oracle: a literal Oracle and MySQL would close in
+different places (a quote behind an odd backslash run). It is a **deliberate loss of a bound** —
+appending after the whole text, as this method used to, happened to be valid Oracle there, and is
+what puts the clause inside a trailing comment everywhere else — so that statement returns every row
+rather than being bounded on a guess.
+
+`#` inside an identifier (`ID#`, common in legacy schemas) used to reach the same refusal and no
+longer does. `prepareQuery()` passes its own `type` to the shared readers (#292), and Oracle's grammar
+says `#` opens no comment: node-oracledb's own SQL tokenizer
+(`node_modules/oracledb/lib/thin/statement.js`) accepts `#` as an identifier character and starts
+comments on `--` and `/* … */` only. `SELECT * FROM EMP WHERE ID# = 1` is therefore bounded, emitted
+as `… ID# = 1 FETCH FIRST 500 ROWS ONLY`. See
+[Which dialect the readers are reading](../editor/query-optimization.md#which-dialect-the-readers-are-reading).
 
 ### 3.3 Owner-scoped, five-query schema introspection
 

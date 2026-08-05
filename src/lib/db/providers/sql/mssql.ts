@@ -31,6 +31,7 @@ import { DatabaseConfigError, ConnectionError, QueryError, mapDatabaseError } fr
 import { formatBytes } from "../../utils/pool-manager";
 import { analyzeQuery, DEFAULT_QUERY_LIMIT, MAX_UNLIMITED_ROWS } from "../../utils/query-limiter";
 import { readLeadingKeyword } from "@/lib/sql/leading-keyword";
+import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import { readStatementEnd } from "@/lib/sql/statement-end";
 
 // Row shape used to group foreign keys per table in getSchema().
@@ -559,7 +560,7 @@ export class MSSQLProvider extends SQLBaseProvider {
   public override prepareQuery(query: string, options: QueryPrepareOptions = {}): PreparedQuery {
     const { limit = DEFAULT_QUERY_LIMIT, offset = 0, unlimited = false } = options;
     const effectiveLimit = unlimited ? MAX_UNLIMITED_ROWS : limit;
-    const queryInfo = analyzeQuery(query);
+    const queryInfo = analyzeQuery(query, this.type);
 
     if (queryInfo.type === "SELECT" && !queryInfo.hasLimit) {
       // The `TOP` branch writes into the HEAD and was never reachable by a
@@ -572,23 +573,20 @@ export class MSSQLProvider extends SQLBaseProvider {
       //
       // Splitting and rejoining is lossless and the splice does not depend on
       // where the statement ends, so the `TOP` branch stays correct even where
-      // the tail may not be CUT - which matters here more than anywhere else,
-      // because a T-SQL temp table (`SELECT * FROM #tmp`) is exactly such a
-      // statement and is entirely ordinary. Only the appending branch has to
-      // decline.
+      // the tail may not be CUT. Only the appending branch has to decline there.
       //
-      // What makes that tolerable is that a refused cut still reports the whole
-      // statement as its end, so the already-bounded probe above sees a
-      // `FETCH NEXT` written after the `#` and this block is not entered for an
-      // already-paged temp table. It is not airtight: put trailing trivia after
-      // that bound (`... FETCH NEXT 10 ROWS ONLY -- daily`) and the end-anchored
-      // probe stops seeing it, so a `TOP` is spliced alongside an `OFFSET …
-      // FETCH` that SQL Server rejects. That shape behaves exactly as it did
-      // before this change - the probe was end-anchored on the raw text then too
-      // - and closing it needs the `#` end re-read under a hash-is-code scan,
-      // which is a change of its own with its own tests.
+      // The end is read under T-SQL's grammar (#292), where `#` opens no comment
+      // at all - `#name` and `##name` are temp tables. That is what makes a temp
+      // table an ordinary statement here rather than the special case it used to
+      // be: `SELECT * FROM #tmp` is cuttable, so BOTH branches are reachable for
+      // it, and the already-bounded probe sees a `FETCH NEXT` written after the
+      // `#` even when trailing trivia follows it - which is where a `TOP` used to
+      // be spliced alongside an `OFFSET … FETCH` that SQL Server rejects
+      // outright. What still declines is a statement whose end cannot be cut for
+      // a reason that is not the hash, such as a literal behind an odd backslash
+      // run; that class is #293's remaining half.
       const source = query.trim();
-      const { end, rewritable } = readStatementEnd(source);
+      const { end, rewritable } = readStatementEnd(source, resolveSqlGrammar(this.type));
       let modifiedSql = source.slice(0, end);
       const trailing = source.slice(end);
 

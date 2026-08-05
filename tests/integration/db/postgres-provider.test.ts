@@ -1711,4 +1711,41 @@ describe("PostgresProvider", () => {
       expect(activity[0].query).toBe("SELECT * FROM test_table");
     });
   });
+
+  // --------------------------------------------------------------------------
+  // prepareQuery() — the `#` grammar is PostgreSQL's here (#292)
+  // --------------------------------------------------------------------------
+  //
+  // PostgreSQL has exactly two comment forms, `--` and `/* */`; `#` is an
+  // operator character (`#>`, `#>>`, `#-` walk or delete a jsonb path, `#` is
+  // integer XOR). The shared readers used to approximate that with "a hash is a
+  // comment unless the next character makes an operator", which reads `# note` on
+  // this provider as a comment and stops the statement there. Asserted through
+  // the provider's own `prepareQuery`, with the emitted text pinned whole.
+
+  describe("prepareQuery()", () => {
+    test.each<[string, string]>([
+      ["a jsonb path operator", "SELECT meta #> '{a}' FROM docs"],
+      ["a jsonb path-as-text operator", "SELECT meta #>> '{a}' FROM docs"],
+      ["an integer XOR operator", "SELECT flags # 5 AS x FROM t"],
+      ["a dollar-quoted body carrying a hash and a paren", "SELECT $fn$ # ) DELETE $fn$ AS body FROM t"],
+    ])("bounds a statement carrying %s, emitted intact", (_label, sql) => {
+      provider = new PostgresProvider(makePgConfig());
+
+      const result = provider.prepareQuery(sql, { limit: 50 });
+
+      expect(result.query).toBe(`${sql} LIMIT 50`);
+      expect(result.wasLimited).toBe(true);
+    });
+
+    test("a write is still a write, hash or no hash", () => {
+      provider = new PostgresProvider(makePgConfig());
+      const sql = "UPDATE t SET flags = flags # 5";
+
+      const result = provider.prepareQuery(sql, { limit: 50 });
+
+      expect(result.query).toBe(sql);
+      expect(result.wasLimited).toBe(false);
+    });
+  });
 });

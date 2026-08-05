@@ -58,7 +58,7 @@ export async function POST(req: NextRequest) {
         // was made comment-tolerant to close (#281, #275). The shared reading also
         // types a `WITH` by the keyword its CTE list operates (#287), so a
         // read-only CTE is bounded here and a data-modifying one is not.
-        const isLastSelect = i === statements.length - 1 && isSelectQuery(stmt.sql);
+        const isLastSelect = i === statements.length - 1 && isSelectQuery(stmt.sql, connection.type);
         const prepared = isLastSelect
           ? provider.prepareQuery(stmt.sql, options)
           : { query: stmt.sql, wasLimited: false, limit: 0, offset: 0 };

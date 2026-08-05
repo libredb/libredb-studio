@@ -800,6 +800,13 @@ await provider.query('SELECT COUNT(*) AS c FROM "libredb_demo" WHERE region = ?'
 (`supportsExternalQueryLimiting: true`) unless the statement ends in an `OFFSET` with no `LIMIT`
 ([§3.9](#39-the-preparequery-override-offset-with-no-limit)).
 
+The limiter is told which dialect it is reading (#292), and Druid is one of the dialects deliberately
+left at the **compatibility default**: no authoritative source was established for how Druid SQL reads
+`#`, and guessing it from a neighbouring dialect is what that channel exists to stop. The reading here
+is therefore unchanged — `#` opens a line comment unless the next character makes a PostgreSQL
+operator — and a statement ending in a `#` run is returned unbounded rather than bounded on a guess
+([which dialect the readers are reading](../editor/query-optimization.md#which-dialect-the-readers-are-reading)).
+
 A write is **not special-cased**. Every write form Druid rejects, it rejects with a message that names
 both the reason and the alternative, which is more useful than anything this provider would substitute
 ([§5.5](#55-druid-sql-cannot-write-and-the-server-says-so-clearly)).

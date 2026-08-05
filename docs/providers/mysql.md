@@ -208,14 +208,20 @@ MySQL's `#` line comment is skipped when the statement type is read, alongside `
 for: a `# note`-led `SELECT` used to classify as an unknown statement type and reach the server with
 no `LIMIT` at all (#275).
 
-A **trailing** `#` comment is the one place MySQL is treated more conservatively than the other
-dialects. `SELECT … # note` is not bounded at all: the bound has to go before the comment, and the
-same characters are a temp table, an identifier or an operator in T-SQL, Oracle and PostgreSQL, which
-the shared reader cannot rule out (see
-[Where the bound is placed](../editor/query-optimization.md#where-the-bound-is-placed)). Before this
-the clause was appended *inside* that comment while the UI reported the query as capped, so the
-statement ran unbounded either way — it is now honest about it. A trailing `-- note` is bounded
-normally.
+Every `#` is a comment marker here, and this provider now says so: `prepareQuery()` passes its own
+`type` to the shared readers, which resolve `#` under MySQL's grammar instead of the dialect-less
+compromise they used to apply to everyone (see
+[Which dialect the readers are reading](../editor/query-optimization.md#which-dialect-the-readers-are-reading)).
+Three readings change on this provider, and each was wrong in a way only MySQL sees:
+
+| Statement | Before | Now |
+|-----------|--------|-----|
+| `SELECT … # note` | not bounded at all — the bound has to go before the comment, and the reader could not rule out `#tmp`/`ID#`/XOR | bounded, with the clause before the comment |
+| `SELECT * FROM t # LIMIT 10` | the commented-out bound read as a real one, so the statement ran unbounded | the comment is a comment; a real bound is added before it |
+| `WITH t AS (` + `#- drop the ) SELECT here` + `…) DELETE FROM users` | the `#-` read as a PostgreSQL jsonb operator, so the `)` inside the comment closed the CTE body, the statement typed `SELECT` and a `LIMIT` was appended to a `DELETE` — which MySQL 8 accepts and commits | typed `DELETE`, not bounded |
+
+The third row is the one that cost more than rows: a bound on a `DELETE` commits part of it while the
+UI reports a truncated result set. A trailing `-- note` was always bounded normally and is unchanged.
 
 ### 5.3 Query cancellation
 

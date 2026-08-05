@@ -274,6 +274,15 @@ and, **only for `SELECT`/CTE-`SELECT` queries that don't already have a `LIMIT`*
   already-limited check, so an annotated bounded query is not bounded twice. Before this, an
   annotated `SELECT` classified as an unknown statement type and returned **every** row while the
   UI badge reported it as not limited (#275).
+- The statement's characters are read under **PostgreSQL's** grammar, which the provider passes down
+  from its own `type` ([`grammar.ts`](../../src/lib/sql/grammar.ts)). PostgreSQL has exactly two
+  comment forms, `--` and `/* … */`; `#` is an operator character (`#>` and `#>>` walk a jsonb path,
+  `#-` deletes one, `##` is geometric, `#` is integer XOR). The shared reader used to approximate
+  that with "a comment unless the next character makes an operator", which kept everyday jsonb queries
+  bounded but read `SELECT flags # 5 AS x FROM t` as a statement that ends at the `#` — so it was not
+  bounded. Both are bounded now, and the emitted text is unchanged apart from the appended clause
+  (#292). See
+  [Which dialect the readers are reading](../editor/query-optimization.md#which-dialect-the-readers-are-reading).
 - A statement leading with `WITH` is typed by the keyword its CTE list **operates**
   ([`operative-keyword.ts`](../../src/lib/sql/operative-keyword.ts)), so a data-modifying CTE
   (`WITH t AS (UPDATE … RETURNING …) INSERT INTO … SELECT …`) is **not** bounded. This matters most on

@@ -649,20 +649,33 @@ describe("OracleProvider", () => {
         expect(result.query).toBe("SELECT * FROM USERS FETCH FIRST 500 ROWS ONLY; -- daily check");
       });
 
-      test.each<[string, string]>([
-        // A quote behind an odd backslash run: Oracle and MySQL close that
-        // literal in different places, so there is no honest place for the
-        // clause. Appending on a guess would put it after the terminator.
-        ["a literal whose end is undeterminable", "SELECT * FROM USERS WHERE PATH = 'C:\\';"],
-        // `#` is legal in an Oracle identifier and is MySQL's comment marker, and
-        // nothing in the text tells them apart. Appending would have emitted
-        // `... WHERE ID FETCH FIRST 500 ROWS ONLY# = 1`.
-        ["an identifier carrying a hash", "SELECT * FROM EMP WHERE ID# = 1"],
-      ])("returns %s untouched rather than bounding it on a guess", (_label, sql) => {
+      // A quote behind an odd backslash run: Oracle and MySQL close that literal
+      // in different places, so there is no honest place for the clause.
+      // Appending on a guess would put it after the terminator.
+      test("returns a literal whose end is undeterminable untouched rather than bounding it on a guess", () => {
+        const sql = "SELECT * FROM USERS WHERE PATH = 'C:\\';";
+
         const result = provider.prepareQuery(sql);
 
         expect(result.query).toBe(sql);
         expect(result.wasLimited).toBe(false);
+      });
+
+      // ── The `#` grammar is Oracle's here (#292) ─────────────────────────
+      //
+      // `#` is a legal identifier character in Oracle and opens no comment there
+      // - node-oracledb's own SQL tokenizer accepts it inside a name and starts
+      // comments on `--` and `/*` only. While the shared reader had to guess, it
+      // read `ID#` as MySQL would and declined to bound the statement at all;
+      // told which dialect it is reading, it bounds it where Oracle wants it.
+      test.each<[string, string]>([
+        ["a bare identifier carrying a hash", "SELECT * FROM EMP WHERE ID# = 1"],
+        ["a hash at the end of a table name", "SELECT * FROM EMP#"],
+      ])("bounds %s instead of declining", (_label, sql) => {
+        const result = provider.prepareQuery(sql);
+
+        expect(result.query).toBe(`${sql} FETCH FIRST 500 ROWS ONLY`);
+        expect(result.wasLimited).toBe(true);
       });
 
       test("a real FETCH FIRST before a comment is still honoured", () => {

@@ -31,6 +31,7 @@
  * SAFE answer, the limiter needs a PRECISE one, so this reads the grammar.
  */
 
+import { DEFAULT_SQL_GRAMMAR, type SqlGrammar } from "./grammar";
 import { readLeadingKeyword, type LeadingKeyword } from "./leading-keyword";
 import { readSqlSpan } from "./spans";
 import { readSqlWord } from "./words";
@@ -40,11 +41,11 @@ import { readSqlWord } from "./words";
  * does - the input ended, or ended inside a comment, so there is nothing further
  * to read and no honest way to guess what it would have been.
  */
-function skipTrivia(sql: string, from: number): number {
+function skipTrivia(sql: string, from: number, grammar: SqlGrammar): number {
   let i = from;
 
   while (i < sql.length) {
-    const span = readSqlSpan(sql, i);
+    const span = readSqlSpan(sql, i, grammar);
     if (span === null) return i;
     if (span.kind !== "whitespace" && span.kind !== "line-comment" && span.kind !== "block-comment") return i;
     if (!span.terminated) return -1;
@@ -64,12 +65,12 @@ function skipTrivia(sql: string, from: number): number {
  * at the first `)` inside a definition would put the reader in the middle of the
  * CTE body and let a `SELECT` there answer for the whole statement.
  */
-function skipParenthesised(sql: string, open: number): number {
+function skipParenthesised(sql: string, open: number, grammar: SqlGrammar): number {
   let depth = 0;
   let i = open;
 
   while (i < sql.length) {
-    const span = readSqlSpan(sql, i);
+    const span = readSqlSpan(sql, i, grammar);
     if (span !== null) {
       if (!span.terminated) return -1;
       i = span.end;
@@ -96,8 +97,8 @@ function skipParenthesised(sql: string, open: number): number {
 // issue #295), since neither reader recurses into a literal.
 
 /** The index past a CTE's name - a bare word or a quoted identifier - or `-1`. */
-function skipCteName(sql: string, index: number): number {
-  const span = readSqlSpan(sql, index);
+function skipCteName(sql: string, index: number, grammar: SqlGrammar): number {
+  const span = readSqlSpan(sql, index, grammar);
   if (span !== null) {
     // A quoted identifier is a name; a string or dollar-quoted body is not, and
     // trivia has already been skipped by the caller.
@@ -123,11 +124,11 @@ function skipCteName(sql: string, index: number): number {
  */
 type StandardElement = { kind: "element"; end: number } | { kind: "other-shape" } | { kind: "malformed" };
 
-function readStandardElement(sql: string, index: number): StandardElement {
-  const afterName = skipCteName(sql, index);
+function readStandardElement(sql: string, index: number, grammar: SqlGrammar): StandardElement {
+  const afterName = skipCteName(sql, index, grammar);
   if (afterName < 0) return { kind: "other-shape" };
 
-  let i = skipTrivia(sql, afterName);
+  let i = skipTrivia(sql, afterName, grammar);
   if (i < 0) return { kind: "malformed" };
 
   // An optional column list: `WITH t (a, b) AS (…)`. It closes back to depth 0
@@ -136,15 +137,15 @@ function readStandardElement(sql: string, index: number): StandardElement {
   // argument list (`now()`) is consumed here too and reaches the same index, so the
   // two need no telling apart: what follows the `AS` decides the shape.
   if (sql[i] === "(") {
-    const afterColumns = skipParenthesised(sql, i);
+    const afterColumns = skipParenthesised(sql, i, grammar);
     if (afterColumns < 0) return { kind: "malformed" };
-    i = skipTrivia(sql, afterColumns);
+    i = skipTrivia(sql, afterColumns, grammar);
     if (i < 0) return { kind: "malformed" };
   }
 
   const as = readSqlWord(sql, i);
   if (as?.text !== "AS") return { kind: "other-shape" };
-  i = skipTrivia(sql, as.end);
+  i = skipTrivia(sql, as.end, grammar);
   if (i < 0) return { kind: "malformed" };
 
   // PostgreSQL's inlining hints sit between `AS` and the body. Neither word exists
@@ -153,19 +154,19 @@ function readStandardElement(sql: string, index: number): StandardElement {
   let hint = readSqlWord(sql, i);
   const committed = hint?.text === "NOT" || hint?.text === "MATERIALIZED";
   if (hint?.text === "NOT") {
-    i = skipTrivia(sql, hint.end);
+    i = skipTrivia(sql, hint.end, grammar);
     if (i < 0) return { kind: "malformed" };
     hint = readSqlWord(sql, i);
     if (hint?.text !== "MATERIALIZED") return { kind: "malformed" };
   }
   if (hint?.text === "MATERIALIZED") {
-    i = skipTrivia(sql, hint.end);
+    i = skipTrivia(sql, hint.end, grammar);
     if (i < 0) return { kind: "malformed" };
   }
 
   if (sql[i] !== "(") return { kind: committed ? "malformed" : "other-shape" };
 
-  const afterBody = skipParenthesised(sql, i);
+  const afterBody = skipParenthesised(sql, i, grammar);
   if (afterBody < 0) return { kind: "malformed" };
 
   return { kind: "element", end: afterBody };
@@ -180,12 +181,12 @@ function readStandardElement(sql: string, index: number): StandardElement {
  * is not - which is all this module needs, since it never has to understand the
  * expression, only find where it stops.
  */
-function skipExpressionElement(sql: string, index: number): number {
+function skipExpressionElement(sql: string, index: number, grammar: SqlGrammar): number {
   let depth = 0;
   let i = index;
 
   while (i < sql.length) {
-    const span = readSqlSpan(sql, i);
+    const span = readSqlSpan(sql, i, grammar);
     if (span !== null) {
       if (!span.terminated) return -1;
       i = span.end;
@@ -217,11 +218,11 @@ function skipExpressionElement(sql: string, index: number): number {
       continue;
     }
     if (depth === 0 && word.text === "AS") {
-      const aliasAt = skipTrivia(sql, word.end);
+      const aliasAt = skipTrivia(sql, word.end, grammar);
       if (aliasAt < 0) return -1;
       // The alias is a plain name. Anything else - a body, a literal - means this
       // is not the shape either, and `-1` reaches the caller as "cannot tell".
-      return skipCteName(sql, aliasAt);
+      return skipCteName(sql, aliasAt, grammar);
     }
     i = word.end;
   }
@@ -242,12 +243,12 @@ function skipExpressionElement(sql: string, index: number): number {
  *   the standard shape already reads - which is what keeps #287's writing CTEs
  *   answering their own write keyword.
  */
-function skipCteElement(sql: string, index: number): number {
-  const standard = readStandardElement(sql, index);
+function skipCteElement(sql: string, index: number, grammar: SqlGrammar): number {
+  const standard = readStandardElement(sql, index, grammar);
   if (standard.kind === "element") return standard.end;
   if (standard.kind === "malformed") return -1;
 
-  return skipExpressionElement(sql, index);
+  return skipExpressionElement(sql, index, grammar);
 }
 
 /**
@@ -258,24 +259,24 @@ function skipCteElement(sql: string, index: number): number {
  * CTE's own body. Anything that does not match answers `null`: see the bias note
  * on the exported function.
  */
-function readKeywordAfterCteList(sql: string, afterWith: number): LeadingKeyword | null {
-  let i = skipTrivia(sql, afterWith);
+function readKeywordAfterCteList(sql: string, afterWith: number, grammar: SqlGrammar): LeadingKeyword | null {
+  let i = skipTrivia(sql, afterWith, grammar);
   if (i < 0) return null;
 
   const recursive = readSqlWord(sql, i);
   if (recursive?.text === "RECURSIVE") {
-    i = skipTrivia(sql, recursive.end);
+    i = skipTrivia(sql, recursive.end, grammar);
     if (i < 0) return null;
   }
 
   for (;;) {
-    const afterElement = skipCteElement(sql, i);
+    const afterElement = skipCteElement(sql, i, grammar);
     if (afterElement < 0) return null;
-    i = skipTrivia(sql, afterElement);
+    i = skipTrivia(sql, afterElement, grammar);
     if (i < 0) return null;
 
     if (sql[i] !== ",") break;
-    i = skipTrivia(sql, i + 1);
+    i = skipTrivia(sql, i + 1, grammar);
     if (i < 0) return null;
   }
 
@@ -328,13 +329,14 @@ function readKeywordAfterCteList(sql: string, afterWith: number): LeadingKeyword
  *   reading. Unreachable in Oracle itself, which has no `WITH … DELETE`, and no
  *   other dialect here has the form.
  * - A MySQL line comment whose first character makes a PostgreSQL operator (`#-`,
- *   `#>`) is code by the deliberate trade `spans.ts` documents, so a paren inside
- *   such a comment can end a CTE body early. Contrived, and paid for on purpose:
- *   closing it would cost every PostgreSQL jsonb-operator CTE its bound.
+ *   `#>`) is code to a reader that was given NO dialect, so a paren inside such a
+ *   comment can end a CTE body early. That is now only the dialect-less reading:
+ *   pass MySQL's grammar and the comment is a comment, pass PostgreSQL's and the
+ *   operator is an operator (#292). Every caller in this project passes one.
  */
-export function readOperativeKeyword(sql: string): LeadingKeyword | null {
+export function readOperativeKeyword(sql: string, grammar: SqlGrammar = DEFAULT_SQL_GRAMMAR): LeadingKeyword | null {
   const leading = readLeadingKeyword(sql);
   if (leading === null || leading.keyword !== "WITH") return leading;
 
-  return readKeywordAfterCteList(sql, leading.end);
+  return readKeywordAfterCteList(sql, leading.end, grammar);
 }

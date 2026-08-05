@@ -496,6 +496,13 @@ The request carries `metrics: true`, the effective statement timeout, and
 including where the clause is placed: at the end of the statement, before a trailing comment or `;`
 ([`query-optimization.md`](../editor/query-optimization.md#where-the-bound-is-placed)).
 
+The limiter is told which dialect it is reading (#292), and Couchbase is one of the dialects
+deliberately left at the **compatibility default**: no authoritative source was established for how
+SQL++ reads `#`, and guessing it from a neighbouring dialect is what that channel exists to stop. So
+the reading here is unchanged — `#` opens a line comment unless the next character makes a PostgreSQL
+operator — and a statement ending in a `#` run is returned unbounded rather than bounded on a guess
+([which dialect the readers are reading](../editor/query-optimization.md#which-dialect-the-readers-are-reading)).
+
 ### 5.2 Result shaping
 
 | Source field | `QueryResult` field | Notes |

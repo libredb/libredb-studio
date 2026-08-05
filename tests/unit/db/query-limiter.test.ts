@@ -945,3 +945,107 @@ describe("applyQueryLimit: bracket-quoted identifiers", () => {
     expect(applyQueryLimit("SELECT [a--b] FROM t -- daily", 500).sql).toBe("SELECT [a--b] FROM t LIMIT 500 -- daily");
   });
 });
+
+// ─── The dialect channel (#292) ──────────────────────────────────────────────
+//
+// Every reading above is a call that names NO dialect, and the point of the
+// compatibility default is that those answers do not move: the readers do exactly
+// what they did before this channel existed. A caller that DOES name its dialect
+// gets that dialect's grammar, and the shapes below are the ones where the two
+// answers differ - each asserted on BOTH sides, so the default is a decision
+// rather than whatever the implementation happened to do.
+
+describe("a named dialect changes the reading; naming none does not", () => {
+  // The bad direction this family exists to prevent: a hash comment whose first
+  // character makes a PostgreSQL operator hides a `)`, the CTE body ends early,
+  // and a statement that DELETEs is typed SELECT and bounded. MySQL 8 accepts
+  // both `WITH … DELETE` and a `LIMIT` on a `DELETE`, so that bound would commit a
+  // partial delete while the UI reported a truncated result set.
+  const HIDDEN_DELETE = "WITH t AS (\n  #- drop the ) SELECT here\n  SELECT id FROM logs\n) DELETE FROM users";
+
+  test("without a dialect the hidden DELETE keeps today's (wrong) type", () => {
+    expect(analyzeQuery(HIDDEN_DELETE).type).toBe("SELECT");
+  });
+
+  test("under MySQL's grammar it is typed as the DELETE it operates and gets no bound", () => {
+    expect(analyzeQuery(HIDDEN_DELETE, "mysql").type).toBe("DELETE");
+
+    const result = applyQueryLimit(HIDDEN_DELETE, 500, 0, {}, "mysql");
+    expect(result.sql).toBe(HIDDEN_DELETE);
+    expect(result.wasLimited).toBe(false);
+  });
+
+  // The read-side face of the same ambiguity: a bound written after a hash is
+  // read as a real one today, so the statement is left unbounded. Under MySQL's
+  // grammar the bound is commented out, so a real one is added - and it is added
+  // BEFORE the comment, or it would land inside it.
+  test("a bound commented out with a hash is real without a dialect and commented out under MySQL's", () => {
+    const sql = "SELECT * FROM t # LIMIT 10";
+
+    expect(analyzeQuery(sql).hasLimit).toBe(true);
+    expect(applyQueryLimit(sql, 500).sql).toBe(sql);
+
+    expect(analyzeQuery(sql, "mysql").hasLimit).toBe(false);
+    expect(applyQueryLimit(sql, 500, 0, {}, "mysql")).toMatchObject({
+      sql: "SELECT * FROM t LIMIT 500 # LIMIT 10",
+      wasLimited: true,
+    });
+  });
+
+  // The other side: under a code grammar the run is part of the statement, so the
+  // cut is no longer refused and an ordinary temp-table read is bounded.
+  test.each<[string, string, "mssql" | "oracle" | "postgres" | "sqlite", string]>([
+    ["a T-SQL temp table", "SELECT * FROM #tmp", "mssql", "SELECT * FROM #tmp LIMIT 500"],
+    [
+      "an Oracle identifier carrying a hash",
+      "SELECT * FROM EMP WHERE ID# = 1",
+      "oracle",
+      "SELECT * FROM EMP WHERE ID# = 1 LIMIT 500",
+    ],
+    ["a PostgreSQL XOR operator", "SELECT flags # 5 AS x FROM t", "postgres", "SELECT flags # 5 AS x FROM t LIMIT 500"],
+    ["a SQLite bind variable", "SELECT * FROM t WHERE id = #id", "sqlite", "SELECT * FROM t WHERE id = #id LIMIT 500"],
+  ])("%s is bounded under a code grammar and left alone without one", (_label, sql, type, expected) => {
+    expect(applyQueryLimit(sql, 500).wasLimited).toBe(false);
+
+    const result = applyQueryLimit(sql, 500, 0, {}, type);
+    expect(result.sql).toBe(expected);
+    expect(result.wasLimited).toBe(true);
+  });
+
+  // Fixture discipline: input built from syntax these readers do not model as a
+  // unit - a hash INSIDE a quoted name, and a dollar-quoted body carrying both a
+  // hash and a close paren. The emitted text is asserted whole, because "a bound
+  // was added" would pass while the bound sat inside the name.
+  test.each<[string, string, "mysql" | "postgres" | "mssql", string]>([
+    ["a backtick name carrying a hash", "SELECT `a#b` FROM t", "mysql", "SELECT `a#b` FROM t LIMIT 500"],
+    [
+      "a bracket name carrying a hash, from a temp table",
+      "SELECT [a#b] FROM #tmp",
+      "mssql",
+      "SELECT [a#b] FROM #tmp LIMIT 500",
+    ],
+    [
+      "a dollar-quoted body carrying a hash and a paren",
+      "SELECT $fn$ # ) DELETE $fn$ AS body FROM t",
+      "postgres",
+      "SELECT $fn$ # ) DELETE $fn$ AS body FROM t LIMIT 500",
+    ],
+  ])("%s is emitted intact", (_label, sql, type, expected) => {
+    const result = applyQueryLimit(sql, 500, 0, {}, type);
+
+    expect(result.sql).toBe(expected);
+    expect(result.wasLimited).toBe(true);
+  });
+
+  test("isSelectQuery takes the dialect too, so the multi-statement route agrees with the provider", () => {
+    expect(isSelectQuery(HIDDEN_DELETE)).toBe(true);
+    expect(isSelectQuery(HIDDEN_DELETE, "mysql")).toBe(false);
+  });
+
+  // A dialect with no established `#` rule keeps the default reading, and that is
+  // an answer this milestone owes its readers rather than an accident.
+  test("a dialect left at the compatibility default answers as a dialect-less call does", () => {
+    expect(analyzeQuery(HIDDEN_DELETE, "druid").type).toBe("SELECT");
+    expect(applyQueryLimit("SELECT * FROM t # note", 500, 0, {}, "couchbase").wasLimited).toBe(false);
+  });
+});

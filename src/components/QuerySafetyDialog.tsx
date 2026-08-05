@@ -3,8 +3,10 @@
 import React, { useState, useEffect } from "react";
 import { ShieldAlert, ShieldCheck, AlertTriangle, Loader2, Play, X } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import { readOperativeKeyword } from "@/lib/sql/operative-keyword";
 import { findCodeWord } from "@/lib/sql/words";
+import type { DatabaseType } from "@/lib/types";
 
 interface SafetyAnalysis {
   riskLevel: "safe" | "low" | "medium" | "high" | "critical";
@@ -334,9 +336,18 @@ const DANGEROUS_KEYWORDS = new Set(["DELETE", "DROP", "TRUNCATE", "ALTER", "GRAN
  * immediately before a closing quote, and whether an unresolvable statement should ASK
  * instead is a policy question with its own UX cost - tracked as #297, with the
  * dialect-aware reading #292 asks for as the alternative, rather than decided here.
+ *
+ * `databaseType` is the connection the statement is about to run on, and both
+ * call sites hold one (#292). It decides the characters the engines read
+ * differently: a write written after a `#` is commented out in MySQL and the
+ * statement's own code in PostgreSQL, and a `#` comment inside a CTE list used to
+ * hide the `)` that closes it - so a `DELETE` after the list ran with no
+ * confirmation at all. Omitting it keeps the dialect-less reading.
  */
-export function isDangerousQuery(query: string): boolean {
-  const keyword = readOperativeKeyword(query)?.keyword;
+export function isDangerousQuery(query: string, databaseType?: DatabaseType): boolean {
+  const grammar = resolveSqlGrammar(databaseType);
+
+  const keyword = readOperativeKeyword(query, grammar)?.keyword;
   if (keyword !== undefined && DANGEROUS_KEYWORDS.has(keyword)) return true;
 
   // A write the statement's own keyword does not report: PostgreSQL's data-modifying
@@ -344,6 +355,6 @@ export function isDangerousQuery(query: string): boolean {
   // this probe stays unanchored deliberately. It reads the statement's CODE rather
   // than its text, so a read that merely quotes or comments the two words - which
   // the pattern before it treated as a write - no longer asks for a confirmation.
-  const update = findCodeWord(query, "UPDATE");
-  return update !== null && findCodeWord(query, "SET", update.end) !== null;
+  const update = findCodeWord(query, "UPDATE", 0, grammar);
+  return update !== null && findCodeWord(query, "SET", update.end, grammar) !== null;
 }
