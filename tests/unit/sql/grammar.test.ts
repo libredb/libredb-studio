@@ -223,23 +223,60 @@ describe("hashRunIsAmbiguous", () => {
  * Same shape as the grammar table and for the same reason: ONE place maps a
  * database type to the answer, so no reader grows a type test of its own.
  */
-describe("readsSqlText", () => {
-  test.each<DatabaseType>([
-    "postgres",
-    "mysql",
-    "sqlite",
-    "oracle",
-    "mssql",
-    "clickhouse",
-    "druid",
-    "couchbase",
-    "libredb",
-  ])("%s writes its queries in SQL", (type) => {
-    expect(readsSqlText(type)).toBe(true);
-  });
+/**
+ * The two maps below are the real checklist for a new provider, in the shape this
+ * repo already uses for the other type-keyed tables (`PICKER_COVERAGE`,
+ * `MODIFIED_COLUMN_COVERAGE`): a `Record<DatabaseType, …>` the compiler refuses to
+ * accept until the new id is listed.
+ *
+ * Neither table in `grammar.ts` can enforce this on its own - `SQL_GRAMMARS` is a
+ * `Partial<Record<…>>` because "absent" is a meaningful answer, and the non-SQL set
+ * is a set. So a provider added without touching that file silently inherits the
+ * compatibility grammar and is silently declared to write SQL, and nothing fails.
+ * Deciding is mandatory; deciding "leave it at the default" is a fine decision.
+ */
+const GRAMMAR_COVERAGE: Record<DatabaseType, "established" | "default"> = {
+  postgres: "established",
+  mysql: "established",
+  sqlite: "established",
+  oracle: "established",
+  mssql: "established",
+  clickhouse: "established",
+  // No authoritative source was established for these, so they read as SQL under
+  // the compatibility grammar. See the module doc in `grammar.ts`.
+  couchbase: "default",
+  druid: "default",
+  libredb: "default",
+  // Not SQL at all - see SQL_TEXT_COVERAGE below.
+  mongodb: "default",
+  redis: "default",
+};
 
-  test.each<DatabaseType>(["mongodb", "redis"])("%s does not", (type) => {
-    expect(readsSqlText(type)).toBe(false);
+describe("every database type has a recorded grammar decision", () => {
+  test.each(Object.entries(GRAMMAR_COVERAGE))("%s is %s", (type, expected) => {
+    const isDefault = resolveSqlGrammar(type as DatabaseType) === DEFAULT_SQL_GRAMMAR;
+
+    expect(isDefault ? "default" : "established").toBe(expected);
+  });
+});
+
+const SQL_TEXT_COVERAGE: Record<DatabaseType, boolean> = {
+  postgres: true,
+  mysql: true,
+  sqlite: true,
+  oracle: true,
+  mssql: true,
+  clickhouse: true,
+  couchbase: true,
+  druid: true,
+  libredb: true,
+  mongodb: false,
+  redis: false,
+};
+
+describe("readsSqlText", () => {
+  test.each(Object.entries(SQL_TEXT_COVERAGE))("%s writes SQL: %s", (type, expected) => {
+    expect(readsSqlText(type as DatabaseType)).toBe(expected);
   });
 
   test("a call that names no dialect is read as SQL", () => {

@@ -672,6 +672,18 @@ The integration points, all of which need an entry. This is the list the Strateg
 - [ ] `src/lib/schema-diff/migration-generator.ts` — same shape, same hazard: the modified-column
       chain's trailing `else` is PostgreSQL DDL, so an unlisted id silently inherits it (#269). Give the
       dialect a branch, or list it in `NO_COLUMN_MODIFICATION` to emit an honest comment instead
+- [ ] `src/lib/sql/grammar.ts` — **two decisions, neither of which the compiler can force.** First,
+      whether your engine's query text is SQL at all (`NON_SQL_DIALECTS`): an id absent from that set is
+      declared to write SQL, and the confirmation gate then applies a SQL span reader to it — which for
+      a JSON or command-line grammar reports ordinary text as unreadable and prompts on every run (#297).
+      Second, the four grammar facts (`SQL_GRAMMARS`): `#`, `[…]`, whether block comments nest, and
+      whether `q'…'` is a literal. An id absent from that table reads under the compatibility default,
+      which is SQL Server's bracket reading and MySQL-ish everything else — fine where your engine
+      agrees, a lost row bound or a false prompt where it does not (that is what PostgreSQL's bracket
+      row cost before it was established). Establish each fact from your engine's own documentation or
+      its driver's tokenizer, never from a neighbouring dialect, and leave it at the default rather than
+      guess. `tests/unit/sql/grammar.test.ts` holds `Record<DatabaseType, …>` maps for both decisions,
+      so the compiler will at least stop you from *forgetting* that a decision exists
 
 **And the tests for every exhaustive map**, which are the real checklist — several are exhaustive
 *by construction* (`Record<DatabaseType, …>` in `db-ui-config`, `PICKER_COVERAGE` in the
@@ -681,7 +693,9 @@ connection-form test), so the compiler and those tests refuse to pass until each
 `tests/unit/lib/query-generators.test.ts`, `tests/unit/seed/types.test.ts`,
 `tests/hooks/use-connection-form.test.ts`,
 `tests/unit/schema-diff/migration-generator.test.ts` (`MODIFIED_COLUMN_COVERAGE` — classify the new id
-as having its own dialect branch or as unable to express a column modification).
+as having its own dialect branch or as unable to express a column modification),
+`tests/unit/sql/grammar.test.ts` (`GRAMMAR_COVERAGE` and `SQL_TEXT_COVERAGE` — record whether the id
+has an established grammar or reads at the default, and whether its query text is SQL).
 
 > **`git grep -l <the-previous-provider-type-id> -- src/ tests/` is the authoritative checklist.**
 > This list is maintained by hand and has been wrong before: it long claimed "no other files should

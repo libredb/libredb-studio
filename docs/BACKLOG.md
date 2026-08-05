@@ -99,7 +99,9 @@ bracket row was established rather than left here: at the name reading, `ARRAY[[
 
 **Rows resting on documentation alone, worth re-checking against an artifact:** ClickHouse's `#` and
 bracket rows (HTTP-only provider, no driver package to read), MSSQL's block-comment nesting row
-(tedious ships no tokenizer), and the `nq'…'` spelling of Oracle's alternate quoting.
+(tedious ships no tokenizer), PostgreSQL's bracket and block-comment rows (`pg` is a wire-protocol
+driver and carries no SQL tokenizer, so both rest on the manual), and the `nq'…'` spelling of Oracle's
+alternate quoting.
 
 ### S7. A confirmation refinement that was considered and rejected
 
