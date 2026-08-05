@@ -9,9 +9,16 @@
  * so no LIMIT was injected and the entire result set came back while the UI badge
  * reported the query as unlimited (#275). Every dialect here accepts a comment
  * before a statement, so every dialect had the defect.
+ *
+ * For a statement leading with `WITH` the type comes from
+ * `lib/sql/operative-keyword` instead: the CTE list is a preamble, so the keyword
+ * that types the statement is the one AFTER it. Testing whether the text contained
+ * `SELECT` let `INSERT INTO ... SELECT` type its own statement as a read, and the
+ * appended LIMIT then bounded the rows that statement WROTE (#287).
  */
 
 import { readLeadingKeyword } from "@/lib/sql/leading-keyword";
+import { readOperativeKeyword } from "@/lib/sql/operative-keyword";
 
 // ============================================================================
 // Constants
@@ -68,6 +75,16 @@ function stripTrailingSemicolon(s: string): string {
   return s.slice(0, end);
 }
 
+/** The type this module reports for a statement operated by `keyword`. */
+function classifyKeyword(keyword: string | undefined): ParsedQueryInfo["type"] {
+  if (keyword === "SELECT") return "SELECT";
+  if (keyword === "INSERT") return "INSERT";
+  if (keyword === "UPDATE") return "UPDATE";
+  if (keyword === "DELETE") return "DELETE";
+  if (keyword !== undefined && DDL_KEYWORDS.has(keyword)) return "DDL";
+  return "OTHER";
+}
+
 export function analyzeQuery(sql: string): ParsedQueryInfo {
   // Strip trailing whitespace and semicolons upfront to avoid ReDoS-prone patterns
   const trimmed = stripTrailingSemicolon(sql.trim());
@@ -85,18 +102,19 @@ export function analyzeQuery(sql: string): ParsedQueryInfo {
   // left the query unbounded - the very symptom #275 removed (PR #289 review).
   const normalized = fromKeyword.replace(/\s+/g, " ").toUpperCase();
 
-  let type: ParsedQueryInfo["type"] = "OTHER";
-  if (keyword === "SELECT") type = "SELECT";
-  else if (keyword === "INSERT") type = "INSERT";
-  else if (keyword === "UPDATE") type = "UPDATE";
-  else if (keyword === "DELETE") type = "DELETE";
-  else if (keyword !== undefined && DDL_KEYWORDS.has(keyword)) type = "DDL";
-  // CTE (WITH clause) that leads to SELECT - searched from the keyword, so a
-  // `SELECT` mentioned in the leading comment cannot make a writing CTE look like
-  // one and earn it a LIMIT it would choke on
-  else if (keyword === "WITH" && /\bSELECT\b/i.test(fromKeyword)) {
-    type = "SELECT";
-  }
+  // A `WITH` statement is typed by the keyword its CTE list OPERATES, not by the
+  // keyword it opens with and not by a `SELECT` found in its text. Asking whether
+  // the text contained `SELECT` let the `INSERT INTO ... SELECT` idiom answer for
+  // the whole statement, so a data-modifying CTE was typed SELECT and a LIMIT was
+  // appended to it - and in PostgreSQL that LIMIT applies to the rows the
+  // statement WRITES, committing at most `limit` of them while the UI reported a
+  // truncated result set (#287). The operative keyword is reported as its own type
+  // rather than as a blanket OTHER: all three consumers of `type` outside this
+  // module - `sql-base.ts`, `oracle.ts` and `mssql.ts` - test `=== "SELECT"` and
+  // nothing else, so the honest answer costs nothing.
+  // `MERGE`, which the union cannot name, falls through to OTHER.
+  const typingKeyword = keyword === "WITH" ? readOperativeKeyword(trimmed)?.keyword : keyword;
+  const type = classifyKeyword(typingKeyword);
 
   // LIMIT/OFFSET detection - en dıştaki sorgunun LIMIT'ini bul
   // Regex: Sorgunun sonundaki LIMIT [sayı] [OFFSET sayı] pattern'i
@@ -155,8 +173,10 @@ export function analyzeQuery(sql: string): ParsedQueryInfo {
   // UNION detection
   const isUnion = /\bUNION\b/i.test(normalized);
 
-  // CTE detection (WITH clause) - from the same reading as the type above, so the
-  // two cannot disagree about what the statement leads with
+  // CTE detection (WITH clause) - this answers what the statement LEADS with,
+  // which is a different question from what it operates: `WITH t AS (...) INSERT
+  // ...` has a CTE and is typed INSERT. So this deliberately stays on the leading
+  // keyword and is true for every `WITH`, whatever its type turned out to be.
   const hasCTE = keyword === "WITH";
 
   // Subquery detection (nested SELECT - birden fazla SELECT var mı)

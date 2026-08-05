@@ -259,7 +259,7 @@ timeout → `TimeoutError`, etc.).
 ### 5.2 Automatic `LIMIT` injection
 
 `prepareQuery()` (inherited from `SQLBaseProvider`) protects the UI from runaway result sets. It
-runs the query through `analyzeQuery()` ([query-limiter.ts:59](../../src/lib/db/utils/query-limiter.ts))
+runs the query through `analyzeQuery()` ([query-limiter.ts:88](../../src/lib/db/utils/query-limiter.ts))
 and, **only for `SELECT`/CTE-`SELECT` queries that don't already have a `LIMIT`**, appends one via
 `applyQueryLimit()`:
 
@@ -274,6 +274,14 @@ and, **only for `SELECT`/CTE-`SELECT` queries that don't already have a `LIMIT`*
   already-limited check, so an annotated bounded query is not bounded twice. Before this, an
   annotated `SELECT` classified as an unknown statement type and returned **every** row while the
   UI badge reported it as not limited (#275).
+- A statement leading with `WITH` is typed by the keyword its CTE list **operates**
+  ([`operative-keyword.ts`](../../src/lib/sql/operative-keyword.ts)), so a data-modifying CTE
+  (`WITH t AS (UPDATE … RETURNING …) INSERT INTO … SELECT …`) is **not** bounded. This matters most on
+  PostgreSQL, where data-modifying CTEs are an everyday idiom and the appended `LIMIT` applied to the
+  rows the statement *writes*: it committed at most 500 of them while reporting a truncated result
+  set (#287). Undeterminable CTE shapes are likewise not bounded — an over-large read can be re-run,
+  a partly committed write cannot. Asserted at the shared seam in `tests/unit/db/sql-base.test.ts`,
+  since the behaviour is `SQLBaseProvider`'s for every SQL provider.
 
 `prepareQuery()` is a *preparation* step (the UI calls it before `query()`); `query()` itself runs
 exactly the SQL it is handed.

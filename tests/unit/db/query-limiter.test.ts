@@ -239,21 +239,21 @@ describe("classification behind a leading comment", () => {
     });
 
     // Same principle, on the one branch that reads more than the leading keyword:
-    // `WITH` is a SELECT only when the statement also CONTAINS a SELECT, and that
-    // search has to start past the trivia too. A LEADING comment could not reach this
-    // branch before the classifier saw behind one, which is what makes this the
-    // task's own regression to guard. An INTERIOR comment has always been able to
-    // answer for the statement here (`WITH t AS (UPDATE …) /* SELECT */ INSERT …`
-    // still classifies as SELECT) - same pre-existing family as the trailing-comment
-    // swallow, out of this task's scope. Below: a CTE that writes, annotated with a
-    // comment that happens to say SELECT.
+    // a `WITH` is typed by the keyword its CTE list operates (#287), and finding
+    // that keyword has to start past the trivia too. A LEADING comment could not
+    // reach this branch before the classifier saw behind one, which is what makes
+    // this the task's own regression to guard. Below: a CTE that writes, annotated
+    // with a comment that happens to say SELECT.
     const writingCTE =
       "-- remember to SELECT afterwards\nWITH t AS (UPDATE x SET a = 1 RETURNING id) INSERT INTO y VALUES (1)";
 
     test("does not let a SELECT inside the comment body turn a writing CTE into a SELECT", () => {
       const info = analyzeQuery(writingCTE);
 
-      expect(info.type).toBe("OTHER");
+      // INSERT rather than OTHER since #287: the statement is typed by the keyword
+      // after its CTE list, which is the honest answer and the one the four
+      // consumers of `type` (all of which test `=== "SELECT"`) already handle.
+      expect(info.type).toBe("INSERT");
       expect(info.hasCTE).toBe(true);
     });
 
@@ -331,6 +331,126 @@ describe("classification behind a leading comment", () => {
     test("reports a commented bound through hasQueryLimit", () => {
       expect(hasQueryLimit("-- annotated\nSELECT TOP 10 * FROM users")).toBe(true);
       expect(hasQueryLimit("-- annotated\nSELECT * FROM users")).toBe(false);
+    });
+  });
+});
+
+// ─── Data-modifying CTEs (#287) ─────────────────────────────────────────────
+//
+// A `WITH` statement used to be typed by testing whether the word SELECT appeared
+// anywhere in its text. `INSERT INTO … SELECT` supplies that word itself, so an
+// ordinary data-modifying CTE was typed SELECT and the limiter appended a bound to
+// it. In PostgreSQL that bound applies to the rows the statement WRITES: the
+// statement commits at most the default limit and the UI reports a truncated
+// result set. A write that commits 500 of 10,000 rows is not recoverable the way a
+// truncated read is, which is what makes this the worst failure in this family.
+//
+// The type now comes from the keyword the CTE list actually operates
+// (`lib/sql/operative-keyword`), and that keyword is reported as its own type
+// rather than as a blanket OTHER - every consumer of `type` tests `=== "SELECT"`,
+// so the honest answer costs nothing.
+
+describe("a CTE is typed by the keyword its list operates", () => {
+  describe("type detection", () => {
+    test.each<[string, ParsedQueryInfo["type"], string]>([
+      [
+        "INSERT ... SELECT after an UPDATE ... RETURNING CTE",
+        "INSERT",
+        "WITH t AS (UPDATE logs SET seen = true RETURNING id) INSERT INTO audit SELECT id FROM t",
+      ],
+      [
+        "INSERT ... SELECT after a DELETE ... RETURNING CTE",
+        "INSERT",
+        "WITH gone AS (DELETE FROM sessions RETURNING id) INSERT INTO audit SELECT id FROM gone",
+      ],
+      [
+        "UPDATE ... FROM a read-only CTE",
+        "UPDATE",
+        "WITH stale AS (SELECT id FROM sessions) UPDATE users SET flag = 1 FROM stale",
+      ],
+      [
+        "DELETE ... USING a read-only CTE",
+        "DELETE",
+        "WITH doomed AS (SELECT id FROM sessions) DELETE FROM users USING doomed WHERE users.id = doomed.id",
+      ],
+      // MERGE has no member in the type union, so it lands on OTHER - which is
+      // still not SELECT, and not being bounded is the whole point.
+      [
+        "MERGE after a read-only CTE",
+        "OTHER",
+        "WITH src AS (SELECT 1 AS id) MERGE INTO target USING src ON target.id = src.id WHEN MATCHED THEN DELETE",
+      ],
+      [
+        "a parenthesised subquery SELECT inside the writing CTE's definition",
+        "INSERT",
+        "WITH t AS (UPDATE logs SET n = (SELECT count(*) FROM x) RETURNING id) INSERT INTO audit SELECT id FROM t",
+      ],
+    ])("types %s as %s", (_label, expected, sql) => {
+      expect(analyzeQuery(sql).type).toBe(expected);
+    });
+
+    test.each<[string, string]>([
+      ["one CTE", "WITH t AS (SELECT 1) SELECT * FROM t"],
+      ["several CTEs", "WITH a AS (SELECT 1), b AS (SELECT 2) SELECT * FROM a, b"],
+      ["a nested CTE", "WITH o AS (WITH i AS (SELECT 1) SELECT * FROM i) SELECT * FROM o"],
+      ["WITH RECURSIVE", "WITH RECURSIVE t AS (SELECT 1 UNION ALL SELECT 2) SELECT * FROM t"],
+      ["a column list before AS", "WITH t (a) AS (SELECT 1) SELECT * FROM t"],
+      ["MATERIALIZED", "WITH t AS MATERIALIZED (SELECT 1) SELECT * FROM t"],
+    ])("still types a read-only CTE with %s as SELECT", (_label, sql) => {
+      expect(analyzeQuery(sql).type).toBe("SELECT");
+    });
+
+    // Not being able to tell must never resolve to SELECT: an unbounded read is
+    // recoverable, a partially committed write is not.
+    test.each<[string, string]>([
+      ["an unclosed CTE body", "WITH t AS (SELECT 1"],
+      ["nothing after the CTE list", "WITH t AS (SELECT 1)"],
+      ["a malformed CTE list", "WITH t AS SELECT 1"],
+    ])("does not type %s as SELECT", (_label, sql) => {
+      expect(analyzeQuery(sql).type).not.toBe("SELECT");
+    });
+
+    // hasCTE answers "does this statement lead with WITH", which is independent of
+    // what the CTE list operates - the two readings must not start disagreeing.
+    test.each<[string, string]>([
+      ["a read-only CTE", "WITH t AS (SELECT 1) SELECT * FROM t"],
+      ["a writing CTE", "WITH t AS (SELECT 1) INSERT INTO u SELECT * FROM t"],
+      ["a MERGE CTE", "WITH s AS (SELECT 1) MERGE INTO t USING s ON t.id = s.id WHEN MATCHED THEN DELETE"],
+      ["an unclosed CTE body", "WITH t AS (SELECT 1"],
+      ["a commented writing CTE", "-- note\nWITH t AS (SELECT 1) DELETE FROM u WHERE id IN (SELECT id FROM t)"],
+    ])("flags %s as a CTE", (_label, sql) => {
+      expect(analyzeQuery(sql).hasCTE).toBe(true);
+    });
+  });
+
+  describe("limiting", () => {
+    test.each<[string, string]>([
+      ["INSERT", "WITH t AS (UPDATE logs SET seen = true RETURNING id) INSERT INTO audit SELECT id FROM t"],
+      ["UPDATE", "WITH stale AS (SELECT id FROM sessions) UPDATE users SET flag = 1 FROM stale"],
+      ["DELETE", "WITH doomed AS (SELECT id FROM s) DELETE FROM users USING doomed WHERE users.id = doomed.id"],
+      [
+        "MERGE",
+        "WITH src AS (SELECT 1 AS id) MERGE INTO target USING src ON target.id = src.id WHEN MATCHED THEN DELETE",
+      ],
+    ])("leaves a CTE that operates an %s byte-identical", (_label, sql) => {
+      const result = applyQueryLimit(sql, 500);
+
+      expect(result.sql).toBe(sql);
+      expect(result.wasLimited).toBe(false);
+    });
+
+    test("still bounds a read-only CTE", () => {
+      const sql = "WITH RECURSIVE t AS (SELECT 1 UNION ALL SELECT 2) SELECT * FROM t";
+
+      const result = applyQueryLimit(sql, 500);
+
+      expect(result.sql).toBe(`${sql} LIMIT 500`);
+      expect(result.wasLimited).toBe(true);
+    });
+
+    test("reports a writing CTE as not a SELECT through isSelectQuery", () => {
+      expect(isSelectQuery("WITH t AS (SELECT 1) INSERT INTO u SELECT * FROM t")).toBe(false);
+      expect(isSelectQuery("WITH t AS (SELECT 1) SELECT * FROM t")).toBe(true);
     });
   });
 });

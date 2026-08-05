@@ -554,5 +554,39 @@ describe("SQLBaseProvider", () => {
       expect(result.query).toBe("-- annotated\nSELECT * FROM users LIMIT 50");
       expect(result.wasLimited).toBe(true);
     });
+
+    // #287. This is the seam through which the misclassification reached the
+    // engine: a data-modifying CTE was typed SELECT, so a bound was appended to a
+    // statement that WRITES. In PostgreSQL the bound applies to the written rows,
+    // so the statement committed at most `limit` of them and reported a truncated
+    // result set - the one failure in this family that re-running cannot undo.
+    describe("a CTE that operates a write reaches the engine untouched", () => {
+      test.each<[string, string]>([
+        ["INSERT", "WITH t AS (UPDATE logs SET seen = true RETURNING id) INSERT INTO audit SELECT id FROM t"],
+        ["UPDATE", "WITH stale AS (SELECT id FROM sessions) UPDATE users SET flag = 1 FROM stale"],
+        ["DELETE", "WITH doomed AS (SELECT id FROM s) DELETE FROM users USING doomed WHERE users.id = doomed.id"],
+        [
+          "MERGE",
+          "WITH src AS (SELECT 1 AS id) MERGE INTO target USING src ON target.id = src.id WHEN MATCHED THEN DELETE",
+        ],
+      ])("passes a CTE operating an %s through byte-identical", (_label, sql) => {
+        const p = new TestSQLProvider(makeConfig("postgres"));
+
+        const result = p.prepareQuery(sql, { limit: 500 });
+
+        expect(result.query).toBe(sql);
+        expect(result.wasLimited).toBe(false);
+      });
+
+      test("still bounds a read-only CTE", () => {
+        const p = new TestSQLProvider(makeConfig("postgres"));
+        const sql = "WITH t AS (SELECT 1) SELECT * FROM t";
+
+        const result = p.prepareQuery(sql, { limit: 500 });
+
+        expect(result.query).toBe(`${sql} LIMIT 500`);
+        expect(result.wasLimited).toBe(true);
+      });
+    });
   });
 });

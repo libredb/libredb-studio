@@ -85,7 +85,8 @@ const result = applyQueryLimit('SELECT * FROM users', 500, 0);
 | SELECT behind a leading comment | Yes |
 | SELECT with LIMIT | No (preserved) |
 | SELECT with UNION | Yes (LIMIT appended after the last statement) |
-| SELECT with CTE | Yes |
+| Read-only CTE (`WITH … SELECT`) | Yes |
+| Data-modifying CTE (`WITH … INSERT`/`UPDATE`/`DELETE`/`MERGE`) | No — the bound would apply to the rows the statement writes, committing only part of it |
 | INSERT/UPDATE/DELETE | No |
 | DDL (CREATE, ALTER) | No |
 
@@ -95,6 +96,27 @@ are skipped and the limit is still applied. Before this, an annotated `SELECT` w
 unknown statement type and returned **every** row while the badge reported it as not limited.
 An already-bounded annotated statement (`LIMIT n`, `FETCH FIRST n ROWS ONLY`, `SELECT TOP n`) is
 still recognised as bounded and is not limited twice.
+
+A statement leading with `WITH` is typed by the keyword its CTE list **operates** — the first one
+after the list, read by walking the list's grammar in `src/lib/sql/operative-keyword.ts`. Asking
+instead whether the text contained `SELECT` let the `INSERT INTO … SELECT` idiom answer for its own
+statement: a data-modifying CTE was typed `SELECT`, received a `LIMIT`, and in PostgreSQL that bound
+applies to the rows the statement **writes** — it committed at most 500 of them while the badge
+reported a truncated result set. Where the CTE list's shape cannot be determined, the statement is
+not treated as a `SELECT` and is not bounded: an over-large read can be re-run, a partly committed
+write cannot be undone.
+
+That covers malformed input (an unclosed body, a missing `AS`, an unterminated comment or literal)
+and, deliberately, two **well-formed** forms the reader does not walk — so they lose their bound and
+return every row:
+
+| Form | Why it is not read | Effect |
+|------|--------------------|--------|
+| ClickHouse's `WITH <expr> AS <alias>` (`WITH now() AS ts SELECT …`) | puts an expression where the standard form puts a CTE name; reading it needs an expression parser | idiomatic on ClickHouse, and a regression there — tracked for follow-up |
+| PostgreSQL's `SEARCH` / `CYCLE` clause after a recursive CTE list | sits between the list and the operative keyword; the reader stops at the first word after the list | rare |
+
+Both are reads, so the cost is an unbounded result set rather than a partial write, and both are
+pinned by tests in `tests/unit/sql/operative-keyword.test.ts` so the gap stays a decision.
 
 ---
 
