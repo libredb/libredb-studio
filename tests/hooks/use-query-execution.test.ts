@@ -8,9 +8,17 @@ import { mockGlobalFetch, restoreGlobalFetch } from "../helpers/mock-fetch";
 import { storage } from "@/lib/storage";
 
 // ── Mock QuerySafetyDialog ──────────────────────────────────────────────────
-mock.module("@/components/QuerySafetyDialog", () => ({
-  isDangerousQuery: (q: string) =>
+// The stub is deliberately more permissive than the real predicate - it answers for
+// DROP/DELETE/TRUNCATE only - which is what lets the UPDATE and DDL tests further
+// down execute without a confirmation. It is a spy so the gate test can assert WHICH
+// text the hook asks about; what the real predicate ANSWERS for that text is pinned
+// in tests/components/QuerySafetyDialog.test.tsx.
+const isDangerousQueryMock = mock(
+  (q: string) =>
     q.toUpperCase().includes("DROP") || q.toUpperCase().includes("DELETE") || q.toUpperCase().includes("TRUNCATE"),
+);
+mock.module("@/components/QuerySafetyDialog", () => ({
+  isDangerousQuery: isDangerousQueryMock,
 }));
 
 import { useQueryExecution } from "@/hooks/use-query-execution";
@@ -250,6 +258,30 @@ describe("useQueryExecution", () => {
     });
 
     expect(result.current.safetyCheckQuery).toBe("DROP TABLE users");
+  });
+
+  /**
+   * The standalone path's half of #294: the hook must ask the gate about the query
+   * text AS WRITTEN, comments included, and open the dialog on a positive answer.
+   *
+   * The predicate itself is stubbed in this file (see the top), so this asserts the
+   * call site's contract - no trimming, no normalising, no re-derived SELECT test
+   * before the gate - while the predicate's comment tolerance is pinned in
+   * tests/components/QuerySafetyDialog.test.tsx against the real export.
+   */
+  test("executeQuery asks the safety gate about the query text as written", async () => {
+    mockGlobalFetch({});
+    const params = createDefaultParams();
+
+    const { result } = renderHook(() => useQueryExecution(params));
+
+    const annotated = "-- cleanup\nDROP TABLE users";
+    await act(async () => {
+      await result.current.executeQuery(annotated);
+    });
+
+    expect(isDangerousQueryMock).toHaveBeenCalledWith(annotated);
+    expect(result.current.safetyCheckQuery).toBe(annotated);
   });
 
   test("executeQuery sets safetyCheckQuery for DELETE queries", async () => {

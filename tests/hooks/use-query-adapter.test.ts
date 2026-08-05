@@ -331,6 +331,28 @@ describe("useQueryAdapter", () => {
     expect(params.onQueryExecute).not.toHaveBeenCalled();
   });
 
+  /**
+   * The same gate with a note above the statement (#294).
+   *
+   * This file uses the REAL `isDangerousQuery`, and this is the packaged product's
+   * execution path - a host application embedding studio runs every query through
+   * this adapter - so the annotated statement has to reach the dialog here, not
+   * only in the predicate's own unit tests.
+   */
+  test("executeQuery sets safetyCheckQuery for a destructive statement behind a comment", async () => {
+    const params = makeHookParams();
+
+    const { result } = renderHook(() => useQueryAdapter(params));
+
+    const annotated = "-- cleanup\nDROP TABLE users";
+    await act(async () => {
+      await result.current.executeQuery(annotated);
+    });
+
+    expect(result.current.safetyCheckQuery).toBe(annotated);
+    expect(params.onQueryExecute).not.toHaveBeenCalled();
+  });
+
   // ── executeQuery leaves other tabs untouched ────────────────────────────────
 
   test("executeQuery updates only the target tab when multiple tabs exist", async () => {

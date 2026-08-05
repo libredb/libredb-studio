@@ -32,30 +32,8 @@
  */
 
 import { readLeadingKeyword, type LeadingKeyword } from "./leading-keyword";
-import { IDENTIFIER_PART, IDENTIFIER_START, readSqlSpan } from "./spans";
-
-/** A word (identifier or keyword) and where it ends, or `null` if none starts here. */
-interface Word {
-  text: string;
-  end: number;
-}
-
-/**
- * A word runs over the shared identifier alphabet, plus `$` after the first
- * character: it is legal inside a MySQL identifier and after the first character
- * in PostgreSQL. It stays out of the START position so a dollar-quoted string is
- * still read as the literal it is.
- */
-function readWord(sql: string, index: number): Word | null {
-  if (index >= sql.length || !IDENTIFIER_START.test(sql[index])) return null;
-
-  let end = index + 1;
-  while (end < sql.length && (IDENTIFIER_PART.test(sql[end]) || sql[end] === "$")) end++;
-
-  // Upper-cased for the keyword comparisons below. Every keyword this module
-  // tests for is ASCII, so the locale-independent mapping is all it needs.
-  return { text: sql.slice(index, end).toUpperCase(), end };
-}
+import { readSqlSpan } from "./spans";
+import { readSqlWord } from "./words";
 
 /**
  * The next index at which the statement's own code resumes, or `-1` when it never
@@ -156,7 +134,7 @@ function skipCteName(sql: string, index: number): number {
 
   if (sql[index] === "[") return skipBracketed(sql, index);
 
-  return readWord(sql, index)?.end ?? -1;
+  return readSqlWord(sql, index)?.end ?? -1;
 }
 
 /**
@@ -193,7 +171,7 @@ function readStandardElement(sql: string, index: number): StandardElement {
     if (i < 0) return { kind: "malformed" };
   }
 
-  const as = readWord(sql, i);
+  const as = readSqlWord(sql, i);
   if (as?.text !== "AS") return { kind: "other-shape" };
   i = skipTrivia(sql, as.end);
   if (i < 0) return { kind: "malformed" };
@@ -201,12 +179,12 @@ function readStandardElement(sql: string, index: number): StandardElement {
   // PostgreSQL's inlining hints sit between `AS` and the body. Neither word exists
   // in the expression shape, so reading one COMMITS this element to the standard
   // one: from here a missing body is malformed input, not an alias.
-  let hint = readWord(sql, i);
+  let hint = readSqlWord(sql, i);
   const committed = hint?.text === "NOT" || hint?.text === "MATERIALIZED";
   if (hint?.text === "NOT") {
     i = skipTrivia(sql, hint.end);
     if (i < 0) return { kind: "malformed" };
-    hint = readWord(sql, i);
+    hint = readSqlWord(sql, i);
     if (hint?.text !== "MATERIALIZED") return { kind: "malformed" };
   }
   if (hint?.text === "MATERIALIZED") {
@@ -268,7 +246,7 @@ function skipExpressionElement(sql: string, index: number): number {
     // so there is no element here to read.
     if (ch === "," && depth === 0) return -1;
 
-    const word = readWord(sql, i);
+    const word = readSqlWord(sql, i);
     if (word === null) {
       i++;
       continue;
@@ -319,7 +297,7 @@ function readKeywordAfterCteList(sql: string, afterWith: number): LeadingKeyword
   let i = skipTrivia(sql, afterWith);
   if (i < 0) return null;
 
-  const recursive = readWord(sql, i);
+  const recursive = readSqlWord(sql, i);
   if (recursive?.text === "RECURSIVE") {
     i = skipTrivia(sql, recursive.end);
     if (i < 0) return null;
@@ -336,7 +314,7 @@ function readKeywordAfterCteList(sql: string, afterWith: number): LeadingKeyword
     if (i < 0) return null;
   }
 
-  const operative = readWord(sql, i);
+  const operative = readSqlWord(sql, i);
   if (operative === null) return null;
 
   return { keyword: operative.text, start: i, end: operative.end };

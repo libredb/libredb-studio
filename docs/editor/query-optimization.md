@@ -6,6 +6,7 @@ LibreDB Studio includes enterprise-grade query optimization features to prevent 
 
 - [Query Pagination System](#query-pagination-system)
 - [Silent Auto-Limiting](#silent-auto-limiting)
+- [Destructive-Statement Confirmation](#destructive-statement-confirmation)
 - [Load More Functionality](#load-more-functionality)
 - [Result-Level Signals](#result-level-signals)
 - [Query EXPLAIN Integration](#query-explain-integration)
@@ -219,6 +220,59 @@ Two indicators do not follow the bound onto this route, because it returns no pa
 all: the **AUTO-LIMITED badge does not appear** for a multi-statement run, and **Load More is not
 offered** even when rows were capped. The bound itself is real and applied — re-run the final statement
 on its own to page through it.
+
+---
+
+## Destructive-Statement Confirmation
+
+Before a destructive statement runs, studio opens a confirmation dialog carrying an AI risk
+analysis (`src/components/QuerySafetyDialog.tsx`). Which statements reach it is decided by the
+same reading the auto-limiter uses, so the two cannot disagree about where a statement begins.
+
+| Statement | Confirmation |
+|-----------|--------------|
+| `DELETE` / `DROP` / `TRUNCATE` / `ALTER` / `GRANT` / `REVOKE` / `UPDATE` | Yes |
+| Any of those behind a comment (`-- note`, `/* note */`, MySQL's `# note`, several stacked) | Yes |
+| A `WITH` whose CTE list precedes one (`WITH x AS (…) DELETE FROM …`) | Yes |
+| A `WITH` whose CTE list *contains* an `UPDATE … SET` (PostgreSQL's data-modifying CTE) | Yes |
+| `SELECT`, including one naming a destructive keyword in a string or a comment | No |
+
+The statement's own keyword is read with `src/lib/sql/operative-keyword.ts` and tested against a
+keyword set. It used to be re-derived here as six anchored patterns (`/^\s*DROP\b/i`, …), which
+tolerate whitespace but not a comment — so `-- cleanup` above a `DROP TABLE` skipped the dialog
+and the statement executed unconfirmed, on both the standalone and the embedded execution path.
+Writing a note above a destructive statement is ordinary, and it is exactly where a confirmation
+matters most.
+
+One probe stays deliberately unanchored: a statement whose code contains `UPDATE` followed by
+`SET` asks for confirmation whatever its own keyword is. PostgreSQL's data-modifying CTE is
+*operated* by its `SELECT` — which is the honest answer, and the one the limiter needs so it does
+not bound the rows a write commits — so anchoring this probe too would take the last check away
+from a statement that really does write. It reads the statement's **code** rather than its text
+(`src/lib/sql/words.ts`), so unlike the pattern before it, a read that merely quotes
+`'UPDATE t SET x = 1'` or mentions it in a comment no longer prompts.
+
+Three gaps are known and pinned by tests rather than claimed closed:
+
+- **Only `UPDATE … SET` is looked for inside a read.** A write hidden in a CTE *body* under any
+  other keyword (`WITH gone AS (DELETE FROM t RETURNING *) SELECT * FROM gone`) does not prompt.
+  Widening the probe to `DELETE`/`INSERT`/`MERGE` would also make every read whose code names one
+  of them prompt, so the asymmetry is inherited from the vocabulary above rather than chosen here.
+- **A statement whose shape cannot be read at all** — an unclosed CTE list, or an undeterminable
+  literal such as `'\'`, which closes the string in PostgreSQL and not in MySQL — hides what
+  follows it. The text is a syntax error under at least one dialect, so the server rejects it
+  either way.
+- **A multi-statement script is read as one statement.** `SELECT 1; DROP TABLE users` does not
+  prompt (its first keyword is the `SELECT`), while `SELECT 1; UPDATE t SET x = 1` does, because
+  the unanchored probe finds it. Executing the destructive statement on its own always prompts.
+
+Four runs bypass the gate on purpose, all on the standalone path
+(`src/hooks/use-query-execution.ts`): an EXPLAIN run (see below), a Load-More page of a result the
+user already has, a playground run (rolled back rather than committed), and anything carrying
+`skipSafety` — which is the dialog's own "Execute Anyway" button and the inline row editor, whose
+`UPDATE` comes from a grid edit the user has already confirmed. The embedded adapter
+(`src/workspace/hooks/use-query-adapter.ts`) has only the force-execute bypass, so every other
+query a host application runs through it reaches the gate.
 
 ---
 

@@ -613,4 +613,123 @@ describe("isDangerousQuery", () => {
     expect(isDangerousQuery("SELECT * FROM users")).toBe(false);
     expect(isDangerousQuery("WITH cte AS (SELECT 1) SELECT * FROM cte")).toBe(false);
   });
+
+  // ── A comment cannot hide the statement (#294) ───────────────────────────
+
+  /**
+   * The predicate used to re-derive the leading-keyword test with its own anchored
+   * patterns (`/^\s*DROP\b/i`, …), which tolerate whitespace but not a comment. So
+   * writing a note above a destructive statement - the most ordinary habit there is
+   * - skipped the confirmation dialog entirely on both execution paths.
+   */
+  test.each<[string, string]>([
+    ["a line comment", "-- cleanup\nDROP TABLE users"],
+    ["a block comment", "/* nightly */ TRUNCATE TABLE audit"],
+    ["stacked comments", "-- one\n/* two */\n-- three\nDELETE FROM sessions"],
+    ["a MySQL hash comment", "# note\nDELETE FROM sessions"],
+    ["an indented comment", "   -- note\n   ALTER TABLE users ADD COLUMN x int"],
+    ["a comment above GRANT", "-- audit\nGRANT SELECT ON users TO analyst"],
+    ["a comment above REVOKE", "/* audit */ REVOKE SELECT ON users FROM analyst"],
+    ["a comment above UPDATE", "-- fix\nUPDATE users SET admin = true"],
+  ])("prompts for a destructive statement behind %s", (_label, query) => {
+    expect(isDangerousQuery(query)).toBe(true);
+  });
+
+  test.each<[string, string]>([
+    ["a plain read", "SELECT * FROM users"],
+    ["a read behind a comment", "-- daily report\nSELECT * FROM users"],
+    ["a read whose comment names DROP", "SELECT * FROM t -- DROP TABLE users"],
+    ["a read whose comment names UPDATE ... SET", "SELECT * FROM t /* UPDATE t SET x = 1 */"],
+    ["a read quoting UPDATE ... SET in a string", "SELECT note FROM logs WHERE note = 'UPDATE t SET x = 1'"],
+    ["a read of a column named UPDATE", 'SELECT "UPDATE" FROM audit'],
+  ])("never prompts for %s", (_label, query) => {
+    expect(isDangerousQuery(query)).toBe(false);
+  });
+
+  // ── Writes a read-shaped statement carries ───────────────────────────────
+
+  /**
+   * The `UPDATE … SET` probe is deliberately NOT anchored to the statement's own
+   * keyword, unlike the vocabulary test above.
+   *
+   * PostgreSQL's data-modifying CTE is OPERATED by its `SELECT` - which is the
+   * honest answer, and the one the query limiter needs to avoid bounding the rows a
+   * write commits (#287) - so anchoring this probe too would take the last human
+   * check away from a statement that really does write. The probe reads the
+   * statement's CODE (`findCodeWord`), so the cost of keeping it unanchored is no
+   * longer a prompt on every read that merely mentions both words: the two string
+   * and comment cases above used to prompt and now do not.
+   */
+  test("prompts for a write hidden inside a read-shaped statement", () => {
+    expect(isDangerousQuery("WITH moved AS (UPDATE t SET a = 1 RETURNING *) SELECT * FROM moved")).toBe(true);
+  });
+
+  test("prompts for a destructive statement a CTE list only precedes", () => {
+    expect(isDangerousQuery("WITH x AS (SELECT id FROM t) DELETE FROM t USING x WHERE t.id = x.id")).toBe(true);
+  });
+
+  // ── Nothing to read ─────────────────────────────────────────────────────
+
+  test.each<[string, string]>([
+    ["empty text", ""],
+    ["whitespace only", "   \n"],
+    ["a comment only", "-- just a note"],
+    ["a parenthesised read", "(SELECT 1)"],
+  ])("does not prompt for %s, which is not a statement", (_label, query) => {
+    expect(isDangerousQuery(query)).toBe(false);
+  });
+
+  /**
+   * A `WITH` whose list never closes cannot be read, so the destructive keyword
+   * inside it is not reported. No dialect accepts the text either, so what the
+   * server receives is a syntax error rather than a dropped table - pinned so the
+   * gap stays a decision.
+   */
+  test("does not prompt when the statement's shape cannot be read at all", () => {
+    expect(isDangerousQuery("WITH t AS (DELETE FROM x")).toBe(false);
+  });
+
+  /**
+   * The gaps this predicate does NOT close, pinned so each stays a decision and so
+   * `docs/editor/query-optimization.md` cannot drift from them.
+   *
+   * The write-inside-a-read probe looks for `UPDATE … SET` only, because widening it
+   * to the other write keywords would make every read whose code names one of them
+   * prompt. And the whole editor text is read as one statement, so a destructive
+   * statement later in a script is only caught by that same unanchored probe.
+   */
+  test.each<[string, string, boolean]>([
+    ["a DELETE hidden in a CTE body", "WITH gone AS (DELETE FROM t RETURNING *) SELECT * FROM gone", false],
+    ["a DROP after a leading SELECT", "SELECT 1; DROP TABLE users", false],
+    ["an UPDATE after a leading SELECT", "SELECT 1;\nUPDATE t SET x = 1", true],
+    ["a write behind an undeterminable literal", "SELECT '\\';\nUPDATE t SET x = 1", false],
+  ])("answers %s with %p", (_label, query, expected) => {
+    expect(isDangerousQuery(query)).toBe(expected);
+  });
+
+  // ── Shape of the scan ───────────────────────────────────────────────────
+
+  /**
+   * A timing guard: this predicate runs on the editor's execute path, and the
+   * pattern it replaced was measurably quadratic.
+   *
+   * `/\bUPDATE\b[\s\S]*?\bSET\b/i` restarts its lazy tail at every `UPDATE` in the
+   * text, so a script holding many of them and no `SET` cost one full scan each -
+   * measured on the real export before this change: 10.5ms at 14 KB, **1025ms at
+   * 140 KB**, 6406ms at 350 KB. A pasted migration script reaches those sizes.
+   *
+   * The statement below leads with `SELECT` on purpose: a leading `UPDATE` is
+   * answered by the vocabulary test without the probe ever running, so it would
+   * guard nothing.
+   */
+  test("answers in bounded time on a statement holding many UPDATE words and no SET", () => {
+    const query = `SELECT ${"UPDATE ".repeat(20000)}(`;
+
+    const started = performance.now();
+    const dangerous = isDangerousQuery(query);
+    const elapsed = performance.now() - started;
+
+    expect(dangerous).toBe(false);
+    expect(elapsed, `took ${elapsed.toFixed(1)}ms`).toBeLessThan(200);
+  });
 });

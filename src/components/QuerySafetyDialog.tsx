@@ -3,6 +3,8 @@
 import React, { useState, useEffect } from "react";
 import { ShieldAlert, ShieldCheck, AlertTriangle, Loader2, Play, X } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { readOperativeKeyword } from "@/lib/sql/operative-keyword";
+import { findCodeWord } from "@/lib/sql/words";
 
 interface SafetyAnalysis {
   riskLevel: "safe" | "low" | "medium" | "high" | "critical";
@@ -298,25 +300,47 @@ export function QuerySafetyDialog({
 }
 
 /**
+ * Statements whose own keyword is enough to want a confirmation: they delete rows,
+ * remove objects or change who may reach them.
+ *
+ * The same vocabulary the six anchored patterns here used to spell out, now tested
+ * against one reading of the statement instead of re-derived per keyword.
+ */
+const DANGEROUS_KEYWORDS = new Set(["DELETE", "DROP", "TRUNCATE", "ALTER", "GRANT", "REVOKE", "UPDATE"]);
+
+/**
  * Detect if a query is potentially dangerous and should trigger safety analysis.
+ *
+ * This gates the confirmation dialog on BOTH execution paths - `use-query-execution`
+ * standalone and the embedded `use-query-adapter` - so it is the last check before a
+ * destructive statement runs.
+ *
+ * It used to re-derive the leading-keyword test with its own anchored patterns
+ * (`/^\s*DROP\b/i`, …), which tolerate whitespace but not a comment, so
+ * `-- cleanup\nDROP TABLE users` executed with no confirmation at all (#294) - the
+ * same blindness this project has now removed from the query limiter (#275) and the
+ * multi-statement route (#281). Reading the shared primitive instead means the
+ * dialog and the limiter agree about where a statement starts, and a `WITH` whose CTE
+ * list only precedes a write (`WITH x AS (…) DELETE FROM …`) is now recognised too.
+ *
+ * KNOWN GAP, and it is the uncomfortable direction for a safety check: text the
+ * reading cannot resolve HIDES what follows it, so this answers false there rather
+ * than asking. `SELECT '\';` + a following write is the case — the two dialect
+ * readings of `'\'` end the string in different places, so `spans.ts` declines to
+ * guess and everything after is inside a literal as far as this predicate can tell.
+ * A test pins it. Reachable only from text carrying a backslash immediately before a
+ * closing quote, and whether an unresolvable statement should ASK instead is a policy
+ * question with its own UX cost, tracked separately rather than decided here.
  */
 export function isDangerousQuery(query: string): boolean {
-  const normalized = query.trim().toUpperCase();
+  const keyword = readOperativeKeyword(query)?.keyword;
+  if (keyword !== undefined && DANGEROUS_KEYWORDS.has(keyword)) return true;
 
-  // Dangerous patterns
-  const patterns = [
-    /^\s*DELETE\b/i,
-    /^\s*DROP\b/i,
-    /^\s*TRUNCATE\b/i,
-    /^\s*ALTER\b/i,
-    /\bUPDATE\b[\s\S]*?\bSET\b/i,
-    /^\s*GRANT\b/i,
-    /^\s*REVOKE\b/i,
-  ];
-
-  // Check for UPDATE/DELETE without WHERE (most dangerous)
-  if (/^\s*DELETE\b/i.test(normalized) && !/\bWHERE\b/.test(normalized)) return true;
-  if (/\bUPDATE\b[\s\S]*?\bSET\b/i.test(normalized) && !/\bWHERE\b/.test(normalized)) return true;
-
-  return patterns.some((p) => p.test(query));
+  // A write the statement's own keyword does not report: PostgreSQL's data-modifying
+  // CTE is OPERATED by its SELECT (`WITH x AS (UPDATE … SET …) SELECT * FROM x`), so
+  // this probe stays unanchored deliberately. It reads the statement's CODE rather
+  // than its text, so a read that merely quotes or comments the two words - which
+  // the pattern before it treated as a write - no longer asks for a confirmation.
+  const update = findCodeWord(query, "UPDATE");
+  return update !== null && findCodeWord(query, "SET", update.end) !== null;
 }
