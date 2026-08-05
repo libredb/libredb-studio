@@ -223,6 +223,25 @@ The statement timeout is **separate** from pool config: `ProviderOptions.queryTi
 live `{ total, idle, active, waiting }` counts. Every query acquires a client from the pool and
 releases it in a `finally` block.
 
+#### Idle-client failures are handled, not fatal
+
+`connect()` attaches an `error` listener to the pool as soon as it is constructed. This is not
+optional bookkeeping: a client that fails while **checked out** rejects its own query, but a client
+that fails while **idle** (the server dropped it, the network went away) has no query to reject, so
+`pg` removes and destroys it and emits `error` on the pool instead. An `error` event with no listener
+is an uncaught exception — i.e. a long-running server process would die from a dropped idle
+connection.
+
+The listener reports the failure with the file's usual bracketed-prefix `console.error` and does
+nothing else. `pg` has already discarded the client, so the handler exists to keep the event
+non-fatal and visible, not to reconnect; the pool opens a fresh client on the next acquire.
+
+The same guard is on the PostgreSQL **storage** pool (see [STORAGE.md](../STORAGE.md)), which is a
+second long-lived `pg.Pool` when `STORAGE_PROVIDER=postgres`. Across the other pooled drivers, only
+SQL Server needs the same treatment ([mssql.md](./mssql.md#42-connection-pooling)): mysql2 and
+oracledb expose no pool-level `error` event at all, which is recorded at each provider's
+`connect()`.
+
 ### 4.3 SSL
 
 `buildSSLConfig()` ([postgres.ts:342](../../src/lib/db/providers/sql/postgres.ts)) resolves SSL with

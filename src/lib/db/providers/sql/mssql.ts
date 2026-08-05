@@ -515,6 +515,16 @@ export class MSSQLProvider extends SQLBaseProvider {
     try {
       const config = this.buildConfig();
       this.pool = new mssql.ConnectionPool(config);
+
+      // `mssql`'s ConnectionPool is an EventEmitter that emits `error` for a background
+      // connection failure (a non-ESOCKET tedious error) and for a failed acquire. An
+      // `error` event with no listener is an uncaught exception, so without this handler
+      // one of those takes the server process down (#298). A failed acquire ALSO rejects
+      // the caller's promise, so this handler must only log — swallowing nothing.
+      this.pool.on("error", (error: unknown) => {
+        console.error("[MSSQL] Pool error:", error);
+      });
+
       await this.pool.connect();
 
       // Test the connection

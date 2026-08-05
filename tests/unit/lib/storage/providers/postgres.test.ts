@@ -1,5 +1,7 @@
-import { describe, test, expect, beforeEach, afterEach, mock } from "bun:test";
+import { describe, test, expect, beforeEach, afterEach, mock, spyOn } from "bun:test";
+import { EventEmitter } from "node:events";
 import type { ServerStorageProvider } from "@/lib/storage/types";
+import { logger } from "@/lib/logger";
 
 // ── Mock pg ──────────────────────────────────────────────────────────────────
 
@@ -13,13 +15,26 @@ const mockClient = {
   release: mockRelease,
 };
 
-const mockPool: Record<string, any> = {
-  query: mockQuery,
-  connect: mock(async () => mockClient),
-  end: mockEnd,
-};
+/**
+ * A real EventEmitter, fresh per construction, mirroring what `pg` hands back. An `error`
+ * event with no listener is an uncaught exception (#298), and this pool is long-lived —
+ * it serves every request while STORAGE_PROVIDER=postgres — so an inert `on` in the mock
+ * would hide exactly the crash this suite has to pin.
+ */
+function createMockPool(): EventEmitter & Record<string, any> {
+  const pool = new EventEmitter() as EventEmitter & Record<string, any>;
+  pool.query = mockQuery;
+  pool.connect = mock(async () => mockClient);
+  pool.end = mockEnd;
+  return pool;
+}
 
-const mockPoolConstructor = mock(() => mockPool);
+let mockPool = createMockPool();
+
+const mockPoolConstructor = mock(() => {
+  mockPool = createMockPool();
+  return mockPool;
+});
 
 mock.module("pg", () => ({
   Pool: mockPoolConstructor,
@@ -307,5 +322,35 @@ describe("PostgresStorageProvider", () => {
   test("ensurePool throws when not initialized", async () => {
     const freshProvider = new PostgresStorageProvider("postgresql://localhost/test");
     await expect(freshProvider.getAllData("test@test.com")).rejects.toThrow("not initialized");
+  });
+
+  // ── Pool error events (#298) ───────────────────────────────────────────────
+
+  test("an idle client error on the storage pool is logged and does not escalate", async () => {
+    await provider.initialize();
+    const idleFailure = new Error("Connection terminated unexpectedly");
+    const errorSpy = spyOn(logger, "error").mockImplementation(() => {});
+    // Another test file replaces `@/lib/logger` wholesale, and spying on a method that is
+    // already a mock reuses that mock — call history from the rest of the process comes
+    // with it. Clear it so the count below is this test's own.
+    errorSpy.mockClear();
+
+    try {
+      // `pg` destroys the idle client and emits on the POOL; an `error` event with no
+      // listener is an uncaught exception, i.e. a dead server process.
+      expect(() => mockPool.emit("error", idleFailure)).not.toThrow();
+      expect(errorSpy).toHaveBeenCalledTimes(1);
+      const [message, loggedError, context] = errorSpy.mock.calls[0] as [string, unknown, unknown];
+      expect(message).toContain("pool");
+      expect(loggedError).toBe(idleFailure);
+      expect(context).toEqual({ provider: "postgres" });
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  test("the storage pool carries exactly one error listener", async () => {
+    await provider.initialize();
+    expect(mockPool.listenerCount("error")).toBe(1);
   });
 });

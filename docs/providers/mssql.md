@@ -265,6 +265,20 @@ This is the most complete pool/timeout mapping of any SQL provider. `getPoolStat
 ([mssql.ts:702](../../src/lib/db/providers/sql/mssql.ts)) exposes
 `{ total: size, idle: available, active, waiting: pending }`.
 
+#### Pool errors are handled, not fatal
+
+`mssql.ConnectionPool` is an `EventEmitter` and emits `error` in two situations: a background
+connection failure (a tedious connection error that is not `ESOCKET`) and a failed acquire. An
+`error` event with no listener is an uncaught exception, so `connect()` attaches a listener the
+moment the pool is constructed — otherwise either situation would take the whole server process
+down. The listener only reports (bracketed-prefix `console.error`, this file's convention): a failed
+acquire **also** rejects the caller's promise, so nothing may be swallowed here.
+
+PostgreSQL carries the same guard for its idle clients
+([postgres.md](./postgres.md#42-connection-pooling)). MySQL and Oracle do not, because mysql2 and
+oracledb expose no pool-level `error` event — that audit result is recorded at each of those
+providers' `connect()`.
+
 ### 4.3 Encryption / SSL
 
 `buildConfig()` resolves transport encryption from `connection.ssl`:

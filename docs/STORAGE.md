@@ -201,9 +201,19 @@ bun dev
 On the first API request, the PostgreSQL provider:
 
 1. **Creates a connection pool** — max 5 connections, 30s idle timeout
-2. **Creates the table** — `user_storage` table with the schema below via `CREATE TABLE IF NOT EXISTS`
+2. **Handles idle-client failures** — the pool gets an `error` listener immediately (see below)
+3. **Creates the table** — `user_storage` table with the schema below via `CREATE TABLE IF NOT EXISTS`
 
 The database itself must already exist. The **table** is auto-created, but the **database** is not.
+
+This pool is long-lived: once created it serves every storage request for the life of the process. A
+pooled client that fails while **idle** — the server dropped it, the network went away, the DBA
+restarted the database — has no query to reject, so `pg` destroys it and emits `error` on the pool.
+Node treats an `error` event with no listener as an uncaught exception, so the provider attaches one
+that logs through the storage logger (`provider=postgres`) and lets the pool open a fresh client on
+the next request. A dropped idle connection therefore costs one log line, never the server process.
+The PostgreSQL *database* provider carries the same guard for the same reason (see
+[providers/postgres.md](./providers/postgres.md#42-connection-pooling)).
 
 ### Required Privileges
 

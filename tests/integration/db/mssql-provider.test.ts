@@ -1,4 +1,5 @@
-import { describe, test, expect, beforeEach, afterEach, mock } from "bun:test";
+import { describe, test, expect, beforeEach, afterEach, mock, spyOn } from "bun:test";
+import { EventEmitter } from "node:events";
 
 // ---------------------------------------------------------------------------
 // Mock mssql BEFORE importing the provider
@@ -7,6 +8,8 @@ import { describe, test, expect, beforeEach, afterEach, mock } from "bun:test";
 let mockQueryFn: (sql: string) => Promise<unknown>;
 let capturedInputs: Array<{ name: string; value: unknown }> = [];
 let cancelShouldThrow = false;
+/** The pool handed to the most recently constructed provider. */
+let lastPool: EventEmitter | undefined;
 
 class MockRequest {
   private _transaction: unknown;
@@ -41,13 +44,20 @@ class MockTransaction {
   async rollback() {}
 }
 
-class MockConnectionPool {
+/**
+ * A real EventEmitter, because `mssql`'s ConnectionPool is one and emits `error` for a
+ * background connection failure (a non-ESOCKET tedious error) as well as for a failed
+ * acquire. An `error` event with no listener is an uncaught exception (#298), so an inert
+ * `on` in the mock would hide the crash instead of pinning it.
+ */
+class MockConnectionPool extends EventEmitter {
   private _config: unknown;
   public size = 10;
   public available = 7;
   public pending = 0;
 
   constructor(config: unknown) {
+    super();
     this._config = config;
   }
 
@@ -62,10 +72,20 @@ class MockConnectionPool {
   }
 }
 
+/**
+ * The provider does `new mssql.ConnectionPool(config)`; recording the instance here lets a
+ * test emit on the very emitter the provider attached its listener to.
+ */
+function ConnectionPoolFactory(config: unknown): MockConnectionPool {
+  const pool = new MockConnectionPool(config);
+  lastPool = pool;
+  return pool;
+}
+
 mock.module("mssql", () => {
   return {
     default: {
-      ConnectionPool: MockConnectionPool,
+      ConnectionPool: ConnectionPoolFactory,
       Transaction: MockTransaction,
       Request: MockRequest,
     },
@@ -474,6 +494,30 @@ describe("MSSQLProvider", () => {
       await provider.connect();
       await provider.connect(); // should not throw
       expect(provider.isConnected()).toBe(true);
+    });
+
+    // ── Pool error events (#298) ─────────────────────────────────────────────
+
+    test("a pool error is logged and does not escalate past the provider", async () => {
+      await provider.connect();
+      const errorSpy = spyOn(console, "error").mockImplementation(() => {});
+
+      try {
+        expect(() => lastPool?.emit("error", new Error("socket hang up"))).not.toThrow();
+        expect(errorSpy).toHaveBeenCalledTimes(1);
+        const logged = errorSpy.mock.calls[0].join(" ");
+        expect(logged).toContain("[MSSQL]");
+        expect(logged).toContain("socket hang up");
+      } finally {
+        errorSpy.mockRestore();
+      }
+    });
+
+    test("the pool carries exactly one error listener, and a repeat connect adds none", async () => {
+      await provider.connect();
+      await provider.connect();
+
+      expect(lastPool?.listenerCount("error")).toBe(1);
     });
   });
 

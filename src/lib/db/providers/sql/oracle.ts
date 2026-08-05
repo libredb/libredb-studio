@@ -280,6 +280,11 @@ export class OracleProvider extends SQLBaseProvider {
     }
 
     try {
+      // No pool `error` listener here, unlike the PostgreSQL and SQL Server providers
+      // (#298): oracledb's pool has no pool-level `error` event to listen for. Audited in
+      // the installed package — `oracledb/lib/pool.js` extends EventEmitter but emits only
+      // the internal `_afterPoolClose` and `_allCheckedIn`, and nothing under `oracledb/lib`
+      // emits `error` at all. Connection failures surface through the awaiting call.
       this.pool = await oracledb.createPool({
         user: this.config.user,
         password: this.config.password,

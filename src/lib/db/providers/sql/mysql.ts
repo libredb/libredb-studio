@@ -303,6 +303,12 @@ export class MySQLProvider extends SQLBaseProvider {
     }
 
     try {
+      // No pool `error` listener here, unlike the PostgreSQL and SQL Server providers
+      // (#298): mysql2's pool has no pool-level `error` event to listen for. Audited in
+      // the installed package — `mysql2/lib/base/pool.js` emits only `acquire`,
+      // `connection`, `enqueue` and `release`, the promise wrapper forwards exactly those
+      // four (`lib/promise/pool.js`), and `typings/mysql/lib/Pool.d.ts` types no `error`
+      // overload. A connection that fails reports through the call that holds it.
       this.pool = mysql.createPool(this.buildPoolConfig());
 
       const conn = await this.pool.getConnection();

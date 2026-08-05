@@ -35,6 +35,15 @@ export class PostgresStorageProvider implements ServerStorageProvider {
       ssl: this.buildSSLConfig(),
     });
 
+    // An idle client the server drops has no query to reject, so `pg` destroys it and
+    // emits on the pool; an `error` event with no listener is an uncaught exception. This
+    // pool is long-lived and serves every request while STORAGE_PROVIDER=postgres, so
+    // without this handler a dropped idle connection crashes the server (#298). The
+    // client is already gone — log it and let the pool open a fresh one on next acquire.
+    this.pool.on("error", (error: unknown) => {
+      logger.error("PostgreSQL storage pool client error", error, { provider: "postgres" });
+    });
+
     // Create table
     try {
       await this.pool.query(`

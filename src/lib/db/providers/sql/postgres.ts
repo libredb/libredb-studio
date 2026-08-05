@@ -567,6 +567,7 @@ export class PostgresProvider extends SQLBaseProvider {
     try {
       const poolConfig = this.buildPoolConfig();
       this.pool = new Pool(poolConfig);
+      this.attachPoolErrorListener(this.pool);
 
       const client = await this.pool.connect();
       client.release();
@@ -589,6 +590,24 @@ export class PostgresProvider extends SQLBaseProvider {
       this.pool = null;
       this.setConnected(false);
     }
+  }
+
+  /**
+   * A client that fails while CHECKED OUT rejects its own query, which is why ordinary
+   * query failures behave correctly. A client that fails while IDLE — the server dropped
+   * it, the network went away — has no query to reject, so `pg` removes and destroys it
+   * and then emits `error` on the pool. An `error` event with no listener is an uncaught
+   * exception, so without this handler a dropped idle connection takes the whole server
+   * process down (#298).
+   *
+   * The client is already gone by the time this fires, so the handler exists to keep the
+   * event non-fatal and visible — not to reconnect. The pool opens a fresh client on the
+   * next acquire by itself.
+   */
+  private attachPoolErrorListener(pool: Pool): void {
+    pool.on("error", (error) => {
+      console.error("[Postgres] Idle pool client error:", error);
+    });
   }
 
   private buildPoolConfig(): PgPoolConfig {

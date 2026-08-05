@@ -3,7 +3,8 @@
  * Uses mock.module() to intercept pg before provider import.
  */
 
-import { describe, test, expect, beforeEach, afterEach, mock } from "bun:test";
+import { describe, test, expect, beforeEach, afterEach, mock, spyOn } from "bun:test";
+import { EventEmitter } from "node:events";
 import type { DatabaseConnection } from "@/lib/types";
 import { DatabaseConfigError } from "@/lib/db/errors";
 
@@ -25,17 +26,31 @@ const mockClient = {
   release: () => {},
 };
 
-const mockPool = {
-  connect: async () => mockClient,
-  end: async () => {},
-  totalCount: 10,
-  idleCount: 7,
-  waitingCount: 0,
-};
+/**
+ * The pool mock is a real EventEmitter, and a fresh instance per construction, because
+ * that is what `pg` hands back. An `error` event with no listener is an uncaught
+ * exception (#298), so a plain object carrying an inert `on` could not tell a pool whose
+ * idle-client failure is handled from one that takes the process down with it.
+ */
+class MockPool extends EventEmitter {
+  public totalCount = 10;
+  public idleCount = 7;
+  public waitingCount = 0;
+
+  async connect() {
+    return mockClient;
+  }
+
+  async end() {}
+}
+
+/** The pool handed to the most recently constructed provider. */
+let lastPool: MockPool | undefined;
 
 mock.module("pg", () => ({
   Pool: function () {
-    return mockPool;
+    lastPool = new MockPool();
+    return lastPool;
   },
 }));
 
@@ -1635,6 +1650,40 @@ describe("PostgresProvider", () => {
       expect(stats.length).toBeGreaterThanOrEqual(1);
       const walEntry = stats.find((s) => s.name === "WAL");
       expect(walEntry).toBeUndefined();
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // Pool Error Events (#298)
+  // --------------------------------------------------------------------------
+
+  describe("pool error events", () => {
+    test("an idle client error is logged and does not escalate past the provider", async () => {
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      const pool = lastPool;
+      const errorSpy = spyOn(console, "error").mockImplementation(() => {});
+
+      try {
+        // `pg` has already removed and destroyed the client by the time it emits on the
+        // POOL; with no listener that emit is an uncaught exception, i.e. a dead server.
+        expect(() => pool?.emit("error", new Error("Connection terminated unexpectedly"))).not.toThrow();
+        expect(errorSpy).toHaveBeenCalledTimes(1);
+        const logged = errorSpy.mock.calls[0].join(" ");
+        expect(logged).toContain("[Postgres]");
+        expect(logged).toContain("Connection terminated unexpectedly");
+      } finally {
+        errorSpy.mockRestore();
+      }
+    });
+
+    test("the pool carries exactly one error listener, and a repeat connect adds none", async () => {
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      // connect() is a no-op once a pool exists, so listeners cannot accumulate.
+      await provider.connect();
+
+      expect(lastPool?.listenerCount("error")).toBe(1);
     });
   });
 
