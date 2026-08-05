@@ -155,7 +155,7 @@ id, so no reader can grow a dialect test of its own.
 | `q'…'` | a string literal (alternate quoting): the delimiter after the tag opens the body and its partner followed by `'` closes it, so the body carries apostrophes unescaped — `[ ] { } ( ) < >` pair up, any other character closes with itself, either letter case of the tag, and `nq'…'` is the same form for the national character set | Oracle only |
 | `q'…'` | not a form at all — a name followed by an ordinary string, which is what those characters are there | everything else, including the default |
 | `[…]` | a quoted **name**: everything between the brackets is the identifier (`SELECT [a--b] FROM t` selects a column called `a--b`) and the run does not nest. The doubled `]` this reading honours is SQL Server's escape — SQLite stops at the first `]` and has none, so `[a]]b]` reads as one name where SQLite reads `[a]` and then junk, which it rejects either way | SQL Server, SQLite |
-| `[…]` | an **array literal or subscript**: it nests (`[[1,2],[3,4]]`), nothing inside it is escaped, and a literal inside it is a literal (`m['a]b']`) | ClickHouse |
+| `[…]` | an **array literal or subscript**: it nests (`[[1,2],[3,4]]`), nothing inside it is escaped, and a literal inside it is a literal (`m['a]b']`) | ClickHouse, PostgreSQL |
 | `/* … /* … */ … */` | one **nesting** comment: a `/*` inside a comment opens another and the run continues until the depth returns to zero, so a region that already contains comments can be commented out. A run short of a closer is undeterminable rather than closed early | PostgreSQL, SQL Server, ClickHouse |
 | `/* … /* … */ … */` | a **flat** comment: the first `*/` ends it, and everything after that is the statement's own code | MySQL, MariaDB, SQLite, Oracle, and the default |
 
@@ -166,29 +166,33 @@ A rule that could **not** be established is not guessed from a neighbouring dial
 at the compatibility default below, and it is listed here rather than left implicit. The default is per
 **fact**, not per dialect: a dialect whose `#` rule is known can still be undecided about its brackets.
 
-The two non-SQL types, **MongoDB and Redis, are undecided about every fact** and are left out of the
-rows below to keep them readable: no SQL fact was established for either, their providers never reach
-these readers on the query path, and the confirmation gate — which reads whatever is in the editor —
-therefore reads their query text under the compatibility default (see the third accepted cost below).
+The two non-SQL types, **MongoDB and Redis, have no SQL grammar at all** and are left out of the rows
+below: their providers never reach these readers on the query path, and the confirmation gate — which
+reads whatever is in the editor — asks `readsSqlText()` before applying any span-based rule to their
+text, so a JSON document or a Redis command is not judged by a SQL reader that cannot parse it. The
+gate's keyword tests still run on that text.
 
 | Fact | Undecided, so left at the default | Established, and it happens to equal the default |
 |------|-----------------------------------|--------------------------------------------------|
 | `#` | Couchbase, Druid, the embedded LibreDB provider | — |
 | `q'…'` | nobody | everything except Oracle: the form is Oracle's alone, so "not a literal" is the correct reading for the rest |
-| `[…]` | MySQL, PostgreSQL, Oracle, Couchbase, Druid, LibreDB | SQL Server and SQLite, whose rule the default already applied |
+| `[…]` | MySQL, Oracle, Couchbase, Druid, LibreDB | SQL Server and SQLite, whose rule the default already applied |
 | `/* … */` nesting | Couchbase, Druid, LibreDB | MySQL, SQLite and Oracle, whose flat rule the default already applied — each established from its own source rather than assumed to agree |
 
 The distinction is visible in `src/lib/sql/grammar.ts` too: an established fact is written out in that
 dialect's row, an undecided one is written `DEFAULT_SQL_GRAMMAR.<fact>`.
 
-The bracket row is the one where a default costs something: PostgreSQL subscripts arrays and jsonb with
-those characters, so a nested array or a subscript key containing a `]` loses its bound there, exactly as
-it did on ClickHouse before #295. It is left undecided because no first-party artifact for the subscript
-rule was established for those dialects and reading one engine's rule off another's is what this channel
-exists to stop. The direction is safe: a run the name reading cannot close is reported as
-undeterminable, and an undeterminable end is never cut, so the cost is an unbounded read and never a
-misplaced clause. The same undeterminable run is text the safety gate cannot read, so since #297 it
-also costs those statements a confirmation prompt — see
+The bracket row is the one where a default costs something, and PostgreSQL is why it is worth
+establishing rather than accepting: left at the name reading, a nested array or a subscript key
+containing a `]` lost its bound there — and, since #297, also asked for confirmation, because the same
+undeterminable run is text the safety gate cannot read. A prompt on everyday syntax teaches operators
+to click the gate away, which costs more than the missed bound, so the rule was established from the
+manual (4.2.3 Subscripts, 4.2.12 Array Constructors). MySQL and Oracle stay undecided: `[` is not a
+name quote in either, but neither has a subscript rule to read it under instead, and reading one
+engine's rule off another's is what this channel exists to stop. The direction there is safe — a run
+the name reading cannot close is reported as undeterminable, an undeterminable end is never cut, so
+the cost is an unbounded read and never a misplaced clause — and those two dialects do not write
+bracket runs in everyday SQL. See
 [Text the reading cannot resolve asks, and says so](#text-the-reading-cannot-resolve-asks-and-says-so).
 
 **A call that names no dialect keeps today's reading**, and that is a decision with its own tests, not
@@ -414,7 +418,7 @@ under PostgreSQL's `standard_conforming_strings` and continues it under MySQL's 
 `src/lib/sql/spans.ts` reports it as undeterminable rather than guessing, and everything after it
 was invisible to the reading. It now asks instead of executing.
 
-The accepted cost, pinned by tests rather than left to be discovered, in three classes:
+The accepted cost, pinned by tests rather than left to be discovered, in two classes:
 
 - **A closing quote behind an odd backslash run** is reported undeterminable whatever the dialect, and
   this is the most frequent prompt the rule buys: it covers a literal ending in a backslash (a Windows
@@ -425,16 +429,20 @@ The accepted cost, pinned by tests rather than left to be discovered, in three c
   for a statement that merely contains a backslash — `SELECT 'a\nb' FROM t`, `… LIKE 'a\_b'` and
   `'C:\\Users\\me'` all resolve and run without one.
 - **A bracketed run a dialect at the default bracket reading cannot close.** `[…]` is read as SQL
-  Server's quoted name for every dialect but ClickHouse (#295 established the subscript rule there
-  only), so a PostgreSQL nested array (`SELECT ARRAY[[1,2],[3,4]] AS a FROM t`), a nested subscript
-  (`t.data[idx[0]]`) and a subscript key carrying a `]` (`j['a]b']`) are unresolvable and ask, even
-  though they only read. Ordinary `a[1]` and `ARRAY[1,2]` resolve and do not. This is the second half
-  of a cost the limiter already paid as a lost bound — see
-  [docs/providers/postgres.md](../providers/postgres.md).
-- **Non-SQL query text.** Both execution paths ask about whatever is in the editor, so a MongoDB
-  document or a Redis command whose escaped quote this SQL span reader cannot resolve
-  (`{"filter":{"msg":"say \"hi\""}}`) prompts too, and the notice says the statement could not be
-  fully read — true, though the grammar it was read under is not the one the text is written in.
+  Server's quoted name for the dialects with no established subscript rule (MySQL, Oracle, Couchbase,
+  Druid, LibreDB), so a nested run or a key carrying a `]` written there is unresolvable and asks.
+  ClickHouse and PostgreSQL read those as subscripts and do not — the PostgreSQL row was established
+  precisely because everyday syntax there (`ARRAY[[1,2],[3,4]]`, `j['a]b']`) was paying this prompt.
+  Ordinary `a[1]` and `ARRAY[1,2]` resolve under every reading.
+
+**Not a cost this rule pays: non-SQL query text.** Both execution paths ask about whatever is in the
+editor, so this predicate is handed MongoDB documents and Redis commands as well. A SQL span reader's
+verdict about text that is not SQL is not evidence of anything — the escaped quote in
+`{"filter":{"msg":"say \"hi\""}}` or in `SET k "a\"b"` closes perfectly in the grammar the text is
+actually written in — so the unresolvable-run rule is applied only where `readsSqlText()` says the
+dialect writes SQL. Saying *"could not be read"* about text that reads fine is the false alarm this
+notice exists to avoid, and a gate operators learn to click through protects nothing. The keyword
+tests still run on that text; only the span-based rule is narrowed.
 
 A fourth class arrives with the nesting fact (#300), and it is the reverse of the ones above — a prompt
 the dialect *adds* rather than one it narrows: on PostgreSQL, SQL Server and ClickHouse a block comment

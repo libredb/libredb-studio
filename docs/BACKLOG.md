@@ -87,15 +87,15 @@ writes `DEFAULT_SQL_GRAMMAR.<fact>` where it was not. Currently undecided:
 
 | Fact | Undecided for |
 |---|---|
-| `[…]` bracket reading | **mysql, postgres, oracle**, couchbase, druid, libredb |
+| `[…]` bracket reading | mysql, oracle, couchbase, druid, libredb |
 | `#` | couchbase, druid, libredb |
 | block-comment nesting | couchbase, druid, libredb |
 
-The cost is visible and pinned by fixtures, not hypothetical: on PostgreSQL a nested array
-constructor (`ARRAY[[1,2],[3,4]]`) and a jsonb key carrying a `]` (`j['a]b']`) lose their automatic
-row bound and, since #297, prompt for confirmation before running. Ordinary subscripts (`a[1]`,
-`ARRAY[1,2]`) are unaffected. Establishing PostgreSQL's bracket row from the manual is the smallest
-high-value item in this section.
+None of these currently costs everyday syntax anything — `[` carries no meaning in ordinary MySQL or
+Oracle SQL, and the three HTTP/embedded dialects were never probed for the other two facts. The cost
+of leaving one undecided is real when the dialect does use the syntax, which is why PostgreSQL's
+bracket row was established rather than left here: at the name reading, `ARRAY[[1,2],[3,4]]` and
+`j['a]b']` lost their bound and prompted for confirmation on an ordinary read.
 
 **Rows resting on documentation alone, worth re-checking against an artifact:** ClickHouse's `#` and
 bracket rows (HTTP-only provider, no driver package to read), MSSQL's block-comment nesting row
@@ -107,6 +107,19 @@ Scanning an unreadable region for destructive vocabulary and asking only when a 
 be in there. Sound on its face, but it substitutes a cleverer reading for the honesty rule #297
 pinned — the gate asks because it *cannot* read the text, not because it guessed what is in it. Only
 revisit this with an explicit product decision.
+
+---
+
+### S8. The confirmation gate's destructive vocabulary is SQL-only
+
+`isDangerousQuery` recognises SQL keywords, so it is close to inert for the two non-SQL types it is
+nevertheless asked about: a Redis `FLUSHALL` or `DEL key`, and a MongoDB `{"operation":"drop"}`, are
+destructive and match nothing. The span-based half of the gate no longer fires on their text at all
+(it is not SQL, so a SQL reader's verdict about it means nothing), which makes the keyword half the
+only thing left — and it does not speak their languages.
+
+Done when a destructive MongoDB operation and a destructive Redis command each ask before running,
+driven from the same single type-to-facts place rather than a type test in the component.
 
 ---
 

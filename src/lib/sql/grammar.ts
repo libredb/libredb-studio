@@ -59,7 +59,7 @@ export type HashGrammar = "comment" | "code" | "comment-unless-operator";
  *   well, where the doubled bracket swallows the real closer and the run therefore
  *   never terminates (`SELECT [a]] FROM t`).
  * - `subscript` - an array literal or a subscript. It NESTS, nothing inside it is
- *   escaped, and a literal inside it is a literal. ClickHouse.
+ *   escaped, and a literal inside it is a literal. ClickHouse, PostgreSQL.
  *
  * The two are mutually exclusive rather than two spellings of one rule, which is
  * why this is a dialect fact and not something the text could settle: `['a]b']` is
@@ -144,7 +144,7 @@ const CLICKHOUSE_GRAMMAR: SqlGrammar = {
 };
 const POSTGRES_GRAMMAR: SqlGrammar = {
   hash: "code",
-  bracket: DEFAULT_SQL_GRAMMAR.bracket,
+  bracket: "subscript",
   blockComment: "nesting",
   alternateQuoting: false,
 };
@@ -174,10 +174,10 @@ const SQLITE_GRAMMAR: SqlGrammar = {
  * rule was not established, NOT because it agrees with the default. Currently
  * absent: `couchbase`, `druid`, `libredb` and the non-SQL `mongodb`, `redis` -
  * whose providers never reach these readers on the QUERY path, though the
- * confirmation gate does read their editor text under the default, since both
- * execution paths ask about whatever is in the editor (#297). Present for one fact
- * and undecided about another: `mysql`, `postgres` and `oracle` carry no
- * established BRACKET reading (see the row below).
+ * confirmation gate reads their editor text as SQL only where `readsSqlText` says
+ * the text IS SQL, which for those two it does not (#297). Present for one fact and
+ * undecided about another: `mysql` and `oracle` carry no established BRACKET
+ * reading (see the row below).
  *
  * Sources, one per row, all offline or first-party documentation:
  *
@@ -250,23 +250,31 @@ const SQLITE_GRAMMAR: SqlGrammar = {
  *     stops at the first `*\/`, and Oracle's PL/SQL Language Reference states that
  *     one multiline comment cannot contain another.
  *
- * NOT established, and therefore left at the default: how `mysql`, `postgres` and
- * `oracle` read `[…]`. It is not an identifier quote in any of the three -
- * PostgreSQL subscripts arrays and jsonb with it, MySQL gives it no meaning outside
- * a JSON path written inside a string, and Oracle none outside an alternate-quote
- * delimiter - but no first-party artifact for the SUBSCRIPT rule was established
- * here, and PD-5 forbids reading one dialect's rule off another's. The name reading
- * costs them a bound on a nested array or on a subscript key carrying a `]`, and it
- * can never misplace one: a run it cannot close is undeterminable, and an
- * undeterminable end is not cut. That is the fail-safe direction, so it is what
- * they keep.
+ * - `postgres`, brackets - `expression[subscript]` extracts an element and
+ *   `expression[lower:upper]` a slice (PostgreSQL manual 4.2.3 Subscripts), and
+ *   array constructors nest: the manual's own example is
+ *   `SELECT ARRAY[[1,2],[3,4]]` (4.2.12 Array Constructors, which also notes the
+ *   inner `ARRAY` keyword may be omitted). Identifiers there are quoted with double
+ *   quotes (4.1.1), so `[` is never a name quote in this dialect.
  *
- * The same run costs one more thing since #297, and it is stated here because this
- * table is where the default is chosen: an undeterminable run is text the
- * confirmation gate cannot read, and that gate now ASKS rather than staying silent,
- * so a PostgreSQL nested array in an everyday read prompts before it runs. Pinned in
- * `tests/components/QuerySafetyDialog.test.tsx` and documented in
- * `docs/providers/postgres.md`.
+ * NOT established, and therefore left at the default: how `mysql` and `oracle` read
+ * `[…]`. It is not an identifier quote in either - MySQL gives it no meaning outside
+ * a JSON path written inside a string, and Oracle none outside an alternate-quote
+ * delimiter - but neither has a SUBSCRIPT rule to read it under instead, and PD-5
+ * forbids reading one dialect's rule off another's. The name reading costs them a
+ * bound on a nested bracket run, and it can never misplace one: a run it cannot
+ * close is undeterminable, and an undeterminable end is not cut. That is the
+ * fail-safe direction, so it is what they keep.
+ *
+ * PostgreSQL was briefly left there too, and the cost is why it is not: an
+ * undeterminable run is also text the confirmation gate cannot read, and since #297
+ * that gate ASKS rather than staying silent - so `ARRAY[[1,2],[3,4]]` and
+ * `j['a]b']`, everyday reads in this dialect, both lost their bound AND prompted
+ * before running. A confirmation an operator learns to click through protects
+ * nothing, so a false prompt on everyday syntax is not the cheap direction it looks
+ * like. The rule was established from the manual rather than the cost being
+ * accepted. Pinned in `tests/components/QuerySafetyDialog.test.tsx` and the
+ * PostgreSQL provider suite, and documented in `docs/providers/postgres.md`.
  */
 const SQL_GRAMMARS: Partial<Record<DatabaseType, SqlGrammar>> = {
   mysql: MYSQL_GRAMMAR,
@@ -289,6 +297,39 @@ const SQL_GRAMMARS: Partial<Record<DatabaseType, SqlGrammar>> = {
 export function resolveSqlGrammar(type?: DatabaseType): SqlGrammar {
   if (type === undefined || !Object.hasOwn(SQL_GRAMMARS, type)) return DEFAULT_SQL_GRAMMAR;
   return SQL_GRAMMARS[type] ?? DEFAULT_SQL_GRAMMAR;
+}
+
+/**
+ * The dialects whose query text is not SQL at all.
+ *
+ * MongoDB takes a JSON document and Redis a command line, and neither reaches the
+ * readers in this folder on the QUERY path - their providers extend
+ * `BaseDatabaseProvider` and never call `prepareQuery`. They reach the confirmation
+ * gate, though, because both execution paths ask about whatever is in the editor
+ * before running it (#297).
+ */
+const NON_SQL_DIALECTS: ReadonlySet<DatabaseType> = new Set<DatabaseType>(["mongodb", "redis"]);
+
+/**
+ * Whether this dialect's query text is SQL - the question BEFORE which SQL grammar
+ * to read it under.
+ *
+ * `resolveSqlGrammar` has an answer for every input, so without this a Mongo
+ * document or a Redis command is simply read as SQL under the compatibility
+ * grammar. For a reader that only ever declines to act, that costs nothing. For the
+ * confirmation gate it cost a false prompt on ordinary reads: the escaped quote in
+ * `{"filter":{"msg":"say \"hi\""}}` or in `SET k "a\"b"` is an unresolvable literal
+ * to a SQL span reader and a perfectly closed one in the grammar the text is
+ * actually written in - and the dialog then said the statement could not be read
+ * about text that reads fine. An operator who learns to click the confirmation away
+ * is the one thing that gate cannot survive.
+ *
+ * Unknown and absent both answer true, which keeps every existing caller and any
+ * host application passing an unrecognised string on today's reading rather than
+ * silently switching the SQL checks off.
+ */
+export function readsSqlText(type?: DatabaseType): boolean {
+  return type === undefined || !NON_SQL_DIALECTS.has(type);
 }
 
 /**

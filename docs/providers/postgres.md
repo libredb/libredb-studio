@@ -302,22 +302,18 @@ and, **only for `SELECT`/CTE-`SELECT` queries that don't already have a `LIMIT`*
   bounded. Both are bounded now, and the emitted text is unchanged apart from the appended clause
   (#292). See
   [Which dialect the readers are reading](../editor/query-optimization.md#which-dialect-the-readers-are-reading).
-- **One grammar fact is deliberately left undecided for this dialect: how `[…]` is read.** PostgreSQL
-  subscripts arrays and jsonb with those characters, but the shared reader still reads a bracketed run
-  as SQL Server's quoted NAME here, because no first-party source for the subscript rule was
-  established for PostgreSQL and reading one engine's rule off another's is what the dialect channel
-  exists to stop (#295 established it for ClickHouse only). The cost is a **lost bound** and, since
-  #297, a **confirmation prompt** — never a misplaced clause. A nested array
-  (`SELECT ARRAY[[1,2],[3,4]] AS a FROM t`) ends with a `]]` the name reading takes for an escape, so
-  the run never closes; a subscript key containing a `]` (`SELECT j['a]b'] FROM t`) ends the run at
-  that bracket and the rest of the key then reads as an unterminated literal. Either way the end is
-  undeterminable, an undeterminable end is never cut, and the statement is returned untouched with
-  `wasLimited: false` — and because the same undeterminable run means the safety gate cannot read the
-  statement either, such a read-only statement now asks for confirmation before it runs
-  ([query-optimization.md](../editor/query-optimization.md#destructive-statement-confirmation)).
-  Ordinary subscripts (`a[1]`, `ARRAY[1,2]`) are unaffected: still bounded, and no prompt. All four
-  limiter shapes are pinned in `tests/integration/db/postgres-provider.test.ts`, the prompt they now
-  also cost in `tests/components/QuerySafetyDialog.test.tsx`.
+- **`[…]` is a SUBSCRIPT here, not a quoted name.** `expression[subscript]` extracts an element and
+  `expression[lower:upper]` a slice (manual 4.2.3), array constructors nest — the manual's own example
+  is `SELECT ARRAY[[1,2],[3,4]]` (4.2.12) — and identifiers are quoted with double quotes (4.1.1), so
+  `[` is never a name quote in this dialect. The run nests, nothing inside it is escaped, and a literal
+  inside it is read as a literal, so a nested array (`SELECT ARRAY[[1,2],[3,4]] AS a FROM t`), a
+  subscript key carrying a close bracket (`SELECT j['a]b'] FROM t`) and a nested subscript
+  (`SELECT t.data[idx[0]] FROM t`) are all read whole: bounded, emitted intact, no prompt (#295).
+  A run short of its closer (`SELECT ARRAY[[1,2] AS a FROM t`) is still undeterminable — not bounded,
+  and the safety gate asks — which is the fail-safe direction and the only bracket shape that costs
+  anything here. Pinned in `tests/integration/db/postgres-provider.test.ts`, including a statement that
+  ENDS with a nested array (nothing after the run would catch a bound placed by a reader that lost
+  track of where it closes), and on the gate side in `tests/components/QuerySafetyDialog.test.tsx`.
 - **Block comments NEST here, and that is the dialect's own rule** — PostgreSQL's manual (4.1.5
   Comments) says they nest "as specified in the SQL standard but unlike C", precisely so a region that
   already contains comments can be commented out. The shared reader used to end every comment at its
@@ -350,8 +346,8 @@ and, **only for `SELECT`/CTE-`SELECT` queries that don't already have a `LIMIT`*
   trivia is emitted exactly as before. A statement whose end may not be **cut** is returned untouched
   with `wasLimited: false`, since a guess would place the bound after the `;` or in the middle of the
   statement. **On this dialect the shapes that reach it are a quote behind an odd backslash run** (MySQL
-  and PostgreSQL close such a literal in different places, so the reader declines to guess), **the
-  bracketed runs in the bullet above** (a nested array, a subscript key carrying a `]`) **and any other
+  and PostgreSQL close such a literal in different places, so the reader declines to guess), **a
+  bracketed run short of its closer** (see the bullet above) **and any other
   run that never closes** — an unterminated comment or literal. A trailing `#`
   run used to reach it too and no longer does — under PostgreSQL's grammar `#` is code, not a comment
   marker, so `SELECT flags # 5` is cut and bounded like any other statement (#292); the refusal survives

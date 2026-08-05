@@ -1797,17 +1797,29 @@ describe("PostgresProvider", () => {
       expect(result.wasLimited).toBe(false);
     });
 
-    // ── The bracket fact is left UNDECIDED for this dialect (#295) ──────────
+    // ── `[…]` is a SUBSCRIPT here (#295) ────────────────────────────────────
     //
-    // PostgreSQL subscripts arrays and jsonb with `[…]`, but no first-party source
-    // for that rule was established here, so the reader keeps SQL Server's quoted-
-    // NAME reading rather than guessing from ClickHouse's. These fixtures pin what
-    // that costs the LIMITER, because `docs/providers/postgres.md` states it: a lost
-    // bound, never a misplaced clause. Ordinary subscripts are unaffected.
+    // Established from the manual: `expression[subscript]` and
+    // `expression[lower:upper]` are an element and a slice (4.2.3), array
+    // constructors nest and the manual's own example is `SELECT ARRAY[[1,2],[3,4]]`
+    // (4.2.12), and identifiers are quoted with double quotes (4.1.1) - so `[` is
+    // never a name quote in this dialect and the NAME reading it briefly inherited
+    // from SQL Server could not close a nested array or a key carrying a `]`. That
+    // cost a bound on everyday syntax and, once #297 landed, a confirmation prompt
+    // on an ordinary read.
+    //
+    // The last row is the one the reader could get wrong silently: the statement
+    // ENDS with the bracketed run, so nothing after it would catch a bound placed
+    // by a reader that lost track of where the run closes. A fixture can only pin a
+    // reading where the two readings disagree.
     test.each<[string, string]>([
       ["an ordinary subscript", "SELECT a[1] FROM t"],
       ["a flat array constructor", "SELECT ARRAY[1,2] FROM t"],
-    ])("still bounds %s", (_label, sql) => {
+      ["a nested array constructor", "SELECT ARRAY[[1,2],[3,4]] AS a FROM t"],
+      ["a jsonb subscript whose key carries a close bracket", "SELECT j['a]b'] FROM t"],
+      ["a nested subscript", "SELECT t.data[idx[0]] FROM t"],
+      ["a statement that ENDS with a nested array", "SELECT ARRAY[[1,2],[3,4]]"],
+    ])("bounds %s, appending the clause after the run", (_label, sql) => {
       provider = new PostgresProvider(makePgConfig());
 
       const result = provider.prepareQuery(sql, { limit: 50 });
@@ -1816,19 +1828,12 @@ describe("PostgresProvider", () => {
       expect(result.wasLimited).toBe(true);
     });
 
-    // The two shapes below cost their statements a confirmation prompt as well
-    // (#297): a run the reader cannot resolve is text the safety gate cannot read
-    // either, so an everyday read asks before it runs. That half is pinned in
-    // `tests/components/QuerySafetyDialog.test.tsx`, where the predicate lives, and
-    // stated in `docs/providers/postgres.md` beside the lost bound.
-    test.each<[string, string]>([
-      // The closing `]]` is read as SQL Server's escape, so the run never closes.
-      ["a nested array constructor", "SELECT ARRAY[[1,2],[3,4]] AS a FROM t"],
-      // The `]` inside the key ends the run early, and the rest of the key then
-      // reads as an unterminated literal.
-      ["a jsonb subscript whose key carries a close bracket", "SELECT j['a]b'] FROM t"],
-    ])("leaves %s unbounded, and emits it untouched", (_label, sql) => {
+    // A reading is not a licence to guess: a subscript run short of its closer is
+    // still undeterminable, so the statement keeps its text and loses its bound
+    // rather than collecting a clause inside the run.
+    test("leaves an unclosed subscript run unbounded, and emits it untouched", () => {
       provider = new PostgresProvider(makePgConfig());
+      const sql = "SELECT ARRAY[[1,2] AS a FROM t";
 
       const result = provider.prepareQuery(sql, { limit: 50 });
 

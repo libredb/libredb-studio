@@ -934,23 +934,28 @@ describe("isDangerousQuery", () => {
   });
 
   /**
-   * The cost reaches past the backslash class, and it is pinned here rather than
-   * left to be discovered: a dialect at the compatibility BRACKET reading (#295
-   * established the subscript rule for ClickHouse only) cannot close a PostgreSQL
-   * nested array or a subscript key carrying a `]`, so those read-only statements
-   * ask before they run. `docs/providers/postgres.md` records the same cost on the
-   * limiter side - a lost bound - and now records this half too.
-   *
-   * Ordinary subscripts and array literals resolve, which is what keeps the class
-   * narrow: it is nested brackets and `]`-bearing keys, not every `[`.
+   * PostgreSQL reads `[…]` as a subscript, so none of these is unresolvable and an
+   * everyday read does not ask. The rule was established from the manual (4.2.3
+   * Subscripts, 4.2.12 Array Constructors, whose own example is
+   * `SELECT ARRAY[[1,2],[3,4]]`) after the dialect was briefly left at the
+   * compatibility NAME reading, which could not close a nested array or a key
+   * carrying a `]` and therefore prompted on ordinary statements. A confirmation
+   * the operator learns to click through protects nothing, so a false prompt on
+   * everyday syntax is not the cheap direction it looks like.
    */
-  test.each<[string, string, boolean]>([
-    ["a nested array", "SELECT ARRAY[[1,2],[3,4]] AS a FROM t", true],
-    ["a subscript key holding a close bracket", "SELECT j['a]b'] FROM t", true],
-    ["a nested subscript", "SELECT t.data[idx[0]] FROM t", true],
-    ["an ordinary subscript and array literal", "SELECT a[1], ARRAY[1,2] FROM t", false],
-  ])("answers %s on PostgreSQL with %p", (_label, query, expected) => {
-    expect(isDangerousQuery(query, "postgres")).toBe(expected);
+  test.each<[string, string]>([
+    ["a nested array", "SELECT ARRAY[[1,2],[3,4]] AS a FROM t"],
+    ["a subscript key holding a close bracket", "SELECT j['a]b'] FROM t"],
+    ["a nested subscript", "SELECT t.data[idx[0]] FROM t"],
+    ["an ordinary subscript and array literal", "SELECT a[1], ARRAY[1,2] FROM t"],
+  ])("does not prompt for %s on PostgreSQL", (_label, query) => {
+    expect(isDangerousQuery(query, "postgres")).toBe(false);
+  });
+
+  // The reading is a reading, not a licence: a subscript run that never closes is
+  // still unresolvable, and a write inside one still asks.
+  test("still prompts where a PostgreSQL subscript run does not close", () => {
+    expect(isDangerousQuery("SELECT ARRAY[[1,2] AS a FROM t", "postgres")).toBe(true);
   });
 
   /**
@@ -964,17 +969,29 @@ describe("isDangerousQuery", () => {
   });
 
   /**
-   * Both execution paths ask about every query text, so the rule reaches the two
-   * non-SQL providers as well: a Mongo document or a Redis command whose escaped
-   * quote this SQL span reader reports as undeterminable prompts, and the dialog
-   * tells the operator the text could not be fully read - which is true, though the
-   * grammar it could not read it under is not the one the text is written in. The
-   * fail-safe direction and one click, stated rather than implied.
+   * Both execution paths ask about whatever is in the editor, so this predicate is
+   * handed MongoDB documents and Redis commands too - and the unresolvable-run rule
+   * must not fire on them. Their text is not SQL, so a SQL span reader's verdict
+   * about it is not evidence of anything: the escaped quote below closes perfectly
+   * in JSON and in Redis's own argument parsing, and the dialog would have said
+   * "part of this statement could not be read" about text that reads fine.
+   *
+   * The rule that keeps this honest is the one the repo already applies to
+   * behaviour that differs by database: ask the single type-to-facts table
+   * (`readsSqlText`), never a type test written here.
    */
-  test("prompts for non-SQL query text whose escaped quote cannot be resolved", () => {
-    expect(isDangerousQuery('{"operation":"find","filter":{"msg":"say \\"hi\\""}}', "mongodb")).toBe(true);
+  test("does not prompt for non-SQL query text whose escaped quote a SQL reader cannot resolve", () => {
+    expect(isDangerousQuery('{"operation":"find","filter":{"msg":"say \\"hi\\""}}', "mongodb")).toBe(false);
     expect(isDangerousQuery('{"operation":"find","filter":{"msg":"hi"}}', "mongodb")).toBe(false);
-    expect(isDangerousQuery('SET k "a\\"b"', "redis")).toBe(true);
+    expect(isDangerousQuery('SET k "a\\"b"', "redis")).toBe(false);
+  });
+
+  // Only the unresolvable-run half was narrowed. The keyword half still reads the
+  // text it is given, whatever connection it is about to run on - not realistic
+  // Mongo input, but it is what pins that the predicate was not switched off
+  // wholesale for these two types.
+  test("still prompts for a destructive keyword under a non-SQL type", () => {
+    expect(isDangerousQuery("DROP TABLE users", "mongodb")).toBe(true);
   });
 
   // ── The dialect decides what the statement says (#292) ──────────────────

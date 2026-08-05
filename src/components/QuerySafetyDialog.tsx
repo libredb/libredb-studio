@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { ShieldAlert, ShieldCheck, AlertTriangle, Loader2, Play, X } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { resolveSqlGrammar } from "@/lib/sql/grammar";
+import { readsSqlText, resolveSqlGrammar } from "@/lib/sql/grammar";
 import { readOperativeKeyword } from "@/lib/sql/operative-keyword";
 import { hasUnterminatedSpan } from "@/lib/sql/spans";
 import { findCodeWord } from "@/lib/sql/words";
@@ -113,10 +113,13 @@ export function QuerySafetyDialog({
    * Memoised because the analysis stream re-renders this component per chunk while
    * the query text does not change, and the scan is linear in that text.
    */
-  const unreadableRun = useMemo(
-    () => hasUnterminatedSpan(query, resolveSqlGrammar(databaseType as DatabaseType | undefined)),
-    [query, databaseType],
-  );
+  const unreadableRun = useMemo(() => {
+    const type = databaseType as DatabaseType | undefined;
+    // Asked first: a SQL span reader's verdict about text that is not SQL is not
+    // evidence of anything, and saying "could not be read" about a Mongo document
+    // that reads fine is the false alarm this notice exists to avoid.
+    return readsSqlText(type) && hasUnterminatedSpan(query, resolveSqlGrammar(type));
+  }, [query, databaseType]);
 
   useEffect(() => {
     if (isOpen && query) {
@@ -397,7 +400,13 @@ export function isDangerousQuery(query: string, databaseType?: DatabaseType): bo
   // on reading the statement: where a run never closes, every keyword test below
   // is reading text that stops early, so their `false` is "not found" rather than
   // "not there".
-  if (hasUnterminatedSpan(query, grammar)) return true;
+  //
+  // Only where the text IS SQL, though. Both execution paths ask about whatever is
+  // in the editor, so this predicate is handed MongoDB documents and Redis commands
+  // as well, and an escaped quote that a SQL span reader cannot resolve closes
+  // perfectly in the grammar those are written in. The keyword tests below still
+  // run: narrowing this rule is not switching the gate off.
+  if (readsSqlText(databaseType) && hasUnterminatedSpan(query, grammar)) return true;
 
   const keyword = readOperativeKeyword(query, grammar)?.keyword;
   if (keyword !== undefined && DANGEROUS_KEYWORDS.has(keyword)) return true;

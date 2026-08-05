@@ -4,6 +4,7 @@ import {
   type BracketGrammar,
   DEFAULT_SQL_GRAMMAR,
   hashRunIsAmbiguous,
+  readsSqlText,
   resolveSqlGrammar,
 } from "@/lib/sql/grammar";
 import type { DatabaseType } from "@/lib/types";
@@ -126,24 +127,28 @@ describe("resolveSqlGrammar", () => {
   //   no doubling escape; identifiers there are quoted with backticks or double
   //   quotes (`identifier.ts` falls back to the standard form for it). So the two
   //   readings are mutually exclusive rather than two spellings of one rule.
-
+  // - PostgreSQL: `expression[subscript]` and `expression[lower:upper]` are how it
+  //   reads an element and a slice (manual 4.2.3 Subscripts), and array
+  //   constructors nest - the manual's own example is `SELECT ARRAY[[1,2],[3,4]]`
+  //   (4.2.12 Array Constructors). Identifiers there are quoted with double quotes
+  //   (4.1.1), so `[` is never a name quote and the subscript reading is the only
+  //   one the dialect has.
   test.each<[DatabaseType, BracketGrammar]>([
     ["mssql", "quoted-identifier"],
     ["sqlite", "quoted-identifier"],
     ["clickhouse", "subscript"],
+    ["postgres", "subscript"],
   ])("%s reads `[…]` as %s", (type, bracket) => {
     expect(resolveSqlGrammar(type).bracket).toBe(bracket);
   });
 
   // A dialect established for ONE character can be undecided about another, so
   // the default is per fact rather than per dialect. `[` is not an identifier
-  // quote in MySQL, PostgreSQL or Oracle and no authoritative reading of it was
-  // established for them, so they keep the one they had.
-  test.each<DatabaseType>([
-    "mysql",
-    "postgres",
-    "oracle",
-  ])("%s is left at the compatibility default for `[…]`", (type) => {
+  // quote in MySQL or Oracle either, but neither has a SUBSCRIPT rule to read it
+  // under - MySQL gives the characters no meaning outside a JSON path written in a
+  // string, Oracle none outside an alternate-quote delimiter - so no authoritative
+  // reading was established for them and they keep the one they had.
+  test.each<DatabaseType>(["mysql", "oracle"])("%s is left at the compatibility default for `[…]`", (type) => {
     expect(resolveSqlGrammar(type).bracket).toBe(DEFAULT_SQL_GRAMMAR.bracket);
   });
 
@@ -200,5 +205,49 @@ describe("hashRunIsAmbiguous", () => {
     expect(hashRunIsAmbiguous(DEFAULT_SQL_GRAMMAR)).toBe(true);
     expect(hashRunIsAmbiguous(resolveSqlGrammar("mysql"))).toBe(false);
     expect(hashRunIsAmbiguous(resolveSqlGrammar("mssql"))).toBe(false);
+  });
+});
+
+/**
+ * Whether the query text is SQL at all - the question that comes BEFORE which SQL
+ * grammar to read it under.
+ *
+ * `resolveSqlGrammar` answers the second question and has an answer for every
+ * input, so a MongoDB document or a Redis command gets the compatibility grammar
+ * and is then read as SQL. That is what the readers under `src/lib/sql/` do to
+ * text no dialect here describes, and for the confirmation gate it produced a
+ * prompt on ordinary reads: the escaped quote in a Mongo filter or a Redis value
+ * is an unresolvable literal to a SQL span reader and a perfectly closed one in
+ * the grammar the text is actually written in.
+ *
+ * Same shape as the grammar table and for the same reason: ONE place maps a
+ * database type to the answer, so no reader grows a type test of its own.
+ */
+describe("readsSqlText", () => {
+  test.each<DatabaseType>([
+    "postgres",
+    "mysql",
+    "sqlite",
+    "oracle",
+    "mssql",
+    "clickhouse",
+    "druid",
+    "couchbase",
+    "libredb",
+  ])("%s writes its queries in SQL", (type) => {
+    expect(readsSqlText(type)).toBe(true);
+  });
+
+  test.each<DatabaseType>(["mongodb", "redis"])("%s does not", (type) => {
+    expect(readsSqlText(type)).toBe(false);
+  });
+
+  test("a call that names no dialect is read as SQL", () => {
+    // The compatibility default once more. A caller that named nothing was reading
+    // SQL before this question existed, and the published dialog takes the type as
+    // a plain string from a host application - an unrecognised one must not turn
+    // the SQL checks off.
+    expect(readsSqlText()).toBe(true);
+    expect(readsSqlText("not-a-database" as DatabaseType)).toBe(true);
   });
 });
