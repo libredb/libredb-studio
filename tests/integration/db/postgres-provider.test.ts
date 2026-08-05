@@ -1747,5 +1747,39 @@ describe("PostgresProvider", () => {
       expect(result.query).toBe(sql);
       expect(result.wasLimited).toBe(false);
     });
+
+    // ── The bracket fact is left UNDECIDED for this dialect (#295) ──────────
+    //
+    // PostgreSQL subscripts arrays and jsonb with `[…]`, but no first-party source
+    // for that rule was established here, so the reader keeps SQL Server's quoted-
+    // NAME reading rather than guessing from ClickHouse's. These fixtures pin what
+    // that costs, because `docs/providers/postgres.md` now states it: a lost bound,
+    // never a misplaced clause. Ordinary subscripts are unaffected.
+    test.each<[string, string]>([
+      ["an ordinary subscript", "SELECT a[1] FROM t"],
+      ["a flat array constructor", "SELECT ARRAY[1,2] FROM t"],
+    ])("still bounds %s", (_label, sql) => {
+      provider = new PostgresProvider(makePgConfig());
+
+      const result = provider.prepareQuery(sql, { limit: 50 });
+
+      expect(result.query).toBe(`${sql} LIMIT 50`);
+      expect(result.wasLimited).toBe(true);
+    });
+
+    test.each<[string, string]>([
+      // The closing `]]` is read as SQL Server's escape, so the run never closes.
+      ["a nested array constructor", "SELECT ARRAY[[1,2],[3,4]] AS a FROM t"],
+      // The `]` inside the key ends the run early, and the rest of the key then
+      // reads as an unterminated literal.
+      ["a jsonb subscript whose key carries a close bracket", "SELECT j['a]b'] FROM t"],
+    ])("leaves %s unbounded, and emits it untouched", (_label, sql) => {
+      provider = new PostgresProvider(makePgConfig());
+
+      const result = provider.prepareQuery(sql, { limit: 50 });
+
+      expect(result.query).toBe(sql);
+      expect(result.wasLimited).toBe(false);
+    });
   });
 });

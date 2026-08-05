@@ -765,6 +765,36 @@ describe("MSSQLProvider", () => {
           expect(result.query).toBe("SELECT TOP 50 [a#b] FROM #tmp");
           expect(result.wasLimited).toBe(true);
         });
+
+        // ── `[…]` stays a quoted NAME here (#295) ───────────────────────────
+        //
+        // The bracket grammar is now the dialect's answer, and T-SQL's is the one
+        // the shared reader always applied: everything between the brackets is the
+        // name — an apostrophe, a comment marker, a semicolon — and a doubled `]`
+        // is how a bracket inside one is written, which is exactly what this
+        // provider's own `escapeIdentifier` emits. ClickHouse gets the array
+        // reading instead, and teaching THIS scan to step over string literals is
+        // what would break the first row below.
+        test.each<[string, string, string]>([
+          ["an apostrophe", "SELECT [it's] FROM users", "SELECT TOP 50 [it's] FROM users"],
+          ["a doubled close bracket", "SELECT [a]]b] FROM users", "SELECT TOP 50 [a]]b] FROM users"],
+          ["a comment marker", "SELECT [a--b] FROM users", "SELECT TOP 50 [a--b] FROM users"],
+          ["a semicolon", "SELECT [a;b] FROM users", "SELECT TOP 50 [a;b] FROM users"],
+        ])("splices TOP ahead of a bracket-quoted name carrying %s", (_label, sql, expected) => {
+          const result = provider.prepareQuery(sql, { limit: 50 });
+
+          expect(result.query).toBe(expected);
+          expect(result.wasLimited).toBe(true);
+        });
+
+        test("pages a bracket-quoted name carrying an apostrophe, appending at the real end", () => {
+          // The tail branch is where a misread name costs more than a bound: the
+          // page has to land after the whole name, not inside it.
+          const result = provider.prepareQuery("SELECT [it's] FROM users ORDER BY id", { limit: 50, offset: 10 });
+
+          expect(result.query).toBe("SELECT [it's] FROM users ORDER BY id OFFSET 10 ROWS FETCH NEXT 50 ROWS ONLY");
+          expect(result.wasLimited).toBe(true);
+        });
       });
 
       test("appends OFFSET FETCH to a commented SELECT, which needs no head rewrite", () => {

@@ -438,3 +438,64 @@ describe("readSqlSpan: bracket-quoted identifiers", () => {
     expect(span?.end).toBe(4);
   });
 });
+
+// ─── Bracketed subscripts (#295) ─────────────────────────────────────────────
+//
+// The same characters are an array literal or a subscript in ClickHouse, where
+// they NEST and nothing is escaped, so the name reading above ends the run at the
+// wrong place twice over: at a `]` written inside a string (`m['a]b']`) and at the
+// first `]` of a nested array (`[[1,2],[3,4]]`, whose `]]` the name reading then
+// takes for an escape and never closes). Both cost the statement its bound. The
+// two grammars are mutually exclusive - teaching the name scan to step over
+// literals would break a legal SQL Server name like `[it's]` - so the reading
+// comes from the dialect.
+
+describe("readSqlSpan: bracketed subscripts", () => {
+  const CLICKHOUSE = resolveSqlGrammar("clickhouse");
+  const MSSQL = resolveSqlGrammar("mssql");
+
+  test("reads an array literal as one span", () => {
+    expect(spanOf("[1,2] AS a", 0, CLICKHOUSE)).toBe("subscript|[1,2]");
+    expect(spanOf("m['k'] FROM t", 1, CLICKHOUSE)).toBe("subscript|['k']");
+  });
+
+  test("nests, so an inner array does not end the outer one", () => {
+    expect(spanOf("[[1,2],[3,4]] AS a", 0, CLICKHOUSE)).toBe("subscript|[[1,2],[3,4]]");
+    expect(spanOf("[[[1]]] x", 0, CLICKHOUSE)).toBe("subscript|[[[1]]]");
+  });
+
+  test("a close bracket inside a literal does not end the run", () => {
+    expect(spanOf("['a]b'] AS v", 0, CLICKHOUSE)).toBe("subscript|['a]b']");
+    expect(spanOf('["a]b"] AS v', 0, CLICKHOUSE)).toBe('subscript|["a]b"]');
+  });
+
+  test("a close bracket inside a comment does not end it either", () => {
+    expect(spanOf("[1 /* ] */, 2] x", 0, CLICKHOUSE)).toBe("subscript|[1 /* ] */, 2]");
+    // `#` is a comment in ClickHouse, which is the T1a row of the same record:
+    // the two facts have to hold at once inside one run.
+    expect(spanOf("[1 # ]\n, 2] x", 0, CLICKHOUSE)).toBe("subscript|[1 # ]\n, 2]");
+  });
+
+  test("a doubled close bracket is not an escape here", () => {
+    // The mutually exclusive half, asserted on one input: `]]` closes the run
+    // under the subscript reading (it is how a nested array ends) and escapes a
+    // name character under SQL Server's.
+    expect(spanOf("[a]]b] x", 0, CLICKHOUSE)).toBe("subscript|[a]");
+    expect(spanOf("[a]]b] x", 0, MSSQL)).toBe("quoted-identifier|[a]]b]");
+  });
+
+  test("reports an unterminated subscript rather than guessing where it ends", () => {
+    expect(readSqlSpan("[1,2", 0, CLICKHOUSE)).toEqual({ kind: "subscript", end: 4, terminated: false });
+    // Depth is counted, so a run that closes one bracket short is unterminated too.
+    expect(readSqlSpan("[[1,2]", 0, CLICKHOUSE)).toEqual({ kind: "subscript", end: 6, terminated: false });
+  });
+
+  test("a literal inside that cannot be resolved makes the whole run unterminated", () => {
+    // The span reader reports a quote behind an odd backslash run as
+    // undeterminable, and a run built on top of one cannot be more certain than
+    // what it contains. Answering `terminated` here would put the end of the
+    // statement inside a literal.
+    expect(readSqlSpan("['a", 0, CLICKHOUSE)).toEqual({ kind: "subscript", end: 3, terminated: false });
+    expect(readSqlSpan("['a\\'] AS v", 0, CLICKHOUSE)?.terminated).toBe(false);
+  });
+});

@@ -383,6 +383,26 @@ comment, exactly as the `--` form is, and `SELECT * FROM users # FORMAT TSV` is 
 commented-out clause, not a trailing one (#292). See
 [Which dialect the readers are reading](../editor/query-optimization.md#which-dialect-the-readers-are-reading).
 
+The same channel carries the second reading this dialect needs: **`[…]` is an array literal or a
+subscript here, not a quoted name.** Arrays nest (`Array(Array(T))`) and nothing inside them is
+escaped, while SQL Server's `[name]` ends at the first unpaired `]` and writes a bracket inside a name
+by doubling it — two rules that cannot both hold, so the reading comes from the dialect (#295). Under
+the name reading ClickHouse lost bounds in two everyday shapes: a subscript whose key text contains a
+close bracket (`WITH m['a]b'] AS v SELECT v`) ended the run at that bracket, so the CTE element could
+not be crossed and the statement typed as unknown; and a nested array (`SELECT [[1,2],[3,4]] AS a`)
+ended with a doubled bracket read as an escape, so the run never closed and the statement's end was
+not cuttable. Both are now bounded, emitted byte-intact. A run that genuinely never closes
+(`SELECT [[1,2] AS a`) is still reported as undeterminable and the statement is passed through
+untouched — the same fail-safe direction as an unterminated literal.
+
+The same reading reaches the **destructive-statement confirmation**, because that predicate reads the
+statement under the connection's dialect too. It gains prompts here: a nested array before a
+destructive keyword (`WITH [[1,2],[3,4]] AS x DELETE FROM t`) used to leave the run unterminated and
+everything after it invisible, so nothing asked. One prompt is lost, and it is recorded rather than
+hidden: bracket text that does not *balance* (`WITH [[1,2] AS x DELETE FROM t`) is undeterminable under
+the array reading, and the predicate still answers "not dangerous" for text it cannot read — the input
+class tracked as #297. Both directions are pinned by tests.
+
 A hand-rolled semicolon strip used to stand in for that reading, so `... FORMAT TSV -- note` read as
 carrying no trailing clause at all. That was harmless only while the inherited limiter appended its
 bound after the comment, where the server never saw it; now that the bound is placed **before** the

@@ -154,13 +154,32 @@ id, so no reader can grow a dialect test of its own.
 | `#` | ordinary code — a jsonb/geometric operator, an identifier character, a temp-table name, a bind-variable prefix | PostgreSQL, Oracle, SQL Server, SQLite |
 | `q'…'` | a string literal (alternate quoting): the delimiter after the tag opens the body and its partner followed by `'` closes it, so the body carries apostrophes unescaped — `[ ] { } ( ) < >` pair up, any other character closes with itself, either letter case of the tag, and `nq'…'` is the same form for the national character set | Oracle only |
 | `q'…'` | not a form at all — a name followed by an ordinary string, which is what those characters are there | everything else, including the default |
+| `[…]` | a quoted **name**: everything between the brackets is the identifier (`SELECT [a--b] FROM t` selects a column called `a--b`) and the run does not nest. The doubled `]` this reading honours is SQL Server's escape — SQLite stops at the first `]` and has none, so `[a]]b]` reads as one name where SQLite reads `[a]` and then junk, which it rejects either way | SQL Server, SQLite |
+| `[…]` | an **array literal or subscript**: it nests (`[[1,2],[3,4]]`), nothing inside it is escaped, and a literal inside it is a literal (`m['a]b']`) | ClickHouse |
 
 Each row was established from an authoritative source: the engine's own documentation, or its
 driver's own tokenizer under `node_modules` (node-oracledb accepts `#` inside an identifier; the
-SQLite amalgamation classifies it as a bind-variable prefix). A rule that could **not** be
-established is not guessed from a neighbouring dialect — the dialect stays at the compatibility
-default below, and it is listed here rather than left implicit. Currently at the default: **Couchbase,
-Druid and the embedded LibreDB provider** (MongoDB and Redis never reach these readers).
+SQLite amalgamation classifies `#` as a bind-variable prefix and `[` as a "`[...]` style quoted id").
+A rule that could **not** be established is not guessed from a neighbouring dialect — the dialect stays
+at the compatibility default below, and it is listed here rather than left implicit. The default is per
+**fact**, not per dialect: a dialect whose `#` rule is known can still be undecided about its brackets.
+
+| Fact | Undecided, so left at the default | Established, and it happens to equal the default |
+|------|-----------------------------------|--------------------------------------------------|
+| `#` | Couchbase, Druid, the embedded LibreDB provider (MongoDB and Redis never reach these readers) | — |
+| `q'…'` | nobody | everything except Oracle: the form is Oracle's alone, so "not a literal" is the correct reading for the rest |
+| `[…]` | MySQL, PostgreSQL, Oracle, Couchbase, Druid, LibreDB | SQL Server and SQLite, whose rule the default already applied |
+
+The distinction is visible in `src/lib/sql/grammar.ts` too: an established fact is written out in that
+dialect's row, an undecided one is written `DEFAULT_SQL_GRAMMAR.<fact>`.
+
+The bracket row is the one where a default costs something: PostgreSQL subscripts arrays and jsonb with
+those characters, so a nested array or a subscript key containing a `]` loses its bound there, exactly as
+it did on ClickHouse before #295. It is left undecided because no first-party artifact for the subscript
+rule was established for those dialects and reading one engine's rule off another's is what this channel
+exists to stop. The direction is safe: a run the name reading cannot close is reported as
+undeterminable, and an undeterminable end is never cut, so the cost is an unbounded read and never a
+misplaced clause.
 
 **A call that names no dialect keeps today's reading**, and that is a decision with its own tests, not
 an accident: `#` opens a comment unless the next character makes a PostgreSQL operator (`#>`, `#>>`,
@@ -186,6 +205,9 @@ What changes for a caller that does name one:
 | `SELECT q'[it's a -- note )]' FROM dual` | Oracle | the `--` inside the literal read as a trailing comment, so the bound was inserted **inside** the literal and the statement was reported limited | the whole literal is the statement's text, bound appended after it |
 | `SELECT * FROM users # daily` | ClickHouse | not bounded | bound added before the comment |
 | `SELECT meta #> '{a}' FROM docs` | PostgreSQL | bounded (the default already read this correctly) | unchanged |
+| `WITH m['a]b'] AS v SELECT v` | ClickHouse | the `]` inside the key ended the bracketed run, the CTE element could not be crossed, not bounded | the subscript is one run, statement typed `SELECT`, bounded |
+| `SELECT [[1,2],[3,4]] AS a FROM t` | ClickHouse | the closing `]]` read as an escape, so the run never closed and the end was not cuttable, not bounded | the arrays nest, bound appended after them |
+| `SELECT [it's] FROM users` | SQL Server, SQLite | bounded (the name reading is these dialects' own) | unchanged, and now pinned as the dialect's answer rather than a shared default |
 
 ### Where the bound is placed
 
@@ -216,21 +238,22 @@ The same reading of the end answers "is this statement already bounded". The `LI
 
 Reading where a statement ends and **cutting** it there are separate answers, because they are not
 equally risky: a probe that stops early merely finds no bound, while a clause inserted early lands in
-the middle of the statement and the server rejects it outright. Two shapes are therefore read but not
-cut, and a statement carrying either is **returned untouched with `wasLimited: false`** — the second
+the middle of the statement and the server rejects it outright. Three shapes are therefore read but not
+cut, and a statement carrying one is **returned untouched with `wasLimited: false`** — the second
 branch of "never `true` alongside a bound the engine cannot see":
 
 | Shape | Why the cut is refused |
 |-------|------------------------|
 | An unterminated comment or literal, or a quote behind an odd backslash run (`… WHERE name = 'O\'Brien'`) | MySQL escapes with backslashes and PostgreSQL does not, so the two close the literal in different places; inserting on a guess puts the bound after the statement's own `;` |
 | A `#` run at the end of the statement (`SELECT * FROM #tmp`, `… WHERE ID# = 1`, `SELECT flags # 5`), **when no dialect was named** | `#` is a comment marker in MySQL and ClickHouse and ordinary code elsewhere — a T-SQL temp table, an Oracle identifier, a PostgreSQL XOR — and nothing in the *text* tells them apart (`#note` and `#tmp` are the same characters) |
+| A bracketed run that never closes — an unterminated name (`SELECT [abc`) or, under the subscript reading, an array short of a bracket (`SELECT [[1,2] AS a`) or one holding an unresolvable literal | a run cannot be more certain than what it contains; guessing where it ends puts the bound inside a name or a literal, which is the corrupted-statement shape rather than a missed bound |
 
-Both are a **deliberate loss of a bound**: appending after everything, as the limiter used to, was
+Each is a **deliberate loss of a bound**: appending after everything, as the limiter used to, was
 valid SQL for the dialect in which those characters are code, and is exactly what put the clause
 inside a trailing comment for the dialect in which they are not. Not bounding costs an over-large
 read the user can re-run, which is the trade every reader in `src/lib/sql/` makes.
 
-The second row applies to the **dialect-less** reading only. A caller that names its dialect has told
+The `#` row applies to the **dialect-less** reading only. A caller that names its dialect has told
 the two apart, so the refusal is lifted in whichever direction that dialect requires: MySQL and
 ClickHouse cut before the comment, PostgreSQL, Oracle, SQL Server and SQLite read the run as the
 statement's own text and cut after it. Every caller in this project names one, so the row describes

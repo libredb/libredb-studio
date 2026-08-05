@@ -21,13 +21,18 @@
  * to change:
  *
  * - `statement-splitter.ts` inlines the same scan, wound together with the line
- *   counting it needs, and knows neither of the dialect facts below: it treats `#`
- *   as ordinary code, so a MySQL hash comment containing a `;` still splits there,
- *   and it has no alternate-quoting branch, so an Oracle `q'{a'b;c}'` body splits
- *   at that `;` while every reader over this module sees one literal. Both
- *   divergences are safe in the same direction - the fragments lose a bound rather
- *   than gaining a misplaced one - and reusing this module would move statement
- *   boundaries: a separate bug with its own tests.
+ *   counting it needs, and knows none of the dialect facts below: it treats `#`
+ *   as ordinary code, so a MySQL hash comment containing a `;` still splits there;
+ *   it has no alternate-quoting branch, so an Oracle `q'{a'b;c}'` body splits
+ *   at that `;`; and it has no bracket branch of either kind, so a `;` inside a
+ *   bracket-quoted NAME (`SELECT [a;b] FROM t`, verified) splits one statement into
+ *   two while every reader over this module sees one name. The bracket fact's
+ *   SUBSCRIPT half escapes it only where the key is STRING-quoted, and by luck
+ *   rather than by design: the splitter reads `'…'` and `"…"` but not backticks, so
+ *   `SELECT arr[\`a;b\`] FROM t` splits there exactly as the bracketed name does.
+ *   All three divergences are safe in the same direction - the fragments lose a
+ *   bound rather than gaining a misplaced one - and reusing this module would move
+ *   statement boundaries: a separate bug with its own tests.
  * - `alias-extractor.ts:134-135` blanks literals with a regex that honours
  *   BACKSLASH escapes, which this module reports as undeterminable instead (see
  *   `readQuoted`). Its job is autocomplete, where a wrong alias costs a
@@ -47,9 +52,11 @@ import { DEFAULT_SQL_GRAMMAR, type SqlGrammar } from "./grammar";
  * What kind of non-code run a span is.
  *
  * Callers care about the distinction in two ways: trivia (`whitespace`,
- * `line-comment`, `block-comment`) can be skipped between tokens, while a
- * literal is a token - a quoted identifier can BE a name, so a reader that
- * skipped it as trivia would misread `WITH "my cte" AS (…)`.
+ * `line-comment`, `block-comment`) can be skipped between tokens, while the rest
+ * are the statement's own text - a quoted identifier can BE a name, so a reader
+ * that skipped it as trivia would misread `WITH "my cte" AS (…)`, and a
+ * `subscript` sits in the middle of an expression, so a reader that took it for
+ * trivia would place the statement's end before it.
  */
 export type SqlSpanKind =
   | "whitespace"
@@ -57,7 +64,8 @@ export type SqlSpanKind =
   | "block-comment"
   | "string"
   | "quoted-identifier"
-  | "dollar-string";
+  | "dollar-string"
+  | "subscript";
 
 export interface SqlSpan {
   kind: SqlSpanKind;
@@ -170,6 +178,59 @@ function readBracketed(sql: string, index: number): SqlSpan {
   }
 
   return { kind: "quoted-identifier", end: sql.length, terminated: false };
+}
+
+/**
+ * A `[…]` array literal or subscript, which NESTS and escapes nothing.
+ *
+ * The other reading of these characters (`readBracketed`) is a name, and the two
+ * disagree about the same text in both directions, which is why the grammar record
+ * picks between them rather than one scan trying to serve both: a `]` written
+ * inside a string ends a NAME (that is the whole point of `[a--b]`) and does not
+ * end a subscript, and a doubled `]` escapes inside a name and closes a nested
+ * array. Reaching into `readSqlSpan` for what a run CONTAINS is safe here for the
+ * same reason it would be wrong there - a subscript's contents are code, a name's
+ * are characters of the name.
+ *
+ * Depth is counted rather than matched, and both brackets are consumed before the
+ * span reader is asked, so the recursion is exactly one level deep and the scan
+ * still advances one span or one character at a time - it cannot backtrack.
+ */
+function readSubscripted(sql: string, index: number, grammar: SqlGrammar): SqlSpan {
+  let depth = 0;
+  let i = index;
+
+  while (i < sql.length) {
+    const ch = sql[i];
+    if (ch === "[") {
+      depth++;
+      i++;
+      continue;
+    }
+    if (ch === "]") {
+      depth--;
+      i++;
+      if (depth === 0) return { kind: "subscript", end: i, terminated: true };
+      continue;
+    }
+
+    const inner = readSqlSpan(sql, i, grammar);
+    if (inner !== null) {
+      // A run cannot be more certain than what it contains: an unterminated literal
+      // inside means the closing bracket cannot be found, only guessed at, and a
+      // guess here puts the statement's end inside a literal. Every span kind in
+      // this module currently ends an unterminated run at the input's end, so
+      // falling through the loop would reach the same record - this says the reason
+      // locally rather than resting on that coincidence, and it is what keeps the
+      // answer right if a future span kind ever ends BEFORE the input does.
+      if (!inner.terminated) return { kind: "subscript", end: sql.length, terminated: false };
+      i = inner.end;
+      continue;
+    }
+    i++;
+  }
+
+  return { kind: "subscript", end: sql.length, terminated: false };
 }
 
 /**
@@ -387,14 +448,19 @@ export function readSqlSpan(sql: string, index: number, grammar: SqlGrammar = DE
   // though it is the one delimiter pair here that opens and closes with different
   // characters. SQL Server's escape is a doubled closing bracket.
   //
-  // ClickHouse spells an array with the same characters and nests them, so
-  // `[[1,2],[3,4]]` closes at the first single `]` under this reading and the rest
-  // is undeterminable. That costs a bound on a form which already lost it before
-  // this change (see the array note in `operative-keyword.ts`). Telling the two
-  // apart needs a BRACKET fact on the grammar record, which it does not carry yet
-  // - the record exists and reaches this reader, but issue #295 is what puts the
-  // second row on it.
-  if (ch === "[") return readBracketed(sql, index);
+  // ClickHouse spells an array with the same characters and nests them, and there
+  // the name reading is wrong in both of its rules at once: `m['a]b']` is a
+  // subscript whose key carries a close bracket (the name reading ends the run at
+  // that bracket, and the CTE element around it can then not be crossed), and
+  // `[[1,2],[3,4]]` ends with a doubled bracket that the name reading takes for an
+  // escape, so the run never closes at all. Both cost the statement its bound. The
+  // grammar record answers it (#295): the two readings are mutually exclusive, so
+  // the dialect picks, and a caller that named none keeps the name reading - which
+  // is where the corrupted-statement shape `SELECT [a LIMIT 500--b] FROM t` lives,
+  // and it is the more expensive mistake of the two.
+  if (ch === "[") {
+    return grammar.bracket === "subscript" ? readSubscripted(sql, index, grammar) : readBracketed(sql, index);
+  }
 
   if (ch === "$") {
     const tagLength = measureDollarTag(sql, index);

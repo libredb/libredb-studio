@@ -387,6 +387,66 @@ describe("readOperativeKeyword", () => {
     });
   });
 
+  // ── The bracket grammar (#295) ──────────────────────────────────────────
+  //
+  // `[…]` is a quoted NAME in SQL Server and SQLite and a nestable array or
+  // subscript in ClickHouse, and the two readings are mutually exclusive: the
+  // name reading ends the run at the first unpaired `]` (so one written inside a
+  // string ends it early) while the subscript reading steps over literals and
+  // counts depth (so a doubled `]` closes it rather than escaping). Each element
+  // the walker cannot cross costs the statement its bound, which on ClickHouse -
+  // the engine whose whole point is scanning more rows than a browser can hold -
+  // is the entire cost.
+
+  describe("a bracketed run under the dialect that owns it", () => {
+    const CLICKHOUSE = resolveSqlGrammar("clickhouse");
+    const MSSQL = resolveSqlGrammar("mssql");
+
+    test.each<[string, string]>([
+      ["a map subscript whose key text carries a close bracket", "WITH m['a]b'] AS v SELECT v"],
+      ["a nested array element", "WITH [[1,2],[3,4]] AS a SELECT arrayJoin(a)"],
+      ["an array holding a close bracket in a literal", "WITH ['a]', 'b'] AS a SELECT a"],
+      ["a subscript chain", "WITH m['k']['j]'] AS v SELECT v"],
+      // Syntax the reader models as neither of its two shapes: a lambda inside an
+      // array literal, and a map literal whose key carries a close bracket.
+      ["a lambda inside an array", "WITH arrayMap(x -> x, [1,2]) AS a SELECT a"],
+      ["a map literal subscripted by a bracketed key", "WITH map('a]b', 1)['a]b'] AS v SELECT v"],
+    ])("crosses %s and reports the operative keyword", (_label, sql) => {
+      expect(operativeOf(sql, CLICKHOUSE)).toBe("SELECT");
+    });
+
+    test("still reads a bracket-quoted name as one name under the SQL Server grammar", () => {
+      // The constraint that makes the naive fix wrong: everything between the
+      // brackets is the NAME there, apostrophe included, and a doubled `]` is how
+      // a bracket inside one is written. A scan that stepped over literals would
+      // lose both.
+      expect(operativeOf("WITH [it's] AS (SELECT 1) SELECT 1", MSSQL)).toBe("SELECT");
+      expect(operativeOf("WITH [my]]cte] AS (SELECT 1) SELECT 1", MSSQL)).toBe("SELECT");
+      expect(operativeOf("WITH [my cte] AS (SELECT 1) DELETE FROM users", MSSQL)).toBe("DELETE");
+    });
+
+    test("reports null where a subscript never closes", () => {
+      // The fail-safe direction is unchanged: a run the reader cannot close is
+      // undeterminable, so the statement is not typed as a read.
+      expect(operativeOf("WITH [1,2 AS a SELECT 1", CLICKHOUSE)).toBeNull();
+      expect(operativeOf("WITH [[1,2] AS a SELECT 1", CLICKHOUSE)).toBeNull();
+      expect(operativeOf("WITH m['a] AS v SELECT v", CLICKHOUSE)).toBeNull();
+    });
+
+    test("crosses a deeply nested subscript in bounded time", () => {
+      // Depth is counted, not matched by a regex: the scan advances one span or
+      // one bracket at a time and cannot backtrack.
+      const sql = `WITH ${"[".repeat(20000)}1${"]".repeat(20000)} AS a SELECT 1`;
+
+      const started = performance.now();
+      const keyword = operativeOf(sql, CLICKHOUSE);
+      const elapsed = performance.now() - started;
+
+      expect(keyword).toBe("SELECT");
+      expect(elapsed, `took ${elapsed.toFixed(1)}ms`).toBeLessThan(200);
+    });
+  });
+
   // ── Bounded time ────────────────────────────────────────────────────────
   //
   // The CTE-list scan is a character scanner rather than a regex over

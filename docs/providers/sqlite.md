@@ -277,6 +277,16 @@ shared reader used to guess MySQL's rule here, which swallowed the rest of the l
 statement its bound, so `SELECT * FROM users WHERE id = #id` returned every row; it is now bounded,
 emitted intact (#292). See
 [Which dialect the readers are reading](../editor/query-optimization.md#which-dialect-the-readers-are-reading).
+
+The same tokenizer settles this dialect's second grammar fact: `[` is `CC_QUOTE2` there — "`[...]` style
+quoted ids", the Microsoft-style form SQLite accepts for compatibility — so **`[…]` is a quoted name
+here**, not ClickHouse's nestable array (#295). Everything between the brackets is the name, apostrophe
+and comment marker included, so `SELECT [it's] FROM users` and `SELECT [a--b] FROM users` are both
+bounded with the clause written after the whole name. One deliberate divergence: SQLite's tokenizer
+stops at the FIRST `]` and has no escape, while this reader honours SQL Server's doubled bracket, so
+`[a]]b]` reads as one name where SQLite reads `[a]` followed by junk. SQLite rejects that text either
+way, so the longer reading can only ever cost a bound on a statement the server refuses — it is pinned
+by a test rather than left to be discovered.
 `EXPLAIN QUERY PLAN` is supported (`supportsExplain: true`, `explainFormat: "sqlite-queryplan"`) — the UI renders the plan as a tree; SQLite reports no per-node cost or timing metrics, so none are shown.
 
 ---

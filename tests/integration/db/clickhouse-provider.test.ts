@@ -959,18 +959,63 @@ describe("ClickHouseProvider query preparation", () => {
     expect(prepared.wasLimited).toBe(true);
   });
 
-  // Fixture discipline: a hash beside ClickHouse's array literal, which the span
-  // reader models as SQL Server's bracket-quoted NAME rather than as an array —
-  // two constructs it does not model as a unit. The bound must land before the
-  // comment and leave the array untouched; a bound spliced into `[…]` is the
-  // statement-corrupting shape this suite exists to catch. (A NESTED array still
-  // costs the statement its bound: that is the bracket grammar, issue #295, and
-  // this asserts today's answer rather than pretending it is closed.)
+  // Fixture discipline: a hash beside ClickHouse's array literal — two facts of
+  // the same grammar record meeting inside one statement. The bound must land
+  // before the comment and leave the array untouched; a bound spliced into `[…]`
+  // is the statement-corrupting shape this suite exists to catch.
   test("bounds a statement carrying an array literal and a trailing hash comment", () => {
     const prepared = provider().prepareQuery("SELECT [1,2] AS a FROM t # daily", { limit: 25 });
 
     expect(prepared.query).toBe("SELECT [1,2] AS a FROM t LIMIT 25 # daily");
     expect(prepared.wasLimited).toBe(true);
+  });
+
+  // ── `[…]` is an array here, not a quoted name (#295) ──────────────────────
+  //
+  // The shared span reader used to read every bracketed run as SQL Server's
+  // quoted identifier: the run ended at the first unpaired `]` and a doubled one
+  // was an escape. Both are wrong for ClickHouse, where `[…]` nests and nothing
+  // inside it is escaped, and both cost the statement its bound — a `]` inside a
+  // subscript key ended the run early (so the CTE element could not be crossed and
+  // the statement typed OTHER), and a nested array's `]]` was read as an escape,
+  // so the run never closed and the end was not cuttable. Named, the dialect gets
+  // the array reading; SQL Server and SQLite keep the name one.
+  test.each<[string, string]>([
+    ["a nested array in the select list", "SELECT [[1,2],[3,4]] AS a FROM t"],
+    ["a map subscript whose key carries a close bracket", "WITH m['a]b'] AS v SELECT v FROM t"],
+    ["a nested array CTE element", "WITH [[1,2],[3,4]] AS a SELECT arrayJoin(a)"],
+    ["an array holding a close bracket in a literal", "WITH ['a]', 'b'] AS a SELECT a"],
+    // Syntax the reader models as neither of its two bracket shapes: a lambda
+    // inside an array, a map literal whose key carries a close bracket, and a
+    // chained subscript.
+    ["a lambda inside an array", "WITH arrayMap(x -> x, [[1],[2]]) AS a SELECT a"],
+    ["a map literal subscripted by a bracketed key", "WITH map('a]b', 1)['a]b'] AS v SELECT v"],
+    ["a subscript chain", "SELECT m['k']['j]'] AS v FROM t"],
+    // The rows where the run is the statement's LAST token are the ones that pin
+    // it as the statement's own TEXT: with code after the run, the end reaches the
+    // input's length whether the run is read as text or as trivia, so the emitted
+    // SQL is the same either way. Read as trivia, these three come back as
+    // `SELECT LIMIT 25 [1,2]` and `SELECT m LIMIT 25['a]b']` — a corrupted
+    // statement reported as limited. Reported by review on this task.
+    ["an array literal that ends the statement", "SELECT [1,2]"],
+    ["a nested array that ends the statement", "SELECT [[1,2],[3,4]]"],
+    ["a subscript that ends the statement", "SELECT m['a]b']"],
+  ])("bounds %s, emitted intact", (_label, sql) => {
+    const prepared = provider().prepareQuery(sql, { limit: 25 });
+
+    expect(prepared.query).toBe(`${sql} LIMIT 25`);
+    expect(prepared.wasLimited).toBe(true);
+  });
+
+  test("refuses to rewrite a statement whose array literal never closes", () => {
+    // The fail-safe direction is unchanged: a run the reader cannot close is
+    // undeterminable, and an undeterminable end is not cut.
+    const sql = "SELECT [[1,2] AS a FROM t";
+
+    const prepared = provider().prepareQuery(sql, { limit: 25 });
+
+    expect(prepared.query).toBe(sql);
+    expect(prepared.wasLimited).toBe(false);
   });
 
   // ── Expression-form CTEs (#291) ───────────────────────────────────────────

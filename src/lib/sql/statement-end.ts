@@ -32,7 +32,7 @@
  */
 
 import { DEFAULT_SQL_GRAMMAR, hashRunIsAmbiguous, type SqlGrammar } from "./grammar";
-import { readSqlSpan } from "./spans";
+import { readSqlSpan, type SqlSpanKind } from "./spans";
 
 export interface StatementEnd {
   /**
@@ -72,6 +72,23 @@ function endBeforeTerminator(sql: string): number {
 /** Whitespace as the terminator strip counts it, matching `String.prototype.trim`. */
 function isTrailingSpace(ch: string): boolean {
   return ch === " " || ch === "\t" || ch === "\n" || ch === "\r" || ch === "\f" || ch === "\v";
+}
+
+/**
+ * Whether a span is the statement's own text rather than trivia between tokens.
+ *
+ * Everything but a comment and whitespace is: a literal, a quoted name and a
+ * bracketed subscript are all tokens the statement is made of, so the end has to
+ * advance past them. Reading one as trivia would leave the end at the last code
+ * character BEFORE it, and the insert-before-trivia rewrite then splices the bound
+ * into the middle of the statement - `SELECT [1,2]` emitted as
+ * `SELECT LIMIT 500 [1,2]`, `SELECT m['k']` as `SELECT m LIMIT 500['k']` - a
+ * corrupted statement rather than a missed bound. Both examples END with the run on
+ * purpose: with code after it the end reaches the same index under either reading,
+ * which is why the fixtures that pin this all end with the run.
+ */
+function isStatementText(kind: SqlSpanKind): boolean {
+  return kind === "string" || kind === "quoted-identifier" || kind === "dollar-string" || kind === "subscript";
 }
 
 /**
@@ -130,7 +147,7 @@ export function readStatementEnd(sql: string, grammar: SqlGrammar = DEFAULT_SQL_
       // A literal is the statement's own text; trivia is not. Both are skipped
       // whole, which is what keeps a `;` or a `--` written inside one from
       // looking like the end of the statement.
-      if (span.kind === "string" || span.kind === "quoted-identifier" || span.kind === "dollar-string") {
+      if (isStatementText(span.kind)) {
         end = span.end;
         hashInTrailingRun = false;
       } else if (span.kind === "line-comment" && sql[i] === "#" && hashRunIsAmbiguous(grammar)) {

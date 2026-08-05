@@ -946,6 +946,93 @@ describe("applyQueryLimit: bracket-quoted identifiers", () => {
   });
 });
 
+// ─── `[…]` is read per dialect (#295) ────────────────────────────────────────
+//
+// The reading above is a NAME, which is right for SQL Server and SQLite and wrong
+// for ClickHouse, where the same characters are an array or a subscript: they nest
+// and nothing inside them is escaped. Read as a name, a `]` written inside a
+// string ends the run early and the CTE element around it cannot be crossed, so
+// the statement loses its bound - on the engine whose whole point is scanning more
+// rows than a browser can hold. The two readings are mutually exclusive, so this
+// is the dialect's answer and both sides are asserted on the emitted text.
+
+describe("applyQueryLimit: the bracket grammar", () => {
+  test.each<[string, string, "clickhouse", string]>([
+    [
+      "a map subscript whose key carries a close bracket",
+      "WITH m['a]b'] AS v SELECT v FROM t",
+      "clickhouse",
+      "WITH m['a]b'] AS v SELECT v FROM t LIMIT 500",
+    ],
+    [
+      "a nested array element",
+      "WITH [[1,2],[3,4]] AS a SELECT arrayJoin(a)",
+      "clickhouse",
+      "WITH [[1,2],[3,4]] AS a SELECT arrayJoin(a) LIMIT 500",
+    ],
+    [
+      "a nested array in the select list",
+      "SELECT [[1,2],[3,4]] AS a FROM t",
+      "clickhouse",
+      "SELECT [[1,2],[3,4]] AS a FROM t LIMIT 500",
+    ],
+    // The bound goes after the run and before the trailing comment: a subscript is
+    // the statement's own text, not trivia, so an end read before it would splice
+    // the clause into the middle of the statement. The rows where the run is the
+    // statement's LAST token are what make that assertable at all - with code after
+    // the run, both readings put the end in the same place (reported by review).
+    [
+      "an array literal before a trailing hash comment",
+      "SELECT [[1,2],[3]] AS a FROM t # daily",
+      "clickhouse",
+      "SELECT [[1,2],[3]] AS a FROM t LIMIT 500 # daily",
+    ],
+    ["a subscript that ends the statement", "SELECT m['a]b']", "clickhouse", "SELECT m['a]b'] LIMIT 500"],
+    [
+      "a nested array that ends the statement, before a comment",
+      "SELECT [[1,2],[3,4]] # daily",
+      "clickhouse",
+      "SELECT [[1,2],[3,4]] LIMIT 500 # daily",
+    ],
+  ])("%s is bounded under the subscript grammar, emitted intact", (_label, sql, type, expected) => {
+    const result = applyQueryLimit(sql, 500, 0, {}, type);
+
+    expect(result.sql).toBe(expected);
+    expect(result.wasLimited).toBe(true);
+    // Without the dialect the same text keeps today's answer, which for every
+    // shape here is no bound at all: the name reading either cannot cross the
+    // element or cannot close the run.
+    expect(applyQueryLimit(sql, 500).sql).not.toBe(expected);
+  });
+
+  test.each<[string, string, "mssql" | "sqlite", string]>([
+    ["an apostrophe inside the name", "SELECT [it's] FROM t", "mssql", "SELECT [it's] FROM t LIMIT 500"],
+    ["a doubled close bracket", "SELECT [a]]b] FROM t", "mssql", "SELECT [a]]b] FROM t LIMIT 500"],
+    ["a comment marker inside the name", "SELECT [a--b] FROM t", "sqlite", "SELECT [a--b] FROM t LIMIT 500"],
+    ["a name carrying a semicolon", "SELECT [a;b] FROM t -- daily", "sqlite", "SELECT [a;b] FROM t LIMIT 500 -- daily"],
+  ])("a bracket-quoted name with %s stays one name under the name grammar", (_label, sql, type, expected) => {
+    const result = applyQueryLimit(sql, 500, 0, {}, type);
+
+    expect(result.sql).toBe(expected);
+    expect(result.wasLimited).toBe(true);
+  });
+
+  test("a subscript with no literal in it, and a literal with no close bracket, keep their answers", () => {
+    // Neither reading moves for these, and that is worth pinning: it is what says
+    // the change is confined to the runs where the two grammars disagree.
+    expect(applyQueryLimit("SELECT a[1] FROM t", 500, 0, {}, "clickhouse").sql).toBe("SELECT a[1] FROM t LIMIT 500");
+    expect(applyQueryLimit("SELECT a[1] FROM t", 500).sql).toBe("SELECT a[1] FROM t LIMIT 500");
+    expect(applyQueryLimit("SELECT 'a[b' FROM t", 500, 0, {}, "clickhouse").sql).toBe("SELECT 'a[b' FROM t LIMIT 500");
+    expect(applyQueryLimit("SELECT 'a[b' FROM t", 500).sql).toBe("SELECT 'a[b' FROM t LIMIT 500");
+  });
+
+  test("a run the subscript grammar cannot close is not rewritten", () => {
+    const sql = "SELECT [1,2 AS a FROM t";
+
+    expect(applyQueryLimit(sql, 500, 0, {}, "clickhouse")).toMatchObject({ sql, wasLimited: false });
+  });
+});
+
 // ─── The dialect channel (#292) ──────────────────────────────────────────────
 //
 // Every reading above is a call that names NO dialect, and the point of the

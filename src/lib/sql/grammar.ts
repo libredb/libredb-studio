@@ -45,9 +45,32 @@ import type { DatabaseType } from "@/lib/types";
  */
 export type HashGrammar = "comment" | "code" | "comment-unless-operator";
 
+/**
+ * What a `[…]` run is.
+ *
+ * - `quoted-identifier` - everything between the brackets is a NAME and the run
+ *   does not nest. SQL Server, SQLite. The doubled `]` this reading honours is SQL
+ *   SERVER's escape; SQLite's own tokenizer stops at the first `]` and has no
+ *   escape at all, so this reads `[a]]b]` as one name where SQLite reads `[a]`
+ *   followed by junk. SQLite rejects that text either way, so the longer reading
+ *   can only cost a bound on a statement the server refuses - the fail-safe
+ *   direction, pinned by a test in the SQLite provider suite rather than left to
+ *   be discovered.
+ * - `subscript` - an array literal or a subscript. It NESTS, nothing inside it is
+ *   escaped, and a literal inside it is a literal. ClickHouse.
+ *
+ * The two are mutually exclusive rather than two spellings of one rule, which is
+ * why this is a dialect fact and not something the text could settle: `['a]b']` is
+ * a subscript whose key carries a close bracket under one reading and a name that
+ * ends at that bracket under the other, and `[a]]b]` is one name under the first
+ * and a closed run followed by junk under the second.
+ */
+export type BracketGrammar = "quoted-identifier" | "subscript";
+
 /** The grammar facts that differ between the engines this product supports. */
 export interface SqlGrammar {
   readonly hash: HashGrammar;
+  readonly bracket: BracketGrammar;
   /**
    * Whether `q'…'` opens a string literal - Oracle's alternate quoting.
    *
@@ -72,11 +95,37 @@ export interface SqlGrammar {
  * pinning the old behaviour. Pinned by its own tests instead, so it is a decision
  * rather than an accident.
  */
-export const DEFAULT_SQL_GRAMMAR: SqlGrammar = { hash: "comment-unless-operator", alternateQuoting: false };
+export const DEFAULT_SQL_GRAMMAR: SqlGrammar = {
+  hash: "comment-unless-operator",
+  bracket: "quoted-identifier",
+  alternateQuoting: false,
+};
 
-const COMMENT_HASH: SqlGrammar = { hash: "comment", alternateQuoting: false };
-const CODE_HASH: SqlGrammar = { hash: "code", alternateQuoting: false };
-const ORACLE_GRAMMAR: SqlGrammar = { hash: "code", alternateQuoting: true };
+/**
+ * One constant per dialect, and a fact spelled `DEFAULT_SQL_GRAMMAR.<fact>` is one
+ * this table could not establish for that dialect. The default is therefore per
+ * FACT, not per dialect: a dialect whose `#` rule is known can still be undecided
+ * about its brackets, and writing the default's own value there is what keeps that
+ * visible in the code rather than only in the doc.
+ */
+const MYSQL_GRAMMAR: SqlGrammar = {
+  hash: "comment",
+  bracket: DEFAULT_SQL_GRAMMAR.bracket,
+  alternateQuoting: false,
+};
+const CLICKHOUSE_GRAMMAR: SqlGrammar = { hash: "comment", bracket: "subscript", alternateQuoting: false };
+const POSTGRES_GRAMMAR: SqlGrammar = {
+  hash: "code",
+  bracket: DEFAULT_SQL_GRAMMAR.bracket,
+  alternateQuoting: false,
+};
+const ORACLE_GRAMMAR: SqlGrammar = {
+  hash: "code",
+  bracket: DEFAULT_SQL_GRAMMAR.bracket,
+  alternateQuoting: true,
+};
+const MSSQL_GRAMMAR: SqlGrammar = { hash: "code", bracket: "quoted-identifier", alternateQuoting: false };
+const SQLITE_GRAMMAR: SqlGrammar = { hash: "code", bracket: "quoted-identifier", alternateQuoting: false };
 
 /**
  * The established readings, one row per fact per dialect.
@@ -84,7 +133,9 @@ const ORACLE_GRAMMAR: SqlGrammar = { hash: "code", alternateQuoting: true };
  * A dialect absent from this table is at the compatibility default because its
  * rule was not established, NOT because it agrees with the default. Currently
  * absent: `couchbase`, `druid`, `libredb` (and the non-SQL `mongodb`, `redis`,
- * whose providers never reach these readers).
+ * whose providers never reach these readers). Present for one fact and undecided
+ * about another: `mysql`, `postgres` and `oracle` carry no established BRACKET
+ * reading (see the row below).
  *
  * Sources, one per row, all offline or first-party documentation:
  *
@@ -113,17 +164,42 @@ const ORACLE_GRAMMAR: SqlGrammar = { hash: "code", alternateQuoting: true };
  *   form, so Oracle is the only row that carries it.
  * - `sqlite` - the SQLite amalgamation bundled with `better-sqlite3` classifies
  *   `#` as `CC_VARALPHA`, an alphabetic bind-variable prefix, and opens comments
- *   on `--` and `/*` only.
+ *   on `--` and `/*` only. The same tokenizer is where its BRACKET row comes from:
+ *   `[` is `CC_QUOTE2`, "`[...]` style quoted ids", scanned to the first `]` -
+ *   Microsoft-style identifiers, accepted for compatibility.
  * - `mssql` - `#name` and `##name` are local and global temp tables, which is
- *   ordinary T-SQL; the comment forms are `--` and the block form.
+ *   ordinary T-SQL; the comment forms are `--` and the block form. `[name]` is a
+ *   delimited identifier and a `]` inside one is written doubled, which is exactly
+ *   what this repo's own quoter emits for the dialect (`src/lib/sql/identifier.ts`,
+ *   pinned by the MSSQL provider suite's `escapeIdentifier` test).
+ * - `clickhouse`, brackets - `[…]` is an array literal or a subscript there, and
+ *   arrays nest (`Array(Array(T))` is a type). Source: the ClickHouse SQL reference
+ *   (clickhouse.com/docs/sql-reference, the Array type and the `[]` operator,
+ *   checked 2026-08-05); as with the `#` row there is no offline artifact, so the
+ *   two halves are corroborated separately from inside this repo - that `[…]` is an
+ *   array literal by the provider suite's own live-verified fixture
+ *   (`WITH [1, 2, 3] AS arr SELECT arrayJoin(arr)`), and that it is NOT an
+ *   identifier quote by `identifier.ts`, which quotes this dialect's names with the
+ *   standard `"…"` form. The nesting half rests on the reference alone.
+ *
+ * NOT established, and therefore left at the default: how `mysql`, `postgres` and
+ * `oracle` read `[…]`. It is not an identifier quote in any of the three -
+ * PostgreSQL subscripts arrays and jsonb with it, MySQL gives it no meaning outside
+ * a JSON path written inside a string, and Oracle none outside an alternate-quote
+ * delimiter - but no first-party artifact for the SUBSCRIPT rule was established
+ * here, and PD-5 forbids reading one dialect's rule off another's. The name reading
+ * costs them a bound on a nested array or on a subscript key carrying a `]`, and it
+ * can never misplace one: a run it cannot close is undeterminable, and an
+ * undeterminable end is not cut. That is the fail-safe direction, so it is what
+ * they keep.
  */
 const SQL_GRAMMARS: Partial<Record<DatabaseType, SqlGrammar>> = {
-  mysql: COMMENT_HASH,
-  clickhouse: COMMENT_HASH,
-  postgres: CODE_HASH,
+  mysql: MYSQL_GRAMMAR,
+  clickhouse: CLICKHOUSE_GRAMMAR,
+  postgres: POSTGRES_GRAMMAR,
   oracle: ORACLE_GRAMMAR,
-  mssql: CODE_HASH,
-  sqlite: CODE_HASH,
+  mssql: MSSQL_GRAMMAR,
+  sqlite: SQLITE_GRAMMAR,
 };
 
 /** The grammar to read a statement of this dialect with. */

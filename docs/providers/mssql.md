@@ -127,6 +127,14 @@ See
 This closes the common half of #293; the remaining case — a statement whose end cannot be cut for a
 reason that is *not* the hash, such as a literal behind an odd backslash run — is tracked there.
 
+The same channel carries this dialect's bracket reading, and T-SQL's is the one the shared reader always
+applied: **`[…]` is a delimited identifier**, everything between the brackets is the name (apostrophe,
+comment marker and semicolon included), and a `]` inside one is written doubled — which is exactly what
+`escapeIdentifier()` emits. That is now the dialect's stated answer rather than a shared default:
+ClickHouse spells a nestable array with the same characters and gets the opposite reading (#295), and
+teaching one scan to step over string literals inside the brackets — the naive way to serve both —
+would have broken `SELECT [it's] FROM users`, which is legal here.
+
 The `SELECT` it splices after is located with `src/lib/sql/leading-keyword.ts`, so a T-SQL comment
 before the statement (`-- note` or `/* note */`) is skipped rather than defeating the injection. That
 shared helper also skips `#`, which is a comment in MySQL only; T-SQL rejects a statement opening with

@@ -283,6 +283,18 @@ and, **only for `SELECT`/CTE-`SELECT` queries that don't already have a `LIMIT`*
   bounded. Both are bounded now, and the emitted text is unchanged apart from the appended clause
   (#292). See
   [Which dialect the readers are reading](../editor/query-optimization.md#which-dialect-the-readers-are-reading).
+- **One grammar fact is deliberately left undecided for this dialect: how `[…]` is read.** PostgreSQL
+  subscripts arrays and jsonb with those characters, but the shared reader still reads a bracketed run
+  as SQL Server's quoted NAME here, because no first-party source for the subscript rule was
+  established for PostgreSQL and reading one engine's rule off another's is what the dialect channel
+  exists to stop (#295 established it for ClickHouse only). The cost is a **lost bound**, never a
+  misplaced clause. A nested array (`SELECT ARRAY[[1,2],[3,4]] AS a FROM t`) ends with a `]]` the name
+  reading takes for an escape, so the run never closes; a subscript key containing a `]`
+  (`SELECT j['a]b'] FROM t`) ends the run at that bracket and the rest of the key then reads as an
+  unterminated literal. Either way the end is undeterminable, an undeterminable end is never cut, and
+  the statement is returned untouched with `wasLimited: false`. Ordinary subscripts (`a[1]`,
+  `ARRAY[1,2]`) are unaffected and still bounded. All four shapes are pinned in
+  `tests/integration/db/postgres-provider.test.ts`.
 - A statement leading with `WITH` is typed by the keyword its CTE list **operates**
   ([`operative-keyword.ts`](../../src/lib/sql/operative-keyword.ts)), so a data-modifying CTE
   (`WITH t AS (UPDATE … RETURNING …) INSERT INTO … SELECT …`) is **not** bounded. This matters most on

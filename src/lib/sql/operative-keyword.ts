@@ -92,9 +92,13 @@ function skipParenthesised(sql: string, open: number, grammar: SqlGrammar): numb
 // name position and array subscripting elsewhere. `readSqlSpan` reads it now: the
 // statement-end reader needed the same run to be opaque, and leaving two scanners
 // for one delimiter is what this folder exists to stop. Both callers below reach it
-// through the span branch, with identical behaviour - including that a `]` inside a
-// string still closes the run early (`WITH map['a]'] AS v SELECT 1` loses its bound,
-// issue #295), since neither reader recurses into a literal.
+// through the span branch, so both get the reading the DIALECT gives those
+// characters (#295): a quoted name whose only escape is a doubled `]` in SQL Server
+// and SQLite, or a nestable array or subscript whose contents are code in ClickHouse
+// - where a `]` written inside a subscript key no longer ends the run and
+// `WITH m['a]'] AS v SELECT v` keeps its bound. Only the name reading can BE a name,
+// so a subscript reaches `skipCteName` as "not a name", which is what sends the
+// element to the expression shape it actually is.
 
 /** The index past a CTE's name - a bare word or a quoted identifier - or `-1`. */
 function skipCteName(sql: string, index: number, grammar: SqlGrammar): number {

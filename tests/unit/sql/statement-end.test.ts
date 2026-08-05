@@ -178,6 +178,43 @@ describe("readStatementEnd", () => {
         ";",
       ]);
     });
+
+    // ── A bracketed run is the statement's own text under both readings ────
+    //
+    // A quoted name and an array literal are both TOKENS, so the end has to
+    // advance past either of them. Treating the subscript reading (#295) as
+    // trivia instead would put the end back at the last code character BEFORE
+    // the run, and the insert-before-trivia rewrite then splices the bound into
+    // the middle of the statement - `SELECT [1,2]` emitted as
+    // `SELECT LIMIT 500 [1,2]` - which is the corrupted-statement class, not a
+    // missed bound.
+    // Only a row where the run is the LAST token decides that: with code after the
+    // run the end reaches the input's length under either reading, so the first
+    // three rows below say nothing about it. Reported by review on this task.
+    test.each<[string, string, DatabaseType]>([
+      ["an array literal", "SELECT [1,2] AS a", "clickhouse"],
+      ["a map subscript whose key carries a close bracket", "SELECT m['a]b'] AS v", "clickhouse"],
+      ["a bracket-quoted name", "SELECT [a--b] FROM t", "mssql"],
+      ["an array literal that ENDS the statement", "SELECT [1,2]", "clickhouse"],
+      ["a nested array that ends the statement", "SELECT [[1,2],[3,4]]", "clickhouse"],
+      ["a subscript that ends the statement", "SELECT m['a]b']", "clickhouse"],
+      ["a bracket-quoted name that ends the statement", "SELECT [a--b]", "mssql"],
+    ])("keeps %s inside the statement and allows the cut", (_label, sql, type) => {
+      expect(readStatementEnd(sql, resolveSqlGrammar(type))).toEqual({ end: sql.length, rewritable: true });
+    });
+
+    test("splits the trailing trivia off after a bracketed run, not before it", () => {
+      const clickhouse = resolveSqlGrammar("clickhouse");
+
+      expect(split("SELECT [1,2] AS a -- daily", clickhouse)).toEqual(["SELECT [1,2] AS a", " -- daily"]);
+      expect(split("SELECT [[1,2],[3,4]] AS a;", clickhouse)).toEqual(["SELECT [[1,2],[3,4]] AS a", ";"]);
+    });
+
+    test("refuses the cut where a subscript never closes", () => {
+      const clickhouse = resolveSqlGrammar("clickhouse");
+
+      expect(readStatementEnd("SELECT [1,2 AS a", clickhouse).rewritable).toBe(false);
+    });
   });
 
   // ── Bounded time ────────────────────────────────────────────────────────

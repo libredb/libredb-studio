@@ -1,5 +1,5 @@
 import { describe, test, expect } from "bun:test";
-import { DEFAULT_SQL_GRAMMAR, hashRunIsAmbiguous, resolveSqlGrammar } from "@/lib/sql/grammar";
+import { type BracketGrammar, DEFAULT_SQL_GRAMMAR, hashRunIsAmbiguous, resolveSqlGrammar } from "@/lib/sql/grammar";
 import type { DatabaseType } from "@/lib/types";
 
 /**
@@ -87,6 +87,47 @@ describe("resolveSqlGrammar", () => {
     // The compatibility default: before the channel existed no reader here had a
     // branch for the form, so keeping it out is what keeps those answers still.
     expect(DEFAULT_SQL_GRAMMAR.alternateQuoting).toBe(false);
+  });
+
+  // ── `[…]`: two readings that cannot both apply (#295) ────────────────────
+  //
+  // - SQL Server: `[name]` is a delimited identifier and a `]` inside it is
+  //   written doubled. This repo's own quoter emits exactly that
+  //   (`src/lib/sql/identifier.ts`), and the MSSQL provider's
+  //   `escapeIdentifier` is pinned on it.
+  // - SQLite: the SQLite amalgamation bundled with `better-sqlite3` classifies
+  //   `[` as `CC_QUOTE2` - "`[...]` style quoted ids", the Microsoft-style form -
+  //   so it is a name there too.
+  // - ClickHouse: `[…]` is an array literal or a subscript, it NESTS, and it has
+  //   no doubling escape; identifiers there are quoted with backticks or double
+  //   quotes (`identifier.ts` falls back to the standard form for it). So the two
+  //   readings are mutually exclusive rather than two spellings of one rule.
+
+  test.each<[DatabaseType, BracketGrammar]>([
+    ["mssql", "quoted-identifier"],
+    ["sqlite", "quoted-identifier"],
+    ["clickhouse", "subscript"],
+  ])("%s reads `[…]` as %s", (type, bracket) => {
+    expect(resolveSqlGrammar(type).bracket).toBe(bracket);
+  });
+
+  // A dialect established for ONE character can be undecided about another, so
+  // the default is per fact rather than per dialect. `[` is not an identifier
+  // quote in MySQL, PostgreSQL or Oracle and no authoritative reading of it was
+  // established for them, so they keep the one they had.
+  test.each<DatabaseType>([
+    "mysql",
+    "postgres",
+    "oracle",
+  ])("%s is left at the compatibility default for `[…]`", (type) => {
+    expect(resolveSqlGrammar(type).bracket).toBe(DEFAULT_SQL_GRAMMAR.bracket);
+  });
+
+  test("the compatibility default reads `[…]` as a quoted name", () => {
+    // Today's reading, kept for the same reason as the `#` row: it is what the
+    // #291/#299 fixtures assert, and the corrupted-statement shape those closed
+    // (`SELECT [a LIMIT 500--b] FROM t`) is what a code reading brings back.
+    expect(DEFAULT_SQL_GRAMMAR.bracket).toBe("quoted-identifier");
   });
 });
 

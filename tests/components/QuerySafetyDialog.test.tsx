@@ -739,6 +739,32 @@ describe("isDangerousQuery", () => {
     expect(isDangerousQuery("SELECT * FROM users", "mysql")).toBe(false);
   });
 
+  // The bracket grammar reaches this predicate for the same reason (#295): under
+  // ClickHouse's reading a nested array closes, so the keyword after the CTE list
+  // is read and asked about, where the quoted-name reading took the closing `]]`
+  // for an escape, never closed the run, and left everything after it invisible.
+  test("prompts for a DELETE a nested array hid, once the dialect is named", () => {
+    const query = "WITH [[1,2],[3,4]] AS x DELETE FROM t";
+
+    expect(isDangerousQuery(query)).toBe(false);
+    expect(isDangerousQuery(query, "clickhouse")).toBe(true);
+  });
+
+  /**
+   * KNOWN NARROWING, pinned rather than left to be discovered: bracket text that
+   * does not balance is undeterminable under the subscript reading, and this
+   * predicate still answers "not dangerous" for text it cannot read - the one input
+   * class #297 is filed to change. Under the name reading the same text happened to
+   * close its run at the inner `]` and answer true, so naming the dialect LOSES
+   * this prompt. The text is a syntax error in ClickHouse either way.
+   */
+  test("still answers false for bracket text no reader can resolve", () => {
+    const query = "WITH [[1,2] AS x DELETE FROM t";
+
+    expect(isDangerousQuery(query)).toBe(true);
+    expect(isDangerousQuery(query, "clickhouse")).toBe(false);
+  });
+
   // ── Shape of the scan ───────────────────────────────────────────────────
 
   /**
