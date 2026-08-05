@@ -208,6 +208,15 @@ MySQL's `#` line comment is skipped when the statement type is read, alongside `
 for: a `# note`-led `SELECT` used to classify as an unknown statement type and reach the server with
 no `LIMIT` at all (#275).
 
+A **trailing** `#` comment is the one place MySQL is treated more conservatively than the other
+dialects. `SELECT … # note` is not bounded at all: the bound has to go before the comment, and the
+same characters are a temp table, an identifier or an operator in T-SQL, Oracle and PostgreSQL, which
+the shared reader cannot rule out (see
+[Where the bound is placed](../editor/query-optimization.md#where-the-bound-is-placed)). Before this
+the clause was appended *inside* that comment while the UI reported the query as capped, so the
+statement ran unbounded either way — it is now honest about it. A trailing `-- note` is bounded
+normally.
+
 ### 5.3 Query cancellation
 
 A query issued with a `queryId` records its connection `threadId`. `cancelQuery(queryId)`

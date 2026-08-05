@@ -282,6 +282,17 @@ and, **only for `SELECT`/CTE-`SELECT` queries that don't already have a `LIMIT`*
   set (#287). Undeterminable CTE shapes are likewise not bounded — an over-large read can be re-run,
   a partly committed write cannot. Asserted at the shared seam in `tests/unit/db/sql-base.test.ts`,
   since the behaviour is `SQLBaseProvider`'s for every SQL provider.
+- The clause is inserted at the end of the **statement** as
+  [`statement-end.ts`](../../src/lib/sql/statement-end.ts) delimits it — before any trailing comment
+  and before the terminating `;`, both re-attached verbatim — and the already-limited probes read the
+  same end. Appending after the trivia put the bound inside a trailing `-- note`, so the query ran
+  unbounded while the badge said it was capped; reading the bound off the same text made
+  `-- LIMIT 10` look like a real one, so nothing was injected (#280). A statement with no trailing
+  trivia is emitted exactly as before. A statement whose end may not be **cut** is returned untouched
+  with `wasLimited: false`, since a guess would place the bound after the `;` or in the middle of the
+  statement: a quote behind an odd backslash run (MySQL and PostgreSQL close it in different places)
+  and a trailing `#` run, which is a comment in MySQL and PostgreSQL's XOR operator here
+  (`SELECT flags # 5`).
 
 `prepareQuery()` is a *preparation* step (the UI calls it before `query()`); `query()` itself runs
 exactly the SQL it is handed.

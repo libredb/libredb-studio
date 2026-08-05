@@ -103,6 +103,22 @@ overrides the base and appends `FETCH FIRST n ROWS ONLY` (or `OFFSET m ROWS FETC
 when an offset is set) to bare `SELECT`s that don't already have a limit. Default page size
 `DEFAULT_QUERY_LIMIT = 500`; unlimited caps at `MAX_UNLIMITED_ROWS = 100000`.
 
+Both branches append at the **end of the statement**, which `src/lib/sql/statement-end.ts` delimits —
+before any trailing comment and before the terminating `;`, both of which are then re-attached
+verbatim. Appending after them instead put the clause inside a trailing `-- note` while this method
+still reported `wasLimited: true`, so the statement reached Oracle unbounded and the UI called the
+result capped. A statement with no trailing comment is emitted exactly as it was before. The same
+reading answers whether the statement already carries a `FETCH FIRST`, so
+`SELECT … FETCH FIRST 10 ROWS ONLY -- deliberate` is still honoured and never gets a second clause.
+A statement whose end may not be **cut** is returned untouched with `wasLimited: false` rather than
+bounded on a guess. Two shapes reach that on Oracle: a literal Oracle and MySQL would close in
+different places (a quote behind an odd backslash run), and `#` inside an identifier (`ID#`, common
+in legacy schemas), which the shared scanner has to read as MySQL's comment marker because nothing in
+the text distinguishes the two. Both are a **deliberate loss of a bound**: appending after the whole
+text, as this method used to, happened to be valid Oracle for these two shapes, and is what puts the
+clause inside a trailing comment everywhere else. They now return every row rather than being bounded
+on a reading that is right for Oracle and wrong for the dialect the scanner cannot rule out.
+
 ### 3.3 Owner-scoped, five-query schema introspection
 
 `getSchema()` ([oracle.ts:323](../../src/lib/db/providers/sql/oracle.ts)) runs **five bulk queries**

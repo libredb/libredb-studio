@@ -515,9 +515,10 @@ panel is worse than an empty one.
 ### 3.9 The `prepareQuery()` override: `OFFSET` with no `LIMIT`
 
 The inherited limiter is otherwise correct for Druid: `LIMIT 500` appends cleanly, an existing `LIMIT`
-is left alone, and the shared `applyQueryLimit` already strips and re-appends a trailing semicolon —
-which matters, because Druid accepts `SELECT 1 AS c1;` but rejects `SELECT 1 AS c1; LIMIT 2`, and the
-shared limiter never produces the latter.
+is left alone, and the shared `applyQueryLimit` inserts the bound at the end of the **statement**,
+before the terminating semicolon and any trailing comment, which it then re-attaches — which matters,
+because Druid accepts `SELECT 1 AS c1;` but rejects `SELECT 1 AS c1; LIMIT 2`, and the shared limiter
+never produces the latter.
 
 The one failure is a statement ending in **`OFFSET n` with no `LIMIT`**. The limiter appends `LIMIT`
 after it, and Druid rejects the result outright (live-verified):
@@ -528,11 +529,18 @@ SELECT id FROM libredb_demo OFFSET 2 LIMIT 3
 ```
 
 `DruidProvider.prepareQuery()`
-([index.ts:218](../../src/lib/db/providers/sql/druid/index.ts)) asks `analyzeQuery()` — the shared
-analyzer, not a regex of its own, because it already handles the trailing semicolon and already
+([index.ts:271](../../src/lib/db/providers/sql/druid/index.ts)) asks `analyzeQuery()` — the shared
+analyzer, not a regex of its own, because it already reads the end of the statement (so the
+terminating semicolon and any trailing comment are outside what its probes see) and already
 distinguishes an `OFFSET` that follows a `LIMIT` (the ordinary paginated form, which the limiter
 leaves alone anyway) from one that stands alone. When the statement has an `OFFSET` and no `LIMIT`, it
 returns the query **untouched** with `wasLimited: false`.
+
+Routing that decision through the shared analyzer is also what fixed `SELECT … OFFSET 2 -- paged`
+here with no edit to this provider: the probe was anchored at the end of the raw text, so a trailing
+comment hid the `OFFSET`, the limiter appended a bound and Druid answered `400`. The analyzer now
+reads the end of the **statement** ([`statement-end.ts`](../../src/lib/sql/statement-end.ts)), and
+this override inherits that (#280).
 
 The bias is the same one ClickHouse's trailing-clause case takes, for the same reason: **rewriting
 wrongly turns a working statement into a syntax error, while leaving it alone at worst returns more
@@ -859,7 +867,8 @@ Quoting is what makes the word an identifier — `SELECT 1 AS "one"` is accepted
 statement and get an unexplained syntax error near a perfectly ordinary word, quote it.
 
 **`LIMIT 5 LIMIT 2` is a syntax error**, and so is `SELECT 1 AS c1; LIMIT 2`. The shared limiter never
-produces either: it preserves an existing `LIMIT`, and it strips and re-appends a trailing semicolon.
+produces either: it preserves an existing `LIMIT`, and it inserts its own before the terminating
+semicolon rather than after it.
 
 ### 5.5 Druid SQL cannot write, and the server says so clearly
 

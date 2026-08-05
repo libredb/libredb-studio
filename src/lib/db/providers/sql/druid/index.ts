@@ -260,8 +260,11 @@ export class DruidProvider extends SQLBaseProvider {
    * reason as ClickHouse's trailing-clause case: rewriting wrongly fails the
    * query outright, while leaving it alone only returns more rows than asked for.
    *
-   * `analyzeQuery` rather than a regex of this file's own: it already strips a
-   * trailing semicolon, and it already distinguishes the OFFSET that follows a
+   * `analyzeQuery` rather than a regex of this file's own: it already reads the
+   * end of the statement - so the terminating semicolon and any trailing comment
+   * are outside what its probes see, which is what makes
+   * `SELECT ... OFFSET 2 -- paged` refuse here with no edit to this file (#280) -
+   * and it already distinguishes the OFFSET that follows a
    * LIMIT (which is the ordinary paginated form, and which the limiter leaves
    * alone anyway) from the OFFSET that stands alone.
    */

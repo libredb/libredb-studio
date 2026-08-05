@@ -641,6 +641,84 @@ describe("MSSQLProvider", () => {
         expect(result.query.match(/\bTOP\b/gi)).toHaveLength(1);
       });
 
+      // ── Trailing comments (#280) ──────────────────────────────────────────
+      //
+      // The `TOP` head splice was never affected - it writes into the head, which
+      // no trailing comment can reach - but the pagination branch appends at the
+      // tail exactly as PostgreSQL's and Oracle's do, so it shared the defect.
+      // Both are asserted here: the one that changes, and the one that must not.
+
+      describe("trailing comments", () => {
+        test("the offset branch appends before the comment", () => {
+          const result = provider.prepareQuery("SELECT id FROM users -- daily check", { limit: 50, offset: 10 });
+
+          expect(result.query).toBe(
+            "SELECT id FROM users ORDER BY (SELECT NULL) OFFSET 10 ROWS FETCH NEXT 50 ROWS ONLY -- daily check",
+          );
+          expect(result.wasLimited).toBe(true);
+        });
+
+        test("the offset branch keeps the terminating semicolon outside the comment", () => {
+          const result = provider.prepareQuery("SELECT id FROM users ORDER BY id; -- daily check", {
+            limit: 50,
+            offset: 10,
+          });
+
+          expect(result.query).toBe(
+            "SELECT id FROM users ORDER BY id OFFSET 10 ROWS FETCH NEXT 50 ROWS ONLY; -- daily check",
+          );
+        });
+
+        // The head splice is lossless whatever follows the statement, so it keeps
+        // working where the tail may not be cut. A temp table is the case that
+        // makes this matter: `#tmp` is everyday T-SQL and reads as a MySQL
+        // comment to the shared scanner, so a tail append would have emitted
+        // `SELECT * FROM ... OFFSET ... #tmp`.
+        test.each<[string, string, string]>([
+          ["a temp table", "SELECT * FROM #tmp", "SELECT TOP 50 * FROM #tmp"],
+          [
+            "a literal whose end is undeterminable",
+            "SELECT id FROM users WHERE path = 'C:\\';",
+            "SELECT TOP 50 id FROM users WHERE path = 'C:\\';",
+          ],
+        ])("still splices TOP into %s", (_label, sql, expected) => {
+          const result = provider.prepareQuery(sql, { limit: 50 });
+
+          expect(result.query).toBe(expected);
+          expect(result.wasLimited).toBe(true);
+        });
+
+        // `TOP` and `OFFSET … FETCH` cannot both appear in one query expression
+        // (Msg 10741), so the splice must not fire on a page the user already
+        // bounded. It does not, because a refused cut still reports the whole
+        // statement, and the already-bounded probe reads that.
+        test("does not splice TOP into a temp-table page that already carries a bound", () => {
+          const sql = "SELECT * FROM #tmp ORDER BY id OFFSET 0 ROWS FETCH NEXT 10 ROWS ONLY";
+
+          const result = provider.prepareQuery(sql, { limit: 50 });
+
+          expect(result.query).toBe(sql);
+          expect(result.wasLimited).toBe(false);
+        });
+
+        test.each<[string, string]>([
+          ["a temp table", "SELECT * FROM #tmp ORDER BY id"],
+          ["a literal whose end is undeterminable", "SELECT id FROM users WHERE path = 'C:\\';"],
+        ])("the offset branch declines on %s, which it cannot append to", (_label, sql) => {
+          const result = provider.prepareQuery(sql, { limit: 50, offset: 10 });
+
+          expect(result.query).toBe(sql);
+          expect(result.wasLimited).toBe(false);
+        });
+
+        test("the TOP head splice is unchanged by a trailing comment", () => {
+          const result = provider.prepareQuery("SELECT * FROM users -- daily check", { limit: 50 });
+
+          expect(result.query).toBe("SELECT TOP 50 * FROM users -- daily check");
+          expect(result.wasLimited).toBe(true);
+        });
+      });
+
       test("appends OFFSET FETCH to a commented SELECT, which needs no head rewrite", () => {
         const result = provider.prepareQuery("-- annotated\nSELECT * FROM users", { limit: 50, offset: 10 });
 

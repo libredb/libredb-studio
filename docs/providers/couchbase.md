@@ -492,7 +492,9 @@ await provider.query('SELECT h.name FROM `travel`.`inventory`.`hotel` AS h WHERE
 The request carries `metrics: true`, the effective statement timeout, and
 `scan_consistency: request_plus` ([§3.7](#37-read-your-writes-scan_consistency-defaults-to-request_plus)).
 `prepareQuery()` injects `LIMIT`/`OFFSET` through the shared limiter
-(`supportsExternalQueryLimiting: true`), so paging behaves as it does for every SQL provider.
+(`supportsExternalQueryLimiting: true`), so paging behaves as it does for every SQL provider —
+including where the clause is placed: at the end of the statement, before a trailing comment or `;`
+([`query-optimization.md`](../editor/query-optimization.md#where-the-bound-is-placed)).
 
 ### 5.2 Result shaping
 

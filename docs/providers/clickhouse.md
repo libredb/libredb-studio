@@ -361,9 +361,10 @@ error, live-verified:
 works.
 
 `ClickHouseProvider.prepareQuery()`
-([index.ts:515](../../src/lib/db/providers/sql/clickhouse/index.ts)) detects a trailing `FORMAT` or
-`SETTINGS` clause with two patterns anchored at the **end** of the statement (after stripping one
-trailing semicolon, which the server accepts) and, when either matches, returns the query
+([index.ts:562](../../src/lib/db/providers/sql/clickhouse/index.ts)) detects a trailing `FORMAT` or
+`SETTINGS` clause with two patterns anchored at the **end** of the statement — as
+`src/lib/sql/statement-end.ts` delimits it, so the terminating semicolon and any trailing comment are
+outside what the patterns read — and, when either matches, returns the query
 **unchanged** with `wasLimited: false` rather than delegating to the inherited limiter. Anchoring at
 the end is what keeps the check off a statement that merely mentions the word: `SELECT * FROM t
 WHERE note = 'format'` and `SELECT name FROM system.settings` are ordinary statements that still get
@@ -371,6 +372,15 @@ limited normally, because neither ends in the clause pattern. A user who wrote a
 or `SETTINGS` clause is expressing intent the editor must not silently rewrite, and the bias has to
 favour not rewriting: rewriting wrongly turns a working statement into a syntax error, while leaving
 it alone at worst returns more rows than the page size.
+
+A hand-rolled semicolon strip used to stand in for that reading, so `... FORMAT TSV -- note` read as
+carrying no trailing clause at all. That was harmless only while the inherited limiter appended its
+bound after the comment, where the server never saw it; now that the bound is placed **before** the
+comment, the same miss would emit `... FORMAT TSV LIMIT n -- note` — the very `400` / code `62` above.
+Detection and placement therefore read one shared definition of where a statement ends. Where that
+reader refuses to let the statement be cut at all — an unterminated literal, or a trailing `#` run —
+the inherited limiter declines on its own, so such a statement is passed through untouched whatever
+this override answers.
 
 One false positive is accepted on purpose rather than fixed: a statement ending in a string literal
 that itself contains an assignment (`... WHERE note = 'SETTINGS foo = 1'`) is read as carrying a

@@ -905,6 +905,37 @@ describe("ClickHouseProvider query preparation", () => {
     expect(prepared.wasLimited).toBe(false);
   });
 
+  // ── Trailing comments (#280) ──────────────────────────────────────────────
+  //
+  // The trailing-clause patterns are anchored at the end of the statement, and
+  // until the limiter learned where a statement ends, a line comment after the
+  // clause hid it from them. That was harmless only for as long as the inherited
+  // bound landed inside the same comment: once it is placed before the comment,
+  // `... FORMAT TSV LIMIT 25 -- note` is the 400 / code 62 this override exists
+  // to prevent. Detection and placement have to read the same end.
+  test.each([
+    ["FORMAT before a line comment", "SELECT * FROM users FORMAT TSV -- exported nightly"],
+    ["FORMAT before a semicolon and a comment", "SELECT * FROM users FORMAT JSONEachRow; -- exported nightly"],
+    ["SETTINGS before a line comment", "SELECT * FROM users SETTINGS max_threads = 1 -- tuned"],
+    ["FORMAT before a block comment", "SELECT * FROM users FORMAT TSV /* exported nightly */"],
+    // Two reasons agree here: the pattern still matches (a refused cut reports
+    // the whole text as the end) AND the shared limiter declines on its own,
+    // because a literal it cannot close is one it will not rewrite.
+    ["a statement whose end may not be cut", "SELECT * FROM users WHERE path = 'C:\\' FORMAT TSV"],
+  ])("still refuses to rewrite %s", (_label, sql) => {
+    const prepared = provider().prepareQuery(sql, { limit: 25 });
+
+    expect(prepared.query).toBe(sql);
+    expect(prepared.wasLimited).toBe(false);
+  });
+
+  test("bounds an ordinary statement that ends in a comment, before the comment", () => {
+    const prepared = provider().prepareQuery("SELECT * FROM users -- daily check", { limit: 25 });
+
+    expect(prepared.query).toBe("SELECT * FROM users LIMIT 25 -- daily check");
+    expect(prepared.wasLimited).toBe(true);
+  });
+
   test("leaves a write untouched", () => {
     const prepared = provider().prepareQuery("INSERT INTO users VALUES (1, 'a@b.c')");
 

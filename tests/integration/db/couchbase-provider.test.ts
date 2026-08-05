@@ -944,6 +944,19 @@ describe("CouchbaseProvider query preparation", () => {
     expect(prepared.wasLimited).toBe(true);
   });
 
+  // Same inheritance for the trailing edge (#280): the bound has to land before a
+  // closing comment, and a backtick-quoted path must not be mistaken for one.
+  test("puts the bound before a trailing comment", () => {
+    const provider = new CouchbaseProvider(makeConnection());
+
+    const prepared = provider.prepareQuery("SELECT * FROM `travel`.`inventory`.`hotel` -- daily check", {
+      limit: 25,
+    });
+
+    expect(prepared.query).toBe("SELECT * FROM `travel`.`inventory`.`hotel` LIMIT 25 -- daily check");
+    expect(prepared.wasLimited).toBe(true);
+  });
+
   test("leaves a mutation untouched", () => {
     const provider = new CouchbaseProvider(makeConnection());
 

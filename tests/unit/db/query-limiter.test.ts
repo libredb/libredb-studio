@@ -697,3 +697,188 @@ describe("analyzeQuery: leading comments cannot answer for the statement body", 
     expect(analyzeQuery("SELECT (SELECT 1) AS x").hasSubquery).toBe(true);
   });
 });
+
+// ─── trailing trivia (#280) ─────────────────────────────────────────────────
+//
+// The limiter used to treat the END of a statement as plain text, which broke it
+// in both directions at once. Appending `LIMIT n` after a trailing line comment
+// puts the bound INSIDE the comment while the caller is told the statement was
+// limited, and reading an existing bound off the same text makes a commented-out
+// one look real, so nothing is injected. Either way the query runs unbounded, and
+// the first also lights the "limited" badge over a full table scan.
+//
+// The fix is one reading of where the statement ends, shared by the placement and
+// by the probes (`lib/sql/statement-end`).
+
+describe("trailing trivia: placement", () => {
+  test.each<[string, string, string]>([
+    // label, input, expected output
+    ["a line comment", "SELECT * FROM t -- note", "SELECT * FROM t LIMIT 500 -- note"],
+    ["a semicolon then a comment", "SELECT * FROM t; -- note", "SELECT * FROM t LIMIT 500; -- note"],
+    ["a comment then a semicolon", "SELECT * FROM t -- note\n;", "SELECT * FROM t LIMIT 500 -- note\n;"],
+    ["a comment carrying a semicolon", "SELECT * FROM t -- a; b", "SELECT * FROM t LIMIT 500 -- a; b"],
+    // A block comment closes, so the bound was already engine-visible after it.
+    // It moves anyway: one reading of the end serves both the placement and the
+    // probes, and a probe that had to look PAST a trailing block comment is how
+    // `LIMIT 10 /* note */` used to collect a second bound (below).
+    ["a block comment", "SELECT * FROM t /* note */", "SELECT * FROM t LIMIT 500 /* note */"],
+    ["mixed trivia", "SELECT * FROM t /* a */ ; -- b", "SELECT * FROM t LIMIT 500 /* a */ ; -- b"],
+  ])("puts the bound before %s", (_label, sql, expected) => {
+    const result = applyQueryLimit(sql, 500);
+
+    expect(result.sql).toBe(expected);
+    expect(result.wasLimited).toBe(true);
+  });
+
+  test("an offset bound also lands before the comment", () => {
+    const result = applyQueryLimit("SELECT * FROM t -- note", 500, 20);
+
+    expect(result.sql).toBe("SELECT * FROM t LIMIT 500 OFFSET 20 -- note");
+    expect(result.wasLimited).toBe(true);
+  });
+
+  // The flag is the part a user acts on: a badge reading "limited to 500" over a
+  // statement the engine ran unbounded is worse than no badge at all.
+  test("never reports a bound the engine cannot see", () => {
+    for (const sql of ["SELECT * FROM t -- note", "SELECT * FROM t /* note */", "SELECT * FROM t; -- note"]) {
+      const result = applyQueryLimit(sql, 500);
+
+      // Everything the engine reads: the comment and what follows it removed.
+      const executed = result.sql.split(/--|#/)[0];
+      expect(result.wasLimited && executed.includes("LIMIT 500"), sql).toBe(true);
+    }
+  });
+
+  test("a statement with no trailing trivia is emitted exactly as before", () => {
+    expect(applyQueryLimit("SELECT * FROM t", 500).sql).toBe("SELECT * FROM t LIMIT 500");
+    expect(applyQueryLimit("SELECT * FROM t;", 500).sql).toBe("SELECT * FROM t LIMIT 500;");
+  });
+});
+
+describe("trailing trivia: detection", () => {
+  // A bound written inside a comment is a bound the user turned OFF. Reading it
+  // as real leaves the statement unbounded, which is what #280 reported.
+  test.each<[string, string]>([
+    ["a commented-out LIMIT", "SELECT * FROM t -- LIMIT 10"],
+    ["a commented-out FETCH FIRST", "SELECT * FROM t -- FETCH FIRST 10 ROWS ONLY"],
+    ["a commented-out OFFSET", "SELECT * FROM t -- OFFSET 5"],
+    ["a commented-out ROWNUM bound", "SELECT * FROM t -- ROWNUM <= 10"],
+    ["a commented-out LIMIT in a block comment", "SELECT * FROM t /* LIMIT 10 */"],
+  ])("does not mistake %s for a real one", (_label, sql) => {
+    const info = analyzeQuery(sql);
+    expect(info.hasLimit).toBe(false);
+
+    const result = applyQueryLimit(sql, 500);
+    expect(result.sql).toContain("LIMIT 500");
+    expect(result.wasLimited).toBe(true);
+  });
+
+  test.each<[string, string, number]>([
+    ["a LIMIT before a line comment", "SELECT * FROM t LIMIT 10 -- deliberate", 10],
+    ["a LIMIT before a block comment", "SELECT * FROM t LIMIT 10 /* deliberate */", 10],
+    ["a LIMIT before a semicolon and a comment", "SELECT * FROM t LIMIT 10; -- deliberate", 10],
+    ["a FETCH FIRST before a comment", "SELECT * FROM t FETCH FIRST 25 ROWS ONLY -- deliberate", 25],
+  ])("still honours %s", (_label, sql, expected) => {
+    const info = analyzeQuery(sql);
+    expect(info.hasLimit).toBe(true);
+    expect(info.existingLimit).toBe(expected);
+
+    // Not doubled: a second bound after the first is a syntax error, not extra rows.
+    const result = applyQueryLimit(sql, 500);
+    expect(result.sql).toBe(sql);
+    expect(result.wasLimited).toBe(false);
+  });
+
+  test("an OFFSET without a LIMIT is seen behind a comment", () => {
+    const info = analyzeQuery("SELECT * FROM t OFFSET 5 -- note");
+
+    expect(info.hasOffset).toBe(true);
+    expect(info.existingOffset).toBe(5);
+  });
+
+  test("hasQueryLimit reads the statement, not its trailing comment", () => {
+    expect(hasQueryLimit("SELECT * FROM t -- LIMIT 10")).toBe(false);
+    expect(hasQueryLimit("SELECT * FROM t LIMIT 10 -- note")).toBe(true);
+  });
+
+  // forceLimit strips the old bound before writing the new one, and that strip is
+  // end-anchored too: run against the raw text it either misses the bound (two
+  // LIMITs) or tears the comment apart.
+  test("forceLimit replaces a real bound and leaves the comment intact", () => {
+    const result = applyQueryLimit("SELECT * FROM t LIMIT 10 -- deliberate", 500, 0, { forceLimit: true });
+
+    expect(result.sql).toBe("SELECT * FROM t LIMIT 500 -- deliberate");
+    expect(result.wasLimited).toBe(true);
+    expect(result.originalLimit).toBe(10);
+  });
+
+  test("forceLimit replaces a MySQL-style bound behind a comment", () => {
+    const result = applyQueryLimit("SELECT * FROM t LIMIT 5, 10 -- deliberate", 500, 0, { forceLimit: true });
+
+    expect(result.sql).toBe("SELECT * FROM t LIMIT 500 -- deliberate");
+    expect(result.wasLimited).toBe(true);
+  });
+});
+
+// A statement whose end may not be cut has nowhere honest to take a bound, and
+// `wasLimited: false` is the honest answer - the second branch of the spec's own
+// item 1. Two shapes reach it, and both are ordinary SQL somewhere:
+//
+//   - a literal MySQL and PostgreSQL close in different places (`'O\'Brien'`),
+//     where inserting on a guess emits the bound after the statement's own `;`;
+//   - a trailing `#` run, which is a comment in MySQL and a temp table, an
+//     identifier or an XOR operator in the dialects that are not MySQL. Cutting
+//     there emitted `SELECT * FROM LIMIT 500 #tmp`.
+//
+// The cost is that these statements are not bounded: an over-large read the user
+// can re-run, against a statement the server would have rejected outright.
+describe("a statement whose end may not be cut is not rewritten", () => {
+  test.each<[string, string]>([
+    ["a quote behind an odd backslash run", "SELECT * FROM users WHERE name = 'O\\'Brien'"],
+    ["the same with a terminator", "SELECT * FROM users WHERE name = 'O\\'Brien';"],
+    ["the same with a trailing comment", "SELECT * FROM users WHERE name = 'O\\'Brien' -- note"],
+    ["an unterminated block comment", "SELECT * FROM users /* note"],
+    ["a T-SQL temp table", "SELECT * FROM #tmp"],
+    ["an Oracle identifier carrying a hash", "SELECT * FROM EMP WHERE ID# = 1"],
+    ["a PostgreSQL XOR operator", "SELECT flags # 5 AS x FROM t"],
+    ["a MySQL trailing hash comment", "SELECT * FROM t # note"],
+  ])("returns %s untouched", (_label, sql) => {
+    const result = applyQueryLimit(sql, 500);
+
+    expect(result.sql).toBe(sql);
+    expect(result.wasLimited).toBe(false);
+    expect(result.appliedLimit).toBe(0);
+  });
+
+  // Reading is not cutting. Where the cut is refused the probes read the WHOLE
+  // statement, which is what they read before this reader existed - so a bound
+  // written after a `#` is still found, and this is the one shape where a bound
+  // written INSIDE a line comment is still taken for a real one. That is the
+  // pre-existing reading for `#` and it is left as it is deliberately: the
+  // alternative hides `SELECT * FROM #t FETCH NEXT 10 ROWS ONLY`'s real bound
+  // from every caller, and the outcome here is the same either way - the
+  // statement is returned untouched.
+  test("a bound written after a hash is still found", () => {
+    expect(analyzeQuery("SELECT * FROM #t FETCH NEXT 10 ROWS ONLY").hasLimit).toBe(true);
+    expect(analyzeQuery("SELECT * FROM t # LIMIT 10").hasLimit).toBe(true);
+  });
+
+  // KNOWN LIMITATION, pinned: for `#` alone, a commented-out bound is still read
+  // as a real one, so the statement is left alone as "already bounded" instead of
+  // being bounded. The `--` form, which is unambiguous, is fixed above.
+  test("a bound commented out with a hash is read as real, and the statement is left alone", () => {
+    const sql = "SELECT * FROM t # LIMIT 10";
+
+    const result = applyQueryLimit(sql, 500);
+
+    expect(result.sql).toBe(sql);
+    expect(result.wasLimited).toBe(false);
+  });
+
+  test("a hash comment with code after it does not stop the statement", () => {
+    const result = applyQueryLimit("SELECT * FROM t # note\nWHERE a = 1", 500);
+
+    expect(result.sql).toBe("SELECT * FROM t # note\nWHERE a = 1 LIMIT 500");
+    expect(result.wasLimited).toBe(true);
+  });
+});

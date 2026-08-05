@@ -588,5 +588,46 @@ describe("SQLBaseProvider", () => {
         expect(result.wasLimited).toBe(true);
       });
     });
+
+    // #280. The bound used to be appended after everything, so a trailing line
+    // comment swallowed it: the engine ran the statement unbounded while the
+    // caller was handed `wasLimited: true` and the UI reported a capped result.
+    describe("a statement ending in a comment", () => {
+      test("gets its bound before the comment, not inside it", () => {
+        const p = new TestSQLProvider(makeConfig("postgres"));
+
+        const result = p.prepareQuery("SELECT * FROM users -- daily check", { limit: 50 });
+
+        expect(result.query).toBe("SELECT * FROM users LIMIT 50 -- daily check");
+        expect(result.wasLimited).toBe(true);
+      });
+
+      test("keeps its terminating semicolon outside the comment", () => {
+        const p = new TestSQLProvider(makeConfig("postgres"));
+
+        const result = p.prepareQuery("SELECT * FROM users; -- daily check", { limit: 50 });
+
+        expect(result.query).toBe("SELECT * FROM users LIMIT 50; -- daily check");
+      });
+
+      test("is bounded even when the comment contains a bound", () => {
+        const p = new TestSQLProvider(makeConfig("postgres"));
+
+        const result = p.prepareQuery("SELECT * FROM users -- LIMIT 10", { limit: 50 });
+
+        expect(result.query).toBe("SELECT * FROM users LIMIT 50 -- LIMIT 10");
+        expect(result.wasLimited).toBe(true);
+      });
+
+      test("keeps a real bound written before the comment", () => {
+        const p = new TestSQLProvider(makeConfig("postgres"));
+        const sql = "SELECT * FROM users LIMIT 10 -- deliberate";
+
+        const result = p.prepareQuery(sql, { limit: 50 });
+
+        expect(result.query).toBe(sql);
+        expect(result.wasLimited).toBe(false);
+      });
+    });
   });
 });

@@ -96,6 +96,28 @@ limit-less `SELECT`: with no offset it injects `TOP n` right after `SELECT [DIST
 offset it appends `OFFSET m ROWS FETCH NEXT n ROWS ONLY` — and because T-SQL requires an `ORDER BY`
 for `OFFSET … FETCH`, it injects `ORDER BY (SELECT NULL)` when the query has none.
 
+The two branches differ in where a **trailing** comment can reach them. `TOP` is spliced into the
+head, so `SELECT * FROM t -- note` has always come back as `SELECT TOP n * FROM t -- note` and is
+unchanged. The `OFFSET … FETCH` branch appends at the tail, so a trailing `-- note` used to swallow
+its clause while this method reported `wasLimited: true`; it now appends at the end of the statement
+as `src/lib/sql/statement-end.ts` delimits it, before any trailing comment and before the `;`, both
+of which are re-attached verbatim. Whitespace written before the terminator is now preserved rather
+than dropped, which is the only emitted-SQL difference on the `TOP` branch.
+
+That reader also answers whether the end may be **cut**, and the two branches differ there too. A
+statement ending in a `#` run — `SELECT * FROM #tmp`, everyday T-SQL, which the shared scanner reads
+as a MySQL comment because nothing in the text distinguishes the two — may not be cut, so the
+appending branch declines. The `TOP` splice writes into the head and rejoins the tail verbatim, so it
+still bounds such a statement, and `SELECT * FROM #tmp` comes back as `SELECT TOP 500 * FROM #tmp`.
+What makes that tolerable is that a refused cut still reports the statement's whole text as its end:
+the shared already-bounded probe therefore sees a `FETCH NEXT` written after the `#`, so a temp-table
+page the user already bounded is left alone rather than collecting a `TOP` — which SQL Server rejects
+outright alongside `OFFSET … FETCH`. It is not airtight. Put trailing trivia after that bound
+(`… FETCH NEXT 10 ROWS ONLY -- daily`) and the end-anchored probe stops seeing it, so the `TOP` is
+spliced anyway. That shape behaves exactly as it did before — the probe was end-anchored on the raw
+text then too — and closing it needs the `#` end re-read under a hash-is-code scan, which is a change
+of its own.
+
 The `SELECT` it splices after is located with `src/lib/sql/leading-keyword.ts`, so a T-SQL comment
 before the statement (`-- note` or `/* note */`) is skipped rather than defeating the injection. That
 shared helper also skips `#`, which is a comment in MySQL only; T-SQL rejects a statement opening with
@@ -111,6 +133,10 @@ returning the statement untouched. It never reports a limit while handing back t
   probe missed it, because that probe wants literal whitespace between `SELECT` and `TOP`, which both a
   comment (`SELECT/* c */TOP 10 …`) and a `DISTINCT` defeat. Splicing would emit `SELECT TOP n TOP 10`
   and a syntax error.
+
+The `OFFSET … FETCH` branch declines in one further case of its own: **an end that may not be cut** —
+a trailing `#` run, or a quote behind an odd backslash run, which T-SQL and MySQL close in different
+places. It has nowhere to append; the `TOP` branch, which does not append, is unaffected.
 
 ### 3.3 Five-query schema introspection, cross-schema
 

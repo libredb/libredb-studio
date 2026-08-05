@@ -620,6 +620,60 @@ describe("OracleProvider", () => {
       expect(result.limit).toBe(100000);
       expect(result.query).toContain("FETCH FIRST 100000 ROWS ONLY");
     });
+
+    // ── Trailing comments (#280) ────────────────────────────────────────────
+    //
+    // Both branches below append their clause at the tail, so a trailing line
+    // comment used to absorb it whole - the statement reached Oracle unbounded
+    // while this method reported `wasLimited: true`. Oracle accepts `--` and
+    // ignores `#`, so only the dash form is asserted here.
+
+    describe("trailing comments", () => {
+      test("FETCH FIRST lands before a trailing comment", () => {
+        const result = provider.prepareQuery("SELECT * FROM USERS -- daily check");
+
+        expect(result.query).toBe("SELECT * FROM USERS FETCH FIRST 500 ROWS ONLY -- daily check");
+        expect(result.wasLimited).toBe(true);
+      });
+
+      test("OFFSET/FETCH NEXT lands before a trailing comment", () => {
+        const result = provider.prepareQuery("SELECT * FROM USERS -- daily check", { offset: 20, limit: 10 });
+
+        expect(result.query).toBe("SELECT * FROM USERS OFFSET 20 ROWS FETCH NEXT 10 ROWS ONLY -- daily check");
+        expect(result.wasLimited).toBe(true);
+      });
+
+      test("the terminating semicolon stays outside the comment", () => {
+        const result = provider.prepareQuery("SELECT * FROM USERS; -- daily check");
+
+        expect(result.query).toBe("SELECT * FROM USERS FETCH FIRST 500 ROWS ONLY; -- daily check");
+      });
+
+      test.each<[string, string]>([
+        // A quote behind an odd backslash run: Oracle and MySQL close that
+        // literal in different places, so there is no honest place for the
+        // clause. Appending on a guess would put it after the terminator.
+        ["a literal whose end is undeterminable", "SELECT * FROM USERS WHERE PATH = 'C:\\';"],
+        // `#` is legal in an Oracle identifier and is MySQL's comment marker, and
+        // nothing in the text tells them apart. Appending would have emitted
+        // `... WHERE ID FETCH FIRST 500 ROWS ONLY# = 1`.
+        ["an identifier carrying a hash", "SELECT * FROM EMP WHERE ID# = 1"],
+      ])("returns %s untouched rather than bounding it on a guess", (_label, sql) => {
+        const result = provider.prepareQuery(sql);
+
+        expect(result.query).toBe(sql);
+        expect(result.wasLimited).toBe(false);
+      });
+
+      test("a real FETCH FIRST before a comment is still honoured", () => {
+        const sql = "SELECT * FROM USERS FETCH FIRST 10 ROWS ONLY -- deliberate";
+
+        const result = provider.prepareQuery(sql);
+
+        expect(result.query).toBe(sql);
+        expect(result.wasLimited).toBe(false);
+      });
+    });
   });
 
   // =========================================================================

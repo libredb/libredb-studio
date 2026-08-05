@@ -31,6 +31,7 @@ import { DatabaseConfigError, ConnectionError, QueryError, mapDatabaseError } fr
 import { formatBytes } from "../../utils/pool-manager";
 import { analyzeQuery, DEFAULT_QUERY_LIMIT, MAX_UNLIMITED_ROWS } from "../../utils/query-limiter";
 import { readLeadingKeyword } from "@/lib/sql/leading-keyword";
+import { readStatementEnd } from "@/lib/sql/statement-end";
 
 // Row shape used to group foreign keys per table in getSchema().
 type ForeignKeyInfo = { columnName: string; referencedTable: string; referencedColumn: string };
@@ -561,11 +562,41 @@ export class MSSQLProvider extends SQLBaseProvider {
     const queryInfo = analyzeQuery(query);
 
     if (queryInfo.type === "SELECT" && !queryInfo.hasLimit) {
-      let modifiedSql = query.trim();
-      const hasSemicolon = modifiedSql.endsWith(";");
-      if (hasSemicolon) modifiedSql = modifiedSql.slice(0, -1).trim();
+      // The `TOP` branch writes into the HEAD and was never reachable by a
+      // trailing comment, but the pagination branch below appends at the tail
+      // exactly as PostgreSQL's and Oracle's do, so it shared #280: the clause
+      // landed inside the comment while this method reported a limit. Both
+      // branches now build on the statement's own text and re-attach whatever
+      // trailed it, which leaves the `TOP` output unchanged except that
+      // whitespace before a terminating `;` is preserved instead of dropped.
+      //
+      // Splitting and rejoining is lossless and the splice does not depend on
+      // where the statement ends, so the `TOP` branch stays correct even where
+      // the tail may not be CUT - which matters here more than anywhere else,
+      // because a T-SQL temp table (`SELECT * FROM #tmp`) is exactly such a
+      // statement and is entirely ordinary. Only the appending branch has to
+      // decline.
+      //
+      // What makes that tolerable is that a refused cut still reports the whole
+      // statement as its end, so the already-bounded probe above sees a
+      // `FETCH NEXT` written after the `#` and this block is not entered for an
+      // already-paged temp table. It is not airtight: put trailing trivia after
+      // that bound (`... FETCH NEXT 10 ROWS ONLY -- daily`) and the end-anchored
+      // probe stops seeing it, so a `TOP` is spliced alongside an `OFFSET …
+      // FETCH` that SQL Server rejects. That shape behaves exactly as it did
+      // before this change - the probe was end-anchored on the raw text then too
+      // - and closing it needs the `#` end re-read under a hash-is-code scan,
+      // which is a change of its own with its own tests.
+      const source = query.trim();
+      const { end, rewritable } = readStatementEnd(source);
+      let modifiedSql = source.slice(0, end);
+      const trailing = source.slice(end);
 
       if (offset > 0) {
+        if (!rewritable) {
+          return { query, wasLimited: false, limit: effectiveLimit, offset };
+        }
+
         // OFFSET FETCH requires ORDER BY
         const hasOrderBy = /\bORDER\s+BY\b/i.test(modifiedSql);
         if (!hasOrderBy) {
@@ -587,10 +618,8 @@ export class MSSQLProvider extends SQLBaseProvider {
         modifiedSql = injected;
       }
 
-      if (hasSemicolon) modifiedSql += ";";
-
       return {
-        query: modifiedSql,
+        query: `${modifiedSql}${trailing}`,
         wasLimited: true,
         limit: effectiveLimit,
         offset,

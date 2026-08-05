@@ -30,7 +30,7 @@ All SELECT queries are automatically paginated to prevent browser freezes when d
 ### How It Works
 
 1. User executes a SELECT query
-2. System automatically adds `LIMIT 500` if no LIMIT exists (an `OFFSET` clause is only appended when the offset is greater than 0)
+2. System automatically adds `LIMIT 500` if no LIMIT exists (an `OFFSET` clause is only appended when the offset is greater than 0). The clause is inserted at the end of the statement itself, before any trailing comment or `;` — see [Where the bound is placed](#where-the-bound-is-placed)
 3. If user already specified a LIMIT, it's preserved (no override)
 4. Results display with pagination metadata
 
@@ -83,6 +83,7 @@ const result = applyQueryLimit('SELECT * FROM users', 500, 0);
 |------------|-------------------|
 | SELECT | Yes |
 | SELECT behind a leading comment | Yes |
+| SELECT ending in a comment | Yes (the bound is placed before the comment), except a `#` comment — see below |
 | SELECT with LIMIT | No (preserved) |
 | SELECT with UNION | Yes (LIMIT appended after the last statement) |
 | Read-only CTE (`WITH … SELECT`) | Yes |
@@ -117,6 +118,67 @@ return every row:
 
 Both are reads, so the cost is an unbounded result set rather than a partial write, and both are
 pinned by tests in `tests/unit/sql/operative-keyword.test.ts` so the gap stays a decision.
+
+### Where the bound is placed
+
+The clause is inserted **between the statement and its trailing trivia** — whitespace, comments and
+the terminating `;` — and the trivia is re-attached verbatim. A statement carrying no trailing trivia
+is emitted exactly as it was before this rule existed.
+
+| Statement | Emitted SQL |
+|-----------|-------------|
+| `SELECT * FROM t` | `SELECT * FROM t LIMIT 500` |
+| `SELECT * FROM t;` | `SELECT * FROM t LIMIT 500;` |
+| `SELECT * FROM t -- note` | `SELECT * FROM t LIMIT 500 -- note` |
+| `SELECT * FROM t; -- note` | `SELECT * FROM t LIMIT 500; -- note` |
+| `SELECT * FROM t /* note */` | `SELECT * FROM t LIMIT 500 /* note */` |
+
+Appending after the trivia instead put the bound **inside** a trailing line comment: the engine ran
+the statement unbounded while the badge reported it as capped, and the re-appended `;` ended up
+inside the comment as well.
+
+The same reading of the end answers "is this statement already bounded". The `LIMIT n`,
+`FETCH FIRST n ROWS ONLY` and `OFFSET n` probes are anchored at the end of the **statement**
+(`src/lib/sql/statement-end.ts`), so:
+
+- a bound written inside a trailing comment (`SELECT … -- LIMIT 10`) is not mistaken for a real one,
+  and the statement is bounded;
+- a real bound followed by a comment (`SELECT … LIMIT 10 -- deliberate`) is still detected, honoured
+  and never doubled — a second bound is a syntax error, not extra rows.
+
+Reading where a statement ends and **cutting** it there are separate answers, because they are not
+equally risky: a probe that stops early merely finds no bound, while a clause inserted early lands in
+the middle of the statement and the server rejects it outright. Two shapes are therefore read but not
+cut, and a statement carrying either is **returned untouched with `wasLimited: false`** — the second
+branch of "never `true` alongside a bound the engine cannot see":
+
+| Shape | Why the cut is refused |
+|-------|------------------------|
+| An unterminated comment or literal, or a quote behind an odd backslash run (`… WHERE name = 'O\'Brien'`) | MySQL escapes with backslashes and PostgreSQL does not, so the two close the literal in different places; inserting on a guess puts the bound after the statement's own `;` |
+| A `#` run at the end of the statement (`SELECT * FROM #tmp`, `… WHERE ID# = 1`, `SELECT flags # 5`) | `#` is MySQL's second comment marker and ordinary code elsewhere — a T-SQL temp table, an Oracle identifier, a PostgreSQL XOR — and nothing in the text tells them apart (`#note` and `#tmp` are the same characters) |
+
+Both are a **deliberate loss of a bound**: appending after everything, as the limiter used to, was
+valid SQL for the dialect in which those characters are code, and is exactly what put the clause
+inside a trailing comment for the dialect in which they are not. Not bounding costs an over-large
+read the user can re-run, which is the trade every reader in `src/lib/sql/` makes.
+
+A `#` comment with code after it on a later line is unaffected. Where the cut is refused, the
+statement's *text* is still read to its very end (trailing whitespace and `;` aside), so a bound
+written after a `#` is still found and never doubled — which is also why MSSQL's `TOP` splice, writing
+into the head, keeps bounding `SELECT * FROM #tmp` while leaving a temp-table page that already
+carries a `FETCH NEXT` alone. That last part is not airtight: trailing trivia written *after* such a
+bound hides it from the end-anchored probe, so the `TOP` is spliced anyway — unchanged from before
+this section existed, and noted here rather than claimed closed. The
+one shape that stays wrong is a bound commented out with `#` (`… # LIMIT 10`): it is still read as
+real, so that statement is left alone instead of being bounded. The `--` form, which is unambiguous,
+is fixed.
+
+Providers that append a clause of their own follow the same rule: Oracle's `FETCH FIRST` and
+`OFFSET … FETCH NEXT`, and MSSQL's `OFFSET … FETCH NEXT` pagination branch. MSSQL's `SELECT TOP n`
+splices into the head, which no trailing comment can reach, and is unchanged. ClickHouse's refusal to
+rewrite a statement ending in `FORMAT`/`SETTINGS`, and Druid's refusal to rewrite one ending in an
+`OFFSET`, both read the same end — otherwise a trailing comment would hide the clause from them and
+the bound placed before that comment would turn a working statement into a server-side syntax error.
 
 ---
 

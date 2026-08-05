@@ -1094,6 +1094,27 @@ describe("DruidProvider query preparation", () => {
     expect(prepared.limit).toBe(25);
   });
 
+  // #280. This override reads `analyzeQuery`'s `hasOffset`, which was anchored at
+  // the end of the raw text: a trailing comment hid the OFFSET, the shared limiter
+  // appended a bound, and Druid answered 400. It inherits the fix rather than
+  // implementing one - the point of routing the decision through the shared probe.
+  test.each([
+    ["OFFSET before a line comment", "SELECT id FROM libredb_demo ORDER BY __time OFFSET 2 -- paged"],
+    ["OFFSET before a semicolon and a comment", "SELECT id FROM libredb_demo OFFSET 2; -- paged"],
+  ])("leaves a statement ending in %s untouched", (_label, sql) => {
+    const prepared = provider().prepareQuery(sql, { limit: 25 });
+
+    expect(prepared.query).toBe(sql);
+    expect(prepared.wasLimited).toBe(false);
+  });
+
+  test("bounds a statement ending in a comment, before the comment", () => {
+    const prepared = provider().prepareQuery('SELECT * FROM "libredb_demo" -- daily check', { limit: 25 });
+
+    expect(prepared.query).toBe('SELECT * FROM "libredb_demo" LIMIT 25 -- daily check');
+    expect(prepared.wasLimited).toBe(true);
+  });
+
   test("still limits a statement that merely mentions an offset column", () => {
     const sql = "SELECT offset_minutes FROM libredb_demo WHERE region = 'emea'";
 

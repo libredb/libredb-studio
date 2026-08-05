@@ -30,6 +30,7 @@ import {
 import { DatabaseConfigError, ConnectionError, QueryError, mapDatabaseError } from "../../errors";
 import { formatBytes } from "../../utils/pool-manager";
 import { analyzeQuery, DEFAULT_QUERY_LIMIT, MAX_UNLIMITED_ROWS } from "../../utils/query-limiter";
+import { readStatementEnd } from "@/lib/sql/statement-end";
 
 // ============================================================================
 // SQL Statements
@@ -396,20 +397,31 @@ export class OracleProvider extends SQLBaseProvider {
     const queryInfo = analyzeQuery(query);
 
     if (queryInfo.type === "SELECT" && !queryInfo.hasLimit) {
-      let modifiedSql = query.trim();
-      const hasSemicolon = modifiedSql.endsWith(";");
-      if (hasSemicolon) modifiedSql = modifiedSql.slice(0, -1).trim();
-
-      if (offset > 0) {
-        modifiedSql = `${modifiedSql} OFFSET ${offset} ROWS FETCH NEXT ${effectiveLimit} ROWS ONLY`;
-      } else {
-        modifiedSql = `${modifiedSql} FETCH FIRST ${effectiveLimit} ROWS ONLY`;
+      // Both branches append at the tail, so both used to have their clause
+      // swallowed by a trailing line comment while this method still reported
+      // `wasLimited: true` - the statement reached Oracle unbounded and the UI
+      // said it was capped (#280). The clause goes between the statement and its
+      // trailing trivia instead, which also keeps the `;` out of the comment.
+      // A statement whose end may not be cut has nowhere honest to take the
+      // clause, so it is returned untouched rather than bounded on a guess. On
+      // Oracle the live shape is `#` in an identifier (`ID#`), which is legal
+      // there and a comment marker in MySQL.
+      const source = query.trim();
+      const { end, rewritable } = readStatementEnd(source);
+      if (!rewritable) {
+        return { query, wasLimited: false, limit: effectiveLimit, offset };
       }
 
-      if (hasSemicolon) modifiedSql += ";";
+      const statement = source.slice(0, end);
+      const trailing = source.slice(end);
+
+      const clause =
+        offset > 0
+          ? `OFFSET ${offset} ROWS FETCH NEXT ${effectiveLimit} ROWS ONLY`
+          : `FETCH FIRST ${effectiveLimit} ROWS ONLY`;
 
       return {
-        query: modifiedSql,
+        query: `${statement} ${clause}${trailing}`,
         wasLimited: true,
         limit: effectiveLimit,
         offset,

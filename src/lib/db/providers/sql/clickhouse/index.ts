@@ -66,6 +66,7 @@ import {
 } from "@/lib/db/types";
 import { formatCacheHitRatio } from "@/lib/monitoring-cache-ratio";
 import { formatBytes } from "@/lib/db/utils/pool-manager";
+import { readStatementEnd } from "@/lib/sql/statement-end";
 import { ClickHouseHttpTransport } from "./http-transport";
 import {
   CLICKHOUSE_SYSTEM_DATABASES,
@@ -382,12 +383,17 @@ function splitTarget(target: string, pinnedDatabase: string): [database: string,
 /**
  * Whether the statement ends in a clause that `LIMIT` may not follow.
  *
- * The trailing semicolon is stripped for the test only: a single one is accepted
- * by the server, and it would otherwise hide the clause from both patterns.
+ * Both patterns are anchored at the end of the STATEMENT, which the shared reader
+ * delimits: the terminating semicolon and any trailing comment are outside it. A
+ * hand-rolled semicolon strip used to stand in for that, so `... FORMAT TSV
+ * -- note` read as carrying no trailing clause. That was harmless only while the
+ * inherited bound landed inside the same comment; now that the limiter places it
+ * before the comment, missing the clause would emit `... FORMAT TSV LIMIT n
+ * -- note` and turn a working statement into the 400 / code 62 this override
+ * exists to prevent (#280).
  */
 function hasTrailingClause(sql: string): boolean {
-  const trimmed = sql.trimEnd();
-  const statement = trimmed.endsWith(";") ? trimmed.slice(0, -1).trimEnd() : trimmed;
+  const statement = sql.slice(0, readStatementEnd(sql).end);
   return TRAILING_FORMAT.test(statement) || TRAILING_SETTINGS.test(statement);
 }
 
