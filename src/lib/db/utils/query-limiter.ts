@@ -116,8 +116,12 @@ function analyzeUnderGrammar(sql: string, grammar: SqlGrammar): ParsedQueryInfo 
   // differently than it used to.
   const statement = sql.slice(0, readStatementEnd(sql, grammar).end);
 
-  // Query type detection - from the first keyword that is not whitespace or a comment
-  const leading = readLeadingKeyword(statement);
+  // Query type detection - from the first keyword that is not whitespace or a
+  // comment, and where a comment ENDS is the dialect's answer: on a dialect that
+  // nests block comments, a flat reading reports a word the operator commented out
+  // (#300). The grammar is already resolved here, so it costs one argument to keep
+  // this reader and `readStatementEnd` above reading the same comment.
+  const leading = readLeadingKeyword(statement, grammar);
   const keyword = leading?.keyword;
   // The statement from its own first keyword onward. Anything that searches the
   // statement's TEXT rather than just its leading keyword has to start here, or a

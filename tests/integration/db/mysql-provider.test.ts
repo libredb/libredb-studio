@@ -959,10 +959,11 @@ describe("MySQLProvider", () => {
       expect(result.wasLimited).toBe(false);
     });
 
-    // `#` is MySQL's own second line-comment marker, and it is the reason the shared
-    // trivia pattern in `lib/sql/leading-keyword.ts` recognises one at all: without it
-    // a `# note`-led SELECT classified as an unknown statement type and reached the
-    // server with no LIMIT, which is #275's reported symptom on this provider.
+    // `#` is MySQL's own second line-comment marker, and it is the reason
+    // `lib/sql/leading-keyword.ts` skips such a run at all - on every dialect, since
+    // none of them can OPEN a statement with one. Without it a `# note`-led SELECT
+    // classified as an unknown statement type and reached the server with no LIMIT,
+    // which is #275's reported symptom on this provider.
     test.each<[string, string]>([
       ["a hash comment", "# note\nSELECT * FROM users"],
       ["a line comment", "-- note\nSELECT * FROM users"],

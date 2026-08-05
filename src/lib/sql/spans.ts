@@ -241,6 +241,48 @@ function readSubscripted(sql: string, index: number, grammar: SqlGrammar): SqlSp
 }
 
 /**
+ * A block comment under a grammar that NESTS: `/* a /* b *\/ c *\/` is one run.
+ *
+ * Depth is counted rather than matched, and both characters of every delimiter are
+ * consumed before the next look, so `/*\/` is one opener and no closer (the shared
+ * slash belongs to the opener) and the scan cannot see a delimiter twice. It is a
+ * single forward pass over the comment, so it stays linear on an adversarial nest -
+ * the property `leading-keyword.ts` records three measured regex failures for.
+ *
+ * Nothing inside a comment is a literal, here or in the engines this reads for: a
+ * `/*` written inside quotes in comment text is still an opener and a `*\/` inside
+ * them still closes. Looking for literals in there is the plausible wrong fix - it
+ * would make `/* it's /* deep *\/ still *\/` unterminated - so a fixture pins it.
+ *
+ * A run whose depth never returns to zero is reported undeterminable rather than
+ * closed at the last delimiter it saw. That is the fail-safe direction this module
+ * keeps everywhere: it costs the statement its bound (an over-large read) and, since
+ * #297, a confirmation prompt - where the guess would hide a write behind text the
+ * reader claimed to have read.
+ */
+function readNestedBlockComment(sql: string, index: number): SqlSpan {
+  let depth = 0;
+  let i = index;
+
+  while (i + 1 < sql.length) {
+    if (sql[i] === "/" && sql[i + 1] === "*") {
+      depth++;
+      i += 2;
+      continue;
+    }
+    if (sql[i] === "*" && sql[i + 1] === "/") {
+      depth--;
+      i += 2;
+      if (depth === 0) return { kind: "block-comment", end: i, terminated: true };
+      continue;
+    }
+    i++;
+  }
+
+  return { kind: "block-comment", end: sql.length, terminated: false };
+}
+
+/**
  * The closer Oracle pairs with an alternate-quote opener, or the opener itself.
  *
  * From node-oracledb's own SQL tokenizer (`lib/thin/statement.js`,
@@ -413,7 +455,20 @@ export function readSqlSpan(sql: string, index: number, grammar: SqlGrammar = DE
     return { kind: "line-comment", end: newline === -1 ? sql.length : newline + 1, terminated: true };
   }
 
+  // A `/*` written INSIDE a block comment opens a second one in PostgreSQL, SQL
+  // Server and ClickHouse and means nothing at all in MySQL, SQLite and Oracle, so
+  // the two readings put the comment's end in different places - and everything
+  // between the first `*\/` and the real end is either comment text or the
+  // statement's own code depending on which one applies. Read flat where the
+  // dialect nests, a `)` written in that region closed a CTE body that was still
+  // open, so the statement was typed by a keyword the operator had commented out:
+  // `WITH t AS (\n /* a /* b *\/ ) SELECT 1 *\/\n SELECT id FROM logs\n) INSERT …`
+  // was typed a read and handed a bound, which on PostgreSQL commits part of the
+  // insert. The grammar record answers it now (#300), and the flat reading survives
+  // as MySQL's, SQLite's, Oracle's and what a caller that named no dialect gets.
   if (ch === "/" && sql[index + 1] === "*") {
+    if (grammar.blockComment === "nesting") return readNestedBlockComment(sql, index);
+
     const close = sql.indexOf("*/", index + 2);
     if (close === -1) return { kind: "block-comment", end: sql.length, terminated: false };
     return { kind: "block-comment", end: close + 2, terminated: true };

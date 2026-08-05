@@ -299,6 +299,21 @@ and, **only for `SELECT`/CTE-`SELECT` queries that don't already have a `LIMIT`*
   Ordinary subscripts (`a[1]`, `ARRAY[1,2]`) are unaffected: still bounded, and no prompt. All four
   limiter shapes are pinned in `tests/integration/db/postgres-provider.test.ts`, the prompt they now
   also cost in `tests/components/QuerySafetyDialog.test.tsx`.
+- **Block comments NEST here, and that is the dialect's own rule** — PostgreSQL's manual (4.1.5
+  Comments) says they nest "as specified in the SQL standard but unlike C", precisely so a region that
+  already contains comments can be commented out. The shared reader used to end every comment at its
+  first `*/`, which handed everything between that marker and the comment's real end to the readers as
+  code. On this provider that was the most expensive shape in the family, because a `)` written in that
+  region closes a CTE body that is still open: `WITH recent AS (/* a /* b */ ) SELECT 1 */ SELECT id
+  FROM logs) INSERT INTO archive (id) SELECT id FROM recent` typed as a `SELECT` and collected a bound,
+  and on PostgreSQL that bound applies to the rows the INSERT **writes** — a partial commit reported as
+  a truncated result set. Under PostgreSQL's grammar the comment is read whole, the statement is typed
+  `INSERT`, and nothing is appended (#300). The read side improves too: `/* a /* b */ x */ SELECT id
+  FROM logs` is now typed `SELECT` and bounded, comment emitted intact. A comment carrying one opener
+  too many (`/* a /* b */ SELECT 1`) never closes here, so it is undeterminable: not bounded, and the
+  safety gate asks — the fail-safe direction, since the same text is either an unterminated comment the
+  server rejects or a comment hiding a statement nobody can see. Pinned in
+  `tests/integration/db/postgres-provider.test.ts`.
 - A statement leading with `WITH` is typed by the keyword its CTE list **operates**
   ([`operative-keyword.ts`](../../src/lib/sql/operative-keyword.ts)), so a data-modifying CTE
   (`WITH t AS (UPDATE … RETURNING …) INSERT INTO … SELECT …`) is **not** bounded. This matters most on

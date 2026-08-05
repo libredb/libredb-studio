@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import { classifySelectPrefix, hasDataModifyingStatement } from "@/lib/explain/select-prefix";
 
 describe("classifySelectPrefix", () => {
@@ -20,8 +21,11 @@ describe("classifySelectPrefix", () => {
   });
 
   // The `#` case above is a DELIBERATE widening, not inherited behaviour: it arrived
-  // when the query limiter needed the same comment tolerance (#275) and `#` went into
-  // the shared trivia pattern for MySQL's and MariaDB's sake. It answered `null` here
+  // when the query limiter needed the same comment tolerance (#275) and a leading `#`
+  // run became trivia in the shared reader for MySQL's and MariaDB's sake - which it
+  // still is on every dialect, because none can open a statement with one, and that
+  // is the one reading in `lib/sql/leading-keyword.ts` the dialect does not
+  // decide (#300). It answered `null` here
   // before, so all six strategies used to hide the Explain button for a `#`-annotated
   // statement and now build one.
   //
@@ -72,6 +76,27 @@ describe("classifySelectPrefix", () => {
     ["a comment that never closes before the keyword", "-- SELECT 1"],
   ])("returns null for %s", (_label, sql) => {
     expect(classifySelectPrefix(sql)).toBeNull();
+  });
+
+  /**
+   * The classifier takes a grammar too, because one caller's EXPLAIN executes what it
+   * explains (#300).
+   *
+   * `classifySelectPrefix` is dialect-blind by default and stays that way: the shared
+   * reading is the flat one, and for five of the six strategies a misread comment costs
+   * at most a refused Explain button. PostgreSQL's is the exception — `EXPLAIN
+   * (ANALYZE, …)` runs the statement and that path skips the confirmation gate — so
+   * that strategy passes PostgreSQL's grammar, under which a nested comment is read
+   * whole and the statement below is seen for the write it is.
+   */
+  test("reads leading trivia under the grammar it is given", () => {
+    const hiddenWrite = "/* a /* b */ SELECT 1 */ DELETE FROM users";
+
+    expect(classifySelectPrefix(hiddenWrite)).toBe("select");
+    expect(classifySelectPrefix(hiddenWrite, resolveSqlGrammar("postgres"))).toBeNull();
+
+    const read = "/* a /* b */ x */ SELECT 1";
+    expect(classifySelectPrefix(read, resolveSqlGrammar("postgres"))).toBe("select");
   });
 
   /**

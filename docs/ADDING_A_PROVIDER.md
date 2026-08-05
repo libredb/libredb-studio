@@ -432,7 +432,13 @@ control that only emits invalid input. That is the defect class
   therefore pairs the shared classification with `hasDataModifyingStatement()`, and it applies that
   screen **only** to the `"with"` case, because a statement leading with `SELECT` cannot carry such a
   CTE and screening it too would strip the button off anything that merely mentions `insert`. The
-  other five engines describe without running and need no screen.
+  other five engines describe without running and need no screen. `classifySelectPrefix()` takes an
+  optional grammar for the same reason: an explain run bypasses the confirmation dialog, so on the one
+  engine whose EXPLAIN executes, a comment read by the wrong dialect's rule is a write executed with no
+  prompt — `postgres-json.ts` therefore passes PostgreSQL's grammar (block comments nest there, and a
+  flat reading of `/* a /* b */ SELECT 1 */ DELETE …` reports `SELECT`; verified on 18, the rows were
+  deleted). If your engine's comment or quoting rules differ from the compatibility default, pass its
+  grammar too.
 - A capability can be absent because the **grammar** lacks it rather than because nobody implemented
   it, and the flag reads the same either way — so check, and then say so. Druid answers
   `CREATE TABLE t (id BIGINT)` with a syntax error, because `CREATE` is not one of its statements at

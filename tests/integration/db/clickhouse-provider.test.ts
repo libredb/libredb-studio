@@ -1018,6 +1018,40 @@ describe("ClickHouseProvider query preparation", () => {
     expect(prepared.wasLimited).toBe(false);
   });
 
+  // ── Block comments NEST here too (#300) ───────────────────────────────────
+  //
+  // ClickHouse's syntax reference states C-style comments can be nested and gives
+  // a nested example. Read flat, the run between the inner `*/` and the comment's
+  // real end reaches the readers as code, which costs a statement carrying one its
+  // bound - the entire cost on this engine, which has no data-modifying CTE.
+
+  test.each<[string, string]>([
+    ["a leading nested comment", "/* a /* b */ x */ SELECT arrayJoin([1, 2]) AS n"],
+    ["a nested comment inside a CTE element", "WITH /* a /* b */ x */ 1 AS one SELECT one FROM events"],
+    ["a nested comment carrying a close bracket and a paren", "SELECT /* a /* ] ) */ x */ [1,2] AS a FROM t"],
+  ])("bounds a statement carrying %s, emitted intact", (_label, sql) => {
+    const prepared = provider().prepareQuery(sql, { limit: 25 });
+
+    expect(prepared.query).toBe(`${sql} LIMIT 25`);
+    expect(prepared.wasLimited).toBe(true);
+  });
+
+  test("places the bound before a trailing nested comment, not inside it", () => {
+    const prepared = provider().prepareQuery("SELECT n FROM events /* a /* b */ c */", { limit: 25 });
+
+    expect(prepared.query).toBe("SELECT n FROM events LIMIT 25 /* a /* b */ c */");
+    expect(prepared.wasLimited).toBe(true);
+  });
+
+  test("refuses to rewrite a statement whose nested comment never closes", () => {
+    const sql = "/* a /* b */ SELECT n FROM events";
+
+    const prepared = provider().prepareQuery(sql, { limit: 25 });
+
+    expect(prepared.query).toBe(sql);
+    expect(prepared.wasLimited).toBe(false);
+  });
+
   // ── Expression-form CTEs (#291) ───────────────────────────────────────────
   //
   // `WITH <expr> AS <alias>` is how a CTE is ordinarily written here, and it is

@@ -11,6 +11,7 @@ import {
   type QueryPrepareOptions,
 } from "../../types";
 import { analyzeQuery, applyQueryLimit, DEFAULT_QUERY_LIMIT, MAX_UNLIMITED_ROWS } from "../../utils/query-limiter";
+import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import { readLeadingKeyword } from "@/lib/sql/leading-keyword";
 
 // ============================================================================
@@ -127,9 +128,18 @@ export abstract class SQLBaseProvider extends BaseDatabaseProvider {
    * write branch and returned no rows for a query that has data (#275). And
    * `startsWith` has no word boundary, so a statement led by an identifier that
    * merely begins with a keyword answered true; reading the whole word ends that.
+   *
+   * Both pass `this.type`, so the leading comment is read the way THIS engine reads
+   * it - which for a dialect that nests block comments is not where a flat reading
+   * ends one (#300). No provider's answer changes today: `isReadOnlyQuery`'s only
+   * caller is the SQLite provider's `all()`/`run()` routing and SQLite reads comments
+   * flat, while `isSchemaModifyingQuery` has no caller in `src/` at all. The grammar is
+   * threaded anyway, so that the day a nesting dialect routes on either predicate it
+   * reads the statement the way its own server will - and so that no reader in this
+   * class disagrees with the limiter one method below it.
    */
   protected isReadOnlyQuery(sql: string): boolean {
-    const keyword = readLeadingKeyword(sql)?.keyword;
+    const keyword = readLeadingKeyword(sql, resolveSqlGrammar(this.type))?.keyword;
     return keyword !== undefined && READ_ONLY_KEYWORDS.has(keyword);
   }
 
@@ -137,7 +147,7 @@ export abstract class SQLBaseProvider extends BaseDatabaseProvider {
    * Check if query modifies schema (CREATE, DROP, ALTER, TRUNCATE)
    */
   protected isSchemaModifyingQuery(sql: string): boolean {
-    const keyword = readLeadingKeyword(sql)?.keyword;
+    const keyword = readLeadingKeyword(sql, resolveSqlGrammar(this.type))?.keyword;
     return keyword !== undefined && SCHEMA_MODIFYING_KEYWORDS.has(keyword);
   }
 

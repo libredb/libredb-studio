@@ -375,6 +375,31 @@ describe("useQueryAdapter", () => {
   });
 
   /**
+   * The embedded path's half of #300: the default connection here is PostgreSQL,
+   * where block comments NEST, so a comment carrying a second opener runs past the
+   * `*\/` a flat reading stops at. Read flat, the word after that marker answered
+   * for the statement - one the operator commented out, never in the dangerous set -
+   * so the `DROP` reached the host application's executor with no confirmation. The
+   * two shapes ask for different reasons: the balanced one because the `DROP` is now
+   * read, the unbalanced one because the text cannot be resolved at all.
+   */
+  test.each<[string, string]>([
+    ["a balanced nested comment", "/* outer /* inner */ still a note */ DROP TABLE users"],
+    ["a nested comment that never closes", "/* outer /* inner */ DROP TABLE users"],
+  ])("executeQuery sets safetyCheckQuery for a destructive statement behind %s", async (_label, hidden) => {
+    const params = makeHookParams();
+
+    const { result } = renderHook(() => useQueryAdapter(params));
+
+    await act(async () => {
+      await result.current.executeQuery(hidden);
+    });
+
+    expect(result.current.safetyCheckQuery).toBe(hidden);
+    expect(params.onQueryExecute).not.toHaveBeenCalled();
+  });
+
+  /**
    * The embedded path's half of #297: a write hidden behind a run the reader cannot
    * resolve reaches the dialog instead of the server.
    *

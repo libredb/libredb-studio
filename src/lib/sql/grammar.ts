@@ -69,10 +69,29 @@ export type HashGrammar = "comment" | "code" | "comment-unless-operator";
  */
 export type BracketGrammar = "quoted-identifier" | "subscript";
 
+/**
+ * Where a block comment ENDS when a second `/*` is written inside it.
+ *
+ * - `flat` - the first `*\/` closes the run, whatever is inside it. MySQL,
+ *   MariaDB, SQLite, Oracle.
+ * - `nesting` - a `/*` inside a comment opens another one, so the run continues
+ *   until the depth returns to zero. PostgreSQL, SQL Server, ClickHouse. A run
+ *   short of a closer is then undeterminable rather than closed early, which costs
+ *   a bound and asks for a confirmation instead of hiding a write.
+ *
+ * The two readings put the comment's end in different places, and everything
+ * between the first `*\/` and the real end is either comment text or the
+ * statement's own code depending on which one applies - so a `)` written there
+ * either closes a CTE body or does not, and the keyword that types the statement
+ * changes with it (#300).
+ */
+export type BlockCommentGrammar = "flat" | "nesting";
+
 /** The grammar facts that differ between the engines this product supports. */
 export interface SqlGrammar {
   readonly hash: HashGrammar;
   readonly bracket: BracketGrammar;
+  readonly blockComment: BlockCommentGrammar;
   /**
    * Whether `q'…'` opens a string literal - Oracle's alternate quoting.
    *
@@ -100,6 +119,7 @@ export interface SqlGrammar {
 export const DEFAULT_SQL_GRAMMAR: SqlGrammar = {
   hash: "comment-unless-operator",
   bracket: "quoted-identifier",
+  blockComment: "flat",
   alternateQuoting: false,
 };
 
@@ -113,21 +133,39 @@ export const DEFAULT_SQL_GRAMMAR: SqlGrammar = {
 const MYSQL_GRAMMAR: SqlGrammar = {
   hash: "comment",
   bracket: DEFAULT_SQL_GRAMMAR.bracket,
+  blockComment: "flat",
   alternateQuoting: false,
 };
-const CLICKHOUSE_GRAMMAR: SqlGrammar = { hash: "comment", bracket: "subscript", alternateQuoting: false };
+const CLICKHOUSE_GRAMMAR: SqlGrammar = {
+  hash: "comment",
+  bracket: "subscript",
+  blockComment: "nesting",
+  alternateQuoting: false,
+};
 const POSTGRES_GRAMMAR: SqlGrammar = {
   hash: "code",
   bracket: DEFAULT_SQL_GRAMMAR.bracket,
+  blockComment: "nesting",
   alternateQuoting: false,
 };
 const ORACLE_GRAMMAR: SqlGrammar = {
   hash: "code",
   bracket: DEFAULT_SQL_GRAMMAR.bracket,
+  blockComment: "flat",
   alternateQuoting: true,
 };
-const MSSQL_GRAMMAR: SqlGrammar = { hash: "code", bracket: "quoted-identifier", alternateQuoting: false };
-const SQLITE_GRAMMAR: SqlGrammar = { hash: "code", bracket: "quoted-identifier", alternateQuoting: false };
+const MSSQL_GRAMMAR: SqlGrammar = {
+  hash: "code",
+  bracket: "quoted-identifier",
+  blockComment: "nesting",
+  alternateQuoting: false,
+};
+const SQLITE_GRAMMAR: SqlGrammar = {
+  hash: "code",
+  bracket: "quoted-identifier",
+  blockComment: "flat",
+  alternateQuoting: false,
+};
 
 /**
  * The established readings, one row per fact per dialect.
@@ -144,8 +182,9 @@ const SQLITE_GRAMMAR: SqlGrammar = { hash: "code", bracket: "quoted-identifier",
  * Sources, one per row, all offline or first-party documentation:
  *
  * - `mysql` - `#` to end of line is MySQL's and MariaDB's second comment form;
- *   this repo already encodes it in `leading-keyword.ts`'s trivia pattern and
- *   pins it in the MySQL provider suite (#275).
+ *   this repo already skipped such a run in a statement's LEADING trivia before the
+ *   record existed - `leading-keyword.ts` still does, on every dialect, and says
+ *   why - and pins it in the MySQL provider suite (#275).
  * - `clickhouse` - the ClickHouse SQL syntax reference
  *   (clickhouse.com/docs/sql-reference/syntax, "Comments", checked 2026-08-05)
  *   lists `#` and `#!` beside `--` as single-line comment forms. The only row
@@ -185,6 +224,31 @@ const SQLITE_GRAMMAR: SqlGrammar = { hash: "code", bracket: "quoted-identifier",
  *   (`WITH [1, 2, 3] AS arr SELECT arrayJoin(arr)`), and that it is NOT an
  *   identifier quote by `identifier.ts`, which quotes this dialect's names with the
  *   standard `"…"` form. The nesting half rests on the reference alone.
+ * - Block comments, one source per dialect and every row established, so no
+ *   dialect in this table is left undecided about this fact (#300):
+ *   - `postgres` NESTS - the PostgreSQL manual's lexical-structure chapter (4.1.5
+ *     Comments, postgresql.org/docs/current/sql-syntax-lexical.html; checked
+ *     2026-08-05) says block comments nest "as specified in the SQL standard but
+ *     unlike C", precisely so a region containing comments can be commented out.
+ *   - `mssql` NESTS - "Slash Star (Block Comment) (Transact-SQL)"
+ *     (learn.microsoft.com; checked 2026-08-05): nested comments are supported, a
+ *     `/*` anywhere inside a comment starts a nested one, and a missing closer is
+ *     an error. This is the row the report on #300 got wrong, which is why it was
+ *     re-established rather than copied.
+ *   - `clickhouse` NESTS - the ClickHouse SQL syntax reference
+ *     (clickhouse.com/docs/sql-reference/syntax; checked 2026-08-05) states C-style
+ *     comments can be nested and gives a nested example. Same caveat as its `#`
+ *     row: reached over HTTP, so there is no driver artifact to check it against.
+ *   - `mysql` is FLAT - the MySQL reference manual (11.7 Comments, dev.mysql.com;
+ *     checked 2026-08-05) states nested comments are not supported and are
+ *     deprecated. It adds that they "might be permitted" under some conditions and
+ *     that users should avoid them, which is a reason to read the first `*\/` as
+ *     the end rather than to guess at a second reading.
+ *   - `sqlite` is FLAT, from the bundled amalgamation's own tokenizer: `case
+ *     CC_SLASH` scans forward for the first `*\/` with no depth count at all.
+ *   - `oracle` is FLAT - node-oracledb's tokenizer (`_parseMultiLineComment`)
+ *     stops at the first `*\/`, and Oracle's PL/SQL Language Reference states that
+ *     one multiline comment cannot contain another.
  *
  * NOT established, and therefore left at the default: how `mysql`, `postgres` and
  * `oracle` read `[…]`. It is not an identifier quote in any of the three -

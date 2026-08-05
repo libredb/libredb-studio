@@ -157,6 +157,112 @@ describe("readSqlSpan", () => {
     });
   });
 
+  // ── A second opener inside a comment is the dialect's answer (#300) ───────
+  //
+  // The cases above all call without a dialect and keep the reading this module
+  // always had: the first `*/` closes the run. Where a dialect NESTS them, that
+  // reading hands the text between the first `*/` and the comment's real end to
+  // the readers above as code - and both of them are then wrong at once, because
+  // a `)` in there ends a CTE body early (so the statement is typed by a keyword
+  // written inside a comment) and the keyword the confirmation gate reads is one
+  // the operator commented out.
+
+  describe("a named dialect decides where a block comment ends", () => {
+    const POSTGRES = resolveSqlGrammar("postgres");
+    const MSSQL = resolveSqlGrammar("mssql");
+    const CLICKHOUSE_G = resolveSqlGrammar("clickhouse");
+    const MYSQL = resolveSqlGrammar("mysql");
+    const SQLITE = resolveSqlGrammar("sqlite");
+    const ORACLE_G = resolveSqlGrammar("oracle");
+
+    const NESTED = "/* a /* b */ c */ SELECT 1";
+
+    test.each<[string, SqlGrammar]>([
+      ["postgres", POSTGRES],
+      ["mssql", MSSQL],
+      ["clickhouse", CLICKHOUSE_G],
+    ])("a nesting grammar (%s) reads the inner comment as part of the outer one", (_label, grammar) => {
+      expect(spanOf(NESTED, 0, grammar)).toBe("block-comment|/* a /* b */ c */");
+    });
+
+    test.each<[string, SqlGrammar | undefined]>([
+      ["mysql", MYSQL],
+      ["sqlite", SQLITE],
+      ["oracle", ORACLE_G],
+      ["no dialect at all", undefined],
+    ])("a flat grammar (%s) closes it at the first delimiter", (_label, grammar) => {
+      expect(spanOf(NESTED, 0, grammar)).toBe("block-comment|/* a /* b */");
+    });
+
+    // The fail-safe half of the nesting reading: one opener too many means the
+    // comment never closes, so the span is undeterminable rather than guessed -
+    // which costs a bound and, since #297, asks for a confirmation.
+    test("a nesting grammar reports an unclosed nested comment as undeterminable", () => {
+      expect(readSqlSpan("/* a /* b */ DROP TABLE t", 0, POSTGRES)).toEqual({
+        kind: "block-comment",
+        end: 25,
+        terminated: false,
+      });
+    });
+
+    test("depth is counted, not matched: three levels close in order", () => {
+      expect(spanOf("/*1 /*2 /*3 */ 2*/ 1*/ SELECT", 0, POSTGRES)).toBe("block-comment|/*1 /*2 /*3 */ 2*/ 1*/");
+    });
+
+    test.each<[string, string]>([
+      ["an empty comment", "/**/"],
+      ["a comment holding a lone star", "/* a * b */"],
+      ["a comment with a body", "/*a*/"],
+    ])("a nesting grammar answers %s exactly as the flat reading does", (_label, sql) => {
+      expect(spanOf(`${sql} SELECT 1`, 0, POSTGRES)).toBe(`block-comment|${sql}`);
+      expect(spanOf(`${sql} SELECT 1`, 0)).toBe(`block-comment|${sql}`);
+    });
+
+    // Adjacent comments do not nest into each other: the first closes at depth zero,
+    // and the second is a separate span. Worth asserting because a depth counter that
+    // kept scanning past a zero crossing would swallow both.
+    test("a nesting grammar ends the first of two adjacent comments at its own closer", () => {
+      expect(spanOf("/*a*//*b*/SELECT 1", 0, POSTGRES)).toBe("block-comment|/*a*/");
+      expect(spanOf("/*a*//*b*/SELECT 1", 5, POSTGRES)).toBe("block-comment|/*b*/");
+    });
+
+    // An empty nested comment is the smallest input where the two readings differ,
+    // so it belongs here rather than in the list above: the nesting reading needs
+    // both closers, the flat one stops at the first.
+    test("the two readings of an empty nested comment differ by its second closer", () => {
+      expect(spanOf("/*/**/*/ SELECT 1", 0, POSTGRES)).toBe("block-comment|/*/**/*/");
+      expect(spanOf("/*/**/*/ SELECT 1", 0)).toBe("block-comment|/*/**/");
+    });
+
+    // `/*/` is one opener and no closer: the slash the two delimiters share is
+    // consumed by the opener, so this never closes under either reading.
+    test.each<[string, SqlGrammar | undefined]>([
+      ["a nesting grammar", POSTGRES],
+      ["the default", undefined],
+    ])("%s leaves `/*/` unterminated", (_label, grammar) => {
+      expect(readSqlSpan("/*/", 0, grammar)).toEqual({ kind: "block-comment", end: 3, terminated: false });
+    });
+
+    // Inside a comment there are no literals, in this reader and in the engines it
+    // is reading for: a `/*` written inside a quoted-looking run is still an
+    // opener, and a `*/` inside one still closes. Asserted because the opposite
+    // guess - looking for literals inside comment text - is the plausible wrong fix.
+    test("a quote inside comment text neither opens a literal nor hides a delimiter", () => {
+      expect(spanOf("/* it's /* deep */ still */ SELECT 1", 0, POSTGRES)).toBe(
+        "block-comment|/* it's /* deep */ still */",
+      );
+    });
+
+    // A comment is trivia, so a nested one cannot be part of a statement's text -
+    // but a nested comment INSIDE a bracketed subscript is crossed by the run that
+    // contains it, and that run has to stay one span (#295).
+    test("a nested comment inside a ClickHouse subscript is crossed with the run", () => {
+      expect(spanOf("[1 /* ] /* deep */ still */, 2] x", 0, CLICKHOUSE_G)).toBe(
+        "subscript|[1 /* ] /* deep */ still */, 2]",
+      );
+    });
+  });
+
   // ── Literals ────────────────────────────────────────────────────────────
 
   describe("single-quoted strings", () => {
@@ -557,6 +663,37 @@ describe("hasUnterminatedSpan", () => {
 
     expect(hasUnterminatedSpan(nested)).toBe(true);
     expect(hasUnterminatedSpan(nested, resolveSqlGrammar("clickhouse"))).toBe(false);
+  });
+
+  test("the dialect decides whether a nested comment resolves", () => {
+    // One opener too many: flat reading closes at the first `*/` and reads the
+    // rest as code, while a nesting dialect is still inside the comment when the
+    // input runs out - so the same text is resolvable under one and not the other,
+    // and the gate asks only where it cannot be read (#300).
+    const unclosed = "/* a /* b */ DROP TABLE users";
+
+    expect(hasUnterminatedSpan(unclosed)).toBe(false);
+    expect(hasUnterminatedSpan(unclosed, resolveSqlGrammar("mysql"))).toBe(false);
+    expect(hasUnterminatedSpan(unclosed, resolveSqlGrammar("postgres"))).toBe(true);
+
+    // Balanced, so a nesting dialect resolves it - and the gate then has to find
+    // the DROP by reading the statement rather than by giving up on the text.
+    const balanced = "/* a /* b */ c */ DROP TABLE users";
+
+    expect(hasUnterminatedSpan(balanced, resolveSqlGrammar("postgres"))).toBe(false);
+  });
+
+  test("answers in bounded time on a deeply nested comment", () => {
+    // The depth count is a single forward pass, so an adversarial nest is linear.
+    // Unbalanced on purpose: the answer has to be reached by scanning to the end.
+    const deep = `${"/*".repeat(20000)} SELECT 1`;
+
+    const started = performance.now();
+    const unresolved = hasUnterminatedSpan(deep, resolveSqlGrammar("postgres"));
+    const elapsed = performance.now() - started;
+
+    expect(unresolved).toBe(true);
+    expect(elapsed, `took ${elapsed.toFixed(1)}ms`).toBeLessThan(200);
   });
 
   test("the dialect decides whether an alternate-quoted literal resolves", () => {

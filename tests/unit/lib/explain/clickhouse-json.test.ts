@@ -243,6 +243,21 @@ describe("clickhouseJsonStrategy", () => {
     );
   });
 
+  // Block comments nest in ClickHouse too (#300), so this strategy reads the statement
+  // under ClickHouse's grammar. Nothing here executes - ClickHouse's EXPLAIN describes
+  // without running, unlike PostgreSQL's ANALYZE - so what this buys is an honest
+  // classification rather than a write prevented: a statement whose real keyword is a
+  // write no longer gets an Explain built for it, and a read hidden behind a nested
+  // comment does.
+  test("buildSql reads a nested comment the way ClickHouse does", () => {
+    expect(
+      clickhouseJsonStrategy.buildSql("/* a /* b */ SELECT 1 */ ALTER TABLE users DELETE WHERE id = 1", "estimate"),
+    ).toBeNull();
+
+    const read = "/* a /* b */ x */ SELECT 1";
+    expect(clickhouseJsonStrategy.buildSql(read, "estimate")).toBe(`EXPLAIN json = 1, indexes = 1 ${read}`);
+  });
+
   test("buildSql returns null for non-SELECT statements in both modes", () => {
     expect(clickhouseJsonStrategy.buildSql("INSERT INTO users FORMAT Values (1)", "estimate")).toBeNull();
     expect(

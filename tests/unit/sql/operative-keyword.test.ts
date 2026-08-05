@@ -447,6 +447,44 @@ describe("readOperativeKeyword", () => {
     });
   });
 
+  // ── The block-comment grammar (#300) ────────────────────────────────────
+  //
+  // A comment that NESTS ends later than a flat reading thinks, and everything in
+  // between is handed to this walker as code. A `)` written in that region closes
+  // the CTE body early, so the statement is typed by a keyword the operator
+  // commented out - and on PostgreSQL, where a `WITH … INSERT` really writes, the
+  // bound that follows commits part of it.
+
+  describe("a nested comment inside a CTE list", () => {
+    const POSTGRES = resolveSqlGrammar("postgres");
+    const MYSQL = resolveSqlGrammar("mysql");
+
+    const HIDDEN_WRITE = (write: string) =>
+      `WITH recent AS (\n  /* outer /* inner */ ) SELECT 1 */\n  SELECT id FROM logs\n)\n${write}`;
+
+    test.each<[string, string]>([
+      ["an INSERT", "INSERT INTO archive (id) SELECT id FROM recent"],
+      ["an UPDATE", "UPDATE archive SET seen = true WHERE id IN (SELECT id FROM recent)"],
+      ["a DELETE", "DELETE FROM archive WHERE id IN (SELECT id FROM recent)"],
+    ])("reports %s under a nesting grammar, where the whole comment is a comment", (_label, write) => {
+      expect(operativeOf(HIDDEN_WRITE(write), POSTGRES)).toBe(write.split(" ")[0]);
+    });
+
+    test("reports the keyword written inside the comment under a flat grammar", () => {
+      // MySQL closes the comment at the first `*/`, so the `)` after it really does
+      // end the CTE body there and `SELECT` really is the next word. The text is a
+      // syntax error on MySQL either way; what matters is that the answer is the
+      // dialect's own reading rather than a shared guess.
+      expect(operativeOf(HIDDEN_WRITE("INSERT INTO archive (id) SELECT id FROM recent"), MYSQL)).toBe("SELECT");
+    });
+
+    test("reports null under a nesting grammar when the nested comment never closes", () => {
+      const unclosed = "WITH recent AS (\n  /* outer /* inner */\n  SELECT id FROM logs\n) DELETE FROM users";
+
+      expect(operativeOf(unclosed, POSTGRES)).toBeNull();
+    });
+  });
+
   // ── Bounded time ────────────────────────────────────────────────────────
   //
   // The CTE-list scan is a character scanner rather than a regex over

@@ -1,5 +1,11 @@
 import { describe, test, expect } from "bun:test";
-import { type BracketGrammar, DEFAULT_SQL_GRAMMAR, hashRunIsAmbiguous, resolveSqlGrammar } from "@/lib/sql/grammar";
+import {
+  type BlockCommentGrammar,
+  type BracketGrammar,
+  DEFAULT_SQL_GRAMMAR,
+  hashRunIsAmbiguous,
+  resolveSqlGrammar,
+} from "@/lib/sql/grammar";
 import type { DatabaseType } from "@/lib/types";
 
 /**
@@ -14,9 +20,11 @@ import type { DatabaseType } from "@/lib/types";
 describe("resolveSqlGrammar", () => {
   // ── `#`: established readings ────────────────────────────────────────────
   //
-  // - MySQL/MariaDB: `#` opens a line comment. The repo already encodes this in
-  //   `leading-keyword.ts`'s trivia pattern and pins it in the MySQL provider
-  //   suite (`# note\nSELECT …` is bounded), which is what #275 closed.
+  // - MySQL/MariaDB: `#` opens a line comment. The repo already skipped such a run
+  //   in a statement's LEADING trivia before this record existed - and still does,
+  //   on every dialect, because none of them can open a statement with one - and it
+  //   pins that in the MySQL provider suite (`# note\nSELECT …` is bounded), which
+  //   is what #275 closed.
   // - ClickHouse: `#` and `#!` open a line comment (ClickHouse syntax reference).
   // - PostgreSQL: the only comment forms are `--` and `/* */`; `#` is an operator
   //   character (`#>`, `#-`, `##`, integer XOR).
@@ -144,6 +152,46 @@ describe("resolveSqlGrammar", () => {
     // #291/#299 fixtures assert, and the corrupted-statement shape those closed
     // (`SELECT [a LIMIT 500--b] FROM t`) is what a code reading brings back.
     expect(DEFAULT_SQL_GRAMMAR.bracket).toBe("quoted-identifier");
+  });
+
+  // ── `/* … /* … */ … */`: where a block comment ENDS (#300) ────────────────
+  //
+  // The one grammar fact that moves the end of a construct the reader is
+  // otherwise happy with: a second opener written inside a comment is either part
+  // of the comment (so the run continues past the next `*/`) or it is nothing at
+  // all (so the run ends there and everything after it is the statement's code).
+  //
+  // - PostgreSQL: block comments nest, "as specified in the SQL standard but
+  //   unlike C" (PostgreSQL manual, 4.1.5 Comments).
+  // - SQL Server: nested comments are supported - a `/*` anywhere inside a comment
+  //   opens a nested one and needs its own `*/` (T-SQL "Slash Star (Block
+  //   Comment)").
+  // - ClickHouse: C-style comments can be nested (ClickHouse SQL syntax
+  //   reference, which gives a nested example).
+  // - MySQL/MariaDB: nested comments are NOT supported and are deprecated (MySQL
+  //   reference manual, 11.7 Comments), so the first `*/` ends the run.
+  // - SQLite: the bundled amalgamation's tokenizer (`case CC_SLASH`) scans for the
+  //   first `*/` with no depth count at all.
+  // - Oracle: node-oracledb's own tokenizer (`_parseMultiLineComment`) stops at the
+  //   first `*/`, and Oracle's PL/SQL reference states one multiline comment
+  //   cannot contain another.
+
+  test.each<[DatabaseType, BlockCommentGrammar]>([
+    ["postgres", "nesting"],
+    ["mssql", "nesting"],
+    ["clickhouse", "nesting"],
+    ["mysql", "flat"],
+    ["sqlite", "flat"],
+    ["oracle", "flat"],
+  ])("%s closes a block comment the %s way", (type, blockComment) => {
+    expect(resolveSqlGrammar(type).blockComment).toBe(blockComment);
+  });
+
+  test("the compatibility default does not nest block comments", () => {
+    // Today's reading again: every fixture written for #275, #280, #287, #291 and
+    // #294 calls these readers without a dialect, and `indexOf("*/")` is what they
+    // were written against.
+    expect(DEFAULT_SQL_GRAMMAR.blockComment).toBe("flat");
   });
 });
 

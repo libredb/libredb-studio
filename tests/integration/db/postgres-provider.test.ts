@@ -1786,5 +1786,47 @@ describe("PostgresProvider", () => {
       expect(result.query).toBe(sql);
       expect(result.wasLimited).toBe(false);
     });
+
+    // ── Block comments NEST here (#300) ────────────────────────────────────
+    //
+    // PostgreSQL's manual (4.1.5) says block comments nest "as specified in the SQL
+    // standard but unlike C", so a `/*` written inside one opens a second comment
+    // and the run continues past the next `*/`. Read flat, everything between that
+    // `*/` and the comment's real end reaches the readers as code - and this is the
+    // provider where that costs the most, because `WITH … INSERT` really writes and
+    // a bound appended to it commits part of the write.
+
+    test.each<[string, string]>([
+      ["an INSERT … SELECT", "INSERT INTO archive (id) SELECT id FROM recent"],
+      ["an UPDATE … SET", "UPDATE archive SET seen = true WHERE id IN (SELECT id FROM recent)"],
+    ])("leaves %s hidden behind a nested comment unbounded, emitted intact", (_label, write) => {
+      provider = new PostgresProvider(makePgConfig());
+      const sql = `WITH recent AS (\n  /* outer /* inner */ ) SELECT 1 */\n  SELECT id FROM logs\n)\n${write}`;
+
+      const result = provider.prepareQuery(sql, { limit: 50 });
+
+      expect(result.query).toBe(sql);
+      expect(result.wasLimited).toBe(false);
+    });
+
+    test("bounds a read behind a nested comment, and emits the comment intact", () => {
+      provider = new PostgresProvider(makePgConfig());
+      const sql = "/* outer /* inner */ still a note */ SELECT id FROM logs";
+
+      const result = provider.prepareQuery(sql, { limit: 50 });
+
+      expect(result.query).toBe(`${sql} LIMIT 50`);
+      expect(result.wasLimited).toBe(true);
+    });
+
+    test("leaves a statement whose nested comment never closes untouched", () => {
+      provider = new PostgresProvider(makePgConfig());
+      const sql = "/* outer /* inner */ SELECT id FROM logs";
+
+      const result = provider.prepareQuery(sql, { limit: 50 });
+
+      expect(result.query).toBe(sql);
+      expect(result.wasLimited).toBe(false);
+    });
   });
 });

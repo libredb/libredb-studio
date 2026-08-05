@@ -31,7 +31,7 @@ import { DatabaseConfigError, ConnectionError, QueryError, mapDatabaseError } fr
 import { formatBytes } from "../../utils/pool-manager";
 import { analyzeQuery, DEFAULT_QUERY_LIMIT, MAX_UNLIMITED_ROWS } from "../../utils/query-limiter";
 import { readLeadingKeyword } from "@/lib/sql/leading-keyword";
-import { resolveSqlGrammar } from "@/lib/sql/grammar";
+import { resolveSqlGrammar, type SqlGrammar } from "@/lib/sql/grammar";
 import { readStatementEnd } from "@/lib/sql/statement-end";
 
 // Row shape used to group foreign keys per table in getSchema().
@@ -47,12 +47,23 @@ type ForeignKeyInfo = { columnName: string; referencedTable: string; referencedC
  * (#275). `DISTINCT` is found the same way, so `SELECT /* c *\/ DISTINCT a` places
  * `TOP` after the `DISTINCT` and not between the two - `SELECT TOP n DISTINCT ...`
  * is a syntax error in T-SQL.
+ *
+ * Every one of those three reads takes T-SQL's grammar, because this is a HEAD
+ * rewrite and the index comes from the reading: T-SQL nests block comments, so a
+ * flat reading of `SELECT /* a /* b *\/ DISTINCT *\/ name FROM t` found a
+ * `DISTINCT` that is inside the comment and spliced the `TOP` in after it - inside
+ * the comment too. SQL Server then ran the statement unbounded while this provider
+ * reported a limit, which is #280's shape rather than a missed bound (#300).
+ *
+ * The two SUFFIX slices are safe under this dialect's grammar specifically: only
+ * the alternate-quote tag reads the character before its index (see `readSqlSpan`),
+ * and T-SQL does not have that form.
  */
-function injectTop(sql: string, limit: number): string | null {
-  const select = readLeadingKeyword(sql);
+function injectTop(sql: string, limit: number, grammar: SqlGrammar): string | null {
+  const select = readLeadingKeyword(sql, grammar);
   if (select === null || select.keyword !== "SELECT") return null;
 
-  const next = readLeadingKeyword(sql.slice(select.end));
+  const next = readLeadingKeyword(sql.slice(select.end), grammar);
   const insertAt = next?.keyword === "DISTINCT" ? select.end + next.end : select.end;
 
   // A `TOP` already sitting where this one would go means the statement carries its
@@ -60,7 +71,7 @@ function injectTop(sql: string, limit: number): string | null {
   // whitespace between the two words, so a comment between them defeats it, as does
   // a `DISTINCT`. Splicing anyway yields `SELECT TOP 50 TOP 10` and a syntax error,
   // so decline and let the caller report that nothing was limited.
-  if (readLeadingKeyword(sql.slice(insertAt))?.keyword === "TOP") return null;
+  if (readLeadingKeyword(sql.slice(insertAt), grammar)?.keyword === "TOP") return null;
 
   return `${sql.slice(0, insertAt)} TOP ${limit}${sql.slice(insertAt)}`;
 }
@@ -623,7 +634,10 @@ export class MSSQLProvider extends SQLBaseProvider {
       // it, and the already-bounded probe sees a `FETCH NEXT` written after the
       // `#` even when trailing trivia follows it.
       const source = query.trim();
-      const { end, rewritable } = readStatementEnd(source, resolveSqlGrammar(this.type));
+      // Resolved once and handed to both readers below, so the head splice and the
+      // end reader cannot disagree about where a comment ends (#300).
+      const grammar = resolveSqlGrammar(this.type);
+      const { end, rewritable } = readStatementEnd(source, grammar);
       let modifiedSql = source.slice(0, end);
       const trailing = source.slice(end);
 
@@ -652,7 +666,7 @@ export class MSSQLProvider extends SQLBaseProvider {
         modifiedSql = `${modifiedSql} OFFSET ${offset} ROWS FETCH NEXT ${effectiveLimit} ROWS ONLY`;
       } else {
         // Inject TOP N after SELECT
-        const injected = injectTop(modifiedSql, effectiveLimit);
+        const injected = injectTop(modifiedSql, effectiveLimit, grammar);
 
         // Nothing to inject into: report the truth rather than a limit that is not
         // there. `analyzeQuery` also calls a CTE a SELECT, and `TOP` belongs to the

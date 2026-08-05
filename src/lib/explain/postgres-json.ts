@@ -1,5 +1,16 @@
+import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import { classifySelectPrefix, hasDataModifyingStatement } from "./select-prefix";
 import type { ExplainPlanResult, ExplainStrategy } from "./types";
+
+/**
+ * This strategy's dialect, resolved once.
+ *
+ * The module IS the PostgreSQL strategy - it is reached only through
+ * `explainFormat: "postgres-json"`, which only `providers/sql/postgres.ts` declares -
+ * so naming the type here is the same shape as a provider passing `this.type`, not the
+ * type-switching this project bans. Nothing below the resolver sees a type id.
+ */
+const POSTGRES_GRAMMAR = resolveSqlGrammar("postgres");
 
 /**
  * The one strategy that cannot simply take the shared classification, because it is
@@ -23,9 +34,20 @@ import type { ExplainPlanResult, ExplainStrategy } from "./types";
  *
  * The narrower question of ANALYZE executing an ordinary SELECT twice - once for the
  * user, once for the background pre-warm - is issue #194's remaining work, not this.
+ *
+ * The classification is read under PostgreSQL's own grammar, and that is load-bearing
+ * rather than tidiness: block comments NEST here, so read flat,
+ * `/* a /* b *\/ SELECT 1 *\/ DELETE FROM users` leads with `SELECT` - the `DELETE`
+ * hides behind text a flat reader thinks is code - and this path has no other screen,
+ * because a `SELECT` prefix skips `hasDataModifyingStatement` by the paragraph above
+ * and an explain run skips the confirmation dialog entirely
+ * (`use-query-execution.ts`, `!isExplain`). Live-verified on PostgreSQL 18:
+ * `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)` over that statement against a three-row
+ * table left zero rows. Under this dialect's grammar the comment is read whole, the
+ * statement leads with `DELETE`, and nothing is built (#300).
  */
 function isExplainable(sql: string): boolean {
-  const prefix = classifySelectPrefix(sql);
+  const prefix = classifySelectPrefix(sql, POSTGRES_GRAMMAR);
   if (prefix === null) return false;
 
   return prefix === "select" || !hasDataModifyingStatement(sql);

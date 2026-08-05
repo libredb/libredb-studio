@@ -160,6 +160,19 @@ before the statement (`-- note` or `/* note */`) is skipped rather than defeatin
 shared helper also skips `#`, which is a comment in MySQL only; T-SQL rejects a statement opening with
 one either way, so skipping it changes which syntax error the server reports and nothing else.
 
+**Block comments NEST here** — "Slash Star (Block Comment) (Transact-SQL)" states that a `/*` anywhere
+inside a comment starts a nested one and requires its own `*/`, and that a missing closer is an error.
+The shared reader used to end every comment at its first `*/`, and on this provider that mattered more
+than a lost bound, because the `TOP` splice writes into the **head** at an index that reading chose:
+`SELECT /* a /* b */ DISTINCT */ name FROM t` was read as a comment ending after `/* a /* b */`,
+followed by a `DISTINCT` — which is inside the comment — so the `TOP` was spliced in after it, inside
+the comment too. SQL Server saw `SELECT name FROM t` and ran it unbounded while this method reported
+`wasLimited: true`. Under T-SQL's grammar the whole run is one comment, so the `TOP` goes before it,
+and a `DISTINCT` written *after* the comment still takes the `TOP` after itself (#300). The same fact
+bounds a read behind a leading nested comment (`/* a /* b */ x */ SELECT name FROM t`), declines on a
+write a nested comment hid inside a CTE list, and declines where the comment carries one opener too
+many and therefore never closes. Pinned in `tests/integration/db/mssql-provider.test.ts`.
+
 `prepareQuery` **declines** rather than splicing in two cases, reporting `wasLimited: false` and
 returning the statement untouched. It never reports a limit while handing back the statement unchanged.
 

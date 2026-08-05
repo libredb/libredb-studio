@@ -1,5 +1,14 @@
+import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import { classifySelectPrefix } from "./select-prefix";
 import type { ExplainStrategy, ExplainTreeNode } from "./types";
+
+/**
+ * This strategy's dialect, resolved once. Reached only through
+ * `explainFormat: "clickhouse-json"`, which only the ClickHouse provider declares, so
+ * the module's identity IS the dialect - the same shape as a provider passing
+ * `this.type`.
+ */
+const CLICKHOUSE_GRAMMAR = resolveSqlGrammar("clickhouse");
 
 /**
  * `FORMAT <Name>` where nothing but a `SETTINGS` clause or a semicolon follows it.
@@ -168,7 +177,11 @@ export const clickhouseJsonStrategy: ExplainStrategy = {
   // so both modes return the estimate, as the SQLite and Couchbase strategies do.
   buildSql(sql) {
     // ClickHouse's `EXPLAIN` describes without running, so a CTE is safe to explain.
-    if (classifySelectPrefix(sql) === null) return null;
+    // The statement is read under this dialect's grammar all the same (#300): block
+    // comments nest here, so a flat reading reports a keyword written inside one, and
+    // an Explain built for a statement whose real keyword is a write is a dishonest
+    // classification even where nothing executes.
+    if (classifySelectPrefix(sql, CLICKHOUSE_GRAMMAR) === null) return null;
     // A trailing FORMAT would reformat the PLAN, not the statement's rows: live, a
     // wrapped `... FORMAT TSV` comes back as TSV text and the tree can never be
     // built. The clause describes the statement's own result, which an EXPLAIN never

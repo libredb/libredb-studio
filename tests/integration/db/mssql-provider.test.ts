@@ -807,6 +807,58 @@ describe("MSSQLProvider", () => {
       });
     });
 
+    // ── Block comments NEST here (#300) ──────────────────────────────────────
+    //
+    // T-SQL supports nested comments: a `/*` anywhere inside a comment opens a
+    // nested one and needs its own `*/` ("Slash Star (Block Comment)"). Read flat,
+    // the text between the inner `*/` and the comment's real end reaches the
+    // readers as code - and on THIS provider that is worse than a lost bound,
+    // because the `TOP` splice writes into the head at an index that reading
+    // chose. The first row below is the shape it emitted: a `TOP` placed after a
+    // `DISTINCT` that is inside the comment, so SQL Server saw
+    // `SELECT name FROM t` - unbounded - while this method reported a limit.
+    describe("nested block comments", () => {
+      test("splices TOP before the whole comment rather than into it", () => {
+        const result = provider.prepareQuery("SELECT /* a /* b */ DISTINCT */ name FROM t", { limit: 50 });
+
+        expect(result.query).toBe("SELECT TOP 50 /* a /* b */ DISTINCT */ name FROM t");
+        expect(result.wasLimited).toBe(true);
+      });
+
+      test("still keeps TOP after a DISTINCT that follows the whole comment", () => {
+        const result = provider.prepareQuery("SELECT /* a /* b */ c */ DISTINCT name FROM t", { limit: 50 });
+
+        expect(result.query).toBe("SELECT /* a /* b */ c */ DISTINCT TOP 50 name FROM t");
+        expect(result.wasLimited).toBe(true);
+      });
+
+      test("bounds a read behind a leading nested comment", () => {
+        const result = provider.prepareQuery("/* a /* b */ x */ SELECT name FROM t", { limit: 50 });
+
+        expect(result.query).toBe("/* a /* b */ x */ SELECT TOP 50 name FROM t");
+        expect(result.wasLimited).toBe(true);
+      });
+
+      test("adds no clause to a write a nested comment hid inside a CTE list", () => {
+        const sql =
+          "WITH recent AS (\n  /* outer /* inner */ ) SELECT 1 */\n  SELECT id FROM logs\n)\nINSERT INTO archive (id) SELECT id FROM recent";
+
+        const result = provider.prepareQuery(sql, { limit: 50 });
+
+        expect(result.query).toBe(sql);
+        expect(result.wasLimited).toBe(false);
+      });
+
+      test("adds no clause where the nested comment never closes", () => {
+        const sql = "/* a /* b */ SELECT name FROM t";
+
+        const result = provider.prepareQuery(sql, { limit: 50 });
+
+        expect(result.query).toBe(sql);
+        expect(result.wasLimited).toBe(false);
+      });
+    });
+
     // ── A statement that already carries a page (#293) ───────────────────────
     //
     // `TOP` and `OFFSET … FETCH` may not both appear in one query expression, so

@@ -57,6 +57,41 @@ describe("postgresJsonStrategy", () => {
     expect(postgresJsonStrategy.buildSql(sql, "estimate")).toBeNull();
   });
 
+  /**
+   * The nested-comment shape, and the reason this strategy has to read the statement
+   * under PostgreSQL's own grammar rather than the shared default (#300).
+   *
+   * Block comments NEST here, so `/* a /* b *\/ SELECT 1 *\/ DELETE FROM users` is a
+   * comment followed by a DELETE - while a flat reading sees the comment end at the
+   * inner `*\/` and reports `SELECT` as the leading keyword. This path skips the
+   * confirmation gate entirely (an explain run is not a dangerous-query check), and
+   * `ANALYZE` executes what it explains, so the flat reading really did delete the
+   * rows: live-verified on PostgreSQL 18, `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)`
+   * over that statement against a 3-row table left 0 rows behind. Refusing to build
+   * is the only honest answer - the statement is a DELETE, and this strategy explains
+   * reads.
+   */
+  test.each<[string, string]>([
+    ["a DELETE", "/* a /* b */ SELECT 1 */ DELETE FROM users"],
+    ["an UPDATE", "/* a /* b */ SELECT 1 */ UPDATE users SET x = 1"],
+    ["a TRUNCATE", "/* a /* b */ SELECT 1 */ TRUNCATE users"],
+  ])("buildSql refuses %s that a nested comment made look like a SELECT", (_label, sql) => {
+    expect(postgresJsonStrategy.buildSql(sql, "analyze")).toBeNull();
+    expect(postgresJsonStrategy.buildSql(sql, "estimate")).toBeNull();
+  });
+
+  test("buildSql still explains a read behind a nested comment", () => {
+    const sql = "/* a /* b */ x */ SELECT 1";
+
+    expect(postgresJsonStrategy.buildSql(sql, "analyze")).toBe(`EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ${sql}`);
+  });
+
+  test("buildSql refuses a statement whose nested comment never closes", () => {
+    // Undeterminable text: the comment never returns to depth zero, so there is no
+    // leading keyword to classify and nothing to wrap.
+    expect(postgresJsonStrategy.buildSql("/* a /* b */ SELECT 1", "analyze")).toBeNull();
+  });
+
   // The over-reach, pinned at the STRATEGY boundary rather than only on the helper.
   // The screen is textual, so a keyword inside a string literal counts and this
   // harmless read-only CTE loses its Explain button. That is the direction this has to

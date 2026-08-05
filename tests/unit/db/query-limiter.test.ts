@@ -1165,3 +1165,94 @@ describe("a named dialect changes the reading; naming none does not", () => {
     expect(applyQueryLimit("SELECT * FROM t # note", 500, 0, {}, "couchbase").wasLimited).toBe(false);
   });
 });
+
+// ─── Where a block comment ends is the dialect's answer too (#300) ───────────
+//
+// The third grammar this channel carries, and the one whose cost is the same as
+// the `#` row's worst case: a comment that NESTS ends later than the flat reading
+// thinks, so a `)` written between the first `*/` and the comment's real end
+// closes a CTE body that is still open. The statement is then typed by a keyword
+// the operator commented out, and a bound appended to a write on PostgreSQL
+// commits part of it.
+
+describe("a nested block comment under the dialect that reads it", () => {
+  // The `)` and the `SELECT` both sit AFTER the inner `*/`, which is the region a
+  // flat reading hands over as code. With the whole comment read as one comment,
+  // the CTE body runs to its real `)` and the statement is the write it operates.
+  const hiddenWrite = (write: string) =>
+    `WITH recent AS (\n  /* outer /* inner */ ) SELECT 1 */\n  SELECT id FROM logs\n)\n${write}`;
+
+  test.each<[string, string, ParsedQueryInfo["type"]]>([
+    ["an INSERT … SELECT", "INSERT INTO archive (id) SELECT id FROM recent", "INSERT"],
+    ["an UPDATE … SET", "UPDATE archive SET seen = true WHERE id IN (SELECT id FROM recent)", "UPDATE"],
+  ])("%s hidden behind a nested comment is typed as the write it is, and not bounded", (_label, write, type) => {
+    const sql = hiddenWrite(write);
+
+    // Today's answer without the dialect, kept: the flat reading really is what
+    // MySQL does, and the statement is a syntax error there.
+    expect(analyzeQuery(sql).type).toBe("SELECT");
+    expect(analyzeQuery(sql, "mysql").type).toBe("SELECT");
+
+    expect(analyzeQuery(sql, "postgres").type).toBe(type);
+
+    const result = applyQueryLimit(sql, 500, 0, {}, "postgres");
+    expect(result.sql).toBe(sql);
+    expect(result.wasLimited).toBe(false);
+  });
+
+  // The read side of the same fact: with the comment read whole, the statement
+  // behind it is an ordinary SELECT and collects its bound - and the bound goes
+  // after the statement, never inside the comment.
+  test("a read behind a nested comment is bounded, and the comment is emitted intact", () => {
+    const sql = "/* outer /* inner */ still a note */ SELECT id FROM logs";
+
+    expect(applyQueryLimit(sql, 500).wasLimited).toBe(false);
+
+    expect(applyQueryLimit(sql, 500, 0, {}, "postgres")).toMatchObject({
+      sql: "/* outer /* inner */ still a note */ SELECT id FROM logs LIMIT 500",
+      wasLimited: true,
+    });
+  });
+
+  // Fixture discipline (the milestone's rule): a nested comment written where no
+  // reader models it as a unit - inside a dollar-quoted body, and inside a trailing
+  // comment run - with the emitted text asserted whole rather than "a bound was
+  // added".
+  test.each<[string, string, string]>([
+    [
+      "a dollar-quoted body carrying a nested comment and a paren",
+      "SELECT $fn$ /* a /* b */ ) $fn$ AS body FROM t",
+      "SELECT $fn$ /* a /* b */ ) $fn$ AS body FROM t LIMIT 500",
+    ],
+    [
+      "a trailing nested comment, where the bound goes before it",
+      "SELECT id FROM logs /* a /* b */ c */",
+      "SELECT id FROM logs LIMIT 500 /* a /* b */ c */",
+    ],
+  ])("%s is emitted intact under a nesting grammar", (_label, sql, expected) => {
+    const result = applyQueryLimit(sql, 500, 0, {}, "postgres");
+
+    expect(result.sql).toBe(expected);
+    expect(result.wasLimited).toBe(true);
+  });
+
+  // One opener too many is undeterminable rather than guessed, so nothing is
+  // rewritten - the fail-safe direction this folder keeps everywhere.
+  test("a nested comment that never closes is not rewritten under a nesting grammar", () => {
+    const sql = "/* outer /* inner */ SELECT id FROM logs";
+
+    expect(applyQueryLimit(sql, 500, 0, {}, "postgres")).toMatchObject({ sql, wasLimited: false });
+  });
+
+  // Ordinary comments answer the same under both readings, which is what says the
+  // change is confined to the runs where the grammars disagree.
+  test.each<[string, string, string]>([
+    ["one block comment", "/* note */ SELECT 1", "/* note */ SELECT 1 LIMIT 500"],
+    ["adjacent block comments", "/*a*//*b*/SELECT 1", "/*a*//*b*/SELECT 1 LIMIT 500"],
+    ["a comment holding a lone star", "/* a * b */ SELECT 1", "/* a * b */ SELECT 1 LIMIT 500"],
+    ["a multi-line comment", "/* one\n   two */ SELECT 1", "/* one\n   two */ SELECT 1 LIMIT 500"],
+  ])("%s keeps its answer under both readings", (_label, sql, expected) => {
+    expect(applyQueryLimit(sql, 500).sql).toBe(expected);
+    expect(applyQueryLimit(sql, 500, 0, {}, "postgres").sql).toBe(expected);
+  });
+});

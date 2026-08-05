@@ -709,6 +709,46 @@ describe("QuerySafetyDialog", () => {
     );
     expect(onOracle.queryByText("Part of this statement could not be read")).toBeNull();
   });
+
+  /**
+   * The nesting fact reaches the notice as well (#300), and the two halves of that
+   * issue's dialog bar are visible here side by side: a nested comment that never
+   * closes is text the reader could not resolve and the notice says so, while a
+   * balanced one was read WHOLE - the dialog is open because the statement really
+   * is a `DROP`, and claiming the text could not be read would be the false half.
+   */
+  test("says so for a nested comment that never closes, and nothing for one that does", async () => {
+    globalThis.fetch = mock(async () =>
+      createStreamResponse({ chunks: [JSON.stringify(SAFE_PAYLOAD)] }),
+    ) as unknown as typeof fetch;
+
+    const unclosed = render(
+      <QuerySafetyDialog
+        isOpen
+        query="/* outer /* inner */ DROP TABLE users"
+        schemaContext=""
+        databaseType="postgres"
+        onClose={onClose}
+        onProceed={onProceed}
+      />,
+    );
+    expect(unclosed.queryByText("Part of this statement could not be read")).not.toBeNull();
+
+    unclosed.unmount();
+    cleanup();
+
+    const balanced = render(
+      <QuerySafetyDialog
+        isOpen
+        query="/* outer /* inner */ still a note */ DROP TABLE users"
+        schemaContext=""
+        databaseType="postgres"
+        onClose={onClose}
+        onProceed={onProceed}
+      />,
+    );
+    expect(balanced.queryByText("Part of this statement could not be read")).toBeNull();
+  });
 });
 
 describe("isDangerousQuery", () => {
@@ -997,6 +1037,84 @@ describe("isDangerousQuery", () => {
 
     expect(isDangerousQuery(query)).toBe(true);
     expect(isDangerousQuery(query, "clickhouse")).toBe(true);
+  });
+
+  // ── Where a block comment ends decides what this predicate reads (#300) ──
+  //
+  // The third grammar fact, and the one that reaches this predicate through the
+  // KEYWORD rather than through unresolvable text: with the comment closed at its
+  // first `*/`, the word after it answers for the statement, and a word an
+  // operator commented out is never in the dangerous set. So a destructive
+  // statement written after a nested comment ran with no confirmation at all on
+  // every dialect that nests - which is PostgreSQL, SQL Server and ClickHouse.
+
+  test.each<["postgres" | "mssql" | "clickhouse"]>([
+    ["postgres"],
+    ["mssql"],
+    ["clickhouse"],
+  ])("prompts on %s for a destructive statement a nested comment hid", (type) => {
+    const query = "/* outer /* inner */ still a note */ DROP TABLE users";
+
+    expect(isDangerousQuery(query, type)).toBe(true);
+  });
+
+  test.each<[string, string]>([
+    ["a DELETE", "DELETE FROM users WHERE id = 1"],
+    ["a TRUNCATE", "TRUNCATE TABLE users"],
+    ["a write inside a CTE list", "WITH t AS (UPDATE users SET seen = true RETURNING id) SELECT * FROM t"],
+  ])("prompts for %s hidden behind a nested comment under a nesting grammar", (_label, statement) => {
+    expect(isDangerousQuery(`/* outer /* inner */ still a note */ ${statement}`, "postgres")).toBe(true);
+  });
+
+  // The answer a flat grammar requires, pinned rather than left to the
+  // implementation: MySQL closes the comment at the first `*/`, so `still` really
+  // is the word that follows it and `*/ DROP …` is text MySQL rejects outright.
+  // Staying silent there is the dialect's own reading, not a missed prompt.
+  test("stays silent under a flat grammar, where the same text is a syntax error", () => {
+    const query = "/* outer /* inner */ still a note */ DROP TABLE users";
+
+    expect(isDangerousQuery(query)).toBe(false);
+    expect(isDangerousQuery(query, "mysql")).toBe(false);
+    expect(isDangerousQuery(query, "sqlite")).toBe(false);
+  });
+
+  // One opener too many: the comment never closes under a nesting grammar, so the
+  // statement is unreadable rather than misread - and unresolvable text asks
+  // (#297). The two halves of #300's dialog bar meet here: whichever way the text
+  // goes, a null keyword no longer means silence.
+  test("asks where the nested comment never closes, because the text cannot be read", () => {
+    const query = "/* outer /* inner */ DROP TABLE users";
+
+    expect(isDangerousQuery(query, "postgres")).toBe(true);
+    // Flat, the comment closed and the DROP is the statement's own leading keyword.
+    expect(isDangerousQuery(query, "mysql")).toBe(true);
+  });
+
+  /**
+   * The trivia alphabet the reader shares with the rest of the folder is ASCII, and the
+   * LEADING scan's is deliberately wider (JS `\s`) - the alphabet the pattern it
+   * replaced used, so the conversion answers what that pattern answered.
+   *
+   * On one engine the narrower reading would cost this prompt rather than merely
+   * differ: a `latin1` MySQL connection reads byte 0xA0 as a space and executes the
+   * statement behind it (verified on MySQL 26.7 through mysql2 - a row comes back under
+   * `charset=latin1`, and the same text is rejected under the `utf8mb4` the provider
+   * negotiates by default), and a connection string is where that charset comes from.
+   * U+2028 is here for the compatibility rule alone; no engine tried accepts it.
+   */
+  test.each<[string, string]>([
+    ["a no-break space", " DROP TABLE users"],
+    ["a line separator", " DROP TABLE users"],
+  ])("still prompts for a destructive statement behind %s", (_label, query) => {
+    expect(isDangerousQuery(query, "mysql")).toBe(true);
+    expect(isDangerousQuery(query)).toBe(true);
+  });
+
+  test("ordinary comments keep their answers under a nesting grammar", () => {
+    expect(isDangerousQuery("/* note */ DROP TABLE users", "postgres")).toBe(true);
+    expect(isDangerousQuery("/* a */ /* b */ SELECT * FROM users", "postgres")).toBe(false);
+    expect(isDangerousQuery("/* was a DELETE once */ SELECT 1", "postgres")).toBe(false);
+    expect(isDangerousQuery("/* a * b */ SELECT 1", "postgres")).toBe(false);
   });
 
   // ── Shape of the scan ───────────────────────────────────────────────────

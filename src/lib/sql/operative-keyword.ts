@@ -342,7 +342,7 @@ function readKeywordAfterCteList(sql: string, afterWith: number, grammar: SqlGra
  *   operator is an operator (#292). Every caller in this project passes one.
  */
 export function readOperativeKeyword(sql: string, grammar: SqlGrammar = DEFAULT_SQL_GRAMMAR): LeadingKeyword | null {
-  const leading = readLeadingKeyword(sql);
+  const leading = readLeadingKeyword(sql, grammar);
   if (leading === null || leading.keyword !== "WITH") return leading;
 
   return readKeywordAfterCteList(sql, leading.end, grammar);

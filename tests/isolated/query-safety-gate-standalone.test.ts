@@ -119,6 +119,30 @@ describe("useQueryExecution: the real safety gate", () => {
   });
 
   /**
+   * #300's dialog half on this path: the connection is PostgreSQL, where block
+   * comments NEST, so a comment carrying a second opener runs past the `*\/` a flat
+   * reading stops at. Read flat, the word after that marker answered for the
+   * statement - a word the operator commented out, never in the dangerous set - so
+   * the `DROP` reached the server with no confirmation. Both shapes are asserted
+   * because they ask for different reasons: the balanced one because the reader now
+   * reads the `DROP`, the unbalanced one because the text cannot be resolved at all.
+   */
+  test.each<[string, string]>([
+    ["a balanced nested comment", "/* outer /* inner */ still a note */ DROP TABLE users"],
+    ["a nested comment that never closes", "/* outer /* inner */ DROP TABLE users"],
+  ])("opens the dialog for a destructive statement behind %s", async (_label, hidden) => {
+    const fetchMock = mockGlobalFetch({});
+    const { result } = renderHook(() => useQueryExecution(params()));
+
+    await act(async () => {
+      await result.current.executeQuery(hidden);
+    });
+
+    expect(result.current.safetyCheckQuery).toBe(hidden);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  /**
    * And the #294 fixture on the real predicate here as well: a note above a
    * destructive statement is the most ordinary habit there is, and it used to
    * skip the dialog entirely.

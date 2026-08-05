@@ -395,6 +395,18 @@ not cuttable. Both are now bounded, emitted byte-intact. A run that genuinely ne
 (`SELECT [[1,2] AS a`) is still reported as undeterminable and the statement is passed through
 untouched — the same fail-safe direction as an unterminated literal.
 
+A third fact of the same record: **block comments nest here.** ClickHouse's syntax reference states
+that C-style comments can be nested and gives a nested example, while the shared reader used to end
+every comment at its first `*/` — handing everything between that marker and the comment's real end to
+the readers as code, which cost the statement its bound. On this engine, whose whole point is scanning
+more rows than a browser can hold, a missing bound is the entire cost: there is no data-modifying CTE
+here, so no bound can land on a write. `/* a /* b */ x */ SELECT arrayJoin([1, 2]) AS n` and
+`WITH /* a /* b */ x */ 1 AS one SELECT one FROM events` are now bounded, and a trailing nested comment
+takes the bound before it rather than inside it. A comment carrying one opener too many
+(`/* a /* b */ SELECT n FROM events`) never closes here, so it is undeterminable and the statement is
+passed through untouched — the same fail-safe direction as an unclosed array, and it costs that
+statement a confirmation prompt as well (#300).
+
 The same reading reaches the **destructive-statement confirmation**, because that predicate reads the
 statement under the connection's dialect too. It gains prompts here: a nested array before a
 destructive keyword (`WITH [[1,2],[3,4]] AS x DELETE FROM t`) used to leave the run unterminated and

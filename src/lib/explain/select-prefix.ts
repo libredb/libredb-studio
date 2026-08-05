@@ -22,6 +22,7 @@
  * tolerance (#275), and the ReDoS reasoning that shapes the pattern moved with it.
  */
 
+import type { SqlGrammar } from "@/lib/sql/grammar";
 import { readLeadingKeyword } from "@/lib/sql/leading-keyword";
 
 /**
@@ -49,8 +50,9 @@ export type SelectPrefix = "select" | "with";
  *   statement that leads with it is already refused by `classifySelectPrefix`, which
  *   only ever answers for `SELECT` or `WITH`. Same for `CREATE`, `DROP` and `ALTER`.
  *
- * Flat, with no nested quantifier, so it carries none of the backtracking risk that
- * the trivia pattern in `lib/sql/leading-keyword.ts` had to be shaped around.
+ * Flat, with no nested quantifier, so it carries none of the backtracking risk the
+ * trivia pattern `lib/sql/leading-keyword.ts` used to carry - the three measured
+ * failures that reader still records, and the reason it is a scanner now.
  */
 const DATA_MODIFYING = /\b(?:INSERT|UPDATE|DELETE|MERGE)\b/i;
 
@@ -61,9 +63,19 @@ const DATA_MODIFYING = /\b(?:INSERT|UPDATE|DELETE|MERGE)\b/i;
  * `buildSql`. A comment on its own is `null`: a comment is not a statement. So is any
  * other leading keyword - `readLeadingKeyword` reports what it finds, and only these
  * two are explainable.
+ *
+ * `grammar` is optional because for most strategies the reading cannot cost more than
+ * a refused Explain button, and omitting it keeps the dialect-less reading. One
+ * strategy must pass it: PostgreSQL's `EXPLAIN (ANALYZE, …)` EXECUTES what it
+ * explains, its execution path skips the confirmation gate (an explain run is not a
+ * dangerous-query check), and block comments NEST in PostgreSQL - so read flat, a
+ * `/* a /* b *\/ SELECT 1 *\/ DELETE FROM users` classified as a `SELECT` and the
+ * explain really deleted the rows (live-verified on PostgreSQL 18: 3 rows before, 0
+ * after). ClickHouse passes it too, for the honest classification rather than for
+ * safety - its EXPLAIN describes without running (#300).
  */
-export function classifySelectPrefix(sql: string): SelectPrefix | null {
-  const leading = readLeadingKeyword(sql)?.keyword;
+export function classifySelectPrefix(sql: string, grammar?: SqlGrammar): SelectPrefix | null {
+  const leading = readLeadingKeyword(sql, grammar)?.keyword;
 
   if (leading === "SELECT") return "select";
   if (leading === "WITH") return "with";
