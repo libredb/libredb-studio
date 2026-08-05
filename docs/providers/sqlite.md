@@ -285,8 +285,10 @@ and comment marker included, so `SELECT [it's] FROM users` and `SELECT [a--b] FR
 bounded with the clause written after the whole name. One deliberate divergence: SQLite's tokenizer
 stops at the FIRST `]` and has no escape, while this reader honours SQL Server's doubled bracket, so
 `[a]]b]` reads as one name where SQLite reads `[a]` followed by junk. SQLite rejects that text either
-way, so the longer reading can only ever cost a bound on a statement the server refuses — it is pinned
-by a test rather than left to be discovered.
+way, so the longer reading can only ever cost a bound — and, where the doubled bracket swallows the
+real closer so the run never terminates (`SELECT [a]] FROM t`), a confirmation prompt as well, since
+#297 asks about text the reader cannot resolve. Both are on statements the server refuses, and both are
+pinned by tests rather than left to be discovered.
 `EXPLAIN QUERY PLAN` is supported (`supportsExplain: true`, `explainFormat: "sqlite-queryplan"`) — the UI renders the plan as a tree; SQLite reports no per-node cost or timing metrics, so none are shown.
 
 ---

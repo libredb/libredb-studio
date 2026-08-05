@@ -115,7 +115,10 @@ bounded on a guess. One shape reaches that on Oracle: a literal Oracle and MySQL
 different places (a quote behind an odd backslash run). It is a **deliberate loss of a bound** —
 appending after the whole text, as this method used to, happened to be valid Oracle there, and is
 what puts the clause inside a trailing comment everywhere else — so that statement returns every row
-rather than being bounded on a guess.
+rather than being bounded on a guess. Since #297 the same unresolvable run also costs that statement a
+confirmation prompt, because the safety gate cannot read it either; the general rule and its accepted
+costs are in
+[query-optimization.md](../editor/query-optimization.md#text-the-reading-cannot-resolve-asks-and-says-so).
 
 `#` inside an identifier (`ID#`, common in legacy schemas) used to reach the same refusal and no
 longer does. `prepareQuery()` passes its own `type` to the shared readers (#292), and Oracle's grammar
@@ -148,8 +151,8 @@ bounded on a guess. The tag must also **start** a word: in `SELECT FREQ'{it's}' 
 `FREQ` for a name and the apostrophe after it for an ordinary string, so that statement reaches the
 same refusal rather than a bound placed inside something that may not be a literal at all. That is
 deliberately stricter than node-oracledb's tokenizer, which opens a q-string at any `'` preceded by
-`q`/`Q` whatever comes before it; the strict side is the one whose mistake costs a bound rather than a
-misplaced clause.
+`q`/`Q` whatever comes before it; the strict side is the one whose mistake costs a bound — and, since
+#297, a confirmation prompt on that statement — rather than a misplaced clause.
 
 ### 3.3 Owner-scoped, five-query schema introspection
 

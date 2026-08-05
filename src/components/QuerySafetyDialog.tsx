@@ -1,10 +1,11 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { ShieldAlert, ShieldCheck, AlertTriangle, Loader2, Play, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import { readOperativeKeyword } from "@/lib/sql/operative-keyword";
+import { hasUnterminatedSpan } from "@/lib/sql/spans";
 import { findCodeWord } from "@/lib/sql/words";
 import type { DatabaseType } from "@/lib/types";
 
@@ -97,6 +98,25 @@ export function QuerySafetyDialog({
   const [analysis, setAnalysis] = useState<SafetyAnalysis | null>(null);
   const [rawResponse, setRawResponse] = useState("");
   const [error, setError] = useState<string | null>(null);
+
+  /**
+   * Whether the client-side reading that opened this dialog could not resolve part
+   * of the statement (#297).
+   *
+   * Recomputed here rather than passed in: the gate is a pure function of the text
+   * and the dialect, both of which this component already has, and a new required
+   * prop would be a breaking change for the published package. `databaseType`
+   * arrives as a plain string from the host application, and a value that is not one
+   * of the types this project knows resolves to the compatibility default - the
+   * same answer a dialect-less call gets everywhere else in `src/lib/sql`.
+   *
+   * Memoised because the analysis stream re-renders this component per chunk while
+   * the query text does not change, and the scan is linear in that text.
+   */
+  const unreadableRun = useMemo(
+    () => hasUnterminatedSpan(query, resolveSqlGrammar(databaseType as DatabaseType | undefined)),
+    [query, databaseType],
+  );
 
   useEffect(() => {
     if (isOpen && query) {
@@ -200,6 +220,25 @@ export function QuerySafetyDialog({
         </div>
 
         <div className="px-5 py-4 max-h-80 overflow-auto">
+          {/*
+            Said before the analysis and kept beside it: the reason this dialog
+            opened is the client-side reading, and a risk verdict produced from text
+            whose reading stopped early may not describe what the statement does.
+          */}
+          {unreadableRun && (
+            <div className="mb-3 flex items-start gap-2 px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-500/20">
+              <AlertTriangle strokeWidth={1.5} className="w-3.5 h-3.5 mt-0.5 shrink-0 text-amber-400" />
+              <div>
+                <span className="text-xs font-medium text-amber-400">Part of this statement could not be read</span>
+                <p className="text-xs text-zinc-400 mt-0.5">
+                  A quoted, commented or bracketed run in it never closes (or its closing quote sits behind a backslash,
+                  which dialects read differently), so nothing written after that point could be checked. It may hide a
+                  write, which is why you are being asked.
+                </p>
+              </div>
+            </div>
+          )}
+
           {isAnalyzing && (
             <div className="flex items-center justify-center gap-2 py-8 text-zinc-500">
               <Loader2 strokeWidth={1.5} className="w-5 h-5 animate-spin" />
@@ -325,17 +364,24 @@ const DANGEROUS_KEYWORDS = new Set(["DELETE", "DROP", "TRUNCATE", "ALTER", "GRAN
  * dialog and the limiter agree about where a statement starts, and a `WITH` whose CTE
  * list only precedes a write (`WITH x AS (…) DELETE FROM …`) is now recognised too.
  *
- * KNOWN GAP, and it is the uncomfortable direction for a safety check: text the
- * reading cannot resolve HIDES what follows it, so this answers false there rather
- * than asking. `SELECT '\';` + a following write is the case — the two dialect
- * readings of `'\'` end the string in different places, so `spans.ts` declines to
- * guess and everything after is inside a literal as far as this predicate can tell.
- * A test pins it. It is also the ONE input class this reading NARROWED: the text scan
- * it replaced found an `UPDATE … SET` written after such a literal, so that script
- * prompted before and does not now. Reachable only from text carrying a backslash
- * immediately before a closing quote, and whether an unresolvable statement should ASK
- * instead is a policy question with its own UX cost - tracked as #297, with the
- * dialect-aware reading #292 asks for as the alternative, rather than decided here.
+ * Text the reading cannot resolve ASKS (#297). A run that never closes hides
+ * whatever is written inside it - `SELECT '\';` followed by a write is the case,
+ * because the two dialect readings of `'\'` end the string in different places and
+ * `spans.ts` declines to guess - so reading the code words finds nothing after it
+ * and every keyword test above answers false. Every other reader in `src/lib/sql/`
+ * errs toward not ACTING on such text, which is the safe direction for them (their
+ * mistake is a row bound appended to a write). Here the costs are reversed: a false
+ * prompt costs one click, silence costs an unconfirmed destructive statement. So
+ * this predicate treats an unresolvable run as a reason to ask, and the dialog says
+ * that is why it is asking rather than describing a risk it could not assess.
+ *
+ * The accepted cost, pinned by tests rather than left to be discovered: `spans.ts`
+ * reports an undeterminable literal for any closing quote behind an ODD backslash
+ * run, so a legitimate PostgreSQL literal ending in a backslash prompts every time.
+ * A statement whose runs all resolve does NOT prompt merely for carrying a
+ * backslash. Naming the dialect narrows this further where a dialect resolves the
+ * text (#292, #295): Oracle's `q'{it's}'` and ClickHouse's `[[1,2],[3,4]]` are
+ * closed runs under their own grammars and unresolvable under a reader without them.
  *
  * `databaseType` is the connection the statement is about to run on, and both
  * call sites hold one (#292). It decides the characters the engines read
@@ -346,6 +392,12 @@ const DANGEROUS_KEYWORDS = new Set(["DELETE", "DROP", "TRUNCATE", "ALTER", "GRAN
  */
 export function isDangerousQuery(query: string, databaseType?: DatabaseType): boolean {
   const grammar = resolveSqlGrammar(databaseType);
+
+  // Asked FIRST because it is the only question here whose answer does not depend
+  // on reading the statement: where a run never closes, every keyword test below
+  // is reading text that stops early, so their `false` is "not found" rather than
+  // "not there".
+  if (hasUnterminatedSpan(query, grammar)) return true;
 
   const keyword = readOperativeKeyword(query, grammar)?.keyword;
   if (keyword !== undefined && DANGEROUS_KEYWORDS.has(keyword)) return true;

@@ -287,14 +287,18 @@ and, **only for `SELECT`/CTE-`SELECT` queries that don't already have a `LIMIT`*
   subscripts arrays and jsonb with those characters, but the shared reader still reads a bracketed run
   as SQL Server's quoted NAME here, because no first-party source for the subscript rule was
   established for PostgreSQL and reading one engine's rule off another's is what the dialect channel
-  exists to stop (#295 established it for ClickHouse only). The cost is a **lost bound**, never a
-  misplaced clause. A nested array (`SELECT ARRAY[[1,2],[3,4]] AS a FROM t`) ends with a `]]` the name
-  reading takes for an escape, so the run never closes; a subscript key containing a `]`
-  (`SELECT j['a]b'] FROM t`) ends the run at that bracket and the rest of the key then reads as an
-  unterminated literal. Either way the end is undeterminable, an undeterminable end is never cut, and
-  the statement is returned untouched with `wasLimited: false`. Ordinary subscripts (`a[1]`,
-  `ARRAY[1,2]`) are unaffected and still bounded. All four shapes are pinned in
-  `tests/integration/db/postgres-provider.test.ts`.
+  exists to stop (#295 established it for ClickHouse only). The cost is a **lost bound** and, since
+  #297, a **confirmation prompt** — never a misplaced clause. A nested array
+  (`SELECT ARRAY[[1,2],[3,4]] AS a FROM t`) ends with a `]]` the name reading takes for an escape, so
+  the run never closes; a subscript key containing a `]` (`SELECT j['a]b'] FROM t`) ends the run at
+  that bracket and the rest of the key then reads as an unterminated literal. Either way the end is
+  undeterminable, an undeterminable end is never cut, and the statement is returned untouched with
+  `wasLimited: false` — and because the same undeterminable run means the safety gate cannot read the
+  statement either, such a read-only statement now asks for confirmation before it runs
+  ([query-optimization.md](../editor/query-optimization.md#destructive-statement-confirmation)).
+  Ordinary subscripts (`a[1]`, `ARRAY[1,2]`) are unaffected: still bounded, and no prompt. All four
+  limiter shapes are pinned in `tests/integration/db/postgres-provider.test.ts`, the prompt they now
+  also cost in `tests/components/QuerySafetyDialog.test.tsx`.
 - A statement leading with `WITH` is typed by the keyword its CTE list **operates**
   ([`operative-keyword.ts`](../../src/lib/sql/operative-keyword.ts)), so a data-modifying CTE
   (`WITH t AS (UPDATE … RETURNING …) INSERT INTO … SELECT …`) is **not** bounded. This matters most on
@@ -311,9 +315,15 @@ and, **only for `SELECT`/CTE-`SELECT` queries that don't already have a `LIMIT`*
   `-- LIMIT 10` look like a real one, so nothing was injected (#280). A statement with no trailing
   trivia is emitted exactly as before. A statement whose end may not be **cut** is returned untouched
   with `wasLimited: false`, since a guess would place the bound after the `;` or in the middle of the
-  statement: a quote behind an odd backslash run (MySQL and PostgreSQL close it in different places)
-  and a trailing `#` run, which is a comment in MySQL and PostgreSQL's XOR operator here
-  (`SELECT flags # 5`).
+  statement. **On this dialect the shapes that reach it are a quote behind an odd backslash run** (MySQL
+  and PostgreSQL close such a literal in different places, so the reader declines to guess), **the
+  bracketed runs in the bullet above** (a nested array, a subscript key carrying a `]`) **and any other
+  run that never closes** — an unterminated comment or literal. A trailing `#`
+  run used to reach it too and no longer does — under PostgreSQL's grammar `#` is code, not a comment
+  marker, so `SELECT flags # 5` is cut and bounded like any other statement (#292); the refusal survives
+  only for a caller that names no dialect. The backslash shape also asks for confirmation since #297 —
+  an unresolvable run is text the safety gate cannot read either — see
+  [query-optimization.md](../editor/query-optimization.md#text-the-reading-cannot-resolve-asks-and-says-so).
 
 `prepareQuery()` is a *preparation* step (the UI calls it before `query()`); `query()` itself runs
 exactly the SQL it is handed.

@@ -398,10 +398,11 @@ untouched — the same fail-safe direction as an unterminated literal.
 The same reading reaches the **destructive-statement confirmation**, because that predicate reads the
 statement under the connection's dialect too. It gains prompts here: a nested array before a
 destructive keyword (`WITH [[1,2],[3,4]] AS x DELETE FROM t`) used to leave the run unterminated and
-everything after it invisible, so nothing asked. One prompt is lost, and it is recorded rather than
-hidden: bracket text that does not *balance* (`WITH [[1,2] AS x DELETE FROM t`) is undeterminable under
-the array reading, and the predicate still answers "not dangerous" for text it cannot read — the input
-class tracked as #297. Both directions are pinned by tests.
+everything after it invisible, so nothing asked. Nothing is lost either, since #297 closed the
+narrowing this paragraph used to record: bracket text that does not *balance*
+(`WITH [[1,2] AS x DELETE FROM t`) is undeterminable under the array reading, and unresolvable text
+now asks — the confirmation dialog says the statement could not be fully read instead of staying
+silent. The statement is a syntax error in ClickHouse either way. Both directions are pinned by tests.
 
 A hand-rolled semicolon strip used to stand in for that reading, so `... FORMAT TSV -- note` read as
 carrying no trailing clause at all. That was harmless only while the inherited limiter appended its

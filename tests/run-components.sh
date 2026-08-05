@@ -23,7 +23,10 @@ set -e
 
 PASS=0
 FAIL=0
-TOTAL_GROUPS=21
+# Count the `run_group` CALLS below when adding one (not the definition) - this is the
+# number the final summary reports, and it had already drifted by one before Group 0e
+# was added.
+TOTAL_GROUPS=23
 EXTRA_BUN_ARGS=("$@")
 GROUP_INDEX=0
 COVERAGE_MODE=0
@@ -99,6 +102,13 @@ run_group "Group 0c: Exports shim" --nocov \
 # module chain without rendering it.
 run_group "Group 0d: Monaco loader wiring" --nocov \
   tests/isolated/monaco-loader-wiring.test.ts
+
+# Group 0e: The standalone execution path against the REAL confirmation gate
+# (isolated — tests/hooks/use-query-execution.test.ts stubs
+# @/components/QuerySafetyDialog with mock.module, which is process-wide, so a
+# test sharing that process cannot observe what the real predicate answers).
+run_group "Group 0e: Query safety gate (standalone path)" \
+  tests/isolated/query-safety-gate-standalone.test.ts
 
 # Group 1: Studio (isolated — mocks almost every child component)
 run_group "Group 1/6: Studio" \

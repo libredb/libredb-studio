@@ -287,6 +287,33 @@ describe("useQueryExecution", () => {
     expect(result.current.safetyCheckQuery).toBe(annotated);
   });
 
+  /**
+   * The standalone path's half of #297, in this file's division of labour: a script
+   * whose reading cannot be resolved is handed to the gate whole - the unresolvable
+   * literal included, on the line where the user wrote it - and a positive answer
+   * opens the dialog instead of executing.
+   *
+   * What the REAL predicate answers for this exact text is pinned in
+   * tests/components/QuerySafetyDialog.test.tsx (it asks); the embedded adapter
+   * exercises the real predicate end to end in tests/hooks/use-query-adapter.test.ts.
+   * Here the stub answers on the DELETE, so what is provable is the call site: the
+   * gate sees the script as written and its answer decides whether anything runs.
+   */
+  test("asks the safety gate about a script whose literal cannot be resolved", async () => {
+    mockGlobalFetch({});
+    const params = createDefaultParams();
+
+    const { result } = renderHook(() => useQueryExecution(params));
+
+    const hidden = "SELECT '\\';\nDELETE FROM t WHERE id = 1";
+    await act(async () => {
+      await result.current.executeQuery(hidden);
+    });
+
+    expect(isDangerousQueryMock).toHaveBeenCalledWith(hidden, "postgres");
+    expect(result.current.safetyCheckQuery).toBe(hidden);
+  });
+
   test("executeQuery sets safetyCheckQuery for DELETE queries", async () => {
     mockGlobalFetch({});
     const params = createDefaultParams();

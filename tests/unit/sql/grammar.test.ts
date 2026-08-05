@@ -56,6 +56,22 @@ describe("resolveSqlGrammar", () => {
     expect(resolveSqlGrammar(undefined)).toBe(DEFAULT_SQL_GRAMMAR);
   });
 
+  /**
+   * A string that is not a database type at all gets the default too, prototype
+   * keys included. The packaged confirmation dialog resolves its own grammar from an
+   * optional prop a HOST application fills in as a plain string (#297), so this
+   * lookup is reached with text nothing in this repo validated; a bare index would
+   * answer `Object.prototype.constructor` for one of these - not a grammar.
+   */
+  test.each([
+    "constructor",
+    "toString",
+    "hasOwnProperty",
+    "not-a-database",
+  ])("resolves %p to the compatibility default rather than a prototype value", (key) => {
+    expect(resolveSqlGrammar(key as DatabaseType)).toBe(DEFAULT_SQL_GRAMMAR);
+  });
+
   test("the compatibility default is today's reading, not one of the honest two", () => {
     expect(DEFAULT_SQL_GRAMMAR.hash).toBe("comment-unless-operator");
   });

@@ -1753,8 +1753,8 @@ describe("PostgresProvider", () => {
     // PostgreSQL subscripts arrays and jsonb with `[…]`, but no first-party source
     // for that rule was established here, so the reader keeps SQL Server's quoted-
     // NAME reading rather than guessing from ClickHouse's. These fixtures pin what
-    // that costs, because `docs/providers/postgres.md` now states it: a lost bound,
-    // never a misplaced clause. Ordinary subscripts are unaffected.
+    // that costs the LIMITER, because `docs/providers/postgres.md` states it: a lost
+    // bound, never a misplaced clause. Ordinary subscripts are unaffected.
     test.each<[string, string]>([
       ["an ordinary subscript", "SELECT a[1] FROM t"],
       ["a flat array constructor", "SELECT ARRAY[1,2] FROM t"],
@@ -1767,6 +1767,11 @@ describe("PostgresProvider", () => {
       expect(result.wasLimited).toBe(true);
     });
 
+    // The two shapes below cost their statements a confirmation prompt as well
+    // (#297): a run the reader cannot resolve is text the safety gate cannot read
+    // either, so an everyday read asks before it runs. That half is pinned in
+    // `tests/components/QuerySafetyDialog.test.tsx`, where the predicate lives, and
+    // stated in `docs/providers/postgres.md` beside the lost bound.
     test.each<[string, string]>([
       // The closing `]]` is read as SQL Server's escape, so the run never closes.
       ["a nested array constructor", "SELECT ARRAY[[1,2],[3,4]] AS a FROM t"],

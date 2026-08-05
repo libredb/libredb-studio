@@ -374,6 +374,49 @@ describe("useQueryAdapter", () => {
     expect(onMysql.onQueryExecute).not.toHaveBeenCalled();
   });
 
+  /**
+   * The embedded path's half of #297: a write hidden behind a run the reader cannot
+   * resolve reaches the dialog instead of the server.
+   *
+   * This file uses the REAL predicate, so this is where the new rule is provable on
+   * the packaged execution path rather than only in the predicate's unit tests. The
+   * script is two statements under PostgreSQL's reading of `'\'` and one under
+   * MySQL's; the gate cannot tell which, and it is the second statement that writes.
+   */
+  test("executeQuery sets safetyCheckQuery for a write hidden behind an unresolvable literal", async () => {
+    const params = makeHookParams();
+
+    const { result } = renderHook(() => useQueryAdapter(params));
+
+    const hidden = "SELECT '\\';\nUPDATE t SET x = 1";
+    await act(async () => {
+      await result.current.executeQuery(hidden);
+    });
+
+    expect(result.current.safetyCheckQuery).toBe(hidden);
+    expect(params.onQueryExecute).not.toHaveBeenCalled();
+  });
+
+  /**
+   * The other side of the same rule, on the same path: a statement whose runs all
+   * resolve executes without a prompt even though it carries a backslash. The cost
+   * of the rule above is a prompt for text that cannot be read, not for text that
+   * contains an escape.
+   */
+  test("executeQuery runs a read whose literal resolves, backslash and all", async () => {
+    const params = makeHookParams();
+
+    const { result } = renderHook(() => useQueryAdapter(params));
+
+    const escaped = "SELECT 'a\\nb' FROM t";
+    await act(async () => {
+      await result.current.executeQuery(escaped);
+    });
+
+    expect(result.current.safetyCheckQuery).toBeNull();
+    expect(params.onQueryExecute).toHaveBeenCalledWith("conn-1", escaped);
+  });
+
   // ── executeQuery leaves other tabs untouched ────────────────────────────────
 
   test("executeQuery updates only the target tab when multiple tabs exist", async () => {

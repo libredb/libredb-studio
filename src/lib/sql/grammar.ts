@@ -55,7 +55,9 @@ export type HashGrammar = "comment" | "code" | "comment-unless-operator";
  *   followed by junk. SQLite rejects that text either way, so the longer reading
  *   can only cost a bound on a statement the server refuses - the fail-safe
  *   direction, pinned by a test in the SQLite provider suite rather than left to
- *   be discovered.
+ *   be discovered. Since #297 it can cost that statement a confirmation prompt as
+ *   well, where the doubled bracket swallows the real closer and the run therefore
+ *   never terminates (`SELECT [a]] FROM t`).
  * - `subscript` - an array literal or a subscript. It NESTS, nothing inside it is
  *   escaped, and a literal inside it is a literal. ClickHouse.
  *
@@ -132,10 +134,12 @@ const SQLITE_GRAMMAR: SqlGrammar = { hash: "code", bracket: "quoted-identifier",
  *
  * A dialect absent from this table is at the compatibility default because its
  * rule was not established, NOT because it agrees with the default. Currently
- * absent: `couchbase`, `druid`, `libredb` (and the non-SQL `mongodb`, `redis`,
- * whose providers never reach these readers). Present for one fact and undecided
- * about another: `mysql`, `postgres` and `oracle` carry no established BRACKET
- * reading (see the row below).
+ * absent: `couchbase`, `druid`, `libredb` and the non-SQL `mongodb`, `redis` -
+ * whose providers never reach these readers on the QUERY path, though the
+ * confirmation gate does read their editor text under the default, since both
+ * execution paths ask about whatever is in the editor (#297). Present for one fact
+ * and undecided about another: `mysql`, `postgres` and `oracle` carry no
+ * established BRACKET reading (see the row below).
  *
  * Sources, one per row, all offline or first-party documentation:
  *
@@ -192,6 +196,13 @@ const SQLITE_GRAMMAR: SqlGrammar = { hash: "code", bracket: "quoted-identifier",
  * can never misplace one: a run it cannot close is undeterminable, and an
  * undeterminable end is not cut. That is the fail-safe direction, so it is what
  * they keep.
+ *
+ * The same run costs one more thing since #297, and it is stated here because this
+ * table is where the default is chosen: an undeterminable run is text the
+ * confirmation gate cannot read, and that gate now ASKS rather than staying silent,
+ * so a PostgreSQL nested array in an everyday read prompts before it runs. Pinned in
+ * `tests/components/QuerySafetyDialog.test.tsx` and documented in
+ * `docs/providers/postgres.md`.
  */
 const SQL_GRAMMARS: Partial<Record<DatabaseType, SqlGrammar>> = {
   mysql: MYSQL_GRAMMAR,
@@ -202,9 +213,17 @@ const SQL_GRAMMARS: Partial<Record<DatabaseType, SqlGrammar>> = {
   sqlite: SQLITE_GRAMMAR,
 };
 
-/** The grammar to read a statement of this dialect with. */
+/**
+ * The grammar to read a statement of this dialect with.
+ *
+ * `Object.hasOwn` rather than a bare lookup: since #297 the packaged confirmation
+ * dialog resolves its own grammar from an optional prop a HOST application supplies
+ * as a plain string, and a prototype key (`"constructor"`, `"toString"`) would
+ * otherwise return something that is not a grammar at all instead of falling to the
+ * default.
+ */
 export function resolveSqlGrammar(type?: DatabaseType): SqlGrammar {
-  if (type === undefined) return DEFAULT_SQL_GRAMMAR;
+  if (type === undefined || !Object.hasOwn(SQL_GRAMMARS, type)) return DEFAULT_SQL_GRAMMAR;
   return SQL_GRAMMARS[type] ?? DEFAULT_SQL_GRAMMAR;
 }
 

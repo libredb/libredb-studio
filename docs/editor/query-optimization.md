@@ -164,9 +164,14 @@ A rule that could **not** be established is not guessed from a neighbouring dial
 at the compatibility default below, and it is listed here rather than left implicit. The default is per
 **fact**, not per dialect: a dialect whose `#` rule is known can still be undecided about its brackets.
 
+The two non-SQL types, **MongoDB and Redis, are undecided about every fact** and are left out of the
+rows below to keep them readable: no SQL fact was established for either, their providers never reach
+these readers on the query path, and the confirmation gate — which reads whatever is in the editor —
+therefore reads their query text under the compatibility default (see the third accepted cost below).
+
 | Fact | Undecided, so left at the default | Established, and it happens to equal the default |
 |------|-----------------------------------|--------------------------------------------------|
-| `#` | Couchbase, Druid, the embedded LibreDB provider (MongoDB and Redis never reach these readers) | — |
+| `#` | Couchbase, Druid, the embedded LibreDB provider | — |
 | `q'…'` | nobody | everything except Oracle: the form is Oracle's alone, so "not a literal" is the correct reading for the rest |
 | `[…]` | MySQL, PostgreSQL, Oracle, Couchbase, Druid, LibreDB | SQL Server and SQLite, whose rule the default already applied |
 
@@ -179,7 +184,9 @@ it did on ClickHouse before #295. It is left undecided because no first-party ar
 rule was established for those dialects and reading one engine's rule off another's is what this channel
 exists to stop. The direction is safe: a run the name reading cannot close is reported as
 undeterminable, and an undeterminable end is never cut, so the cost is an unbounded read and never a
-misplaced clause.
+misplaced clause. The same undeterminable run is text the safety gate cannot read, so since #297 it
+also costs those statements a confirmation prompt — see
+[Text the reading cannot resolve asks, and says so](#text-the-reading-cannot-resolve-asks-and-says-so).
 
 **A call that names no dialect keeps today's reading**, and that is a decision with its own tests, not
 an accident: `#` opens a comment unless the next character makes a PostgreSQL operator (`#>`, `#>>`,
@@ -252,6 +259,12 @@ Each is a **deliberate loss of a bound**: appending after everything, as the lim
 valid SQL for the dialect in which those characters are code, and is exactly what put the clause
 inside a trailing comment for the dialect in which they are not. Not bounding costs an over-large
 read the user can re-run, which is the trade every reader in `src/lib/sql/` makes.
+
+Rows one and three cost one thing more since #297, because a run that never closes is also text the
+safety gate cannot read: such a statement asks for confirmation before it runs (see
+[Text the reading cannot resolve asks, and says so](#text-the-reading-cannot-resolve-asks-and-says-so)).
+The `#` row is the exception — a `#` line comment closed by the end of the input is terminated, so
+that shape loses its bound silently, as it always did.
 
 The `#` row applies to the **dialect-less** reading only. A caller that names its dialect has told
 the two apart, so the refusal is lifted in whichever direction that dialect requires: MySQL and
@@ -339,6 +352,7 @@ same reading the auto-limiter uses, so the two cannot disagree about where a sta
 | Any of those behind a comment (`-- note`, `/* note */`, MySQL's `# note`, several stacked) | Yes |
 | A `WITH` whose CTE list precedes one (`WITH x AS (…) DELETE FROM …`) | Yes |
 | A `WITH` whose CTE list *contains* an `UPDATE … SET` (PostgreSQL's data-modifying CTE) | Yes |
+| A statement carrying a run the reader cannot resolve (`SELECT '\';` and anything after it, an unterminated comment, literal, name or array) | Yes, and the dialog says why |
 | `SELECT`, including one naming a destructive keyword in a string or a comment | No |
 
 The reading is done under the **active connection's dialect** on both execution paths, because what
@@ -364,23 +378,69 @@ from a statement that really does write. It reads the statement's **code** rathe
 (`src/lib/sql/words.ts`), so unlike the pattern before it, a read that merely quotes
 `'UPDATE t SET x = 1'` or mentions it in a comment no longer prompts.
 
+### Text the reading cannot resolve asks, and says so
+
+Every other reader in `src/lib/sql/` errs toward **not acting** on text it cannot resolve, because
+its mistake would be a row bound appended to a write — a partial commit (#287). This gate's costs
+run the other way: a false prompt costs one click, silence costs an unconfirmed destructive
+statement. So a statement carrying a run that never closes prompts (#297), and the dialog leads with
+a distinct notice — *"Part of this statement could not be read"* — explaining that a quoted, commented
+or bracketed run never closes, that nothing after that point could be checked, and that this is why it
+is asking. The notice stays visible beside the AI risk verdict, including a verdict of *Safe*: that
+analysis was produced from text whose reading stopped early, so it may not describe what the
+statement does.
+
+`SELECT '\';` followed by a write is the shape the issue was filed about — `'\'` closes the string
+under PostgreSQL's `standard_conforming_strings` and continues it under MySQL's default, so
+`src/lib/sql/spans.ts` reports it as undeterminable rather than guessing, and everything after it
+was invisible to the reading. It now asks instead of executing.
+
+The accepted cost, pinned by tests rather than left to be discovered, in three classes:
+
+- **A closing quote behind an odd backslash run** is reported undeterminable whatever the dialect, and
+  this is the most frequent prompt the rule buys: it covers a literal ending in a backslash (a Windows
+  path) *and* `\'` as an escaped apostrophe — which is MySQL's own escape, so an everyday MySQL read
+  such as `… WHERE name = 'O\'Brien'` asks on every execute. Naming the dialect does not narrow this
+  one, because whether `\` escapes is deliberately not a fact the grammar record carries yet (fixtures
+  across this milestone rest on the undeterminable reading). What does *not* happen is a prompt
+  for a statement that merely contains a backslash — `SELECT 'a\nb' FROM t`, `… LIKE 'a\_b'` and
+  `'C:\\Users\\me'` all resolve and run without one.
+- **A bracketed run a dialect at the default bracket reading cannot close.** `[…]` is read as SQL
+  Server's quoted name for every dialect but ClickHouse (#295 established the subscript rule there
+  only), so a PostgreSQL nested array (`SELECT ARRAY[[1,2],[3,4]] AS a FROM t`), a nested subscript
+  (`t.data[idx[0]]`) and a subscript key carrying a `]` (`j['a]b']`) are unresolvable and ask, even
+  though they only read. Ordinary `a[1]` and `ARRAY[1,2]` resolve and do not. This is the second half
+  of a cost the limiter already paid as a lost bound — see
+  [docs/providers/postgres.md](../providers/postgres.md).
+- **Non-SQL query text.** Both execution paths ask about whatever is in the editor, so a MongoDB
+  document or a Redis command whose escaped quote this SQL span reader cannot resolve
+  (`{"filter":{"msg":"say \"hi\""}}`) prompts too, and the notice says the statement could not be
+  fully read — true, though the grammar it was read under is not the one the text is written in.
+
+Naming the dialect narrows the second class — ClickHouse's `[[1,2],[3,4]]` is a closed run under its
+own grammar (#295) and unresolvable only to a reader without it — and it lifts a form the default
+cannot read at all: Oracle's `q'{it's}'` (#292). It does nothing for the first class, per that
+bullet.
+
 Three gaps are known and pinned by tests rather than claimed closed:
 
 - **Only `UPDATE … SET` is looked for inside a read.** A write hidden in a CTE *body* under any
   other keyword (`WITH gone AS (DELETE FROM t RETURNING *) SELECT * FROM gone`) does not prompt.
   Widening the probe to `DELETE`/`INSERT`/`MERGE` would also make every read whose code names one
   of them prompt, so the asymmetry is inherited from the vocabulary above rather than chosen here.
-- **A statement whose shape cannot be read at all** — an unclosed CTE list, or an undeterminable
-  literal such as `'\'`, which closes the string in PostgreSQL and not in MySQL — hides what
-  follows it. The text is a syntax error under at least one dialect, so the server rejects it
-  either way. This is also the one place the reading NARROWED: the text-scanning probe it replaced
-  found an `UPDATE … SET` written after such a literal, so `SELECT '\';` followed by a write
-  prompted before and does not now. Whether unresolvable text should ask instead is tracked as
-  #297, and the dialect-aware reading #292 asks for would settle where the literal ends.
+- **A statement whose shape cannot be TYPED** — an unclosed CTE list such as
+  `WITH t AS (DELETE FROM x` — does not prompt. This is the boundary of the rule above rather than
+  an exception to it: every character was read, and what they spell is an incomplete statement
+  rather than a run hiding what is written inside it. No dialect accepts the text, so the server
+  rejects it; and the keyword inside the unclosed list is a CTE-body write, which the gap above
+  already does not prompt for even when the list closes. Pinned by
+  `tests/components/QuerySafetyDialog.test.tsx` ("does not prompt when the statement's shape cannot
+  be typed") so the boundary stays a decision — the shipped rule keys on unresolvable *runs*, and
+  widening it to every statement the reader cannot type would prompt for an empty editor.
 - **A multi-statement script is read as one statement.** `SELECT 1; DROP TABLE users` does not
   prompt (its first keyword is the `SELECT`), while `SELECT 1; UPDATE t SET x = 1` does, because
   the unanchored probe finds it. Executing the destructive statement on its own prompts, as long
-  as that statement's own shape can be read — the gap above is the exception.
+  as that statement's own shape can be typed — the gap above is the exception.
 
 Four runs bypass the gate on purpose, all on the standalone path
 (`src/hooks/use-query-execution.ts`): an EXPLAIN run (see below), a Load-More page of a result the

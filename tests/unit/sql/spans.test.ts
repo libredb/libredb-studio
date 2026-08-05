@@ -1,6 +1,6 @@
 import { describe, test, expect } from "bun:test";
 import { resolveSqlGrammar, type SqlGrammar } from "@/lib/sql/grammar";
-import { readSqlSpan } from "@/lib/sql/spans";
+import { hasUnterminatedSpan, readSqlSpan } from "@/lib/sql/spans";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -497,5 +497,88 @@ describe("readSqlSpan: bracketed subscripts", () => {
     // statement inside a literal.
     expect(readSqlSpan("['a", 0, CLICKHOUSE)).toEqual({ kind: "subscript", end: 3, terminated: false });
     expect(readSqlSpan("['a\\'] AS v", 0, CLICKHOUSE)?.terminated).toBe(false);
+  });
+});
+
+// ─── Text no reader can resolve (#297) ───────────────────────────────────────
+//
+// Every reader over this module discards `terminated: false` after acting on it:
+// the limiter declines to rewrite, `findCodeWord` reports the word it could not
+// see as absent. The confirmation gate needs the signal ITSELF - a span that never
+// closes hides whatever is written inside it, and answering "not dangerous" for
+// text a reader cannot read is the one direction that costs more than a click.
+
+describe("hasUnterminatedSpan", () => {
+  test.each<[string, string]>([
+    ["a plain read", "SELECT * FROM users"],
+    ["a closed literal", "SELECT name FROM users WHERE name = 'O''Brien'"],
+    ["a backslash inside a literal", "SELECT 'a\\nb' FROM t"],
+    ["a literal ending in a doubled backslash", "SELECT 'C:\\\\Users\\\\me' FROM files"],
+    ["stacked comments", "-- one\n/* two */\n-- three\nSELECT 1"],
+    ["a line comment closed by the end of the input", "SELECT 1 -- note"],
+    ["a dollar-quoted body", "SELECT $fn$ begin end $fn$"],
+    ["a bracket-quoted name", "SELECT [a--b] FROM t"],
+    ["a backtick-quoted name", "SELECT `a b` FROM t"],
+    ["text holding no span at all", "1+1"],
+    ["nothing", ""],
+  ])("answers false for %s", (_label, sql) => {
+    expect(hasUnterminatedSpan(sql)).toBe(false);
+  });
+
+  test.each<[string, string]>([
+    ["a quote behind an odd backslash run", "SELECT '\\';\nUPDATE t SET x = 1"],
+    ["a literal that never closes", "SELECT 'unclosed FROM t"],
+    ["a block comment that never closes", "SELECT 1 /* unclosed"],
+    ["a dollar-quoted body that never closes", "SELECT $fn$ begin"],
+    ["a bracket-quoted name that never closes", "SELECT [name FROM t"],
+    ["a double-quoted name that never closes", 'SELECT "name FROM t'],
+  ])("answers true for %s", (_label, sql) => {
+    expect(hasUnterminatedSpan(sql)).toBe(true);
+  });
+
+  // The signal is the GRAMMAR's answer, not this module's: the same characters are
+  // resolvable under one dialect's reading and not under another's, which is the
+  // whole reason the dialect reaches these readers (#292, #295).
+
+  test("the dialect decides whether a bracketed run resolves", () => {
+    // Under the name reading this closes at the inner `]`; under ClickHouse's
+    // array reading the depth never returns to zero.
+    const unbalanced = "WITH [[1,2] AS x DELETE FROM t";
+
+    expect(hasUnterminatedSpan(unbalanced)).toBe(false);
+    expect(hasUnterminatedSpan(unbalanced, resolveSqlGrammar("clickhouse"))).toBe(true);
+
+    // And the other direction on a nested array that IS balanced: the name reading
+    // takes the trailing `]]` for an escape and never closes the run, while
+    // ClickHouse's counts depth and closes it. This is the reason the confirmation
+    // gate answers the same for both readings of this text and for different
+    // reasons - one read the statement, the other could not.
+    const nested = "WITH [[1,2],[3,4]] AS x DELETE FROM t";
+
+    expect(hasUnterminatedSpan(nested)).toBe(true);
+    expect(hasUnterminatedSpan(nested, resolveSqlGrammar("clickhouse"))).toBe(false);
+  });
+
+  test("the dialect decides whether an alternate-quoted literal resolves", () => {
+    // Read as ordinary code the apostrophe inside the body opens a string that
+    // swallows the rest of the input; under Oracle's grammar the form closes.
+    const alternateQuoted = "SELECT q'{it's}' FROM dual";
+
+    expect(hasUnterminatedSpan(alternateQuoted)).toBe(true);
+    expect(hasUnterminatedSpan(alternateQuoted, resolveSqlGrammar("oracle"))).toBe(false);
+  });
+
+  test("answers in bounded time on a large input", () => {
+    // The gate that consumes this runs on the editor's execute path, where a
+    // pasted migration script is ordinary. A scanner that advances one span at a
+    // time cannot backtrack - the property this asserts is kept, not assumed.
+    const many = `SELECT ${"'lit' /* note */ -- line\n".repeat(20000)}1`;
+
+    const started = performance.now();
+    const unresolved = hasUnterminatedSpan(many);
+    const elapsed = performance.now() - started;
+
+    expect(unresolved).toBe(false);
+    expect(elapsed, `took ${elapsed.toFixed(1)}ms`).toBeLessThan(200);
   });
 });

@@ -72,6 +72,12 @@ export interface CodeWord {
  * would answer for words inside a literal under the other. Pinned by a test in
  * `tests/unit/sql/words.test.ts`.
  *
+ * So a caller that must not be silent about such text asks about it separately
+ * rather than reading this reader's `null` as "the word is not there": the
+ * confirmation gate calls `hasUnterminatedSpan` and prompts on it (#297). This
+ * reader's answer stays what it is - where the word was FOUND - because the readers
+ * that walk a statement to rewrite it need exactly that.
+ *
  * WHICH runs are not code is the dialect's answer for one character: a write
  * written after a `#` is commented out in MySQL and the statement's own code in
  * PostgreSQL, and the safety predicate above this reader has to prompt in the

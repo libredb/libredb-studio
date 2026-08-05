@@ -151,8 +151,15 @@ function hasOddBackslashRunBefore(sql: string, from: number, at: number): boolea
  * delimiter behind an odd backslash run is reported as UNDETERMINABLE instead of
  * guessed: `WITH t AS (SELECT '\') SELECT ') DELETE FROM users` reads as a SELECT
  * under one dialect and a DELETE under the other, and guessing the first would
- * append a bound to a DELETE. Callers already decline to rewrite what they cannot
- * read, so the cost of the safe answer is at most an unbounded read.
+ * append a bound to a DELETE. The callers that REWRITE a statement decline to,
+ * so the cost there is at most an unbounded read.
+ *
+ * Since #297 it costs one thing more, and this rule is where the cost is largest:
+ * the confirmation gate asks about text it cannot resolve rather than staying
+ * silent, and `\'` is MySQL's own escape for an apostrophe, so an everyday read
+ * (`… WHERE name = 'O\'Brien'`) prompts on every execute. Naming the dialect does
+ * not narrow it, because whether `\` escapes is deliberately not one of the facts
+ * `grammar.ts` carries yet.
  */
 /**
  * A `[…]` quoted identifier, whose closing bracket is escaped by doubling.
@@ -473,4 +480,40 @@ export function readSqlSpan(sql: string, index: number, grammar: SqlGrammar = DE
   }
 
   return null;
+}
+
+/**
+ * Whether this text carries a run that never closes - i.e. whether part of it is
+ * text no reader over this module can resolve.
+ *
+ * Every OTHER reader here consumes `terminated: false` and then throws it away:
+ * `statement-end.ts` refuses the cut, `words.ts` reports the word it could not see
+ * as absent, `readSubscripted` above gives up on the bracket. Each is answering a
+ * question where declining to act is the safe direction, because their mistake
+ * would be a row bound appended to a write.
+ *
+ * The confirmation gate's costs run the other way - silence there is an
+ * unconfirmed destructive statement, while asking costs a click - so it needs the
+ * signal itself rather than a reader's response to it (#297). Hence a predicate
+ * over spans rather than a fourth reader that re-derives it: an unterminated run
+ * hides whatever is written INSIDE it, and the whole answer is whether one exists.
+ *
+ * A scanner for the same reason as the rest of this module: it advances one span
+ * or one character at a time and cannot backtrack, so it stays linear on the
+ * pasted-script sizes the execute path sees.
+ */
+export function hasUnterminatedSpan(sql: string, grammar: SqlGrammar = DEFAULT_SQL_GRAMMAR): boolean {
+  let i = 0;
+
+  while (i < sql.length) {
+    const span = readSqlSpan(sql, i, grammar);
+    if (span === null) {
+      i++;
+      continue;
+    }
+    if (!span.terminated) return true;
+    i = span.end;
+  }
+
+  return false;
 }

@@ -594,6 +594,121 @@ describe("QuerySafetyDialog", () => {
     const highButton = result2.queryByText("Proceed with Caution")!.closest("button");
     expect(highButton?.className).toContain("bg-red-600");
   });
+
+  // ── Honesty about text the reading could not resolve (#297) ────────────────
+  //
+  // The gate now opens this dialog for a statement carrying a run no reader can
+  // resolve, and a silent `true` would be only half of the bar: the operator is
+  // then reading a risk analysis produced from text whose reading stopped early.
+  // So the dialog says which of the two situations it is in.
+
+  const UNREADABLE_QUERY = "SELECT '\\';\nUPDATE t SET x = 1";
+
+  const SAFE_PAYLOAD = {
+    riskLevel: "safe",
+    summary: "Read-only query.",
+    warnings: [],
+    affectedRows: "none",
+    cascadeEffects: "none",
+    recommendation: "Proceed.",
+  };
+
+  test("says part of the statement could not be read, and that this is why it asks", async () => {
+    globalThis.fetch = mock(async () =>
+      createStreamResponse({ chunks: [JSON.stringify(SAFE_PAYLOAD)] }),
+    ) as unknown as typeof fetch;
+
+    const { queryByText } = render(
+      <QuerySafetyDialog
+        isOpen
+        query={UNREADABLE_QUERY}
+        schemaContext=""
+        databaseType="postgres"
+        onClose={onClose}
+        onProceed={onProceed}
+      />,
+    );
+
+    // Said immediately, without waiting on the analysis: the reason for asking is
+    // this client-side reading, not anything the model returns.
+    expect(queryByText("Part of this statement could not be read")).not.toBeNull();
+    expect(queryByText(/never closes/)).not.toBeNull();
+    expect(queryByText(/why you are being asked/)).not.toBeNull();
+
+    // And it goes on saying so BESIDE a verdict that read the statement as safe.
+    // The analysis was produced from text whose reading stopped early, so a "Safe"
+    // answer is not allowed to be the last thing the operator sees.
+    await waitFor(() => {
+      expect(queryByText("Safe")).not.toBeNull();
+    });
+    expect(queryByText("Part of this statement could not be read")).not.toBeNull();
+  });
+
+  test("says nothing of the kind for a statement it read whole", async () => {
+    globalThis.fetch = mock(async () =>
+      createStreamResponse({ chunks: [JSON.stringify(SAFE_PAYLOAD)] }),
+    ) as unknown as typeof fetch;
+
+    const { queryByText } = render(
+      <QuerySafetyDialog
+        isOpen
+        query="DELETE FROM users WHERE id = 5"
+        schemaContext=""
+        databaseType="postgres"
+        onClose={onClose}
+        onProceed={onProceed}
+      />,
+    );
+
+    expect(queryByText("Part of this statement could not be read")).toBeNull();
+
+    await waitFor(() => {
+      expect(queryByText("Safe")).not.toBeNull();
+    });
+    expect(queryByText("Part of this statement could not be read")).toBeNull();
+  });
+
+  /**
+   * The notice is the DIALECT's answer, like the gate that opened the dialog: the
+   * component already receives the connection's type, so it resolves the grammar
+   * itself rather than being told what to say.
+   */
+  test("reads the statement under the dialect it was given", async () => {
+    globalThis.fetch = mock(async () =>
+      createStreamResponse({ chunks: [JSON.stringify(SAFE_PAYLOAD)] }),
+    ) as unknown as typeof fetch;
+
+    // An Oracle alternate-quoted literal: an unresolvable run to a reader that does
+    // not have the form, one closed literal to Oracle's.
+    const alternateQuoted = "SELECT q'{it's}' FROM dual";
+
+    const { queryByText, unmount } = render(
+      <QuerySafetyDialog
+        isOpen
+        query={alternateQuoted}
+        schemaContext=""
+        databaseType="postgres"
+        onClose={onClose}
+        onProceed={onProceed}
+      />,
+    );
+    expect(queryByText("Part of this statement could not be read")).not.toBeNull();
+
+    unmount();
+    cleanup();
+
+    const onOracle = render(
+      <QuerySafetyDialog
+        isOpen
+        query={alternateQuoted}
+        schemaContext=""
+        databaseType="oracle"
+        onClose={onClose}
+        onProceed={onProceed}
+      />,
+    );
+    expect(onOracle.queryByText("Part of this statement could not be read")).toBeNull();
+  });
 });
 
 describe("isDangerousQuery", () => {
@@ -680,12 +795,19 @@ describe("isDangerousQuery", () => {
   });
 
   /**
-   * A `WITH` whose list never closes cannot be read, so the destructive keyword
+   * A `WITH` whose list never closes cannot be TYPED, so the destructive keyword
    * inside it is not reported. No dialect accepts the text either, so what the
    * server receives is a syntax error rather than a dropped table - pinned so the
    * gap stays a decision.
+   *
+   * This is the boundary of #297's rule, which is about text no reader can RESOLVE:
+   * here every character was read, and the shape it spells is an incomplete
+   * statement rather than a run hiding what is written inside it. The keyword inside
+   * the unclosed list is a CTE-body write, which the row above pins as not prompting
+   * even when the list DOES close - so the answer is inherited from that gap, not
+   * from the reading stopping early.
    */
-  test("does not prompt when the statement's shape cannot be read at all", () => {
+  test("does not prompt when the statement's shape cannot be typed", () => {
     expect(isDangerousQuery("WITH t AS (DELETE FROM x")).toBe(false);
   });
 
@@ -702,9 +824,117 @@ describe("isDangerousQuery", () => {
     ["a DELETE hidden in a CTE body", "WITH gone AS (DELETE FROM t RETURNING *) SELECT * FROM gone", false],
     ["a DROP after a leading SELECT", "SELECT 1; DROP TABLE users", false],
     ["an UPDATE after a leading SELECT", "SELECT 1;\nUPDATE t SET x = 1", true],
-    ["a write behind an undeterminable literal", "SELECT '\\';\nUPDATE t SET x = 1", false],
   ])("answers %s with %p", (_label, query, expected) => {
     expect(isDangerousQuery(query)).toBe(expected);
+  });
+
+  // ── Text no reader can resolve asks instead of staying silent (#297) ──────
+  //
+  // Every OTHER reader in `src/lib/sql/` errs toward not ACTING on text it cannot
+  // resolve, and that is the safe direction for them: their mistake is a row bound
+  // appended to a write, i.e. a partial commit. Here the costs are reversed - a
+  // false prompt costs one click, silence costs an unconfirmed destructive
+  // statement - so this predicate reads the span reader's `terminated: false` as
+  // its own answer rather than discarding it.
+
+  test("prompts for a write hidden behind an undeterminable literal", () => {
+    // `'\'` closes the string under PostgreSQL's reading and continues it under
+    // MySQL's, so `spans.ts` declines to guess and everything after the quote is
+    // invisible to a reader walking code words. The write is the second statement
+    // of a script node-postgres sends through the simple query protocol.
+    expect(isDangerousQuery("SELECT '\\';\nUPDATE t SET x = 1")).toBe(true);
+    // Not only the unanchored probe's vocabulary: a DROP written there was
+    // invisible too, and this predicate never looked for it past the leading word.
+    expect(isDangerousQuery("SELECT '\\';\nDROP TABLE users")).toBe(true);
+  });
+
+  test.each<[string, string]>([
+    ["a literal that never closes", "SELECT 'unclosed FROM t"],
+    ["a block comment that never closes", "SELECT 1 /* unclosed"],
+    ["a dollar-quoted body that never closes", "SELECT $fn$ begin"],
+    ["a bracket-quoted name that never closes", "SELECT [name FROM t"],
+    ["a double-quoted name that never closes", 'SELECT "name FROM t'],
+  ])("prompts for %s", (_label, query) => {
+    expect(isDangerousQuery(query)).toBe(true);
+  });
+
+  /**
+   * The cost of asking, bounded by assertion rather than by hope.
+   *
+   * The reason this predicate stayed silent was the false prompts the honest answer
+   * buys: `spans.ts` reports an undeterminable literal for any closing quote behind
+   * an ODD backslash run, and a legitimate PostgreSQL literal ending in a backslash
+   * is exactly that shape. What must NOT happen is a prompt for every statement
+   * that merely CONTAINS a backslash, which is what a text-level backslash test
+   * would have produced.
+   */
+  test.each<[string, string]>([
+    ["a backslash inside a literal", "SELECT 'a\\nb' FROM t"],
+    ["a literal ending in a doubled backslash", "SELECT 'C:\\\\Users\\\\me' FROM files"],
+    ["an escaped LIKE wildcard", "SELECT * FROM t WHERE p LIKE 'a\\_b'"],
+    ["a backslash in a comment", "-- C:\\\nSELECT 1"],
+  ])("never prompts for %s, whose runs all resolve", (_label, query) => {
+    expect(isDangerousQuery(query)).toBe(false);
+  });
+
+  /**
+   * The most frequent prompt this rule buys, named rather than left to be
+   * discovered: `\'` is MySQL's OWN escape for an apostrophe, and `spans.ts` reports
+   * any closing quote behind an odd backslash run as undeterminable whatever the
+   * dialect - backslash semantics are deliberately not a fact the grammar record
+   * carries yet, because fixtures across this milestone rest on the undeterminable
+   * reading. So an everyday MySQL read asks, and naming the dialect does not narrow
+   * it: this is the one cost the channel cannot resolve today.
+   */
+  test("prompts for a literal escaping its apostrophe with a backslash, under either dialect", () => {
+    const everyday = "SELECT * FROM t WHERE name = 'it\\'s'";
+
+    expect(isDangerousQuery(everyday, "mysql")).toBe(true);
+    expect(isDangerousQuery(everyday, "postgres")).toBe(true);
+  });
+
+  /**
+   * The cost reaches past the backslash class, and it is pinned here rather than
+   * left to be discovered: a dialect at the compatibility BRACKET reading (#295
+   * established the subscript rule for ClickHouse only) cannot close a PostgreSQL
+   * nested array or a subscript key carrying a `]`, so those read-only statements
+   * ask before they run. `docs/providers/postgres.md` records the same cost on the
+   * limiter side - a lost bound - and now records this half too.
+   *
+   * Ordinary subscripts and array literals resolve, which is what keeps the class
+   * narrow: it is nested brackets and `]`-bearing keys, not every `[`.
+   */
+  test.each<[string, string, boolean]>([
+    ["a nested array", "SELECT ARRAY[[1,2],[3,4]] AS a FROM t", true],
+    ["a subscript key holding a close bracket", "SELECT j['a]b'] FROM t", true],
+    ["a nested subscript", "SELECT t.data[idx[0]] FROM t", true],
+    ["an ordinary subscript and array literal", "SELECT a[1], ARRAY[1,2] FROM t", false],
+  ])("answers %s on PostgreSQL with %p", (_label, query, expected) => {
+    expect(isDangerousQuery(query, "postgres")).toBe(expected);
+  });
+
+  /**
+   * The same class on SQLite, because the shared name reading honours SQL Server's
+   * doubled `]` for it: the escape swallows the real closer, so the run never
+   * terminates and the statement asks. SQLite rejects the text either way - recorded
+   * in `docs/providers/sqlite.md` beside the bound that divergence already cost.
+   */
+  test("prompts for a SQLite name whose doubled bracket swallows its closer", () => {
+    expect(isDangerousQuery("SELECT [a]] FROM t", "sqlite")).toBe(true);
+  });
+
+  /**
+   * Both execution paths ask about every query text, so the rule reaches the two
+   * non-SQL providers as well: a Mongo document or a Redis command whose escaped
+   * quote this SQL span reader reports as undeterminable prompts, and the dialog
+   * tells the operator the text could not be fully read - which is true, though the
+   * grammar it could not read it under is not the one the text is written in. The
+   * fail-safe direction and one click, stated rather than implied.
+   */
+  test("prompts for non-SQL query text whose escaped quote cannot be resolved", () => {
+    expect(isDangerousQuery('{"operation":"find","filter":{"msg":"say \\"hi\\""}}', "mongodb")).toBe(true);
+    expect(isDangerousQuery('{"operation":"find","filter":{"msg":"hi"}}', "mongodb")).toBe(false);
+    expect(isDangerousQuery('SET k "a\\"b"', "redis")).toBe(true);
   });
 
   // ── The dialect decides what the statement says (#292) ──────────────────
@@ -742,27 +972,31 @@ describe("isDangerousQuery", () => {
   // The bracket grammar reaches this predicate for the same reason (#295): under
   // ClickHouse's reading a nested array closes, so the keyword after the CTE list
   // is read and asked about, where the quoted-name reading took the closing `]]`
-  // for an escape, never closed the run, and left everything after it invisible.
-  test("prompts for a DELETE a nested array hid, once the dialect is named", () => {
+  // for an escape and never closed the run.
+  //
+  // Both readings ask now, and for two different reasons - ClickHouse's because it
+  // read the `DELETE`, the name reading because it could not read the statement at
+  // all (#297), which is also what the dialog then tells the operator. Which
+  // reading resolves that text is pinned in tests/unit/sql/spans.test.ts.
+  test("prompts for a DELETE a nested array hid, whether or not the dialect is named", () => {
     const query = "WITH [[1,2],[3,4]] AS x DELETE FROM t";
 
-    expect(isDangerousQuery(query)).toBe(false);
+    expect(isDangerousQuery(query)).toBe(true);
     expect(isDangerousQuery(query, "clickhouse")).toBe(true);
   });
 
   /**
-   * KNOWN NARROWING, pinned rather than left to be discovered: bracket text that
-   * does not balance is undeterminable under the subscript reading, and this
-   * predicate still answers "not dangerous" for text it cannot read - the one input
-   * class #297 is filed to change. Under the name reading the same text happened to
-   * close its run at the inner `]` and answer true, so naming the dialect LOSES
-   * this prompt. The text is a syntax error in ClickHouse either way.
+   * The narrowing #295 recorded here, now closed by #297's rule rather than left
+   * pinned: bracket text that does not balance is undeterminable under the subscript
+   * reading, so naming ClickHouse used to LOSE this prompt (the name reading happened
+   * to close its run at the inner `]` and read the `DELETE`). Both readings ask now -
+   * one because it read the statement, the other because it could not.
    */
-  test("still answers false for bracket text no reader can resolve", () => {
+  test("asks for bracket text no reader can resolve, under either reading", () => {
     const query = "WITH [[1,2] AS x DELETE FROM t";
 
     expect(isDangerousQuery(query)).toBe(true);
-    expect(isDangerousQuery(query, "clickhouse")).toBe(false);
+    expect(isDangerousQuery(query, "clickhouse")).toBe(true);
   });
 
   // ── Shape of the scan ───────────────────────────────────────────────────
