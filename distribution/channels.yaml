@@ -263,28 +263,6 @@ channels:
 
   # ---- Tier 2: LibreDB-owned copies and listings, bumped by hand ----------
 
-  - id: caprover-mirror
-    name: CapRover 3rd-party repo (libredb.org/caprover-one-click-apps)
-    short_name: CapRover 3rd-party repo
-    status: deprecated
-    category: paas-catalogs
-    platforms: [cloud]
-    tier: 2
-    kind: one-click-template
-    update:
-      method: commit
-      sla: on_demand
-    links:
-      tracking_issue: https://github.com/libredb/libredb-studio/issues/56
-      catalog: https://libredb.org/caprover-one-click-apps
-      upstream_repo: https://github.com/libredb/caprover-one-click-apps
-    pin:
-      strategy: none
-      note: This was a LibreDB-owned CapRover repo, published while the official catalog submission
-        (#56) was in review. The official listing (caprover-official) is now live, so this
-        fallback is retired. The libredb.org/caprover-one-click-apps path it was served from is not
-        currently published.
-
   - id: railway-template
     name: Railway one-click template
     status: live
@@ -413,10 +391,18 @@ channels:
       tracking_issue: https://github.com/libredb/libredb-studio/issues/56
       first_pr: https://github.com/caprover/one-click-apps/pull/1303
       upstream_repo: https://github.com/caprover/one-click-apps
+      docs: deploy/caprover/README.md
     pin:
       strategy: remote_file
       url: https://raw.githubusercontent.com/caprover/one-click-apps/master/public/v4/apps/libredb-studio.yml
       extract: "defaultValue: '(\\d+\\.\\d+\\.\\d+)'"
+      note: The single CapRover row. A LibreDB-owned 3rd-party repo
+        (libredb/caprover-one-click-apps) served the app while this submission was in review and was
+        retired once it merged; it had its own inventory entry until that duplicated CapRover in the
+        coverage matrix as one live and one dead route to the same platform, with the dead one's URL
+        no longer published. Its record lives in deploy/caprover/README.md, which is where a
+        maintainer bumping the template already looks. Users install from the official catalog only -
+        no third-party repo to add.
 
   - id: dokploy
     name: Dokploy template catalog
