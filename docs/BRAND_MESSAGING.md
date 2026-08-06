@@ -166,3 +166,52 @@ Recorded so they are not reintroduced later from memory.
 | :--- | :--- |
 | "CloudBeaver Community has LDAP, LibreDB does not" | Current documentation lists LDAP under the Enterprise Edition only. The half about LibreDB stands and appears in the honesty limits; the half about CloudBeaver is no longer verifiable and is not used |
 | "Issue #3961 proves NoSQL is unavailable in the Community Edition" | The issue is a driver-configuration question, not an availability statement. The bundled driver set is the evidence instead |
+
+## Audience layers
+
+Adoption of infrastructure tooling flows bottom-up. A platform lead evaluates LibreDB because an engineer already tried it, which is why the engineer is the primary audience and the lead is the second layer rather than the first.
+
+### Layer A — the individual developer (primary)
+
+Register: direct, willing to take a side, with proof attached to every side taken. This layer may state a position. It may not state an adjective.
+
+Hooks: Door 1 and Door 3. Assurances stay in the second half.
+
+Surfaces: GitHub, Hacker News, Reddit, developer newsletters, conference talks.
+
+### Layer B — the platform and DevOps lead (secondary)
+
+Register: calm and evidence-led, with the rhetoric removed. This reader is deciding on behalf of other people and has to be able to repeat the claim to a security reviewer without embarrassment. Anything that cannot survive that repetition does not belong in Layer B.
+
+Hooks: Door 2, Assurance 1 and Assurance 2.
+
+Surfaces: documentation, comparison pages, LinkedIn, Kubernetes and DevOps communities.
+
+### Layer C — PaaS providers (dormant)
+
+Platforms that provision databases can ship an editor beside every database they create, through the npm package rather than an iframe. This is the audience closest to the partnership and licensing goal, and the narrowest.
+
+Documented so the message exists when it is wanted. Not part of the current campaign, and not to be activated without a decision.
+
+## What we will not say
+
+An agency that knows what it may not embellish is forced to fill the remaining space with real material. That is the purpose of this section.
+
+1. **Display masking is a presentation feature, not a security control.** It was built for screen sharing, demos and screenshots. It runs in the browser, and the API returns full values to an authorized user. State this as scope, not as a shortcoming. No message may imply that display masking is data protection, access control, or compliance.
+2. **Never claim leadership on the number of SQL engines.** CloudBeaver Community bundles 18 driver modules covering 15 distinct engines, against ten here. The claim is the span across SQL, NoSQL and analytics in one interface, never the count.
+3. **There is no LDAP.** Single sign-on is delivered through OIDC. Teams that require LDAP are told before they install, not after.
+4. **There is no Elasticsearch or OpenSearch provider.** Neither may appear as an example, in any list of engines, or in any story about polyglot teams. What the story promises, the product has to hold.
+5. **No unverifiable adjectives.** Replace each with the fact underneath it. Not "enterprise-grade" but: there is an audit trail, there is role-based access control, there is OIDC.
+6. **Never use competitor defects.** No bug reports, no performance complaints, no community friction, no screenshots of someone's broken session. Comparison runs on licence and feature scope, with a primary source attached to every line.
+7. **AI is not described as magic.** The assistant is schema-aware and it is useful. It is not authoritative, and verification remains the user's responsibility. Never imply a generated query is safe to run unread.
+
+## Voice and tone
+
+An engineer speaking to an engineer.
+
+- Claim plus proof. Never adjective plus adjective.
+- No emoji. No exclamation marks.
+- Competitors are never disparaged by name. A comparison is a table with sources, and the reader draws the conclusion.
+- Prefer the concrete number to the impressive word. "Ten engines" beats "extensive database support".
+- Say the limitation out loud. Stating scope precisely is what makes the rest of the claims credible to this audience.
+- Product terms stay in English in every language. LibreDB Studio, not a translated variant.
