@@ -215,3 +215,30 @@ An engineer speaking to an engineer.
 - Prefer the concrete number to the impressive word. "Ten engines" beats "extensive database support".
 - Say the limitation out loud. Stating scope precisely is what makes the rest of the claims credible to this audience.
 - Product terms stay in English in every language. LibreDB Studio, not a translated variant.
+
+## Tagline candidates
+
+Three options. The choice belongs to the marketing team. All three carry the umbrella claim rather than a feature, which is the only requirement.
+
+- **Bring the editor to the data.** Shortest. States the belief directly and works as a section heading or a talk title. Weakest standing alone without context around it.
+- **Your databases moved to the cloud. Your editor should too.** Carries the whole argument in two clauses and needs no setup. Longest, and the hardest to place in a narrow layout.
+- **An editor beside every database.** Closest to the founding image, and the only one that also generalizes to the PaaS audience in Layer C.
+
+Pick one and repeat it. Do not rotate between them, and do not combine two into a longer line.
+
+## Application map
+
+Direction, not copy. This brief contains no finished copy for any surface. It says which door each surface leads with, and why.
+
+| Surface | Leads with | Why | Current state |
+| :--- | :--- | :--- | :--- |
+| GitHub About | Door 2, in one line | The first thing a repository visitor reads, and the only place a full sentence has to work with no layout around it | Defect: it names four engines against ten shipped. Fix before any campaign starts |
+| README opening | Door 1, then Door 3 | Visitors arriving from search need the claim before the feature list | States a category rather than a claim. Rewrite |
+| Website hero | Door 1 | The site as a whole can carry the story; the hero carries the claim and a single proof | States a category rather than a claim. Rewrite |
+| Website story section | The brand story, both scenes | Nothing on the site currently says why LibreDB exists | Missing entirely. Add |
+| Comparison page | Door 3, in table form | The one surface where the four gated capabilities belong in full, each with its source attached | Missing. Add, sourced from the proof library |
+| Hacker News and Reddit | Door 1, Layer A register | This audience rejects positioning language and accepts a specific verifiable claim | Not yet attempted |
+| LinkedIn | Door 2 with Assurance 1, Layer B register | Reaches the lead rather than the engineer | Not yet attempted |
+| Conference talk or long-form article | The brand story in full | The only format long enough for the belief and its consequences | Not yet attempted |
+
+Two rules for anyone working from this map. Every surface leads with exactly one door. And no surface promises anything the proof library does not carry.
