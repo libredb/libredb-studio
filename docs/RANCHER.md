@@ -8,17 +8,46 @@ versions, how to install through Rancher, and the combinations we validate.
 
 ## Supported versions
 
-| Component | Supported |
-|-----------|-----------|
-| Rancher | 2.9 or later |
-| Kubernetes | 1.26 or later (chart `kubeVersion: >=1.26.0-0`) |
-| Distributions | K3s, RKE2, and other CNCF-conformant Kubernetes distributions |
-| Architectures | linux/amd64, linux/arm64 |
+These are the SUSE Rancher and Rancher Kubernetes distribution versions
+LibreDB Studio is supported on, and the versions Sekoya provides
+[commercial support](#commercial-support) for.
+
+| Component | Supported | Validated |
+|-----------|-----------|-----------|
+| SUSE Rancher Prime and Rancher (community) | 2.9 or later | 2.14.3 (community build) |
+| SUSE K3s | 1.26 or later | v1.31.14+k3s1, v1.35.5+k3s1 |
+| SUSE RKE2 | 1.26 or later | — |
+| Kubernetes | 1.26 or later (chart `kubeVersion: >=1.26.0-0`) | v1.31.14, v1.35.5 |
+| Distributions | any CNCF-conformant Kubernetes distribution | — |
+| Architectures | linux/amd64, linux/arm64 | linux/amd64 |
 
 The chart uses only core Kubernetes APIs (`apps/v1`, `networking.k8s.io/v1`,
 `autoscaling/v2`, `policy/v1`) and carries no distribution-specific
 dependencies; the version floor is set by the chart's `kubeVersion`
-constraint, not by distribution features.
+constraint, not by distribution features. Support for a Rancher or
+distribution version is not withdrawn while that version is itself supported
+upstream.
+
+## Commercial support
+
+LibreDB Studio is developed and maintained by **Sekoya Grup Bilişim ve
+Teknoloji Ltd. Şti.** (Istanbul, Türkiye), trading publicly as **LibreDB**.
+Sekoya is the primary developer and maintainer of the software.
+
+**Sekoya provides commercial support for LibreDB Studio on every Rancher,
+K3s, RKE2 and Kubernetes version declared in the table above**, covering Helm
+chart installation and upgrades, configuration, defect triage and fixes, and
+security patches.
+
+| Need | Channel |
+|------|---------|
+| Commercial support enquiries | <info@sekoya.tech> |
+| Security vulnerabilities | [`SECURITY.md`](../SECURITY.md) — do not open a public issue |
+| Community questions and bug reports | <https://github.com/libredb/libredb-studio/issues> |
+
+LibreDB Studio is released under the [MIT license](../LICENSE) and follows a
+regular tagged release cadence; critical vulnerabilities are patched promptly
+and serious defects are disclosed in the release notes.
 
 ## Installing via Rancher Apps
 
@@ -110,3 +139,8 @@ recreation instead, as covered by the persistence scenario in the Rancher row.
 | Rancher v2.14.3 (single-node Docker install) | v1.35.5 | 2026-07-07 | 0.1.9 | bundled K3s v1.35.5+k3s1; chart served to the Rancher Apps catalog via a `ClusterRepo`; validated with a nine-scenario matrix (zero-config default, explicit secrets, strict-mode refusal, strict + optional user account, `existingSecret`, multi-replica guard refusal and shared-secret multi-replica, persistence across pod recreation, chart upgrade 0.1.8 to 0.1.9), including Rancher UI evidence |
 | K3s v1.31.14+k3s1 | v1.31.14 | 2026-07-07 | 0.1.8 (appVersion 0.9.49) | k3d v5.9.0, containerd 2.1.5 |
 | K3s v1.35.5+k3s1 | v1.35.5 | 2026-07-07 | 0.1.8 (appVersion 0.9.49) | k3d v5.9.0, containerd 2.2.3 |
+
+Rows are the combinations we exercise end-to-end. Versions listed under
+[Supported versions](#supported-versions) that do not yet appear here are
+supported on the same terms — the chart is distribution-agnostic — and rows
+are added as each release is validated.

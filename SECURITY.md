@@ -6,9 +6,8 @@ We actively support and provide security updates for the following versions of L
 
 | Version | Supported          |
 | ------- | ------------------ |
-| 0.5.x   | :white_check_mark: |
-| 0.4.x   | :white_check_mark: |
-| < 0.4.0 | :x:                |
+| 0.9.x   | :white_check_mark: |
+| < 0.9.0 | :x:                |
 
 > **Note**: We recommend always using the latest version to ensure you have the most recent security patches.
 
@@ -22,7 +21,10 @@ We take the security of LibreDB Studio seriously. If you believe you have found 
 
 Instead, please report them via email to:
 
-**Email:** cevheribozoglan@gmail.com
+**Email:** info@sekoya.tech
+
+Reports are handled by Sekoya Grup Bilişim ve Teknoloji Ltd. Şti., the
+maintainer of LibreDB Studio.
 
 ### What to Include
 
@@ -99,7 +101,7 @@ Security updates will be released as:
 
 ### Security Audit
 
-If you are conducting a security audit or penetration test, please contact us in advance at cevheribozoglan@gmail.com so we can coordinate and ensure your testing does not impact other users.
+If you are conducting a security audit or penetration test, please contact us in advance at info@sekoya.tech so we can coordinate and ensure your testing does not impact other users.
 
 ---
 
