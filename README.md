@@ -5,7 +5,7 @@
 <h1 align="center">LibreDB Studio</h1>
 
 <p align="center">
-  <strong>The Modern, AI-Powered Open-Source SQL IDE for Cloud-Native Teams.</strong>
+  <strong>The database editor that deploys next to your data, not onto your laptop.</strong>
 </p>
 
 <p align="center">
@@ -68,14 +68,20 @@ The test instance comes with a pre-configured PostgreSQL database via [Seed Conn
 
 ## Overview
 
-**LibreDB Studio** is a lightweight, high-performance, and secure web-based SQL editor designed to bridge the gap between heavy desktop applications (like DataGrip/DBeaver) and minimal CLI tools. Built with a "Mobile-First, Professional-Always" philosophy, it empowers engineering teams to manage databases anywhere—from a 4K monitor to a mobile screen.
+You create a Postgres on a managed platform. It is ready in forty seconds. Then you want to look inside it — so you open a port to the internet, dig an SSH tunnel, or install a desktop client on every machine that needs one.
+
+LibreDB Studio goes the other way. It deploys next to the data: a container, a Helm chart, an operator, a one-click template on your PaaS, or `npm i @libredb/studio` inside your own product. Nothing has to face outward.
+
+Ten engines share one interface — PostgreSQL, MySQL, Oracle, SQL Server, SQLite, MongoDB, Redis, Couchbase, ClickHouse and Druid — with the same explorer, ER diagrams, schema diff and monitoring across all of them.
+
+And nothing is held back. Single sign-on, ER diagrams, the AI assistant and the NoSQL engines all ship in the MIT build. MIT is not generosity here, it is a requirement of the architecture: you cannot place a per-seat licensed, feature-gated tool into every environment you own.
 
 ### Why LibreDB Studio?
-- **Zero Install**: Run a professional SQL IDE in your browser or private network.
-- **Multi-Platform**: Native-like experience on **Web**, **Mobile**, and **Windows** (native zip, winget, Chocolatey).
-- **AI-Native**: Multi-model support (Gemini, OpenAI, or Local LLMs) for NL2SQL.
-- **DevOps Ready**: Optimized for Kubernetes orchestration and Docker environments.
-- **Enterprise Grade**: Built-in RBAC, SSO (OIDC), query auditing, and live health monitoring.
+- **Deploys next to the data**: container, Helm chart, OpenShift operator, one-click PaaS template, or embedded via npm.
+- **Ten engines, one interface**: PostgreSQL, MySQL, Oracle, SQL Server, SQLite, MongoDB, Redis, Couchbase, ClickHouse, Druid.
+- **Runs where you are**: browser, phone, Windows, Linux desktop.
+- **AI with your own model**: NL2SQL against Gemini, OpenAI, or a local LLM.
+- **Nothing behind a wall**: RBAC, OIDC single sign-on, query audit trail and ER diagrams all ship under MIT.
 
 <p align="center">
   <img src="public/screenshots/connection-modal.png" alt="Multi-Database Connection Manager" width="100%" />
