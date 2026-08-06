@@ -57,13 +57,6 @@ export abstract class SQLBaseProvider extends BaseDatabaseProvider {
   }
 
   /**
-   * Escape string value for SQL
-   */
-  protected escapeString(value: string): string {
-    return value.replace(/'/g, "''");
-  }
-
-  /**
    * Build LIMIT clause based on dialect
    */
   protected buildLimitClause(limit: number, offset?: number): string {
@@ -71,18 +64,6 @@ export abstract class SQLBaseProvider extends BaseDatabaseProvider {
       return `LIMIT ${limit} OFFSET ${offset}`;
     }
     return `LIMIT ${limit}`;
-  }
-
-  /**
-   * Get placeholder style for parameterized queries
-   * PostgreSQL: $1, $2, $3
-   * MySQL/SQLite: ?, ?, ?
-   */
-  protected getPlaceholder(index: number): string {
-    if (this.type === "postgres") return `$${index}`;
-    if (this.type === "oracle") return `:${index}`;
-    if (this.type === "mssql") return `@p${index}`;
-    return "?";
   }
 
   /**

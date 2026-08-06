@@ -14,20 +14,27 @@ describe("quoteLiteral", () => {
     expect(quoteLiteral("abc", "mysql")).toBe("'abc'");
   });
 
-  test("doubles an embedded single quote in every dialect", () => {
+  test("doubles an embedded single quote where doubling is the escape", () => {
     expect(quoteLiteral("O'Brien", "postgres")).toBe("'O''Brien'");
     expect(quoteLiteral("O'Brien", "mysql")).toBe("'O''Brien'");
     expect(quoteLiteral("O'Brien", "sqlite")).toBe("'O''Brien'");
     expect(quoteLiteral("O'Brien", "oracle")).toBe("'O''Brien'");
     expect(quoteLiteral("O'Brien", "mssql")).toBe("'O''Brien'");
     expect(quoteLiteral("O'Brien", "clickhouse")).toBe("'O''Brien'");
+    expect(quoteLiteral("O'Brien", "druid")).toBe("'O''Brien'");
+  });
+
+  test("escapes the quote with a backslash where the grammar has no doubling", () => {
+    // Couchbase's SQL++ spells every escape with a backslash:
+    //   char ::= unicode-character | '\' ( '\' | '"' | "'" | 'b' | ... )
+    // Doubling is not in that grammar, so `'O''Brien'` is not one literal there.
+    expect(quoteLiteral("O'Brien", "couchbase")).toBe("'O\\'Brien'");
   });
 
   test("doubles a backslash where the dialect reads it as an escape", () => {
     expect(quoteLiteral("a\\b", "mysql")).toBe("'a\\\\b'");
     expect(quoteLiteral("a\\b", "clickhouse")).toBe("'a\\\\b'");
     expect(quoteLiteral("a\\b", "couchbase")).toBe("'a\\\\b'");
-    expect(quoteLiteral("a\\b", "mongodb")).toBe("'a\\\\b'");
   });
 
   test("leaves a backslash alone where it is data", () => {
@@ -36,8 +43,17 @@ describe("quoteLiteral", () => {
     expect(quoteLiteral("a\\b", "oracle")).toBe("'a\\b'");
     expect(quoteLiteral("a\\b", "mssql")).toBe("'a\\b'");
     expect(quoteLiteral("a\\b", "druid")).toBe("'a\\b'");
+  });
+
+  test("gives the standard form to an engine that has no SQL of its own", () => {
+    // MongoDB, Redis and the embedded engine all declare `queryLanguage: "json"`,
+    // so no statement is ever built for them to read. What a generator emits for
+    // such a connection is portable SQL meant to run elsewhere, and the standard
+    // form is the only thing it can claim.
+    expect(quoteLiteral("a\\b", "mongodb")).toBe("'a\\b'");
     expect(quoteLiteral("a\\b", "redis")).toBe("'a\\b'");
     expect(quoteLiteral("a\\b", "libredb")).toBe("'a\\b'");
+    expect(quoteLiteral("O'Brien", "mongodb")).toBe("'O''Brien'");
   });
 
   test("falls back to the standard form when no dialect is known", () => {
@@ -69,15 +85,21 @@ describe("positionalPlaceholder", () => {
     // mssql binds `request.input("p1", ...)`, so the statement must say `@p1`.
     expect(positionalPlaceholder("mssql", 1)).toBe("@p1");
     expect(positionalPlaceholder("mssql", 2)).toBe("@p2");
+    // Druid's provider binds a `parameters` array against `?` placeholders, which
+    // its own doc comment records as live-verified.
+    expect(positionalPlaceholder("druid", 1)).toBe("?");
+    // Couchbase sends `args`, which SQL++ reads as `$1`, `$2` — the integration
+    // test pins the pair with `bodyOf("country = $1").args`.
+    expect(positionalPlaceholder("couchbase", 1)).toBe("$1");
+    expect(positionalPlaceholder("couchbase", 2)).toBe("$2");
   });
 
-  test("returns null for a dialect whose bind form this repo has not pinned", () => {
-    // ClickHouse's provider refuses positional parameters outright, and the
-    // remaining engines are not driven by a SQL statement at all. Null is the
-    // signal to quote the value instead — never to emit an unbound placeholder.
+  test("returns null where this repo knows there is no positional bind form", () => {
+    // ClickHouse's provider refuses positional parameters outright, and the other
+    // three declare `queryLanguage: "json"`, so no SQL statement binds anything for
+    // them. Null is the signal to quote the value instead — never to emit an
+    // unbound placeholder.
     expect(positionalPlaceholder("clickhouse", 1)).toBeNull();
-    expect(positionalPlaceholder("couchbase", 1)).toBeNull();
-    expect(positionalPlaceholder("druid", 1)).toBeNull();
     expect(positionalPlaceholder("mongodb", 1)).toBeNull();
     expect(positionalPlaceholder("redis", 1)).toBeNull();
     expect(positionalPlaceholder("libredb", 1)).toBeNull();

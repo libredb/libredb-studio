@@ -138,19 +138,7 @@ MongoDB, Redis, ClickHouse, Druid or Couchbase clients expose a fatal `error` ev
 
 ## Value interpolation
 
-### V1. `SQLBaseProvider.escapeString` teaches the escape that #290 was about
-
-`src/lib/db/providers/sql/sql-base.ts` still carries a `protected escapeString` that doubles the
-quote and nothing else. It has no callers — only a test-local subclass reaches it — so it is not a
-defect today, but it is the method a provider author would reach for, and on MySQL or ClickHouse its
-result can be closed early by a value ending in a backslash. Either delete it (the six call sites
-that did this now use `quoteLiteral` in `src/lib/sql/values.ts`) or make it dialect-aware from
-`this.type`.
-
-The two remaining doubling sites in `src/lib/db/providers/sql/oracle.ts` are correct as written:
-Oracle reads a backslash in a literal as data.
-
-### V2. Query history records the placeholders, not the values that were bound
+### V1. Query history records the placeholders, not the values that were bound
 
 Since #290 the inline row editor sends `SET "name" = $1` with the value bound, and
 `use-query-execution` writes that text to history — a truthful record of the statement the engine

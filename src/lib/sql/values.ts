@@ -1,33 +1,47 @@
 import type { DatabaseType } from "@/lib/types";
 
 /**
- * Whether the dialect reads a backslash as an escape character inside a string
- * literal. The map is total on purpose: a new provider cannot be added without
- * TypeScript demanding an answer here, because the silent wrong answer is exactly
- * the defect this file exists to close (issue #290).
+ * How a dialect spells the escapes inside a single-quoted string literal.
+ *
+ * - `standard` — the quote is doubled and a backslash is ordinary data.
+ * - `double-and-backslash` — the quote is doubled, and a backslash escapes, so it
+ *   has to be doubled too or it would escape the closing quote.
+ * - `backslash` — every escape is spelled with a backslash, including the quote;
+ *   doubling is not part of the grammar.
+ *
+ * The map is total on purpose: a new provider cannot be added without TypeScript
+ * demanding an answer here, because the silent wrong answer is exactly the defect
+ * this file exists to close (issue #290).
  */
-const BACKSLASH_ESCAPES_IN_LITERAL: Record<DatabaseType, boolean> = {
+type LiteralEscape = "standard" | "double-and-backslash" | "backslash";
+
+const LITERAL_ESCAPE: Record<DatabaseType, LiteralEscape> = {
   // `standard_conforming_strings` has been on by default since PostgreSQL 9.1, so
   // a backslash in a plain literal is data.
-  postgres: false,
-  sqlite: false,
-  oracle: false,
-  mssql: false,
-  // Calcite's standard lexer, which Druid SQL uses: doubling is the only escape.
-  druid: false,
-  // No SQL string literal of its own; the standard form is the inert choice.
-  redis: false,
-  libredb: false,
+  postgres: "standard",
+  sqlite: "standard",
+  oracle: "standard",
+  mssql: "standard",
+  // Druid quotes a string with single quotes and puts its backslash escapes in the
+  // separate `U&'fo\00F6'` form, so a backslash in a plain literal is data.
+  druid: "standard",
+  // These three declare `queryLanguage: "json"`, so no statement is ever built for
+  // them to read. What a generator emits for such a connection is portable SQL
+  // meant to run elsewhere, and the standard form is the only thing it can claim.
+  mongodb: "standard",
+  redis: "standard",
+  libredb: "standard",
   // Default `sql_mode`. A server running with NO_BACKSLASH_ESCAPES reads the
   // doubled backslash as two characters, which is why binding the value beats
   // quoting it wherever a bind form exists.
-  mysql: true,
+  mysql: "double-and-backslash",
   // Matches what the ClickHouse provider already does when it builds its own
   // literals (`src/lib/db/providers/sql/clickhouse/index.ts`).
-  clickhouse: true,
-  // SQL++ and the document shells spell their strings the way JSON does.
-  couchbase: true,
-  mongodb: true,
+  clickhouse: "double-and-backslash",
+  // SQL++ spells its literals the way JSON does — `char ::= unicode-character |
+  // '\' ( '\' | '"' | "'" | 'b' | 'f' | 'n' | 'r' | 't' | 'u' hex hex hex hex )`.
+  // Doubling is not in that grammar, so a doubled quote is not one literal there.
+  couchbase: "backslash",
 };
 
 /**
@@ -49,8 +63,13 @@ const BACKSLASH_ESCAPES_IN_LITERAL: Record<DatabaseType, boolean> = {
  * every dialect that reads it as data, which is the larger group.
  */
 export function quoteLiteral(value: string, dialect: DatabaseType | undefined): string {
-  const escaped = dialect && BACKSLASH_ESCAPES_IN_LITERAL[dialect] ? value.replace(/\\/g, "\\\\") : value;
-  return `'${escaped.replace(/'/g, "''")}'`;
+  const escape = dialect ? LITERAL_ESCAPE[dialect] : "standard";
+  if (escape === "standard") return `'${value.replace(/'/g, "''")}'`;
+
+  // The backslash goes first in both remaining forms: doubling it afterwards would
+  // also double the one this function just added in front of a quote.
+  const escaped = value.replace(/\\/g, "\\\\");
+  return escape === "backslash" ? `'${escaped.replace(/'/g, "\\'")}'` : `'${escaped.replace(/'/g, "''")}'`;
 }
 
 /**
@@ -63,18 +82,23 @@ export function quoteLiteral(value: string, dialect: DatabaseType | undefined): 
  * the mssql provider registers its inputs as `p1`, `p2`, … which the statement
  * spells `@p1`, `@p2`.
  *
- * `null` is not the claim that an engine cannot bind — it is the claim that this
- * repo has not verified how. ClickHouse's provider refuses positional parameters
- * outright, and the remaining engines are not driven by a SQL statement. A dialect
- * that gains statement-driven row editing (issue #279) adds its form here; until
- * it does, `quoteLiteral` keeps the value out of the statement's grammar.
+ * `null` is where this repo knows there is no positional form to spell: ClickHouse
+ * binds named parameters only and its provider refuses positional ones outright,
+ * and MongoDB, Redis and the embedded engine declare `queryLanguage: "json"`, so
+ * no SQL statement binds anything for them. It is the signal to quote the value
+ * with `quoteLiteral` instead — never to emit a placeholder nothing will bind.
  */
 export function positionalPlaceholder(dialect: DatabaseType, position: number): string | null {
   switch (dialect) {
+    // SQL++ takes its values in `args`, which the statement reads as `$1`, `$2`.
     case "postgres":
+    case "couchbase":
       return `$${position}`;
+    // Druid binds a `parameters` array against `?`, live-verified when the
+    // provider was written (`src/lib/db/providers/sql/druid/index.ts`).
     case "mysql":
     case "sqlite":
+    case "druid":
       return "?";
     case "oracle":
       return `:${position}`;

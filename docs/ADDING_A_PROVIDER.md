@@ -36,8 +36,8 @@ Three decisions. The first is the consequential one, which is why it is first.
      avoid it.** A standard-SQL engine reached over HTTP, such as ClickHouse or Apache Druid, should
      extend it and get all of that for free. Druid is the clearest case of how little is left over:
      double-quoted identifiers and `LIMIT n OFFSET m` are both correct Druid SQL, so
-     `escapeIdentifier()`, `buildLimitClause()` and `getPlaceholder()` are inherited unchanged and
-     `prepareQuery()` is the only override — for a single dialect trap, not for the transport.
+     `escapeIdentifier()` and `buildLimitClause()` are inherited unchanged and `prepareQuery()` is
+     the only override — for a single dialect trap, not for the transport.
    - **Non-SQL databases → extend `BaseDatabaseProvider`** directly, like MongoDB and Redis.
    - The one reason a SQL-speaking provider extends `BaseDatabaseProvider` anyway is a dialect the
      shared helpers cannot express. Couchbase is that case: SQL++ quotes identifiers with doubled
@@ -245,7 +245,7 @@ for worked, code-verified examples see each provider's **Design decisions** sect
 |--------|-------------|
 | `escapeIdentifier()` | `"table_name"` (PostgreSQL/SQLite) or `` `table_name` `` (MySQL) |
 | `buildLimitClause()` | `LIMIT 50 OFFSET 10` |
-| `getPlaceholder()` | `$1` (PostgreSQL) or `?` (MySQL/SQLite) |
+| `positionalPlaceholder()` ([`src/lib/sql/values.ts`](../src/lib/sql/values.ts), not inherited) | `$1` (PostgreSQL, Couchbase), `?` (MySQL, SQLite, Druid), `:1` (Oracle), `@p1` (SQL Server), `null` where the engine has no positional form |
 | `shouldEnableSSL()` | Auto-detects cloud providers |
 | `prepareQuery()` | Automatically injects LIMIT into SELECT queries |
 

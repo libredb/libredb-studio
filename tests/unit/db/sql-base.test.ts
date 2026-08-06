@@ -86,14 +86,8 @@ class TestSQLProvider extends SQLBaseProvider {
   public callEscapeIdentifier(id: string): string {
     return this.escapeIdentifier(id);
   }
-  public callEscapeString(val: string): string {
-    return this.escapeString(val);
-  }
   public callBuildLimitClause(limit: number, offset?: number): string {
     return this.buildLimitClause(limit, offset);
-  }
-  public callGetPlaceholder(index: number): string {
-    return this.getPlaceholder(index);
   }
   public callShouldEnableSSL(): boolean {
     return this.shouldEnableSSL();
@@ -178,22 +172,6 @@ describe("SQLBaseProvider", () => {
   });
 
   // --------------------------------------------------------------------------
-  // escapeString
-  // --------------------------------------------------------------------------
-
-  describe("escapeString()", () => {
-    test("escapes single quotes", () => {
-      const p = new TestSQLProvider(makeConfig("postgres"));
-      expect(p.callEscapeString("O'Brien")).toBe("O''Brien");
-    });
-
-    test("no change for strings without quotes", () => {
-      const p = new TestSQLProvider(makeConfig("postgres"));
-      expect(p.callEscapeString("hello")).toBe("hello");
-    });
-  });
-
-  // --------------------------------------------------------------------------
   // buildLimitClause
   // --------------------------------------------------------------------------
 
@@ -211,40 +189,6 @@ describe("SQLBaseProvider", () => {
     test("LIMIT only when offset is 0", () => {
       const p = new TestSQLProvider(makeConfig("postgres"));
       expect(p.callBuildLimitClause(50, 0)).toBe("LIMIT 50");
-    });
-  });
-
-  // --------------------------------------------------------------------------
-  // getPlaceholder
-  // --------------------------------------------------------------------------
-
-  describe("getPlaceholder()", () => {
-    test("postgres returns $N", () => {
-      const p = new TestSQLProvider(makeConfig("postgres"));
-      expect(p.callGetPlaceholder(1)).toBe("$1");
-      expect(p.callGetPlaceholder(3)).toBe("$3");
-    });
-
-    test("mysql returns ?", () => {
-      const p = new TestSQLProvider(makeConfig("mysql"));
-      expect(p.callGetPlaceholder(1)).toBe("?");
-    });
-
-    test("sqlite returns ?", () => {
-      const p = new TestSQLProvider(makeConfig("sqlite"));
-      expect(p.callGetPlaceholder(1)).toBe("?");
-    });
-
-    test("oracle returns :N", () => {
-      const p = new TestSQLProvider(makeConfig("oracle"));
-      expect(p.callGetPlaceholder(1)).toBe(":1");
-      expect(p.callGetPlaceholder(5)).toBe(":5");
-    });
-
-    test("mssql returns @pN", () => {
-      const p = new TestSQLProvider(makeConfig("mssql"));
-      expect(p.callGetPlaceholder(1)).toBe("@p1");
-      expect(p.callGetPlaceholder(2)).toBe("@p2");
     });
   });
 

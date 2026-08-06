@@ -79,7 +79,7 @@ rather than reimplementing them:
 | Member | Purpose |
 |--------|---------|
 | `escapeIdentifier()` ([sql-base.ts:33](../../src/lib/db/providers/sql/sql-base.ts)) | Dialect-aware quoting — `"ident"` for Postgres, `` `ident` `` for MySQL, `[ident]` for MSSQL; doubles embedded quote chars |
-| `getPlaceholder()` ([sql-base.ts:65](../../src/lib/db/providers/sql/sql-base.ts)) | `$1`-style placeholders for Postgres (`?` for MySQL/SQLite, `:n` Oracle, `@pn` MSSQL) |
+| `positionalPlaceholder()` ([values.ts](../../src/lib/sql/values.ts), shared rather than inherited) | `$1`-style placeholders for Postgres (`?` for MySQL/SQLite/Druid, `:n` Oracle, `@pn` MSSQL, `$n` Couchbase) |
 | `shouldEnableSSL()` ([sql-base.ts:75](../../src/lib/db/providers/sql/sql-base.ts)) | Auto-enables SSL for known cloud hosts (supabase, neon, render, planetscale, aws, azure, gcp, …) |
 | `getDefaultSchema()` ([sql-base.ts:91](../../src/lib/db/providers/sql/sql-base.ts)) | `public` for Postgres |
 | `prepareQuery()` ([sql-base.ts:137](../../src/lib/db/providers/sql/sql-base.ts)) | Injects `LIMIT` into bare `SELECT`s — see [§5.2](#52-automatic-limit-injection) |
