@@ -160,6 +160,55 @@ describe("PivotTable", () => {
     expect(sql).toContain("CASE WHEN");
   });
 
+  // A pivot column key is a VALUE read back from the result, so it carries
+  // whatever the table holds and reaches the generated statement as a literal. The
+  // SQL is loaded into the editor a click away from running (#290).
+
+  test("Generate SQL quotes a column key for the dialect the result came from", () => {
+    const hostile: QueryResult = {
+      rows: [
+        { dept: "Engineering", status: "a\\' OR 1=1 -- ", salary: 90000 },
+        { dept: "Sales", status: "active", salary: 70000 },
+      ],
+      fields: ["dept", "status", "salary"],
+      rowCount: 2,
+      executionTime: 5,
+    };
+    const onLoadQuery = mock((sql: string) => {
+      void sql;
+    });
+    const { container, queryByText } = render(
+      <PivotTable result={hostile} onLoadQuery={onLoadQuery} databaseType="mysql" />,
+    );
+    const colSelect = container.querySelectorAll("select")[1];
+    fireEvent.change(colSelect!, { target: { value: "status" } });
+    fireEvent.click(queryByText("Generate SQL")!);
+
+    const sql = onLoadQuery.mock.calls[0][0];
+    expect(sql).toContain("= 'a\\\\'' OR 1=1 -- '");
+  });
+
+  test("Generate SQL emits the standard form when no dialect is known", () => {
+    const withBackslash: QueryResult = {
+      rows: [
+        { dept: "Engineering", status: "C:\\Users", salary: 90000 },
+        { dept: "Sales", status: "active", salary: 70000 },
+      ],
+      fields: ["dept", "status", "salary"],
+      rowCount: 2,
+      executionTime: 5,
+    };
+    const onLoadQuery = mock((sql: string) => {
+      void sql;
+    });
+    const { container, queryByText } = render(<PivotTable result={withBackslash} onLoadQuery={onLoadQuery} />);
+    const colSelect = container.querySelectorAll("select")[1];
+    fireEvent.change(colSelect!, { target: { value: "status" } });
+    fireEvent.click(queryByText("Generate SQL")!);
+
+    expect(onLoadQuery.mock.calls[0][0]).toContain("= 'C:\\Users'");
+  });
+
   test("status footer shows group and column counts", () => {
     const { container } = render(<PivotTable result={result} />);
     const text = container.textContent || "";

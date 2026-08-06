@@ -17,7 +17,8 @@ import {
   Loader2,
   X,
 } from "lucide-react";
-import type { TableSchema } from "@/lib/types";
+import type { DatabaseType, TableSchema } from "@/lib/types";
+import { quoteLiteral } from "@/lib/sql/values";
 
 interface DataImportModalProps {
   isOpen: boolean;
@@ -106,9 +107,17 @@ export function inferSqlType(values: string[]): string {
   return "TEXT";
 }
 
-export function escapeSQL(value: string): string {
+/**
+ * Quote an imported cell as a SQL literal for the dialect the import will run on.
+ *
+ * These statements are handed to `onImport`, which executes them, so a cell of the
+ * uploaded file becomes SQL. Doubling the quote is enough only where a backslash
+ * is data: on a backslash-escaping dialect a cell ending in one would escape the
+ * closing quote and have the rest of the row read as statement text (#290).
+ */
+export function escapeSQL(value: string, dialect?: DatabaseType): string {
   if (value === "" || value === "null" || value === "NULL") return "NULL";
-  return `'${value.replace(/'/g, "''")}'`;
+  return quoteLiteral(value, dialect);
 }
 
 export function generateImportSQL(
@@ -117,6 +126,7 @@ export function generateImportSQL(
   createNewTable: boolean,
   newTableName: string,
   columnMapping: Record<string, string>,
+  dialect?: DatabaseType,
 ): string {
   if (!parsedData) return "";
 
@@ -150,7 +160,7 @@ export function generateImportSQL(
           if (sqlType === "BOOLEAN") return val.toLowerCase() === "true" || val === "1" ? "TRUE" : "FALSE";
           return val;
         }
-        return escapeSQL(val);
+        return escapeSQL(val, dialect);
       });
       return `  (${values.join(", ")})`;
     });
@@ -239,8 +249,16 @@ export function DataImportModal({ isOpen, onClose, onImport, tables, databaseTyp
   }, []);
 
   const generatedSQL = useMemo(
-    () => generateImportSQL(parsedData, targetTable, createNewTable, newTableName, columnMapping),
-    [parsedData, targetTable, createNewTable, newTableName, columnMapping],
+    () =>
+      generateImportSQL(
+        parsedData,
+        targetTable,
+        createNewTable,
+        newTableName,
+        columnMapping,
+        databaseType as DatabaseType | undefined,
+      ),
+    [parsedData, targetTable, createNewTable, newTableName, columnMapping, databaseType],
   );
 
   const handleImport = () => {

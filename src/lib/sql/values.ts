@@ -42,9 +42,14 @@ const BACKSLASH_ESCAPES_IN_LITERAL: Record<DatabaseType, boolean> = {
  * a value ending in `\` would escape the closing quote and everything after it
  * would be read as SQL — a `WHERE` clause pasted into a cell then becomes the
  * statement's real predicate (issue #290).
+ *
+ * An undefined dialect is the generator that has no connection to name one. It
+ * gets the standard form, matching the standard identifier quoting such a
+ * generator already emits: doubling the backslash there would corrupt the value on
+ * every dialect that reads it as data, which is the larger group.
  */
-export function quoteLiteral(value: string, dialect: DatabaseType): string {
-  const escaped = BACKSLASH_ESCAPES_IN_LITERAL[dialect] ? value.replace(/\\/g, "\\\\") : value;
+export function quoteLiteral(value: string, dialect: DatabaseType | undefined): string {
+  const escaped = dialect && BACKSLASH_ESCAPES_IN_LITERAL[dialect] ? value.replace(/\\/g, "\\\\") : value;
   return `'${escaped.replace(/'/g, "''")}'`;
 }
 

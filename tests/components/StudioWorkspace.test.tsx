@@ -583,6 +583,33 @@ describe("StudioWorkspace", () => {
     expect(text).toContain("true");
   });
 
+  // Same file, same hazard as the standalone export: the values are data the table
+  // held, and the file is run later, usually unattended. On a dialect that escapes
+  // with a backslash, a value ending in one would close its literal and have the
+  // rest of the file read as statements (#290).
+  test("exportResults sql-insert quotes a value for the connected dialect", async () => {
+    connAdapterOverride = { activeConnection: { ...dbConn, type: "mysql" as const } };
+    tabMgrOverride = {
+      currentTab: {
+        ...baseTab,
+        name: "Query: users",
+        result: {
+          rows: [{ id: 1, path: "C:\\Users\\'); DROP TABLE users; --" }],
+          fields: ["id", "path"],
+          rowCount: 1,
+          executionTime: 1,
+        },
+      },
+    };
+    renderWorkspace();
+    act(() => (capturedBottomPanelProps.onExportResults as (f: string) => void)("sql-insert"));
+
+    const blob = mockCreateObjectURL.mock.calls[0][0] as Blob;
+    expect(await blob.text()).toBe(
+      "INSERT INTO users (id, path) VALUES (1, 'C:\\\\Users\\\\''); DROP TABLE users; --');",
+    );
+  });
+
   test("exportResults sql-ddl infers column types from the first row", async () => {
     withExportResult();
     renderWorkspace();

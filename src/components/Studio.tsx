@@ -23,6 +23,7 @@ import {
   BottomPanel,
 } from "@/components/studio/index";
 import { DatabaseConnection, SavedQuery } from "@/lib/types";
+import { quoteLiteral } from "@/lib/sql/values";
 import { useToast } from "@/hooks/use-toast";
 import { useProviderMetadata } from "@/hooks/use-provider-metadata";
 import { useAuth } from "@/hooks/use-auth";
@@ -226,7 +227,12 @@ export default function Studio() {
           const val = row[col];
           if (val === null || val === undefined) return "NULL";
           if (typeof val === "number" || typeof val === "boolean") return String(val);
-          return `'${String(val).replace(/'/g, "''")}'`;
+          // The exported file is SQL that runs somewhere later, usually unattended,
+          // and every value in it is data the table held. Quoting is therefore the
+          // connected engine's own: doubling the quote alone would let a value
+          // ending in a backslash close its literal and have the rest of the file
+          // read as statements (#290).
+          return quoteLiteral(String(val), conn.activeConnection?.type);
         });
         return `INSERT INTO ${tableName} (${columns.join(", ")}) VALUES (${values.join(", ")});`;
       });

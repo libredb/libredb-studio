@@ -4,6 +4,7 @@ import { createErrorResponse } from "@/lib/api/errors";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { getSession } from "@/lib/auth";
 import { quoteIdentifier, quoteQualifiedName } from "@/lib/query-generators";
+import { quoteLiteral } from "@/lib/sql/values";
 
 export async function POST(req: NextRequest) {
   try {
@@ -82,9 +83,12 @@ export async function POST(req: NextRequest) {
       // Build profiling query for each column
       const profileParts = colList.slice(0, 20).map((col) => {
         const safeCol = quoteIdentifier(col, capabilities);
+        // The name is also carried as a LABEL, which makes it a value in a string
+        // literal. It arrives in the request, so it is quoted the way the connected
+        // engine reads a literal rather than by doubling the quote alone (#290).
         return `
           SELECT
-            '${col.replace(/'/g, "''")}' as column_name,
+            ${quoteLiteral(col, connection.type)} as column_name,
             COUNT(*) as total_count,
             COUNT(${safeCol}) as non_null_count,
             COUNT(*) - COUNT(${safeCol}) as null_count,

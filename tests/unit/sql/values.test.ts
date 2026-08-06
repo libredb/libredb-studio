@@ -40,6 +40,15 @@ describe("quoteLiteral", () => {
     expect(quoteLiteral("a\\b", "libredb")).toBe("'a\\b'");
   });
 
+  test("falls back to the standard form when no dialect is known", () => {
+    // A generator that has no connection yet (no engine has been picked) can only
+    // claim the SQL standard, which is also what its identifier quoting claims.
+    // Doubling a backslash there would corrupt the value on the dialects that read
+    // it as data — the larger group.
+    expect(quoteLiteral("a\\b", undefined)).toBe("'a\\b'");
+    expect(quoteLiteral("O'Brien", undefined)).toBe("'O''Brien'");
+  });
+
   test("the issue #290 payload cannot close the literal early on MySQL", () => {
     // Read as MySQL: '  \\ -> one backslash, '' -> one quote, then the text, then
     // the closing quote. Every character of the payload stays data, so the trailing

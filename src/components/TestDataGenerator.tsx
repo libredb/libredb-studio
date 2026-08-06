@@ -3,7 +3,8 @@
 import React, { useState, useMemo } from "react";
 import { Wand2, X, Play, Copy, Check, RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { TableSchema } from "@/lib/types";
+import { DatabaseType, TableSchema } from "@/lib/types";
+import { quoteLiteral } from "@/lib/sql/values";
 
 interface TestDataGeneratorProps {
   isOpen: boolean;
@@ -161,6 +162,7 @@ export function TestDataGenerator({
   onClose,
   tableName,
   tableSchema,
+  databaseType,
   queryLanguage,
   onExecuteQuery,
 }: TestDataGeneratorProps) {
@@ -213,14 +215,17 @@ export function TestDataGenerator({
           type.includes("real")
         )
           return val;
-        return `'${val.replace(/'/g, "''")}'`;
+        // No generator can produce a quote or a backslash today, so this is the
+        // shared quoting rather than a fix: the next generator added inherits a
+        // literal the connected engine reads as data (#290).
+        return quoteLiteral(val, databaseType as DatabaseType | undefined);
       });
       return `(${values.join(", ")})`;
     });
 
     return `INSERT INTO ${tableName} (${colNames})\nVALUES\n  ${rows.join(",\n  ")};`;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tableSchema, columnConfigs, rowCount, queryLanguage, tableName, refreshKey]);
+  }, [tableSchema, columnConfigs, rowCount, queryLanguage, tableName, databaseType, refreshKey]);
 
   const handleCopy = () => {
     navigator.clipboard.writeText(generatedQuery);

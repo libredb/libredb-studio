@@ -3,11 +3,14 @@
 import React, { useState, useMemo, useCallback, useEffect } from "react";
 import { Columns3, GripVertical, ArrowRight } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { QueryResult } from "@/lib/types";
+import { DatabaseType, QueryResult } from "@/lib/types";
+import { quoteLiteral } from "@/lib/sql/values";
 
 interface PivotTableProps {
   result: QueryResult | null;
   onLoadQuery?: (query: string) => void;
+  /** The connected engine, so a generated literal is quoted the way it reads it. */
+  databaseType?: string;
 }
 
 type AggFunction = "count" | "sum" | "avg" | "min" | "max";
@@ -37,7 +40,7 @@ export function aggregate(values: unknown[], fn: AggFunction): string {
   }
 }
 
-export function PivotTable({ result, onLoadQuery }: PivotTableProps) {
+export function PivotTable({ result, onLoadQuery, databaseType }: PivotTableProps) {
   const [rowField, setRowField] = useState<string | null>(null);
   const [colField, setColField] = useState<string | null>(null);
   const [valueField, setValueField] = useState<string | null>(null);
@@ -115,8 +118,12 @@ export function PivotTable({ result, onLoadQuery }: PivotTableProps) {
       for (const ck of colKeys) {
         if (ck === "__all__") continue;
         const valExpr = valueField ? `"${valueField}"` : "1";
+        // A column key is a VALUE the result carried, so it is quoted the way the
+        // connected engine reads a literal — doubling the quote alone would let a
+        // key ending in a backslash close the literal on MySQL or ClickHouse and
+        // have the rest read as SQL (#290).
         select.push(
-          `${AGG_LABELS[aggFunction]}(CASE WHEN "${colField}" = '${ck.replace(/'/g, "''")}' THEN ${valExpr} END) AS "${ck}"`,
+          `${AGG_LABELS[aggFunction]}(CASE WHEN "${colField}" = ${quoteLiteral(ck, databaseType as DatabaseType | undefined)} THEN ${valExpr} END) AS "${ck}"`,
         );
       }
     } else {
@@ -125,7 +132,7 @@ export function PivotTable({ result, onLoadQuery }: PivotTableProps) {
     }
 
     return `SELECT\n  ${select.join(",\n  ")}\nFROM your_table\nGROUP BY ${groupBy.join(", ")}\nORDER BY ${groupBy.join(", ")};`;
-  }, [rowField, colField, valueField, aggFunction, pivotData]);
+  }, [rowField, colField, valueField, aggFunction, pivotData, databaseType]);
 
   if (!result || rows.length === 0) {
     return (

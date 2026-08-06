@@ -206,6 +206,12 @@ describe("escapeSQL", () => {
     expect(escapeSQL("it's a 'test'")).toBe("'it''s a ''test'''");
   });
 
+  test("doubles a backslash for a dialect that reads it as an escape", () => {
+    expect(escapeSQL("a\\b", "mysql")).toBe("'a\\\\b'");
+    expect(escapeSQL("a\\b", "postgres")).toBe("'a\\b'");
+    expect(escapeSQL("a\\b")).toBe("'a\\b'");
+  });
+
   test("returns NULL for empty string", () => {
     expect(escapeSQL("")).toBe("NULL");
   });
@@ -232,6 +238,32 @@ describe("generateImportSQL", () => {
     ],
     totalRows: 2,
   };
+
+  // The generated statements are handed straight to `onImport`, which executes
+  // them, so a cell of an imported file is a value that becomes SQL. On a
+  // backslash-escaping dialect a cell ending in `\` would escape the closing quote
+  // and the rest of the row would be read as statement text (#290).
+  test("escapes an imported cell for the dialect it will run on", () => {
+    const withBackslash: ParsedData = {
+      headers: ["path"],
+      rows: [["C:\\Users\\'; DROP TABLE users; --"]],
+      totalRows: 1,
+    };
+
+    const sql = generateImportSQL(withBackslash, "files", false, "", {}, "mysql");
+
+    expect(sql).toContain("('C:\\\\Users\\\\''; DROP TABLE users; --')");
+  });
+
+  test("emits the standard form when no dialect is known", () => {
+    const withBackslash: ParsedData = {
+      headers: ["path"],
+      rows: [["C:\\Users"]],
+      totalRows: 1,
+    };
+
+    expect(generateImportSQL(withBackslash, "files", false, "", {})).toContain("('C:\\Users')");
+  });
 
   test("returns empty for null parsedData", () => {
     expect(generateImportSQL(null, "users", false, "", {})).toBe("");

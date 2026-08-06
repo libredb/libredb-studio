@@ -19,6 +19,7 @@ import { useConnectionAdapter } from "@/workspace/hooks/use-connection-adapter";
 import { useQueryAdapter } from "@/workspace/hooks/use-query-adapter";
 import { type StudioWorkspaceProps, DEFAULT_WORKSPACE_FEATURES } from "@/workspace/types";
 import { cn } from "@/lib/utils";
+import { quoteLiteral } from "@/lib/sql/values";
 
 /**
  * Scoped CSS for studio's dark theme.
@@ -233,7 +234,12 @@ export function StudioWorkspace({
             const val = row[col];
             if (val === null || val === undefined) return "NULL";
             if (typeof val === "number" || typeof val === "boolean") return String(val);
-            return `'${String(val).replace(/'/g, "''")}'`;
+            // The exported file is SQL that runs somewhere later, usually
+            // unattended, and every value in it is data the table held. Quoting is
+            // the connected engine's own: doubling the quote alone would let a
+            // value ending in a backslash close its literal and have the rest of
+            // the file read as statements (#290).
+            return quoteLiteral(String(val), conn.activeConnection?.type);
           });
           return `INSERT INTO ${tableName} (${columns.join(", ")}) VALUES (${values.join(", ")});`;
         });

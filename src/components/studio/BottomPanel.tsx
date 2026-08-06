@@ -319,6 +319,7 @@ export function BottomPanel({
               onLoadQuery(q);
               onSetMode("results");
             }}
+            databaseType={activeConnection?.type}
           />
         ) : mode === "docs" ? (
           <DatabaseDocs schema={schema} schemaContext={schemaContext} databaseType={activeConnection?.type} />

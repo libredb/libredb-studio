@@ -804,6 +804,37 @@ describe("Studio", () => {
     expect(blob.type).toBe("text/sql");
   });
 
+  // The exported file is SQL that will be run somewhere later, usually
+  // unattended, and every value in it is data the table held. A cell ending in a
+  // backslash would close its literal on a dialect that escapes with one and have
+  // the rest of the file read as statements (#290).
+  test("exportResults sql-insert quotes a cell for the connected dialect", async () => {
+    connMgrOverride = { activeConnection: { ...pgConn, type: "mysql" as const } };
+    tabMgrOverride = {
+      currentTab: {
+        id: "tab-1",
+        name: "Users",
+        query: "SELECT 1",
+        result: {
+          rows: [{ id: 1, path: "C:\\Users\\'); DROP TABLE users; --" }],
+          fields: ["id", "path"],
+          rowCount: 1,
+          executionTime: 1,
+        },
+        isExecuting: false,
+        type: "sql",
+      },
+    };
+    render(<Studio />);
+    const exportFn = capturedBottomPanelProps.onExportResults as (format: string) => void;
+    act(() => exportFn("sql-insert"));
+
+    const blob = (mockCreateObjectURL.mock.calls[0] as unknown[])[0] as Blob;
+    expect(await blob.text()).toBe(
+      "INSERT INTO Users (id, path) VALUES (1, 'C:\\\\Users\\\\''); DROP TABLE users; --');",
+    );
+  });
+
   test("exportResults sql-ddl creates text/sql blob", () => {
     tabMgrOverride = {
       currentTab: {

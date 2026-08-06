@@ -86,6 +86,28 @@ describe("POST /api/db/profile", () => {
     );
   });
 
+  // The column name arrives in the request and is embedded in the profiling query
+  // as a string literal (`'<col>' as column_name`). Doubling the quote is enough
+  // only where a backslash is data, so on a backslash-escaping dialect a name
+  // ending in one would close the literal and have the rest read as SQL (#290).
+  test("quotes the column label for the connected dialect", async () => {
+    const req = createMockRequest("/api/db/profile", {
+      method: "POST",
+      body: {
+        connection: { ...validConnection, type: "mysql" },
+        tableName: "users",
+        columns: ["a\\' UNION SELECT 1 -- "],
+      },
+    });
+
+    await POST(req as never);
+
+    const emitted = (mockSQLProvider.query as ReturnType<typeof mock>).mock.calls
+      .map((call) => String(call[0]))
+      .join("\n");
+    expect(emitted).toContain("'a\\\\'' UNION SELECT 1 -- ' as column_name");
+  });
+
   test("returns 401 when no session exists", async () => {
     mockGetSession.mockResolvedValueOnce(null);
 
