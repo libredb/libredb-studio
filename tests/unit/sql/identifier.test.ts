@@ -17,6 +17,14 @@ describe("quoteIdentifier", () => {
     expect(quoteIdentifier("name", "mssql")).toBe("[name]");
   });
 
+  test("falls back to the standard form when no dialect is known", () => {
+    // A generator with no connection to name a dialect still has to quote the
+    // names it builds from result data; the standard form is what such a
+    // generator can claim, and it is what these callers already emitted.
+    expect(quoteIdentifier("name", undefined)).toBe('"name"');
+    expect(quoteIdentifier('a"b', undefined)).toBe('"a""b"');
+  });
+
   test("doubles an embedded closing quote character", () => {
     expect(quoteIdentifier('a"b', "postgres")).toBe('"a""b"');
     expect(quoteIdentifier("a`b", "mysql")).toBe("`a``b`");

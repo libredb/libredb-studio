@@ -188,6 +188,56 @@ describe("PivotTable", () => {
     expect(sql).toContain("= 'a\\\\'' OR 1=1 -- '");
   });
 
+  test("Generate SQL quotes the identifiers it builds from result data", () => {
+    // The same key is also written as the column's ALIAS, and a field name is
+    // whatever the query aliased it to. Both reach the statement as identifiers,
+    // so a value carrying the closing quote character would end the quoted span
+    // and leave the rest to be parsed as SQL (PR #304 review).
+    const hostile: QueryResult = {
+      rows: [
+        { 'de"pt': "Engineering", status: 'a" , 1 AS x --', salary: 90000 },
+        { 'de"pt': "Sales", status: "active", salary: 70000 },
+      ],
+      fields: ['de"pt', "status", "salary"],
+      rowCount: 2,
+      executionTime: 5,
+    };
+    const onLoadQuery = mock((sql: string) => {
+      void sql;
+    });
+    const { container, queryByText } = render(<PivotTable result={hostile} onLoadQuery={onLoadQuery} />);
+    const colSelect = container.querySelectorAll("select")[1];
+    fireEvent.change(colSelect!, { target: { value: "status" } });
+    fireEvent.click(queryByText("Generate SQL")!);
+
+    const sql = onLoadQuery.mock.calls[0][0];
+    expect(sql).toContain('AS "a"" , 1 AS x --"');
+    expect(sql).toContain('"de""pt"');
+    // The `--` and the comma are inside the alias and the literal, and nowhere
+    // else: each appears exactly as many times as the values that carry them.
+    expect(sql.match(/--/g)).toHaveLength(2);
+  });
+
+  test("Generate SQL quotes identifiers the way the connected dialect spells them", () => {
+    // MySQL does not read `"name"` as an identifier at all: without ANSI_QUOTES it
+    // is a string literal, so a generated alias in that form is not just unsafe,
+    // it is wrong.
+    const onLoadQuery = mock((sql: string) => {
+      void sql;
+    });
+    const { container, queryByText } = render(
+      <PivotTable result={result} onLoadQuery={onLoadQuery} databaseType="mysql" />,
+    );
+    const colSelect = container.querySelectorAll("select")[1];
+    fireEvent.change(colSelect!, { target: { value: "status" } });
+    fireEvent.click(queryByText("Generate SQL")!);
+
+    const sql = onLoadQuery.mock.calls[0][0];
+    expect(sql).toContain("`dept`");
+    expect(sql).toContain("AS `active`");
+    expect(sql).not.toContain('"');
+  });
+
   test("Generate SQL emits the standard form when no dialect is known", () => {
     const withBackslash: QueryResult = {
       rows: [

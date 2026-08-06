@@ -719,6 +719,60 @@ describe("useQueryExecution", () => {
     expect("params" in body).toBe(false);
   });
 
+  test("executeQuery binds the same parameters in the background explain request", async () => {
+    // The explain SQL is the statement with a prefix, so its placeholders are the
+    // same ones in the same order. Sending it without the values would run it
+    // unbound — the plan request fails and the panel keeps the previous plan
+    // (PR #304 review).
+    const fetchMock = mockGlobalFetch({
+      "/api/db/query": { ok: true, json: mockQueryResult },
+    });
+
+    const { result } = renderHook(() => useQueryExecution(createDefaultParams()));
+
+    await act(async () => {
+      await result.current.executeQuery("SELECT * FROM users WHERE id = $1", undefined, false, {
+        params: [7],
+      });
+    });
+
+    const explainCall = fetchMock.mock.calls.find((call) => {
+      const body = JSON.parse((call[1] as RequestInit).body as string);
+      return typeof body.sql === "string" && body.sql.startsWith("EXPLAIN");
+    });
+    expect(explainCall).toBeDefined();
+    expect(JSON.parse((explainCall![1] as RequestInit).body as string).params).toEqual([7]);
+  });
+
+  test("executeQuery keeps a parameterized statement off the multi-statement route", async () => {
+    // `/api/db/multi-query` splits the payload and binds nothing, so a parameter
+    // array reaching it would be dropped and the statement would run with unbound
+    // placeholders. Parameters may only travel to an endpoint that binds them.
+    const fetchMock = mockGlobalFetch({
+      "/api/db/multi-query": { ok: true, json: mockQueryResult },
+      "/api/db/query": { ok: true, json: mockQueryResult },
+    });
+
+    const { result } = renderHook(() => useQueryExecution(createDefaultParams()));
+
+    await act(async () => {
+      await result.current.executeQuery("UPDATE users SET name = $1 WHERE id = $2; SELECT 1", undefined, false, {
+        skipSafety: true,
+        params: ["Alice", 1],
+      });
+    });
+
+    const multiCall = fetchMock.mock.calls.find(
+      (call) => typeof call[0] === "string" && call[0].includes("/api/db/multi-query"),
+    );
+    expect(multiCall).toBeUndefined();
+
+    const queryCall = fetchMock.mock.calls.find(
+      (call) => typeof call[0] === "string" && call[0].includes("/api/db/query"),
+    );
+    expect(JSON.parse((queryCall![1] as RequestInit).body as string).params).toEqual(["Alice", 1]);
+  });
+
   test("executeQuery sends bound parameters on the transaction endpoint too", async () => {
     // A row edit applied while a transaction is open takes this endpoint, so the
     // value has to be bound here as well — otherwise the transaction path would be

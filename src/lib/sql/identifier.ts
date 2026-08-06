@@ -14,7 +14,7 @@ import type { DatabaseType } from "@/lib/types";
  * name you have exactly as the engine reports it — a result field name is such a
  * name; a table name guessed from a tab title is not.
  */
-export function quoteIdentifier(name: string, dialect: DatabaseType): string {
+export function quoteIdentifier(name: string, dialect: DatabaseType | undefined): string {
   switch (dialect) {
     case "mysql":
       return `\`${name.replace(/`/g, "``")}\``;
@@ -23,7 +23,8 @@ export function quoteIdentifier(name: string, dialect: DatabaseType): string {
     default:
       // The SQL standard form, and what the remaining dialects use: PostgreSQL,
       // SQLite, Oracle, ClickHouse, Druid, and the document/key-value providers
-      // whose generators fall back to it.
+      // whose generators fall back to it. An undefined dialect lands here too —
+      // a generator with no connection to name one can claim only the standard.
       return `"${name.replace(/"/g, '""')}"`;
   }
 }
