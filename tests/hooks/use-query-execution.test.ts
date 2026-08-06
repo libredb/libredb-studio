@@ -674,6 +674,77 @@ describe("useQueryExecution", () => {
     expect(body.sql).toBe("SELECT * FROM users");
   });
 
+  // ── Bound parameters reach the server (#290) ───────────────────────────────
+  //
+  // The inline row editor builds `SET col = $1` and hands the value over as data.
+  // If the value stopped here the statement would run with its placeholders
+  // unbound, so this channel is what makes binding possible at all.
+
+  test("executeQuery sends bound parameters to /api/db/query", async () => {
+    const fetchMock = mockGlobalFetch({
+      "/api/db/query": { ok: true, json: mockQueryResult },
+    });
+
+    const { result } = renderHook(() => useQueryExecution(createDefaultParams()));
+
+    await act(async () => {
+      await result.current.executeQuery(`UPDATE users SET "name" = $1 WHERE "id" = $2`, undefined, false, {
+        skipSafety: true,
+        params: ["\\' WHERE 1=1 -- ", 1],
+      });
+    });
+
+    const queryCall = fetchMock.mock.calls.find(
+      (call) => typeof call[0] === "string" && call[0].includes("/api/db/query"),
+    );
+    const body = JSON.parse(queryCall![1]!.body as string);
+    expect(body.params).toEqual(["\\' WHERE 1=1 -- ", 1]);
+  });
+
+  test("executeQuery omits params entirely when the caller passed none", async () => {
+    const fetchMock = mockGlobalFetch({
+      "/api/db/query": { ok: true, json: mockQueryResult },
+    });
+
+    const { result } = renderHook(() => useQueryExecution(createDefaultParams()));
+
+    await act(async () => {
+      await result.current.executeQuery("SELECT * FROM users");
+    });
+
+    const queryCall = fetchMock.mock.calls.find(
+      (call) => typeof call[0] === "string" && call[0].includes("/api/db/query"),
+    );
+    const body = JSON.parse(queryCall![1]!.body as string);
+    expect("params" in body).toBe(false);
+  });
+
+  test("executeQuery sends bound parameters on the transaction endpoint too", async () => {
+    // A row edit applied while a transaction is open takes this endpoint, so the
+    // value has to be bound here as well — otherwise the transaction path would be
+    // the one place the statement still carried its values as text.
+    const fetchMock = mockGlobalFetch({
+      "/api/db/transaction": { ok: true, json: mockQueryResult },
+      "/api/db/query": { ok: true, json: mockQueryResult },
+    });
+
+    const { result } = renderHook(() => useQueryExecution(createDefaultParams({ transactionActive: true })));
+
+    await act(async () => {
+      await result.current.executeQuery(`UPDATE users SET "name" = $1 WHERE "id" = $2`, undefined, false, {
+        skipSafety: true,
+        params: ["Alice", 1],
+      });
+    });
+
+    const txnCall = fetchMock.mock.calls.find(
+      (call) => typeof call[0] === "string" && call[0].includes("/api/db/transaction"),
+    );
+    const body = JSON.parse(txnCall![1]!.body as string);
+    expect(body.action).toBe("query");
+    expect(body.params).toEqual(["Alice", 1]);
+  });
+
   // ── executeQuery adds error to history on failure ──────────────────────────
 
   test("executeQuery adds to history on error response", async () => {

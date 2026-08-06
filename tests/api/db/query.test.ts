@@ -140,6 +140,73 @@ describe("POST /api/db/query", () => {
     expect(providerWithCancel.query).toHaveBeenCalledWith("SELECT * FROM users LIMIT 50", undefined, "query-42");
   });
 
+  // ── Bound parameters (#290) ───────────────────────────────────────────────
+  //
+  // A generated statement (the inline row editor) sends its values here instead of
+  // writing them into the SQL, so a value cannot close a string literal and have
+  // the rest read as statement text. The route is the last hop before the driver's
+  // bind path, so it is also where an unbindable value is refused.
+
+  test("binds the request's parameters instead of running the statement unbound", async () => {
+    const req = createMockRequest("/api/db/query", {
+      method: "POST",
+      body: {
+        connection: validConnection,
+        sql: `UPDATE users SET "name" = $1 WHERE "id" = $2`,
+        params: ["\\' WHERE 1=1 -- ", 7],
+      },
+    });
+
+    const res = await POST(req as never);
+
+    expect(res.status).toBe(200);
+    expect(mockProvider.query).toHaveBeenCalledWith(`UPDATE users SET "name" = $1 WHERE "id" = $2 LIMIT 50`, [
+      "\\' WHERE 1=1 -- ",
+      7,
+    ]);
+  });
+
+  test("binds parameters alongside a queryId when cancellation is supported", async () => {
+    const providerWithCancel = {
+      ...createMockProvider(),
+      cancelQuery: mock(async () => true),
+    };
+    mockGetOrCreateProvider.mockResolvedValueOnce(providerWithCancel as never);
+
+    const req = createMockRequest("/api/db/query", {
+      method: "POST",
+      body: {
+        connection: validConnection,
+        sql: `UPDATE users SET "name" = $1 WHERE "id" = $2`,
+        params: ["Alice", 7],
+        queryId: "query-42",
+      },
+    });
+
+    const res = await POST(req as never);
+
+    expect(res.status).toBe(200);
+    expect(providerWithCancel.query).toHaveBeenCalledWith(
+      `UPDATE users SET "name" = $1 WHERE "id" = $2 LIMIT 50`,
+      ["Alice", 7],
+      "query-42",
+    );
+  });
+
+  test("returns 400 for a parameter the driver cannot bind as a scalar", async () => {
+    const req = createMockRequest("/api/db/query", {
+      method: "POST",
+      body: { connection: validConnection, sql: "SELECT * FROM users WHERE id = $1", params: [{ nested: true }] },
+    });
+
+    const res = await POST(req as never);
+    const data = await parseResponseJSON<{ error: string }>(res);
+
+    expect(res.status).toBe(400);
+    expect(data.error).toContain("params");
+    expect(mockProvider.query).not.toHaveBeenCalled();
+  });
+
   test("returns 200 with rows and pagination for valid query", async () => {
     const req = createMockRequest("/api/db/query", {
       method: "POST",

@@ -5,6 +5,7 @@ import type { DatabaseConnection, QueryTab } from "@/lib/types";
 import type { CellChange } from "@/components/ResultsGrid";
 import { useToast } from "@/hooks/use-toast";
 import { isBareIdentifier, quoteIdentifier } from "@/lib/sql/identifier";
+import { positionalPlaceholder, quoteLiteral } from "@/lib/sql/values";
 
 interface UseInlineEditingParams {
   activeConnection: DatabaseConnection | null;
@@ -17,7 +18,7 @@ interface UseInlineEditingParams {
     sql: string,
     tabId?: string,
     isExplain?: boolean,
-    options?: { skipSafety?: boolean },
+    options?: { skipSafety?: boolean; params?: unknown[] },
   ) => void | Promise<unknown>;
 }
 
@@ -86,27 +87,49 @@ export function useInlineEditing({ activeConnection, currentTab, executeQuery }:
       return;
     }
 
-    const quote = (identifier: string) => quoteIdentifier(identifier, activeConnection.type);
+    const dialect = activeConnection.type;
+    const quote = (identifier: string) => quoteIdentifier(identifier, dialect);
 
     // Generate UPDATE statements
-    const statements: string[] = [];
+    const statements: Array<{ sql: string; params: unknown[] }> = [];
     for (const [rowIndex, changes] of changesByRow) {
       const row = currentTab.result.rows[rowIndex];
       const pkValue = row[pkColumn];
+      const params: unknown[] = [];
+      // A value is arbitrary text — pasted, imported, or read back from the table —
+      // so it is bound rather than written into the statement. Interpolating it and
+      // doubling the quote is only enough where a backslash is data: MySQL reads
+      // `\'` as an escaped quote, so a value could close its own literal and have
+      // the rest read as SQL, and applying edits skips the dangerous-query dialog
+      // that would otherwise show the user that statement (#290). Where the dialect
+      // has no positional bind form, a dialect-aware quoted literal is the fallback.
+      const emit = (value: string | number): string => {
+        const placeholder = positionalPlaceholder(dialect, params.length + 1);
+        if (placeholder !== null) {
+          params.push(value);
+          return placeholder;
+        }
+        return typeof value === "number" ? String(value) : quoteLiteral(value, dialect);
+      };
       const setClauses = changes.map((c) => {
-        const val =
-          c.newValue === "" || c.newValue.toUpperCase() === "NULL" ? "NULL" : `'${c.newValue.replace(/'/g, "''")}'`;
+        const isNull = c.newValue === "" || c.newValue.toUpperCase() === "NULL";
         // Column names come from the result's own field list, so they are exactly
         // what the engine reports and can be quoted: that keeps a name holding a
         // space or a reserved word legal, and keeps one that spells SQL inert.
-        return `${quote(c.columnId)} = ${val}`;
+        // NULL stays a keyword: it is not a value, so it takes no parameter.
+        return `${quote(c.columnId)} = ${isNull ? "NULL" : emit(c.newValue)}`;
       });
-      const pkVal = typeof pkValue === "number" ? pkValue : `'${pkValue}'`;
+      // The key keeps the number/text split it always had — a number goes to the
+      // driver as a number — but neither form is written into the statement now.
+      const pkVal = emit(typeof pkValue === "number" ? pkValue : String(pkValue));
       // No trailing semicolon: it only ever served to join the statements, and each
       // one now goes to /api/db/query verbatim rather than through
       // `splitStatements`, which used to strip it. oracledb rejects a plain
       // statement that carries one (ORA-00933).
-      statements.push(`UPDATE ${tableName} SET ${setClauses.join(", ")} WHERE ${quote(pkColumn)} = ${pkVal}`);
+      statements.push({
+        sql: `UPDATE ${tableName} SET ${setClauses.join(", ")} WHERE ${quote(pkColumn)} = ${pkVal}`,
+        params,
+      });
     }
 
     // One request per row (issue #269), sequentially and with the safety dialog
@@ -126,7 +149,10 @@ export function useInlineEditing({ activeConnection, currentTab, executeQuery }:
     //    statements are generated rather than typed, each carries a WHERE on the
     //    detected key, and the pending changes were reviewed in the grid first.
     for (const statement of statements) {
-      await executeQuery(statement, undefined, false, { skipSafety: true });
+      await executeQuery(statement.sql, undefined, false, {
+        skipSafety: true,
+        ...(statement.params.length > 0 && { params: statement.params }),
+      });
     }
     setPendingChanges([]);
     setEditingEnabled(false);

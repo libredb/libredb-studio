@@ -222,6 +222,49 @@ describe("POST /api/db/transaction", () => {
     expect(data.pagination.wasLimited).toBeDefined();
   });
 
+  // A row edit applied while a transaction is open takes this endpoint, so the
+  // values have to be bound here too — otherwise the transaction path would be the
+  // one place a generated statement still carried its values as text (#290).
+
+  test("query action binds the request's parameters", async () => {
+    const req = createMockRequest("/api/db/transaction", {
+      method: "POST",
+      body: {
+        connection: validConnection,
+        action: "query",
+        sql: `UPDATE users SET "name" = $1 WHERE "id" = $2`,
+        params: ["\\' WHERE 1=1 -- ", 7],
+      },
+    });
+
+    const res = await POST(req as never);
+
+    expect(res.status).toBe(200);
+    expect(mockTxProvider.queryInTransaction).toHaveBeenCalledWith(
+      `UPDATE users SET "name" = $1 WHERE "id" = $2 LIMIT 50`,
+      ["\\' WHERE 1=1 -- ", 7],
+    );
+  });
+
+  test("query action returns 400 for a parameter the driver cannot bind as a scalar", async () => {
+    const req = createMockRequest("/api/db/transaction", {
+      method: "POST",
+      body: {
+        connection: validConnection,
+        action: "query",
+        sql: "SELECT * FROM users WHERE id = $1",
+        params: [{ nested: true }],
+      },
+    });
+
+    const res = await POST(req as never);
+    const data = await parseResponseJSON<{ error: string }>(res);
+
+    expect(res.status).toBe(400);
+    expect(data.error).toContain("params");
+    expect(mockTxProvider.queryInTransaction).not.toHaveBeenCalled();
+  });
+
   test("query action without sql returns 400", async () => {
     const req = createMockRequest("/api/db/transaction", {
       method: "POST",

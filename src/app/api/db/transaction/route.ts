@@ -3,6 +3,7 @@ import { getOrCreateProvider } from "@/lib/db";
 import { createErrorResponse } from "@/lib/api/errors";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { getSession } from "@/lib/auth";
+import { readBoundParams } from "@/lib/api/bound-params";
 
 interface TransactionProvider {
   beginTransaction(): Promise<void>;
@@ -71,9 +72,17 @@ export async function POST(req: NextRequest) {
           return NextResponse.json({ error: "SQL query is required for transaction query" }, { status: 400 });
         }
 
+        // The values of a generated statement are bound here as well: a row edit
+        // applied while a transaction is open takes this endpoint, and it would
+        // otherwise be the one path that still carried them as text (#290).
+        const bound = readBoundParams(body.params);
+        if (!bound.valid) {
+          return NextResponse.json({ error: bound.message }, { status: 400 });
+        }
+
         // Apply limit for SELECT queries within transaction
         const prepared = provider.prepareQuery(sql, options);
-        const result = await provider.queryInTransaction(prepared.query);
+        const result = await provider.queryInTransaction(prepared.query, bound.params);
 
         const hasMore = result.rows.length === prepared.limit;
 

@@ -3,6 +3,7 @@ import { getOrCreateProvider } from "@/lib/db";
 import { createErrorResponse } from "@/lib/api/errors";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { getSession } from "@/lib/auth";
+import { readBoundParams } from "@/lib/api/bound-params";
 
 export async function POST(req: NextRequest) {
   try {
@@ -20,6 +21,14 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Connection and query are required" }, { status: 400 });
     }
 
+    // A generated statement sends its values here rather than writing them into the
+    // SQL (#290). They go straight to the driver's bind path, so what may be bound
+    // is decided before the provider is even reached.
+    const bound = readBoundParams(body.params);
+    if (!bound.valid) {
+      return NextResponse.json({ error: bound.message }, { status: 400 });
+    }
+
     const provider = await getOrCreateProvider(connection);
     const prepared = provider.prepareQuery(sql, options);
 
@@ -31,8 +40,8 @@ export async function POST(req: NextRequest) {
             provider as unknown as {
               query(sql: string, params?: unknown[], queryId?: string): ReturnType<typeof provider.query>;
             }
-          ).query(prepared.query, undefined, queryId)
-        : await provider.query(prepared.query);
+          ).query(prepared.query, bound.params, queryId)
+        : await provider.query(prepared.query, bound.params);
 
     const hasMore = result.rows.length === prepared.limit;
 

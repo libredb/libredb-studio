@@ -303,6 +303,19 @@ Execute SQL query on connected database.
 
 The `pagination` object reports the auto-limiting applied by the server (default 500 rows). `wasLimited` is `true` when the server injected a `LIMIT` the query didn't specify; `hasMore` indicates more rows are available — re-request with a higher `offset` to page. See [`docs/editor/query-optimization.md`](editor/query-optimization.md).
 
+**Bound parameters (optional):**
+```json
+{
+  "connection": { "type": "mysql", "host": "localhost", "database": "mydb" },
+  "sql": "UPDATE users SET `name` = ? WHERE `id` = ?",
+  "params": ["O'Brien", 7]
+}
+```
+
+`params` binds the statement's positional placeholders through the driver, so a value never becomes statement text. Use it for any statement built from data rather than typed by a person — a value carrying `\'` would otherwise close its own string literal on MySQL or ClickHouse and have the rest read as SQL. The placeholder form is the dialect's own: `$n` (PostgreSQL), `?` (MySQL, SQLite), `:n` (Oracle), `@pn` (SQL Server).
+
+Each element must be a string, number, boolean or `null`; anything else is rejected with 400 rather than handed to the driver. `POST /api/db/transaction` accepts the same field for its `query` action.
+
 **Response (400 Bad Request):**
 ```json
 {

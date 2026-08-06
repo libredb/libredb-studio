@@ -211,9 +211,14 @@ describe("useInlineEditing", () => {
     expect(sql).toContain("UPDATE");
     expect(sql).toContain("users");
     // Column identifiers are quoted (PR #289 review): a result field is named by
-    // whatever the query aliased it to, so it reaches SQL as arbitrary text.
-    expect(sql).toContain(`"name" = 'Alice Updated'`);
-    expect(sql).toContain(`WHERE "id" = 1`);
+    // whatever the query aliased it to, so it reaches SQL as arbitrary text. Values
+    // are bound rather than quoted (#290), so the statement carries placeholders.
+    expect(sql).toContain(`"name" = $1`);
+    expect(sql).toContain(`WHERE "id" = $2`);
+    expect((mockExecuteQuery as ReturnType<typeof mock>).mock.calls[0][3]).toEqual({
+      skipSafety: true,
+      params: ["Alice Updated", 1],
+    });
 
     // Changes should be cleared after apply
     expect(result.current.pendingChanges).toEqual([]);
@@ -258,8 +263,13 @@ describe("useInlineEditing", () => {
       expect(sql.match(/UPDATE/g)).toHaveLength(1);
       expect(sql.endsWith(";")).toBe(false);
     }
-    expect(sent[0]).toBe(`UPDATE users SET "name" = 'Alice Updated' WHERE "id" = 1`);
-    expect(sent[1]).toBe(`UPDATE users SET "email" = 'bob@new.test' WHERE "id" = 2`);
+    expect(sent[0]).toBe(`UPDATE users SET "name" = $1 WHERE "id" = $2`);
+    expect(sent[1]).toBe(`UPDATE users SET "email" = $1 WHERE "id" = $2`);
+    // Each row carries its own parameters, so a shared statement text is not a
+    // shared payload: placeholder numbering restarts per request.
+    const options = (mockExecuteQuery as ReturnType<typeof mock>).mock.calls.map((call) => call[3]);
+    expect(options[0]).toEqual({ skipSafety: true, params: ["Alice Updated", 1] });
+    expect(options[1]).toEqual({ skipSafety: true, params: ["bob@new.test", 2] });
   });
 
   test("handleApplyChanges runs each row past the safety dialog, so every row is applied", async () => {
@@ -293,7 +303,7 @@ describe("useInlineEditing", () => {
     const calls = (mockExecuteQuery as ReturnType<typeof mock>).mock.calls;
     expect(calls).toHaveLength(2);
     for (const call of calls) {
-      expect(call[3]).toEqual({ skipSafety: true });
+      expect((call[3] as { skipSafety?: boolean }).skipSafety).toBe(true);
     }
   });
 
@@ -341,7 +351,7 @@ describe("useInlineEditing", () => {
     });
 
     // The second row must not have been sent while the first is still in flight.
-    expect(order).toEqual([`start:UPDATE users SET "name" = 'A2' WHERE "id" = 1`]);
+    expect(order).toEqual([`start:UPDATE users SET "name" = $1 WHERE "id" = $2`]);
 
     await act(async () => {
       resolveFirst?.();
@@ -349,10 +359,10 @@ describe("useInlineEditing", () => {
     });
 
     expect(order).toEqual([
-      `start:UPDATE users SET "name" = 'A2' WHERE "id" = 1`,
-      `end:UPDATE users SET "name" = 'A2' WHERE "id" = 1`,
-      `start:UPDATE users SET "name" = 'B2' WHERE "id" = 2`,
-      `end:UPDATE users SET "name" = 'B2' WHERE "id" = 2`,
+      `start:UPDATE users SET "name" = $1 WHERE "id" = $2`,
+      `end:UPDATE users SET "name" = $1 WHERE "id" = $2`,
+      `start:UPDATE users SET "name" = $1 WHERE "id" = $2`,
+      `end:UPDATE users SET "name" = $1 WHERE "id" = $2`,
     ]);
   });
 
@@ -490,7 +500,7 @@ describe("useInlineEditing", () => {
 
     expect(mockExecuteQuery).toHaveBeenCalledTimes(1);
     const sql = mockExecuteQuery.mock.calls[0][0] as string;
-    expect(sql).toBe(`UPDATE users SET "${hostile}" = 'w' WHERE "id" = 1`);
+    expect(sql).toBe(`UPDATE users SET "${hostile}" = $1 WHERE "id" = $2`);
     // Nothing outside the quoted identifier ends the statement.
     expect(sql.replace(/"[^"]*"/g, "")).not.toContain(";");
   });
@@ -513,7 +523,7 @@ describe("useInlineEditing", () => {
       await result.current.handleApplyChanges();
     });
 
-    expect(mockExecuteQuery.mock.calls[0][0]).toBe("UPDATE users SET `first name` = 'Bob' WHERE `id` = 1");
+    expect(mockExecuteQuery.mock.calls[0][0]).toBe("UPDATE users SET `first name` = ? WHERE `id` = ?");
   });
 
   test("refuses to apply when the table name could not be read as an identifier", async () => {
@@ -556,6 +566,153 @@ describe("useInlineEditing", () => {
       await result.current.handleApplyChanges();
     });
 
-    expect(mockExecuteQuery.mock.calls[0][0]).toBe(`UPDATE public.users SET "name" = 'Alice Updated' WHERE "id" = 1`);
+    expect(mockExecuteQuery.mock.calls[0][0]).toBe(`UPDATE public.users SET "name" = $1 WHERE "id" = $2`);
+  });
+
+  // ── Values are bound, not interpolated (#290) ─────────────────────────────
+  //
+  // The value half of the statement is arbitrary text — pasted, imported, or read
+  // back from the table. Doubling the quote is enough only where a backslash is
+  // data; MySQL reads `\'` as an escaped quote, so an interpolated value could
+  // close its literal early and have the rest read as SQL. Applying edits skips
+  // the dangerous-query dialog, so nothing shows that statement before it runs.
+
+  test("binds the edited value in the placeholder form the dialect's driver expects", async () => {
+    const cases: Array<{ type: DatabaseConnection["type"]; sql: string }> = [
+      { type: "postgres", sql: `UPDATE users SET "name" = $1 WHERE "id" = $2` },
+      { type: "mysql", sql: "UPDATE users SET `name` = ? WHERE `id` = ?" },
+      { type: "sqlite", sql: `UPDATE users SET "name" = ? WHERE "id" = ?` },
+      { type: "oracle", sql: `UPDATE users SET "name" = :1 WHERE "id" = :2` },
+      { type: "mssql", sql: `UPDATE users SET [name] = @p1 WHERE [id] = @p2` },
+    ];
+
+    for (const { type, sql } of cases) {
+      mockExecuteQuery.mockClear();
+      const { result } = renderHook(() =>
+        useInlineEditing({
+          activeConnection: makeConnection({ type }),
+          currentTab: makeTab(),
+          executeQuery: mockExecuteQuery as (sql: string) => void,
+        }),
+      );
+
+      act(() => {
+        result.current.handleCellChange(makeChange({ newValue: "Alice Updated" }));
+      });
+      await act(async () => {
+        await result.current.handleApplyChanges();
+      });
+
+      expect(mockExecuteQuery.mock.calls[0][0]).toBe(sql);
+      expect(mockExecuteQuery.mock.calls[0][3]).toEqual({ skipSafety: true, params: ["Alice Updated", 1] });
+    }
+  });
+
+  test("a backslash-escaping dialect cannot read the edited value as SQL", async () => {
+    // The issue #290 payload: interpolated into a MySQL statement it closed the
+    // literal early and `WHERE 1=1` became the real predicate, so every row in the
+    // table was updated instead of the edited one.
+    const payload = "\\' WHERE 1=1 -- ";
+    const { result } = renderHook(() =>
+      useInlineEditing({
+        activeConnection: makeConnection({ type: "mysql" }),
+        currentTab: makeTab(),
+        executeQuery: mockExecuteQuery as (sql: string) => void,
+      }),
+    );
+
+    act(() => {
+      result.current.handleCellChange(makeChange({ newValue: payload }));
+    });
+    await act(async () => {
+      await result.current.handleApplyChanges();
+    });
+
+    const [sql, , , options] = mockExecuteQuery.mock.calls[0];
+    expect(sql).toBe("UPDATE users SET `name` = ? WHERE `id` = ?");
+    expect(sql).not.toContain("1=1");
+    expect(options).toEqual({ skipSafety: true, params: [payload, 1] });
+  });
+
+  test("binds a primary key value that is not a number instead of quoting it", async () => {
+    // The key is read back from the result, so it carries whatever the table holds.
+    // A natural key with a quote in it used to reach `WHERE id = '...'` with no
+    // escaping at all — in every dialect, not only the backslash ones.
+    const hostileKey = "x' OR '1'='1";
+    const { result } = renderHook(() =>
+      useInlineEditing({
+        activeConnection: makeConnection(),
+        currentTab: makeTab({
+          result: makeResult({
+            fields: ["id", "name"],
+            rows: [{ id: hostileKey, name: "Alice" }],
+          }),
+        }),
+        executeQuery: mockExecuteQuery as (sql: string) => void,
+      }),
+    );
+
+    act(() => {
+      result.current.handleCellChange(makeChange({ newValue: "Alice Updated" }));
+    });
+    await act(async () => {
+      await result.current.handleApplyChanges();
+    });
+
+    const [sql, , , options] = mockExecuteQuery.mock.calls[0];
+    expect(sql).toBe(`UPDATE users SET "name" = $1 WHERE "id" = $2`);
+    expect(options).toEqual({ skipSafety: true, params: ["Alice Updated", hostileKey] });
+  });
+
+  test("keeps NULL a keyword and numbers the remaining placeholders around it", async () => {
+    // Clearing a cell means SQL NULL, which is a keyword rather than a value, so it
+    // takes no parameter — and the placeholders that follow must not count it.
+    const { result } = renderHook(() =>
+      useInlineEditing({
+        activeConnection: makeConnection(),
+        currentTab: makeTab(),
+        executeQuery: mockExecuteQuery as (sql: string) => void,
+      }),
+    );
+
+    act(() => {
+      result.current.handleCellChange(makeChange({ columnId: "name", originalValue: "Alice", newValue: "" }));
+      result.current.handleCellChange(
+        makeChange({ columnId: "email", originalValue: "alice@test.com", newValue: "new@test.com" }),
+      );
+    });
+    await act(async () => {
+      await result.current.handleApplyChanges();
+    });
+
+    const [sql, , , options] = mockExecuteQuery.mock.calls[0];
+    expect(sql).toBe(`UPDATE users SET "name" = NULL, "email" = $1 WHERE "id" = $2`);
+    expect(options).toEqual({ skipSafety: true, params: ["new@test.com", 1] });
+  });
+
+  test("quotes the value dialect-aware where the dialect has no positional bind form", async () => {
+    // ClickHouse's provider refuses positional parameters outright, so a statement
+    // built for it has to carry its values as literals — quoted the way ClickHouse
+    // reads them, backslash included. Its `supportsInlineRowEdit` is false today, so
+    // this is the guard that keeps issue #279 from re-opening #290 when a dialect
+    // like it gains row editing.
+    const { result } = renderHook(() =>
+      useInlineEditing({
+        activeConnection: makeConnection({ type: "clickhouse" }),
+        currentTab: makeTab(),
+        executeQuery: mockExecuteQuery as (sql: string) => void,
+      }),
+    );
+
+    act(() => {
+      result.current.handleCellChange(makeChange({ newValue: "a\\'b" }));
+    });
+    await act(async () => {
+      await result.current.handleApplyChanges();
+    });
+
+    const [sql, , , options] = mockExecuteQuery.mock.calls[0];
+    expect(sql).toBe(`UPDATE users SET "name" = 'a\\\\''b' WHERE "id" = 1`);
+    expect(options).toEqual({ skipSafety: true });
   });
 });

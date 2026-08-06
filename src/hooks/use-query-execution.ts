@@ -19,6 +19,12 @@ export interface QueryExecutionOptions {
   offset?: number;
   unlimited?: boolean;
   skipSafety?: boolean;
+  /**
+   * Values for the statement's positional placeholders, bound by the driver
+   * instead of written into the SQL. A generated statement (the inline row editor,
+   * #290) carries its values here so that no value can be read as statement text.
+   */
+  params?: unknown[];
 }
 
 interface UseQueryExecutionParams {
@@ -137,7 +143,7 @@ export function useQueryExecution({
       }
 
       // Options extraction
-      const { limit = 500, offset = 0, unlimited = false } = executionOptions || {};
+      const { limit = 500, offset = 0, unlimited = false, params } = executionOptions || {};
 
       // isLoadingMore flag
       const isLoadMore = offset > 0;
@@ -216,6 +222,10 @@ export function useQueryExecution({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             ...buildConnectionPayload(activeConnection),
+            // The parameter array travels beside the SQL on whichever endpoint the
+            // statement takes, and only when the caller supplied one: a request
+            // without values must stay a request without a `params` key (#290).
+            ...(params && { params }),
             ...(useTransaction
               ? { action: "query", sql: queryToExecute, options: { limit, offset, unlimited } }
               : {
