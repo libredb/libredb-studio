@@ -50,6 +50,70 @@ LibreDB Studio is MIT because it has to go everywhere. libredb-platform is paid 
 
 The line holds under pressure, which is the point. The editor you deploy is free and stays free; what costs money is someone else running it for you. No capability is moved across that line to create a reason to upgrade.
 
+## Messaging house
+
+One umbrella claim, three entry doors into it, three assurance layers underneath.
+
+**Umbrella claim.** The tool deploys next to the data.
+
+**The three doors** are three ways into that one claim. A campaign picks a door. It does not argue all three at once, because a piece that opens on three arguments has opened on none.
+
+1. You created the database. The editor is already beside it.
+2. One tab, ten databases.
+3. Nothing sits behind an Enterprise wall.
+
+**Door 3 is deliberately third, and stays third.** Leading with it would define LibreDB as another company's opponent rather than as a position of its own, and it would put our credibility at the mercy of their pricing page. Third, the same fact reads as reassurance rather than accusation.
+
+**The three assurances are not entry points.** Nobody arrives because of a test-coverage number. People stay because of one. Assurances belong in the second half of a piece, after a door has already done its work.
+
+## Value propositions
+
+Each door carries five parts. A promise whose proof does not resolve to a row in the proof library is dropped, not softened.
+
+### Door 1 — You created the database. The editor is already beside it.
+
+- **Audience:** a developer running databases on a PaaS or on Kubernetes.
+- **Pain:** the database is ready in seconds; reaching it means exposing a port, digging a tunnel, or installing a client on every machine that needs one.
+- **Promise:** the editor deploys next to the data, inside the same network, with nothing opened to the outside.
+- **Proof:** a one-line container run; a Helm chart and an OLM operator bundle; one-click templates on Railway, Dokploy, CapRover, DigitalOcean and Sealos; `npm i @libredb/studio` to embed it inside your own product.
+- **Difference:** the only Helm chart the dbeaver organization publishes defaults to the Enterprise image, and no `cloudbeaver` npm package exists.
+
+This is the sharpest of the three. It is the one claim no competitor can currently make.
+
+### Door 2 — One tab, ten databases.
+
+- **Audience:** teams running more than one kind of database, and the engineers who join them.
+- **Pain:** four databases, four clients, four sets of credentials, and a connection-string hunt for anyone new.
+- **Promise:** ten engines in one interface, with the same exploration, ER diagrams, schema diff and monitoring across all of them.
+- **Proof:** ten providers, each with its own reference document under `docs/providers/`.
+- **Difference:** CloudBeaver Community bundles 18 driver modules and every one of them is SQL. MongoDB and Redis are not among them.
+
+The claim here is the span, never the count. See the honesty limits.
+
+### Door 3 — Nothing sits behind an Enterprise wall.
+
+- **Audience:** developers looking for an alternative on GitHub.
+- **Pain:** downloading something called open source and finding single sign-on, ER diagrams and the AI assistant behind a licence.
+- **Promise:** all of it under MIT, with no capability held back.
+- **Proof:** OIDC single sign-on, ER diagrams, AI-assisted SQL and the NoSQL engines all ship in the MIT build.
+- **Difference:** in CloudBeaver, single sign-on is Enterprise and AWS only, ER diagrams are "Available only in PRO", the AI assistant is Enterprise, and NoSQL is absent from the Community driver set.
+
+State the four gated capabilities as facts with their sources attached. Never as an accusation.
+
+### Assurance 1 — Governance
+
+For the lead deciding whether a team is allowed to use this. OIDC single sign-on against any compliant provider. Role-based access control separating admin from user. An audit trail of executed queries. Risk analysis before a destructive statement runs. Display masking for screen sharing, within the limits stated below. And deployment inside the network, so no database port has to face outward.
+
+### Assurance 2 — Maturity
+
+For anyone asking whether this is a weekend project. 100% line coverage enforced as a CI gate. MIT. Four releases tagged between 31 July and 3 August 2026. A Helm chart and an OpenShift operator bundle. 27 distribution channels, 22 of them live. Build provenance attestations on published artifacts.
+
+### Assurance 3 — Founder-market fit
+
+Three engineers built this: a data engineer, a backend architect, and a frontend and mobile engineer. Between them they had spent years installing, configuring and working around database tooling before deciding to build the one they actually wanted.
+
+This belongs to the evidence, not the opening. A reader wants to recognise themselves first and trust the author second — put the founders in the first paragraph and the order inverts.
+
 ## Proof library
 
 Every promise in this brief resolves to a row below. A claim with no row here does not enter the brief — it is dropped rather than softened.
@@ -68,7 +132,13 @@ Facts drift. Provider counts, channel counts and competitor editions all change,
 | Usable from a phone | Dedicated mobile navigation and mobile card and table result views | `src/components/MobileNav.tsx`, `src/components/results-grid/ResultCard.tsx` | 2026-08-07 |
 | 100% line coverage enforced as a CI gate | `coverage:check` runs `scripts/check-coverage.mjs` against the merged lcov | `package.json` | 2026-08-07 |
 | Deployable to Kubernetes and OpenShift | Helm chart and OLM operator bundle both present | `charts/libredb-studio/Chart.yaml`, `operator/bundle/` | 2026-08-07 |
+| Build provenance attestations on published artifacts | Attestation steps in the npm, container and release-artifact workflows | `.github/workflows/npm-publish.yml`, `docker-build-push.yml`, `release-artifacts.yml` | 2026-08-07 |
+| Frequent releases | 0.9.63, 0.9.64, 0.9.65 and 0.9.66 were tagged between 2026-07-31 and 2026-08-03. State the dates rather than promising a cadence | git tags | 2026-08-07 |
 | OIDC single sign-on | Vendor-agnostic OIDC client with PKCE | `src/lib/oidc.ts` | 2026-08-07 |
+| ER diagrams ship in the MIT build | Interactive schema diagram with foreign-key edges and auto-layout | `src/components/SchemaDiagram.tsx`, `src/components/schema-diagram/` | 2026-08-07 |
+| AI-assisted SQL ships in the MIT build | Multi-provider LLM layer behind a factory, so any model can be configured | `src/lib/llm/` | 2026-08-07 |
+| Role-based access control | Middleware separating admin from user routes | `src/proxy.ts` | 2026-08-07 |
+| Risk analysis before destructive statements run | Per-dialect SQL parsing that identifies statement boundaries and destructive keywords | `src/lib/sql/words.ts`, `src/lib/sql/spans.ts`, `src/lib/sql/statement-end.ts` | 2026-08-07 |
 | Audit trail of executed queries | Admin-only audit view backed by the storage layer | `src/components/admin/tabs/AuditTab.tsx` | 2026-08-07 |
 | Display masking is a presentation-layer feature | Masking is implemented in `src/lib/data-masking.ts` and applied by UI components only. The string `mask` does not occur anywhere under `src/app/api`, so the API returns full values to an authorized user | `src/lib/data-masking.ts`; absence verified across `src/app/api/` | 2026-08-07 |
 
