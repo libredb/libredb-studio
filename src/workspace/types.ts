@@ -1,5 +1,5 @@
 // src/workspace/types.ts
-import type { DatabaseType, TableSchema, SavedQuery } from "@/lib/types";
+import type { DatabaseType, TableSchema, SavedQuery, QueryWarning } from "@/lib/types";
 
 // === Connection (platform → studio) ===
 
@@ -22,9 +22,25 @@ export interface WorkspaceUser {
 export interface WorkspaceQueryResult {
   rows: Record<string, unknown>[];
   fields: string[];
+  /**
+   * The declared type of each column, as the engine spells it. Optional per
+   * column, because a computed projection often has none. The adapter turns this
+   * into the grid's `columnTypes` map (#285).
+   */
   columns?: { name: string; type?: string }[];
   rowCount: number;
   executionTime: number;
+  /**
+   * Notices the engine attached to this run — an analytics engine answering 200
+   * with rows missing, a query service returning advice about the statement. The
+   * grid renders them from the field's presence, so a host that has none should
+   * omit the field rather than send an empty array (#285).
+   *
+   * Additive and optional: this interface is published (`src/exports/workspace.ts`)
+   * and implemented outside this repo, so a required field would stop every
+   * existing host from compiling.
+   */
+  warnings?: QueryWarning[];
   pagination?: {
     limit: number;
     offset: number;

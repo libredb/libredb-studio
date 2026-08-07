@@ -599,8 +599,8 @@ connection ceiling over REST, so the denominator is a constant while the numerat
 | `kill` | `DELETE FROM system:active_requests WHERE requestId = $1` | Target is the request id shown in active sessions |
 
 `vacuum`, `optimize` and `check` have no Couchbase equivalent, so they are absent from
-`maintenanceOperations` and the monitoring Tables tab never offers them (#272); the admin Operations
-tab still does not read capabilities ([#282](https://github.com/libredb/libredb-studio/issues/282)).
+`maintenanceOperations` and neither tab that offers maintenance renders them — the monitoring Tables
+tab since #272, the admin Operations tab since #282.
 Calling `runMaintenance` with one directly throws a `QueryError` naming the three supported
 operations.
 

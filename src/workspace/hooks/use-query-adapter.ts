@@ -7,6 +7,32 @@ import type { BottomPanelMode } from "@/components/studio/BottomPanel";
 import { useToast } from "@/hooks/use-toast";
 import { isDangerousQuery } from "@/components/QuerySafetyDialog";
 
+/**
+ * The channels a host result carries beyond rows and counts (#285).
+ *
+ * The adapter used to build its tab result from an explicit five-key list, so
+ * anything the host attached beyond those keys was dropped and the embedding saw
+ * neither the query warnings nor the declared column types the standalone app
+ * shows. Both are read straight off `result` by `ResultsGrid`, so carrying them is
+ * the whole fix — and the declared types go into the contract's existing
+ * `columns[].type` slot rather than a second shape for the same information.
+ *
+ * Both stay ABSENT when the host sent nothing: the grid decides whether to render
+ * from the field's presence, so an empty array would announce a section with
+ * nothing in it.
+ */
+function carriedChannels(result: WorkspaceQueryResult): Pick<QueryTab["result"] & object, "warnings" | "columnTypes"> {
+  // A column the host declared without a type contributes no entry rather than an
+  // undefined one every reader would have to test for.
+  const declared = (result.columns ?? []).filter((column) => column.type !== undefined);
+  return {
+    ...(result.warnings && { warnings: result.warnings }),
+    ...(declared.length > 0 && {
+      columnTypes: Object.fromEntries(declared.map((column) => [column.name, column.type as string])),
+    }),
+  };
+}
+
 interface UseQueryAdapterParams {
   activeConnection: DatabaseConnection | null;
   onQueryExecute: (
@@ -120,6 +146,7 @@ export function useQueryAdapter({
                 rowCount: result.rowCount,
                 executionTime,
                 pagination: result.pagination,
+                ...carriedChannels(result),
               },
               allRows: result.rows,
               currentOffset: result.rows.length,
@@ -202,6 +229,7 @@ export function useQueryAdapter({
                   rowCount: result.rowCount,
                   executionTime,
                   pagination: result.pagination,
+                  ...carriedChannels(result),
                 },
                 allRows: result.rows,
                 currentOffset: result.rows.length,

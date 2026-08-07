@@ -37,7 +37,8 @@ import { useMonitoringData } from "@/hooks/use-monitoring-data";
 import { storage } from "@/lib/storage";
 import { useAllConnections } from "@/hooks/use-all-connections";
 import type { DatabaseConnection } from "@/lib/types";
-import type { ActiveSessionDetails } from "@/lib/db/types";
+import type { ActiveSessionDetails, MaintenanceType } from "@/lib/db/types";
+import { useProviderMetadata } from "@/hooks/use-provider-metadata";
 
 interface OperationLogEntry {
   id: string;
@@ -63,6 +64,17 @@ export function OperationsTab() {
     selectedConnection,
     monitoringOptions,
   );
+
+  // Offer only the maintenance the connected provider declares it can perform:
+  // /api/db/maintenance rejects everything else with 400, so an ungated control can
+  // only produce an error (#282, the twin of the #272 gate on the monitoring Tables
+  // tab). Unknown capabilities hide the controls rather than showing them —
+  // `metadata` is also null when /api/db/provider-meta fails, and failing open
+  // would put the dead buttons back on exactly the connections this gate is for.
+  const { metadata } = useProviderMetadata(selectedConnection);
+  const canRun = (type: MaintenanceType) =>
+    metadata?.capabilities.supportsMaintenance === true && metadata.capabilities.maintenanceOperations.includes(type);
+  const anyMaintenance = canRun("analyze") || canRun("vacuum") || canRun("reindex");
 
   const { connections: allConns } = useAllConnections();
   useEffect(() => {
@@ -224,88 +236,98 @@ export function OperationsTab() {
         <div className="rounded-xl border border-red-500/20 bg-red-500/5 p-4 text-red-400 text-sm">{error}</div>
       )}
 
-      {/* Global Operations */}
-      <div>
-        <div className="flex items-center gap-2 mb-3">
-          <ShieldAlert className="h-4 w-4 text-blue-400" />
-          <h3 className="text-sm font-bold text-zinc-300">Global Operations</h3>
+      {/* Global Operations — hidden entirely where the provider declares none */}
+      {anyMaintenance && (
+        <div>
+          <div className="flex items-center gap-2 mb-3">
+            <ShieldAlert className="h-4 w-4 text-blue-400" />
+            <h3 className="text-sm font-bold text-zinc-300">Global Operations</h3>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            {/* Analyze */}
+            {canRun("analyze") && (
+              <div className="p-4 rounded-xl border border-white/5 bg-white/[0.02] hover:bg-white/[0.04] transition-colors">
+                <div className="flex items-start justify-between mb-3">
+                  <div className="w-8 h-8 rounded-lg bg-yellow-500/10 border border-yellow-500/20 flex items-center justify-center">
+                    <Zap className="w-4 h-4 text-yellow-500" />
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 text-xs border-white/10 hover:bg-yellow-500/10 hover:text-yellow-500"
+                    onClick={() => handleRunMaintenance("analyze")}
+                    disabled={!!actionLoading || !selectedConnection}
+                  >
+                    {actionLoading === "analyze-global" ? <RefreshCw className="w-3 h-3 animate-spin mr-1" /> : null}
+                    Run Analyze
+                  </Button>
+                </div>
+                <h4 className="text-sm font-bold text-zinc-200 mb-1">Update Statistics</h4>
+                <p className="text-xs text-zinc-500 leading-relaxed">
+                  Updates query planner statistics for all tables.
+                </p>
+              </div>
+            )}
+
+            {/* Vacuum */}
+            {canRun("vacuum") && (
+              <div className="p-4 rounded-xl border border-white/5 bg-white/[0.02] hover:bg-white/[0.04] transition-colors">
+                <div className="flex items-start justify-between mb-3">
+                  <div className="w-8 h-8 rounded-lg bg-blue-500/10 border border-blue-500/20 flex items-center justify-center">
+                    <HardDrive className="w-4 h-4 text-blue-500" />
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 text-xs border-white/10 hover:bg-blue-500/10 hover:text-blue-500"
+                    onClick={() => handleRunMaintenance("vacuum")}
+                    disabled={!!actionLoading || !selectedConnection}
+                  >
+                    {actionLoading === "vacuum-global" ? <RefreshCw className="w-3 h-3 animate-spin mr-1" /> : null}
+                    Run Vacuum
+                  </Button>
+                </div>
+                <h4 className="text-sm font-bold text-zinc-200 mb-1">Reclaim Space</h4>
+                <p className="text-xs text-zinc-500 leading-relaxed">Removes dead rows and returns space to the OS.</p>
+              </div>
+            )}
+
+            {/* Reindex */}
+            {canRun("reindex") && (
+              <div className="p-4 rounded-xl border border-white/5 bg-white/[0.02] hover:bg-white/[0.04] transition-colors">
+                <div className="flex items-start justify-between mb-3">
+                  <div className="w-8 h-8 rounded-lg bg-purple-500/10 border border-purple-500/20 flex items-center justify-center">
+                    <RefreshCw className="w-4 h-4 text-purple-500" />
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 text-xs border-white/10 hover:bg-purple-500/10 hover:text-purple-500"
+                    onClick={() => handleRunMaintenance("reindex")}
+                    disabled={!!actionLoading || !selectedConnection}
+                  >
+                    {actionLoading === "reindex-global" ? <RefreshCw className="w-3 h-3 animate-spin mr-1" /> : null}
+                    Run Reindex
+                  </Button>
+                </div>
+                <h4 className="text-sm font-bold text-zinc-200 mb-1">Rebuild Indexes</h4>
+                <p className="text-xs text-zinc-500 leading-relaxed">Reconstructs all indexes in the database.</p>
+              </div>
+            )}
+
+            {/* Warning Card */}
+            <div className="p-4 rounded-xl border border-red-500/10 bg-red-500/5 flex flex-col justify-center">
+              <div className="flex items-center gap-2 text-red-400 mb-2">
+                <ShieldAlert className="w-4 h-4" />
+                <span className="text-xs font-bold uppercase tracking-wider">Warning</span>
+              </div>
+              <p className="text-xs text-red-400/70 leading-relaxed italic">
+                These operations can be resource-intensive. Avoid running them during peak traffic hours.
+              </p>
+            </div>
+          </div>
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-          {/* Analyze */}
-          <div className="p-4 rounded-xl border border-white/5 bg-white/[0.02] hover:bg-white/[0.04] transition-colors">
-            <div className="flex items-start justify-between mb-3">
-              <div className="w-8 h-8 rounded-lg bg-yellow-500/10 border border-yellow-500/20 flex items-center justify-center">
-                <Zap className="w-4 h-4 text-yellow-500" />
-              </div>
-              <Button
-                size="sm"
-                variant="outline"
-                className="h-7 text-xs border-white/10 hover:bg-yellow-500/10 hover:text-yellow-500"
-                onClick={() => handleRunMaintenance("analyze")}
-                disabled={!!actionLoading || !selectedConnection}
-              >
-                {actionLoading === "analyze-global" ? <RefreshCw className="w-3 h-3 animate-spin mr-1" /> : null}
-                Run Analyze
-              </Button>
-            </div>
-            <h4 className="text-sm font-bold text-zinc-200 mb-1">Update Statistics</h4>
-            <p className="text-xs text-zinc-500 leading-relaxed">Updates query planner statistics for all tables.</p>
-          </div>
-
-          {/* Vacuum */}
-          <div className="p-4 rounded-xl border border-white/5 bg-white/[0.02] hover:bg-white/[0.04] transition-colors">
-            <div className="flex items-start justify-between mb-3">
-              <div className="w-8 h-8 rounded-lg bg-blue-500/10 border border-blue-500/20 flex items-center justify-center">
-                <HardDrive className="w-4 h-4 text-blue-500" />
-              </div>
-              <Button
-                size="sm"
-                variant="outline"
-                className="h-7 text-xs border-white/10 hover:bg-blue-500/10 hover:text-blue-500"
-                onClick={() => handleRunMaintenance("vacuum")}
-                disabled={!!actionLoading || !selectedConnection}
-              >
-                {actionLoading === "vacuum-global" ? <RefreshCw className="w-3 h-3 animate-spin mr-1" /> : null}
-                Run Vacuum
-              </Button>
-            </div>
-            <h4 className="text-sm font-bold text-zinc-200 mb-1">Reclaim Space</h4>
-            <p className="text-xs text-zinc-500 leading-relaxed">Removes dead rows and returns space to the OS.</p>
-          </div>
-
-          {/* Reindex */}
-          <div className="p-4 rounded-xl border border-white/5 bg-white/[0.02] hover:bg-white/[0.04] transition-colors">
-            <div className="flex items-start justify-between mb-3">
-              <div className="w-8 h-8 rounded-lg bg-purple-500/10 border border-purple-500/20 flex items-center justify-center">
-                <RefreshCw className="w-4 h-4 text-purple-500" />
-              </div>
-              <Button
-                size="sm"
-                variant="outline"
-                className="h-7 text-xs border-white/10 hover:bg-purple-500/10 hover:text-purple-500"
-                onClick={() => handleRunMaintenance("reindex")}
-                disabled={!!actionLoading || !selectedConnection}
-              >
-                {actionLoading === "reindex-global" ? <RefreshCw className="w-3 h-3 animate-spin mr-1" /> : null}
-                Run Reindex
-              </Button>
-            </div>
-            <h4 className="text-sm font-bold text-zinc-200 mb-1">Rebuild Indexes</h4>
-            <p className="text-xs text-zinc-500 leading-relaxed">Reconstructs all indexes in the database.</p>
-          </div>
-
-          {/* Warning Card */}
-          <div className="p-4 rounded-xl border border-red-500/10 bg-red-500/5 flex flex-col justify-center">
-            <div className="flex items-center gap-2 text-red-400 mb-2">
-              <ShieldAlert className="w-4 h-4" />
-              <span className="text-xs font-bold uppercase tracking-wider">Warning</span>
-            </div>
-            <p className="text-xs text-red-400/70 leading-relaxed italic">
-              These operations can be resource-intensive. Avoid running them during peak traffic hours.
-            </p>
-          </div>
-        </div>
-      </div>
+      )}
 
       {/* Tables + Sessions Split */}
       <div className="grid gap-6 md:grid-cols-2">
@@ -353,34 +375,38 @@ export function OperationsTab() {
                       </div>
                     </div>
                     <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        className="w-7 h-7 text-zinc-500 hover:text-yellow-500"
-                        title="Analyze"
-                        onClick={() => handleRunMaintenance("analyze", table.tableName)}
-                        disabled={!!actionLoading}
-                      >
-                        {actionLoading === `analyze-${table.tableName}` ? (
-                          <Loader2 className="w-3 h-3 animate-spin" />
-                        ) : (
-                          <Search className="w-3 h-3" />
-                        )}
-                      </Button>
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        className="w-7 h-7 text-zinc-500 hover:text-blue-500"
-                        title="Vacuum"
-                        onClick={() => handleRunMaintenance("vacuum", table.tableName)}
-                        disabled={!!actionLoading}
-                      >
-                        {actionLoading === `vacuum-${table.tableName}` ? (
-                          <Loader2 className="w-3 h-3 animate-spin" />
-                        ) : (
-                          <HardDrive className="w-3 h-3" />
-                        )}
-                      </Button>
+                      {canRun("analyze") && (
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="w-7 h-7 text-zinc-500 hover:text-yellow-500"
+                          title="Analyze"
+                          onClick={() => handleRunMaintenance("analyze", table.tableName)}
+                          disabled={!!actionLoading}
+                        >
+                          {actionLoading === `analyze-${table.tableName}` ? (
+                            <Loader2 className="w-3 h-3 animate-spin" />
+                          ) : (
+                            <Search className="w-3 h-3" />
+                          )}
+                        </Button>
+                      )}
+                      {canRun("vacuum") && (
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="w-7 h-7 text-zinc-500 hover:text-blue-500"
+                          title="Vacuum"
+                          onClick={() => handleRunMaintenance("vacuum", table.tableName)}
+                          disabled={!!actionLoading}
+                        >
+                          {actionLoading === `vacuum-${table.tableName}` ? (
+                            <Loader2 className="w-3 h-3 animate-spin" />
+                          ) : (
+                            <HardDrive className="w-3 h-3" />
+                          )}
+                        </Button>
+                      )}
                     </div>
                   </div>
                 ))}
