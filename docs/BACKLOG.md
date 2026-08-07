@@ -16,6 +16,10 @@ the time it was written down, but none of it has been filed as a GitHub issue.
   reading of a database's grammar that ought to be checked against a first-party source again.
 - Promote an entry to a GitHub issue whenever it needs discussion, an outside reporter, or a
   release note. This file is a holding area, not a competing tracker.
+- The reverse happens too. An issue that is understood, breaks nothing today and is not scheduled
+  belongs here rather than in a tracker where it only ages: it is closed with a pointer to its entry
+  and reopened if a consumer asks for it. A defect a user can hit stays an issue — closing one of
+  those hides a limitation instead of deferring it.
 
 ---
 
@@ -145,6 +149,37 @@ Since #290 the inline row editor sends `SET "name" = $1` with the value bound, a
 ran, but no longer a record of what was written. Carrying the bound values as their own history
 field would restore the audit trail without putting them back into the SQL. Touches the history
 entry shape in `src/lib/storage`, so it is a schema change rather than a one-line fix.
+
+---
+
+## Row editing
+
+### R1. Row editing is offered only where a shared `UPDATE` happens to fit (was #279)
+
+The results grid builds one statement shape for every engine —
+`UPDATE <table> SET <col> = <val> WHERE <pk> = <val>` in `src/hooks/use-inline-editing.ts` — so an
+engine that spells a row mutation differently cannot have the feature. #269 made that honest rather
+than broken: `supportsInlineRowEdit` hides the control wherever the shape does not fit, which is why
+this is deferred work and not a defect. Today it is true for PostgreSQL, MySQL, SQLite, Oracle and
+SQL Server, and false everywhere else.
+
+Making it work means moving statement generation into the provider, so each dialect owns its own
+form: the SQL providers keep the shape above, ClickHouse spells it `ALTER TABLE <t> UPDATE <col> =
+<val> WHERE ...`, MongoDB has no statement at all and would need the document-update path, and an
+append-only engine keeps declaring the capability false. The provider triad applies, so code,
+`docs/providers/<type-id>.md` and the provider's integration test move together, per provider.
+
+Two constraints come from #269 and do not go away:
+
+- **One request per edited row.** Several engines reject a multi-statement request, so the old
+  newline-joined payload cannot come back.
+- **Primary-key detection is heuristic.** The hook picks the key by looking for a result column named
+  `id` or ending in `_id`. That is acceptable for a control gated on an opt-in capability, but
+  per-dialect editing on real tables should derive the key from the schema instead.
+
+Whether row editing should be a universal feature at all is a product decision, not a mechanical one,
+which is the other half of why it is here. The published `WorkspaceFeatures.inlineEditing` flag is
+deprecated against this entry (#288): it becomes real, or goes away in a major, with this work.
 
 ---
 

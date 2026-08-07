@@ -1,3 +1,23 @@
+/**
+ * Migration SQL from a schema diff.
+ *
+ * **Only part of this generator is dialect-aware, and the rest emits one shape for
+ * everyone (#284).** Stated here because the difference is invisible from a call
+ * site: `generateMigrationSQL(diff, dialect)` takes a dialect either way.
+ *
+ * - Dialect-aware: the modified-column path, which branches per engine and names
+ *   the limitation in a comment where an engine has no such statement (#269).
+ * - Not yet: the transaction wrapper (`BEGIN;` / `COMMIT;`, which is only valid
+ *   for PostgreSQL and MySQL — MSSQL spells it `BEGIN TRANSACTION`, Oracle opens a
+ *   PL/SQL block and auto-commits DDL anyway, and six type ids have no
+ *   transactional DDL at all), `ADD COLUMN` and `DROP COLUMN`, and the index/FK
+ *   fallbacks that emit `DROP INDEX IF EXISTS`.
+ *
+ * So the output is correct for PostgreSQL, largely correct for MySQL and SQLite,
+ * and can be unrunnable elsewhere. Tracked rather than fixed here because the
+ * emitted forms want checking against a live MSSQL and Oracle before they are
+ * settled, the way #264 and #265 did.
+ */
 import type { DatabaseType } from "@/lib/types";
 // The shared quoter, which also escapes an embedded closing quote character — this
 // file used to carry its own copy that did not, so a schema object named with one

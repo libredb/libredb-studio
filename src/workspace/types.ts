@@ -59,6 +59,22 @@ export interface WorkspaceFeatures {
   testDataGenerator?: boolean;
   schemaDiagram?: boolean;
   dataImport?: boolean;
+  /**
+   * @deprecated Declared but not read: setting it has no effect (#288).
+   *
+   * The embedded workspace has no editing path to switch on. `StudioWorkspace`
+   * hard-codes `editingEnabled={false}` at both grid call sites, and the embedded
+   * query adapter's `executeQuery` takes no execution options, so it could not
+   * carry the `skipSafety` flag the standalone inline-edit path relies on (#269)
+   * even if a caller reached it.
+   *
+   * Kept rather than removed because this interface is published and implemented
+   * outside this repo, so deleting the field would stop a host that sets it from
+   * compiling. Saying so here is the honest half: a declared capability that is
+   * neither implemented nor rejected is the state to avoid, and this rejects it
+   * where a host reads the contract. It becomes real, or goes away in a major,
+   * with per-dialect row editing (#279).
+   */
   inlineEditing?: boolean;
   transactions?: boolean;
   connectionManagement?: boolean;
@@ -72,6 +88,9 @@ export const DEFAULT_WORKSPACE_FEATURES: Required<WorkspaceFeatures> = {
   testDataGenerator: true,
   schemaDiagram: true,
   dataImport: true,
+  // Deprecated and unread — see the field's note above (#288). It stays in the
+  // defaults because the type is `Required<WorkspaceFeatures>`, and `false` is
+  // the only value that matches what the embedded workspace actually does.
   inlineEditing: false,
   transactions: false,
   connectionManagement: false,
