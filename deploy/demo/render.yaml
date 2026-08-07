@@ -1,0 +1,96 @@
+# Render Blueprint — the public showcase instance, and only that instance.
+#
+# This file is deliberately NOT the repository root `render.yaml`. That one is
+# the target of the README's "Deploy to Render" button and redeploys every
+# service created from it on each commit, so a `DEMO_MODE` value there would
+# open a public demo on other people's deployments. Keeping the demo's config
+# in its own Blueprint file means everything about the showcase instance is
+# managed from this repo, and nobody else inherits it.
+#
+# Render reads a custom Blueprint path set when the Blueprint is created (or
+# changed later from its Settings page): point it at `deploy/demo/render.yaml`.
+#
+# Deliberately a SEPARATE service from app.libredb.org rather than a re-point
+# of it: re-pointing an existing Blueprint reconciles the service's environment
+# against the new file, which would disturb whatever is set on the live
+# instance. A new service leaves it untouched and can be wiped freely.
+
+services:
+  - type: web
+    name: libredb-studio-demo
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/db/health
+    autoDeployTrigger: commit
+
+    # A demo that cold-starts for 50 seconds converts nobody. Free instances
+    # spin down when idle, which is exactly wrong for a launch: the traffic
+    # arrives in one burst and the first visitors meet a spinner. Use a paid
+    # instance for the launch window, then downgrade if you like.
+    plan: starter
+
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: "3000"
+
+      # --- What makes this the demo -------------------------------------
+      # One-click entry for visitors with no account. Safe HERE and nowhere
+      # else: this service holds nothing but sample data.
+      - key: DEMO_MODE
+        value: "true"
+      # Explicit rather than relying on the default, so the privilege a
+      # stranger receives is stated in the file rather than inferred.
+      - key: DEMO_ROLE
+        value: user
+
+      # --- Auth ----------------------------------------------------------
+      # Password auth rather than SSO: a demo visitor has no account at an
+      # identity provider, so OIDC would leave them exactly as stuck as the
+      # login wall this instance exists to remove. The admin password is
+      # generated on first boot (AUTH_BOOTSTRAP) and never needed by visitors,
+      # who arrive through DEMO_MODE.
+      - key: NEXT_PUBLIC_AUTH_PROVIDER
+        value: local
+      # Prompted once at create time; 32+ characters. Without it the bootstrap
+      # generates one, but it would then change on every redeploy of an
+      # instance with no disk, logging every visitor out mid-session.
+      - key: JWT_SECRET
+        sync: false
+
+      # --- Storage --------------------------------------------------------
+      # Browser-scoped on purpose. Server-side storage would put every visitor
+      # in one shared namespace, where anyone can rename or delete the
+      # connections the next visitor is about to open. "local" gives each
+      # browser its own workspace, needs no disk, and survives redeploys.
+      - key: STORAGE_PROVIDER
+        value: local
+
+      # --- Sample data ----------------------------------------------------
+      # Both are on by default; stated explicitly because an empty demo is a
+      # worse advertisement than no demo. They provide the "Sample (LibreDB)"
+      # and "Sample (Employees)" connections a visitor lands on.
+      - key: LIBREDB_EMBEDDED_SAMPLE
+        value: "true"
+      - key: SQLITE_EMBEDDED_SAMPLE
+        value: "true"
+
+      # --- Richer seed connections (optional, recommended before launch) ---
+      # The two embedded samples are small. A visitor arriving from Hacker
+      # News judges the product on what the grid and the ER diagram look like
+      # with realistic volume. To point the demo at real Postgres/Mongo/Redis
+      # instances, mount a seed config and set the credentials it references.
+      # See docs/SEED_CONNECTIONS.md.
+      # - key: SEED_CONFIG_PATH
+      #   value: /app/config/seed-connections.yaml
+
+      # --- AI assistant (optional) ----------------------------------------
+      # NL2SQL is one of the strongest things to show. Enabling it here spends
+      # real tokens on anonymous traffic, so weigh that against launch volume.
+      # - key: LLM_PROVIDER
+      #   value: gemini
+      # - key: LLM_MODEL
+      #   value: gemini-2.5-flash
+      # - key: LLM_API_KEY
+      #   sync: false
