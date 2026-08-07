@@ -204,6 +204,35 @@ gets. Related to the `mock.module()` isolation rules in `docs/TOOLCHAIN.md`.
 
 ---
 
+## Dependencies
+
+### P1. The desktop shell's `glib` advisory has no reachable fix while Tauri v2 targets GTK 3
+
+Dependabot alert 1 (GHSA-wrw7-89jp-8q8g, medium) reports unsoundness in the `Iterator` and
+`DoubleEndedIterator` impls of `glib::VariantStrIter`, affecting `>= 0.15.0, < 0.20.0`.
+`desktop/src-tauri/Cargo.lock` carries `glib 0.18.5`, and it cannot move:
+
+```
+glib 0.18.5  <-  gtk 0.18.2 (requires glib ^0.18)  <-  tauri 2.11.5
+```
+
+`cargo update -p glib@0.18.5 --precise 0.20.0` fails on that requirement. Upgrading Tauri does not
+help — 2.11.5 is the latest published version — and the `gtk` crate cannot deliver the fix either:
+0.18.2 is its latest release and it is published as UNMAINTAINED, directing users to `gtk4`. So the
+advisory closes only when Tauri's Linux backend moves off the GTK 3 bindings, which is upstream work
+on their side.
+
+Nothing in `desktop/src-tauri/` touches `glib`: the shell's direct dependencies are `tauri`,
+`serde_json` and `libc`, and no source file references `glib` or `Variant`. The exposure is whatever
+Tauri and GTK do with `VariantStrIter` internally, so the practical risk is low, but "we do not call
+it" is not the same as proving the code path is unreachable.
+
+Done when Tauri's dependency tree offers `glib >= 0.20` and the lock is updated, or when the alert is
+dismissed with this reasoning recorded on it. Re-check on each Tauri upgrade — a one-line
+`cargo tree -i glib` in `desktop/src-tauri/` answers it.
+
+---
+
 ## Documentation
 
 ### X1. Provider-doc line references are stale across the board
