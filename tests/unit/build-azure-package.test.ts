@@ -11,6 +11,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import { execFileSync, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -275,6 +276,26 @@ describe("buildPackage (end to end against a fixture repo)", () => {
     expect(script).toContain(`ghcr.io/libredb/libredb-studio@${APP_DIGEST}`);
     expect(script).toContain(`docker.io/library/caddy@${CADDY_DIGEST}`);
     expect(script).not.toContain("__APP_IMAGE__");
+  });
+
+  test("writes a metadata file next to the zip, for the job summary and for provenance", async () => {
+    const root = makeFixtureRepo();
+    const result = await buildPackage({ root, fetchImpl: registryFetch(), now: NOW, log: () => {} });
+
+    const metadata = JSON.parse(readFileSync(join(root, "dist/azure/build-metadata.json"), "utf8"));
+    expect(metadata).toEqual({
+      packageVersion: "1.2.3",
+      appVersion: "0.9.66",
+      appImage: `ghcr.io/libredb/libredb-studio@${APP_DIGEST}`,
+      caddyImage: `docker.io/library/caddy@${CADDY_DIGEST}`,
+      zip: "libredb-studio-azure-1.2.3.zip",
+      zipSha256: result.zipSha256,
+    });
+    // The hash has to describe the file a human actually uploads to Partner
+    // Center, so compare it against the bytes on disk rather than trusting the
+    // builder's own report of it.
+    expect(metadata.zipSha256).toBe(createHash("sha256").update(readFileSync(result.zipPath)).digest("hex"));
+    expect(metadata.zipSha256).toMatch(/^[0-9a-f]{64}$/);
   });
 
   test("explicit --version wins over package.json for the app image tag", async () => {

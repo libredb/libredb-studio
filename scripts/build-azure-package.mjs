@@ -28,6 +28,7 @@
  */
 
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -277,7 +278,38 @@ export async function buildPackage({
     },
   );
 
-  return { zipPath, packageVersion: resolvedPackageVersion, version: resolvedVersion, appImage, caddyImage };
+  // The checksum describes the file a human uploads to Partner Center by hand, so
+  // it is read back off disk rather than computed from the bytes we meant to write.
+  const zipSha256 = createHash("sha256").update(fs.readFileSync(zipPath)).digest("hex");
+
+  // Written beside the zip, not inside it: the package must stay exactly two files
+  // at the root. It carries what a reader of the finished zip cannot recover from
+  // it - which app version and which image digests it pins - so the CI job summary,
+  // and anyone auditing a submitted package later, can state that without guessing.
+  fs.writeFileSync(
+    path.join(root, "dist/azure/build-metadata.json"),
+    `${JSON.stringify(
+      {
+        packageVersion: resolvedPackageVersion,
+        appVersion: resolvedVersion,
+        appImage,
+        caddyImage,
+        zip: path.basename(zipPath),
+        zipSha256,
+      },
+      null,
+      2,
+    )}\n`,
+  );
+
+  return {
+    zipPath,
+    zipSha256,
+    packageVersion: resolvedPackageVersion,
+    version: resolvedVersion,
+    appImage,
+    caddyImage,
+  };
 }
 
 async function main(argv) {

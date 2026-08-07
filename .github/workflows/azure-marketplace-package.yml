@@ -34,6 +34,24 @@ jobs:
           PACKAGE_VERSION: ${{ inputs.packageVersion }}
         run: node scripts/build-azure-package.mjs --version "$APP_VERSION" --package-version "$PACKAGE_VERSION"
 
+      # Each step writes its own section as soon as its facts exist, so a run that
+      # fails validation still leaves a usable summary behind instead of nothing.
+      - name: Summarise what was built
+        run: |
+          jq -r '
+            "## Azure Marketplace package \(.packageVersion)",
+            "",
+            "| | |",
+            "|---|---|",
+            "| Package version | `\(.packageVersion)` |",
+            "| App version | `\(.appVersion)` |",
+            "| App image | `\(.appImage)` |",
+            "| Caddy image | `\(.caddyImage)` |",
+            "| Package zip | `\(.zip)` |",
+            "| Package zip SHA-256 | `\(.zipSha256)` |",
+            ""
+          ' dist/azure/build-metadata.json >> "$GITHUB_STEP_SUMMARY"
+
       # Pinned by release tag AND checksum: this toolkit is executed in the same
       # job that produces the zip submitted to Partner Center, so "latest" is
       # not an acceptable provenance. Bump tag + hash together when upgrading.
@@ -77,6 +95,16 @@ jobs:
           $warned = @($results | Where-Object { $_.Warnings -and -not $_.Errors })
           Write-Host "arm-ttk: $($results.Count) tests, $($failed.Count) failed, $($warned.Count) warned"
           foreach ($w in $warned) { Write-Host "::warning title=arm-ttk::$($w.Name): $($w.Warnings -join '; ')" }
+
+          # Written before the gate, so a failing run explains itself in the summary
+          # instead of only in the log.
+          $summary = @("### arm-ttk marketplace suite", "",
+            "**$($results.Count) tests, $($failed.Count) failed, $($warned.Count) warned**", "")
+          foreach ($f in $failed) { $summary += "- FAILED - $($f.Name): $($f.Errors -join '; ')" }
+          foreach ($w in $warned) { $summary += "- warning - $($w.Name): $($w.Warnings -join '; ')" }
+          $summary += ""
+          $summary | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+
           if ($failed.Count -gt 0) {
             foreach ($f in $failed) { Write-Host "::error title=arm-ttk::$($f.Name): $($f.Errors -join '; ')" }
             Write-Error "arm-ttk reported $($failed.Count) failing test(s)"
@@ -84,7 +112,46 @@ jobs:
           }
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        id: upload
         with:
           name: libredb-studio-azure-package
           path: dist/azure/*.zip
           if-no-files-found: error
+
+      # Without this the job ends with a green tick and no answer to the only
+      # question its operator has: where the package went and what to do with it.
+      - name: Summarise where it went and what to do next
+        env:
+          ARTIFACT_URL: ${{ steps.upload.outputs.artifact-url }}
+        run: |
+          ZIP="$(jq -r .zip dist/azure/build-metadata.json)"
+          SHA="$(jq -r .zipSha256 dist/azure/build-metadata.json)"
+          VERSION="$(jq -r .packageVersion dist/azure/build-metadata.json)"
+          {
+            echo "### Download"
+            echo ""
+            echo "[**libredb-studio-azure-package**](${ARTIFACT_URL}) - the run's artifact, valid while this run is kept (90 days)."
+            echo ""
+            echo "> GitHub wraps artifacts in an archive of its own, so the download is a zip"
+            echo "> **containing** \`${ZIP}\`. Partner Center needs the INNER zip - the one whose"
+            echo "> root holds \`mainTemplate.json\` and \`createUiDefinition.json\` and nothing else."
+            echo "> Uploading GitHub's wrapper instead fails certification on package structure."
+            echo ""
+            echo "Verify the inner zip before uploading it:"
+            echo ""
+            echo '```bash'
+            echo "echo '${SHA}  ${ZIP}' | sha256sum -c -"
+            echo '```'
+            echo ""
+            echo "### Then, by hand (no automation reaches past this point)"
+            echo ""
+            echo "1. Partner Center -> the offer -> the plan -> **Technical configuration**."
+            echo "2. Raise **Version** to \`${VERSION}\` and upload \`${ZIP}\`."
+            echo "3. **Review and publish**, wait for certification, then **Go live**."
+            echo "   Customers keep the previously published package until Go live, so there is"
+            echo "   no outage window - and Go live is deliberately a human decision."
+            echo "4. Bump \`deploy/azure/package-version.txt\` in the repo to match what you"
+            echo "   published, otherwise the next build reuses a version Partner Center rejects."
+            echo ""
+            echo "Acceptance criteria for a real deployment: \`deploy/azure/README.md\`."
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -29,9 +29,19 @@ files at the zip root, images pinned by manifest digest. The build fails if an
 warnings start at 540) — refresh values against `az provider show` when it
 warns.
 
-In CI: run the **Azure Marketplace Package** workflow (workflow_dispatch),
-which also validates the output with `Test-AzMarketplacePackage` (arm-ttk) and
-uploads the zip as an artifact.
+Beside it, `dist/azure/build-metadata.json` records what the zip pins — app
+version, both image digests, and the zip's SHA-256. None of that is recoverable
+from the zip itself, so it is what to keep if you ever need to say which images
+a submitted package deployed.
+
+In CI: run the **Azure Marketplace Package** workflow (workflow_dispatch). It
+validates the output with `Test-AzMarketplacePackage` (arm-ttk), uploads the zip
+as an artifact, and writes a job summary carrying the digests, the checksum, the
+artifact link and the Partner Center steps — so the run itself tells you what to
+do next.
+
+> The artifact download is a zip **containing** the package zip, because GitHub
+> wraps artifacts in an archive of its own. Partner Center needs the inner one.
 
 ## Validate before submitting
 
