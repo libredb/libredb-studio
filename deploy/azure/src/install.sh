@@ -85,8 +85,21 @@ pull_with_retry "$APP_IMAGE"
 pull_with_retry "$CADDY_IMAGE"
 
 # ------------------------------------------------------------------- layout ---
-install -d -m 0755 /opt/libredb /opt/libredb/data /opt/libredb/caddy \
-                   /opt/libredb/caddy/data /opt/libredb/caddy/config
+# The shared parents stay world-readable; the two directories holding secrets do
+# not. /opt/libredb/data carries the SQLite store, whose connection records include
+# plaintext passwords and connection strings, and /opt/libredb/caddy/data carries the
+# TLS private keys and the ACME account key. The mode of the files inside follows the
+# containers' umask, not anything this installer sets, so the directory is the control
+# point: 0700 keeps both out of reach of every local account except root, which is the
+# same bar /etc/libredb-studio.env already meets.
+#
+# Both containers still work, and neither needs a mode change: the app container starts
+# as root, chowns its data dir to `nextjs` and drops privileges (docker-entrypoint.sh),
+# the Caddy image runs as root, and `chown` does not touch the mode. A re-run also
+# repairs a directory left at 0755 by an earlier version, because `install -d` applies
+# the mode to directories that already exist.
+install -d -m 0755 /opt/libredb /opt/libredb/caddy /opt/libredb/caddy/config
+install -d -m 0700 /opt/libredb/data /opt/libredb/caddy/data
 
 # ---------------------------------------------------------------- app env ---
 # Strict mode: no generated credentials, everything explicit (docs/DISTRIBUTION.md).

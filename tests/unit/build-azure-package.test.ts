@@ -480,6 +480,23 @@ describe("the shipped template sources agree with each other", () => {
     expect(install).toMatch(/\[ "\$SITE_ADDRESS" = ":80" \][\s\S]{0,200}AUTH_COOKIE_SECURE=false/);
   });
 
+  test("the directories that hold secrets are created private", () => {
+    // /opt/libredb/data carries the SQLite store, whose connection records hold
+    // plaintext passwords and connection strings (DatabaseConnection in
+    // src/lib/types.ts), and /opt/libredb/caddy/data carries the TLS private keys
+    // and the ACME account key. A world-traversable parent is what exposes those
+    // to every local account, and the mode of the files inside follows the
+    // containers' umask rather than anything this installer controls - so the
+    // directory mode is the control point, and it is pinned here.
+    const install = readSrc("install.sh");
+    const shared = install.match(/install -d -m 0755 (.+)/)?.[1] ?? "";
+    const private_ = install.match(/install -d -m 0700 (.+)/)?.[1] ?? "";
+    for (const secretDir of ["/opt/libredb/data", "/opt/libredb/caddy/data"]) {
+      expect(private_).toContain(secretDir);
+      expect(shared).not.toContain(secretDir);
+    }
+  });
+
   test("mainTemplate passes exactly the arguments install.sh reads", () => {
     const command = JSON.parse(readSrc("mainTemplate.json")).resources.at(-1).properties.protectedSettings
       .commandToExecute;

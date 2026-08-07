@@ -53,6 +53,11 @@ uploads the zip as an artifact.
 - `GET https://<fqdn>/api/db/health` → `{"status":"healthy",…}`.
 - Port 3000 closed from outside and open on the VM; port 22 closed when
   `sshSourceAddressPrefix` is empty; `/etc/libredb-studio.env` mode `0600`.
+- The two secret-bearing directories are private — `stat -c '%a %n' /opt/libredb/data
+  /opt/libredb/caddy/data` → `700` for both. The SQLite store holds connection records
+  with plaintext passwords, and the Caddy data directory holds the TLS private keys; the
+  files inside are created with the containers' umask (`0644`), so the directory mode is
+  what keeps them away from other local accounts.
 - `enableHttps=false` + a `/32` source range: reachable only from that address, login
   still survives a reload.
 - `authenticationType=password`, and a second region, both deploy cleanly.
