@@ -21,22 +21,57 @@ live instance should not have: it can be wiped and rebuilt at any time.
 
 ## One-time setup
 
-Render needs to be told, once, which repo and file to read. After that the
-instance is repo-driven.
+Render needs to be told, once, which repo and file to read, and the domain has
+to be pointed at it. None of this happens automatically. After it, every change
+to the demo — sample data, the AI assistant, the plan — is a commit to
+`deploy/demo/render.yaml`.
+
+- [ ] **1.** Create the Render service from `deploy/demo/render.yaml` — *not* the root `render.yaml`
+- [ ] **2.** Supply a `JWT_SECRET` when prompted
+- [ ] **3.** Add the custom domain `demo.libredb.org` in Render
+- [ ] **4.** Add the Cloudflare CNAME **as DNS-only (grey cloud)** and set SSL/TLS to Full
+- [ ] **5.** Wait for Render to report the certificate valid, then switch to Proxied
+- [ ] **6.** Repoint the "Try Live Demo" CTA on libredb.org to `demo.libredb.org`
+- [ ] **7.** Verify in a private window, and confirm `app.libredb.org` is unchanged
+
+### 1–2. Create the service
 
 1. Render Dashboard → **New** → **Blueprint**
-2. Repository: `libredb/libredb-studio`
-3. Blueprint file path: **`deploy/demo/render.yaml`**
-   (Render defaults to `render.yaml` at the root; custom paths are set here or
-   later from the Blueprint's Settings page.)
-4. When prompted, provide `JWT_SECRET` — 32+ characters, `openssl rand -base64 32`.
-   It is the only value not in the file, because a committed session-signing
-   secret is a committed session-signing secret.
-5. Point `demo.libredb.org` at the new service and update the "Try Live Demo"
-   button on libredb.org.
+2. Repository: `libredb/libredb-studio`, branch `main`
+3. Blueprint file path: **`deploy/demo/render.yaml`**. Render defaults to
+   `render.yaml` at the root, which is the wrong file — it is the public
+   "Deploy to Render" recipe and carries no demo access. Custom paths are set
+   here, or later from the Blueprint's Settings page.
+4. When prompted, provide `JWT_SECRET` — 32+ characters,
+   `openssl rand -base64 32`. It is the only value not in the file, because a
+   committed session-signing secret is a committed session-signing secret.
 
-From then on, every change to the demo — sample data, the AI assistant, the
-plan — is a commit to `deploy/demo/render.yaml`.
+### 3–5. Custom domain
+
+The service works on its `onrender.com` URL, but this is the link that goes on
+Hacker News, Reddit and Product Hunt, and a vendor subdomain reads as a weekend
+deployment. Use the real one.
+
+1. Render → the demo service → **Settings** → **Custom Domains** → add
+   `demo.libredb.org`
+2. Cloudflare → DNS → `CNAME demo → libredb-studio-demo.onrender.com`,
+   **Proxy status: DNS only (grey cloud)**
+3. Cloudflare → SSL/TLS → encryption mode **Full**
+4. Wait for Render to report the certificate issued and valid. The grey cloud
+   above is not a detail to skip: a proxied record can block issuance, and the
+   failure surfaces later as an unrelated TLS error.
+5. Once the certificate is valid, optionally switch the record to **Proxied
+   (orange cloud)** for Cloudflare's caching and WAF.
+
+Per [Render's Cloudflare guide](https://render.com/docs/configure-cloudflare-dns).
+
+### 6. Point the site at it
+
+Update the "Try Live Demo" CTA on libredb.org to `https://demo.libredb.org`.
+It currently points at `app.libredb.org`, which redirects to `/login` — a
+visitor with no account cannot get past it, which is the problem this instance
+exists to solve. Leaving the CTA where it is ships the fix and keeps the
+symptom.
 
 ## What a visitor gets
 
