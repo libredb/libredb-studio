@@ -150,7 +150,7 @@ Reading `distribution:check` after a release - what "clean" looks like:
 | Rows | Expected |
 |---|---|
 | `every_release` tier 0/1: github-release, docker-ghcr, docker-hub-mirror, npm, helm, homebrew, snap | **all OK at the new version.** Anything else here is a real chain failure |
-| `winget` | DRIFT at the previous version until its per-release manifest PR merges (see Phase 7) |
+| `winget` | DRIFT at the previous version until the auto-submitted manifest PR merges upstream (see Phase 7) |
 | tier 2/3 PaaS: caprover x3, railway, dokploy, cosmos, kubero, fly-io | DRIFT is normal - `on_demand` SLA |
 | linux-deb-rpm, appimage, flatpark, chocolatey, render, koyeb | SKIP by design, not a gap |
 
@@ -160,8 +160,7 @@ None of these belong in the bump commit or the chain; each needs the release to 
 
 | Follow-up | Why it waits |
 |---|---|
-| **winget manifest PR** | winget has no floating "latest" - every version needs its own manifests merged into `microsoft/winget-pkgs`. Not automated; `wingetcreate` against the published release is the least error-prone path |
-| **FlatPark metainfo + extra-data re-pin** | `tests/unit/flatpark-descriptor.test.ts` requires the metainfo's newest `<release>` to equal the version the manifest pins as extra-data, and that pin cannot move until the release's GUI `.deb` exists. So this is a post-release commit, never the bump commit |
+| **winget manifest PR - watch only, do not run `wingetcreate`** | winget has no floating "latest", so every version needs its own manifests in `microsoft/winget-pkgs` - but the `winget` job in `release-artifacts.yml` now submits that PR itself, from `needs: [guard, publish-release, channels]` so it runs strictly after publish (the validation pipeline downloads `InstallerUrl`, which is only public once published). Confirm it: `gh search prs --repo microsoft/winget-pkgs "LibreDB.Studio" --state open`. The job skips cleanly when winget's `update.ci_enabled` is false, when `WINGETCREATE_GITHUB_TOKEN` is missing (classic PAT with `public_repo`; wingetcreate rejects fine-grained PATs), when the package has no listing yet, or when the version is already upstream - so a green job is not by itself proof a PR was opened. Only a genuinely missing PR calls for a manual `wingetcreate` |
 | **PaaS template bumps** (caprover, railway, dokploy, cosmos, kubero, fly) | `on_demand` channels, several in upstream repos; batch them rather than blocking a release |
 | **OperatorHub / community-operators catalogs** | FBC ships in TWO upstream PRs - bundle first, then rendered catalogs. The second is bot-created only when the bundle directory carries a `release-config.yaml`, and `operator/bundle/` currently ships none, so that PR must be opened by hand |
 | **Chocolatey** | Gated off via `update.ci_enabled` in `distribution/channels.yaml` while the first push sits in community moderation |
@@ -199,7 +198,7 @@ true on a tag ref.
 | `artifacthub.io/changes` left stale | ArtifactHub shows the previous release's changelog for the new chart |
 | Chart version already released | Republishing rewrites the released chart's gh-pages index digest and OCI content (#167). `chart:check` blocks it; `force_republish` is the only escape hatch, for an asset-uploaded-but-index-failed run |
 | Unquoted `{}:[],&*#?\|-<>=!%@` in a changes entry | ArtifactHub hard-skips that chart version, permanently |
-| FlatPark metainfo bumped in the bump commit | `tests/unit/flatpark-descriptor.test.ts` fails - the metainfo's newest release must equal the version the manifest pins as extra-data, and that pin cannot move until the release's GUI `.deb` exists. Metainfo + extra-data re-pin belong to a post-release commit |
+| `packaging/flatpark/` bumped as part of a release | Do not touch it. FlatPark's bot has owned the pin since the 0.9.62 submission merged - it re-runs `resolve-update.sh` after each of our releases and rewrites its own copy, so this directory drifts by design (it still reads 0.9.62) and must stay out of release work. Bumping half of it fails `tests/unit/flatpark-descriptor.test.ts`, which requires the metainfo's newest `<release>` to equal the version the manifest pins as extra-data |
 | `gh release create --target <short-sha>` | Rejected ("target_commitish is invalid") - use `--target main` |
 | A `release-artifacts` run reporting `failure` | The release may still have published fine; check `Verify assets and publish release` before assuming otherwise |
 | Reusing a failed release's version after Snap published | Snap store revisions are immutable per version; bump the patch instead |
