@@ -1,0 +1,64 @@
+name: Azure Marketplace Package
+
+# Builds the Partner Center deployment package on demand
+# (deploy/azure/AZURE_MARKETPLACE_PLAN.md §5.7): resolves the image digests,
+# embeds the installer, gates on apiVersion age, validates with the ARM
+# template test toolkit's marketplace suite, and uploads the two-file zip
+# ready for the plan's Technical configuration page.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'App version to pin (must exist on ghcr.io/libredb/libredb-studio, e.g. 0.9.66)'
+        required: true
+      packageVersion:
+        description: 'Marketplace package version (integer.integer.integer, must be higher than the last published one)'
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      # The build script is dependency-free plain Node; the runner's Node is
+      # enough, no `bun install` needed. Inputs travel through env so a value
+      # containing shell metacharacters is data, never code.
+      - name: Build package
+        env:
+          APP_VERSION: ${{ inputs.version }}
+          PACKAGE_VERSION: ${{ inputs.packageVersion }}
+        run: node scripts/build-azure-package.mjs --version "$APP_VERSION" --package-version "$PACKAGE_VERSION"
+
+      # Pinned by release tag AND checksum: this toolkit is executed in the same
+      # job that produces the zip submitted to Partner Center, so "latest" is
+      # not an acceptable provenance. Bump tag + hash together when upgrading.
+      - name: Download ARM template test toolkit
+        env:
+          ARM_TTK_TAG: "20260213"
+          ARM_TTK_SHA256: "2a2d21f17cc31299ba2c78caf97def3c1f9f37eb3a7bab7900cda18c95d4c657"
+        run: |
+          curl -fsSLo arm-ttk.zip "https://github.com/Azure/arm-ttk/releases/download/${ARM_TTK_TAG}/arm-ttk.zip"
+          echo "${ARM_TTK_SHA256}  arm-ttk.zip" | sha256sum -c -
+          unzip -q arm-ttk.zip -d arm-ttk
+
+      - name: Run marketplace validation
+        shell: pwsh
+        run: |
+          # The release zip carries a top-level arm-ttk/ folder, so extracting
+          # into arm-ttk/ nests the module one level deeper (verified 2026-08-05).
+          Import-Module ./arm-ttk/arm-ttk/arm-ttk/arm-ttk.psd1
+          $results = Test-AzMarketplacePackage -TemplatePath "dist/azure/package"
+          $results | Format-List
+          $failed = $results | Where-Object { $_.Errors }
+          if ($failed) { Write-Error "arm-ttk reported $($failed.Count) failing test(s)"; exit 1 }
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: libredb-studio-azure-package
+          path: dist/azure/*.zip
+          if-no-files-found: error

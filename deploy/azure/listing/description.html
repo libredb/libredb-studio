@@ -1,0 +1,47 @@
+<p><strong>LibreDB Studio</strong> is an open-source, self-hosted SQL IDE that runs entirely inside
+your own Azure subscription. This solution template deploys it on a single Ubuntu 24.04 LTS virtual
+machine, behind an automatically provisioned HTTPS endpoint, in about five minutes.</p>
+
+<h3>What you get</h3>
+<ul>
+  <li><strong>One workspace for every engine</strong> - PostgreSQL, MySQL/MariaDB, Microsoft SQL Server
+      (including Azure SQL), Oracle, SQLite, MongoDB, Redis, ClickHouse, Couchbase and Apache Druid.</li>
+  <li><strong>A real editor</strong> - Monaco-based SQL editing with schema-aware autocomplete,
+      formatting, query history and virtualized result grids that stay fast on large result sets.</li>
+  <li><strong>AI query assistance</strong> - turn natural language into SQL, explain and optimize
+      existing queries. You supply your own model provider key; no query data is sent anywhere you
+      have not configured.</li>
+  <li><strong>Schema and operations tooling</strong> - ERD diagrams, data profiling, EXPLAIN plans,
+      slow-query and session views, and code generation.</li>
+  <li><strong>Single sign-on</strong> - vendor-agnostic OIDC that works with Microsoft Entra ID,
+      Okta, Auth0, Keycloak and any other compliant provider.</li>
+</ul>
+
+<h3>Why teams run it themselves</h3>
+<ul>
+  <li><strong>Your data never leaves your subscription.</strong> The application, its configuration
+      store and every database connection stay inside your own Azure tenant.</li>
+  <li><strong>No licence, no seat count, no telemetry.</strong> LibreDB Studio is MIT-licensed open
+      source; this offer is free and you pay only for the Azure resources you deploy.</li>
+  <li><strong>Private networking friendly.</strong> Reach databases over your virtual network, private
+      endpoints or peered networks; restrict the web interface to a CIDR range at deployment time.</li>
+</ul>
+
+<h3>What this template deploys</h3>
+<ul>
+  <li>An Ubuntu 24.04 LTS virtual machine of the size you choose</li>
+  <li>A virtual network, subnet and network security group (ports 80 and 443; SSH only if you ask for it)</li>
+  <li>A static public IP address with a DNS label</li>
+  <li>LibreDB Studio and a reverse proxy that obtains a free TLS certificate for that DNS name</li>
+</ul>
+
+<h3>After deployment</h3>
+<p>Open the URL shown in the deployment outputs and sign in with the administrator email and password
+you entered in the wizard. Application data is stored on the virtual machine's managed disk and
+survives restarts.</p>
+
+<h3>Support and source</h3>
+<p>Documentation, source code and issue tracker:
+<a href="https://github.com/libredb/libredb-studio">github.com/libredb/libredb-studio</a>.
+Product site: <a href="https://libredb.org">libredb.org</a>.
+LibreDB Studio is developed and maintained by Sekoya Grup Bilisim ve Teknoloji Ltd. Sti.</p>

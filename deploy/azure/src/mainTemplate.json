@@ -1,0 +1,292 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "location": {
+      "type": "string",
+      "defaultValue": "[resourceGroup().location]",
+      "metadata": { "description": "Azure region for all resources." }
+    },
+    "vmName": {
+      "type": "string",
+      "defaultValue": "libredb-studio",
+      "minLength": 3,
+      "maxLength": 40,
+      "metadata": { "description": "Name of the virtual machine that hosts LibreDB Studio." }
+    },
+    "vmSize": {
+      "type": "string",
+      "defaultValue": "Standard_B2s",
+      "metadata": { "description": "Size of the virtual machine." }
+    },
+    "osDiskSizeGb": {
+      "type": "int",
+      "defaultValue": 64,
+      "minValue": 32,
+      "maxValue": 1024,
+      "metadata": { "description": "OS disk size in GB. LibreDB Studio stores its SQLite data on this disk." }
+    },
+    "adminUsername": {
+      "type": "string",
+      "metadata": { "description": "Linux administrator user name for the virtual machine." }
+    },
+    "authenticationType": {
+      "type": "string",
+      "defaultValue": "sshPublicKey",
+      "allowedValues": [ "sshPublicKey", "password" ],
+      "metadata": { "description": "Authentication type for the Linux administrator account." }
+    },
+    "adminPasswordOrKey": {
+      "type": "securestring",
+      "metadata": { "description": "SSH public key or password for the Linux administrator account." }
+    },
+    "dnsLabelPrefix": {
+      "type": "string",
+      "defaultValue": "[toLower(concat('libredb-', uniqueString(resourceGroup().id)))]",
+      "metadata": { "description": "DNS label for the public IP address. Produces <label>.<region>.cloudapp.azure.com." }
+    },
+    "appAdminEmail": {
+      "type": "string",
+      "metadata": { "description": "Email address of the LibreDB Studio administrator account." }
+    },
+    "appAdminPassword": {
+      "type": "securestring",
+      "minLength": 12,
+      "metadata": { "description": "Password for the LibreDB Studio administrator account. Minimum 12 characters." }
+    },
+    "enableHttps": {
+      "type": "bool",
+      "defaultValue": true,
+      "metadata": { "description": "Obtain a free Let's Encrypt certificate for the public DNS name and serve the app over HTTPS." }
+    },
+    "acmeContactEmail": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": { "description": "Optional contact address sent to Let's Encrypt for certificate expiry notices." }
+    },
+    "appSourceAddressPrefix": {
+      "type": "string",
+      "defaultValue": "Internet",
+      "metadata": { "description": "Source address prefix allowed to reach the application. With HTTPS enabled this restricts port 443; port 80 stays open to the internet for the Let's Encrypt challenge. With HTTPS disabled it restricts port 80." }
+    },
+    "sshSourceAddressPrefix": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": { "description": "Optional source address prefix allowed to reach SSH (port 22). Leave empty to block inbound SSH entirely." }
+    }
+  },
+  "variables": {
+    "vnetName": "[concat(parameters('vmName'), '-vnet')]",
+    "subnetName": "app",
+    "nsgName": "[concat(parameters('vmName'), '-nsg')]",
+    "nicName": "[concat(parameters('vmName'), '-nic')]",
+    "publicIpName": "[concat(parameters('vmName'), '-pip')]",
+    "addressPrefix": "10.10.0.0/16",
+    "subnetPrefix": "10.10.1.0/24",
+    "subnetRef": "[resourceId('Microsoft.Network/virtualNetworks/subnets', variables('vnetName'), variables('subnetName'))]",
+    "imagePublisher": "Canonical",
+    "imageOffer": "ubuntu-24_04-lts",
+    "imageSku": "server",
+    "linuxConfiguration": {
+      "disablePasswordAuthentication": true,
+      "ssh": {
+        "publicKeys": [
+          {
+            "path": "[concat('/home/', parameters('adminUsername'), '/.ssh/authorized_keys')]",
+            "keyData": "[parameters('adminPasswordOrKey')]"
+          }
+        ]
+      }
+    },
+    "httpsWebRules": [
+      {
+        "name": "AllowHttpInbound",
+        "properties": {
+          "priority": 1000,
+          "protocol": "Tcp",
+          "access": "Allow",
+          "direction": "Inbound",
+          "sourceAddressPrefix": "Internet",
+          "sourcePortRange": "*",
+          "destinationAddressPrefix": "*",
+          "destinationPortRange": "80",
+          "description": "Required by the Let's Encrypt HTTP-01 challenge for issuance and renewal; also serves the redirect to HTTPS."
+        }
+      },
+      {
+        "name": "AllowHttpsInbound",
+        "properties": {
+          "priority": 1010,
+          "protocol": "Tcp",
+          "access": "Allow",
+          "direction": "Inbound",
+          "sourceAddressPrefix": "[parameters('appSourceAddressPrefix')]",
+          "sourcePortRange": "*",
+          "destinationAddressPrefix": "*",
+          "destinationPortRange": "443",
+          "description": "The application itself. Restrict this to your own address range if you do not want the interface to be publicly reachable."
+        }
+      }
+    ],
+    "httpOnlyWebRules": [
+      {
+        "name": "AllowHttpInbound",
+        "properties": {
+          "priority": 1000,
+          "protocol": "Tcp",
+          "access": "Allow",
+          "direction": "Inbound",
+          "sourceAddressPrefix": "[parameters('appSourceAddressPrefix')]",
+          "sourcePortRange": "*",
+          "destinationAddressPrefix": "*",
+          "destinationPortRange": "80",
+          "description": "The application itself, served over plain HTTP."
+        }
+      }
+    ],
+    "webRules": "[if(parameters('enableHttps'), variables('httpsWebRules'), variables('httpOnlyWebRules'))]",
+    "sshRules": [
+      {
+        "name": "AllowSshInbound",
+        "properties": {
+          "priority": 1020,
+          "protocol": "Tcp",
+          "access": "Allow",
+          "direction": "Inbound",
+          "sourceAddressPrefix": "[parameters('sshSourceAddressPrefix')]",
+          "sourcePortRange": "*",
+          "destinationAddressPrefix": "*",
+          "destinationPortRange": "22"
+        }
+      }
+    ],
+    "securityRules": "[if(empty(parameters('sshSourceAddressPrefix')), variables('webRules'), concat(variables('webRules'), variables('sshRules')))]",
+    "installScriptB64": "__INSTALL_SCRIPT_B64__"
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Network/networkSecurityGroups",
+      "apiVersion": "2025-07-01",
+      "name": "[variables('nsgName')]",
+      "location": "[parameters('location')]",
+      "properties": { "securityRules": "[variables('securityRules')]" }
+    },
+    {
+      "type": "Microsoft.Network/virtualNetworks",
+      "apiVersion": "2025-07-01",
+      "name": "[variables('vnetName')]",
+      "location": "[parameters('location')]",
+      "dependsOn": [ "[resourceId('Microsoft.Network/networkSecurityGroups', variables('nsgName'))]" ],
+      "properties": {
+        "addressSpace": { "addressPrefixes": [ "[variables('addressPrefix')]" ] },
+        "subnets": [
+          {
+            "name": "[variables('subnetName')]",
+            "properties": {
+              "addressPrefix": "[variables('subnetPrefix')]",
+              "networkSecurityGroup": { "id": "[resourceId('Microsoft.Network/networkSecurityGroups', variables('nsgName'))]" }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "type": "Microsoft.Network/publicIPAddresses",
+      "apiVersion": "2025-07-01",
+      "name": "[variables('publicIpName')]",
+      "location": "[parameters('location')]",
+      "sku": { "name": "Standard" },
+      "properties": {
+        "publicIPAllocationMethod": "Static",
+        "publicIPAddressVersion": "IPv4",
+        "dnsSettings": { "domainNameLabel": "[parameters('dnsLabelPrefix')]" }
+      }
+    },
+    {
+      "type": "Microsoft.Network/networkInterfaces",
+      "apiVersion": "2025-07-01",
+      "name": "[variables('nicName')]",
+      "location": "[parameters('location')]",
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/virtualNetworks', variables('vnetName'))]",
+        "[resourceId('Microsoft.Network/publicIPAddresses', variables('publicIpName'))]"
+      ],
+      "properties": {
+        "ipConfigurations": [
+          {
+            "name": "ipconfig1",
+            "properties": {
+              "privateIPAllocationMethod": "Dynamic",
+              "subnet": { "id": "[variables('subnetRef')]" },
+              "publicIPAddress": { "id": "[resourceId('Microsoft.Network/publicIPAddresses', variables('publicIpName'))]" }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "type": "Microsoft.Compute/virtualMachines",
+      "apiVersion": "2026-03-01",
+      "name": "[parameters('vmName')]",
+      "location": "[parameters('location')]",
+      "dependsOn": [ "[resourceId('Microsoft.Network/networkInterfaces', variables('nicName'))]" ],
+      "properties": {
+        "hardwareProfile": { "vmSize": "[parameters('vmSize')]" },
+        "storageProfile": {
+          "imageReference": {
+            "publisher": "[variables('imagePublisher')]",
+            "offer": "[variables('imageOffer')]",
+            "sku": "[variables('imageSku')]",
+            "version": "latest"
+          },
+          "osDisk": {
+            "createOption": "FromImage",
+            "diskSizeGB": "[parameters('osDiskSizeGb')]",
+            "managedDisk": { "storageAccountType": "StandardSSD_LRS" }
+          }
+        },
+        "osProfile": {
+          "computerName": "[parameters('vmName')]",
+          "adminUsername": "[parameters('adminUsername')]",
+          "adminPassword": "[parameters('adminPasswordOrKey')]",
+          "linuxConfiguration": "[if(equals(parameters('authenticationType'), 'password'), null(), variables('linuxConfiguration'))]"
+        },
+        "networkProfile": {
+          "networkInterfaces": [ { "id": "[resourceId('Microsoft.Network/networkInterfaces', variables('nicName'))]" } ]
+        },
+        "diagnosticsProfile": { "bootDiagnostics": { "enabled": true } }
+      }
+    },
+    {
+      "type": "Microsoft.Compute/virtualMachines/extensions",
+      "apiVersion": "2026-03-01",
+      "name": "[concat(parameters('vmName'), '/installLibreDBStudio')]",
+      "location": "[parameters('location')]",
+      "dependsOn": [ "[resourceId('Microsoft.Compute/virtualMachines', parameters('vmName'))]" ],
+      "properties": {
+        "publisher": "Microsoft.Azure.Extensions",
+        "type": "CustomScript",
+        "typeHandlerVersion": "2.1",
+        "autoUpgradeMinorVersion": true,
+        "protectedSettings": {
+          "commandToExecute": "[concat('echo ', variables('installScriptB64'), ' | base64 -d > /opt/libredb-install.sh && chmod 700 /opt/libredb-install.sh && /opt/libredb-install.sh ', base64(parameters('appAdminEmail')), ' ', base64(parameters('appAdminPassword')), ' ', base64(if(parameters('enableHttps'), reference(resourceId('Microsoft.Network/publicIPAddresses', variables('publicIpName'))).dnsSettings.fqdn, ':80')), ' ', base64(parameters('acmeContactEmail')), ' ', base64(parameters('appSourceAddressPrefix')))]"
+        }
+      }
+    }
+  ],
+  "outputs": {
+    "applicationUrl": {
+      "type": "string",
+      "value": "[if(parameters('enableHttps'), concat('https://', reference(resourceId('Microsoft.Network/publicIPAddresses', variables('publicIpName'))).dnsSettings.fqdn), concat('http://', reference(resourceId('Microsoft.Network/publicIPAddresses', variables('publicIpName'))).ipAddress))]"
+    },
+    "notes": {
+      "type": "string",
+      "value": "[if(parameters('enableHttps'), if(equals(parameters('appSourceAddressPrefix'), 'Internet'), concat('If the TLS certificate could not be issued, the installer serves the application over plain HTTP at http://', reference(resourceId('Microsoft.Network/publicIPAddresses', variables('publicIpName'))).ipAddress, ' and records the reason in /etc/libredb-studio.info on the virtual machine.'), 'If the TLS certificate could not be issued, the installer keeps the application on port 443 with a self-signed certificate so that your source restriction is never widened; your browser will warn you. The reason is recorded in /etc/libredb-studio.info on the virtual machine.'), 'The application is served over plain HTTP. Put a TLS terminating gateway in front of it before exposing it beyond a trusted network.')]"
+    },
+    "administratorEmail": { "type": "string", "value": "[parameters('appAdminEmail')]" },
+    "sshCommand": {
+      "type": "string",
+      "value": "[if(empty(parameters('sshSourceAddressPrefix')), 'Inbound SSH is blocked by the network security group. Use Azure Bastion or the serial console, or add an SSH rule afterwards.', concat('ssh ', parameters('adminUsername'), '@', reference(resourceId('Microsoft.Network/publicIPAddresses', variables('publicIpName'))).dnsSettings.fqdn))]"
+    }
+  }
+}
