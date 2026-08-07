@@ -52,10 +52,36 @@ jobs:
           # The release zip carries a top-level arm-ttk/ folder, so extracting
           # into arm-ttk/ nests the module one level deeper (verified 2026-08-05).
           Import-Module ./arm-ttk/arm-ttk/arm-ttk/arm-ttk.psd1
-          $results = Test-AzMarketplacePackage -TemplatePath "dist/azure/package"
+
+          # arm-ttk's individual tests report through the ERROR stream, and
+          # Test-AzTemplate collects that stream into each result's .Errors /
+          # .Warnings (`. $myModule $TheTest @testInput 2>&1 3>&1`). GitHub's pwsh
+          # shell runs with $ErrorActionPreference = 'Stop', which turns the first
+          # such write into a TERMINATING error - so the run died inside the toolkit
+          # and the gate below never executed. A test arm-ttk itself classifies as a
+          # warning was therefore indistinguishable from a failure, and this job
+          # could not pass while any warning existed. Let the toolkit finish; the
+          # gate decides the outcome.
+          $ErrorActionPreference = 'Continue'
+          $results = Test-AzMarketplacePackage -TemplatePath "dist/azure/package" 2>$null
           $results | Format-List
-          $failed = $results | Where-Object { $_.Errors }
-          if ($failed) { Write-Error "arm-ttk reported $($failed.Count) failing test(s)"; exit 1 }
+
+          # A wrong -TemplatePath or a half-imported module yields an empty result
+          # set, which would otherwise sail through the gate as "nothing failed".
+          if (-not $results -or $results.Count -eq 0) {
+            Write-Error "arm-ttk produced no results at all - the package path or the module import is wrong"
+            exit 1
+          }
+
+          $failed = @($results | Where-Object { $_.Errors })
+          $warned = @($results | Where-Object { $_.Warnings -and -not $_.Errors })
+          Write-Host "arm-ttk: $($results.Count) tests, $($failed.Count) failed, $($warned.Count) warned"
+          foreach ($w in $warned) { Write-Host "::warning title=arm-ttk::$($w.Name): $($w.Warnings -join '; ')" }
+          if ($failed.Count -gt 0) {
+            foreach ($f in $failed) { Write-Host "::error title=arm-ttk::$($f.Name): $($f.Errors -join '; ')" }
+            Write-Error "arm-ttk reported $($failed.Count) failing test(s)"
+            exit 1
+          }
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
