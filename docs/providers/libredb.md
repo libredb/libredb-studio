@@ -454,11 +454,11 @@ QueryError: Maintenance operation "<type>" is not supported for LibreDB
 ```
 
 This is reflected in `getCapabilities().supportsMaintenance = false` and
-`maintenanceOperations = []`. The monitoring **Tables** tab hides the maintenance actions for this
-provider: it renders no per-row maintenance control when a provider declares maintenance unsupported
-(issue #272). The admin **Operations** tab does not read capabilities yet, so its maintenance buttons
-still appear here and answer HTTP 400 — tracked as
-[#282](https://github.com/libredb/libredb-studio/issues/282), outside #272's bar.
+`maintenanceOperations = []`. Both tabs that offer maintenance now hide it for this provider: the
+monitoring **Tables** tab renders no per-row control when a provider declares maintenance
+unsupported (issue #272), and the admin **Operations** tab hides its whole Global Operations group
+and its per-table buttons on the same reading (issue #282). Neither offers a control that could only
+answer HTTP 400.
 
 ---
 

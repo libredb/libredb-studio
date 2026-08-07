@@ -89,6 +89,90 @@ describe("useQueryAdapter", () => {
     mockToastError.mockClear();
   });
 
+  // ── The two additive result channels reach the grid (#285) ────────────────
+  //
+  // The adapter built its tab result from an explicit five-key list, so anything
+  // the host attached beyond those keys was dropped — which made the query
+  // warnings and declared column types of #273 invisible in the npm-package
+  // embedding while the standalone app showed them. `ResultsGrid` reads
+  // `result.warnings` and `result.columnTypes`, so a passthrough is the whole fix.
+
+  test("executeQuery carries host warnings through to the tab result", async () => {
+    const params = makeHookParams({
+      onQueryExecute: mock(() =>
+        Promise.resolve(makeQueryResult({ warnings: [{ message: "1 document exceeded the limit", code: 3000 }] })),
+      ),
+    });
+    const { result } = renderHook(() => useQueryAdapter(params as never));
+
+    await act(async () => {
+      await result.current.executeQuery("SELECT 1");
+    });
+
+    expect(params.tabs[0].result?.warnings).toEqual([{ message: "1 document exceeded the limit", code: 3000 }]);
+  });
+
+  test("executeQuery fills columnTypes from the contract's existing columns slot", async () => {
+    // `WorkspaceQueryResult.columns[].type` was already declared and unused;
+    // filling it beats inventing a second shape for the same information.
+    const params = makeHookParams({
+      onQueryExecute: mock(() =>
+        Promise.resolve(
+          makeQueryResult({
+            columns: [{ name: "id", type: "BIGINT" }, { name: "name", type: "Nullable(String)" }, { name: "extra" }],
+          }),
+        ),
+      ),
+    });
+    const { result } = renderHook(() => useQueryAdapter(params as never));
+
+    await act(async () => {
+      await result.current.executeQuery("SELECT 1");
+    });
+
+    // A column the host declared without a type contributes no entry, rather than
+    // an undefined one the grid would have to test for.
+    expect(params.tabs[0].result?.columnTypes).toEqual({ id: "BIGINT", name: "Nullable(String)" });
+  });
+
+  test("executeQuery leaves both channels absent when the host sent neither", async () => {
+    const params = makeHookParams();
+    const { result } = renderHook(() => useQueryAdapter(params as never));
+
+    await act(async () => {
+      await result.current.executeQuery("SELECT 1");
+    });
+
+    expect(params.tabs[0].result?.warnings).toBeUndefined();
+    expect(params.tabs[0].result?.columnTypes).toBeUndefined();
+  });
+
+  test("forceExecuteQuery carries both channels too", async () => {
+    // The confirm-and-run path builds its own result object, so it drops the same
+    // keys unless it is fixed with the first one.
+    const params = makeHookParams({
+      onQueryExecute: mock(() =>
+        Promise.resolve(
+          makeQueryResult({
+            warnings: [{ message: "truncated" }],
+            columns: [{ name: "id", type: "INTEGER" }],
+          }),
+        ),
+      ),
+    });
+    const { result } = renderHook(() => useQueryAdapter(params as never));
+
+    await act(async () => {
+      result.current.forceExecuteQuery("DELETE FROM users");
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(params.tabs[0].result?.warnings).toEqual([{ message: "truncated" }]);
+    expect(params.tabs[0].result?.columnTypes).toEqual({ id: "INTEGER" });
+  });
+
   // ── executeQuery calls onQueryExecute with correct connectionId and sql ────
 
   test("executeQuery calls onQueryExecute with correct connectionId and sql", async () => {

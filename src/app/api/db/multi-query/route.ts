@@ -5,6 +5,7 @@ import { isSelectQuery } from "@/lib/db/utils/query-limiter";
 import { createErrorResponse } from "@/lib/api/errors";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { getSession } from "@/lib/auth";
+import type { QueryWarning } from "@/lib/types";
 
 export interface StatementResult {
   index: number;
@@ -16,6 +17,15 @@ export interface StatementResult {
   rowCount?: number;
   executionTime: number;
   error?: string;
+  /**
+   * The two additive channels #273 gave the shared result, carried per statement
+   * because that is where they are attributable: a notice belongs to the run that
+   * produced it, and a declared type describes that run's own projection. Absent
+   * when the engine reported none, never empty — the grid decides whether to
+   * render anything from the field's presence alone (#285).
+   */
+  warnings?: QueryWarning[];
+  columnTypes?: Record<string, string>;
 }
 
 export async function POST(req: NextRequest) {
@@ -76,6 +86,8 @@ export async function POST(req: NextRequest) {
           fields: result.fields,
           rowCount: result.rowCount,
           executionTime,
+          ...(result.warnings && { warnings: result.warnings }),
+          ...(result.columnTypes && { columnTypes: result.columnTypes }),
         });
       } catch (error) {
         const executionTime = Math.round(performance.now() - startTime);
@@ -108,6 +120,11 @@ export async function POST(req: NextRequest) {
       fields: lastResultWithRows?.fields || [],
       rowCount: lastResultWithRows?.rowCount || 0,
       executionTime: totalExecutionTime,
+      // The main result shows one statement's rows, so it carries that statement's
+      // notices and declared types and no others. Merging every statement's
+      // warnings here would attribute one run's notice to another run's rows.
+      ...(lastResultWithRows?.warnings && { warnings: lastResultWithRows.warnings }),
+      ...(lastResultWithRows?.columnTypes && { columnTypes: lastResultWithRows.columnTypes }),
       // Multi-statement metadata
       multiStatement: true,
       statementCount: statements.length,

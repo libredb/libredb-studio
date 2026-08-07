@@ -28,6 +28,13 @@ let mockConnectionsList: Record<string, unknown>[] = [
 ];
 let mockActiveConnectionId: string | null = "c1";
 
+// The capabilities the selected connection's provider declares. `null` is the
+// state before `/api/db/provider-meta` answers, and the state it stays in when
+// that request fails (#282).
+let mockMetadata: { capabilities: Record<string, unknown> } | null = {
+  capabilities: { supportsMaintenance: true, maintenanceOperations: ["analyze", "vacuum", "reindex"] },
+};
+
 const defaultSessions = [
   {
     pid: 1234,
@@ -64,6 +71,10 @@ mock.module("@/hooks/use-monitoring-data", () => ({
     runMaintenance: mockRunMaintenance,
     ...monitoringOverride,
   })),
+}));
+
+mock.module("@/hooks/use-provider-metadata", () => ({
+  useProviderMetadata: mock(() => ({ metadata: mockMetadata, isLoading: false })),
 }));
 
 mock.module("@/lib/storage", () => ({
@@ -167,6 +178,9 @@ describe("OperationsTab", () => {
       },
     ];
     mockActiveConnectionId = "c1";
+    mockMetadata = {
+      capabilities: { supportsMaintenance: true, maintenanceOperations: ["analyze", "vacuum", "reindex"] },
+    };
 
     // Clear mocks
     mockRefresh.mockClear();
@@ -234,6 +248,69 @@ describe("OperationsTab", () => {
     expect(queryByText("Run Analyze")).not.toBeNull();
     expect(queryByText("Run Vacuum")).not.toBeNull();
     expect(queryByText("Run Reindex")).not.toBeNull();
+  });
+
+  // ── Maintenance controls are gated on declared capability (#282) ──────────
+  //
+  // `/api/db/maintenance` short-circuits on the capability, so an ungated button
+  // can only ever answer HTTP 400. This is the same gate #272 put on the
+  // monitoring Tables tab; this tab is its untouched twin, and the affected set is
+  // broad — Druid and the embedded engine declare no maintenance at all, and
+  // MySQL, MSSQL, ClickHouse, Oracle and Redis declare neither vacuum nor reindex.
+
+  test("renders only the operations the provider declares", async () => {
+    mockMetadata = { capabilities: { supportsMaintenance: true, maintenanceOperations: ["analyze"] } };
+    let renderResult: ReturnType<typeof render>;
+    await act(async () => {
+      renderResult = render(<OperationsTab />);
+    });
+    const { queryByText } = renderResult!;
+
+    expect(queryByText("Run Analyze")).not.toBeNull();
+    expect(queryByText("Run Vacuum")).toBeNull();
+    expect(queryByText("Run Reindex")).toBeNull();
+  });
+
+  test("hides the whole maintenance group when the provider declares none", async () => {
+    mockMetadata = { capabilities: { supportsMaintenance: false, maintenanceOperations: [] } };
+    let renderResult: ReturnType<typeof render>;
+    await act(async () => {
+      renderResult = render(<OperationsTab />);
+    });
+    const { queryByText } = renderResult!;
+
+    expect(queryByText("Global Operations")).toBeNull();
+    expect(queryByText("Run Analyze")).toBeNull();
+    expect(queryByText("Run Vacuum")).toBeNull();
+    expect(queryByText("Run Reindex")).toBeNull();
+  });
+
+  test("hides the controls while the capabilities are unknown", async () => {
+    // Undefined covers both the moment before /api/db/provider-meta answers and
+    // the case where it failed. Failing open would put the dead buttons back on
+    // exactly the connections this gate exists for, which is how #272 reasoned.
+    mockMetadata = null;
+    let renderResult: ReturnType<typeof render>;
+    await act(async () => {
+      renderResult = render(<OperationsTab />);
+    });
+    const { queryByText } = renderResult!;
+
+    expect(queryByText("Run Analyze")).toBeNull();
+    expect(queryByText("Global Operations")).toBeNull();
+  });
+
+  test("hides the per-table maintenance buttons the provider does not declare", async () => {
+    mockMetadata = { capabilities: { supportsMaintenance: true, maintenanceOperations: ["analyze"] } };
+    let renderResult: ReturnType<typeof render>;
+    await act(async () => {
+      renderResult = render(<OperationsTab />);
+    });
+    const { container } = renderResult!;
+
+    const titles = Array.from(container.querySelectorAll("button")).map((b) => b.getAttribute("title"));
+    expect(titles).toContain("Analyze");
+    expect(titles).not.toContain("Vacuum");
   });
 
   test("warning card present", async () => {

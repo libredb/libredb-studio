@@ -161,6 +161,95 @@ describe("POST /api/db/multi-query", () => {
     expect(data.fields).toBeDefined();
   });
 
+  // ── Warnings and declared column types travel with their statement (#285) ──
+  //
+  // #273 gave the shared result both channels and the providers fill them, but
+  // this route builds each statement result from an explicit field list, so both
+  // stopped here. Silent field-dropping is only caught by asserting the far end.
+
+  test("carries each statement's warnings and column types onto that statement", async () => {
+    let call = 0;
+    (mockProvider.query as ReturnType<typeof mock>).mockImplementation(async () => {
+      call++;
+      return {
+        rows: [{ id: call }],
+        fields: ["id"],
+        rowCount: 1,
+        executionTime: 5,
+        warnings: [{ message: `notice ${call}`, code: call }],
+        columnTypes: { id: call === 1 ? "BIGINT" : "INTEGER" },
+      };
+    });
+
+    const req = createMockRequest("/api/db/multi-query", {
+      method: "POST",
+      body: { connection: validConnection, sql: "SELECT 1; SELECT 2" },
+    });
+
+    const res = await POST(req as never);
+    const data = await parseResponseJSON<{
+      statements: Array<{
+        warnings?: { message: string; code?: number | string }[];
+        columnTypes?: Record<string, string>;
+      }>;
+    }>(res);
+
+    expect(data.statements[0].warnings).toEqual([{ message: "notice 1", code: 1 }]);
+    expect(data.statements[0].columnTypes).toEqual({ id: "BIGINT" });
+    expect(data.statements[1].warnings).toEqual([{ message: "notice 2", code: 2 }]);
+    expect(data.statements[1].columnTypes).toEqual({ id: "INTEGER" });
+  });
+
+  test("the main result carries the channels of the statement whose rows it shows", async () => {
+    // The main result is the last statement that returned rows, so those rows and
+    // these notices come from the same run. Merging every statement's warnings
+    // would attribute one statement's notice to another's rows.
+    let call = 0;
+    (mockProvider.query as ReturnType<typeof mock>).mockImplementation(async () => {
+      call++;
+      return call === 1
+        ? { rows: [{ id: 1 }], fields: ["id"], rowCount: 1, executionTime: 5, warnings: [{ message: "first" }] }
+        : {
+            rows: [{ total: 2 }],
+            fields: ["total"],
+            rowCount: 1,
+            executionTime: 5,
+            warnings: [{ message: "second" }],
+            columnTypes: { total: "BIGINT" },
+          };
+    });
+
+    const req = createMockRequest("/api/db/multi-query", {
+      method: "POST",
+      body: { connection: validConnection, sql: "SELECT 1; SELECT count(*) AS total FROM t" },
+    });
+
+    const res = await POST(req as never);
+    const data = await parseResponseJSON<{
+      warnings?: { message: string }[];
+      columnTypes?: Record<string, string>;
+    }>(res);
+
+    expect(data.warnings).toEqual([{ message: "second" }]);
+    expect(data.columnTypes).toEqual({ total: "BIGINT" });
+  });
+
+  test("omits both channels when the engine reported neither", async () => {
+    // Absent rather than empty: the grid decides whether to render anything from
+    // the field's presence alone.
+    const req = createMockRequest("/api/db/multi-query", {
+      method: "POST",
+      body: { connection: validConnection, sql: "SELECT 1; SELECT 2" },
+    });
+
+    const res = await POST(req as never);
+    const data = await parseResponseJSON<Record<string, unknown>>(res);
+
+    expect("warnings" in data).toBe(false);
+    expect("columnTypes" in data).toBe(false);
+    expect("warnings" in (data.statements as Record<string, unknown>[])[0]).toBe(false);
+  });
+
   test("multiple statements are all executed", async () => {
     let callCount = 0;
     (mockProvider.query as ReturnType<typeof mock>).mockImplementation(async () => {
