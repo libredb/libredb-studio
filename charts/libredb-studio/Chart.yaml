@@ -2,8 +2,8 @@ apiVersion: v2
 name: libredb-studio
 description: Web-based SQL IDE for cloud-native teams supporting PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, and Redis
 type: application
-version: 0.1.28
-appVersion: "0.9.66"
+version: 0.1.29
+appVersion: "0.9.67"
 kubeVersion: ">=1.26.0-0"
 home: https://github.com/libredb/libredb-studio
 icon: https://raw.githubusercontent.com/libredb/libredb-studio/main/public/logo.svg
@@ -31,7 +31,7 @@ annotations:
   artifacthub.io/containsSecurityUpdates: "false"
   artifacthub.io/images: |
     - name: libredb-studio
-      image: ghcr.io/libredb/libredb-studio:0.9.66
+      image: ghcr.io/libredb/libredb-studio:0.9.67
       platforms:
         - linux/amd64
         - linux/arm64
@@ -43,9 +43,11 @@ annotations:
     - name: Source
       url: https://github.com/libredb/libredb-studio
   artifacthub.io/changes: |
-    - "Application updated to 0.9.66 - Couchbase is now a supported database, speaking SQL++ over the Query and management REST APIs; it adds no driver dependency, so the image size is unchanged"
-    - "Couchbase support covers the bucket, scope and collection explorer with INFER-derived column types, EXPLAIN plans, read-your-writes query consistency, and the monitoring and maintenance surfaces the other providers expose"
-    - "No chart template changes - the rendered manifests are identical to 0.1.27"
+    - "Application updated to 0.9.67 - ClickHouse and Apache Druid are now supported databases, both spoken over their HTTP interfaces, so neither adds a driver dependency and the image size is unchanged"
+    - "ClickHouse support covers the explorer, EXPLAIN plans, and the monitoring and maintenance surfaces the other providers expose; Apache Druid adds datasource browsing and plan reading over Druid SQL"
+    - "Every SQL statement is now read with its own dialect's grammar, so statement boundaries, identifier quoting and row-limit injection stay correct on all ten engines"
+    - "Inline row edits and CSV imports bind their values instead of interpolating them"
+    - "No chart template changes - the rendered manifests are identical to 0.1.28"
 dependencies:
   - name: postgresql
     version: "16.x.x"
