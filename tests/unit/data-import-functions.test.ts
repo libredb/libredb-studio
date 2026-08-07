@@ -255,6 +255,43 @@ describe("generateImportSQL", () => {
     expect(sql).toContain("('C:\\\\Users\\\\''; DROP TABLE users; --')");
   });
 
+  // The column type is inferred from the first 100 rows only, and every value it
+  // typed as numeric used to be written into the statement verbatim. Row 101 is
+  // outside that sample, so it could carry anything — and these statements are
+  // executed by `onImport` (PR #304 review).
+  test("quotes a value that does not match the type inferred from the sample", () => {
+    const rows = Array.from({ length: 100 }, (_, i) => [String(i)]);
+    rows.push(["0); DELETE FROM users; -- "]);
+    const beyondTheSample: ParsedData = { headers: ["amount"], rows, totalRows: 101 };
+
+    const sql = generateImportSQL(beyondTheSample, "orders", false, "", {});
+
+    expect(sql).toContain("('0); DELETE FROM users; -- ')");
+    expect(sql).not.toContain("(0); DELETE FROM users; -- )");
+  });
+
+  test("quotes a value the sample typed as boolean but that is not one", () => {
+    // Not an injection — the old code answered FALSE for anything unrecognized,
+    // which silently wrote the wrong value rather than letting the engine object.
+    const rows = Array.from({ length: 100 }, () => ["true"]);
+    rows.push(["maybe"]);
+    const beyondTheSample: ParsedData = { headers: ["active"], rows, totalRows: 101 };
+
+    const sql = generateImportSQL(beyondTheSample, "flags", false, "", {});
+
+    expect(sql).toContain("('maybe')");
+  });
+
+  test("still writes a matching numeric value unquoted", () => {
+    const numeric: ParsedData = {
+      headers: ["amount", "ratio", "active"],
+      rows: [["42", "1.5", "true"]],
+      totalRows: 1,
+    };
+
+    expect(generateImportSQL(numeric, "orders", false, "", {})).toContain("(42, 1.5, TRUE)");
+  });
+
   test("emits the standard form when no dialect is known", () => {
     const withBackslash: ParsedData = {
       headers: ["path"],

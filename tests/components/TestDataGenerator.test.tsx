@@ -53,6 +53,32 @@ describe("TestDataGenerator", () => {
     expect(container.textContent).toContain("INSERT INTO employees");
   });
 
+  test("quotes a generated value that does not match its column's numeric type", () => {
+    // The generator is chosen by column NAME and the quoting by column TYPE, so
+    // the two can disagree: `phone BIGINT` produces `+1-555-…`, which used to be
+    // written into the statement unquoted because the type said numeric. Same
+    // shape as the import defect (PR #304 review) — here it makes broken SQL
+    // rather than an injection, because the vocabulary is the generator's own.
+    const mismatched: TableSchema = {
+      name: "contacts",
+      indexes: [],
+      columns: [{ name: "phone", type: "BIGINT", nullable: false, isPrimary: false }],
+    };
+    const { container } = render(
+      <TestDataGenerator
+        isOpen
+        onClose={mock(() => {})}
+        tableName="contacts"
+        tableSchema={mismatched}
+        onExecuteQuery={mock(() => {})}
+      />,
+    );
+
+    const text = container.textContent || "";
+    expect(text).toContain("('+1-555-");
+    expect(text).not.toContain("(+1-555-");
+  });
+
   test("row count buttons change output", () => {
     const { queryByText, container } = render(
       <TestDataGenerator
