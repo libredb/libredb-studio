@@ -6,6 +6,11 @@ instance, and first-run admin credentials are generated automatically. This
 document describes the supported Rancher, Kubernetes, and distribution
 versions, how to install through Rancher, and the combinations we validate.
 
+LibreDB Studio is listed in the SUSE Partner Certification & Solutions
+Catalog: [LibreDB Studio](https://www.suse.com/pcsc/viewVersionPage?versionID=26969),
+where the listing records the platform as SUSE Rancher and the certification
+as SUSE Ready.
+
 ## Supported versions
 
 These are the SUSE Rancher and Rancher Kubernetes distribution versions
