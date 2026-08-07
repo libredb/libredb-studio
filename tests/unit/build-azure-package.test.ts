@@ -1,6 +1,6 @@
 /**
  * Unit tests for the Azure Marketplace package builder
- * (scripts/build-azure-package.mjs, deploy/azure/AZURE_MARKETPLACE_PLAN.md §5.6).
+ * (scripts/build-azure-package.mjs).
  *
  * The pure pieces (argument parsing, image-ref parsing, placeholder filling,
  * the apiVersion age gate) are exercised directly; digest resolution runs

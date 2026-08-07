@@ -1,7 +1,7 @@
 name: Azure Marketplace Package
 
 # Builds the Partner Center deployment package on demand
-# (deploy/azure/AZURE_MARKETPLACE_PLAN.md §5.7): resolves the image digests,
+# (deploy/azure/README.md): resolves the image digests,
 # embeds the installer, gates on apiVersion age, validates with the ARM
 # template test toolkit's marketplace suite, and uploads the two-file zip
 # ready for the plan's Technical configuration page.

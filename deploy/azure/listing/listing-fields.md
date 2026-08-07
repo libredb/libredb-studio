@@ -1,8 +1,7 @@
 # Partner Center listing fields — LibreDB Studio (Azure Application)
 
-Single source of truth for every text field in the offer listing
-(deploy/azure/AZURE_MARKETPLACE_PLAN.md §7.3). Copy these into Partner Center
-verbatim. Character limits are enforced by tests/unit/build-azure-package.test.ts
+Single source of truth for every text field in the offer listing. Copy these
+into Partner Center verbatim. Character limits are enforced by tests/unit/build-azure-package.test.ts
 via the `<!-- limit:N -->` markers — the line directly below each marker is the
 field value, measured in characters (Partner Center counts HTML markup and
 spaces too).
@@ -64,7 +63,7 @@ the limit is asserted by the unit test.
 (name + phone + email, support website `https://github.com/libredb/libredb-studio/issues`)
 and engineering contact (name + phone + email; never shown publicly).
 
-## Media (assets/ — to be produced, see plan §7.3 "Media")
+## Media (assets/ — to be produced)
 
 | Asset | Requirement | Status |
 |---|---|---|

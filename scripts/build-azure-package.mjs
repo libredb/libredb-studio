@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 /**
- * Azure Marketplace solution-template package builder
- * (deploy/azure/AZURE_MARKETPLACE_PLAN.md §5.6).
+ * Azure Marketplace solution-template package builder (deploy/azure/README.md).
  *
  * Produces the two-file zip Partner Center expects — mainTemplate.json and
  * createUiDefinition.json at the zip ROOT, no binaries — from the sources in
