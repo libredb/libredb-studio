@@ -55,6 +55,18 @@ services:
       # - key: OIDC_ADMIN_ROLES
       #   value: admin
 
+      # --- Public demo access (optional) ---------------------------------
+      # Turns the login screen into a one-click way in for visitors who have
+      # no account, for a public showcase instance. Deliberately left
+      # commented and without a value: this Blueprint is the target of the
+      # README's "Deploy to Render" button and redeploys on every commit, so
+      # a value here would open every service deployed from it. Set it in the
+      # Render dashboard (Environment tab) on the one instance that wants it.
+      # Never enable it on a service holding real data - anyone reaching the
+      # URL gets a session.
+      # - key: DEMO_MODE
+      #   value: "true"
+
       # --- AI query assistance (optional) --------------------------------
       # Fully opt-in: uncomment and provide a key to enable. See the README
       # configuration section for supported providers/models.
