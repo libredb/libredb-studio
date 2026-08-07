@@ -49,6 +49,14 @@ const POLICY_AGE_DAYS = 730;
 /** Partner Center requires integer.integer.integer, increased on every publish. */
 const PACKAGE_VERSION_RE = /^\d+\.\d+\.\d+$/;
 
+/**
+ * The OCI tag grammar. The tag is the one part of the app ref that is not a
+ * constant here — it arrives from package.json or --version — and it is
+ * interpolated into the registry URLs below, so an invalid tag has to fail the
+ * build rather than reshape a URL path.
+ */
+const OCI_TAG_RE = /^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$/;
+
 /** @returns {{ version: string | undefined, packageVersion: string | undefined }} */
 export function parseArgs(argv) {
   /** @type {{ version: string | undefined, packageVersion: string | undefined }} */
@@ -81,7 +89,11 @@ export function parseImageRef(ref) {
   if (colon === -1 || colon === rest.length - 1) {
     throw new Error(`image ref "${ref}" is missing a tag`);
   }
-  return { registry, repository: rest.slice(0, colon), tag: rest.slice(colon + 1) };
+  const tag = rest.slice(colon + 1);
+  if (!OCI_TAG_RE.test(tag)) {
+    throw new Error(`image ref "${ref}" has a tag that is not a valid OCI tag: "${tag}"`);
+  }
+  return { registry, repository: rest.slice(0, colon), tag };
 }
 
 /**

@@ -57,7 +57,10 @@ function registryFetch({
     if (url.startsWith("https://ghcr.io/token") || url.startsWith("https://auth.docker.io/token")) {
       return new Response(JSON.stringify({ token: "anonymous-pull-token" }), { status: tokenStatus });
     }
-    const digest = url.includes("registry-1.docker.io") ? caddyDigest : appDigest;
+    // startsWith on the whole origin, not includes: a substring test on a URL
+    // is the pattern CodeQL flags as incomplete sanitization, and the origin is
+    // exactly what distinguishes the two registries here anyway.
+    const digest = url.startsWith("https://registry-1.docker.io/") ? caddyDigest : appDigest;
     if (url.includes("/manifests/")) {
       return new Response(null, {
         status: 200,
@@ -118,6 +121,16 @@ describe("parseImageRef", () => {
   test("rejects a ref without an explicit registry or tag", () => {
     expect(() => parseImageRef("caddy:2-alpine")).toThrow(/registry/);
     expect(() => parseImageRef("ghcr.io/libredb/libredb-studio")).toThrow(/tag/);
+  });
+
+  test("rejects a tag outside the OCI tag grammar", () => {
+    // The tag is the only part of the app ref that does not come from a
+    // constant - it is package.json's version or --version - so it is the only
+    // place a stray path segment could reshape the registry URL the builder
+    // then fetches. An invalid tag must fail the build, not travel into a URL.
+    expect(() => parseImageRef("ghcr.io/libredb/libredb-studio:0.9.66/../../evil")).toThrow(/tag/);
+    expect(() => parseImageRef("ghcr.io/libredb/libredb-studio:-leading-dash")).toThrow(/tag/);
+    expect(() => parseImageRef("ghcr.io/libredb/libredb-studio:has space")).toThrow(/tag/);
   });
 });
 
@@ -377,13 +390,103 @@ describe("listing texts stay inside the Partner Center limits", () => {
 
 describe("the shipped template sources agree with each other", () => {
   const srcDir = join(REPO_ROOT, "deploy/azure/src");
+  const readSrc = (name: string): string => readFileSync(join(srcDir, name), "utf8");
 
-  test("every createUiDefinition output maps to a mainTemplate parameter of a compatible kind", () => {
-    const template = JSON.parse(readFileSync(join(srcDir, "mainTemplate.json"), "utf8"));
-    const ui = JSON.parse(readFileSync(join(srcDir, "createUiDefinition.json"), "utf8"));
+  /**
+   * The ARM type every wizard output must land on. Comparing key names alone
+   * lets `enableHttps` drift from `bool` to `string` while the wizard keeps
+   * emitting a boolean - a mismatch ARM only rejects at deployment time, long
+   * after certification passed.
+   */
+  const EXPECTED_PARAMETER_TYPES: Record<string, string> = {
+    location: "string",
+    vmName: "string",
+    vmSize: "string",
+    osDiskSizeGb: "int",
+    adminUsername: "string",
+    authenticationType: "string",
+    adminPasswordOrKey: "securestring",
+    dnsLabelPrefix: "string",
+    appAdminEmail: "string",
+    appAdminPassword: "securestring",
+    enableHttps: "bool",
+    acmeContactEmail: "string",
+    appSourceAddressPrefix: "string",
+    sshSourceAddressPrefix: "string",
+  };
+
+  test("every createUiDefinition output maps to a mainTemplate parameter", () => {
+    const template = JSON.parse(readSrc("mainTemplate.json"));
+    const ui = JSON.parse(readSrc("createUiDefinition.json"));
     const outputs = Object.keys(ui.parameters.outputs).sort();
     const params = Object.keys(template.parameters).sort();
     expect(outputs).toEqual(params);
+    expect(outputs).toEqual(Object.keys(EXPECTED_PARAMETER_TYPES).sort());
+  });
+
+  test("every mainTemplate parameter declares the type its wizard control produces", () => {
+    const template = JSON.parse(readSrc("mainTemplate.json"));
+    for (const [name, expectedType] of Object.entries(EXPECTED_PARAMETER_TYPES)) {
+      expect(template.parameters[name].type).toBe(expectedType);
+    }
+  });
+
+  test("the controls behind the non-string parameters really emit that type", () => {
+    type Element = Record<string, unknown> & { name: string };
+    const ui = JSON.parse(readSrc("createUiDefinition.json"));
+    const elements: Element[] = ui.parameters.steps.flatMap((step: { elements: Element[] }) => step.elements);
+    const byName = (name: string): Element => {
+      const found = elements.find((element) => element.name === name);
+      if (!found) throw new Error(`no wizard element named ${name}`);
+      return found;
+    };
+
+    const allowedValues = (byName("enableHttps").constraints as { allowedValues: Array<{ value: unknown }> })
+      .allowedValues;
+    for (const allowed of allowedValues) {
+      expect(typeof allowed.value).toBe("boolean");
+    }
+    const diskSlider = byName("osDiskSizeGb");
+    for (const bound of [diskSlider.defaultValue, diskSlider.min, diskSlider.max]) {
+      expect(Number.isInteger(bound)).toBe(true);
+    }
+  });
+
+  /*
+   * The next three read install.sh as text rather than running it: the repo has
+   * no harness that can execute a first-boot installer (it apt-installs Docker
+   * and talks to systemd), so these pin the shape that the reviewed design
+   * depends on. They are the cheapest guard against the drift class that
+   * produced the findings in PR #307.
+   */
+  test("the TLS fallback is Caddy's issuer chain, not a config rewrite", () => {
+    const install = readSrc("install.sh");
+    expect(install).toContain("issuer acme");
+    expect(install).toContain("issuer internal");
+    // Rewriting the Caddyfile after the health gate is what coupled the proxy
+    // config to the app's cookie policy and to the ARM output strings - and
+    // then drifted from both. Caddy falls back on its own; bash must not.
+    expect(install).not.toContain("Caddyfile.fallback");
+    expect(install).not.toContain("Caddyfile.https");
+    expect(install).not.toContain("WEB_SOURCE");
+  });
+
+  test("a plain-HTTP deployment, and only that, drops the Secure cookie flag", () => {
+    // NODE_ENV=production marks auth cookies Secure for every non-loopback host
+    // (src/lib/auth.ts, shouldMarkCookieSecure), so on http:// the browser
+    // discards the login cookie and the sign-in loops back to the login page.
+    const install = readSrc("install.sh");
+    expect(install.match(/AUTH_COOKIE_SECURE/g)).toHaveLength(1);
+    expect(install).toMatch(/\[ "\$SITE_ADDRESS" = ":80" \][\s\S]{0,200}AUTH_COOKIE_SECURE=false/);
+  });
+
+  test("mainTemplate passes exactly the arguments install.sh reads", () => {
+    const command = JSON.parse(readSrc("mainTemplate.json")).resources.at(-1).properties.protectedSettings
+      .commandToExecute;
+    const passed = (command.match(/base64\(/g) ?? []).length;
+    const read = new Set([...readSrc("install.sh").matchAll(/\$\{(\d):-\}/g)].map((match) => match[1]));
+    expect([...read].sort()).toEqual(["1", "2", "3", "4"]);
+    expect(passed).toBe(read.size);
   });
 
   test("the template never declares a Microsoft.Resources/deployments resource (usage attribution rule)", () => {

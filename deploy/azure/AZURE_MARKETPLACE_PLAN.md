@@ -325,7 +325,7 @@ Müşteri: Marketplace → "Get It Now" → Azure portal sihirbazı (createUiDef
 | **HTTPS açıkken NSG kuralları ikiye ayrılır:** 80 her zaman `Internet`'e açık, 443 müşterinin verdiği kaynak aralığına kısıtlı | Caddy adlandırılmış bir site için **otomatik HTTPS** yapar: `:443`'te sunar, `:80`'i oraya 308 ile yönlendirir. Sertifika alınamazsa uygulama **her iki portta** erişilemez olur. Let's Encrypt HTTP-01 challenge'ı **yalnızca 80'e** ihtiyaç duyar; bu yüzden 80'i açık tutup 443'ü kısıtlamak hem sertifikayı garanti eder hem de "arayüzü kendi IP aralığıma kısıtla" yeteneğini korur. (İlk tasarımda tek bir kural her iki portu birden kısıtlıyordu ve müşteri CIDR girdiğinde sertifika **sessizce** hiç alınamıyordu.) 80 portunda ACME challenge'ı ve HTTPS yönlendirmesi servis edilir |
 | **TLS düşüşü müşterinin kısıtına saygı duyar:** kaynak `Internet` ise `:80`'e düşer, kısıtlıysa `:443`'te **self-signed** sertifikayla kalır | Port 80 ACME için `Internet`'e açık olduğundan, kısıtlı bir kurulumda uygulamayı `:80`'e taşımak müşterinin koyduğu sınırı **sessizce baypas eder** ve login formunu şifresiz olarak herkese açardı — 100.11'in ("kullanıcı güvenliğini tehlikeye atmamalı") doğrudan ihlali. Self-signed sertifika tarayıcıda uyarı verir ama **kısıt korunur ve trafik şifreli kalır**; buradaki alternatif "korkutucu HTTPS" değil, "internete açık düz HTTP"dir |
 | ACME issuer'ında `disable_tlsalpn_challenge` | 443 müşterinin CIDR'ına kısıtlıyken TLS-ALPN-01 challenge'ı (Let's Encrypt'in **443'e** bağlanmasını gerektirir) başarısız olur; boşa geçen backoff süresi 180 saniyelik doğrulama penceresini yiyebilir ve **yenilemede** de aynı kumar atılır. Tek direktifle HTTP-01'e sabitlemek, tasarımın kendi iddiasını *umut* olmaktan çıkarıp *zorunlu* yapar |
-| **Tek CA (Let's Encrypt) — bilinçli bedel** | Caddy varsayılan olarak bir issuer **çifti** dener (LE + yedek). `issuer` direktifini açıkça yazmak varsayılan listeyi **değiştirir**, yani yedek CA düşer. Bunu kabul ediyoruz çünkü: (a) `disable_tlsalpn_challenge` için açık issuer bloğu şart, (b) alternatif yedek CA'lar (ör. ZeroSSL) bugün **EAB kimlik bilgisi** istiyor — sıfır-yapılandırma vaadi olan bir Marketplace teklifinde müşteriden API anahtarı istenemez, (c) P1 sonrası düşüş yolu **güvenli**: sertifika alınamazsa kurulum kısıtı genişletmeden bozulmadan devam ediyor. Bedeli R4'ün olasılığına yansıtıldı (Düşük → Düşük–Orta). Gerçek issuer listesini §6.1 kontrol 2.9 ile ölçün |
+| **Tek ACME CA (Let's Encrypt) + Caddy'nin kendi CA'sı** | Caddy varsayılan olarak bir ACME issuer **çifti** dener (LE + ZeroSSL) ve `issuer` direktifini açıkça yazmak varsayılan listeyi **değiştirir**, yani ZeroSSL düşer. Açık blok yine de şart (`disable_tlsalpn_challenge` başka türlü yazılamıyor) ve ZeroSSL'i geri koymak mümkün değil: `issuer zerossl` **zorunlu bir API anahtarı** alıyor ve ödeme gerektirebiliyor — sıfır-yapılandırma vaadi olan bir Marketplace teklifinde müşteriden API anahtarı istenemez. Yedeklilik bunun yerine **`issuer internal`**'dan geliyor: zincir `issuer acme` → `issuer internal` olduğu için issuance başarısız olsa bile site aynı portta ayakta kalır, kısıt genişlemez ve internal sertifikaların kısa ömrü sayesinde her yenileme döngüsü ACME'yi yeniden dener (kendi kendine onarım). Bedeli tarayıcı uyarısıdır, erişilemezlik değil — R4'e böyle yansıtıldı. Gerçek issuer listesini §6.1 kontrol 2.9 ile ölçün |
 | Kurulumun sonunda **gerçek TLS doğrulaması** (`curl --resolve <fqdn>:443:127.0.0.1`) ve başarısızsa **kısıt durumuna göre dallanan otomatik düşüş** (yukarıdaki "TLS düşüşü müşterinin kısıtına saygı duyar" satırı) | Yerel `127.0.0.1:3000` kontrolü uygulama ayakta diye "başarılı" derdi; deployment `Succeeded` görünürken duyurulan URL ölü olurdu. Azure bir VM'in kendi public IP'sine hairpin yapmayı garanti etmediği için doğrulama `--resolve` ile yerel Caddy'ye pinlenir — sertifika zinciri yine de gerçek olarak doğrulanır |
 | `AUTH_BOOTSTRAP=off` + template'ten gelen açık `JWT_SECRET`/`ADMIN_PASSWORD` | Ürünün strict modu; üretim için önerilen mod (bkz. `docs/DISTRIBUTION.md`) |
 | İmaj **digest ile pinlenir** (`@sha256:...`) | Tekrarlanabilir kurulum; paket sürümü ile çalışan sürüm birebir eşleşir |
@@ -355,344 +355,15 @@ scripts/build-azure-package.mjs     # paketi üretir: dist/azure/libredb-studio-
 
 ### 5.3 `deploy/azure/src/install.sh`
 
-```bash
-#!/usr/bin/env bash
-# LibreDB Studio — Azure Marketplace solution template first-boot installer.
-#
-# Executed by the CustomScript VM extension via protectedSettings.commandToExecute.
-# Every argument is base64-encoded by the ARM template, so no shell quoting or
-# injection is possible regardless of what the customer typed in the portal.
-#
-#   $1  admin email        (base64)
-#   $2  admin password     (base64)
-#   $3  site address       (base64)  FQDN for HTTPS, or ":80" for plain HTTP
-#   $4  ACME contact       (base64)  may be empty
-#   $5  web source prefix  (base64)  "Internet" or a CIDR — decides how the TLS
-#                                    fallback may degrade without widening access
-set -euo pipefail
-
-exec > >(tee -a /var/log/libredb-install.log) 2>&1
-echo "=== LibreDB Studio install started: $(date -Is) ==="
-
-b64d() { printf '%s' "${1:-}" | base64 -d 2>/dev/null || true; }
-
-APP_ADMIN_EMAIL="$(b64d "${1:-}")"
-APP_ADMIN_PASSWORD="$(b64d "${2:-}")"
-SITE_ADDRESS="$(b64d "${3:-}")"
-ACME_EMAIL="$(b64d "${4:-}")"
-WEB_SOURCE="$(b64d "${5:-}")"
-[ -n "$WEB_SOURCE" ] || WEB_SOURCE="Internet"
-
-# Injected by scripts/build-azure-package.mjs at package build time.
-APP_IMAGE="__APP_IMAGE__"
-CADDY_IMAGE="__CADDY_IMAGE__"
-
-if [ -z "$APP_ADMIN_EMAIL" ] || [ -z "$APP_ADMIN_PASSWORD" ]; then
-  echo "FATAL: admin credentials were not passed to the installer" >&2
-  exit 1
-fi
-[ -n "$SITE_ADDRESS" ] || SITE_ADDRESS=":80"
-
-# ---------------------------------------------------------------- packages ---
-# DPkg::Lock::Timeout is not optional here: Azure's Canonical cloud images run
-# apt-daily / unattended-upgrades on first boot, and the CustomScript extension
-# races them. Without the timeout a lock collision fails apt, `set -e` kills the
-# script, the extension reports Failed and the whole ARM deployment fails.
-export DEBIAN_FRONTEND=noninteractive
-# Belt: wait for cloud-init to finish its own package work before we start ours.
-command -v cloud-init >/dev/null 2>&1 && cloud-init status --wait >/dev/null 2>&1 || true
-# Braces: even after cloud-init, apt-daily/unattended-upgrades can hold the lock.
-APT_OPTS=(-o DPkg::Lock::Timeout=600)
-apt-get "${APT_OPTS[@]}" update -y
-apt-get "${APT_OPTS[@]}" install -y --no-install-recommends \
-  docker.io ca-certificates curl openssl
-systemctl enable --now docker
-
-# Registry hiccups must not fail the deployment on the first try.
-pull_with_retry() {
-  local ref="$1" i
-  for i in 1 2 3 4 5; do
-    if docker pull "$ref"; then return 0; fi
-    echo "docker pull $ref failed (attempt $i), retrying in $((i * 10))s"
-    sleep $((i * 10))
-  done
-  echo "FATAL: could not pull $ref" >&2
-  return 1
-}
-pull_with_retry "$APP_IMAGE"
-pull_with_retry "$CADDY_IMAGE"
-
-# ------------------------------------------------------------------- layout ---
-install -d -m 0755 /opt/libredb /opt/libredb/data /opt/libredb/caddy \
-                   /opt/libredb/caddy/data /opt/libredb/caddy/config
-
-# ---------------------------------------------------------------- app env ---
-# Strict mode: no generated credentials, everything explicit (docs/DISTRIBUTION.md).
-#
-# Written once and never rewritten: if the extension re-runs (VM reimage, extension
-# update), regenerating JWT_SECRET would invalidate every existing session.
-if [ ! -f /etc/libredb-studio.env ]; then
-  (
-    umask 077   # scoped to this subshell so later files keep normal modes
-    cat > /etc/libredb-studio.env <<EOF
-AUTH_BOOTSTRAP=off
-JWT_SECRET=$(openssl rand -base64 48 | tr -d '\n')
-NEXT_PUBLIC_AUTH_PROVIDER=local
-ADMIN_EMAIL=${APP_ADMIN_EMAIL}
-ADMIN_PASSWORD=${APP_ADMIN_PASSWORD}
-STORAGE_PROVIDER=sqlite
-STORAGE_SQLITE_PATH=/app/data/libredb-storage.db
-PORT=3000
-HOSTNAME=0.0.0.0
-EOF
-  )
-  chmod 600 /etc/libredb-studio.env
-else
-  echo "/etc/libredb-studio.env already exists — keeping the existing JWT secret"
-fi
-
-# ---------------------------------------------------------------- Caddyfile ---
-{
-  echo '{'
-  echo '	admin off'
-  if [ -n "$ACME_EMAIL" ]; then printf '\temail %s\n' "$ACME_EMAIL"; fi
-  echo '}'
-  echo ''
-  printf '%s {\n' "$SITE_ADDRESS"
-  if [ "$SITE_ADDRESS" != ":80" ]; then
-    # Port 443 may be restricted to the customer's address range, so the TLS-ALPN-01
-    # challenge (which Let's Encrypt performs against :443) can fail or waste backoff
-    # time. Port 80 is open by design, so pin issuance and renewal to HTTP-01 instead
-    # of leaving the choice to chance. The email is repeated here because an explicit
-    # issuer block does not necessarily inherit the global one.
-    echo '	tls {'
-    echo '		issuer acme {'
-    if [ -n "$ACME_EMAIL" ]; then printf '\t\t\temail %s\n' "$ACME_EMAIL"; fi
-    echo '			disable_tlsalpn_challenge'
-    echo '		}'
-    echo '	}'
-  fi
-  echo '	encode zstd gzip'
-  echo '	reverse_proxy libredb-studio:3000'
-  echo '}'
-} > /opt/libredb/caddy/Caddyfile
-chmod 644 /opt/libredb/caddy/Caddyfile
-
-# ------------------------------------------------------------------ network ---
-docker network inspect libredb >/dev/null 2>&1 || docker network create libredb
-
-# ------------------------------------------------------------ systemd units ---
-cat > /etc/systemd/system/libredb-studio.service <<EOF
-[Unit]
-Description=LibreDB Studio
-After=docker.service network-online.target
-Wants=network-online.target docker.service
-
-[Service]
-ExecStartPre=-/usr/bin/docker rm -f libredb-studio
-ExecStart=/usr/bin/docker run \\
-  --name libredb-studio \\
-  --init \\
-  --network libredb \\
-  -p 127.0.0.1:3000:3000 \\
-  --env-file /etc/libredb-studio.env \\
-  -v /opt/libredb/data:/app/data \\
-  ${APP_IMAGE}
-ExecStop=/usr/bin/docker stop libredb-studio
-ExecStopPost=-/usr/bin/docker rm -f libredb-studio
-Restart=always
-RestartSec=10
-TimeoutStartSec=300
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-cat > /etc/systemd/system/libredb-caddy.service <<EOF
-[Unit]
-Description=LibreDB Studio reverse proxy (Caddy)
-After=docker.service network-online.target libredb-studio.service
-Wants=network-online.target docker.service
-
-[Service]
-ExecStartPre=-/usr/bin/docker rm -f libredb-caddy
-ExecStart=/usr/bin/docker run \\
-  --name libredb-caddy \\
-  --init \\
-  --network libredb \\
-  -p 80:80 -p 443:443 \\
-  -v /opt/libredb/caddy/Caddyfile:/etc/caddy/Caddyfile:ro \\
-  -v /opt/libredb/caddy/data:/data \\
-  -v /opt/libredb/caddy/config:/config \\
-  ${CADDY_IMAGE}
-ExecStop=/usr/bin/docker stop libredb-caddy
-ExecStopPost=-/usr/bin/docker rm -f libredb-caddy
-Restart=always
-RestartSec=10
-TimeoutStartSec=300
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-systemctl daemon-reload
-systemctl enable --now libredb-studio libredb-caddy
-
-# ------------------------------------------------------------- health gate ---
-# 1) The application itself must answer. Response body is {"status":"healthy",...}.
-ok=0
-for _ in $(seq 1 60); do
-  if curl -fsS http://127.0.0.1:3000/api/db/health >/dev/null 2>&1; then ok=1; break; fi
-  sleep 5
-done
-if [ "$ok" -ne 1 ]; then
-  echo "FATAL: LibreDB Studio did not become healthy within 5 minutes" >&2
-  docker logs libredb-studio --tail 200 || true
-  exit 1
-fi
-
-# 2) If HTTPS was requested, the certificate must actually exist — otherwise the URL
-#    we are about to advertise is dead on both ports (Caddy serves a named site on
-#    :443 and 308-redirects :80 to it, so a failed certificate breaks BOTH).
-#    --resolve pins the connection to the local Caddy while still validating the
-#    real certificate chain and SNI; Azure does not reliably hairpin a VM's own
-#    public IP, so a plain https://<fqdn> probe from the VM is not a valid test.
-TLS_OK=1
-FALLBACK_MODE=none
-if [ "$SITE_ADDRESS" != ":80" ]; then
-  TLS_OK=0
-  for _ in $(seq 1 36); do
-    if curl -fsS --resolve "${SITE_ADDRESS}:443:127.0.0.1" \
-         "https://${SITE_ADDRESS}/api/db/health" >/dev/null 2>&1; then
-      TLS_OK=1
-      break
-    fi
-    sleep 5
-  done
-  if [ "$TLS_OK" -ne 1 ]; then
-    # Degrade rather than leave an unreachable deployment behind — but NEVER degrade in a
-    # way that reaches more people than the customer allowed. Port 80 is open to the
-    # internet by design (ACME), so moving the app onto :80 is only safe when the customer
-    # left port 443 open to the internet too.
-    #
-    # Remaining causes at this point (port 80 is guaranteed reachable by the template):
-    # Let's Encrypt rate limit, a Let's Encrypt outage, or a firewall the customer added.
-    docker logs libredb-caddy --tail 100 || true
-    # Keep the HTTPS config verbatim so restoring it later also restores the ACME
-    # contact address — rewriting only the site line would silently drop `email`.
-    cp /opt/libredb/caddy/Caddyfile /opt/libredb/caddy/Caddyfile.https
-
-    # "0.0.0.0/0" is spelled differently but means exactly what "Internet" means; treat
-    # both as unrestricted. Anything else (a CIDR, VirtualNetwork, AzureLoadBalancer) is
-    # narrower than the internet, so it takes the conservative branch.
-    if [ "$WEB_SOURCE" = "Internet" ] || [ "$WEB_SOURCE" = "0.0.0.0/0" ]; then
-      FALLBACK_MODE=http
-      echo "WARNING: no valid TLS certificate after 3 minutes — falling back to plain HTTP on :80"
-      printf '{\n\tadmin off\n}\n\n:80 {\n\tencode zstd gzip\n\treverse_proxy libredb-studio:3000\n}\n' \
-        > /opt/libredb/caddy/Caddyfile
-    else
-      # The customer restricted port 443. Falling back to :80 would publish the
-      # application to the entire internet. Stay on 443 with a self-signed certificate:
-      # the restriction holds and the traffic stays encrypted. The browser will warn.
-      FALLBACK_MODE=selfsigned
-      echo "WARNING: no valid TLS certificate after 3 minutes — staying on :443 with a self-signed certificate (source range is restricted to ${WEB_SOURCE})"
-      printf '{\n\tadmin off\n}\n\n%s {\n\ttls internal\n\tencode zstd gzip\n\treverse_proxy libredb-studio:3000\n}\n' \
-        "$SITE_ADDRESS" > /opt/libredb/caddy/Caddyfile
-    fi
-
-    # Freeze the working fallback config here, not in the operator's restore hint. If the
-    # operator makes the backup by hand and re-runs the restore block after a failed
-    # attempt, the second run would overwrite the escape hatch with the broken HTTPS
-    # config and there would be no way back short of re-running this installer.
-    cp /opt/libredb/caddy/Caddyfile /opt/libredb/caddy/Caddyfile.fallback
-
-    systemctl restart libredb-caddy
-    for _ in $(seq 1 24); do
-      if [ "$FALLBACK_MODE" = "http" ]; then
-        curl -fsS "http://127.0.0.1/api/db/health" >/dev/null 2>&1 && break
-      else
-        # -k on purpose: the certificate is deliberately self-signed here.
-        curl -fsSk --resolve "${SITE_ADDRESS}:443:127.0.0.1" \
-          "https://${SITE_ADDRESS}/api/db/health" >/dev/null 2>&1 && break
-      fi
-      sleep 5
-    done
-  fi
-fi
-
-# ------------------------------------------------------------------- notice ---
-# Azure Instance Metadata Service — link-local, no traffic leaves the virtual network.
-PUBLIC_IP="$(curl -fsS -H 'Metadata:true' --noproxy '*' \
-  'http://169.254.169.254/metadata/instance/network/interface/0/ipv4/ipAddress/0/publicIpAddress?api-version=2021-02-01&format=text' 2>/dev/null || true)"
-
-case "$FALLBACK_MODE" in
-  http)       APP_URL="http://${PUBLIC_IP:-<public-ip>}" ;;
-  selfsigned) APP_URL="https://${SITE_ADDRESS}" ;;
-  *)          if [ "$SITE_ADDRESS" = ":80" ]; then APP_URL="http://${PUBLIC_IP:-<public-ip>}"
-              else APP_URL="https://${SITE_ADDRESS}"; fi ;;
-esac
-
-RESTORE_HINT="     First find out WHY the certificate failed - the answer decides what to do:
-       docker logs libredb-caddy 2>&1 | grep -i -m5 'acme\|challenge\|rate limit'
-     * A connection error or timeout while fetching the challenge means port 80 was not
-       reachable from the internet. That is measurable: from ANY machine other than this
-       one, run
-         curl -sS -o /dev/null -w '%{http_code}\n' --max-time 10 http://${SITE_ADDRESS}/
-       Any HTTP status (404 included) means port 80 is reachable now. A timeout means it
-       is still blocked - do not restore yet.
-     * A rate limit cannot be probed at all. Let's Encrypt limits reset on a rolling
-       weekly window, so the only remedy is to wait for the window to pass.
-     Then restore. The working fallback config is already saved as Caddyfile.fallback, so
-     a premature restore is recoverable:
-       cp /opt/libredb/caddy/Caddyfile.https /opt/libredb/caddy/Caddyfile
-       systemctl restart libredb-caddy
-     If HTTPS still fails, go back with:
-       cp /opt/libredb/caddy/Caddyfile.fallback /opt/libredb/caddy/Caddyfile
-       systemctl restart libredb-caddy"
-
-TLS_NOTE=""
-if [ "$FALLBACK_MODE" = "http" ]; then
-  TLS_NOTE="
-  !! HTTPS was requested but no certificate could be issued, so the application is
-     being served over plain HTTP on port 80. Port 443 was open to the internet in
-     this deployment, so nothing is reachable that was not reachable before.
-     Likely causes: a Let's Encrypt rate limit or outage, or a firewall added after
-     deployment.
-${RESTORE_HINT}
-"
-elif [ "$FALLBACK_MODE" = "selfsigned" ]; then
-  TLS_NOTE="
-  !! HTTPS was requested but no certificate could be issued. Because you restricted
-     access to ${WEB_SOURCE}, the application was NOT moved to port 80 - that port is
-     open to the internet for the certificate challenge, and moving there would have
-     published the application to everyone. It is still served on port 443, inside your
-     allowed range, with a SELF-SIGNED certificate, so your browser will warn you.
-     Likely causes: a Let's Encrypt rate limit or outage, or a firewall added after
-     deployment.
-${RESTORE_HINT}
-"
-fi
-
-cat > /etc/libredb-studio.info <<EOF
-LibreDB Studio is running.
-
-  URL:   ${APP_URL}
-  Admin: ${APP_ADMIN_EMAIL}   (password: the one you entered during deployment)
-${TLS_NOTE}
-
-  Service:  systemctl status libredb-studio
-  Logs:     docker logs libredb-studio
-  Data:     /opt/libredb/data   (SQLite storage; survives restarts)
-  Config:   /etc/libredb-studio.env   (mode 0600)
-  Install log: /var/log/libredb-install.log
-
-  Docs:    https://github.com/libredb/libredb-studio#readme
-  Support: https://github.com/libredb/libredb-studio/issues
-EOF
-cp /etc/libredb-studio.info /etc/motd
-
-echo "=== LibreDB Studio install finished: $(date -Is) ==="
-```
+> **Kaynak: [`deploy/azure/src/install.sh`](src/install.sh) — tek doğruluk kaynağı ilk açılış kurulum script'i için.**
+>
+> Kod buraya kopyalanmıyor. Kopya, kaynak değiştikçe sessizce bayatlar ve onu
+> kopyalayan kişi kaynakta çoktan düzeltilmiş hataları geri getirir: PR #307
+> incelemesinde bu dokümanın installer kopyası, eksik bir argümanda güvenli olmayan
+> tarafa düşüyor ve müşterinin parolasını quote'suz bir heredoc ile yazıyordu — yani
+> parolanın içindeki `$(...)` dizisi root olarak genişliyordu. Kaynakta ikisi de
+> düzeltilmişti. Aşağıdaki kararlar kaynaktan okunamayan gerekçelerdir; kodun
+> kendisi için dosyaya bakın.
 
 **Bilinçli kararlar:**
 - `docker.io` paketi Ubuntu deposundan kurulur — üçüncü parti apt reposu veya `get.docker.com`
@@ -729,280 +400,15 @@ echo "=== LibreDB Studio install finished: $(date -Is) ==="
 > [Microsoft.Network/virtualNetworks](https://learn.microsoft.com/en-us/azure/templates/microsoft.network/virtualnetworks) ·
 > [Microsoft.Compute/virtualMachines](https://learn.microsoft.com/en-us/azure/templates/microsoft.compute/virtualmachines)
 
-```json
-{
-  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
-  "contentVersion": "1.0.0.0",
-  "parameters": {
-    "location": {
-      "type": "string",
-      "defaultValue": "[resourceGroup().location]",
-      "metadata": { "description": "Azure region for all resources." }
-    },
-    "vmName": {
-      "type": "string",
-      "defaultValue": "libredb-studio",
-      "minLength": 3,
-      "maxLength": 40,
-      "metadata": { "description": "Name of the virtual machine that hosts LibreDB Studio." }
-    },
-    "vmSize": {
-      "type": "string",
-      "defaultValue": "Standard_B2s",
-      "metadata": { "description": "Size of the virtual machine." }
-    },
-    "osDiskSizeGb": {
-      "type": "int",
-      "defaultValue": 64,
-      "minValue": 32,
-      "maxValue": 1024,
-      "metadata": { "description": "OS disk size in GB. LibreDB Studio stores its SQLite data on this disk." }
-    },
-    "adminUsername": {
-      "type": "string",
-      "metadata": { "description": "Linux administrator user name for the virtual machine." }
-    },
-    "authenticationType": {
-      "type": "string",
-      "defaultValue": "sshPublicKey",
-      "allowedValues": [ "sshPublicKey", "password" ],
-      "metadata": { "description": "Authentication type for the Linux administrator account." }
-    },
-    "adminPasswordOrKey": {
-      "type": "securestring",
-      "metadata": { "description": "SSH public key or password for the Linux administrator account." }
-    },
-    "dnsLabelPrefix": {
-      "type": "string",
-      "defaultValue": "[toLower(concat('libredb-', uniqueString(resourceGroup().id)))]",
-      "metadata": { "description": "DNS label for the public IP address. Produces <label>.<region>.cloudapp.azure.com." }
-    },
-    "appAdminEmail": {
-      "type": "string",
-      "metadata": { "description": "Email address of the LibreDB Studio administrator account." }
-    },
-    "appAdminPassword": {
-      "type": "securestring",
-      "minLength": 12,
-      "metadata": { "description": "Password for the LibreDB Studio administrator account. Minimum 12 characters." }
-    },
-    "enableHttps": {
-      "type": "bool",
-      "defaultValue": true,
-      "metadata": { "description": "Obtain a free Let's Encrypt certificate for the public DNS name and serve the app over HTTPS." }
-    },
-    "acmeContactEmail": {
-      "type": "string",
-      "defaultValue": "",
-      "metadata": { "description": "Optional contact address sent to Let's Encrypt for certificate expiry notices." }
-    },
-    "appSourceAddressPrefix": {
-      "type": "string",
-      "defaultValue": "Internet",
-      "metadata": { "description": "Source address prefix allowed to reach the application. With HTTPS enabled this restricts port 443; port 80 stays open to the internet for the Let's Encrypt challenge. With HTTPS disabled it restricts port 80." }
-    },
-    "sshSourceAddressPrefix": {
-      "type": "string",
-      "defaultValue": "",
-      "metadata": { "description": "Optional source address prefix allowed to reach SSH (port 22). Leave empty to block inbound SSH entirely." }
-    }
-  },
-  "variables": {
-    "vnetName": "[concat(parameters('vmName'), '-vnet')]",
-    "subnetName": "app",
-    "nsgName": "[concat(parameters('vmName'), '-nsg')]",
-    "nicName": "[concat(parameters('vmName'), '-nic')]",
-    "publicIpName": "[concat(parameters('vmName'), '-pip')]",
-    "addressPrefix": "10.10.0.0/16",
-    "subnetPrefix": "10.10.1.0/24",
-    "subnetRef": "[resourceId('Microsoft.Network/virtualNetworks/subnets', variables('vnetName'), variables('subnetName'))]",
-    "imagePublisher": "Canonical",
-    "imageOffer": "ubuntu-24_04-lts",
-    "imageSku": "server",
-    "linuxConfiguration": {
-      "disablePasswordAuthentication": true,
-      "ssh": {
-        "publicKeys": [
-          {
-            "path": "[concat('/home/', parameters('adminUsername'), '/.ssh/authorized_keys')]",
-            "keyData": "[parameters('adminPasswordOrKey')]"
-          }
-        ]
-      }
-    },
-    "httpsWebRules": [
-      {
-        "name": "AllowHttpInbound",
-        "properties": {
-          "priority": 1000, "protocol": "Tcp", "access": "Allow", "direction": "Inbound",
-          "sourceAddressPrefix": "Internet", "sourcePortRange": "*",
-          "destinationAddressPrefix": "*", "destinationPortRange": "80",
-          "description": "Required by the Let's Encrypt HTTP-01 challenge for issuance and renewal; also serves the redirect to HTTPS."
-        }
-      },
-      {
-        "name": "AllowHttpsInbound",
-        "properties": {
-          "priority": 1010, "protocol": "Tcp", "access": "Allow", "direction": "Inbound",
-          "sourceAddressPrefix": "[parameters('appSourceAddressPrefix')]", "sourcePortRange": "*",
-          "destinationAddressPrefix": "*", "destinationPortRange": "443",
-          "description": "The application itself. Restrict this to your own address range if you do not want the interface to be publicly reachable."
-        }
-      }
-    ],
-    "httpOnlyWebRules": [
-      {
-        "name": "AllowHttpInbound",
-        "properties": {
-          "priority": 1000, "protocol": "Tcp", "access": "Allow", "direction": "Inbound",
-          "sourceAddressPrefix": "[parameters('appSourceAddressPrefix')]", "sourcePortRange": "*",
-          "destinationAddressPrefix": "*", "destinationPortRange": "80",
-          "description": "The application itself, served over plain HTTP."
-        }
-      }
-    ],
-    "webRules": "[if(parameters('enableHttps'), variables('httpsWebRules'), variables('httpOnlyWebRules'))]",
-    "sshRules": [
-      {
-        "name": "AllowSshInbound",
-        "properties": {
-          "priority": 1020, "protocol": "Tcp", "access": "Allow", "direction": "Inbound",
-          "sourceAddressPrefix": "[parameters('sshSourceAddressPrefix')]", "sourcePortRange": "*",
-          "destinationAddressPrefix": "*", "destinationPortRange": "22"
-        }
-      }
-    ],
-    "securityRules": "[if(empty(parameters('sshSourceAddressPrefix')), variables('webRules'), concat(variables('webRules'), variables('sshRules')))]",
-    "installScriptB64": "__INSTALL_SCRIPT_B64__"
-  },
-  "resources": [
-    {
-      "type": "Microsoft.Network/networkSecurityGroups",
-      "apiVersion": "2025-07-01",
-      "name": "[variables('nsgName')]",
-      "location": "[parameters('location')]",
-      "properties": { "securityRules": "[variables('securityRules')]" }
-    },
-    {
-      "type": "Microsoft.Network/virtualNetworks",
-      "apiVersion": "2025-07-01",
-      "name": "[variables('vnetName')]",
-      "location": "[parameters('location')]",
-      "dependsOn": [ "[resourceId('Microsoft.Network/networkSecurityGroups', variables('nsgName'))]" ],
-      "properties": {
-        "addressSpace": { "addressPrefixes": [ "[variables('addressPrefix')]" ] },
-        "subnets": [
-          {
-            "name": "[variables('subnetName')]",
-            "properties": {
-              "addressPrefix": "[variables('subnetPrefix')]",
-              "networkSecurityGroup": { "id": "[resourceId('Microsoft.Network/networkSecurityGroups', variables('nsgName'))]" }
-            }
-          }
-        ]
-      }
-    },
-    {
-      "type": "Microsoft.Network/publicIPAddresses",
-      "apiVersion": "2025-07-01",
-      "name": "[variables('publicIpName')]",
-      "location": "[parameters('location')]",
-      "sku": { "name": "Standard" },
-      "properties": {
-        "publicIPAllocationMethod": "Static",
-        "publicIPAddressVersion": "IPv4",
-        "dnsSettings": { "domainNameLabel": "[parameters('dnsLabelPrefix')]" }
-      }
-    },
-    {
-      "type": "Microsoft.Network/networkInterfaces",
-      "apiVersion": "2025-07-01",
-      "name": "[variables('nicName')]",
-      "location": "[parameters('location')]",
-      "dependsOn": [
-        "[resourceId('Microsoft.Network/virtualNetworks', variables('vnetName'))]",
-        "[resourceId('Microsoft.Network/publicIPAddresses', variables('publicIpName'))]"
-      ],
-      "properties": {
-        "ipConfigurations": [
-          {
-            "name": "ipconfig1",
-            "properties": {
-              "privateIPAllocationMethod": "Dynamic",
-              "subnet": { "id": "[variables('subnetRef')]" },
-              "publicIPAddress": { "id": "[resourceId('Microsoft.Network/publicIPAddresses', variables('publicIpName'))]" }
-            }
-          }
-        ]
-      }
-    },
-    {
-      "type": "Microsoft.Compute/virtualMachines",
-      "apiVersion": "2026-03-01",
-      "name": "[parameters('vmName')]",
-      "location": "[parameters('location')]",
-      "dependsOn": [ "[resourceId('Microsoft.Network/networkInterfaces', variables('nicName'))]" ],
-      "properties": {
-        "hardwareProfile": { "vmSize": "[parameters('vmSize')]" },
-        "storageProfile": {
-          "imageReference": {
-            "publisher": "[variables('imagePublisher')]",
-            "offer": "[variables('imageOffer')]",
-            "sku": "[variables('imageSku')]",
-            "version": "latest"
-          },
-          "osDisk": {
-            "createOption": "FromImage",
-            "diskSizeGB": "[parameters('osDiskSizeGb')]",
-            "managedDisk": { "storageAccountType": "StandardSSD_LRS" }
-          }
-        },
-        "osProfile": {
-          "computerName": "[parameters('vmName')]",
-          "adminUsername": "[parameters('adminUsername')]",
-          "adminPassword": "[parameters('adminPasswordOrKey')]",
-          "linuxConfiguration": "[if(equals(parameters('authenticationType'), 'password'), null(), variables('linuxConfiguration'))]"
-        },
-        "networkProfile": {
-          "networkInterfaces": [ { "id": "[resourceId('Microsoft.Network/networkInterfaces', variables('nicName'))]" } ]
-        },
-        "diagnosticsProfile": { "bootDiagnostics": { "enabled": true } }
-      }
-    },
-    {
-      "type": "Microsoft.Compute/virtualMachines/extensions",
-      "apiVersion": "2026-03-01",
-      "name": "[concat(parameters('vmName'), '/installLibreDBStudio')]",
-      "location": "[parameters('location')]",
-      "dependsOn": [ "[resourceId('Microsoft.Compute/virtualMachines', parameters('vmName'))]" ],
-      "properties": {
-        "publisher": "Microsoft.Azure.Extensions",
-        "type": "CustomScript",
-        "typeHandlerVersion": "2.1",
-        "autoUpgradeMinorVersion": true,
-        "protectedSettings": {
-          "commandToExecute": "[concat('echo ', variables('installScriptB64'), ' | base64 -d > /opt/libredb-install.sh && chmod 700 /opt/libredb-install.sh && /opt/libredb-install.sh ', base64(parameters('appAdminEmail')), ' ', base64(parameters('appAdminPassword')), ' ', base64(if(parameters('enableHttps'), reference(resourceId('Microsoft.Network/publicIPAddresses', variables('publicIpName'))).dnsSettings.fqdn, ':80')), ' ', base64(parameters('acmeContactEmail')), ' ', base64(parameters('appSourceAddressPrefix')))]"
-        }
-      }
-    }
-  ],
-  "outputs": {
-    "applicationUrl": {
-      "type": "string",
-      "value": "[if(parameters('enableHttps'), concat('https://', reference(resourceId('Microsoft.Network/publicIPAddresses', variables('publicIpName'))).dnsSettings.fqdn), concat('http://', reference(resourceId('Microsoft.Network/publicIPAddresses', variables('publicIpName'))).ipAddress))]"
-    },
-    "notes": {
-      "type": "string",
-      "value": "[if(parameters('enableHttps'), if(equals(parameters('appSourceAddressPrefix'), 'Internet'), concat('If the TLS certificate could not be issued, the installer serves the application over plain HTTP at http://', reference(resourceId('Microsoft.Network/publicIPAddresses', variables('publicIpName'))).ipAddress, ' and records the reason in /etc/libredb-studio.info on the virtual machine.'), 'If the TLS certificate could not be issued, the installer keeps the application on port 443 with a self-signed certificate so that your source restriction is never widened; your browser will warn you. The reason is recorded in /etc/libredb-studio.info on the virtual machine.'), 'The application is served over plain HTTP. Put a TLS terminating gateway in front of it before exposing it beyond a trusted network.')]"
-    },
-    "administratorEmail": { "type": "string", "value": "[parameters('appAdminEmail')]" },
-    "sshCommand": {
-      "type": "string",
-      "value": "[if(empty(parameters('sshSourceAddressPrefix')), 'Inbound SSH is blocked by the network security group. Use Azure Bastion or the serial console, or add an SSH rule afterwards.', concat('ssh ', parameters('adminUsername'), '@', reference(resourceId('Microsoft.Network/publicIPAddresses', variables('publicIpName'))).dnsSettings.fqdn))]"
-    }
-  }
-}
-```
+> **Kaynak: [`deploy/azure/src/mainTemplate.json`](src/mainTemplate.json) — tek doğruluk kaynağı ARM şablonu için.**
+>
+> Kod buraya kopyalanmıyor. Kopya, kaynak değiştikçe sessizce bayatlar ve onu
+> kopyalayan kişi kaynakta çoktan düzeltilmiş hataları geri getirir: PR #307
+> incelemesinde bu dokümanın installer kopyası, eksik bir argümanda güvenli olmayan
+> tarafa düşüyor ve müşterinin parolasını quote'suz bir heredoc ile yazıyordu — yani
+> parolanın içindeki `$(...)` dizisi root olarak genişliyordu. Kaynakta ikisi de
+> düzeltilmişti. Aşağıdaki kararlar kaynaktan okunamayan gerekçelerdir; kodun
+> kendisi için dosyaya bakın.
 
 > **Yorum satırı yok — bilerek.** Yukarıdaki blok geçerli JSON'dur ve öyle kalmalıdır: ARM
 > template'lerinde yorum satırları sertifikasyonda sorun çıkarabilir; Microsoft'un kendi örneğinde
@@ -1014,225 +420,15 @@ echo "=== LibreDB Studio install finished: $(date -Is) ==="
 
 ### 5.5 `deploy/azure/src/createUiDefinition.json`
 
-```json
-{
-  "$schema": "https://schema.management.azure.com/schemas/0.1.2-preview/CreateUIDefinition.MultiVm.json#",
-  "handler": "Microsoft.Azure.CreateUIDef",
-  "version": "0.1.2-preview",
-  "parameters": {
-    "basics": [
-      {
-        "name": "vmName",
-        "type": "Microsoft.Common.TextBox",
-        "label": "Virtual machine name",
-        "defaultValue": "libredb-studio",
-        "toolTip": "Name of the virtual machine that will run LibreDB Studio.",
-        "constraints": {
-          "required": true,
-          "regex": "^[a-z][a-z0-9-]{1,38}[a-z0-9]$",
-          "validationMessage": "3-40 characters: lowercase letters, numbers and hyphens; must start with a letter and must not end with a hyphen."
-        }
-      },
-      {
-        "name": "adminUsername",
-        "type": "Microsoft.Compute.UserNameTextBox",
-        "label": "Linux admin username",
-        "toolTip": "Administrator account used for SSH access to the virtual machine.",
-        "osPlatform": "Linux",
-        "constraints": { "required": true }
-      },
-      {
-        "name": "adminCredentials",
-        "type": "Microsoft.Compute.CredentialsCombo",
-        "label": {
-          "authenticationType": "Authentication type",
-          "password": "Password",
-          "confirmPassword": "Confirm password",
-          "sshPublicKey": "SSH public key"
-        },
-        "toolTip": {
-          "authenticationType": "SSH public key is strongly recommended.",
-          "password": "Password for the Linux administrator account.",
-          "sshPublicKey": "Paste an OpenSSH public key."
-        },
-        "constraints": { "required": true },
-        "options": { "hideConfirmation": false },
-        "osPlatform": "Linux"
-      }
-    ],
-    "steps": [
-      {
-        "name": "vmConfig",
-        "label": "Virtual machine",
-        "elements": [
-          {
-            "name": "vmSize",
-            "type": "Microsoft.Compute.SizeSelector",
-            "label": "Virtual machine size",
-            "toolTip": "LibreDB Studio runs comfortably on 2 vCPU / 4 GB RAM.",
-            "recommendedSizes": [ "Standard_B2s", "Standard_B2ms", "Standard_D2s_v5" ],
-            "options": { "hideDiskTypeFilter": false },
-            "osPlatform": "Linux",
-            "imageReference": {
-              "publisher": "Canonical",
-              "offer": "ubuntu-24_04-lts",
-              "sku": "server"
-            },
-            "count": 1,
-            "visible": true
-          },
-          {
-            "name": "osDiskSizeGb",
-            "type": "Microsoft.Common.Slider",
-            "min": 32,
-            "max": 1024,
-            "label": "OS disk size (GB)",
-            "subLabel": "GB",
-            "defaultValue": 64,
-            "showStepMarkers": false,
-            "toolTip": "LibreDB Studio keeps its SQLite storage on the OS disk.",
-            "constraints": { "required": false },
-            "visible": true
-          },
-          {
-            "name": "dnsLabelPrefix",
-            "type": "Microsoft.Common.TextBox",
-            "label": "DNS name label",
-            "toolTip": "Produces <label>.<region>.cloudapp.azure.com. Must be unique inside the region.",
-            "constraints": {
-              "required": true,
-              "regex": "^[a-z][a-z0-9-]{1,61}[a-z0-9]$",
-              "validationMessage": "3-63 characters: lowercase letters, numbers and hyphens; must start with a letter and end with a letter or number."
-            }
-          }
-        ]
-      },
-      {
-        "name": "appConfig",
-        "label": "LibreDB Studio",
-        "elements": [
-          {
-            "name": "appAdminEmail",
-            "type": "Microsoft.Common.TextBox",
-            "label": "Application administrator email",
-            "defaultValue": "",
-            "toolTip": "The email address you will sign in to LibreDB Studio with.",
-            "constraints": {
-              "required": true,
-              "regex": "^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$",
-              "validationMessage": "Enter a valid email address."
-            }
-          },
-          {
-            "name": "appAdminPassword",
-            "type": "Microsoft.Common.PasswordBox",
-            "label": { "password": "Application administrator password", "confirmPassword": "Confirm password" },
-            "toolTip": "Password for the LibreDB Studio administrator account (not the VM account).",
-            "constraints": {
-              "required": true,
-              "regex": "^[A-Za-z0-9!@#%^*_+=.,:?-]{12,64}$",
-              "validationMessage": "12-64 characters. Letters, digits and ! @ # % ^ * _ + = . , : ? - are allowed."
-            },
-            "options": { "hideConfirmation": false },
-            "visible": true
-          },
-          {
-            "name": "enableHttps",
-            "type": "Microsoft.Common.OptionsGroup",
-            "label": "Enable HTTPS with a free Let's Encrypt certificate",
-            "defaultValue": "Yes",
-            "toolTip": "Issues a certificate for the DNS name above. Requires inbound port 80 to be reachable from the internet.",
-            "constraints": {
-              "allowedValues": [
-                { "label": "Yes", "value": true },
-                { "label": "No (HTTP only)", "value": false }
-              ],
-              "required": true
-            }
-          },
-          {
-            "name": "acmeContactEmail",
-            "type": "Microsoft.Common.TextBox",
-            "label": "Certificate contact email (optional)",
-            "defaultValue": "",
-            "toolTip": "Sent to Let's Encrypt for expiry notices.",
-            "constraints": {
-              "required": false,
-              "regex": "^$|^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$",
-              "validationMessage": "Leave empty or enter a valid email address."
-            },
-            "visible": "[equals(steps('appConfig').enableHttps, true)]"
-          }
-        ]
-      },
-      {
-        "name": "networkConfig",
-        "label": "Network access",
-        "elements": [
-          {
-            "name": "appSourceAddressPrefix",
-            "type": "Microsoft.Common.TextBox",
-            "label": "Allowed source for the web interface",
-            "defaultValue": "Internet",
-            "toolTip": "Use 'Internet' for public access, or a CIDR such as 203.0.113.0/24 to restrict it.",
-            "constraints": {
-              "required": true,
-              "regex": "^(Internet|VirtualNetwork|AzureLoadBalancer|(\\d{1,3}\\.){3}\\d{1,3}(/\\d{1,2})?)$",
-              "validationMessage": "Enter 'Internet' or an IPv4 address / CIDR range."
-            }
-          },
-          {
-            "name": "httpsPortNotice",
-            "type": "Microsoft.Common.InfoBox",
-            "visible": "[equals(steps('appConfig').enableHttps, true)]",
-            "options": {
-              "icon": "Info",
-              "text": "This restriction applies to port 443, where the application is served. Port 80 stays open to the internet so that Let's Encrypt can issue and renew the certificate; it serves the challenge and a redirect to HTTPS. If you restrict the range and no certificate can be issued, the installer keeps the application on port 443 with a self-signed certificate rather than moving it to port 80, so your restriction is never widened."
-            }
-          },
-          {
-            "name": "sshSourceAddressPrefix",
-            "type": "Microsoft.Common.TextBox",
-            "label": "Allowed source for SSH (optional)",
-            "defaultValue": "",
-            "toolTip": "Leave empty to block inbound SSH completely. Azure Bastion or the serial console can still be used.",
-            "constraints": {
-              "required": false,
-              "regex": "^$|^((\\d{1,3}\\.){3}\\d{1,3}(/\\d{1,2})?)$",
-              "validationMessage": "Leave empty or enter an IPv4 address / CIDR range."
-            }
-          },
-          {
-            "name": "sshWarning",
-            "type": "Microsoft.Common.InfoBox",
-            "visible": "[empty(steps('networkConfig').sshSourceAddressPrefix)]",
-            "options": {
-              "icon": "Info",
-              "text": "Inbound SSH will be blocked. You can still manage the VM with Azure Bastion or the serial console, and you can add an SSH rule to the network security group later."
-            }
-          }
-        ]
-      }
-    ],
-    "outputs": {
-      "location": "[location()]",
-      "vmName": "[basics('vmName')]",
-      "adminUsername": "[basics('adminUsername')]",
-      "authenticationType": "[basics('adminCredentials').authenticationType]",
-      "adminPasswordOrKey": "[coalesce(basics('adminCredentials').password, basics('adminCredentials').sshPublicKey)]",
-      "vmSize": "[steps('vmConfig').vmSize]",
-      "osDiskSizeGb": "[steps('vmConfig').osDiskSizeGb]",
-      "dnsLabelPrefix": "[steps('vmConfig').dnsLabelPrefix]",
-      "appAdminEmail": "[steps('appConfig').appAdminEmail]",
-      "appAdminPassword": "[steps('appConfig').appAdminPassword]",
-      "enableHttps": "[steps('appConfig').enableHttps]",
-      "acmeContactEmail": "[steps('appConfig').acmeContactEmail]",
-      "appSourceAddressPrefix": "[steps('networkConfig').appSourceAddressPrefix]",
-      "sshSourceAddressPrefix": "[steps('networkConfig').sshSourceAddressPrefix]"
-    }
-  }
-}
-```
+> **Kaynak: [`deploy/azure/src/createUiDefinition.json`](src/createUiDefinition.json) — tek doğruluk kaynağı portal sihirbazı için.**
+>
+> Kod buraya kopyalanmıyor. Kopya, kaynak değiştikçe sessizce bayatlar ve onu
+> kopyalayan kişi kaynakta çoktan düzeltilmiş hataları geri getirir: PR #307
+> incelemesinde bu dokümanın installer kopyası, eksik bir argümanda güvenli olmayan
+> tarafa düşüyor ve müşterinin parolasını quote'suz bir heredoc ile yazıyordu — yani
+> parolanın içindeki `$(...)` dizisi root olarak genişliyordu. Kaynakta ikisi de
+> düzeltilmişti. Aşağıdaki kararlar kaynaktan okunamayan gerekçelerdir; kodun
+> kendisi için dosyaya bakın.
 
 > ⚠️ **Buradaki regex'ler ve kontrol şemaları portal sandbox'ında doğrulanmadan kabul edilmemeli**
 > (§6.1, kontrol 2.3). Bir regex hatası veya yanlış kontrol özelliği sihirbazı çalışmaz hale getirir
@@ -1403,7 +599,7 @@ Bu fazın tamamı **Partner Center'a dokunmadan** yapılır. Buradaki her adım 
 | 2.6 | `install.sh` shell lint | `shellcheck deploy/azure/src/install.sh` | 🤖 |
 | 2.7 | **`apiVersion` yaşı** — hata dalı (≥700) tetiklenmiyor, uyarı dalı (≥540) çıktısı okundu | `build-azure-package.mjs`'nin yaş kapısı (§5.6, adım 6) | 🤖 |
 | 2.8 | `scripts/build-azure-package.mjs` birim testi geçiyor mu | `bun run test:unit` | 🤖 |
-| 2.9 | **Caddyfile sözdizimi + gerçek issuer listesi.** Önce `caddy validate`, sonra `caddy adapt` çıktısındaki issuer'ları sayın — **tek ACME issuer** görünüyorsa bu, §5.1'deki "tek CA" kararının fiilen yürürlükte olduğunun kanıtıdır (R4'ün olasılığı buna göre ayarlandı). Beklenmedik bir liste çıkarsa kararı yeniden değerlendirin | `docker run --rm -v "$PWD/Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile` ve `… caddy adapt --config /etc/caddy/Caddyfile --adapter caddyfile \| grep -o '"issuer[^,]*' \| sort -u` (üretilmiş Caddyfile'ı `install.sh`'i yerel koşturarak elde edin) | 🤖 |
+| 2.9 | **Caddyfile sözdizimi + gerçek issuer listesi.** Önce `caddy validate`, sonra `caddy adapt` çıktısındaki issuer'ları **sırayla** okuyun. Beklenen: `acme` (tls-alpn kapalı) ve ardından `internal` — **tam olarak iki issuer, bu sırayla**. Tek issuer görünüyorsa düşüş yolu yok demektir (R4 yeniden değerlendirilmeli); `internal` önce görünüyorsa hiç ACME denenmez. ✅ 2026-08-07'de `caddy:2-alpine` üzerinde ölçüldü: `Valid configuration` ve `issuers: [acme(tls-alpn disabled), internal]` | `docker run --rm -v "$PWD/Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile` ve `… caddy adapt … \| python3 -c "import json,sys; print(json.load(sys.stdin)['apps']['tls']['automation']['policies'])"` (üretilmiş Caddyfile'ı `install.sh`'in Caddyfile bloğunu yerel koşturarak elde edin) | 🤖 |
 
 ### 6.2 Gerçek deployment testi (kendi aboneliğimizde)
 
@@ -1442,107 +638,33 @@ az deployment group show -g "$RG" -n mainTemplate --query properties.outputs
 - [ ] 3000 portu **dışarıdan kapalı** (`nc -zv <ip> 3000` timeout), içeriden açık
 - [ ] `/etc/libredb-studio.env` mode `0600`
 - [ ] `enableHttps=false` + `appSourceAddressPrefix=<kendi IP>/32` ile ikinci bir deployment:
-      HTTP 80'de yalnızca o IP'den erişilebiliyor
+      HTTP 80'de yalnızca o IP'den erişilebiliyor **ve giriş kalıcı oluyor** — düz HTTP'de
+      `AUTH_COOKIE_SECURE=false` yazılmazsa tarayıcı oturum çerezini atar ve giriş sessizce
+      login sayfasına döner (`src/lib/auth.ts`, `shouldMarkCookieSecure`). Doğrulaması:
+      `sudo grep AUTH_COOKIE_SECURE /etc/libredb-studio.env` → `AUTH_COOKIE_SECURE=false`,
+      ardından tarayıcıda giriş yapıp **sayfayı yenileyin** — oturum durmalı
 - [ ] `authenticationType=password` ile üçüncü bir deployment: sorunsuz
 - [ ] Aynı template ile **ikinci bir bölgede** (ör. `eastus`) deployment: sorunsuz
 - [ ] **HTTPS + kaynak kısıtı birlikte çalışıyor:** `enableHttps=true appSourceAddressPrefix=<kendi IP>/32`
       ile deploy edin. Beklenen: **sertifika sorunsuz alınır** (80 `Internet`'e açık kaldığı için) ve
       uygulamaya yalnızca o IP'den HTTPS ile erişilebilir; başka bir ağdan 443 timeout verir
-- [ ] **TLS düşüş senaryosu (B4).** Bu yol artık template parametresiyle **tetiklenemez** — N1 düzeltmesi
-      en olası sebebi ortadan kaldırdı. Kalan sebepler (LE rate limit / kesinti / müşterinin sonradan
-      araya soktuğu güvenlik duvarı) için yolu elle simüle edin:
-      **Komutlar iki ayrı makinede çalışır — karıştırmayın.**
+- [ ] **TLS düşüş senaryosu (B4).** Düşüşü artık bash değil **Caddy'nin issuer zinciri**
+      yürütüyor (`issuer acme` → `issuer internal`), yani test edilecek şey bir yapılandırma
+      yeniden yazımı değil: sertifika alınamadığında sitenin **aynı portta, aynı URL'de**
+      self-signed sertifikayla ayakta kalması ve deployment'ın **başarılı** bitmesi.
 
-      ```bash
-      # ============ İŞ İSTASYONUNDA (az CLI + oturum) ============
-      # 1) normal bir HTTPS deployment'ı tamamlayın, sonra 80'i dışarıya kapatın
-      az network nsg rule create -g "$RG" --nsg-name libredb-studio-nsg \
-        -n DenyAcme --priority 900 --access Deny --direction Inbound \
-        --protocol Tcp --destination-port-ranges 80 --source-address-prefixes Internet
-
-      # 2) VM'e geçmeden önce gerçek FQDN'i buradan okuyup not edin
-      az network public-ip show -g "$RG" -n libredb-studio-pip \
-        --query dnsSettings.fqdn -o tsv
-      ```
-
-      > ⚠️ **Aşağıdaki bloğu kopyalarken satır başlarındaki girintiyi atın.** `<<'VMBLOCK'`
-      > heredoc'unun sonlandırıcısı **satır başında, önünde tek boşluk bile olmadan** durmak zorunda.
-      > Render edilmiş markdown'dan kopyalarsanız girinti zaten gitmiş olur; **ham dosyadan**
-      > kopyalarsanız (bu doküman bir AI asistanına ham okutuluyor) `VMBLOCK` satırı girintili kalır
-      > ve bash heredoc'u hiç sonlandıramaz — `warning: here-document delimited by end-of-file`.
-      > `<<-` işe yaramaz: yalnızca **tab** siler, boşluk silmez.
-
-      ```bash
-      # ============ VM'DE (SSH veya seri konsol) ============
-      # Blok tek parça çalışsın diye `sudo bash` heredoc'una sarıldı. İki faydası var:
-      #   1) İçerideki `exit 1` yalnızca bu alt kabuğu bitirir — interaktif bir SSH
-      #      oturumunda çıplak `exit 1` OTURUMU KAPATIRDI ve kalan satırlar yerel
-      #      kabuğa düşerdi.
-      #   2) Yapıştırma atomik olur, yarısı çalışıp yarısı kaybolmaz.
-      # sudo parolası terminalden (/dev/tty) okunur, stdin'den değil — heredoc bunu bozmaz.
-      sudo bash <<'VMBLOCK'
-      # FQDN'i iş istasyonu bloğunun yazdırdığı değerden DÜZ METİN olarak yapıştırmak
-      # asıl yoldur. Aşağıdaki okuma yedek yoldur ve yalnızca TEMİZ bir HTTPS kurulumunda
-      # çalışır:
-      #   * `hostname -f` KULLANMAYIN — Azure'da İÇ adı döndürür (<vm>.internal.cloudapp.net)
-      #     ve test, ACME'nin iç ada sertifika vermemesi yüzünden YANLIŞ SEBEPLE geçer.
-      #   * Desende `https` bilerek sabit: `https\?` olsaydı düşüş sonrası FQDN yerine IP
-      #     döndürürdü. Bunun bedeli, `Internet` dalına düşülmüş bir VM'de bu okumanın
-      #     BOŞ dönmesidir — bu yüzden aşağıdaki koruma zorunlu.
-      # FQDN_OVERRIDE ile dışarıdan verilebilir: ikinci koşuda bloğu düzenlemek yerine
-      #   sudo FQDN_OVERRIDE=<ilk-koşudaki-fqdn> bash <<'VMBLOCK'
-      # yazmanız yeterli; blok hiç değişmez.
-      FQDN="${FQDN_OVERRIDE:-$(sed -n 's#^  URL:  *https://##p' /etc/libredb-studio.info)}"
-      # Koruma: FQDN boş kalırsa 3. argüman boş gider, install.sh SITE_ADDRESS=":80"
-      # varsayar, TLS bloğu HİÇ çalışmaz ve test "geçti" der — hiçbir şey doğrulamadan.
-      [ -n "$FQDN" ] || { echo "FQDN okunamadi — is istasyonu ciktisindan yapistirin" >&2; exit 1; }
-
-      systemctl stop libredb-caddy
-      rm -rf /opt/libredb/caddy/data/*
-      systemctl start libredb-caddy
-
-      # BEŞ argümanın hepsini geçin. 5. argüman eksik kalırsa script kısıtsız varsayar,
-      # düz HTTP dalına düşer ve testin doğrulaması gereken dalı sessizce atlar.
-      # -w0: GNU base64 76 kolonda kaydırır; ARM'ın base64() fonksiyonu kaydırmaz.
-      /opt/libredb-install.sh \
-        "$(printf admin@libredb.org  | base64 -w0)" \
-        "$(printf 'ChangeMe.2026!'   | base64 -w0)" \
-        "$(printf '%s' "$FQDN"       | base64 -w0)" \
-        "$(printf ''                 | base64 -w0)" \
-        "$(printf '203.0.113.0/24'   | base64 -w0)"     # kısıtlı dalı zorlar
-      VMBLOCK
-      ```
-      Beklenen (**kısıtlı dal**): script **başarısız olmaz**, uygulama `:80`'e **taşınmaz**,
-      `:443`'te **self-signed** sertifikayla kalır, `/etc/libredb-studio.info` + MOTD içinde
-      "was NOT moved to port 80" uyarısı çıkar, `Caddyfile.https` yedeği oluşur.
-
-      Aynı testi 5. argüman `Internet` ile tekrarlayın: bu kez `:80`'e düşmeli.
-      ⚠️ İkinci koşuda bloğu **olduğu gibi** çalıştırın ama FQDN'i dışarıdan verin:
-      `sudo FQDN_OVERRIDE=<ilk-koşudaki-fqdn> bash <<'VMBLOCK'`. İlk koşudan sonra info dosyası
-      `http://<ip>` yazabilir; override vermezseniz okuma boş döner ve koruma testi sessizce
-      geçirmek yerine durdurur
-- [ ] **Kurtarma yolunu da test edin** — planın en az yürünmüş yolu burası, ve ona her dokunulduğunda
-      yeni bir pürüz çıktı. Düşüş oluştuktan sonra sırayla:
-
-      > 🔴 **Önce şunu okuyun: (e) adımını AYNI hostname üzerinde koşturmayın.** Let's Encrypt
-      > başarısız doğrulamaları **identifier (hostname) başına saatlik** bir bütçeyle sınırlar
-      > (bugün 5/saat). Bu bütçeyi tüketen şey **yukarıdaki simülasyondur** — özellikle iki
-      > koşu, her biri 180 sn boyunca yeniden deneyerek — artı aşağıdaki **(c)** adımındaki
-      > erken geri yükleme. ((a) `ls` ve (b) `docker logs` salt okumadır, hiçbir şey harcamaz;
-      > yani "onları atlarsam bütçe korunur" diye düşünmeyin, bütçe testten önce zaten
-      > harcanmıştır.) Sonuç: aynı hostname'de (e) **kurtarmayla ilgisi olmayan** bir sebepten
-      > düşer ve test sizi yanlış yöne sürer.
+      > ⚠️ **Aynı hostname'de tekrar tekrar denemeyin.** Let's Encrypt başarısız doğrulamaları
+      > **identifier (hostname) başına saatlik** bir bütçeyle sınırlar (bugün 5/saat) ve her
+      > deneme 180 saniye boyunca yeniden dener. Tekrar gerekiyorsa **taze bir
+      > `dnsLabelPrefix`** ile yeni bir deployment açın; limit hostname başına olduğu için
+      > bütçe sıfırlanır.
       >
-      > **Bu yüzden (e), taze bir `dnsLabelPrefix` ile yapılan yeni bir deployment üzerinde
-      > düşüş durumunu YENİDEN ÜRETEREK koşulur** (aşağıdaki e0–e4). Limit hostname başına
-      > olduğu için bütçe sıfırlanır.
-      >
-      > **Alternatif — tüm simülasyonu tekrarlanabilir kılar (ek yapılandırma ister):** (a)–(d)'yi
-      > LE **staging** dizinine alın. ⚠️ Bunu global `acme_ca` seçeneğiyle yapmaya çalışmayın:
-      > `acme_ca` **varsayılan** issuer'ları yapılandırır, oysa bizim ürettiğimiz Caddyfile sitenin
-      > kendi **açık** `issuer acme` bloğunu ilan ediyor — global kısayol orada en iyi ihtimalle
-      > belirsiz, pratikte etkisizdir ve istekler **sessizce üretime** gider (yani kaçınmak
-      > istediğiniz rate limit'i alırsınız). Doğrusu dizini **issuer bloğunun içine** yazmaktır:
+      > **Alternatif — simülasyonu tekrarlanabilir kılar:** issuer'ı LE **staging** dizinine
+      > alın. ⚠️ Bunu global `acme_ca` seçeneğiyle yapmaya çalışmayın: `acme_ca`
+      > **varsayılan** issuer'ları yapılandırır, oysa ürettiğimiz Caddyfile sitenin kendi
+      > **açık** `issuer acme` bloğunu ilan ediyor — global kısayol orada etkisizdir ve
+      > istekler **sessizce üretime** gider (yani kaçınmak istediğiniz rate limit'i alırsınız).
+      > Doğrusu dizini **issuer bloğunun içine** yazmaktır:
       >
       > ```
       > tls {
@@ -1551,37 +673,34 @@ az deployment group show -g "$RG" -n mainTemplate --query properties.outputs
       >         email <acme-contact>
       >         disable_tlsalpn_challenge
       >     }
+      >     issuer internal
       > }
       > ```
-      >
-      > Pratikte: `install.sh`'in Caddyfile üretecine geçici bir `dir` satırı ekleyin ya da testten
-      > önce `/opt/libredb/caddy/Caddyfile`'ı elle düzenleyip Caddy'yi yeniden başlatın. Staging
-      > limitleri çok daha geniştir ve staging sertifikası güvenilmez olduğu için kurulumun
-      > `curl -fsS` kontrolü zaten başarısız olup düşüşü tetikler — test için kusur değil, kolaylık.
 
       | # | Adım | Nerede | Beklenen |
       |---|---|---|---|
-      | (a) | `ls -l /opt/libredb/caddy/Caddyfile.fallback` | VM | Dosya **kurulum tarafından** yazılmış (operatör eli değmeden) |
-      | (b) | `docker logs libredb-caddy 2>&1 \| grep -i -m5 'acme\|challenge\|rate limit'` | VM | Gerçek ACME hatasını gösteriyor (bağlantı hatası mı, rate limit mi) |
-      | (c) | `sudo cp /opt/libredb/caddy/Caddyfile.https /opt/libredb/caddy/Caddyfile && sudo systemctl restart libredb-caddy` | VM | **Erken geri yükleme**, 80 hâlâ kapalıyken: `:443` TLS el sıkışması başarısız olur, `:80` yalnızca ölü bir adrese 308 yönlendirir (yani 80 **yanıt verir** ama site kullanılamaz) |
-      | (d) | `sudo cp /opt/libredb/caddy/Caddyfile.fallback /opt/libredb/caddy/Caddyfile && sudo systemctl restart libredb-caddy` | VM | Çalışan düşüş geri gelir — kaçış kapısı gerçekten çalışıyor |
+      | (a) | `az network nsg rule create -g "$RG" --nsg-name libredb-studio-nsg -n DenyAcme --priority 900 --access Deny --direction Inbound --protocol Tcp --destination-port-ranges 80 --source-address-prefixes Internet` | iş istasyonu | 80 kapanır, HTTP-01 doğrulaması artık imkânsız |
+      | (b) | **Taze bir `dnsLabelPrefix`** ile deployment | iş istasyonu | Deployment **`Succeeded`** — düşüş bir hata değil |
+      | (c) | `curl -fsSk https://<fqdn>/api/db/health` | herhangi bir makine (izinli aralıktan) | `{"status":"healthy",…}` — site **aynı portta** ayakta |
+      | (d) | `curl -fsS https://<fqdn>/api/db/health` (`-k` yok) | aynı makine | **Başarısız** — sertifika güvenilir değil, yani gerçekten internal CA devrede |
+      | (e) | `sudo cat /etc/libredb-studio.info` | VM | "No publicly trusted certificate could be issued yet" notu var, **geri yükleme talimatı yok** |
+      | (f) | `ls /opt/libredb/caddy/` | VM | Yalnızca `Caddyfile`, `data`, `config` — **`.https` / `.fallback` kopyası yok**; kurulum yapılandırmayı hiç yeniden yazmadı |
+      | (g) | `sudo grep -c AUTH_COOKIE_SECURE /etc/libredb-studio.env` | VM | `0` — HTTPS deployment'ında override **yazılmaz**; tarayıcı https konuşuyor, Secure cookie kabul edilir |
+      | (h) | Tarayıcıda `applicationUrl`'i açın, uyarıyı geçip **giriş yapın** | tarayıcı | Giriş çalışır ve **kalıcıdır** (self-signed de https'tir) |
+- [ ] **Kendi kendine onarımı doğrulayın** — kurtarma artık operatörün işi değil, Caddy'nin
+      işi. Elle geri yüklenecek bir şey **olmadığını** kanıtlayın:
 
-      **(e) taze bir hostname'de düşüşü yeniden üretir** — eski gruptaki `DenyAcme`'i silmek
-      işe yaramaz, çünkü yeni deployment'ın NSG'sinde o kural yoktur; ve taze kurulum sertifikayı
-      zaten aldığı için ortada geri yüklenecek bir `Caddyfile.fallback` da olmaz. Sıra şu:
-
-      | # | Adım | Nerede | Not |
+      | # | Adım | Nerede | Beklenen |
       |---|---|---|---|
-      | (e0) | `RG2=libredb-mp-test2-$RANDOM` · `az group create -n "$RG2" -l westeurope` · ardından **taze bir `dnsLabelPrefix` ile** `az deployment group create -g "$RG2" …` | iş istasyonu | Bütçe sıfırlanır. `RG2`'yi burada tanımlayın — (e1) ve (e3) onu kullanıyor, ve **temizlik maddesi de silmek zorunda** |
-      | (e1) | `az network nsg rule create -g "$RG2" --nsg-name libredb-studio-nsg -n DenyAcme --priority 900 --access Deny --direction Inbound --protocol Tcp --destination-port-ranges 80 --source-address-prefixes Internet` | iş istasyonu | 80 kapanır |
-      | (e2) | Cert store'u silip `install.sh`'i **BİR KEZ** koşturun (yukarıdaki VM bloğu) | VM | Düşüş oluşur. ⚠️ Kısıtlı + `Internet` çift koşusunu burada **tekrarlamayın** — taze hostname'in bütçesi de 5/saat, tekrar ederseniz (e4) yine bütçe yüzünden düşer |
-      | (e3) | `az network nsg rule delete -g "$RG2" --nsg-name libredb-studio-nsg -n DenyAcme` | iş istasyonu | 80 tekrar açılır |
-      | (e4) | `sudo cp /opt/libredb/caddy/Caddyfile.https /opt/libredb/caddy/Caddyfile && sudo systemctl restart libredb-caddy` | VM | **Bu kez HTTPS gerçekten gelir** — kurtarma yolu kanıtlanmış olur |
+      | (i) | `az network nsg rule delete -g "$RG" --nsg-name libredb-studio-nsg -n DenyAcme` | iş istasyonu | 80 tekrar açılır |
+      | (j) | `sudo systemctl restart libredb-caddy` — yenileme döngüsünü beklemek yerine tetikler | VM | Caddy issuer zincirini baştan işletir |
+      | (k) | `curl -fsS https://<fqdn>/api/db/health` (`-k` yok, 1-2 dk sonra) | herhangi bir makine | **Artık geçer** — güvenilir sertifika kendiliğinden geldi, tek bir `cp` komutu bile gerekmedi |
+      | (l) | `docker logs libredb-caddy 2>&1 | grep -i -m5 'acme\|challenge\|obtained'` | VM | Başarısız denemeden başarılı issuance'a geçişi gösteriyor |
 - [ ] Sihirbazda HTTPS açıkken kaynak kısıtı alanının **yanında bilgi kutusu** görünüyor
       ("bu kısıt 443'e uygulanır, 80 açık kalır") — portal sandbox'ta doğrulanır
-- [ ] **Her iki grubu da silin** — kurtarma testi ikinci bir grup (`RG2`) açar ve içinde çalışan bir
-      VM, statik bir public IP ve bir managed disk kalır:
-      `az group delete -n "$RG" --yes && az group delete -n "$RG2" --yes` → artık kaynak kalmıyor
+- [ ] **Açtığınız her grubu silin** — düşüş testi taze bir `dnsLabelPrefix` ile ikinci bir
+      deployment açar ve içinde çalışan bir VM, statik bir public IP ve bir managed disk kalır:
+      her grup için `az group delete -n <grup> --yes` → artık kaynak kalmıyor
 
 > **Maliyet:** Standard_B2s ~$0.05/saat. Testler bittiğinde resource group'ları silin.
 
@@ -1996,7 +1115,7 @@ Marketplace'e taşımak için:
 | R2a | Sertifikasyon, VM'in **dışarıdan konteyner imajı indirmesini** sorun etsin | Düşük–Orta | Orta | "Notes for certification"da tüm çıkış uçları tek tek beyan edildi; imajlar **digest ile pinli**; alternatif plan: Faz 7 (VHD tabanlı VM offer) |
 | R2b | Teklif, **"container tabanlı çözüm"** sayılıp solution template kapsamı dışına itilsin (bkz. §2'deki alıntı) | Düşük | **Yüksek** — teklif tipi değişmek zorunda kalır | Hazır cevap: ARM template hiçbir `Microsoft.ContainerService/*` / `Microsoft.ContainerInstance/*` kaynağı oluşturmuyor, Docker VM içi bir uygulama detayı. Bu cümle "Notes for certification"a **önden** yazıldı. Ret gelirse: Faz 7 (VHD) devreye alınır ve Docker imaj içine pişirilir |
 | R3 | **arm-ttk** hataları sertifikasyonu düşürsün | Orta | Düşük (düzeltilebilir) | CI'da zorunlu kapı (§5.7); submit öncesi sıfır kırmızı kuralı |
-| R4 | Let's Encrypt sertifikası alınamıyor (ACME rate limit, geçici LE arızası, müşterinin araya soktuğu güvenlik duvarı) → **Caddy adlandırılmış siteyi `:443`'te sunup `:80`'i oraya yönlendirdiği için uygulama HER İKİ portta erişilemez hale gelir** | **Düşük–Orta** (açık `issuer acme` bloğu yedek CA'yı düşürdüğü için ilk iki sebebe karşı yedeklilik yok — bkz. §5.1'deki "tek CA" satırı) | Orta | Üç katmanlı savunma: (1) **kök sebep kaldırıldı** — HTTPS açıkken NSG'de 80 her zaman `Internet`'e açık kalır (ACME HTTP-01 yalnızca 80'e ihtiyaç duyar), müşterinin kaynak kısıtı 443'e uygulanır; (2) kurulum sonunda `curl --resolve <fqdn>:443:127.0.0.1` ile **gerçek sertifika doğrulanır**; (3) doğrulama 3 dakikada geçmezse Caddyfile `Caddyfile.https` olarak yedeklenir ve **kısıt durumuna göre dallanan** düşüş devreye girer (kısıtsız → `:80` düz HTTP; kısıtlı → `:443` self-signed), `/etc/libredb-studio.info` + MOTD bunu **açıkça** yazar. `enableHttps=false` zaten ayrı bir kaçış yolu |
+| R4 | Let's Encrypt sertifikası alınamıyor (ACME rate limit, geçici LE arızası, müşterinin araya soktuğu güvenlik duvarı) → uygulama **erişilebilir kalır ama sertifikası güvenilmezdir**, tarayıcı uyarı gösterir | **Düşük–Orta** (ilk iki sebep bizim elimizde değil) | **Düşük** — eskiden bu satır "uygulama HER İKİ portta erişilemez" diyordu; `issuer internal` zinciri o sonucu ortadan kaldırdı | Üç katmanlı savunma: (1) **kök sebep kaldırıldı** — HTTPS açıkken NSG'de 80 her zaman `Internet`'e açık kalır (ACME HTTP-01 yalnızca 80'e ihtiyaç duyar), müşterinin kaynak kısıtı 443'e uygulanır; (2) Caddyfile **iki issuer** ilan eder (`issuer acme` → `issuer internal`), yani issuance başarısız olsa bile site **aynı portta, aynı URL'de** ayakta kalır ve kısıt hiç genişlemez — ZeroSSL yedeği artık ücretli bir API anahtarı istediği için (bkz. §5.1 "tek CA") yedeklilik Caddy'nin kendi CA'sından gelir; (3) internal sertifikalar kısa ömürlüdür, her yenileme döngüsü ACME'yi yeniden dener ve kurulum **kendi kendini onarır** — kurulum hangi sertifikanın devrede olduğunu ölçüp `/etc/libredb-studio.info` + MOTD'ye **açıkça** yazar. `enableHttps=false` zaten ayrı bir kaçış yolu |
 | R5 | Logo/ekran görüntüsü boyut ve stil kurallarına takılma | **Yüksek** (mevcut varlıklar uygun değil) | Düşük | §7.3'teki "yapılacak"lar; 1280×720 ve düz-renk logo üretimi Faz 1 içinde tamamlanmalı |
 | R6 | Docker Hub anonim çekme limiti nedeniyle Caddy imajı çekilemez (uygulama imajı GHCR'da olduğu için etkilenmez) | Düşük | Orta | Caddy imajını **digest ile pinle**; kalıcı çözüm: **Caddy imajını GHCR'a mirror'la** (`ghcr.io/libredb/caddy`) — böylece VM'in tek dış bağımlılığı GHCR olur |
 | R7 | "Terms of use" linki eksik (libredb.org'da terms sayfası yok) | Orta | Düşük | **Standard Contract** kullan (§7.2) veya `libredb.org/terms` yayınla |
@@ -2040,15 +1159,20 @@ işaretli, kalanlar hâlâ açık.**
    ancak Caddy'nin direktifsiz halde önce hangi challenge'ı denediği buradan kesin doğrulanamadı.
    İlk gerçek deployment'ta `docker logs libredb-caddy` çıktısında bir TLS-ALPN denemesi görünüyor
    mu, bakın; ayrıca üretilen Caddyfile'ı `caddy validate` ile doğrulayın (§6.1, kontrol 2.9).
-8. **Pinlenmiş Caddy sürümünde ZeroSSL, EAB olmadan kullanılabilir mi?**
-   ✅ *Kapandı olan kısım:* Caddy'nin varsayılan issuer kümesinin bir **çift** olduğu artık
-   dokümante bir gerçek — `acme_ca` global option'ının tanımı: *"Default: **ZeroSSL and Let's
-   Encrypt's production endpoints**."* Yani açık `issuer acme` bloğumuz gerçekten ikinci CA'yı
-   düşürüyor ve §5.1'deki "tek CA — bilinçli bedel" satırı ile R4'ün Düşük–Orta olasılığı
-   doğrulanmış bir temele oturuyor.
-   ❓ *Açık kalan kısım:* yalnızca **yedekliliği geri getirmeye karar verilirse** önemli — ZeroSSL
-   pinlediğiniz sürümde EAB kimlik bilgisi olmadan kullanılabiliyor mu? `caddy adapt` çıktısıyla
-   ölçün (§6.1, kontrol 2.9).
+8. **Yedek CA sorusu — kapandı.**
+   ✅ Caddy'nin varsayılan issuer kümesinin bir **çift** olduğu dokümante bir gerçek (`acme_ca`
+   global option'ının tanımı: *"Default: **ZeroSSL and Let's Encrypt's production endpoints**."*),
+   yani açık `issuer acme` bloğumuz gerçekten ikinci ACME CA'sını düşürüyor.
+   ✅ ZeroSSL'i geri koymak **mümkün değil**: `issuer zerossl` sözdizimi zorunlu bir
+   `<api_key>` argümanı alıyor ve dokümantasyon *"An API key is required and payment may also be
+   required depending on your plan"* diyor (2026-08-07'de doğrulandı). Sıfır-yapılandırma vaadi
+   olan bir teklifte müşteriden API anahtarı istenemez.
+   ✅ Yedeklilik bunun yerine `issuer internal` ile sağlandı — ücretsiz, hesapsız ve ürünün
+   erişilebilirliğini garanti ediyor. Geriye kalan tek bedel tarayıcı uyarısıdır.
+   ❓ *Ölçülmesi gereken tek şey kaldı:* internal sertifikanın yenilenmesinde Caddy issuer
+   listesini **baştan** işletiyor mu (yani ACME'yi tekrar deniyor mu)? Dokümantasyon issuance
+   sırasını garanti ediyor, yenilemede aynı sırayı işlettiğini açıkça yazmıyor. §6.2'nin
+   "kendi kendine onarımı doğrulayın" maddesi tam olarak bunu ölçüyor.
 
 ### Denetimde kapandı
 
@@ -2180,3 +1304,4 @@ tekrarlanmaz (iki listenin zamanla birbirinden ayrılmaması için).
 | 2026-08-05 | **6. denetim turu** (`REVIEW.md` §16): 3 bulgu, **üçü de §6.2'deki test prosedüründe** — ürün tarafında bulgu yok. Kurtarma testi kendi eliyle Let's Encrypt'in saatlik başarısız-doğrulama bütçesini tüketip son adımını yanlış sebeple düşürüyordu; (e) adımı artık **taze bir hostname** üzerinde koşuyor (staging alternatifiyle birlikte). Kurtarma adımları makine etiketli bir tabloya çevrildi ve eksik `nsg rule delete` komutu yazıldı; (c)'nin beklentisi `:80`'in 308 yanıt verdiğini yansıtacak şekilde kesinleştirildi. Simülasyondaki `FQDN` okumasına, boş kalırsa testi sessizce geçirmek yerine durduran bir koruma eklendi. |
 | 2026-08-05 | **7. denetim turu** (`REVIEW.md` §18): 3 bulgu, üçü de bir önceki turun düzeltmesinin içinde. (e) adımı yazıldığı şekliyle uygulanamıyordu (taze deployment'ta `DenyAcme` yok, geri yüklenecek `Caddyfile.fallback` yok) → **e0–e4** olarak düşüşü yeniden üreten bir sıraya çevrildi ve bütçeyi asıl kimin tükettiği düzeltildi. Staging alternatifi global `acme_ca` ile **sessizce üretime giderdi** → dizin `issuer acme { dir … }` bloğunun içine alındı. VM bloğu `sudo bash <<'VMBLOCK'` ile sarıldı (çıplak `exit 1` SSH oturumunu kapatıyordu). Ayrıca **§12 madde 8 daraldı**: Caddy'nin varsayılan issuer çifti (ZeroSSL + LE) artık dokümante bir gerçek, "tek CA" kararı doğrulanmış temele oturdu. |
 | 2026-08-05 | **8. denetim turu** (`REVIEW.md` §20): 3 bulgu, hepsi 🟡 ve üçü de bir önceki turun mekanik artığı — sekiz turda ilk kez **tek bir orta şiddetli bulgu bile yok**. `RG2` (e0)'da tanımlandı ve temizlik maddesi **her iki grubu** silecek şekilde düzeltildi (aksi halde unutulan bir test VM'i fatura üretiyordu); girintili heredoc'un ham dosyadan kopyalanınca sonlanmayacağı uyarısı eklendi; ikinci koşu için `FQDN_OVERRIDE` kancası kondu. **Statik denetim burada kapandı** — bundan sonrasının girdisi doküman değil, `arm-ttk` / portal sandbox / ilk deployment çıktılarıdır. |
+| 2026-08-07 | **PR #307 incelemesi** (CodeQL + Copilot + elle doğrulama): 6 geçerli bulgu, biri bloke edici. (1) Düz HTTP'de giriş **imkânsızdı** — üretimde uygulama auth cookie'sini loopback olmayan her host için `Secure` işaretliyor, tarayıcı `http://` üzerinde o cookie'yi atıyor ve giriş sessizce login sayfasına dönüyordu; `:80` kurulumu artık `AUTH_COOKIE_SECURE=false` yazıyor. (2) **TLS düşüşü bash'ten Caddy'ye taşındı**: `issuer acme` → `issuer internal`. Bunun sonucu olarak `Caddyfile.https` / `Caddyfile.fallback` kopyaları, kısıt-durumuna-göre-dallanan düşüş, `systemctl restart`, geri-yükleme talimatı ve 5. installer argümanı **tamamen silindi** — çünkü üç Copilot bulgusunun (yanlış `applicationUrl`, `0.0.0.0/0`'ı tanımayan `notes`, sihirbazdaki yanlış bilgi kutusu) kökü tek bir şeydi: aynı kararın bash, ARM çıktıları ve sihirbaz metni arasında elle senkron tutulması. Senkron tutulacak durum kalmadı. (3) §5.3–5.5'teki **birebir kaynak kopyaları silindi**, yerine kaynağa işaret kondu: kopya çoktan bayatlamıştı ve onu kopyalayan kişi kaynakta düzeltilmiş bir root-RCE'yi (quote'suz heredoc) geri getirirdi. (4) `parseImageRef` artık OCI tag gramerini doğruluyor; test double'ı URL'yi `startsWith` ile ayırıyor (iki CodeQL uyarısının kaynağı). (5) `createUiDefinition` ↔ `mainTemplate` testi artık **tipleri** de karşılaştırıyor ve yeni bir çapraz test, şablonun geçtiği argüman sayısını installer'ın okuduğu sayıyla eşliyor. **§6.2 düşüş/kurtarma testleri yeniden yazıldı** — artık geri yüklenecek bir şey yok, test edilecek şey kendi kendine onarım. |

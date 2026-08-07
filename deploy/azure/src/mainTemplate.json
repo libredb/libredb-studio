@@ -269,7 +269,7 @@
         "typeHandlerVersion": "2.1",
         "autoUpgradeMinorVersion": true,
         "protectedSettings": {
-          "commandToExecute": "[concat('echo ', variables('installScriptB64'), ' | base64 -d > /opt/libredb-install.sh && chmod 700 /opt/libredb-install.sh && /opt/libredb-install.sh ', base64(parameters('appAdminEmail')), ' ', base64(parameters('appAdminPassword')), ' ', base64(if(parameters('enableHttps'), reference(resourceId('Microsoft.Network/publicIPAddresses', variables('publicIpName'))).dnsSettings.fqdn, ':80')), ' ', base64(parameters('acmeContactEmail')), ' ', base64(parameters('appSourceAddressPrefix')))]"
+          "commandToExecute": "[concat('echo ', variables('installScriptB64'), ' | base64 -d > /opt/libredb-install.sh && chmod 700 /opt/libredb-install.sh && /opt/libredb-install.sh ', base64(parameters('appAdminEmail')), ' ', base64(parameters('appAdminPassword')), ' ', base64(if(parameters('enableHttps'), reference(resourceId('Microsoft.Network/publicIPAddresses', variables('publicIpName'))).dnsSettings.fqdn, ':80')), ' ', base64(parameters('acmeContactEmail')))]"
         }
       }
     }
@@ -281,7 +281,7 @@
     },
     "notes": {
       "type": "string",
-      "value": "[if(parameters('enableHttps'), if(equals(parameters('appSourceAddressPrefix'), 'Internet'), concat('If the TLS certificate could not be issued, the installer serves the application over plain HTTP at http://', reference(resourceId('Microsoft.Network/publicIPAddresses', variables('publicIpName'))).ipAddress, ' and records the reason in /etc/libredb-studio.info on the virtual machine.'), 'If the TLS certificate could not be issued, the installer keeps the application on port 443 with a self-signed certificate so that your source restriction is never widened; your browser will warn you. The reason is recorded in /etc/libredb-studio.info on the virtual machine.'), 'The application is served over plain HTTP. Put a TLS terminating gateway in front of it before exposing it beyond a trusted network.')]"
+      "value": "[if(parameters('enableHttps'), 'The application is always served at the URL above. If a publicly trusted certificate cannot be issued, the reverse proxy serves a self-signed one on the same port instead of moving anywhere else, so the URL and your source restriction both stay valid; your browser will warn you until a trusted certificate arrives, which the proxy keeps retrying on its own. The reason is recorded in /etc/libredb-studio.info on the virtual machine.', 'The application is served over plain HTTP. Put a TLS terminating gateway in front of it before exposing it beyond a trusted network.')]"
     },
     "administratorEmail": { "type": "string", "value": "[parameters('appAdminEmail')]" },
     "sshCommand": {

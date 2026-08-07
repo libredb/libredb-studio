@@ -9,11 +9,9 @@
 #   $2  admin password     (base64)
 #   $3  site address       (base64)  FQDN for HTTPS, or ":80" for plain HTTP
 #   $4  ACME contact       (base64)  may be empty
-#   $5  web source prefix  (base64)  "Internet" or a CIDR — decides how the TLS
-#                                    fallback may degrade without widening access
 set -euo pipefail
 
-# The log stays root-only: it records the admin email and the network scope.
+# The log stays root-only: it records the admin email and the deployment's hostname.
 # Created only when absent so a re-run (VM reimage, extension re-apply) keeps
 # the earlier history; chmod covers logs created by older versions.
 [ -f /var/log/libredb-install.log ] || install -m 600 /dev/null /var/log/libredb-install.log
@@ -27,12 +25,6 @@ APP_ADMIN_EMAIL="$(b64d "${1:-}")"
 APP_ADMIN_PASSWORD="$(b64d "${2:-}")"
 SITE_ADDRESS="$(b64d "${3:-}")"
 ACME_EMAIL="$(b64d "${4:-}")"
-WEB_SOURCE="$(b64d "${5:-}")"
-# Fail CLOSED. This value decides whether the TLS fallback may serve plain HTTP
-# on the internet-open port 80, so a missing or undecodable argument must land
-# on the restrictive branch (self-signed on :443), never on the permissive one.
-# The template always sends a value; anything else is a bug upstream.
-[ -n "$WEB_SOURCE" ] || WEB_SOURCE="restricted"
 
 # Injected by scripts/build-azure-package.mjs at package build time.
 APP_IMAGE="__APP_IMAGE__"
@@ -123,6 +115,12 @@ if [ ! -f /etc/libredb-studio.env ]; then
       printf 'STORAGE_SQLITE_PATH=/app/data/libredb-storage.db\n'
       printf 'PORT=3000\n'
       printf 'HOSTNAME=0.0.0.0\n'
+      # In production the app marks its auth cookie Secure for every non-loopback
+      # host, and a browser reached over plain http discards such a cookie, so the
+      # login would silently loop back to the login page (src/lib/auth.ts,
+      # shouldMarkCookieSecure). Only the ":80" deployment needs the override: the
+      # HTTPS one always speaks https to the browser, self-signed included.
+      if [ "$SITE_ADDRESS" = ":80" ]; then printf 'AUTH_COOKIE_SECURE=false\n'; fi
     } > /etc/libredb-studio.env
   )
   chmod 600 /etc/libredb-studio.env
@@ -139,6 +137,15 @@ fi
   echo ''
   printf '%s {\n' "$SITE_ADDRESS"
   if [ "$SITE_ADDRESS" != ":80" ]; then
+    # Two issuers, tried in order: "This subdirective can be specified multiple
+    # times to configure multiple, redundant issuers; if one fails to issue a
+    # cert, the next one will be tried" (Caddy tls directive docs). So Let's
+    # Encrypt first, and Caddy's own CA as the fallback — which means a failed
+    # issuance never leaves the site dead, never moves the app to another port,
+    # and needs no reconfiguration here. Internal certificates are short-lived
+    # (12h default), so every renewal cycle retries ACME and the deployment
+    # upgrades itself the moment issuance becomes possible again.
+    #
     # Port 443 may be restricted to the customer's address range, so the TLS-ALPN-01
     # challenge (which Let's Encrypt performs against :443) can fail or waste backoff
     # time. Port 80 is open by design, so pin issuance and renewal to HTTP-01 instead
@@ -149,6 +156,7 @@ fi
     if [ -n "$ACME_EMAIL" ]; then printf '\t\t\temail %s\n' "$ACME_EMAIL"; fi
     echo '			disable_tlsalpn_challenge'
     echo '		}'
+    echo '		issuer internal'
     echo '	}'
   fi
   echo '	encode zstd gzip'
@@ -230,140 +238,78 @@ if [ "$ok" -ne 1 ]; then
   exit 1
 fi
 
-# 2) If HTTPS was requested, the certificate must actually exist — otherwise the URL
-#    we are about to advertise is dead on both ports (Caddy serves a named site on
-#    :443 and 308-redirects :80 to it, so a failed certificate breaks BOTH).
+# 2) If HTTPS was requested, SOME certificate must be in place before we advertise the
+#    URL — Caddy serves a named site on :443 and 308-redirects :80 to it, so a site with
+#    no usable certificate is dead on BOTH ports. The issuer chain in the Caddyfile
+#    guarantees one arrives (Let's Encrypt, else Caddy's internal CA); the two probes
+#    below only establish WHICH one, so the notice can be honest about the browser
+#    warning. Nothing here rewrites configuration or moves the app to another port.
 #    --resolve pins the connection to the local Caddy while still validating the
 #    real certificate chain and SNI; Azure does not reliably hairpin a VM's own
 #    public IP, so a plain https://<fqdn> probe from the VM is not a valid test.
-TLS_OK=1
-FALLBACK_MODE=none
+TLS_MODE=none
 if [ "$SITE_ADDRESS" != ":80" ]; then
-  TLS_OK=0
+  TLS_MODE=pending
   for _ in $(seq 1 36); do
-    if curl -fsS --resolve "${SITE_ADDRESS}:443:127.0.0.1" \
+    # -k here: any certificate ends the wait, trusted or self-signed.
+    if curl -fsSk --resolve "${SITE_ADDRESS}:443:127.0.0.1" \
          "https://${SITE_ADDRESS}/api/db/health" >/dev/null 2>&1; then
-      TLS_OK=1
+      TLS_MODE=ready
       break
     fi
     sleep 5
   done
-  if [ "$TLS_OK" -ne 1 ]; then
-    # Degrade rather than leave an unreachable deployment behind — but NEVER degrade in a
-    # way that reaches more people than the customer allowed. Port 80 is open to the
-    # internet by design (ACME), so moving the app onto :80 is only safe when the customer
-    # left port 443 open to the internet too.
-    #
-    # Remaining causes at this point (port 80 is guaranteed reachable by the template):
-    # Let's Encrypt rate limit, a Let's Encrypt outage, or a firewall the customer added.
+  if [ "$TLS_MODE" != "ready" ]; then
+    echo "FATAL: HTTPS did not become reachable within 3 minutes" >&2
     docker logs libredb-caddy --tail 100 || true
-    # Keep the HTTPS config verbatim so restoring it later also restores the ACME
-    # contact address — rewriting only the site line would silently drop `email`.
-    cp /opt/libredb/caddy/Caddyfile /opt/libredb/caddy/Caddyfile.https
-
-    # "0.0.0.0/0" is spelled differently but means exactly what "Internet" means; treat
-    # both as unrestricted. Anything else (a CIDR, VirtualNetwork, AzureLoadBalancer) is
-    # narrower than the internet, so it takes the conservative branch.
-    if [ "$WEB_SOURCE" = "Internet" ] || [ "$WEB_SOURCE" = "0.0.0.0/0" ]; then
-      FALLBACK_MODE=http
-      echo "WARNING: no valid TLS certificate after 3 minutes — falling back to plain HTTP on :80"
-      printf '{\n\tadmin off\n}\n\n:80 {\n\tencode zstd gzip\n\treverse_proxy libredb-studio:3000\n}\n' \
-        > /opt/libredb/caddy/Caddyfile
-    else
-      # The customer restricted port 443. Falling back to :80 would publish the
-      # application to the entire internet. Stay on 443 with a self-signed certificate:
-      # the restriction holds and the traffic stays encrypted. The browser will warn.
-      FALLBACK_MODE=selfsigned
-      echo "WARNING: no valid TLS certificate after 3 minutes — staying on :443 with a self-signed certificate (source range is restricted to ${WEB_SOURCE})"
-      printf '{\n\tadmin off\n}\n\n%s {\n\ttls internal\n\tencode zstd gzip\n\treverse_proxy libredb-studio:3000\n}\n' \
-        "$SITE_ADDRESS" > /opt/libredb/caddy/Caddyfile
-    fi
-
-    # Freeze the working fallback config here, not in the operator's restore hint. If the
-    # operator makes the backup by hand and re-runs the restore block after a failed
-    # attempt, the second run would overwrite the escape hatch with the broken HTTPS
-    # config and there would be no way back short of re-running this installer.
-    cp /opt/libredb/caddy/Caddyfile /opt/libredb/caddy/Caddyfile.fallback
-
-    systemctl restart libredb-caddy
-    # The fallback must be verified exactly like the primary paths: exhausting
-    # this loop and then writing "LibreDB Studio is running" would advertise a
-    # dead URL while the deployment reports Succeeded.
-    fallback_ok=0
-    for _ in $(seq 1 24); do
-      if [ "$FALLBACK_MODE" = "http" ]; then
-        if curl -fsS "http://127.0.0.1/api/db/health" >/dev/null 2>&1; then
-          fallback_ok=1
-          break
-        fi
-      else
-        # -k on purpose: the certificate is deliberately self-signed here.
-        if curl -fsSk --resolve "${SITE_ADDRESS}:443:127.0.0.1" \
-             "https://${SITE_ADDRESS}/api/db/health" >/dev/null 2>&1; then
-          fallback_ok=1
-          break
-        fi
-      fi
-      sleep 5
-    done
-    if [ "$fallback_ok" -ne 1 ]; then
-      echo "FATAL: the ${FALLBACK_MODE} fallback did not become reachable within 2 minutes" >&2
-      docker logs libredb-caddy --tail 100 || true
-      exit 1
-    fi
+    exit 1
+  fi
+  # Same probe WITHOUT -k: curl validates against the VM's system trust store, so a
+  # Let's Encrypt certificate passes and Caddy's internal CA — whose root exists only
+  # inside the container — does not. That is the browser's verdict too.
+  if curl -fsS --resolve "${SITE_ADDRESS}:443:127.0.0.1" \
+       "https://${SITE_ADDRESS}/api/db/health" >/dev/null 2>&1; then
+    TLS_MODE=trusted
+  else
+    TLS_MODE=internal
+    echo "WARNING: no publicly trusted certificate yet — Caddy fell back to its internal (self-signed) CA"
+    docker logs libredb-caddy --tail 100 || true
   fi
 fi
 
 # ------------------------------------------------------------------- notice ---
-# Azure Instance Metadata Service — link-local, no traffic leaves the virtual network.
-PUBLIC_IP="$(curl -fsS -H 'Metadata:true' --noproxy '*' \
-  'http://169.254.169.254/metadata/instance/network/interface/0/ipv4/ipAddress/0/publicIpAddress?api-version=2021-02-01&format=text' 2>/dev/null || true)"
+# An HTTPS deployment is reached by its DNS name, so only the plain-HTTP one has to
+# ask who it is. Azure Instance Metadata Service — link-local, no traffic leaves the
+# virtual network.
+if [ "$SITE_ADDRESS" = ":80" ]; then
+  PUBLIC_IP="$(curl -fsS -H 'Metadata:true' --noproxy '*' \
+    'http://169.254.169.254/metadata/instance/network/interface/0/ipv4/ipAddress/0/publicIpAddress?api-version=2021-02-01&format=text' 2>/dev/null || true)"
+  APP_URL="http://${PUBLIC_IP:-<public-ip>}"
+else
+  APP_URL="https://${SITE_ADDRESS}"
+fi
 
-case "$FALLBACK_MODE" in
-  http)       APP_URL="http://${PUBLIC_IP:-<public-ip>}" ;;
-  selfsigned) APP_URL="https://${SITE_ADDRESS}" ;;
-  *)          if [ "$SITE_ADDRESS" = ":80" ]; then APP_URL="http://${PUBLIC_IP:-<public-ip>}"
-              else APP_URL="https://${SITE_ADDRESS}"; fi ;;
-esac
-
-RESTORE_HINT="     First find out WHY the certificate failed - the answer decides what to do:
+TLS_NOTE=""
+if [ "$TLS_MODE" = "internal" ]; then
+  TLS_NOTE="
+  !! No publicly trusted certificate could be issued yet, so Caddy is serving its own
+     self-signed certificate on the same port. The URL above is the right one and the
+     traffic is encrypted, but your browser will warn you until a trusted certificate
+     arrives. Nothing needs to be restored by hand: self-signed certificates are
+     short-lived by design, and Caddy retries Let's Encrypt on every renewal cycle,
+     switching over on its own as soon as issuance succeeds.
+     Likely causes: a Let's Encrypt rate limit or outage, or a firewall that keeps port
+     80 unreachable. Which one it was:
        docker logs libredb-caddy 2>&1 | grep -i -m5 'acme\|challenge\|rate limit'
      * A connection error or timeout while fetching the challenge means port 80 was not
        reachable from the internet. That is measurable: from ANY machine other than this
        one, run
          curl -sS -o /dev/null -w '%{http_code}\n' --max-time 10 http://${SITE_ADDRESS}/
-       Any HTTP status (404 included) means port 80 is reachable now. A timeout means it
-       is still blocked - do not restore yet.
-     * A rate limit cannot be probed at all. Let's Encrypt limits reset on a rolling
-       weekly window, so the only remedy is to wait for the window to pass.
-     Then restore. The working fallback config is already saved as Caddyfile.fallback, so
-     a premature restore is recoverable:
-       cp /opt/libredb/caddy/Caddyfile.https /opt/libredb/caddy/Caddyfile
-       systemctl restart libredb-caddy
-     If HTTPS still fails, go back with:
-       cp /opt/libredb/caddy/Caddyfile.fallback /opt/libredb/caddy/Caddyfile
-       systemctl restart libredb-caddy"
-
-TLS_NOTE=""
-if [ "$FALLBACK_MODE" = "http" ]; then
-  TLS_NOTE="
-  !! HTTPS was requested but no certificate could be issued, so the application is
-     being served over plain HTTP on port 80. Port 443 was open to the internet in
-     this deployment, so nothing is reachable that was not reachable before.
-     Likely causes: a Let's Encrypt rate limit or outage, or a firewall added after
-     deployment.
-${RESTORE_HINT}
-"
-elif [ "$FALLBACK_MODE" = "selfsigned" ]; then
-  TLS_NOTE="
-  !! HTTPS was requested but no certificate could be issued. Because you restricted
-     access to ${WEB_SOURCE}, the application was NOT moved to port 80 - that port is
-     open to the internet for the certificate challenge, and moving there would have
-     published the application to everyone. It is still served on port 443, inside your
-     allowed range, with a SELF-SIGNED certificate, so your browser will warn you.
-     Likely causes: a Let's Encrypt rate limit or outage, or a firewall added after
-     deployment.
-${RESTORE_HINT}
+       Any HTTP status (404 included) means port 80 is reachable and the next renewal
+       cycle should succeed. A timeout means something still blocks it - that is yours
+       to fix, and nothing else will help until it is.
+     * A rate limit needs no action at all: Let's Encrypt limits reset on a rolling
+       weekly window and the retry happens by itself.
 "
 fi
 

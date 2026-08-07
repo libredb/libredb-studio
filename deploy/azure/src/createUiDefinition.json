@@ -170,7 +170,7 @@
             "visible": "[equals(steps('appConfig').enableHttps, true)]",
             "options": {
               "icon": "Info",
-              "text": "This restriction applies to port 443, where the application is served. Port 80 stays open to the internet so that Let's Encrypt can issue and renew the certificate; it serves the challenge and a redirect to HTTPS. If you restrict the range and no certificate can be issued, the installer keeps the application on port 443 with a self-signed certificate rather than moving it to port 80, so your restriction is never widened."
+              "text": "This restriction applies to port 443, where the application is served. Port 80 stays open to the internet so that Let's Encrypt can issue and renew the certificate; it serves the challenge and a redirect to HTTPS. If no certificate can be issued, the application stays on port 443 with a self-signed certificate instead of moving anywhere else, so your restriction is never widened and the deployment URL stays valid; your browser will warn you until a trusted certificate arrives."
             }
           },
           {
