@@ -440,10 +440,10 @@ export class SQLiteProvider extends SQLBaseProvider {
           sql = "VACUUM";
           break;
         case "analyze":
-          sql = target ? `ANALYZE "${target}"` : "ANALYZE";
+          sql = target ? `ANALYZE ${this.escapeIdentifier(target)}` : "ANALYZE";
           break;
         case "reindex":
-          sql = target ? `REINDEX "${target}"` : "REINDEX";
+          sql = target ? `REINDEX ${this.escapeIdentifier(target)}` : "REINDEX";
           break;
         case "check":
           const checkStmt = this.db!.prepare("PRAGMA integrity_check");

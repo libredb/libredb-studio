@@ -435,6 +435,33 @@ describe("SQLiteProvider", () => {
       expect(result.success).toBe(true);
       expect(result.message).toContain("REINDEX");
     });
+
+    test("analyze does not execute a statement smuggled through the target identifier", async () => {
+      provider = new SQLiteProvider(makeSQLiteConfig());
+      await provider.connect();
+      await provider.query("CREATE TABLE mt (id INTEGER PRIMARY KEY, v TEXT)");
+      await provider.query("CREATE TABLE victim (id INTEGER PRIMARY KEY)");
+
+      // The target is quoted, so a `"` inside it must be doubled rather than closing the
+      // identifier. Unescaped, this becomes: ANALYZE "mt"; DROP TABLE victim; --"
+      await provider.runMaintenance("analyze", 'mt"; DROP TABLE victim; --').catch(() => undefined);
+
+      const tables = await provider.query("SELECT name FROM sqlite_master WHERE type='table' AND name='victim'");
+      expect(tables.rows.length).toBe(1);
+    });
+
+    test("reindex does not execute a statement smuggled through the target identifier", async () => {
+      provider = new SQLiteProvider(makeSQLiteConfig());
+      await provider.connect();
+      await provider.query("CREATE TABLE mt (id INTEGER PRIMARY KEY, v TEXT)");
+      await provider.query("CREATE INDEX idx_mt_v ON mt(v)");
+      await provider.query("CREATE TABLE victim (id INTEGER PRIMARY KEY)");
+
+      await provider.runMaintenance("reindex", 'idx_mt_v"; DROP TABLE victim; --').catch(() => undefined);
+
+      const tables = await provider.query("SELECT name FROM sqlite_master WHERE type='table' AND name='victim'");
+      expect(tables.rows.length).toBe(1);
+    });
   });
 
   // --------------------------------------------------------------------------
