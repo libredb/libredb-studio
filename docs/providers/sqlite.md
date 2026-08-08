@@ -330,7 +330,8 @@ Minimal by nature — SQLite keeps almost no server-style runtime statistics.
 
 ## 8. Maintenance
 
-`runMaintenance(type, target?)` ([sqlite.ts:377](../../src/lib/db/providers/sql/sqlite.ts)):
+`runMaintenance(type, target?)` ([sqlite.ts:377](../../src/lib/db/providers/sql/sqlite.ts)); `analyze`
+and `reindex` targets are quoted via `escapeIdentifier()`:
 
 | Type | Action |
 |------|--------|
@@ -340,7 +341,8 @@ Minimal by nature — SQLite keeps almost no server-style runtime statistics.
 | `check` | `PRAGMA integrity_check` (returns ok / failure detail) |
 
 `getCapabilities().maintenanceOperations = ['vacuum', 'analyze', 'reindex', 'check']`. There is no
-`kill` — SQLite has no sessions to terminate.
+`kill` — SQLite has no sessions to terminate. Quoting the target prevents identifier injection in
+`ANALYZE`/`REINDEX` statements (which cannot use bind parameters for object names).
 
 ---
 
