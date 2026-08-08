@@ -39,6 +39,8 @@ npx @libredb/studio
 
 **http://localhost:3000** を開くだけです。初回起動時に管理者パスワードがログに出力されるので、設定ファイルは要りません。
 
+> localhostでもHTTPSでもない経路（LAN内の `http://192.168.x.x:3000` など）でアクセスする場合は、`AUTH_COOKIE_SECURE=false` を設定してください。設定しないと、ヘルスチェックは正常なのにログインだけが黙って失敗し、ログイン画面に戻され続けます。
+
 Helm、Homebrew、Snap、winget、deb/rpm は[インストール方法](#インストール方法)を参照してください。
 
 ## なぜもう一つデータベースツールを作ったのか
@@ -51,15 +53,15 @@ Helm、Homebrew、Snap、winget、deb/rpm は[インストール方法](#イン�
 
 **データベースは移動しました。** Kubernetesの中へ、マネージドクラウドへ、踏み台越しに辿り着く顧客のVPCへ。**しかし、それを読むツールは移動していません。** 今も重量級のデスクトップアプリで、席数課金で、インストールが前提で、「データベースは1つ、PCは1台、担当者は端末を変えない」という想定の上に立っています。
 
-LibreDB Studioは逆向きです。**ツールがデータのところへ行く。データをツールのところへ持ってくるのではなく。**
+LibreDB Studioは逆向きです。**データをツールのところへ持ってくるのではなく、ツールがデータのところへ行きます。**
 
-これを本気で受け取ると、好みの問題ではなく仕様になります。
+これを真に受けると、好みの問題ではなく仕様になります。
 
 - データも同僚も自分のマシン上にはいないので、エディタはブラウザで動く必要がある。
-- クエリが必要になる障害は、あなたがノートPCを開くまで待ってくれないので、スマートフォンから届く必要がある。
+- クエリが必要になる障害は、あなたがノートPCを開くまで待ってくれないので、スマートフォンにも届く必要がある。
 - データベースの隣に置かれるものはすべてそうやって入るので、コンテナ、Helm chart、Operator、ワンクリックテンプレートという形でデプロイされる必要がある。
 - エディタが最も役に立つ場所はそのデータベースを作った製品の内側なので、埋め込み可能である必要がある。
-- そして、何も出し惜しみしてはならない。席数課金で機能に段階のあるツールを、自分が持つすべての環境に置くことはできません。**シングルサインオンが有料になった時点で、そのツールは「デフォルトでデプロイできるもの」ではなくなります。**
+- 席数課金で機能に段階のあるツールを、自分が持つすべての環境に置くことはできないので、何も出し惜しみしてはならない。**シングルサインオンが有料になった時点で、そのツールは「デフォルトでデプロイできるもの」ではなくなる。**
 
 > MITは気前の良さではなく、このアーキテクチャの要件です。
 
@@ -69,19 +71,19 @@ LibreDB Studioは逆向きです。**ツールがデータのところへ行く�
 
 PostgreSQL · MySQL · Oracle · SQL Server · SQLite · MongoDB · Redis · Couchbase · ClickHouse · Apache Druid
 
-スキーマエクスプローラ、ER図、スキーマ差分、モニタリングが全エンジンで共通です。
+スキーマエクスプローラ、ER図、スキーマ差分、モニタリングは全SQLエンジンで共通です。MongoDBとRedisはSQLエンジンではないため、ER図とスキーマ差分はありません。DruidはHTTP SQL APIに貼り付けられるURIがないためhostとportで設定する二重の例外で、生成されるマイグレーションもDDLを出力せず制約を明示します（Couchbaseのスキーマレスなコレクションも同様）。
 
 | データベース | ドライバ | 機能 |
 | :--- | :--- | :--- |
 | **PostgreSQL** | `pg` | フルSQL IDE、EXPLAIN、トランザクション、クエリキャンセル（`pg_cancel_backend`）、SSL/TLS、SSHトンネル |
 | **MySQL** | `mysql2` | フルSQL IDE、EXPLAIN、トランザクション、クエリキャンセル（`KILL QUERY`）、SSL/TLS、SSHトンネル |
-| **Oracle** | `oracledb`（Thinモード） | フルSQL IDE、`FETCH FIRST N ROWS`、`V$`監視ビュー、`ANALYZE TABLE`、`ALTER INDEX REBUILD` |
-| **SQL Server** | `mssql` (tedious) | フルSQL IDE、`TOP N` / `OFFSET FETCH`、`sys.dm_*` DMV、`UPDATE STATISTICS`、`DBCC CHECKDB`、Azure SQL自動判別 |
+| **Oracle** | `oracledb`（Thinモード） | フルSQL IDE、`FETCH FIRST N ROWS`、`V$`監視ビュー、`ANALYZE TABLE`、`ALTER INDEX REBUILD`、トランザクション |
+| **SQL Server** | `mssql` (tedious) | フルSQL IDE、`TOP N` / `OFFSET FETCH`、`sys.dm_*` DMV、`UPDATE STATISTICS`、`DBCC CHECKDB`、トランザクション、Azure SQL自動判別 |
 | **SQLite** | `bun:sqlite` / `node:sqlite`（実行時選択） | フルSQL IDE、ファイル型・インメモリ型 |
 | **MongoDB** | `mongodb` | JSONクエリエディタ、コレクション操作（find、aggregate、insert、update、delete） |
-| **Couchbase** | HTTP（Query + 管理REST） | フルSQL++ IDE、EXPLAIN、bucket/scope/collectionエクスプローラ、`INFER`による型推論 |
-| **ClickHouse** | HTTP（SQLインターフェース、8123） | フルSQL IDE、JSON EXPLAINツリー、システムテーブルからのスキーマ取得、`OPTIMIZE TABLE` |
-| **Apache Druid** | HTTP（`POST /druid/v2/sql`） | 読み取り専用SQL IDE、ネイティブクエリのEXPLAINツリー、`INFORMATION_SCHEMA`、`sys.*`監視 |
+| **Couchbase** | なし — HTTP（Query + 管理REST） | フルSQL++ IDE、EXPLAIN、bucket/scope/collectionエクスプローラ、`INFER`によるカラム推論 |
+| **ClickHouse** | なし — HTTP（SQLインターフェース、8123） | フルSQL IDE、JSON EXPLAINツリー、システムテーブルからのスキーマ取得、`OPTIMIZE TABLE` |
+| **Apache Druid** | なし — HTTP（`POST /druid/v2/sql`） | 読み取り専用SQL IDE、ネイティブクエリのEXPLAINツリー、`INFORMATION_SCHEMA`、`sys.*`監視 |
 | **Redis** | `ioredis` | コマンドエディタ、キーブラウザ、INFOベースの監視 |
 
 > RedisがこのSQL指向のインターフェースに乗るのは規約によるものです。`getSchema()` はブロッキングしない `SCAN`（**`KEYS *` は使いません**）でキーのプレフィックスを「テーブル」としてまとめ、ヘルスとメトリクスは `INFO`、スロークエリとセッションは `SLOWLOG GET` / `CLIENT LIST` から取得します。
@@ -93,7 +95,7 @@ PostgreSQL · MySQL · Oracle · SQL Server · SQLite · MongoDB · Redis · Cou
 - **マルチタブ**：タブごとに独立した実行状態。
 - **ビジュアルEXPLAIN**：実行計画をグラフで表示し、ボトルネックを特定。
 - **インタラクティブER図**：実際の外部キーをエッジとして描画、カーディナリティ表示、MiniMap、テーブル検索、PNG/SVGエクスポート。ELK.jsによる自動階層レイアウト。
-- **スキーマ差分とマイグレーション**：接続間・スナップショット間の比較を色分け表示し、マイグレーションSQLを自動生成。
+- **スキーマ差分とマイグレーション**：接続間・スナップショット間の比較を色分け表示し、マイグレーションSQLを自動生成（PostgreSQL、MySQL、SQLite、Oracle、SQL Server、およびClickHouseのカラム変更）。
 - **スナップショットタイムライン**：任意の2点をクリックしてスキーマの変遷を比較。
 
 <p align="center">
@@ -108,7 +110,7 @@ PostgreSQL · MySQL · Oracle · SQL Server · SQLite · MongoDB · Redis · Cou
 - **実行計画の解説**：EXPLAINを平易な言葉に翻訳し、改善案を提示。
 - **スロークエリのAutopilot**：スロークエリを分析し、インデックスや書き換えを具体的に提案。
 
-**キーを設定しなければ、このパネルは存在しません。** 既定では何もネットワークの外に出ません。
+**キーを設定しなければ、AIは一切呼び出されません。** 既定では何もネットワークの外に出ません。
 
 <p align="center">
   <img src="public/screenshots/nl2sql.png" alt="NL2SQL" width="100%" />
@@ -146,11 +148,15 @@ PostgreSQL · MySQL · Oracle · SQL Server · SQLite · MongoDB · Redis · Cou
 | :--- | :--- |
 | **Docker** | `docker run -d -p 3000:3000 ghcr.io/libredb/libredb-studio:latest` |
 | **npx** | `npx @libredb/studio` |
-| **Helm** | `helm repo add libredb https://libredb.org/libredb-studio/` |
-| **Homebrew** | `brew install libredb/tap/libredb-studio` |
-| **Snap** | `snap install libredb-studio` |
+| **Helm** | `helm install libredb oci://ghcr.io/libredb/charts/libredb-studio` |
+| **Homebrew** | `brew trust libredb/tap && brew install libredb/tap/libredb-studio` |
+| **Snap** | `sudo snap install libredb-studio` |
 | **winget** | `winget install LibreDB.Studio` |
-| **deb / rpm / AppImage** | [リリースページ](https://github.com/libredb/libredb-studio/releases/latest) |
+| **deb / rpm**（サーバ版、systemdユニット同梱） | [リリースページ](https://github.com/libredb/libredb-studio/releases/latest) |
+| **デスクトップアプリ**（AppImage / deb） | [リリースページ](https://github.com/libredb/libredb-studio/releases/latest) — ネイティブウィンドウで、サーバはローカルのサイドカーとして動作し、ログイン画面はありません。**上のサーバ版とは別物です。** |
+| **デスクトップアプリ**（Flatpak、サンドボックス） | `flatpak --user remote-add --if-not-exists flatpark https://dl.flatpark.org/flatpark.flatpakrepo`<br>`flatpak --user install flatpark org.libredb.Studio` |
+
+`brew trust` は最初の一度だけ必要です（Homebrew 6+。「unknown command」と出る場合は先に `brew update`）。Docker、Helm、Snapはゼロコンフィグで、初回起動時に生成される管理者パスワードはそれぞれコンテナログ、Podログ、`sudo snap logs libredb-studio` に出力されます。チャネルごとの詳細——コマンド、設定、systemdの使い方、Dockerイメージのタグ体系——は [`docs/DISTRIBUTION.md`](docs/DISTRIBUTION.md) にあります。
 
 ワンクリックテンプレート：Railway、Dokploy、CapRover、Sealos、Kubero、Cosmos、DigitalOcean Marketplace、Unraid Community Apps、Render Blueprint、Fly.io、Koyeb。一覧は [`docs/CHANNELS.md`](docs/CHANNELS.md) にあります。
 

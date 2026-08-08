@@ -27,7 +27,7 @@
 
 ## 快速开始
 
-一条命令跑起一个完整的 SQL IDE，不用克隆，不用构建：
+一条命令启动完整的 SQL IDE，不用克隆，不用构建：
 
 ```bash
 # Docker（推荐）
@@ -38,6 +38,8 @@ npx @libredb/studio
 ```
 
 然后打开 **http://localhost:3000**。首次启动时管理员密码会打印到日志里，无需任何配置文件。
+
+> 如果浏览器不是通过 localhost 或 HTTPS 访问（例如局域网里的 `http://192.168.x.x:3000`），还需要设置 `AUTH_COOKIE_SECURE=false`。否则健康检查一切正常，登录却会静默失败并不断跳回登录页。
 
 需要 Helm、Homebrew、Snap、winget 或 deb/rpm？见下面的[安装方式](#安装方式)。
 
@@ -69,19 +71,19 @@ LibreDB Studio 走另一条路：**工具去找数据，而不是把数据搬来
 
 PostgreSQL · MySQL · Oracle · SQL Server · SQLite · MongoDB · Redis · Couchbase · ClickHouse · Apache Druid
 
-同一套 schema 浏览器、ER 图、schema 对比和监控面板，横跨全部引擎。
+所有 SQL 引擎共用同一套 schema 浏览器、ER 图、schema 对比和监控面板。MongoDB 和 Redis 不属于 SQL 引擎，没有 ER 图和 schema 对比；Druid 是双重例外：它的 HTTP SQL 接口没有可粘贴的 URI，只能按 host/port 配置，而且生成的迁移会直接说明限制，而不是对一个 SQL 里根本没有列变更语句的引擎硬输出 DDL——Couchbase 的 schemaless collection 同理。
 
 | 数据库 | 驱动 | 能力 |
 | :--- | :--- | :--- |
 | **PostgreSQL** | `pg` | 完整 SQL IDE、EXPLAIN 执行计划、事务、查询取消（`pg_cancel_backend`）、SSL/TLS、SSH 隧道 |
 | **MySQL** | `mysql2` | 完整 SQL IDE、EXPLAIN、事务、查询取消（`KILL QUERY`）、SSL/TLS、SSH 隧道 |
-| **Oracle** | `oracledb`（Thin 模式） | 完整 SQL IDE、`FETCH FIRST N ROWS` 分页、`V$` 监控视图、`ANALYZE TABLE`、`ALTER INDEX REBUILD` |
-| **SQL Server** | `mssql` (tedious) | 完整 SQL IDE、`TOP N` / `OFFSET FETCH` 分页、`sys.dm_*` DMV、`UPDATE STATISTICS`、`DBCC CHECKDB`、自动识别 Azure SQL |
+| **Oracle** | `oracledb`（Thin 模式） | 完整 SQL IDE、`FETCH FIRST N ROWS` 分页、`V$` 监控视图、`ANALYZE TABLE`、`ALTER INDEX REBUILD`、事务 |
+| **SQL Server** | `mssql` (tedious) | 完整 SQL IDE、`TOP N` / `OFFSET FETCH` 分页、`sys.dm_*` DMV、`UPDATE STATISTICS`、`DBCC CHECKDB`、事务、自动识别 Azure SQL |
 | **SQLite** | `bun:sqlite` / `node:sqlite`（运行时自选） | 完整 SQL IDE，文件型或内存型数据库 |
 | **MongoDB** | `mongodb` | JSON 查询编辑器，集合操作（find、aggregate、insert、update、delete） |
-| **Couchbase** | HTTP（Query + 管理 REST） | 完整 SQL++ IDE、EXPLAIN、bucket/scope/collection 浏览器、`INFER` 字段推断 |
-| **ClickHouse** | HTTP（SQL 接口，8123 端口） | 完整 SQL IDE、JSON EXPLAIN 树、系统表 schema 自省、`OPTIMIZE TABLE` |
-| **Apache Druid** | HTTP（`POST /druid/v2/sql`） | 只读 SQL IDE、原生查询 EXPLAIN 树、`INFORMATION_SCHEMA` 自省、`sys.*` 监控 |
+| **Couchbase** | 无 — HTTP（Query + 管理 REST） | 完整 SQL++ IDE、EXPLAIN、bucket/scope/collection 浏览器、`INFER` 字段推断 |
+| **ClickHouse** | 无 — HTTP（SQL 接口，8123 端口） | 完整 SQL IDE、JSON EXPLAIN 树、系统表 schema 自省、`OPTIMIZE TABLE` |
+| **Apache Druid** | 无 — HTTP（`POST /druid/v2/sql`） | 只读 SQL IDE、原生查询 EXPLAIN 树、`INFORMATION_SCHEMA` 自省、`sys.*` 监控 |
 | **Redis** | `ioredis` | 命令编辑器、键浏览器、基于 INFO 的监控 |
 
 > Redis 之所以能套进这套面向 SQL 的接口，靠的是一层约定。`getSchema()` 用非阻塞的 `SCAN`（**绝不用 `KEYS *`**）把键前缀归类成“表”，健康与指标来自 `INFO`，慢查询和会话来自 `SLOWLOG GET` / `CLIENT LIST`。
@@ -93,7 +95,7 @@ PostgreSQL · MySQL · Oracle · SQL Server · SQLite · MongoDB · Redis · Cou
 - **多标签工作区**：每个标签独立的执行状态。
 - **可视化 EXPLAIN**：图形化执行计划，定位性能瓶颈。
 - **交互式 ER 图**：真实外键连线、基数标注、MiniMap、表搜索、PNG/SVG 导出，ELK.js 自动分层布局。
-- **Schema 对比与迁移**：跨连接或跨快照对比，按颜色区分新增/删除/修改，并自动生成迁移 SQL。
+- **Schema 对比与迁移**：跨连接或跨快照对比，按颜色区分新增/删除/修改，并自动生成迁移 SQL（PostgreSQL、MySQL、SQLite、Oracle、SQL Server，以及 ClickHouse 的列变更）。
 - **快照时间线**：横向时间轴，点任意两点即可对比 schema 的演化。
 
 <p align="center">
@@ -108,7 +110,7 @@ PostgreSQL · MySQL · Oracle · SQL Server · SQLite · MongoDB · Redis · Cou
 - **执行计划翻译**：把 EXPLAIN 翻成人话，并给出优化建议。
 - **慢查询 Autopilot**：自动分析慢查询，给出可落地的索引和改写建议。
 
-**不配置密钥，这个面板根本不存在**，默认不会有任何数据离开你的网络。
+**不配置密钥，AI 就不会发起任何调用**，默认不会有任何数据离开你的网络。
 
 <p align="center">
   <img src="public/screenshots/nl2sql.png" alt="NL2SQL" width="100%" />
@@ -146,11 +148,15 @@ PostgreSQL · MySQL · Oracle · SQL Server · SQLite · MongoDB · Redis · Cou
 | :--- | :--- |
 | **Docker** | `docker run -d -p 3000:3000 ghcr.io/libredb/libredb-studio:latest` |
 | **npx** | `npx @libredb/studio` |
-| **Helm** | `helm repo add libredb https://libredb.org/libredb-studio/` |
-| **Homebrew** | `brew install libredb/tap/libredb-studio` |
-| **Snap** | `snap install libredb-studio` |
+| **Helm** | `helm install libredb oci://ghcr.io/libredb/charts/libredb-studio` |
+| **Homebrew** | `brew trust libredb/tap && brew install libredb/tap/libredb-studio` |
+| **Snap** | `sudo snap install libredb-studio` |
 | **winget** | `winget install LibreDB.Studio` |
-| **deb / rpm / AppImage** | [Releases 页面](https://github.com/libredb/libredb-studio/releases/latest) |
+| **deb / rpm**（服务端，自带 systemd 服务） | [Releases 页面](https://github.com/libredb/libredb-studio/releases/latest) |
+| **桌面应用**（AppImage / deb） | [Releases 页面](https://github.com/libredb/libredb-studio/releases/latest) — 原生窗口，服务端作为本地 sidecar 运行，没有登录页。**不是上面那个服务端包。** |
+| **桌面应用**（Flatpak，沙箱） | `flatpak --user remote-add --if-not-exists flatpark https://dl.flatpark.org/flatpark.flatpakrepo`<br>`flatpak --user install flatpark org.libredb.Studio` |
+
+`brew trust` 只需执行一次（要求 Homebrew 6+；如果提示未知命令，先 `brew update`）。Docker、Helm 和 Snap 都是零配置的：首次启动生成的管理员密码分别打印在容器日志、Pod 日志和 `sudo snap logs libredb-studio` 里。每个渠道的完整说明——命令、配置、systemd 用法、Docker 镜像标签模型——见 [`docs/DISTRIBUTION.md`](docs/DISTRIBUTION.md)。
 
 一键部署模板：Railway、Dokploy、CapRover、Sealos、Kubero、Cosmos、DigitalOcean Marketplace、Unraid Community Apps、Render Blueprint、Fly.io、Koyeb。完整清单见 [`docs/CHANNELS.md`](docs/CHANNELS.md)。
 
