@@ -74,16 +74,25 @@ When using LibreDB Studio, please follow these security best practices:
 
 #### Authentication
 - LibreDB Studio uses JWT-based authentication
-- Passwords are hashed using industry-standard algorithms
+- Credentials for the built-in local login are supplied through the `ADMIN_PASSWORD` and
+  `USER_PASSWORD` environment variables and are compared directly; they are not stored in a
+  database and are not hashed. Protect them the way you protect any other server environment
+  variable, or use the OIDC provider instead.
 - Session tokens expire after a configurable period
 
 #### Database Connections
-- Connection strings are stored encrypted in browser localStorage
-- Database credentials are never logged or exposed in API responses
+- Connection details, including database passwords and SSH private keys, are stored unencrypted
+  in browser `localStorage`, and in the server-side store when `STORAGE_PROVIDER` is set to
+  `sqlite` or `postgres`. Treat both as secret material: anyone who can read that browser
+  profile or that database can read every configured credential.
+- Database credentials are not written to application logs, but they are returned in plaintext
+  to the authenticated owner through storage API responses (for example `GET /api/storage`),
+  because the app must be able to redisplay a saved connection's password for editing and reuse
 - Connection pooling is used to prevent connection exhaustion
 
 #### API Security
-- All API endpoints require authentication (except `/api/auth/login`)
+- All API endpoints require authentication except `/api/auth/*`, `/api/db/health` (for load
+  balancer probes) and `/api/storage/config` (which returns the storage mode only)
 - SQL injection protection is handled by parameterized queries
 - Rate limiting should be implemented at the infrastructure level
 
