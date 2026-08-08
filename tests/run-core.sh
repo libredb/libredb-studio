@@ -31,7 +31,7 @@ for arg in "$@"; do
 done
 
 # Deterministic, sorted list of every core test file.
-mapfile -t FILES < <(find tests/unit tests/api tests/integration tests/hooks \
+mapfile -t FILES < <(find tests/unit tests/api tests/integration tests/hooks tests/security \
   -type f \( -name '*.test.ts' -o -name '*.test.tsx' \) | sort)
 
 if [ "${#FILES[@]}" -eq 0 ]; then
