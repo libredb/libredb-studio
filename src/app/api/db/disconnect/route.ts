@@ -1,8 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { removeProvider } from "@/lib/db/factory";
+import { requireSession } from "@/lib/api/require-session";
 import { logger } from "@/lib/logger";
 
 export async function POST(req: NextRequest) {
+  const unauthorized = await requireSession();
+  if (unauthorized) return unauthorized;
+
   try {
     const { connectionId } = await req.json();
 

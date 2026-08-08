@@ -60,6 +60,18 @@ mock.module("@/lib/logger", () => ({
   },
 }));
 
+const mockGetSession = mock(
+  async (): Promise<{ role: string; username: string } | null> => ({ role: "admin", username: "admin" }),
+);
+
+mock.module("@/lib/auth", () => ({
+  getSession: mockGetSession,
+  signJWT: mock(async () => "mock-token"),
+  verifyJWT: mock(async () => null),
+  login: mock(async () => {}),
+  logout: mock(async () => {}),
+}));
+
 const { POST } = await import("@/app/api/db/disconnect/route");
 
 beforeEach(() => {

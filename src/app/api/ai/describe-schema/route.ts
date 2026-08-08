@@ -1,8 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createLLMProvider } from "@/lib/llm";
 import { createErrorResponse } from "@/lib/api/errors";
+import { requireSession } from "@/lib/api/require-session";
 
 export async function POST(req: NextRequest) {
+  const unauthorized = await requireSession();
+  if (unauthorized) return unauthorized;
+
   try {
     const { schemaContext, databaseType, mode } = await req.json();
 

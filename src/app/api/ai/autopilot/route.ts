@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { createLLMProvider } from "@/lib/llm";
 import { createErrorResponse } from "@/lib/api/errors";
+import { requireSession } from "@/lib/api/require-session";
 
 function buildAutopilotPrompt(databaseType: string): string {
   return `You are a Database Performance Autopilot for ${databaseType || "PostgreSQL"}. You combine slow query analysis, execution plans, table statistics, and index usage into a comprehensive optimization report.
@@ -44,6 +45,9 @@ GUIDELINES:
 }
 
 export async function POST(req: NextRequest) {
+  const unauthorized = await requireSession();
+  if (unauthorized) return unauthorized;
+
   try {
     const { slowQueries, indexStats, tableStats, performanceMetrics, overview, schemaContext, databaseType } =
       await req.json();

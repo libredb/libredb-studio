@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { createLLMProvider } from "@/lib/llm";
 import { createErrorResponse } from "@/lib/api/errors";
+import { requireSession } from "@/lib/api/require-session";
 
 function buildIndexAdvisorPrompt(databaseType: string): string {
   return `You are a Database Index Optimization Expert for ${databaseType || "PostgreSQL"}.
@@ -53,6 +54,9 @@ GUIDELINES:
 }
 
 export async function POST(req: NextRequest) {
+  const unauthorized = await requireSession();
+  if (unauthorized) return unauthorized;
+
   try {
     const { slowQueries, indexStats, tableStats, schemaContext, databaseType } = await req.json();
 

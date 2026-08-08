@@ -75,6 +75,18 @@ mock.module("@/lib/llm/types", () => ({
   LLMStreamError: MockLLMStreamError,
 }));
 
+const mockGetSession = mock(
+  async (): Promise<{ role: string; username: string } | null> => ({ role: "admin", username: "admin" }),
+);
+
+mock.module("@/lib/auth", () => ({
+  getSession: mockGetSession,
+  signJWT: mock(async () => "mock-token"),
+  verifyJWT: mock(async () => null),
+  login: mock(async () => {}),
+  logout: mock(async () => {}),
+}));
+
 // ─── Import route handler AFTER mocking ─────────────────────────────────────
 
 const { POST } = await import("@/app/api/ai/describe-schema/route");
