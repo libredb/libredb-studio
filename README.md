@@ -189,8 +189,8 @@ And nothing is held back. Single sign-on, ER diagrams, the AI assistant and the 
 
 | Database | Driver | Features |
 | :--- | :--- | :--- |
-| **PostgreSQL** | `pg` | Full SQL IDE, EXPLAIN plans, transactions, query cancellation (`pg_cancel_backend`), SSL/TLS, SSH tunnel |
-| **MySQL** | `mysql2` | Full SQL IDE, EXPLAIN plans, transactions, query cancellation (`KILL QUERY`), SSL/TLS, SSH tunnel |
+| **PostgreSQL** | `pg` | Full SQL IDE, EXPLAIN plans, transactions, query cancellation (`pg_cancel_backend`) |
+| **MySQL** | `mysql2` | Full SQL IDE, EXPLAIN plans, transactions, query cancellation (`KILL QUERY`) |
 | **Oracle** | `oracledb` (Thin mode) | Full SQL IDE, `FETCH FIRST N ROWS` pagination, `V$` monitoring views, `ANALYZE TABLE`, `ALTER INDEX REBUILD`, transactions |
 | **SQL Server** | `mssql` (tedious) | Full SQL IDE, `TOP N` / `OFFSET FETCH` pagination, `sys.dm_*` DMVs, `UPDATE STATISTICS`, `DBCC CHECKDB`, transactions, Azure SQL auto-detect |
 | **SQLite** | `bun:sqlite` / `node:sqlite` (runtime-selected) | Full SQL IDE, file-based or in-memory databases (server-local file) |
@@ -199,6 +199,8 @@ And nothing is held back. Single sign-on, ER diagrams, the AI assistant and the 
 | **ClickHouse** | none — HTTP (SQL interface, port 8123) | Full SQL IDE, JSON EXPLAIN plan trees, system-table schema introspection, `OPTIMIZE TABLE` / table statistics / query kill maintenance |
 | **Apache Druid** | none — HTTP (`POST /druid/v2/sql`, Router port 8888 or Broker 8082) | Read-only SQL IDE, native-query EXPLAIN plan trees, `INFORMATION_SCHEMA` datasource introspection, `sys.*` monitoring (segments, servers, ingestion tasks). Druid SQL has no `UPDATE`, no `DELETE` and no `CREATE TABLE`, and nothing it can do counts as a maintenance operation — a datasource changes through ingestion, not from the editor |
 | **Redis** | `ioredis` | Command editor, key browser, INFO-based monitoring |
+
+> **Transport security is cross-cutting, not per engine.** An SSH tunnel is opened before the provider connects and the connection is rewritten to the local endpoint, so it works for every engine except SQLite, which has no host or port. SSL/TLS is wired for PostgreSQL, MySQL, SQL Server, Couchbase, ClickHouse and Druid; Oracle, MongoDB and Redis currently connect without it even though the connection dialog offers the panel.
 
 > All SQL databases share: schema explorer, ER diagrams, schema diff & migration, display masking (preview), monitoring dashboard, and connection string import. Druid is the exception twice over: its HTTP SQL API has no URI convention to paste, so it is configured by host and port only, and a generated migration names the limitation instead of emitting column-modification DDL against an engine whose SQL contains none — as it also does for Couchbase's schemaless collections.
 

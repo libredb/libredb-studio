@@ -138,6 +138,21 @@ and oracledb have no pool-level `error` event, and each `connect()` now records 
 MongoDB, Redis, ClickHouse, Druid or Couchbase clients expose a fatal `error` event that can reach
 `uncaughtException` is an open question, not a claim.
 
+### D2. Oracle, MongoDB and Redis ignore the SSL/TLS panel the connection dialog shows them
+
+`ConnectionModal.tsx` gates the SSL/TLS and SSH tunnel panels on `!isFileBased(type)`, so every
+engine except SQLite renders both. The tunnel really is universal - `factory.ts` opens it and
+rewrites host/port before `createDatabaseProvider`, so the provider never knows. SSL/TLS is not:
+`grep -rln ssl src/lib/db/providers/` hits postgres, mysql, mssql, couchbase, clickhouse and druid
+only. `oracle.ts`, `mongodb.ts` and `redis.ts` never read `config.ssl`, so a user who sets the mode
+to `require` on those three gets a plaintext connection and no warning.
+
+Found while reviewing #317. The READMEs now state the real scope, which closes the documentation
+half; the UI half is still open. Either wire the three providers (oracledb supports TLS through the
+connect string, `mongodb` through `tls` options, `ioredis` through `tls`) or hide the panel for
+engines that cannot honour it - silently accepting a security setting and dropping it is the worst
+of the three options.
+
 ---
 
 ## Value interpolation

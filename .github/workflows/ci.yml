@@ -43,6 +43,12 @@ jobs:
         env:
           CHART_SYNC_STRICT: "1"
 
+      - name: Localized README drift guard (#317)
+        # Same reasoning as the chart guard above: inside the required check so
+        # it actually gates. README_zh.md and README_ja.md restate README.md's
+        # engine table and install commands, and nothing else notices drift.
+        run: bun run readme:check
+
       - name: Check formatting (Biome)
         run: bun run format
 
