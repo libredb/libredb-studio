@@ -78,7 +78,8 @@ When using LibreDB Studio, please follow these security best practices:
   `USER_PASSWORD` environment variables and are compared directly; they are not stored in a
   database and are not hashed. Protect them the way you protect any other server environment
   variable, or use the OIDC provider instead.
-- Session tokens expire after a configurable period
+- Session tokens (the JWT and its cookie) have a fixed 24-hour lifetime; this is not configurable
+  today
 
 #### Database Connections
 - Connection details, including database passwords and SSH private keys, are stored unencrypted
@@ -93,7 +94,11 @@ When using LibreDB Studio, please follow these security best practices:
 #### API Security
 - All API endpoints require authentication except `/api/auth/*`, `/api/db/health` (for load
   balancer probes) and `/api/storage/config` (which returns the storage mode only)
-- SQL injection protection is handled by parameterized queries
+- Running arbitrary SQL against your connected database is the product's purpose, not an
+  injection surface. Where the application builds SQL of its own — generated starter queries,
+  schema browsing, inline cell edits — values are bound as parameters and identifiers such as
+  table and column names are quoted for the target dialect, since SQL has no parameter syntax
+  for identifiers
 - Rate limiting should be implemented at the infrastructure level
 
 #### AI/LLM Integration
