@@ -141,17 +141,30 @@ MongoDB, Redis, ClickHouse, Druid or Couchbase clients expose a fatal `error` ev
 ### D2. Oracle, MongoDB and Redis ignore the SSL/TLS panel the connection dialog shows them
 
 `ConnectionModal.tsx` gates the SSL/TLS and SSH tunnel panels on `!isFileBased(type)`, so every
-engine except SQLite renders both. The tunnel really is universal - `factory.ts` opens it and
-rewrites host/port before `createDatabaseProvider`, so the provider never knows. SSL/TLS is not:
-`grep -rln ssl src/lib/db/providers/` hits postgres, mysql, mssql, couchbase, clickhouse and druid
-only. `oracle.ts`, `mongodb.ts` and `redis.ts` never read `config.ssl`, so a user who sets the mode
-to `require` on those three gets a plaintext connection and no warning.
+engine except the two file-based ones (`sqlite` and the embedded `libredb`, both of which declare
+`connectionFields: ["database"]`) renders both. The defect is narrow and specific: **the visible
+`config.ssl` selection is not enforced by three providers.** `grep -rln ssl src/lib/db/providers/`
+hits postgres, mysql, mssql, couchbase, clickhouse and druid; `oracle.ts`, `mongodb.ts` and
+`redis.ts` never read it. A user who sets the mode to `require` on those three gets no error and no
+guarantee - the connection may still be encrypted, but only if the connection string says so
+(`oracle.ts:266` passes a supplied `connectionString` through verbatim, and the MongoDB driver
+honours `tls=true` in the URI). Silently accepting a security setting and dropping it is the
+problem, not plaintext per se.
 
-Found while reviewing #317. The READMEs now state the real scope, which closes the documentation
-half; the UI half is still open. Either wire the three providers (oracledb supports TLS through the
-connect string, `mongodb` through `tls` options, `ioredis` through `tls`) or hide the panel for
-engines that cannot honour it - silently accepting a security setting and dropping it is the worst
-of the three options.
+Two related scope facts worth keeping straight, both established while correcting an earlier
+overstatement of this entry:
+
+- The SSH tunnel is genuinely provider-independent - `factory.ts:229` opens it and rewrites
+  host/port before `createDatabaseProvider` - but it is skipped when either is absent. Connection
+  string mode (`showConnectionStringToggle`: mongodb, couchbase, clickhouse) clears both in
+  `use-connection-form.ts:173-179`, so those connections are not tunnelled even though the panel is
+  offered.
+- "Every engine except SQLite" is wrong twice over; see the file-based pair above.
+
+Found while reviewing #317, corrected after Copilot's review of #318. The READMEs now state the
+real scope, which closes the documentation half; the UI half is still open. Either wire the three
+providers (oracledb supports TLS through the connect string, `mongodb` through `tls` options,
+`ioredis` through `tls`) or hide the panel where it cannot be honoured.
 
 ---
 

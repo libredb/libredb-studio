@@ -111,13 +111,28 @@ describe("extraction", () => {
   });
 
   test("commandSpans collects both commands from a two-command cell", () => {
-    const table = { header: ["a"], rows: [["`one`<br>`two`"]] };
+    const table = { header: ["a", "b"], rows: [["**Flatpak**", "`one`<br>`two`"]] };
     expect(commandSpans(table)).toEqual(["one", "two"]);
   });
 
   test("commandSpans returns nothing for a link-only row", () => {
-    const table = { header: ["a"], rows: [["[Releases](https://example.com)"]] };
+    const table = { header: ["a", "b"], rows: [["**deb**", "[Releases](https://example.com)"]] };
     expect(commandSpans(table)).toEqual([]);
+  });
+
+  test("commandSpans ignores code-formatted notes outside the command column", () => {
+    // README.md's install table has a Notes column carrying `brew update` and
+    // `sudo snap logs libredb-studio`. Those are not install commands, and
+    // admitting them would let a localized file put a note in its Command cell.
+    const table = {
+      header: ["Channel", "Command", "Notes"],
+      rows: [["**Homebrew**", "`brew install x`", "run `brew update` first"]],
+    };
+    expect(commandSpans(table)).toEqual(["brew install x"]);
+  });
+
+  test("commandSpans skips a row with no command column at all", () => {
+    expect(commandSpans({ header: ["a", "b"], rows: [["only one cell"]] })).toEqual([]);
   });
 });
 
@@ -150,6 +165,17 @@ describe("checkReadmes", () => {
     const violations = checkReadmes({ canonical, localized: [{ name: "README_zh.md", text: localized }] });
     expect(violations).toHaveLength(1);
     expect(violations[0]).toContain("snap install libredb-studio");
+  });
+
+  test("rejects a localized command that only appears in README.md's Notes column", () => {
+    const withNotes =
+      `# Title\n\n${engineTable(ENGINES)}\n\n` +
+      "| Channel | Command | Notes |\n| :--- | :--- | :--- |\n" +
+      `| **Docker** | \`${COMMANDS[0]}\` | run \`brew update\` first |\n`;
+    const localized = readme(ENGINES, [COMMANDS[0], "brew update"]);
+    const violations = checkReadmes({ canonical: withNotes, localized: [{ name: "README_zh.md", text: localized }] });
+    expect(violations).toHaveLength(1);
+    expect(violations[0]).toContain("brew update");
   });
 
   test("reports every localized file, not just the first", () => {

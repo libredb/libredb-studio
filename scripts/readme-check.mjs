@@ -84,14 +84,25 @@ export function engineNames(table) {
   return table.rows.map((r) => /^\*\*(.+?)\*\*$/.exec(r[0] ?? "")?.[1]).filter((name) => name !== undefined);
 }
 
-/** Every code span in the table, in document order. */
-export function commandSpans(table) {
+/**
+ * Every code span in the table's command column, in document order.
+ *
+ * Restricted to one column deliberately. README.md's install table carries a
+ * Notes column whose code spans (`brew update`, `sudo snap logs
+ * libredb-studio`, `libredb-studio.exe`) are not install commands; admitting
+ * them to the canonical set would let a localized file put a note in its
+ * Command cell and still pass. Both table shapes - Channel/Command/Notes in
+ * README.md, and the two-column translations - put the command in column 1.
+ */
+export function commandSpans(table, columnIndex = 1) {
   const spans = [];
   for (const row of table.rows) {
-    for (const cell of row) {
-      for (const match of cell.matchAll(/`([^`]+)`/g)) {
-        spans.push(match[1]);
-      }
+    const cell = row[columnIndex];
+    if (cell === undefined) {
+      continue;
+    }
+    for (const match of cell.matchAll(/`([^`]+)`/g)) {
+      spans.push(match[1]);
     }
   }
   return spans;

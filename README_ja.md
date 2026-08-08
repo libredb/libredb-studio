@@ -86,7 +86,7 @@ PostgreSQL · MySQL · Oracle · SQL Server · SQLite · MongoDB · Redis · Cou
 | **Apache Druid** | ドライバなし、HTTPのみ（`POST /druid/v2/sql`） | 読み取り専用SQL IDE、ネイティブクエリのEXPLAINツリー、`INFORMATION_SCHEMA`、`sys.*`監視 |
 | **Redis** | `ioredis` | コマンドエディタ、キーブラウザ、INFOベースの監視 |
 
-> **トランスポート層のセキュリティはエンジンごとではなく横断的な機能です。** SSHトンネルはproviderが接続する前に張られ、接続先はローカルのエンドポイントに書き換えられます。したがってhostとportを持たないSQLite以外のすべてのエンジンで利用できます。SSL/TLSは現在PostgreSQL、MySQL、SQL Server、Couchbase、ClickHouse、Druidで有効です。Oracle、MongoDB、Redisは接続ダイアログにパネルが表示されるものの、実際の接続にはまだ適用されていません。
+> **トランスポート層のセキュリティはエンジンごとではなく横断的な機能です。** SSHトンネルはproviderが接続する前に張られ、接続先はローカルのエンドポイントに書き換えられます。つまりエンジンに依存せず、hostとportが設定された接続であれば適用されます。接続文字列で入力した接続（MongoDB、Couchbase、ClickHouseで選択できます）はhostもportも持たないためトンネルされません。SQLiteも同様です。SSL/TLSパネルが実際に効くのはPostgreSQL、MySQL、SQL Server、Couchbase、ClickHouse、Druidです。Oracle、MongoDB、Redisはこの設定を無視するため、この3つで暗号化されるかどうかはダイアログの選択ではなく接続文字列の内容次第になります。
 
 > RedisがこのSQL指向のインターフェースに乗るのは規約によるものです。`getSchema()` はブロッキングしない `SCAN`（**`KEYS *` は使いません**）でキーのプレフィックスを「テーブル」としてまとめ、ヘルスとメトリクスは `INFO`、スロークエリとセッションは `SLOWLOG GET` / `CLIENT LIST` から取得します。
 
