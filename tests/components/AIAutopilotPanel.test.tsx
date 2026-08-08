@@ -632,6 +632,30 @@ describe("AIAutopilotPanel", () => {
     });
   });
 
+  test("renders an autopilot report containing an HTML payload as text", async () => {
+    const payload = "<svg onload=alert(1)>";
+    globalThis.fetch = mock((url: string) => {
+      if (url === "/api/db/monitoring") {
+        return Promise.resolve(createJsonResponse({}));
+      }
+      return Promise.resolve(createStreamResponse(`- ${payload}`));
+    }) as never;
+
+    const { queryByText, container } = render(<AIAutopilotPanel {...defaultProps} />);
+
+    await act(async () => {
+      fireEvent.click(queryByText("Run Analysis")!.closest("button")!);
+    });
+
+    await waitFor(() => {
+      expect(container.textContent).toContain(payload);
+    });
+    // Scoped to the rendered report itself: the panel's header and button always render
+    // legitimate Lucide <svg> icons, so a bare container-wide query would find those and
+    // pass regardless of whether the payload was escaped.
+    expect(container.querySelector(".prose svg")).toBeNull();
+  });
+
   // ── Bold in lists ───────────────────────────────────────────────────────
 
   test("renders bold text inside bullet list items", async () => {

@@ -187,6 +187,21 @@ describe("DatabaseDocs", () => {
     });
   });
 
+  test("renders AI documentation containing an HTML payload as text", async () => {
+    const payload = '<img src=x onerror="steal()">';
+    const user = userEvent.setup();
+    globalThis.fetch = mockFetchStream(`- ${payload}`) as unknown as typeof fetch;
+
+    const { container, queryByText } = render(<DatabaseDocs schema={schema} schemaContext="[]" />);
+
+    await user.click(queryByText("AI Describe")!);
+
+    await waitFor(() => {
+      expect(container.textContent).toContain(payload);
+    });
+    expect(container.querySelector("img")).toBeNull();
+  });
+
   test("renders AI docs markdown: h2, h3, list items, paragraphs", async () => {
     const user = userEvent.setup();
     const mdContent = "## Section\n### Subsection\n- Item one\n1. Numbered item\nPlain text paragraph\n";

@@ -4,6 +4,7 @@ import React, { useState, useRef } from "react";
 import { Loader2, Sparkles, RefreshCw, Play, Copy, Check } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { DatabaseConnection } from "@/lib/types";
+import { renderInlineBold } from "@/components/rich-text";
 
 interface AIAutopilotPanelProps {
   connection: DatabaseConnection | null;
@@ -181,27 +182,22 @@ export function AIAutopilotPanel({ connection, schemaContext, onExecuteQuery }: 
           </h3>,
         );
       } else if (line.startsWith("- ")) {
-        const content = line.slice(2).replace(/\*\*(.*?)\*\*/g, '<strong class="text-zinc-200">$1</strong>');
         elements.push(
-          <li
-            key={i}
-            className="text-xs text-zinc-400 ml-4 leading-relaxed"
-            dangerouslySetInnerHTML={{ __html: content }}
-          />,
+          <li key={i} className="text-xs text-zinc-400 ml-4 leading-relaxed">
+            {renderInlineBold(line.slice(2))}
+          </li>,
         );
       } else if (line.match(/^\d+\.\s/)) {
-        const content = line.replace(/\*\*(.*?)\*\*/g, '<strong class="text-zinc-200">$1</strong>');
         elements.push(
-          <li
-            key={i}
-            className="text-xs text-zinc-400 ml-4 leading-relaxed list-decimal"
-            dangerouslySetInnerHTML={{ __html: content }}
-          />,
+          <li key={i} className="text-xs text-zinc-400 ml-4 leading-relaxed list-decimal">
+            {renderInlineBold(line)}
+          </li>,
         );
       } else if (line.trim()) {
-        const content = line.replace(/\*\*(.*?)\*\*/g, '<strong class="text-zinc-200">$1</strong>');
         elements.push(
-          <p key={i} className="text-xs text-zinc-400 leading-relaxed" dangerouslySetInnerHTML={{ __html: content }} />,
+          <p key={i} className="text-xs text-zinc-400 leading-relaxed">
+            {renderInlineBold(line)}
+          </p>,
         );
       } else {
         elements.push(<div key={i} className="h-2" />);

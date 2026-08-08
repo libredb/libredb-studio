@@ -4,6 +4,7 @@ import React, { useState } from "react";
 import { FileText, Loader2, Search, Sparkles, Download } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { TableSchema } from "@/lib/types";
+import { renderInlineBold } from "@/components/rich-text";
 
 interface DatabaseDocsProps {
   schema: TableSchema[];
@@ -138,29 +139,24 @@ export function DatabaseDocs({ schema, schemaContext, databaseType }: DatabaseDo
           </h3>
         );
       if (line.startsWith("- ")) {
-        const content = line.slice(2).replace(/\*\*(.*?)\*\*/g, '<strong class="text-zinc-200">$1</strong>');
         return (
-          <li
-            key={i}
-            className="text-xs text-zinc-400 ml-4 leading-relaxed"
-            dangerouslySetInnerHTML={{ __html: content }}
-          />
+          <li key={i} className="text-xs text-zinc-400 ml-4 leading-relaxed">
+            {renderInlineBold(line.slice(2))}
+          </li>
         );
       }
       if (line.match(/^\d+\.\s/)) {
-        const content = line.replace(/\*\*(.*?)\*\*/g, '<strong class="text-zinc-200">$1</strong>');
         return (
-          <li
-            key={i}
-            className="text-xs text-zinc-400 ml-4 leading-relaxed list-decimal"
-            dangerouslySetInnerHTML={{ __html: content }}
-          />
+          <li key={i} className="text-xs text-zinc-400 ml-4 leading-relaxed list-decimal">
+            {renderInlineBold(line)}
+          </li>
         );
       }
       if (line.trim()) {
-        const content = line.replace(/\*\*(.*?)\*\*/g, '<strong class="text-zinc-200">$1</strong>');
         return (
-          <p key={i} className="text-xs text-zinc-400 leading-relaxed" dangerouslySetInnerHTML={{ __html: content }} />
+          <p key={i} className="text-xs text-zinc-400 leading-relaxed">
+            {renderInlineBold(line)}
+          </p>
         );
       }
       return <div key={i} className="h-1.5" />;
