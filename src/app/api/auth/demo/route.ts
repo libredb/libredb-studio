@@ -8,7 +8,7 @@ import { logger } from "@/lib/logger";
 /**
  * One-click sign-in for a public demo instance.
  *
- * Gated solely by `DEMO_MODE`, because there is no visitor to authenticate — a
+ * Gated solely by `DEMO_MODE`, because there is nobody to authenticate — a
  * demo password would be a constant shared between two variables on the same
  * server, not a check. Requiring a real account instead would mean enabling
  * password login on an SSO-only deployment, which is a worse trade.

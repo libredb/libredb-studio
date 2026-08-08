@@ -68,10 +68,11 @@ Per [Render's Cloudflare guide](https://render.com/docs/configure-cloudflare-dns
 ### 6. Point the site at it
 
 Update the "Try Live Demo" CTA on libredb.org to `https://demo.libredb.org`.
-It currently points at `app.libredb.org`, which redirects to `/login` — a
-visitor with no account cannot get past it, which is the problem this instance
-exists to solve. Leaving the CTA where it is ships the fix and keeps the
-symptom.
+It currently points at `app.libredb.org`, which redirects to `/login`: a button
+promising a live demo that opens an SSO prompt. Whether a stranger can complete
+that prompt depends on how the identity provider is configured, but a visitor
+evaluating the product should not have to find out. Leaving the CTA where it is
+ships the fix and keeps the symptom.
 
 ## What a visitor gets
 

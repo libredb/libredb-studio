@@ -1,11 +1,14 @@
 /**
  * Public demo access — a single opt-in switch for showcase instances.
  *
- * A visitor arriving at a public instance has no account and no way to see the
- * product. `DEMO_MODE` opens a one-click session for them. It is deliberately
- * not a credential: there is nobody to authenticate, so a password would be a
- * shared constant between two variables on the same server rather than a check.
- * The gate is the switch, and the switch is off unless an operator turns it on.
+ * A visitor arriving at a public instance is asked for an identity before they
+ * see anything — a password they were never given, or a round trip through an
+ * identity provider. `DEMO_MODE` opens a one-click session instead of asking.
+ *
+ * The switch is deliberately not a credential. There is nobody to authenticate,
+ * so a demo password would be a constant shared between two variables on the
+ * same server rather than a check. The gate is the switch, and the switch is
+ * off unless an operator turns it on.
  */
 import type { Role } from "@/lib/auth";
 
