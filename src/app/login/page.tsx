@@ -1,4 +1,5 @@
 import LoginForm from "./login-form";
+import { isDemoEnabled } from "@/lib/demo-access";
 
 // Force dynamic rendering so env vars are read at runtime, not build time.
 // This is critical for Docker deployments where NEXT_PUBLIC_AUTH_PROVIDER
@@ -7,5 +8,7 @@ export const dynamic = "force-dynamic";
 
 export default function LoginPage() {
   const authProvider = process.env.NEXT_PUBLIC_AUTH_PROVIDER || "local";
-  return <LoginForm authProvider={authProvider} />;
+  // Read through the same switch the route uses, so the button and the endpoint
+  // can never disagree about whether this server offers a demo.
+  return <LoginForm authProvider={authProvider} demoEnabled={isDemoEnabled()} />;
 }

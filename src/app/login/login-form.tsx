@@ -6,19 +6,39 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
-import { ExternalLink, Lock, Mail, ShieldCheck, Zap, Globe, Shield, Layers } from "lucide-react";
+import { ExternalLink, Lock, Mail, PlayCircle, ShieldCheck, Zap, Globe, Shield, Layers } from "lucide-react";
 import { toast } from "sonner";
 import LibreDBLogo from "@/components/libredb-logo";
 import { CommunitySection } from "@/components/community-section";
 
-function LoginFormInner({ authProvider }: { authProvider: string }) {
+function LoginFormInner({ authProvider, demoEnabled = false }: { authProvider: string; demoEnabled?: boolean }) {
   const isOIDC = authProvider === "oidc";
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [isDemoLoading, setIsDemoLoading] = useState(false);
   const router = useRouter();
   const searchParams = useSearchParams();
   const oidcError = searchParams.get("error");
+
+  const handleDemoLogin = async () => {
+    setIsDemoLoading(true);
+    try {
+      const response = await fetch("/api/auth/demo", { method: "POST" });
+      const data = await response.json();
+
+      if (data.success) {
+        router.push(data.role === "admin" ? "/admin" : "/");
+        router.refresh();
+      } else {
+        toast.error(data.message || "The demo is unavailable right now");
+      }
+    } catch {
+      toast.error("An error occurred. Please try again.");
+    } finally {
+      setIsDemoLoading(false);
+    }
+  };
 
   const handleLogin = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
@@ -279,6 +299,34 @@ function LoginFormInner({ authProvider }: { authProvider: string }) {
                   </form>
                 </>
               )}
+
+              {/* Public-demo escape hatch: a first-time visitor who has no
+                  account must still be able to see the product. Rendered only
+                  when the server has a demo account configured. */}
+              {demoEnabled && (
+                <div className="space-y-3">
+                  <div className="relative">
+                    <div className="absolute inset-0 flex items-center">
+                      <span className="w-full border-t border-muted-foreground/15" />
+                    </div>
+                    <div className="relative flex justify-center">
+                      <span className="bg-card px-2 text-xs text-muted-foreground">or</span>
+                    </div>
+                  </div>
+                  <Button
+                    variant="outline"
+                    className="w-full h-11 text-base font-medium active:scale-[0.98] transition-all gap-2"
+                    onClick={handleDemoLogin}
+                    disabled={isDemoLoading}
+                  >
+                    <PlayCircle strokeWidth={1.5} className="h-4 w-4" />
+                    {isDemoLoading ? "Opening the demo..." : "Explore the live demo"}
+                  </Button>
+                  <p className="text-xs text-muted-foreground text-center">
+                    No account needed. Sample databases, reset regularly.
+                  </p>
+                </div>
+              )}
             </CardContent>
 
             <CardFooter className="pt-0 pb-6 flex flex-col items-center gap-2">
@@ -311,10 +359,10 @@ function LoginFormInner({ authProvider }: { authProvider: string }) {
   );
 }
 
-export default function LoginForm({ authProvider }: { authProvider: string }) {
+export default function LoginForm({ authProvider, demoEnabled }: { authProvider: string; demoEnabled?: boolean }) {
   return (
     <Suspense>
-      <LoginFormInner authProvider={authProvider} />
+      <LoginFormInner authProvider={authProvider} demoEnabled={demoEnabled} />
     </Suspense>
   );
 }
