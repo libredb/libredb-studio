@@ -12,6 +12,78 @@ mock.module("@/lib/auth", () => ({
   logout: mock(async () => {}),
 }));
 
+// ─── Mock @/lib/llm so a bypassed guard can never be mistaken for a working one ──
+//
+// Without this, a route that lost its guard would fall through to the real
+// createLLMProvider() (network call, needs a valid key) and, on some failure
+// modes, src/lib/api/errors.ts maps LLMAuthError to HTTP 401 — the exact status
+// this test expects from the guard. A status-only assertion could then pass for
+// the wrong reason. Making createLLMProvider throw a plain Error (not one of the
+// LLM* classes) means a bypassed guard can only produce a 500 (the "Generic
+// Error" branch in createErrorResponse), never a 401 — so 401 here can only mean
+// the guard actually ran. This also means the test makes no network call.
+
+class MockLLMError extends Error {
+  statusCode?: number;
+  constructor(msg: string, _provider?: string, code?: number) {
+    super(msg);
+    this.name = "LLMError";
+    this.statusCode = code;
+  }
+}
+class MockLLMConfigError extends MockLLMError {
+  constructor(msg: string) {
+    super(msg);
+    this.name = "LLMConfigError";
+  }
+}
+class MockLLMAuthError extends MockLLMError {
+  constructor(msg: string) {
+    super(msg, undefined, 401);
+    this.name = "LLMAuthError";
+  }
+}
+class MockLLMRateLimitError extends MockLLMError {
+  constructor(msg: string) {
+    super(msg, undefined, 429);
+    this.name = "LLMRateLimitError";
+  }
+}
+class MockLLMSafetyError extends MockLLMError {
+  constructor(msg: string) {
+    super(msg, undefined, 400);
+    this.name = "LLMSafetyError";
+  }
+}
+class MockLLMStreamError extends MockLLMError {
+  constructor(msg: string) {
+    super(msg);
+    this.name = "LLMStreamError";
+  }
+}
+
+const mockCreateLLMProvider = mock(async () => {
+  throw new Error("createLLMProvider must not be reached: the requireSession guard should have returned 401 first");
+});
+
+mock.module("@/lib/llm", () => ({
+  createLLMProvider: mockCreateLLMProvider,
+  LLMError: MockLLMError,
+  LLMConfigError: MockLLMConfigError,
+  LLMAuthError: MockLLMAuthError,
+  LLMRateLimitError: MockLLMRateLimitError,
+  LLMSafetyError: MockLLMSafetyError,
+}));
+
+mock.module("@/lib/llm/types", () => ({
+  LLMError: MockLLMError,
+  LLMConfigError: MockLLMConfigError,
+  LLMAuthError: MockLLMAuthError,
+  LLMRateLimitError: MockLLMRateLimitError,
+  LLMSafetyError: MockLLMSafetyError,
+  LLMStreamError: MockLLMStreamError,
+}));
+
 const { requireSession } = await import("@/lib/api/require-session");
 
 describe("requireSession", () => {
@@ -70,6 +142,7 @@ describe("routes that reach a provider require a session", () => {
       const res = await POST(req as never);
 
       expect(res.status).toBe(401);
+      expect(await res.json()).toEqual({ error: "Authentication required" });
     });
   }
 });
