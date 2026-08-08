@@ -25,8 +25,6 @@
   <img src="public/screenshots/hero-editor.png" alt="LibreDB Studio" width="100%" />
 </p>
 
----
-
 ## 快速开始
 
 一条命令跑起一个完整的 SQL IDE，不用克隆，不用构建：
@@ -43,31 +41,27 @@ npx @libredb/studio
 
 需要 Helm、Homebrew、Snap、winget 或 deb/rpm？见下面的[安装方式](#安装方式)。
 
----
-
 ## 为什么要再做一个数据库工具
 
 你在托管平台上开一个 Postgres，四十秒就绪。
 
 然后你想看看里面有什么。于是你把端口暴露到公网，或者装一个桌面客户端再挖一条 SSH 隧道，或者干脆放弃、退回到命令行。数据库花了四十秒，而给它开一扇窗花掉了你一个下午。
 
-再乘上规模：应用用 Postgres，文档用 Mongo，缓存用 Redis，事件用 ClickHouse。四个数据库，四个客户端，四套凭据。周一来了个新人，在写下第一行代码之前，他要先搞清楚哪些数据在哪里，在 wiki 和三个私聊里翻连接串，等 VPN 权限，再给每种引擎装一个不同的工具。
+再乘上规模。应用用 Postgres，文档用 Mongo，缓存用 Redis，事件用 ClickHouse。四个数据库，四个客户端，四套凭据。周一来了个新人，在写下第一行代码之前，他要先搞清楚哪些数据在哪里，在 wiki 和三个私聊里翻连接串，等 VPN 权限，再给每种引擎装一个不同的工具。
 
-**数据库已经搬走了**——搬进了 Kubernetes，搬进了托管云，搬进了要穿过跳板机才能到达的客户 VPC。**但读它们的工具没有跟着搬。** 它们仍然是桌面应用：笨重、按席位收费、必须先安装，并且假设你只有一个数据库、一台笔记本，以及一个永远不换设备的人。
+**数据库已经搬走了。** 它们搬进了 Kubernetes，搬进了托管云，搬进了要穿过跳板机才能到达的客户 VPC。**但读它们的工具没有跟着搬。** 它们仍然是桌面应用：笨重、按席位收费、必须先安装，并且假设你只有一个数据库、一台笔记本，以及一个永远不换设备的人。
 
 LibreDB Studio 走另一条路：**工具去找数据，而不是把数据搬来找工具。**
 
-认真对待这句话，它就不再是一种偏好，而是一份规格说明：
+认真对待这句话，它就不再是一种偏好，而是一份规格说明。
 
 - 编辑器必须跑在浏览器里，因为数据不在你的机器上，你的同事也不在。
 - 它必须能在手机上打开，因为需要执行一条查询的故障，不会等你先开笔记本。
-- 它必须像基础设施那样部署——容器、Helm chart、Operator、一键模板——因为数据库旁边的东西都是这么装的。
+- 它必须像基础设施那样部署（容器、Helm chart、Operator、一键模板），因为数据库旁边的东西都是这么装的。
 - 它必须可嵌入，因为编辑器最有用的位置，是在那个创建了数据库的产品内部。
 - 它必须毫无保留。你没法把一个按席位授权、功能分级的工具放进你拥有的每一个环境。**单点登录一旦要加钱，这个工具就不再是默认可部署的了。**
 
 > MIT 不是慷慨，而是这套架构的硬性要求。
-
----
 
 ## 核心能力
 
@@ -90,7 +84,7 @@ PostgreSQL · MySQL · Oracle · SQL Server · SQLite · MongoDB · Redis · Cou
 | **Apache Druid** | HTTP（`POST /druid/v2/sql`） | 只读 SQL IDE、原生查询 EXPLAIN 树、`INFORMATION_SCHEMA` 自省、`sys.*` 监控 |
 | **Redis** | `ioredis` | 命令编辑器、键浏览器、基于 INFO 的监控 |
 
-> Redis 之所以能套进这套面向 SQL 的接口，靠的是一层约定：`getSchema()` 用非阻塞的 `SCAN`（**绝不用 `KEYS *`**）把键前缀归类成"表"，健康与指标来自 `INFO`，慢查询和会话来自 `SLOWLOG GET` / `CLIENT LIST`。
+> Redis 之所以能套进这套面向 SQL 的接口，靠的是一层约定。`getSchema()` 用非阻塞的 `SCAN`（**绝不用 `KEYS *`**）把键前缀归类成“表”，健康与指标来自 `INFO`，慢查询和会话来自 `SLOWLOG GET` / `CLIENT LIST`。
 
 ### 专业 SQL 编辑器
 
@@ -132,10 +126,10 @@ PostgreSQL · MySQL · Oracle · SQL Server · SQLite · MongoDB · Redis · Cou
 
 - **AI 数据画像**：一键生成列统计（空值率、基数、最大最小值、样本值）与叙述式总结。
 - **ORM 代码生成**：从实时 schema 生成 TypeScript interface、Zod schema、Prisma model、Go struct、Python dataclass、Java POJO。
-- **测试数据生成**：30+ 种语义列推断（邮箱、电话、姓名、地址……），输出 INSERT 语句或 MongoDB insertMany JSON。
+- **测试数据生成**：30+ 种语义列推断（邮箱、电话、姓名、地址等），输出 INSERT 语句或 MongoDB insertMany JSON。
 - **数据库文档**：从实时 schema 自动生成可搜索的数据字典，支持 Markdown 导出。
 
-### 认证与单点登录 — 全部在 MIT 版本里
+### 认证与单点登录：全部在 MIT 版本里
 
 - **两种模式**：本地邮箱密码，或 OIDC 单点登录，通过环境变量切换。
 - **不挑厂商**：Auth0、Keycloak、Okta、Azure AD、Zitadel、Google，任何符合 OIDC 规范的提供方。
@@ -144,9 +138,7 @@ PostgreSQL · MySQL · Oracle · SQL Server · SQLite · MongoDB · Redis · Cou
 
 ### DBA 运维工具（仅管理员）
 
-7 个标签页的监控面板（概览、性能、查询、会话、表、存储、连接池）、时序趋势图、5–60 秒可调自动刷新、阈值告警配色，以及一键 `VACUUM` / `ANALYZE` / `REINDEX` / `UPDATE STATISTICS` / `DBCC CHECKDB` / `ALTER INDEX REBUILD`。全组织的查询审计日志一并提供。
-
----
+7 个标签页的监控面板（概览、性能、查询、会话、表、存储、连接池）、时序趋势图、5-60 秒可调自动刷新、阈值告警配色，以及一键 `VACUUM` / `ANALYZE` / `REINDEX` / `UPDATE STATISTICS` / `DBCC CHECKDB` / `ALTER INDEX REBUILD`。全组织的查询审计日志一并提供。
 
 ## 安装方式
 
@@ -170,22 +162,18 @@ Kubernetes 用户还有一个 OpenShift / OLM Operator bundle。
 npm i @libredb/studio
 ```
 
-Studio 同时以 npm 包形式发布，可以直接嵌进你的应用——如果你的产品会替用户创建数据库，这是编辑器最该待的地方。
-
----
+Studio 同时以 npm 包形式发布，可以直接嵌进你的应用。如果你的产品会替用户创建数据库，这是编辑器最该待的地方。
 
 ## 关于收费的那条线
 
-Studio 是 MIT，因为它必须能去任何地方。付费的是 libredb-platform：它卖的是"别人替你运维"——托管、多租户、计费和支持，而不是某个被挪到付费墙后面的功能。
+Studio 是 MIT，因为它必须能去任何地方。付费的是 libredb-platform，它卖的是“别人替你运维”：托管、多租户、计费和支持，而不是某个被挪到付费墙后面的功能。
 
 **没有任何能力为了制造升级理由而被移到这条线的另一边。** 单点登录、RBAC、查询审计、ER 图、AI 助手、全部 NoSQL 引擎，都在 MIT 构建里。
-
----
 
 ## 测试与质量
 
 - 单元、API、集成、hooks、组件、E2E 六层测试
-- **行覆盖率 100%**，并且是 CI 的硬性门禁——覆盖率掉下来，合并就被拦住
+- **行覆盖率 100%**，并且是 CI 的硬性门禁。覆盖率掉下来，合并就被拦住
 - SonarCloud 质量门禁
 - 每次发布跨 Node 20.9 / 22 / 24 做冒烟测试
 
@@ -195,8 +183,6 @@ bun run test:e2e       # Playwright（需先构建）
 bun run test:coverage  # 覆盖率报告
 ```
 
----
-
 ## 文档
 
 深入内容目前只有英文版本：
@@ -205,15 +191,11 @@ bun run test:coverage  # 覆盖率报告
 - [API 文档](docs/API_DOCS.md) · [OIDC 配置](docs/OIDC.md) · [存储层](docs/STORAGE.md)
 - [Helm Chart](docs/HELM_CHART.md) · [分发渠道](docs/CHANNELS.md) · [新增一个数据库](docs/ADDING_A_PROVIDER.md)
 
----
-
 ## 参与贡献
 
 欢迎 issue 和 PR，中文提交完全没问题。请先读 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
-新增数据库引擎请看 [`docs/ADDING_A_PROVIDER.md`](docs/ADDING_A_PROVIDER.md)——代码、文档、测试三者必须在同一个 PR 里同步。
-
----
+新增数据库引擎请看 [`docs/ADDING_A_PROVIDER.md`](docs/ADDING_A_PROVIDER.md)。代码、文档、测试三者必须在同一个 PR 里同步。
 
 ## 许可证
 

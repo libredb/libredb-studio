@@ -25,8 +25,6 @@
   <img src="public/screenshots/hero-editor.png" alt="LibreDB Studio" width="100%" />
 </p>
 
----
-
 ## クイックスタート
 
 クローンもビルドも不要。1コマンドでフル機能のSQL IDEが立ち上がります。
@@ -42,8 +40,6 @@ npx @libredb/studio
 **http://localhost:3000** を開くだけです。初回起動時に管理者パスワードがログに出力されるので、設定ファイルは要りません。
 
 Helm、Homebrew、Snap、winget、deb/rpm は[インストール方法](#インストール方法)を参照してください。
-
----
 
 ## なぜもう一つデータベースツールを作ったのか
 
@@ -66,8 +62,6 @@ LibreDB Studioは逆向きです。**ツールがデータのところへ行く�
 - そして、何も出し惜しみしてはならない。席数課金で機能に段階のあるツールを、自分が持つすべての環境に置くことはできません。**シングルサインオンが有料になった時点で、そのツールは「デフォルトでデプロイできるもの」ではなくなります。**
 
 > MITは気前の良さではなく、このアーキテクチャの要件です。
-
----
 
 ## 主な機能
 
@@ -135,7 +129,7 @@ PostgreSQL · MySQL · Oracle · SQL Server · SQLite · MongoDB · Redis · Cou
 - **テストデータ生成**：30種類以上のセマンティック推論（メール、電話番号、氏名、住所など）でINSERT文またはMongoDBのinsertMany JSONを出力。
 - **データベースドキュメント**：ライブスキーマから検索可能なデータディクショナリを自動生成、Markdownエクスポート対応。
 
-### 認証とSSO — すべてMITビルドに含まれます
+### 認証とSSO：すべてMITビルドに含まれます
 
 - **2つのモード**：ローカルのメール／パスワード、またはOIDCシングルサインオン。環境変数で切り替え。
 - **プロバイダを選ばない**：Auth0、Keycloak、Okta、Azure AD、Zitadel、Googleなど、OIDC準拠であれば何でも。
@@ -145,8 +139,6 @@ PostgreSQL · MySQL · Oracle · SQL Server · SQLite · MongoDB · Redis · Cou
 ### DBA運用ツール（管理者のみ）
 
 7タブのモニタリング（概要、パフォーマンス、クエリ、セッション、テーブル、ストレージ、コネクションプール）、時系列トレンドグラフ、5〜60秒で調整可能な自動更新、しきい値による色分けアラート、そしてワンクリックの `VACUUM` / `ANALYZE` / `REINDEX` / `UPDATE STATISTICS` / `DBCC CHECKDB` / `ALTER INDEX REBUILD`。組織全体のクエリ監査ログも含みます。
-
----
 
 ## インストール方法
 
@@ -172,15 +164,11 @@ npm i @libredb/studio
 
 Studioはnpmパッケージとしても配布されているので、自分のアプリケーションの中に直接埋め込めます。ユーザーのためにデータベースを作る製品なら、エディタが最も役に立つのはその内側です。
 
----
-
 ## 有料との線引きについて
 
-StudioがMITなのは、あらゆる場所に置ける必要があるからです。有料なのはlibredb-platformで、そこで売っているのは「運用の代行」——ホスティング、テナント管理、課金、サポートであって、有料の壁の向こうに移された機能ではありません。
+StudioがMITなのは、あらゆる場所に置ける必要があるからです。有料なのはlibredb-platformで、そこで売っているのは「運用の代行」、つまりホスティング、テナント管理、課金、サポートであって、有料の壁の向こうに移された機能ではありません。
 
 **アップグレードの理由を作るために線の向こう側へ移された機能は、1つもありません。** SSO、RBAC、クエリ監査ログ、ER図、AIアシスタント、NoSQLエンジン群、すべてMITビルドに入っています。
-
----
 
 ## テストと品質
 
@@ -195,8 +183,6 @@ bun run test:e2e       # Playwright（ビルドが必要）
 bun run test:coverage  # カバレッジレポート
 ```
 
----
-
 ## ドキュメント
 
 詳細ドキュメントは現在のところ英語のみです。
@@ -205,15 +191,11 @@ bun run test:coverage  # カバレッジレポート
 - [APIドキュメント](docs/API_DOCS.md) · [OIDC設定](docs/OIDC.md) · [ストレージ](docs/STORAGE.md)
 - [Helm Chart](docs/HELM_CHART.md) · [配布チャネル](docs/CHANNELS.md) · [データベースの追加](docs/ADDING_A_PROVIDER.md)
 
----
-
 ## コントリビューション
 
 IssueもPRも歓迎です。日本語でも構いません。まず [CONTRIBUTING.md](CONTRIBUTING.md) をご覧ください。
 
 データベースエンジンを追加する場合は [`docs/ADDING_A_PROVIDER.md`](docs/ADDING_A_PROVIDER.md) を参照してください。コード・ドキュメント・テストは同じPRの中で揃っている必要があります。
-
----
 
 ## ライセンス
 
