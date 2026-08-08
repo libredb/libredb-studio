@@ -81,9 +81,9 @@ PostgreSQL · MySQL · Oracle · SQL Server · SQLite · MongoDB · Redis · Cou
 | **SQL Server** | `mssql` (tedious) | フルSQL IDE、`TOP N` / `OFFSET FETCH`、`sys.dm_*` DMV、`UPDATE STATISTICS`、`DBCC CHECKDB`、トランザクション、Azure SQL自動判別 |
 | **SQLite** | `bun:sqlite` / `node:sqlite`（実行時選択） | フルSQL IDE、ファイル型・インメモリ型 |
 | **MongoDB** | `mongodb` | JSONクエリエディタ、コレクション操作（find、aggregate、insert、update、delete） |
-| **Couchbase** | なし — HTTP（Query + 管理REST） | フルSQL++ IDE、EXPLAIN、bucket/scope/collectionエクスプローラ、`INFER`によるカラム推論 |
-| **ClickHouse** | なし — HTTP（SQLインターフェース、8123） | フルSQL IDE、JSON EXPLAINツリー、システムテーブルからのスキーマ取得、`OPTIMIZE TABLE` |
-| **Apache Druid** | なし — HTTP（`POST /druid/v2/sql`） | 読み取り専用SQL IDE、ネイティブクエリのEXPLAINツリー、`INFORMATION_SCHEMA`、`sys.*`監視 |
+| **Couchbase** | ドライバなし、HTTPのみ（Query + 管理REST） | フルSQL++ IDE、EXPLAIN、bucket/scope/collectionエクスプローラ、`INFER`によるカラム推論 |
+| **ClickHouse** | ドライバなし、HTTPのみ（SQLインターフェース、8123） | フルSQL IDE、JSON EXPLAINツリー、システムテーブルからのスキーマ取得、`OPTIMIZE TABLE` |
+| **Apache Druid** | ドライバなし、HTTPのみ（`POST /druid/v2/sql`） | 読み取り専用SQL IDE、ネイティブクエリのEXPLAINツリー、`INFORMATION_SCHEMA`、`sys.*`監視 |
 | **Redis** | `ioredis` | コマンドエディタ、キーブラウザ、INFOベースの監視 |
 
 > RedisがこのSQL指向のインターフェースに乗るのは規約によるものです。`getSchema()` はブロッキングしない `SCAN`（**`KEYS *` は使いません**）でキーのプレフィックスを「テーブル」としてまとめ、ヘルスとメトリクスは `INFO`、スロークエリとセッションは `SLOWLOG GET` / `CLIENT LIST` から取得します。
@@ -153,10 +153,10 @@ PostgreSQL · MySQL · Oracle · SQL Server · SQLite · MongoDB · Redis · Cou
 | **Snap** | `sudo snap install libredb-studio` |
 | **winget** | `winget install LibreDB.Studio` |
 | **deb / rpm**（サーバ版、systemdユニット同梱） | [リリースページ](https://github.com/libredb/libredb-studio/releases/latest) |
-| **デスクトップアプリ**（AppImage / deb） | [リリースページ](https://github.com/libredb/libredb-studio/releases/latest) — ネイティブウィンドウで、サーバはローカルのサイドカーとして動作し、ログイン画面はありません。**上のサーバ版とは別物です。** |
+| **デスクトップアプリ**（AppImage / deb） | [リリースページ](https://github.com/libredb/libredb-studio/releases/latest)。ネイティブウィンドウで、サーバはローカルのサイドカーとして動作し、ログイン画面はありません。**上のサーバ版とは別物です。** |
 | **デスクトップアプリ**（Flatpak、サンドボックス） | `flatpak --user remote-add --if-not-exists flatpark https://dl.flatpark.org/flatpark.flatpakrepo`<br>`flatpak --user install flatpark org.libredb.Studio` |
 
-`brew trust` は最初の一度だけ必要です（Homebrew 6+。「unknown command」と出る場合は先に `brew update`）。Docker、Helm、Snapはゼロコンフィグで、初回起動時に生成される管理者パスワードはそれぞれコンテナログ、Podログ、`sudo snap logs libredb-studio` に出力されます。チャネルごとの詳細——コマンド、設定、systemdの使い方、Dockerイメージのタグ体系——は [`docs/DISTRIBUTION.md`](docs/DISTRIBUTION.md) にあります。
+`brew trust` は最初の一度だけ必要です（Homebrew 6+。「unknown command」と出る場合は先に `brew update`）。Docker、Helm、Snapはゼロコンフィグで、初回起動時に生成される管理者パスワードはそれぞれコンテナログ、Podログ、`sudo snap logs libredb-studio` に出力されます。チャネルごとの詳細（コマンド、設定、systemdの使い方、Dockerイメージのタグ体系）は [`docs/DISTRIBUTION.md`](docs/DISTRIBUTION.md) にあります。
 
 ワンクリックテンプレート：Railway、Dokploy、CapRover、Sealos、Kubero、Cosmos、DigitalOcean Marketplace、Unraid Community Apps、Render Blueprint、Fly.io、Koyeb。一覧は [`docs/CHANNELS.md`](docs/CHANNELS.md) にあります。
 

@@ -71,7 +71,7 @@ LibreDB Studio 走另一条路：**工具去找数据，而不是把数据搬来
 
 PostgreSQL · MySQL · Oracle · SQL Server · SQLite · MongoDB · Redis · Couchbase · ClickHouse · Apache Druid
 
-所有 SQL 引擎共用同一套 schema 浏览器、ER 图、schema 对比和监控面板。MongoDB 和 Redis 不属于 SQL 引擎，没有 ER 图和 schema 对比；Druid 是双重例外：它的 HTTP SQL 接口没有可粘贴的 URI，只能按 host/port 配置，而且生成的迁移会直接说明限制，而不是对一个 SQL 里根本没有列变更语句的引擎硬输出 DDL——Couchbase 的 schemaless collection 同理。
+所有 SQL 引擎共用同一套 schema 浏览器、ER 图、schema 对比和监控面板。MongoDB 和 Redis 不属于 SQL 引擎，没有 ER 图和 schema 对比；Druid 是双重例外：它的 HTTP SQL 接口没有可粘贴的 URI，只能按 host/port 配置，而且生成的迁移会直接说明限制，而不是对一个 SQL 里根本没有列变更语句的引擎硬输出 DDL；Couchbase 的 schemaless collection 同理。
 
 | 数据库 | 驱动 | 能力 |
 | :--- | :--- | :--- |
@@ -81,9 +81,9 @@ PostgreSQL · MySQL · Oracle · SQL Server · SQLite · MongoDB · Redis · Cou
 | **SQL Server** | `mssql` (tedious) | 完整 SQL IDE、`TOP N` / `OFFSET FETCH` 分页、`sys.dm_*` DMV、`UPDATE STATISTICS`、`DBCC CHECKDB`、事务、自动识别 Azure SQL |
 | **SQLite** | `bun:sqlite` / `node:sqlite`（运行时自选） | 完整 SQL IDE，文件型或内存型数据库 |
 | **MongoDB** | `mongodb` | JSON 查询编辑器，集合操作（find、aggregate、insert、update、delete） |
-| **Couchbase** | 无 — HTTP（Query + 管理 REST） | 完整 SQL++ IDE、EXPLAIN、bucket/scope/collection 浏览器、`INFER` 字段推断 |
-| **ClickHouse** | 无 — HTTP（SQL 接口，8123 端口） | 完整 SQL IDE、JSON EXPLAIN 树、系统表 schema 自省、`OPTIMIZE TABLE` |
-| **Apache Druid** | 无 — HTTP（`POST /druid/v2/sql`） | 只读 SQL IDE、原生查询 EXPLAIN 树、`INFORMATION_SCHEMA` 自省、`sys.*` 监控 |
+| **Couchbase** | 无驱动，纯 HTTP（Query + 管理 REST） | 完整 SQL++ IDE、EXPLAIN、bucket/scope/collection 浏览器、`INFER` 字段推断 |
+| **ClickHouse** | 无驱动，纯 HTTP（SQL 接口，8123 端口） | 完整 SQL IDE、JSON EXPLAIN 树、系统表 schema 自省、`OPTIMIZE TABLE` |
+| **Apache Druid** | 无驱动，纯 HTTP（`POST /druid/v2/sql`） | 只读 SQL IDE、原生查询 EXPLAIN 树、`INFORMATION_SCHEMA` 自省、`sys.*` 监控 |
 | **Redis** | `ioredis` | 命令编辑器、键浏览器、基于 INFO 的监控 |
 
 > Redis 之所以能套进这套面向 SQL 的接口，靠的是一层约定。`getSchema()` 用非阻塞的 `SCAN`（**绝不用 `KEYS *`**）把键前缀归类成“表”，健康与指标来自 `INFO`，慢查询和会话来自 `SLOWLOG GET` / `CLIENT LIST`。
@@ -153,10 +153,10 @@ PostgreSQL · MySQL · Oracle · SQL Server · SQLite · MongoDB · Redis · Cou
 | **Snap** | `sudo snap install libredb-studio` |
 | **winget** | `winget install LibreDB.Studio` |
 | **deb / rpm**（服务端，自带 systemd 服务） | [Releases 页面](https://github.com/libredb/libredb-studio/releases/latest) |
-| **桌面应用**（AppImage / deb） | [Releases 页面](https://github.com/libredb/libredb-studio/releases/latest) — 原生窗口，服务端作为本地 sidecar 运行，没有登录页。**不是上面那个服务端包。** |
+| **桌面应用**（AppImage / deb） | [Releases 页面](https://github.com/libredb/libredb-studio/releases/latest)。原生窗口，服务端作为本地 sidecar 运行，没有登录页。**不是上面那个服务端包。** |
 | **桌面应用**（Flatpak，沙箱） | `flatpak --user remote-add --if-not-exists flatpark https://dl.flatpark.org/flatpark.flatpakrepo`<br>`flatpak --user install flatpark org.libredb.Studio` |
 
-`brew trust` 只需执行一次（要求 Homebrew 6+；如果提示未知命令，先 `brew update`）。Docker、Helm 和 Snap 都是零配置的：首次启动生成的管理员密码分别打印在容器日志、Pod 日志和 `sudo snap logs libredb-studio` 里。每个渠道的完整说明——命令、配置、systemd 用法、Docker 镜像标签模型——见 [`docs/DISTRIBUTION.md`](docs/DISTRIBUTION.md)。
+`brew trust` 只需执行一次（要求 Homebrew 6+；如果提示未知命令，先 `brew update`）。Docker、Helm 和 Snap 都是零配置的：首次启动生成的管理员密码分别打印在容器日志、Pod 日志和 `sudo snap logs libredb-studio` 里。每个渠道的完整说明（命令、配置、systemd 用法、Docker 镜像标签模型）见 [`docs/DISTRIBUTION.md`](docs/DISTRIBUTION.md)。
 
 一键部署模板：Railway、Dokploy、CapRover、Sealos、Kubero、Cosmos、DigitalOcean Marketplace、Unraid Community Apps、Render Blueprint、Fly.io、Koyeb。完整清单见 [`docs/CHANNELS.md`](docs/CHANNELS.md)。
 
