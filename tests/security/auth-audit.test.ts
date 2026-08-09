@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
+import { AuthConfigError } from "@/lib/auth-errors";
 
 /**
  * Threat: an authentication event that leaves no trace.
@@ -227,8 +228,15 @@ describe("the OIDC callback", () => {
   });
 
   test("records a configuration failure with its own reason", async () => {
+    // A real AuthConfigError, not a plain Error whose message happens to contain "config": the
+    // classification in the route is `instanceof AuthConfigError`, not a message substring match,
+    // so this message deliberately does NOT contain the word "config" - a regression back to
+    // substring matching would make this specific message fail the assertion below while an
+    // instanceof check keeps passing it. The reverse case - a plain Error, classified oidc_failed
+    // regardless of its text - is already pinned above by "records a provider failure without
+    // leaking the error text".
     mockDiscoverProvider.mockImplementation(async () => {
-      throw new Error("missing OIDC config value");
+      throw new AuthConfigError("JWT_SECRET is required for OIDC state encryption");
     });
     const spy = spyOn(console, "log").mockImplementation(() => {});
     try {

@@ -4,6 +4,7 @@ import { emitAuditEvent } from "@/lib/audit";
 import { createErrorResponse } from "@/lib/api/errors";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
+import { logger } from "@/lib/logger";
 
 export async function POST(request: Request) {
   // Session, rate limit and denial audit share the same door as every other provider-reaching
@@ -49,16 +50,23 @@ export async function POST(request: Request) {
     const result = await provider.runMaintenance(type, target);
     const duration = Date.now() - startTime;
 
-    // Emit audit event
-    emitAuditEvent({
-      type: type === "kill" ? "kill_session" : "maintenance",
-      action: type.toUpperCase(),
-      target: target || "all",
-      connectionName: connection.name || connection.database || "unknown",
-      user: guard.session.username || "admin",
-      result: "success",
-      duration,
-    });
+    // Isolated in its own try/catch: runMaintenance() above has already succeeded and its result
+    // is already decided by the time this runs, so a broken audit sink must never turn a
+    // completed maintenance operation into a 500 that invites the client to retry it - the outer
+    // catch below is for failures of the operation itself, not for failures to record it.
+    try {
+      emitAuditEvent({
+        type: type === "kill" ? "kill_session" : "maintenance",
+        action: type.toUpperCase(),
+        target: target || "all",
+        connectionName: connection.name || connection.database || "unknown",
+        user: guard.session.username || "admin",
+        result: "success",
+        duration,
+      });
+    } catch (auditError) {
+      logger.error("Failed to record maintenance audit event", auditError, { route: "POST /api/db/maintenance" });
+    }
 
     return NextResponse.json(result);
   } catch (error) {

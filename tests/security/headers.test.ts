@@ -68,10 +68,14 @@ describe("studioCspDirectives", () => {
     expect(studioCspDirectives()["worker-src"]).toContain("blob:");
   });
 
-  test("admits an absolute Monaco origin to script-src and worker-src only", () => {
+  test("admits an absolute Monaco origin to script-src, style-src and worker-src", () => {
     const directives = studioCspDirectives({ monacoVsPath: "https://assets.example.com/monaco/vs" });
 
     expect(directives["script-src"]).toContain("https://assets.example.com");
+    // editor.main.css resolves against the same "vs" base path as the script bundle (Monaco's own
+    // vs/css loader plugin), so an off-origin Monaco path needs style-src too, or the enforced CSP
+    // blocks that stylesheet and every gutter/menu glyph disappears.
+    expect(directives["style-src"]).toContain("https://assets.example.com");
     expect(directives["worker-src"]).toContain("https://assets.example.com");
     expect(directives["connect-src"]).toEqual(["'self'"]);
     expect(directives["img-src"]).not.toContain("https://assets.example.com");

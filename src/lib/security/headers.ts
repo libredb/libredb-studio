@@ -151,6 +151,13 @@ export function studioCspDirectives(options: CspOptions = {}): CspDirectives {
 
   if (monacoOrigin) {
     scriptSrc.push(monacoOrigin);
+    // Monaco's AMD loader resolves editor.main.css against the same "vs" base path as the script
+    // bundle (via its own vs/css loader plugin - public/monaco/vs/editor/editor.main.js's
+    // `createElement("link")` call), so an off-origin monacoVsPath serves that stylesheet from
+    // monacoOrigin too. Missing this left the enforced CSP blocking the stylesheet the documented
+    // off-origin NEXT_PUBLIC_MONACO_VS_PATH setup depends on - Monaco would load with every gutter
+    // and menu glyph, and the editor's own syntax styling, silently unstyled.
+    styleSrc.push(monacoOrigin);
     workerSrc.push(monacoOrigin);
   }
 

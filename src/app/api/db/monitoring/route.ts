@@ -10,6 +10,12 @@ import { guardRoute } from "@/lib/api/require-session";
  * Get comprehensive monitoring data for a database connection
  */
 export async function POST(req: NextRequest) {
+  // Moved ahead of body parsing, matching every other provider-reaching route: an unauthenticated
+  // or rate-limited caller no longer gets a body parsed on its behalf, and gets the promised
+  // denial audit instead of a 400 that never reached the guard.
+  const guard = await guardRoute({ route: "POST /api/db/monitoring", bucket: "query", request: req });
+  if ("response" in guard) return guard.response;
+
   try {
     // Handle empty or aborted requests
     let body;
@@ -22,9 +28,6 @@ export async function POST(req: NextRequest) {
     } catch {
       return NextResponse.json({ error: "Invalid JSON in request body" }, { status: 400 });
     }
-
-    const guard = await guardRoute({ route: "POST /api/db/monitoring", bucket: "query", request: req });
-    if ("response" in guard) return guard.response;
 
     const connection = await resolveConnection(body, guard.session);
     const { options } = body as { options?: MonitoringOptions };

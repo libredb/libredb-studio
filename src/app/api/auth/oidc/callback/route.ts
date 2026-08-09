@@ -5,6 +5,7 @@ import { getOIDCConfig, discoverProvider, exchangeCode, decryptState, mapOIDCRol
 import { logger } from "@/lib/logger";
 import { clientAddress } from "@/lib/api/client-address";
 import { emitAuditEvent, type AuditReason } from "@/lib/audit";
+import { AuthConfigError } from "@/lib/auth-errors";
 
 const ROUTE = "GET /api/auth/oidc/callback";
 
@@ -107,7 +108,15 @@ export async function GET(request: Request) {
     return NextResponse.redirect(`${origin}${role === "admin" ? "/admin" : "/"}`);
   } catch (error) {
     logger.error("OIDC callback error", error, { route: ROUTE });
-    const errorCode = error instanceof Error && error.message.includes("config") ? "oidc_config" : "oidc_failed";
+    // Typed, not message substring matching: `error instanceof Error && error.message.includes(
+    // "config")` was the bug this replaces. getOIDCConfig()'s own missing-env-vars message never
+    // contained the word "config", so the real failure it exists to name was silently reported as
+    // oidc_failed instead of oidc_config - proven only by a test whose synthetic error message
+    // happened to contain "config", which passed for the wrong reason. AuthConfigError is also
+    // what a JWT-configuration failure throws (login() -> signJWT() -> getJwtSecret(), reachable
+    // from this same outer try above), so this classification covers both origins of "OIDC is
+    // configured but the server's auth secret isn't" with one type check.
+    const errorCode = error instanceof AuthConfigError ? "oidc_config" : "oidc_failed";
     auditFailure(errorCode, ip);
     return NextResponse.redirect(`${origin}/login?error=${errorCode}`);
   }

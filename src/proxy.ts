@@ -42,14 +42,18 @@ export async function proxy(request: NextRequest) {
     const address = clientAddress(request);
     const notice = consumeRateLimit("anon", address);
     if (notice.allowed || notice.tripped) {
+      // Every field here is bounded to MAX_AUDIT_FIELD_LENGTH, not just observedOrigin: the anon
+      // bucket above caps how often this line can be written, but a bound on request COUNT does
+      // not bound the SIZE of each line. `route` is built from `pathname`, an attacker-controlled
+      // URL path; `expectedHost` is `origin.expectedHost`, which reflects the Host (or a trusted
+      // x-forwarded-host) header, not something this deployment controls independently of the
+      // request - both can be made arbitrarily large by the same caller this metering exists to
+      // bound. Leaving either unbounded would defeat the log-volume protection this branch is
+      // named for, just via line SIZE instead of line COUNT.
       logger.warn("Origin check rejected a request", {
-        route: `${request.method} ${pathname}`,
-        // Bounded the same as the audit target beside it (MAX_AUDIT_FIELD_LENGTH): observedOrigin
-        // is read straight from the request's own Origin/Referer header and is attacker-controlled
-        // on every rejected request, unlike expectedHost, which reflects this deployment's own
-        // configured host.
+        route: `${request.method} ${pathname}`.slice(0, MAX_AUDIT_FIELD_LENGTH),
         observedOrigin: origin.observedOrigin.slice(0, MAX_AUDIT_FIELD_LENGTH),
-        expectedHost: origin.expectedHost,
+        expectedHost: origin.expectedHost.slice(0, MAX_AUDIT_FIELD_LENGTH),
       });
       // Isolated in its own try/catch: the 403 below is unconditional and already decided: a
       // broken audit sink must never turn it into an unrelated 500.
@@ -128,8 +132,7 @@ export const config = {
   matcher: [
     /*
      * Match all request paths except for the ones starting with:
-     * - api/db/health (health check for load balancers)
-     * - api/storage/config (storage mode discovery - public)
+     * - api/storage/config (storage mode discovery - public, GET only)
      * - _next/static (static files)
      * - _next/image (image optimization files)
      * - anything containing a dot (static assets under public/, /monaco/vs/*.js)
@@ -137,13 +140,24 @@ export const config = {
      * api/auth is deliberately NOT excluded any more: proxy()'s own public-route branch already
      * returns NextResponse.next() for those paths, so the auth semantics are unchanged, but
      * login, logout and the OIDC responses now carry the security headers and are covered by the
-     * Origin check. api/db/health and api/storage/config stay excluded: they are load-balancer
-     * and bootstrap paths where added latency has no upside.
+     * Origin check. api/storage/config stays excluded: it is a bootstrap path with no
+     * state-changing method at all, so there is no CSRF surface to protect and no upside to the
+     * added latency.
+     *
+     * api/db/health is NOT excluded, unlike Phase 1's first cut: this path also backs
+     * `POST /api/db/health` (a session-gated, provider-reaching "detailed health check" for a
+     * specific connection - see src/app/api/db/health/route.ts), and excluding the whole path from
+     * the matcher meant that POST bypassed the Origin check along with every other proxy()
+     * protection, precisely the CSRF gap this phase exists to close. Running proxy() for this path
+     * costs GET /api/db/health nothing observable: checkOrigin() exempts GET by method, and the
+     * "Allow public routes" branch below still matches this pathname and returns
+     * NextResponse.next() before any auth redirect, so load-balancer probes see no behaviour
+     * change.
      *
      * Residual gap, accepted and recorded in docs/BACKLOG.md: paths containing a dot receive no
      * headers. They are not documents, and MIME sniffing on assets Next serves with correct
      * content types is not a live threat.
      */
-    "/((?!api/db/health|api/storage/config|_next/static|_next/image|.*\\..*).*)",
+    "/((?!api/storage/config|_next/static|_next/image|.*\\..*).*)",
   ],
 };

@@ -219,8 +219,14 @@ export function createErrorResponse(error: unknown, context?: { route?: string }
   // Mirrors the LLMRateLimitError mapping above: same shape, same retryable: true, distinct code.
   // No RateLimit-Limit / RateLimit-Remaining headers on success responses - on the login route
   // they would tell an attacker exactly how to pace.
+  //
+  // Deliberately no logger.warn here, unlike the branches above: this runs on EVERY rejected
+  // request once a bucket trips, not just the first, while the caller's rate_limit_exceeded audit
+  // event is intentionally latched to that first trip (guardRoute checks decision.tripped before
+  // emitting). A logger.warn on every 429 would let a hammering client fill container logs with
+  // one line per rejection regardless of that latch - defeating the bounded-log-volume design the
+  // rest of this phase is built around, through this one incidental call site.
   if (error instanceof RateLimitError) {
-    logger.warn("Rate limit exceeded", { route });
     return NextResponse.json(
       {
         error: error.message,

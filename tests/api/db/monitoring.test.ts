@@ -197,6 +197,41 @@ describe("POST /api/db/monitoring", () => {
     expect(data.error).toContain("Authentication required");
   });
 
+  // Threat: this route used to parse the body BEFORE guardRoute(), unlike every other
+  // provider-reaching route - an unauthenticated caller with an empty or malformed body got a 400
+  // with no denial audit, instead of the 401 (and audit line) the guard produces. A malformed body
+  // also means work spent parsing before authentication is even checked. Both cases below prove
+  // the guard now runs first regardless of what the body contains.
+  test("returns 401, not 400, when an unauthenticated request also carries an empty body", async () => {
+    mockGetSession.mockResolvedValueOnce(null);
+    const req = new Request("http://localhost:3000/api/db/monitoring", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "",
+    });
+
+    const res = await POST(req as never);
+    const data = await parseResponseJSON<{ error: string }>(res);
+
+    expect(res.status).toBe(401);
+    expect(data.error).toContain("Authentication required");
+  });
+
+  test("returns 401, not 400, when an unauthenticated request also carries malformed JSON", async () => {
+    mockGetSession.mockResolvedValueOnce(null);
+    const req = new Request("http://localhost:3000/api/db/monitoring", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "not-valid-json{{{",
+    });
+
+    const res = await POST(req as never);
+    const data = await parseResponseJSON<{ error: string }>(res);
+
+    expect(res.status).toBe(401);
+    expect(data.error).toContain("Authentication required");
+  });
+
   test("aborted request returns 499 with empty body", async () => {
     const abortError = new Error("socket hang up") as NodeJS.ErrnoException;
     abortError.code = "ECONNRESET";

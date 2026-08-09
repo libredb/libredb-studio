@@ -78,7 +78,16 @@ describe("the matcher", () => {
     const { config } = require("@/proxy") as { config: { matcher: string[] } };
 
     expect(config.matcher[0]).not.toContain("api/auth");
-    expect(config.matcher[0]).toContain("api/db/health");
     expect(config.matcher[0]).toContain("api/storage/config");
+  });
+
+  test("no longer excludes /api/db/health, so its state-changing POST is Origin-checked too", () => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { config } = require("@/proxy") as { config: { matcher: string[] } };
+
+    // Pinned by csrf-origin.test.ts's "is refused on POST /api/db/health" - excluding the path
+    // here would silently take that test's protection away again, the same class of gap this
+    // assertion exists to catch.
+    expect(config.matcher[0]).not.toContain("api/db/health");
   });
 });

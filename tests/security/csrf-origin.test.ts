@@ -71,6 +71,18 @@ describe("a cross-site state-changing request", () => {
     expect(res.status).toBe(403);
   });
 
+  test("is refused on POST /api/db/health, which the middleware matcher used to exclude entirely", async () => {
+    // src/app/api/db/health/route.ts's POST handler is session-gated and provider-reaching
+    // ("detailed health check" for a specific connection) - Phase 1's first cut excluded the whole
+    // /api/db/health path from proxy()'s matcher for GET's sake (a load-balancer probe with no
+    // upside to added latency) and, as a side effect, took this state-changing POST out of the
+    // Origin check along with every other proxy() protection. GET's own exemption from checkOrigin
+    // (by method, see origin-check.ts) means closing that gap costs the probe nothing.
+    const res = await proxy(post("/api/db/health", { origin: "https://evil.example" }));
+
+    expect(res.status).toBe(403);
+  });
+
   test("is refused when it carries neither an Origin nor a Referer", async () => {
     const res = await proxy(post("/api/db/query"));
 

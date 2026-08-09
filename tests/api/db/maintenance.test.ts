@@ -163,6 +163,28 @@ describe("POST /api/db/maintenance", () => {
     expect(data.message).toBe("OK");
   });
 
+  // Threat: runMaintenance() has already completed by the time emitAuditEvent runs (see the route's
+  // own comment). Before this fix, a broken audit sink shared the operation's try/catch, so a
+  // throw here would 500 a client that must not be told to retry an operation - possibly a
+  // destructive one, like "kill" - that already succeeded.
+  test("a broken audit sink does not turn a completed maintenance operation into a 500", async () => {
+    mockAuditPush.mockImplementationOnce(() => {
+      throw new Error("audit sink unavailable");
+    });
+
+    const req = createMockRequest("/api/db/maintenance", {
+      method: "POST",
+      body: { type: "vacuum", target: "users", connection: validConnection },
+    });
+
+    const res = await POST(req as never);
+    const data = await parseResponseJSON<{ success: boolean; executionTime: number; message: string }>(res);
+
+    expect(res.status).toBe(200);
+    expect(data.success).toBe(true);
+    expect(data.message).toBe("OK");
+  });
+
   test("non-admin user returns 403", async () => {
     mockGetSession.mockImplementation(
       async (): Promise<{ role: string; username: string } | null> => ({ role: "user", username: "user" }),

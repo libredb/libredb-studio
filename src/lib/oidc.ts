@@ -2,6 +2,7 @@ import * as client from "openid-client";
 import { SignJWT, jwtVerify } from "jose";
 import { logger } from "@/lib/logger";
 import { getJwtSecret } from "@/lib/config/auth-env";
+import { AuthConfigError } from "@/lib/auth-errors";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -22,13 +23,25 @@ export interface OIDCState {
 
 // ─── Configuration ──────────────────────────────────────────────────────────
 
+// Hoisted single-line message, matching the JWT_SECRET_MISSING_MESSAGE precedent in
+// src/lib/config/auth-env.ts (bun coverage under-counts multi-line string continuations).
+const OIDC_CONFIG_MISSING_MESSAGE =
+  "OIDC_ISSUER, OIDC_CLIENT_ID, and OIDC_CLIENT_SECRET are required when using OIDC authentication";
+
 export function getOIDCConfig(): OIDCConfig {
   const issuer = process.env.OIDC_ISSUER;
   const clientId = process.env.OIDC_CLIENT_ID;
   const clientSecret = process.env.OIDC_CLIENT_SECRET;
 
   if (!issuer || !clientId || !clientSecret) {
-    throw new Error("OIDC_ISSUER, OIDC_CLIENT_ID, and OIDC_CLIENT_SECRET are required when using OIDC authentication");
+    // AuthConfigError (not a plain Error), so the OIDC callback route can classify this as
+    // oidc_config by TYPE - see AuthConfigError's own doc comment and the callback route. The
+    // message intentionally does not need to contain any particular substring: "config" was never
+    // a reliable signal (this message doesn't even use the word "config"), and substring matching
+    // on error.message was the bug (the callback route's own review comment; the message that
+    // ships here happened to not contain "config" until this fix, which is exactly how it was
+    // caught misclassifying itself as oidc_failed).
+    throw new AuthConfigError(OIDC_CONFIG_MISSING_MESSAGE);
   }
 
   return {
