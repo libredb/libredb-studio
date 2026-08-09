@@ -82,15 +82,22 @@ const BUCKETS: Record<RateLimitBucket, BucketSpec> = {
     windowDefault: 300,
   },
   // Failed logins per submitted account. Immune to X-Forwarded-For spoofing, which is the whole
-  // reason it exists. Bounded at 10 per 15 minutes and cleared by a successful login, because an
-  // uncleared per-account cap is a denial-of-login handle on a known user. This bucket's own
-  // capacity partition is what keeps it immune to eviction pressure from login_client/anon too -
-  // see the module docstring.
+  // reason it exists. Bounded at 20 per 5 minutes and cleared by a successful login. A per-account
+  // cap is ALWAYS a denial-of-login handle on a known account, not something a smarter design can
+  // remove: whoever trips it locks the real owner out for the rest of the window, renewable
+  // indefinitely afterwards at roughly one trip per window. That is the accepted trade for
+  // bounding brute force against an operator-set password. The bucket shipped with a 900-second
+  // window, which made the lockout longer than the trade justified; 300 seconds keeps the same
+  // order-of-magnitude guess ceiling with a smaller blast radius. RATE_LIMIT_LOGIN_ACCOUNT_MAX=0
+  // is the documented break-glass for an operator who needs the bucket off entirely - verified
+  // in decide() below, a limit of 0 allows every request unconditionally rather than blocking
+  // everything. This bucket's own capacity partition is what keeps it immune to eviction pressure
+  // from login_client/anon too - see the module docstring.
   login_account: {
     maxVar: "RATE_LIMIT_LOGIN_ACCOUNT_MAX",
     windowVar: "RATE_LIMIT_LOGIN_ACCOUNT_WINDOW_SEC",
-    maxDefault: 10,
-    windowDefault: 900,
+    maxDefault: 20,
+    windowDefault: 300,
   },
   // Shared across all eight AI routes: rotating routes must not multiply the budget.
   ai: { maxVar: "RATE_LIMIT_AI_MAX", windowVar: "RATE_LIMIT_AI_WINDOW_SEC", maxDefault: 20, windowDefault: 60 },
@@ -207,11 +214,15 @@ function truncatedKey(key: string): string {
  * introduced a worse flaw than the one they fixed, and the cost below is a real deterrent on its
  * own without touching the policy a third time.
  *
- * What this DOES cost the attacker: roughly MAX_ENTRIES_PER_BUCKET - 1 decoy requests - about a
- * thousand at the current constant, a linear and roughly hundred-fold cost multiplier over simply
- * guessing - to buy back one guess against the target. It is NOT audit-visible: catching up to a
- * target's count never requires a decoy to reach its OWN max, so no decoy bucket trips and no
- * rate_limit_exceeded event fires. Do not describe this as self-defeating or as leaving an audit
+ * What this DOES cost the attacker: tying a target sitting at count N costs roughly
+ * (MAX_ENTRIES_PER_BUCKET - 1) x N decoy requests, NOT a flat MAX_ENTRIES_PER_BUCKET - 1 - each of
+ * the ~999 decoys must itself be raised from 0 to N, not merely inserted once, before the tie-break
+ * can fire. At login_account's current default (20), a target one guess from tripping (N=19) costs
+ * on the order of 999 x 19 - about nineteen thousand decoy requests to buy back that one guess, not
+ * "about a thousand". It is still a real, linear cost multiplier over simply guessing (linear in
+ * both the bucket size and how deep the target already is), and it is NOT audit-visible: catching
+ * up to a target's count never requires a decoy to reach its OWN max, so no decoy bucket trips and
+ * no rate_limit_exceeded event fires. Do not describe this as self-defeating or as leaving an audit
  * trail; it does neither. (This residual belongs in docs/BACKLOG.md - not added here.)
  *
  * Complexity note: this function runs once per request for a key with no live entry, before that

@@ -153,12 +153,12 @@ describe("the rate limiter tells an attacker nothing either", () => {
 
   test("an attacker rotating the forwarded address is still capped by the account bucket", async () => {
     let throttled = 0;
-    for (let i = 0; i < 14; i += 1) {
+    for (let i = 0; i < 24; i += 1) {
       const res = await attempt({ email: "admin@libredb.org", password: "guess" }, `198.51.100.${100 + i}`);
       if (res.status === 429) throttled += 1;
     }
 
-    // The client bucket never fills (a fresh address each time), so the account bucket - 10 per
+    // The client bucket never fills (a fresh address each time), so the account bucket - 20 per
     // window, keyed on the hash of the submitted email - is what stops the run.
     expect(throttled).toBe(4);
   });
@@ -209,7 +209,7 @@ describe("what the audit trail records", () => {
   });
 
   test("a targeted attack on one account spread across forged addresses is recorded as the account bucket", async () => {
-    for (let i = 0; i < 11; i += 1) {
+    for (let i = 0; i < 21; i += 1) {
       await attempt({ email: "admin@libredb.org", password: "guess" }, `198.51.100.${210 + i}`);
     }
 
@@ -218,7 +218,7 @@ describe("what the audit trail records", () => {
       .filter((line) => line.event === "rate_limit_exceeded");
 
     // Every attempt used a fresh forged address, so login_client never trips; only login_account -
-    // keyed on the submitted email, immune to the spoofed address - trips, on the 11th attempt.
+    // keyed on the submitted email, immune to the spoofed address - trips, on the 21st attempt.
     expect(events).toHaveLength(1);
     expect(events[0].bucket).toBe("login_account");
   });
