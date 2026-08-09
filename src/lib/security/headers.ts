@@ -138,9 +138,16 @@ export function studioCspDirectives(options: CspOptions = {}): CspDirectives {
   // Monaco injects <style> elements at runtime for the db-dark theme, and the app uses the React
   // style={{...}} prop with computed values at 41 sites. Neither is nonce-able or hash-able.
   const styleSrc = ["'self'", "'unsafe-inline'"];
-  // Monaco's five workers and the ELK layout worker are same-origin module workers. No blob: worker
-  // exists anywhere, so this stays strict: a worker failure is loud and the e2e suite catches it.
-  const workerSrc = ["'self'"];
+  // The ELK layout worker (src/components/schema-diagram/elk.worker.ts) is a same-origin module
+  // worker and needs nothing beyond 'self'. blob: is also required: Monaco's bundled language
+  // workers (json/css/html/typescript, and the default worker used for every other language,
+  // including this app's SQL editor) are NOT same-origin module workers — Monaco's own worker
+  // factory (public/monaco/vs/editor/editor.main.js, function F) wraps each worker script in a
+  // `new Blob([...])` + `importScripts(...)`, then constructs the Worker from that blob: URL, so
+  // it can load the same worker code regardless of Monaco's own origin. This was documented as
+  // "no blob: worker exists anywhere" before e2e/security-headers.spec.ts proved otherwise against
+  // a real production build — the report-only stage exists precisely to catch a claim like that.
+  const workerSrc = ["'self'", "blob:"];
 
   if (monacoOrigin) {
     scriptSrc.push(monacoOrigin);
