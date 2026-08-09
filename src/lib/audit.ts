@@ -136,7 +136,8 @@ export function getServerAuditBuffer(): AuditRingBuffer {
 const AUDIT_SCHEMA = "libredb.audit.v1";
 /**
  * RFC 5321's maximum address length: enough for any real account, bounded against a 10 KB one.
- * One rule for every free-text field on the line, not a fresh number per field.
+ * One rule for every free-text field, wherever it is stored — the ring buffer or the stdout line —
+ * not a fresh number per field or per destination.
  */
 const MAX_AUDIT_FIELD_LENGTH = 254;
 /** The address derivation's "no usable signal" placeholder; never recorded as if it were one. */
@@ -145,14 +146,14 @@ const UNKNOWN_ADDRESS = "unknown";
 const CREDENTIAL_REDACTION = "[REDACTED]";
 /**
  * Matches `scheme://userinfo@` so a connection string's `user:password` (or a bare token used as
- * userinfo) can be replaced before the value reaches the line. The host and everything after `@`
- * is left intact — an operator needs to know which host, not the password.
+ * userinfo) can be replaced before the value reaches either destination. The host and everything
+ * after `@` is left intact — an operator needs to know which host, not the password.
  */
 const URI_CREDENTIAL_PATTERN = /([a-zA-Z][a-zA-Z0-9+.-]*):\/\/[^/\s@]+@/g;
 
 /**
- * The one gate every free-text field passes through before it can reach the line: strip any
- * URI-shaped credential, then bound the length. Order matters — redacting first means a value
+ * The one gate every free-text field passes through before it can reach either destination: strip
+ * any URI-shaped credential, then bound the length. Order matters — redacting first means a value
  * long enough to be truncated never has its credential cut in half and left partially exposed.
  */
 function sanitizeAuditField(value: string): string {
@@ -161,20 +162,23 @@ function sanitizeAuditField(value: string): string {
 }
 
 /**
- * Sweeps every own key of the constructed line and sanitizes any string value found there,
- * unconditionally. This is deliberately not a per-field allowlist of calls to sanitizeAuditField:
- * a field added to AuditLogLine later is covered by construction, because opting OUT would
- * require deleting code, not because someone remembered to opt it in.
+ * The single sanitization boundary, applied once to the caller-supplied event before it reaches
+ * either the ring buffer (push) or the stdout line (toAuditLine) — both destinations consume this
+ * result, so there is exactly one rule to keep correct instead of one per destination. Sweeps
+ * every own key of the event and sanitizes any string value found there, unconditionally: this is
+ * deliberately not a per-field allowlist of calls to sanitizeAuditField, so a field added to
+ * AuditEvent later is covered by construction. Opting a field OUT would require deleting code from
+ * this sweep; there is no opt-in step to forget.
  */
-function sanitizeAuditLine(line: AuditLogLine): AuditLogLine {
-  const sanitized: Record<string, unknown> = { ...line };
+function sanitizeAuditInput(event: Omit<AuditEvent, "id" | "timestamp">): Omit<AuditEvent, "id" | "timestamp"> {
+  const sanitized: Record<string, unknown> = { ...event };
   for (const key of Object.keys(sanitized)) {
     const value = sanitized[key];
     if (typeof value === "string") {
       sanitized[key] = sanitizeAuditField(value);
     }
   }
-  return sanitized as unknown as AuditLogLine;
+  return sanitized as unknown as Omit<AuditEvent, "id" | "timestamp">;
 }
 
 /**
@@ -236,10 +240,10 @@ function toAuditLine(event: AuditEvent): AuditLogLine {
  * masks result-grid cell values by column-name pattern and has no bearing on log strings.
  */
 export function emitAuditEvent(event: Omit<AuditEvent, "id" | "timestamp">): AuditEvent {
-  const stored = getServerAuditBuffer().push({ ...event, user: event.user.slice(0, MAX_AUDIT_FIELD_LENGTH) });
+  const stored = getServerAuditBuffer().push(sanitizeAuditInput(event));
   // JSON.stringify escapes newlines and control characters, so an attacker-controlled actor
   // cannot forge a second log line. This is why the audit channel does not reuse logger.ts.
-  console.log(JSON.stringify(sanitizeAuditLine(toAuditLine(stored))));
+  console.log(JSON.stringify(toAuditLine(stored)));
   return stored;
 }
 

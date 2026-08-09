@@ -293,6 +293,35 @@ describe("emitAuditEvent", () => {
     });
   });
 
+  /**
+   * Threat: the admin API's audit endpoint is a display-only passthrough over
+   * `getServerAuditBuffer()` (see src/app/api/admin/audit/route.ts) — whatever is retained here is
+   * what that endpoint serves. A connection string with an embedded password must not survive in
+   * the buffer just because it was scrubbed on the way to stdout; the two destinations share one
+   * sanitized event, not two independent rules.
+   */
+  test("a connection string with an embedded password is not readable from the buffer the admin API serves", () => {
+    const spy = spyOn(console, "log").mockImplementation(() => {});
+    try {
+      emitAuditEvent({
+        type: "query_execution",
+        action: "query",
+        target: "POST /api/db/query",
+        connectionName: "postgres://dbadmin:supersecret@10.0.0.5:5432/prod",
+        user: "user@libredb.org",
+        result: "success",
+      });
+
+      const buffered = getServerAuditBuffer().getAll();
+      expect(buffered).toHaveLength(1);
+      const serializedBuffer = JSON.stringify(buffered);
+      expect(serializedBuffer).not.toContain("supersecret");
+      expect(serializedBuffer).toContain("10.0.0.5");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   test("bounds an oversized ip so a spoofed forwarded-for chain cannot bloat every line", () => {
     const line = captureLine(() =>
       emitAuditEvent({
