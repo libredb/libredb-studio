@@ -1,17 +1,29 @@
 # Secret scanning configuration for LibreDB Studio (security programme control 2.1).
 #
-# The full-history sweep that produced this file found 24 matches across 753
-# commits and classified every one of them as a fabricated value: no credential
-# has ever been committed to this repository and no rotation was required. The
-# four allowlists below are that classification, written down, so the
-# incremental scan on every pull request starts from zero and any new match is a
-# real finding rather than one of the same 24 forever.
+# The full-history sweep found 24 matches across 753 commits and classified
+# every one of them as a fabricated value: no credential has ever been
+# committed to this repository and no rotation was required. Each is
+# suppressed by exact fingerprint in `.gitleaksignore`, not here - see that
+# file for the classification and the reasoning.
 #
-# Every allowlist names `targetRules`. A rule-less allowlist would exempt a path
-# from ALL of gitleaks' rules, including the provider-specific ones (AWS, GCP,
-# Slack, Stripe) that have no false positives here - which is how an allowlist
-# written for a fake JWT ends up hiding a real AWS key. tests/unit/gitleaks-config.test.ts
-# enforces that.
+# Why fingerprints instead of a `[[allowlists]]` entry in this file: an
+# allowlist scoped by `paths` exempts an entire file or directory from a rule
+# forever, and one scoped by `regexes` still exempts every future occurrence
+# of that literal value anywhere. A fingerprint names the one already-seen
+# `commit:file:rule:startline`, so a real secret added later - even the exact
+# same fabricated literal, in a new commit - produces a different fingerprint
+# and is still reported. Verified 2026-08-09: a `paths = ['^tests/']`
+# allowlist for the generic-api-key/jwt/private-key rules silently swallowed a
+# freshly planted, real-shaped secret added to a brand-new file under tests/;
+# replacing it with fingerprints in `.gitleaksignore` closed that gap while
+# the full 774-commit history still scans clean.
+#
+# `[[allowlists]]` in this file remains available for the different problem it
+# actually solves well: a rule that is unconditionally noisy for a known,
+# reviewable reason (see tests/unit/gitleaks-config.test.ts for the shape
+# every entry here must have - targetRules is mandatory, and `paths` is
+# rejected outright in favour of `regexes` + `regexTarget` or a
+# `.gitleaksignore` fingerprint). There are none of those today.
 
 title = "LibreDB Studio secret scanning"
 
@@ -20,43 +32,3 @@ title = "LibreDB Studio secret scanning"
 # with the pinned scanner digest, which is what makes the verdict a pure function
 # of the commit plus that digest.
 useDefault = true
-
-[[allowlists]]
-description = """
-Test fixtures. Every secret-shaped literal under tests/ is fabricated - the
-jwt.io sample token, hex filler, self-describing strings such as
-"winner-secret-that-is-at-least-32-chars", and an RSA key whose body is the word
-"fake". Scoped to the three generic rules that match shape rather than issuer, so
-a real provider token pasted into a test still fails the scan; GitHub's push
-protection covers that case independently.
-"""
-targetRules = ["generic-api-key", "jwt", "private-key"]
-paths = ['''^tests/''']
-
-[[allowlists]]
-description = """
-The two example passwords in the documented Helm install commands, which appear
-verbatim in charts/libredb-studio/README.md, its operator copy,
-docs/HELM_CHART.md and an archived planning document. Allowlisted by VALUE, not
-by path, so a different literal in the same files is still reported.
-"""
-targetRules = ["generic-api-key"]
-regexes = ['''^StrongPass\d+$''']
-regexTarget = "secret"
-
-[[allowlists]]
-description = """
-The two PEM placeholders in the connection form's textareas ("Optional client
-key...", "Paste private key here..."). They are UI copy, not keys.
-"""
-targetRules = ["private-key"]
-paths = ['''^src/components/ConnectionModal\.tsx$''']
-
-[[allowlists]]
-description = """
-The Couchbase healthcheck in the local development compose file, whose curl -u
-argument is "$$COUCHBASE_USER:$$COUCHBASE_PASSWORD" - Compose variable
-interpolation, resolved from the same file's environment block.
-"""
-targetRules = ["curl-auth-user"]
-paths = ['''^database-compose\.yml$''']

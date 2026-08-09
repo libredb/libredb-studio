@@ -43,7 +43,7 @@ describe(".trivyignore.yaml suppression policy", () => {
     // Not a requirement that this file must stay empty forever. A record of
     // the current, expected state, so a reader knows the loops below are
     // vacuous by design rather than by accident.
-    expect(vulnerabilities.length).toBe(0);
+    expect(vulnerabilities).toHaveLength(0);
   });
 
   test("every suppression names the advisory it suppresses", () => {

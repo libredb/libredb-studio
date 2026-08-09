@@ -1,12 +1,27 @@
 /**
  * Threat: an allowlist that hides a real credential.
  *
- * The historical sweep found 24 matches and classified all 24 as fabricated, so
- * .gitleaks.toml exists to make the incremental scan start from zero. The way
- * that file goes wrong is not a wrong regex - it is a future maintainer
- * silencing one noisy path by adding a `paths` entry with no `targetRules`,
- * which exempts that path from EVERY gitleaks rule, including the AWS, GCP,
- * Slack and Stripe rules that have never produced a false positive here.
+ * The historical sweep found 24 matches and classified all 24 as fabricated.
+ * That classification lives in `.gitleaksignore` as exact fingerprints
+ * (tests/unit/gitleaksignore.test.ts covers its shape) - not here. This file
+ * used to also carry the classification as `[[allowlists]]` entries, but a
+ * `paths` allowlist for a rule that matches by SHAPE rather than by issuer
+ * (generic-api-key, jwt, private-key, curl-auth-user) exempts every future
+ * finding of that shape anywhere under the path, not just the historical one
+ * it was written for. Verified live 2026-08-09 against gitleaks 8.30.1: a
+ * `paths = ['^tests/']` allowlist silently swallowed a freshly planted,
+ * real-shaped secret added to a brand-new file under tests/, and a `paths`
+ * entry scoped to a single known file did the same for a real-shaped secret
+ * added next to the known fixture in that file. A fingerprint - the exact
+ * `commit:file:rule:startline` gitleaks reports - does not have that failure
+ * mode: a real secret added later, even the exact same fabricated literal in
+ * a new commit, produces a different fingerprint and is still reported.
+ *
+ * `.gitleaks.toml` keeps the `[[allowlists]]` mechanism available for the
+ * different problem it actually solves well - a rule that is unconditionally
+ * noisy for a known, reviewable reason - and this file guards the shape any
+ * future entry there must have, so a future maintainer silencing a noisy
+ * path does not reopen the gap above.
  *
  * Parsed with Bun.TOML rather than imported: `import x from "*.toml"` is a bun
  * loader feature that `tsc --noEmit` rejects, and typecheck is a required gate.
@@ -38,8 +53,12 @@ describe(".gitleaks.toml", () => {
     expect(config.extend?.useDefault).toBe(true);
   });
 
-  test("has allowlists at all - the sweep found 24 fabricated matches to classify", () => {
-    expect(allowlists.length).toBeGreaterThan(0);
+  test("carries no allowlists today - the 24 known findings are fingerprints in .gitleaksignore", () => {
+    // Not a requirement that this file must stay empty forever - a record of
+    // the current, expected state, so a reader knows the loops below are
+    // vacuous by design rather than by accident (the same pattern
+    // tests/unit/trivyignore-policy.test.ts uses for its own empty file).
+    expect(allowlists).toHaveLength(0);
   });
 
   test("every allowlist is scoped to named rules", () => {
@@ -78,6 +97,17 @@ describe(".gitleaks.toml", () => {
           tree: false,
         });
       }
+    }
+  });
+
+  test("no allowlist is scoped by path - a future one should be scoped by value or fingerprint", () => {
+    // The gap this whole file exists to prevent: a `paths` entry exempts
+    // every future finding under that path, not just the one it was written
+    // for. `.gitleaksignore` (exact fingerprints) and `regexes` +
+    // `regexTarget` (exact values) do not have that failure mode; `paths`
+    // does, which is why every allowlist here is one of the other two shapes.
+    for (const entry of allowlists) {
+      expect(entry.paths).toBeUndefined();
     }
   });
 

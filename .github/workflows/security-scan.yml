@@ -6,7 +6,12 @@ name: Security Scan
 # commit, and the repository's required checks must stay a function of the code
 # under review. Same reasoning that keeps SonarCloud out of the required set.
 #
-# WHAT BLOCKS AND WHAT REPORTS
+# WHICH SCANS CAN FAIL, AND WHICH ONLY REPORT
+#
+# "Fails" below means the job goes red, not that it blocks a merge: none of
+# these three is a required status check in branch protection today (see the
+# note after the list), so a failed job here is visible on the pull request
+# but does not by itself stop a maintainer from clicking merge.
 #
 #   secret-scan       fails. Its verdict is a pure function of the scanned commit
 #                     range and the pinned gitleaks digest - no feed can turn it
@@ -91,11 +96,20 @@ jobs:
         run: |
           set -euo pipefail
           if [ "$EVENT_NAME" = "pull_request" ]; then
-            # Only the commits this pull request adds. Without --no-merges a
-            # merge commit re-presents the whole other side of the merge as a
-            # diff, which would report every historical match again on every
-            # pull request - and a check that is always red is a check nobody
-            # reads.
+            # Only the commits this pull request adds. `git log` already
+            # shows no diff at all for a merge commit by default - unrelated
+            # history is never re-presented, `--no-merges` was never needed
+            # for that - but a plain merge commit hides whatever its
+            # resolution introduced from BOTH parents, so a secret added only
+            # while resolving a conflict would never reach the scanner.
+            # `--diff-merges=first-parent` shows a merge commit's diff against
+            # the branch it was merged into, which is exactly the new content
+            # this pull request is adding, without the flood a full
+            # non-first-parent diff of the other side would produce. Verified
+            # 2026-08-09: a secret introduced only in a conflict resolution is
+            # invisible under `--no-merges` and reported under
+            # `--diff-merges=first-parent`, and a linear (no-merge) range
+            # scans identically either way.
             #
             # `range` is the ONE definition of what gets scanned. log_opts and
             # commit_count are both derived from this single variable rather
@@ -105,7 +119,7 @@ jobs:
             # commit_count correct and non-zero while the scanner below reads
             # the reversed, typically empty, direction and reports clean). One
             # source cannot diverge from itself.
-            range="--no-merges $BASE_SHA..$HEAD_SHA"
+            range="--diff-merges=first-parent $BASE_SHA..$HEAD_SHA"
             echo "log_opts=$range" >> "$GITHUB_OUTPUT"
             # `git rev-list --count` resolves that SAME range, under the same
             # `set -e`. An unresolvable range - an unreachable base.sha after a
@@ -171,9 +185,9 @@ jobs:
             echo "## Committed secrets found"
             echo
             if [ -s "$report" ]; then
-              echo "| Rule | File | Line | Commit |"
-              echo "| --- | --- | --- | --- |"
-              jq -r '.[] | "| \(.RuleID) | \(.File) | \(.StartLine) | \(.Commit[0:8]) |"' "$report"
+              echo "| Rule | File | Line | Commit | Fingerprint |"
+              echo "| --- | --- | --- | --- | --- |"
+              jq -r '.[] | "| \(.RuleID) | \(.File) | \(.StartLine) | \(.Commit[0:8]) | \(.Fingerprint) |"' "$report"
             else
               echo "The scanner failed before producing a report - read the step log."
             fi
@@ -184,9 +198,12 @@ jobs:
             echo "remedy that works."
             echo
             echo "If the match is fabricated - a fixture, a placeholder, documented example copy -"
-            echo "add a rule-scoped allowlist to \`.gitleaks.toml\` with a description that says"
-            echo "why. An allowlist without \`targetRules\` is rejected by"
-            echo "\`tests/unit/gitleaks-config.test.ts\`."
+            echo "copy the Fingerprint column above (commit:file:rule:startline) into"
+            echo "\`.gitleaksignore\` with a comment explaining why. That suppresses exactly this"
+            echo "finding; a real secret added later, even the same literal in a new commit,"
+            echo "is still reported. \`.gitleaks.toml\`'s \`[[allowlists]]\` is for a whole rule"
+            echo "being unconditionally noisy, not a single fixture; one without \`targetRules\`"
+            echo "is rejected by \`tests/unit/gitleaks-config.test.ts\`."
           } >> "$GITHUB_STEP_SUMMARY"
 
   dependency-scan:

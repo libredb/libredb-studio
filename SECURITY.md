@@ -148,10 +148,11 @@ When using LibreDB Studio, please follow these security best practices:
 
 #### Supply Chain
 
-- Dependencies are scanned on every pull request against the lockfiles that
-  actually build the shipped artefacts: `bun.lock`, the Windows launcher's
-  `go.mod`, and the desktop shell's `Cargo.lock`. Findings appear in the run's
-  job summary and, for branches in this repository, in the GitHub Security tab
+- Dependencies are scanned on every pull request against the npm, Go and Rust
+  inputs that actually build the shipped artefacts: `bun.lock`, the Windows
+  launcher's `go.mod`, and the desktop shell's `Cargo.lock`. Findings appear in
+  the run's job summary and, for branches in this repository, in the GitHub
+  Security tab
 - The scan **fails** only for a CRITICAL advisory that has a fixed version
   available and is not covered by an unexpired entry in `.trivyignore.yaml`, and
   only outside pull requests. Findings with no available fix are reported and
@@ -201,12 +202,15 @@ gh attestation verify libredb-studio-<version>.cdx.json --repo libredb/libredb-s
 The container image is not covered by that document, because the image is built
 after the release is published and this project's releases are immutable. Its
 SBOM is generated daily from the published image, and you can regenerate it
-yourself from any digest at any time:
+yourself from any digest at any time. A tag such as `:0.9.67` is mutable - it
+resolves to whatever manifest it currently points at - so resolve it to the
+immutable digest first:
 
 ```bash
+digest=$(docker buildx imagetools inspect ghcr.io/libredb/libredb-studio:0.9.67 --format '{{json .Manifest.Digest}}' | tr -d '"')
 trivy image --format cyclonedx --scanners license \
   --output libredb-studio-image.cdx.json \
-  ghcr.io/libredb/libredb-studio:0.9.67
+  "ghcr.io/libredb/libredb-studio@$digest"
 ```
 
 ### Security Updates

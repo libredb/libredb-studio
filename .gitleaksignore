@@ -1,0 +1,78 @@
+# Historical secret-scanning suppressions for LibreDB Studio (security
+# programme control 2.1).
+#
+# The full-history sweep found 24 matches across 753 commits (grown to 774 as
+# of 2026-08-09) and classified every one of them as a fabricated value: no
+# credential has ever been committed to this repository and no rotation was
+# required. Each line below is one finding's fingerprint - the exact
+# `commit:file:rule:startline` gitleaks reports for it - not a path or a
+# value, so it suppresses that one already-classified historical occurrence
+# and nothing else: a real secret added later anywhere in these same files, or
+# a real secret matching one of these same fabricated literals in a NEW
+# commit, still produces a new finding with a different fingerprint and is
+# still reported.
+#
+# Verified 2026-08-09 against gitleaks 8.30.1: converting the four
+# `.gitleaks.toml` `paths`-scoped allowlists this file replaces (`tests/`,
+# `src/components/ConnectionModal.tsx`, `database-compose.yml`) to this
+# fingerprint list closed a real gap - a real-shaped secret planted in a new
+# file under `tests/`, or next to the known fixture in the other two files,
+# was silently swallowed by the old path-scoped allowlists and is reported
+# under this one. tests/unit/gitleaksignore.test.ts enforces the shape (every
+# line either a comment or a well-formed, non-wildcard fingerprint) and pins
+# the count so a line silently dropped, or one silently added without review,
+# both show up as a diff.
+
+# jwt.io's published sample token (header/payload `sub: 1234567890`), used to
+# verify a failed OIDC exchange does not leak a real token. Matches both the
+# jwt rule and, in the redaction test, the generic-api-key rule.
+01693036a151eca81b128f03335ae7f8f687ca52:tests/security/auth-audit.test.ts:jwt:255
+01693036a151eca81b128f03335ae7f8f687ca52:tests/security/audit-redaction.test.ts:generic-api-key:103
+
+# 32-char hex filler used as a placeholder JWT secret across three Helm-chart
+# rendering tests, plus a 31-char boundary-length variant in the same file.
+54e6b79d54532105e56eb0b06ca552828c64f874:tests/unit/helm-chart-auth-provider.test.ts:generic-api-key:28
+332ebefa913ca28a494d96edbbfdd2d974d68106:tests/unit/helm-chart-user-password.test.ts:generic-api-key:18
+332ebefa913ca28a494d96edbbfdd2d974d68106:tests/unit/helm-chart-hardening.test.ts:generic-api-key:30
+332ebefa913ca28a494d96edbbfdd2d974d68106:tests/unit/helm-chart-hardening.test.ts:generic-api-key:132
+
+# Self-describing literal strings naming their own role in an auth-bootstrap
+# unit test ("persisted-secret-that-is-32-chars-x", "winner-secret-that-is-at-
+# least-32-chars"), repeated across two commits.
+4d66b72ddd3447b3271732f9a3664269a84280ce:tests/unit/lib/auth-bootstrap.test.ts:generic-api-key:331
+4d66b72ddd3447b3271732f9a3664269a84280ce:tests/unit/lib/auth-bootstrap.test.ts:generic-api-key:353
+4d66b72ddd3447b3271732f9a3664269a84280ce:tests/unit/lib/auth-bootstrap.test.ts:generic-api-key:379
+4d66b72ddd3447b3271732f9a3664269a84280ce:tests/unit/lib/auth-bootstrap.test.ts:generic-api-key:406
+4d66b72ddd3447b3271732f9a3664269a84280ce:tests/unit/lib/auth-bootstrap.test.ts:generic-api-key:442
+095c613f317cc8792d4da1bf8d840cf58f9ed7fe:tests/unit/lib/auth-bootstrap.test.ts:generic-api-key:309
+
+# tests/unit/ssh-tunnel.test.ts's stub private key, whose PEM body is
+# literally the word "fake" - used with a stub SSH client to test tunnel auth
+# wiring, not a real key.
+7b99be66f9a77f007dc62e375ddcae4878d23c54:tests/unit/ssh-tunnel.test.ts:private-key:155
+
+# The example password ("StrongPass123", "StrongPass456") in the documented
+# `helm install --set secrets.adminPassword=...` command, duplicated verbatim
+# across four documentation files.
+b742deda754da77f89b73ea947e8fa45cbc49bc9:operator/helm-charts/libredb-studio/README.md:generic-api-key:122
+b742deda754da77f89b73ea947e8fa45cbc49bc9:operator/helm-charts/libredb-studio/README.md:generic-api-key:123
+421fddcc1e9278a2ea0c94b8c3e07a669d085755:charts/libredb-studio/README.md:generic-api-key:116
+421fddcc1e9278a2ea0c94b8c3e07a669d085755:charts/libredb-studio/README.md:generic-api-key:117
+02f8532c9e85e957297bccc5385a75aafa02263d:docs/HELM_CHART.md:generic-api-key:227
+02f8532c9e85e957297bccc5385a75aafa02263d:docs/HELM_CHART.md:generic-api-key:228
+dfb4a9af0dcf58a7042b138d9d710a011041fb1a:docs/kubernetes-helm-chart-artifacthub-plan.md:generic-api-key:331
+dfb4a9af0dcf58a7042b138d9d710a011041fb1a:docs/kubernetes-helm-chart-artifacthub-plan.md:generic-api-key:332
+
+# The connection form's PEM placeholder ("Optional client key...") in the
+# textarea's `placeholder` attribute. UI copy, not a key; the rule's match is
+# greedy and its capture runs on for thousands of characters of surrounding
+# component code, but the fingerprint pins the exact commit, file and line the
+# addition landed on.
+7f69b8036ebb1dc24f83f18db4174a367121fab0:src/components/ConnectionModal.tsx:private-key:648
+
+# The Couchbase healthcheck in the local development compose file: curl -u
+# "$$COUCHBASE_USER:$$COUCHBASE_PASSWORD" is Compose variable interpolation,
+# resolved at container-run time from the same file's environment block, not a
+# credential in source. Matched twice on the same line, once per half.
+5135a9c606e9e42c1b4ae0bdc31725718758f2b4:database-compose.yml:curl-auth-user:83
+5135a9c606e9e42c1b4ae0bdc31725718758f2b4:database-compose.yml:curl-auth-user:122

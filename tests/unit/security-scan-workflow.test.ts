@@ -211,9 +211,16 @@ describe("secret-scan is the one scan allowed to fail a check", () => {
     expect(checkout?.with?.["fetch-depth"]).toBe(0);
   });
 
-  test("scans only the pull request's own commits, and skips merge commits", () => {
+  test("scans only the pull request's own commits, diffing merges against their first parent", () => {
+    // Plain `git log` already shows no diff for a merge commit, so a bare
+    // range never re-floods with the other side's unrelated history; but it
+    // also means a secret introduced only while resolving a merge conflict
+    // reaches neither parent's diff and would go unscanned. Verified
+    // 2026-08-09: `--diff-merges=first-parent` is what surfaces that
+    // resolution while a linear (no-merge) range scans identically to a bare
+    // range.
     const resolver = steps.find((s) => s.id === "range");
-    expect(resolver?.run).toContain("--no-merges");
+    expect(resolver?.run).toContain("--diff-merges=first-parent");
     expect(resolver?.run).toContain("pull_request");
     expect(resolver?.run).toContain("--all");
   });
@@ -240,7 +247,7 @@ describe("secret-scan is the one scan allowed to fail a check", () => {
     // impossible rather than merely absent today.
     const resolver = steps.find((s) => s.id === "range");
     const run = resolver?.run ?? "";
-    expect(run).toMatch(/range="--no-merges \$BASE_SHA\.\.\$HEAD_SHA"/);
+    expect(run).toMatch(/range="--diff-merges=first-parent \$BASE_SHA\.\.\$HEAD_SHA"/);
     expect(run).toContain('echo "log_opts=$range"');
     expect(run).toContain("git rev-list --count $range");
   });
