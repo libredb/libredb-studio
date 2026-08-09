@@ -94,7 +94,7 @@ const headers = securityHeaders({
 const directives = studioCspDirectives();
 ```
 
-Three things to know before using it:
+Four things to know before using it:
 
 - **`img-src` must keep `data:` and `font-src` must keep `data:`.** `@zumer/snapdom` rasterizes the
   ER diagram (`src/components/schema-diagram/export.ts`) and the chart PNG export
@@ -104,6 +104,15 @@ Three things to know before using it:
   URL would have loaded — each call site catches that and reports it as a destructive toast
   (`SchemaDiagram.tsx`'s `exportDiagram`, `DataCharts.tsx`'s `exportChart`), so it fails loudly
   rather than silently, but it fails.
+- **`worker-src` must keep `blob:`.** Monaco's bundled language workers (json/css/html/typescript,
+  and the default worker used for every other language, including this app's SQL editor) are not
+  same-origin module workers — Monaco's own worker factory wraps each worker script in a
+  `new Blob([...])` + `importScripts(...)` and constructs the Worker from that `blob:` URL, so it
+  can load the worker code regardless of Monaco's own origin. This was documented as "no `blob:`
+  worker exists anywhere" before the end-to-end security-headers stage proved otherwise against a
+  real production build — the exact kind of directive a platform developer assembling their own CSP
+  by hand, or cherry-picking from `studioCspDirectives()`, would drop as apparently unused. Without
+  it Monaco's editor pane fails to load its language workers, silently, in embedded mode only.
 - **`script-src` and `style-src` need `'unsafe-inline'` and cannot use a nonce** while the pages
   are statically prerendered. `'unsafe-eval'` is not needed and must not be added.
 - **`frame-ancestors 'none'` is safe for the embedded path.** Platform imports Studio as React

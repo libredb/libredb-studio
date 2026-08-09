@@ -402,31 +402,45 @@ coverage span exists. The general fix is the same wherever the shape recurs: hoi
 inline parameter (or return) type annotation to a module-scope `interface`/`type`, don't chase it by
 adding a test that calls the under-covered function for coverage's sake alone.
 
-### H7. `sanitizeAuditInput` sweeps only top-level string values
+### H7. `sanitizeAuditInput` does not recurse, so a nested secret survives inside the coerced string it now produces
 
-`src/lib/audit.ts`'s `sanitizeAuditInput` iterates `Object.keys(event)` and sanitizes a value only
-when `typeof value === "string"`; it does not recurse into a nested object. `POST /api/admin/audit`
-(`src/app/api/admin/audit/route.ts`) accepts a fully client-supplied, untyped body
-(`await request.json()`) and passes it straight to `sanitizeAuditInput` before pushing it to the
-ring buffer — the closed `AuditEventType`/`AuditReason` unions are compile-time only and do not
-constrain what an admin session can actually send at runtime. A nested object value (for example
-`{"details": {"token": "…"}}`, a shape the real `AuditEvent` type never produces but nothing at
-runtime rejects) bypasses the sweep entirely and lands unredacted and unbounded in the ring buffer
-the admin UI reads via `GET /api/admin/audit`. This is bounded to the ring buffer, not stdout: the
-stdout line is built by `toAuditLine`'s explicit field allowlist, which never re-serializes an
-unknown property, so a smuggled nested value cannot reach the log pipeline this way. Done when
-`sanitizeAuditInput` walks nested plain objects (bounded depth, to avoid a cycle or a pathological
-document costing unbounded time) rather than only the event's own top-level keys.
+`src/lib/audit.ts`'s `sanitizeAuditInput` originally sanitized a value only when
+`typeof value === "string"`, silently skipping everything else. That was corrected for I3 of the
+Phase 1 review: a top-level value that is neither a string nor `duration`'s legitimate number is
+now coerced to a string (`JSON.stringify`, then the same `sanitizeAuditField` a real string goes
+through) rather than passed on as-is. The claim this entry originally made — "bounded to the ring
+buffer, not stdout, because `toAuditLine`'s allowlist never re-serializes an unknown property" — was
+true for the `details` field specifically (`toAuditLine` does not carry `details` at all) but false
+as a general rule: `target`, `user`, `action`, `connectionName`, `ip` and `bucket` are all
+allowlisted onto the stdout line, all string-typed, and all reachable with a non-string runtime
+value the same way `POST /api/db/maintenance`'s `target` was (its own untyped
+`await request.json()` body, no runtime validation). The coercion fix closes that gap: a nested
+object reaching any of those fields is now bounded (254 chars, same as every other free-text field)
+and reaches both destinations as a string, not an object, wherever it lands.
+
+The residual this entry now tracks is narrower: coercion is whole-value, not recursive per-key
+redaction. `sanitizeAuditField`'s credential pattern only recognizes a URI-shaped
+`scheme://user:pass@host` substring, so a nested secret under an arbitrary key name (for example
+`{"apiKey": "sk-live-…"}`, as opposed to a connection string) is bounded and no longer breaks the
+shape contract, but is not specifically redacted — it survives, truncated, inside the single
+JSON-stringified value. Done when nested plain objects are walked key-by-key (bounded depth, to
+avoid a cycle or a pathological document costing unbounded time) so a non-URI-shaped nested secret
+gets the same by-key-name scrutiny a top-level one does — no such scrutiny exists for any field
+today, top-level or nested; this is a new capability, not a gap being closed.
 
 ### H8. The rate limiter's lowest-count eviction lets an attacker buy back a `login_account` guess for a real, but audit-invisible, cost
 
 From `src/lib/api/rate-limit.ts`'s `pruneIfAtCapacity` doc comment, recorded here as instructed: an
-attacker can *"buy back one guess against an established `login_account` target for roughly
-`MAX_ENTRIES_PER_BUCKET - 1` (about a thousand) decoy requests, by raising that many other entries to
-TIE (not exceed) the target's count - the tie-break favors evicting the earliest-inserted member of a
-tied group, and the target, having been created before its decoys, always is. This is a real, linear
-cost multiplier and not a bypass, but unlike a tripped bucket it produces no `rate_limit_exceeded`
-audit event, so an operator watching only the audit trail would not see it happen."* Accepted for
+attacker can *"buy back one guess against an established `login_account` target sitting at count N
+for roughly `(MAX_ENTRIES_PER_BUCKET - 1) x N` decoy requests - not a flat `MAX_ENTRIES_PER_BUCKET -
+1` (about a thousand), because each of the ~999 decoys must itself be raised from 0 to N, not merely
+inserted once, before the tie-break can fire. At the bucket's current default (20), a target one
+guess from tripping (N=19) costs on the order of 999 x 19 - about nineteen thousand decoy requests,
+by raising that many other entries to TIE (not exceed) the target's count - the tie-break favors
+evicting the earliest-inserted member of a tied group, and the target, having been created before
+its decoys, always is. This is a real, linear cost multiplier and not a bypass, but unlike a tripped
+bucket it produces no `rate_limit_exceeded` audit event, so an operator watching only the audit
+trail would not see it happen."* Accepted for
 Phase 1: the eviction policy that produces this (lowest-count, not oldest-first) is itself the fix
 for a worse bypass (an attacker evicting a target's entry for free before it can accumulate any
 cost), and the two alternatives considered and rejected each introduced a worse flaw. Done when a
@@ -456,3 +470,61 @@ provider call to one of these routes (say, `storage/migrate` growing a database-
 would silently escape the guard sweep the allowlist exists to police, exactly the failure mode the
 enumeration itself was built to catch for undiscovered routes. Done when a second, independent check
 greps each allowlisted file for provider-reaching imports and fails loudly if one appears.
+
+### H11. `login_account`'s hard cap is an accepted denial-of-login handle on a known account
+
+`src/lib/api/rate-limit.ts`'s `login_account` bucket (keyed on `hmacHex(submittedEmail)`, immune to
+`X-Forwarded-For` spoofing) throws before the credential comparison runs, and is cleared only by a
+*successful* login, which cannot happen while the bucket is tripped. Anyone who knows or guesses a
+real account's address - the published default `admin@libredb.org` when `ADMIN_EMAIL` is unset makes
+this free - can lock that account out for the rest of the window with the bucket's own default (20
+wrong guesses), and renew the lockout indefinitely afterwards at roughly one wrong guess per window.
+`login_client`, the address-keyed bucket, does not help here: it is bypassed in any topology where an
+attacker can set or rotate `X-Forwarded-For` (direct exposure, or a proxy that appends rather than
+overwrites the header - Caddy and Traefik defaults, and the common nginx `proxy_add_x_forwarded_for`
+recipe, all qualify). This is inherent to a hard per-account cap, not a defect to design away:
+bounding brute force against an operator-set password and bounding this lockout are in direct
+tension, and no design removes one side without giving up the other. `.env.example` documents
+`RATE_LIMIT_LOGIN_ACCOUNT_MAX=0` as the break-glass (verified: `decide()` returns `allowed: true`
+unconditionally for `max === 0`, for both `peekRateLimit` and `consumeRateLimit`, so the bucket is
+fully inert, not merely permissive). Phase 1 narrowed the window from 900 to 300 seconds to shrink
+the lockout's blast radius without materially loosening the guess ceiling; it did not and cannot
+remove the residual. Done when a design is found that keeps this bucket immune to header spoofing
+without also being a stranger's denial-of-login switch on a known account - unknown at the time of
+writing.
+
+### H12. A role-based denial is never audited, and `insufficient_role` has no emitter
+
+`AuditReason` includes `insufficient_role` in its closed union, but no call site ever constructs an
+event with it. Every denial the audit trail actually records is a SESSION or ORIGIN check failing
+(`no_session` from `src/lib/api/require-session.ts`'s `guardRoute`, `origin_mismatch` from
+`src/proxy.ts`'s Origin check) - not a ROLE check failing for an already-authenticated caller. Four
+in-handler admin-only checks return their 403 with no audit call at all: `GET` and `POST
+/api/admin/audit` (`src/app/api/admin/audit/route.ts:9`, `:28`), `POST /api/admin/fleet-health`
+(`:29`) and `POST /api/db/maintenance` (`:18`). The proxy's own `/admin` RBAC redirect
+(`src/proxy.ts:106-108`, a non-admin token requesting an `/admin` page) is the same gap at the
+middleware layer: it silently redirects to `/`, no audit line, no `insufficient_role` reason ever
+used anywhere in the codebase. An admin session (or a stolen one) probing for a role it does not
+hold leaves no trace in the one channel this project treats as authoritative. Done when each of
+these five call sites emits a `permission_denied` event with `reason: "insufficient_role"`, the same
+pattern `guardRoute` already uses for `no_session`.
+
+### H13. No rate-limit bucket is a global, unkeyed ceiling - and Phase 1 leaves it that way on purpose
+
+Every bucket in `src/lib/api/rate-limit.ts` is keyed on something the caller supplies:
+`login_client`/`anon` on the derived client address (`X-Forwarded-For`, attacker-controlled in any
+topology without a correctly configured `TRUSTED_PROXY_HOPS`), `login_account` on a hash of the
+submitted email (fully attacker-chosen, see H11), and `query`/`ai` on the session's username
+(attacker-chosen only in the sense that it requires a session at all). A global, unkeyed ceiling -
+one counter for an entire bucket regardless of key - is the one shape that cannot be evaded by
+picking a favourable key, because there is no key to pick. Phase 1 does not add one, and this is a
+deliberate scope boundary for this wave, not an oversight: a global ceiling on `login_client` or
+`anon` turns one attacker's flood into a lockout for every other concurrent user of the same bucket,
+which is a strictly worse failure mode than the keyed floods it would prevent, and getting the
+sizing right (a ceiling loose enough not to bite a legitimate multi-tenant deployment, tight enough
+to bound an attacker) is its own design problem this wave did not scope. Recorded here because
+`src/proxy.ts`'s rejection warn log (`observedOrigin`, bounded per I4 of the Phase 1 review) and the
+`anon` bucket it shares with `guardRoute`'s denial path are the closest thing to a global counter
+this codebase has today, and it is still address-keyed. Done when a real, measured flood (not a
+hypothetical one) makes the keyed buckets' residual insufficient and a global ceiling's sizing can
+be grounded in that data rather than guessed.

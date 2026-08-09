@@ -232,6 +232,19 @@ helm install libredb libredb/libredb-studio \
 In report-only mode the browser logs the same violation to its console instead of blocking the
 resource. Please also open an issue naming the violated directive.
 
+Setting both `ALLOWED_ORIGINS` and `CSP_REPORT_ONLY` at once needs a distinct index per entry —
+`extraEnv` is a list, and `--set` on the same index (`extraEnv[0]` in both examples above) just
+overwrites the one element, so copying both snippets into a single command silently keeps only the
+second variable:
+
+```bash
+helm install libredb libredb/libredb-studio \
+  --set extraEnv[0].name=ALLOWED_ORIGINS \
+  --set extraEnv[0].value=https://libredb.example.com \
+  --set extraEnv[1].name=CSP_REPORT_ONLY \
+  --set extraEnv[1].value="true"
+```
+
 ## External Secrets
 
 Use `secrets.existingSecret` to reference a secret managed by External Secrets Operator, Sealed Secrets, or Vault:

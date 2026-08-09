@@ -117,15 +117,25 @@ When using LibreDB Studio, please follow these security best practices:
   deployments behind a reverse proxy that rewrites `Host` set `ALLOWED_ORIGINS`
 - Every response that passes through the app's request middleware carries `Content-Security-Policy`,
   `Strict-Transport-Security`, `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy` and
-  `Permissions-Policy` (static assets and the health/storage-config bootstrap endpoints are excluded
-  from the middleware and carry none of these — see `docs/BACKLOG.md`). The CSP permits inline
+  `Permissions-Policy` (static assets and the health/storage-config bootstrap paths are excluded
+  from the middleware and carry none of these — see `docs/BACKLOG.md`). The health exclusion is by
+  path, not method: `POST /api/db/health`, a database-reaching route, is excluded the same as
+  `GET /api/db/health` and so gets no Origin check and no security headers from the middleware
+  either — it checks its own session instead, the same as every other guarded route, so this is a
+  headers/CSRF gap on that one route, not an authentication gap. The CSP permits inline
   scripts, because the application is statically prerendered and its hydration scripts are inline
   and nonce-less; what it does contain is where an injected script could send data, not whether one
   can run. The CSP is enforced by default; if an upgrade breaks a blocked resource, set
   `CSP_REPORT_ONLY=true` (no rebuild required — it is a runtime environment variable) to downgrade
   it to report-only while you identify the violated directive
-- Logins, logouts, permission denials and rate-limit trips are written to the in-app audit log and
-  emitted as one structured JSON line each on stdout, for whatever log pipeline you already run
+- Logins, logouts, missing-session denials, Origin-mismatch denials and rate-limit trips are
+  written to the in-app audit log and emitted as one structured JSON line each on stdout, for
+  whatever log pipeline you already run. A denial based on ROLE rather than session or Origin — the
+  proxy's `/admin` redirect for a non-admin token, and the in-handler admin-only checks on
+  `admin/audit`, `admin/fleet-health` and `db/maintenance` — is not audited today; see
+  `docs/BACKLOG.md`. A failed login records the submitted email verbatim (truncated to 254
+  characters) as the event's actor, not just a real, known account: a user who mistypes their
+  password into the email field puts that password on a retained audit log line
 
 #### AI/LLM Integration
 - API keys are stored server-side only

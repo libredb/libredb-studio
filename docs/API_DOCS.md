@@ -18,6 +18,7 @@
 - [Data Types](#data-types)
 - [Error Handling](#error-handling)
 - [Rate Limiting](#rate-limiting)
+- [CSRF: Origin Check](#csrf-origin-check)
 - [Examples](#examples)
 
 ---
@@ -964,9 +965,9 @@ interface ActiveSession {
 | `200` | Success |
 | `400` | Bad Request - Invalid parameters or query syntax |
 | `401` | Unauthorized - Missing or invalid authentication |
-| `403` | Forbidden - Insufficient permissions |
+| `403` | Forbidden - Insufficient permissions, or the request's Origin does not match this deployment (`ORIGIN_MISMATCH`) |
 | `408` | Request Timeout - Query exceeded time limit |
-| `429` | Too Many Requests - Rate limit exceeded (AI) |
+| `429` | Too Many Requests - Rate limit exceeded. Applies to `POST /api/auth/login` and every session-guarded route (see "Rate Limiting" below), not only the AI endpoints |
 | `499` | Client Closed Request - Query cancelled by the client |
 | `500` | Internal Server Error |
 | `502` | Bad Gateway - LLM streaming failure |
@@ -1003,14 +1004,60 @@ These are the values of the `code` field emitted by `createErrorResponse` (`src/
 | `LLM_ERROR` | Generic LLM error |
 | `INTERNAL_ERROR` | Unhandled server error (500) |
 | `NETWORK_ERROR` | Network failure |
+| `RATE_LIMITED` | Application-level rate limit exceeded (429) - see "Rate Limiting" below |
+
+The Origin-mismatch 403 (see "CSRF: Origin Check" below) is not in this table: it is returned
+directly by the request middleware (`src/proxy.ts`), before a request ever reaches
+`createErrorResponse`, and carries `code: "ORIGIN_MISMATCH"` instead of one of the codes above.
 
 ---
 
 ## Rate Limiting
 
-### AI Endpoint
+The application enforces its own request-rate limits, independent of and in addition to whatever
+limits the underlying LLM provider applies. A rate-limited request always gets:
 
-The AI chat endpoint (`/api/ai/chat`) is subject to rate limits from the underlying LLM provider:
+- HTTP `429`
+- `code: "RATE_LIMITED"` in the JSON body
+- A `Retry-After` header naming the number of seconds until the window resets
+
+```json
+{
+  "error": "Too many requests. Try again in 42 seconds.",
+  "code": "RATE_LIMITED",
+  "statusCode": 429,
+  "retryable": true
+}
+```
+
+### Login
+
+`POST /api/auth/login` is limited two ways at once: per client address (5 failed attempts per 300
+seconds by default) and per submitted account, keyed on a hash of the email so it cannot be evaded
+by rotating the client address (20 failed attempts per 300 seconds by default). A successful login
+clears both counters for that request's keys. Both are configurable - see `RATE_LIMIT_LOGIN_MAX`
+and `RATE_LIMIT_LOGIN_ACCOUNT_MAX` in `.env.example`.
+
+### Every session-guarded route
+
+Every route that reaches a database or an LLM provider - the 8 AI endpoints, the database-reaching
+routes under `/api/db/`, and `POST /api/admin/fleet-health` (25 routes today) - shares one of two
+rate-limit buckets, keyed on the signed-in session, not the client address:
+
+| Bucket | Applies to | Default |
+|--------|-----------|---------|
+| `ai` | All 8 `/api/ai/*` routes together | 20 requests / 60 seconds |
+| `query` | Every database-reaching `/api/db/*` route plus `/api/admin/fleet-health`, together | 120 requests / 60 seconds |
+
+Routing the same workload through a different endpoint does not multiply the budget - the bucket is
+shared across every route it applies to. All limits are configurable through the `RATE_LIMIT_*`
+environment variables documented in `.env.example`; setting a `*_MAX` variable to `0` disables that
+bucket.
+
+### AI Endpoint (provider-side limits)
+
+Independent of the application-level `ai` bucket above, LLM API calls are also subject to whatever
+limits the underlying provider itself enforces:
 
 | Provider | Limits |
 |----------|--------|
@@ -1018,9 +1065,36 @@ The AI chat endpoint (`/api/ai/chat`) is subject to rate limits from the underly
 | OpenAI | Varies by plan |
 | Ollama | No limits (local) |
 
+A provider-side limit surfaces as `LLM_RATE_LIMIT` (429), distinct from this application's own
+`RATE_LIMITED` (429) above - both use the same HTTP status, but the `code` field tells them apart.
+
 ### Database Operations
 
 Database operations have a default timeout of 60 seconds (`DEFAULT_QUERY_TIMEOUT`).
+
+---
+
+## CSRF: Origin Check
+
+Every `POST`, `PUT`, `PATCH` and `DELETE` must carry an `Origin` (or, failing that, a `Referer`)
+whose host matches this deployment's own host, or the request is refused with `403` and
+`code: "ORIGIN_MISMATCH"` - a second layer behind the session cookie's `SameSite=Lax`, and the only
+layer on `POST /api/auth/login`, which carries no session cookie yet. There is no way to disable
+this check.
+
+**The cURL and fetch examples below keep working without changes.** A request that carries neither
+`Origin` nor `Referer` is still allowed when its `Content-Type` is exactly `application/json` - the
+one shape a cross-site browser cannot forge (an HTML `<form>` cannot set that content type at all,
+and a cross-site `fetch()` that does triggers a CORS preflight this deployment never answers). Every
+example below already sends `Content-Type: application/json` and no `Origin`, so all of them are
+unaffected. **A caller who drops that header** - and does not substitute an explicit
+`Origin: <this deployment's public origin>` - **gets refused with a 403** where it previously
+succeeded. Non-browser integrations that cannot set `Content-Type: application/json` (a webhook
+sender, for instance) must send `Origin: <this deployment's public origin>` instead.
+
+A deployment behind a reverse proxy that rewrites the `Host` header to an internal name must set
+`ALLOWED_ORIGINS` to its public origin (see `.env.example`), or every state-changing request -
+including login - is refused this way.
 
 ---
 
