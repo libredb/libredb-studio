@@ -1,6 +1,7 @@
 import { describe, test, expect, mock, beforeEach, afterEach } from "bun:test";
 import { createMockRequest, parseResponseJSON } from "../../helpers/mock-next";
 import { AuthConfigError } from "@/lib/auth-errors";
+import { clearRateLimitState } from "@/lib/api/rate-limit";
 
 // ─── Mock @/lib/auth BEFORE importing the route ─────────────────────────────
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -27,6 +28,7 @@ describe("POST /api/auth/login", () => {
   const envSnapshot: Record<string, string | undefined> = {};
 
   beforeEach(() => {
+    clearRateLimitState();
     mockLogin.mockClear();
     for (const key of MUTATED_ENV_KEYS) envSnapshot[key] = process.env[key];
   });
