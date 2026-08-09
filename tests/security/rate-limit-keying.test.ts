@@ -72,3 +72,26 @@ describe("a legitimate deployment behind one reverse proxy", () => {
     expect(consumeRateLimit("login_client", alice).allowed).toBe(false);
   });
 });
+
+describe("an attacker flooding a cheap bucket to steer eviction", () => {
+  test("cannot reset a login_account counter by flooding login_client with disposable keys", () => {
+    process.env.RATE_LIMIT_LOGIN_ACCOUNT_MAX = "1";
+    const victimAccount = "victim@libredb.org";
+
+    expect(consumeRateLimit("login_account", victimAccount).allowed).toBe(true);
+    expect(consumeRateLimit("login_account", victimAccount).allowed).toBe(false);
+
+    // Each rotated X-Forwarded-For value is a free, disposable login_client key. This is well past
+    // the old SHARED eviction threshold (5000), entirely within login_client - a bucket an
+    // attacker never needs a real account to flood.
+    for (let attempt = 0; attempt < 5001; attempt += 1) {
+      const key = clientAddress(request({ "x-forwarded-for": `203.0.113.${attempt}` }));
+      consumeRateLimit("login_client", key);
+    }
+
+    // The victim's login_account counter must still be tripped: flooding a different, cheap
+    // bucket must never evict a counter out of login_account. Per-bucket capacity partitioning is
+    // the property under test - see the module docstring in src/lib/api/rate-limit.ts.
+    expect(consumeRateLimit("login_account", victimAccount).allowed).toBe(false);
+  });
+});

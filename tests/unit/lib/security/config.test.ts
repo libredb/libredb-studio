@@ -140,6 +140,12 @@ describe("readTrustProxyHeaders", () => {
 
   test("warns once, naming the variable and the bad value, when the value is unrecognized", () => {
     const warn = spyOn(logger, "warn").mockImplementation(() => {});
+    // `bun run test` shares this process (and therefore logger.warn) with every other file. A
+    // debounced localStorage write elsewhere in the suite can flush into this spy's history the
+    // instant it is installed, so the baseline is cleared before exercising the code under test
+    // rather than assumed to start empty (see tests/unit/lib/api/client-address.test.ts, which
+    // hit this for real).
+    warn.mockClear();
     try {
       process.env.TRUST_PROXY_HEADERS = "maybe";
 

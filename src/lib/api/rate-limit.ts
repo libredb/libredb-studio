@@ -14,8 +14,20 @@
  * There are no timers here. A setInterval would hold the event loop open and leak one per process;
  * entries expire lazily on access instead.
  *
- * Memory bound: MAX_ENTRIES counters of roughly 100 bytes is under 1 MB. Nobody may add a second,
- * unbounded map alongside this one.
+ * Memory bound: MAX_ENTRIES_PER_BUCKET (1000) x 5 buckets = 5000 counters total. Each counter is a
+ * map entry keyed by up to MAX_KEY_LENGTH (200) UTF-16 characters (~400 bytes) plus a small
+ * {count, resetAt, notified} object and Map/object overhead, so the realistic bound is roughly
+ * 2.5-3 MB, not a flat "100 bytes per counter" - correct this comment again if either constant
+ * changes. Nobody may add a second, unbounded map alongside these.
+ *
+ * Capacity is partitioned PER BUCKET, not shared across buckets: see pruneIfOverCapacity. A single
+ * shared eviction pool would let an attacker flood a cheap, address-keyed bucket (login_client,
+ * anon - rotate X-Forwarded-For, each rotation is a free new key) to evict entries out of a
+ * different bucket (login_account) map-wide, and eviction resets a counter to zero by design. That
+ * would let an attacker who just tripped login_account on a victim's account reset it for free by
+ * generating unrelated traffic elsewhere - defeating the one bucket that is immune to header
+ * spoofing. Partitioning makes that cross-bucket eviction structurally impossible: traffic in one
+ * bucket can only ever evict entries already in that same bucket's own store.
  */
 
 export type RateLimitBucket = "login_client" | "login_account" | "ai" | "query" | "anon";
@@ -51,7 +63,8 @@ interface Counter {
   notified: boolean;
 }
 
-const MAX_ENTRIES = 5000;
+/** Per-bucket cap - see the module docstring for why this is partitioned rather than shared. */
+const MAX_ENTRIES_PER_BUCKET = 1000;
 const MAX_KEY_LENGTH = 200;
 const MAX_LIMIT = 1_000_000;
 const MAX_WINDOW_SECONDS = 86_400;
@@ -66,7 +79,9 @@ const BUCKETS: Record<RateLimitBucket, BucketSpec> = {
   },
   // Failed logins per submitted account. Immune to X-Forwarded-For spoofing, which is the whole
   // reason it exists. Bounded at 10 per 15 minutes and cleared by a successful login, because an
-  // uncleared per-account cap is a denial-of-login handle on a known user.
+  // uncleared per-account cap is a denial-of-login handle on a known user. This bucket's own
+  // capacity partition is what keeps it immune to eviction pressure from login_client/anon too -
+  // see the module docstring.
   login_account: {
     maxVar: "RATE_LIMIT_LOGIN_ACCOUNT_MAX",
     windowVar: "RATE_LIMIT_LOGIN_ACCOUNT_WINDOW_SEC",
@@ -88,7 +103,18 @@ const BUCKETS: Record<RateLimitBucket, BucketSpec> = {
   anon: { maxVar: "RATE_LIMIT_ANON_MAX", windowVar: "RATE_LIMIT_ANON_WINDOW_SEC", maxDefault: 5, windowDefault: 300 },
 };
 
-const counters = new Map<string, Counter>();
+/**
+ * One Map per bucket, never one shared Map. This is the partition itself: pruneIfOverCapacity only
+ * ever receives the store for the bucket being written to, so it can only evict entries that
+ * already live in that same store.
+ */
+const bucketStores: Record<RateLimitBucket, Map<string, Counter>> = {
+  login_client: new Map(),
+  login_account: new Map(),
+  ai: new Map(),
+  query: new Map(),
+  anon: new Map(),
+};
 
 /**
  * A clamped integer from the environment. One helper rather than a branch per variable, so the
@@ -116,24 +142,27 @@ function limitFor(bucket: RateLimitBucket): { max: number; windowSeconds: number
   };
 }
 
-function entryKey(bucket: RateLimitBucket, key: string): string {
-  return `${bucket}|${key}`.slice(0, MAX_KEY_LENGTH);
+/** Bounds the key alone (no bucket prefix needed - each bucket already has its own store). */
+function truncatedKey(key: string): string {
+  return key.slice(0, MAX_KEY_LENGTH);
 }
 
 /**
- * Amortized O(1), worst case one pass over MAX_ENTRIES. Eviction fails OPEN - an evicted
- * attacker key restarts at zero - because a counter must never become an availability control.
- * That is also why the cap is generous.
+ * Amortized O(1), worst case one pass over this bucket's MAX_ENTRIES_PER_BUCKET. Takes the target
+ * bucket's own store, and only that store - never the full bucketStores map - which is what makes
+ * eviction pressure in one bucket unable to reach another bucket's counters (module docstring).
+ * Eviction fails OPEN - an evicted attacker key restarts at zero - because a counter must never
+ * become an availability control. That is also why the cap is generous.
  */
-function pruneIfOverCapacity(now: number): void {
-  if (counters.size <= MAX_ENTRIES) return;
-  for (const [id, entry] of counters) {
-    if (now >= entry.resetAt) counters.delete(id);
+function pruneIfOverCapacity(store: Map<string, Counter>, now: number): void {
+  if (store.size <= MAX_ENTRIES_PER_BUCKET) return;
+  for (const [id, entry] of store) {
+    if (now >= entry.resetAt) store.delete(id);
   }
-  // Map iterates in insertion order, so this drops the oldest keys first.
-  for (const id of counters.keys()) {
-    if (counters.size <= MAX_ENTRIES) break;
-    counters.delete(id);
+  // Map iterates in insertion order, so this drops the oldest keys first, within this bucket only.
+  for (const id of store.keys()) {
+    if (store.size <= MAX_ENTRIES_PER_BUCKET) break;
+    store.delete(id);
   }
 }
 
@@ -141,17 +170,18 @@ function decide(bucket: RateLimitBucket, key: string, consume: boolean): RateLim
   const limit = limitFor(bucket);
   if (limit.max === 0) return { allowed: true, retryAfterSeconds: 0, tripped: false };
 
+  const store = bucketStores[bucket];
   const now = Date.now();
-  const id = entryKey(bucket, key);
-  const existing = counters.get(id);
+  const id = truncatedKey(key);
+  const existing = store.get(id);
   const live = existing !== undefined && now < existing.resetAt;
   const entry: Counter = live
     ? (existing as Counter)
     : { count: 0, resetAt: now + limit.windowSeconds * 1000, notified: false };
 
   if (!live) {
-    counters.set(id, entry);
-    pruneIfOverCapacity(now);
+    store.set(id, entry);
+    pruneIfOverCapacity(store, now);
   }
 
   // resetAt is always strictly greater than now on both paths, so this is never below 1.
@@ -182,7 +212,7 @@ export function peekRateLimit(bucket: RateLimitBucket, key: string): RateLimitDe
 
 /** Clears one key. A successful login calls this on both of its keys. */
 export function resetRateLimit(bucket: RateLimitBucket, key: string): void {
-  counters.delete(entryKey(bucket, key));
+  bucketStores[bucket].delete(truncatedKey(key));
 }
 
 /**
@@ -191,5 +221,5 @@ export function resetRateLimit(bucket: RateLimitBucket, key: string): void {
  * that exercises a rate-limited route calls this in beforeEach.
  */
 export function clearRateLimitState(): void {
-  counters.clear();
+  for (const store of Object.values(bucketStores)) store.clear();
 }

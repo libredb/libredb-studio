@@ -109,6 +109,19 @@ describe("consumeRateLimit", () => {
     expect(consumeRateLimit("ai", "u").allowed).toBe(true);
   });
 
+  test("pins the exact boundary: still closed one millisecond before resetAt, open exactly at it", () => {
+    process.env.RATE_LIMIT_AI_MAX = "1";
+    process.env.RATE_LIMIT_AI_WINDOW_SEC = "60";
+    consumeRateLimit("ai", "u"); // resetAt = T0 + 60_000
+
+    setSystemTime(new Date(T0.getTime() + 60_000 - 1));
+    // The live check is `now < resetAt`; a change to `<=` would flip this specific assertion.
+    expect(consumeRateLimit("ai", "u").allowed).toBe(false);
+
+    setSystemTime(new Date(T0.getTime() + 60_000));
+    expect(consumeRateLimit("ai", "u").allowed).toBe(true);
+  });
+
   test("reports the seconds remaining in the window", () => {
     process.env.RATE_LIMIT_AI_MAX = "1";
     process.env.RATE_LIMIT_AI_WINDOW_SEC = "60";
@@ -204,6 +217,24 @@ describe("eviction", () => {
 
     // Every earlier window closed, so the sweep reclaimed all of them and nothing live was lost.
     expect(consumeRateLimit("anon", "fresh").allowed).toBe(false);
+  });
+
+  test("partitions capacity per bucket, so flooding one bucket cannot evict another bucket's counters", () => {
+    process.env.RATE_LIMIT_LOGIN_ACCOUNT_MAX = "1";
+    consumeRateLimit("login_account", "victim");
+    expect(peekRateLimit("login_account", "victim").allowed).toBe(false);
+
+    process.env.RATE_LIMIT_LOGIN_MAX = "1";
+    for (let i = 0; i < 5001; i += 1) {
+      consumeRateLimit("login_client", `flood-${i}`);
+    }
+
+    // login_client's own eviction pressure never touches login_account's store: each bucket has
+    // its own capacity, so a flood cheap enough to need no real account can only ever evict
+    // entries that already belong to that same cheap bucket. 5001 crosses the old SHARED
+    // eviction threshold too, so this fails against a single-map design as well as any
+    // per-bucket cap smaller than 5001.
+    expect(peekRateLimit("login_account", "victim").allowed).toBe(false);
   });
 });
 
