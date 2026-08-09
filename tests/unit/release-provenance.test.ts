@@ -87,6 +87,9 @@ const ATTESTED_JOBS: { job: string; globs: string[] }[] = [
   { job: "linux-packages", globs: ["pkgs/*.deb", "pkgs/*.rpm"] },
   { job: "desktop-appimage", globs: ["dist-desktop/*.AppImage", "dist-desktop/*.deb"] },
   { job: "snap", globs: ["${{ steps.snapcraft.outputs.snap }}"] },
+  // An unsigned SBOM is a text file anyone can rewrite, and it is the one asset
+  // whose entire value is that its claims are trustworthy.
+  { job: "sbom", globs: ["sbom/libredb-studio-*.cdx.json"] },
 ];
 
 describe.each(ATTESTED_JOBS)("release-artifacts.yml attestation: $job", ({ job, globs }) => {

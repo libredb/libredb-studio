@@ -22,6 +22,13 @@ name: Release Artifacts
 # manifest in packaging/flatpak/ repacks the AppImage too, but only in
 # flatpak-smoke.yml now that the Flathub submission was declined - see that
 # directory's README.
+# The sbom job (security programme control 2.2) generates one CycloneDX
+# document from the repository's three lockfiles (bun.lock,
+# packaging/windows/launcher/go.mod, desktop/src-tauri/Cargo.lock) and
+# attaches it as libredb-studio-<version>.cdx.json. It covers the dependency
+# closure of every artifact this workflow builds; it does NOT cover the
+# container image, which docker-build-push.yml has not built yet at this
+# point in the chain - security-scan.yml generates that SBOM separately.
 #
 # DRAFT-FIRST FLOW (issue #154): the repository uses immutable releases, which
 # freeze a release's assets the moment it is published - post-publish uploads
@@ -479,6 +486,112 @@ jobs:
             commit -m "libredb-studio ${VERSION}"
           git -c http.extraheader="$AUTH_HEADER" push origin HEAD
 
+  sbom:
+    name: Generate and attach the SBOM
+    # Its own job rather than a step inside `publish`: the SBOM needs the
+    # dependency tree installed, because Trivy reads licences out of
+    # node_modules/*/package.json and emits a licence-free document without them
+    # (verified: 0 of 755 components carry a licence with node_modules absent,
+    # 330 of 755 with it present). `publish` deliberately does not install
+    # anything. Isolating it also means a reviewer can reject the SBOM without
+    # rejecting the artifact upload.
+    #
+    # One SBOM covers everything this release ships: Trivy finds bun.lock,
+    # packaging/windows/launcher/go.mod and desktop/src-tauri/Cargo.lock, which
+    # between them are the closure of the npm package, the four standalone
+    # tarballs, the win32 zip, the .deb and .rpm packages, the snap, the AppImage
+    # and the desktop .deb - all built from these lockfiles at this commit.
+    #
+    # The container image is NOT covered here and cannot be: this workflow
+    # publishes the release before dispatching docker-build-push.yml, so the
+    # image does not exist while the release can still receive assets, and
+    # immutable releases freeze the set at publish time. security-scan.yml
+    # generates the image SBOM daily instead, and SECURITY.md documents the
+    # one-command regeneration from the immutable digest.
+    needs: [guard, draft]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: "1.3.14"
+
+      - name: Install dependencies
+        uses: ./.github/actions/bun-install
+
+      - name: Generate the CycloneDX SBOM
+        env:
+          VERSION: ${{ needs.guard.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p sbom
+          # Trivy 0.73.0, pinned by digest. CycloneDX rather than SPDX: Trivy
+          # emits it natively for both a filesystem and an image, and it is what
+          # Dependency-Track and most procurement questionnaires consume.
+          #
+          # Not byte-reproducible across runs - the document carries a random
+          # serialNumber and a wall-clock timestamp - so it is generated exactly
+          # once, here, before the release is published. What is stable is the
+          # component set.
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE:/repo" \
+            -w /repo \
+            aquasec/trivy@sha256:7cced7cae583819fc7806d4cbc0dbbc7cad18b99f7d3e235192e6da8c091045c fs \
+              --format cyclonedx \
+              --scanners license \
+              --skip-dirs .next \
+              --skip-dirs dist \
+              --skip-dirs coverage \
+              --skip-dirs sbom \
+              --output "/repo/sbom/libredb-studio-${VERSION}.cdx.json" \
+              .
+          ls -la sbom
+
+      - name: Verify the SBOM describes something
+        env:
+          VERSION: ${{ needs.guard.outputs.version }}
+        run: |
+          set -euo pipefail
+          # A malformed or empty document uploads exactly as happily as a good
+          # one, and immutable releases mean the bad one is permanent. Assert the
+          # three properties that make it useful before it becomes unamendable:
+          # it parses, it is CycloneDX, and it found all three lockfiles.
+          node -e '
+            const fs = require("fs");
+            const file = process.argv[1];
+            const doc = JSON.parse(fs.readFileSync(file, "utf8"));
+            if (doc.bomFormat !== "CycloneDX") throw new Error("not a CycloneDX document");
+            const components = doc.components || [];
+            if (components.length < 100) throw new Error("only " + components.length + " components");
+            const apps = components.filter((c) => c.type === "application").map((c) => c.name);
+            for (const lock of ["bun.lock", "packaging/windows/launcher/go.mod", "desktop/src-tauri/Cargo.lock"]) {
+              if (!apps.includes(lock)) throw new Error("missing ecosystem: " + lock);
+            }
+            const licensed = components.filter((c) => (c.licenses || []).length > 0).length;
+            if (licensed === 0) throw new Error("no licence data - were dependencies installed?");
+            console.log("SBOM ok: " + components.length + " components, " + licensed + " with licences");
+          ' "sbom/libredb-studio-${VERSION}.cdx.json"
+
+      - name: Attest the SBOM
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        with:
+          subject-path: sbom/libredb-studio-*.cdx.json
+
+      - name: Upload the SBOM to the draft release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.guard.outputs.version }}
+        run: |
+          gh release upload "$TAG" sbom/libredb-studio-*.cdx.json \
+            --clobber --repo "$GITHUB_REPOSITORY"
+
   linux-packages:
     name: Build .deb and .rpm (${{ matrix.arch }})
     # Turns the linux standalone tarballs into native packages (issue #112):
@@ -875,7 +988,7 @@ jobs:
     # `release: published` fires here, triggering npm-publish and
     # docker-build-push exactly as before.
     name: Verify assets and publish release
-    needs: [guard, publish, linux-packages, desktop-appimage, snap]
+    needs: [guard, publish, sbom, linux-packages, desktop-appimage, snap]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -915,7 +1028,8 @@ jobs:
             "libredb-studio-desktop_${TAG}_amd64.deb" \
             "libredb-studio-desktop_${TAG}_amd64.deb.sha256" \
             "libredb-studio-desktop_${TAG}_arm64.deb" \
-            "libredb-studio-desktop_${TAG}_arm64.deb.sha256"; do
+            "libredb-studio-desktop_${TAG}_arm64.deb.sha256" \
+            "libredb-studio-${TAG}.cdx.json"; do
             if ! grep -Fqx "$asset" /tmp/assets.txt; then
               echo "::error::draft release '$TAG' is missing required asset '$asset' - refusing to publish an incomplete immutable release"
               missing=1
