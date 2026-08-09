@@ -206,7 +206,7 @@
     "@types/react-dom": "^19.2.3",
     "@types/ssh2": "^1.15.5",
     "eslint": "^9",
-    "eslint-config-next": "^16.1.6",
+    "eslint-config-next": "^16.3.0",
     "happy-dom": "^20.6.1",
     "knip": "^6.17.1",
     "oxlint": "^1.71",

@@ -52,6 +52,11 @@ export function useTabManager({ activeConnection, metadata, schema, persistWorks
 
   // LOAD EFFECT — restore tabs from localStorage on connection switch
   useEffect(() => {
+    // Deliberate: this flag has no derivable value during render (it exists purely to gate
+    // the SAVE EFFECT below from writing back a load in progress), so there is no "don't use
+    // an effect" alternative here — it is intentionally the reset half of a two-effect
+    // load/ready handshake, not state that could be computed instead of set.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setIsWorkspaceHydrated(false);
     if (!shouldPersistWorkspace) return;
 
@@ -96,6 +101,10 @@ export function useTabManager({ activeConnection, metadata, schema, persistWorks
   // READY EFFECT — fires after load's setTabs commits (next render)
   useEffect(() => {
     if (!shouldPersistWorkspace || isWorkspaceHydrated) return;
+    // Deliberate: this is the flip half of the same handshake as the LOAD EFFECT's reset
+    // above — it must run in an effect because it depends on the LOAD EFFECT's setTabs
+    // having already committed (the "next render" this effect is named for).
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setIsWorkspaceHydrated(true);
   }, [tabs, activeTabId, shouldPersistWorkspace, isWorkspaceHydrated]);
 
