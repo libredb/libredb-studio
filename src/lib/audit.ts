@@ -196,6 +196,23 @@ function sanitizeAuditField(value: string): string {
 }
 
 /**
+ * `sanitizeAuditInput`'s fallback for a value that is present, not the one legitimate non-string
+ * field (`duration`, a number), and not already a string: turns it into a string so the sweep
+ * below has something to bound and redact, instead of leaving the original value - object, array,
+ * boolean, bigint - to reach a destination whose contract promises a string. JSON.stringify covers
+ * every shape that can actually arrive from a JSON request body; the catch exists only for the
+ * inputs JSON.stringify itself refuses (a circular reference, a BigInt), which a hand-built
+ * AuditEvent could construct even though `JSON.parse` output never does.
+ */
+function coerceToString(value: unknown): string {
+  try {
+    return JSON.stringify(value) ?? String(value);
+  } catch {
+    return "[unserializable]";
+  }
+}
+
+/**
  * The single sanitization boundary, applied once to a caller-supplied event before it reaches
  * either the ring buffer (push) or the stdout line (toAuditLine) — both destinations consume this
  * result, so there is exactly one rule to keep correct instead of one per destination. Sweeps
@@ -203,6 +220,15 @@ function sanitizeAuditField(value: string): string {
  * deliberately not a per-field allowlist of calls to sanitizeAuditField, so a field added to
  * AuditEvent later is covered by construction. Opting a field OUT would require deleting code from
  * this sweep; there is no opt-in step to forget.
+ *
+ * The allowlist selects KEYS, not TYPES: every AuditEvent field but `duration` is typed as a
+ * string, but TypeScript cannot enforce that at runtime against a route that destructures a field
+ * straight out of an untyped `await request.json()` body (`target` in
+ * `POST /api/db/maintenance`, for one) and hands it to `emitAuditEvent` unchecked. A value that is
+ * neither a string nor `duration`'s legitimate number is coerced to a bounded string through the
+ * same sanitizer a real string would have gone through, rather than passed on verbatim: an object
+ * reaching either destination as-is would be unbounded and would break the fixed-shape
+ * `libredb.audit.v1` contract `toAuditLine` promises downstream parsers.
  *
  * Exported on its own, separately from emitAuditEvent: sanitization and stdout emission are two
  * different privileges. `POST /api/admin/audit` accepts a fully client-supplied body with none of
@@ -221,6 +247,8 @@ export function sanitizeAuditInput(event: Omit<AuditEvent, "id" | "timestamp">):
     const value = mutable[key];
     if (typeof value === "string") {
       mutable[key] = sanitizeAuditField(value);
+    } else if (value !== undefined && typeof value !== "number") {
+      mutable[key] = sanitizeAuditField(coerceToString(value));
     }
   }
   return sanitized;
