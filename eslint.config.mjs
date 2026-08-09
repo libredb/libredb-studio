@@ -38,6 +38,30 @@ const eslintConfig = defineConfig([
       "react-hooks/set-state-in-effect": "warn",
       "react-hooks/purity": "warn",
       "react-hooks/incompatible-library": "warn",
+      // dangerouslySetInnerHTML is an XSS sink: the security hotfix branch removed the two that
+      // existed (LLM markdown now renders through src/components/rich-text.tsx's React-node
+      // renderer instead), and this rule is what keeps a third one from being added silently.
+      // Enforced here (ESLint / eslint-config-next), not in oxlint's .oxlintrc.json: this
+      // project's convention is that eslint-config-next owns React/JSX-semantics rules (see the
+      // "Strategy A" note below, and .oxlintrc.json's react/react-in-jsx-scope and
+      // react-hooks/exhaustive-deps entries, which are explicitly turned off there so they are
+      // not double-reported). oxlint's react plugin implements react/no-danger too, but leaves it
+      // off by default (it sits outside oxlint's correctness/suspicious categories, which are the
+      // only ones this project enables), so there is nothing to disable on that side — ESLint is
+      // already the sole enforcer.
+      "react/no-danger": "error",
+    },
+  },
+  {
+    // src/components/ui/chart.tsx is an upstream shadcn primitive that emits CSS custom
+    // properties (chart colors) from a developer-supplied typed config via
+    // dangerouslySetInnerHTML; it is kept upstream-pure by repository convention (see the
+    // src/components/ui/** overrides in .oxlintrc.json for the same policy) and is referenced
+    // nowhere else in the codebase. Scoped to this one file, not to src/components/ui/**, so a
+    // sink added to any other ui/* file still fails.
+    files: ["src/components/ui/chart.tsx"],
+    rules: {
+      "react/no-danger": "off",
     },
   },
   // Narrow type-aware safety net for the async-heavy code paths (API routes
