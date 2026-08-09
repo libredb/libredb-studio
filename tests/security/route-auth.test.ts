@@ -1,4 +1,6 @@
 import { describe, expect, test, mock, beforeEach } from "bun:test";
+import { readdirSync, existsSync } from "node:fs";
+import { join } from "node:path";
 
 const mockGetSession = mock(
   async (): Promise<{ role: string; username: string } | null> => ({ role: "admin", username: "admin" }),
@@ -109,17 +111,34 @@ describe("requireSession", () => {
 
 type RouteModule = { POST: (req: never) => Promise<Response> };
 
-// Each specifier is a literal inside its own arrow function: bun resolves the "@/" alias at
-// parse time, so a variable module path would not resolve here.
+// Enumerated from disk instead of hardcoded, so a route added under src/app/api/ai/ later is
+// checked automatically instead of silently escaping this test - that was the whole gap: a
+// hardcoded list only ever proves the routes someone remembered to add to it are guarded.
+//
+// The import specifier is a filesystem path computed at test-run time, not the "@/" alias used
+// elsewhere in this file: bun resolves "@/" only when the specifier is a literal string it can
+// see at parse time, and a path built from a directory listing is not one. A plain path (relative
+// or absolute) has no such restriction - bun's dynamic import() resolves it like any other
+// runtime module specifier, and the "@/" imports *inside* each route.ts still resolve normally
+// there, since that resolution happens in that file's own context, independent of how the
+// importer named it.
+const AI_ROUTES_DIR = join(import.meta.dir, "..", "..", "src", "app", "api", "ai");
+
+function discoverAiRoutes(): Array<[string, () => Promise<RouteModule>]> {
+  return readdirSync(AI_ROUTES_DIR, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && existsSync(join(AI_ROUTES_DIR, entry.name, "route.ts")))
+    .map((entry) => entry.name)
+    .sort()
+    .map((name): [string, () => Promise<RouteModule>] => [
+      `/api/ai/${name}`,
+      () => import(join(AI_ROUTES_DIR, name, "route.ts")) as Promise<RouteModule>,
+    ]);
+}
+
+const AI_ROUTES = discoverAiRoutes();
+
 const GUARDED_ROUTES: Array<[string, () => Promise<RouteModule>]> = [
-  ["/api/ai/autopilot", () => import("@/app/api/ai/autopilot/route")],
-  ["/api/ai/chat", () => import("@/app/api/ai/chat/route")],
-  ["/api/ai/describe-schema", () => import("@/app/api/ai/describe-schema/route")],
-  ["/api/ai/explain", () => import("@/app/api/ai/explain/route")],
-  ["/api/ai/impact", () => import("@/app/api/ai/impact/route")],
-  ["/api/ai/index-advisor", () => import("@/app/api/ai/index-advisor/route")],
-  ["/api/ai/nl2sql", () => import("@/app/api/ai/nl2sql/route")],
-  ["/api/ai/query-safety", () => import("@/app/api/ai/query-safety/route")],
+  ...AI_ROUTES,
   ["/api/db/disconnect", () => import("@/app/api/db/disconnect/route")],
 ];
 
@@ -127,6 +146,14 @@ describe("routes that reach a provider require a session", () => {
   beforeEach(() => {
     mockGetSession.mockClear();
     mockGetSession.mockImplementation(async () => null);
+  });
+
+  // A directory-listing bug that silently finds zero routes would make every test below
+  // vacuously pass (a `for` loop over an empty array runs no assertions). This is the guard
+  // that keeps the guard honest: today there are eight AI routes, and the enumeration must find
+  // at least that many, or this test suite is no longer proving what it claims to prove.
+  test("the filesystem enumeration finds at least today's eight AI routes", () => {
+    expect(AI_ROUTES.length).toBeGreaterThanOrEqual(8);
   });
 
   for (const [route, load] of GUARDED_ROUTES) {
