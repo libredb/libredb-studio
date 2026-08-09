@@ -224,9 +224,12 @@ function coerceToString(value: unknown): string {
  * The allowlist selects KEYS, not TYPES: every AuditEvent field but `duration` is typed as a
  * string, but TypeScript cannot enforce that at runtime against a route that destructures a field
  * straight out of an untyped `await request.json()` body (`target` in
- * `POST /api/db/maintenance`, for one) and hands it to `emitAuditEvent` unchecked. A value that is
- * neither a string nor `duration`'s legitimate number is coerced to a bounded string through the
- * same sanitizer a real string would have gone through, rather than passed on verbatim: an object
+ * `POST /api/db/maintenance`, for one) and hands it to `emitAuditEvent` unchecked. The exemption
+ * below is therefore keyed on the field NAME (`key === "duration"`), not merely on the runtime
+ * value happening to be a number - a number arriving in any other field (say, `target`) is not
+ * `duration`'s legitimate number and is coerced like any other non-string. A value that is
+ * neither a string nor `duration`'s own number is coerced to a bounded string through the same
+ * sanitizer a real string would have gone through, rather than passed on verbatim: an object
  * reaching either destination as-is would be unbounded and would break the fixed-shape
  * `libredb.audit.v1` contract `toAuditLine` promises downstream parsers.
  *
@@ -247,7 +250,7 @@ export function sanitizeAuditInput(event: Omit<AuditEvent, "id" | "timestamp">):
     const value = mutable[key];
     if (typeof value === "string") {
       mutable[key] = sanitizeAuditField(value);
-    } else if (value !== undefined && typeof value !== "number") {
+    } else if (value !== undefined && !(key === "duration" && typeof value === "number")) {
       mutable[key] = sanitizeAuditField(coerceToString(value));
     }
   }

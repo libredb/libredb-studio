@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { createMockRequest, parseResponseJSON } from "../helpers/mock-next";
 import { createMockProvider } from "../helpers/mock-provider";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
-import { getServerAuditBuffer } from "@/lib/audit";
+import { getServerAuditBuffer, sanitizeAuditInput } from "@/lib/audit";
 
 /**
  * Threat: a non-string value reaching the authoritative stdout audit line unbounded, breaking the
@@ -113,5 +113,42 @@ describe("POST /api/db/maintenance audit type safety", () => {
     } finally {
       spy.mockRestore();
     }
+  });
+});
+
+/**
+ * Threat: `sanitizeAuditInput`'s coercion exemption for `duration` (the one AuditEvent field
+ * legitimately typed as a number) must be keyed on the FIELD NAME, not merely on the runtime value
+ * being a number - otherwise any other field arriving as a bare number (again, from an untyped
+ * `await request.json()` body) would silently skip coercion the same way a nested object once did,
+ * reaching the stdout line and the buffer as a raw number where the schema promises a string.
+ */
+describe("sanitizeAuditInput's duration exemption is keyed on the field name", () => {
+  test("coerces a non-duration field to a string even when it arrives as a bare number", () => {
+    const result = sanitizeAuditInput({
+      type: "maintenance",
+      action: "vacuum",
+      // A shape the AuditEvent type never produces but nothing at runtime rejects.
+      target: 42 as unknown as string,
+      user: "admin",
+      result: "success",
+    });
+
+    expect(typeof result.target).toBe("string");
+    expect(result.target).toBe("42");
+  });
+
+  test("leaves a genuine duration number untouched", () => {
+    const result = sanitizeAuditInput({
+      type: "maintenance",
+      action: "vacuum",
+      target: "orders",
+      user: "admin",
+      result: "success",
+      duration: 1500,
+    });
+
+    expect(result.duration).toBe(1500);
+    expect(typeof result.duration).toBe("number");
   });
 });

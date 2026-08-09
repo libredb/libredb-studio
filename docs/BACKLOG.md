@@ -435,12 +435,13 @@ attacker can *"buy back one guess against an established `login_account` target 
 for roughly `(MAX_ENTRIES_PER_BUCKET - 1) x N` decoy requests - not a flat `MAX_ENTRIES_PER_BUCKET -
 1` (about a thousand), because each of the ~999 decoys must itself be raised from 0 to N, not merely
 inserted once, before the tie-break can fire. At the bucket's current default (20), a target one
-guess from tripping (N=19) costs on the order of 999 x 19 - about nineteen thousand decoy requests,
-by raising that many other entries to TIE (not exceed) the target's count - the tie-break favors
-evicting the earliest-inserted member of a tied group, and the target, having been created before
-its decoys, always is. This is a real, linear cost multiplier and not a bypass, but unlike a tripped
-bucket it produces no `rate_limit_exceeded` audit event, so an operator watching only the audit
-trail would not see it happen."* Accepted for
+guess from tripping (N=20 - `decide()` checks `entry.count >= limit.max` before incrementing, so an
+entry with one guess left in its budget sits at count 20, not 19) costs on the order of 999 x 20 -
+about twenty thousand decoy requests, by raising that many other entries to TIE (not exceed) the
+target's count - the tie-break favors evicting the earliest-inserted member of a tied group, and the
+target, having been created before its decoys, always is. This is a real, linear cost multiplier and
+not a bypass, but unlike a tripped bucket it produces no `rate_limit_exceeded` audit event, so an
+operator watching only the audit trail would not see it happen."* Accepted for
 Phase 1: the eviction policy that produces this (lowest-count, not oldest-first) is itself the fix
 for a worse bypass (an attacker evicting a target's entry for free before it can accumulate any
 cost), and the two alternatives considered and rejected each introduced a worse flaw. Done when a
@@ -502,7 +503,7 @@ event with it. Every denial the audit trail actually records is a SESSION or ORI
 in-handler admin-only checks return their 403 with no audit call at all: `GET` and `POST
 /api/admin/audit` (`src/app/api/admin/audit/route.ts:9`, `:28`), `POST /api/admin/fleet-health`
 (`:29`) and `POST /api/db/maintenance` (`:18`). The proxy's own `/admin` RBAC redirect
-(`src/proxy.ts:106-108`, a non-admin token requesting an `/admin` page) is the same gap at the
+(`src/proxy.ts:116`, a non-admin token requesting an `/admin` page) is the same gap at the
 middleware layer: it silently redirects to `/`, no audit line, no `insufficient_role` reason ever
 used anywhere in the codebase. An admin session (or a stolen one) probing for a role it does not
 hold leaves no trace in the one channel this project treats as authoritative. Done when each of

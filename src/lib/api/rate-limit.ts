@@ -217,13 +217,15 @@ function truncatedKey(key: string): string {
  * What this DOES cost the attacker: tying a target sitting at count N costs roughly
  * (MAX_ENTRIES_PER_BUCKET - 1) x N decoy requests, NOT a flat MAX_ENTRIES_PER_BUCKET - 1 - each of
  * the ~999 decoys must itself be raised from 0 to N, not merely inserted once, before the tie-break
- * can fire. At login_account's current default (20), a target one guess from tripping (N=19) costs
- * on the order of 999 x 19 - about nineteen thousand decoy requests to buy back that one guess, not
- * "about a thousand". It is still a real, linear cost multiplier over simply guessing (linear in
- * both the bucket size and how deep the target already is), and it is NOT audit-visible: catching
- * up to a target's count never requires a decoy to reach its OWN max, so no decoy bucket trips and
- * no rate_limit_exceeded event fires. Do not describe this as self-defeating or as leaving an audit
- * trail; it does neither. (This residual belongs in docs/BACKLOG.md - not added here.)
+ * can fire. At login_account's current default (20), a target one guess from tripping (N=20 -
+ * decide() checks entry.count >= limit.max BEFORE incrementing, so the entry sits at count 20, not
+ * 19, with one guess left in its budget) costs on the order of 999 x 20 - about twenty thousand
+ * decoy requests to buy back that one guess, not "about a thousand". It is still a real, linear
+ * cost multiplier over simply guessing (linear in both the bucket size and how deep the target
+ * already is), and it is NOT audit-visible: catching up to a target's count never requires a decoy
+ * to reach its OWN max, so no decoy bucket trips and no rate_limit_exceeded event fires. Do not
+ * describe this as self-defeating or as leaving an audit trail; it does neither. (This residual
+ * belongs in docs/BACKLOG.md - not added here.)
  *
  * Complexity note: this function runs once per request for a key with no live entry, before that
  * entry is created, so it is never asked to make room for more than one new arrival at a time - a
