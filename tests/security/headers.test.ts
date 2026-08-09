@@ -93,6 +93,24 @@ describe("studioCspDirectives", () => {
 
     expect(directives["connect-src"]).toEqual(["'self'"]);
   });
+
+  test("drops the 'none' placeholder from every deny-only directive once the embedder adds a source", () => {
+    // 'none' only means "match nothing" when it is the SOLE entry in a CSP source list; alongside
+    // another source it is inert. Keeping it would produce a header that reads as a total denial
+    // while actually permitting the added source.
+    for (const directive of ["base-uri", "object-src", "frame-src", "frame-ancestors"]) {
+      const directives = studioCspDirectives({ extra: { [directive]: ["https://embedder.example"] } });
+
+      expect(directives[directive]).not.toContain("'none'");
+      expect(directives[directive]).toContain("https://embedder.example");
+    }
+  });
+
+  test("leaves a deny-only directive as bare 'none' when the embedder re-asserts it without a new source", () => {
+    const directives = studioCspDirectives({ extra: { "object-src": ["'none'"] } });
+
+    expect(directives["object-src"]).toEqual(["'none'"]);
+  });
 });
 
 describe("securityHeaders", () => {

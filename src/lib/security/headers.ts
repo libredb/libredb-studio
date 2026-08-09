@@ -28,14 +28,26 @@ export interface CspOptions {
    * script-src and worker-src. Defaults to the same-origin /monaco/vs, which needs no source.
    */
   monacoVsPath?: string;
-  /** Extra sources merged per directive, for hosts only the embedder knows about. */
+  /**
+   * Extra sources merged per directive, for hosts only the embedder knows about.
+   *
+   * Adding a source to a deny-only directive (base-uri, object-src, frame-src and
+   * frame-ancestors all start as ['none']) removes the 'none' placeholder instead of keeping it
+   * alongside the addition: CSP treats 'none' as inert once another source is present, so keeping
+   * both would leave a header that reads as a denial while actually permitting the added source.
+   * That is a deliberate decision for the caller to make, not a default to fall into by accident.
+   */
   extra?: Partial<CspDirectives>;
 }
 
 export interface SecurityHeaderOptions extends CspOptions {
   /** Emit Content-Security-Policy-Report-Only instead of Content-Security-Policy. */
   reportOnly?: boolean;
-  /** false disables HSTS; an object customises it. */
+  /**
+   * false disables HSTS; an object customises it. The caller owns validating maxAgeSeconds — it
+   * is not clamped or checked here, so a bad value (for instance one forwarded from an unvalidated
+   * environment variable) passes straight through and serializes as `max-age=NaN`.
+   */
   hsts?: false | { maxAgeSeconds: number; includeSubDomains?: boolean };
 }
 
@@ -74,7 +86,14 @@ const DENIED_FEATURES = [
 
 const PERMISSIONS_POLICY = DENIED_FEATURES.map((feature) => `${feature}=()`).join(", ");
 
-/** The origin of an absolute http(s) URL, or undefined for a relative path. */
+/**
+ * The origin of an absolute http(s) URL, or undefined for a relative path.
+ *
+ * Only recognises absolute `http://`/`https://` URLs. A protocol-relative URL
+ * (`//cdn.example.com/monaco/vs`) or a bare host with no scheme is treated as a same-origin path
+ * and gets no script-src/worker-src grant, which fails Monaco's load with nothing pointing at the
+ * CSP as the cause.
+ */
 function absoluteOrigin(value: string | undefined): string | undefined {
   if (!value) return undefined;
   if (!/^https?:\/\//i.test(value)) return undefined;
@@ -89,7 +108,15 @@ function mergeSources(base: CspDirectives, extra: Partial<CspDirectives> | undef
   for (const [directive, sources] of Object.entries(extra)) {
     if (!sources) continue;
     const current = merged[directive] ?? [];
-    merged[directive] = [...current, ...sources.filter((source) => !current.includes(source))];
+    const additions = sources.filter((source) => !current.includes(source));
+    // CSP evaluates a source list source-by-source: 'none' means "match nothing" only when it is
+    // the SOLE entry, and is inert alongside any other source. So a directive that started as
+    // exactly ['none'] must drop it the moment the caller adds a real source — keeping both would
+    // serialize as e.g. "frame-ancestors 'none' https://embedder.example", which reads as a total
+    // denial while actually permitting that origin. Re-asserting 'none' with no new source (the
+    // additions.length === 0 case) leaves the directive untouched.
+    const isDenyOnly = current.length === 1 && current[0] === "'none'";
+    merged[directive] = isDenyOnly && additions.length > 0 ? additions : [...current, ...additions];
   }
   return merged;
 }
