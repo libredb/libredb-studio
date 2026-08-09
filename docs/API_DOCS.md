@@ -120,9 +120,18 @@ Authenticate user and create session.
 }
 ```
 
+**Response (400 Bad Request):**
+```json
+{
+  "success": false,
+  "message": "Invalid request body"
+}
+```
+
 **Notes:**
 - Both `email` and `password` are required in the request body; matched against `ADMIN_EMAIL`/`ADMIN_PASSWORD` or `USER_EMAIL`/`USER_PASSWORD` environment variables. `ADMIN_PASSWORD` is mandatory; the `USER_*` account exists only when `USER_PASSWORD` is set
 - Sets `auth-token` HTTP-only cookie on success
+- A body that is not valid JSON gets the 400 above, not a 500 - and, like a wrong password, spends one unit of the client-address rate-limit budget (see "Rate Limiting" below), so a flood of malformed bodies from one address is eventually refused rather than answered indefinitely
 
 ---
 
@@ -1036,7 +1045,10 @@ limits the underlying LLM provider applies. A rate-limited request always gets:
 seconds by default) and per submitted account, keyed on a hash of the email so it cannot be evaded
 by rotating the client address (20 failed attempts per 300 seconds by default). A successful login
 clears both counters for that request's keys. Both are configurable - see `RATE_LIMIT_LOGIN_MAX`
-and `RATE_LIMIT_LOGIN_ACCOUNT_MAX` in `.env.example`.
+and `RATE_LIMIT_LOGIN_ACCOUNT_MAX` in `.env.example`. A body that fails to parse as JSON spends the
+per-address budget the same way a wrong password does - it is checked and charged before the body
+is read, so it cannot bypass the limit the way it would if parsing happened first - but it cannot
+spend the per-account budget, since that key comes from a body there was nothing to extract.
 
 ### Every session-guarded route
 

@@ -22,6 +22,7 @@ export type AuditEventType =
  */
 export type AuditReason =
   | "bad_credentials"
+  | "malformed_body"
   | "no_session"
   | "insufficient_role"
   | "origin_mismatch"

@@ -222,4 +222,43 @@ describe("what the audit trail records", () => {
     expect(events).toHaveLength(1);
     expect(events[0].bucket).toBe("login_account");
   });
+
+  test("a malformed body is recorded and its flood is bounded the same way a bad password's is", async () => {
+    // A raw, unparseable body - unlike attempt()'s JSON.stringify(body) - which never reaches
+    // credential extraction, so this exercises the client-bucket check that runs before parsing
+    // (src/app/api/auth/login/route.ts) rather than the account bucket exercised above.
+    const malformed = (address: string) =>
+      new Request("http://localhost:3000/api/auth/login", {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-forwarded-for": address },
+        body: "not-json",
+      });
+
+    const address = "198.51.100.220";
+    const first = await POST(malformed(address) as never);
+    expect(first.status).toBe(400);
+
+    const firstLine = JSON.parse(logSpy.mock.calls[0][0] as string) as Record<string, unknown>;
+    expect(firstLine.event).toBe("login_failure");
+    expect(firstLine.reason).toBe("malformed_body");
+    expect(firstLine.actor).toBe("anonymous");
+
+    // RATE_LIMIT_LOGIN_MAX defaults to 5: the first five spend the client bucket (one malformed
+    // body already sent above), the sixth trips it.
+    for (let i = 0; i < 4; i += 1) await POST(malformed(address) as never);
+    const sixth = await POST(malformed(address) as never);
+    expect(sixth.status).toBe(429);
+
+    // Same suppression as "the trip is recorded once" above: one line per attempt while the
+    // bucket has room, then a single rate_limit_exceeded line on the trip, then nothing further -
+    // never one unbounded line per request.
+    const linesAfterTrip = logSpy.mock.calls.length;
+    await POST(malformed(address) as never);
+    await POST(malformed(address) as never);
+    expect(logSpy.mock.calls.length).toBe(linesAfterTrip);
+
+    const events = logSpy.mock.calls.map((call) => JSON.parse(call[0] as string) as Record<string, unknown>);
+    expect(events.filter((line) => line.reason === "malformed_body")).toHaveLength(5);
+    expect(events.filter((line) => line.event === "rate_limit_exceeded")).toHaveLength(1);
+  });
 });

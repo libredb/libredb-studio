@@ -112,7 +112,7 @@ describe("POST /api/auth/login", () => {
     expect(data.message).toBe("Invalid email or password");
   });
 
-  test("returns 500 when body is not valid JSON", async () => {
+  test("returns 400, not 500, when body is not valid JSON", async () => {
     const req = new Request("http://localhost:3000/api/auth/login", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -120,14 +120,16 @@ describe("POST /api/auth/login", () => {
     });
 
     const res = await POST(req as never);
-    const data = await parseResponseJSON<{ error: string; code: string; statusCode: number }>(res);
+    const data = await parseResponseJSON<{ success: boolean; message: string }>(res);
 
-    expect(res.status).toBe(500);
-    expect(data.code).toBe("INTERNAL_ERROR");
-    expect(data.statusCode).toBe(500);
+    // A malformed body is a client error, not a server error - it never reached credential
+    // comparison, so the uniform-failure property below does not apply to it.
+    expect(res.status).toBe(400);
+    expect(data.success).toBe(false);
+    expect(data.message).toBe("Invalid request body");
   });
 
-  test("returns 500 when body is empty", async () => {
+  test("returns 400, not 500, when body is empty", async () => {
     const req = new Request("http://localhost:3000/api/auth/login", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -135,11 +137,62 @@ describe("POST /api/auth/login", () => {
     });
 
     const res = await POST(req as never);
-    const data = await parseResponseJSON<{ error: string; code: string; statusCode: number }>(res);
+    const data = await parseResponseJSON<{ success: boolean; message: string }>(res);
 
-    expect(res.status).toBe(500);
-    expect(data.code).toBe("INTERNAL_ERROR");
-    expect(data.statusCode).toBe(500);
+    expect(res.status).toBe(400);
+    expect(data.success).toBe(false);
+    expect(data.message).toBe("Invalid request body");
+  });
+
+  test("repeated malformed bodies from one address are eventually refused, not answered indefinitely", async () => {
+    const malformed = () =>
+      new Request("http://localhost:3000/api/auth/login", {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-forwarded-for": "203.0.113.201" },
+        body: "not-json",
+      });
+
+    // RATE_LIMIT_LOGIN_MAX defaults to 5: the first five spend the client bucket (one per
+    // malformed body, the same budget a wrong password would spend), the sixth trips it.
+    for (let i = 0; i < 5; i += 1) {
+      const res = await POST(malformed() as never);
+      expect(res.status).toBe(400);
+    }
+
+    const res = await POST(malformed() as never);
+    const data = await parseResponseJSON<{ error: string; code: string }>(res);
+
+    expect(res.status).toBe(429);
+    expect(data.code).toBe("RATE_LIMITED");
+  });
+
+  // The malformed body's audit-line content and its bounded-log-volume property are covered in
+  // tests/security/login-enumeration.test.ts ("what the audit trail records"), not here: that
+  // suite runs as its own bun process, isolated from tests/api/db/maintenance.test.ts's
+  // mock.module("@/lib/audit", ...) stub (an incomplete getServerAuditBuffer with no .getAll) -
+  // mock.module is process-wide, and this file shares a process with that stub whenever `bun run
+  // test` runs tests/unit, tests/api and tests/integration together.
+
+  test("still returns 400 when the login_failure audit emit throws for a malformed body", async () => {
+    const logSpy = spyOn(console, "log").mockImplementation(() => {
+      throw new Error("audit sink unavailable");
+    });
+    try {
+      const req = new Request("http://localhost:3000/api/auth/login", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "not-json",
+      });
+
+      const res = await POST(req as never);
+      const data = await parseResponseJSON<{ success: boolean; message: string }>(res);
+
+      expect(res.status).toBe(400);
+      expect(data.success).toBe(false);
+      expect(data.message).toBe("Invalid request body");
+    } finally {
+      logSpy.mockRestore();
+    }
   });
 
   test("calls login() with role and email for admin", async () => {
