@@ -134,10 +134,48 @@ export function getServerAuditBuffer(): AuditRingBuffer {
 }
 
 const AUDIT_SCHEMA = "libredb.audit.v1";
-/** RFC 5321's maximum address length: enough for any real account, bounded against a 10 KB one. */
-const MAX_ACTOR_LENGTH = 254;
+/**
+ * RFC 5321's maximum address length: enough for any real account, bounded against a 10 KB one.
+ * One rule for every free-text field on the line, not a fresh number per field.
+ */
+const MAX_AUDIT_FIELD_LENGTH = 254;
 /** The address derivation's "no usable signal" placeholder; never recorded as if it were one. */
 const UNKNOWN_ADDRESS = "unknown";
+/** Redaction marker for a URI's userinfo segment. Never a value real credentials could equal. */
+const CREDENTIAL_REDACTION = "[REDACTED]";
+/**
+ * Matches `scheme://userinfo@` so a connection string's `user:password` (or a bare token used as
+ * userinfo) can be replaced before the value reaches the line. The host and everything after `@`
+ * is left intact — an operator needs to know which host, not the password.
+ */
+const URI_CREDENTIAL_PATTERN = /([a-zA-Z][a-zA-Z0-9+.-]*):\/\/[^/\s@]+@/g;
+
+/**
+ * The one gate every free-text field passes through before it can reach the line: strip any
+ * URI-shaped credential, then bound the length. Order matters — redacting first means a value
+ * long enough to be truncated never has its credential cut in half and left partially exposed.
+ */
+function sanitizeAuditField(value: string): string {
+  const withoutCredentials = value.replace(URI_CREDENTIAL_PATTERN, `$1://${CREDENTIAL_REDACTION}@`);
+  return withoutCredentials.slice(0, MAX_AUDIT_FIELD_LENGTH);
+}
+
+/**
+ * Sweeps every own key of the constructed line and sanitizes any string value found there,
+ * unconditionally. This is deliberately not a per-field allowlist of calls to sanitizeAuditField:
+ * a field added to AuditLogLine later is covered by construction, because opting OUT would
+ * require deleting code, not because someone remembered to opt it in.
+ */
+function sanitizeAuditLine(line: AuditLogLine): AuditLogLine {
+  const sanitized: Record<string, unknown> = { ...line };
+  for (const key of Object.keys(sanitized)) {
+    const value = sanitized[key];
+    if (typeof value === "string") {
+      sanitized[key] = sanitizeAuditField(value);
+    }
+  }
+  return sanitized as unknown as AuditLogLine;
+}
 
 /**
  * The stdout record. Built as an explicit allowlist, never as a spread of a wider object, so that
@@ -171,7 +209,10 @@ function toAuditLine(event: AuditEvent): AuditLogLine {
     ...(event.reason ? { reason: event.reason } : {}),
     ...(event.ip && event.ip !== UNKNOWN_ADDRESS ? { ip: event.ip } : {}),
     ...(event.connectionName ? { connection: event.connectionName } : {}),
-    ...(event.duration !== undefined ? { duration_ms: event.duration } : {}),
+    // Number.isFinite excludes NaN and +/-Infinity: JSON.stringify(NaN) silently produces `null`,
+    // which would flip duration_ms from a number to null for that one line in a contract parsers
+    // depend on. Omitting it entirely keeps the field's type stable instead.
+    ...(event.duration !== undefined && Number.isFinite(event.duration) ? { duration_ms: event.duration } : {}),
   };
 }
 
@@ -195,10 +236,10 @@ function toAuditLine(event: AuditEvent): AuditLogLine {
  * masks result-grid cell values by column-name pattern and has no bearing on log strings.
  */
 export function emitAuditEvent(event: Omit<AuditEvent, "id" | "timestamp">): AuditEvent {
-  const stored = getServerAuditBuffer().push({ ...event, user: event.user.slice(0, MAX_ACTOR_LENGTH) });
+  const stored = getServerAuditBuffer().push({ ...event, user: event.user.slice(0, MAX_AUDIT_FIELD_LENGTH) });
   // JSON.stringify escapes newlines and control characters, so an attacker-controlled actor
   // cannot forge a second log line. This is why the audit channel does not reuse logger.ts.
-  console.log(JSON.stringify(toAuditLine(stored)));
+  console.log(JSON.stringify(sanitizeAuditLine(toAuditLine(stored))));
   return stored;
 }
 

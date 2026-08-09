@@ -195,4 +195,133 @@ describe("emitAuditEvent", () => {
       spy.mockRestore();
     }
   });
+
+  /**
+   * Threat: a connection string reaches the log pipeline the moment a real call site (Tasks 6-9)
+   * passes one through connectionName, ip, action, route or the actor. Each field gets its own
+   * test so that dropping the sanitizer from exactly one field turns exactly one test red and
+   * names it, rather than a single call-site test that a future refactor could satisfy by
+   * accident.
+   */
+  describe("credential redaction is pinned per field", () => {
+    const CONNECTION_STRING = "postgres://dbadmin:supersecret@10.0.0.5:5432/prod";
+
+    test("redacts an embedded connection-string password from the connection field, keeping the host", () => {
+      const line = captureLine(() =>
+        emitAuditEvent({
+          type: "query_execution",
+          action: "query",
+          target: "POST /api/db/query",
+          connectionName: CONNECTION_STRING,
+          user: "user@libredb.org",
+          result: "success",
+        }),
+      );
+
+      const serialized = JSON.stringify(line);
+      expect(serialized).not.toContain("supersecret");
+      expect(serialized).toContain("10.0.0.5");
+    });
+
+    test("redacts an embedded connection-string password from the actor field", () => {
+      const line = captureLine(() =>
+        emitAuditEvent({
+          type: "login_failure",
+          action: "login",
+          target: "POST /api/auth/login",
+          user: CONNECTION_STRING,
+          result: "failure",
+          reason: "bad_credentials",
+        }),
+      );
+
+      const serialized = JSON.stringify(line);
+      expect(serialized).not.toContain("supersecret");
+      expect(String(line.actor)).toContain("10.0.0.5");
+    });
+
+    test("redacts an embedded connection-string password carried through the ip field", () => {
+      const line = captureLine(() =>
+        emitAuditEvent({
+          type: "permission_denied",
+          action: "denied",
+          target: "POST /api/db/query",
+          user: "anonymous",
+          result: "failure",
+          reason: "no_session",
+          ip: CONNECTION_STRING,
+        }),
+      );
+
+      const serialized = JSON.stringify(line);
+      expect(serialized).not.toContain("supersecret");
+      expect(String(line.ip)).toContain("10.0.0.5");
+    });
+
+    test("redacts an embedded connection-string password carried through the action field", () => {
+      const line = captureLine(() =>
+        emitAuditEvent({
+          type: "login_failure",
+          action: CONNECTION_STRING,
+          target: "POST /api/auth/login",
+          user: "admin@libredb.org",
+          result: "failure",
+          reason: "bad_credentials",
+        }),
+      );
+
+      const serialized = JSON.stringify(line);
+      expect(serialized).not.toContain("supersecret");
+      expect(String(line.action)).toContain("10.0.0.5");
+    });
+
+    test("redacts an embedded connection-string password carried through the route field", () => {
+      const line = captureLine(() =>
+        emitAuditEvent({
+          type: "login_failure",
+          action: "login",
+          target: CONNECTION_STRING,
+          user: "admin@libredb.org",
+          result: "failure",
+          reason: "bad_credentials",
+        }),
+      );
+
+      const serialized = JSON.stringify(line);
+      expect(serialized).not.toContain("supersecret");
+      expect(String(line.route)).toContain("10.0.0.5");
+    });
+  });
+
+  test("bounds an oversized ip so a spoofed forwarded-for chain cannot bloat every line", () => {
+    const line = captureLine(() =>
+      emitAuditEvent({
+        type: "permission_denied",
+        action: "denied",
+        target: "POST /api/db/query",
+        user: "anonymous",
+        result: "failure",
+        reason: "no_session",
+        ip: `1.2.3.4,${"x".repeat(50_000)}`,
+      }),
+    );
+
+    expect(String(line.ip).length).toBe(254);
+  });
+
+  test("omits duration_ms instead of letting a non-finite duration flip the field from a number to null", () => {
+    const line = captureLine(() =>
+      emitAuditEvent({
+        type: "query_execution",
+        action: "query",
+        target: "POST /api/db/query",
+        connectionName: "sample-employees",
+        user: "user@libredb.org",
+        result: "success",
+        duration: Number.NaN,
+      }),
+    );
+
+    expect("duration_ms" in line).toBe(false);
+  });
 });
