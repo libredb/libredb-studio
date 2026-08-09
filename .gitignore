@@ -115,6 +115,9 @@ npmjs-token
 .token
 .sonar-token
 data/
+# e2e/offline-editor.spec.ts's isolated server (playwright.config.ts) gets its own data dir so it
+# never contends for the primary server's exclusive-lock sample files.
+data-e2e-offline/
 # Local Docker test volumes and any stray embedded-db files
 .docker-data*/
 *.libredb

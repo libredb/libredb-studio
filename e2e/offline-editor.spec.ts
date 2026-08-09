@@ -8,6 +8,13 @@
  * reach the CDN. The existing specs pass *because* the CDN is reachable, which is the
  * wrong thing to assert for a self-hosted product, so this one asserts the opposite:
  * nothing the workspace needs comes from another host.
+ *
+ * Runs under playwright.config.ts's "chromium-offline-editor" project, against its own server
+ * process, not the shared one every other spec uses. It logs in as the same user@libredb.org
+ * account as everything else in this suite and asserts on the query's actual result value, so it
+ * is the one spec that visibly breaks if that account's "query" rate-limit bucket
+ * (src/lib/api/rate-limit.ts) is already spent by the ~30 other tests' auto-hydration on the
+ * shared server before this one gets its turn - see the webServer/projects comments there.
  */
 import { expect, test, type Page } from "@playwright/test";
 
