@@ -20,7 +20,14 @@ import * as path from "path";
 const file = path.join(__dirname, "../../.gitleaksignore");
 const lines = fs.readFileSync(file, "utf8").split("\n");
 
-const FINGERPRINT = /^[0-9a-f]{40}:[^:\s]+(?:\/[^:\s]+)*:[a-z0-9-]+:[0-9]+$/;
+// The file segment (`[^:\s]+`) already matches `/`, so no separate
+// slash-delimited grouping is needed. A previous version had one anyway -
+// `[^:\s]+(?:\/[^:\s]+)*` - which let the same slash be consumed by either
+// alternative, an ambiguity CodeQL (js/redos) flagged as exponential
+// backtracking on a long enough run of `/` before a non-matching suffix. The
+// colon delimiters between fingerprint fields make one `[^:\s]+` per segment
+// unambiguous - there is no repetition left to backtrack over.
+const FINGERPRINT = /^[0-9a-f]{40}:[^:\s]+:[a-z0-9-]+:[0-9]+$/;
 
 const contentLines = lines.map((l) => l.trim()).filter((l) => l.length > 0 && !l.startsWith("#"));
 

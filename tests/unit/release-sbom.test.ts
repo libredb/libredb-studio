@@ -43,7 +43,7 @@ const generate = sbomSteps.find((s) => s.run?.includes("cyclonedx"));
 const upload = sbomSteps.find((s) => s.run?.includes("gh release upload"));
 const dockerHubCheck = sbomSteps.find((s) => s.id === "dockerhub");
 const dockerHubLogin = sbomSteps.find((s) => s.name === "Log in to Docker Hub");
-const rename = sbomSteps.find((s) => s.name === "Name the SBOM's root component");
+const rename = sbomSteps.find((s) => s.name === "Name and version the SBOM's root component");
 const publishRelease = workflow.jobs["publish-release"];
 const verify = (publishRelease?.steps ?? []).find((s) => s.run?.includes("missing required asset"));
 
@@ -127,6 +127,15 @@ describe("the sbom job names its root component, so it does not import as a proj
     expect(rename).toBeDefined();
     expect(rename?.run).toContain("metadata.component");
     expect(rename?.run).toContain("libredb-studio");
+  });
+
+  test("also sets metadata.component.version, so successive releases do not collapse into one project", () => {
+    // Dependency-Track and similar CycloneDX consumers key a project by
+    // name+version. Setting the name alone leaves version empty, and every
+    // release's SBOM would then import as the same unversioned project,
+    // each overwriting the last rather than recording its own release.
+    expect(rename?.run).toContain("metadata.component.version");
+    expect(rename?.run).toContain("$VERSION");
   });
 
   test("runs after generation and before verification and attestation", () => {

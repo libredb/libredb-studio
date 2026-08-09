@@ -139,6 +139,20 @@ jobs:
             # against, which is why there is no commit_count, and no
             # "Assert the scan covered commits" check, for these events. A
             # decision, not an oversight.
+            #
+            # `--all` still has a failure mode the range branch above does
+            # not: a shallow checkout. `fetch-depth: 0` above makes one
+            # unlikely today, but nothing here re-derives that guarantee, and
+            # a shallow `--all` does not fail - it scans however many commits
+            # the shallow boundary left reachable and reports "no leaks
+            # found" over that truncated slice, which looks identical to a
+            # real clean scan of the full 753+ commits. `git rev-parse
+            # --is-shallow-repository` is the direct check for exactly that,
+            # so it is asserted here rather than trusted.
+            if [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then
+              echo "::error::This checkout is shallow, so --all would scan a truncated slice of history and could report a false clean. Checkout must use fetch-depth: 0." >&2
+              exit 1
+            fi
             echo "log_opts=--all" >> "$GITHUB_OUTPUT"
           fi
 
@@ -435,10 +449,26 @@ jobs:
           username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Resolve :latest to one digest
+        id: image
+        run: |
+          set -euo pipefail
+          # The vuln scan and the SBOM below are two separate `docker run`
+          # invocations several minutes apart. Resolving `:latest` in each
+          # independently means a release that retags `:latest` mid-run makes
+          # them describe two different images with no shared identity - the
+          # exact failure mode a digest-pinned reference exists to rule out
+          # everywhere else in this workflow. Resolved once, here, and every
+          # step below scans image_ref, never the bare tag.
+          digest=$(docker buildx imagetools inspect ghcr.io/libredb/libredb-studio:latest --format '{{json .Manifest.Digest}}' | tr -d '"')
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          echo "image_ref=ghcr.io/libredb/libredb-studio@$digest" >> "$GITHUB_OUTPUT"
+
       - name: Scan the published image
         env:
           TRIVY_USERNAME: ${{ github.actor }}
           TRIVY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+          IMAGE_REF: ${{ steps.image.outputs.image_ref }}
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/trivy-cache" "$RUNNER_TEMP/trivy-out"
@@ -459,7 +489,7 @@ jobs:
               --scanners vuln \
               --format json \
               --output /out/image.json \
-              ghcr.io/libredb/libredb-studio:latest
+              "$IMAGE_REF"
 
       - name: Render the report
         run: |
@@ -472,6 +502,8 @@ jobs:
             "$TRIVY_IMAGE" convert --format sarif --output /out/image.sarif /out/image.json
 
       - name: Generate the image SBOM
+        env:
+          IMAGE_REF: ${{ steps.image.outputs.image_ref }}
         run: |
           set -euo pipefail
           # Not a release asset, and it cannot be one: release-artifacts.yml
@@ -480,6 +512,11 @@ jobs:
           # source SBOM on the release covers the application closure; this one
           # adds the Debian layer, and anyone can regenerate it from the immutable
           # digest at any time with the command documented in SECURITY.md.
+          #
+          # Same $IMAGE_REF the vuln scan above used, not a second `:latest`
+          # resolved independently - a release retagging `:latest` between the
+          # two `docker run` invocations would otherwise make the report and
+          # this SBOM describe two different images with no shared identity.
           docker run --rm \
             -v "$HOME/.docker/config.json:/root/.docker/config.json:ro" \
             -v "$RUNNER_TEMP/trivy-cache:/root/.cache/trivy" \
@@ -488,13 +525,19 @@ jobs:
               --format cyclonedx \
               --scanners license \
               --output /out/image.cdx.json \
-              ghcr.io/libredb/libredb-studio:latest
+              "$IMAGE_REF"
 
       - name: Publish the findings to the job summary
+        env:
+          IMAGE_REF: ${{ steps.image.outputs.image_ref }}
         run: |
           set -euo pipefail
           {
-            echo "## Published image: ghcr.io/libredb/libredb-studio:latest"
+            echo "## Published image: $IMAGE_REF"
+            echo
+            echo "Resolved from \`ghcr.io/libredb/libredb-studio:latest\` once, at the start of"
+            echo "this run, so the vulnerability report and the SBOM above describe the same"
+            echo "bytes even if a release retags \`:latest\` while this job is running."
             echo
             echo "Critical and high findings only. Most carry no fixed package - Debian's"
             echo "security team has not shipped one - which is why this job reports and never"

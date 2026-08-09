@@ -265,6 +265,20 @@ describe("secret-scan is the one scan allowed to fail a check", () => {
     expect(assertion?.run).toContain("exit 1");
   });
 
+  test("refuses to run --all against a shallow checkout", () => {
+    // A shallow `--all` does not fail the way an unresolvable pull-request
+    // range does - it scans however many commits the shallow boundary left
+    // reachable and reports "no leaks found" over that truncated slice,
+    // indistinguishable from a real clean scan of the full history. Verified
+    // live 2026-08-09: `git rev-parse --is-shallow-repository` prints
+    // "true" for a `--depth 1` clone and "false" for a full one.
+    const resolver = steps.find((s) => s.id === "range");
+    const run = resolver?.run ?? "";
+    expect(run).toContain("git rev-parse --is-shallow-repository");
+    expect(run).toMatch(/is-shallow-repository\)"\s*=\s*"true"/);
+    expect(run).toContain("exit 1");
+  });
+
   test("the commit-count assertion runs after the scan, not before it", () => {
     const names = steps.map((s) => s.name);
     expect(names.indexOf("Assert the scan covered commits")).toBeGreaterThan(
@@ -408,7 +422,9 @@ describe("dependency-scan reports on pull requests and gates elsewhere", () => {
 describe("image-scan reports and never gates", () => {
   const job = workflow.jobs["image-scan"];
   const steps = job?.steps ?? [];
+  const resolve = steps.find((s) => s.id === "image");
   const scan = steps.find((s) => s.run?.includes("--output /out/image.json"));
+  const sbom = steps.find((s) => s.run?.includes("--output /out/image.cdx.json"));
   const sarif = steps.find((s) => s.uses?.startsWith("github/codeql-action/upload-sarif@"));
 
   test("exists and is named for a human reading the checks list", () => {
@@ -424,7 +440,21 @@ describe("image-scan reports and never gates", () => {
   });
 
   test("scans the image users actually run", () => {
-    expect(scan?.run).toContain("ghcr.io/libredb/libredb-studio:latest");
+    expect(resolve?.run).toContain("ghcr.io/libredb/libredb-studio:latest");
+  });
+
+  test("resolves :latest to one digest and reuses it for both the vuln scan and the SBOM", () => {
+    // The vuln scan and the SBOM are two separate `docker run` invocations
+    // minutes apart. Each independently resolving `:latest` would let a
+    // release that retags `:latest` mid-run make them describe two different
+    // images with no shared identity - the class of bug a digest-pinned
+    // reference exists everywhere else in this workflow to rule out.
+    expect(resolve?.run).toContain("imagetools inspect");
+    expect(resolve?.run).toContain("image_ref=ghcr.io/libredb/libredb-studio@$digest");
+    expect(scan?.env?.IMAGE_REF).toBe("${{ steps.image.outputs.image_ref }}");
+    expect(sbom?.env?.IMAGE_REF).toBe("${{ steps.image.outputs.image_ref }}");
+    expect(scan?.run).toContain('"$IMAGE_REF"');
+    expect(sbom?.run).toContain('"$IMAGE_REF"');
   });
 
   test("cannot fail: no exit code anywhere in this job", () => {

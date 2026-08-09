@@ -597,25 +597,29 @@ jobs:
           done
           ls -la sbom
 
-      - name: Name the SBOM's root component
+      - name: Name and version the SBOM's root component
         env:
           VERSION: ${{ needs.guard.outputs.version }}
         run: |
           set -euo pipefail
           # Trivy names the root component after its scan target - "." for a
-          # filesystem scan of the repository root - so an unpatched document
-          # imports into Dependency-Track, or any other CycloneDX consumer, as
-          # a project literally named ".". This is the one field `trivy fs`
-          # has no flag to set.
+          # filesystem scan of the repository root - and leaves its version
+          # empty; neither is a flag `trivy fs` has. Leaving version unset
+          # matters beyond cosmetics: a CycloneDX consumer such as
+          # Dependency-Track keys a project by name+version, so successive
+          # releases' unpatched SBOMs would all collapse into one
+          # unversioned "libredb-studio" project, each overwriting the last.
           node -e '
             const fs = require("fs");
             const file = process.argv[1];
+            const version = process.argv[2];
             const doc = JSON.parse(fs.readFileSync(file, "utf8"));
             if (doc.metadata && doc.metadata.component) {
               doc.metadata.component.name = "libredb-studio";
+              doc.metadata.component.version = version;
             }
             fs.writeFileSync(file, JSON.stringify(doc, null, 2));
-          ' "sbom/libredb-studio-${VERSION}.cdx.json"
+          ' "sbom/libredb-studio-${VERSION}.cdx.json" "$VERSION"
 
       - name: Verify the SBOM describes something
         env:
