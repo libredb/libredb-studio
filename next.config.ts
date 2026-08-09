@@ -12,9 +12,6 @@ const nextConfig: NextConfig = {
   // Externalize native modules to reduce bundle size and memory usage
   // These packages will be loaded from node_modules at runtime
   serverExternalPackages: ["pg", "mysql2", "mongodb", "better-sqlite3", "ssh2"],
-  typescript: {
-    ignoreBuildErrors: true,
-  },
 };
 
 export default nextConfig;
