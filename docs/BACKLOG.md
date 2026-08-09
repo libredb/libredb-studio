@@ -233,11 +233,14 @@ the hotfix: none of the three is wrong today, and consolidating them is a refact
 ### A2. Static assets receive no security headers — decided, not implemented
 
 `src/proxy.ts`'s matcher excludes any path matching `.*\..*` so that static assets skip the auth
-redirect — `/((?!api/db/health|api/storage/config|_next/static|_next/image|.*\..*).*)`. The
-exclusion is by design for auth (nothing under `public/` or `/monaco/vs/*.js` needs a login
-redirect), but it means `proxy()` never runs for those paths at all: files under `public/`,
-`/monaco/vs/*.js` and `_next/static` are served with none of the Phase 1 security headers
-(`X-Content-Type-Options` chief among them), while every extensionless route gets the full set.
+redirect — `/((?!api/storage/config|_next/static|_next/image|.*\..*).*)`. (`api/db/health` was
+also excluded here until it was found to be excluding `POST /api/db/health`, a state-changing
+route, from the Origin check too — see SECURITY.md; it is no longer in this list, and GET's
+load-balancer path is unaffected because the Origin check exempts GET by method.) The dot exclusion
+is by design for auth (nothing under `public/` or `/monaco/vs/*.js` needs a login redirect), but it
+means `proxy()` never runs for those paths at all: files under `public/`, `/monaco/vs/*.js` and
+`_next/static` are served with none of the Phase 1 security headers (`X-Content-Type-Options` chief
+among them), while every extensionless route gets the full set.
 
 This was raised while Phase 1's header work landed and, having weighed it, was left as-is: these
 are not documents, and Next serves them with correct content types, so MIME sniffing on them is not

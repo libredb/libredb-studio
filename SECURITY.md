@@ -113,21 +113,25 @@ When using LibreDB Studio, please follow these security best practices:
   `RATE_LIMIT_*` environment variables documented in `.env.example`
 - Every state-changing request (`POST`, `PUT`, `PATCH`, `DELETE`) must carry an `Origin` (or
   `Referer`) whose host matches the deployment's own host, as a second layer behind the
-  `SameSite=Lax` session cookie. Non-browser clients must send `Origin: <your public origin>`;
-  deployments behind a reverse proxy that rewrites `Host` set `ALLOWED_ORIGINS`
+  `SameSite=Lax` session cookie — except a request whose `Content-Type` is exactly
+  `application/json` and carries neither header at all, the one shape a cross-site browser cannot
+  forge; see `docs/API_DOCS.md`'s "CSRF: Origin Check" section for the full carve-out and why it is
+  safe. A non-browser client that does NOT send that content type (a webhook sender, for instance)
+  must send `Origin: <your public origin>` instead — that requirement is on clients which skip the
+  JSON carve-out, not on every non-browser client unconditionally. Deployments behind a reverse
+  proxy that rewrites `Host` set `ALLOWED_ORIGINS`
 - Every response that passes through the app's request middleware carries `Content-Security-Policy`,
   `Strict-Transport-Security`, `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy` and
-  `Permissions-Policy` (static assets and the health/storage-config bootstrap paths are excluded
-  from the middleware and carry none of these — see `docs/BACKLOG.md`). The health exclusion is by
-  path, not method: `POST /api/db/health`, a database-reaching route, is excluded the same as
-  `GET /api/db/health` and so gets no Origin check and no security headers from the middleware
-  either — it checks its own session instead, the same as every other guarded route, so this is a
-  headers/CSRF gap on that one route, not an authentication gap. The CSP permits inline
-  scripts, because the application is statically prerendered and its hydration scripts are inline
-  and nonce-less; what it does contain is where an injected script could send data, not whether one
-  can run. The CSP is enforced by default; if an upgrade breaks a blocked resource, set
-  `CSP_REPORT_ONLY=true` (no rebuild required — it is a runtime environment variable) to downgrade
-  it to report-only while you identify the violated directive
+  `Permissions-Policy` (static assets and the storage-config bootstrap path are excluded from the
+  middleware and carry none of these — see `docs/BACKLOG.md`). `/api/db/health` is NOT excluded:
+  its `POST` handler is a session-gated, provider-reaching route like any other, so it goes through
+  the same Origin check and carries the same headers; `GET /api/db/health` is unaffected because
+  the Origin check exempts GET by method and the load-balancer/probe path stays a public route. The
+  CSP permits inline scripts, because the application is statically prerendered and its hydration
+  scripts are inline and nonce-less; what it does contain is where an injected script could send
+  data, not whether one can run. The CSP is enforced by default; if an upgrade breaks a blocked
+  resource, set `CSP_REPORT_ONLY=true` (no rebuild required — it is a runtime environment variable)
+  to downgrade it to report-only while you identify the violated directive
 - Logins, logouts, missing-session denials, Origin-mismatch denials and rate-limit trips are
   written to the in-app audit log and emitted as one structured JSON line each on stdout, for
   whatever log pipeline you already run. A denial based on ROLE rather than session or Origin — the
