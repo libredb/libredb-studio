@@ -4,9 +4,12 @@ import { SignJWT } from "jose";
 import { proxy } from "@/proxy";
 
 /**
- * Threat: a response path that escapes the headers. proxy() has eight return statements; a new
+ * Threat: a response path that escapes the headers. proxy() has nine return statements; a new
  * branch that forgets withSecurityHeaders() ships a document with no CSP and no clickjacking
- * defence, and nothing else in the suite would notice. Every branch is driven here.
+ * defence, and nothing else in the suite would notice. Eight of the nine are driven here; the
+ * ninth - the Origin-mismatch 403 - is driven in csrf-origin.test.ts:86 ("still carries the
+ * security headers, so the 403 is not a hole of its own"), since that branch's own threat model
+ * belongs with the rest of the Origin-check suite.
  */
 
 const JWT_SECRET = new TextEncoder().encode("test-jwt-secret-for-unit-tests-32ch");

@@ -3,7 +3,7 @@ import { jwtVerify } from "jose";
 import { clientAddress } from "@/lib/api/client-address";
 import { checkOrigin } from "@/lib/api/origin-check";
 import { consumeRateLimit } from "@/lib/api/rate-limit";
-import { emitAuditEvent } from "@/lib/audit";
+import { emitAuditEvent, MAX_AUDIT_FIELD_LENGTH } from "@/lib/audit";
 import { logger } from "@/lib/logger";
 import { getJwtSecret } from "@/lib/config/auth-env";
 import { withSecurityHeaders } from "@/lib/security/config";
@@ -44,18 +44,28 @@ export async function proxy(request: NextRequest) {
     if (notice.allowed || notice.tripped) {
       logger.warn("Origin check rejected a request", {
         route: `${request.method} ${pathname}`,
-        observedOrigin: origin.observedOrigin,
+        // Bounded the same as the audit target beside it (MAX_AUDIT_FIELD_LENGTH): observedOrigin
+        // is read straight from the request's own Origin/Referer header and is attacker-controlled
+        // on every rejected request, unlike expectedHost, which reflects this deployment's own
+        // configured host.
+        observedOrigin: origin.observedOrigin.slice(0, MAX_AUDIT_FIELD_LENGTH),
         expectedHost: origin.expectedHost,
       });
-      emitAuditEvent({
-        type: "permission_denied",
-        action: "denied",
-        target: `${request.method} ${pathname}`,
-        user: "anonymous",
-        result: "failure",
-        reason: "origin_mismatch",
-        ip: address,
-      });
+      // Isolated in its own try/catch: the 403 below is unconditional and already decided: a
+      // broken audit sink must never turn it into an unrelated 500.
+      try {
+        emitAuditEvent({
+          type: "permission_denied",
+          action: "denied",
+          target: `${request.method} ${pathname}`,
+          user: "anonymous",
+          result: "failure",
+          reason: "origin_mismatch",
+          ip: address,
+        });
+      } catch (auditError) {
+        logger.error("Failed to record origin_mismatch audit event", auditError, { route: "proxy" });
+      }
     }
     return withSecurityHeaders(NextResponse.json(ORIGIN_MISMATCH_BODY, { status: 403 }));
   }

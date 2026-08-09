@@ -1,4 +1,4 @@
-import { describe, expect, test, mock, beforeEach } from "bun:test";
+import { describe, expect, test, mock, spyOn, beforeEach } from "bun:test";
 import { join } from "node:path";
 import { discoverRoutes } from "./helpers/discover-routes";
 
@@ -114,6 +114,47 @@ describe("guardRoute", () => {
     const response = (guard as { response: Response }).response;
     expect(response.status).toBe(401);
     expect(await response.json()).toEqual({ error: "Authentication required" });
+  });
+
+  test("still returns 401 when the permission_denied audit emit throws", async () => {
+    // Isolated in its own try/catch: a broken audit sink must never change a denial this route
+    // already decided into an unrelated 500.
+    mockGetSession.mockImplementation(async () => null);
+    const logSpy = spyOn(console, "log").mockImplementation(() => {
+      throw new Error("audit sink unavailable");
+    });
+    try {
+      const request = new Request("http://localhost:3000/api/db/query", { method: "POST" });
+
+      const guard = await guardRoute({ route: "POST /api/db/query", bucket: "query", request });
+
+      expect("response" in guard).toBe(true);
+      const response = (guard as { response: Response }).response;
+      expect(response.status).toBe(401);
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
+  test("still returns 429 when the rate_limit_exceeded audit emit throws", async () => {
+    const request = () => new Request("http://localhost:3000/api/db/query", { method: "POST" });
+    // Trip the "query" bucket (default max 120) with a working audit sink first.
+    for (let i = 0; i < 120; i += 1) {
+      await guardRoute({ route: "POST /api/db/query", bucket: "query", request: request() });
+    }
+
+    const logSpy = spyOn(console, "log").mockImplementation(() => {
+      throw new Error("audit sink unavailable");
+    });
+    try {
+      const guard = await guardRoute({ route: "POST /api/db/query", bucket: "query", request: request() });
+
+      expect("response" in guard).toBe(true);
+      const response = (guard as { response: Response }).response;
+      expect(response.status).toBe(429);
+    } finally {
+      logSpy.mockRestore();
+    }
   });
 });
 

@@ -38,16 +38,22 @@ function enforceLoginLimit(bucket: LoginBucket, key: string, actor: string, ip: 
   if (decision.allowed) return;
 
   if (decision.tripped) {
-    emitAuditEvent({
-      type: "rate_limit_exceeded",
-      action: "throttled",
-      target: ROUTE,
-      user: actor,
-      result: "failure",
-      reason: "rate_limited",
-      ip,
-      bucket,
-    });
+    // Isolated for the same reason as the two emits in POST below: the 429 is already decided
+    // (the throw below fires regardless), and a broken audit sink must not turn it into a 500.
+    try {
+      emitAuditEvent({
+        type: "rate_limit_exceeded",
+        action: "throttled",
+        target: ROUTE,
+        user: actor,
+        result: "failure",
+        reason: "rate_limited",
+        ip,
+        bucket,
+      });
+    } catch (auditError) {
+      logger.error("Failed to record rate_limit_exceeded audit event", auditError, { route: ROUTE });
+    }
   }
   throw new RateLimitError(decision.retryAfterSeconds);
 }
@@ -85,28 +91,41 @@ export async function POST(request: NextRequest) {
       await login(matched.role, matched.email);
       resetRateLimit("login_client", clientKey);
       resetRateLimit("login_account", accountKey);
-      emitAuditEvent({
-        type: "login_success",
-        action: "login",
-        target: ROUTE,
-        user: matched.email,
-        result: "success",
-        ip,
-      });
+      // Isolated in its own try/catch, separate from login() above, matching logout and the OIDC
+      // callback: a real session has already been created by this point, so a failure to record
+      // it must never turn a successful login into a 500 for a user who is in fact logged in.
+      try {
+        emitAuditEvent({
+          type: "login_success",
+          action: "login",
+          target: ROUTE,
+          user: matched.email,
+          result: "success",
+          ip,
+        });
+      } catch (auditError) {
+        logger.error("Failed to record login_success audit event", auditError, { route: ROUTE });
+      }
       return NextResponse.json({ success: true, role: matched.role });
     }
 
     consumeRateLimit("login_client", clientKey);
     consumeRateLimit("login_account", accountKey);
-    emitAuditEvent({
-      type: "login_failure",
-      action: "login",
-      target: ROUTE,
-      user: actor,
-      result: "failure",
-      reason: "bad_credentials",
-      ip,
-    });
+    // Isolated for the same reason as the success path above: the 401 below is already decided
+    // and must not become a 500 because the audit sink itself failed.
+    try {
+      emitAuditEvent({
+        type: "login_failure",
+        action: "login",
+        target: ROUTE,
+        user: actor,
+        result: "failure",
+        reason: "bad_credentials",
+        ip,
+      });
+    } catch (auditError) {
+      logger.error("Failed to record login_failure audit event", auditError, { route: ROUTE });
+    }
     return NextResponse.json({ success: false, message: "Invalid email or password" }, { status: 401 });
   } catch (error) {
     // Server is not configured for authentication (missing ADMIN_PASSWORD, or a

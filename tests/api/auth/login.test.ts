@@ -1,4 +1,4 @@
-import { describe, test, expect, mock, beforeEach, afterEach } from "bun:test";
+import { describe, test, expect, mock, spyOn, beforeEach, afterEach } from "bun:test";
 import { createMockRequest, parseResponseJSON } from "../../helpers/mock-next";
 import { AuthConfigError } from "@/lib/auth-errors";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
@@ -225,6 +225,81 @@ describe("POST /api/auth/login", () => {
     expect(res.status).toBe(200);
     expect(data.success).toBe(true);
     expect(data.role).toBe("admin");
+  });
+
+  test("still returns 200 and success when the login_success audit emit throws", async () => {
+    // Isolated in its own try/catch, matching logout and the OIDC callback: a real session has
+    // already been created by this point (login() succeeded, the cookie is set), so a broken
+    // audit sink must never turn that into a 500 for a user who is in fact logged in.
+    const logSpy = spyOn(console, "log").mockImplementation(() => {
+      throw new Error("audit sink unavailable");
+    });
+    try {
+      const req = createMockRequest("/api/auth/login", {
+        method: "POST",
+        body: { email: "admin@libredb.org", password: "LibreDB.2026" },
+      });
+
+      const res = await POST(req as never);
+      const data = await parseResponseJSON<{ success: boolean; role: string }>(res);
+
+      expect(res.status).toBe(200);
+      expect(data.success).toBe(true);
+      expect(data.role).toBe("admin");
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
+  test("still returns 429 when the rate_limit_exceeded audit emit throws", async () => {
+    // Trip login_client first (default max 5) with a broken console.log, then confirm the 429
+    // itself still arrives rather than degrading to a 500.
+    for (let i = 0; i < 5; i += 1) {
+      const req = createMockRequest("/api/auth/login", {
+        method: "POST",
+        headers: { "x-forwarded-for": "203.0.113.77" },
+        body: { email: "admin@libredb.org", password: "wrong" },
+      });
+      await POST(req as never);
+    }
+
+    const logSpy = spyOn(console, "log").mockImplementation(() => {
+      throw new Error("audit sink unavailable");
+    });
+    try {
+      const req = createMockRequest("/api/auth/login", {
+        method: "POST",
+        headers: { "x-forwarded-for": "203.0.113.77" },
+        body: { email: "admin@libredb.org", password: "wrong" },
+      });
+
+      const res = await POST(req as never);
+
+      expect(res.status).toBe(429);
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
+  test("still returns 401 when the login_failure audit emit throws", async () => {
+    const logSpy = spyOn(console, "log").mockImplementation(() => {
+      throw new Error("audit sink unavailable");
+    });
+    try {
+      const req = createMockRequest("/api/auth/login", {
+        method: "POST",
+        body: { email: "admin@libredb.org", password: "wrong-password" },
+      });
+
+      const res = await POST(req as never);
+      const data = await parseResponseJSON<{ success: boolean; message: string }>(res);
+
+      expect(res.status).toBe(401);
+      expect(data.success).toBe(false);
+      expect(data.message).toBe("Invalid email or password");
+    } finally {
+      logSpy.mockRestore();
+    }
   });
 
   test("rejects user login when USER_PASSWORD is not set (account is optional, no default)", async () => {

@@ -4,6 +4,7 @@ import { clientAddress } from "@/lib/api/client-address";
 import { createErrorResponse } from "@/lib/api/errors";
 import { consumeRateLimit, RateLimitError } from "@/lib/api/rate-limit";
 import { emitAuditEvent } from "@/lib/audit";
+import { logger } from "@/lib/logger";
 
 /**
  * The single guard for routes that reach a database or an LLM provider: session check, rate limit
@@ -38,15 +39,21 @@ export async function guardRoute(opts: {
     // otherwise fill a container log volume with one line per probe.
     const notice = consumeRateLimit("anon", ip);
     if (notice.allowed || notice.tripped) {
-      emitAuditEvent({
-        type: "permission_denied",
-        action: "denied",
-        target: opts.route,
-        user: "anonymous",
-        result: "failure",
-        reason: "no_session",
-        ip,
-      });
+      // Isolated in its own try/catch: the 401 below is already decided, and a broken audit sink
+      // must never turn a denial this route already made into an unrelated 500.
+      try {
+        emitAuditEvent({
+          type: "permission_denied",
+          action: "denied",
+          target: opts.route,
+          user: "anonymous",
+          result: "failure",
+          reason: "no_session",
+          ip,
+        });
+      } catch (auditError) {
+        logger.error("Failed to record permission_denied audit event", auditError, { route: opts.route });
+      }
     }
     return { response: NextResponse.json({ error: "Authentication required" }, { status: 401 }) };
   }
@@ -57,16 +64,22 @@ export async function guardRoute(opts: {
   const decision = consumeRateLimit(opts.bucket, session.username);
   if (!decision.allowed) {
     if (decision.tripped) {
-      emitAuditEvent({
-        type: "rate_limit_exceeded",
-        action: "throttled",
-        target: opts.route,
-        user: session.username,
-        result: "failure",
-        reason: "rate_limited",
-        ip,
-        bucket: opts.bucket,
-      });
+      // Isolated for the same reason as the no_session branch above: the 429 below is already
+      // decided regardless of whether this line succeeds.
+      try {
+        emitAuditEvent({
+          type: "rate_limit_exceeded",
+          action: "throttled",
+          target: opts.route,
+          user: session.username,
+          result: "failure",
+          reason: "rate_limited",
+          ip,
+          bucket: opts.bucket,
+        });
+      } catch (auditError) {
+        logger.error("Failed to record rate_limit_exceeded audit event", auditError, { route: opts.route });
+      }
     }
     return {
       response: createErrorResponse(new RateLimitError(decision.retryAfterSeconds), { route: opts.route }),

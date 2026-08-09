@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { NextRequest } from "next/server";
 import { resetOriginCheckWarnings } from "@/lib/api/origin-check";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
@@ -89,6 +89,39 @@ describe("a cross-site state-changing request", () => {
     expect(res.status).toBe(403);
     expect(res.headers.get("x-content-type-options")).toBe("nosniff");
     expect(res.headers.get("content-security-policy")).toContain("frame-ancestors 'none'");
+  });
+
+  test("bounds an oversized Origin header in the rejection warn log", async () => {
+    // observedOrigin comes straight from the request's own Origin/Referer header and is
+    // attacker-controlled on every rejected request; it must be bounded the same as the audit
+    // target beside it (MAX_AUDIT_FIELD_LENGTH), not written to stdout unbounded.
+    const warnSpy = spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const hugeOrigin = `https://${"x".repeat(50_000)}.example`;
+      const res = await proxy(post("/api/db/query", { origin: hugeOrigin }));
+
+      expect(res.status).toBe(403);
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      const line = warnSpy.mock.calls[0][0] as string;
+      expect(line.length).toBeLessThan(400);
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  test("still returns 403 when the origin_mismatch audit emit throws", async () => {
+    // Isolated in its own try/catch: the 403 is unconditional and already decided regardless of
+    // whether the audit line can be written.
+    const logSpy = spyOn(console, "log").mockImplementation(() => {
+      throw new Error("audit sink unavailable");
+    });
+    try {
+      const res = await proxy(post("/api/db/query", { origin: "https://evil.example" }));
+
+      expect(res.status).toBe(403);
+    } finally {
+      logSpy.mockRestore();
+    }
   });
 
   test("is still refused when it declares a form content type instead of JSON", async () => {

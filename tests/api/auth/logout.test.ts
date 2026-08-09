@@ -72,14 +72,17 @@ describe("POST /api/auth/logout (local)", () => {
     });
     const logSpy = spyOn(console, "log").mockImplementation(() => {});
 
-    const res = await POST(makeRequest() as never);
-    const data = await parseResponseJSON<{ error: string }>(res);
+    try {
+      const res = await POST(makeRequest() as never);
+      const data = await parseResponseJSON<{ error: string }>(res);
 
-    expect(res.status).toBe(500);
-    expect(data.error).toBe("Cookie store unavailable");
-    // A failed logout must never produce a line asserting a logout that did not happen.
-    expect(logSpy).not.toHaveBeenCalled();
-    logSpy.mockRestore();
+      expect(res.status).toBe(500);
+      expect(data.error).toBe("Cookie store unavailable");
+      // A failed logout must never produce a line asserting a logout that did not happen.
+      expect(logSpy).not.toHaveBeenCalled();
+    } finally {
+      logSpy.mockRestore();
+    }
   });
 
   test("multiple logouts all succeed", async () => {
