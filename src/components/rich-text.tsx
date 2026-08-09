@@ -8,6 +8,9 @@ import type { ReactNode } from "react";
  * monitoring data, both of which an attacker can influence, so it must never reach an HTML
  * parser. Returning React nodes makes escaping structural rather than a step someone can
  * forget to apply.
+ *
+ * Expects a single line: the `**bold**` pattern is matched without the `s` flag, so `**` cannot
+ * pair across a newline. Both callers split their input on `\n` before calling this per line.
  */
 export function renderInlineBold(text: string): ReactNode[] {
   const pattern = /\*\*(.*?)\*\*/g;

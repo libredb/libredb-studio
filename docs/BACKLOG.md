@@ -211,6 +211,41 @@ deprecated against this entry (#288): it becomes real, or goes away in a major, 
 
 ---
 
+## Authentication and security headers
+
+### A1. Three copies of the 401 response, with two different shapes
+
+`src/lib/api/require-session.ts:17` builds `{ error: "Authentication required" }` with status 401 —
+the shared guard the security/phase-0-hotfix branch added for routes that reach a database or an
+LLM provider. `src/lib/api/schema-route.ts:31-34` and `src/app/api/db/health/route.ts:28-31` build
+the identical response inline, and both predate that branch: they were not converted to call the
+new guard.
+
+Separately, the storage routes (`src/app/api/storage/route.ts:21`,
+`src/app/api/storage/[collection]/route.ts:22`, `src/app/api/storage/migrate/route.ts:23`) answer
+`{ error: "Unauthorized" }` instead, so a client cannot rely on one error shape for "not logged in"
+across the whole API.
+
+Done when there is exactly one 401 response for this condition, built in one place, and every route
+that needs it (including the storage routes) calls it. Deferred to Phase 1 rather than folded into
+the hotfix: none of the three is wrong today, and consolidating them is a refactor, not a fix.
+
+### A2. Paths containing a dot bypass the security middleware entirely
+
+`src/proxy.ts:85`'s matcher excludes any path matching `.*\..*` so that static assets skip the auth
+redirect — `/((?!api/auth|api/db/health|api/storage/config|_next/static|_next/image|.*\..*).*)`.
+The exclusion is by design for auth (nothing under `public/` or `/monaco/vs/*.js` needs a login
+redirect), but it means `proxy()` never runs for those paths at all, not just skips the redirect.
+Phase 1's plan to add security headers (CSP and friends) inside `proxy()` would then miss every
+dot-containing path — `public/**` and the Monaco AMD bundle under `/monaco/vs/*.js` chief among
+them — leaving them without the new headers while every extensionless route gets them.
+
+Done when Phase 1's header work accounts for this gap: either give static assets their headers
+through a different mechanism (e.g. `next.config`'s `headers()`), or narrow the matcher exclusion
+so it still skips the auth redirect without skipping header injection.
+
+---
+
 ## Tests
 
 ### T1. Two disjuncts are pinned by almost nothing
@@ -229,6 +264,22 @@ Done when deleting any single disjunct of `isStatementText` fails a test.
 The test mocks `pg` with a shared inert pool while the storage provider caches `Pool` in a
 module-level variable, so in a shared process the first initialize decides which mock every later one
 gets. Related to the `mock.module()` isolation rules in `docs/TOOLCHAIN.md`.
+
+### T3. `tests/security/image-proxy.test.ts` asserts a configuration invariant, not the threat
+
+The design this test protects is: `/_next/image?url=http://169.254.169.254/` (or any other
+attacker-chosen URL) must be rejected, because `next/image`'s optimizer would otherwise perform an
+unauthenticated server-side fetch of it. What the test actually asserts is narrower —
+`nextConfig.images` is `undefined` — which is sufficient today only because nothing in `src/`
+imports `next/image` at all (verified: `next.config`'s `images` key is never set, and no component
+imports `next/image`), so the control is closed and correctly verified for the current codebase.
+
+The gap is that the assertion is a proxy for the threat, not the threat itself, and a future,
+strictly safer configuration would fail it: setting `images: { unoptimized: true }` (which disables
+the optimizer's fetch behaviour entirely, closing the same threat a different way) would still trip
+`toBeUndefined()`. The real assertion — that `GET /_next/image?url=<attacker URL>` is rejected —
+belongs with the Phase 1 Playwright work, which can make an actual HTTP request against a running
+server; a unit test importing `next.config` has no way to exercise the route itself.
 
 ---
 

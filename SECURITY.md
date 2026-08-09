@@ -92,13 +92,17 @@ When using LibreDB Studio, please follow these security best practices:
 - Connection pooling is used to prevent connection exhaustion
 
 #### API Security
-- All API endpoints require authentication except `/api/auth/*`, `/api/db/health` (for load
-  balancer probes) and `/api/storage/config` (which returns the storage mode only)
+- All API endpoints require authentication except `POST /api/auth/login`, `POST /api/auth/logout`,
+  `GET /api/auth/oidc/login`, `GET /api/auth/oidc/callback`, `GET /api/db/health` (for load
+  balancer probes), and `GET /api/storage/config` (which returns the storage mode only).
+  `GET /api/auth/me` and `POST /api/db/health` each check for a session themselves and return 401
+  without one, the same as every other endpoint.
 - Running arbitrary SQL against your connected database is the product's purpose, not an
   injection surface. Where the application builds SQL of its own — generated starter queries,
   schema browsing, inline cell edits — values are bound as parameters and identifiers such as
-  table and column names are quoted for the target dialect, since SQL has no parameter syntax
-  for identifiers
+  column names are quoted for the target dialect; a table name is validated instead of quoted
+  where quoting it would change its case semantics (for example on Oracle), since SQL has no
+  parameter syntax for identifiers
 - Rate limiting should be implemented at the infrastructure level
 
 #### AI/LLM Integration

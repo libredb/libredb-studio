@@ -330,7 +330,7 @@ Minimal by nature — SQLite keeps almost no server-style runtime statistics.
 
 ## 8. Maintenance
 
-`runMaintenance(type, target?)` ([sqlite.ts:377](../../src/lib/db/providers/sql/sqlite.ts)); `analyze`
+`runMaintenance(type, target?)` ([sqlite.ts:432](../../src/lib/db/providers/sql/sqlite.ts)); `analyze`
 and `reindex` targets are quoted via `escapeIdentifier()`:
 
 | Type | Action |
