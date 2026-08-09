@@ -4,10 +4,16 @@ import {
   readCspReportOnly,
   readHstsIncludeSubDomains,
   readSecurityHeaderOptions,
+  readTrustProxyHeaders,
   resetSecurityConfigWarnings,
 } from "@/lib/security/config";
 
-const MUTATED = ["CSP_REPORT_ONLY", "HSTS_INCLUDE_SUBDOMAINS", "NEXT_PUBLIC_MONACO_VS_PATH"] as const;
+const MUTATED = [
+  "CSP_REPORT_ONLY",
+  "HSTS_INCLUDE_SUBDOMAINS",
+  "NEXT_PUBLIC_MONACO_VS_PATH",
+  "TRUST_PROXY_HEADERS",
+] as const;
 const snapshot: Record<string, string | undefined> = {};
 
 beforeEach(() => {
@@ -105,6 +111,47 @@ describe("readHstsIncludeSubDomains", () => {
     process.env.HSTS_INCLUDE_SUBDOMAINS = "true";
 
     expect(readHstsIncludeSubDomains()).toBe(true);
+  });
+});
+
+describe("readTrustProxyHeaders", () => {
+  test("trusts forwarded headers by default: a route handler has no socket address to fall back to", () => {
+    delete process.env.TRUST_PROXY_HEADERS;
+
+    expect(readTrustProxyHeaders()).toBe(true);
+  });
+
+  test("honours an explicit off value for a deployment with no reverse proxy in front", () => {
+    process.env.TRUST_PROXY_HEADERS = "false";
+
+    expect(readTrustProxyHeaders()).toBe(false);
+  });
+
+  test("falls back to the trusted default on an unrecognized value rather than guessing", () => {
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      process.env.TRUST_PROXY_HEADERS = "maybe";
+
+      expect(readTrustProxyHeaders()).toBe(true);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  test("warns once, naming the variable and the bad value, when the value is unrecognized", () => {
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      process.env.TRUST_PROXY_HEADERS = "maybe";
+
+      readTrustProxyHeaders();
+      readTrustProxyHeaders();
+
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls[0][0]).toContain("TRUST_PROXY_HEADERS");
+      expect(warn.mock.calls[0][0]).toContain("maybe");
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
 

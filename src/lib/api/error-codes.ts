@@ -22,6 +22,9 @@ export const ApiErrorCode = {
   LLM_STREAM: "LLM_STREAM",
   LLM_ERROR: "LLM_ERROR",
 
+  // Application rate limiting (distinct from LLM_RATE_LIMIT, which is the provider's limit)
+  RATE_LIMITED: "RATE_LIMITED",
+
   // Generic
   INTERNAL_ERROR: "INTERNAL_ERROR",
   NETWORK_ERROR: "NETWORK_ERROR",

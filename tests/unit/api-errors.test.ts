@@ -2,6 +2,7 @@ import "../setup";
 import { describe, test, expect, beforeEach, afterEach, spyOn } from "bun:test";
 import type { Mock } from "bun:test";
 import { createErrorResponse } from "@/lib/api/errors";
+import { RateLimitError } from "@/lib/api/rate-limit";
 import {
   DatabaseError,
   DatabaseConfigError,
@@ -206,5 +207,17 @@ describe("createErrorResponse", () => {
     expect(body.code).toBe("INTERNAL_ERROR");
     expect(body.statusCode).toBe(500);
     expect(body.error).toBe("Internal server error");
+  });
+
+  test("maps a rate-limit rejection to 429 with a Retry-After the client can obey", async () => {
+    const res = createErrorResponse(new RateLimitError(47), { route: "POST /api/auth/login" });
+    const body = (await res.json()) as { error: string; code: string; statusCode: number; retryable: boolean };
+
+    expect(res.status).toBe(429);
+    expect(res.headers.get("retry-after")).toBe("47");
+    expect(body.code).toBe("RATE_LIMITED");
+    expect(body.statusCode).toBe(429);
+    expect(body.retryable).toBe(true);
+    expect(body.error).toBe("Too many requests. Try again in 47 seconds.");
   });
 });

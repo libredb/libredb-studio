@@ -24,6 +24,7 @@ import {
   LLMSafetyError,
   LLMStreamError,
 } from "@/lib/llm/types";
+import { RateLimitError } from "@/lib/api/rate-limit";
 import { SeedConnectionError } from "@/lib/seed/resolve-connection";
 
 // ============================================================================
@@ -212,6 +213,23 @@ export function createErrorResponse(error: unknown, context?: { route?: string }
     const status = error.statusCode ?? 500;
     logger.error("LLM error", error, { route, provider: error.provider });
     return NextResponse.json({ error: error.message, code: ApiErrorCode.LLM_ERROR, statusCode: status }, { status });
+  }
+
+  // --- Application rate limit ---
+  // Mirrors the LLMRateLimitError mapping above: same shape, same retryable: true, distinct code.
+  // No RateLimit-Limit / RateLimit-Remaining headers on success responses - on the login route
+  // they would tell an attacker exactly how to pace.
+  if (error instanceof RateLimitError) {
+    logger.warn("Rate limit exceeded", { route });
+    return NextResponse.json(
+      {
+        error: error.message,
+        code: ApiErrorCode.RATE_LIMITED,
+        statusCode: 429,
+        retryable: true,
+      },
+      { status: 429, headers: { "Retry-After": String(error.retryAfterSeconds) } },
+    );
   }
 
   // --- Generic Error ---

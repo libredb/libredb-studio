@@ -69,6 +69,20 @@ export function readHstsIncludeSubDomains(): boolean {
   return readFlag("HSTS_INCLUDE_SUBDOMAINS", process.env.HSTS_INCLUDE_SUBDOMAINS, 'use "true" to opt in') ?? false;
 }
 
+/**
+ * Whether forwarded-address headers (X-Forwarded-For / X-Real-IP) are trusted as a bucketing hint
+ * for rate limiting (src/lib/api/client-address.ts). Trusted by default: a Next.js route handler
+ * has no socket address to fall back to, so refusing forwarded headers collapses every caller
+ * behind any reverse proxy into one shared bucket - turning the login limiter into a remote
+ * lockout switch, a strictly worse failure than trusting a spoofable header. An operator exposed
+ * directly to the internet with no reverse proxy in front (the header would then be
+ * self-reported by the very client it is meant to identify) sets this to "false".
+ */
+export function readTrustProxyHeaders(): boolean {
+  const hint = 'use "false" only when no reverse proxy sits in front of this deployment';
+  return readFlag("TRUST_PROXY_HEADERS", process.env.TRUST_PROXY_HEADERS, hint) ?? true;
+}
+
 export function readSecurityHeaderOptions(): SecurityHeaderOptions {
   return {
     reportOnly: readCspReportOnly(),

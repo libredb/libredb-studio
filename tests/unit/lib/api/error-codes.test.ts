@@ -2,8 +2,8 @@ import { describe, test, expect } from "bun:test";
 import { ApiErrorCode } from "@/lib/api/error-codes";
 
 describe("ApiErrorCode", () => {
-  test("contains all 16 error codes", () => {
-    expect(Object.keys(ApiErrorCode)).toHaveLength(16);
+  test("contains all 17 error codes", () => {
+    expect(Object.keys(ApiErrorCode)).toHaveLength(17);
   });
 
   test("values match keys", () => {
@@ -35,5 +35,9 @@ describe("ApiErrorCode", () => {
   test("contains generic error codes", () => {
     expect(ApiErrorCode.INTERNAL_ERROR).toBe("INTERNAL_ERROR");
     expect(ApiErrorCode.NETWORK_ERROR).toBe("NETWORK_ERROR");
+  });
+
+  test("contains the application rate-limit error code", () => {
+    expect(ApiErrorCode.RATE_LIMITED).toBe("RATE_LIMITED");
   });
 });
