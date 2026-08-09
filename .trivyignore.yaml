@@ -1,0 +1,43 @@
+# Vulnerability suppressions for the dependency gate (security programme control 2.1).
+#
+# WHAT THE GATE ACTUALLY FAILS ON
+#
+# CRITICAL severity, in a lockfile, with a fixed version available, not covered
+# by an unexpired entry below. Everything else - HIGH, MEDIUM, LOW, and anything
+# with no available fix - is reported to the job summary and to the Security tab,
+# and fails nothing. That threshold is not leniency: measured on 2026-08-09 the
+# shipped container image carries 168 OS-package findings of which 167 have no
+# fixed package at all, and a gate over those would be permanently red with no
+# action available to anyone here - which is the state in which somebody adds
+# continue-on-error at two in the morning.
+#
+# SO THIS FILE SHOULD ALMOST ALWAYS BE EMPTY.
+#
+# It exists for the one case the threshold does not cover: a critical advisory
+# with a fix this repository cannot take yet - a breaking major, a transitive
+# pin held by a dependency that has not released. Reaching for it for anything
+# else means the threshold is wrong; change the threshold, in review, instead.
+#
+# AN ENTRY MUST CARRY
+#
+#   id           the CVE or GHSA identifier exactly as Trivy reports it
+#   statement    why this is not exploitable HERE, or why the fix cannot be taken
+#                yet, in one or two sentences. "Not exploitable" on its own is not
+#                a statement - name the reachability argument, or name the
+#                blocking dependency and its issue
+#   expired_at   a date no more than 90 days out
+#
+# Verified behaviour (Trivy 0.73.0): an entry whose expired_at has passed is
+# re-reported and the gate fails again. A suppression is therefore a decision
+# with a review date attached, not a deletion. Renewing one means making the
+# argument again, which is the point.
+#
+# Reproduce the gate locally, exactly as CI runs it:
+#
+#   docker run --rm -v "$PWD:/repo:ro" -w /repo \
+#     aquasec/trivy@sha256:7cced7cae583819fc7806d4cbc0dbbc7cad18b99f7d3e235192e6da8c091045c \
+#     fs --scanners vuln --severity CRITICAL --ignore-unfixed --exit-code 1 \
+#        --ignorefile /repo/.trivyignore.yaml \
+#        --skip-dirs node_modules --skip-dirs .next --skip-dirs dist --skip-dirs coverage .
+
+vulnerabilities: []

@@ -146,3 +146,80 @@ describe("secret-scan is the one scan allowed to fail a check", () => {
     expect(job.if).toBeUndefined();
   });
 });
+
+describe("dependency-scan reports on pull requests and gates elsewhere", () => {
+  const job = workflow.jobs["dependency-scan"];
+  const steps = job?.steps ?? [];
+  const install = steps.find((s) => s.uses === "./.github/actions/bun-install");
+  const report = steps.find((s) => s.run?.includes("--output /out/deps.json"));
+  const sarif = steps.find((s) => s.uses?.startsWith("github/codeql-action/upload-sarif@"));
+  const audit = steps.find((s) => s.run?.includes("bun audit"));
+  const gate = steps.find((s) => s.name === "Gate: critical, fixable, unsuppressed");
+
+  test("exists and is named for a human reading the checks list", () => {
+    expect(job).toBeDefined();
+    expect(job.name).toBe("Dependency Scan");
+  });
+
+  test("installs dependencies through the composite action, never a bare bun install", () => {
+    // A bare `bun install` has no retry; one failed tarball download broke three
+    // runs in a day, one of them a release publish.
+    expect(install).toBeDefined();
+    for (const step of steps) {
+      expect({ name: step.name, bare: /(^|\s)bun install(\s|$)/.test(step.run ?? "") }).toEqual({
+        name: step.name,
+        bare: false,
+      });
+    }
+  });
+
+  test("the reporting scan never narrows severity - the summary shows everything", () => {
+    expect(report).toBeDefined();
+    expect(report?.run).not.toContain("--severity");
+    expect(report?.run).toContain("--ignorefile /repo/.trivyignore.yaml");
+  });
+
+  test("the reporting scan cannot fail the job", () => {
+    // No --exit-code anywhere in the reporting path: an advisory published
+    // overnight must not turn a contributor's unrelated pull request red.
+    expect(report?.run).not.toContain("--exit-code");
+  });
+
+  test("the gate is the narrow, actionable set", () => {
+    expect(gate).toBeDefined();
+    expect(gate?.run).toContain("--severity CRITICAL");
+    expect(gate?.run).toContain("--ignore-unfixed");
+    expect(gate?.run).toContain("--exit-code 1");
+    expect(gate?.run).toContain("--ignorefile /repo/.trivyignore.yaml");
+  });
+
+  test("the gate is a second scan, not a convert of the report", () => {
+    // Verified 2026-08-09: `trivy convert` does NOT honour --ignore-unfixed. A
+    // gate built on convert would fail on findings with no available fix, which
+    // is the exact permanent-red this threshold exists to avoid.
+    expect(gate?.run).toContain(" fs ");
+    expect(gate?.run).not.toContain("convert");
+  });
+
+  test("the gate never runs on a pull request", () => {
+    expect(gate?.if).toBe("github.event_name != 'pull_request'");
+  });
+
+  test("bun audit reports and cannot fail the job", () => {
+    expect(audit).toBeDefined();
+    expect(audit?.run).toContain("|| true");
+  });
+
+  test("the SARIF upload is guarded against fork pull requests", () => {
+    // A fork's GITHUB_TOKEN is read-only, so security-events: write is not
+    // granted and the upload would fail for every external contributor. Same
+    // guard shape as ci.yml's SonarCloud job.
+    expect(sarif).toBeDefined();
+    expect(sarif?.if).toContain("head.repo.full_name == github.repository");
+    expect(job.permissions?.["security-events"]).toBe("write");
+  });
+
+  test("the SARIF upload names a category, so it does not collide with CodeQL", () => {
+    expect(sarif?.with?.category).toBe("trivy-dependencies");
+  });
+});
