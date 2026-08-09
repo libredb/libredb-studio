@@ -238,7 +238,16 @@ function pruneIfAtCapacity(store: Map<string, Counter>, now: number): void {
   }
   if (store.size < MAX_ENTRIES_PER_BUCKET) return;
 
-  const [victimId] = [...store].reduce((min, candidate) => (candidate[1].count < min[1].count ? candidate : min));
+  // Seeded with entries[0] rather than left to reduce()'s no-initial-value form (SonarCloud
+  // typescript:S6959): behaviourally identical when non-empty - the seed compares against itself
+  // as a no-op on the first iteration - but reduce() with no initial value throws on an empty
+  // array, and Sonar's static analysis cannot see that the two size checks above already rule
+  // that out here. Explicit is also correct if a future refactor ever loses one of those guards.
+  const entries = [...store];
+  const [victimId] = entries.reduce(
+    (min, candidate) => (candidate[1].count < min[1].count ? candidate : min),
+    entries[0],
+  );
   store.delete(victimId);
 }
 
