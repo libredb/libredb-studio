@@ -193,17 +193,20 @@ describe("resetRateLimit", () => {
 });
 
 describe("eviction", () => {
-  test("stays bounded under key-rotation pressure by dropping the oldest entries first", () => {
+  test("stays bounded under key-rotation pressure, protecting entries that already did work", () => {
     process.env.RATE_LIMIT_ANON_MAX = "1";
     for (let i = 0; i < 5001; i += 1) {
       consumeRateLimit("anon", `key-${i}`);
     }
 
-    // The very first key was evicted, so it starts again at zero. Eviction fails OPEN on purpose:
+    // Eviction targets the LOWEST count, not the oldest. Once the bucket fills with entries tied
+    // at count 1, a fresh single-use key can never displace any of them: the newcomer is always
+    // the lowest count (0, not yet incremented) at the moment capacity is exceeded, so it evicts
+    // itself instead. The earliest key therefore stays capped...
+    expect(consumeRateLimit("anon", "key-0").allowed).toBe(false);
+    // ...and the latest rotated key is the one that starts fresh - eviction fails OPEN on purpose,
     // a counter must never become an availability control, which is why the cap is generous.
-    expect(consumeRateLimit("anon", "key-0").allowed).toBe(true);
-    // A recent key kept its count.
-    expect(consumeRateLimit("anon", "key-5000").allowed).toBe(false);
+    expect(consumeRateLimit("anon", "key-5000").allowed).toBe(true);
   });
 
   test("reclaims closed windows before evicting live ones", () => {
@@ -226,19 +229,20 @@ describe("eviction", () => {
     expect(peekRateLimit("login_account", "victim").allowed).toBe(false);
 
     process.env.RATE_LIMIT_LOGIN_MAX = "1";
-    // One request for "flood-0" now, and MAX_ENTRIES_PER_BUCKET more distinct keys after it - one
-    // more than the bucket's own capacity - so eviction inside login_client is forced to happen,
-    // not merely possible. Deriving the size from the constant keeps this true if it ever moves.
-    expect(consumeRateLimit("login_client", "flood-0").allowed).toBe(true);
-    for (let i = 1; i <= MAX_ENTRIES_PER_BUCKET; i += 1) {
-      consumeRateLimit("login_client", `flood-${i}`);
+    // MAX_ENTRIES_PER_BUCKET + 1 distinct login_client keys - one more than the bucket's own
+    // capacity - so eviction inside login_client is forced to happen, not merely possible.
+    // Deriving the size from the constant keeps this true if it ever moves.
+    let lastKey = "";
+    for (let i = 0; i <= MAX_ENTRIES_PER_BUCKET; i += 1) {
+      lastKey = `flood-${i}`;
+      consumeRateLimit("login_client", lastKey);
     }
 
-    // Eviction inside login_client actually happened: "flood-0" was the oldest insertion, so it
-    // was evicted and restarted at zero - allowed again even though RATE_LIMIT_LOGIN_MAX is 1.
-    // Without this assertion, "login_account survived" would be equally explained by no eviction
-    // ever having occurred at all.
-    expect(consumeRateLimit("login_client", "flood-0").allowed).toBe(true);
+    // Eviction inside login_client actually happened: the entry created last is always the one
+    // with the least accumulated work (count 0, not yet incremented) at the moment capacity is
+    // exceeded, so it evicts itself. Without this assertion, "login_account survived" would be
+    // equally explained by no eviction ever having occurred at all.
+    expect(consumeRateLimit("login_client", lastKey).allowed).toBe(true);
     // login_client's own eviction pressure never touches login_account's store: each bucket has
     // its own capacity, so a flood cheap enough to need no real account can only ever evict
     // entries that already belong to that same cheap bucket.

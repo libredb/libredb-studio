@@ -152,22 +152,46 @@ function truncatedKey(key: string): string {
 }
 
 /**
- * Amortized O(1), worst case one pass over this bucket's MAX_ENTRIES_PER_BUCKET. Takes the target
- * bucket's own store, and only that store - never the full bucketStores map - which is what makes
- * eviction pressure in one bucket unable to reach another bucket's counters (module docstring).
- * Eviction fails OPEN - an evicted attacker key restarts at zero - because a counter must never
- * become an availability control. That is also why the cap is generous.
+ * Takes the target bucket's own store, and only that store - never the full bucketStores map -
+ * which is what makes eviction pressure in one bucket unable to reach another bucket's counters
+ * (module docstring). Eviction fails OPEN - an evicted attacker key restarts at zero - because a
+ * counter must never become an availability control. That is also why the cap is generous.
+ *
+ * Two phases, in order:
+ * 1. Reclaim expired entries first. They cost nothing to discard (their window is already over)
+ *    and this alone is often enough, so it runs before the more expensive phase below.
+ * 2. If still over capacity, evict the entry with the LOWEST count, not the oldest by insertion.
+ *
+ * Why lowest-count and not oldest-first: an eviction policy should discard the entry doing the
+ * LEAST work. A high count means that entry is actively limiting somebody; a count of one is a
+ * stranger who knocked once and costs nothing to forget. Oldest-first throws away exactly the
+ * wrong entry, because a determined attacker's target - the one closest to tripping - is, by
+ * construction, the entry that has been sitting in the map the longest: it was created first and
+ * has been accumulating count ever since. That made oldest-first eviction a bypass for the one
+ * bucket (login_account) whose key is fully attacker-chosen (hmacHex of the submitted email):
+ * burn a target's budget, then flood the bucket with ~1000 disposable single-guess accounts to
+ * evict the target's entry and buy a fresh budget for the price of the flood.
+ *
+ * Lowest-count eviction closes that: to displace a target sitting near its limit, an attacker must
+ * make a thousand OTHER entries each accumulate a HIGHER count than the target first - meaning a
+ * thousand accounts each failed against repeatedly, tripping every one of those buckets and
+ * generating a rate_limit_exceeded audit event each time. The bypass stops being a cheap flood and
+ * starts being self-defeating.
+ *
+ * Complexity note: this function runs once per insert, immediately after adding exactly one new
+ * entry to a store that was already at or under capacity, so phase 2 is never scanning more than
+ * one entry's worth over capacity - a single full-store scan for the minimum is enough; no loop is
+ * needed.
  */
 function pruneIfOverCapacity(store: Map<string, Counter>, now: number): void {
   if (store.size <= MAX_ENTRIES_PER_BUCKET) return;
   for (const [id, entry] of store) {
     if (now >= entry.resetAt) store.delete(id);
   }
-  // Map iterates in insertion order, so this drops the oldest keys first, within this bucket only.
-  for (const id of store.keys()) {
-    if (store.size <= MAX_ENTRIES_PER_BUCKET) break;
-    store.delete(id);
-  }
+  if (store.size <= MAX_ENTRIES_PER_BUCKET) return;
+
+  const [victimId] = [...store].reduce((min, candidate) => (candidate[1].count < min[1].count ? candidate : min));
+  store.delete(victimId);
 }
 
 function decide(bucket: RateLimitBucket, key: string, consume: boolean): RateLimitDecision {

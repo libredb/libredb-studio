@@ -12,7 +12,7 @@ import {
   type RateLimitBucket,
 } from "@/lib/api/rate-limit";
 import { hmacHex, secretsMatch } from "@/lib/auth-compare";
-import { emitAuditEvent } from "@/lib/audit";
+import { emitAuditEvent, MAX_AUDIT_FIELD_LENGTH } from "@/lib/audit";
 import { logger } from "@/lib/logger";
 
 const ROUTE = "POST /api/auth/login";
@@ -25,13 +25,13 @@ const ROUTE = "POST /api/auth/login";
  */
 const DUMMY_PASSWORD = "libredb-dummy-password-never-a-credential";
 
-const MAX_ACTOR_LENGTH = 254;
-
 type LoginBucket = Extract<RateLimitBucket, "login_client" | "login_account">;
 
 /**
  * Peek, not consume: a legitimate user who logs in repeatedly must not throttle themselves, so
- * only FAILURES spend budget. The trip is audited once per window, on the transition.
+ * only FAILURES spend budget. The trip is audited once per window, on the transition. The bucket
+ * is recorded on the event so an operator can tell a broad address flood (login_client) apart
+ * from a targeted attack on one account (login_account).
  */
 function enforceLoginLimit(bucket: LoginBucket, key: string, actor: string, ip: string): void {
   const decision = peekRateLimit(bucket, key);
@@ -46,6 +46,7 @@ function enforceLoginLimit(bucket: LoginBucket, key: string, actor: string, ip: 
       result: "failure",
       reason: "rate_limited",
       ip,
+      bucket,
     });
   }
   throw new RateLimitError(decision.retryAfterSeconds);
@@ -61,7 +62,9 @@ export async function POST(request: NextRequest) {
     // into a 500 that differs from the uniform 401 and hands back a distinguishable response.
     const submittedEmail = typeof email === "string" ? email : "";
     const submittedPassword = typeof password === "string" ? password : "";
-    const actor = submittedEmail.slice(0, MAX_ACTOR_LENGTH) || "anonymous";
+    // MAX_AUDIT_FIELD_LENGTH, not a locally redeclared copy of the same number: the actor becomes
+    // an AuditEvent field either way, so both truncations must move together.
+    const actor = submittedEmail.slice(0, MAX_AUDIT_FIELD_LENGTH) || "anonymous";
 
     const clientKey = ip;
     // Keyed on the SUBMITTED account, hashed, and created whether or not that account exists. If

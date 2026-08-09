@@ -82,24 +82,53 @@ describe("an attacker flooding a cheap bucket to steer eviction", () => {
     expect(consumeRateLimit("login_account", victimAccount).allowed).toBe(true);
     expect(consumeRateLimit("login_account", victimAccount).allowed).toBe(false);
 
-    // Spend the first, disposable login_client key, then rotate X-Forwarded-For for
-    // MAX_ENTRIES_PER_BUCKET more - one more than the bucket's own capacity, deriving the size from
-    // the constant rather than a hardcoded number so this keeps forcing eviction if it ever moves.
-    const firstKey = clientAddress(request({ "x-forwarded-for": "203.0.113.0" }));
-    expect(consumeRateLimit("login_client", firstKey).allowed).toBe(true);
-    for (let attempt = 1; attempt <= MAX_ENTRIES_PER_BUCKET; attempt += 1) {
-      const key = clientAddress(request({ "x-forwarded-for": `203.0.113.${attempt}` }));
-      consumeRateLimit("login_client", key);
+    // Rotate X-Forwarded-For for MAX_ENTRIES_PER_BUCKET + 1 disposable login_client keys - one
+    // more than the bucket's own capacity, deriving the size from the constant rather than a
+    // hardcoded number so this keeps forcing eviction if it ever moves.
+    let lastKey = "";
+    for (let attempt = 0; attempt <= MAX_ENTRIES_PER_BUCKET; attempt += 1) {
+      lastKey = clientAddress(request({ "x-forwarded-for": `203.0.113.${attempt}` }));
+      consumeRateLimit("login_client", lastKey);
     }
 
-    // Eviction inside login_client actually happened: the first key was the oldest insertion, so
-    // it was evicted and restarted at zero - allowed again even though RATE_LIMIT_LOGIN_MAX is 1.
-    // Without this, "login_account survived" would be equally explained by nothing ever having
-    // been evicted at all.
-    expect(consumeRateLimit("login_client", firstKey).allowed).toBe(true);
+    // Eviction inside login_client actually happened: the entry created last is always the one
+    // with the least accumulated work (count 0, not yet incremented) at the moment capacity is
+    // exceeded, so it is the one that loses its slot and starts fresh. Without this,
+    // "login_account survived" would be equally explained by nothing ever having been evicted.
+    expect(consumeRateLimit("login_client", lastKey).allowed).toBe(true);
     // The victim's login_account counter must still be tripped: flooding a different, cheap
     // bucket must never evict a counter out of login_account. Per-bucket capacity partitioning is
     // the property under test - see the module docstring in src/lib/api/rate-limit.ts.
     expect(consumeRateLimit("login_account", victimAccount).allowed).toBe(false);
+  });
+});
+
+describe("an attacker trying to buy back a spent login_account budget", () => {
+  test("an entry deep into its budget survives a flood of fresh single-use guesses, which are evicted instead", () => {
+    process.env.RATE_LIMIT_LOGIN_ACCOUNT_MAX = "10";
+    const target = "victim@libredb.org";
+
+    // The target is deep into its budget: 9 of 10 failed attempts already spent, one left before
+    // it trips. login_account's key is hmacHex(email), fully attacker-chosen - the attacker picks
+    // every guessed email below for free, unlike login_client's address-derived key.
+    for (let i = 0; i < 9; i += 1) {
+      consumeRateLimit("login_account", target);
+    }
+
+    // Flood the SAME bucket with MAX_ENTRIES_PER_BUCKET fresh, single-use guessed accounts. One
+    // more than the bucket's own capacity guarantees an eviction happens.
+    let lastGuess = "";
+    for (let i = 0; i < MAX_ENTRIES_PER_BUCKET; i += 1) {
+      lastGuess = `guess-${i}@example.com`;
+      consumeRateLimit("login_account", lastGuess);
+    }
+
+    // The target's budget was NOT bought back by the flood: it still has exactly the one attempt
+    // it had left, not a fresh ten. Oldest-first eviction would have discarded the target - it is
+    // the longest-lived entry in the bucket - and handed the attacker a fresh budget for free.
+    expect(consumeRateLimit("login_account", target).allowed).toBe(true);
+    expect(consumeRateLimit("login_account", target).allowed).toBe(false);
+    // A flood entry, not the target, is what actually lost its slot.
+    expect(consumeRateLimit("login_account", lastGuess).allowed).toBe(true);
   });
 });

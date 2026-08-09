@@ -203,5 +203,23 @@ describe("what the audit trail records", () => {
 
     expect(events).toHaveLength(1);
     expect(events[0].reason).toBe("rate_limited");
+    // Same address and account on every attempt, so login_client trips first - an operator reading
+    // this line must be able to tell a broad address flood from a targeted single-account attack.
+    expect(events[0].bucket).toBe("login_client");
+  });
+
+  test("a targeted attack on one account spread across forged addresses is recorded as the account bucket", async () => {
+    for (let i = 0; i < 11; i += 1) {
+      await attempt({ email: "admin@libredb.org", password: "guess" }, `198.51.100.${210 + i}`);
+    }
+
+    const events = logSpy.mock.calls
+      .map((call) => JSON.parse(call[0] as string) as Record<string, unknown>)
+      .filter((line) => line.event === "rate_limit_exceeded");
+
+    // Every attempt used a fresh forged address, so login_client never trips; only login_account -
+    // keyed on the submitted email, immune to the spoofed address - trips, on the 11th attempt.
+    expect(events).toHaveLength(1);
+    expect(events[0].bucket).toBe("login_account");
   });
 });

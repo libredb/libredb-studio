@@ -49,6 +49,13 @@ export interface AuditEvent {
    */
   ip?: string;
   reason?: AuditReason;
+  /**
+   * Which rate-limit bucket tripped (e.g. "login_client", "login_account"). Only
+   * rate_limit_exceeded events set this. Without it, the audit trail cannot tell a broad address
+   * flood (login_client) apart from a targeted attack on one account (login_account) - the two
+   * call for a different operator response, but would otherwise read identically.
+   */
+  bucket?: string;
 }
 
 const MAX_EVENTS = 1000;
@@ -138,8 +145,12 @@ const AUDIT_SCHEMA = "libredb.audit.v1";
  * RFC 5321's maximum address length: enough for any real account, bounded against a 10 KB one.
  * One rule for every free-text field, wherever it is stored — the ring buffer or the stdout line —
  * not a fresh number per field or per destination.
+ *
+ * Exported so any call site that pre-truncates a value before it becomes an AuditEvent field (the
+ * login route's actor, for one) imports this constant instead of redeclaring its own copy of 254 -
+ * two independent constants with the same value today are one unnoticed edit away from drifting.
  */
-const MAX_AUDIT_FIELD_LENGTH = 254;
+export const MAX_AUDIT_FIELD_LENGTH = 254;
 /** The address derivation's "no usable signal" placeholder; never recorded as if it were one. */
 const UNKNOWN_ADDRESS = "unknown";
 /** Redaction marker for a URI's userinfo segment. Never a value real credentials could equal. */
@@ -232,6 +243,7 @@ interface AuditLogLine {
   ip?: string;
   connection?: string;
   duration_ms?: number;
+  bucket?: string;
 }
 
 function toAuditLine(event: AuditEvent): AuditLogLine {
@@ -247,6 +259,7 @@ function toAuditLine(event: AuditEvent): AuditLogLine {
     ...(event.reason ? { reason: event.reason } : {}),
     ...(event.ip && event.ip !== UNKNOWN_ADDRESS ? { ip: event.ip } : {}),
     ...(event.connectionName ? { connection: event.connectionName } : {}),
+    ...(event.bucket ? { bucket: event.bucket } : {}),
     // Number.isFinite excludes NaN and +/-Infinity: JSON.stringify(NaN) silently produces `null`,
     // which would flip duration_ms from a number to null for that one line in a contract parsers
     // depend on. Omitting it entirely keeps the field's type stable instead.

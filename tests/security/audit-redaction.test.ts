@@ -24,6 +24,7 @@ const ALLOWED_KEYS = new Set([
   "ip",
   "connection",
   "duration_ms",
+  "bucket",
 ]);
 
 function captureLine(emit: () => void): Record<string, unknown> {
@@ -125,7 +126,7 @@ describe("emitAuditEvent", () => {
     expect(String(line.actor).length).toBe(254);
   });
 
-  test("omits the reason, the ip, the connection and the duration when they are absent", () => {
+  test("omits the reason, the ip, the connection, the duration and the bucket when they are absent", () => {
     const line = captureLine(() =>
       emitAuditEvent({
         type: "logout",
@@ -140,6 +141,23 @@ describe("emitAuditEvent", () => {
     expect("ip" in line).toBe(false);
     expect("connection" in line).toBe(false);
     expect("duration_ms" in line).toBe(false);
+    expect("bucket" in line).toBe(false);
+  });
+
+  test("carries the bucket when a rate-limit trip supplies one", () => {
+    const line = captureLine(() =>
+      emitAuditEvent({
+        type: "rate_limit_exceeded",
+        action: "throttled",
+        target: "POST /api/auth/login",
+        user: "admin@libredb.org",
+        result: "failure",
+        reason: "rate_limited",
+        bucket: "login_account",
+      }),
+    );
+
+    expect(line.bucket).toBe("login_account");
   });
 
   test("omits an unknown ip rather than recording the placeholder as an address", () => {
