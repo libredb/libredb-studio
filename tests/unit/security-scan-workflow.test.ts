@@ -73,6 +73,28 @@ function dockerRunBlocks(run: string): string[] {
   return blocks;
 }
 
+/**
+ * Finds the token docker actually reads as the image to run: the first
+ * whitespace-separated word on the first line, after `docker run --rm \`,
+ * that is not itself a flag (every `-e`/`-v`/`-w` flag and its value share one
+ * line in this workflow's style, so skipping flag-prefixed lines skips
+ * exactly the flags). Presence of a pinned-image variable ANYWHERE in the
+ * block is not enough: a decoy reference in an unrelated `-e` flag would make
+ * a hardcoded tag in the real argument position look pinned under a
+ * presence-only check.
+ */
+function imageArgument(block: string): string | undefined {
+  const lines = block.split("\n").map((l) => l.trim());
+  for (const line of lines.slice(1)) {
+    if (line.startsWith("-")) continue;
+    if (line.length === 0) continue;
+    return line.split(/\s+/)[0];
+  }
+  return undefined;
+}
+
+const PINNED_IMAGE_ARG = /^"?\$(TRIVY_IMAGE|GITLEAKS_IMAGE)"?$/;
+
 describe("security-scan.yml wiring", () => {
   test("runs on pull requests, on main, on a schedule and on demand", () => {
     // The four together are the control: pull requests get the deterministic
@@ -109,27 +131,54 @@ describe("security-scan.yml wiring", () => {
     }
   });
 
-  test("every docker run invocation references a pinned image env var, never an inline tag", () => {
-    // Asserted positively over the WHOLE multi-line invocation, not by
-    // pattern-matching a single line for the absence of a tag: every image
-    // reference here sits on a continuation line after `docker run --rm \`,
-    // so a single-line regex never sees it. Proved by substituting a mutable
-    // tag for every "$TRIVY_IMAGE" and "$GITLEAKS_IMAGE" - the old version of
-    // this test still passed.
+  test("every docker run invocation runs the pinned image variable itself, not merely a block that mentions it", () => {
+    // Asserted positionally, not by presence anywhere in the WHOLE multi-line
+    // invocation: a block that hardcodes the tag as its real argument while
+    // carrying an unrelated, unused reference to $TRIVY_IMAGE or
+    // $GITLEAKS_IMAGE elsewhere - a decoy `-e` flag, a comment - would still
+    // read as "pinned" under a presence-only check. `imageArgument` finds the
+    // token docker actually reads as the image: the first non-flag word after
+    // `docker run --rm \`.
     let checked = 0;
     for (const step of allSteps) {
       for (const block of dockerRunBlocks(step.run ?? "")) {
         checked += 1;
-        const pinned = /\$(TRIVY_IMAGE|GITLEAKS_IMAGE)\b/.test(block);
-        expect({ name: step.name, invocation: block.split("\n")[0].trim(), pinned }).toEqual({
+        const arg = imageArgument(block);
+        const pinned = arg !== undefined && PINNED_IMAGE_ARG.test(arg);
+        expect({ name: step.name, invocation: block.split("\n")[0].trim(), imageArgument: arg, pinned }).toEqual({
           name: step.name,
           invocation: block.split("\n")[0].trim(),
+          imageArgument: arg,
           pinned: true,
         });
       }
     }
     // A helper that silently found nothing to check would make every
     // iteration above vacuous.
+    expect(checked).toBeGreaterThan(0);
+  });
+
+  test("any step conditioned on another step's own outcome begins with an explicit status function", () => {
+    // A bare `steps.x.outcome == 'y'` (or `.conclusion == 'y'`) has no status
+    // function, so GitHub Actions implicitly prepends `success() &&` - which
+    // is false whenever the referenced step failed, since a failed step makes
+    // the job's running status failed too. The exact shape of the regression
+    // this guards: `if: steps.gate.outcome == 'failure'` collapses to
+    // `success() && steps.gate.outcome == 'failure'`, which can never be true.
+    const STATUS_FN = /^(failure|success|always|cancelled)\(\)/;
+    const STEP_OUTCOME = /steps\.[A-Za-z0-9_-]+\.(outcome|conclusion)/;
+    let checked = 0;
+    for (const step of allSteps) {
+      if (!step.if || !STEP_OUTCOME.test(step.if)) continue;
+      checked += 1;
+      expect({ name: step.name, if: step.if, startsWithStatusFn: STATUS_FN.test(step.if) }).toEqual({
+        name: step.name,
+        if: step.if,
+        startsWithStatusFn: true,
+      });
+    }
+    // A step referencing another step's outcome is exactly the shape this
+    // guards; zero of them found would make the loop vacuous.
     expect(checked).toBeGreaterThan(0);
   });
 
@@ -177,8 +226,23 @@ describe("secret-scan is the one scan allowed to fail a check", () => {
     // `set -e` fails this step before gitleaks ever runs.
     const resolver = steps.find((s) => s.id === "range");
     expect(resolver?.run).toContain("set -euo pipefail");
-    expect(resolver?.run).toContain("git rev-list --count --no-merges");
+    expect(resolver?.run).toContain("git rev-list --count");
     expect(resolver?.run).toContain("commit_count");
+  });
+
+  test("derives commit_count from the SAME range string log_opts uses, not a second construction", () => {
+    // Two independent constructions of "$BASE_SHA..$HEAD_SHA" - one for
+    // log_opts, one for commit_count - can diverge: a sabotage that reverses
+    // the direction in log_opts alone would leave commit_count correct and
+    // non-zero, satisfying the assertion below, while gitleaks scans the
+    // reversed - typically empty - direction and reports clean. Asserting a
+    // single `range=` assignment feeding both outputs is what makes that
+    // impossible rather than merely absent today.
+    const resolver = steps.find((s) => s.id === "range");
+    const run = resolver?.run ?? "";
+    expect(run).toMatch(/range="--no-merges \$BASE_SHA\.\.\$HEAD_SHA"/);
+    expect(run).toContain('echo "log_opts=$range"');
+    expect(run).toContain("git rev-list --count $range");
   });
 
   test("asserts the scanned commit count is non-zero, and only on a pull request", () => {
@@ -294,8 +358,14 @@ describe("dependency-scan reports on pull requests and gates elsewhere", () => {
     // DB download timeout, a bun install flake - and tells whoever hit it that
     // a CRITICAL advisory is present and sends them to edit
     // .trivyignore.yaml. That lands on the audience least able to diagnose it.
+    //
+    // `failure() &&` is required, not optional: `steps.gate.outcome ==
+    // 'failure'` alone has no status function, so GitHub Actions implicitly
+    // prepends `success() &&` - which is already false once the gate step has
+    // failed, so the bare form can never fire at all, on the one path where
+    // firing is the point.
     expect(explainer).toBeDefined();
-    expect(explainer?.if).toBe("steps.gate.outcome == 'failure'");
+    expect(explainer?.if).toBe("failure() && steps.gate.outcome == 'failure'");
   });
 
   test("no step in this job is advisory either", () => {

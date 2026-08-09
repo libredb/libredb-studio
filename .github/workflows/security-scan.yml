@@ -96,24 +96,35 @@ jobs:
             # diff, which would report every historical match again on every
             # pull request - and a check that is always red is a check nobody
             # reads.
-            echo "log_opts=--no-merges $BASE_SHA..$HEAD_SHA" >> "$GITHUB_OUTPUT"
-            # `git rev-list --count` resolves the exact same range, under the
-            # same `set -e`. An unresolvable range - an unreachable base.sha
-            # after a force-push racing this run, a shallow checkout, `.git`
-            # as a file rather than a directory (the worktree case) - fails
-            # this step immediately instead of reaching the scanner below.
-            # Measured on the pinned digest: that scanner logs the same
-            # failure at ERROR ("fatal: Invalid revision range") and still
-            # exits 0, reporting "0 commits scanned" as "no leaks found". A
-            # verdict from zero scanned bytes must never look like a verdict
-            # from a clean scan.
-            count=$(git rev-list --count --no-merges "$BASE_SHA..$HEAD_SHA")
+            #
+            # `range` is the ONE definition of what gets scanned. log_opts and
+            # commit_count are both derived from this single variable rather
+            # than each reconstructing "$BASE_SHA..$HEAD_SHA" separately - two
+            # independent constructions of the same range can diverge (a
+            # sabotage that flips the direction in log_opts alone would leave
+            # commit_count correct and non-zero while the scanner below reads
+            # the reversed, typically empty, direction and reports clean). One
+            # source cannot diverge from itself.
+            range="--no-merges $BASE_SHA..$HEAD_SHA"
+            echo "log_opts=$range" >> "$GITHUB_OUTPUT"
+            # `git rev-list --count` resolves that SAME range, under the same
+            # `set -e`. An unresolvable range - an unreachable base.sha after a
+            # force-push racing this run, a shallow checkout, `.git` as a file
+            # rather than a directory (the worktree case) - fails this step
+            # immediately instead of reaching the scanner below. Measured on
+            # the pinned digest: that scanner logs the same failure at ERROR
+            # ("fatal: Invalid revision range") and still exits 0, reporting
+            # "0 commits scanned" as "no leaks found". A verdict from zero
+            # scanned bytes must never look like a verdict from a clean scan.
+            count=$(git rev-list --count $range)
             echo "commit_count=$count" >> "$GITHUB_OUTPUT"
           else
-            # On main, the cron and a manual run: the whole history. The
-            # repository authorises direct pushes to main, and at 1.1 seconds
-            # the full sweep is cheaper than reasoning about which range covers
-            # a force push.
+            # On main, the cron and a manual run: the whole history, so there
+            # is no equivalent base..head range to resolve or miscount - `--all`
+            # cannot hit the unresolvable-range failure this step guards
+            # against, which is why there is no commit_count, and no
+            # "Assert the scan covered commits" check, for these events. A
+            # decision, not an oversight.
             echo "log_opts=--all" >> "$GITHUB_OUTPUT"
           fi
 
@@ -348,7 +359,13 @@ jobs:
         # whose run died on a transient flake that a CRITICAL advisory is
         # present and sending them to edit .trivyignore.yaml lands on the
         # audience least able to diagnose it.
-        if: steps.gate.outcome == 'failure'
+        #
+        # `failure()` is required here, not implied: an `if:` with no status
+        # function gets `success() &&` prepended by GitHub Actions, and
+        # success() is already false once the gate step above has failed -
+        # `steps.gate.outcome == 'failure'` alone would never fire, on the one
+        # path where this explainer is the whole point.
+        if: failure() && steps.gate.outcome == 'failure'
         run: |
           {
             echo "## The dependency gate failed"
@@ -361,6 +378,7 @@ jobs:
             echo "   \`expired_at\` no more than 90 days out and a \`statement\` that names the"
             echo "   reachability argument or the blocking dependency. Trivy re-reports an expired"
             echo "   entry, so the argument has to be made again rather than inherited."
+            echo "   \`tests/unit/trivyignore-policy.test.ts\` enforces both mechanically."
             echo "3. Do not add \`continue-on-error\` to this step. If the threshold is wrong,"
             echo "   change the threshold in review."
           } >> "$GITHUB_STEP_SUMMARY"

@@ -32,6 +32,11 @@
 # with a review date attached, not a deletion. Renewing one means making the
 # argument again, which is the point.
 #
+# tests/unit/trivyignore-policy.test.ts enforces the id/statement/expired_at
+# rules above mechanically - an entry missing one, or with a statement too
+# short or an expired_at too far out, fails that test before it ever reaches
+# a gate run.
+#
 # Reproduce the gate locally, exactly as CI runs it:
 #
 #   docker run --rm -v "$PWD:/repo:ro" -w /repo \
