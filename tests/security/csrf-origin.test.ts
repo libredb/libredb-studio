@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { NextRequest } from "next/server";
+import { resetOriginCheckWarnings } from "@/lib/api/origin-check";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
 import { proxy } from "@/proxy";
 
@@ -17,7 +18,7 @@ import { proxy } from "@/proxy";
  * which requires an active network attacker who has already broken transport.
  */
 
-const MUTATED = ["ALLOWED_ORIGINS"] as const;
+const MUTATED = ["ALLOWED_ORIGINS", "TRUST_PROXY_HEADERS"] as const;
 const snapshot: Record<string, string | undefined> = {};
 
 function post(pathname: string, headers: Record<string, string> = {}): NextRequest {
@@ -30,7 +31,9 @@ function post(pathname: string, headers: Record<string, string> = {}): NextReque
 beforeEach(() => {
   for (const key of MUTATED) snapshot[key] = process.env[key];
   delete process.env.ALLOWED_ORIGINS;
+  delete process.env.TRUST_PROXY_HEADERS;
   clearRateLimitState();
+  resetOriginCheckWarnings();
 });
 
 afterEach(() => {
@@ -83,8 +86,50 @@ describe("a cross-site state-changing request", () => {
   test("still carries the security headers, so the 403 is not a hole of its own", async () => {
     const res = await proxy(post("/api/db/query", { origin: "https://evil.example" }));
 
+    expect(res.status).toBe(403);
     expect(res.headers.get("x-content-type-options")).toBe("nosniff");
     expect(res.headers.get("content-security-policy")).toContain("frame-ancestors 'none'");
+  });
+
+  test("is still refused when it declares a form content type instead of JSON", async () => {
+    // Proves the JSON carve-out is narrow: an HTML <form> can send this content type (unlike
+    // application/json), and it must still be refused when it carries no Origin or Referer.
+    const res = await proxy(post("/api/db/query", { "content-type": "application/x-www-form-urlencoded" }));
+
+    expect(res.status).toBe(403);
+  });
+
+  test("is refused when a spoofed x-forwarded-host is not trusted because TRUST_PROXY_HEADERS=false", async () => {
+    process.env.TRUST_PROXY_HEADERS = "false";
+    const res = await proxy(
+      post("/api/auth/login", {
+        host: "libredb-studio.default.svc.cluster.local:3000",
+        "x-forwarded-host": "db.example.com",
+        origin: "https://db.example.com",
+      }),
+    );
+
+    expect(res.status).toBe(403);
+  });
+
+  test("is refused despite a literal wildcard in ALLOWED_ORIGINS, which is ignored rather than trusted", async () => {
+    process.env.ALLOWED_ORIGINS = "*";
+    const res = await proxy(post("/api/auth/login", { origin: "https://evil.example" }));
+
+    expect(res.status).toBe(403);
+  });
+
+  test("keeps returning 403 after the anon rate-limit logging budget is exhausted", async () => {
+    // The default anon bucket allows 5 before it trips. Firing well past that proves the 403 does
+    // not depend on the limiter's notice at all - the `return` in proxy() sits outside the
+    // `if (notice.allowed || notice.tripped)` block, and this is the state (budget exhausted,
+    // notice.allowed=false, notice.tripped=false, so that whole condition is false) where a
+    // regression that moved the return inside that block would silently start letting requests
+    // through instead of rejecting them.
+    for (let i = 0; i < 8; i++) {
+      const res = await proxy(post("/api/db/query", { origin: "https://evil.example" }));
+      expect(res.status).toBe(403);
+    }
   });
 });
 
@@ -169,5 +214,19 @@ describe("requests the check must not break", () => {
     const res = await proxy(post("/api/db/query", { origin: "/" }));
 
     expect(res.status).toBe(403);
+  });
+
+  test("the project's own documented API examples: JSON with neither Origin nor Referer", async () => {
+    // Matches scripts/engine-smoke.sh, docs/RANCHER.md and docs/API_DOCS.md verbatim: every
+    // published curl example sends Content-Type: application/json and neither Origin nor Referer.
+    const res = await proxy(post("/api/auth/login", { "content-type": "application/json" }));
+
+    expect(res.status).not.toBe(403);
+  });
+
+  test("a JSON content type with a charset parameter, parsed rather than compared verbatim", async () => {
+    const res = await proxy(post("/api/db/query", { "content-type": "APPLICATION/JSON; charset=UTF-8" }));
+
+    expect(res.status).not.toBe(403);
   });
 });
