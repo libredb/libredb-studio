@@ -22,6 +22,7 @@ interface Step {
   name?: string;
   run?: string;
   if?: string;
+  id?: string;
   uses?: string;
   with?: Record<string, string | boolean>;
 }
@@ -40,6 +41,9 @@ const sbom = workflow.jobs.sbom;
 const sbomSteps = sbom?.steps ?? [];
 const generate = sbomSteps.find((s) => s.run?.includes("cyclonedx"));
 const upload = sbomSteps.find((s) => s.run?.includes("gh release upload"));
+const dockerHubCheck = sbomSteps.find((s) => s.id === "dockerhub");
+const dockerHubLogin = sbomSteps.find((s) => s.name === "Log in to Docker Hub");
+const rename = sbomSteps.find((s) => s.name === "Name the SBOM's root component");
 const publishRelease = workflow.jobs["publish-release"];
 const verify = (publishRelease?.steps ?? []).find((s) => s.run?.includes("missing required asset"));
 
@@ -92,6 +96,45 @@ describe("the release SBOM job", () => {
         touches: false,
       });
     }
+  });
+});
+
+describe("the sbom job authenticates to Docker Hub when possible, and retries the pull", () => {
+  // publish-release needs this job, so it now sits on the release chain -
+  // the same fragile path where a failed release retries with a NEW patch
+  // version, never the same tag. An anonymous, unretried Docker Hub pull here
+  // could stall a release before publish.
+
+  test("checks whether Docker Hub credentials are configured before deciding whether to log in", () => {
+    expect(dockerHubCheck).toBeDefined();
+    expect(dockerHubCheck?.run).toContain("DOCKER_HUB_TOKEN");
+  });
+
+  test("logs in to Docker Hub only when the check says credentials are available", () => {
+    expect(dockerHubLogin).toBeDefined();
+    expect(dockerHubLogin?.if).toBe("steps.dockerhub.outputs.enabled == 'true'");
+    expect(dockerHubLogin?.with?.username).toBe("${{ vars.DOCKER_HUB_USERNAME }}");
+  });
+
+  test("retries the trivy pull/run rather than failing on the first blip", () => {
+    expect(generate?.run).toContain("until docker run");
+    expect(generate?.run).toMatch(/attempt/);
+  });
+});
+
+describe("the sbom job names its root component, so it does not import as a project called '.'", () => {
+  test("patches metadata.component.name after generating, before verifying or attesting", () => {
+    expect(rename).toBeDefined();
+    expect(rename?.run).toContain("metadata.component");
+    expect(rename?.run).toContain("libredb-studio");
+  });
+
+  test("runs after generation and before verification and attestation", () => {
+    const names = sbomSteps.map((s) => s.name);
+    const renameIndex = names.indexOf(rename?.name ?? "");
+    expect(renameIndex).toBeGreaterThan(names.indexOf(generate?.name ?? ""));
+    expect(renameIndex).toBeLessThan(names.indexOf("Verify the SBOM describes something"));
+    expect(renameIndex).toBeLessThan(names.indexOf("Attest the SBOM"));
   });
 });
 

@@ -180,14 +180,22 @@ When using LibreDB Studio, please follow these security best practices:
 Every release carries `libredb-studio-<version>.cdx.json`, a CycloneDX 1.7 SBOM
 of the production dependency closure, attached as a release asset and signed with
 a GitHub build-provenance attestation. It covers all three ecosystems the release
-is built from — npm, Go and Rust — and therefore describes the npm package, the
-standalone tarballs, the Windows zip, the `.deb` and `.rpm` packages, the snap,
-the AppImage and the desktop package alike.
+is built from — npm, Go and Rust — and therefore describes **the dependency
+closure of** the npm package, the standalone tarballs, the Windows zip, the
+`.deb` and `.rpm` packages, the snap, the AppImage and the desktop package alike.
+
+It does **not** describe the pinned Node.js runtime that `packaging/linux/fetch-node.sh`
+and `packaging/windows/fetch-node.sh` download and bundle into every one of those
+artefacts except the npm package. That runtime is the largest single binary in
+most of them, it is fetched by a shell script rather than resolved from a
+lockfile, and the SBOM's only `node`-named component is `pkg:npm/@types/node`, a
+type-declarations package with no relationship to the runtime that actually
+ships. This is a known gap, tracked in `docs/BACKLOG.md`.
 
 Verify it:
 
 ```bash
-gh attestation verify libredb-studio-0.9.67.cdx.json --repo libredb/libredb-studio
+gh attestation verify libredb-studio-<version>.cdx.json --repo libredb/libredb-studio
 ```
 
 The container image is not covered by that document, because the image is built

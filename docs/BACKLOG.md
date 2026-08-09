@@ -538,9 +538,10 @@ be grounded in that data rather than guessed.
 ## Security Phase 2 deferrals
 
 Each of these was decided during Phase 2, not overlooked. Delete an entry when
-the work lands.
+the work lands. Lettered `C` (supply **C**hain) rather than `S`: the SQL
+statement-reading section above already owns `S1`-`S8`.
 
-### S1. No scan check is a required check
+### C1. No scan check is a required check
 
 Branch protection requires `Lint, Typecheck and Build` and `Unit & Integration
 Tests`. Phase 2 adds three scan jobs and promotes none of them, because promoting
@@ -553,7 +554,7 @@ identically for fork pull requests, and it currently scans a pull request's
 commits in about 75 milliseconds. Done when the owner promotes it, or when this
 entry records why not.
 
-### S2. A failing scheduled scan notifies nobody but the owner
+### C2. A failing scheduled scan notifies nobody but the owner
 
 `security-scan.yml`'s daily run fails when a critical fixable advisory lands, and
 GitHub emails the repository owner for a failed scheduled run. That is the whole
@@ -563,7 +564,7 @@ and it was not copied here because an auto-filed issue per advisory is how a
 security label becomes noise. Done when a real missed advisory shows the email is
 insufficient, at which point the rolling-issue pattern is the thing to copy.
 
-### S3. The image SBOM is a 30-day workflow artifact, not a durable asset
+### C3. The image SBOM is a 30-day workflow artifact, not a durable asset
 
 It cannot be a release asset: `release-artifacts.yml` publishes the release
 before dispatching `docker-build-push.yml`, and immutable releases (#154) freeze
@@ -577,7 +578,7 @@ failure mode, to the release-path Docker build - the most fragile CI surface in
 this repository. Done when the release chain has been quiet for a few releases and
 the change can be validated with a `workflow_dispatch` backfill first.
 
-### S4. No SBOM covers the operator image
+### C4. No SBOM covers the operator image
 
 `operator-release.yml` builds a controller image that wraps the chart. Phase 2
 deliberately touched no release workflow other than `release-artifacts.yml`, and
@@ -585,7 +586,7 @@ the operator image has a different lifecycle and a different consumer (OpenShift
 OperatorHub, which does its own scanning). Done when a certification requirement
 asks for one.
 
-### S5. Dependabot has alerts but no version-update configuration
+### C5. Dependabot has alerts but no version-update configuration
 
 The repository has Dependabot alerts and secret scanning enabled, but there is no
 `.github/dependabot.yml`, so nothing opens a pull request for a bump. The
@@ -596,18 +597,53 @@ required checks in ways worth thinking about once (a bot pull request must pass
 the same six gates). Done when `dependabot.yml` lands with a grouping strategy
 that does not produce one pull request per transitive package.
 
-### S6. `bun audit` cannot answer "is there a fix"
+### C6. `bun audit` cannot answer "is there a fix"
 
 It reports severity and vulnerable ranges and no fixed version, which is why
 Trivy owns the gate and `bun audit` is a job-summary second opinion. If bun adds
 fixed-version data, the container dependency in the local contributor workflow
 could be dropped entirely. Done when `bun audit --json` carries a fix field.
 
-### S7. Seventeen HIGH fixable npm advisories, mostly `next` 16.1.6 to 16.2.x
+### C7. Seventeen HIGH fixable npm advisories, three of them middleware/authorization bypasses against the exact surface Phase 1 hardened
 
-The dependency gate's job summary lists them; none is CRITICAL so none gates.
-Deliberately not taken in Phase 2: a Next minor can change middleware and CSP
-behaviour, which is exactly the surface Phase 1 just verified in a real browser,
-and bumping inside this phase would invalidate that verification without
-re-running it. This belongs to a separate bump pull request after the Phase 2
-chain lands, not to a supply-chain-scanning phase.
+The dependency gate's job summary lists seventeen HIGH advisories, mostly `next`
+16.1.6 to 16.2.x; none is CRITICAL so none gates. Three are not generic HIGH
+advisories: **CVE-2026-44573, CVE-2026-44574 and CVE-2026-44575 are Next.js
+middleware-bypass and authorization-bypass advisories**, and `src/proxy.ts` IS
+Next 16's middleware - the exact file Phase 1 put RBAC, the Origin check, rate
+limiting, the security headers and the audit emit into. Framing this as a
+compatibility question alone - a Next minor can change middleware and CSP
+behaviour, which is exactly the surface Phase 1 just verified in a real browser -
+understated the risk; it is also a question of which known bypasses ship against
+that surface today.
+
+Still not taken inside Phase 2, for the compatibility reason above: bumping
+inside a supply-chain-scanning phase would invalidate Phase 1's browser
+verification without re-running it, and this belongs to a dedicated bump pull
+request instead.
+
+**Decision, recorded here because it is now updated by evidence**: the programme
+ships one release, 0.10.0, after Phase 3. The Next bump must land BEFORE that tag
+is cut, not merely "after the Phase 2 chain lands" - 0.10.0 must not ship with
+known middleware-bypass and authorization-bypass advisories against the exact
+layer it hardens. The bump pull request must re-run Phase 1's end-to-end
+verification in a real browser, because it touches the middleware and CSP
+surface that verification exists to cover. Done when that pull request lands and
+0.10.0 is cut from a `main` that has it.
+
+### C8. The release SBOM does not describe the bundled Node.js runtime
+
+`packaging/linux/fetch-node.sh` and `packaging/windows/fetch-node.sh` download a
+pinned Node.js build and bundle it into every packaged artefact except the npm
+package itself - the standalone tarballs, the Windows zip, the `.deb` and `.rpm`
+packages, the snap, the AppImage and the desktop package. That runtime is the
+largest single binary in most of those artefacts, it is fetched by a shell
+script rather than resolved from a lockfile, and the CycloneDX SBOM Trivy
+generates from `bun.lock` never sees it - the document's only `node`-named
+component is `pkg:npm/@types/node`, a type-declarations package. `SECURITY.md`
+now says the SBOM covers "the dependency closure of" those artefacts rather than
+the artefacts themselves, which is the honest claim; this entry is the gap
+behind it. Done when the bundled runtime's version and provenance appear in the
+SBOM or a sibling document - a second Trivy pass over the `fetch-node.sh`
+scripts' pinned version, or a hand-maintained component entry, whichever ships
+without adding a new failure mode to the release chain.

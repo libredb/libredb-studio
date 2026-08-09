@@ -11,7 +11,11 @@ name: Security Scan
 #   secret-scan       fails. Its verdict is a pure function of the scanned commit
 #                     range and the pinned gitleaks digest - no feed can turn it
 #                     red overnight - and a secret in a diff is unambiguous and
-#                     fixable by the author.
+#                     fixable by the author. The range is resolved with `git
+#                     rev-list --count` under `set -e` before gitleaks ever
+#                     runs, and the scanned count is asserted non-zero on a
+#                     pull request, because gitleaks itself logs an
+#                     unresolvable range at ERROR and still exits 0.
 #   dependency-scan   reports on a pull request (job summary only) and gates on
 #                     main, the daily schedule and manual runs. An advisory
 #                     published overnight must not turn a contributor's unrelated
@@ -45,9 +49,13 @@ on:
   workflow_dispatch:
 
 concurrency:
-  # Keyed by ref: a shared group would let the daily cron and a pull request run
-  # cancel each other, leaving a cancelled check on the pull request.
-  group: security-scan-${{ github.ref }}
+  # Keyed by ref AND by event: `push` to main and the daily `schedule` share the
+  # same github.ref (refs/heads/main), so keying by ref alone let a push cancel
+  # that day's only image scan mid-run - image-scan does not run on push at all,
+  # so the scan simply never happened - and a cancelled run sends no failed-run
+  # email, the only notification path BACKLOG C2 names. pull_request events
+  # already have distinct refs, so this changes nothing for them.
+  group: security-scan-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: true
 
 permissions:
@@ -89,6 +97,18 @@ jobs:
             # pull request - and a check that is always red is a check nobody
             # reads.
             echo "log_opts=--no-merges $BASE_SHA..$HEAD_SHA" >> "$GITHUB_OUTPUT"
+            # `git rev-list --count` resolves the exact same range, under the
+            # same `set -e`. An unresolvable range - an unreachable base.sha
+            # after a force-push racing this run, a shallow checkout, `.git`
+            # as a file rather than a directory (the worktree case) - fails
+            # this step immediately instead of reaching the scanner below.
+            # Measured on the pinned digest: that scanner logs the same
+            # failure at ERROR ("fatal: Invalid revision range") and still
+            # exits 0, reporting "0 commits scanned" as "no leaks found". A
+            # verdict from zero scanned bytes must never look like a verdict
+            # from a clean scan.
+            count=$(git rev-list --count --no-merges "$BASE_SHA..$HEAD_SHA")
+            echo "commit_count=$count" >> "$GITHUB_OUTPUT"
           else
             # On main, the cron and a manual run: the whole history. The
             # repository authorises direct pushes to main, and at 1.1 seconds
@@ -114,6 +134,22 @@ jobs:
               --log-opts="$LOG_OPTS" \
               --report-format json \
               --report-path /out/gitleaks.json
+
+      - name: Assert the scan covered commits
+        # The range step above already validated the range resolves; this
+        # asserts it also resolved to something. Only on pull_request: `--all`
+        # has no single count worth asserting, and main/the cron/dispatch are
+        # not the racing-synchronize case this exists for.
+        if: github.event_name == 'pull_request'
+        env:
+          COMMIT_COUNT: ${{ steps.range.outputs.commit_count }}
+        run: |
+          set -euo pipefail
+          if [ "$COMMIT_COUNT" -eq 0 ]; then
+            echo "::error::The resolved commit range scanned 0 commits. A pull request always adds at least one commit, so an empty range here means gitleaks verified nothing while still reporting a pass - investigate before trusting this check." >&2
+            exit 1
+          fi
+          echo "Scanned $COMMIT_COUNT commit(s)."
 
       - name: Report the findings
         if: failure()
@@ -182,11 +218,13 @@ jobs:
 
       - name: Scan the lockfiles
         env:
-          # GHCR rate-limits anonymous pulls per address and hosted runners share
-          # addresses, which is the usual cause of "failed to download
-          # vulnerability DB". The workflow token lifts that limit and exists on
-          # fork pull requests too, where read-only is enough to pull a public
-          # package.
+          # Not a GHCR rate-limit workaround, despite what this comment used to
+          # claim: Trivy 0.73's default vulnerability-DB source is
+          # mirror.gcr.io, confirmed against this branch's own run logs, and
+          # that mirror is anonymous and needs no credential at all. These
+          # credentials are harmless to keep - GITHUB_TOKEN costs nothing and
+          # is available on fork pull requests too - but they are not what
+          # makes the DB download succeed.
           TRIVY_USERNAME: ${{ github.actor }}
           TRIVY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -280,6 +318,7 @@ jobs:
         # convert-based gate would fail on findings nobody can fix. The
         # database is already in the cache, so this costs seconds.
         if: github.event_name != 'pull_request'
+        id: gate
         env:
           TRIVY_USERNAME: ${{ github.actor }}
           TRIVY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
@@ -303,7 +342,13 @@ jobs:
               .
 
       - name: Explain a failed gate
-        if: failure()
+        # Conditioned on the gate step's own outcome, not a bare failure() -
+        # which fires for ANY earlier failure in the job, including a Trivy DB
+        # download timeout or a `bun install` flake. Telling a contributor
+        # whose run died on a transient flake that a CRITICAL advisory is
+        # present and sending them to edit .trivyignore.yaml lands on the
+        # audience least able to diagnose it.
+        if: steps.gate.outcome == 'failure'
         run: |
           {
             echo "## The dependency gate failed"

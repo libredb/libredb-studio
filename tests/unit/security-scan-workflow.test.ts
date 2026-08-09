@@ -48,6 +48,31 @@ const allSteps = Object.values(workflow.jobs).flatMap((j) => j.steps ?? []);
 
 const DIGEST = /@sha256:[0-9a-f]{64}$/;
 
+/**
+ * Splits a step's `run` script into the individual `docker run ...`
+ * invocations it contains, joining each one's backslash-continued lines back
+ * into a single block. The old single-line regex this replaces matched only
+ * the physical `docker run --rm \` line; every image reference in this
+ * workflow sits on a continuation line, so it never saw one.
+ */
+function dockerRunBlocks(run: string): string[] {
+  const blocks: string[] = [];
+  let current: string[] | null = null;
+  for (const line of run.split("\n")) {
+    const trimmed = line.trim();
+    if (current === null) {
+      if (!trimmed.startsWith("docker run")) continue;
+      current = [];
+    }
+    current.push(line);
+    if (!trimmed.endsWith("\\")) {
+      blocks.push(current.join("\n"));
+      current = null;
+    }
+  }
+  return blocks;
+}
+
 describe("security-scan.yml wiring", () => {
   test("runs on pull requests, on main, on a schedule and on demand", () => {
     // The four together are the control: pull requests get the deterministic
@@ -63,6 +88,15 @@ describe("security-scan.yml wiring", () => {
     expect(workflow.concurrency?.group).toContain("github.ref");
   });
 
+  test("keys concurrency by event too, so a push to main cannot cancel the daily cron", () => {
+    // `push` to main and the daily `schedule` share github.ref
+    // (refs/heads/main). Without the event in the group, a push cancels that
+    // day's only image scan mid-run - image-scan excludes `push` entirely - and
+    // a cancelled run sends no failed-run email, the only notification path
+    // docs/BACKLOG.md's Phase 2 deferrals name.
+    expect(workflow.concurrency?.group).toContain("github.event_name");
+  });
+
   test("defaults to read-only permissions", () => {
     expect(workflow.permissions?.contents).toBe("read");
   });
@@ -75,15 +109,28 @@ describe("security-scan.yml wiring", () => {
     }
   });
 
-  test("never runs a container by tag", () => {
-    // An inline `docker run some/image:tag` would bypass the env pinning above.
+  test("every docker run invocation references a pinned image env var, never an inline tag", () => {
+    // Asserted positively over the WHOLE multi-line invocation, not by
+    // pattern-matching a single line for the absence of a tag: every image
+    // reference here sits on a continuation line after `docker run --rm \`,
+    // so a single-line regex never sees it. Proved by substituting a mutable
+    // tag for every "$TRIVY_IMAGE" and "$GITLEAKS_IMAGE" - the old version of
+    // this test still passed.
+    let checked = 0;
     for (const step of allSteps) {
-      const run = step.run ?? "";
-      expect({ name: step.name, taggedRun: /docker run[^\n]*\s[a-z0-9./-]+:[a-z0-9.-]+\s/.test(run) }).toEqual({
-        name: step.name,
-        taggedRun: false,
-      });
+      for (const block of dockerRunBlocks(step.run ?? "")) {
+        checked += 1;
+        const pinned = /\$(TRIVY_IMAGE|GITLEAKS_IMAGE)\b/.test(block);
+        expect({ name: step.name, invocation: block.split("\n")[0].trim(), pinned }).toEqual({
+          name: step.name,
+          invocation: block.split("\n")[0].trim(),
+          pinned: true,
+        });
+      }
     }
+    // A helper that silently found nothing to check would make every
+    // iteration above vacuous.
+    expect(checked).toBeGreaterThan(0);
   });
 
   test("pins every action to a full commit SHA", () => {
@@ -122,6 +169,38 @@ describe("secret-scan is the one scan allowed to fail a check", () => {
     expect(resolver?.run).toContain("--all");
   });
 
+  test("resolves the pull-request range with git rev-list --count under set -e, so an unresolvable range fails loudly", () => {
+    // gitleaks itself logs an unresolvable range ("fatal: Invalid revision
+    // range") at ERROR and still exits 0 - measured on the pinned digest, and
+    // reproduced by `.git` being a file rather than a directory, the worktree
+    // case. `git rev-list --count` resolving the SAME range under the SAME
+    // `set -e` fails this step before gitleaks ever runs.
+    const resolver = steps.find((s) => s.id === "range");
+    expect(resolver?.run).toContain("set -euo pipefail");
+    expect(resolver?.run).toContain("git rev-list --count --no-merges");
+    expect(resolver?.run).toContain("commit_count");
+  });
+
+  test("asserts the scanned commit count is non-zero, and only on a pull request", () => {
+    // Resolving is not enough: an empty-but-valid range also passes gitleaks
+    // silently. Not asserted outside pull_request - `--all` has no single
+    // count worth asserting, and main/the cron/dispatch are not the
+    // racing-synchronize case this exists for.
+    const assertion = steps.find((s) => s.name === "Assert the scan covered commits");
+    expect(assertion).toBeDefined();
+    expect(assertion?.if).toBe("github.event_name == 'pull_request'");
+    expect(assertion?.run).toContain("COMMIT_COUNT");
+    expect(assertion?.run).toMatch(/-eq 0/);
+    expect(assertion?.run).toContain("exit 1");
+  });
+
+  test("the commit-count assertion runs after the scan, not before it", () => {
+    const names = steps.map((s) => s.name);
+    expect(names.indexOf("Assert the scan covered commits")).toBeGreaterThan(
+      names.indexOf("Scan for committed secrets"),
+    );
+  });
+
   test("passes the repository's allowlist rather than gitleaks' bare defaults", () => {
     expect(scan?.run).toContain(".gitleaks.toml");
   });
@@ -155,6 +234,7 @@ describe("dependency-scan reports on pull requests and gates elsewhere", () => {
   const sarif = steps.find((s) => s.uses?.startsWith("github/codeql-action/upload-sarif@"));
   const audit = steps.find((s) => s.run?.includes("bun audit"));
   const gate = steps.find((s) => s.name === "Gate: critical, fixable, unsuppressed");
+  const explainer = steps.find((s) => s.name === "Explain a failed gate");
 
   test("exists and is named for a human reading the checks list", () => {
     expect(job).toBeDefined();
@@ -203,6 +283,30 @@ describe("dependency-scan reports on pull requests and gates elsewhere", () => {
 
   test("the gate never runs on a pull request", () => {
     expect(gate?.if).toBe("github.event_name != 'pull_request'");
+  });
+
+  test("the gate step is identifiable, so the failure explainer can target its own outcome", () => {
+    expect(gate?.id).toBe("gate");
+  });
+
+  test("the failure explainer fires only when the gate step itself failed", () => {
+    // A bare if: failure() fires for ANY earlier failure in the job - a Trivy
+    // DB download timeout, a bun install flake - and tells whoever hit it that
+    // a CRITICAL advisory is present and sends them to edit
+    // .trivyignore.yaml. That lands on the audience least able to diagnose it.
+    expect(explainer).toBeDefined();
+    expect(explainer?.if).toBe("steps.gate.outcome == 'failure'");
+  });
+
+  test("no step in this job is advisory either", () => {
+    // secret-scan has this guard; dependency-scan's own gate step - the one
+    // scanner in this job permitted to fail anything - did not.
+    for (const step of steps) {
+      expect({ name: step.name, advisory: step["continue-on-error"] === true }).toEqual({
+        name: step.name,
+        advisory: false,
+      });
+    }
   });
 
   test("bun audit reports and cannot fail the job", () => {

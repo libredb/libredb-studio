@@ -526,6 +526,33 @@ jobs:
       - name: Install dependencies
         uses: ./.github/actions/bun-install
 
+      - name: Check Docker Hub availability
+        # This job now sits on the release path: `publish-release` needs it.
+        # An anonymous pull of aquasec/trivy is subject to Docker Hub's
+        # per-address rate limit, and hosted runners share addresses - the
+        # same failure mode security-scan.yml documents for its own pulls.
+        # Optional: falls back to an anonymous pull when the repository has
+        # not configured Docker Hub credentials, same guard shape as
+        # docker-build-push.yml's own Docker Hub mirror step.
+        id: dockerhub
+        env:
+          DOCKER_HUB_TOKEN: ${{ secrets.DOCKER_HUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -n "$DOCKER_HUB_TOKEN" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::DOCKER_HUB_TOKEN is not configured - pulling aquasec/trivy anonymously, subject to Docker Hub's per-address rate limit."
+          fi
+
+      - name: Log in to Docker Hub
+        if: steps.dockerhub.outputs.enabled == 'true'
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          username: ${{ vars.DOCKER_HUB_USERNAME }}
+          password: ${{ secrets.DOCKER_HUB_TOKEN }}
+
       - name: Generate the CycloneDX SBOM
         env:
           VERSION: ${{ needs.guard.outputs.version }}
@@ -540,7 +567,14 @@ jobs:
           # serialNumber and a wall-clock timestamp - so it is generated exactly
           # once, here, before the release is published. What is stable is the
           # component set.
-          docker run --rm \
+          #
+          # Retried rather than run once: this is the most fragile CI surface
+          # in the repository (a failed release retries with a NEW patch
+          # version, never the same tag), so a transient Docker Hub rate limit
+          # or network blip must not be allowed to stall a release before
+          # publish.
+          attempt=0
+          until docker run --rm \
             -v "$GITHUB_WORKSPACE:/repo" \
             -w /repo \
             aquasec/trivy@sha256:7cced7cae583819fc7806d4cbc0dbbc7cad18b99f7d3e235192e6da8c091045c fs \
@@ -552,7 +586,36 @@ jobs:
               --skip-dirs sbom \
               --output "/repo/sbom/libredb-studio-${VERSION}.cdx.json" \
               .
+          do
+            attempt=$((attempt + 1))
+            if [ "$attempt" -ge 3 ]; then
+              echo "::error::Failed to pull or run aquasec/trivy after 3 attempts." >&2
+              exit 1
+            fi
+            echo "Trivy pull/run failed (attempt $attempt/3) - retrying in 10s..."
+            sleep 10
+          done
           ls -la sbom
+
+      - name: Name the SBOM's root component
+        env:
+          VERSION: ${{ needs.guard.outputs.version }}
+        run: |
+          set -euo pipefail
+          # Trivy names the root component after its scan target - "." for a
+          # filesystem scan of the repository root - so an unpatched document
+          # imports into Dependency-Track, or any other CycloneDX consumer, as
+          # a project literally named ".". This is the one field `trivy fs`
+          # has no flag to set.
+          node -e '
+            const fs = require("fs");
+            const file = process.argv[1];
+            const doc = JSON.parse(fs.readFileSync(file, "utf8"));
+            if (doc.metadata && doc.metadata.component) {
+              doc.metadata.component.name = "libredb-studio";
+            }
+            fs.writeFileSync(file, JSON.stringify(doc, null, 2));
+          ' "sbom/libredb-studio-${VERSION}.cdx.json"
 
       - name: Verify the SBOM describes something
         env:
@@ -985,8 +1048,10 @@ jobs:
     # asset set on the draft, then flip it to published. Publishing is the
     # point of no return under immutable releases - after it, the asset set
     # can never be amended - so the verification runs strictly before it.
-    # `release: published` fires here, triggering npm-publish and
-    # docker-build-push exactly as before.
+    # `release: published` does fire here, but this runs under GITHUB_TOKEN and
+    # events it creates trigger no other workflow (the 0.9.46 incident) -
+    # npm-publish and docker-build-push are chained explicitly by the
+    # dispatch-downstream job below instead.
     name: Verify assets and publish release
     needs: [guard, publish, sbom, linux-packages, desktop-appimage, snap]
     runs-on: ubuntu-latest
