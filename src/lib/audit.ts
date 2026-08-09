@@ -145,20 +145,23 @@ const UNKNOWN_ADDRESS = "unknown";
 /** Redaction marker for a URI's userinfo segment. Never a value real credentials could equal. */
 const CREDENTIAL_REDACTION = "[REDACTED]";
 /**
- * Matches `scheme://userinfo@` so a connection string's `user:password` (or a bare token used as
- * userinfo) can be replaced before the value reaches either destination. The host and everything
- * after `@` is left intact — an operator needs to know which host, not the password.
+ * Matches `scheme://` followed by the remainder of the value, so a connection string's userinfo
+ * can be collapsed before the value reaches either destination. `rest` runs to the end of the
+ * string (not bounded to "before the next `/`"): a password containing `/`, `?` or `#` is an
+ * ordinary shape, and a boundary based on those characters cannot tell `postgres://user:pa/ss@host
+ * /db` (a slash INSIDE the password) apart from `https://example.com/user@example/profile` (an
+ * `@` INSIDE the path) — they are structurally identical. There is no syntax-only fix for that.
  *
- * Per RFC 3986, userinfo ends at the LAST `@` before the host, not the first: a password like
- * `p@ssw0rd` is an ordinary shape, not a contrived one. The character class deliberately does NOT
- * exclude `@` (only `/` and whitespace, which the host/path/end always are): a greedy `+` run
- * against a bounded authority string can only stop where the engine's backtracking finds a
- * trailing literal `@`, and backtracking searches from the longest match down, so it lands on the
- * rightmost `@` still inside that run — the one immediately before the host — rather than the
- * first one it happens to see. Excluding `/` and whitespace from the class is what keeps the match
- * from crossing into the path or across a value with no scheme at all.
+ * The fix is to stop trying to parse a URI out of this value at all. An audit field is not a URI
+ * field: nobody downstream needs the full string back, only the scheme and which host it named.
+ * sanitizeAuditField below finds the LAST `@` in `rest` and keeps only what follows it, discarding
+ * everything between the scheme and that point regardless of what characters it contained. This is
+ * deliberately over-eager — a value shaped like case 6 above gets its path mangled even though it
+ * carried no credential — and that trade is correct here: mangling a harmless URL costs an
+ * operator nothing, while leaking a password costs them everything. Do not "fix" this by trying to
+ * distinguish password characters from path characters; that parser cannot be written correctly.
  */
-const URI_CREDENTIAL_PATTERN = /([a-zA-Z][a-zA-Z0-9+.-]*):\/\/[^/\s]+@/g;
+const URI_CREDENTIAL_PATTERN = /([a-zA-Z][a-zA-Z0-9+.-]*):\/\/([\s\S]*)$/;
 
 /**
  * The one gate every free-text field passes through before it can reach either destination: strip
@@ -166,20 +169,38 @@ const URI_CREDENTIAL_PATTERN = /([a-zA-Z][a-zA-Z0-9+.-]*):\/\/[^/\s]+@/g;
  * long enough to be truncated never has its credential cut in half and left partially exposed.
  */
 function sanitizeAuditField(value: string): string {
-  const withoutCredentials = value.replace(URI_CREDENTIAL_PATTERN, `$1://${CREDENTIAL_REDACTION}@`);
+  const withoutCredentials = value.replace(URI_CREDENTIAL_PATTERN, (_match, scheme: string, rest: string) => {
+    const lastAt = rest.lastIndexOf("@");
+    // No `@` at all: no userinfo was ever present, so there is nothing to hide.
+    if (lastAt === -1) {
+      return `${scheme}://${rest}`;
+    }
+    const host = rest.slice(lastAt + 1);
+    // No recoverable host (e.g. a dangling "user:pass@" with nothing after it): degrade to the
+    // marker alone rather than emitting a "scheme://[REDACTED]@" that promises a host it can't
+    // name.
+    return host.length === 0 ? CREDENTIAL_REDACTION : `${scheme}://${CREDENTIAL_REDACTION}@${host}`;
+  });
   return withoutCredentials.slice(0, MAX_AUDIT_FIELD_LENGTH);
 }
 
 /**
- * The single sanitization boundary, applied once to the caller-supplied event before it reaches
+ * The single sanitization boundary, applied once to a caller-supplied event before it reaches
  * either the ring buffer (push) or the stdout line (toAuditLine) — both destinations consume this
  * result, so there is exactly one rule to keep correct instead of one per destination. Sweeps
  * every own key of the event and sanitizes any string value found there, unconditionally: this is
  * deliberately not a per-field allowlist of calls to sanitizeAuditField, so a field added to
  * AuditEvent later is covered by construction. Opting a field OUT would require deleting code from
  * this sweep; there is no opt-in step to forget.
+ *
+ * Exported on its own, separately from emitAuditEvent: sanitization and stdout emission are two
+ * different privileges. `POST /api/admin/audit` accepts a fully client-supplied body with none of
+ * its fields validated at runtime, so it must never gain the authority to write to the stdout
+ * channel the design treats as authoritative — it calls this function directly and pushes to the
+ * buffer itself. `emitAuditEvent` below is a policy built on top of this boundary, for callers
+ * whose event content is decided by trusted route logic rather than by the request body.
  */
-function sanitizeAuditInput(event: Omit<AuditEvent, "id" | "timestamp">): Omit<AuditEvent, "id" | "timestamp"> {
+export function sanitizeAuditInput(event: Omit<AuditEvent, "id" | "timestamp">): Omit<AuditEvent, "id" | "timestamp"> {
   const sanitized: Omit<AuditEvent, "id" | "timestamp"> = { ...event };
   // A second, dynamically-keyed view of the SAME object (not a copy, no cast): every property of
   // an AuditEvent is a valid Record<string, unknown> value, so this assignment needs no assertion,

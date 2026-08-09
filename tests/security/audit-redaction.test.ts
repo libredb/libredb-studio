@@ -406,7 +406,17 @@ describe("emitAuditEvent", () => {
       expect(line.actor).toBe("admin@libredb.org");
     });
 
-    test("does not treat an @ inside the path as if it were userinfo", () => {
+    /**
+     * Revised in fix round 4: a slash inside a password (`postgres://user:pa/ss@host/db`) and an
+     * `@` inside a path (`https://example.com/user@example/profile`) are structurally identical —
+     * no syntax-only rule can tell them apart, which is exactly why the round-3 version of this
+     * test expected the path-embedded `@` to survive untouched. Round 4 deliberately abandoned
+     * that precision: sanitizeAuditField now collapses everything between the scheme and the LAST
+     * `@` unconditionally, so a harmless URL shaped like this one gets its path mangled too. That
+     * is the intended, accepted cost — mangling a URL costs an operator nothing; a slash-bearing
+     * password that used to defeat redaction entirely costs them everything.
+     */
+    test("collapses an @ inside the path too, because that risk cannot be told apart from a slash inside a password", () => {
       const line = captureLine(() =>
         emitAuditEvent({
           type: "login_failure",
@@ -418,7 +428,52 @@ describe("emitAuditEvent", () => {
         }),
       );
 
-      expect(line.route).toBe("https://example.com/user@example/profile");
+      expect(line.route).toBe("https://[REDACTED]@example/profile");
+    });
+
+    test("redacts a password containing a slash, which a boundary excluding / could never reach", () => {
+      const line = captureLine(() =>
+        emitAuditEvent({
+          type: "query_execution",
+          action: "query",
+          target: "POST /api/db/query",
+          connectionName: "postgres://user:pa/ss@host:5432/db",
+          user: "user@libredb.org",
+          result: "success",
+        }),
+      );
+
+      expect(line.connection).toBe("postgres://[REDACTED]@host:5432/db");
+    });
+
+    test("redacts a password containing ? and #, which a URI parser would mistake for query and fragment delimiters", () => {
+      const line = captureLine(() =>
+        emitAuditEvent({
+          type: "query_execution",
+          action: "query",
+          target: "POST /api/db/query",
+          connectionName: "postgres://user:pa?ss#word@host:5432/db",
+          user: "user@libredb.org",
+          result: "success",
+        }),
+      );
+
+      expect(line.connection).toBe("postgres://[REDACTED]@host:5432/db");
+    });
+
+    test("degrades to the marker alone when no host is recoverable after the credential", () => {
+      const line = captureLine(() =>
+        emitAuditEvent({
+          type: "query_execution",
+          action: "query",
+          target: "POST /api/db/query",
+          connectionName: "postgres://user:pa/ss@",
+          user: "user@libredb.org",
+          result: "success",
+        }),
+      );
+
+      expect(line.connection).toBe("[REDACTED]");
     });
   });
 
