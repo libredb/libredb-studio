@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getOrCreateProvider } from "@/lib/db";
 import { createErrorResponse } from "@/lib/api/errors";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
-import { getSession } from "@/lib/auth";
+import { guardRoute } from "@/lib/api/require-session";
 
 /**
  * GET /api/db/health
@@ -25,12 +25,10 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
 
-    const session = await getSession();
-    if (!session) {
-      return NextResponse.json({ error: "Authentication required" }, { status: 401 });
-    }
+    const guard = await guardRoute({ route: "POST /api/db/health", bucket: "query", request: req });
+    if ("response" in guard) return guard.response;
 
-    const connection = await resolveConnection(body, session);
+    const connection = await resolveConnection(body, guard.session);
 
     if (!connection.type) {
       return NextResponse.json({ error: "Valid connection configuration is required" }, { status: 400 });

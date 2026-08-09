@@ -2,18 +2,16 @@ import { NextRequest, NextResponse } from "next/server";
 import { getOrCreateProvider } from "@/lib/db/factory";
 import { createErrorResponse } from "@/lib/api/errors";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
-import { getSession } from "@/lib/auth";
+import { guardRoute } from "@/lib/api/require-session";
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
 
-    const session = await getSession();
-    if (!session) {
-      return NextResponse.json({ error: "Authentication required" }, { status: 401 });
-    }
+    const guard = await guardRoute({ route: "POST /api/db/pool-stats", bucket: "query", request });
+    if ("response" in guard) return guard.response;
 
-    const connection = await resolveConnection(body, session);
+    const connection = await resolveConnection(body, guard.session);
 
     const provider = await getOrCreateProvider(connection);
 

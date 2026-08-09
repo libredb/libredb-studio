@@ -1,6 +1,7 @@
 import { describe, test, expect, mock, beforeEach } from "bun:test";
 import { createMockRequest, parseResponseJSON } from "../../helpers/mock-next";
 import { createMockProvider } from "../../helpers/mock-provider";
+import { clearRateLimitState } from "@/lib/api/rate-limit";
 
 // ─── Mock providers ─────────────────────────────────────────────────────────
 const mockSQLProvider = createMockProvider({
@@ -76,6 +77,7 @@ const mongoConnection = {
 // ─── Tests ──────────────────────────────────────────────────────────────────
 describe("POST /api/db/profile", () => {
   beforeEach(() => {
+    clearRateLimitState();
     mockGetOrCreateProvider.mockClear();
     mockGetOrCreateProvider.mockImplementation(async () => mockSQLProvider);
     (mockSQLProvider.query as ReturnType<typeof mock>).mockClear();

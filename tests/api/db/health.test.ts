@@ -1,6 +1,7 @@
 import { describe, test, expect, mock, beforeEach } from "bun:test";
 import { createMockRequest, parseResponseJSON } from "../../helpers/mock-next";
 import { createMockProvider } from "../../helpers/mock-provider";
+import { clearRateLimitState } from "@/lib/api/rate-limit";
 import {
   QueryError,
   TimeoutError,
@@ -108,6 +109,7 @@ describe("GET /api/db/health", () => {
 
 describe("POST /api/db/health", () => {
   beforeEach(() => {
+    clearRateLimitState();
     mockGetOrCreateProvider.mockClear();
     (mockProvider.getHealth as ReturnType<typeof mock>).mockClear();
   });

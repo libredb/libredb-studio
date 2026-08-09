@@ -2,6 +2,7 @@ import { describe, test, expect, mock, beforeEach } from "bun:test";
 import { createMockRequest, parseResponseJSON } from "../../helpers/mock-next";
 import { createMockProvider } from "../../helpers/mock-provider";
 import type { TableRelations } from "@/lib/db/types";
+import { clearRateLimitState } from "@/lib/api/rate-limit";
 import {
   QueryError,
   TimeoutError,
@@ -105,6 +106,7 @@ const relations: TableRelations[] = [
 
 describe("POST /api/db/schema/relations", () => {
   beforeEach(() => {
+    clearRateLimitState();
     mockGetOrCreateProvider.mockClear();
     mockGetSession.mockClear();
     mockProvider.getSchemaRelations = mock(async () => relations);

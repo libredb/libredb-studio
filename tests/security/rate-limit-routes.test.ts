@@ -1,7 +1,7 @@
-import { beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
-import { readdirSync, existsSync } from "node:fs";
+import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { join } from "node:path";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
+import { discoverRoutes } from "./helpers/discover-routes";
 
 /**
  * Threat: an authenticated user burning the operator's LLM budget or saturating the database.
@@ -44,6 +44,14 @@ beforeEach(() => {
   mockCreateLLMProvider.mockClear();
   mockGetSession.mockImplementation(async () => ({ role: "user", username: "u@libredb.org" }));
   process.env.RATE_LIMIT_AI_MAX = "3";
+});
+
+// Symmetric with the "an unauthenticated probe" test's own delete of RATE_LIMIT_ANON_MAX: an
+// env var set for this file's own tests must not leak into whichever file bun happens to run
+// next in the same process. Left unrestored, the failure mode is a 429 in a test that has
+// nothing to do with rate limiting, in whichever file runs after this one.
+afterEach(() => {
+  delete process.env.RATE_LIMIT_AI_MAX;
 });
 
 describe("the AI budget", () => {
@@ -168,25 +176,12 @@ describe("an unauthenticated probe", () => {
  * reaches a provider without one of the three controls (session, rate limit, audit), and a
  * hardcoded list only ever proves the routes someone remembered to add to it are covered. A
  * tenth AI route added later without wiring guardRoute is caught here automatically, the same
- * way tests/security/route-auth.test.ts's AI_ROUTES enumeration already catches one that skips
- * the session check.
+ * way tests/security/route-auth.test.ts's whole-tree enumeration already catches one that skips
+ * the session check - both use the same discoverRoutes() helper, so they cannot drift apart.
  */
 const AI_ROUTES_DIR = join(import.meta.dir, "..", "..", "src", "app", "api", "ai");
 
-type RouteModule = { POST: (req: never) => Promise<Response> };
-
-function discoverAiRoutes(): Array<[string, () => Promise<RouteModule>]> {
-  return readdirSync(AI_ROUTES_DIR, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory() && existsSync(join(AI_ROUTES_DIR, entry.name, "route.ts")))
-    .map((entry) => entry.name)
-    .sort()
-    .map((name): [string, () => Promise<RouteModule>] => [
-      name,
-      () => import(join(AI_ROUTES_DIR, name, "route.ts")) as Promise<RouteModule>,
-    ]);
-}
-
-const AI_ROUTES = discoverAiRoutes();
+const AI_ROUTES = discoverRoutes(AI_ROUTES_DIR);
 
 describe("every AI route enforces the shared budget", () => {
   // A directory-listing bug that silently finds zero routes would make the loop below run no
@@ -204,6 +199,12 @@ describe("every AI route enforces the shared budget", () => {
 
       for (const [name, load] of AI_ROUTES) {
         const { POST } = await load();
+        // Narrows POST off its optional RouteModule type and doubles as its own assertion: a
+        // discovered "AI route" that does not export POST is a bug in the route file, not
+        // something this loop should silently skip.
+        if (typeof POST !== "function") {
+          throw new Error(`discovered route "${name}" does not export POST`);
+        }
         const req = new Request(`http://localhost:3000/api/ai/${name}`, {
           method: "POST",
           headers: { "content-type": "application/json" },

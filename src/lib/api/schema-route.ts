@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getOrCreateProvider } from "@/lib/db";
 import { createErrorResponse } from "@/lib/api/errors";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
-import { getSession } from "@/lib/auth";
+import { guardRoute } from "@/lib/api/require-session";
 import type { DatabaseProvider } from "@/lib/db/types";
 
 /**
@@ -10,6 +10,11 @@ import type { DatabaseProvider } from "@/lib/db/types";
  * (/api/db/schema/list and /api/db/schema/relations). Both perform the same
  * body parsing, auth, connection resolution and error mapping; only the
  * provider call differs, supplied via `load`.
+ *
+ * Fixing the guard once here, rather than in each caller, is what keeps both routes on the
+ * `query` bucket in lockstep: `route` (e.g. "api/db/schema/list") is the same string both
+ * callers already pass for error-response context, so `POST /${route}` reuses it rather than
+ * threading a second, guard-specific string through both call sites.
  */
 export async function handleSchemaRequest(
   req: NextRequest,
@@ -28,14 +33,12 @@ export async function handleSchemaRequest(
       return NextResponse.json({ error: "Empty request body" }, { status: 400 });
     }
 
-    const session = await getSession();
-    if (!session) {
-      return NextResponse.json({ error: "Authentication required" }, { status: 401 });
-    }
+    const guard = await guardRoute({ route: `POST /${route}`, bucket: "query", request: req });
+    if ("response" in guard) return guard.response;
 
     const connection = await resolveConnection(
       body.connectionId ? body : body.connection ? body : { connection: body },
-      session,
+      guard.session,
     );
 
     if (!connection.type) {

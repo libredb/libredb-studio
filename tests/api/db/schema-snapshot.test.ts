@@ -1,6 +1,7 @@
 import { describe, test, expect, mock, beforeEach } from "bun:test";
 import { createMockRequest, parseResponseJSON } from "../../helpers/mock-next";
 import { createMockProvider } from "../../helpers/mock-provider";
+import { clearRateLimitState } from "@/lib/api/rate-limit";
 
 // ─── Mock provider ──────────────────────────────────────────────────────────
 const mockProvider = createMockProvider();
@@ -62,6 +63,7 @@ const validConnection = {
 // ─── Tests ──────────────────────────────────────────────────────────────────
 describe("POST /api/db/schema-snapshot", () => {
   beforeEach(() => {
+    clearRateLimitState();
     mockCreateDatabaseProvider.mockClear();
     mockCreateDatabaseProvider.mockImplementation(async () => mockProvider);
     (mockProvider.connect as ReturnType<typeof mock>).mockClear();

@@ -2,19 +2,17 @@ import { NextRequest, NextResponse } from "next/server";
 import { getOrCreateProvider } from "@/lib/db";
 import { createErrorResponse } from "@/lib/api/errors";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
-import { getSession } from "@/lib/auth";
+import { guardRoute } from "@/lib/api/require-session";
 
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
     const { queryId } = body;
 
-    const session = await getSession();
-    if (!session) {
-      return NextResponse.json({ error: "Authentication required" }, { status: 401 });
-    }
+    const guard = await guardRoute({ route: "POST /api/db/cancel", bucket: "query", request: req });
+    if ("response" in guard) return guard.response;
 
-    const connection = await resolveConnection(body, session);
+    const connection = await resolveConnection(body, guard.session);
 
     if (!queryId) {
       return NextResponse.json({ error: "Connection and queryId are required" }, { status: 400 });

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createDatabaseProvider } from "@/lib/db";
 import { createErrorResponse } from "@/lib/api/errors";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
-import { getSession } from "@/lib/auth";
+import { guardRoute } from "@/lib/api/require-session";
 
 export const dynamic = "force-dynamic";
 
@@ -24,14 +24,12 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Empty request body" }, { status: 400 });
     }
 
-    const session = await getSession();
-    if (!session) {
-      return NextResponse.json({ error: "Authentication required" }, { status: 401 });
-    }
+    const guard = await guardRoute({ route: "POST /api/db/provider-meta", bucket: "query", request: req });
+    if ("response" in guard) return guard.response;
 
     const connection = await resolveConnection(
       body.connectionId ? body : body.connection ? body : { connection: body },
-      session,
+      guard.session,
     );
 
     if (!connection.type) {

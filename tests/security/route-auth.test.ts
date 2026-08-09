@@ -1,6 +1,6 @@
 import { describe, expect, test, mock, beforeEach } from "bun:test";
-import { readdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
+import { discoverRoutes } from "./helpers/discover-routes";
 
 const mockGetSession = mock(
   async (): Promise<{ role: string; username: string } | null> => ({ role: "admin", username: "admin" }),
@@ -65,7 +65,7 @@ class MockLLMStreamError extends MockLLMError {
 }
 
 const mockCreateLLMProvider = mock(async () => {
-  throw new Error("createLLMProvider must not be reached: the requireSession guard should have returned 401 first");
+  throw new Error("createLLMProvider must not be reached: the guardRoute guard should have returned 401 first");
 });
 
 mock.module("@/lib/llm", () => ({
@@ -117,38 +117,42 @@ describe("guardRoute", () => {
   });
 });
 
-type RouteModule = { POST: (req: never) => Promise<Response> };
+// Enumerated from disk instead of hardcoded, so a route added ANYWHERE under src/app/api/ is
+// checked automatically instead of silently escaping this test. This replaces a curated
+// GUARDED_ROUTES list (AI routes discovered dynamically, plus one hand-picked db/ entry) that
+// was itself an instance of the exact failure it was trying to prevent: it never covered
+// db/query, db/multi-query, db/transaction, db/maintenance, db/cancel, db/health,
+// db/monitoring, db/pool-stats, db/profile, db/provider-meta, db/schema, db/schema/list,
+// db/schema/relations, db/schema-snapshot, db/test-connection or admin/fleet-health - eleven of
+// which reached a database provider through a bare inline getSession() with no rate limit and
+// no denial audit, sitting undetected next to routes that had already been fixed. Walking the
+// whole tree and requiring an explicit reason for every exemption is what makes a newly added
+// provider-reaching route red by default instead of invisible by default.
+const API_ROOT_DIR = join(import.meta.dir, "..", "..", "src", "app", "api");
 
-// Enumerated from disk instead of hardcoded, so a route added under src/app/api/ai/ later is
-// checked automatically instead of silently escaping this test - that was the whole gap: a
-// hardcoded list only ever proves the routes someone remembered to add to it are guarded.
-//
-// The import specifier is a filesystem path computed at test-run time, not the "@/" alias used
-// elsewhere in this file: bun resolves "@/" only when the specifier is a literal string it can
-// see at parse time, and a path built from a directory listing is not one. A plain path (relative
-// or absolute) has no such restriction - bun's dynamic import() resolves it like any other
-// runtime module specifier, and the "@/" imports *inside* each route.ts still resolve normally
-// there, since that resolution happens in that file's own context, independent of how the
-// importer named it.
-const AI_ROUTES_DIR = join(import.meta.dir, "..", "..", "src", "app", "api", "ai");
+const ALL_ROUTES = discoverRoutes(API_ROOT_DIR);
 
-function discoverAiRoutes(): Array<[string, () => Promise<RouteModule>]> {
-  return readdirSync(AI_ROUTES_DIR, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory() && existsSync(join(AI_ROUTES_DIR, entry.name, "route.ts")))
-    .map((entry) => entry.name)
-    .sort()
-    .map((name): [string, () => Promise<RouteModule>] => [
-      `/api/ai/${name}`,
-      () => import(join(AI_ROUTES_DIR, name, "route.ts")) as Promise<RouteModule>,
-    ]);
-}
+/**
+ * Every route that legitimately reaches no database or LLM provider, so the enumeration below
+ * does not require it to call guardRoute. Every entry needs a reason: an unexplained addition
+ * here is exactly the hand-maintained-inventory drift this enumeration exists to prevent, and
+ * the sanity check below fails if a key does not match a route that actually exists.
+ */
+const ROUTES_WITHOUT_A_PROVIDER: Record<string, string> = {
+  "admin/audit": "reads/writes the in-process audit ring buffer only; no database or LLM provider",
+  "auth/login": "authenticates the credential itself; a session cannot be required before one exists",
+  "auth/logout": "clears the session cookie unconditionally; touches no provider either way",
+  "auth/me": "reads the caller's own session claims only (GET, no POST export)",
+  "auth/oidc/callback": "completes the OIDC exchange that CREATES the session (GET, no POST export)",
+  "auth/oidc/login": "starts the OIDC redirect before a session exists (GET, no POST export)",
+  "connections/managed": "reads seed config metadata only; never opens a database connection (GET, no POST export)",
+  storage: "reaches the app's own storage backend (STORAGE_PROVIDER), not a user database or LLM provider (GET only)",
+  "storage/[collection]": "same storage backend as above, scoped to the caller's own data (PUT, no POST export)",
+  "storage/config": "publicly documents whether server storage is enabled; no session, no provider (GET only)",
+  "storage/migrate": "same storage backend as above; its own 401 body differs from guardRoute's on purpose",
+};
 
-const AI_ROUTES = discoverAiRoutes();
-
-const GUARDED_ROUTES: Array<[string, () => Promise<RouteModule>]> = [
-  ...AI_ROUTES,
-  ["/api/db/disconnect", () => import("@/app/api/db/disconnect/route")],
-];
+const PROVIDER_ROUTES = ALL_ROUTES.filter(([key]) => !(key in ROUTES_WITHOUT_A_PROVIDER));
 
 describe("routes that reach a provider require a session", () => {
   beforeEach(() => {
@@ -158,19 +162,47 @@ describe("routes that reach a provider require a session", () => {
 
   // A directory-listing bug that silently finds zero routes would make every test below
   // vacuously pass (a `for` loop over an empty array runs no assertions). This is the guard
-  // that keeps the guard honest: today there are eight AI routes, and the enumeration must find
-  // at least that many, or this test suite is no longer proving what it claims to prove.
-  test("the filesystem enumeration finds at least today's eight AI routes", () => {
-    expect(AI_ROUTES.length).toBeGreaterThanOrEqual(8);
+  // that keeps the guard honest: today there are at least 25 provider-reaching routes (8 AI +
+  // 16 db/ + admin/fleet-health), and the enumeration must find at least that many, or this
+  // test suite is no longer proving what it claims to prove.
+  test("the filesystem enumeration finds at least today's 25 provider-reaching routes", () => {
+    expect(PROVIDER_ROUTES.length).toBeGreaterThanOrEqual(25);
   });
 
-  for (const [route, load] of GUARDED_ROUTES) {
-    test(`POST ${route} returns 401 without a session`, async () => {
-      const { POST } = await load();
+  // A recursion bug that only ever looked one level deep would still pass the check above by
+  // over-counting somewhere else; this independently confirms the AI routes specifically -
+  // exactly one directory level under src/app/api/ai/ - are still found by the same walk that
+  // also has to reach three levels deep for db/schema/list and db/schema/relations.
+  test("the same walk finds at least today's eight AI routes", () => {
+    expect(ALL_ROUTES.filter(([key]) => key.startsWith("ai/")).length).toBeGreaterThanOrEqual(8);
+  });
 
-      const req = new Request(`http://localhost${route}`, {
+  // A typo'd or stale allowlist key silently exempts fewer routes than intended (or a route
+  // that no longer exists) without ever failing loudly - this is what catches that.
+  test("every allowlist entry names a route that actually exists", () => {
+    for (const key of Object.keys(ROUTES_WITHOUT_A_PROVIDER)) {
+      expect(ALL_ROUTES.some(([routeKey]) => routeKey === key)).toBe(true);
+    }
+  });
+
+  for (const [route, load] of PROVIDER_ROUTES) {
+    test(`POST /api/${route} returns 401 without a session`, async () => {
+      const routeModule = await load();
+      const POST = routeModule.POST;
+      // Narrows POST off its optional RouteModule type and doubles as its own assertion: a
+      // route in PROVIDER_ROUTES that exports no POST is either missing one or belongs in the
+      // allowlist above, not something this loop should silently skip.
+      if (typeof POST !== "function") {
+        throw new Error(`"${route}" reaches a provider but exports no POST - allowlist it or add one`);
+      }
+
+      // A non-empty body clears every route's own pre-guard "empty body" check (several parse
+      // and validate the body before reaching the guard), so every route's guard is reached
+      // regardless of what it validates afterward - the guard-here-blocks-everything property
+      // this test proves does not depend on the request being otherwise well-formed.
+      const req = new Request(`http://localhost/api/${route}`, {
         method: "POST",
-        body: JSON.stringify({}),
+        body: JSON.stringify({ probe: true }),
         headers: { "Content-Type": "application/json" },
       });
 

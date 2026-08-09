@@ -1,6 +1,7 @@
 import { describe, test, expect, mock, beforeEach } from "bun:test";
 import { createMockRequest, parseResponseJSON } from "../../helpers/mock-next";
 import { createMockProvider } from "../../helpers/mock-provider";
+import { clearRateLimitState } from "@/lib/api/rate-limit";
 import {
   QueryError,
   DatabaseError,
@@ -117,6 +118,7 @@ const validConnection = {
 // ─── Tests ──────────────────────────────────────────────────────────────────
 describe("POST /api/db/maintenance", () => {
   beforeEach(() => {
+    clearRateLimitState();
     mockGetSession.mockClear();
     mockGetOrCreateProvider.mockClear();
     mockAuditPush.mockClear();
@@ -178,7 +180,10 @@ describe("POST /api/db/maintenance", () => {
     expect(data.error).toContain("Unauthorized");
   });
 
-  test("no session returns 403", async () => {
+  // Guarded by guardRoute now: an unauthenticated caller is rejected at the session check,
+  // before the route's own admin-role check ever runs, so this is 401 ("not authenticated"),
+  // distinct from "non-admin user returns 403" above ("authenticated but forbidden").
+  test("no session returns 401", async () => {
     mockGetSession.mockImplementation(async () => null);
 
     const req = createMockRequest("/api/db/maintenance", {
@@ -189,8 +194,8 @@ describe("POST /api/db/maintenance", () => {
     const res = await POST(req as never);
     const data = await parseResponseJSON<{ error: string }>(res);
 
-    expect(res.status).toBe(403);
-    expect(data.error).toContain("Unauthorized");
+    expect(res.status).toBe(401);
+    expect(data.error).toContain("Authentication required");
   });
 
   test("missing connection returns 400", async () => {

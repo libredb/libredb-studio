@@ -3,6 +3,7 @@ import { createMockRequest, parseResponseJSON } from "../../helpers/mock-next";
 import { createMockProvider } from "../../helpers/mock-provider";
 import { mockSchema } from "../../fixtures/schemas";
 import type { TableSchema } from "@/lib/types";
+import { clearRateLimitState } from "@/lib/api/rate-limit";
 import {
   QueryError,
   TimeoutError,
@@ -114,6 +115,7 @@ const listSchema: TableSchema[] = [
 
 describe("POST /api/db/schema/list", () => {
   beforeEach(() => {
+    clearRateLimitState();
     mockGetOrCreateProvider.mockClear();
     mockGetSession.mockClear();
     (mockProvider.getSchema as ReturnType<typeof mock>).mockClear();

@@ -3,7 +3,7 @@ import { getOrCreateProvider } from "@/lib/db";
 import type { MonitoringOptions } from "@/lib/db/types";
 import { createErrorResponse } from "@/lib/api/errors";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
-import { getSession } from "@/lib/auth";
+import { guardRoute } from "@/lib/api/require-session";
 
 /**
  * POST /api/db/monitoring
@@ -23,12 +23,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Invalid JSON in request body" }, { status: 400 });
     }
 
-    const session = await getSession();
-    if (!session) {
-      return NextResponse.json({ error: "Authentication required" }, { status: 401 });
-    }
+    const guard = await guardRoute({ route: "POST /api/db/monitoring", bucket: "query", request: req });
+    if ("response" in guard) return guard.response;
 
-    const connection = await resolveConnection(body, session);
+    const connection = await resolveConnection(body, guard.session);
     const { options } = body as { options?: MonitoringOptions };
 
     if (!connection.type) {

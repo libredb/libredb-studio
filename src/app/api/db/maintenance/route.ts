@@ -1,15 +1,21 @@
-import { getSession } from "@/lib/auth";
 import { NextResponse } from "next/server";
 import { getOrCreateProvider, type MaintenanceType } from "@/lib/db";
 import { emitAuditEvent } from "@/lib/audit";
 import { createErrorResponse } from "@/lib/api/errors";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
+import { guardRoute } from "@/lib/api/require-session";
 
 export async function POST(request: Request) {
-  // Check admin authorization
-  const session = await getSession();
+  // Session, rate limit and denial audit share the same door as every other provider-reaching
+  // route, on the "query" bucket: an admin session is still one identity, and a stolen or
+  // careless one hammering maintenance operations is the exact threat this guard exists to stop.
+  // Authentication now yields 401 (was folded into a blanket 403 before); role is checked
+  // separately below so "no session" and "wrong role" stay distinguishable, matching every
+  // other guarded route's contract.
+  const guard = await guardRoute({ route: "POST /api/db/maintenance", bucket: "query", request });
+  if ("response" in guard) return guard.response;
 
-  if (!session || session.role !== "admin") {
+  if (guard.session.role !== "admin") {
     return NextResponse.json({ error: "Unauthorized. Admin access required." }, { status: 403 });
   }
 
@@ -17,7 +23,7 @@ export async function POST(request: Request) {
     const body = await request.json();
     const { type, target } = body;
 
-    const connection = await resolveConnection(body, session);
+    const connection = await resolveConnection(body, guard.session);
 
     if (!type) {
       return NextResponse.json({ error: "Maintenance type is required" }, { status: 400 });
@@ -49,7 +55,7 @@ export async function POST(request: Request) {
       action: type.toUpperCase(),
       target: target || "all",
       connectionName: connection.name || connection.database || "unknown",
-      user: session.username || "admin",
+      user: guard.session.username || "admin",
       result: "success",
       duration,
     });
