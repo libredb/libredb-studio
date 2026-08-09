@@ -11,10 +11,14 @@ const OFF_VALUES = new Set(["off", "false", "0"]);
 const ON_VALUES = new Set(["on", "true", "1"]);
 
 /**
- * Phase 1 staging flag. The policy ships report-only until e2e/security-headers.spec.ts has proven
- * it against the real production build, then this flips to false in the same phase.
+ * The policy is enforced. It was verified against the real production build first, through
+ * e2e/security-headers.spec.ts, whose securitypolicyviolation collector drives Monaco, a query,
+ * the ELK layout worker and both export formats.
+ *
+ * CSP_REPORT_ONLY=true remains as an operator escape hatch, because a prebuilt image cannot be
+ * rebuilt by the person whose distribution channel broke.
  */
-const CSP_DEFAULT_REPORT_ONLY = true;
+const CSP_DEFAULT_REPORT_ONLY = false;
 
 // withSecurityHeaders runs on every proxied request, so an unrecognized value must warn at most
 // once per flag per process, not once per request (same reasoning as auth.ts's cookie-security

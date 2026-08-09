@@ -20,6 +20,14 @@ export default defineConfig({
       name: "chromium",
       use: { ...devices["Desktop Chrome"] },
     },
+    {
+      // Scoped to the CSP spec only. The desktop shell renders under WebKitGTK, and this is the
+      // nearest engine available in CI; the release-time desktop smoke test remains the final
+      // check on the webview.eval handoff and is listed in the Phase 1 pull request description.
+      name: "webkit-security",
+      use: { ...devices["Desktop Safari"] },
+      testMatch: /security-headers\.spec\.ts/,
+    },
   ],
   webServer: {
     command: "bun run build && bun start",

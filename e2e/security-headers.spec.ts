@@ -13,7 +13,7 @@
  */
 import { expect, test, type Page } from "@playwright/test";
 
-const CSP_HEADER = "content-security-policy-report-only";
+const CSP_HEADER = "content-security-policy";
 
 interface Violation {
   directive: string;

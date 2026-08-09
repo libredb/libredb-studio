@@ -31,7 +31,8 @@ function expectHardened(response: Response): void {
   expect(response.headers.get("referrer-policy")).toBe("same-origin");
   expect(response.headers.get("strict-transport-security")).toBe("max-age=15552000");
   expect(response.headers.get("permissions-policy")).toContain("camera=()");
-  expect(response.headers.get("content-security-policy-report-only")).toContain("frame-ancestors 'none'");
+  expect(response.headers.get("content-security-policy")).toContain("frame-ancestors 'none'");
+  expect(response.headers.get("content-security-policy-report-only")).toBeNull();
 }
 
 describe("every response the proxy returns carries the security headers", () => {
