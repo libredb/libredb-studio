@@ -15,14 +15,14 @@
 </p>
 
 <p align="center">
+  <img src="public/screenshots/hero-demo.gif" alt="LibreDB Studio" width="100%" />
+</p>
+
+<p align="center">
   <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"></a>
   <a href="https://sonarcloud.io/project/overview?id=libredb_libredb-studio"><img src="https://sonarcloud.io/api/project_badges/measure?project=libredb_libredb-studio&metric=alert_status" alt="Quality Gate"></a>
   <a href="#测试与质量"><img src="https://img.shields.io/badge/coverage-100%25-brightgreen" alt="Coverage 100%"></a>
   <a href="https://artifacthub.io/packages/helm/libredb-studio/libredb-studio"><img src="https://img.shields.io/endpoint?url=https://artifacthub.io/badge/repository/libredb-studio" alt="Artifact Hub"></a>
-</p>
-
-<p align="center">
-  <img src="public/screenshots/hero-editor.png" alt="LibreDB Studio" width="100%" />
 </p>
 
 ## 快速开始

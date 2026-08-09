@@ -15,6 +15,10 @@
 </p>
 
 <p align="center">
+  <img src="public/screenshots/hero-demo.gif" alt="Opening a table, running a join, charting the result and reading the ER diagram in LibreDB Studio" width="100%" />
+</p>
+
+<p align="center">
   <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"></a>
   <a href="https://sonarcloud.io/project/overview?id=libredb_libredb-studio"><img src="https://sonarcloud.io/api/project_badges/measure?project=libredb_libredb-studio&metric=alert_status" alt="Quality Gate"></a>
   <a href="#testing"><img src="https://img.shields.io/badge/coverage-100%25-brightgreen" alt="Coverage 100%"></a>
@@ -34,10 +38,6 @@
   <a href="#live-test"><strong>Live Demo</strong></a> •
   <a href="#getting-started"><strong>Install Options</strong></a> •
   <a href="#one-click-deploy"><strong>Deploy Your Own</strong></a>
-</p>
-
-<p align="center">
-  <img src="public/screenshots/hero-editor.png" alt="LibreDB Studio - Professional SQL IDE" width="100%" />
 </p>
 
 ---
