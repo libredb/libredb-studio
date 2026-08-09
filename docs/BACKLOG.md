@@ -244,6 +244,19 @@ Done when Phase 1's header work accounts for this gap: either give static assets
 through a different mechanism (e.g. `next.config`'s `headers()`), or narrow the matcher exclusion
 so it still skips the auth redirect without skipping header injection.
 
+### A3. `ALLOWED_ORIGINS` is read by the Origin check but not documented anywhere
+
+`src/lib/api/origin-check.ts`'s `configuredHosts()` reads `ALLOWED_ORIGINS`, and the 403 body the
+Origin check returns tells the operator by name to set it ("If Studio sits behind a reverse proxy,
+set ALLOWED_ORIGINS to its public origin"). Neither `.env.example` nor
+`charts/libredb-studio/README.md` mentions the variable, so an operator who hits the 403 has no
+reference for its exact syntax: comma-separated, accepts either a full origin
+(`https://db.example.com`) or a bare `host:port`, case-insensitive, scheme ignored on both sides.
+
+Done when `.env.example` documents it alongside the other reverse-proxy-facing variables
+(`TRUST_PROXY_HEADERS`, `TRUSTED_PROXY_HOPS`) and the Helm chart README's values reference mentions
+it for the ingress/ALB deployment path.
+
 ---
 
 ## Tests
