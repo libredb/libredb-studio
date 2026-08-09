@@ -12,7 +12,14 @@ test.describe("Admin Dashboard", () => {
   });
 
   test("admin dashboard loads", async ({ page }) => {
-    await expect(page.locator("text=Admin Dashboard")).toBeVisible({ timeout: 10000 });
+    // Scoped to the heading role, not a bare text locator: Next 16.3.0 shifted the timing of
+    // the App Router's accessibility route-announcer (the hidden shadow-DOM live region Next
+    // renders for screen readers on client navigation) relative to 16.1.6, so the announcer's
+    // text now settles to this page's title ("Admin Dashboard", the h1 fallback - this app sets
+    // no per-route <title>) within the assertion's polling window. A bare `text=Admin Dashboard`
+    // locator then resolves to two elements - the visible h1 and the announcer - and fails with
+    // a strict-mode violation instead of asserting the intended, visible heading.
+    await expect(page.getByRole("heading", { name: "Admin Dashboard" })).toBeVisible({ timeout: 10000 });
   });
 
   test("shows 5 section nav links", async ({ page }) => {
