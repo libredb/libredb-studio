@@ -120,6 +120,11 @@ function OperationsAudit() {
             <SelectItem value="kill_session">Kill Session</SelectItem>
             <SelectItem value="masking_config">Masking</SelectItem>
             <SelectItem value="threshold_config">Thresholds</SelectItem>
+            <SelectItem value="login_success">Login Success</SelectItem>
+            <SelectItem value="login_failure">Login Failure</SelectItem>
+            <SelectItem value="logout">Logout</SelectItem>
+            <SelectItem value="permission_denied">Permission Denied</SelectItem>
+            <SelectItem value="rate_limit_exceeded">Rate Limited</SelectItem>
           </SelectContent>
         </Select>
         <Input

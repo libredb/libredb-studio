@@ -1,0 +1,198 @@
+import { beforeEach, describe, expect, spyOn, test } from "bun:test";
+import { emitAuditEvent, getServerAuditBuffer } from "@/lib/audit";
+
+/**
+ * Threat: a secret reaching the audit trail or the log pipeline, or an attacker-controlled value
+ * forging a second log line so a brute-force run reads as something else.
+ *
+ * The audit channel deliberately does NOT reuse logger.ts's sanitizeLogValue. JSON.stringify
+ * escapes newlines and control characters structurally, which is a stronger guarantee than a
+ * replace() someone can later narrow, and logger.ts additionally emits a non-parseable
+ * "[LEVEL] [ts] {k=v} message" shape and does not redact secrets from error.message or stack.
+ */
+
+const ALLOWED_KEYS = new Set([
+  "schema",
+  "ts",
+  "id",
+  "event",
+  "action",
+  "outcome",
+  "actor",
+  "route",
+  "reason",
+  "ip",
+  "connection",
+  "duration_ms",
+]);
+
+function captureLine(emit: () => void): Record<string, unknown> {
+  const spy = spyOn(console, "log").mockImplementation(() => {});
+  try {
+    emit();
+    expect(spy).toHaveBeenCalledTimes(1);
+    const written = spy.mock.calls[0][0] as string;
+    // Exactly one line: a forged newline would make this more than one.
+    expect(written.split("\n").length).toBe(1);
+    return JSON.parse(written) as Record<string, unknown>;
+  } finally {
+    spy.mockRestore();
+  }
+}
+
+beforeEach(() => {
+  getServerAuditBuffer().clear();
+});
+
+describe("emitAuditEvent", () => {
+  test("writes exactly one JSON object carrying only allowlisted keys", () => {
+    const line = captureLine(() =>
+      emitAuditEvent({
+        type: "login_failure",
+        action: "login",
+        target: "POST /api/auth/login",
+        user: "admin@libredb.org",
+        result: "failure",
+        reason: "bad_credentials",
+        ip: "203.0.113.9",
+      }),
+    );
+
+    for (const key of Object.keys(line)) {
+      expect({ key, allowed: ALLOWED_KEYS.has(key) }).toEqual({ key, allowed: true });
+    }
+    expect(line.schema).toBe("libredb.audit.v1");
+    expect(line.event).toBe("login_failure");
+    expect(line.action).toBe("login");
+    expect(line.outcome).toBe("failure");
+    expect(line.actor).toBe("admin@libredb.org");
+    expect(line.route).toBe("POST /api/auth/login");
+    expect(line.reason).toBe("bad_credentials");
+    expect(line.ip).toBe("203.0.113.9");
+  });
+
+  test("cannot be made to forge a second log line through the actor field", () => {
+    const line = captureLine(() =>
+      emitAuditEvent({
+        type: "login_failure",
+        action: "login",
+        target: "POST /api/auth/login",
+        user: '\n{"schema":"libredb.audit.v1","event":"login_success","actor":"root"}',
+        result: "failure",
+        reason: "bad_credentials",
+      }),
+    );
+
+    expect(line.event).toBe("login_failure");
+    expect(String(line.actor)).toContain("login_success");
+  });
+
+  test("carries no field that could hold a credential, a token or a connection string", () => {
+    const line = captureLine(() =>
+      emitAuditEvent({
+        type: "login_failure",
+        action: "login",
+        target: "POST /api/auth/login",
+        user: "admin@libredb.org",
+        result: "failure",
+        reason: "bad_credentials",
+        // These are the shapes a careless call site would try to attach. The AuditEvent fields
+        // that could carry them (details) are not part of the emitted allowlist, and reason is a
+        // closed union so no error string can reach the record.
+        details: "password=hunter2 token=eyJhbGciOiJIUzI1NiJ9.x.y postgres://u:p@db:5432/app",
+      }),
+    );
+
+    const serialized = JSON.stringify(line);
+    expect(serialized).not.toContain("hunter2");
+    expect(serialized).not.toContain("eyJhbGciOiJIUzI1NiJ9");
+    expect(serialized).not.toContain("postgres://");
+    expect(line.details).toBeUndefined();
+  });
+
+  test("truncates the actor so a 10 KB submitted email cannot bloat every line", () => {
+    const line = captureLine(() =>
+      emitAuditEvent({
+        type: "login_failure",
+        action: "login",
+        target: "POST /api/auth/login",
+        user: "a".repeat(10_000),
+        result: "failure",
+        reason: "bad_credentials",
+      }),
+    );
+
+    expect(String(line.actor).length).toBe(254);
+  });
+
+  test("omits the reason, the ip, the connection and the duration when they are absent", () => {
+    const line = captureLine(() =>
+      emitAuditEvent({
+        type: "logout",
+        action: "logout",
+        target: "POST /api/auth/logout",
+        user: "anonymous",
+        result: "success",
+      }),
+    );
+
+    expect("reason" in line).toBe(false);
+    expect("ip" in line).toBe(false);
+    expect("connection" in line).toBe(false);
+    expect("duration_ms" in line).toBe(false);
+  });
+
+  test("omits an unknown ip rather than recording the placeholder as an address", () => {
+    const line = captureLine(() =>
+      emitAuditEvent({
+        type: "permission_denied",
+        action: "denied",
+        target: "POST /api/db/query",
+        user: "anonymous",
+        result: "failure",
+        reason: "no_session",
+        ip: "unknown",
+      }),
+    );
+
+    expect("ip" in line).toBe(false);
+  });
+
+  test("carries the connection and the duration when a caller supplies them", () => {
+    const line = captureLine(() =>
+      emitAuditEvent({
+        type: "query_execution",
+        action: "query",
+        target: "POST /api/db/query",
+        connectionName: "sample-employees",
+        user: "user@libredb.org",
+        result: "success",
+        duration: 42,
+      }),
+    );
+
+    expect(line.connection).toBe("sample-employees");
+    expect(line.duration_ms).toBe(42);
+  });
+
+  test("also pushes the event to the buffer the admin UI reads, sharing its id", () => {
+    const spy = spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const stored = emitAuditEvent({
+        type: "login_success",
+        action: "login",
+        target: "POST /api/auth/login",
+        user: "admin@libredb.org",
+        result: "success",
+      });
+      const line = JSON.parse(spy.mock.calls[0][0] as string) as Record<string, unknown>;
+
+      expect(getServerAuditBuffer().getAll()).toHaveLength(1);
+      expect(getServerAuditBuffer().getAll()[0].id).toBe(stored.id);
+      expect(line.id).toBe(stored.id);
+      expect(line.ts).toBe(stored.timestamp);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
