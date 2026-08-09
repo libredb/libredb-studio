@@ -223,3 +223,47 @@ describe("dependency-scan reports on pull requests and gates elsewhere", () => {
     expect(sarif?.with?.category).toBe("trivy-dependencies");
   });
 });
+
+describe("image-scan reports and never gates", () => {
+  const job = workflow.jobs["image-scan"];
+  const steps = job?.steps ?? [];
+  const scan = steps.find((s) => s.run?.includes("--output /out/image.json"));
+  const sarif = steps.find((s) => s.uses?.startsWith("github/codeql-action/upload-sarif@"));
+
+  test("exists and is named for a human reading the checks list", () => {
+    expect(job).toBeDefined();
+    expect(job.name).toBe("Image Scan");
+  });
+
+  test("never runs on a pull request - there is no image for a pull request", () => {
+    // docker-build-push.yml publishes from main, feature branches and releases.
+    // A pull request has no image of its own, and scanning :latest from a pull
+    // request would report the released image against unrelated code.
+    expect(job.if).toContain("github.event_name != 'pull_request'");
+  });
+
+  test("scans the image users actually run", () => {
+    expect(scan?.run).toContain("ghcr.io/libredb/libredb-studio:latest");
+  });
+
+  test("cannot fail: no exit code anywhere in this job", () => {
+    // Measured 2026-08-09: the runtime base carries 4 critical and 18 high
+    // Debian CVEs, and 167 of 168 findings have no fixed package. Any
+    // --exit-code here is a permanent red, which ends with the workflow being
+    // disabled rather than the CVEs being fixed.
+    for (const step of steps) {
+      expect({ name: step.name, gates: (step.run ?? "").includes("--exit-code") }).toEqual({
+        name: step.name,
+        gates: false,
+      });
+    }
+  });
+
+  test("uploads under its own category so it does not overwrite the dependency results", () => {
+    expect(sarif?.with?.category).toBe("trivy-image");
+  });
+
+  test("can read the image from GHCR", () => {
+    expect(job.permissions?.packages).toBe("read");
+  });
+});

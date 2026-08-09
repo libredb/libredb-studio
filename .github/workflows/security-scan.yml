@@ -319,3 +319,123 @@ jobs:
             echo "3. Do not add \`continue-on-error\` to this step. If the threshold is wrong,"
             echo "   change the threshold in review."
           } >> "$GITHUB_STEP_SUMMARY"
+
+  image-scan:
+    name: Image Scan
+    # Not on a pull request: a pull request has no image of its own, and scanning
+    # the released :latest from a pull request would report findings that have
+    # nothing to do with the change under review. Not on a main push either: that
+    # push is racing docker-build-push.yml's own build for the same commit. The
+    # daily cron asks the only question worth asking here - what is in the image
+    # users are running right now.
+    if: github.event_name != 'pull_request' && github.event_name != 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      # Pull the published image from GHCR.
+      packages: read
+      security-events: write
+    steps:
+      - name: Compute the database cache day
+        id: day
+        run: echo "value=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore the Trivy vulnerability database
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ runner.temp }}/trivy-cache
+          key: trivy-db-${{ steps.day.outputs.value }}
+          restore-keys: trivy-db-
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Scan the published image
+        env:
+          TRIVY_USERNAME: ${{ github.actor }}
+          TRIVY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/trivy-cache" "$RUNNER_TEMP/trivy-out"
+          # No severity filter and no exit code. This job's entire job is to make
+          # the OS layer visible: measured 2026-08-09, the runtime base image
+          # carries 4 critical and 18 high Debian CVEs of which 167 of 168
+          # findings have no fixed package available. There is nothing to gate on
+          # and pretending otherwise ends with the workflow disabled.
+          #
+          # ~/.docker/config.json carries the GHCR credentials from the login
+          # step, which is what lets Trivy resolve the image inside the container.
+          docker run --rm \
+            -e TRIVY_USERNAME -e TRIVY_PASSWORD \
+            -v "$HOME/.docker/config.json:/root/.docker/config.json:ro" \
+            -v "$RUNNER_TEMP/trivy-cache:/root/.cache/trivy" \
+            -v "$RUNNER_TEMP/trivy-out:/out" \
+            "$TRIVY_IMAGE" image \
+              --scanners vuln \
+              --format json \
+              --output /out/image.json \
+              ghcr.io/libredb/libredb-studio:latest
+
+      - name: Render the report
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            -v "$RUNNER_TEMP/trivy-out:/out" \
+            "$TRIVY_IMAGE" convert --format table --severity CRITICAL,HIGH --output /out/image.txt /out/image.json
+          docker run --rm \
+            -v "$RUNNER_TEMP/trivy-out:/out" \
+            "$TRIVY_IMAGE" convert --format sarif --output /out/image.sarif /out/image.json
+
+      - name: Generate the image SBOM
+        run: |
+          set -euo pipefail
+          # Not a release asset, and it cannot be one: release-artifacts.yml
+          # publishes the release BEFORE dispatching docker-build-push.yml, and
+          # immutable releases (#154) freeze the asset set at publish time. The
+          # source SBOM on the release covers the application closure; this one
+          # adds the Debian layer, and anyone can regenerate it from the immutable
+          # digest at any time with the command documented in SECURITY.md.
+          docker run --rm \
+            -v "$HOME/.docker/config.json:/root/.docker/config.json:ro" \
+            -v "$RUNNER_TEMP/trivy-cache:/root/.cache/trivy" \
+            -v "$RUNNER_TEMP/trivy-out:/out" \
+            "$TRIVY_IMAGE" image \
+              --format cyclonedx \
+              --scanners license \
+              --output /out/image.cdx.json \
+              ghcr.io/libredb/libredb-studio:latest
+
+      - name: Publish the findings to the job summary
+        run: |
+          set -euo pipefail
+          {
+            echo "## Published image: ghcr.io/libredb/libredb-studio:latest"
+            echo
+            echo "Critical and high findings only. Most carry no fixed package - Debian's"
+            echo "security team has not shipped one - which is why this job reports and never"
+            echo "gates. The actionable subset is the one with a Fixed Version column entry:"
+            echo "that is a base-image bump in \`Dockerfile\`."
+            echo
+            echo '```'
+            cat "$RUNNER_TEMP/trivy-out/image.txt"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the findings to the security tab
+        uses: github/codeql-action/upload-sarif@a60c4df7a135c7317c1e9ddf9b5a9b07a910dda9 # v4
+        with:
+          sarif_file: ${{ runner.temp }}/trivy-out/image.sarif
+          category: trivy-image
+
+      - name: Upload the image SBOM
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: image-sbom
+          path: ${{ runner.temp }}/trivy-out/image.cdx.json
+          if-no-files-found: error
+          retention-days: 30
