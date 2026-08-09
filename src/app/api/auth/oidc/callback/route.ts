@@ -3,15 +3,39 @@ import { cookies } from "next/headers";
 import { login } from "@/lib/auth";
 import { getOIDCConfig, discoverProvider, exchangeCode, decryptState, mapOIDCRole, getPublicOrigin } from "@/lib/oidc";
 import { logger } from "@/lib/logger";
+import { clientAddress } from "@/lib/api/client-address";
+import { emitAuditEvent, type AuditReason } from "@/lib/audit";
+
+const ROUTE = "GET /api/auth/oidc/callback";
+
+/**
+ * One event type with a reason enum, not five event types. The reasons reuse the redirect codes
+ * the login page already shows the user through ?error=, so the taxonomy an operator reads in the
+ * audit trail and the one a user sees on screen are the same taxonomy. It also keeps the admin
+ * filter low-cardinality.
+ */
+function auditFailure(reason: AuditReason, ip: string): void {
+  emitAuditEvent({
+    type: "login_failure",
+    action: "login",
+    target: ROUTE,
+    user: "anonymous",
+    result: "failure",
+    reason,
+    ip,
+  });
+}
 
 export async function GET(request: Request) {
   const origin = getPublicOrigin(request);
+  const ip = clientAddress(request);
 
   try {
     const cookieStore = await cookies();
     const stateCookie = cookieStore.get("oidc-state")?.value;
 
     if (!stateCookie) {
+      auditFailure("oidc_state_missing", ip);
       return NextResponse.redirect(`${origin}/login?error=oidc_state_missing`);
     }
 
@@ -21,10 +45,11 @@ export async function GET(request: Request) {
       oidcState = await decryptState(stateCookie);
     } catch (decryptError) {
       logger.warn("OIDC state decryption failed", {
-        route: "GET /api/auth/oidc/callback",
+        route: ROUTE,
         error: decryptError instanceof Error ? decryptError.message : "Unknown",
       });
       cookieStore.delete("oidc-state");
+      auditFailure("oidc_state_invalid", ip);
       return NextResponse.redirect(`${origin}/login?error=oidc_state_invalid`);
     }
 
@@ -40,6 +65,7 @@ export async function GET(request: Request) {
 
     if (!claims) {
       logger.warn("OIDC callback: no claims returned from token exchange", { route: "oidc/callback" });
+      auditFailure("oidc_no_claims", ip);
       return NextResponse.redirect(`${origin}/login?error=oidc_no_claims`);
     }
 
@@ -53,11 +79,21 @@ export async function GET(request: Request) {
     // Clean up state cookie
     cookieStore.delete("oidc-state");
 
+    emitAuditEvent({
+      type: "login_success",
+      action: "login",
+      target: ROUTE,
+      user: String(username),
+      result: "success",
+      ip,
+    });
+
     // Redirect based on role
     return NextResponse.redirect(`${origin}${role === "admin" ? "/admin" : "/"}`);
   } catch (error) {
-    logger.error("OIDC callback error", error, { route: "GET /api/auth/oidc/callback" });
+    logger.error("OIDC callback error", error, { route: ROUTE });
     const errorCode = error instanceof Error && error.message.includes("config") ? "oidc_config" : "oidc_failed";
+    auditFailure(errorCode, ip);
     return NextResponse.redirect(`${origin}/login?error=${errorCode}`);
   }
 }
