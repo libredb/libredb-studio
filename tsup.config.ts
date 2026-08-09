@@ -8,6 +8,7 @@ export default defineConfig({
     types: "src/exports/types.ts",
     components: "src/exports/components.ts",
     workspace: "src/exports/workspace.ts",
+    security: "src/exports/security.ts",
   },
   format: ["esm", "cjs"],
   dts: true,

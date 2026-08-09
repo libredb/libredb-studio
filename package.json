@@ -62,6 +62,16 @@
         "types": "./dist/workspace.d.ts",
         "default": "./dist/workspace.js"
       }
+    },
+    "./security": {
+      "import": {
+        "types": "./dist/security.d.mts",
+        "default": "./dist/security.mjs"
+      },
+      "require": {
+        "types": "./dist/security.d.ts",
+        "default": "./dist/security.js"
+      }
     }
   },
   "bin": {
