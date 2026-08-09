@@ -146,6 +146,61 @@ When using LibreDB Studio, please follow these security best practices:
 - User queries sent to LLM providers may be logged by the provider
 - Consider privacy implications when using cloud-based LLM services
 
+#### Supply Chain
+
+- Dependencies are scanned on every pull request against the lockfiles that
+  actually build the shipped artefacts: `bun.lock`, the Windows launcher's
+  `go.mod`, and the desktop shell's `Cargo.lock`. Findings appear in the run's
+  job summary and, for branches in this repository, in the GitHub Security tab
+- The scan **fails** only for a CRITICAL advisory that has a fixed version
+  available and is not covered by an unexpired entry in `.trivyignore.yaml`, and
+  only outside pull requests. Findings with no available fix are reported and
+  never gate: the runtime container image inherits Debian package advisories for
+  which no fixed package exists, and a gate over those would be permanently red
+  without making anyone safer
+- Every suppression in `.trivyignore.yaml` carries a written justification and an
+  expiry date. An expired suppression is re-reported, so a decision to accept a
+  risk has to be made again rather than inherited
+- The published container image is scanned daily and its findings are published
+  to the Security tab. Most OS-package findings in any Debian-based image have no
+  fixed package available at the time they appear; the ones that do are taken by
+  bumping the base image
+- Every commit is scanned for credentials. The full history was swept once and
+  classified: 24 matches across 753 commits, every one of them a fabricated test
+  fixture, a documented example password or UI placeholder copy. **No credential
+  has ever been committed to this repository**, and none has been rotated for that
+  reason. The classification is `.gitleaks.toml`, and the full sweep runs again on
+  every push to `main` and daily
+- The production build type-checks. `next.config.ts` sets no
+  `typescript.ignoreBuildErrors`, so a type error fails the build rather than
+  shipping
+
+### Software Bill of Materials
+
+Every release carries `libredb-studio-<version>.cdx.json`, a CycloneDX 1.7 SBOM
+of the production dependency closure, attached as a release asset and signed with
+a GitHub build-provenance attestation. It covers all three ecosystems the release
+is built from — npm, Go and Rust — and therefore describes the npm package, the
+standalone tarballs, the Windows zip, the `.deb` and `.rpm` packages, the snap,
+the AppImage and the desktop package alike.
+
+Verify it:
+
+```bash
+gh attestation verify libredb-studio-0.9.67.cdx.json --repo libredb/libredb-studio
+```
+
+The container image is not covered by that document, because the image is built
+after the release is published and this project's releases are immutable. Its
+SBOM is generated daily from the published image, and you can regenerate it
+yourself from any digest at any time:
+
+```bash
+trivy image --format cyclonedx --scanners license \
+  --output libredb-studio-image.cdx.json \
+  ghcr.io/libredb/libredb-studio:0.9.67
+```
+
 ### Security Updates
 
 Security updates will be released as:
