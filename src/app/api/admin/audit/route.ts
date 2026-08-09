@@ -1,6 +1,6 @@
 import { getSession } from "@/lib/auth";
 import { NextResponse } from "next/server";
-import { getServerAuditBuffer, type AuditEventType } from "@/lib/audit";
+import { emitAuditEvent, getServerAuditBuffer, type AuditEventType } from "@/lib/audit";
 import { createErrorResponse } from "@/lib/api/errors";
 
 export async function GET(request: Request) {
@@ -31,8 +31,7 @@ export async function POST(request: Request) {
 
   try {
     const event = await request.json();
-    const buffer = getServerAuditBuffer();
-    const created = buffer.push({
+    const created = emitAuditEvent({
       ...event,
       user: session.username || "admin",
     });

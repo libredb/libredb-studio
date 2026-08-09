@@ -28,7 +28,7 @@ const mockGetSession = mock(
 );
 
 // ─── Mock audit buffer ──────────────────────────────────────────────────────
-const mockAuditPush = mock(() => ({
+const mockAuditPush = mock((_event?: unknown) => ({
   id: "1",
   timestamp: new Date().toISOString(),
   type: "maintenance",
@@ -70,6 +70,10 @@ mock.module("@/lib/seed/resolve-connection", () => {
 
 mock.module("@/lib/audit", () => ({
   getServerAuditBuffer: () => ({ push: mockAuditPush }),
+  // The route calls emitAuditEvent (the sanitizing boundary), not buffer.push, directly. This
+  // delegates to the same push mock the test suite already exercises, so no assertion elsewhere
+  // needs to change target.
+  emitAuditEvent: (event: Record<string, unknown>) => mockAuditPush(event as never),
   AuditRingBuffer: class {},
   loadAuditFromStorage: () => [],
   saveAuditToStorage: () => {},

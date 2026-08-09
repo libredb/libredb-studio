@@ -148,8 +148,17 @@ const CREDENTIAL_REDACTION = "[REDACTED]";
  * Matches `scheme://userinfo@` so a connection string's `user:password` (or a bare token used as
  * userinfo) can be replaced before the value reaches either destination. The host and everything
  * after `@` is left intact — an operator needs to know which host, not the password.
+ *
+ * Per RFC 3986, userinfo ends at the LAST `@` before the host, not the first: a password like
+ * `p@ssw0rd` is an ordinary shape, not a contrived one. The character class deliberately does NOT
+ * exclude `@` (only `/` and whitespace, which the host/path/end always are): a greedy `+` run
+ * against a bounded authority string can only stop where the engine's backtracking finds a
+ * trailing literal `@`, and backtracking searches from the longest match down, so it lands on the
+ * rightmost `@` still inside that run — the one immediately before the host — rather than the
+ * first one it happens to see. Excluding `/` and whitespace from the class is what keeps the match
+ * from crossing into the path or across a value with no scheme at all.
  */
-const URI_CREDENTIAL_PATTERN = /([a-zA-Z][a-zA-Z0-9+.-]*):\/\/[^/\s@]+@/g;
+const URI_CREDENTIAL_PATTERN = /([a-zA-Z][a-zA-Z0-9+.-]*):\/\/[^/\s]+@/g;
 
 /**
  * The one gate every free-text field passes through before it can reach either destination: strip
@@ -171,14 +180,18 @@ function sanitizeAuditField(value: string): string {
  * this sweep; there is no opt-in step to forget.
  */
 function sanitizeAuditInput(event: Omit<AuditEvent, "id" | "timestamp">): Omit<AuditEvent, "id" | "timestamp"> {
-  const sanitized: Record<string, unknown> = { ...event };
-  for (const key of Object.keys(sanitized)) {
-    const value = sanitized[key];
+  const sanitized: Omit<AuditEvent, "id" | "timestamp"> = { ...event };
+  // A second, dynamically-keyed view of the SAME object (not a copy, no cast): every property of
+  // an AuditEvent is a valid Record<string, unknown> value, so this assignment needs no assertion,
+  // and mutating through it mutates `sanitized` because both names refer to one object.
+  const mutable: Record<string, unknown> = sanitized;
+  for (const key of Object.keys(mutable)) {
+    const value = mutable[key];
     if (typeof value === "string") {
-      sanitized[key] = sanitizeAuditField(value);
+      mutable[key] = sanitizeAuditField(value);
     }
   }
-  return sanitized as unknown as Omit<AuditEvent, "id" | "timestamp">;
+  return sanitized;
 }
 
 /**

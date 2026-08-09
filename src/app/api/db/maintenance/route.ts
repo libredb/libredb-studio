@@ -1,7 +1,7 @@
 import { getSession } from "@/lib/auth";
 import { NextResponse } from "next/server";
 import { getOrCreateProvider, type MaintenanceType } from "@/lib/db";
-import { getServerAuditBuffer } from "@/lib/audit";
+import { emitAuditEvent } from "@/lib/audit";
 import { createErrorResponse } from "@/lib/api/errors";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
 
@@ -44,8 +44,7 @@ export async function POST(request: Request) {
     const duration = Date.now() - startTime;
 
     // Emit audit event
-    const audit = getServerAuditBuffer();
-    audit.push({
+    emitAuditEvent({
       type: type === "kill" ? "kill_session" : "maintenance",
       action: type.toUpperCase(),
       target: target || "all",

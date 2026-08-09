@@ -322,6 +322,106 @@ describe("emitAuditEvent", () => {
     }
   });
 
+  /**
+   * Threat: per RFC 3986, a URI's userinfo ends at the LAST `@` before the host, not the first —
+   * and `P@ssw0rd` shapes are ordinary. A pattern that stops at the first `@` leaves the tail of
+   * the password sitting in front of the host, where it reads as if it belongs to nothing. Each
+   * case uses a password distinct from `supersecret` (the constant reused by the per-field tests
+   * above) so a regression here cannot pass by accident because some other test's fixture happens
+   * to satisfy it.
+   */
+  describe("the credential pattern resolves the userinfo boundary correctly", () => {
+    test("redacts a plain single-@ connection string, keeping the host", () => {
+      const line = captureLine(() =>
+        emitAuditEvent({
+          type: "query_execution",
+          action: "query",
+          target: "POST /api/db/query",
+          connectionName: "postgres://user:pass@host:5432/db",
+          user: "user@libredb.org",
+          result: "success",
+        }),
+      );
+
+      expect(line.connection).toBe("postgres://[REDACTED]@host:5432/db");
+    });
+
+    test("fully redacts a password containing an embedded @, leaving no fragment before the host", () => {
+      const line = captureLine(() =>
+        emitAuditEvent({
+          type: "query_execution",
+          action: "query",
+          target: "POST /api/db/query",
+          connectionName: "postgres://user:p@ss@host:5432/db",
+          user: "user@libredb.org",
+          result: "success",
+        }),
+      );
+
+      expect(line.connection).toBe("postgres://[REDACTED]@host:5432/db");
+    });
+
+    test("fully redacts a password containing multiple embedded @ characters", () => {
+      const line = captureLine(() =>
+        emitAuditEvent({
+          type: "query_execution",
+          action: "query",
+          target: "POST /api/db/query",
+          connectionName: "postgres://user:p@s@s@host/db",
+          user: "user@libredb.org",
+          result: "success",
+        }),
+      );
+
+      expect(line.connection).toBe("postgres://[REDACTED]@host/db");
+    });
+
+    test("leaves a connection string with no userinfo untouched", () => {
+      const line = captureLine(() =>
+        emitAuditEvent({
+          type: "query_execution",
+          action: "query",
+          target: "POST /api/db/query",
+          connectionName: "postgres://host:5432/db",
+          user: "user@libredb.org",
+          result: "success",
+        }),
+      );
+
+      expect(line.connection).toBe("postgres://host:5432/db");
+    });
+
+    test("does not mangle a bare email address with no scheme", () => {
+      const line = captureLine(() =>
+        emitAuditEvent({
+          type: "login_failure",
+          action: "login",
+          target: "POST /api/auth/login",
+          user: "admin@libredb.org",
+          result: "failure",
+          reason: "bad_credentials",
+        }),
+      );
+
+      expect(line.actor).toBe("admin@libredb.org");
+    });
+
+    test("does not treat an @ inside the path as if it were userinfo", () => {
+      const line = captureLine(() =>
+        emitAuditEvent({
+          type: "login_failure",
+          action: "login",
+          target: "https://example.com/user@example/profile",
+          user: "admin@libredb.org",
+          result: "failure",
+          reason: "bad_credentials",
+        }),
+      );
+
+      expect(line.route).toBe("https://example.com/user@example/profile");
+    });
+  });
+
   test("bounds an oversized ip so a spoofed forwarded-for chain cannot bloat every line", () => {
     const line = captureLine(() =>
       emitAuditEvent({
