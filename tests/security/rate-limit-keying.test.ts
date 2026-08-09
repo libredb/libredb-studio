@@ -64,8 +64,11 @@ describe("a legitimate deployment behind one reverse proxy", () => {
     process.env.TRUSTED_PROXY_HOPS = "1";
     process.env.RATE_LIMIT_LOGIN_MAX = "1";
 
-    const alice = clientAddress(request({ "x-forwarded-for": "spoofed, 198.51.100.7, 10.0.0.2" }));
-    const bob = clientAddress(request({ "x-forwarded-for": "spoofed, 198.51.100.8, 10.0.0.2" }));
+    // One trusted proxy appends exactly one entry - the rightmost - so that is the position that
+    // must vary between two different real clients; "spoofed" and the middle entry are both
+    // attacker-suppliable prefix and must never affect which bucket a request lands in.
+    const alice = clientAddress(request({ "x-forwarded-for": "spoofed, 10.0.0.2, 198.51.100.7" }));
+    const bob = clientAddress(request({ "x-forwarded-for": "spoofed, 10.0.0.2, 198.51.100.8" }));
 
     expect(consumeRateLimit("login_client", alice).allowed).toBe(true);
     expect(consumeRateLimit("login_client", bob).allowed).toBe(true);

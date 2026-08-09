@@ -33,16 +33,28 @@ describe("clientAddress", () => {
     expect(clientAddress(request({ "x-forwarded-for": "203.0.113.9, 10.0.0.1, 10.0.0.2" }))).toBe("203.0.113.9");
   });
 
-  test("takes the hop the operator's topology says to trust", () => {
+  // One trusted proxy (e.g. a single nginx using proxy_add_x_forwarded_for): it appends exactly
+  // one entry, so the real client is the LAST entry, not the second-to-last - a forged leading
+  // entry is fully attacker-suppliable and must never be selected.
+  test("one proxy hop: takes the rightmost entry, not a forged leading one", () => {
     process.env.TRUSTED_PROXY_HOPS = "1";
 
-    expect(clientAddress(request({ "x-forwarded-for": "203.0.113.9, 198.51.100.7, 10.0.0.2" }))).toBe("198.51.100.7");
+    expect(clientAddress(request({ "x-forwarded-for": "9.9.9.9, 203.0.113.9" }))).toBe("203.0.113.9");
   });
 
-  test("clamps a hop count larger than the chain instead of returning undefined", () => {
+  // Two trusted proxies each append one entry as the request passes through, so the real client
+  // sits two entries in from the right; everything left of that - including a forged prefix - is
+  // untrusted.
+  test("two proxy hops: takes the entry two positions from the right, not a forged leading one", () => {
+    process.env.TRUSTED_PROXY_HOPS = "2";
+
+    expect(clientAddress(request({ "x-forwarded-for": "9.9.9.9, 203.0.113.9, 198.51.100.7" }))).toBe("203.0.113.9");
+  });
+
+  test("falls back to the rightmost entry, not the leftmost, when the hop count exceeds the chain", () => {
     process.env.TRUSTED_PROXY_HOPS = "9";
 
-    expect(clientAddress(request({ "x-forwarded-for": "203.0.113.9, 10.0.0.1" }))).toBe("203.0.113.9");
+    expect(clientAddress(request({ "x-forwarded-for": "203.0.113.9, 10.0.0.1" }))).toBe("10.0.0.1");
   });
 
   test("falls back to x-real-ip when there is no forwarded chain", () => {

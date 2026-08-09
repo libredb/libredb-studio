@@ -43,9 +43,17 @@ export function clientAddress(request: { headers: Headers }): string {
       .filter((entry) => entry.length > 0);
     if (entries.length > 0) {
       const hops = parsePositiveInt(process.env.TRUSTED_PROXY_HOPS, 0, MAX_HOPS);
-      // 0 means "the leftmost entry", the conventional client position. A non-zero value counts
-      // back from the rightmost entry, which is the hop the operator's own proxy appended.
-      const index = hops === 0 ? 0 : Math.min(Math.max(entries.length - 1 - hops, 0), entries.length - 1);
+      // 0 means "the leftmost entry", the conventional client position (no trusted proxy
+      // configured). Otherwise: each of the `hops` trusted proxies appends exactly one entry as
+      // the request passes through it, so the real client sits `hops` entries counted in from the
+      // RIGHT end - i.e. at index (entries.length - hops), counting positions from the left. Any
+      // entries to the left of that are attacker-suppliable prefix and must never be trusted.
+      // If the header is shorter than the configured hop count (a direct connection that bypassed
+      // the proxy, or a stripped header), that index falls below zero - fall back to the
+      // RIGHTMOST entry, the most trustworthy value actually present, never the leftmost, which
+      // is fully attacker-controlled.
+      const rawIndex = entries.length - hops;
+      const index = hops === 0 ? 0 : rawIndex >= 0 ? rawIndex : entries.length - 1;
       return entries[index].slice(0, MAX_ADDRESS_LENGTH);
     }
   }
