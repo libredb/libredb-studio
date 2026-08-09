@@ -7,11 +7,13 @@ import { guardRoute } from "@/lib/api/require-session";
 export async function POST(req: NextRequest) {
   let provider = null;
 
+  // Moved ahead of req.json(): an unauthenticated caller no longer gets a body parsed on its
+  // behalf, and the rate limiter sees the request before any work is done for it.
+  const guard = await guardRoute({ route: "POST /api/db/test-connection", bucket: "query", request: req });
+  if ("response" in guard) return guard.response;
+
   try {
     const body = await req.json();
-
-    const guard = await guardRoute({ route: "POST /api/db/test-connection", bucket: "query", request: req });
-    if ("response" in guard) return guard.response;
 
     // Support both formats: { connectionId: "seed:X" }, { connection: {...} }, or bare connection object
     const connection = await resolveConnection(

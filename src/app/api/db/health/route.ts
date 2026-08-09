@@ -22,11 +22,13 @@ export async function GET() {
  * Detailed health check for a specific database connection
  */
 export async function POST(req: NextRequest) {
+  // Moved ahead of req.json(): an unauthenticated caller no longer gets a body parsed on its
+  // behalf, and the rate limiter sees the request before any work is done for it.
+  const guard = await guardRoute({ route: "POST /api/db/health", bucket: "query", request: req });
+  if ("response" in guard) return guard.response;
+
   try {
     const body = await req.json();
-
-    const guard = await guardRoute({ route: "POST /api/db/health", bucket: "query", request: req });
-    if ("response" in guard) return guard.response;
 
     const connection = await resolveConnection(body, guard.session);
 

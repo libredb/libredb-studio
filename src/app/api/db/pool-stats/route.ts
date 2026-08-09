@@ -5,11 +5,13 @@ import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
 
 export async function POST(request: NextRequest) {
+  // Moved ahead of request.json(): an unauthenticated caller no longer gets a body parsed on its
+  // behalf, and the rate limiter sees the request before any work is done for it.
+  const guard = await guardRoute({ route: "POST /api/db/pool-stats", bucket: "query", request });
+  if ("response" in guard) return guard.response;
+
   try {
     const body = await request.json();
-
-    const guard = await guardRoute({ route: "POST /api/db/pool-stats", bucket: "query", request });
-    if ("response" in guard) return guard.response;
 
     const connection = await resolveConnection(body, guard.session);
 

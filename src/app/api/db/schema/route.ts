@@ -7,6 +7,11 @@ import { guardRoute } from "@/lib/api/require-session";
 export const dynamic = "force-dynamic";
 
 export async function POST(req: NextRequest) {
+  // Moved ahead of body parsing: an unauthenticated caller no longer gets a body parsed on its
+  // behalf, and the rate limiter sees the request before any work is done for it.
+  const guard = await guardRoute({ route: "POST /api/db/schema", bucket: "query", request: req });
+  if ("response" in guard) return guard.response;
+
   try {
     let body;
     try {
@@ -18,9 +23,6 @@ export async function POST(req: NextRequest) {
     if (!body || (typeof body === "object" && Object.keys(body).length === 0)) {
       return NextResponse.json({ error: "Empty request body" }, { status: 400 });
     }
-
-    const guard = await guardRoute({ route: "POST /api/db/schema", bucket: "query", request: req });
-    if ("response" in guard) return guard.response;
 
     // Support both formats: { connectionId: "seed:X" }, { connection: {...} }, or bare connection object
     const connection = await resolveConnection(
