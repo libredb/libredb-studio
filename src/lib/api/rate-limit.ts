@@ -190,12 +190,23 @@ function truncatedKey(key: string): string {
  * burn a target's budget, then flood the bucket with ~1000 disposable single-guess accounts to
  * evict the target's entry and buy a fresh budget for the price of the flood.
  *
- * Lowest-count eviction (excluding the entry being inserted) closes that: a target sitting at
- * count 9 of 10 is only evicted once every OTHER entry in the bucket reaches count 9 or higher -
- * meaning roughly nine to ten failed attempts against each of a thousand other accounts, which
- * trips every one of those buckets (their own max is reached the same way) and emits a
- * rate_limit_exceeded audit event each time. The bypass stops being a cheap flood and starts being
- * self-defeating.
+ * Lowest-count eviction (excluding the entry being inserted) does not require an attacker to push
+ * decoys PAST a target's count - only to TIE it. Ties resolve to the earliest inserted (phase 2
+ * above), and a real target predates every decoy raised to catch up with it, so once every OTHER
+ * entry in the bucket reaches the target's own count, the target - being the earliest member of
+ * that tied group - is what loses the tie-break, not a decoy. A long-established entry can lose to
+ * a newer one that has merely caught up, never overtaken it. This is a known, accepted property of
+ * this policy, not an oversight: the alternative tie-break (favour evicting the newest) was
+ * considered and rejected, because the two earlier changes to this function's eviction rule each
+ * introduced a worse flaw than the one they fixed, and the cost below is a real deterrent on its
+ * own without touching the policy a third time.
+ *
+ * What this DOES cost the attacker: roughly MAX_ENTRIES_PER_BUCKET - 1 decoy requests - about a
+ * thousand at the current constant, a linear and roughly hundred-fold cost multiplier over simply
+ * guessing - to buy back one guess against the target. It is NOT audit-visible: catching up to a
+ * target's count never requires a decoy to reach its OWN max, so no decoy bucket trips and no
+ * rate_limit_exceeded event fires. Do not describe this as self-defeating or as leaving an audit
+ * trail; it does neither. (This residual belongs in docs/BACKLOG.md - not added here.)
  *
  * Complexity note: this function runs once per request for a key with no live entry, before that
  * entry is created, so it is never asked to make room for more than one new arrival at a time - a
