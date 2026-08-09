@@ -46,6 +46,14 @@ Configuration:
 Health check:
   kubectl --namespace {{ .Release.Namespace }} exec deploy/{{ include "libredb-studio.fullname" . }} -- wget -qO- http://localhost:{{ .Values.service.targetPort }}/api/db/health
 
+IMPORTANT: if every action (including login) starts returning 403 after a `helm upgrade` behind an
+ingress that rewrites the Host header, set ALLOWED_ORIGINS to this deployment's public origin via
+extraEnv (there is no dedicated values field for it - see README.md's "Rate Limiting Across
+Replicas" section):
+  helm upgrade libredb libredb/libredb-studio \
+    --set extraEnv[0].name=ALLOWED_ORIGINS \
+    --set extraEnv[0].value=https://libredb.example.com
+
 {{- if and (not (include "libredb-studio.authStrict" .)) (eq .Values.authProvider "local") (not .Values.secrets.adminPassword) (not .Values.secrets.existingSecret) }}
 
 First-run credentials (zero-config bootstrap):
