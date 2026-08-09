@@ -120,6 +120,25 @@ describe("the sbom job authenticates to Docker Hub when possible, and retries th
     expect(generate?.run).toContain("until docker run");
     expect(generate?.run).toMatch(/attempt/);
   });
+
+  test("runs trivy as the invoking user, not root, since the next step patches this file in place", () => {
+    // aquasec/trivy runs as root by default, so a bind-mounted output file
+    // lands on the host owned by root, mode 644. Reproduced 2026-08-09
+    // against the real pinned image: the "Name and version the SBOM's root
+    // component" step's `fs.writeFileSync` on that same, already-existing
+    // file needs write permission on the file itself, which the runner's own
+    // non-root user does not have on a root-owned one - EACCES. Verified the
+    // fix the same way: with --user "$(id -u):$(id -g)" the output is owned
+    // by the invoking user and the patch step succeeds.
+    //
+    // Asserted as the flag immediately following `docker run --rm`, not a
+    // bare substring match: this step's own comment above the command
+    // explains the flag in prose and so also contains the literal text
+    // `--user "$(id -u):$(id -g)"` - a substring check alone would still
+    // pass with the flag removed from the actual command.
+    const run = generate?.run ?? "";
+    expect(run).toMatch(/docker run --rm \\\s*\n\s*--user "\$\(id -u\):\$\(id -g\)" \\/);
+  });
 });
 
 describe("the sbom job names its root component, so it does not import as a project called '.'", () => {

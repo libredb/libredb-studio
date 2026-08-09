@@ -573,8 +573,35 @@ jobs:
           # version, never the same tag), so a transient Docker Hub rate limit
           # or network blip must not be allowed to stall a release before
           # publish.
+          #
+          # --user "$(id -u):$(id -g)": aquasec/trivy runs as root by default,
+          # so without this the bind-mounted output file lands on the host
+          # owned by root, mode 644. Reproduced 2026-08-09: the very next step
+          # patches this same file in place with Node's `fs.writeFileSync`,
+          # which for an EXISTING file opens it for write - permission this
+          # runner's own non-root user does not have on a root-owned file, so
+          # that step fails EACCES. This scanner needs no vulnerability-DB
+          # cache (`--scanners license` only), so running as the invoking user
+          # has no cache-ownership fallout to work around, unlike the
+          # `/root/.cache/trivy`-mounted scanners elsewhere in this
+          # repository, which stay root and are not touched by a host step
+          # afterward.
+          #
+          # Two other shapes were considered and rejected. `sudo chown` the
+          # file back after generation is reactive rather than preventing the
+          # wrong owner in the first place, and assumes passwordless sudo,
+          # which a self-hosted runner is not guaranteed to grant. Writing a
+          # sibling file and renaming over the original needs no privilege
+          # either (rename only needs write on the directory), but it moves
+          # the fix into the Node patch step where it looks like an
+          # unrelated stylistic choice - exactly the shape a future editor
+          # "simplifies" back into an in-place write without realising a
+          # permission fix depends on it. Fixing it here, on the line that
+          # creates the wrong owner, is the one shape where the fix and the
+          # defect it prevents stay next to each other.
           attempt=0
           until docker run --rm \
+            --user "$(id -u):$(id -g)" \
             -v "$GITHUB_WORKSPACE:/repo" \
             -w /repo \
             aquasec/trivy@sha256:7cced7cae583819fc7806d4cbc0dbbc7cad18b99f7d3e235192e6da8c091045c fs \
