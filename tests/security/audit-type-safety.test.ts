@@ -152,3 +152,35 @@ describe("sanitizeAuditInput's duration exemption is keyed on the field name", (
     expect(typeof result.duration).toBe("number");
   });
 });
+
+/**
+ * Threat: CodeQL's js/remote-property-injection (alerts #113/#114) - `sanitizeAuditInput` writes
+ * through `mutable[key]` where `key` is enumerated from an object built by spreading
+ * `POST /api/admin/audit`'s client-supplied JSON body (see src/app/api/admin/audit/route.ts). This
+ * reproduces that exact shape: `JSON.parse` can produce an own property literally named
+ * "__proto__" (it is not special to JSON.parse, only to certain assignment forms), and object
+ * spread copies it as a plain own data property rather than resolving it as the prototype link.
+ * DANGEROUS_KEYS skips it before the dynamic write, so the loop never even attempts
+ * `mutable["__proto__"] = ...` - not relying on the spread's own accident of safety to hold.
+ */
+test("sanitizeAuditInput does not let an own __proto__ key from a spread JSON body reach the dynamic write", () => {
+  const clientBody = JSON.parse('{"__proto__": {"polluted": "yes"}}') as Record<string, unknown>;
+  const event = {
+    ...clientBody,
+    type: "maintenance",
+    action: "vacuum",
+    target: "orders",
+    user: "admin",
+    result: "success",
+  } as unknown as Record<string, unknown>;
+
+  expect(() => sanitizeAuditInput(event as never)).not.toThrow();
+  const result = sanitizeAuditInput(event as never) as unknown as Record<string, unknown>;
+
+  expect((Object.prototype as Record<string, unknown>).polluted).toBeUndefined();
+  expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+  // Skipped, not deleted: the own "__proto__" property survives untouched (a pre-existing,
+  // separately tracked residual - sanitizeAuditInput only sweeps top-level strings - not something
+  // this guard is responsible for closing).
+  expect(Object.prototype.hasOwnProperty.call(result, "__proto__")).toBe(true);
+});

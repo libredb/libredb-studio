@@ -493,6 +493,45 @@ describe("emitAuditEvent", () => {
 
       expect(line.connection).toBe("[REDACTED]");
     });
+
+    /**
+     * Threat: after CodeQL flagged the original backtracking regex as polynomial-time (alert
+     * #112, js/polynomial-redos), it was replaced with a loop over `indexOf("://", ...)`. These
+     * two cases pin the loop's own correctness: a "://" occurrence with no valid scheme
+     * immediately before it must not defeat redaction of a LATER, valid one in the same value, and
+     * a scheme-character run that starts with digits must still find the letter RFC 3986 requires
+     * a scheme to start with, rather than rejecting the whole run because its first character
+     * fails.
+     */
+    test("keeps searching past a delimiter with no valid scheme immediately before it", () => {
+      const line = captureLine(() =>
+        emitAuditEvent({
+          type: "query_execution",
+          action: "query",
+          target: "POST /api/db/query",
+          connectionName: "1://postgres://user:pass@host:5432/db",
+          user: "user@libredb.org",
+          result: "success",
+        }),
+      );
+
+      expect(line.connection).toBe("1://postgres://[REDACTED]@host:5432/db");
+    });
+
+    test("finds the scheme's mandatory leading letter after skipping digits within the same run", () => {
+      const line = captureLine(() =>
+        emitAuditEvent({
+          type: "query_execution",
+          action: "query",
+          target: "POST /api/db/query",
+          connectionName: "123abc://user:pass@host:5432/db",
+          user: "user@libredb.org",
+          result: "success",
+        }),
+      );
+
+      expect(line.connection).toBe("123abc://[REDACTED]@host:5432/db");
+    });
   });
 
   test("bounds an oversized ip so a spoofed forwarded-for chain cannot bloat every line", () => {
@@ -508,6 +547,33 @@ describe("emitAuditEvent", () => {
       }),
     );
 
+    expect(String(line.ip).length).toBe(254);
+  });
+
+  /**
+   * Threat: exactly the CodeQL js/polynomial-redos proof-of-concept shape (alert #112) - a long
+   * run of one repeated letter with no "://" anywhere - reaching the credential redactor through
+   * an attacker-controlled field with no length bound applied before it runs. The old backtracking
+   * regex was O(n^2) here; 300,000 characters would not return within a CI-sane timeout if that
+   * regression came back. It is proven with a wall-clock budget, not just a correctness assertion,
+   * because a quadratic function still returns the CORRECT string - it just takes minutes to do it.
+   */
+  test("stays fast on a long run with no URI delimiter anywhere, the ReDoS proof-of-concept shape", () => {
+    const started = performance.now();
+    const line = captureLine(() =>
+      emitAuditEvent({
+        type: "permission_denied",
+        action: "denied",
+        target: "POST /api/db/query",
+        user: "anonymous",
+        result: "failure",
+        reason: "no_session",
+        ip: "A".repeat(300_000),
+      }),
+    );
+    const elapsedMs = performance.now() - started;
+
+    expect(elapsedMs).toBeLessThan(500);
     expect(String(line.ip).length).toBe(254);
   });
 

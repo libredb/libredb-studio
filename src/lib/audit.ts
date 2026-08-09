@@ -156,23 +156,92 @@ const UNKNOWN_ADDRESS = "unknown";
 /** Redaction marker for a URI's userinfo segment. Never a value real credentials could equal. */
 const CREDENTIAL_REDACTION = "[REDACTED]";
 /**
- * Matches `scheme://` followed by the remainder of the value, so a connection string's userinfo
- * can be collapsed before the value reaches either destination. `rest` runs to the end of the
- * string (not bounded to "before the next `/`"): a password containing `/`, `?` or `#` is an
+ * Where a connection string's userinfo can be collapsed before the value reaches either
+ * destination. Once the `scheme://` boundary is found, everything to the end of the string is in
+ * play (not bounded to "before the next `/`"): a password containing `/`, `?` or `#` is an
  * ordinary shape, and a boundary based on those characters cannot tell `postgres://user:pa/ss@host
  * /db` (a slash INSIDE the password) apart from `https://example.com/user@example/profile` (an
  * `@` INSIDE the path) — they are structurally identical. There is no syntax-only fix for that.
  *
  * The fix is to stop trying to parse a URI out of this value at all. An audit field is not a URI
  * field: nobody downstream needs the full string back, only the scheme and which host it named.
- * sanitizeAuditField below finds the LAST `@` in `rest` and keeps only what follows it, discarding
- * everything between the scheme and that point regardless of what characters it contained. This is
- * deliberately over-eager — a value shaped like case 6 above gets its path mangled even though it
- * carried no credential — and that trade is correct here: mangling a harmless URL costs an
- * operator nothing, while leaking a password costs them everything. Do not "fix" this by trying to
- * distinguish password characters from path characters; that parser cannot be written correctly.
+ * redactUriCredentials below finds the LAST `@` after the delimiter and keeps only what follows
+ * it, discarding everything between the scheme and that point regardless of what characters it
+ * contained. This is deliberately over-eager — a value shaped like case 6 above gets its path
+ * mangled even though it carried no credential — and that trade is correct here: mangling a
+ * harmless URL costs an operator nothing, while leaking a password costs them everything. Do not
+ * "fix" this by trying to distinguish password characters from path characters; that parser cannot
+ * be written correctly.
+ *
+ * Previously implemented as a single backtracking regex,
+ * `/([a-zA-Z][a-zA-Z0-9+.-]*):\/\/([\s\S]*)$/` applied via `String.replace`. CodeQL flagged that as
+ * js/polynomial-redos (alert #112): the pattern is unanchored, so `.replace` retries the whole
+ * scheme-quantifier backtrack at every one of a long value's ~n starting positions before giving
+ * up, which is O(n^2) on an attacker-controlled field with no length bound applied before this
+ * runs (the bound below is applied AFTER redaction, deliberately - see sanitizeAuditField). Every
+ * field this module processes is free text from a request body or a header value, so "attacker
+ * controls the length and content" is the normal case, not an edge case.
+ *
+ * Rewritten below as `indexOf`/`lastIndexOf` plus one bounded scan per candidate delimiter. Why
+ * this stays O(value.length) even adversarially: `:` and `/` are not URI-scheme characters, so a
+ * scheme-character run can never span a "://" delimiter it failed to match against. Each loop
+ * iteration's backward-then-forward scan is therefore confined to the segment strictly between the
+ * previous rejected delimiter and the current one - those segments never overlap - so their
+ * lengths sum to at most value.length across every iteration, however many "://" occurrences the
+ * value contains. (An anchored regex, `/^([a-zA-Z]...)/`, would also kill the O(n^2) blowup, but
+ * only by matching solely at index 0 - silently DROPPING redaction for a credential that arrives
+ * with any prefix, e.g. an error message wrapping a connection string. That is a coverage
+ * regression in a control whose entire job is to never miss a credential, so it was rejected.)
  */
-const URI_CREDENTIAL_PATTERN = /([a-zA-Z][a-zA-Z0-9+.-]*):\/\/([\s\S]*)$/;
+function isSchemeChar(ch: string): boolean {
+  return (
+    (ch >= "a" && ch <= "z") ||
+    (ch >= "A" && ch <= "Z") ||
+    (ch >= "0" && ch <= "9") ||
+    ch === "+" ||
+    ch === "." ||
+    ch === "-"
+  );
+}
+
+function isLetter(ch: string): boolean {
+  return (ch >= "a" && ch <= "z") || (ch >= "A" && ch <= "Z");
+}
+
+function redactUriCredentials(value: string): string {
+  let searchFrom = 0;
+  for (;;) {
+    const delimiter = value.indexOf("://", searchFrom);
+    if (delimiter === -1) return value;
+
+    // Walk backward over the maximal run of scheme characters immediately before the delimiter,
+    // then forward to the first letter within that run: RFC 3986 requires a scheme to START with
+    // a letter, but the greedy backward walk may have overrun into a non-letter prefix (e.g. the
+    // "1" in "1://postgres://user:pass@host/db" - see the two tests pinning this loop).
+    let runStart = delimiter;
+    while (runStart > 0 && isSchemeChar(value[runStart - 1])) runStart--;
+    let schemeStart = runStart;
+    while (schemeStart < delimiter && !isLetter(value[schemeStart])) schemeStart++;
+
+    if (schemeStart < delimiter) {
+      const scheme = value.slice(schemeStart, delimiter);
+      const rest = value.slice(delimiter + 3);
+      const lastAt = rest.lastIndexOf("@");
+      // No `@` at all: no userinfo was ever present, so there is nothing to hide.
+      if (lastAt === -1) return value;
+      const host = rest.slice(lastAt + 1);
+      // No recoverable host (e.g. a dangling "user:pass@" with nothing after it): degrade to the
+      // marker alone rather than emitting a "scheme://[REDACTED]@" that promises a host it can't
+      // name.
+      const redacted = host.length === 0 ? CREDENTIAL_REDACTION : `${scheme}://${CREDENTIAL_REDACTION}@${host}`;
+      return value.slice(0, schemeStart) + redacted;
+    }
+
+    // No letter anywhere in the run immediately before this delimiter: not a valid scheme. Keep
+    // looking - a value can legitimately contain more than one "://" (see the same two tests).
+    searchFrom = delimiter + 3;
+  }
+}
 
 /**
  * The one gate every free-text field passes through before it can reach either destination: strip
@@ -180,19 +249,7 @@ const URI_CREDENTIAL_PATTERN = /([a-zA-Z][a-zA-Z0-9+.-]*):\/\/([\s\S]*)$/;
  * long enough to be truncated never has its credential cut in half and left partially exposed.
  */
 function sanitizeAuditField(value: string): string {
-  const withoutCredentials = value.replace(URI_CREDENTIAL_PATTERN, (_match, scheme: string, rest: string) => {
-    const lastAt = rest.lastIndexOf("@");
-    // No `@` at all: no userinfo was ever present, so there is nothing to hide.
-    if (lastAt === -1) {
-      return `${scheme}://${rest}`;
-    }
-    const host = rest.slice(lastAt + 1);
-    // No recoverable host (e.g. a dangling "user:pass@" with nothing after it): degrade to the
-    // marker alone rather than emitting a "scheme://[REDACTED]@" that promises a host it can't
-    // name.
-    return host.length === 0 ? CREDENTIAL_REDACTION : `${scheme}://${CREDENTIAL_REDACTION}@${host}`;
-  });
-  return withoutCredentials.slice(0, MAX_AUDIT_FIELD_LENGTH);
+  return redactUriCredentials(value).slice(0, MAX_AUDIT_FIELD_LENGTH);
 }
 
 /**
@@ -239,7 +296,19 @@ function coerceToString(value: unknown): string {
  * channel the design treats as authoritative — it calls this function directly and pushes to the
  * buffer itself. `emitAuditEvent` below is a policy built on top of this boundary, for callers
  * whose event content is decided by trusted route logic rather than by the request body.
+ *
+ * DANGEROUS_KEYS guards the dynamic `mutable[key] = ...` write below against CodeQL's
+ * js/remote-property-injection (alerts #113/#114): `key` is drawn from `Object.keys()` of an
+ * object built by spreading that same admin-audit request body. Empirically, this is not currently
+ * exploitable - object-spread (`{ ...event }` in that route, `{ ...event, ... }` in
+ * AuditRingBuffer.push below) uses CreateDataPropertyOrThrow, which defines "__proto__" as an
+ * ordinary own data property rather than invoking Object.prototype's accessor, so a later
+ * `mutable["__proto__"] = ...` here only overwrites that shadow property, never the real
+ * prototype. But that safety depends on both call sites staying spread-based forever; it is not a
+ * property of this function. A three-name skip list costs nothing and removes the dependency.
  */
+const DANGEROUS_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+
 export function sanitizeAuditInput(event: Omit<AuditEvent, "id" | "timestamp">): Omit<AuditEvent, "id" | "timestamp"> {
   const sanitized: Omit<AuditEvent, "id" | "timestamp"> = { ...event };
   // A second, dynamically-keyed view of the SAME object (not a copy, no cast): every property of
@@ -247,6 +316,7 @@ export function sanitizeAuditInput(event: Omit<AuditEvent, "id" | "timestamp">):
   // and mutating through it mutates `sanitized` because both names refer to one object.
   const mutable: Record<string, unknown> = sanitized;
   for (const key of Object.keys(mutable)) {
+    if (DANGEROUS_KEYS.has(key)) continue;
     const value = mutable[key];
     if (typeof value === "string") {
       mutable[key] = sanitizeAuditField(value);
