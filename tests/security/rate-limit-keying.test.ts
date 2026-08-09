@@ -85,17 +85,19 @@ describe("an attacker flooding a cheap bucket to steer eviction", () => {
     // Rotate X-Forwarded-For for MAX_ENTRIES_PER_BUCKET + 1 disposable login_client keys - one
     // more than the bucket's own capacity, deriving the size from the constant rather than a
     // hardcoded number so this keeps forcing eviction if it ever moves.
-    let lastKey = "";
-    for (let attempt = 0; attempt <= MAX_ENTRIES_PER_BUCKET; attempt += 1) {
-      lastKey = clientAddress(request({ "x-forwarded-for": `203.0.113.${attempt}` }));
-      consumeRateLimit("login_client", lastKey);
+    const firstKey = clientAddress(request({ "x-forwarded-for": "203.0.113.0" }));
+    consumeRateLimit("login_client", firstKey);
+    for (let attempt = 1; attempt <= MAX_ENTRIES_PER_BUCKET; attempt += 1) {
+      const key = clientAddress(request({ "x-forwarded-for": `203.0.113.${attempt}` }));
+      consumeRateLimit("login_client", key);
     }
 
-    // Eviction inside login_client actually happened: the entry created last is always the one
-    // with the least accumulated work (count 0, not yet incremented) at the moment capacity is
-    // exceeded, so it is the one that loses its slot and starts fresh. Without this,
-    // "login_account survived" would be equally explained by nothing ever having been evicted.
-    expect(consumeRateLimit("login_client", lastKey).allowed).toBe(true);
+    // Eviction inside login_client actually happened: pruning runs BEFORE the new key is
+    // inserted, so the arriving key is never a candidate for its own eviction - every existing
+    // entry here is tied at count 1, and a tie resolves to the earliest inserted, so the very
+    // first key is what loses its slot. Without this, "login_account survived" would be equally
+    // explained by nothing ever having been evicted.
+    expect(consumeRateLimit("login_client", firstKey).allowed).toBe(true);
     // The victim's login_account counter must still be tripped: flooding a different, cheap
     // bucket must never evict a counter out of login_account. Per-bucket capacity partitioning is
     // the property under test - see the module docstring in src/lib/api/rate-limit.ts.
@@ -117,18 +119,47 @@ describe("an attacker trying to buy back a spent login_account budget", () => {
 
     // Flood the SAME bucket with MAX_ENTRIES_PER_BUCKET fresh, single-use guessed accounts. One
     // more than the bucket's own capacity guarantees an eviction happens.
-    let lastGuess = "";
-    for (let i = 0; i < MAX_ENTRIES_PER_BUCKET; i += 1) {
-      lastGuess = `guess-${i}@example.com`;
-      consumeRateLimit("login_account", lastGuess);
+    const firstGuess = "guess-0@example.com";
+    consumeRateLimit("login_account", firstGuess);
+    for (let i = 1; i < MAX_ENTRIES_PER_BUCKET; i += 1) {
+      consumeRateLimit("login_account", `guess-${i}@example.com`);
     }
 
     // The target's budget was NOT bought back by the flood: it still has exactly the one attempt
-    // it had left, not a fresh ten. Oldest-first eviction would have discarded the target - it is
-    // the longest-lived entry in the bucket - and handed the attacker a fresh budget for free.
+    // it had left, not a fresh ten. The target's own count (9) makes it the highest in the
+    // bucket, and the entry being inserted is never a candidate for its own eviction, so nothing
+    // here can ever pick the target as the victim.
     expect(consumeRateLimit("login_account", target).allowed).toBe(true);
     expect(consumeRateLimit("login_account", target).allowed).toBe(false);
-    // A flood entry, not the target, is what actually lost its slot.
-    expect(consumeRateLimit("login_account", lastGuess).allowed).toBe(true);
+    // A flood entry, not the target, is what actually lost its slot: every guess ties at count 1,
+    // and a tie resolves to the earliest inserted.
+    expect(consumeRateLimit("login_account", firstGuess).allowed).toBe(true);
+  });
+});
+
+describe("a target account established after login_account is already saturated with decoys", () => {
+  test("still accumulates a persistent count and still trips at its budget", () => {
+    process.env.RATE_LIMIT_LOGIN_ACCOUNT_MAX = "10";
+    const target = "victim@libredb.org";
+
+    // Saturate the bucket to capacity BEFORE the target ever appears, with decoys hit exactly
+    // once each - cheap, and audit-silent because none of them trip. This is the ordering that
+    // exposed the bug in an earlier version of this file: pruning ran AFTER insert, so the
+    // target's own brand-new entry (count 0) was always the lowest count and evicted itself on
+    // every single attempt, and the target's count could never rise above 1 - it would never
+    // trip at all, which is a complete, sustained, audit-silent bypass.
+    for (let i = 0; i < MAX_ENTRIES_PER_BUCKET; i += 1) {
+      consumeRateLimit("login_account", `decoy-${i}@example.com`);
+    }
+
+    // The target must still take a slot - by evicting a decoy, since pruning excludes the target
+    // itself from candidacy - and accumulate a REAL, persistent count across repeated attempts.
+    // All 10 of the budget's attempts must be allowed (a fresh entry that keeps resetting to zero
+    // would also pass every individual check here), so the 11th - past the budget - is what
+    // actually proves the count persisted rather than restarting on every request.
+    for (let i = 0; i < 10; i += 1) {
+      expect(consumeRateLimit("login_account", target).allowed).toBe(true);
+    }
+    expect(consumeRateLimit("login_account", target).allowed).toBe(false);
   });
 });

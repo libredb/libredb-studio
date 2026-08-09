@@ -20,7 +20,7 @@
  * 2.5-3 MB, not a flat "100 bytes per counter" - correct this comment again if either constant
  * changes. Nobody may add a second, unbounded map alongside these.
  *
- * Capacity is partitioned PER BUCKET, not shared across buckets: see pruneIfOverCapacity. A single
+ * Capacity is partitioned PER BUCKET, not shared across buckets: see pruneIfAtCapacity. A single
  * shared eviction pool would let an attacker flood a cheap, address-keyed bucket (login_client,
  * anon - rotate X-Forwarded-For, each rotation is a free new key) to evict entries out of a
  * different bucket (login_account) map-wide, and eviction resets a counter to zero by design. That
@@ -108,7 +108,7 @@ const BUCKETS: Record<RateLimitBucket, BucketSpec> = {
 };
 
 /**
- * One Map per bucket, never one shared Map. This is the partition itself: pruneIfOverCapacity only
+ * One Map per bucket, never one shared Map. This is the partition itself: pruneIfAtCapacity only
  * ever receives the store for the bucket being written to, so it can only evict entries that
  * already live in that same store.
  */
@@ -157,10 +157,28 @@ function truncatedKey(key: string): string {
  * (module docstring). Eviction fails OPEN - an evicted attacker key restarts at zero - because a
  * counter must never become an availability control. That is also why the cap is generous.
  *
+ * CALLED BEFORE THE NEW KEY IS INSERTED, on purpose, whenever the store is already at capacity -
+ * ensuring there is room for one more entry. This is load-bearing, not a style choice: a Counter
+ * always starts at count 0, and 0 is the smallest a count can ever be, so if the entry about to be
+ * created were itself a candidate for "lowest count", it would always win and evict itself. That
+ * was this function's actual bug in an earlier version of this file: pruning ran AFTER insert, the
+ * newly-inserted entry was always the unique minimum, and it always evicted itself - meaning any
+ * entry that had ever reached count >= 1 became permanently immune to eviction. A bucket seeded
+ * with MAX_ENTRIES_PER_BUCKET disposable decoys, each hit exactly once and audit-silent because
+ * none of them trip, would then protect a REAL target forever: the target's own entry could never
+ * be created, because every attempt to create it would trigger a prune that evicted the
+ * just-created entry rather than a decoy. Pruning before insert removes the entry from candidacy
+ * entirely, so the decoys - sitting at the bucket's actual lowest count - become the cheapest
+ * victims instead.
+ *
  * Two phases, in order:
  * 1. Reclaim expired entries first. They cost nothing to discard (their window is already over)
  *    and this alone is often enough, so it runs before the more expensive phase below.
- * 2. If still over capacity, evict the entry with the LOWEST count, not the oldest by insertion.
+ * 2. If still at capacity, evict the EXISTING entry with the LOWEST count, not the oldest by
+ *    insertion. Ties (e.g. a flood of same-count decoys) resolve to the earliest inserted, because
+ *    Map iteration order is insertion order and only a STRICTLY lower count replaces the running
+ *    minimum - so a homogeneous flood behaves like a sliding window, always giving up its oldest
+ *    member, never a genuinely different one.
  *
  * Why lowest-count and not oldest-first: an eviction policy should discard the entry doing the
  * LEAST work. A high count means that entry is actively limiting somebody; a count of one is a
@@ -172,23 +190,23 @@ function truncatedKey(key: string): string {
  * burn a target's budget, then flood the bucket with ~1000 disposable single-guess accounts to
  * evict the target's entry and buy a fresh budget for the price of the flood.
  *
- * Lowest-count eviction closes that: to displace a target sitting near its limit, an attacker must
- * make a thousand OTHER entries each accumulate a HIGHER count than the target first - meaning a
- * thousand accounts each failed against repeatedly, tripping every one of those buckets and
- * generating a rate_limit_exceeded audit event each time. The bypass stops being a cheap flood and
- * starts being self-defeating.
+ * Lowest-count eviction (excluding the entry being inserted) closes that: a target sitting at
+ * count 9 of 10 is only evicted once every OTHER entry in the bucket reaches count 9 or higher -
+ * meaning roughly nine to ten failed attempts against each of a thousand other accounts, which
+ * trips every one of those buckets (their own max is reached the same way) and emits a
+ * rate_limit_exceeded audit event each time. The bypass stops being a cheap flood and starts being
+ * self-defeating.
  *
- * Complexity note: this function runs once per insert, immediately after adding exactly one new
- * entry to a store that was already at or under capacity, so phase 2 is never scanning more than
- * one entry's worth over capacity - a single full-store scan for the minimum is enough; no loop is
- * needed.
+ * Complexity note: this function runs once per request for a key with no live entry, before that
+ * entry is created, so it is never asked to make room for more than one new arrival at a time - a
+ * single full-store scan for the minimum is enough; no loop is needed.
  */
-function pruneIfOverCapacity(store: Map<string, Counter>, now: number): void {
-  if (store.size <= MAX_ENTRIES_PER_BUCKET) return;
+function pruneIfAtCapacity(store: Map<string, Counter>, now: number): void {
+  if (store.size < MAX_ENTRIES_PER_BUCKET) return;
   for (const [id, entry] of store) {
     if (now >= entry.resetAt) store.delete(id);
   }
-  if (store.size <= MAX_ENTRIES_PER_BUCKET) return;
+  if (store.size < MAX_ENTRIES_PER_BUCKET) return;
 
   const [victimId] = [...store].reduce((min, candidate) => (candidate[1].count < min[1].count ? candidate : min));
   store.delete(victimId);
@@ -203,14 +221,16 @@ function decide(bucket: RateLimitBucket, key: string, consume: boolean): RateLim
   const id = truncatedKey(key);
   const existing = store.get(id);
   const live = existing !== undefined && now < existing.resetAt;
+
+  // Make room BEFORE creating the new entry, while it is still just a key with no Counter of its
+  // own - see pruneIfAtCapacity's doc comment for why the ordering itself is the fix.
+  if (!live) pruneIfAtCapacity(store, now);
+
   const entry: Counter = live
     ? (existing as Counter)
     : { count: 0, resetAt: now + limit.windowSeconds * 1000, notified: false };
 
-  if (!live) {
-    store.set(id, entry);
-    pruneIfOverCapacity(store, now);
-  }
+  if (!live) store.set(id, entry);
 
   // resetAt is always strictly greater than now on both paths, so this is never below 1.
   const retryAfterSeconds = Math.ceil((entry.resetAt - now) / 1000);
