@@ -1,0 +1,143 @@
+name: Security Scan
+
+# Supply-chain scanning (security programme controls 2.1 and 2.2). Deliberately
+# NOT part of ci.yml: the dependency and image jobs depend on a vulnerability
+# database that is rebuilt every six hours, so their verdict can change with no
+# commit, and the repository's required checks must stay a function of the code
+# under review. Same reasoning that keeps SonarCloud out of the required set.
+#
+# WHAT BLOCKS AND WHAT REPORTS
+#
+#   secret-scan       fails. Its verdict is a pure function of the scanned commit
+#                     range and the pinned gitleaks digest - no feed can turn it
+#                     red overnight - and a secret in a diff is unambiguous and
+#                     fixable by the author.
+#   dependency-scan   reports on a pull request (job summary only) and gates on
+#                     main, the daily schedule and manual runs. An advisory
+#                     published overnight must not turn a contributor's unrelated
+#                     pull request red; the maintainer still learns within a day,
+#                     which is what control 2.1 asks for. GitHub emails the owner
+#                     when a scheduled run fails, so a red cron is not silent.
+#   image-scan        never fails. Measured 2026-08-09 against
+#                     node:24.16.0-trixie-slim: 4 critical and 18 high Debian
+#                     CVEs, and 167 of 168 findings have no fixed package. A gate
+#                     over that is a permanent red with nothing to do about it -
+#                     which is how a gate becomes a continue-on-error line.
+#
+# None of these is a required check today. If one is ever promoted, secret-scan
+# is the only candidate, for the determinism reason above.
+#
+# Scanners run as containers pinned by DIGEST rather than as third-party actions:
+# a supply-chain workflow should not add a third-party action to its own trust
+# chain, and a digest freezes the rule set together with the binary.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  push:
+    branches:
+      - main
+  schedule:
+    # 03:37 UTC daily, clear of the other crons in this repository (05:23 daily,
+    # 06:00 and 06:41 Monday, 06:20 Friday). Daily, not weekly: the point of
+    # control 2.1 is to learn about a driver CVE before users do.
+    - cron: "37 3 * * *"
+  workflow_dispatch:
+
+concurrency:
+  # Keyed by ref: a shared group would let the daily cron and a pull request run
+  # cancel each other, leaving a cancelled check on the pull request.
+  group: security-scan-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # gitleaks v8.30.1.
+  GITLEAKS_IMAGE: zricethezav/gitleaks@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f
+  # Trivy 0.73.0.
+  TRIVY_IMAGE: aquasec/trivy@sha256:7cced7cae583819fc7806d4cbc0dbbc7cad18b99f7d3e235192e6da8c091045c
+
+jobs:
+  secret-scan:
+    name: Secret Scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          # The scan reads git history, so the default single-commit checkout
+          # would make every range empty - and an empty range passes. The whole
+          # history is 753 commits / 14.5 MB and scans in about 1.1 seconds, so
+          # there is nothing here worth optimising.
+          fetch-depth: 0
+
+      - name: Resolve the commit range to scan
+        id: range
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            # Only the commits this pull request adds. Without --no-merges a
+            # merge commit re-presents the whole other side of the merge as a
+            # diff, which would report every historical match again on every
+            # pull request - and a check that is always red is a check nobody
+            # reads.
+            echo "log_opts=--no-merges $BASE_SHA..$HEAD_SHA" >> "$GITHUB_OUTPUT"
+          else
+            # On main, the cron and a manual run: the whole history. The
+            # repository authorises direct pushes to main, and at 1.1 seconds
+            # the full sweep is cheaper than reasoning about which range covers
+            # a force push.
+            echo "log_opts=--all" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Scan for committed secrets
+        env:
+          LOG_OPTS: ${{ steps.range.outputs.log_opts }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/gitleaks"
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE:/repo:ro" \
+            -v "$RUNNER_TEMP/gitleaks:/out" \
+            -w /repo \
+            "$GITLEAKS_IMAGE" git \
+              --no-banner \
+              --redact \
+              --config /repo/.gitleaks.toml \
+              --log-opts="$LOG_OPTS" \
+              --report-format json \
+              --report-path /out/gitleaks.json
+
+      - name: Report the findings
+        if: failure()
+        run: |
+          set -uo pipefail
+          report="$RUNNER_TEMP/gitleaks/gitleaks.json"
+          {
+            echo "## Committed secrets found"
+            echo
+            if [ -s "$report" ]; then
+              echo "| Rule | File | Line | Commit |"
+              echo "| --- | --- | --- | --- |"
+              jq -r '.[] | "| \(.RuleID) | \(.File) | \(.StartLine) | \(.Commit[0:8]) |"' "$report"
+            else
+              echo "The scanner failed before producing a report - read the step log."
+            fi
+            echo
+            echo "**A hit is an incident, not a lint failure.** Rotate the credential first, then"
+            echo "remove it from the working tree. Do not rewrite history: forks and every"
+            echo "distribution channel already carry the old objects, so rotation is the only"
+            echo "remedy that works."
+            echo
+            echo "If the match is fabricated - a fixture, a placeholder, documented example copy -"
+            echo "add a rule-scoped allowlist to \`.gitleaks.toml\` with a description that says"
+            echo "why. An allowlist without \`targetRules\` is rejected by"
+            echo "\`tests/unit/gitleaks-config.test.ts\`."
+          } >> "$GITHUB_STEP_SUMMARY"
