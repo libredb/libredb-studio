@@ -126,6 +126,34 @@ describe("LoginPage", () => {
     });
   });
 
+  test("falls back to the response's error field when message is absent (origin-mismatch/rate-limit shape)", async () => {
+    // The proxy's Origin-mismatch 403 and the shared 429 envelope both carry `error`, not
+    // `message` - unlike the login route's own body. Without the fallback this reads as
+    // `data.message || "Invalid email or password"`, so a rate-limited or origin-refused caller
+    // would incorrectly be told their password is wrong.
+    globalThis.fetch = mock(() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            error: "Request origin is not allowed for this deployment. Set ALLOWED_ORIGINS.",
+            code: "ORIGIN_MISMATCH",
+          }),
+        ),
+      ),
+    ) as never;
+
+    const { form, emailInput, passwordInput, user } = renderLogin();
+    await user.type(emailInput, "admin@libredb.org");
+    await user.type(passwordInput, "correct-password");
+    fireEvent.submit(form);
+
+    await waitFor(() => {
+      expect(mockToastError).toHaveBeenCalledWith(
+        "Request origin is not allowed for this deployment. Set ALLOWED_ORIGINS.",
+      );
+    });
+  });
+
   test("shows generic error toast on network failure", async () => {
     globalThis.fetch = mock(() => Promise.reject(new Error("Network error"))) as never;
 

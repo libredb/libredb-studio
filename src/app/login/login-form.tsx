@@ -43,7 +43,13 @@ function LoginFormInner({ authProvider }: { authProvider: string }) {
         router.push(data.role === "admin" ? "/admin" : "/");
         router.refresh();
       } else {
-        toast.error(data.message || "Invalid email or password");
+        // data.message is the login route's own body ({ success: false, message }); data.error is
+        // everything else that can refuse a login POST before or without reaching that body - the
+        // proxy's Origin-mismatch 403 (src/proxy.ts) and the shared 429 envelope
+        // (createErrorResponse) both carry `error`, not `message`. Without this fallback, a
+        // reverse-proxy Host rewrite or a rate-limited legitimate user both see "Invalid email or
+        // password" instead of the actionable text naming ALLOWED_ORIGINS or the retry window.
+        toast.error(data.message || data.error || "Invalid email or password");
       }
     } catch {
       toast.error("An error occurred. Please try again.");
