@@ -604,52 +604,7 @@ Trivy owns the gate and `bun audit` is a job-summary second opinion. If bun adds
 fixed-version data, the container dependency in the local contributor workflow
 could be dropped entirely. Done when `bun audit --json` carries a fix field.
 
-### C7. Seventeen HIGH fixable npm advisories, three of them middleware/authorization bypasses against the exact surface Phase 1 hardened
-
-The dependency gate's job summary lists seventeen HIGH advisories, mostly `next`
-16.1.6 to 16.2.x; none is CRITICAL so none gates. Five carry the "Middleware /
-Proxy bypass" title, and resolving each against the GitHub advisory database
-(the authoritative source, not a copy of a CVE number) narrows to three that
-actually apply to this application - App Router with no `i18n` config, no
-`pages/` directory, authorization enforced in `src/proxy.ts` middleware:
-
-| GHSA | CVE | Fixed in | Applies here | Why |
-|---|---|---|---|---|
-| `GHSA-267c-6grr-h53f` | CVE-2026-44575 | 16.2.5 | yes | App Router segment-prefetch (`.rsc` / transport variants) resolves to a page middleware's matcher does not cover |
-| `GHSA-26hh-7cqf-hhc6` | CVE-2026-45109 | 16.2.6 | yes | incomplete-fix follow-up to the row above, specifically for `middleware.ts` |
-| `GHSA-492v-c6pp-mqqv` | CVE-2026-44574 | 16.2.5 | yes | dynamic route parameter injection bypasses a middleware path match; this app has middleware-protected dynamic routes (e.g. `/api/storage/[collection]`) |
-| `GHSA-36qx-fr4f-26g5` | CVE-2026-44573 | 16.2.5 | **no** | Pages Router + `i18n` only - this app has no `pages/` directory |
-| `GHSA-6gpp-xcg3-4w24` | CVE-2026-64642 | 16.2.11 | **no** | requires a single-entry `config.i18n.locales` - this app has no `i18n` config at all |
-
-**CVE-2026-44573 was previously cited here in place of CVE-2026-45109 - wrong
-identifier, not a stale one: both were published before this branch existed.**
-The two non-applicable rows are recorded so a future reader does not re-derive
-"five GHSAs, three CVEs previously named" and wonder whether two were dropped by
-mistake.
-
-`src/proxy.ts` IS Next 16's middleware - the exact file Phase 1 put RBAC, the
-Origin check, rate limiting, the security headers and the audit emit into.
-Framing the applicable three as a compatibility question alone - a Next minor
-can change middleware and CSP behaviour, which is exactly the surface Phase 1
-just verified in a real browser - understated the risk; it is also a question
-of which known bypasses ship against that surface today. `next@16.3.0` carries
-zero advisories against it, so the fix is a version bump, not a patch.
-
-Still not taken inside Phase 2, for the compatibility reason above: bumping
-inside a supply-chain-scanning phase would invalidate Phase 1's browser
-verification without re-running it, and this belongs to a dedicated bump pull
-request instead.
-
-**Decision, recorded here because it is now updated by evidence**: the programme
-ships one release, 0.10.0, after Phase 3. The Next bump must land BEFORE that tag
-is cut, not merely "after the Phase 2 chain lands" - 0.10.0 must not ship with
-known middleware-bypass and authorization-bypass advisories against the exact
-layer it hardens. The bump pull request must re-run Phase 1's end-to-end
-verification in a real browser, because it touches the middleware and CSP
-surface that verification exists to cover. Done when that pull request lands and
-0.10.0 is cut from a `main` that has it.
-
-### C8. The release SBOM does not describe the bundled Node.js runtime
+### C7. The release SBOM does not describe the bundled Node.js runtime
 
 `packaging/linux/fetch-node.sh` and `packaging/windows/fetch-node.sh` download a
 pinned Node.js build and bundle it into every packaged artefact except the npm
