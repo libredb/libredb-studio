@@ -71,3 +71,44 @@ After any UI change in studio:
 2. `cp -r dist/* ../libredb-platform/node_modules/@libredb/studio/dist/` — copy to platform
 3. `rm -rf ../libredb-platform/.next` — clear platform cache (for CSS changes)
 4. Restart platform dev server and verify at `localhost:3000/workspace`
+
+## Security Headers (`@libredb/studio/security`)
+
+The package ships the knowledge; the application ships the enforcement. Every server-side control
+in Studio (headers, rate limiting, route auth, audit) is application-layer and does **not** reach
+platform through the package — platform supplies its own backend and its own `next.config`. What
+the package does ship is the policy Monaco and Studio actually require, so platform adopts a
+correct CSP in one line instead of choosing between one that breaks the editor and one that
+protects nothing:
+
+```ts
+import { securityHeaders, studioCspDirectives } from "@libredb/studio/security";
+
+// Ready-to-spread header map, CSP already serialized.
+const headers = securityHeaders({
+  monacoVsPath: process.env.NEXT_PUBLIC_MONACO_VS_PATH,
+  extra: { "connect-src": ["https://api.platform.example"] },
+});
+
+// Or take the structured directives and merge them into a policy platform already builds.
+const directives = studioCspDirectives();
+```
+
+Three things to know before using it:
+
+- **`img-src` must keep `data:` and `font-src` must keep `data:`.** `@zumer/snapdom` rasterizes the
+  ER diagram (`src/components/schema-diagram/export.ts`) and the chart PNG export
+  (`src/components/DataCharts.tsx`) through a `data:image/svg+xml` URL, and Monaco's
+  `editor.main.css` embeds the codicon font as a base64 `data:` URI. Without them the editor keeps
+  working while every glyph silently disappears, and both exports throw where the blocked `data:`
+  URL would have loaded — each call site catches that and reports it as a destructive toast
+  (`SchemaDiagram.tsx`'s `exportDiagram`, `DataCharts.tsx`'s `exportChart`), so it fails loudly
+  rather than silently, but it fails.
+- **`script-src` and `style-src` need `'unsafe-inline'` and cannot use a nonce** while the pages
+  are statically prerendered. `'unsafe-eval'` is not needed and must not be added.
+- **`frame-ancestors 'none'` is safe for the embedded path.** Platform imports Studio as React
+  components and never frames a Studio page. If that ever changes, pass an `extra` entry rather
+  than dropping the directive.
+
+Serve Monaco from platform's own origin (see the Monaco assets note above) or pass an absolute
+`monacoVsPath` — an absolute URL adds its origin to `script-src` and `worker-src` automatically.

@@ -608,7 +608,9 @@ Get database schema including tables, columns, indexes, and foreign keys.
 
 Run database maintenance operations.
 
-**Authentication:** Required (Admin only)
+**Authentication:** Required (Admin only). No session returns `401`; a valid session with a
+non-admin role returns `403` — the two are distinguishable, unlike the combined check some other
+admin routes use.
 
 **Request:**
 ```json
@@ -653,6 +655,13 @@ Run database maintenance operations.
   "success": true,
   "executionTime": 1234,
   "message": "VACUUM completed successfully"
+}
+```
+
+**Response (401 Unauthorized):**
+```json
+{
+  "error": "Authentication required"
 }
 ```
 
@@ -822,7 +831,7 @@ Auth required. Returns seed/managed connections for the current user's role, wit
 
 ### Admin API
 
-Both require an **admin** role (enforced in-handler in addition to the middleware); non-admins get `403 { "error": "Unauthorized. Admin access required." }`.
+Both require an **admin** role (enforced in-handler in addition to the middleware); non-admins get `403 { "error": "Unauthorized. Admin access required." }`. `GET`/`POST /api/admin/audit` check the session inline and return that same `403` whether there is no session at all or a valid session with the wrong role — the two are not distinguished. `POST /api/admin/fleet-health` goes through the shared route guard instead and distinguishes them: no session returns `401 { "error": "Authentication required" }`, and only a valid session with a non-admin role returns the `403` above.
 
 #### GET /api/admin/audit
 
@@ -830,7 +839,7 @@ Returns audit events. Optional query params: `type` (filter by event type), `lim
 
 #### POST /api/admin/fleet-health
 
-Body `{ "connections": [...] }`; returns per-connection health `{ "results": [{ connectionId, status, latencyMs, ... }] }`. `400` if `connections` is missing.
+Body `{ "connections": [...] }`; returns per-connection health `{ "results": [{ connectionId, status, latencyMs, ... }] }`. `400` if `connections` is missing. `401` with no session, `403` with a session that is not an admin — see the note above.
 
 ---
 

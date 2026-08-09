@@ -40,7 +40,7 @@ helm install libredb libredb/libredb-studio \
 
 ```bash
 helm install libredb oci://ghcr.io/libredb/charts/libredb-studio \
-  --version 0.1.29 \
+  --version 0.1.30 \
   --set secrets.jwtSecret=$(openssl rand -base64 32) \
   --set secrets.adminPassword=MyAdmin123
 ```
@@ -181,6 +181,56 @@ helm install libredb libredb/libredb-studio \
   --set "ingress.hosts[0].paths[0].pathType=Prefix" \
   # ... secrets omitted for brevity
 ```
+
+## Rate Limiting Across Replicas
+
+Studio's built-in rate limiter (login attempts, AI endpoints, and every database-reaching route —
+query execution, schema browsing, maintenance, fleet health) keeps its counters in the application
+process. With the default `replicaCount: 1` that is the whole deployment. **If you raise
+`replicaCount` or enable `autoscaling`, each replica enforces the budget separately**, so N replicas
+allow N times the configured limit. Studio does not ship a distributed limiter, and it is not
+planned: an ingress already has one.
+
+Enforce the same budgets at the ingress instead. With nginx:
+
+```bash
+helm install libredb libredb/libredb-studio \
+  --set replicaCount=3 \
+  --set ingress.enabled=true \
+  --set ingress.className=nginx \
+  --set "ingress.annotations.nginx\.ingress\.kubernetes\.io/limit-rpm=120" \
+  --set "ingress.annotations.nginx\.ingress\.kubernetes\.io/limit-burst-multiplier=2"
+```
+
+With Traefik, attach a `rateLimit` middleware and reference it from the ingress annotations.
+
+Set `ALLOWED_ORIGINS` at the same time. Studio refuses any POST, PUT, PATCH or DELETE whose Origin
+host does not match its own, and an ingress that rewrites the `Host` header to a service name
+without setting `x-forwarded-host` will trip that on every request including login. The symptom is
+a page that loads and then refuses every action with a 403. There is no dedicated values field for
+it, so pass it through `extraEnv`:
+
+```bash
+helm install libredb libredb/libredb-studio \
+  --set extraEnv[0].name=ALLOWED_ORIGINS \
+  --set extraEnv[0].value=https://libredb.example.com
+```
+
+### The Content-Security-Policy escape hatch
+
+Studio's `Content-Security-Policy` is enforced by default. If an upgrade breaks a resource you
+serve from a non-default origin (a self-hosted Monaco bundle, a CDN in front of static assets),
+downgrade it to report-only without a rebuild — it is a plain runtime environment variable, also
+passed through `extraEnv`:
+
+```bash
+helm install libredb libredb/libredb-studio \
+  --set extraEnv[0].name=CSP_REPORT_ONLY \
+  --set extraEnv[0].value="true"
+```
+
+In report-only mode the browser logs the same violation to its console instead of blocking the
+resource. Please also open an issue naming the violated directive.
 
 ## External Secrets
 

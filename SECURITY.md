@@ -105,7 +105,27 @@ When using LibreDB Studio, please follow these security best practices:
   rather than knows — the table name behind an inline cell edit, read from a tab title or guessed
   from the query text — is validated as a bare identifier instead, and the edit is refused when it
   is not, because a guess cannot be safely quoted
-- Rate limiting should be implemented at the infrastructure level
+- Login attempts, the AI endpoints and every database-reaching route (query execution, schema
+  browsing, maintenance operations, and the admin fleet-health check) are rate limited in the
+  application. The counters live in the application process, so with more than one replica the
+  limits apply per replica; multi-replica deployments should enforce the same budgets at the
+  ingress as well (see `charts/libredb-studio/README.md`). The budgets are configurable through the
+  `RATE_LIMIT_*` environment variables documented in `.env.example`
+- Every state-changing request (`POST`, `PUT`, `PATCH`, `DELETE`) must carry an `Origin` (or
+  `Referer`) whose host matches the deployment's own host, as a second layer behind the
+  `SameSite=Lax` session cookie. Non-browser clients must send `Origin: <your public origin>`;
+  deployments behind a reverse proxy that rewrites `Host` set `ALLOWED_ORIGINS`
+- Every response that passes through the app's request middleware carries `Content-Security-Policy`,
+  `Strict-Transport-Security`, `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy` and
+  `Permissions-Policy` (static assets and the health/storage-config bootstrap endpoints are excluded
+  from the middleware and carry none of these — see `docs/BACKLOG.md`). The CSP permits inline
+  scripts, because the application is statically prerendered and its hydration scripts are inline
+  and nonce-less; what it does contain is where an injected script could send data, not whether one
+  can run. The CSP is enforced by default; if an upgrade breaks a blocked resource, set
+  `CSP_REPORT_ONLY=true` (no rebuild required — it is a runtime environment variable) to downgrade
+  it to report-only while you identify the violated directive
+- Logins, logouts, permission denials and rate-limit trips are written to the in-app audit log and
+  emitted as one structured JSON line each on stdout, for whatever log pipeline you already run
 
 #### AI/LLM Integration
 - API keys are stored server-side only

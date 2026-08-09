@@ -369,3 +369,23 @@ helm install libredb libredb/libredb-studio \
 1. **SQLite + Multi-Replica**: SQLite is single-writer. `storageProvider=sqlite` with `replicaCount > 1` will cause write conflicts. Use `postgres` for multi-replica. With SQLite storage `autoscaling.enabled` is ignored: the HPA is not rendered (NOTES.txt warns) and the deployment falls back to `replicaCount`.
 2. **ISR Cache**: Next.js ISR cache is per-pod (emptyDir). Session-based app, so no impact.
 3. **Chart appVersion**: Not auto-bumped - a version-bump PR must run `bun run chart:bump`; the CI sync guard blocks the merge until `appVersion` equals `package.json` (see Version Management above).
+
+## Rate limiting, the Origin check, and the CSP escape hatch
+
+Three Phase 1 security controls change what a multi-replica or reverse-proxied deployment has to
+configure, and all three are documented with copy-paste values in
+[`charts/libredb-studio/README.md`](../charts/libredb-studio/README.md#rate-limiting-across-replicas).
+
+The short version:
+
+- The built-in rate limiter is **per process**. The chart's default `replicaCount: 1` makes that
+  the whole deployment; anything above one replica must enforce the budgets at the ingress
+  instead. This is a deliberate design decision, not a gap: the existing storage abstraction is a
+  per-user blob store whose read-modify-write cycle cannot hold counters, and an ingress already
+  has a rate limiter that works across replicas.
+- Studio refuses state-changing requests whose `Origin` host does not match its own. Set
+  `ALLOWED_ORIGINS` (via the chart's `extraEnv`) to your public origin whenever the ingress
+  rewrites `Host` without setting `x-forwarded-host`, or every action including login returns 403.
+- Studio's `Content-Security-Policy` is enforced, not report-only. If an upgrade breaks a resource
+  served from a non-default origin, set `CSP_REPORT_ONLY=true` (also via `extraEnv`) to downgrade
+  it without rebuilding the image while you identify the violated directive.

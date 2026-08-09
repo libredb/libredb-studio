@@ -94,8 +94,14 @@ const BUCKETS: Record<RateLimitBucket, BucketSpec> = {
   },
   // Shared across all eight AI routes: rotating routes must not multiply the budget.
   ai: { maxVar: "RATE_LIMIT_AI_MAX", windowVar: "RATE_LIMIT_AI_WINDOW_SEC", maxDefault: 20, windowDefault: 60 },
-  // Shared across query, multi-query, transaction and disconnect, for the same reason: the same
-  // statement sent through multi-query must not get a second budget.
+  // Shared across every db/ route that reaches a provider - query, multi-query, transaction,
+  // disconnect, cancel, health, maintenance, monitoring, pool-stats, profile, provider-meta,
+  // schema, schema/list, schema/relations, schema-snapshot, test-connection - plus
+  // admin/fleet-health: seventeen routes today (grep -rl 'bucket: "query"' src/app/api/ finds
+  // fifteen; schema/list and schema/relations reach this bucket indirectly, through
+  // schema-route.ts's shared handleSchemaRequest). The same workload reached through a
+  // different endpoint must not get a second budget - re-verify and correct this comment again
+  // if guardRoute grows a new call site.
   query: {
     maxVar: "RATE_LIMIT_QUERY_MAX",
     windowVar: "RATE_LIMIT_QUERY_WINDOW_SEC",

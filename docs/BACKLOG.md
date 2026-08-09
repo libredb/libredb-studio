@@ -230,32 +230,21 @@ Done when there is exactly one 401 response for this condition, built in one pla
 that needs it (including the storage routes) calls it. Deferred to Phase 1 rather than folded into
 the hotfix: none of the three is wrong today, and consolidating them is a refactor, not a fix.
 
-### A2. Paths containing a dot bypass the security middleware entirely
+### A2. Static assets receive no security headers — decided, not implemented
 
-`src/proxy.ts:85`'s matcher excludes any path matching `.*\..*` so that static assets skip the auth
-redirect — `/((?!api/auth|api/db/health|api/storage/config|_next/static|_next/image|.*\..*).*)`.
-The exclusion is by design for auth (nothing under `public/` or `/monaco/vs/*.js` needs a login
-redirect), but it means `proxy()` never runs for those paths at all, not just skips the redirect.
-Phase 1's plan to add security headers (CSP and friends) inside `proxy()` would then miss every
-dot-containing path — `public/**` and the Monaco AMD bundle under `/monaco/vs/*.js` chief among
-them — leaving them without the new headers while every extensionless route gets them.
+`src/proxy.ts`'s matcher excludes any path matching `.*\..*` so that static assets skip the auth
+redirect — `/((?!api/db/health|api/storage/config|_next/static|_next/image|.*\..*).*)`. The
+exclusion is by design for auth (nothing under `public/` or `/monaco/vs/*.js` needs a login
+redirect), but it means `proxy()` never runs for those paths at all: files under `public/`,
+`/monaco/vs/*.js` and `_next/static` are served with none of the Phase 1 security headers
+(`X-Content-Type-Options` chief among them), while every extensionless route gets the full set.
 
-Done when Phase 1's header work accounts for this gap: either give static assets their headers
-through a different mechanism (e.g. `next.config`'s `headers()`), or narrow the matcher exclusion
-so it still skips the auth redirect without skipping header injection.
-
-### A3. `ALLOWED_ORIGINS` is read by the Origin check but not documented anywhere
-
-`src/lib/api/origin-check.ts`'s `configuredHosts()` reads `ALLOWED_ORIGINS`, and the 403 body the
-Origin check returns tells the operator by name to set it ("If Studio sits behind a reverse proxy,
-set ALLOWED_ORIGINS to its public origin"). Neither `.env.example` nor
-`charts/libredb-studio/README.md` mentions the variable, so an operator who hits the 403 has no
-reference for its exact syntax: comma-separated, accepts either a full origin
-(`https://db.example.com`) or a bare `host:port`, case-insensitive, scheme ignored on both sides.
-
-Done when `.env.example` documents it alongside the other reverse-proxy-facing variables
-(`TRUST_PROXY_HEADERS`, `TRUSTED_PROXY_HOPS`) and the Helm chart README's values reference mentions
-it for the ingress/ALB deployment path.
+This was raised while Phase 1's header work landed and, having weighed it, was left as-is: these
+are not documents, and Next serves them with correct content types, so MIME sniffing on them is not
+a live threat. `Cross-Origin-Opener-Policy` and `Cross-Origin-Resource-Policy` belong to the same
+decision and are outside the header set Phase 1 agreed. Done when either a second delivery
+mechanism covers them (e.g. `next.config`'s `headers()`) or this entry is re-affirmed as permanently
+accepted risk rather than revisited again.
 
 ---
 
@@ -333,3 +322,137 @@ dismissed with this reasoning recorded on it. Re-check on each Tauri upgrade —
 391 and 749. The drift predates any recent milestone and the same line-anchoring style is used in
 every provider doc, so the fix is a convention change (anchor on symbol names, not line numbers) as
 much as a correction.
+
+---
+
+## Security Phase 1 deferrals
+
+Each of these was decided during Phase 1, not overlooked. Delete an entry when the work lands.
+
+### H1. A CSP nonce needs the app to stop being statically prerendered
+
+`src/lib/security/headers.ts`'s `script-src` carries `'unsafe-inline'`, so the policy does not block
+an inline event handler. A nonce is the only alternative and it is blocked by a structural fact:
+every document route is statically prerendered (`.next/server/app/index.html` and siblings, verified
+— nonce-less `self.__next_f.push` scripts baked in) and a per-request nonce cannot be applied to
+prerendered HTML. Next.js does support the plumbing —
+`node_modules/next/dist/server/app-render/get-script-nonce-from-header.js` extracts a nonce from the
+`script-src`/`default-src` directive of a CSP header the app supplies — and Monaco's loader supports
+`loader.config({ cspNonce })` (`public/monaco/vs/loader.js:206,430`).
+
+The experiment, so nobody re-derives it: force dynamic rendering on the root layout, thread the
+nonce into the Monaco loader config, then measure what the lost prerendering costs in cold-start
+time and in the channels that serve Studio from a small box. Done when either the measurement says
+the trade is worth it and the nonce ships, or the measurement is recorded here as the reason it does
+not.
+
+### H2. A 429 should produce a Retry-After-aware toast
+
+`src/hooks/use-query-execution.ts:277` and `src/components/NL2SQLPanel.tsx:126` already read
+`.error` from any non-ok body, so a rate-limited request shows its message today. What they do not
+do is read the `Retry-After` header and tell the user how long to wait. Done when the toast names
+the wait.
+
+### H3. Audit events do not record a user agent
+
+`AuditEvent` (`src/lib/audit.ts`) deliberately has no `userAgent` field: it is attacker-controlled
+free text with marginal value for a single-operator product, and adding it means adding the
+redaction question the closed `AuditReason` union exists to avoid. Done when a real investigation
+needs it, at which point it is added as a truncated, explicitly-allowlisted field.
+
+### H4. The `@libredb/studio/security` usage note is not in the published README
+
+`.claude/rules/platform-integration.md` carries the platform-facing contract for
+`securityHeaders()`, which is where a platform constraint belongs, but an npm consumer reading
+`README.md` on npmjs.com does not see it. It is left out of `README.md` because `README_zh.md` and
+`README_ja.md` (`scripts/readme-check.mjs`'s `LOCALIZED` pair) would then drift, and that script
+guards the pair structurally rather than by heading. Done when the note lands in all three READMEs
+together.
+
+### H5. No env var can turn HSTS off, and that is deliberate — a lesser hatch would be worse
+
+`src/lib/security/config.ts`'s `readSecurityHeaderOptions()` always sends
+`Strict-Transport-Security`; unlike `CSP_REPORT_ONLY`, there is no `HSTS_DISABLE` or similar, and one
+should not be added in the shape an operator would expect. An escape hatch that merely *stops
+sending* the header is useless against the failure it would be built for: a browser that already
+cached the HSTS pin keeps enforcing HTTPS-only for the remainder of the 180-day `max-age`
+(`HSTS_MAX_AGE_SECONDS`) regardless of what the server does next, and a server that has already
+reverted to plain HTTP may not even be reachable by that browser to serve the corrective response —
+HTTPS-only means the plain-HTTP origin is refused before any response body is read. The only hatch
+that actually works is one that emits `Strict-Transport-Security: max-age=0` over a still-live HTTPS
+listener, which is what tells a visiting browser to drop the pin; a server that can no longer speak
+HTTPS at all has no way to reach that browser regardless of what knob exists. Done when a real
+report of a stuck HSTS pin needs this, at which point it is a `max-age=0` mode, never a header
+omission.
+
+### H6. A coverage-phantom pattern can recur anywhere a rarely-covered function has a multi-line inline parameter type
+
+`scripts/merge-lcov.mjs` picks one "authority" record per source file — whichever test run has the
+most executed lines — to decide which lines are "coverable" (`docs/TOOLCHAIN.md`'s "Coverage
+measurement" section). A function with a multi-line inline parameter type
+(`function f(opts: { a?: string; b?: string; ... })`) that is exercised by only one test file today
+reads as fully covered because that file wins the authority vote. Adding a second test file that
+exercises a large *new* surface in the same source file — without ever calling that function — can
+tip the vote to the new file, whose own run reports the old function as a coarse, never-executed
+block whose zero-hit lines include the parameter type's continuation lines. The result looks like a
+genuine coverage regression in code nobody touched. `src/lib/audit.ts`'s `AuditRingBuffer.filter`
+hit exactly this during Phase 1 (Task 4): extracting the inline type to a module-scope interface
+fixed it permanently there, because module-scope type members are erased before any function's
+coverage span exists. The general fix is the same wherever the shape recurs: hoist a multi-line
+inline parameter (or return) type annotation to a module-scope `interface`/`type`, don't chase it by
+adding a test that calls the under-covered function for coverage's sake alone.
+
+### H7. `sanitizeAuditInput` sweeps only top-level string values
+
+`src/lib/audit.ts`'s `sanitizeAuditInput` iterates `Object.keys(event)` and sanitizes a value only
+when `typeof value === "string"`; it does not recurse into a nested object. `POST /api/admin/audit`
+(`src/app/api/admin/audit/route.ts`) accepts a fully client-supplied, untyped body
+(`await request.json()`) and passes it straight to `sanitizeAuditInput` before pushing it to the
+ring buffer — the closed `AuditEventType`/`AuditReason` unions are compile-time only and do not
+constrain what an admin session can actually send at runtime. A nested object value (for example
+`{"details": {"token": "…"}}`, a shape the real `AuditEvent` type never produces but nothing at
+runtime rejects) bypasses the sweep entirely and lands unredacted and unbounded in the ring buffer
+the admin UI reads via `GET /api/admin/audit`. This is bounded to the ring buffer, not stdout: the
+stdout line is built by `toAuditLine`'s explicit field allowlist, which never re-serializes an
+unknown property, so a smuggled nested value cannot reach the log pipeline this way. Done when
+`sanitizeAuditInput` walks nested plain objects (bounded depth, to avoid a cycle or a pathological
+document costing unbounded time) rather than only the event's own top-level keys.
+
+### H8. The rate limiter's lowest-count eviction lets an attacker buy back a `login_account` guess for a real, but audit-invisible, cost
+
+From `src/lib/api/rate-limit.ts`'s `pruneIfAtCapacity` doc comment, recorded here as instructed: an
+attacker can *"buy back one guess against an established `login_account` target for roughly
+`MAX_ENTRIES_PER_BUCKET - 1` (about a thousand) decoy requests, by raising that many other entries to
+TIE (not exceed) the target's count - the tie-break favors evicting the earliest-inserted member of a
+tied group, and the target, having been created before its decoys, always is. This is a real, linear
+cost multiplier and not a bypass, but unlike a tripped bucket it produces no `rate_limit_exceeded`
+audit event, so an operator watching only the audit trail would not see it happen."* Accepted for
+Phase 1: the eviction policy that produces this (lowest-count, not oldest-first) is itself the fix
+for a worse bypass (an attacker evicting a target's entry for free before it can accumulate any
+cost), and the two alternatives considered and rejected each introduced a worse flaw. Done when a
+cheaper, audit-visible eviction policy is found that does not reopen the oldest-first bypass.
+
+### H9. `admin/fleet-health`'s per-request fan-out width is unbounded by the route guard
+
+`src/app/api/admin/fleet-health/route.ts` shares the `query` rate-limit bucket via `guardRoute`, the
+same as every other database-reaching route, but the guard limits *request rate*, not *fan-out
+width*: the handler runs `Promise.all(connections.map(...))` over whatever `connections` array the
+caller's JSON body names, with no upper bound on its length. One admin-authenticated (or stolen
+admin) POST can open and health-check an arbitrarily large number of connections concurrently — a
+resource-exhaustion vector the per-request rate limit does not touch, because it is a single request
+however large its body is. Done when the handler caps the array length (a `400` above some bound) or
+chunks the fan-out, whichever the real usage pattern (how many managed connections a fleet-health
+dashboard actually names at once) supports.
+
+### H10. The route-guard allowlist in `tests/security/route-auth.test.ts` verifies existence, not truth
+
+`ROUTES_WITHOUT_A_PROVIDER` in `tests/security/route-auth.test.ts` is a hand-maintained map from
+route key to a one-line reason the route is exempt from the "requires a session" sweep. The only
+automated check on it (`"every allowlist entry names a route that actually exists"`) confirms each
+key matches a real route discovered on disk — it does not, and cannot easily, verify that the
+*reason* is still true. Nothing greps an allowlisted route's file for a provider import
+(`@/lib/db`, `getOrCreateProvider`, `createLLMProvider`, and similar), so a future edit that adds a
+provider call to one of these routes (say, `storage/migrate` growing a database-backed feature)
+would silently escape the guard sweep the allowlist exists to police, exactly the failure mode the
+enumeration itself was built to catch for undiscovered routes. Done when a second, independent check
+greps each allowlisted file for provider-reaching imports and fails loudly if one appears.

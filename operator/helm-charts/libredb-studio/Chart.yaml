@@ -2,7 +2,7 @@ apiVersion: v2
 name: libredb-studio
 description: Web-based SQL IDE for cloud-native teams supporting PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, and Redis
 type: application
-version: 0.1.29
+version: 0.1.30
 appVersion: "0.9.67"
 kubeVersion: ">=1.26.0-0"
 home: https://github.com/libredb/libredb-studio
@@ -43,11 +43,10 @@ annotations:
     - name: Source
       url: https://github.com/libredb/libredb-studio
   artifacthub.io/changes: |
-    - "Application updated to 0.9.67 - ClickHouse and Apache Druid are now supported databases, both spoken over their HTTP interfaces, so neither adds a driver dependency and the image size is unchanged"
-    - "ClickHouse support covers the explorer, EXPLAIN plans, and the monitoring and maintenance surfaces the other providers expose; Apache Druid adds datasource browsing and plan reading over Druid SQL"
-    - "Every SQL statement is now read with its own dialect's grammar, so statement boundaries, identifier quoting and row-limit injection stay correct on all ten engines"
-    - "Inline row edits and CSV imports bind their values instead of interpolating them"
-    - "No chart template changes - the rendered manifests are identical to 0.1.28"
+    - "Documented how to enforce rate limits at the ingress when running more than one replica: Studio's built-in limiter keeps its counters per process, so N replicas allow N times the configured budget"
+    - "Documented ALLOWED_ORIGINS, which a deployment needs when the ingress rewrites the Host header without setting x-forwarded-host - without it every state-changing request, including login, is refused with a 403"
+    - "Documented CSP_REPORT_ONLY, the runtime escape hatch for the enforced Content-Security-Policy, and how to set both variables through extraEnv"
+    - "No chart template changes - the rendered manifests are identical to 0.1.29"
 dependencies:
   - name: postgresql
     version: "16.x.x"
