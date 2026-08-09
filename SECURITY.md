@@ -99,10 +99,12 @@ When using LibreDB Studio, please follow these security best practices:
   without one, the same as every other endpoint.
 - Running arbitrary SQL against your connected database is the product's purpose, not an
   injection surface. Where the application builds SQL of its own — generated starter queries,
-  schema browsing, inline cell edits — values are bound as parameters and identifiers such as
-  column names are quoted for the target dialect; a table name is validated instead of quoted
-  where quoting it would change its case semantics (for example on Oracle), since SQL has no
-  parameter syntax for identifiers
+  schema browsing, inline cell edits — values are bound as parameters, and identifiers the
+  application knows from schema metadata, column names and table names alike, are quoted for the
+  target dialect, since SQL has no parameter syntax for identifiers. The one identifier it infers
+  rather than knows — the table name behind an inline cell edit, read from a tab title or guessed
+  from the query text — is validated as a bare identifier instead, and the edit is refused when it
+  is not, because a guess cannot be safely quoted
 - Rate limiting should be implemented at the infrastructure level
 
 #### AI/LLM Integration

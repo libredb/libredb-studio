@@ -215,7 +215,7 @@ deprecated against this entry (#288): it becomes real, or goes away in a major, 
 
 ### A1. Three copies of the 401 response, with two different shapes
 
-`src/lib/api/require-session.ts:17` builds `{ error: "Authentication required" }` with status 401 —
+`src/lib/api/require-session.ts:24` builds `{ error: "Authentication required" }` with status 401 —
 the shared guard the security/phase-0-hotfix branch added for routes that reach a database or an
 LLM provider. `src/lib/api/schema-route.ts:31-34` and `src/app/api/db/health/route.ts:28-31` build
 the identical response inline, and both predate that branch: they were not converted to call the
