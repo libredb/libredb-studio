@@ -86,26 +86,34 @@ mock.module("@/lib/llm/types", () => ({
   LLMStreamError: MockLLMStreamError,
 }));
 
-const { requireSession } = await import("@/lib/api/require-session");
+const { guardRoute } = await import("@/lib/api/require-session");
+const { clearRateLimitState } = await import("@/lib/api/rate-limit");
 
-describe("requireSession", () => {
+describe("guardRoute", () => {
   beforeEach(() => {
+    clearRateLimitState();
     mockGetSession.mockClear();
     mockGetSession.mockImplementation(async () => ({ role: "admin", username: "admin" }));
   });
 
-  test("returns null when a session exists", async () => {
-    expect(await requireSession()).toBeNull();
+  test("returns the session when the caller is authenticated", async () => {
+    const request = new Request("http://localhost:3000/api/db/query", { method: "POST" });
+
+    const guard = await guardRoute({ route: "POST /api/db/query", bucket: "query", request });
+
+    expect(guard).toEqual({ session: { role: "admin", username: "admin" } });
   });
 
   test("returns a 401 response when no session exists", async () => {
     mockGetSession.mockImplementation(async () => null);
+    const request = new Request("http://localhost:3000/api/db/query", { method: "POST" });
 
-    const res = await requireSession();
+    const guard = await guardRoute({ route: "POST /api/db/query", bucket: "query", request });
 
-    expect(res).not.toBeNull();
-    expect(res?.status).toBe(401);
-    expect(await res?.json()).toEqual({ error: "Authentication required" });
+    expect("response" in guard).toBe(true);
+    const response = (guard as { response: Response }).response;
+    expect(response.status).toBe(401);
+    expect(await response.json()).toEqual({ error: "Authentication required" });
   });
 });
 

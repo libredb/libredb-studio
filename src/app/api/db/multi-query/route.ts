@@ -4,7 +4,7 @@ import { splitStatements } from "@/lib/sql/statement-splitter";
 import { isSelectQuery } from "@/lib/db/utils/query-limiter";
 import { createErrorResponse } from "@/lib/api/errors";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
-import { getSession } from "@/lib/auth";
+import { guardRoute } from "@/lib/api/require-session";
 import type { DatabaseType, QueryWarning } from "@/lib/types";
 import type { DatabaseProvider } from "@/lib/db/types";
 
@@ -101,16 +101,14 @@ async function runStatement(
 }
 
 export async function POST(req: NextRequest) {
+  const guard = await guardRoute({ route: "POST /api/db/multi-query", bucket: "query", request: req });
+  if ("response" in guard) return guard.response;
+
   try {
     const body = await req.json();
     const { sql, options = {} } = body;
 
-    const session = await getSession();
-    if (!session) {
-      return NextResponse.json({ error: "Authentication required" }, { status: 401 });
-    }
-
-    const connection = await resolveConnection(body, session);
+    const connection = await resolveConnection(body, guard.session);
 
     if (!sql) {
       return NextResponse.json({ error: "Connection and query are required" }, { status: 400 });

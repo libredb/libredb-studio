@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { createLLMProvider } from "@/lib/llm";
 import { createErrorResponse } from "@/lib/api/errors";
-import { requireSession } from "@/lib/api/require-session";
+import { guardRoute } from "@/lib/api/require-session";
 
 // ============================================================================
 // System Prompt Builder
@@ -92,8 +92,8 @@ GUIDELINES:
 // ============================================================================
 
 export async function POST(req: NextRequest) {
-  const unauthorized = await requireSession();
-  if (unauthorized) return unauthorized;
+  const guard = await guardRoute({ route: "POST /api/ai/chat", bucket: "ai", request: req });
+  if ("response" in guard) return guard.response;
 
   try {
     const { prompt, schemaContext, databaseType, queryLanguage, conversationHistory } = await req.json();

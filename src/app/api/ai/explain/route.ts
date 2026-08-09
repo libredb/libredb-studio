@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createLLMProvider } from "@/lib/llm";
 import { createErrorResponse } from "@/lib/api/errors";
-import { requireSession } from "@/lib/api/require-session";
+import { guardRoute } from "@/lib/api/require-session";
 
 function buildExplainSystemPrompt(databaseType: string, schemaContext: string): string {
   return `You are an Expert Database Performance Analyst specializing in query optimization for ${databaseType || "PostgreSQL"}.
@@ -41,8 +41,8 @@ GUIDELINES:
 }
 
 export async function POST(req: NextRequest) {
-  const unauthorized = await requireSession();
-  if (unauthorized) return unauthorized;
+  const guard = await guardRoute({ route: "POST /api/ai/explain", bucket: "ai", request: req });
+  if ("response" in guard) return guard.response;
 
   try {
     const { query, explainPlan, schemaContext, databaseType } = await req.json();

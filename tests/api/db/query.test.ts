@@ -1,6 +1,7 @@
 import { describe, test, expect, mock, beforeEach } from "bun:test";
 import { createMockRequest, parseResponseJSON } from "../../helpers/mock-next";
 import { createMockProvider } from "../../helpers/mock-provider";
+import { clearRateLimitState } from "@/lib/api/rate-limit";
 import {
   QueryError,
   TimeoutError,
@@ -98,6 +99,7 @@ const validConnection = {
 // ─── Tests ──────────────────────────────────────────────────────────────────
 describe("POST /api/db/query", () => {
   beforeEach(() => {
+    clearRateLimitState();
     mockGetOrCreateProvider.mockClear();
     (mockProvider.query as ReturnType<typeof mock>).mockClear();
     (mockProvider.prepareQuery as ReturnType<typeof mock>).mockClear();

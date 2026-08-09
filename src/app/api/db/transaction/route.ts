@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getOrCreateProvider } from "@/lib/db";
 import { createErrorResponse } from "@/lib/api/errors";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
-import { getSession } from "@/lib/auth";
+import { guardRoute } from "@/lib/api/require-session";
 import { readBoundParams } from "@/lib/api/bound-params";
 
 interface TransactionProvider {
@@ -27,16 +27,14 @@ function isTransactionProvider(provider: unknown): provider is TransactionProvid
 }
 
 export async function POST(req: NextRequest) {
+  const guard = await guardRoute({ route: "POST /api/db/transaction", bucket: "query", request: req });
+  if ("response" in guard) return guard.response;
+
   try {
     const body = await req.json();
     const { action, sql, options = {} } = body;
 
-    const session = await getSession();
-    if (!session) {
-      return NextResponse.json({ error: "Authentication required" }, { status: 401 });
-    }
-
-    const connection = await resolveConnection(body, session);
+    const connection = await resolveConnection(body, guard.session);
 
     if (!action) {
       return NextResponse.json({ error: "Connection and action are required" }, { status: 400 });

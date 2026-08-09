@@ -1,5 +1,6 @@
 import { describe, test, expect, mock, beforeEach } from "bun:test";
 import { createMockRequest, readStreamResponse, parseResponseJSON } from "../../helpers/mock-next";
+import { clearRateLimitState } from "@/lib/api/rate-limit";
 
 // ─── Mock helpers ───────────────────────────────────────────────────────────
 
@@ -95,6 +96,7 @@ const { POST } = await import("@/app/api/ai/describe-schema/route");
 
 describe("POST /api/ai/describe-schema", () => {
   beforeEach(() => {
+    clearRateLimitState();
     mockCreateLLMProvider.mockClear();
     mockStream.mockClear();
     mockCreateLLMProvider.mockImplementation(async () => mockProvider);

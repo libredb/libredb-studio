@@ -1,11 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { removeProvider } from "@/lib/db/factory";
-import { requireSession } from "@/lib/api/require-session";
+import { guardRoute } from "@/lib/api/require-session";
 import { logger } from "@/lib/logger";
 
 export async function POST(req: NextRequest) {
-  const unauthorized = await requireSession();
-  if (unauthorized) return unauthorized;
+  // Shares the query bucket: a disconnect is cheap on its own, but rotating to it must not be a
+  // way to keep hammering the provider layer after the query budget is spent.
+  const guard = await guardRoute({ route: "POST /api/db/disconnect", bucket: "query", request: req });
+  if ("response" in guard) return guard.response;
 
   try {
     const { connectionId } = await req.json();

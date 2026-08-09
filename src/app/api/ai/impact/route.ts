@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createLLMProvider } from "@/lib/llm";
 import { createErrorResponse } from "@/lib/api/errors";
-import { requireSession } from "@/lib/api/require-session";
+import { guardRoute } from "@/lib/api/require-session";
 
 function buildImpactSystemPrompt(databaseType: string, schemaContext: string): string {
   return `You are a Schema Change Impact Analyst for ${databaseType || "PostgreSQL"}. You analyze DDL statements BEFORE they are executed and predict their impact.
@@ -61,8 +61,8 @@ GUIDELINES:
 }
 
 export async function POST(req: NextRequest) {
-  const unauthorized = await requireSession();
-  if (unauthorized) return unauthorized;
+  const guard = await guardRoute({ route: "POST /api/ai/impact", bucket: "ai", request: req });
+  if ("response" in guard) return guard.response;
 
   try {
     const { query, schemaContext, databaseType } = await req.json();

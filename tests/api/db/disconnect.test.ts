@@ -1,5 +1,6 @@
 import { describe, test, expect, mock, beforeEach } from "bun:test";
 import { createMockRequest, parseResponseJSON } from "../../helpers/mock-next";
+import { clearRateLimitState } from "@/lib/api/rate-limit";
 import {
   QueryError,
   TimeoutError,
@@ -75,6 +76,7 @@ mock.module("@/lib/auth", () => ({
 const { POST } = await import("@/app/api/db/disconnect/route");
 
 beforeEach(() => {
+  clearRateLimitState();
   mockRemoveProvider.mockClear();
 });
 
