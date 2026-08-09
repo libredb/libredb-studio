@@ -1,5 +1,11 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { readCspReportOnly, readHstsIncludeSubDomains, readSecurityHeaderOptions } from "@/lib/security/config";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
+import { logger } from "@/lib/logger";
+import {
+  readCspReportOnly,
+  readHstsIncludeSubDomains,
+  readSecurityHeaderOptions,
+  resetSecurityConfigWarnings,
+} from "@/lib/security/config";
 
 const MUTATED = ["CSP_REPORT_ONLY", "HSTS_INCLUDE_SUBDOMAINS", "NEXT_PUBLIC_MONACO_VS_PATH"] as const;
 const snapshot: Record<string, string | undefined> = {};
@@ -14,6 +20,7 @@ afterEach(() => {
     if (value === undefined) delete process.env[key];
     else process.env[key] = value;
   }
+  resetSecurityConfigWarnings();
 });
 
 describe("readCspReportOnly", () => {
@@ -35,16 +42,61 @@ describe("readCspReportOnly", () => {
     expect(readCspReportOnly()).toBe(true);
   });
 
-  test("falls back to the default on an unrecognized value rather than guessing", () => {
-    process.env.CSP_REPORT_ONLY = "maybe";
+  // "0"/"FALSE" are the two spellings an operator is most likely to type: "0" because
+  // AUTH_BOOTSTRAP and AUTH_COOKIE_SECURE both accept it, "FALSE" because shells and .env files
+  // are commonly written in all caps.
+  test("honours an explicit off value spelled as a bare zero", () => {
+    process.env.CSP_REPORT_ONLY = "0";
 
-    expect(readCspReportOnly()).toBe(true);
+    expect(readCspReportOnly()).toBe(false);
   });
 
-  test("treats an empty value as unset", () => {
-    process.env.CSP_REPORT_ONLY = "   ";
+  test("honours an explicit off value spelled in uppercase", () => {
+    process.env.CSP_REPORT_ONLY = "FALSE";
 
-    expect(readCspReportOnly()).toBe(true);
+    expect(readCspReportOnly()).toBe(false);
+  });
+
+  test("falls back to the default on an unrecognized value rather than guessing", () => {
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      process.env.CSP_REPORT_ONLY = "maybe";
+
+      expect(readCspReportOnly()).toBe(true);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  test("treats an empty value as unset, without warning", () => {
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      process.env.CSP_REPORT_ONLY = "   ";
+
+      expect(readCspReportOnly()).toBe(true);
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  // Same class of typo AUTH_BOOTSTRAP and AUTH_COOKIE_SECURE already warn on: a misspelled
+  // security flag must tell the operator, not silently keep the default and look identical to a
+  // deliberate choice.
+  test("warns once, naming the variable and the bad value, when the value is unrecognized", () => {
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      process.env.CSP_REPORT_ONLY = "maybe";
+
+      readCspReportOnly();
+      readCspReportOnly();
+
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls[0][0]).toContain("CSP_REPORT_ONLY");
+      expect(warn.mock.calls[0][0]).toContain("maybe");
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
 

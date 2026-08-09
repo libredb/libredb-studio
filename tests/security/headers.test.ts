@@ -57,6 +57,17 @@ describe("studioCspDirectives", () => {
     expect(directives["font-src"]).toContain("data:");
   });
 
+  test("keeps Monaco's language-service workers loading: they run from a blob: URL, not 'self'", () => {
+    // Monaco's own bundled worker factory (public/monaco/vs/editor/editor.main.js) wraps every
+    // language worker (json/css/html/typescript, and the default worker used for every other
+    // language, including this app's SQL editor) in `new Blob([...])` + `importScripts(...)`, then
+    // constructs the Worker from that blob: URL. Only the ELK layout worker is a genuine
+    // same-origin module worker. Losing blob: here breaks every Monaco worker silently once the
+    // CSP enforces, which is exactly the class of regression a plain array literal cannot catch on
+    // its own — this assertion is what makes deleting "blob:" from worker-src fail a test.
+    expect(studioCspDirectives()["worker-src"]).toContain("blob:");
+  });
+
   test("admits an absolute Monaco origin to script-src and worker-src only", () => {
     const directives = studioCspDirectives({ monacoVsPath: "https://assets.example.com/monaco/vs" });
 

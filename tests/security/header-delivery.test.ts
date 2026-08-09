@@ -4,7 +4,7 @@ import { SignJWT } from "jose";
 import { proxy } from "@/proxy";
 
 /**
- * Threat: a response path that escapes the headers. proxy() has six return statements; a new
+ * Threat: a response path that escapes the headers. proxy() has eight return statements; a new
  * branch that forgets withSecurityHeaders() ships a document with no CSP and no clickjacking
  * defence, and nothing else in the suite would notice. Every branch is driven here.
  */

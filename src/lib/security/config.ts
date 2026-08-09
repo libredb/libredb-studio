@@ -1,4 +1,5 @@
 import type { NextResponse } from "next/server";
+import { logger } from "@/lib/logger";
 import { HSTS_MAX_AGE_SECONDS, securityHeaders, type SecurityHeaderOptions } from "@/lib/security/headers";
 
 /**
@@ -15,16 +16,33 @@ const ON_VALUES = new Set(["on", "true", "1"]);
  */
 const CSP_DEFAULT_REPORT_ONLY = true;
 
+// withSecurityHeaders runs on every proxied request, so an unrecognized value must warn at most
+// once per flag per process, not once per request (same reasoning as auth.ts's cookie-security
+// warnOnce, which is latched because shouldMarkCookieSecure() runs on every login).
+const warnedFlags = new Set<string>();
+
+/** Test seam: clears the warn-once latches so each case observes a fresh process. */
+export function resetSecurityConfigWarnings(): void {
+  warnedFlags.clear();
+}
+
 /**
  * The operator's explicit answer, or undefined to take the default. Spellings follow
  * AUTH_BOOTSTRAP and AUTH_COOKIE_SECURE so the whole product reads flags the same way; an
- * unrecognized value takes the default rather than silently flipping the security posture.
+ * unrecognized value warns (once per flag) and takes the default rather than silently flipping
+ * the security posture.
  */
-function readFlag(raw: string | undefined): boolean | undefined {
+function readFlag(envVarName: string, raw: string | undefined, hint: string): boolean | undefined {
   const normalized = raw?.trim().toLowerCase();
   if (!normalized) return undefined;
   if (OFF_VALUES.has(normalized)) return false;
   if (ON_VALUES.has(normalized)) return true;
+  if (!warnedFlags.has(envVarName)) {
+    warnedFlags.add(envVarName);
+    // Single-line message: bun's line coverage under-counts the continuation lines of a wrapped
+    // call, which then reads as uncovered new code (same note as auth.ts's readCookieSecureOverride).
+    logger.warn(`Unrecognized ${envVarName} value "${raw}"; keeping the default (${hint})`, { route: "security" });
+  }
   return undefined;
 }
 
@@ -35,7 +53,8 @@ function readFlag(raw: string | undefined): boolean | undefined {
  * rebuilt by the person whose distribution channel broke.
  */
 export function readCspReportOnly(): boolean {
-  return readFlag(process.env.CSP_REPORT_ONLY) ?? CSP_DEFAULT_REPORT_ONLY;
+  const hint = 'use "false" to enforce, "true" to stay report-only';
+  return readFlag("CSP_REPORT_ONLY", process.env.CSP_REPORT_ONLY, hint) ?? CSP_DEFAULT_REPORT_ONLY;
 }
 
 /**
@@ -43,7 +62,7 @@ export function readCspReportOnly(): boolean {
  * unrelated siblings by upgrading Studio.
  */
 export function readHstsIncludeSubDomains(): boolean {
-  return readFlag(process.env.HSTS_INCLUDE_SUBDOMAINS) ?? false;
+  return readFlag("HSTS_INCLUDE_SUBDOMAINS", process.env.HSTS_INCLUDE_SUBDOMAINS, 'use "true" to opt in') ?? false;
 }
 
 export function readSecurityHeaderOptions(): SecurityHeaderOptions {
