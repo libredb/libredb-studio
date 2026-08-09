@@ -63,8 +63,12 @@ interface Counter {
   notified: boolean;
 }
 
-/** Per-bucket cap - see the module docstring for why this is partitioned rather than shared. */
-const MAX_ENTRIES_PER_BUCKET = 1000;
+/**
+ * Per-bucket cap - see the module docstring for why this is partitioned rather than shared.
+ * Exported so tests can derive a flood size that is guaranteed to force eviction (cap + 1) instead
+ * of hardcoding a number that silently stops proving anything if this constant ever moves.
+ */
+export const MAX_ENTRIES_PER_BUCKET = 1000;
 const MAX_KEY_LENGTH = 200;
 const MAX_LIMIT = 1_000_000;
 const MAX_WINDOW_SECONDS = 86_400;

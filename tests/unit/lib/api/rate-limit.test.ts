@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, setSystemTime, test } from "bu
 import {
   clearRateLimitState,
   consumeRateLimit,
+  MAX_ENTRIES_PER_BUCKET,
   parsePositiveInt,
   peekRateLimit,
   RateLimitError,
@@ -225,15 +226,22 @@ describe("eviction", () => {
     expect(peekRateLimit("login_account", "victim").allowed).toBe(false);
 
     process.env.RATE_LIMIT_LOGIN_MAX = "1";
-    for (let i = 0; i < 5001; i += 1) {
+    // One request for "flood-0" now, and MAX_ENTRIES_PER_BUCKET more distinct keys after it - one
+    // more than the bucket's own capacity - so eviction inside login_client is forced to happen,
+    // not merely possible. Deriving the size from the constant keeps this true if it ever moves.
+    expect(consumeRateLimit("login_client", "flood-0").allowed).toBe(true);
+    for (let i = 1; i <= MAX_ENTRIES_PER_BUCKET; i += 1) {
       consumeRateLimit("login_client", `flood-${i}`);
     }
 
+    // Eviction inside login_client actually happened: "flood-0" was the oldest insertion, so it
+    // was evicted and restarted at zero - allowed again even though RATE_LIMIT_LOGIN_MAX is 1.
+    // Without this assertion, "login_account survived" would be equally explained by no eviction
+    // ever having occurred at all.
+    expect(consumeRateLimit("login_client", "flood-0").allowed).toBe(true);
     // login_client's own eviction pressure never touches login_account's store: each bucket has
     // its own capacity, so a flood cheap enough to need no real account can only ever evict
-    // entries that already belong to that same cheap bucket. 5001 crosses the old SHARED
-    // eviction threshold too, so this fails against a single-map design as well as any
-    // per-bucket cap smaller than 5001.
+    // entries that already belong to that same cheap bucket.
     expect(peekRateLimit("login_account", "victim").allowed).toBe(false);
   });
 });

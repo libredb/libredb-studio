@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { clientAddress } from "@/lib/api/client-address";
-import { clearRateLimitState, consumeRateLimit } from "@/lib/api/rate-limit";
+import { clearRateLimitState, consumeRateLimit, MAX_ENTRIES_PER_BUCKET } from "@/lib/api/rate-limit";
 
 /**
  * Threat: an attacker who evades the limiter, or weaponises it against a legitimate user.
@@ -76,19 +76,27 @@ describe("a legitimate deployment behind one reverse proxy", () => {
 describe("an attacker flooding a cheap bucket to steer eviction", () => {
   test("cannot reset a login_account counter by flooding login_client with disposable keys", () => {
     process.env.RATE_LIMIT_LOGIN_ACCOUNT_MAX = "1";
+    process.env.RATE_LIMIT_LOGIN_MAX = "1";
     const victimAccount = "victim@libredb.org";
 
     expect(consumeRateLimit("login_account", victimAccount).allowed).toBe(true);
     expect(consumeRateLimit("login_account", victimAccount).allowed).toBe(false);
 
-    // Each rotated X-Forwarded-For value is a free, disposable login_client key. This is well past
-    // the old SHARED eviction threshold (5000), entirely within login_client - a bucket an
-    // attacker never needs a real account to flood.
-    for (let attempt = 0; attempt < 5001; attempt += 1) {
+    // Spend the first, disposable login_client key, then rotate X-Forwarded-For for
+    // MAX_ENTRIES_PER_BUCKET more - one more than the bucket's own capacity, deriving the size from
+    // the constant rather than a hardcoded number so this keeps forcing eviction if it ever moves.
+    const firstKey = clientAddress(request({ "x-forwarded-for": "203.0.113.0" }));
+    expect(consumeRateLimit("login_client", firstKey).allowed).toBe(true);
+    for (let attempt = 1; attempt <= MAX_ENTRIES_PER_BUCKET; attempt += 1) {
       const key = clientAddress(request({ "x-forwarded-for": `203.0.113.${attempt}` }));
       consumeRateLimit("login_client", key);
     }
 
+    // Eviction inside login_client actually happened: the first key was the oldest insertion, so
+    // it was evicted and restarted at zero - allowed again even though RATE_LIMIT_LOGIN_MAX is 1.
+    // Without this, "login_account survived" would be equally explained by nothing ever having
+    // been evicted at all.
+    expect(consumeRateLimit("login_client", firstKey).allowed).toBe(true);
     // The victim's login_account counter must still be tripped: flooding a different, cheap
     // bucket must never evict a counter out of login_account. Per-bucket capacity partitioning is
     // the property under test - see the module docstring in src/lib/api/rate-limit.ts.
