@@ -164,7 +164,16 @@ jobs:
         uses: ./.github/actions/bun-install
 
       - name: Install Playwright browsers
-        run: bunx playwright install --with-deps chromium
+        # webkit is required alongside chromium: playwright.config.ts's
+        # webkit-security project (scoped to e2e/security-headers.spec.ts)
+        # runs under this job's unfiltered `playwright test` invocation. The
+        # other Playwright-installing workflows (docker-build-push.yml,
+        # release-artifacts.yml, and the channel-e2e job below) all drive
+        # scripts/channel-embedded-sample-e2e.sh, which pins
+        # --config=playwright.channel.config.ts - a chromium-only project
+        # list that never resolves the webkit-security project - so they stay
+        # chromium-only on purpose.
+        run: bunx playwright install --with-deps chromium webkit
 
       - name: Run E2E tests
         run: bunx playwright test
