@@ -15,15 +15,23 @@ const ROUTE = "GET /api/auth/oidc/callback";
  * filter low-cardinality.
  */
 function auditFailure(reason: AuditReason, ip: string): void {
-  emitAuditEvent({
-    type: "login_failure",
-    action: "login",
-    target: ROUTE,
-    user: "anonymous",
-    result: "failure",
-    reason,
-    ip,
-  });
+  // Isolated from route control flow: a broken audit sink must never decide which failure code
+  // the caller is redirected to. Every call site below sits inside the route's outer try, whose
+  // catch would otherwise reclassify the ORIGINAL failure (e.g. oidc_state_missing) as oidc_failed
+  // if this throw were allowed to propagate.
+  try {
+    emitAuditEvent({
+      type: "login_failure",
+      action: "login",
+      target: ROUTE,
+      user: "anonymous",
+      result: "failure",
+      reason,
+      ip,
+    });
+  } catch (auditError) {
+    logger.error("Failed to record OIDC login_failure audit event", auditError, { route: ROUTE });
+  }
 }
 
 export async function GET(request: Request) {
@@ -79,14 +87,21 @@ export async function GET(request: Request) {
     // Clean up state cookie
     cookieStore.delete("oidc-state");
 
-    emitAuditEvent({
-      type: "login_success",
-      action: "login",
-      target: ROUTE,
-      user: String(username),
-      result: "success",
-      ip,
-    });
+    // Isolated in its own try/catch, separate from login() above: a real session already exists by
+    // this point, so a failure to record it must never turn a successful login into a recorded (or
+    // outer-catch-driven) login_failure.
+    try {
+      emitAuditEvent({
+        type: "login_success",
+        action: "login",
+        target: ROUTE,
+        user: String(username),
+        result: "success",
+        ip,
+      });
+    } catch (auditError) {
+      logger.error("Failed to record OIDC login_success audit event", auditError, { route: ROUTE });
+    }
 
     // Redirect based on role
     return NextResponse.redirect(`${origin}${role === "admin" ? "/admin" : "/"}`);

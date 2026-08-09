@@ -1,4 +1,4 @@
-import { describe, test, expect, mock, beforeEach, afterEach } from "bun:test";
+import { describe, test, expect, mock, spyOn, beforeEach, afterEach } from "bun:test";
 import { parseResponseJSON } from "../../helpers/mock-next";
 
 // ─── Mock @/lib/auth BEFORE importing the route ─────────────────────────────
@@ -70,12 +70,16 @@ describe("POST /api/auth/logout (local)", () => {
     mockLogout.mockImplementationOnce(async () => {
       throw new Error("Cookie store unavailable");
     });
+    const logSpy = spyOn(console, "log").mockImplementation(() => {});
 
     const res = await POST(makeRequest() as never);
     const data = await parseResponseJSON<{ error: string }>(res);
 
     expect(res.status).toBe(500);
     expect(data.error).toBe("Cookie store unavailable");
+    // A failed logout must never produce a line asserting a logout that did not happen.
+    expect(logSpy).not.toHaveBeenCalled();
+    logSpy.mockRestore();
   });
 
   test("multiple logouts all succeed", async () => {

@@ -96,13 +96,49 @@ describe("logout", () => {
     }
   });
 
-  test("records an anonymous actor when there was no session to destroy", async () => {
+  test("does not emit an audit line when there was no session to destroy", async () => {
+    // No session means no state transition occurred. "anonymous logged out" would be noise, and
+    // this route is public and unrated-limited, so recording it would let an unauthenticated
+    // caller flood the audit trail (and the admin UI's 1000-entry ring buffer) for free.
     mockGetSession.mockImplementation(async () => null);
     const spy = spyOn(console, "log").mockImplementation(() => {});
     try {
       await logoutRoute(new Request("http://localhost:3000/api/auth/logout", { method: "POST" }) as never);
 
-      expect(auditLines(spy)[0].actor).toBe("anonymous");
+      expect(auditLines(spy)).toHaveLength(0);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  test("emits no audit line when logout() throws, even though a session existed", async () => {
+    // The property this task is named for: a failure between reading the identity and destroying
+    // the session must never produce a line asserting a logout that did not happen.
+    mockLogout.mockImplementationOnce(async () => {
+      throw new Error("cookie store unavailable");
+    });
+    const spy = spyOn(console, "log").mockImplementation(() => {});
+    try {
+      await logoutRoute(new Request("http://localhost:3000/api/auth/logout", { method: "POST" }) as never);
+
+      expect(auditLines(spy)).toHaveLength(0);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  test("does not fail the logout response when the audit emit itself throws", async () => {
+    // The emit is isolated in its own try/catch, separate from logout() above: an audit failure
+    // must never change the outcome of the logout it is recording.
+    const spy = spyOn(console, "log").mockImplementation(() => {
+      throw new Error("audit sink unavailable");
+    });
+    try {
+      const response = await logoutRoute(
+        new Request("http://localhost:3000/api/auth/logout", { method: "POST" }) as never,
+      );
+
+      expect(response.status).toBe(200);
     } finally {
       spy.mockRestore();
     }
@@ -132,6 +168,7 @@ describe("the OIDC callback", () => {
       await oidcCallback(callbackRequest());
       const lines = auditLines(spy);
 
+      expect(lines).toHaveLength(1);
       expect(lines[0].event).toBe("login_failure");
       expect(lines[0].reason).toBe("oidc_state_missing");
       expect(lines[0].actor).toBe("anonymous");
@@ -147,8 +184,10 @@ describe("the OIDC callback", () => {
     const spy = spyOn(console, "log").mockImplementation(() => {});
     try {
       await oidcCallback(callbackRequest());
+      const lines = auditLines(spy);
 
-      expect(auditLines(spy)[0].reason).toBe("oidc_state_invalid");
+      expect(lines).toHaveLength(1);
+      expect(lines[0].reason).toBe("oidc_state_invalid");
     } finally {
       spy.mockRestore();
     }
@@ -159,8 +198,10 @@ describe("the OIDC callback", () => {
     const spy = spyOn(console, "log").mockImplementation(() => {});
     try {
       await oidcCallback(callbackRequest());
+      const lines = auditLines(spy);
 
-      expect(auditLines(spy)[0].reason).toBe("oidc_no_claims");
+      expect(lines).toHaveLength(1);
+      expect(lines[0].reason).toBe("oidc_no_claims");
     } finally {
       spy.mockRestore();
     }
@@ -175,6 +216,7 @@ describe("the OIDC callback", () => {
       await oidcCallback(callbackRequest());
       const lines = auditLines(spy);
 
+      expect(lines).toHaveLength(1);
       expect(lines[0].reason).toBe("oidc_failed");
       // The reason is a closed union, which is exactly why no driver string can reach the record.
       expect(JSON.stringify(lines[0])).not.toContain("ECONNREFUSED");
@@ -191,8 +233,10 @@ describe("the OIDC callback", () => {
     const spy = spyOn(console, "log").mockImplementation(() => {});
     try {
       await oidcCallback(callbackRequest());
+      const lines = auditLines(spy);
 
-      expect(auditLines(spy)[0].reason).toBe("oidc_config");
+      expect(lines).toHaveLength(1);
+      expect(lines[0].reason).toBe("oidc_config");
     } finally {
       spy.mockRestore();
     }
@@ -211,11 +255,45 @@ describe("the OIDC callback", () => {
       const lines = auditLines(spy);
       const emitted = JSON.stringify(lines[0]);
 
+      expect(lines).toHaveLength(1);
       expect(lines[0].event).toBe("login_failure");
       expect(lines[0].reason).toBe("oidc_failed");
       expect(emitted).not.toContain(authorizationCode);
       expect(emitted).not.toContain(accessToken);
       expect(emitted).not.toContain("access_token");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  test("still redirects to the app when the success audit emit throws", async () => {
+    // The emit is isolated in its own try/catch, separate from login() above: a real session
+    // already exists by this point, so an audit failure must never turn a successful login into a
+    // recorded (or outer-catch-driven) login_failure, nor into an error redirect.
+    const spy = spyOn(console, "log").mockImplementation(() => {
+      throw new Error("audit sink unavailable");
+    });
+    try {
+      const response = await oidcCallback(callbackRequest());
+
+      expect(response.status).toBe(307);
+      expect(response.headers.get("location")).not.toContain("error=");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  test("still redirects with the original failure reason when the audit emit throws", async () => {
+    // auditFailure() swallows its own throw. Without that isolation, the outer catch would
+    // reclassify this as oidc_failed instead of the true oidc_state_missing.
+    cookieStore.get.mockImplementation(() => undefined);
+    const spy = spyOn(console, "log").mockImplementation(() => {
+      throw new Error("audit sink unavailable");
+    });
+    try {
+      const response = await oidcCallback(callbackRequest());
+
+      expect(response.headers.get("location")).toContain("error=oidc_state_missing");
     } finally {
       spy.mockRestore();
     }

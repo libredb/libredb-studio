@@ -4,6 +4,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createErrorResponse } from "@/lib/api/errors";
 import { clientAddress } from "@/lib/api/client-address";
 import { emitAuditEvent } from "@/lib/audit";
+import { logger } from "@/lib/logger";
 
 const ROUTE = "POST /api/auth/logout";
 
@@ -15,14 +16,28 @@ export async function POST(request: NextRequest) {
 
     await logout();
 
-    emitAuditEvent({
-      type: "logout",
-      action: "logout",
-      target: ROUTE,
-      user: session?.username ?? "anonymous",
-      result: "success",
-      ip: clientAddress(request),
-    });
+    // No session means no state transition occurred - "anonymous logged out" would be noise, not a
+    // fact, and this route has no rate limit, so recording it unconditionally would let an
+    // unauthenticated caller flood the audit trail for free.
+    if (session) {
+      // Isolated in its own try/catch, separate from the mutation above: an audit call must never
+      // change the outcome of the thing it is recording. logout() has already succeeded by this
+      // point, so a failure to record it (today unrealistic - console.log basically cannot throw -
+      // but real the moment the audit sink gains an I/O step) must not turn a successful logout
+      // into a 500, and must not retroactively make it look like the logout never happened.
+      try {
+        emitAuditEvent({
+          type: "logout",
+          action: "logout",
+          target: ROUTE,
+          user: session.username,
+          result: "success",
+          ip: clientAddress(request),
+        });
+      } catch (auditError) {
+        logger.error("Failed to record logout audit event", auditError, { route: ROUTE });
+      }
+    }
 
     const authProvider = process.env.NEXT_PUBLIC_AUTH_PROVIDER || "local";
     if (authProvider === "oidc") {
