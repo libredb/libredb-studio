@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { jwtVerify } from "jose";
+import { clientAddress } from "@/lib/api/client-address";
+import { checkOrigin } from "@/lib/api/origin-check";
+import { consumeRateLimit } from "@/lib/api/rate-limit";
+import { emitAuditEvent } from "@/lib/audit";
 import { logger } from "@/lib/logger";
 import { getJwtSecret } from "@/lib/config/auth-env";
 import { withSecurityHeaders } from "@/lib/security/config";
@@ -14,9 +18,47 @@ function jwtSecret(): Uint8Array {
   return _jwtSecret;
 }
 
+// The body names the fix. A reverse proxy that rewrites Host without setting x-forwarded-host
+// produces a mismatch on every state-changing request including login, and the operator otherwise
+// sees a working page that silently refuses every action. This turns a lockout into a diagnosis.
+const ORIGIN_MISMATCH_BODY = {
+  error:
+    "Request origin is not allowed for this deployment. If Studio sits behind a reverse proxy, set ALLOWED_ORIGINS to its public origin.",
+  code: "ORIGIN_MISMATCH",
+  statusCode: 403,
+  retryable: false,
+};
+
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const isStaticAsset = /\.[a-z0-9]+$/i.test(pathname);
+
+  const origin = checkOrigin(request);
+  if (!origin.allowed) {
+    // The warning and the audit line are metered through the anon bucket so an internet scanner
+    // cannot fill a container log volume. The limiter instance the proxy sees is independent of
+    // the one the route handlers see - the proxy is a separately compiled entry - and it is used
+    // here only to bound log volume, never to reject: the 403 is unconditional.
+    const address = clientAddress(request);
+    const notice = consumeRateLimit("anon", address);
+    if (notice.allowed || notice.tripped) {
+      logger.warn("Origin check rejected a request", {
+        route: `${request.method} ${pathname}`,
+        observedOrigin: origin.observedOrigin,
+        expectedHost: origin.expectedHost,
+      });
+      emitAuditEvent({
+        type: "permission_denied",
+        action: "denied",
+        target: `${request.method} ${pathname}`,
+        user: "anonymous",
+        result: "failure",
+        reason: "origin_mismatch",
+        ip: address,
+      });
+    }
+    return withSecurityHeaders(NextResponse.json(ORIGIN_MISMATCH_BODY, { status: 403 }));
+  }
 
   const token = request.cookies.get("auth-token")?.value;
 

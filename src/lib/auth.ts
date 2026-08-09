@@ -152,6 +152,10 @@ export async function login(role: Role, username?: string) {
   cookieStore.set("auth-token", token, {
     httpOnly: true,
     secure: await shouldMarkCookieSecure(),
+    // Must stay "lax" and must NOT be tightened to "strict": the OIDC callback depends on lax's
+    // top-level-GET exception to return the oidc-state cookie. The cases lax does not cover -
+    // notably a cross-site POST /api/auth/login, where there is no pre-existing cookie to withhold
+    // - are covered by the Origin check in src/proxy.ts (src/lib/api/origin-check.ts).
     sameSite: "lax",
     maxAge: 60 * 60 * 24, // 1 day
     path: "/",
