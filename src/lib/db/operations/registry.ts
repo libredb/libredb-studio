@@ -114,6 +114,10 @@ export class OperationRegistry {
     return { kind: "denied", reasonCode: "UNKNOWN_OPERATION", requestedId };
   }
 
+  // Default (code-point) sort, NOT localeCompare: these are internal operation
+  // ids, never user-facing text, and callers depend on the order being identical
+  // on every host. localeCompare would tie it to the host locale. S2871 is
+  // suppressed for this file in sonar-project.properties for exactly this reason.
   registeredIds(): readonly string[] {
     return [...this.descriptors.keys()].sort();
   }
