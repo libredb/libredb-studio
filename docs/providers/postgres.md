@@ -17,6 +17,7 @@
 | **Connection string** | Supported (`postgres://` / `postgresql://`) |
 | **Transactions** | Yes — explicit `BEGIN`/`COMMIT`/`ROLLBACK` with auto-rollback timeout |
 | **Query cancellation** | Yes — PID tracking + `pg_cancel_backend` |
+| **Agent read-only profile** | Yes — `BEGIN READ ONLY` + extended-protocol single statement (#328, §12) |
 | **Source** | [`src/lib/db/providers/sql/postgres.ts`](../../src/lib/db/providers/sql/postgres.ts) |
 | **Base** | [`src/lib/db/providers/sql/sql-base.ts`](../../src/lib/db/providers/sql/sql-base.ts) |
 | **Tests** | [`tests/integration/db/postgres-provider.test.ts`](../../tests/integration/db/postgres-provider.test.ts) |
@@ -502,9 +503,71 @@ syntax errors.
 
 ---
 
-## 12. Testing
+## 12. Agent read-only execution profile (#328)
 
-### 12.1 How the tests work
+The agent programme (epic #325) never talks to the shared, fully-privileged provider. It acquires
+a **dedicated provider keyed by (connection id, execution profile)** and runs every statement
+through `queryReadOnly()`, where the DATABASE — not a SQL parser — is the boundary.
+
+### 12.1 Acquisition (`acquireExecutionProfileProvider`, [factory.ts](../../src/lib/db/factory.ts))
+
+- The profiled cache is physically separate from `getOrCreateProvider`'s cache: an agent
+  acquisition never returns, inserts, or touches a shared writable entry (unit-tested in both
+  directions), so an agent execution can never be handed the editor's pool — and vice versa.
+- Provider types without a database-native read-only wrapper are refused with
+  `PROFILE_UNSUPPORTED_BY_PROVIDER`; there is no fallback to `query()`.
+- Optional least-privilege credential: `agentUser` / `agentPassword` on the connection
+  (`agentPassword` is secret-classified and sealed at rest by
+  [connection-secrets](../../src/lib/storage/connection-secrets.ts)). Resolution fails closed:
+
+  | Configuration | Outcome |
+  |---|---|
+  | Neither field set | Connection's own credentials, still inside the read-only transaction |
+  | Both set, password resolves | Profile pool authenticates as `agentUser` |
+  | Only one field set | `AGENT_CREDENTIAL_UNRESOLVABLE` — never a silent fallback to the more privileged default |
+  | Sealed password that does not open | `AGENT_CREDENTIAL_UNRESOLVABLE` |
+  | Combined with `connectionString` | `AGENT_CREDENTIAL_WITH_CONNECTION_STRING` — the pool config would silently drop the credential |
+
+- Lifecycle: profiled providers idle out on the same 30-minute sweep, are removed alongside
+  `removeProvider(connectionId)`, and share the connection's SSH tunnel (closed only once nothing
+  serves the connection anymore).
+
+### 12.2 Per-statement execution (`queryReadOnly`, [postgres.ts](../../src/lib/db/providers/sql/postgres.ts))
+
+Each call runs:
+
+```sql
+BEGIN READ ONLY;
+SET LOCAL statement_timeout = <budget.statementTimeoutMs>;  -- dies with the transaction
+-- the single statement, sent on the extended query protocol
+ROLLBACK;                                                   -- always; the profile never commits
+```
+
+Two server-enforced properties carry the security claim:
+
+1. **Writes are rejected by PostgreSQL itself** (SQLSTATE `25006`, *cannot execute … in a
+   read-only transaction*). No SQL classification happens in this path.
+2. **Single-statement is protocol-enforced**: the statement is sent with `queryMode: 'extended'`
+   (pg ≥ 8.11), and the server refuses multi-command strings in a Parse message (SQLSTATE `42601`)
+   before executing anything — so `SELECT 1; COMMIT; INSERT …` cannot commit its way out of the
+   read-only transaction the way it could on the simple protocol.
+
+A lone hostile statement cannot escape either: `SET TRANSACTION READ WRITE` would be the
+transaction's only statement before `ROLLBACK`; a session-level `SET` reverts with the rollback
+(GUC changes are transactional); a bare `COMMIT` merely ends an empty read-only transaction. A
+client whose `ROLLBACK` fails is destroyed (`release(error)`), never returned to the pool
+mid-transaction.
+
+The `ReadOnlyStatementBudget` (`statementTimeoutMs`, `maxResultRows`, `maxResultBytes`,
+[types.ts](../../src/lib/db/types.ts)) is validated as positive integers before any client is
+acquired — the timeout is interpolated into `SET LOCAL`, which takes no bind parameters — and the
+row/byte caps are enforced result-side after the statement returns.
+
+---
+
+## 13. Testing
+
+### 13.1 How the tests work
 
 Integration tests live in
 [`tests/integration/db/postgres-provider.test.ts`](../../tests/integration/db/postgres-provider.test.ts).
@@ -521,7 +584,7 @@ server.
 > process isolation via `tests/run-core.sh`); the coverage workflow uses `bun run test:coverage`
 > (also per-file). See [`CLAUDE.md`](../../CLAUDE.md).
 
-### 12.2 Coverage
+### 13.2 Coverage
 
 The suite (60+ tests) covers: validation (incl. connection-string bypass), connect/disconnect
 idempotency, **every SSL precedence branch**, query + PID tracking + error mapping, query
@@ -533,7 +596,7 @@ formatting, performance (incl. checkpoint fallback), slow queries (extension + `
 fallback), active sessions,
 table/index/storage stats, pool stats, capabilities, and `pg_stat_activity` passthrough.
 
-### 12.3 Run it
+### 13.3 Run it
 
 ```bash
 bun test tests/integration/db/postgres-provider.test.ts   # just this file (single process — safe)
@@ -541,7 +604,7 @@ bun run test:ci                                            # CI publish gate —
 bun run test:coverage                                      # CI coverage workflow — per-file core + components
 ```
 
-### 12.4 Optional: verifying against a live PostgreSQL
+### 13.4 Optional: verifying against a live PostgreSQL
 
 The committed tests are mock-based by design. To smoke-test against a real server:
 
@@ -554,9 +617,9 @@ The E2E suite (`e2e/`) has been verified against PostgreSQL 18.x.
 
 ---
 
-## 13. Usage examples
+## 14. Usage examples
 
-### 13.1 Programmatic (via the factory)
+### 14.1 Programmatic (via the factory)
 
 ```ts
 import { createDatabaseProvider } from '@/lib/db/factory';
@@ -574,7 +637,7 @@ const rels = await provider.getSchemaRelations();      // FKs + indexes to merge
 await provider.disconnect();
 ```
 
-### 13.2 Over the API
+### 14.2 Over the API
 
 - `POST /api/db/query` — run SQL (see [`API_DOCS.md`](../API_DOCS.md#post-apidbquery)).
 - `POST /api/db/schema/list` and `POST /api/db/schema/relations` — two-phase schema.
@@ -584,7 +647,7 @@ await provider.disconnect();
 
 ---
 
-## 14. Known limitations & future work
+## 15. Known limitations & future work
 
 - **`transactionsPerSecond` / `queriesPerSecond` are not reported** (`undefined`) — they require
   time-based sampling of `pg_stat_database`, which the single-shot metric call doesn't do.
@@ -604,7 +667,7 @@ await provider.disconnect();
 
 ---
 
-## 15. References
+## 16. References
 
 - Driver: [`pg` (node-postgres)](https://github.com/brianc/node-postgres)
 - Source: [`src/lib/db/providers/sql/postgres.ts`](../../src/lib/db/providers/sql/postgres.ts)

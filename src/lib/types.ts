@@ -70,6 +70,8 @@ export interface DatabaseConnection {
   instanceName?: string; // MSSQL: named instance (e.g. SQLEXPRESS)
   managed?: boolean; // true = admin-controlled, read-only in UI
   seedId?: string; // stable reference to seed config ID
+  agentUser?: string; // optional least-privilege role for the agent read-only execution profile (#328)
+  agentPassword?: string; // password for agentUser; secret-classified, sealed at rest by connection-secrets
 }
 
 export interface TableSchema {

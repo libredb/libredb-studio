@@ -348,19 +348,21 @@ nothing to switch on and nothing to configure.
 
 ### What is encrypted
 
-Six fields, all on a saved connection:
+Seven fields, all on a saved connection:
 
 | Field | What it is |
 |-------|------------|
 | `password` | The database password |
 | `connectionString` | A URL that can embed `user:password@` |
+| `agentPassword` | The optional least-privilege agent-profile password (#328) |
 | `ssl.clientKey` | The TLS client private key |
 | `sshTunnel.password` | The SSH password |
 | `sshTunnel.privateKey` | The SSH private key |
 | `sshTunnel.passphrase` | The passphrase that unlocks the key above |
 
-Everything else stays readable, deliberately: `host`, `port`, `user`, `database`, `name` and the
-TLS certificates (`ssl.caCert`, `ssl.clientCert` — certificates are public by construction). An
+Everything else stays readable, deliberately: `host`, `port`, `user`, `agentUser`, `database`,
+`name` and the TLS certificates (`ssl.caCert`, `ssl.clientCert` — certificates are public by
+construction). An
 operator holding a dump has to be able to answer "which of my databases is in here"; that is
 incident response, not a leak. No other collection is touched — `history` and `saved_queries` hold
 SQL text, which is the product's data rather than its secrets.

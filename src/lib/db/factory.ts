@@ -6,7 +6,8 @@
 
 import { type DatabaseProvider, type DatabaseConnection, type ProviderOptions } from "./types";
 import { DatabaseConfigError } from "./errors";
-import { createSSHTunnel, closeSSHTunnel } from "@/lib/ssh/tunnel";
+import { createSSHTunnel, closeSSHTunnel, hasTunnel } from "@/lib/ssh/tunnel";
+import { readSecret } from "@/lib/storage/encryption";
 import { logger } from "@/lib/logger";
 
 // ============================================================================
@@ -145,6 +146,30 @@ interface CachedProvider {
 
 const providerCache = new Map<string, CachedProvider>();
 
+// ============================================================================
+// Execution-profile provider cache (#328)
+// ----------------------------------------------------------------------------
+// Physically separate from providerCache on purpose: an agent acquisition must
+// be able to prove it never read from nor wrote to the shared writable cache.
+// Keyed by (connection id, execution profile).
+// ============================================================================
+
+interface ProfiledCachedProvider extends CachedProvider {
+  connectionId: string;
+}
+
+const profiledProviderCache = new Map<string, ProfiledCachedProvider>();
+
+function profiledCacheKey(connectionId: string, profile: ExecutionProfile): string {
+  return `${profile}::${connectionId}`;
+}
+
+/** True when any provider — shared or profiled — still serves this connection. */
+function connectionStillServed(connectionId: string): boolean {
+  if (providerCache.has(connectionId)) return true;
+  return Array.from(profiledProviderCache.values()).some((entry) => entry.connectionId === connectionId);
+}
+
 /** Idle timeout: evict providers unused for 30 minutes */
 const IDLE_TIMEOUT_MS = 30 * 60 * 1000;
 /** Sweep interval: check for idle providers every 5 minutes */
@@ -171,18 +196,46 @@ export async function evictIdleProviders(maxIdleMs: number = IDLE_TIMEOUT_MS): P
         logger.warn(`[DB] Error disconnecting idle provider ${id}`, { connectionId: id, error: String(error) });
       }
       providerCache.delete(id);
-      // Also close SSH tunnel
-      try {
-        await closeSSHTunnel(id);
-      } catch {
-        /* ignore */
+      // Close the shared tunnel only when nothing serves the connection
+      // anymore — a live profiled provider still needs it.
+      if (!connectionStillServed(id)) {
+        try {
+          await closeSSHTunnel(id);
+        } catch {
+          /* ignore */
+        }
       }
       evicted++;
     }
   }
 
-  // Stop sweeping if cache is empty
-  if (providerCache.size === 0 && sweepTimer) {
+  // Profiled providers idle out on the same clock. The tunnel is shared per
+  // connection id, so it is closed only once nothing serves that connection.
+  for (const [key, entry] of profiledProviderCache) {
+    if (now - entry.lastUsed >= maxIdleMs) {
+      logger.info(`[DB] Evicting idle profiled provider: ${key}`);
+      try {
+        await entry.provider.disconnect();
+      } catch (error) {
+        logger.warn(`[DB] Error disconnecting idle profiled provider ${key}`, {
+          connectionId: entry.connectionId,
+          error: String(error),
+        });
+      }
+      profiledProviderCache.delete(key);
+      if (!connectionStillServed(entry.connectionId)) {
+        try {
+          await closeSSHTunnel(entry.connectionId);
+        } catch {
+          /* ignore */
+        }
+      }
+      evicted++;
+    }
+  }
+
+  // Stop sweeping if both caches are empty
+  if (providerCache.size === 0 && profiledProviderCache.size === 0 && sweepTimer) {
     clearInterval(sweepTimer);
     sweepTimer = null;
   }
@@ -223,8 +276,13 @@ export async function getOrCreateProvider(
     return cached.provider;
   }
 
-  // If SSH tunnel is configured, create tunnel first and rewrite connection
+  // If SSH tunnel is configured, create tunnel first and rewrite connection.
+  // createSSHTunnel returns a pre-existing tunnel for the same connection id,
+  // so remember whether this call actually created it — only a fresh tunnel
+  // may be torn down on failure (a pre-existing one may still serve an
+  // execution-profile provider).
   let effectiveConnection = connection;
+  const tunnelPreexisted = hasTunnel(connection.id);
   let tunnel: Awaited<ReturnType<typeof createSSHTunnel>> | null = null;
   if (connection.sshTunnel?.enabled && connection.host && connection.port) {
     tunnel = await createSSHTunnel(connection.id, connection.sshTunnel, connection.host, connection.port);
@@ -241,8 +299,8 @@ export async function getOrCreateProvider(
   try {
     await provider.connect();
   } catch (error) {
-    // Clean up SSH tunnel if provider connect fails to prevent FD leak
-    if (tunnel) {
+    // Clean up a freshly created SSH tunnel if provider connect fails to prevent FD leak
+    if (tunnel && !tunnelPreexisted) {
       await tunnel.close().catch(() => {});
     }
     throw error;
@@ -257,8 +315,144 @@ export async function getOrCreateProvider(
   return provider;
 }
 
+// ============================================================================
+// Execution-profile provider acquisition (#328)
+// ============================================================================
+
 /**
- * Remove a provider from cache and disconnect
+ * The execution profiles this factory can vend. Exactly one exists today; an
+ * unknown profile string is refused, never defaulted (fail closed).
+ */
+export type ExecutionProfile = "agent-read-only";
+
+const EXECUTION_PROFILES: ReadonlySet<string> = new Set<ExecutionProfile>(["agent-read-only"]);
+
+export type ExecutionProfileDenyCode =
+  | "UNSUPPORTED_PROFILE"
+  | "PROFILE_UNSUPPORTED_BY_PROVIDER"
+  | "AGENT_CREDENTIAL_UNRESOLVABLE"
+  | "AGENT_CREDENTIAL_WITH_CONNECTION_STRING";
+
+export class ExecutionProfileError extends Error {
+  constructor(
+    message: string,
+    public readonly reasonCode: ExecutionProfileDenyCode,
+  ) {
+    super(message);
+    this.name = "ExecutionProfileError";
+    Object.setPrototypeOf(this, ExecutionProfileError.prototype);
+  }
+}
+
+/**
+ * Resolves the optional least-privilege agent credential from the connection
+ * (the connection-secrets seam: `agentPassword` may arrive sealed and is
+ * opened with readSecret). Fail closed on every misconfiguration:
+ *
+ * - both fields absent → null (the profile runs under the connection's own
+ *   credentials, still inside the database-native read-only boundary);
+ * - only one field present → deny; a half-configured credential must not
+ *   silently degrade to the more privileged default;
+ * - a sealed password that does not open → deny, never a plaintext fallback;
+ * - combined with a connection string → deny: buildPoolConfig ignores
+ *   user/password fields when a connection string is present, so the
+ *   credential would be silently dropped and the agent would run as the more
+ *   privileged embedded user.
+ */
+function resolveAgentCredential(connection: DatabaseConnection): { user: string; password: string } | null {
+  const { agentUser, agentPassword } = connection;
+  if (agentUser === undefined && agentPassword === undefined) return null;
+  if (connection.connectionString) {
+    throw new ExecutionProfileError(
+      `Connection "${connection.id}" configures an agent credential alongside a connection string; the credential cannot be applied, so acquisition is refused`,
+      "AGENT_CREDENTIAL_WITH_CONNECTION_STRING",
+    );
+  }
+  if (!agentUser || !agentPassword) {
+    throw new ExecutionProfileError(
+      `Connection "${connection.id}" configures an incomplete agent credential (user and password are both required)`,
+      "AGENT_CREDENTIAL_UNRESOLVABLE",
+    );
+  }
+  const read = readSecret(agentPassword);
+  if (read.kind === "undecryptable") {
+    throw new ExecutionProfileError(
+      `Connection "${connection.id}" configures an agent credential that cannot be resolved`,
+      "AGENT_CREDENTIAL_UNRESOLVABLE",
+    );
+  }
+  return { user: agentUser, password: read.value };
+}
+
+/**
+ * Acquire a provider for (connection id, execution profile). Never touches
+ * the shared writable cache in either direction: the profiled provider has
+ * its own keyed lifecycle, so an agent execution can never be handed the
+ * editor's fully-privileged pool, and an editor request can never be handed a
+ * read-only one. Providers whose type has no database-native read-only
+ * wrapper are refused rather than silently served `query()` (fail closed).
+ */
+export async function acquireExecutionProfileProvider(
+  connection: DatabaseConnection,
+  profile: ExecutionProfile,
+  options: ProviderOptions = {},
+): Promise<DatabaseProvider> {
+  if (!EXECUTION_PROFILES.has(profile)) {
+    throw new ExecutionProfileError(`Unknown execution profile: ${String(profile)}`, "UNSUPPORTED_PROFILE");
+  }
+
+  const cacheKey = profiledCacheKey(connection.id, profile);
+  const cached = profiledProviderCache.get(cacheKey);
+  if (cached?.provider.isConnected()) {
+    cached.lastUsed = Date.now();
+    return cached.provider;
+  }
+
+  const credential = resolveAgentCredential(connection);
+  let effectiveConnection: DatabaseConnection = credential
+    ? { ...connection, user: credential.user, password: credential.password }
+    : connection;
+
+  // The SSH tunnel is keyed by connection id and shared with the writable
+  // provider (createSSHTunnel returns the existing one). Only a tunnel this
+  // acquisition freshly created may be torn down on failure.
+  const tunnelPreexisted = hasTunnel(connection.id);
+  let tunnel: Awaited<ReturnType<typeof createSSHTunnel>> | null = null;
+  if (connection.sshTunnel?.enabled && connection.host && connection.port) {
+    tunnel = await createSSHTunnel(connection.id, connection.sshTunnel, connection.host, connection.port);
+    effectiveConnection = { ...effectiveConnection, host: tunnel.localHost, port: tunnel.localPort };
+  }
+
+  const closeFreshTunnel = async () => {
+    if (tunnel && !tunnelPreexisted) await tunnel.close().catch(() => {});
+  };
+
+  const provider = await createDatabaseProvider(effectiveConnection, options);
+  if (typeof provider.queryReadOnly !== "function") {
+    await closeFreshTunnel();
+    throw new ExecutionProfileError(
+      `Provider type "${connection.type}" has no database-native read-only execution profile`,
+      "PROFILE_UNSUPPORTED_BY_PROVIDER",
+    );
+  }
+
+  try {
+    await provider.connect();
+  } catch (error) {
+    await closeFreshTunnel();
+    throw error;
+  }
+
+  profiledProviderCache.set(cacheKey, { provider, lastUsed: Date.now(), connectionId: connection.id });
+  startIdleSweep();
+
+  return provider;
+}
+
+/**
+ * Remove a provider from cache and disconnect. Also removes the connection's
+ * execution-profile providers: a deleted or re-credentialed connection must
+ * not leave a stale agent pool running under the old configuration.
  */
 export async function removeProvider(connectionId: string): Promise<void> {
   const cached = providerCache.get(connectionId);
@@ -272,6 +466,16 @@ export async function removeProvider(connectionId: string): Promise<void> {
     providerCache.delete(connectionId);
   }
 
+  for (const [key, entry] of profiledProviderCache) {
+    if (entry.connectionId !== connectionId) continue;
+    try {
+      await entry.provider.disconnect();
+    } catch (error) {
+      logger.warn(`Error disconnecting profiled provider ${key}`, { connectionId, error: String(error) });
+    }
+    profiledProviderCache.delete(key);
+  }
+
   // Close SSH tunnel if exists
   try {
     await closeSSHTunnel(connectionId);
@@ -281,7 +485,7 @@ export async function removeProvider(connectionId: string): Promise<void> {
 }
 
 /**
- * Clear all cached providers
+ * Clear all cached providers (shared and execution-profile)
  */
 export async function clearProviderCache(): Promise<void> {
   // Stop idle sweep
@@ -299,9 +503,17 @@ export async function clearProviderCache(): Promise<void> {
       }),
     );
   }
+  for (const [key, entry] of profiledProviderCache) {
+    disconnectPromises.push(
+      entry.provider.disconnect().catch((error) => {
+        console.error(`[DB] Error disconnecting profiled provider ${key}:`, error);
+      }),
+    );
+  }
 
   await Promise.all(disconnectPromises);
   providerCache.clear();
+  profiledProviderCache.clear();
 }
 
 /**
@@ -311,6 +523,17 @@ export function getProviderCacheStats(): { size: number; connections: string[] }
   return {
     size: providerCache.size,
     connections: Array.from(providerCache.keys()),
+  };
+}
+
+/**
+ * Execution-profile cache statistics (observability for the isolation
+ * invariant: agent acquisitions must never appear in getProviderCacheStats).
+ */
+export function getExecutionProfileCacheStats(): { size: number; connections: string[] } {
+  return {
+    size: profiledProviderCache.size,
+    connections: Array.from(profiledProviderCache.values(), (entry) => entry.connectionId),
   };
 }
 

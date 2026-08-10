@@ -3,7 +3,7 @@
  * Full PostgreSQL support with connection pooling
  */
 
-import { Pool, type PoolClient, type PoolConfig as PgPoolConfig } from "pg";
+import { Pool, type PoolClient, type PoolConfig as PgPoolConfig, type QueryConfig } from "pg";
 import { SQLBaseProvider } from "./sql-base";
 import {
   type DatabaseConnection,
@@ -15,6 +15,7 @@ import {
   type MaintenanceResult,
   type ProviderOptions,
   type ProviderCapabilities,
+  type ReadOnlyStatementBudget,
   type SlowQuery,
   type ActiveSession,
   type DatabaseOverview,
@@ -505,6 +506,32 @@ const STORAGE_WAL_SQL = `
         `;
 
 // ============================================================================
+// Read-only execution budget validation (#328)
+// ============================================================================
+
+/** PostgreSQL's statement_timeout is a 32-bit millisecond setting. */
+const MAX_STATEMENT_TIMEOUT_MS = 2_147_483_647;
+
+/**
+ * Refuses the whole call unless every budget field is a positive integer in
+ * range (fail closed). The timeout bound matters doubly: the value is
+ * interpolated into `SET LOCAL statement_timeout = N` (SET takes no bind
+ * parameters), so nothing that is not a positive integer may pass.
+ */
+function assertReadOnlyBudget(budget: ReadOnlyStatementBudget): void {
+  const fields: Array<[name: string, value: unknown, max: number]> = [
+    ["statementTimeoutMs", budget?.statementTimeoutMs, MAX_STATEMENT_TIMEOUT_MS],
+    ["maxResultRows", budget?.maxResultRows, Number.MAX_SAFE_INTEGER],
+    ["maxResultBytes", budget?.maxResultBytes, Number.MAX_SAFE_INTEGER],
+  ];
+  for (const [name, value, max] of fields) {
+    if (typeof value !== "number" || !Number.isInteger(value) || value < 1 || value > max) {
+      throw new QueryError(`Read-only execution budget field ${name} must be a positive integer <= ${max}`, "postgres");
+    }
+  }
+}
+
+// ============================================================================
 // PostgreSQL Provider
 // ============================================================================
 
@@ -725,6 +752,89 @@ export class PostgresProvider extends SQLBaseProvider {
       console.error("[Postgres] Failed to cancel query:", error);
       return false;
     }
+  }
+
+  // ============================================================================
+  // Agent Read-Only Execution Profile (#328)
+  // ============================================================================
+
+  /**
+   * Runs exactly one statement inside `BEGIN READ ONLY` with a
+   * transaction-local timeout, then rolls back and releases the client. The
+   * DATABASE is the boundary, twice over:
+   *
+   * - The read-only transaction makes the server itself reject any write that
+   *   reaches it (SQLSTATE 25006) — no SQL classification happens here.
+   * - The statement travels on the extended query protocol (`queryMode:
+   *   "extended"`, pg >= 8.11), whose Parse message the server refuses for
+   *   multi-command strings (SQLSTATE 42601) BEFORE executing anything. That
+   *   is what stops `SELECT 1; COMMIT; INSERT ...` from committing its way out
+   *   of the read-only transaction — on the simple protocol the server would
+   *   execute each command in turn, honoring the smuggled COMMIT.
+   *
+   * A single hostile statement cannot escape either: `SET TRANSACTION READ
+   * WRITE` would be the transaction's only statement before ROLLBACK, a lone
+   * COMMIT merely ends an empty read-only transaction, and a session-level
+   * `SET` reverts with the rollback (GUC changes are transactional).
+   *
+   * The row/byte caps are enforced result-side after the statement returns;
+   * the timeout is `SET LOCAL`, so it dies with the transaction.
+   */
+  public async queryReadOnly(sql: string, budget: ReadOnlyStatementBudget): Promise<QueryResult> {
+    this.ensureConnected();
+    assertReadOnlyBudget(budget);
+
+    return this.trackQuery(async () => {
+      const { result, executionTime } = await this.measureExecution(async () => {
+        const client = await this.pool!.connect();
+        try {
+          await client.query("BEGIN READ ONLY");
+          // SET cannot take bind parameters; the value is proven a positive
+          // integer by assertReadOnlyBudget above, so no text can pass through.
+          await client.query(`SET LOCAL statement_timeout = ${budget.statementTimeoutMs}`);
+          // @types/pg does not model queryMode yet; the runtime supports it
+          // since pg 8.11 (node_modules/pg/lib/query.js requiresPreparation).
+          const extendedQuery = { text: sql, queryMode: "extended" } as QueryConfig & { queryMode: "extended" };
+          return await client.query(extendedQuery);
+        } catch (error) {
+          throw mapDatabaseError(error, "postgres", sql);
+        } finally {
+          // The profile never commits. A client that cannot roll back is
+          // destroyed (release(error)), never returned to the pool mid-transaction.
+          try {
+            await client.query("ROLLBACK");
+            client.release();
+          } catch (rollbackError) {
+            client.release(rollbackError instanceof Error ? rollbackError : new Error(String(rollbackError)));
+          }
+        }
+      });
+
+      if (result.rows.length > budget.maxResultRows) {
+        throw new QueryError(
+          `Read-only execution exceeded the row budget: ${result.rows.length} rows > ${budget.maxResultRows} allowed`,
+          "postgres",
+          sql,
+        );
+      }
+      const resultBytes = Buffer.byteLength(
+        JSON.stringify(result.rows, (_key, value: unknown) => (typeof value === "bigint" ? value.toString() : value)),
+      );
+      if (resultBytes > budget.maxResultBytes) {
+        throw new QueryError(
+          `Read-only execution exceeded the byte budget: ${resultBytes} bytes > ${budget.maxResultBytes} allowed`,
+          "postgres",
+          sql,
+        );
+      }
+
+      return {
+        rows: result.rows,
+        fields: result.fields?.map((f) => f.name) ?? [],
+        rowCount: result.rowCount ?? 0,
+        executionTime,
+      };
+    });
   }
 
   // ============================================================================

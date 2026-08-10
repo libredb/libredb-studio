@@ -37,6 +37,8 @@ export const CONNECTION_FIELDS: Record<keyof DatabaseConnection, FieldClass> = {
   instanceName: "public",
   managed: "public",
   seedId: "public",
+  agentUser: "public",
+  agentPassword: "secret",
 };
 
 export const SSL_FIELDS: Record<keyof SSLConfig, FieldClass> = {

@@ -6,6 +6,7 @@
 import { describe, test, expect, beforeEach, afterEach, mock, spyOn } from "bun:test";
 import { EventEmitter } from "node:events";
 import type { DatabaseConnection } from "@/lib/types";
+import type { ReadOnlyStatementBudget } from "@/lib/db/types";
 import { DatabaseConfigError } from "@/lib/db/errors";
 
 // ============================================================================
@@ -23,7 +24,9 @@ let mockQueryFn: (
 
 const mockClient = {
   query: (sql: string, params?: unknown[]) => mockQueryFn(sql, params),
-  release: () => {},
+  // Real pg signature: release(err?) — an error argument destroys the client
+  // instead of returning it to the pool, which queryReadOnly relies on.
+  release: (_destroy?: Error) => {},
 };
 
 /**
@@ -1881,6 +1884,282 @@ describe("PostgresProvider", () => {
 
       expect(result.query).toBe(sql);
       expect(result.wasLimited).toBe(false);
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // queryReadOnly — agent read-only execution profile (#328)
+  // --------------------------------------------------------------------------
+
+  describe("queryReadOnly (agent read-only execution profile)", () => {
+    /** Reads the first keyword the way the server would: past whitespace and comments. */
+    function engineLeadingKeyword(text: string): string {
+      let rest = text;
+      for (;;) {
+        const trimmed = rest.trimStart();
+        if (trimmed.startsWith("--")) {
+          const newline = trimmed.indexOf("\n");
+          rest = newline === -1 ? "" : trimmed.slice(newline + 1);
+          continue;
+        }
+        if (trimmed.startsWith("/*")) {
+          const close = trimmed.indexOf("*/");
+          rest = close === -1 ? "" : trimmed.slice(close + 2);
+          continue;
+        }
+        return (/^[A-Za-z]+/.exec(trimmed)?.[0] ?? "").toUpperCase();
+      }
+    }
+
+    function pgServerError(message: string, code: string): Error {
+      return Object.assign(new Error(message), { code });
+    }
+
+    /** The server executes each semicolon-separated command of a simple-protocol string in turn. */
+    function splitCommands(text: string): string[] {
+      // Naive split is faithful enough for this suite's corpus (no ';' inside literals).
+      return text
+        .split(";")
+        .map((part) => part.trim())
+        .filter((part) => part.length > 0);
+    }
+
+    type EngineProtocol = "simple" | "extended";
+
+    /**
+     * Stateful engine mock modeling the PostgreSQL behaviors this profile's
+     * security rests on, so the assertions hold even when product-side
+     * classification is bypassed:
+     *
+     * - a write executed inside a READ ONLY transaction fails with 25006 based
+     *   on the ENGINE's transaction state, no matter what the text looks like;
+     * - the extended query protocol refuses multi-command strings with 42601
+     *   before executing anything;
+     * - the simple protocol EXECUTES multi-command strings sequentially and
+     *   honors transaction control, so an implementation that regressed to the
+     *   simple protocol would really COMMIT out of the read-only transaction
+     *   and apply the smuggled write — `appliedWrites` catches that.
+     *
+     * Protocol detection mirrors pg's requiresPreparation()
+     * (node_modules/pg/lib/query.js): named, extended-mode, or valued queries
+     * prepare; a bare string with no values stays on the simple protocol.
+     */
+    class ReadOnlyEngineMock {
+      txState: "none" | "read-only" | "read-write" | "aborted" = "none";
+      readonly statements: Array<{ text: string; protocol: EngineProtocol }> = [];
+      readonly appliedWrites: string[] = [];
+      readonly localTimeouts: number[] = [];
+      selectRows: Array<Record<string, unknown>> = [{ ok: 1 }];
+      failRollback = false;
+
+      static protocolOf(arg: unknown, params?: unknown[]): { text: string; protocol: EngineProtocol } {
+        if (typeof arg === "string") {
+          const extended = Array.isArray(params) && params.length > 0;
+          return { text: arg, protocol: extended ? "extended" : "simple" };
+        }
+        const config = arg as { text: string; name?: string; values?: unknown[]; queryMode?: string };
+        const extended =
+          config.queryMode === "extended" ||
+          Boolean(config.name) ||
+          (Array.isArray(config.values) && config.values.length > 0);
+        return { text: config.text, protocol: extended ? "extended" : "simple" };
+      }
+
+      async query(arg: unknown, params?: unknown[]) {
+        const { text, protocol } = ReadOnlyEngineMock.protocolOf(arg, params);
+        if (protocol === "extended") {
+          if (splitCommands(text).length > 1) {
+            throw pgServerError("cannot insert multiple commands into a prepared statement", "42601");
+          }
+          return this.execute(text, protocol);
+        }
+        let last: ReturnType<ReadOnlyEngineMock["execute"]> = { rows: [], fields: [], rowCount: 0 };
+        for (const command of splitCommands(text)) {
+          last = this.execute(command, protocol);
+        }
+        return last;
+      }
+
+      private execute(text: string, protocol: EngineProtocol) {
+        this.statements.push({ text: text.trim(), protocol });
+        const keyword = engineLeadingKeyword(text);
+        if (this.txState === "aborted" && keyword !== "ROLLBACK" && keyword !== "COMMIT") {
+          throw pgServerError(
+            "current transaction is aborted, commands ignored until end of transaction block",
+            "25P02",
+          );
+        }
+        switch (keyword) {
+          case "BEGIN":
+          case "START":
+            // Inside a transaction the server only warns; state is unchanged.
+            if (this.txState === "none") {
+              this.txState = /read\s+only/i.test(text) ? "read-only" : "read-write";
+            }
+            return { rows: [], fields: [], rowCount: 0 };
+          case "COMMIT":
+          case "END":
+            this.txState = "none";
+            return { rows: [], fields: [], rowCount: 0 };
+          case "ROLLBACK":
+            if (this.failRollback) {
+              throw pgServerError("server closed the connection unexpectedly", "08006");
+            }
+            this.txState = "none";
+            return { rows: [], fields: [], rowCount: 0 };
+          case "SET": {
+            const local = /^set\s+local\s+statement_timeout\s*=\s*(\d+)$/i.exec(text.trim());
+            if (local) this.localTimeouts.push(Number(local[1]));
+            return { rows: [], fields: [], rowCount: 0 };
+          }
+          case "SELECT":
+          case "EXPLAIN":
+          case "SHOW":
+            return {
+              rows: this.selectRows,
+              fields: Object.keys(this.selectRows[0] ?? {}).map((name) => ({ name })),
+              rowCount: this.selectRows.length,
+            };
+          default:
+            // Everything else counts as a write attempt (conservative server model).
+            if (this.txState === "read-only") {
+              this.txState = "aborted";
+              throw pgServerError(`cannot execute ${keyword} in a read-only transaction`, "25006");
+            }
+            this.appliedWrites.push(text.trim());
+            return { rows: [], fields: [], rowCount: 1 };
+        }
+      }
+    }
+
+    function roBudget(overrides: Partial<ReadOnlyStatementBudget> = {}): ReadOnlyStatementBudget {
+      return { statementTimeoutMs: 4500, maxResultRows: 100, maxResultBytes: 1_000_000, ...overrides };
+    }
+
+    let engine: ReadOnlyEngineMock;
+    let releaseSpy: ReturnType<typeof spyOn<typeof mockClient, "release">>;
+
+    beforeEach(async () => {
+      engine = new ReadOnlyEngineMock();
+      mockQueryFn = (sql: string, params?: unknown[]) => engine.query(sql, params);
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      // Installed after connect() so the counts below are wrapper-only.
+      releaseSpy = spyOn(mockClient, "release");
+    });
+
+    afterEach(() => {
+      releaseSpy.mockRestore();
+    });
+
+    test("runs exactly one statement inside BEGIN READ ONLY with a transaction-local timeout, then rolls back and releases", async () => {
+      const result = await provider.queryReadOnly("SELECT 1 AS ok", roBudget());
+
+      expect(result.rows).toEqual([{ ok: 1 }]);
+      expect(result.fields).toEqual(["ok"]);
+      expect(result.rowCount).toBe(1);
+      expect(result.executionTime).toBeGreaterThanOrEqual(0);
+      expect(engine.statements.map((s) => s.text)).toEqual([
+        "BEGIN READ ONLY",
+        "SET LOCAL statement_timeout = 4500",
+        "SELECT 1 AS ok",
+        "ROLLBACK",
+      ]);
+      // The statement itself travels on the extended protocol — that is what
+      // makes single-statement a server-enforced property (42601), not a parse.
+      expect(engine.statements[2]?.protocol).toBe("extended");
+      expect(engine.localTimeouts).toEqual([4500]);
+      expect(releaseSpy).toHaveBeenCalledTimes(1);
+    });
+
+    test("the database itself rejects a write attempted through the agent path", async () => {
+      await expect(provider.queryReadOnly("INSERT INTO t (id) VALUES (1)", roBudget())).rejects.toThrow(
+        /read-only transaction/,
+      );
+
+      expect(engine.appliedWrites).toEqual([]);
+      expect(engine.statements.at(-1)?.text).toBe("ROLLBACK");
+      expect(releaseSpy).toHaveBeenCalledTimes(1);
+    });
+
+    test("the normal editor path on the same connection still writes", async () => {
+      const result = await provider.query("INSERT INTO t (id) VALUES (1)");
+
+      expect(result.rowCount).toBe(1);
+      expect(engine.appliedWrites).toEqual(["INSERT INTO t (id) VALUES (1)"]);
+    });
+
+    test("multi-statement input cannot smuggle transaction control past the read-only boundary", async () => {
+      await expect(
+        provider.queryReadOnly("SELECT 1; COMMIT; INSERT INTO t (id) VALUES (1)", roBudget()),
+      ).rejects.toThrow(/multiple commands/);
+
+      expect(engine.appliedWrites).toEqual([]);
+      // The server refused at parse time: nothing ran between SET LOCAL and ROLLBACK.
+      expect(engine.statements.map((s) => s.text)).toEqual([
+        "BEGIN READ ONLY",
+        "SET LOCAL statement_timeout = 4500",
+        "ROLLBACK",
+      ]);
+    });
+
+    test("a transaction-control statement as the single statement leaves no residue", async () => {
+      const result = await provider.queryReadOnly("COMMIT", roBudget());
+
+      expect(result.rows).toEqual([]);
+      expect(engine.appliedWrites).toEqual([]);
+      expect(engine.txState).toBe("none");
+      expect(releaseSpy).toHaveBeenCalledTimes(1);
+    });
+
+    test("rejects a malformed budget before any statement reaches the session", async () => {
+      const hostileTimeouts = [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, 2_147_483_648, "50; COMMIT"];
+      for (const statementTimeoutMs of hostileTimeouts) {
+        await expect(
+          provider.queryReadOnly("SELECT 1", roBudget({ statementTimeoutMs: statementTimeoutMs as never })),
+        ).rejects.toThrow(/budget/i);
+      }
+      await expect(provider.queryReadOnly("SELECT 1", roBudget({ maxResultRows: 0 }))).rejects.toThrow(/budget/i);
+      await expect(provider.queryReadOnly("SELECT 1", roBudget({ maxResultBytes: -5 }))).rejects.toThrow(/budget/i);
+
+      expect(engine.statements).toEqual([]);
+      expect(releaseSpy).not.toHaveBeenCalled();
+    });
+
+    test("enforces the row budget result-side", async () => {
+      engine.selectRows = [{ id: 1 }, { id: 2 }, { id: 3 }];
+
+      await expect(provider.queryReadOnly("SELECT id FROM t", roBudget({ maxResultRows: 2 }))).rejects.toThrow(
+        /row budget/i,
+      );
+      expect(engine.statements.at(-1)?.text).toBe("ROLLBACK");
+      expect(releaseSpy).toHaveBeenCalledTimes(1);
+    });
+
+    test("enforces the byte budget result-side", async () => {
+      engine.selectRows = [{ blob: "x".repeat(64) }];
+
+      await expect(provider.queryReadOnly("SELECT blob FROM t", roBudget({ maxResultBytes: 16 }))).rejects.toThrow(
+        /byte budget/i,
+      );
+      expect(engine.statements.at(-1)?.text).toBe("ROLLBACK");
+    });
+
+    test("a client that cannot roll back is destroyed, never returned to the pool", async () => {
+      engine.failRollback = true;
+
+      const result = await provider.queryReadOnly("SELECT 1 AS ok", roBudget());
+
+      expect(result.rows).toEqual([{ ok: 1 }]);
+      expect(releaseSpy).toHaveBeenCalledTimes(1);
+      expect(releaseSpy.mock.calls[0]?.[0]).toBeInstanceOf(Error);
+    });
+
+    test("requires a connected provider", async () => {
+      const cold = new PostgresProvider(makePgConfig());
+
+      await expect(cold.queryReadOnly("SELECT 1", roBudget())).rejects.toThrow(/connect/i);
+      expect(engine.statements).toEqual([]);
     });
   });
 });
