@@ -2,8 +2,8 @@ apiVersion: v2
 name: libredb-studio
 description: Web-based SQL IDE for cloud-native teams supporting PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, and Redis
 type: application
-version: 0.1.30
-appVersion: "0.9.67"
+version: 0.1.31
+appVersion: "0.10.0"
 kubeVersion: ">=1.26.0-0"
 home: https://github.com/libredb/libredb-studio
 icon: https://raw.githubusercontent.com/libredb/libredb-studio/main/public/logo.svg
@@ -31,7 +31,7 @@ annotations:
   artifacthub.io/containsSecurityUpdates: "false"
   artifacthub.io/images: |
     - name: libredb-studio
-      image: ghcr.io/libredb/libredb-studio:0.9.67
+      image: ghcr.io/libredb/libredb-studio:0.10.0
       platforms:
         - linux/amd64
         - linux/arm64
@@ -43,10 +43,7 @@ annotations:
     - name: Source
       url: https://github.com/libredb/libredb-studio
   artifacthub.io/changes: |
-    - "Documented how to enforce rate limits at the ingress when running more than one replica: Studio's built-in limiter keeps its counters per process, so N replicas allow N times the configured budget"
-    - "Documented ALLOWED_ORIGINS, which a deployment needs when the ingress rewrites the Host header without setting x-forwarded-host - without it every state-changing request, including login, is refused with a 403"
-    - "Documented CSP_REPORT_ONLY, the runtime escape hatch for the enforced Content-Security-Policy, and how to set both variables through extraEnv"
-    - "No chart template changes - the rendered manifests are identical to 0.1.29"
+    - "Track app release 0.10.0 (appVersion bump; default image tag follows)"
 dependencies:
   - name: postgresql
     version: "16.x.x"

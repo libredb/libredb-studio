@@ -5,4 +5,4 @@ kind: Kustomization
 images:
 - name: controller
   newName: ghcr.io/libredb/libredb-studio-operator
-  newTag: 0.9.67
+  newTag: 0.10.0

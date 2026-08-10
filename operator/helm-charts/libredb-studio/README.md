@@ -40,7 +40,7 @@ helm install libredb libredb/libredb-studio \
 
 ```bash
 helm install libredb oci://ghcr.io/libredb/charts/libredb-studio \
-  --version 0.1.30 \
+  --version 0.1.31 \
   --set secrets.jwtSecret=$(openssl rand -base64 32) \
   --set secrets.adminPassword=MyAdmin123
 ```
@@ -244,6 +244,24 @@ helm install libredb libredb/libredb-studio \
   --set extraEnv[1].name=CSP_REPORT_ONLY \
   --set extraEnv[1].value="true"
 ```
+
+### Separating the storage encryption key
+
+With `STORAGE_PROVIDER` set to `sqlite` or `postgres`, connection credentials are encrypted at rest
+using a key derived from `JWT_SECRET`. Nothing needs configuring for that to work. Set
+`STORAGE_ENCRYPTION_KEY` when you want the two separated — most usefully so rotating the
+session-signing secret does not invalidate every saved connection password:
+
+```bash
+helm install libredb-studio libredb-studio/libredb-studio \
+  --set extraEnv[0].name=STORAGE_ENCRYPTION_KEY \
+  --set extraEnv[0].valueFrom.secretKeyRef.name=libredb-studio-storage \
+  --set extraEnv[0].valueFrom.secretKeyRef.key=encryption-key
+```
+
+Rotating the key makes existing stored credentials unreadable — the connections survive and their
+passwords are omitted. See
+[docs/STORAGE.md](https://github.com/libredb/libredb-studio/blob/main/docs/STORAGE.md#credential-encryption-at-rest).
 
 ## External Secrets
 

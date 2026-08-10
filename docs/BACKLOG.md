@@ -620,3 +620,58 @@ behind it. Done when the bundled runtime's version and provenance appear in the
 SBOM or a sibling document - a second Trivy pass over the `fetch-node.sh`
 scripts' pinned version, or a hand-maintained component entry, whichever ships
 without adding a new failure mode to the release chain.
+
+---
+
+## Security Phase 3 deferrals
+
+Each of these was decided during Phase 3, not overlooked. Delete an entry when the work lands.
+
+### K1. Nothing stops a new route from bypassing the authoritative audit channel
+
+`src/lib/audit.ts` exports both `emitAuditEvent` (ring buffer **and** the `libredb.audit.v1` stdout
+line) and `getServerAuditBuffer`, and `POST /api/admin/audit` legitimately uses the second on its
+own — its body is client-supplied and must never gain authority over the authoritative channel. But
+nothing prevents a future route from doing the same by accident: an event pushed straight to the
+buffer is visible in the admin UI, invisible to every log pipeline, and no test notices. The
+existing tests all pin the CONTENT of the stdout line, not the set of call sites permitted to skip
+it. Done when a check enumerates `getServerAuditBuffer(...).push(` call sites across `src/` and
+fails on any that is not on a short, commented allowlist - the same inversion
+`tests/security/route-auth.test.ts` applied to route discovery, where a hand-curated list had
+already lost eleven routes.
+
+### K2. A legacy plaintext password shaped exactly like an envelope is treated as corruption
+
+`src/lib/storage/encryption.ts`'s `readSecret` treats a three-segment value whose first segment
+matches `/^v\d+$/` as an envelope. A password stored before this feature existed that happens to be
+literally `v1:<base64url>:<base64url>`, with a 12-byte first segment and a second of at least 16
+bytes, is therefore classified `undecryptable` and omitted rather than returned. The compounded
+probability is negligible, the failure is recoverable (the connection survives and the user retypes
+the password once), and the alternative - passing an unrecognised value through - would hand
+`v1:abc:def` to a driver as a password. Accepted rather than designed away, because the fix would
+be a longer, non-colliding prefix, and the stored envelope shape is a fixed contract. Done when the
+envelope format is versioned forward for an unrelated reason, at which point a longer prefix costs
+nothing.
+
+### K3. `STORAGE_ENCRYPTION_KEY` is validated at first write, not at boot
+
+`src/lib/config/auth-preflight.ts` validates `JWT_SECRET` at startup, so a short one stops the
+server rather than producing a green health check and a 503 on every login.
+`STORAGE_ENCRYPTION_KEY` has no equivalent: a value shorter than 32 characters throws only when the
+first storage write happens, which is after login, after the migration attempt, and only in server
+storage modes. The failure surfaces as a `syncError` in the UI rather than as a boot failure. Done
+when the preflight also reads `STORAGE_ENCRYPTION_KEY` - noting that it must stay silent when
+`STORAGE_PROVIDER` is `local`, where the variable is inert and an error would be wrong.
+
+### K4. Rotating the key back does not recover credentials once the app has written
+
+`src/lib/storage/connection-secrets.ts`'s `decryptConnections` omits an unreadable secret and keeps
+the record, which is correct - dropping the record would be persisted as a deletion. But the
+omission is only recoverable until the next write: `useStorageSync` is a write-through cache, so the
+first push of the `connections` collection after a failed read overwrites the ciphertext with a
+record that has no password field at all. The warning fires on READ, which is before any write, so
+an operator who reads their logs promptly has a window. Making the window unnecessary would mean
+reading the stored row before every write and preserving an existing envelope when the incoming
+value is absent - which would also silently resurrect a password the user deliberately cleared, a
+worse bug than the one it fixes. Done when a design is found that distinguishes "the client never
+had this value" from "the client cleared this value" without adding a field to the stored shape.

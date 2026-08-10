@@ -4,10 +4,10 @@
 
 We actively support and provide security updates for the following versions of LibreDB Studio:
 
-| Version | Supported          |
-| ------- | ------------------ |
-| 0.9.x   | :white_check_mark: |
-| < 0.9.0 | :x:                |
+| Version  | Supported          |
+| -------- | ------------------ |
+| 0.10.x   | :white_check_mark: |
+| < 0.10.0 | :x:                |
 
 > **Note**: We recommend always using the latest version to ensure you have the most recent security patches.
 
