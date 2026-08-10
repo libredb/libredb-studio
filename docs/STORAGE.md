@@ -418,7 +418,17 @@ version column. A row that is never written again stays plaintext — which is w
   without a master password — and it is why cross-site scripting is treated as a top-severity
   issue in this project rather than a session-theft issue.
 - **Anyone who can read the server's environment can read the credentials.** The key lives there.
-  This protects a stolen database file, a dump, a backup or a volume snapshot; it is not a vault.
+  This protects a stolen database file or dump on its own; it is not a vault.
+- **For `STORAGE_PROVIDER=sqlite` with no `STORAGE_ENCRYPTION_KEY` set, a backup or volume snapshot
+  is NOT protected.** The fallback key derives from `JWT_SECRET`, persisted in
+  `<data dir>/auth-bootstrap.json` — the same directory `STORAGE_SQLITE_PATH` puts the database
+  file in, and the one directory the Helm chart mounts as a single `/app/data` volume. A snapshot
+  of that volume carries the ciphertext and the key that opens it side by side. Set
+  `STORAGE_ENCRYPTION_KEY` from outside that volume — a Kubernetes Secret, an environment variable
+  your orchestrator supplies — to close this: once the key is not itself part of the backup, a
+  snapshot is genuinely useless without it. `STORAGE_PROVIDER=postgres` does not share this
+  exposure by default, because the key material lives in the app's own filesystem, a volume
+  separate from the database that gets backed up.
 - **`GET /api/storage` returns credentials in plaintext to their authenticated owner.** It has to:
   the app must be able to redisplay a saved password for editing.
 

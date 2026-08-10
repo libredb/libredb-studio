@@ -250,7 +250,10 @@ helm install libredb libredb/libredb-studio \
 With `STORAGE_PROVIDER` set to `sqlite` or `postgres`, connection credentials are encrypted at rest
 using a key derived from `JWT_SECRET`. Nothing needs configuring for that to work. Set
 `STORAGE_ENCRYPTION_KEY` when you want the two separated — most usefully so rotating the
-session-signing secret does not invalidate every saved connection password:
+session-signing secret does not invalidate every saved connection password, and, for
+`STORAGE_PROVIDER=sqlite`, so a backup or volume snapshot of `/app/data` does not also carry the
+key that opens the ciphertext it contains (with nothing set, the fallback key is persisted in that
+same directory, alongside the database file):
 
 ```bash
 helm install libredb-studio libredb-studio/libredb-studio \

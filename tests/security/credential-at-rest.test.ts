@@ -1,4 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import path from "node:path";
+import { resolveBootstrapPath } from "@/lib/auth-bootstrap";
+import { getDataDir } from "@/lib/data-dir";
 import { withCredentialEncryption } from "@/lib/storage/encrypting-provider";
 import { resetStorageEncryptionKey } from "@/lib/storage/encryption";
 import type { ServerStorageProvider, StorageCollection, StorageData } from "@/lib/storage/types";
@@ -187,5 +190,37 @@ describe("a key the store cannot be opened with", () => {
     expect(data.connections?.[0].password).toBeUndefined();
     // Never the envelope itself: "v1:..." reaching a driver as a password is undiagnosable.
     expect(JSON.stringify(data.connections)).not.toContain("v1:");
+  });
+});
+
+/**
+ * A stolen database file "on its own" and a stolen backup or volume snapshot are different
+ * threats, and the difference matters only for STORAGE_PROVIDER=sqlite with no
+ * STORAGE_ENCRYPTION_KEY set: the fallback key derives from JWT_SECRET, which the first-run
+ * bootstrap persists in auth-bootstrap.json (src/lib/auth-bootstrap.ts), and both that file and the
+ * SQLite store resolve their directory through the SAME function - getDataDir() - reading the SAME
+ * STORAGE_SQLITE_PATH. The Helm chart then mounts that one directory as a single /app/data volume
+ * (charts/libredb-studio/templates/deployment.yaml). A snapshot of it therefore contains the
+ * ciphertext and the key that opens it side by side; docs/SECURITY.md and docs/STORAGE.md scope
+ * their "protects a backup or volume snapshot" claim to exclude this case for exactly that reason.
+ *
+ * This test pins the fact the caveat depends on, not the prose. If a future change gives the
+ * bootstrap file its own directory (or its own env var), this test fails - which is the signal that
+ * the docs can be widened back, not a sign this test is stale.
+ */
+describe("the SQLite default-key backup boundary the docs carve out", () => {
+  test("the auth-bootstrap file (carrying the fallback key) resolves to the same directory as the SQLite store", () => {
+    expect(path.dirname(resolveBootstrapPath())).toBe(path.resolve(getDataDir()));
+  });
+
+  test("both resolve through the same STORAGE_SQLITE_PATH, not independent configuration", () => {
+    const original = process.env.STORAGE_SQLITE_PATH;
+    process.env.STORAGE_SQLITE_PATH = "/custom/deployment/path/store.db";
+    try {
+      expect(path.dirname(resolveBootstrapPath())).toBe(path.resolve(getDataDir()));
+    } finally {
+      if (original === undefined) delete process.env.STORAGE_SQLITE_PATH;
+      else process.env.STORAGE_SQLITE_PATH = original;
+    }
   });
 });

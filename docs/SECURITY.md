@@ -65,7 +65,12 @@ line. Tracked in [`docs/BACKLOG.md`](./BACKLOG.md), entry H12.
 **3.1.** Applies to `STORAGE_PROVIDER=sqlite` and `postgres` only. Six fields are encrypted;
 `host`, `port`, `user`, `database` and the TLS certificates stay readable so a dump can still be
 identified. Rotating the key makes stored credentials unreadable — the connection survives, the
-field is omitted. Full detail in [`docs/STORAGE.md`](./STORAGE.md#credential-encryption-at-rest).
+field is omitted. For `STORAGE_PROVIDER=sqlite` with no `STORAGE_ENCRYPTION_KEY` set, the fallback
+key is persisted beside the SQLite file, in the same directory the Helm chart mounts as one volume
+— a backup or snapshot of it carries the key alongside the ciphertext it opens. Set
+`STORAGE_ENCRYPTION_KEY` from outside that volume (a Kubernetes Secret, an environment variable) to
+close that gap; `postgres` deployments do not share this exposure by default. Full detail in
+[`docs/STORAGE.md`](./STORAGE.md#credential-encryption-at-rest).
 
 **3.2.** `POST /api/admin/audit` is the one writer that reaches the in-app buffer without reaching
 stdout, and that is deliberate: its body is client-supplied, so giving it the authoritative channel
@@ -79,7 +84,9 @@ These are real, current, and not oversights. Each is a decision with a reason.
   encrypting it would require a master password and a recovery flow, changing what the product is.
   This is why 0.1 and 1.1 matter as much as they do.
 - **Anyone who can read the server's environment can read the stored credentials.** 3.1 protects a
-  stolen database file, dump, backup or volume snapshot. It is not a vault.
+  stolen database file or dump on its own; it is not a vault. For `STORAGE_PROVIDER=sqlite` with no
+  `STORAGE_ENCRYPTION_KEY` configured, that protection does not extend to a backup or volume
+  snapshot of the data directory — see the note on 3.1 below.
 - **A `user` can connect to any host and port and run any statement.** The product ships two roles,
   and the boundary between them is not a policy engine. Target allowlists, per-provider command
   capabilities and a locked-down deployment profile are a coherent direction and are not

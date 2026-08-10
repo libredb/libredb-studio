@@ -4,11 +4,22 @@ import { getJwtSecret, JWT_SECRET_MIN_LENGTH } from "@/lib/config/auth-env";
 /**
  * Credential encryption at rest for the SERVER-SIDE store (STORAGE_PROVIDER=sqlite|postgres).
  *
- * What this buys and what it does not: a leaked database file or dump is useless on its own,
- * because the key lives in the environment and never in the store. It is NOT a vault - anyone who
- * can read the process environment can read the credentials, and the browser's localStorage copy
- * stays plaintext by deliberate product decision (that is what lets Studio work without a master
+ * What this buys and what it does not: a leaked database file or dump is useless ON ITS OWN,
+ * because the key is never written into the store itself. It is NOT a vault - anyone who can read
+ * the process environment can read the credentials, and the browser's localStorage copy stays
+ * plaintext by deliberate product decision (that is what lets Studio work without a master
  * password, and it is why the XSS controls carry the weight they do).
+ *
+ * A stolen BACKUP OR VOLUME SNAPSHOT is a narrower claim than a stolen database file, and for
+ * STORAGE_PROVIDER=sqlite with no STORAGE_ENCRYPTION_KEY set it does not hold: the fallback key is
+ * derived from JWT_SECRET, which the first-run bootstrap persists in auth-bootstrap.json
+ * (src/lib/auth-bootstrap.ts) beside the SQLite file - both resolve through the same
+ * src/lib/data-dir.ts:getDataDir(), and the Helm chart mounts that one directory as a single
+ * /app/data volume. A snapshot of it carries the ciphertext and the key that opens it side by
+ * side. Set STORAGE_ENCRYPTION_KEY from outside that volume (a Kubernetes Secret, an environment
+ * variable supplied by the orchestrator) to close this gap; see docs/STORAGE.md. postgres
+ * deployments do not share this exposure by default, because the key material lives in the app's
+ * own filesystem, a volume separate from the database being backed up.
  *
  * Key derivation:
  *   STORAGE_ENCRYPTION_KEY, when set -> HKDF-SHA256 -> 32 bytes
