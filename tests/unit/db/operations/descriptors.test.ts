@@ -47,6 +47,12 @@ describe("sql.query.read", () => {
     // assertions above were satisfied by that false wording too.
     expect(sqlQueryReadDescriptor.verification?.boundary).toContain("before every statement");
     expect(sqlQueryReadDescriptor.verification?.boundary).toContain("other files");
+    // Same correction on the PostgreSQL half: a read-only transaction forbids
+    // changing the database, not writing server files or running programs
+    // (verified on 18), so the least-privilege role is part of the boundary and
+    // the marker has to say so.
+    expect(sqlQueryReadDescriptor.verification?.boundary).toContain("least-privilege role verified at open");
+    expect(sqlQueryReadDescriptor.verification?.boundary).toContain("program execution");
   });
 });
 

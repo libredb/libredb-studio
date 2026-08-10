@@ -42,6 +42,7 @@ Two consequences worth stating before the table:
 | 3.1 | Credentials are encrypted at rest in the server-side store | Implemented | [`src/lib/storage/encryption.ts`](../src/lib/storage/encryption.ts), [`src/lib/storage/connection-secrets.ts`](../src/lib/storage/connection-secrets.ts), [`src/lib/storage/encrypting-provider.ts`](../src/lib/storage/encrypting-provider.ts), [`src/lib/storage/factory.ts`](../src/lib/storage/factory.ts) | [`tests/security/credential-at-rest.test.ts`](../tests/security/credential-at-rest.test.ts), [`tests/isolated/factory-singleton.test.ts`](../tests/isolated/factory-singleton.test.ts), [`tests/integration/storage/sqlite-credential-encryption.test.ts`](../tests/integration/storage/sqlite-credential-encryption.test.ts) |
 | 3.2 | Every authoritative (server-generated) audit event is emitted as one structured JSON line on stdout | Implemented | [`src/lib/audit.ts`](../src/lib/audit.ts) | [`tests/security/audit-redaction.test.ts`](../tests/security/audit-redaction.test.ts), [`tests/security/audit-type-safety.test.ts`](../tests/security/audit-type-safety.test.ts) |
 | 3.3 | This page is checked against the repository on every build | Implemented | [`scripts/security-check.mjs`](../scripts/security-check.mjs) | [`tests/unit/security-check.test.ts`](../tests/unit/security-check.test.ts) |
+| 3.4 | A statement submitted on the agent execution path cannot write, change schema, reach another database, load code, or run the executing form of EXPLAIN | Partial | [`src/lib/db/operations/policy.ts`](../src/lib/db/operations/policy.ts), [`src/lib/db/operations/statement-guard.ts`](../src/lib/db/operations/statement-guard.ts), [`src/lib/db/providers/sql/postgres.ts`](../src/lib/db/providers/sql/postgres.ts), [`src/lib/db/providers/sql/sqlite.ts`](../src/lib/db/providers/sql/sqlite.ts) | [`tests/security/agent-statement-boundary.test.ts`](../tests/security/agent-statement-boundary.test.ts), [`tests/integration/db/postgres-provider.test.ts`](../tests/integration/db/postgres-provider.test.ts), [`tests/integration/db/sqlite-provider.test.ts`](../tests/integration/db/sqlite-provider.test.ts) |
 
 ## Notes on individual rows
 
@@ -75,6 +76,16 @@ close that gap; `postgres` deployments do not share this exposure by default. Fu
 **3.2.** `POST /api/admin/audit` is the one writer that reaches the in-app buffer without reaching
 stdout, and that is deliberate: its body is client-supplied, so giving it the authoritative channel
 would let an admin session forge an indistinguishable log line.
+
+**3.4.** WRITES are refused by the database itself — a PostgreSQL read-only transaction carrying
+exactly one statement, run by a role verified at open to hold neither superuser nor any
+server-file/program privilege (a read-only transaction does not stop `COPY … TO PROGRAM`); and a
+separate SQLite read-only open with `PRAGMA query_only` re-asserted before every statement. Reading
+the SQL is defense in depth only, never the boundary. **Partial** for two reasons: out-of-scope
+READS have no database-native control on either provider (only the declared-target allowlist, the
+statement guard, and whatever the role's grants bound — see
+[`docs/BACKLOG.md`](./BACKLOG.md) A3), and no route or agent runtime reaches this layer yet, so it
+governs nothing in a shipped release until the agent surface lands.
 
 ## Known limits
 

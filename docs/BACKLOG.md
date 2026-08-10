@@ -705,3 +705,21 @@ write is refused, so a zero-byte file can still appear at any path the server pr
 callback, which `bun:sqlite` does not expose at all. Done when a control exists on both adapters,
 or when agent SQLite targets are constrained to an allowlisted directory (related: the base-dir
 allowlist proposed in issue #125).
+
+### A3. Out-of-scope READS have no database-native control on either provider
+
+Both agent profiles bound what a statement can WRITE with a database-native control. What it can
+READ is bounded only by the policy layer's declared-target allowlist plus the input-stage statement
+guard - and both of those read SQL, which this milestone treats as defense in depth rather than a
+boundary:
+
+- SQLite: `ATTACH` of an *existing* file succeeds on a read-only handle and its rows become
+  readable. No authorizer exists on `bun:sqlite`, so there is nothing engine-side to stop it
+  (docs/providers/sqlite.md section 12.3).
+- PostgreSQL: the read-only role can read every table its grants allow, whatever catalog or schema
+  the request declared. Per-table `SELECT` grants are the only real bound
+  (docs/providers/postgres.md section 12.3).
+
+Done when out-of-scope reads are refused by something that does not read SQL - a per-target grant
+set generated for the agent role, an allowlisted directory for SQLite targets, or an authorizer both
+adapters expose.

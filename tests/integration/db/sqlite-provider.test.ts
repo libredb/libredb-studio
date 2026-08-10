@@ -1049,6 +1049,37 @@ describe("SQLiteProvider agent read-only execution profile (#328)", () => {
     ).rejects.toThrow(QueryError);
   });
 
+  test("attaching a second database creates nothing and cannot be written through", async () => {
+    const dbPath = await seedDatabase();
+    const otherPath = await seedDatabase();
+    const profile = await openAgent(dbPath);
+    const absent = join(agentTmpDir, `attach-absent-${seeded}.db`);
+
+    // A missing file is not created by ATTACH either — same no-create property
+    // as the profile's own open.
+    await expect(profile.queryReadOnly(`ATTACH DATABASE '${absent}' AS absent`, AGENT_BUDGET)).rejects.toThrow();
+    expect(existsSync(absent)).toBe(false);
+
+    // An EXISTING file attaches successfully: the read-only mode is inherited,
+    // so writes through it are refused...
+    await profile.queryReadOnly(`ATTACH DATABASE '${otherPath}' AS other`, AGENT_BUDGET);
+    await expect(profile.queryReadOnly("INSERT INTO other.t (id, v) VALUES (2, 'x')", AGENT_BUDGET)).rejects.toThrow();
+    expect(await readBack(otherPath)).toEqual([{ id: 1, v: "seeded" }]);
+
+    // ...but its ROWS become readable, and neither adapter offers a
+    // database-native control that would stop that (bun:sqlite exposes no
+    // authorizer at all). This is asserted rather than wished away: the only
+    // control for out-of-scope READS through ATTACH is the input-stage denial in
+    // the operations layer (tests/security/agent-statement-boundary.test.ts),
+    // which is why that denial exists. Recorded as a known limitation in
+    // docs/providers/sqlite.md section 12 and docs/BACKLOG.md.
+    const leaked = await profile.queryReadOnly("SELECT v FROM other.t", AGENT_BUDGET);
+    expect(leaked.rows).toEqual([{ v: "seeded" }]);
+
+    await profile.queryReadOnly("DETACH DATABASE other", AGENT_BUDGET);
+    await expect(profile.queryReadOnly("DETACH DATABASE main", AGENT_BUDGET)).rejects.toThrow();
+  });
+
   test("refuses a handle whose query_only pragma does not read back enabled", () => {
     // The happy path is covered by every test above; these pin the refusal for
     // a driver that accepts `PRAGMA query_only = true` and ignores it.

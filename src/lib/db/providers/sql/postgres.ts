@@ -15,6 +15,7 @@ import {
   type MaintenanceResult,
   type ProviderOptions,
   type ProviderCapabilities,
+  type ProviderExecutionContext,
   type ReadOnlyStatementBudget,
   type SlowQuery,
   type ActiveSession,
@@ -26,7 +27,13 @@ import {
   type IndexStats,
   type StorageStats,
 } from "../../types";
-import { DatabaseConfigError, ConnectionError, QueryError, mapDatabaseError } from "../../errors";
+import {
+  DatabaseConfigError,
+  ConnectionError,
+  ExecutionProfileError,
+  QueryError,
+  mapDatabaseError,
+} from "../../errors";
 import { assertReadOnlyBudget, measureResultBytes } from "./read-only-budget";
 import { formatBytes } from "../../utils/pool-manager";
 
@@ -507,6 +514,67 @@ const STORAGE_WAL_SQL = `
         `;
 
 // ============================================================================
+// Agent read-only execution profile (#328)
+// ============================================================================
+
+/**
+ * The capabilities a read-only TRANSACTION cannot contain, asked of the role
+ * the profile would run as.
+ *
+ * `to_regrole` keeps the query safe on a server where a predefined role is
+ * absent (it yields NULL, and `COALESCE` makes that a `false` rather than an
+ * error), so the check does not depend on the server's major version.
+ */
+const AGENT_ROLE_PRIVILEGE_SQL = `
+        SELECT current_setting('is_superuser') = 'on' AS is_superuser,
+               COALESCE(pg_has_role(current_user, to_regrole('pg_read_server_files'), 'USAGE'), false)
+                 AS reads_server_files,
+               COALESCE(pg_has_role(current_user, to_regrole('pg_write_server_files'), 'USAGE'), false)
+                 AS writes_server_files,
+               COALESCE(pg_has_role(current_user, to_regrole('pg_execute_server_program'), 'USAGE'), false)
+                 AS executes_programs
+      `;
+
+const AGENT_ROLE_FORBIDDEN_CAPABILITIES = [
+  "is_superuser",
+  "reads_server_files",
+  "writes_server_files",
+  "executes_programs",
+] as const;
+
+/**
+ * Refuses a role whose privileges reach past the read-only transaction.
+ *
+ * `BEGIN READ ONLY` forbids changing the DATABASE. It does not forbid writing
+ * somewhere else: verified on PostgreSQL 18, a superuser session inside a
+ * read-only transaction still ran `COPY (…) TO '<path>'` (an arbitrary
+ * server-side file write), `COPY (…) TO PROGRAM '<cmd>'` (command execution as
+ * the server's OS user) and `pg_read_file()` (an arbitrary server-side file
+ * read). Only privileges refuse those — the same lesson the SQLite profile
+ * learned from `VACUUM INTO`: a control is a claim about one resource, so the
+ * question is always what else the statement can reach.
+ *
+ * Hence a least-privilege agent role is part of this profile's boundary rather
+ * than a recommendation, and it is VERIFIED at open instead of assumed from
+ * configuration: an admin can point `agentUser` at a superuser, and a
+ * connection's own user very often is one.
+ *
+ * Fails closed on anything it cannot read as four explicit `false`s — a server
+ * that answers nothing, or answers something else, leaves the boundary
+ * unproven.
+ */
+function assertAgentRoleIsUnprivileged(rows: unknown[]): void {
+  const row = rows[0] as Record<string, unknown> | undefined;
+  const held = AGENT_ROLE_FORBIDDEN_CAPABILITIES.filter((capability) => row?.[capability] !== false);
+  if (held.length > 0) {
+    throw new ExecutionProfileError(
+      `The agent read-only execution profile requires a least-privilege PostgreSQL role; this role is unverified or too broad (${held.join(", ")}). A read-only transaction does not stop server-side file access or program execution.`,
+      "PROFILE_PRIVILEGES_TOO_BROAD",
+    );
+  }
+}
+
+// ============================================================================
 // PostgreSQL Provider
 // ============================================================================
 
@@ -519,8 +587,15 @@ export class PostgresProvider extends SQLBaseProvider {
   private txTimeout: ReturnType<typeof setTimeout> | null = null;
   private static readonly TX_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 
-  constructor(config: DatabaseConnection, options: ProviderOptions = {}) {
+  /** True when this instance was opened under the agent read-only profile. */
+  private readonly readOnlyProfile: boolean;
+
+  constructor(config: DatabaseConnection, options: ProviderOptions = {}, execution: ProviderExecutionContext = {}) {
     super(config, options);
+    // Server-injected only (see ProviderExecutionContext): the editor path
+    // builds providers from caller-supplied ProviderOptions, which has no route
+    // to this flag in either direction.
+    this.readOnlyProfile = execution.readOnly === true;
     this.validate();
   }
 
@@ -572,11 +647,29 @@ export class PostgresProvider extends SQLBaseProvider {
       this.attachPoolErrorListener(this.pool);
 
       const client = await this.pool.connect();
-      client.release();
+      try {
+        // Under the profile, the role itself is part of the boundary — verify it
+        // on the same client this connect already borrowed.
+        if (this.readOnlyProfile) {
+          assertAgentRoleIsUnprivileged((await client.query(AGENT_ROLE_PRIVILEGE_SQL)).rows);
+        }
+      } finally {
+        client.release();
+      }
 
       this.setConnected(true);
     } catch (error) {
       this.setError(error instanceof Error ? error : new Error(String(error)));
+      // A typed profile refusal keeps its identity: wrapping it would strip the
+      // deny reason code callers branch on.
+      if (error instanceof ExecutionProfileError) {
+        // The pool was built before the refusal; leaving it would leak the
+        // sockets of a provider the caller can never use.
+        const refusedPool = this.pool;
+        this.pool = null;
+        await refusedPool?.end().catch(() => {});
+        throw error;
+      }
       throw new ConnectionError(
         `Failed to connect to PostgreSQL: ${error instanceof Error ? error.message : error}`,
         "postgres",
@@ -758,6 +851,17 @@ export class PostgresProvider extends SQLBaseProvider {
   public async queryReadOnly(sql: string, budget: ReadOnlyStatementBudget): Promise<QueryResult> {
     this.ensureConnected();
     assertReadOnlyBudget(budget, "postgres");
+    if (!this.readOnlyProfile) {
+      // A provider opened outside the profile has had no role verification, so
+      // its session may be able to write server files or run programs from
+      // inside a read-only transaction. Refuse rather than serve agent
+      // semantics without the boundary that makes them true.
+      throw new QueryError(
+        "Read-only execution requires a provider opened under the agent read-only profile",
+        "postgres",
+        sql,
+      );
+    }
 
     return this.trackQuery(async () => {
       const { result, executionTime } = await this.measureExecution(async () => {
@@ -774,13 +878,19 @@ export class PostgresProvider extends SQLBaseProvider {
         } catch (error) {
           throw mapDatabaseError(error, "postgres", sql);
         } finally {
-          // The profile never commits. A client that cannot roll back is
+          // The profile never commits. A client that cannot be reset is
           // destroyed (release(error)), never returned to the pool mid-transaction.
           try {
             await client.query("ROLLBACK");
+            // Session state a rollback does NOT undo: an advisory lock taken
+            // inside the transaction survives it (verified on PostgreSQL 18) and
+            // no statement the agent path admits could release it, so a pooled
+            // client would carry it into every later execution. DISCARD ALL
+            // cannot run inside a transaction block, hence after the ROLLBACK.
+            await client.query("DISCARD ALL");
             client.release();
-          } catch (rollbackError) {
-            client.release(rollbackError instanceof Error ? rollbackError : new Error(String(rollbackError)));
+          } catch (cleanupError) {
+            client.release(cleanupError instanceof Error ? cleanupError : new Error(String(cleanupError)));
           }
         }
       });

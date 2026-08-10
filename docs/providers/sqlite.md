@@ -524,6 +524,18 @@ typed deny surface acquisition uses for `UNSUPPORTED_PROFILE` /
 `PROFILE_UNSUPPORTED_BY_PROVIDER`, so a caller can branch on the code instead of a message, and
 `connect()` deliberately does not wrap it into a generic `ConnectionError`.
 
+**Known limitation — `ATTACH` contains writes, not reads.** Attaching a *missing* file fails and
+creates nothing, and an *existing* file attaches with the read-only mode inherited, so writes
+through it are refused (both asserted in the integration suite). Its **rows do become readable**,
+and neither adapter offers a database-native control that would stop that — `bun:sqlite` exposes no
+authorizer callback at all, and `node:sqlite`'s `setAuthorizer` is therefore not usable as a
+cross-adapter control. Out-of-scope reads through `ATTACH` are consequently held off by the
+input-stage denial in the operations layer
+([statement-guard.ts](../../src/lib/db/operations/statement-guard.ts)) — defense in depth carrying a
+gap the engine leaves, which is the honest description rather than a boundary claim. Residual risk:
+a statement that reached the profile with that layer bypassed could read any SQLite file the server
+process can open.
+
 **Known limitation — the timeout cannot preempt.** SQLite has no transaction-local statement
 timeout, and neither adapter exposes `sqlite3_interrupt` or a progress handler. `statementTimeoutMs`
 is therefore enforced as a deadline *check*: an overrunning statement runs to completion and its

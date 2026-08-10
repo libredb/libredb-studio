@@ -159,6 +159,8 @@ export type ExecutionProfileDenyCode =
   | "UNSUPPORTED_PROFILE"
   | "PROFILE_UNSUPPORTED_BY_PROVIDER"
   | "PROFILE_UNSUPPORTED_TARGET"
+  /** The role the profile would run as holds privileges no read-only boundary can contain. */
+  | "PROFILE_PRIVILEGES_TOO_BROAD"
   | "AGENT_CREDENTIAL_UNRESOLVABLE"
   | "AGENT_CREDENTIAL_WITH_CONNECTION_STRING";
 

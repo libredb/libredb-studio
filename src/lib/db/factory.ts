@@ -72,7 +72,7 @@ export async function createDatabaseProvider(
     // SQL Databases - dynamically imported to reduce memory
     case "postgres": {
       const { PostgresProvider } = await import("./providers/sql/postgres");
-      return new PostgresProvider(connection, options);
+      return new PostgresProvider(connection, options, execution);
     }
 
     case "mysql": {

@@ -36,9 +36,27 @@ function makeConnection(type: string, overrides: Partial<DatabaseConnection> = {
 // We do NOT mock provider module paths — that would poison other test files.
 // ============================================================================
 
+/**
+ * The privileges the mocked PostgreSQL role reports to the agent profile's
+ * open-time check. All false = a least-privilege role, which is what the profile
+ * requires: a read-only transaction does not stop server-side file access or
+ * program execution, so the role is part of that boundary (#328).
+ */
+let mockPgRolePrivileges: Record<string, boolean> = {
+  is_superuser: false,
+  reads_server_files: false,
+  writes_server_files: false,
+  executes_programs: false,
+};
+
+const mockPgQuery = async (sql?: string) =>
+  typeof sql === "string" && /is_superuser/i.test(sql)
+    ? { rows: [{ ...mockPgRolePrivileges }], fields: [] }
+    : { rows: [], fields: [] };
+
 const mockPgPool = {
-  query: async () => ({ rows: [], fields: [] }),
-  connect: async () => ({ query: async () => ({ rows: [], fields: [] }), release: () => {} }),
+  query: mockPgQuery,
+  connect: async () => ({ query: mockPgQuery, release: () => {} }),
   end: async () => {},
   on: () => {},
 };
@@ -788,6 +806,30 @@ describe("acquireExecutionProfileProvider", () => {
     expect(error).toBeInstanceOf(ExecutionProfileError);
     expect((error as InstanceType<typeof ExecutionProfileError>).reasonCode).toBe("PROFILE_UNSUPPORTED_BY_PROVIDER");
     expect(getExecutionProfileCacheStats().size).toBe(0);
+  });
+
+  test("refuses to vend a PostgreSQL profile whose role is too privileged, and caches nothing", async () => {
+    // The provider verifies the role at open (a read-only transaction does not
+    // stop COPY TO PROGRAM or pg_read_file), and the refusal has to reach the
+    // caller intact — not as a generic connection failure — with no half-built
+    // entry left in the profiled cache.
+    mockPgRolePrivileges = { ...mockPgRolePrivileges, executes_programs: true };
+    try {
+      const error: unknown = await acquireExecutionProfileProvider(pgConn({ id: "pg-privileged" }), "agent-read-only")
+        .then(() => null)
+        .catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(ExecutionProfileError);
+      expect((error as InstanceType<typeof ExecutionProfileError>).reasonCode).toBe("PROFILE_PRIVILEGES_TOO_BROAD");
+      expect(getExecutionProfileCacheStats().size).toBe(0);
+    } finally {
+      mockPgRolePrivileges = { ...mockPgRolePrivileges, executes_programs: false };
+    }
+
+    // The same connection is still usable on the editor path: the profile's
+    // requirement must not gate ordinary queries.
+    const shared = await getOrCreateProvider(pgConn({ id: "pg-privileged" }));
+    expect(shared.isConnected()).toBe(true);
   });
 
   test("uses the least-privilege agent credential for the profile provider only", async () => {

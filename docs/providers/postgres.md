@@ -520,13 +520,16 @@ through `queryReadOnly()`, where the DATABASE — not a SQL parser — is the bo
   does this for `:memory:` — see [sqlite.md §12.3](./sqlite.md#123-per-statement-execution-queryreadonly)).
   Every refusal is an `ExecutionProfileError` carrying an `ExecutionProfileDenyCode`
   ([errors.ts](../../src/lib/db/errors.ts)), so callers branch on the code, never on a message.
+- **The role is verified at open, not assumed** (see §12.3): a profile provider only connects if
+  its role is genuinely least-privilege. This applies whichever credential resolves below, because
+  an `agentUser` can be pointed at a superuser just as easily as a connection's own user can be one.
 - Optional least-privilege credential: `agentUser` / `agentPassword` on the connection
   (`agentPassword` is secret-classified and sealed at rest by
   [connection-secrets](../../src/lib/storage/connection-secrets.ts)). Resolution fails closed:
 
   | Configuration | Outcome |
   |---|---|
-  | Neither field set | Connection's own credentials, still inside the read-only transaction |
+  | Neither field set | Connection's own credentials — which must themselves pass the role check in §12.3 |
   | Both set, password resolves | Profile pool authenticates as `agentUser` |
   | Only one field set | `AGENT_CREDENTIAL_UNRESOLVABLE` — never a silent fallback to the more privileged default |
   | Sealed password that does not open | `AGENT_CREDENTIAL_UNRESOLVABLE` |
@@ -545,7 +548,14 @@ BEGIN READ ONLY;
 SET LOCAL statement_timeout = <budget.statementTimeoutMs>;  -- dies with the transaction
 -- the single statement, sent on the extended query protocol
 ROLLBACK;                                                   -- always; the profile never commits
+DISCARD ALL;                                                -- session state a rollback keeps
 ```
+
+`DISCARD ALL` is there because a rollback is not a full reset: an advisory lock taken inside the
+transaction survives it (verified on PostgreSQL 18), and nothing on the agent path is *required* to
+release one, so a pooled client would otherwise carry it into every later execution. It runs after the
+rollback because it cannot run inside a transaction block. A client that fails either step is
+destroyed rather than returned to the pool.
 
 Two server-enforced properties carry the security claim:
 
@@ -556,16 +566,71 @@ Two server-enforced properties carry the security claim:
    before executing anything — so `SELECT 1; COMMIT; INSERT …` cannot commit its way out of the
    read-only transaction the way it could on the simple protocol.
 
-A lone hostile statement cannot escape either: `SET TRANSACTION READ WRITE` would be the
-transaction's only statement before `ROLLBACK`; a session-level `SET` reverts with the rollback
-(GUC changes are transactional); a bare `COMMIT` merely ends an empty read-only transaction. A
-client whose `ROLLBACK` fails is destroyed (`release(error)`), never returned to the pool
-mid-transaction.
+A lone hostile statement cannot escape either — and the first of these is not theoretical:
+`SET TRANSACTION READ WRITE` **is accepted inside `BEGIN READ ONLY` and does relax the transaction**
+(verified on 18: a following `INSERT` committed), so what contains it is that it can only ever be
+the transaction's only statement before the `ROLLBACK`. A session-level `SET` reverts with the
+rollback (GUC changes are transactional); a bare `COMMIT` merely ends an empty read-only
+transaction. A client whose cleanup fails is destroyed (`release(error)`), never returned to the
+pool mid-transaction.
 
 The `ReadOnlyStatementBudget` (`statementTimeoutMs`, `maxResultRows`, `maxResultBytes`,
 [types.ts](../../src/lib/db/types.ts)) is validated as positive integers before any client is
 acquired — the timeout is interpolated into `SET LOCAL`, which takes no bind parameters — and the
 row/byte caps are enforced result-side after the statement returns.
+
+`queryReadOnly()` exists only on a provider opened under the profile: called on an ordinary
+provider it throws, because such a provider has had no role verification and would serve agent
+semantics without the boundary that makes them true.
+
+### 12.3 What the read-only transaction does NOT cover — and the role that does
+
+A read-only transaction forbids changing the **database**. It does not forbid a statement from
+reaching the **server**. Verified on PostgreSQL 18, all three of these succeeded inside
+`BEGIN READ ONLY` as a superuser:
+
+| Statement | What it did |
+|---|---|
+| `COPY (…) TO '<path>'` | wrote query results to an arbitrary server-side file |
+| `COPY (…) TO PROGRAM '<cmd>'` | ran a shell command as the server's OS user |
+| `SELECT pg_read_file('<path>')` | read an arbitrary server-side file |
+
+As a role with only `CONNECT`/`USAGE`/`SELECT`, the same three are refused — by **privileges**
+(`pg_write_server_files`, `pg_execute_server_program`, `pg_read_server_files` or superuser), not by
+the transaction. Two consequences the profile implements rather than documents as advice:
+
+1. **Opening the profile probes the role** and refuses with `PROFILE_PRIVILEGES_TOO_BROAD` unless
+   superuser and all three predefined-role memberships read back false
+   (`assertAgentRoleIsUnprivileged`, [postgres.ts](../../src/lib/db/providers/sql/postgres.ts)). The
+   probe uses `to_regrole`, so a server missing a predefined role answers `false` rather than
+   erroring. A server that answers nothing, or answers non-booleans, is refused too — an unproven
+   boundary is not a boundary.
+
+   What the probe proves is **non-membership and non-superuser**, not the absence of the capability:
+   a role directly granted `EXECUTE` on `pg_read_file()` answers false to all four flags and can
+   still read server files. That is why the recipe below says grant nothing else. The probe also
+   runs **once, at open** — a profiled provider stays cached until the idle sweep, so a role granted
+   new privileges afterwards keeps serving from the already-verified pool until it is evicted or
+   `removeProvider` runs.
+2. **`SET TRANSACTION READ WRITE` really works** inside `BEGIN READ ONLY` (also verified on 18: the
+   following `INSERT` committed). What contains it is that it can only ever be the transaction's
+   ONLY statement, after which the profile rolls back — so the single-statement rule in §12.2 is
+   load-bearing, not decorative.
+
+Recommended role for an agent target:
+
+```sql
+CREATE ROLE libredb_agent LOGIN PASSWORD '<secret>';
+GRANT CONNECT ON DATABASE <db> TO libredb_agent;
+GRANT USAGE ON SCHEMA <schema> TO libredb_agent;
+GRANT SELECT ON ALL TABLES IN SCHEMA <schema> TO libredb_agent;
+-- Grant nothing else. In particular do NOT grant pg_read_server_files,
+-- pg_write_server_files, pg_execute_server_program, or superuser.
+```
+
+Per-table `SELECT` grants are also what bound which rows an agent can READ: the policy layer's
+catalog/schema allowlist screens the *declared* target, and only the grants bound what a hostile
+statement could reach instead.
 
 ---
 
