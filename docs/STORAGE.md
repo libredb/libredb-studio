@@ -19,6 +19,7 @@ This document is split into two parts. Most readers want **[Part 1 — Setup & C
 - [2. SQLite Mode](#2-sqlite-mode)
 - [3. PostgreSQL Mode](#3-postgresql-mode)
 - [Migration: Local to Server](#migration-local-to-server)
+- [Credential Encryption at Rest](#credential-encryption-at-rest)
 - [Environment Variables Reference](#environment-variables-reference)
 - [Health Check](#health-check)
 - [Troubleshooting](#troubleshooting)
@@ -340,6 +341,89 @@ For the full migration lifecycle and the underlying merge semantics, see [Migrat
 
 ---
 
+## Credential Encryption at Rest
+
+In `sqlite` and `postgres` modes, credentials are encrypted before they are written. There is
+nothing to switch on and nothing to configure.
+
+### What is encrypted
+
+Six fields, all on a saved connection:
+
+| Field | What it is |
+|-------|------------|
+| `password` | The database password |
+| `connectionString` | A URL that can embed `user:password@` |
+| `ssl.clientKey` | The TLS client private key |
+| `sshTunnel.password` | The SSH password |
+| `sshTunnel.privateKey` | The SSH private key |
+| `sshTunnel.passphrase` | The passphrase that unlocks the key above |
+
+Everything else stays readable, deliberately: `host`, `port`, `user`, `database`, `name` and the
+TLS certificates (`ssl.caCert`, `ssl.clientCert` — certificates are public by construction). An
+operator holding a dump has to be able to answer "which of my databases is in here"; that is
+incident response, not a leak. No other collection is touched — `history` and `saved_queries` hold
+SQL text, which is the product's data rather than its secrets.
+
+Each value is stored as `v1:<iv>:<ciphertext>` using AES-256-GCM with a fresh random IV, so two
+identical passwords do not look identical in the store, and a tampered value is detected rather
+than silently decrypting to something else.
+
+### The key
+
+| `STORAGE_ENCRYPTION_KEY` | Key used |
+|--------------------------|----------|
+| unset (default) | Derived from `JWT_SECRET` via HKDF-SHA256 |
+| set (min 32 characters) | Derived from that value via HKDF-SHA256 |
+
+Deriving from `JWT_SECRET` is what keeps the zero-config promise: no new required variable, and if
+you never set `JWT_SECRET` either, the first-run bootstrap generates and persists one
+(`<data dir>/auth-bootstrap.json`), so the key is stable across restarts.
+
+Set a dedicated `STORAGE_ENCRYPTION_KEY` where key separation matters — most usefully so that
+rotating your session-signing secret does not also invalidate every saved connection password.
+
+### Rotating a key invalidates stored credentials
+
+**This is the trade-off, stated plainly: rotating whichever key is in use makes every stored
+credential unreadable.** That applies to rotating `JWT_SECRET` when `STORAGE_ENCRYPTION_KEY` is
+unset, and to rotating `STORAGE_ENCRYPTION_KEY` when it is set. It also applies if you lose the
+bootstrap file — a container without a persistent volume for its data directory regenerates
+`JWT_SECRET` on every start.
+
+What happens is bounded and recoverable:
+
+- The **connection survives**. Its name, host, port, user and database are still there.
+- The unreadable field is **omitted**, not replaced with garbage. The password box is empty.
+- A warning is written to the server log once per read: `Stored connection secrets could not be
+  decrypted: N field(s) were omitted.`
+- Nothing is deleted from the database by the read itself.
+
+To recover, restore the previous key and restart, **before** using the app. Reads happen on page
+load; the first time the app writes that collection back, the omitted values are gone for good,
+because the browser copy is the source the server is updated from. If you cannot restore the key,
+re-enter the affected passwords once and they are re-encrypted under the current key.
+
+### Existing deployments migrate themselves
+
+Reads accept both plaintext and encrypted values, and writes always produce encrypted ones. An
+existing store therefore migrates as it is used, with no migration command, no downtime and no
+version column. A row that is never written again stays plaintext — which is why the
+`STORAGE_ENCRYPTION_KEY` upgrade is safe to roll back.
+
+### What this does not protect
+
+- **Browser `localStorage` is not encrypted.** It is the rendering source and it holds the same
+  credentials in the clear. That is a deliberate product decision — it is what lets Studio work
+  without a master password — and it is why cross-site scripting is treated as a top-severity
+  issue in this project rather than a session-theft issue.
+- **Anyone who can read the server's environment can read the credentials.** The key lives there.
+  This protects a stolen database file, a dump, a backup or a volume snapshot; it is not a vault.
+- **`GET /api/storage` returns credentials in plaintext to their authenticated owner.** It has to:
+  the app must be able to redisplay a saved password for editing.
+
+---
+
 ## Environment Variables Reference
 
 | Variable | Required | Default | Description |
@@ -410,6 +494,22 @@ curl -b cookies.txt http://localhost:3000/api/storage
 - Switching from server mode **back** to local mode doesn't pull data from the server
 - Local mode only reads from localStorage
 - To recover: switch back to server mode, the data is still in the database
+
+### "My connection passwords are blank after a restart"
+
+Look for this line in the server log:
+
+```
+Stored connection secrets could not be decrypted: 3 field(s) were omitted.
+```
+
+The encryption key changed. Either `JWT_SECRET` was rotated (and `STORAGE_ENCRYPTION_KEY` is not
+set), or `STORAGE_ENCRYPTION_KEY` itself changed, or the data directory holding
+`auth-bootstrap.json` was not persisted so a fresh `JWT_SECRET` was generated on start.
+
+Restore the previous key and restart **before** using the app — see
+[Rotating a key invalidates stored credentials](#rotating-a-key-invalidates-stored-credentials).
+If the key is gone, re-enter the affected passwords; everything else about the connection is intact.
 
 ### "Duplicate data after migration"
 

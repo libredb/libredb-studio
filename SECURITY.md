@@ -82,10 +82,20 @@ When using LibreDB Studio, please follow these security best practices:
   today
 
 #### Database Connections
-- Connection details, including database passwords and SSH private keys, are stored unencrypted
-  in browser `localStorage`, and in the server-side store when `STORAGE_PROVIDER` is set to
-  `sqlite` or `postgres`. Treat both as secret material: anyone who can read that browser
-  profile or that database can read every configured credential.
+- Connection details, including database passwords and SSH private keys, are stored **unencrypted
+  in browser `localStorage`**. Treat that browser profile as secret material: anyone who can read
+  it can read every configured credential. This is deliberate — it is what allows Studio to work
+  without a master password — and it is why cross-site scripting is treated as a top-severity
+  issue in this project.
+- In the **server-side store** (`STORAGE_PROVIDER=sqlite` or `postgres`), those same fields are
+  encrypted at rest with AES-256-GCM before they are written: the database password, the
+  connection string, the TLS client key, and the SSH password, private key and passphrase. The key
+  is `STORAGE_ENCRYPTION_KEY` when set, and is otherwise derived from `JWT_SECRET`, so there is no
+  new required configuration. Host, port, user and database name stay readable so an operator can
+  still identify what a dump contains. A leaked database file or backup is therefore not by itself
+  enough to read the credentials — but anyone who can read the server's environment still can.
+  Rotating the key makes stored credentials unreadable; see
+  [docs/STORAGE.md](docs/STORAGE.md#credential-encryption-at-rest).
 - Database credentials are not written to application logs, but they are returned in plaintext
   to the authenticated owner through storage API responses (for example `GET /api/storage`),
   because the app must be able to redisplay a saved connection's password for editing and reuse
