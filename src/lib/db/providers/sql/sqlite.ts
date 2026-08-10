@@ -19,6 +19,8 @@ import {
   type MaintenanceType,
   type MaintenanceResult,
   type ProviderOptions,
+  type ProviderExecutionContext,
+  type ReadOnlyStatementBudget,
   type ProviderCapabilities,
   type DatabaseOverview,
   type PerformanceMetrics,
@@ -28,7 +30,14 @@ import {
   type IndexStats,
   type StorageStats,
 } from "../../types";
-import { DatabaseConfigError, ConnectionError, QueryError, mapDatabaseError } from "../../errors";
+import {
+  DatabaseConfigError,
+  ConnectionError,
+  ExecutionProfileError,
+  QueryError,
+  mapDatabaseError,
+} from "../../errors";
+import { assertReadOnlyBudget, measureResultBytes } from "./read-only-budget";
 import { formatBytes } from "../../utils/pool-manager";
 import { loadSQLiteDriver, type SQLiteDatabase } from "./sqlite-driver";
 import * as fs from "fs";
@@ -115,14 +124,54 @@ const STATS_INDEXES_SQL = `
     `;
 
 // ============================================================================
+// Agent read-only execution profile (#328)
+// ============================================================================
+
+const QUERY_ONLY_PRAGMA_SQL = "PRAGMA query_only = true";
+const QUERY_ONLY_READBACK_SQL = "PRAGMA query_only";
+
+/**
+ * Refuses a read-only handle whose `query_only` pragma does not read back
+ * enabled.
+ *
+ * A read-only OPEN does not imply `query_only` on either adapter (it reads
+ * back 0 until explicitly set), so the profile sets it and verifies it — at
+ * open AND before every statement.
+ *
+ * The two controls cover different things and neither is redundant. The
+ * read-only open governs the TARGET database file: writes to it are refused
+ * and a missing file is not created. It does NOT govern writes to OTHER
+ * files — `VACUUM INTO '<path>'` copies the whole database to an arbitrary
+ * server path from a read-only handle on both adapters. That is what
+ * `query_only` refuses, and why it is re-asserted per statement rather than
+ * only at open: a statement can turn it off, but `prepare()` compiles exactly
+ * one statement, so the disable and the write can never ride in the same call.
+ */
+export function assertQueryOnlyEnabled(readback: unknown[]): void {
+  const value = (readback[0] as { query_only?: unknown } | undefined)?.query_only;
+  if (value !== 1) {
+    throw new ConnectionError(
+      `SQLite read-only profile could not enable query_only (read back ${JSON.stringify(value ?? null)})`,
+      "sqlite",
+    );
+  }
+}
+
+// ============================================================================
 // SQLite Provider
 // ============================================================================
 
 export class SQLiteProvider extends SQLBaseProvider {
   private db: SQLiteDatabase | null = null;
+  /** True when this instance was opened under the agent read-only profile. */
+  private readonly readOnlyProfile: boolean;
 
-  constructor(config: DatabaseConnection, options: ProviderOptions = {}) {
+  constructor(config: DatabaseConnection, options: ProviderOptions = {}, execution: ProviderExecutionContext = {}) {
     super(config, options);
+    // Server-injected only (see ProviderExecutionContext): the shared editor
+    // path builds providers from caller-supplied ProviderOptions, which has no
+    // route to this flag in either direction.
+    this.readOnlyProfile = execution.readOnly === true;
     this.validate();
   }
 
@@ -172,6 +221,11 @@ export class SQLiteProvider extends SQLBaseProvider {
 
       const dbPath = this.getDatabasePath();
 
+      if (this.readOnlyProfile) {
+        this.connectReadOnly(SQLiteDB, dbPath);
+        return;
+      }
+
       if (dbPath !== ":memory:") {
         const dir = path.dirname(dbPath);
         if (!fs.existsSync(dir)) {
@@ -193,7 +247,9 @@ export class SQLiteProvider extends SQLBaseProvider {
     } catch (error) {
       this.setError(error instanceof Error ? error : new Error(String(error)));
 
-      if (error instanceof DatabaseConfigError) {
+      // Typed refusals keep their own identity: wrapping them would strip the
+      // config diagnosis / the profile's deny reason code.
+      if (error instanceof DatabaseConfigError || error instanceof ExecutionProfileError) {
         throw error;
       }
 
@@ -202,6 +258,48 @@ export class SQLiteProvider extends SQLBaseProvider {
         "sqlite",
       );
     }
+  }
+
+  /**
+   * Open the agent read-only handle (#328). Deliberately NOT the shared
+   * sequence above:
+   *
+   * - no directory is created and no `create` flag is passed, so a missing
+   *   target leaves the filesystem untouched (the read-only open itself
+   *   refuses to create the file on both adapters);
+   * - `PRAGMA journal_mode = WAL` is a write and fails outright on a read-only
+   *   handle, so the shared pragma trio is skipped — none of it applies to a
+   *   connection that cannot write;
+   * - `query_only` is set and verified (a read-only open does not imply it).
+   *
+   * An in-memory target is refused: a read-only open of an anonymous database
+   * can only ever yield an empty one (node:sqlite) or fail (bun:sqlite), so
+   * vending it would hand the agent a silently useless target.
+   */
+  private connectReadOnly(SQLiteDB: Awaited<ReturnType<typeof loadSQLiteDriver>>, dbPath: string): void {
+    if (dbPath === ":memory:") {
+      throw new ExecutionProfileError(
+        "The agent read-only execution profile cannot target an in-memory SQLite database",
+        "PROFILE_UNSUPPORTED_TARGET",
+      );
+    }
+
+    this.db = new SQLiteDB(dbPath, { readonly: true });
+    try {
+      this.enforceQueryOnly();
+    } catch (error) {
+      this.db.close();
+      this.db = null;
+      throw error;
+    }
+
+    this.setConnected(true);
+  }
+
+  /** Set `query_only` and refuse to continue unless it reads back enabled. */
+  private enforceQueryOnly(): void {
+    this.db!.exec(QUERY_ONLY_PRAGMA_SQL);
+    assertQueryOnlyEnabled(this.db!.prepare(QUERY_ONLY_READBACK_SQL).all());
   }
 
   public async disconnect(): Promise<void> {
@@ -274,6 +372,84 @@ export class SQLiteProvider extends SQLBaseProvider {
         rows: result.rows,
         fields: result.fields,
         rowCount: result.rows.length || result.changes,
+        executionTime,
+      };
+    });
+  }
+
+  /**
+   * Execute exactly one statement under SQLite's own read-only enforcement
+   * (#328).
+   *
+   * The boundary is the database's own enforcement, not any inspection of
+   * `sql`: a write reaching this method is executed and rejected by the
+   * engine (see `assertQueryOnlyEnabled` for which control covers what). It is
+   * therefore refused outright on a provider that was not opened under the
+   * profile — a writable handle has no boundary to enforce, and silently
+   * running the statement there would be exactly the fail-open this layer
+   * exists to prevent.
+   *
+   * Statements are compiled with `prepare()`, never `exec()`: `exec()` runs
+   * every statement of a multi-statement string, while `prepare()` compiles
+   * only the first. Rejecting multi-statement input is the policy pipeline's
+   * job — this method only guarantees the tail is never executed.
+   */
+  public async queryReadOnly(sql: string, budget: ReadOnlyStatementBudget): Promise<QueryResult> {
+    this.ensureConnected();
+    assertReadOnlyBudget(budget, "sqlite");
+    if (!this.readOnlyProfile) {
+      throw new QueryError(
+        "Read-only execution requires a provider opened under the agent read-only profile",
+        "sqlite",
+        sql,
+      );
+    }
+    // Per statement, not just at open: the profiled provider is pooled and
+    // reused, so a previous statement's `PRAGMA query_only = false` would
+    // otherwise persist for every later call on this connection.
+    this.enforceQueryOnly();
+
+    return this.trackQuery(async () => {
+      const { result, executionTime } = await this.measureExecution(async () => {
+        try {
+          return this.db!.prepare(sql).all() as Record<string, unknown>[];
+        } catch (error) {
+          throw mapDatabaseError(error, "sqlite", sql);
+        }
+      });
+
+      if (result.length > budget.maxResultRows) {
+        throw new QueryError(
+          `Read-only execution exceeded the row budget: ${result.length} rows > ${budget.maxResultRows} allowed`,
+          "sqlite",
+          sql,
+        );
+      }
+      const resultBytes = measureResultBytes(result);
+      if (resultBytes > budget.maxResultBytes) {
+        throw new QueryError(
+          `Read-only execution exceeded the byte budget: ${resultBytes} bytes > ${budget.maxResultBytes} allowed`,
+          "sqlite",
+          sql,
+        );
+      }
+      // SQLite has no transaction-local statement timeout, and neither adapter
+      // exposes sqlite3_interrupt or a progress handler, so the budget's
+      // timeout is a post-execution deadline: an overrunning statement is not
+      // preempted, but its result is refused rather than returned as if it had
+      // been within budget. Recorded as such in docs/providers/sqlite.md.
+      if (executionTime > budget.statementTimeoutMs) {
+        throw new QueryError(
+          `Read-only execution exceeded the time budget: ${executionTime}ms > ${budget.statementTimeoutMs}ms allowed`,
+          "sqlite",
+          sql,
+        );
+      }
+
+      return {
+        rows: result,
+        fields: result.length > 0 ? Object.keys(result[0]) : [],
+        rowCount: result.length,
         executionTime,
       };
     });

@@ -1,5 +1,16 @@
-import { describe, test, expect, mock, beforeEach } from "bun:test";
-import type { DatabaseConnection } from "@/lib/db/types";
+import { describe, test, expect, mock, beforeEach, beforeAll, afterAll } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type { DatabaseConnection, ReadOnlyStatementBudget } from "@/lib/db/types";
+import { ExecutionProfileError } from "@/lib/db/errors";
+
+/** Enforcement caps for the sqlite agent-profile assertions below. */
+const AGENT_BUDGET: ReadOnlyStatementBudget = {
+  statementTimeoutMs: 5_000,
+  maxResultRows: 100,
+  maxResultBytes: 64 * 1024,
+};
 
 // ============================================================================
 // Helper: build a minimal DatabaseConnection for a given type
@@ -244,7 +255,6 @@ const {
   registerShutdownHandlers,
   acquireExecutionProfileProvider,
   getExecutionProfileCacheStats,
-  ExecutionProfileError,
 } = await import("@/lib/db/factory");
 if (nodeEnvBefore === undefined) {
   delete (process.env as Record<string, string>).NODE_ENV;
@@ -999,5 +1009,72 @@ describe("acquireExecutionProfileProvider", () => {
 
     expect(getExecutionProfileCacheStats().size).toBe(0);
     expect(agent.isConnected()).toBe(false);
+  });
+
+  // ─── SQLite: read-only intent is injected server-side, never by a caller ──
+  // sqlite runs on the real driver here (no mock), so these assert the actual
+  // database boundary rather than factory bookkeeping.
+
+  describe("sqlite", () => {
+    let sqliteTmpDir: string;
+    let seeded = 0;
+
+    beforeAll(() => {
+      sqliteTmpDir = mkdtempSync(join(tmpdir(), "libredb-factory-sqlite-"));
+    });
+
+    afterAll(() => {
+      rmSync(sqliteTmpDir, { recursive: true, force: true });
+    });
+
+    /** A real on-disk sqlite connection with one seeded row. */
+    async function seedFileConnection(): Promise<DatabaseConnection> {
+      const conn = makeConnection("sqlite", {
+        id: `sqlite-agent-${++seeded}`,
+        database: join(sqliteTmpDir, `agent-${seeded}.db`),
+      });
+      const writer = await getOrCreateProvider(conn);
+      await writer.query("CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)");
+      await writer.query("INSERT INTO t (id, v) VALUES (1, 'seeded')");
+      await removeProvider(conn.id);
+      return conn;
+    }
+
+    test("acquires a sqlite agent provider whose writes the database rejects", async () => {
+      const conn = await seedFileConnection();
+
+      const agent = await acquireExecutionProfileProvider(conn, "agent-read-only");
+
+      expect(await agent.queryReadOnly!("SELECT v FROM t", { ...AGENT_BUDGET })).toMatchObject({
+        rows: [{ v: "seeded" }],
+      });
+      await expect(agent.queryReadOnly!("INSERT INTO t (id, v) VALUES (2, 'agent')", AGENT_BUDGET)).rejects.toThrow();
+      expect(getExecutionProfileCacheStats()).toEqual({ size: 1, connections: [conn.id] });
+      expect(getProviderCacheStats().size).toBe(0);
+    });
+
+    test("a caller-supplied options object cannot put the shared provider into the read-only profile", async () => {
+      const conn = await seedFileConnection();
+
+      // ProviderOptions is caller-supplied and flows through getOrCreateProvider;
+      // the execution profile must be unreachable from it in either direction.
+      const shared = await getOrCreateProvider(conn, { readOnly: true } as never);
+
+      const insert = await shared.query("INSERT INTO t (id, v) VALUES (2, 'editor')");
+      expect(insert.rowCount).toBe(1);
+      expect(getExecutionProfileCacheStats().size).toBe(0);
+    });
+
+    test("refuses an in-memory sqlite target for the agent profile (fail closed)", async () => {
+      const conn = makeConnection("sqlite", { id: "sqlite-memory-agent", database: ":memory:" });
+
+      // Refused for being an in-memory target, not for the provider type
+      // lacking a read-only profile — the deny code has to say which.
+      const error: unknown = await acquireExecutionProfileProvider(conn, "agent-read-only").catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(ExecutionProfileError);
+      expect((error as ExecutionProfileError).reasonCode).toBe("PROFILE_UNSUPPORTED_TARGET");
+      expect(getExecutionProfileCacheStats().size).toBe(0);
+    });
   });
 });

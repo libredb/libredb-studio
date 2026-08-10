@@ -675,3 +675,33 @@ reading the stored row before every write and preserving an existing envelope wh
 value is absent - which would also silently resurrect a password the user deliberately cleared, a
 worse bug than the one it fixes. Done when a design is found that distinguishes "the client never
 had this value" from "the client cleared this value" without adding a field to the stored shape.
+
+---
+
+## Agent M1 deferrals (#328)
+
+Each of these was decided while building the operation/policy layer, not overlooked. Delete an
+entry when the work lands.
+
+### A1. A SQLite agent statement can block the runtime for its whole duration
+
+`src/lib/db/providers/sql/sqlite.ts`'s `queryReadOnly` enforces `statementTimeoutMs` as a
+post-execution deadline: the result of an overrunning statement is refused, but the statement is
+never preempted. SQLite has no transaction-local statement timeout, and neither `bun:sqlite` nor
+`node:sqlite` exposes `sqlite3_interrupt` or a progress handler, so there is nothing to preempt it
+with. Because both drivers are synchronous, a hostile recursive CTE therefore blocks the whole
+runtime while it runs. This is the same property as the normal SQLite query path, but the input
+source is different in kind: there the SQL comes from an authenticated operator, here it comes from
+an agent. Done when either driver exposes an interrupt/progress hook, or agent SQLite execution
+moves to a worker that can be killed on deadline.
+
+### A2. `VACUUM INTO` can create an empty file at an agent-chosen path
+
+The SQLite agent profile's read-only open governs the target database file only; `VACUUM INTO
+'<path>'` writes to a *different* file and is refused by `PRAGMA query_only`, which the profile
+re-asserts and verifies before every statement. SQLite creates the destination file before the
+write is refused, so a zero-byte file can still appear at any path the server process can write to
+(no data reaches it - asserted on both adapters by file size). Closing this needs an authorizer
+callback, which `bun:sqlite` does not expose at all. Done when a control exists on both adapters,
+or when agent SQLite targets are constrained to an allowlisted directory (related: the base-dir
+allowlist proposed in issue #125).

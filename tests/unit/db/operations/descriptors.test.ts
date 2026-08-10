@@ -41,6 +41,12 @@ describe("sql.query.read", () => {
     expect(sqlQueryReadDescriptor.verification?.reviewedBy.trim().length).toBeGreaterThan(0);
     expect(sqlQueryReadDescriptor.verification?.boundary).toContain("READ ONLY");
     expect(sqlQueryReadDescriptor.verification?.boundary).toContain("query_only");
+    // The marker must state what each SQLite control actually covers. An
+    // earlier version claimed the read-only open alone was the boundary, which
+    // was false for writes to OTHER files (VACUUM INTO) — and the two
+    // assertions above were satisfied by that false wording too.
+    expect(sqlQueryReadDescriptor.verification?.boundary).toContain("before every statement");
+    expect(sqlQueryReadDescriptor.verification?.boundary).toContain("other files");
   });
 });
 

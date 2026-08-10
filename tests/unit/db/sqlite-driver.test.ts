@@ -13,10 +13,12 @@ import {
 class StubDatabaseSync implements NodeDatabaseSyncLike {
   static lastInstance: StubDatabaseSync | undefined;
   readonly path: string;
+  readonly options: { readOnly?: boolean } | undefined;
   readonly calls: string[] = [];
 
-  constructor(path: string) {
+  constructor(path: string, options?: { readOnly?: boolean }) {
     this.path = path;
+    this.options = options;
     StubDatabaseSync.lastInstance = this;
   }
 
@@ -67,7 +69,7 @@ describe("sqlite-driver", () => {
   });
 
   describe("createNodeSQLiteDriver() adapter semantics", () => {
-    test("bridges exec/prepare/close and ignores bun-style open options", () => {
+    test("bridges exec/prepare/close", () => {
       const Driver = createNodeSQLiteDriver(StubDatabaseSync);
       const db = new Driver("/tmp/adapter.db", { create: true, readwrite: true });
       const stub = StubDatabaseSync.lastInstance!;
@@ -98,6 +100,26 @@ describe("sqlite-driver", () => {
 
       expect(stmt.run("bigint")).toEqual({ changes: 3 });
       expect(stmt.run("number")).toEqual({ changes: 1 });
+    });
+
+    // The read-only open flag is the SQLite half of the agent execution
+    // profile's security boundary (#328). The two runtimes spell it
+    // differently — bun `readonly`, node `readOnly` — so an adapter that
+    // forwards nothing (or forwards the bun spelling verbatim) would hand the
+    // agent a fully writable handle. These pin the mapping at the seam; the
+    // node harness in tests/integration/db proves the real driver honors it.
+    test("maps the read-only open flag onto node:sqlite's readOnly option", () => {
+      const Driver = createNodeSQLiteDriver(StubDatabaseSync);
+      new Driver("/tmp/agent.db", { readonly: true });
+
+      expect(StubDatabaseSync.lastInstance!.options).toEqual({ readOnly: true });
+    });
+
+    test("opens read-write when no read-only flag is given (the shared editor path)", () => {
+      const Driver = createNodeSQLiteDriver(StubDatabaseSync);
+      new Driver("/tmp/editor.db", { create: true, readwrite: true });
+
+      expect(StubDatabaseSync.lastInstance!.options).toEqual({ readOnly: false });
     });
   });
 

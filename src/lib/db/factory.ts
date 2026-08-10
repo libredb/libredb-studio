@@ -4,8 +4,13 @@
  * Uses dynamic imports to reduce memory footprint - providers are loaded on demand
  */
 
-import { type DatabaseProvider, type DatabaseConnection, type ProviderOptions } from "./types";
-import { DatabaseConfigError } from "./errors";
+import {
+  type DatabaseProvider,
+  type DatabaseConnection,
+  type ProviderOptions,
+  type ProviderExecutionContext,
+} from "./types";
+import { DatabaseConfigError, ExecutionProfileError } from "./errors";
 import { createSSHTunnel, closeSSHTunnel, hasTunnel } from "@/lib/ssh/tunnel";
 import { readSecret } from "@/lib/storage/encryption";
 import { logger } from "@/lib/logger";
@@ -20,6 +25,10 @@ import { logger } from "@/lib/logger";
  *
  * @param connection - Database connection configuration
  * @param options - Optional provider options (pooling, timeout, etc.)
+ * @param execution - Server-injected execution context (#328). Never built
+ *   from caller-supplied options; only acquireExecutionProfileProvider passes
+ *   it. Providers whose read-only boundary is established at OPEN time read it
+ *   (SQLite); the rest establish theirs per statement and ignore it.
  * @returns Promise<DatabaseProvider> instance
  * @throws DatabaseConfigError if connection type is not supported
  *
@@ -53,6 +62,7 @@ import { logger } from "@/lib/logger";
 export async function createDatabaseProvider(
   connection: DatabaseConnection,
   options: ProviderOptions = {},
+  execution: ProviderExecutionContext = {},
 ): Promise<DatabaseProvider> {
   // Sanitize user-controlled values to prevent log injection
   const sanitize = (v: string) => v.replace(/[\r\n]/g, " ").replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, "");
@@ -72,7 +82,7 @@ export async function createDatabaseProvider(
 
     case "sqlite": {
       const { SQLiteProvider } = await import("./providers/sql/sqlite");
-      return new SQLiteProvider(connection, options);
+      return new SQLiteProvider(connection, options, execution);
     }
 
     case "oracle": {
@@ -325,24 +335,16 @@ export async function getOrCreateProvider(
  */
 export type ExecutionProfile = "agent-read-only";
 
-const EXECUTION_PROFILES: ReadonlySet<string> = new Set<ExecutionProfile>(["agent-read-only"]);
+/**
+ * What each profile means to a provider that establishes its read-only
+ * boundary at open time. Single source of truth for the profile list, so a new
+ * profile cannot be accepted without stating the context it is opened under.
+ */
+const PROFILE_EXECUTION_CONTEXT: Record<ExecutionProfile, ProviderExecutionContext> = {
+  "agent-read-only": { readOnly: true },
+};
 
-export type ExecutionProfileDenyCode =
-  | "UNSUPPORTED_PROFILE"
-  | "PROFILE_UNSUPPORTED_BY_PROVIDER"
-  | "AGENT_CREDENTIAL_UNRESOLVABLE"
-  | "AGENT_CREDENTIAL_WITH_CONNECTION_STRING";
-
-export class ExecutionProfileError extends Error {
-  constructor(
-    message: string,
-    public readonly reasonCode: ExecutionProfileDenyCode,
-  ) {
-    super(message);
-    this.name = "ExecutionProfileError";
-    Object.setPrototypeOf(this, ExecutionProfileError.prototype);
-  }
-}
+const EXECUTION_PROFILES: ReadonlySet<string> = new Set(Object.keys(PROFILE_EXECUTION_CONTEXT));
 
 /**
  * Resolves the optional least-privilege agent credential from the connection
@@ -427,7 +429,7 @@ export async function acquireExecutionProfileProvider(
     if (tunnel && !tunnelPreexisted) await tunnel.close().catch(() => {});
   };
 
-  const provider = await createDatabaseProvider(effectiveConnection, options);
+  const provider = await createDatabaseProvider(effectiveConnection, options, PROFILE_EXECUTION_CONTEXT[profile]);
   if (typeof provider.queryReadOnly !== "function") {
     await closeFreshTunnel();
     throw new ExecutionProfileError(

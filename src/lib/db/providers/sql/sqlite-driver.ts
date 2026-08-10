@@ -33,7 +33,14 @@ export type SQLiteDatabase = {
   close(): void;
 };
 
-export type SQLiteOpenOptions = { create?: boolean; readwrite?: boolean };
+/**
+ * Open options in the bun:sqlite spelling (this surface is bun-shaped; the
+ * node adapter below translates). `readonly` opens the database under SQLite's
+ * own read-only enforcement — writes are refused by the engine and a missing
+ * file is NOT created — which is the SQLite half of the agent execution
+ * profile (#328).
+ */
+export type SQLiteOpenOptions = { create?: boolean; readwrite?: boolean; readonly?: boolean };
 
 export type SQLiteConstructor = new (path: string, options?: SQLiteOpenOptions) => SQLiteDatabase;
 
@@ -51,7 +58,11 @@ export type NodeDatabaseSyncLike = {
   prepare(sql: string): NodeStatementLike;
   close(): void;
 };
-export type NodeSQLiteModule = { DatabaseSync: new (path: string) => NodeDatabaseSyncLike };
+/** node:sqlite's own open options — only the ones this adapter maps. */
+export type NodeSQLiteOpenOptions = { readOnly?: boolean };
+export type NodeSQLiteModule = {
+  DatabaseSync: new (path: string, options?: NodeSQLiteOpenOptions) => NodeDatabaseSyncLike;
+};
 
 const loadedDrivers = new Map<SQLiteDriverName, SQLiteConstructor>();
 const driverLoadErrors = new Map<SQLiteDriverName, Error>();
@@ -85,7 +96,10 @@ async function loadBunDriver(): Promise<SQLiteConstructor> {
  * the bridges below keep behaviour byte-compatible with bun:sqlite:
  * - node:sqlite opens read-write and creates missing files by default,
  *   matching the `{ create: true, readwrite: true }` options the provider
- *   passes to bun:sqlite, so open options are accepted and ignored.
+ *   passes to bun:sqlite, so those two flags need no translation. The
+ *   read-only flag DOES: node spells it `readOnly`, bun spells it `readonly`,
+ *   and an adapter that dropped it would silently hand an agent execution
+ *   profile a fully writable database handle (#328).
  * - `get()` returns `undefined` on a miss where bun:sqlite returns `null`.
  * - `run()` reports `changes` as `number | bigint`; normalize to `number`.
  *
@@ -96,8 +110,8 @@ export function createNodeSQLiteDriver(DatabaseSyncCtor: NodeSQLiteModule["Datab
   class NodeSQLiteDatabase implements SQLiteDatabase {
     private readonly db: NodeDatabaseSyncLike;
 
-    constructor(dbPath: string, _options?: SQLiteOpenOptions) {
-      this.db = new DatabaseSyncCtor(dbPath);
+    constructor(dbPath: string, options?: SQLiteOpenOptions) {
+      this.db = new DatabaseSyncCtor(dbPath, { readOnly: options?.readonly === true });
     }
 
     exec(sql: string): void {

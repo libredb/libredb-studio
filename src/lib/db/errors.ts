@@ -147,6 +147,43 @@ export class QueryCancelledError extends DatabaseError {
 }
 
 // ============================================================================
+// Execution-profile errors (#328)
+// ============================================================================
+
+/**
+ * Why an execution-profile acquisition was refused. Every refusal carries one:
+ * a caller that has to parse a message to learn why it was denied cannot fail
+ * closed on the reason.
+ */
+export type ExecutionProfileDenyCode =
+  | "UNSUPPORTED_PROFILE"
+  | "PROFILE_UNSUPPORTED_BY_PROVIDER"
+  | "PROFILE_UNSUPPORTED_TARGET"
+  | "AGENT_CREDENTIAL_UNRESOLVABLE"
+  | "AGENT_CREDENTIAL_WITH_CONNECTION_STRING";
+
+/**
+ * Raised when a provider cannot be vended under a requested execution profile.
+ * It lives here, with the other database errors, rather than in the factory:
+ * providers themselves raise it (SQLite refuses an in-memory target), and a
+ * provider must not have to import the factory to state why it fails closed.
+ *
+ * Kept a plain Error rather than a DatabaseError subclass for now — nothing
+ * maps it to an API response yet, and the route surface that eventually will
+ * (#329+) is where that decision belongs.
+ */
+export class ExecutionProfileError extends Error {
+  constructor(
+    message: string,
+    public readonly reasonCode: ExecutionProfileDenyCode,
+  ) {
+    super(message);
+    this.name = "ExecutionProfileError";
+    Object.setPrototypeOf(this, ExecutionProfileError.prototype);
+  }
+}
+
+// ============================================================================
 // Type Guards
 // ============================================================================
 

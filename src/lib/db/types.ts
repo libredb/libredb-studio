@@ -346,6 +346,23 @@ export interface ProviderOptions {
   timezone?: string;
 }
 
+/**
+ * Server-injected construction context for an execution-profile provider
+ * (#328). Deliberately NOT a member of `ProviderOptions`: that object is
+ * caller-supplied and flows all the way into `getOrCreateProvider`, so a
+ * profile flag living there could be set — or cleared — by whoever builds the
+ * options for a request. Only `acquireExecutionProfileProvider` passes this.
+ */
+export interface ProviderExecutionContext {
+  /**
+   * Open the connection under the database's own read-only enforcement.
+   * Only providers whose read-only boundary is established at OPEN time read
+   * this (SQLite); PostgreSQL establishes it per transaction inside
+   * `queryReadOnly` instead, so its provider ignores the context.
+   */
+  readOnly?: boolean;
+}
+
 // ============================================================================
 // Internal Types
 // ============================================================================

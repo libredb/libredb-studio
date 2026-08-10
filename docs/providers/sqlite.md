@@ -20,6 +20,7 @@
 | **Transactions** | ❌ no explicit begin/commit/rollback API |
 | **Query cancellation** | ❌ none (synchronous, embedded) |
 | **Pooling** | ❌ none (single connection) |
+| **Agent read-only profile** | Yes — separate read-only OPEN (no file create) + verified `query_only` (#328, §12) |
 | **Source** | [`src/lib/db/providers/sql/sqlite.ts`](../../src/lib/db/providers/sql/sqlite.ts) |
 | **Tests** | [`tests/integration/db/sqlite-provider.test.ts`](../../tests/integration/db/sqlite-provider.test.ts) |
 
@@ -128,12 +129,16 @@ The driver is imported lazily via `loadSQLiteDriver()`
 ### Registration
 
 ```ts
-// factory.ts:72
+// factory.ts
 case "sqlite": {
   const { SQLiteProvider } = await import("./providers/sql/sqlite");
-  return new SQLiteProvider(connection, options);
+  return new SQLiteProvider(connection, options, execution);
 }
 ```
+
+`execution` is the server-injected [`ProviderExecutionContext`](../../src/lib/db/types.ts) — empty
+on the normal path, and carrying the read-only flag only when
+`acquireExecutionProfileProvider` builds an agent provider ([§12](#12-agent-read-only-execution-profile-328)).
 
 ---
 
@@ -159,7 +164,9 @@ directories are created on connect.
 `connect()` opens the file with `{ create: true, readwrite: true }` and sets
 `PRAGMA foreign_keys = ON`, `journal_mode = WAL`, `synchronous = NORMAL`
 ([sqlite.ts:104](../../src/lib/db/providers/sql/sqlite.ts)) — FK enforcement on, WAL for better
-concurrency, NORMAL sync for a speed/durability balance.
+concurrency, NORMAL sync for a speed/durability balance. The agent read-only profile runs a
+different open sequence entirely — `journal_mode = WAL` is itself a write and fails on a read-only
+handle ([§12.1](#121-where-the-boundary-is)).
 
 ### 3.3 Read vs write dispatch
 
@@ -399,11 +406,14 @@ SQLite is the **only** provider whose integration tests run against a **real eng
 - **bun driver** — the main suite opens a `bun:sqlite` **`:memory:`** database in-process (tests
   run under Bun).
 - **node driver** — Bun cannot load any non-bun SQLite driver in-process, so the core CRUD /
-  schema / maintenance / error-mapping cases run in a real **`node` subprocess**:
+  schema / maintenance / error-mapping cases **and the agent read-only profile contract** run in a
+  real **`node` subprocess**:
   [`sqlite-node-harness.ts`](../../tests/integration/db/sqlite-node-harness.ts) is bundled with
   `bun build --target=node` and executed with `LIBREDB_SQLITE_DRIVER=node` against a temp on-disk
-  file (`mkdtempSync`). The subprocess test skips (with a warning) if `node` with `node:sqlite` is
-  unavailable.
+  file (`mkdtempSync`), reporting its results as JSON on stdout. The subprocess test skips (with a
+  warning) if `node` with `node:sqlite` is unavailable. This subprocess is the only place an
+  adapter that accepted the read-only open flag and ignored it would be caught, so the profile
+  cases are duplicated there deliberately rather than trusted from the bun run.
 - **driver selection** — `resolveSQLiteDriverName()` is tested directly (runtime default, `bun`/
   `node` overrides, invalid-value fallback), restoring `LIBREDB_SQLITE_DRIVER` after each test.
 
@@ -419,7 +429,12 @@ SQL execution, schema PRAGMAs, maintenance, and monitoring end-to-end.
 Validation, connect/disconnect, path handling (NUL rejection, `..` acceptance), query (read +
 write), capabilities, `getSchema` (columns/PKs/FKs/indexes), health, maintenance
 (vacuum/analyze/reindex/check), overview, performance, active sessions, slow queries,
-table/index/storage stats, `getMonitoringData`, `prepareQuery`, and labels.
+table/index/storage stats, `getMonitoringData`, `prepareQuery`, and labels. For the agent profile
+([§12](#12-agent-read-only-execution-profile-328)): rejected write / schema change / file create,
+`query_only` read-back, the pragma-bypass case, row/byte/time budgets, multi-statement tail
+suppression, `:memory:` refusal, and the refusal to run `queryReadOnly` on a writable handle — each
+asserted behaviorally (did the write land? does the file exist?) rather than by driver error code,
+since bun and node report read-only violations differently.
 
 ### 11.3 Run it
 
@@ -431,7 +446,94 @@ bun run test:coverage                                    # CI coverage workflow
 
 ---
 
-## 12. Usage examples
+## 12. Agent read-only execution profile (#328)
+
+The agent programme (epic #325) never talks to the shared, writable provider. It acquires a
+**dedicated provider keyed by (connection id, execution profile)** via
+`acquireExecutionProfileProvider` ([factory.ts](../../src/lib/db/factory.ts)) and runs every
+statement through `queryReadOnly()`. See [postgres.md §12](./postgres.md#12-agent-read-only-execution-profile-328)
+for the acquisition/caching rules, which are provider-independent; this section is the SQLite half.
+
+### 12.1 Where the boundary is
+
+PostgreSQL establishes read-only enforcement **per transaction**. SQLite has no such construct, so
+it is established **at open time** instead — the profile opens a second, physically separate handle
+to the same file with SQLite's own read-only flag (`readonly` under bun:sqlite, `readOnly` under
+node:sqlite; the [driver adapter](../../src/lib/db/providers/sql/sqlite-driver.ts) maps between
+them). Every write and DDL against the target database is refused by the engine, and a missing file
+is not created — with no SQL inspected on the way.
+
+The read-only open governs **the target database file, and only that file**. It does not stop a
+statement that writes to a *different* file: `VACUUM INTO '<path>'` copies the whole database to an
+arbitrary server path from a read-only handle on both adapters. That route is closed by the second
+control below, which is why the profile does not rest on the open alone.
+
+Because the flag is an open option rather than a runtime call, the intent has to reach the
+constructor. It travels in `ProviderExecutionContext` ([types.ts](../../src/lib/db/types.ts)) — a
+*server-injected* third constructor argument, deliberately **not** a member of `ProviderOptions`:
+that object is caller-supplied and flows into `getOrCreateProvider`, so a profile flag living there
+could be set — or cleared — by whoever assembles options for a request. Only
+`acquireExecutionProfileProvider` passes it, and a test pins that the shared path stays writable
+when a caller tries to smuggle the flag through options.
+
+The read-only open deliberately skips the shared `connect()` sequence
+([§3.2](#32-pragmas-on-connect)): no parent directory is created, no `create` flag is passed, and
+the `journal_mode = WAL` pragma — itself a write, which fails outright on a read-only handle — is
+not run. None of it applies to a connection that cannot write.
+
+### 12.2 `query_only`, re-asserted before every statement
+
+A read-only open does **not** imply `PRAGMA query_only`: it reads back `0` on both adapters until
+set explicitly. The profile sets it and verifies the read-back — at open *and before every
+statement* — refusing the handle otherwise (`assertQueryOnlyEnabled`).
+
+Per statement, not once at open, for two reasons. The profiled provider is **pooled and reused**
+across an agent run, and a statement is free to run `PRAGMA query_only = false` (nothing parses
+it), which would otherwise persist for every later call on that connection. Re-asserting closes
+that: `prepare()` compiles exactly one statement, so the disable and the write it would enable can
+never ride in the same call, and the next call re-enables the pragma before running anything.
+
+So the two controls cover different ground and neither is redundant — the open refuses writes to
+the target database, `query_only` refuses writes to anything else. The suite asserts both,
+including the `VACUUM INTO` case with `query_only` deliberately disabled first.
+
+**Known limitation — empty files at an agent-chosen path.** SQLite creates the destination file
+*before* refusing the `VACUUM INTO` copy, so an agent can still cause a zero-byte file to appear at
+any path the server process can write to. No data reaches it (asserted on both adapters by file
+size, not by existence). Closing this would need an authorizer callback, which `bun:sqlite` does
+not expose at all.
+
+### 12.3 Per-statement execution (`queryReadOnly`)
+
+| Budget field | How SQLite honors it |
+|---|---|
+| `maxResultRows` | Result-side: rows are counted after execution; over budget throws, never truncates |
+| `maxResultBytes` | Result-side, same rule (serialized size) |
+| `statementTimeoutMs` | **Post-execution deadline only** — see the limitation below |
+
+Statements are compiled with `prepare()`, never `exec()`. `exec()` runs *every* statement of a
+multi-statement string; `prepare()` compiles only the first and drops the tail, so a smuggled
+trailing write is never executed. Rejecting multi-statement input outright remains the policy
+pipeline's job — silent truncation is not treated as a pass.
+
+An in-memory (`:memory:`) target is refused under this profile: a read-only open of an anonymous
+database can only ever yield an empty one (node:sqlite) or fail outright (bun:sqlite), so vending
+it would hand the agent a silently useless target. The refusal is an `ExecutionProfileError` with
+reason code **`PROFILE_UNSUPPORTED_TARGET`** ([errors.ts](../../src/lib/db/errors.ts)) — the same
+typed deny surface acquisition uses for `UNSUPPORTED_PROFILE` /
+`PROFILE_UNSUPPORTED_BY_PROVIDER`, so a caller can branch on the code instead of a message, and
+`connect()` deliberately does not wrap it into a generic `ConnectionError`.
+
+**Known limitation — the timeout cannot preempt.** SQLite has no transaction-local statement
+timeout, and neither adapter exposes `sqlite3_interrupt` or a progress handler. `statementTimeoutMs`
+is therefore enforced as a deadline *check*: an overrunning statement runs to completion and its
+result is then refused, rather than being returned as if it had been within budget. Since the
+drivers are synchronous, such a statement also blocks the runtime while it runs — the same property
+as the normal SQLite query path ([§3.4](#34-no-transactions-api-no-cancellation-no-pool)).
+
+---
+
+## 13. Usage examples
 
 ```ts
 import { createDatabaseProvider } from '@/lib/db/factory';
@@ -453,7 +555,7 @@ not apply to SQLite ([§3.4](#34-no-transactions-api-no-cancellation-no-pool)).
 
 ---
 
-## 13. Known limitations & future work
+## 14. Known limitations & future work
 
 - **Server-local file only.** No network protocol; a hosted/SaaS user cannot reach a SQLite file on
   their own machine. SQLite-as-target suits self-hosted / local-dev / edge and zero-config trials.
@@ -485,7 +587,7 @@ not apply to SQLite ([§3.4](#34-no-transactions-api-no-cancellation-no-pool)).
 
 ---
 
-## 14. References
+## 15. References
 
 - Drivers: [`bun:sqlite`](https://bun.sh/docs/api/sqlite) (Bun built-in) · [`node:sqlite`](https://nodejs.org/api/sqlite.html) (Node built-in)
 - Driver adapter: [`src/lib/db/providers/sql/sqlite-driver.ts`](../../src/lib/db/providers/sql/sqlite-driver.ts)

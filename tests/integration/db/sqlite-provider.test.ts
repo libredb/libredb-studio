@@ -9,13 +9,14 @@
 
 import { describe, test, expect, afterEach, beforeAll, afterAll } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative } from "node:path";
-import { SQLiteProvider } from "@/lib/db/providers/sql/sqlite";
+import { SQLiteProvider, assertQueryOnlyEnabled } from "@/lib/db/providers/sql/sqlite";
 import { resolveSQLiteDriverName } from "@/lib/db/providers/sql/sqlite-driver";
 import type { DatabaseConnection } from "@/lib/types";
-import { DatabaseConfigError } from "@/lib/db/errors";
+import type { ReadOnlyStatementBudget } from "@/lib/db/types";
+import { ConnectionError, DatabaseConfigError, ExecutionProfileError, QueryError } from "@/lib/db/errors";
 
 // ============================================================================
 // Helpers
@@ -770,6 +771,294 @@ describe("SQLiteProvider", () => {
 });
 
 // ============================================================================
+// Agent read-only execution profile (#328) — bun driver, in-process
+//
+// The security boundary asserted here is the DATABASE's own read-only open,
+// never a SQL classifier: every rejection case drives hostile SQL straight
+// through the profile and then re-reads the data with a writable handle to
+// prove nothing landed. Assertions are behavioral on purpose — bun and node
+// report read-only violations with different codes and messages, so a test
+// that asserted either would pass on one adapter and fail on the other.
+// ============================================================================
+
+const AGENT_BUDGET: ReadOnlyStatementBudget = {
+  statementTimeoutMs: 5_000,
+  maxResultRows: 100,
+  maxResultBytes: 64 * 1024,
+};
+
+describe("SQLiteProvider agent read-only execution profile (#328)", () => {
+  let agentTmpDir: string;
+  let seeded = 0;
+  let agent: SQLiteProvider | null = null;
+  let writable: SQLiteProvider | null = null;
+
+  beforeAll(() => {
+    agentTmpDir = mkdtempSync(join(tmpdir(), "libredb-sqlite-agent-"));
+  });
+
+  afterAll(() => {
+    rmSync(agentTmpDir, { recursive: true, force: true });
+  });
+
+  afterEach(async () => {
+    for (const p of [agent, writable]) {
+      try {
+        if (p?.isConnected()) await p.disconnect();
+      } catch {
+        // Ignore cleanup errors
+      }
+    }
+    agent = null;
+    writable = null;
+  });
+
+  /** Create a real on-disk database with one seeded row, then close the writer. */
+  async function seedDatabase(): Promise<string> {
+    const dbPath = join(agentTmpDir, `agent-${++seeded}.db`);
+    const seed = new SQLiteProvider(makeSQLiteConfig({ database: dbPath }));
+    await seed.connect();
+    await seed.query("CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)");
+    await seed.query("INSERT INTO t (id, v) VALUES (1, 'seeded')");
+    await seed.disconnect();
+    return dbPath;
+  }
+
+  /** Rows currently in `t`, read back through an independent writable handle. */
+  async function readBack(dbPath: string): Promise<Record<string, unknown>[]> {
+    const reader = new SQLiteProvider(makeSQLiteConfig({ database: dbPath }));
+    await reader.connect();
+    try {
+      return (await reader.query("SELECT id, v FROM t ORDER BY id")).rows;
+    } finally {
+      await reader.disconnect();
+    }
+  }
+
+  async function openAgent(dbPath: string): Promise<SQLiteProvider> {
+    agent = new SQLiteProvider(makeSQLiteConfig({ database: dbPath }), {}, { readOnly: true });
+    await agent.connect();
+    return agent;
+  }
+
+  test("returns rows for a legitimate SELECT", async () => {
+    const dbPath = await seedDatabase();
+    const profile = await openAgent(dbPath);
+
+    const result = await profile.queryReadOnly("SELECT id, v FROM t ORDER BY id", AGENT_BUDGET);
+
+    expect(result.rows).toEqual([{ id: 1, v: "seeded" }]);
+    expect(result.fields).toEqual(["id", "v"]);
+    expect(result.rowCount).toBe(1);
+  });
+
+  test("the database itself rejects a write through the profile", async () => {
+    const dbPath = await seedDatabase();
+    const profile = await openAgent(dbPath);
+
+    await expect(profile.queryReadOnly("INSERT INTO t (id, v) VALUES (2, 'agent')", AGENT_BUDGET)).rejects.toThrow();
+
+    expect(await readBack(dbPath)).toEqual([{ id: 1, v: "seeded" }]);
+  });
+
+  test("the database itself rejects a schema change through the profile", async () => {
+    const dbPath = await seedDatabase();
+    const profile = await openAgent(dbPath);
+
+    await expect(profile.queryReadOnly("CREATE TABLE injected (id INTEGER)", AGENT_BUDGET)).rejects.toThrow();
+    await expect(profile.queryReadOnly("DROP TABLE t", AGENT_BUDGET)).rejects.toThrow();
+
+    const tables = await profile.queryReadOnly("SELECT name FROM sqlite_master WHERE type = 'table'", AGENT_BUDGET);
+    expect(tables.rows).toEqual([{ name: "t" }]);
+  });
+
+  test("a missing file in an existing directory is not created", async () => {
+    // The sharp no-create case: the shared editor path would create this file
+    // (it passes `create: true` and mkdirs first), so a read-only open that
+    // silently fell back to read-write would leave the file behind.
+    const missingFile = join(agentTmpDir, "never-created.db");
+
+    const profile = new SQLiteProvider(makeSQLiteConfig({ database: missingFile }), {}, { readOnly: true });
+    await expect(profile.connect()).rejects.toThrow();
+
+    expect(profile.isConnected()).toBe(false);
+    expect(existsSync(missingFile)).toBe(false);
+  });
+
+  test("a missing parent directory is not created either", async () => {
+    const missingDir = join(agentTmpDir, "not-created");
+    const missingFile = join(missingDir, "absent.db");
+
+    const profile = new SQLiteProvider(makeSQLiteConfig({ database: missingFile }), {}, { readOnly: true });
+    await expect(profile.connect()).rejects.toThrow();
+
+    expect(existsSync(missingDir)).toBe(false);
+  });
+
+  test("PRAGMA query_only reads back enabled after open", async () => {
+    const dbPath = await seedDatabase();
+    const profile = await openAgent(dbPath);
+
+    const pragma = await profile.queryReadOnly("PRAGMA query_only", AGENT_BUDGET);
+
+    expect(pragma.rows).toEqual([{ query_only: 1 }]);
+  });
+
+  test("query_only is re-asserted before every statement, so a disable cannot persist", async () => {
+    const dbPath = await seedDatabase();
+    const profile = await openAgent(dbPath);
+
+    // The statement itself succeeds — nothing parses it — but it cannot leave
+    // the session disabled for the next call, because the profiled provider is
+    // pooled and reused across an agent run.
+    await profile.queryReadOnly("PRAGMA query_only = false", AGENT_BUDGET);
+
+    expect((await profile.queryReadOnly("PRAGMA query_only", AGENT_BUDGET)).rows).toEqual([{ query_only: 1 }]);
+    await expect(profile.queryReadOnly("INSERT INTO t (id, v) VALUES (2, 'bypass')", AGENT_BUDGET)).rejects.toThrow();
+    expect(await readBack(dbPath)).toEqual([{ id: 1, v: "seeded" }]);
+  });
+
+  test("VACUUM INTO cannot copy the database to another path, even after disabling query_only", async () => {
+    const dbPath = await seedDatabase();
+    const profile = await openAgent(dbPath);
+    const stolen = join(agentTmpDir, `stolen-${seeded}.db`);
+
+    // A read-only OPEN only governs the target database file: on a handle
+    // whose query_only is off, this statement copies the whole database to an
+    // arbitrary server path on BOTH adapters (verified). query_only is what
+    // refuses it, which is why it is re-asserted per statement.
+    await profile.queryReadOnly("PRAGMA query_only = false", AGENT_BUDGET);
+    await expect(profile.queryReadOnly(`VACUUM INTO '${stolen}'`, AGENT_BUDGET)).rejects.toThrow();
+
+    // KNOWN LIMITATION: the engine creates the target file before refusing the
+    // copy, so an empty file can still appear at an agent-chosen path. What
+    // must never happen is readable data landing in it.
+    expect(existsSync(stolen) ? statSync(stolen).size : 0).toBe(0);
+  });
+
+  test("executes only the first statement of multi-statement input; the tail never runs", async () => {
+    const dbPath = await seedDatabase();
+    const profile = await openAgent(dbPath);
+
+    // prepare() compiles a single statement and drops the tail on both
+    // adapters. The profile must therefore never reach exec(), which would run
+    // every statement. Silent truncation is not an acceptable pass either —
+    // input-stage denial of multi-statement text is the policy pipeline's job.
+    const result = await profile.queryReadOnly("SELECT id FROM t; INSERT INTO t VALUES (2, 'tail')", AGENT_BUDGET);
+
+    expect(result.rows).toEqual([{ id: 1 }]);
+    expect(await readBack(dbPath)).toEqual([{ id: 1, v: "seeded" }]);
+  });
+
+  test("a writable provider on the same file still writes while the profile is open", async () => {
+    const dbPath = await seedDatabase();
+    const profile = await openAgent(dbPath);
+
+    writable = new SQLiteProvider(makeSQLiteConfig({ database: dbPath }));
+    await writable.connect();
+    const insert = await writable.query("INSERT INTO t (id, v) VALUES (2, 'editor')");
+
+    expect(insert.rowCount).toBe(1);
+    expect(await profile.queryReadOnly("SELECT COUNT(*) AS c FROM t", AGENT_BUDGET)).toMatchObject({
+      rows: [{ c: 2 }],
+    });
+  });
+
+  test("refuses queryReadOnly on a provider that was not opened read-only (fail closed)", async () => {
+    const dbPath = await seedDatabase();
+    writable = new SQLiteProvider(makeSQLiteConfig({ database: dbPath }));
+    await writable.connect();
+
+    await expect(writable.queryReadOnly("SELECT 1 AS one", AGENT_BUDGET)).rejects.toThrow(QueryError);
+    // The refusal is what keeps the writable handle from becoming an agent
+    // path: the statement must not have run at all.
+    await expect(writable.queryReadOnly("INSERT INTO t (id, v) VALUES (3, 'x')", AGENT_BUDGET)).rejects.toThrow(
+      QueryError,
+    );
+    expect(await readBack(dbPath)).toEqual([{ id: 1, v: "seeded" }]);
+  });
+
+  test("refuses an in-memory database under the read-only profile", async () => {
+    const profile = new SQLiteProvider(makeSQLiteConfig({ database: ":memory:" }), {}, { readOnly: true });
+
+    // A read-only open of an anonymous database can only ever yield an empty
+    // one (node) or fail outright (bun); vending it would be a silently
+    // useless agent target. The refusal carries a deny code, and connect()
+    // must not wrap it into a generic ConnectionError.
+    const error = await profile.connect().then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(error).toBeInstanceOf(ExecutionProfileError);
+    expect((error as ExecutionProfileError).reasonCode).toBe("PROFILE_UNSUPPORTED_TARGET");
+    expect(profile.isConnected()).toBe(false);
+  });
+
+  test("enforces the row budget with a typed error instead of truncating", async () => {
+    const dbPath = await seedDatabase();
+    const profile = await openAgent(dbPath);
+
+    const rows = await profile.queryReadOnly("SELECT 1 AS n UNION ALL SELECT 2 UNION ALL SELECT 3", {
+      ...AGENT_BUDGET,
+      maxResultRows: 3,
+    });
+    expect(rows.rowCount).toBe(3);
+
+    await expect(
+      profile.queryReadOnly("SELECT 1 AS n UNION ALL SELECT 2 UNION ALL SELECT 3", {
+        ...AGENT_BUDGET,
+        maxResultRows: 2,
+      }),
+    ).rejects.toThrow(QueryError);
+  });
+
+  test("enforces the byte budget with a typed error instead of truncating", async () => {
+    const dbPath = await seedDatabase();
+    const profile = await openAgent(dbPath);
+
+    await expect(
+      profile.queryReadOnly("SELECT 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' AS big", { ...AGENT_BUDGET, maxResultBytes: 8 }),
+    ).rejects.toThrow(QueryError);
+  });
+
+  test("rejects a statement that overruns the timeout budget", async () => {
+    const dbPath = await seedDatabase();
+    const profile = await openAgent(dbPath);
+
+    // Neither adapter exposes sqlite3_interrupt or a progress handler, so the
+    // timeout is a post-execution deadline: the statement is not preempted,
+    // but its result is refused. See docs/providers/sqlite.md section 12.
+    await expect(
+      profile.queryReadOnly(
+        "WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c WHERE x < 400000) SELECT COUNT(*) AS n FROM c",
+        { ...AGENT_BUDGET, statementTimeoutMs: 1 },
+      ),
+    ).rejects.toThrow(QueryError);
+  });
+
+  test.each([
+    ["statementTimeoutMs", { statementTimeoutMs: 0 }],
+    ["maxResultRows", { maxResultRows: -1 }],
+    ["maxResultBytes", { maxResultBytes: 1.5 }],
+  ])("refuses the whole call when budget field %s is not a positive integer", async (_field, override) => {
+    const dbPath = await seedDatabase();
+    const profile = await openAgent(dbPath);
+
+    await expect(
+      profile.queryReadOnly("SELECT 1 AS one", { ...AGENT_BUDGET, ...override } as ReadOnlyStatementBudget),
+    ).rejects.toThrow(QueryError);
+  });
+
+  test("refuses a handle whose query_only pragma does not read back enabled", () => {
+    // The happy path is covered by every test above; these pin the refusal for
+    // a driver that accepts `PRAGMA query_only = true` and ignores it.
+    expect(() => assertQueryOnlyEnabled([{ query_only: 1 }])).not.toThrow();
+    expect(() => assertQueryOnlyEnabled([{ query_only: 0 }])).toThrow(ConnectionError);
+    expect(() => assertQueryOnlyEnabled([])).toThrow(ConnectionError);
+  });
+});
+
+// ============================================================================
 // Driver selection (sqlite-driver adapter)
 // ============================================================================
 
@@ -925,5 +1214,29 @@ describe.skipIf(!nodeDriverTestable)("SQLiteProvider with LIBREDB_SQLITE_DRIVER=
     // Error mapping (same mapDatabaseError path as the bun driver)
     expect(report.queryErrorName).toBe("DatabaseError");
     expect(report.queryErrorMessage).toContain("no such table");
+
+    // ------------------------------------------------------------------
+    // Agent read-only execution profile (#328) on the node:sqlite adapter.
+    // These fail on an adapter that accepts the read-only open flag and
+    // ignores it: the write would land and the file would be created.
+    // ------------------------------------------------------------------
+    expect(report.agentConnected).toBe(true);
+    expect(report.agentQueryOnly).toEqual([{ query_only: 1 }]);
+    expect(report.agentSelectRows).toEqual([{ id: 1, name: "Alice" }]);
+    expect(report.agentMultiStatementRows).toEqual([{ id: 1 }]);
+    expect(report.agentWriteRejected).toBe(true);
+    expect(report.agentSchemaChangeRejected).toBe(true);
+    // query_only is re-asserted per statement, and VACUUM INTO — the one route
+    // a read-only open does not cover — leaks nothing.
+    expect(report.agentQueryOnlyAfterDisable).toEqual([{ query_only: 1 }]);
+    expect(report.agentWriteRejectedAfterDisable).toBe(true);
+    expect(report.agentVacuumIntoRejected).toBe(true);
+    expect(report.agentStolenBytes).toBe(0);
+    expect(report.agentRowsAfterRejectedWrites).toEqual([{ id: 1, name: "Alice" }]);
+    expect(report.agentTablesAfterRejectedWrites).toEqual([{ name: "books" }, { name: "users" }]);
+    expect(report.agentMissingOpenRejected).toBe(true);
+    expect(report.agentMissingFileCreated).toBe(false);
+    expect(report.agentMissingDirOpenRejected).toBe(true);
+    expect(report.agentMissingDirCreated).toBe(false);
   });
 });

@@ -27,6 +27,7 @@ import {
   type StorageStats,
 } from "../../types";
 import { DatabaseConfigError, ConnectionError, QueryError, mapDatabaseError } from "../../errors";
+import { assertReadOnlyBudget, measureResultBytes } from "./read-only-budget";
 import { formatBytes } from "../../utils/pool-manager";
 
 // ============================================================================
@@ -506,32 +507,6 @@ const STORAGE_WAL_SQL = `
         `;
 
 // ============================================================================
-// Read-only execution budget validation (#328)
-// ============================================================================
-
-/** PostgreSQL's statement_timeout is a 32-bit millisecond setting. */
-const MAX_STATEMENT_TIMEOUT_MS = 2_147_483_647;
-
-/**
- * Refuses the whole call unless every budget field is a positive integer in
- * range (fail closed). The timeout bound matters doubly: the value is
- * interpolated into `SET LOCAL statement_timeout = N` (SET takes no bind
- * parameters), so nothing that is not a positive integer may pass.
- */
-function assertReadOnlyBudget(budget: ReadOnlyStatementBudget): void {
-  const fields: Array<[name: string, value: unknown, max: number]> = [
-    ["statementTimeoutMs", budget?.statementTimeoutMs, MAX_STATEMENT_TIMEOUT_MS],
-    ["maxResultRows", budget?.maxResultRows, Number.MAX_SAFE_INTEGER],
-    ["maxResultBytes", budget?.maxResultBytes, Number.MAX_SAFE_INTEGER],
-  ];
-  for (const [name, value, max] of fields) {
-    if (typeof value !== "number" || !Number.isInteger(value) || value < 1 || value > max) {
-      throw new QueryError(`Read-only execution budget field ${name} must be a positive integer <= ${max}`, "postgres");
-    }
-  }
-}
-
-// ============================================================================
 // PostgreSQL Provider
 // ============================================================================
 
@@ -782,7 +757,7 @@ export class PostgresProvider extends SQLBaseProvider {
    */
   public async queryReadOnly(sql: string, budget: ReadOnlyStatementBudget): Promise<QueryResult> {
     this.ensureConnected();
-    assertReadOnlyBudget(budget);
+    assertReadOnlyBudget(budget, "postgres");
 
     return this.trackQuery(async () => {
       const { result, executionTime } = await this.measureExecution(async () => {
@@ -817,9 +792,7 @@ export class PostgresProvider extends SQLBaseProvider {
           sql,
         );
       }
-      const resultBytes = Buffer.byteLength(
-        JSON.stringify(result.rows, (_key, value: unknown) => (typeof value === "bigint" ? value.toString() : value)),
-      );
+      const resultBytes = measureResultBytes(result.rows);
       if (resultBytes > budget.maxResultBytes) {
         throw new QueryError(
           `Read-only execution exceeded the byte budget: ${resultBytes} bytes > ${budget.maxResultBytes} allowed`,

@@ -32,7 +32,8 @@ const PLAN_EXECUTION_ID: ExplainOperationId = "sql.explain.analyze";
  */
 const BOUNDED_READ_BOUNDARY =
   "PostgreSQL: single statement inside BEGIN READ ONLY with transaction-local timeout, rolled back and released; " +
-  "SQLite: separate read-only open (no file creation) with PRAGMA query_only verified at open";
+  "SQLite: separate read-only open governing the target file (no file creation), plus PRAGMA query_only " +
+  "re-asserted and verified before every statement to refuse writes to other files (VACUUM INTO)";
 
 export const sqlQueryReadDescriptor: RegistrableOperationDescriptor = {
   id: "sql.query.read",
