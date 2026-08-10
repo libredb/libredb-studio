@@ -4,11 +4,21 @@
  * The five budget dimensions pinned by the acceptance bar all live here:
  * statement count (`maxStatementsPerRun`), per-statement timeout
  * (`statementTimeoutMs`), row/byte caps (`maxResultRows`/`maxResultBytes`),
- * concurrency (`maxConcurrentExecutions`), and total-run wall clock
- * (`maxTotalRunMs`). Concurrency, statement count, and total-run are gate
- * checks the policy pipeline evaluates against a run's usage; timeout and
+ * concurrency (`maxConcurrentExecutions`), and total execution time
+ * (`maxTotalRunMs`). Concurrency, statement count, and total execution time are
+ * gate checks the policy pipeline evaluates against a run's usage; timeout and
  * row/byte caps are enforcement parameters the execution profiles apply
  * database-side (transaction-local timeout) and result-side.
+ *
+ * `maxTotalRunMs` bounds the DATABASE time a run consumes — the sum of the
+ * elapsed times the execution layer reports for completed calls. It is not a
+ * wall-clock deadline for the run: time between calls is not counted, parallel
+ * calls each contribute their own duration, and a call admitted just under the
+ * limit can still overrun it by up to one statement timeout. That is the useful
+ * bound at this layer (it limits load on the database), and a real wall-clock
+ * deadline needs a clock this tracker deliberately does not have — see the
+ * determinism note below. Bounding an agent run's wall clock belongs to the run
+ * loop that M2 introduces; tracked in docs/BACKLOG.md.
  *
  * `src/lib/api/rate-limit.ts` was evaluated for reuse and deliberately not
  * used: its counters are fixed-window and monotonic (no decrement, so

@@ -7,7 +7,7 @@ import { describe, test, expect, beforeEach, afterEach, mock, spyOn } from "bun:
 import { EventEmitter } from "node:events";
 import type { DatabaseConnection } from "@/lib/types";
 import type { ReadOnlyStatementBudget } from "@/lib/db/types";
-import { DatabaseConfigError, ExecutionProfileError } from "@/lib/db/errors";
+import { ConnectionError, DatabaseConfigError, ExecutionProfileError } from "@/lib/db/errors";
 
 // ============================================================================
 // Mock pg BEFORE importing the provider
@@ -1992,6 +1992,10 @@ describe("PostgresProvider", () => {
       /** Rows the probe returns; overridable to model a server that answers nothing. */
       privilegeRows: Array<Record<string, unknown>> | null = null;
       privilegeProbes = 0;
+      /** The probe's SQL, kept so a test can assert how it names its built-ins. */
+      privilegeProbeText: string | null = null;
+      /** Set to model the probe itself failing (dropped socket, protocol error). */
+      privilegeProbeFailure: Error | null = null;
       /** Session-level statement_timeout, and the value to restore on rollback. */
       sessionTimeout = 30_000;
       private sessionTimeoutBeforeTx: number | null = null;
@@ -2047,6 +2051,8 @@ describe("PostgresProvider", () => {
         // as "what one queryReadOnly call sent".
         if (keyword === "SELECT" && /is_superuser/i.test(text)) {
           this.privilegeProbes++;
+          this.privilegeProbeText = text;
+          if (this.privilegeProbeFailure) throw this.privilegeProbeFailure;
           return this.rows(this.privilegeRows ?? [{ ...this.privileges }]);
         }
         this.statements.push({ text: text.trim(), protocol });
@@ -2309,6 +2315,45 @@ describe("PostgresProvider", () => {
       // The probe is part of opening the profile, not of every statement.
       expect(engine.privilegeProbes).toBe(1);
       expect(provider.isConnected()).toBe(true);
+    });
+
+    test("schema-qualifies every built-in the privilege probe calls", () => {
+      // pg_catalog is searched implicitly FIRST only while it is NOT named in
+      // search_path; once it is named explicitly, a schema ahead of it shadows
+      // built-ins. So `search_path = attacker_schema, pg_catalog` plus a shadow
+      // pg_has_role()/current_setting() makes this probe answer four falses for
+      // a superuser — defeating the one check meant to catch exactly that role.
+      // Whoever can plant prompt-injection text in a table can often also create
+      // a function, so the two reach the same attacker. Qualifying costs nothing.
+      // Only real catalog FUNCTIONS are shadowable, so only they are listed:
+      // COALESCE and CURRENT_USER are SQL constructs the parser handles, cannot
+      // be schema-qualified at all, and no user function can intercept them.
+      const probe = engine.privilegeProbeText;
+      expect(probe).toBeTruthy();
+      for (const builtin of ["current_setting", "pg_has_role", "to_regrole"]) {
+        expect(probe).not.toMatch(new RegExp(String.raw`(?<!pg_catalog\.)\b${builtin}\s*\(`, "i"));
+      }
+    });
+
+    test("ends the pool when the privilege probe itself fails", async () => {
+      // The typed refusal path already ends the pool. This is the other way out
+      // of connect() after the pool exists: the probe query rejecting on a
+      // dropped socket or protocol error. The factory does not disconnect a
+      // provider whose connect() threw, so a pool left open here leaks its idle
+      // socket and timers with nothing holding a reference to close them.
+      engine.privilegeProbeFailure = new Error("connection terminated unexpectedly");
+      const failing = new PostgresProvider(makePgConfig(), {}, { readOnly: true });
+      const endSpy = spyOn(MockPool.prototype, "end");
+
+      const error = await failing.connect().then(
+        () => null,
+        (e: unknown) => e,
+      );
+      expect(error).toBeInstanceOf(ConnectionError);
+      expect(failing.isConnected()).toBe(false);
+      expect(endSpy).toHaveBeenCalled();
+      endSpy.mockRestore();
+      engine.privilegeProbeFailure = null;
     });
 
     test.each([

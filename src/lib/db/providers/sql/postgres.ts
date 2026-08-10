@@ -524,15 +524,30 @@ const STORAGE_WAL_SQL = `
  * `to_regrole` keeps the query safe on a server where a predefined role is
  * absent (it yields NULL, and `COALESCE` makes that a `false` rather than an
  * error), so the check does not depend on the server's major version.
+ *
+ * Every catalog FUNCTION is schema-qualified because this query decides a
+ * security boundary. `pg_catalog` is searched implicitly first only while it is
+ * not named in `search_path`; once it is named explicitly, any schema ahead of
+ * it shadows built-ins, so `search_path = attacker_schema, pg_catalog` plus a
+ * shadow `pg_has_role()` would answer four falses for a superuser and defeat
+ * the one check meant to catch that role. `COALESCE` and `current_user` need no
+ * qualification (and accept none): they are SQL constructs the parser resolves,
+ * not functions that name resolution can redirect.
  */
 const AGENT_ROLE_PRIVILEGE_SQL = `
-        SELECT current_setting('is_superuser') = 'on' AS is_superuser,
-               COALESCE(pg_has_role(current_user, to_regrole('pg_read_server_files'), 'USAGE'), false)
-                 AS reads_server_files,
-               COALESCE(pg_has_role(current_user, to_regrole('pg_write_server_files'), 'USAGE'), false)
-                 AS writes_server_files,
-               COALESCE(pg_has_role(current_user, to_regrole('pg_execute_server_program'), 'USAGE'), false)
-                 AS executes_programs
+        SELECT pg_catalog.current_setting('is_superuser') = 'on' AS is_superuser,
+               COALESCE(
+                 pg_catalog.pg_has_role(current_user, pg_catalog.to_regrole('pg_read_server_files'), 'USAGE'),
+                 false
+               ) AS reads_server_files,
+               COALESCE(
+                 pg_catalog.pg_has_role(current_user, pg_catalog.to_regrole('pg_write_server_files'), 'USAGE'),
+                 false
+               ) AS writes_server_files,
+               COALESCE(
+                 pg_catalog.pg_has_role(current_user, pg_catalog.to_regrole('pg_execute_server_program'), 'USAGE'),
+                 false
+               ) AS executes_programs
       `;
 
 const AGENT_ROLE_FORBIDDEN_CAPABILITIES = [
@@ -660,14 +675,18 @@ export class PostgresProvider extends SQLBaseProvider {
       this.setConnected(true);
     } catch (error) {
       this.setError(error instanceof Error ? error : new Error(String(error)));
+      // The pool is built before anything that can fail here — the borrow, and
+      // under the profile the role probe. Whatever went wrong, the caller ends
+      // up without a usable provider, and `acquireExecutionProfileProvider`
+      // drops it WITHOUT calling disconnect(), so a pool left open here leaks
+      // its idle socket and timers with no reference left to close them. End it
+      // on every failed connect, not just the typed refusal.
+      const failedPool = this.pool;
+      this.pool = null;
+      await failedPool?.end().catch(() => {});
       // A typed profile refusal keeps its identity: wrapping it would strip the
       // deny reason code callers branch on.
       if (error instanceof ExecutionProfileError) {
-        // The pool was built before the refusal; leaving it would leak the
-        // sockets of a provider the caller can never use.
-        const refusedPool = this.pool;
-        this.pool = null;
-        await refusedPool?.end().catch(() => {});
         throw error;
       }
       throw new ConnectionError(

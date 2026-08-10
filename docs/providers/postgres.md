@@ -604,7 +604,10 @@ the transaction. Two consequences the profile implements rather than documents a
    (`assertAgentRoleIsUnprivileged`, [postgres.ts](../../src/lib/db/providers/sql/postgres.ts)). The
    probe uses `to_regrole`, so a server missing a predefined role answers `false` rather than
    erroring. A server that answers nothing, or answers non-booleans, is refused too — an unproven
-   boundary is not a boundary.
+   boundary is not a boundary. Every catalog function the probe calls is written `pg_catalog`-
+   qualified: `pg_catalog` is searched implicitly first only while it is not named in `search_path`,
+   so a path that names it explicitly behind another schema lets a shadow `pg_has_role()` answer
+   false for a superuser and defeat this check.
 
    What the probe proves is **non-membership and non-superuser**, not the absence of the capability:
    a role directly granted `EXECUTE` on `pg_read_file()` answers false to all four flags and can
