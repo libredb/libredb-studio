@@ -49,6 +49,14 @@ jobs:
         # engine table and install commands, and nothing else notices drift.
         run: bun run readme:check
 
+      - name: Security posture drift guard (control 3.3)
+        # Same reasoning as the two guards above: inside the required check so it actually gates.
+        # docs/SECURITY.md claims which controls exist and names what verifies each one; this fails
+        # the build when a row points at a file that is missing or never runs, when a security test
+        # exists that no row accounts for, or when a control claims to be implemented with nothing
+        # verifying it.
+        run: bun run security:check
+
       - name: Check formatting (Biome)
         run: bun run format
 

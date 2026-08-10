@@ -119,7 +119,8 @@
     "chart:bump": "node scripts/sync-chart-version.mjs --write",
     "distribution:check": "node scripts/distribution-check.mjs",
     "distribution:matrix": "node scripts/distribution-check.mjs --matrix",
-    "readme:check": "node scripts/readme-check.mjs"
+    "readme:check": "node scripts/readme-check.mjs",
+    "security:check": "node scripts/security-check.mjs"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
