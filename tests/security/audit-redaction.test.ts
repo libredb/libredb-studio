@@ -25,6 +25,7 @@ const ALLOWED_KEYS = new Set([
   "connection",
   "duration_ms",
   "bucket",
+  "correlation_id",
 ]);
 
 function captureLine(emit: () => void): Record<string, unknown> {
@@ -70,6 +71,30 @@ describe("emitAuditEvent", () => {
     expect(line.route).toBe("POST /api/auth/login");
     expect(line.reason).toBe("bad_credentials");
     expect(line.ip).toBe("203.0.113.9");
+  });
+
+  test("holds an agent event's correlation id to the same key allowlist and the same bound", () => {
+    // The agent execution path (#328) is the only writer that sets
+    // correlationId, so without a case that emits one the new key would sit
+    // outside the invariant this file exists to enforce. A correlation id is
+    // server-generated, but it is a string field like every other, so it goes
+    // through the same allowlist and the same MAX_AUDIT_FIELD_LENGTH bound.
+    const line = captureLine(() =>
+      emitAuditEvent({
+        type: "agent_operation",
+        action: "sql.query.read",
+        target: "agent/operations/decision",
+        user: "agent:user",
+        result: "success",
+        correlationId: "c".repeat(10_000),
+      }),
+    );
+
+    for (const key of Object.keys(line)) {
+      expect({ key, allowed: ALLOWED_KEYS.has(key) }).toEqual({ key, allowed: true });
+    }
+    expect(line.event).toBe("agent_operation");
+    expect(String(line.correlation_id).length).toBe(254);
   });
 
   test("cannot be made to forge a second log line through the actor field", () => {

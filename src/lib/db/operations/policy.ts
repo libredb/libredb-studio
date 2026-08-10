@@ -229,7 +229,13 @@ function isValidScope(scope: TargetScope): boolean {
   );
 }
 
-function isValidActor(actor: ExecutionActor): boolean {
+/**
+ * Exported for the audit glue (`execution.ts`), which may only put an actor's
+ * `mode`/`role` into a log field once this has accepted them: before that they
+ * are unvalidated caller text. Keeping the check here keeps the role/mode
+ * vocabulary in one module.
+ */
+export function isValidActor(actor: ExecutionActor): boolean {
   if (typeof actor !== "object" || actor === null) return false;
   return isNonBlankString(actor.sessionId) && ROLES.has(actor.role) && MODES.has(actor.mode);
 }

@@ -8,6 +8,14 @@ export type AuditEventType =
   | "connection_test"
   | "query_execution"
   | "managed_connection"
+  /**
+   * An agent-path operation: one event for the policy decision and, when that
+   * decision allowed execution, one for its outcome. Distinct from
+   * `query_execution` on purpose — an operator filtering the log needs to
+   * separate what a human ran in the editor from what an agent was permitted
+   * to run (#328).
+   */
+  | "agent_operation"
   // Phase 1 auth events
   | "login_success"
   | "login_failure"
@@ -31,7 +39,29 @@ export type AuditReason =
   | "oidc_state_invalid"
   | "oidc_no_claims"
   | "oidc_failed"
-  | "oidc_config";
+  | "oidc_config"
+  // Agent execution path (#328). The thirteen `agent_*` codes below mirror
+  // `PolicyDenyCode` one-for-one, plus the two outcomes that are not policy
+  // denials: an operation that may only ever require approval, and a provider
+  // that failed after the decision allowed it. The mirror is not maintained by
+  // hand — `DENY_REASONS` in src/lib/db/operations/execution.ts is typed
+  // `Record<PolicyDenyCode, AuditReason>`, so a new deny code with no reason
+  // here, or a reason renamed here, fails to compile.
+  | "agent_unknown_operation"
+  | "agent_ambiguous_operation"
+  | "agent_malformed_policy_context"
+  | "agent_invalid_actor"
+  | "agent_target_out_of_scope"
+  | "agent_input_validation_failed"
+  | "agent_capability_unsupported"
+  | "agent_role_forbidden"
+  | "agent_mode_forbidden"
+  | "agent_risk_exceeds_policy"
+  | "agent_concurrency_budget_exceeded"
+  | "agent_statement_budget_exceeded"
+  | "agent_total_run_budget_exceeded"
+  | "agent_approval_required"
+  | "agent_execution_failed";
 
 export interface AuditEvent {
   id: string;
@@ -57,6 +87,15 @@ export interface AuditEvent {
    * call for a different operator response, but would otherwise read identically.
    */
   bucket?: string;
+  /**
+   * Joins the events of ONE agent execution: the policy decision and, when the
+   * decision allowed it, the execution outcome. Server-generated per execution
+   * (src/lib/db/operations/execution.ts) and opaque — it identifies an
+   * execution, never a session, a user or a token, so it stays safe to log
+   * while remaining the key an operator groups by. Only `agent_operation`
+   * events set it.
+   */
+  correlationId?: string;
 }
 
 const MAX_EVENTS = 1000;
@@ -346,6 +385,7 @@ interface AuditLogLine {
   connection?: string;
   duration_ms?: number;
   bucket?: string;
+  correlation_id?: string;
 }
 
 function toAuditLine(event: AuditEvent): AuditLogLine {
@@ -362,6 +402,7 @@ function toAuditLine(event: AuditEvent): AuditLogLine {
     ...(event.ip && event.ip !== UNKNOWN_ADDRESS ? { ip: event.ip } : {}),
     ...(event.connectionName ? { connection: event.connectionName } : {}),
     ...(event.bucket ? { bucket: event.bucket } : {}),
+    ...(event.correlationId ? { correlation_id: event.correlationId } : {}),
     // Number.isFinite excludes NaN and +/-Infinity: JSON.stringify(NaN) silently produces `null`,
     // which would flip duration_ms from a number to null for that one line in a contract parsers
     // depend on. Omitting it entirely keeps the field's type stable instead.

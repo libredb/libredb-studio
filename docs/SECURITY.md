@@ -43,6 +43,7 @@ Two consequences worth stating before the table:
 | 3.2 | Every authoritative (server-generated) audit event is emitted as one structured JSON line on stdout | Implemented | [`src/lib/audit.ts`](../src/lib/audit.ts) | [`tests/security/audit-redaction.test.ts`](../tests/security/audit-redaction.test.ts), [`tests/security/audit-type-safety.test.ts`](../tests/security/audit-type-safety.test.ts) |
 | 3.3 | This page is checked against the repository on every build | Implemented | [`scripts/security-check.mjs`](../scripts/security-check.mjs) | [`tests/unit/security-check.test.ts`](../tests/unit/security-check.test.ts) |
 | 3.4 | A statement submitted on the agent execution path cannot write, change schema, reach another database, load code, or run the executing form of EXPLAIN | Partial | [`src/lib/db/operations/policy.ts`](../src/lib/db/operations/policy.ts), [`src/lib/db/operations/statement-guard.ts`](../src/lib/db/operations/statement-guard.ts), [`src/lib/db/providers/sql/postgres.ts`](../src/lib/db/providers/sql/postgres.ts), [`src/lib/db/providers/sql/sqlite.ts`](../src/lib/db/providers/sql/sqlite.ts) | [`tests/security/agent-statement-boundary.test.ts`](../tests/security/agent-statement-boundary.test.ts), [`tests/integration/db/postgres-provider.test.ts`](../tests/integration/db/postgres-provider.test.ts), [`tests/integration/db/sqlite-provider.test.ts`](../tests/integration/db/sqlite-provider.test.ts) |
+| 3.5 | Every agent-path operation — allowed, denied, or held for approval — is audited under one correlation id, and its result is released with the run | Partial | [`src/lib/db/operations/execution.ts`](../src/lib/db/operations/execution.ts), [`src/lib/db/operations/artifacts.ts`](../src/lib/db/operations/artifacts.ts), [`src/lib/audit.ts`](../src/lib/audit.ts) | [`tests/security/agent-execution-audit.test.ts`](../tests/security/agent-execution-audit.test.ts), [`tests/unit/db/operations/execution.test.ts`](../tests/unit/db/operations/execution.test.ts), [`tests/unit/db/operations/artifacts.test.ts`](../tests/unit/db/operations/artifacts.test.ts), [`tests/api/db/query.test.ts`](../tests/api/db/query.test.ts) |
 
 ## Notes on individual rows
 
@@ -86,6 +87,17 @@ READS have no database-native control on either provider (only the declared-targ
 statement guard, and whatever the role's grants bound — see
 [`docs/BACKLOG.md`](./BACKLOG.md) A3), and no route or agent runtime reaches this layer yet, so it
 governs nothing in a shipped release until the agent surface lands.
+
+**3.5.** Each execution emits a decision event and, once allowed, an execution-outcome event
+sharing one server-generated correlation id; a denial emits the decision event alone with a typed
+`agent_*` reason. The decision is recorded **before** the provider is called and the emission is not
+wrapped in a try/catch, so an execution that cannot be audited does not run. What the events carry
+is deliberately narrow: the registry-resolved operation id, an `agent:<role>` actor label, the
+outcome, the reason code, the elapsed time and the correlation id — never the statement, the
+agent-supplied operation id, the session identifier or a driver message. Results live in an
+in-process artifact store released with the run (TTL and an entry cap are backstops), so no agent
+result is written at rest. **Partial** for the same two reasons as 3.4: no route reaches this layer
+yet, and the in-app ring buffer is per-process — the stdout line remains the authoritative record.
 
 ## Known limits
 

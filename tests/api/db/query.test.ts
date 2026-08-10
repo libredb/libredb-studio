@@ -1,7 +1,11 @@
 import { describe, test, expect, mock, beforeEach } from "bun:test";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { createMockRequest, parseResponseJSON } from "../../helpers/mock-next";
 import { createMockProvider } from "../../helpers/mock-provider";
+import { discoverRoutes } from "../../security/helpers/discover-routes";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
+import { agentReadSqlInput } from "@/lib/db/operations/statement-guard";
 import {
   QueryError,
   TimeoutError,
@@ -421,5 +425,84 @@ describe("POST /api/db/query", () => {
 
     expect(res.status).toBe(499);
     expect(data.code).toBe("QUERY_CANCELLED");
+  });
+});
+
+/**
+ * Regression for #328: the agent enforcement layer must not have followed the
+ * operator into the editor. Everything #328 built — the read-only execution
+ * profiles, the statement guard, the policy pipeline, the audited execution
+ * glue — applies to the AGENT path only; a human running a write in the editor
+ * is the product's primary use, and gating it would be a silent regression
+ * that no test in the operations layer could see.
+ */
+describe("POST /api/db/query — the editor path stays outside the agent policy layer", () => {
+  const writeStatement = "UPDATE orders SET status = 'shipped' WHERE id = 42";
+
+  beforeEach(() => {
+    clearRateLimitState();
+    mockGetOrCreateProvider.mockClear();
+    mockGetSession.mockClear();
+    mockGetSession.mockImplementation(
+      async (): Promise<{ role: string; username: string } | null> => ({ role: "admin", username: "admin" }),
+    );
+  });
+
+  test("executes a write the agent input contract refuses, through the shared provider", async () => {
+    // The same statement, judged by both paths. If these ever agree, one of the
+    // two is wrong: the agent contract must refuse it, the editor must run it.
+    expect(agentReadSqlInput.safeParse({ sql: writeStatement }).success).toBe(false);
+
+    const writeProvider = createMockProvider({
+      prepareQueryResult: { query: writeStatement, wasLimited: false, limit: 0, offset: 0 },
+    });
+    mockGetOrCreateProvider.mockResolvedValueOnce(writeProvider as never);
+
+    const req = createMockRequest("/api/db/query", {
+      method: "POST",
+      body: { connection: validConnection, sql: writeStatement },
+    });
+
+    const res = await POST(req as never);
+
+    expect(res.status).toBe(200);
+    // Reached the driver verbatim: not refused, not rewritten, not downgraded.
+    expect(writeProvider.query).toHaveBeenCalledWith(writeStatement, undefined);
+    // The shared, fully-privileged provider cache - never an execution profile.
+    expect(mockGetOrCreateProvider).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * Read from disk rather than asserted through a behaviour, deliberately. The
+   * behavioural version of this check would be "the route emits no
+   * agent_operation audit event", and it cannot fail: `bun run test` runs this
+   * directory in one process with tests/api/db/maintenance.test.ts, whose
+   * `mock.module("@/lib/audit")` replaces `emitAuditEvent` itself
+   * process-wide, so no destination — buffer or stdout — would see an emission
+   * even if the glue WERE wired in. A source-level invariant has no such hole.
+   *
+   * `discoverRoutes` is reused rather than re-walked here (it lives under
+   * tests/security/helpers because the security enumerations were its first
+   * callers): it recurses, so it sees `db/schema/list` and `db/schema/relations`
+   * alongside `db/schema` — the exact case its own doc comment names, and the
+   * one a single-level listing silently drops. Its route keys map back to files
+   * deterministically, which is all this assertion needs.
+   */
+  const DB_ROUTES_DIR = join(import.meta.dir, "..", "..", "..", "src", "app", "api", "db");
+
+  const dbRouteFiles = discoverRoutes(DB_ROUTES_DIR).map(([routeKey]) =>
+    join(DB_ROUTES_DIR, ...routeKey.split("/"), "route.ts"),
+  );
+
+  test("the route enumeration finds every one of today's sixteen /api/db routes", () => {
+    // An enumeration bug that found nothing - or that missed the nested schema
+    // routes - would make the next test quietly narrower than it claims.
+    expect(dbRouteFiles.length).toBeGreaterThanOrEqual(16);
+    expect(dbRouteFiles.every((file) => existsSync(file))).toBe(true);
+  });
+
+  test("no /api/db route imports the agent operations layer", () => {
+    const gated = dbRouteFiles.filter((file) => readFileSync(file, "utf8").includes("@/lib/db/operations"));
+    expect(gated).toEqual([]);
   });
 });
