@@ -6,7 +6,7 @@ import {
   SSH_TUNNEL_FIELDS,
   SSL_FIELDS,
 } from "@/lib/storage/connection-secrets";
-import { ENVELOPE_VERSION, resetStorageEncryptionKey } from "@/lib/storage/encryption";
+import { ENVELOPE_VERSION, readSecret, resetStorageEncryptionKey } from "@/lib/storage/encryption";
 import type { DatabaseConnection } from "@/lib/types";
 
 const snapshot: Record<string, string | undefined> = {};
@@ -192,6 +192,28 @@ describe("encryptConnections", () => {
     const blank = { ...fullConnection(), password: "" };
 
     expect(encryptConnections([blank])[0].password).toBe("");
+  });
+
+  test("encrypts a real password shaped like an envelope, rather than writing it verbatim", () => {
+    // A user whose actual password is "v2:hunter2" produces a two-segment string matching the
+    // envelope version tag. readSecret classifies it "undecryptable" - the write path must not
+    // treat that the same as "already sealed" and store it in the clear.
+    const lookalike = { ...fullConnection(), password: "v2:hunter2" };
+    const [sealed] = encryptConnections([lookalike]);
+
+    expect(sealed.password).not.toBe("v2:hunter2");
+    expect(readSecret(sealed.password as string).kind).toBe("decrypted");
+    expect(decryptConnections([sealed]).connections[0].password).toBe("v2:hunter2");
+  });
+
+  test("encrypts a corrupted three-segment envelope claim rather than writing it verbatim", () => {
+    // A three-segment value whose IV/body cannot be decoded or authenticated is also
+    // "undecryptable", not "already sealed" - the write path must seal it, not pass it through.
+    const corrupted = { ...fullConnection(), password: "v1:not-base64url-iv:not-base64url-body" };
+    const [sealed] = encryptConnections([corrupted]);
+
+    expect(sealed.password).not.toBe(corrupted.password);
+    expect(readSecret(sealed.password as string).kind).toBe("decrypted");
   });
 });
 
