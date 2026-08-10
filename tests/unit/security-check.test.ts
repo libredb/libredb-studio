@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import path from "node:path";
 import {
   checkPosture,
   findControlTable,
@@ -7,6 +8,8 @@ import {
   parseTables,
   PROGRAMME_CONTROL_IDS,
 } from "../../scripts/security-check.mjs";
+
+const SCRIPT = path.resolve(import.meta.dir, "../../scripts/security-check.mjs");
 
 /**
  * The guard's own guard. Phase 2's digest-pinning check was structurally unable to fail; these
@@ -114,6 +117,17 @@ describe("isExecuted", () => {
 
   test("a source file is not a test and is not subject to this check", () => {
     expect(isExecuted("src/proxy.ts", context).executed).toBe(true);
+  });
+
+  test("a non-test file is rejected when the caller requires a test (the Verified by column)", () => {
+    expect(isExecuted("SECURITY.md", { ...context, requireTest: true })).toEqual({
+      executed: false,
+      reason: "not a test",
+    });
+  });
+
+  test("a real test still passes when the caller requires a test", () => {
+    expect(isExecuted("tests/security/headers.test.ts", { ...context, requireTest: true }).executed).toBe(true);
   });
 });
 
@@ -225,6 +239,53 @@ describe("checkPosture", () => {
     expect(violations.some((v) => v.includes("not in the programme"))).toBe(true);
   });
 
+  test("rejects a 'Verified by' link that is not a test at all", () => {
+    const rows = cleanRows();
+    rows[0] = row("0.1", "Implemented", "[`policy`](../SECURITY.md)");
+    const violations = checkPosture({
+      posture: page(rows),
+      componentsRunner: COMPONENTS_RUNNER,
+      playwrightConfig: PLAYWRIGHT_CONFIG,
+      exists: () => true,
+      securityTestFiles: CLEAN_SECURITY_TESTS.filter((f) => f !== "tests/security/c-0.1.test.ts"),
+    });
+
+    expect(violations.some((v) => v.includes("SECURITY.md") && v.includes("not a test"))).toBe(true);
+  });
+
+  test("still allows a non-test source file in the 'Enforced in' column", () => {
+    const rows = cleanRows();
+    rows[0] = row(
+      "0.1",
+      "Implemented",
+      "[`t`](../tests/security/c-0.1.test.ts)",
+      "[`docs/SECURITY.md`](../docs/SECURITY.md)",
+    );
+
+    expect(
+      checkPosture({
+        posture: page(rows),
+        componentsRunner: COMPONENTS_RUNNER,
+        playwrightConfig: PLAYWRIGHT_CONFIG,
+        exists: () => true,
+        securityTestFiles: CLEAN_SECURITY_TESTS,
+      }),
+    ).toEqual([]);
+  });
+
+  test("sabotage: a duplicate control id is caught even though every id individually belongs to the programme", () => {
+    const rows = [...cleanRows(), row("0.1", "Implemented", "[`t`](../tests/security/c-0.1-again.test.ts)")];
+    const violations = checkPosture({
+      posture: page(rows),
+      componentsRunner: COMPONENTS_RUNNER,
+      playwrightConfig: PLAYWRIGHT_CONFIG,
+      exists: () => true,
+      securityTestFiles: [...CLEAN_SECURITY_TESTS, "tests/security/c-0.1-again.test.ts"],
+    });
+
+    expect(violations.some((v) => v.includes("duplicate") && v.includes("0.1"))).toBe(true);
+  });
+
   test("a page whose control table cannot be found fails loudly instead of passing vacuously", () => {
     const violations = checkPosture({
       posture: "# Security Posture\n\nno table here\n",
@@ -236,5 +297,18 @@ describe("checkPosture", () => {
 
     expect(violations).toHaveLength(1);
     expect(violations[0]).toContain("no control table");
+  });
+});
+
+describe("security-check CLI", () => {
+  // This is the real verifier for control 0.4 ("The security policy states only what the code
+  // does"): every other test above proves the RULES are right against synthetic fixtures, but 0.4
+  // is a claim about docs/SECURITY.md itself, and only running the checker against the actual
+  // repository proves that claim. Docs/SECURITY.md's own 0.4 row links this test.
+  test("passes against the real docs/SECURITY.md and the real repository", () => {
+    const result = Bun.spawnSync(["node", SCRIPT]);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.toString()).toContain("OK");
   });
 });

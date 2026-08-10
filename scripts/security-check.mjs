@@ -8,13 +8,16 @@
  * to catch. docs/BACKLOG.md H10 records the same shape on the route-guard allowlist. A check that
  * cannot fail is worse than no check, because it is believed.
  *
- * Five checks, each of which a deliberate sabotage turns red:
+ * Seven checks, each of which a deliberate sabotage turns red:
  *
  *   1. RESOLVE  every markdown link in "Enforced in" and "Verified by" points at a real file
  *   2. RUN      every linked path under tests/ or e2e/ is actually executed by a runner
- *   3. ACCOUNT  every tests/security/*.test.ts(x) file is named by at least one row
- *   4. CLAIM    Status is from a closed set, and a claim of Implemented/Partial links a verifier
- *   5. COVER    the row IDs are exactly the programme's controls (a zero-row parse fails here)
+ *   3. PROVE    every "Verified by" link is itself a test - a source file or a policy document
+ *               does not count, no matter how real it is (0.4 and 0.5 shipped this exact gap)
+ *   4. ACCOUNT  every tests/security/*.test.ts(x) file is named by at least one row
+ *   5. CLAIM    Status is from a closed set, and a claim of Implemented/Partial links a verifier
+ *   6. COVER    the row IDs are exactly the programme's controls (a zero-row parse fails here)
+ *   7. UNIQUE   no row ID repeats (all-16-plus-a-second-0.1 is neither missing nor extra)
  *
  * NOT checked, deliberately and stated on the page itself: whether a linked test actually
  * exercises the control it is linked from. No script can decide that honestly.
@@ -128,11 +131,14 @@ export function linkTargets(cell) {
  * claiming a verification nobody performs.
  *
  * A path that is not a test at all (a source file in the "Enforced in" column) is not subject to
- * this and reports executed: true - existence is the only claim being made about it.
+ * this and reports executed: true - existence is the only claim being made about it. `requireTest`
+ * flips that for the "Verified by" column: a control naming the checker script or the policy
+ * document itself as its own verifier (0.4, 0.5) is not linking a test, and existence is not the
+ * claim a "Verified by" cell makes.
  */
-export function isExecuted(target, { componentsRunner, playwrightConfig }) {
+export function isExecuted(target, { componentsRunner, playwrightConfig, requireTest = false }) {
   if (!target.startsWith("tests/") && !target.startsWith("e2e/")) {
-    return { executed: true, reason: "not a test path" };
+    return requireTest ? { executed: false, reason: "not a test" } : { executed: true, reason: "not a test path" };
   }
   if (target.startsWith("e2e/")) {
     const inTestDir = /testDir:\s*["']\.\/e2e["']/.test(playwrightConfig);
@@ -178,7 +184,7 @@ export function checkPosture({ posture, componentsRunner, playwrightConfig, exis
       violations.push(`${POSTURE}: control ${id} claims '${status}' but links nothing that verifies it`);
     }
 
-    for (const target of [...linkTargets(enforced), ...verifiers]) {
+    for (const target of linkTargets(enforced)) {
       if (!exists(target)) {
         violations.push(`${POSTURE}: control ${id} links ${target}, which does not exist`);
         continue;
@@ -188,7 +194,24 @@ export function checkPosture({ posture, componentsRunner, playwrightConfig, exis
         violations.push(`${POSTURE}: control ${id} links ${target}, which is never executed (${reason})`);
       }
     }
-    for (const target of verifiers) linkedTests.add(target);
+    for (const target of verifiers) {
+      // Recorded regardless of what follows: the reciprocal check below asks "does some row CLAIM
+      // to be verified by this file", not "does that claim also check out" - those are separate
+      // violations, and folding them together would hide the missing-file or not-a-test violation
+      // behind a second, misleading "no control row claims this test" one.
+      linkedTests.add(target);
+      if (!exists(target)) {
+        violations.push(`${POSTURE}: control ${id} links ${target}, which does not exist`);
+        continue;
+      }
+      // requireTest: true - a "Verified by" cell is a claim that a test verifies the control, and
+      // isExecuted's normal existence-is-enough-for-a-source-file allowance would otherwise let a
+      // checker script or a policy document stand in for a test that does not exist (0.4, 0.5).
+      const { executed, reason } = isExecuted(target, { componentsRunner, playwrightConfig, requireTest: true });
+      if (!executed) {
+        violations.push(`${POSTURE}: control ${id} links ${target}, which is never executed (${reason})`);
+      }
+    }
   }
 
   // The other direction. A control can ship with a test and never reach the page; nothing above
@@ -203,6 +226,14 @@ export function checkPosture({ posture, componentsRunner, playwrightConfig, exis
   const extra = seenIds.filter((id) => !PROGRAMME_CONTROL_IDS.includes(id));
   if (missing.length > 0) violations.push(`${POSTURE}: missing ${missing.join(", ")} from the control table`);
   if (extra.length > 0) violations.push(`${POSTURE}: rows ${extra.join(", ")} are not in the programme control set`);
+
+  // Presence alone cannot see this: a page carrying all 16 IDs plus a second "0.1" produces
+  // neither a missing nor an extra ID, because both filters only ask "is this ID somewhere in the
+  // other list" - never "how many times does it appear here".
+  const duplicates = [...new Set(seenIds.filter((id, index) => seenIds.indexOf(id) !== index))];
+  if (duplicates.length > 0) {
+    violations.push(`${POSTURE}: duplicate control id(s) ${duplicates.join(", ")} in the control table`);
+  }
 
   return violations;
 }
