@@ -44,13 +44,22 @@ const snapshot: Record<string, string | undefined> = {};
 
 beforeEach(() => {
   snapshot.JWT_SECRET = process.env.JWT_SECRET;
+  snapshot.STORAGE_ENCRYPTION_KEY = process.env.STORAGE_ENCRYPTION_KEY;
   process.env.JWT_SECRET = "encrypting-provider-test-jwt-secret-32";
+  // An ambient STORAGE_ENCRYPTION_KEY (a developer's local .env.local) takes precedence over
+  // JWT_SECRET in inputKeyMaterial(), so the "rotate JWT_SECRET" tests below would silently stop
+  // rotating anything - the derived key would never change, and the undecryptable-warning case
+  // they exist to exercise would never fire. Match the sibling test's isolation
+  // (tests/security/credential-at-rest.test.ts), which snapshots both variables.
+  delete process.env.STORAGE_ENCRYPTION_KEY;
   resetStorageEncryptionKey();
 });
 
 afterEach(() => {
   if (snapshot.JWT_SECRET === undefined) delete process.env.JWT_SECRET;
   else process.env.JWT_SECRET = snapshot.JWT_SECRET;
+  if (snapshot.STORAGE_ENCRYPTION_KEY === undefined) delete process.env.STORAGE_ENCRYPTION_KEY;
+  else process.env.STORAGE_ENCRYPTION_KEY = snapshot.STORAGE_ENCRYPTION_KEY;
   resetStorageEncryptionKey();
 });
 

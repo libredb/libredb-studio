@@ -256,7 +256,7 @@ key that opens the ciphertext it contains (with nothing set, the fallback key is
 same directory, alongside the database file):
 
 ```bash
-helm install libredb-studio libredb-studio/libredb-studio \
+helm install libredb libredb/libredb-studio \
   --set extraEnv[0].name=STORAGE_ENCRYPTION_KEY \
   --set extraEnv[0].valueFrom.secretKeyRef.name=libredb-studio-storage \
   --set extraEnv[0].valueFrom.secretKeyRef.key=encryption-key

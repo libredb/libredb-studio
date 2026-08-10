@@ -64,13 +64,16 @@ const eslintConfig = defineConfig([
       "react/no-danger": "off",
     },
   },
-  // Narrow type-aware safety net for the async-heavy code paths (API routes
-  // and DB providers). These rules need the real TypeScript type checker
-  // (projectService), so they are scoped to keep lint fast and to catch
-  // unhandled-promise bugs where they matter most. Strategy A: eslint-config-next
-  // still owns all React/Next/hooks linting above; this only adds promise safety.
+  // Narrow type-aware safety net for the async-heavy code paths (API routes,
+  // DB providers, and the storage layer). These rules need the real TypeScript
+  // type checker (projectService), so they are scoped to keep lint fast and to
+  // catch unhandled-promise bugs where they matter most. Strategy A:
+  // eslint-config-next still owns all React/Next/hooks linting above; this
+  // only adds promise safety. src/lib/storage/** joined this list in Phase 3
+  // (0.10.0): the credential-encryption decorator wraps async provider
+  // methods, which is exactly the shape this layer exists to catch.
   ...tseslint.config({
-    files: ["src/app/api/**/*.ts", "src/lib/db/**/*.ts"],
+    files: ["src/app/api/**/*.ts", "src/lib/db/**/*.ts", "src/lib/storage/**/*.ts"],
     languageOptions: {
       parserOptions: {
         projectService: true,
