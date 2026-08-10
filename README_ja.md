@@ -33,7 +33,7 @@
 # Docker（推奨）
 docker run -d -p 3000:3000 ghcr.io/libredb/libredb-studio:latest
 
-# または Node.js 20.9+ で（Dockerなし）
+# または Node.js 24+ で（Dockerなし）
 npx @libredb/studio
 ```
 
@@ -183,7 +183,7 @@ StudioがMITなのは、あらゆる場所に置ける必要があるからで�
 - ユニット、API、統合、hooks、コンポーネント、E2Eの6層
 - **行カバレッジ100%**、しかもCIの必須ゲート。下がればマージできません
 - SonarCloud品質ゲート
-- リリースごとにNode 20.9 / 22 / 24でスモークテスト
+- リリースごとにNode 24 / 26でスモークテスト
 
 ```bash
 bun run test           # 全テスト

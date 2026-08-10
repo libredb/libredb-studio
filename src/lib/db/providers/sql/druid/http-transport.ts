@@ -181,9 +181,11 @@ interface HttpOutcome {
  *
  * `JSON.stringify` cannot help: it throws outright on a bigint, and it has no way to
  * emit an unquoted literal wider than a double. `JSON.rawJSON` can, but it is the
- * ES2025 JSON source-text proposal - V8 12.4 / Node 22.2 - while this package declares
- * `engines.node: ">=20.9.0"`, so depending on it would throw a bare TypeError on a
- * runtime the package claims to support.
+ * ES2025 JSON source-text proposal - V8 12.4 / Node 22.2 - and when this was written
+ * the package declared `engines.node: ">=20.9.0"`, so depending on it would have thrown
+ * a bare TypeError on a runtime the package claimed to support. The floor is now
+ * ">=24.0.0" (#326) and `JSON.rawJSON` is available; replacing this is tracked as
+ * BACKLOG A6 rather than folded into a runtime-baseline change.
  *
  * Building the array as text is what remains, and it is deliberately STRUCTURAL rather
  * than a marker-and-substitute pass. An earlier version wrapped the digits in a

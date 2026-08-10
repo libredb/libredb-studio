@@ -8,7 +8,7 @@ import { clickhouseJsonStrategy } from "./clickhouse-json";
 import { druidNativeStrategy } from "./druid-native";
 
 export type { ExplainMode, ExplainStrategy } from "./types";
-export type { ExplainPlanInput, ExplainTreeNode, StoredExplainPlan } from "./types";
+export type { ExplainPlanInput } from "./types";
 
 // Exhaustive by construction: adding an ExplainFormat member without a
 // registry entry is a compile error.

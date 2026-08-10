@@ -1631,25 +1631,21 @@ describe("DruidProvider monitoring", () => {
 // ============================================================================
 
 describe("DruidProvider maintenance", () => {
-  test.each<[string]>([
-    ["vacuum"],
-    ["analyze"],
-    ["reindex"],
-    ["kill"],
-    ["optimize"],
-    ["check"],
-  ])("refuses %s, because SQL reaches no Druid equivalent", async (operation) => {
-    // Absent from maintenanceOperations, so the UI never offers any of these;
-    // the refusal exists so a direct API call gets an explanation rather than a
-    // statement the server would reject.
-    const provider = await connectProvider();
+  test.each<[string]>([["vacuum"], ["analyze"], ["reindex"], ["kill"], ["optimize"], ["check"]])(
+    "refuses %s, because SQL reaches no Druid equivalent",
+    async (operation) => {
+      // Absent from maintenanceOperations, so the UI never offers any of these;
+      // the refusal exists so a direct API call gets an explanation rather than a
+      // statement the server would reject.
+      const provider = await connectProvider();
 
-    const failure = provider.runMaintenance(operation as "vacuum");
+      const failure = provider.runMaintenance(operation as "vacuum");
 
-    await expect(failure).rejects.toBeInstanceOf(QueryError);
-    await expect(failure).rejects.toThrow(operation);
-    expect(sentSql).toEqual([CONNECT_PROBE]);
-  });
+      await expect(failure).rejects.toBeInstanceOf(QueryError);
+      await expect(failure).rejects.toThrow(operation);
+      expect(sentSql).toEqual([CONNECT_PROBE]);
+    },
+  );
 });
 
 // ============================================================================

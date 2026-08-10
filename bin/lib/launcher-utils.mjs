@@ -205,15 +205,19 @@ export function extractArchive(archivePath, destDir) {
 }
 
 /**
- * Runtime tiers for the payload (Next.js standalone server):
- * - Next.js 16 itself needs Node >= 20.9 - below that the server cannot run.
- * - node:sqlite (SQLite database connections) exists unflagged from 22.13.
- * - The bundled better-sqlite3 binding (server-side SQLite storage,
- *   STORAGE_PROVIDER=sqlite) targets the Node 24 ABI line.
- * Node 24 LTS is the fully supported runtime; older tiers run with the
- * degradations spelled out by assessNodeRuntime so users see them up front.
+ * Runtime requirement for the payload (Next.js standalone server). Node 24 LTS
+ * is the reference runtime - it is what release-artifacts.yml builds the
+ * payload on (issue #326 raised the floor here from 20.9 to clear the runway
+ * for the agent runtime, which needs a modern Node and ESM).
+ *
+ * There is a floor but deliberately no ceiling. The payload's only native
+ * module is better-sqlite3, and since v13 it is built on the N-API: one
+ * prebuilt binary per platform, valid across Node majors. So a payload built
+ * on Node 24 runs unchanged on Node 26, and every runtime at or above the
+ * floor is fully supported rather than degraded - which is what the node26 leg
+ * of scripts/engine-smoke.sh asserts.
  */
-const MINIMUM_NODE = { major: 20, minor: 9 };
+const MINIMUM_NODE = { major: 24, minor: 0 };
 
 /**
  * Assess a Node.js runtime version (process.versions.node shape, e.g.
@@ -221,7 +225,7 @@ const MINIMUM_NODE = { major: 20, minor: 9 };
  * unit tests - never reads process state itself.
  *
  * @param {string} version
- * @returns {{ action: "fail" | "warn" | "ok", message: string | null }}
+ * @returns {{ action: "fail" | "ok", message: string | null }}
  */
 export function assessNodeRuntime(version) {
   const match = /^(\d+)\.(\d+)\.(\d+)/.exec(version);
@@ -241,25 +245,6 @@ export function assessNodeRuntime(version) {
         "Install Node 24 LTS (https://nodejs.org) or run Studio with Docker:",
         "  docker run -p 3000:3000 ghcr.io/libredb/libredb-studio:latest",
       ].join("\n"),
-    };
-  }
-  if (major < 22 || (major === 22 && minor < 13)) {
-    return {
-      action: "warn",
-      message:
-        `Node ${version}: SQLite features are unavailable on this runtime - ` +
-        "SQLite database connections need the built-in node:sqlite module (Node 22.13+) and " +
-        "server-side SQLite storage (STORAGE_PROVIDER=sqlite) needs Node 24. " +
-        "Everything else works; use Node 24 LTS for full functionality.",
-    };
-  }
-  if (major < 24) {
-    return {
-      action: "warn",
-      message:
-        `Node ${version}: server-side SQLite storage (STORAGE_PROVIDER=sqlite) needs Node 24 - ` +
-        "the bundled native module targets the Node 24 ABI. Everything else works " +
-        "(node:sqlite may print a one-time ExperimentalWarning); use Node 24 LTS for full functionality.",
     };
   }
   return { action: "ok", message: null };

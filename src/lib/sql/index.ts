@@ -5,4 +5,3 @@
  */
 
 export { extractAliases, resolveAlias } from "./alias-extractor";
-export type { TableAlias, AliasExtractionResult, AliasExtractorOptions } from "./types";

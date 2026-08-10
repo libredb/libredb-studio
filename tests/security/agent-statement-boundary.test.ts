@@ -328,21 +328,22 @@ describe("agent statement boundary — layer (b): SQLite refuses the same statem
 
   const sqliteAttacks = ATTACKS.filter((attack) => attack.sqlite !== undefined);
 
-  test.each(
-    sqliteAttacks.map((attack) => [attack.label, attack] as const),
-  )("the engine — not a parser — refuses %s", async (_label, attack) => {
-    const before = await tableState();
+  test.each(sqliteAttacks.map((attack) => [attack.label, attack] as const))(
+    "the engine — not a parser — refuses %s",
+    async (_label, attack) => {
+      const before = await tableState();
 
-    if (attack.sqlite === "rejected") {
-      await expect(profile.queryReadOnly(attack.sql, AGENT_BUDGET)).rejects.toThrow();
-    } else {
-      // Only the leading statement is compiled; the smuggled tail never runs.
-      const result = await profile.queryReadOnly(attack.sql, AGENT_BUDGET);
-      expect(result.rows).toEqual([{ id: 1 }]);
-    }
+      if (attack.sqlite === "rejected") {
+        await expect(profile.queryReadOnly(attack.sql, AGENT_BUDGET)).rejects.toThrow();
+      } else {
+        // Only the leading statement is compiled; the smuggled tail never runs.
+        const result = await profile.queryReadOnly(attack.sql, AGENT_BUDGET);
+        expect(result.rows).toEqual([{ id: 1 }]);
+      }
 
-    expect(await tableState()).toEqual(before);
-  });
+      expect(await tableState()).toEqual(before);
+    },
+  );
 
   test("a pragma function cannot turn query_only off for a later statement", async () => {
     // The setter form is refused by this build, and the profile re-asserts the

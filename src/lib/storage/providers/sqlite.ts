@@ -73,8 +73,12 @@ export class SQLiteStorageProvider implements ServerStorageProvider {
       logger.error("SQLite storage initialization failed", error, { provider: "sqlite", path: this.dbPath });
       if (isNodeAbiMismatch(error)) {
         throw new Error(
-          `Server-side SQLite storage (STORAGE_PROVIDER=sqlite) requires Node.js 24+: the bundled better-sqlite3 native module targets the Node 24 ABI and cannot load on Node ${process.versions.node}. ` +
-            "Run the server under Node 24 LTS, or use STORAGE_PROVIDER=postgres or STORAGE_PROVIDER=local instead. " +
+          // Deliberately NOT phrased as a floor ("Node 24 or newer"): a native
+          // binding loads only on the exact ABI it was built against, so a
+          // NEWER Node fails here too and would read such a message as already
+          // satisfied.
+          `Server-side SQLite storage (STORAGE_PROVIDER=sqlite) cannot start on Node ${process.versions.node}: the better-sqlite3 native module in this install was built for a different Node ABI and cannot load here. ` +
+            "better-sqlite3 13 ships N-API prebuilds that work across Node majors, so this normally means a pinned older better-sqlite3 or an incomplete node_modules - reinstall dependencies, or use STORAGE_PROVIDER=postgres or STORAGE_PROVIDER=local instead. " +
             `Underlying error: ${error instanceof Error ? error.message : String(error)}`,
           { cause: error },
         );

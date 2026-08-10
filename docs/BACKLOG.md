@@ -762,3 +762,37 @@ engine in the pipeline today is the throwaway PostgreSQL container behind
 Done when a container-backed test proves, against a supported PostgreSQL, that a direct write and a
 multi-command escape are rejected through the profile under the resolved role. The cheapest path is
 extending the functional-smoke container rather than adding a service to every CI test job.
+
+### A6. Druid's hand-written bigint serializer predates the Node 24 floor
+
+`src/lib/db/providers/sql/druid.ts` splices the parameters array into the query envelope by hand so
+a `bigint` literal reaches Druid unquoted. The reason recorded in `docs/providers/druid.md` was that
+`JSON.rawJSON` (ES2025 JSON source text, V8 12.4 / Node 22.2) could not be depended on while
+`engines.node` was `">=20.9.0"`.
+
+That constraint is gone: issue #326 raised the floor to `">=24.0.0"`, so `JSON.rawJSON` is available
+on every supported runtime. The hand-serializer is not wrong and is fully covered, so it was left
+alone rather than rewritten inside a runtime-baseline change - swapping a correctness-critical
+escaping path belongs in a change whose tests are about that path.
+
+Done when the splice is replaced by `JSON.rawJSON` with the existing bigint fixtures still green,
+or when this entry is deleted with a note that the hand-serializer is the preferred implementation.
+
+### A7. TypeScript 7 compiles this project cleanly but the lint layer cannot follow yet
+
+Probed while raising the Node baseline (#326): `tsc --noEmit` under **typescript@7.0.2** (the native
+Go port) reports **zero errors** on this repository and finishes in **1.8s against 7.7s** for the
+6.0.3 JavaScript compiler - a 4x wall-clock improvement on the `typecheck` gate.
+
+It cannot be adopted yet, for one reason that is not about our code:
+
+- `typescript-eslint@8.67.0` (the newest release) declares `peerDependencies.typescript:
+  ">=4.8.4 <6.1.0"`. The repo's type-aware ESLint layer guards `src/app/api` and `src/lib/db`
+  against floating promises, so losing it is not an option.
+- TypeScript 7 also stops shipping the classic in-process compiler API: the package's `main` is
+  `./lib/version.cjs` and everything else sits behind `unstable/*` subpaths. Every tool that does
+  `require("typescript")` for program construction - typescript-eslint, `eslint-config-next`, tsup's
+  declaration build - needs its own port before the swap is possible.
+
+Done when typescript-eslint publishes a release whose peer range admits 7.x, at which point this is
+a one-line dependency bump plus a re-run of the gates: the compiler side is already proven green.

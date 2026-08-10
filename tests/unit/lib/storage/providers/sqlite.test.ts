@@ -272,14 +272,48 @@ describe("SQLiteStorageProvider", () => {
       constructorError = null;
     });
 
-    test("translates a NODE_MODULE_VERSION mismatch into an actionable message", async () => {
-      constructorError = new Error(
+    // better-sqlite3 v13 is N-API, so a genuine ABI mismatch should no longer
+    // be reachable through a normal install - this guard now covers a pinned
+    // older better-sqlite3 or a half-copied node_modules. The mismatch is
+    // reported in BOTH directions (an older runtime wants a lower
+    // NODE_MODULE_VERSION, a newer one a higher), and the message has to be
+    // true of both.
+    test.each([
+      [
+        "an older runtime (wants NODE_MODULE_VERSION 127)",
         "The module 'better_sqlite3.node' was compiled against a different Node.js version using NODE_MODULE_VERSION 137. This version of Node.js requires NODE_MODULE_VERSION 127.",
+      ],
+      [
+        "a newer runtime (wants NODE_MODULE_VERSION 147)",
+        "The module 'better_sqlite3.node' was compiled against a different Node.js version using NODE_MODULE_VERSION 137. This version of Node.js requires NODE_MODULE_VERSION 147.",
+      ],
+    ])("translates the ABI mismatch reported by %s into an actionable message", async (_label, text) => {
+      constructorError = new Error(text);
+      const freshProvider = new SQLiteStorageProvider(":memory:");
+      const error = await freshProvider.initialize().then(
+        () => null,
+        (e: unknown) => e as Error,
+      );
+      expect(error?.message).toContain("different Node ABI");
+      expect(error?.message).toContain("STORAGE_PROVIDER=postgres");
+      expect(error?.message).toContain(text);
+    });
+
+    test("never states the ABI constraint as a version floor", async () => {
+      // Regression guard for the defect this wording used to carry: it said
+      // "requires Node.js 24+", which a Node 26 user reads as satisfied while
+      // the module still refuses to load. A native binding's constraint is the
+      // ABI it was built against, never a version floor.
+      constructorError = new Error(
+        "The module 'better_sqlite3.node' was compiled against a different Node.js version using NODE_MODULE_VERSION 137. This version of Node.js requires NODE_MODULE_VERSION 147.",
       );
       const freshProvider = new SQLiteStorageProvider(":memory:");
-      await expect(freshProvider.initialize()).rejects.toThrow(
-        /requires Node\.js 24\+[\s\S]*STORAGE_PROVIDER=postgres/,
+      const error = await freshProvider.initialize().then(
+        () => null,
+        (e: unknown) => e as Error,
       );
+      expect(error?.message).not.toContain("24+");
+      expect(error?.message).not.toMatch(/24 or newer/i);
     });
 
     test("does NOT claim an ABI mismatch for non-ABI dlopen failures (libc mismatch, missing libs)", async () => {
@@ -297,7 +331,7 @@ describe("SQLiteStorageProvider", () => {
         (e: unknown) => e as Error,
       );
       expect(error).toBe(dlopenError);
-      expect(error?.message).not.toContain("requires Node.js 24+");
+      expect(error?.message).not.toContain("different Node ABI");
     });
 
     test("keeps the friendly error's cause chained to the original", async () => {

@@ -145,19 +145,18 @@ const PINNED = "demo";
 // ============================================================================
 
 describe("the system-database filter", () => {
-  test.each<[Surface]>([
-    ["tables"],
-    ["columns"],
-    ["indices"],
-  ])("excludes every system database from the %s read", async (surface) => {
-    const { transport, calls } = createTransport();
+  test.each<[Surface]>([["tables"], ["columns"], ["indices"]])(
+    "excludes every system database from the %s read",
+    async (surface) => {
+      const { transport, calls } = createTransport();
 
-    await getSchema(transport, PINNED);
-    const sql = sqlFor(calls, surface);
+      await getSchema(transport, PINNED);
+      const sql = sqlFor(calls, surface);
 
-    expect(sql).toContain("NOT IN (");
-    for (const name of CLICKHOUSE_SYSTEM_DATABASES) expect(sql).toContain(`'${name}'`);
-  });
+      expect(sql).toContain("NOT IN (");
+      for (const name of CLICKHOUSE_SYSTEM_DATABASES) expect(sql).toContain(`'${name}'`);
+    },
+  );
 
   test("names exactly the three system databases the live server reports", () => {
     expect([...CLICKHOUSE_SYSTEM_DATABASES]).toEqual(["system", "information_schema", "INFORMATION_SCHEMA"]);

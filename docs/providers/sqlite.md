@@ -68,7 +68,7 @@ SQLite driver by runtime:
 | Runtime | Driver | Notes |
 |---------|--------|-------|
 | Bun (`typeof Bun !== "undefined"`) | `bun:sqlite` | Bun built-in |
-| Node | `node:sqlite` (`DatabaseSync`) | Node built-in: unflagged from 22.13, stable on the recommended Node 24 LTS |
+| Node | `node:sqlite` (`DatabaseSync`) | Node built-in: unflagged from 22.13, stable on the Node 24 LTS floor |
 
 - **Override:** set `LIBREDB_SQLITE_DRIVER=bun|node` to force a driver (used by the integration
   tests for determinism); any other value falls back to runtime detection.
@@ -571,9 +571,10 @@ not apply to SQLite ([§3.4](#34-no-transactions-api-no-cancellation-no-pool)).
 
 - **Server-local file only.** No network protocol; a hosted/SaaS user cannot reach a SQLite file on
   their own machine. SQLite-as-target suits self-hosted / local-dev / edge and zero-config trials.
-- **Bun or Node 22.13+ runtime required** (Node 24 LTS recommended). The provider needs a built-in
-  SQLite driver (`bun:sqlite` or `node:sqlite`); on a runtime with neither (e.g. Node < 22.13
-  without the experimental flag), `connect()` throws a `DatabaseConfigError` with guidance.
+- **Bun or Node 24+ runtime required** (`engines.node: ">=24.0.0"`). The provider needs a built-in
+  SQLite driver (`bun:sqlite` or `node:sqlite`); on a runtime with neither, `connect()` throws a
+  `DatabaseConfigError` with guidance. `node:sqlite` itself has been unflagged since Node 22.13, so
+  the guard still fires correctly below the floor rather than assuming the module is present.
   See [Runtime & driver selection](#runtime--driver-selection).
 - **No transactions / cancellation / pooling.** Single embedded handle; the transaction and cancel
   API routes don't apply.

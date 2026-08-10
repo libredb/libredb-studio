@@ -164,13 +164,12 @@ describe("DruidTransportError.isMonitoringUnavailable", () => {
   // Spec section 5: these three are the ordinary configurations of a locked-down
   // cluster - basic security refusing the credentials, a role without the
   // STATE/EXTERNAL permission `sys` needs, and a build where the table is absent.
-  test.each<[DruidErrorCategory]>([
-    ["UNAUTHORIZED"],
-    ["FORBIDDEN"],
-    ["NOT_FOUND"],
-  ])("treats %s as an unavailable monitoring surface", (category) => {
-    expect(errorIn(DRUID_ERROR_CATEGORIES[category]).isMonitoringUnavailable()).toBe(true);
-  });
+  test.each<[DruidErrorCategory]>([["UNAUTHORIZED"], ["FORBIDDEN"], ["NOT_FOUND"]])(
+    "treats %s as an unavailable monitoring surface",
+    (category) => {
+      expect(errorIn(DRUID_ERROR_CATEGORIES[category]).isMonitoringUnavailable()).toBe(true);
+    },
+  );
 
   // Everything else must keep propagating: swallowing it would hide the user's
   // own mistake behind an empty panel, which is what this list exists to prevent.

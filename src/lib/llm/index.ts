@@ -21,18 +21,8 @@
 
 export { createLLMProvider } from "./factory";
 
-// ============================================================================
-// Types & Interfaces
-// ============================================================================
-
-export type {
-  LLMProviderType,
-  LLMConfig,
-  LLMMessage,
-  LLMMessageRole,
-  LLMStreamOptions,
-  LLMProvider,
-} from "./types";
+// Types are not re-exported here: consumers import them from "./types"
+// directly, and a mirrored export is dead weight the knip gate rejects.
 
 // ============================================================================
 // Provider Classes (Lazy Loaded)

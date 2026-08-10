@@ -1065,15 +1065,14 @@ describe("isDangerousQuery", () => {
   // statement written after a nested comment ran with no confirmation at all on
   // every dialect that nests - which is PostgreSQL, SQL Server and ClickHouse.
 
-  test.each<["postgres" | "mssql" | "clickhouse"]>([
-    ["postgres"],
-    ["mssql"],
-    ["clickhouse"],
-  ])("prompts on %s for a destructive statement a nested comment hid", (type) => {
-    const query = "/* outer /* inner */ still a note */ DROP TABLE users";
+  test.each<["postgres" | "mssql" | "clickhouse"]>([["postgres"], ["mssql"], ["clickhouse"]])(
+    "prompts on %s for a destructive statement a nested comment hid",
+    (type) => {
+      const query = "/* outer /* inner */ still a note */ DROP TABLE users";
 
-    expect(isDangerousQuery(query, type)).toBe(true);
-  });
+      expect(isDangerousQuery(query, type)).toBe(true);
+    },
+  );
 
   test.each<[string, string]>([
     ["a DELETE", "DELETE FROM users WHERE id = 1"],

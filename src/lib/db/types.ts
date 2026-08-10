@@ -10,8 +10,6 @@ export type {
   TableSchema,
   TableRelations,
   ColumnSchema,
-  IndexSchema,
-  ForeignKeySchema,
   QueryResult,
   QueryWarning,
 } from "../types";

@@ -252,50 +252,35 @@ describe("parseLauncherArgs", () => {
 });
 
 describe("assessNodeRuntime", () => {
-  test.each(["18.19.0", "20.0.0", "20.8.9"])("fails below the 20.9 floor (%s)", (version) => {
-    const result = assessNodeRuntime(version);
-    expect(result.action).toBe("fail");
-    expect(result.message).toContain("requires Node.js 20.9 or newer");
-    expect(result.message).toContain(version);
-    expect(result.message).toContain("docker run");
-  });
+  test.each(["18.19.0", "20.9.0", "20.19.5", "22.12.0", "22.13.0", "23.11.1"])(
+    "fails below the Node 24 floor (%s)",
+    (version) => {
+      const result = assessNodeRuntime(version);
+      expect(result.action).toBe("fail");
+      expect(result.message).toContain("requires Node.js 24.0 or newer");
+      expect(result.message).toContain(version);
+      expect(result.message).toContain("docker run");
+    },
+  );
 
-  test.each([
-    "20.9.0",
-    "20.19.5",
-    "21.7.3",
-    "22.0.0",
-    "22.5.0",
-    "22.12.0",
-  ])("warns that all SQLite features are unavailable on %s (no unflagged node:sqlite)", (version) => {
-    const result = assessNodeRuntime(version);
-    expect(result.action).toBe("warn");
-    expect(result.message).toContain("SQLite features are unavailable");
-    expect(result.message).toContain("node:sqlite");
-    expect(result.message).toContain("Node 24");
-  });
-
-  test.each([
-    "22.13.0",
-    "22.23.1",
-    "23.4.0",
-  ])("warns only about server-side SQLite storage on %s (node:sqlite present, better-sqlite3 ABI mismatch)", (version) => {
-    const result = assessNodeRuntime(version);
-    expect(result.action).toBe("warn");
-    expect(result.message).toContain("STORAGE_PROVIDER=sqlite");
-    expect(result.message).toContain("Node 24 ABI");
-    expect(result.message).not.toContain("SQLite features are unavailable");
-  });
-
-  test.each(["24.0.0", "24.14.0", "25.1.0", "26.0.0"])("is silent on the fully supported %s", (version) => {
-    const result = assessNodeRuntime(version);
-    expect(result.action).toBe("ok");
-    expect(result.message).toBeNull();
-  });
+  // Every major at or above the floor is silent, including majors newer than
+  // the one the payload was built on. That is only true because better-sqlite3
+  // v13 moved to the N-API: its prebuilt binary is ABI-independent, so a
+  // payload built on Node 24 runs its native module on Node 26 unchanged
+  // (probed under node:26-trixie-slim). Under v12's per-ABI binding this tier
+  // had to warn that server-side SQLite storage was unavailable.
+  test.each(["24.0.0", "24.14.0", "24.19.0", "25.9.0", "26.0.0", "26.7.0"])(
+    "is silent on the fully supported %s",
+    (version) => {
+      const result = assessNodeRuntime(version);
+      expect(result.action).toBe("ok");
+      expect(result.message).toBeNull();
+    },
+  );
 
   test("handles prerelease-style version strings by their numeric prefix", () => {
     expect(assessNodeRuntime("24.0.0-nightly202512").action).toBe("ok");
-    expect(assessNodeRuntime("20.8.0-rc.1").action).toBe("fail");
+    expect(assessNodeRuntime("23.11.0-rc.1").action).toBe("fail");
   });
 
   test("fails loudly on an unparsable version string", () => {
@@ -305,7 +290,7 @@ describe("assessNodeRuntime", () => {
   });
 
   test("fails closed on two-component version strings (process.versions.node is always three)", () => {
-    expect(assessNodeRuntime("22.13").action).toBe("fail");
+    expect(assessNodeRuntime("24.19").action).toBe("fail");
   });
 
   test("fail boundary matches the package.json engines floor (single source of truth)", () => {

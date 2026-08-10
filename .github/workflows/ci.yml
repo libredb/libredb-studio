@@ -199,7 +199,7 @@ jobs:
           name: playwright-report
           path: playwright-report/
 
-  # The engines floor in package.json (>=20.9.0) is a tested claim: build the
+  # The engines floor in package.json (>=24.0.0) is a tested claim: build the
   # standalone payload once, then boot it through the npx launcher on every
   # supported Node tier and assert the documented behaviour of each
   # (scripts/engine-smoke.sh).
@@ -248,12 +248,15 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - node-version: "20.9"
-            tier: legacy20
-          - node-version: "22"
-            tier: node22
+          # The reference runtime the payload above was built on.
           - node-version: "24"
             tier: node24
+          # The current upper release. Asserts the SAME outcome as node24,
+          # which is what proves the payload is portable across majors:
+          # better-sqlite3 is N-API since v13, so the binary built into a
+          # Node 24 payload has to load and work here too.
+          - node-version: "26"
+            tier: node26
     steps:
       - name: Checkout code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6

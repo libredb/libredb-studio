@@ -20,31 +20,8 @@ export { getOrCreateProvider, createDatabaseProvider } from "./factory";
 // Types & Interfaces
 // ============================================================================
 
-export type {
-  DatabaseType,
-  DatabaseConnection,
-  DatabaseProvider,
-  TableSchema,
-  ColumnSchema,
-  IndexSchema,
-  ForeignKeySchema,
-  QueryResult,
-  HealthInfo,
-  SlowQuery,
-  ActiveSession,
-  MaintenanceType,
-  MaintenanceResult,
-  PoolConfig,
-  ProviderOptions,
-  ConnectionState,
-  ProviderCapabilities,
-  ProviderLabels,
-  PreparedQuery,
-  QueryPrepareOptions,
-} from "./types";
-
-// ============================================================================
-// Utilities
-// ============================================================================
-
-export { type RetryOptions } from "./utils/pool-manager";
+// Only what an in-repo consumer actually imports from this barrel. The npm
+// package's public type surface is `src/exports/types.ts`, which re-exports
+// from `src/lib/types` directly and never passes through here - so a type
+// mirrored here for symmetry is dead weight, not API.
+export type { MaintenanceType } from "./types";

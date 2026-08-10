@@ -9,8 +9,8 @@
 #   - .next/static                  -> .next/static
 #   - public                        -> public
 #   - node_modules/better-sqlite3   -> native binding for server storage
-#   - node_modules/bindings         -> better-sqlite3 runtime dependency
-#   - node_modules/file-uri-to-path -> bindings runtime dependency
+#                                      (self-contained since v13: N-API
+#                                      prebuilds live inside the package)
 #   - node_modules/@libredb/libredb -> lazy-imported, not seen by file tracing
 #   - seed-assets/                  -> vendored sample DB templates (fs-read
 #                                      at runtime, not seen by file tracing)
@@ -147,28 +147,24 @@ cp -R public "$PAYLOAD_DIR/public"
 # but `next build` copies any .env* it finds into the standalone output).
 rm -f "$PAYLOAD_DIR"/.env "$PAYLOAD_DIR"/.env.*
 
-for pkg in better-sqlite3 bindings file-uri-to-path; do
-  if [ ! -d "node_modules/$pkg" ]; then
-    echo "node_modules/$pkg not found - run 'bun install --frozen-lockfile' first" >&2
-    exit 1
-  fi
-done
+if [ ! -d "node_modules/better-sqlite3" ]; then
+  echo "node_modules/better-sqlite3 not found - run 'bun install --frozen-lockfile' first" >&2
+  exit 1
+fi
 
-# The payload runs under `node`, so the better-sqlite3 native binding must
-# match node's ABI - not the ABI of whatever runtime happened to install it
-# (bun-compiled or stale bindings fail with ERR_DLOPEN_FAILED). Probe with an
-# actual Database construction (a bare require does not dlopen the binding)
-# and rebuild against the current node if it does not load.
+# Probe the native binding with an actual Database construction (a bare require
+# does not dlopen it). better-sqlite3 v13 is N-API, so this no longer guards an
+# ABI mismatch between the installing runtime and `node` - that class of failure
+# is gone. What it still catches is a platform with no prebuilt binary in the
+# package, where a source build is the answer.
 if ! node -e "require('./node_modules/better-sqlite3')(':memory:').close()" 2>/dev/null; then
-  echo "==> better-sqlite3 binding does not load under $(node --version) - rebuilding"
-  npm rebuild better-sqlite3
+  echo "==> better-sqlite3 has no usable prebuild under $(node --version) - building from source"
+  npm rebuild better-sqlite3 --build-from-source
   node -e "require('./node_modules/better-sqlite3')(':memory:').close()"
 fi
 
-for pkg in better-sqlite3 bindings file-uri-to-path; do
-  rm -rf "${PAYLOAD_DIR:?}/node_modules/$pkg"
-  cp -R "node_modules/$pkg" "$PAYLOAD_DIR/node_modules/$pkg"
-done
+rm -rf "${PAYLOAD_DIR:?}/node_modules/better-sqlite3"
+cp -R "node_modules/better-sqlite3" "$PAYLOAD_DIR/node_modules/better-sqlite3"
 
 if [ ! -d node_modules/@libredb/libredb ]; then
   echo "node_modules/@libredb/libredb not found - run 'bun install --frozen-lockfile' first" >&2

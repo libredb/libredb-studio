@@ -51,15 +51,12 @@ describe("resolveSqlGrammar", () => {
   // dialect's rule from a neighbouring one is exactly what this milestone forbids.
   // They keep today's reading, which costs them nothing they had.
 
-  test.each<DatabaseType>([
-    "couchbase",
-    "druid",
-    "libredb",
-    "mongodb",
-    "redis",
-  ])("%s is left at the compatibility default", (type) => {
-    expect(resolveSqlGrammar(type)).toBe(DEFAULT_SQL_GRAMMAR);
-  });
+  test.each<DatabaseType>(["couchbase", "druid", "libredb", "mongodb", "redis"])(
+    "%s is left at the compatibility default",
+    (type) => {
+      expect(resolveSqlGrammar(type)).toBe(DEFAULT_SQL_GRAMMAR);
+    },
+  );
 
   test("a call that names no dialect gets the compatibility default", () => {
     expect(resolveSqlGrammar(undefined)).toBe(DEFAULT_SQL_GRAMMAR);
@@ -72,14 +69,12 @@ describe("resolveSqlGrammar", () => {
    * lookup is reached with text nothing in this repo validated; a bare index would
    * answer `Object.prototype.constructor` for one of these - not a grammar.
    */
-  test.each([
-    "constructor",
-    "toString",
-    "hasOwnProperty",
-    "not-a-database",
-  ])("resolves %p to the compatibility default rather than a prototype value", (key) => {
-    expect(resolveSqlGrammar(key as DatabaseType)).toBe(DEFAULT_SQL_GRAMMAR);
-  });
+  test.each(["constructor", "toString", "hasOwnProperty", "not-a-database"])(
+    "resolves %p to the compatibility default rather than a prototype value",
+    (key) => {
+      expect(resolveSqlGrammar(key as DatabaseType)).toBe(DEFAULT_SQL_GRAMMAR);
+    },
+  );
 
   test("the compatibility default is today's reading, not one of the honest two", () => {
     expect(DEFAULT_SQL_GRAMMAR.hash).toBe("comment-unless-operator");
@@ -98,15 +93,12 @@ describe("resolveSqlGrammar", () => {
     expect(resolveSqlGrammar("oracle").alternateQuoting).toBe(true);
   });
 
-  test.each<DatabaseType>([
-    "mysql",
-    "clickhouse",
-    "postgres",
-    "mssql",
-    "sqlite",
-  ])("%s does not read `q'…'` as a literal", (type) => {
-    expect(resolveSqlGrammar(type).alternateQuoting).toBe(false);
-  });
+  test.each<DatabaseType>(["mysql", "clickhouse", "postgres", "mssql", "sqlite"])(
+    "%s does not read `q'…'` as a literal",
+    (type) => {
+      expect(resolveSqlGrammar(type).alternateQuoting).toBe(false);
+    },
+  );
 
   test("a call that names no dialect does not read the form either", () => {
     // The compatibility default: before the channel existed no reader here had a

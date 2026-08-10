@@ -221,16 +221,16 @@ function storageRow(overrides: Partial<DruidRow> = {}): DruidRow {
 // ============================================================================
 
 describe("the datasource filter", () => {
-  test.each<[Surface]>([
-    ["tableList"],
-    ["columnList"],
-  ])("restricts the %s read to the druid schema", async (surface) => {
-    const { runner, calls } = createRunner();
+  test.each<[Surface]>([["tableList"], ["columnList"]])(
+    "restricts the %s read to the druid schema",
+    async (surface) => {
+      const { runner, calls } = createRunner();
 
-    await getSchema(runner);
+      await getSchema(runner);
 
-    expect(sqlFor(calls, surface)).toContain(`TABLE_SCHEMA = '${DRUID_SCHEMA_NAME}'`);
-  });
+      expect(sqlFor(calls, surface)).toContain(`TABLE_SCHEMA = '${DRUID_SCHEMA_NAME}'`);
+    },
+  );
 
   // Live-verified: INFORMATION_SCHEMA.TABLES also lists the four
   // INFORMATION_SCHEMA views and the six sys tables, all as SYSTEM_TABLE, and a

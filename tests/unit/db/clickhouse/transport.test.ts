@@ -139,12 +139,12 @@ describe("ClickHouseTransportError.is", () => {
 describe("ClickHouseTransportError.isMonitoringUnavailable", () => {
   // Spec 1.6 / 3.7: a restricted user is the normal case, and query_log is
   // absent on plenty of deployments. Both must degrade to an empty panel.
-  test.each<[ClickHouseErrorName]>([
-    ["ACCESS_DENIED"],
-    ["UNKNOWN_TABLE"],
-  ])("treats %s as an unavailable monitoring surface", (name) => {
-    expect(errorWithCode(CLICKHOUSE_ERROR_CODES[name]).isMonitoringUnavailable()).toBe(true);
-  });
+  test.each<[ClickHouseErrorName]>([["ACCESS_DENIED"], ["UNKNOWN_TABLE"]])(
+    "treats %s as an unavailable monitoring surface",
+    (name) => {
+      expect(errorWithCode(CLICKHOUSE_ERROR_CODES[name]).isMonitoringUnavailable()).toBe(true);
+    },
+  );
 
   // These are the user's own mistakes. Swallowing them would hide a real failure
   // behind an empty panel, which is the opposite of the honesty rule.

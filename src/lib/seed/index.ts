@@ -12,7 +12,7 @@ import {
 } from "./sqlite-sample";
 import type { ManagedConnection } from "./types";
 
-export type { ManagedConnection, SeedConfig, SeedConnection, SeedDefaults } from "./types";
+export type { ManagedConnection } from "./types";
 export { resetCache } from "./config-loader";
 
 async function loadAndResolve(): Promise<ManagedConnection[]> {

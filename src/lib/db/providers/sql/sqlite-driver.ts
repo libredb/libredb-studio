@@ -178,7 +178,7 @@ export async function loadSQLiteDriver(): Promise<SQLiteConstructor> {
       `SQLite driver "${name}" is not available in this environment: ` +
         `${error instanceof Error ? error.message : String(error)}. ` +
         'The "bun" driver requires the Bun runtime (bun:sqlite); ' +
-        'the "node" driver requires Node.js with the built-in node:sqlite module (Node 22.13+; Node 24 LTS recommended).',
+        'the "node" driver requires Node.js with the built-in node:sqlite module (present from Node 22.13; the supported floor is Node 24 LTS).',
       "sqlite",
     );
     driverLoadErrors.set(name, loadError);

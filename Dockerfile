@@ -13,8 +13,11 @@ COPY package.json bun.lock ./
 RUN bun install --frozen-lockfile
 
 # Build with Node.js to avoid Bun/QEMU segfaults on ARM64
-# trixie-slim: must match the oven/bun deps stage glibc (Debian 13 / glibc 2.41),
-# otherwise native modules (better-sqlite3) compiled in deps fail to load here.
+# trixie-slim: must stay on the same libc FAMILY as the oven/bun deps stage
+# (both Debian/glibc). better-sqlite3 v13 resolves prebuilds/linux-x64.node vs
+# prebuilds/linuxmusl-x64.node at require time, so a glibc-installed
+# node_modules copied onto an Alpine/musl runner would pick a binary it cannot
+# load. The ABI no longer matters (N-API), only the libc.
 FROM node:24.16.0-trixie-slim AS builder
 WORKDIR /usr/src/app
 COPY --from=deps /usr/src/app/node_modules ./node_modules
@@ -56,10 +59,12 @@ RUN mkdir -p .next data
 COPY --from=builder /usr/src/app/.next/standalone ./
 COPY --from=builder /usr/src/app/.next/static ./.next/static
 
-# Copy better-sqlite3 native binding for server storage support
+# Copy better-sqlite3 native binding for server storage support. Since v13 the
+# package is N-API and self-contained: lib/binding.js resolves
+# ../prebuilds/<platform>-<arch>.node relative to itself, so the former
+# bindings + file-uri-to-path runtime dependencies are gone (they are no longer
+# in the lockfile at all). Keep in sync with scripts/build-standalone-payload.sh.
 COPY --from=builder /usr/src/app/node_modules/better-sqlite3 ./node_modules/better-sqlite3
-COPY --from=builder /usr/src/app/node_modules/bindings ./node_modules/bindings
-COPY --from=builder /usr/src/app/node_modules/file-uri-to-path ./node_modules/file-uri-to-path
 # prebuild-install is only needed at build time, not runtime
 
 # Copy the embedded LibreDB database package. The libredb provider lazy-imports

@@ -76,8 +76,17 @@ if (typeof globalThis.document === "undefined") {
     "CSSStyleDeclaration",
   ];
 
+  // Event constructors must come from the SAME realm as the EventTarget that
+  // will receive them. Bun ships its own global Event/CustomEvent, so the
+  // "only if missing" rule below silently keeps Bun's - and happy-dom >= 20.11
+  // validates `dispatchEvent`'s argument against its own Event class, which a
+  // Bun-constructed CustomEvent fails with "parameter 1 is not of type
+  // 'Event'". Earlier happy-dom skipped that check, so the realm mismatch was
+  // latent rather than absent. These few always override.
+  const realmBoundGlobals = new Set(["Event", "CustomEvent", "MouseEvent", "KeyboardEvent"]);
+
   for (const key of domGlobals) {
-    if (key in window && !(key in globalThis)) {
+    if (key in window && (realmBoundGlobals.has(key) || !(key in globalThis))) {
       try {
         Object.defineProperty(globalThis, key, {
           value: (window as unknown as Record<string, unknown>)[key],

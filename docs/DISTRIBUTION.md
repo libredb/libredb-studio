@@ -311,16 +311,27 @@ bundle-directory PR is the whole listing.
 
 ## npx
 
-Requires Node.js 20.9+ on Linux, macOS (x64 / arm64), or Windows (x64); **Node 24 LTS is the
-recommended, fully supported runtime**. The launcher checks the runtime up front and spells out what an
-older Node cannot do (`scripts/engine-smoke.sh` tests every tier in CI):
+Requires Node.js 24+ on Linux, macOS (x64 / arm64), or Windows (x64); **Node 24 LTS is the
+reference runtime** - it is what the release payload is built on. The launcher checks the runtime up
+front and spells out what another Node cannot do (`scripts/engine-smoke.sh` tests every supported
+tier in CI):
 
 | Node | Support |
 |---|---|
-| 24+ (recommended) | Everything works |
-| 22.13 - 23.x | Works; server-side SQLite storage (`STORAGE_PROVIDER=sqlite`) needs Node 24 (the bundled better-sqlite3 binding targets the Node 24 ABI) and fails with a clear error. `node:sqlite` may print a one-time ExperimentalWarning. |
-| 20.9 - 22.12 | Works, minus all SQLite features: SQLite database connections need the built-in `node:sqlite` (unflagged from Node 22.13). |
-| < 20.9 | Refused with a clear error (Next.js 16 floor) - bare `npx` may also fall back to an ancient, bin-less package version here; those versions are npm-deprecated with pointers. |
+| 24 LTS (recommended) | Everything works |
+| 25, 26+ | Everything works. The payload is built on Node 24, but its only native module (better-sqlite3) has shipped N-API prebuilds since v13, so one binary is valid across Node majors - `STORAGE_PROVIDER=sqlite` included. The `node26` leg of `scripts/engine-smoke.sh` asserts exactly this by running a Node-24-built payload on Node 26. |
+| < 24 | Below the `engines.node` floor. See the note below - these users are not refused, they are pinned. |
+
+> **Below the floor, npm pins rather than refuses.** `engines.node` does not produce an error for a
+> bare spec: npm's version picker silently resolves the newest *engine-compatible* release instead,
+> so a Node 20/22 user running `npx @libredb/studio` lands on the last release that still allowed
+> their runtime - with no notice that a newer Studio exists. That pin is only acceptable while it
+> lands on a runnable release, which the `pinned` legs of `npx-engine-smoke.yml` assert against the
+> live registry (issue #130 was this mechanism dropping users onto an ancient, bin-less version).
+> To make the pin visible, the release runbook `npm deprecate`s the last pre-floor version with a
+> pointer to the Node 24 requirement - a deprecation notice is the one message npm *does* print on
+> install. A user who pins the new version explicitly (`npx @libredb/studio@<version>`) gets the
+> launcher's own preflight refusal naming the required runtime.
 
 The npm package stays a pure library for
 libredb-platform; the launcher downloads the matching standalone archive (tar.gz; the flat zip
@@ -669,7 +680,7 @@ cd libredb-studio
 ```
 
 The zip is flat by design (see [Release artifact naming](#release-artifact-naming)). `npx
-@libredb/studio` also works on Windows (Node 20.9+): it downloads this zip, verifies it against
+@libredb/studio` also works on Windows (Node 24+): it downloads this zip, verifies it against
 `SHA256SUMS`, and runs the payload with your own Node runtime.
 
 ## Desktop app (AppImage, Debian package, FlatPark)
@@ -975,9 +986,11 @@ All channels have now had their first live run (the Snap publish completed its f
 2. `npx @libredb/studio@<version>` on a clean machine: download + checksum + first-run banner +
    login. The `npx Engine Smoke` workflow (`npx-engine-smoke.yml`) runs automatically after a
    successful NPM Publish: it waits for the registry to serve the released version, then runs
-   **bare** `npx @libredb/studio` on Node 20.9/22/24 and asserts each tier resolves exactly that
-   release (the #130 regression class - npm's picker avoids engine-incompatible versions for
-   bare specs). Check that it went green; dispatch it manually to re-run.
+   **bare** `npx @libredb/studio` on Node 24/26 and asserts each resolves exactly that release,
+   and on Node 20.9/22 asserts the engines floor pins them to an older but still *runnable*
+   release (the #130 regression class - npm's picker avoids engine-incompatible versions for bare
+   specs and never says so). Check that it went green; dispatch it manually to re-run. Then run
+   the `npm deprecate` step below so the pin stops being silent.
 3. `brew tap libredb/tap && brew install libredb-studio && brew services start libredb-studio`.
 4. Download the `.deb` on Debian/Ubuntu: `dpkg -i`, `systemctl start libredb-studio`, health 200
    on `127.0.0.1:3000`; verify the arm64 package on an arm64 machine (the CI smoke covers amd64
@@ -988,6 +1001,18 @@ All channels have now had their first live run (the Snap publish completed its f
    `gh attestation verify oci://ghcr.io/libredb/libredb-studio:<version> --repo libredb/libredb-studio`,
    plus `npm audit signatures` after installing the package (see
    [Verifying a release artifact](#verifying-a-release-artifact)).
+6. **Only when a release raises `engines.node`**: deprecate the last version below the new floor,
+   so the users npm silently pins there are told why. `npm deprecate` is the only npm mechanism
+   that prints a message on install, and it targets exactly the pinned population - callers who
+   resolve a supported version never see it.
+
+   ```bash
+   npm deprecate '@libredb/studio@<=0.10.0' \
+     'LibreDB Studio 0.11.0+ requires Node.js 24 LTS; npm pinned you to this release because your Node is older. Upgrade Node, or run: docker run -p 3000:3000 ghcr.io/libredb/libredb-studio:latest'
+   ```
+
+   Deprecating a version does not unpublish or hide it: it keeps installing and running exactly as
+   before. Undo with `npm deprecate '@libredb/studio@<=0.10.0' ''`.
 
 ### Artifact provenance roadmap
 

@@ -583,10 +583,15 @@ server would read as a null comparison. Refusing beats sending a value the serve
 ```
 
 So the literal has to reach the body unquoted. `JSON.rawJSON` would do it, but it is the ES2025 JSON
-source-text proposal — V8 12.4 / Node 22.2 — while `package.json` declares
-`engines.node: ">=20.9.0"`, so depending on it would throw a bare `TypeError` on a runtime the
-package claims to support. Instead the **parameters array is serialized by hand** and spliced into the
+source-text proposal — V8 12.4 / Node 22.2 — and when this was written `package.json` declared
+`engines.node: ">=20.9.0"`, so depending on it would have thrown a bare `TypeError` on a runtime the
+package claimed to support. Instead the **parameters array is serialized by hand** and spliced into the
 envelope at its closing brace, whose position is known because `JSON.stringify` just produced it.
+
+> The floor has since moved to `">=24.0.0"` (issue #326), so `JSON.rawJSON` is now available on every
+> supported runtime. The hand-serializer is kept rather than rewritten: it is covered, it is not the
+> bottleneck, and swapping a correctness-critical escaping path deserves its own change with its own
+> tests. Tracked in `docs/BACKLOG.md`.
 Everything that is not a `bigint` still goes through `JSON.stringify`, so user strings are escaped by
 the runtime rather than by us.
 

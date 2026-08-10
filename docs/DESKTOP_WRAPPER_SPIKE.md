@@ -129,11 +129,11 @@ resources — no second build pipeline for the server.
 
 Per-OS native-module notes:
 
-- **better-sqlite3** is the only native module in the payload (plus its runtime deps `bindings`
-  and `file-uri-to-path`); the build script verifies the binding loads under the packaging Node
-  and rebuilds if the ABI mismatches. Prebuilds exist for linux/darwin/win32 on x64 and arm64
-  (uncertainty: confirm the win32-arm64 prebuild for the pinned Node ABI when Windows work
-  starts).
+- **better-sqlite3** is the only native module in the payload; the build script verifies the
+  binding loads under the packaging Node. Since v13 the package is N-API and self-contained - the
+  former `bindings` / `file-uri-to-path` runtime deps are gone, and one prebuilt binary per
+  platform is valid across Node majors, so the ABI-rebuild concern this note was written around no
+  longer applies. Prebuilds exist for linux (glibc and musl), darwin and win32 on x64 and arm64.
 - **Node runtime is bundled per platform**, pinned and checksum-verified against the official
   `SHASUMS256.txt` — the mechanism already implemented in `packaging/linux/fetch-node.sh`
   (Node 24.18.0); extend the same script pattern to darwin and win32 dist tarballs.

@@ -3,34 +3,42 @@
 # Engine-matrix smoke: boot the standalone payload through the npx launcher
 # (bin/studio.js --archive) on the CURRENT `node` and assert the runtime tier
 # behaves as documented. This is what makes the package.json engines floor
-# (>=20.9.0) a tested claim instead of a hope:
+# (>=24.0.0, issue #326) a tested claim instead of a hope:
 #
-#   tier legacy20 (Node 20.9 - 22.12): server + login + embedded sample work;
-#     launcher warns that all SQLite features are unavailable; a sqlite
-#     connection fails with the node:sqlite guidance error.
-#   tier node22 (Node 22.13 - 23.x): sqlite connections work (node:sqlite);
-#     launcher warns about server-side SQLite storage; STORAGE_PROVIDER=sqlite
-#     fails with the better-sqlite3 Node-24-ABI guard message.
-#   tier node24 (Node >= 24): no launcher warning; everything works,
-#     including STORAGE_PROVIDER=sqlite.
+#   tier node24 (Node 24 LTS, the reference runtime the payload is built on)
+#   tier node26 (the current upper release)
 #
-# Usage: scripts/engine-smoke.sh <payload-tarball> <legacy20|node22|node24>
+# Both tiers assert the SAME outcome - no launcher warning, everything works,
+# including STORAGE_PROVIDER=sqlite. That is the point of the node26 leg: the
+# payload is built on Node 24, so a green node26 run proves the payload's one
+# native module (better-sqlite3, N-API since v13) is genuinely ABI-independent.
+# Under v12's per-ABI binding this leg could not have passed.
+#
+# Runtimes below the floor are not a tier here: `npx` never reaches this script
+# on them. npm's version picker silently resolves the newest ENGINE-COMPATIBLE
+# release instead, so a Node 22 user lands on the last <24 release rather than
+# on a preflight error. npx-engine-smoke.yml asserts that pinning behaviour
+# against the live registry; the launcher's own refusal path is unit-tested in
+# tests/unit/launcher-utils.test.ts.
+#
+# Usage: scripts/engine-smoke.sh <payload-tarball> <node24|node26>
 #   PORT (default 3105) and PORT+1 must be free.
 #
 # Used by the engine-smoke job in .github/workflows/ci.yml; runs locally too
-# (e.g. inside `docker run node:20.9` with the repo and tarball mounted).
+# (e.g. inside `docker run node:26-trixie-slim` with the repo and tarball
+# mounted).
 # ==============================================================================
 set -euo pipefail
 
 if [ $# -ne 2 ]; then
-  echo "Usage: $0 <payload-tarball> <legacy20|node22|node24>" >&2
+  echo "Usage: $0 <payload-tarball> <node24|node26>" >&2
   exit 1
 fi
 
 TARBALL=$(cd "$(dirname "$1")" && pwd)/$(basename "$1")
 TIER=$2
-case "$TIER" in legacy20 | node22 | node24) ;; *)
-  echo "Unknown tier '$TIER' (expected legacy20|node22|node24)" >&2
+case "$TIER" in node24 | node26) ;; *)
+  echo "Unknown tier '$TIER' (expected node24|node26)" >&2
   exit 1
   ;;
 esac
@@ -125,23 +133,8 @@ SQLITE_BODY=$(curl -s -b "$WORK/cookies.txt" -X POST "$BASE/api/db/query" -H "Co
   -d "{\"connection\":{\"id\":\"engine-smoke\",\"type\":\"sqlite\",\"name\":\"engine-smoke\",\"database\":\"$WORK/smoke.db\"},\"sql\":\"SELECT 41+1 AS a\"}")
 LAUNCHER_LOG=$(cat "$LOG")
 
-case "$TIER" in
-  legacy20)
-    check "launcher warns that SQLite features are unavailable" "$LAUNCHER_LOG" "SQLite features are unavailable"
-    check "sqlite connection fails with node:sqlite guidance" "$SQLITE_BODY" "node:sqlite"
-    check_absent "sqlite query returns no rows" "$SQLITE_BODY" '"a":42'
-    ;;
-  node22)
-    check "launcher warns about server-side SQLite storage only" "$LAUNCHER_LOG" "server-side SQLite storage"
-    check_absent "launcher does not claim SQLite features are unavailable" "$LAUNCHER_LOG" "SQLite features are unavailable"
-    check "sqlite connection works via node:sqlite" "$SQLITE_BODY" '"a":42'
-    ;;
-  node24)
-    check_absent "launcher prints no runtime warning" "$LAUNCHER_LOG" "SQLite features are unavailable"
-    check_absent "launcher prints no storage warning" "$LAUNCHER_LOG" "server-side SQLite storage"
-    check "sqlite connection works" "$SQLITE_BODY" '"a":42'
-    ;;
-esac
+check_absent "launcher prints no runtime warning" "$LAUNCHER_LOG" "STORAGE_PROVIDER=sqlite"
+check "sqlite connection works via node:sqlite" "$SQLITE_BODY" '"a":42'
 
 kill "$SERVER_PID" 2>/dev/null || true
 wait "$SERVER_PID" 2>/dev/null || true
@@ -149,8 +142,9 @@ SERVER_PID=""
 
 # ------------------------------------------------------------------------------
 # Server 2: STORAGE_PROVIDER=sqlite exercises the bundled better-sqlite3
-# binding (Node 24 ABI) - the guard must translate the ABI mismatch on older
-# runtimes into the actionable message from src/lib/storage/providers/sqlite.ts.
+# binding. On the node26 tier this is the assertion that carries the weight -
+# the binding shipped inside a payload built on Node 24 has to load and serve
+# writes on a different Node major.
 # ------------------------------------------------------------------------------
 LOG2="$WORK/studio-storage.log"
 start_server "$LOG2" "$STORAGE_PORT" env "STORAGE_PROVIDER=sqlite" "STORAGE_SQLITE_PATH=$WORK/storage.db"
@@ -167,12 +161,7 @@ login "$STORAGE_BASE" "$PASSWORD2" "$WORK/cookies2.txt" >/dev/null
 STORAGE_BODY=$(curl -s -b "$WORK/cookies2.txt" -X PUT "$STORAGE_BASE/api/storage/connections" \
   -H "Content-Type: application/json" -d '{"data":[]}')
 
-if [ "$TIER" = "node24" ]; then
-  check "server-side SQLite storage works" "$STORAGE_BODY" '"ok":true'
-else
-  check "storage guard explains the Node 24 ABI requirement" "$STORAGE_BODY" "requires Node.js 24+"
-  check "storage guard suggests alternatives" "$STORAGE_BODY" "STORAGE_PROVIDER=postgres"
-fi
+check "server-side SQLite storage works" "$STORAGE_BODY" '"ok":true'
 
 if [ "$FAILURES" -gt 0 ]; then
   echo "==> engine-smoke FAILED (${FAILURES} assertion(s)) for tier ${TIER}" >&2

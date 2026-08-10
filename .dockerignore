@@ -15,6 +15,29 @@ dist
 .swc
 *.tsbuildinfo
 
+# Sibling-product trees and their build artifacts. None of these are inputs to
+# `next build`, and without them a local `docker build` copies whatever the
+# developer happens to have built - a Rust target/ dir alone put 2.3 GB of
+# desktop-shell objects inside the production image, so the image being smoke
+# tested locally was not the image CI publishes (CI checkouts are clean).
+desktop
+dist-desktop
+dist-rel
+operator
+packaging
+charts
+.attw
+
+# Test and automation trees
+e2e
+tests
+playwright-report
+test-results
+data-e2e-offline
+.loop
+loop
+.claude
+
 # Environment files
 .env
 .env*.local

@@ -1,8 +1,16 @@
 # Post-release validation of the bare-npx experience against the LIVE npm
 # registry (issue #130 regression class): npm's version picker avoids
 # engine-incompatible versions for bare specs, so `npx @libredb/studio` must
-# resolve a runnable release on every supported Node tier - not fall back to
-# an ancient bin-less version.
+# resolve a runnable release on every Node tier - not fall back to an ancient
+# bin-less version.
+#
+# Since the floor moved to Node 24 (#326) this workflow covers two outcomes,
+# not one. On 24/26 bare npx must resolve the release just published; on
+# 20.9/22 the picker silently pins users to the last <24 release, and the
+# assertion is that the pin lands on something that still BOOTS. Note the
+# pinning is silent by design - `npm` prints no notice when the floor excludes
+# a newer version, which is why the release runbook deprecates the pinned
+# version with a pointer instead.
 #
 # Runs automatically after a successful "NPM Publish" (the expected version is
 # the release tag - workflow_run.head_branch - which the release guards pin to
@@ -27,13 +35,28 @@ permissions:
 
 jobs:
   npx-smoke:
-    name: bare npx on Node ${{ matrix.node-version }}
+    name: bare npx on Node ${{ matrix.node-version }} (${{ matrix.expect }})
     if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        node-version: ["20.9", "22", "24"]
+        include:
+          # Supported runtimes: bare npx must resolve the release just published.
+          - node-version: "24"
+            expect: exact
+          - node-version: "26"
+            expect: exact
+          # Below the engines floor (>=24.0.0). npm's picker does not error
+          # here - it silently resolves the newest ENGINE-COMPATIBLE release,
+          # so these users are pinned to the last <24 version. That pin is only
+          # acceptable while it lands on a RUNNABLE release; issue #130 was
+          # exactly this mechanism dropping users onto an ancient bin-less one.
+          # This leg keeps that guarantee under test.
+          - node-version: "22"
+            expect: pinned
+          - node-version: "20.9"
+            expect: pinned
     steps:
       - name: Setup Node ${{ matrix.node-version }}
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
@@ -92,6 +115,7 @@ jobs:
       - name: Run bare npx and assert resolution
         env:
           EXPECTED_VERSION: ${{ steps.expected.outputs.version }}
+          EXPECT_MODE: ${{ matrix.expect }}
         run: |
           set -euo pipefail
           WORK=$(mktemp -d)
@@ -111,9 +135,38 @@ jobs:
           grep -F "Checksum verified" npx.log
           RESOLVED=$(sed -n 's/^Starting LibreDB Studio \([0-9][0-9.]*\) .*/\1/p' npx.log | head -1)
           echo "resolved version: ${RESOLVED:-unknown}"
-          if [ -n "$EXPECTED_VERSION" ] && [ "$RESOLVED" != "$EXPECTED_VERSION" ]; then
-            echo "FAIL: bare npx resolved '$RESOLVED', expected '$EXPECTED_VERSION'; log:" >&2
+          if [ -z "$RESOLVED" ]; then
+            echo "FAIL: could not read the resolved version from the launcher banner; log:" >&2
             cat npx.log >&2
             exit 1
           fi
+          if [ -z "$EXPECTED_VERSION" ]; then
+            echo "==> OK (runnable-server assertion only)"
+            exit 0
+          fi
+          case "$EXPECT_MODE" in
+            exact)
+              if [ "$RESOLVED" != "$EXPECTED_VERSION" ]; then
+                echo "FAIL: bare npx resolved '$RESOLVED', expected '$EXPECTED_VERSION'; log:" >&2
+                cat npx.log >&2
+                exit 1
+              fi
+              ;;
+            pinned)
+              # Serving health above already proved this release is runnable.
+              # What is left to prove is that the engines floor actually held:
+              # resolving the NEW version here would mean npm ignored it and
+              # the floor is decorative.
+              if [ "$RESOLVED" = "$EXPECTED_VERSION" ]; then
+                echo "FAIL: bare npx resolved '$RESOLVED' on a runtime below the engines floor - the floor is not being honoured; log:" >&2
+                cat npx.log >&2
+                exit 1
+              fi
+              echo "pinned to '$RESOLVED' as expected (floor excludes '$EXPECTED_VERSION')"
+              ;;
+            *)
+              echo "FAIL: unknown expect mode '$EXPECT_MODE'" >&2
+              exit 1
+              ;;
+          esac
           echo "==> OK"

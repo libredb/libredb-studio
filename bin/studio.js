@@ -317,11 +317,11 @@ async function main() {
     return;
   }
 
-  // Refuse runtimes the payload cannot run on and surface degraded tiers
-  // up front, before any download happens (see assessNodeRuntime).
+  // Refuse runtimes the payload cannot run on, up front, before any download
+  // happens (see assessNodeRuntime). There are no degraded tiers above the
+  // floor - the payload's one native module is ABI-independent.
   const runtime = assessNodeRuntime(process.versions.node);
   if (runtime.action === "fail") fail(runtime.message);
-  if (runtime.action === "warn") console.warn(runtime.message);
 
   const cacheDir = resolveCacheDir(pkg.version, os.homedir());
   const archive = args.archive || process.env.LIBREDB_STUDIO_ARCHIVE || null;

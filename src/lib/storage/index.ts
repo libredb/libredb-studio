@@ -4,11 +4,5 @@
  */
 
 export { storage } from "./storage-facade";
-export type {
-  StorageData,
-  StorageCollection,
-  ServerStorageProvider,
-  StorageConfigResponse,
-  StorageChangeDetail,
-} from "./types";
+export type { StorageData, StorageConfigResponse, StorageChangeDetail } from "./types";
 export { STORAGE_COLLECTIONS } from "./types";

@@ -33,7 +33,7 @@
 # Docker（推荐）
 docker run -d -p 3000:3000 ghcr.io/libredb/libredb-studio:latest
 
-# 或者用 Node.js 20.9+（不装 Docker）
+# 或者用 Node.js 24+（不装 Docker）
 npx @libredb/studio
 ```
 
@@ -183,7 +183,7 @@ Studio 是 MIT，因为它必须能去任何地方。付费的是 libredb-platfo
 - 单元、API、集成、hooks、组件、E2E 六层测试
 - **行覆盖率 100%**，并且是 CI 的硬性门禁。覆盖率掉下来，合并就被拦住
 - SonarCloud 质量门禁
-- 每次发布跨 Node 20.9 / 22 / 24 做冒烟测试
+- 每次发布跨 Node 24 / 26 做冒烟测试
 
 ```bash
 bun run test           # 全部测试
