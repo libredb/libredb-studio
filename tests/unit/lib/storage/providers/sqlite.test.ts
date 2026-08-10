@@ -128,6 +128,21 @@ describe("SQLiteStorageProvider", () => {
     expect(args[1]).toBe("connections");
   });
 
+  test("persists exactly JSON.stringify of what it was given, adding and hiding nothing", async () => {
+    // The credential-at-rest threat test asserts on what the DECORATOR hands a provider. That is
+    // only a statement about the store if the provider is a faithful serializer, which is what
+    // this pins: a provider that re-shaped, re-encoded or supplemented the value would break the
+    // chain without any security test noticing.
+    const run = mock((..._args: unknown[]) => {});
+    mockPrepare.mockImplementation(() => ({ all: mock(() => []), get: mock(() => undefined), run }));
+    await provider.initialize();
+    const data = [{ id: "c1", name: "Prod", type: "postgres", password: "v1:aaa:bbb" }];
+
+    await provider.setCollection("u@example.org", "connections", data as never);
+
+    expect(run).toHaveBeenCalledWith("u@example.org", "connections", JSON.stringify(data));
+  });
+
   test("isHealthy returns true when db works", async () => {
     mockPrepare.mockReturnValue({
       all: mock(() => []),

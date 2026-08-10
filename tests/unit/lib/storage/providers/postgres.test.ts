@@ -177,6 +177,19 @@ describe("PostgresStorageProvider", () => {
     expect(sql).toContain("ON CONFLICT");
   });
 
+  test("persists exactly JSON.stringify of what it was given, adding and hiding nothing", async () => {
+    // Same reasoning as the SQLite twin: the threat test's claim about the store depends on the
+    // provider being a faithful serializer.
+    await provider.initialize();
+    mockQuery.mockClear();
+    const data = [{ id: "c1", name: "Prod", type: "postgres", password: "v1:aaa:bbb" }];
+
+    await provider.setCollection("u@example.org", "connections", data as never);
+
+    const [, params] = mockQuery.mock.calls[mockQuery.mock.calls.length - 1];
+    expect(params).toEqual(["u@example.org", "connections", JSON.stringify(data)]);
+  });
+
   test("isHealthy returns true on success", async () => {
     await provider.initialize();
     mockQuery.mockResolvedValueOnce({ rows: [{ ok: 1 }] });

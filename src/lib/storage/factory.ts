@@ -5,6 +5,7 @@
  */
 
 import type { ServerStorageProvider, StorageConfigResponse } from "./types";
+import { withCredentialEncryption } from "./encrypting-provider";
 
 let _provider: ServerStorageProvider | null = null;
 let _initialized = false;
@@ -51,15 +52,19 @@ export async function getStorageProvider(): Promise<ServerStorageProvider | null
 
   if (_provider && _initialized) return _provider;
 
+  // Credential encryption is installed HERE, at the one choke point every storage route goes
+  // through, rather than inside the providers. Three call sites obtain a provider, all under
+  // src/app/api/storage/, and all of them call this function - so there is no route-level way to
+  // reach an unencrypted store, and a provider added later inherits the control by construction.
   switch (providerType) {
     case "sqlite": {
       const { SQLiteStorageProvider } = await import("./providers/sqlite");
-      _provider = new SQLiteStorageProvider();
+      _provider = withCredentialEncryption(new SQLiteStorageProvider());
       break;
     }
     case "postgres": {
       const { PostgresStorageProvider } = await import("./providers/postgres");
-      _provider = new PostgresStorageProvider();
+      _provider = withCredentialEncryption(new PostgresStorageProvider());
       break;
     }
   }

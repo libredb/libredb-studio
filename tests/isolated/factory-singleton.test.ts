@@ -98,6 +98,22 @@ describe("factory: getStorageProvider", () => {
 
     await expect(getStorageProvider()).rejects.toThrow("DB init failed");
   });
+
+  test("the provider it hands out encrypts credentials before the backend ever sees them", async () => {
+    // Wiring, not crypto: if the factory ever returns the bare provider, every other test in the
+    // suite still passes and every credential silently goes to disk in the clear.
+    process.env.STORAGE_PROVIDER = "sqlite";
+    process.env.JWT_SECRET = "factory-singleton-test-jwt-secret-32ch";
+    const provider = await getStorageProvider();
+
+    await provider?.setCollection("u@example.org", "connections", [
+      { id: "c1", name: "Prod", type: "postgres", password: "FACTORY-CANARY", createdAt: new Date(0) },
+    ] as never);
+
+    const written = JSON.stringify(mockSQLiteInstance.setCollection.mock.calls);
+    expect(written).not.toContain("FACTORY-CANARY");
+    expect(written).toContain("v1:");
+  });
 });
 
 describe("factory: closeStorageProvider", () => {
