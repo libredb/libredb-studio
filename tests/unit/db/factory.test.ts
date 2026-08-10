@@ -752,6 +752,39 @@ describe("acquireExecutionProfileProvider", () => {
   const pgConn = (overrides: Partial<DatabaseConnection> = {}) =>
     makeConnection("postgres", { id: "pg-profile", ...overrides });
 
+  /**
+   * Deterministic clock for the two cross-cache eviction assertions below.
+   *
+   * Those tests need one cache entry to be older than `evictIdleProviders`'
+   * threshold while the other is younger. Sleeping for the gap makes that a race
+   * with CI scheduling jitter from BOTH sides: any delay between the second
+   * acquisition and the evict call ages the younger entry past the threshold too,
+   * and then both entries evict for a reason unrelated to the invariant under
+   * test. Both cache entries are stamped from `Date.now()` (the `set` calls in
+   * `getOrCreateProvider` and `acquireExecutionProfileProvider`) and compared
+   * against it in `evictIdleProviders`, so freezing it makes the age gap exact
+   * instead of probable — and keeps a security-relevant suite free of a flake
+   * class that would train maintainers to re-run it.
+   *
+   * This does NOT control the idle sweep: `startIdleSweep` runs on a real
+   * `setInterval` and is unaffected. Deliberately a local patch rather than
+   * bun:test's `setSystemTime`, which also moves `new Date()` — the narrower
+   * blast radius matches this file's other stub-and-restore helpers.
+   */
+  function installFakeClock(): { advance: (ms: number) => void; restore: () => void } {
+    const realNow = Date.now;
+    let current = realNow();
+    Date.now = () => current;
+    return {
+      advance: (ms: number) => {
+        current += ms;
+      },
+      restore: () => {
+        Date.now = realNow;
+      },
+    };
+  }
+
   test("acquires a dedicated provider without touching the shared writable cache", async () => {
     const shared = await getOrCreateProvider(pgConn());
     const statsBefore = getProviderCacheStats();
@@ -960,35 +993,45 @@ describe("acquireExecutionProfileProvider", () => {
   });
 
   test("evicting an idle shared provider keeps the tunnel of a live profile provider", async () => {
-    await getOrCreateProvider(pgConn());
-    // The profiled provider arrives later, so only the shared entry is idle
-    // beyond the threshold below (margins sized against CI scheduling jitter).
-    await new Promise((resolve) => setTimeout(resolve, 60));
-    await acquireExecutionProfileProvider(pgConn(), "agent-read-only");
-    mockCloseSSHTunnel.mockClear();
+    const clock = installFakeClock();
+    try {
+      await getOrCreateProvider(pgConn());
+      // The profiled provider arrives later, so only the shared entry is idle
+      // beyond the threshold below. The gap is injected, never slept for.
+      clock.advance(60);
+      await acquireExecutionProfileProvider(pgConn(), "agent-read-only");
+      mockCloseSSHTunnel.mockClear();
 
-    const evicted = await evictIdleProviders(30);
+      const evicted = await evictIdleProviders(30);
 
-    expect(evicted).toBe(1);
-    expect(getProviderCacheStats().size).toBe(0);
-    expect(getExecutionProfileCacheStats().size).toBe(1);
-    expect(mockCloseSSHTunnel).not.toHaveBeenCalled();
+      expect(evicted).toBe(1);
+      expect(getProviderCacheStats().size).toBe(0);
+      expect(getExecutionProfileCacheStats().size).toBe(1);
+      expect(mockCloseSSHTunnel).not.toHaveBeenCalled();
+    } finally {
+      clock.restore();
+    }
   });
 
   test("evicting an idle profile provider keeps the tunnel of a still-served connection", async () => {
-    await acquireExecutionProfileProvider(pgConn(), "agent-read-only");
-    // The writable provider arrives later, so only the profiled entry is idle
-    // beyond the threshold below (margins sized against CI scheduling jitter).
-    await new Promise((resolve) => setTimeout(resolve, 60));
-    await getOrCreateProvider(pgConn());
-    mockCloseSSHTunnel.mockClear();
+    const clock = installFakeClock();
+    try {
+      await acquireExecutionProfileProvider(pgConn(), "agent-read-only");
+      // The writable provider arrives later, so only the profiled entry is idle
+      // beyond the threshold below. The gap is injected, never slept for.
+      clock.advance(60);
+      await getOrCreateProvider(pgConn());
+      mockCloseSSHTunnel.mockClear();
 
-    const evicted = await evictIdleProviders(30);
+      const evicted = await evictIdleProviders(30);
 
-    expect(evicted).toBe(1);
-    expect(getExecutionProfileCacheStats().size).toBe(0);
-    expect(getProviderCacheStats().size).toBe(1);
-    expect(mockCloseSSHTunnel).not.toHaveBeenCalled();
+      expect(evicted).toBe(1);
+      expect(getExecutionProfileCacheStats().size).toBe(0);
+      expect(getProviderCacheStats().size).toBe(1);
+      expect(mockCloseSSHTunnel).not.toHaveBeenCalled();
+    } finally {
+      clock.restore();
+    }
   });
 
   test("eviction logs and continues when a profile provider disconnect fails", async () => {
