@@ -559,12 +559,26 @@ very profile). So `inspect_schema` composes
 ([composed-sql.ts](../../src/lib/agent/composed-sql.ts)), whose projection is therefore each object's
 own DDL text — a column list is there to be read out of a `CREATE TABLE` statement, rather than
 arriving as rows. PostgreSQL gets a structured column inventory from `information_schema` instead.
-(Which side actually parses that DDL is not settled here; no consumer exists at this commit.)
+The DDL is parsed by [`sqlite-ddl.ts`](../../src/lib/agent/sqlite-ddl.ts) (#329 T8), which reads four
+things out of it and steps over the rest: the columns, which are `NOT NULL`, which form the primary
+key, and where each `REFERENCES` points. Text it cannot read as a `CREATE TABLE` with a column list —
+a view, most obviously — yields an EMPTY definition rather than a partial one, and the table is
+rendered as having no derivable columns. (A `CREATE TABLE … AS SELECT` is *not* such a case: SQLite
+stores a materialised column list for it, verified against a live engine in the parser's suite.)
 The asymmetry is a real consequence of the guard's allowlist, not an oversight,
 and it is not worked around: a tool that reached `pragma_table_info` outside the operations layer
 would be exactly the bypass this milestone forbids. The internal `sqlite_%` objects are filtered with
 `NOT LIKE 'sqlite@_%' ESCAPE '@'` — the escape character is `@` rather than a backslash because the
 dialect-less span reader cannot settle `'\'`.
+
+**Two catalog reads, not three.** `inspect_schema` takes a `kind` (#329 T8), and on this engine
+`relations` composes the SAME statement as `columns`: a table's foreign keys are declared inside its
+own `CREATE TABLE` text, so the object read already carries them and
+`pragma_foreign_key_list` is refused for the reason above. `indexes` is the one extra statement —
+`SELECT name, tbl_name, sql FROM sqlite_master WHERE type = 'index' AND sql IS NOT NULL …`. The
+`sql IS NOT NULL` clause is what excludes the indexes SQLite creates for a `UNIQUE` or `PRIMARY KEY`
+constraint: they store no DDL at all, so an inventory that kept them would list an index nothing can
+describe. Their columns are not lost — the constraint that created them is in the table's own DDL.
 
 A `schema` selector is accepted only as `main`, and any other name is refused rather than silently
 ignored — the composer raises `SELECTOR_UNSUPPORTED_BY_DIALECT`, which the tool reports to the model as

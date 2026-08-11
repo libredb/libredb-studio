@@ -162,6 +162,21 @@ export type AgentRunEvent =
       readonly kind: "context-captured";
       readonly fingerprint: string;
       readonly tableCount: number;
+      /**
+       * The inventory itself, so a resumed run can reason over the schema its
+       * earlier claims were made about WITHOUT reading a catalog again (#329 T8).
+       *
+       * Optional, and that is a reading rather than a hedge: an entry without one
+       * records only that a capture happened, which is what a hand-written fixture
+       * and any ledger written before this field carry, and a drive that finds none
+       * re-reads. `fingerprint` and `tableCount` stay as they are rather than
+       * becoming derived accessors — they are the entry's own summary, and a reader
+       * that disagrees with the inventory it sits next to is how the two lists T2
+       * warns about drift. The reuse path therefore RE-DERIVES both from `snapshot`
+       * and refuses the entry if either disagrees, so the duplication is a checked
+       * invariant instead of a second source of truth.
+       */
+      readonly snapshot?: AgentContextSnapshot;
     })
   | (AgentRunEventBase & {
       readonly kind: "statement-drafted";

@@ -70,7 +70,16 @@ const DATABASE_ERROR: AgentToolRefusal = {
  */
 const EVENTS: Record<AgentRunEvent["kind"], AgentRunEvent> = {
   "run-started": { kind: "run-started", atMs: 1, mode: "agent" },
-  "context-captured": { kind: "context-captured", atMs: 2, fingerprint: SNAPSHOT.fingerprint, tableCount: 1 },
+  // Carries the inventory itself: that is what lets a resumed run re-derive its
+  // schema context without reading a catalog again (#329 T8), and it only works
+  // because the snapshot is as inert as every other contract here.
+  "context-captured": {
+    kind: "context-captured",
+    atMs: 2,
+    fingerprint: SNAPSHOT.fingerprint,
+    tableCount: SNAPSHOT.tables.length,
+    snapshot: SNAPSHOT,
+  },
   "statement-drafted": {
     kind: "statement-drafted",
     atMs: 3,

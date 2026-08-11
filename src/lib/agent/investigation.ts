@@ -45,6 +45,7 @@
 
 import { createHash } from "node:crypto";
 import { type ModelMessage, type ToolSet, streamText, tool } from "ai";
+import { captureContextSnapshot, packContextForTask, reusableSnapshot } from "./context-snapshot";
 import { AGENT_MAX_MODEL_TURNS } from "./execution-policy";
 import { type AgentModel, mapAgentModelError } from "./model-adapter";
 import {
@@ -451,6 +452,11 @@ type CallResult =
  * @throws LLMError when the model could not be reached or refused the request. The
  *         run is left RUNNING in that case, on purpose: it is resumable, and the
  *         failure is the environment's rather than the run's.
+ * @throws DatabaseError (the environment classes `ConnectionError`,
+ *         `PoolExhaustedError`, `DatabaseConfigError`) when a tool call — including
+ *         the drive's own context capture, which happens before the model is asked
+ *         anything — cannot reach the database at all. Same reasoning: the run stays
+ *         running because the failure is not the run's own decision.
  */
 export async function runInvestigation(
   runId: string,
@@ -499,6 +505,51 @@ export async function runInvestigation(
   // dead process never recorded which of the two it was.
   const notAttempted = new Set<string>();
 
+  let contextEstablished = false;
+
+  /**
+   * Gives this drive the run's schema context, once, before the first turn.
+   *
+   * A run that has captured its inventory once never reads a catalog again: the
+   * inventory is in its ledger, so `reusableSnapshot` answers from the record this
+   * drive has already read and performs no database operation at all. That is what
+   * the fingerprint is for — it is checked against the inventory it summarises, so
+   * reuse is a verification rather than a hope — and it matters most on the path
+   * that pays for a re-read twice: a run resumed after a process death starts every
+   * cost ceiling again (`docs/BACKLOG.md` B6), so three catalog statements out of
+   * twenty would be spent per resume on rows the run already had.
+   *
+   * A run whose catalog cannot be read is told so and continues: the tools are
+   * still there, and a narrowed `inspect_schema` is exactly what an overflowing
+   * catalog needs.
+   */
+  const establishContext = async (): Promise<void> => {
+    contextEstablished = true;
+    // Planning is toolless and must perform zero database operations. Not merely
+    // skipped for cost: reaching the catalog here would break the mode's own bar.
+    if (record.mode !== "agent") return;
+
+    const recorded = reusableSnapshot(record.events, record.connectionId);
+    if (recorded !== null) {
+      messages.push({ role: "user", content: packContextForTask(recorded, record.objective) });
+      return;
+    }
+
+    const capture = await captureContextSnapshot(context);
+    if (capture.kind === "unavailable") {
+      messages.push({ role: "user", content: capture.modelText });
+      return;
+    }
+    const { snapshot } = capture;
+    await service.recordEvent(runId, {
+      kind: "context-captured",
+      fingerprint: snapshot.fingerprint,
+      tableCount: snapshot.tables.length,
+      snapshot,
+    });
+    messages.push({ role: "user", content: packContextForTask(snapshot, record.objective) });
+  };
+
   let turns = 0;
   let text = "";
 
@@ -512,6 +563,9 @@ export async function runInvestigation(
 
   /** One turn: the model's move and everything it asked for. `null` = keep going. */
   const driveTurn = async (remainingMs: number): Promise<AgentInvestigationResult | null> => {
+    // Inside the drive rather than before the loop, so a run that is already
+    // cancelled or already out of time ends without reading a catalog first.
+    if (!contextEstablished) await establishContext();
     turns += 1;
     const turn = await takeTurn(model, instructions, messages, tools, remainingMs);
     text = turn.text;

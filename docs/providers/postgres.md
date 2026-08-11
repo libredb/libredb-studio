@@ -646,10 +646,11 @@ always asked for `agent-read-only`.
 Be precise about what is true at this commit, because the injection is easy to misread as wiring:
 nothing in `src/` calls `acquireExecutionProfileProvider` yet. The acquirer is a parameter so that a
 denial can be *proven* not to acquire anything (a test passes a spy and asserts it is never reached),
-and the run service is what will pass the real one. There is no route and no run service, so the path
-is reachable from server code and not from a request.
+and the run loop ([`investigation.ts`](../../src/lib/agent/investigation.ts)) passes whatever its
+caller handed it. There is a run service and a workflow but still no HTTP route (#329 T9), so the
+path is reachable from server code and not from a request.
 
-Three things about the PostgreSQL side of that layer are worth knowing here:
+Four things about the PostgreSQL side of that layer are worth knowing here:
 
 - **The catalog read is a composed bounded read**, not a new operation. `inspect_schema` takes a
   schema/table selector and the server writes
@@ -658,6 +659,19 @@ Three things about the PostgreSQL side of that layer are worth knowing here:
   with `quoteLiteral` because `queryReadOnly` binds no parameters, and a selector carrying a
   backslash is refused outright rather than quoted — the dialect-less span reader treats it as an
   escape, so `'a\'` would read as an unterminated literal.
+- **A run reads three catalog inventories at its start (#329 T8), not one.** `inspect_schema` takes
+  a `kind` — `columns` (the default), `relations` (foreign keys, from
+  `information_schema.table_constraints` joined to `key_column_usage` and `constraint_column_usage`)
+  and `indexes` (from `pg_index` joined to `pg_class`, `pg_namespace` and `pg_attribute`, carrying
+  `indisunique` and `indisprimary`). The index read is also the only place on this path that says
+  which columns are the primary key, since `information_schema.columns` does not carry it. Two
+  consequences of the projections, both deliberate: an **expression index** has no `pg_attribute` row
+  for its expression, so it is absent from the inventory rather than listed without columns; and the
+  `information_schema` views are privilege-filtered, so a least-privilege `libredb_agent` role sees
+  exactly the tables it was granted — a smaller inventory on the agent path than the editor's is
+  correct, not a defect. All three are subject to the same row cap and are **refused, not truncated**,
+  when a schema is wider than `maxResultRows`; the run then continues with no snapshot and is told to
+  narrow `inspect_schema` itself.
 - **Plan inspection uses `EXPLAIN (FORMAT JSON)`, never `EXPLAIN (ANALYZE, …)`.** The editor's
   Explain button emits the ANALYZE form deliberately (a user asked for real timings) and that form
   EXECUTES the statement, which on this engine performs a data-modifying CTE. The agent path is

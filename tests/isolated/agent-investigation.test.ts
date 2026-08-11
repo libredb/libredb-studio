@@ -109,8 +109,12 @@ interface BootOptions {
   readonly answer?: (sql: string) => Promise<QueryResult>;
   /** Milliseconds the run's clock has jumped by the time the deadline is next read. */
   readonly spentMs?: number;
-  /** Fails the provider acquisition — a reach that dies before the statement is sent. */
-  readonly acquireFails?: () => Error;
+  /**
+   * Fails the provider acquisition — a reach that dies before the statement is
+   * sent. Called once per acquisition and may return nothing, so a fixture can let
+   * the drive's context capture succeed and take the pool away afterwards.
+   */
+  readonly acquireFails?: () => Error | undefined;
 }
 
 function boot(dataDir: string, options: BootOptions = {}): Boot {
@@ -253,6 +257,41 @@ async function eventsOf(store: AgentRunStore, runId: string): Promise<readonly A
 
 const kindsOf = (events: readonly AgentRunEvent[]): string[] => events.map((event) => event.kind);
 
+/**
+ * Catalog reads one drive makes for its context snapshot before the model's first
+ * turn (#329 T8): the column, relation and index inventories, on this suite's
+ * PostgreSQL connection.
+ *
+ * The T8 block at the end of this file asserts the number and the statements
+ * directly. Everywhere else it is the OFFSET between "statements this run sent" and
+ * "statements the model asked for", which is why it is a named constant rather than
+ * a literal 3 sprinkled through the assertions — an agent-mode drive that reaches a
+ * turn has always paid it.
+ */
+const CONTEXT_READS = 3;
+
+/** The three statements one context capture sends, in order. */
+const CATALOG_READS = ["information_schema.columns", "information_schema.table_constraints", "pg_index"] as const;
+
+/**
+ * The statements the MODEL's tool calls sent, after the drive's own catalog reads.
+ *
+ * The prefix is VERIFIED rather than assumed: a bare `slice(3)` would also return
+ * an empty list when the run sent nothing at all, so `expect(…).toEqual([])` would
+ * pass for a run that never reached the database and for one that made exactly the
+ * expected calls alike. `captured` is 0 for a drive that reused its run's recorded
+ * inventory and therefore read no catalog.
+ */
+const modelStatements = (spy: ReturnType<typeof mock>, captured = CONTEXT_READS): string[] => {
+  const all = spy.mock.calls.map((call) => String(call[0]));
+  const prefix = all.slice(0, captured);
+  const expected = CATALOG_READS.slice(0, captured);
+  if (prefix.length !== captured || !expected.every((needle, index) => prefix[index]?.includes(needle))) {
+    throw new Error(`expected ${captured} catalog read(s) first, got: ${prefix.join(" | ") || "(none)"}`);
+  }
+  return all.slice(captured);
+};
+
 function invocationsOf(events: readonly AgentRunEvent[]): string[] {
   return events.filter((event) => event.kind === "tool-invoked").map((event) => event.stepId);
 }
@@ -294,13 +333,15 @@ describe("a fresh run drives the investigation arc", () => {
     expect(result.turns).toBe(2);
     expect(kindsOf(await eventsOf(b.store, run.runId))).toEqual([
       "run-started",
+      // The drive's own schema capture, before the model was asked anything.
+      "context-captured",
       "statement-drafted",
       "tool-invoked",
       "tool-completed",
       "report-composed",
       "run-finished",
     ]);
-    expect(b.queryReadOnly).toHaveBeenCalledTimes(1);
+    expect(b.queryReadOnly).toHaveBeenCalledTimes(CONTEXT_READS + 1);
   });
 
   test("the drafted statement and its rationale are recorded before the invocation", async () => {
@@ -360,11 +401,11 @@ describe("a fresh run drives the investigation arc", () => {
     });
 
     expect(result.status).toBe("succeeded");
-    expect(b.queryReadOnly).toHaveBeenCalledTimes(2);
+    expect(b.queryReadOnly).toHaveBeenCalledTimes(CONTEXT_READS + 2);
     // The server composed both statements: the model supplied a selector and an
     // inner statement, never the catalog SQL or the EXPLAIN wrapper.
-    expect(b.queryReadOnly.mock.calls[0]?.[0]).toContain("information_schema");
-    expect(b.queryReadOnly.mock.calls[1]?.[0]).toMatch(/^EXPLAIN/);
+    expect(modelStatements(b.queryReadOnly)[0]).toContain("information_schema");
+    expect(modelStatements(b.queryReadOnly)[1]).toMatch(/^EXPLAIN/);
 
     // What each tool drafts follows from what the MODEL authored, not from whether
     // the tool reaches the database. `inspect_schema` takes only a selector, so
@@ -376,6 +417,7 @@ describe("a fresh run drives the investigation arc", () => {
     const events = await eventsOf(b.store, run.runId);
     expect(kindsOf(events)).toEqual([
       "run-started",
+      "context-captured",
       "tool-invoked",
       "tool-completed",
       "statement-drafted",
@@ -402,7 +444,9 @@ describe("a fresh run drives the investigation arc", () => {
     });
 
     expect(result.status).toBe("succeeded");
-    expect(b.queryReadOnly).not.toHaveBeenCalled();
+    // The context capture's reads and nothing else: the refused arguments never
+    // became a statement.
+    expect(modelStatements(b.queryReadOnly)).toEqual([]);
     const events = await eventsOf(b.store, run.runId);
     // Nothing was drafted (there is no statement), the invocation is recorded, and
     // it settles nothing — so that exact call may not be sent again.
@@ -435,7 +479,7 @@ describe("a fresh run drives the investigation arc", () => {
     const answer = script.turns[2]?.transcript ?? "";
     expect(answer).toContain("refused before the database was reached");
     expect(answer).not.toContain("interrupted");
-    expect(b.queryReadOnly).not.toHaveBeenCalled();
+    expect(modelStatements(b.queryReadOnly)).toEqual([]);
   });
 
   test("a rejected argument list does not put two results in the transcript for one call", async () => {
@@ -497,7 +541,12 @@ describe("a fresh run drives the investigation arc", () => {
     const messages = script.turns[0]?.body.messages as { role: string; content: string }[];
     expect(messages[0]?.role).toBe("system");
     expect(messages[0]?.content).toContain(UNTRUSTED_CONTENT_BEGIN);
-    expect(messages.at(-1)?.content).toContain(OBJECTIVE);
+    // The objective is the user's own words and is stated as itself; the packed
+    // schema context follows it, fenced, so the last message is no longer the
+    // objective and asserting on position would pin the wrong thing.
+    expect(messages.filter((message) => message.role === "user").map((message) => message.content)).toContain(
+      OBJECTIVE,
+    );
   });
 });
 
@@ -582,7 +631,7 @@ describe("a run survives the process driving it dying", () => {
         resources: first.resources,
       }),
     ).rejects.toThrow();
-    expect(first.queryReadOnly).toHaveBeenCalledTimes(1);
+    expect(first.queryReadOnly).toHaveBeenCalledTimes(CONTEXT_READS + 1);
 
     // A genuinely new process: new store, new service, new budgets, new artifacts.
     // The resumed tool-call id deliberately DIFFERS from the dead process's: a real
@@ -602,7 +651,9 @@ describe("a run survives the process driving it dying", () => {
 
     expect(result.status).toBe("succeeded");
     // THE milestone assertion: the statement was executed once, across both
-    // processes, and the ledger holds exactly one invocation of that step.
+    // processes, and the ledger holds exactly one invocation of that step. The
+    // resumed drive reaches the database for NOTHING — not even its schema context,
+    // which it re-derives from the inventory the ledger carries.
     expect(second.queryReadOnly).not.toHaveBeenCalled();
     const events = await eventsOf(second.store, run.runId);
     expect(invocationsOf(events)).toHaveLength(1);
@@ -625,7 +676,7 @@ describe("a run survives the process driving it dying", () => {
         resources: first.resources,
       }),
     ).rejects.toThrow();
-    expect(first.queryReadOnly).toHaveBeenCalledTimes(1);
+    expect(first.queryReadOnly).toHaveBeenCalledTimes(CONTEXT_READS + 1);
 
     // The resumed model asks for the SAME statement and, as models do, explains it
     // differently the second time. The rationale reaches the engine in no form and
@@ -709,7 +760,13 @@ describe("a run survives the process driving it dying", () => {
 
   test("a step invoked with no recorded outcome is never repeated", async () => {
     const dataDir = freshDataDir();
-    const first = boot(dataDir, { acquireFails: () => new Error("the pool went away") });
+    // The pool goes away AFTER the drive's context capture: this test is about a
+    // step the model asked for whose outcome was never recorded, so the capture has
+    // to get far enough for the model to be asked anything at all.
+    let acquisitions = 0;
+    const first = boot(dataDir, {
+      acquireFails: () => (++acquisitions > CONTEXT_READS ? new Error("the pool went away") : undefined),
+    });
     const run = await startRun(first);
     const dying = scriptedModel(callsTool("run_read_query", { sql: "SELECT id FROM orders" }));
 
@@ -740,8 +797,9 @@ describe("a run survives the process driving it dying", () => {
 
     expect(result.status).toBe("succeeded");
     // The repeated call was refused as indeterminate, so only the NEW statement ran.
-    expect(second.queryReadOnly).toHaveBeenCalledTimes(1);
-    expect(second.queryReadOnly.mock.calls[0]?.[0]).toContain("LIMIT 5");
+    // The resumed drive read no catalog: its run recorded an inventory already.
+    expect(modelStatements(second.queryReadOnly, 0)).toHaveLength(1);
+    expect(modelStatements(second.queryReadOnly, 0)[0]).toContain("LIMIT 5");
     const events = await eventsOf(second.store, run.runId);
     expect(invocationsOf(events).filter((stepId) => stepId === invocationsOf(afterDeath)[0])).toHaveLength(1);
   });
@@ -794,7 +852,7 @@ describe("a failing statement is repaired, not repeated", () => {
       resources: b.resources,
     });
 
-    expect(b.queryReadOnly).toHaveBeenCalledTimes(1);
+    expect(modelStatements(b.queryReadOnly)).toHaveLength(1);
     expect(invocationsOf(await eventsOf(b.store, run.runId))).toHaveLength(1);
   });
 });
@@ -819,7 +877,9 @@ describe("cancellation is honoured at the next checkpoint", () => {
 
     expect(result.status).toBe("cancelled");
     expect(result.stopReason).toBe("cancelled");
-    expect(b.queryReadOnly).not.toHaveBeenCalled();
+    // The context capture ran (the stop was recorded after it, while the model was
+    // answering); the model's own statement never reached the database.
+    expect(modelStatements(b.queryReadOnly)).toEqual([]);
     expect(kindsOf(await eventsOf(b.store, run.runId))).toContain("run-finished");
   });
 });
@@ -1149,5 +1209,174 @@ describe("prior progress is described from the ledger alone", () => {
     // The engine's message is quoted as untrusted content, not as the server's voice.
     expect(transcript).toContain("syntax error at or near FROM");
     expect(transcript).toContain(UNTRUSTED_CONTENT_BEGIN);
+  });
+});
+
+// ─── the run's schema context (#329 T8) ─────────────────────────────────────
+
+describe("the run reads its schema context through the catalog tool", () => {
+  /** The composed catalog statements, in the order the capture makes them. */
+  const catalogStatements = (b: Boot): string[] =>
+    b.queryReadOnly.mock.calls.slice(0, CONTEXT_READS).map((call) => String(call[0]));
+
+  test("captures the inventory before the first turn, through the audited tool path", async () => {
+    const b = boot(freshDataDir());
+    const run = await startRun(b);
+    const script = scriptedModel(answersProse("understood"));
+
+    await runInvestigation(run.runId, {
+      service: b.service,
+      model: await modelOver(script.fetch),
+      resources: b.resources,
+    });
+
+    // Server-composed, every one of them: nothing here takes a statement from a
+    // model, and each went through the same acquisition seam as any tool call.
+    expect(catalogStatements(b)[0]).toContain("information_schema.columns");
+    expect(catalogStatements(b)[1]).toContain("information_schema.table_constraints");
+    expect(catalogStatements(b)[2]).toContain("pg_index");
+    expect(b.acquireProvider).toHaveBeenCalledTimes(CONTEXT_READS);
+    expect(kindsOf(await eventsOf(b.store, run.runId))[1]).toBe("context-captured");
+  });
+
+  test("the packed inventory reaches the model fenced, carrying the fingerprint a claim can cite", async () => {
+    const b = boot(freshDataDir());
+    const run = await startRun(b);
+    const script = scriptedModel(answersProse("understood"));
+
+    await runInvestigation(run.runId, {
+      service: b.service,
+      model: await modelOver(script.fetch),
+      resources: b.resources,
+    });
+
+    const captured = (await eventsOf(b.store, run.runId)).find((event) => event.kind === "context-captured");
+    const fingerprint = captured && "fingerprint" in captured ? captured.fingerprint : "";
+    expect(fingerprint).toMatch(/^ctx_/);
+    expect(script.turns[0]?.transcript).toContain(fingerprint);
+    expect(script.turns[0]?.transcript).toContain(UNTRUSTED_CONTENT_BEGIN);
+  });
+
+  test("is read once per DRIVE, not once per turn", async () => {
+    const b = boot(freshDataDir());
+    const run = await startRun(b);
+    const script = scriptedModel(
+      callsTool("run_read_query", { sql: "SELECT 1" }),
+      callsTool("run_read_query", { sql: "SELECT 2" }, "call_2"),
+      reportOn(),
+    );
+
+    const result = await runInvestigation(run.runId, {
+      service: b.service,
+      model: await modelOver(script.fetch),
+      resources: b.resources,
+    });
+
+    expect(result.turns).toBe(3);
+    // Three turns, one capture: a refresh the run has already made costs nothing.
+    expect(b.queryReadOnly).toHaveBeenCalledTimes(CONTEXT_READS + 2);
+    expect(kindsOf(await eventsOf(b.store, run.runId)).filter((kind) => kind === "context-captured")).toHaveLength(1);
+  });
+
+  /**
+   * THE refresh assertion (#329 T8): a drive whose run already recorded an
+   * inventory reaches no database for it at all. The ledger carries the inventory
+   * itself, so the fingerprint is checked against the rows it summarises rather
+   * than against a catalog read — which is the whole point, since a resumed run
+   * starts every cost ceiling again (`docs/BACKLOG.md` B6) and would otherwise
+   * spend three of its twenty statements re-reading rows it already has.
+   */
+  test("a drive whose run already recorded its inventory performs NO database operation for it", async () => {
+    const dataDir = freshDataDir();
+    const first = boot(dataDir);
+    const run = await startRun(first);
+    const dying = scriptedModel(callsTool("run_read_query", { sql: "SELECT id FROM orders" }));
+
+    await expect(
+      runInvestigation(run.runId, {
+        service: first.service,
+        model: await modelOver(dying.fetch),
+        resources: first.resources,
+      }),
+    ).rejects.toThrow();
+
+    const second = boot(dataDir);
+    const resumed = scriptedModel(answersProse("continuing"));
+    await runInvestigation(run.runId, {
+      service: second.service,
+      model: await modelOver(resumed.fetch),
+      resources: second.resources,
+    });
+
+    expect(second.queryReadOnly).not.toHaveBeenCalled();
+    expect(second.acquireProvider).not.toHaveBeenCalled();
+    const captures = (await eventsOf(second.store, run.runId)).filter((event) => event.kind === "context-captured");
+    expect(captures).toHaveLength(1);
+    // And the reused inventory is what the resumed model is shown.
+    const fingerprint = captures[0] && "fingerprint" in captures[0] ? captures[0].fingerprint : "";
+    expect(resumed.turns[0]?.transcript).toContain(fingerprint);
+  });
+
+  test("a recorded capture carrying no inventory is read again rather than trusted", async () => {
+    const dataDir = freshDataDir();
+    const first = boot(dataDir);
+    const run = await startRun(first);
+    await first.service.markRunning(run.runId);
+    // What a hand-written fixture, or a ledger written before the inventory was
+    // persisted, carries: the summary without the rows behind it.
+    await first.service.recordEvent(run.runId, { kind: "context-captured", fingerprint: "ctx_old", tableCount: 2 });
+
+    const second = boot(dataDir);
+    const resumed = scriptedModel(answersProse("continuing"));
+    await runInvestigation(run.runId, {
+      service: second.service,
+      model: await modelOver(resumed.fetch),
+      resources: second.resources,
+    });
+
+    expect(second.queryReadOnly).toHaveBeenCalledTimes(CONTEXT_READS);
+    expect((await eventsOf(second.store, run.runId)).filter((event) => event.kind === "context-captured")).toHaveLength(
+      2,
+    );
+  });
+
+  test("a planning run captures nothing and reaches no database", async () => {
+    const b = boot(freshDataDir());
+    const run = await startRun(b, "planning");
+    const script = scriptedModel(answersProse("I would start with the index."));
+
+    await runInvestigation(run.runId, {
+      service: b.service,
+      model: await modelOver(script.fetch),
+      resources: b.resources,
+    });
+
+    expect(b.acquireProvider).not.toHaveBeenCalled();
+    expect(kindsOf(await eventsOf(b.store, run.runId))).not.toContain("context-captured");
+    // Not merely skipped for cost: a planning run is never even TOLD that a schema
+    // inventory was unavailable, because it was never going to read one.
+    expect(script.turns[0]?.transcript).not.toContain("inspect_schema");
+  });
+
+  test("a catalog the run cannot read leaves the run going, and says what to do instead", async () => {
+    const b = boot(freshDataDir(), {
+      answer: async (sql) => {
+        if (sql.includes("pg_index")) throw new QueryError("permission denied for relation pg_index", "postgres");
+        return queryResult();
+      },
+    });
+    const run = await startRun(b);
+    const script = scriptedModel(answersProse("I will inspect it myself."));
+
+    const result = await runInvestigation(run.runId, {
+      service: b.service,
+      model: await modelOver(script.fetch),
+      resources: b.resources,
+    });
+
+    expect(result.status).toBe("succeeded");
+    // No half-inventory is recorded, and the model is told to read the schema itself.
+    expect(kindsOf(await eventsOf(b.store, run.runId))).not.toContain("context-captured");
+    expect(script.turns[0]?.transcript).toContain("inspect_schema");
   });
 });

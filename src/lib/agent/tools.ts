@@ -57,7 +57,12 @@ import type { ExecutionActor, ExecutionPolicy, PolicyDenyCode, TargetScope } fro
 import type { OperationRegistry } from "@/lib/db/operations/registry";
 import type { DatabaseProvider, ProviderCapabilities } from "@/lib/db/types";
 import type { DatabaseConnection, QueryResult } from "@/lib/types";
-import { AgentComposedSqlError, composeCatalogRead, composeEstimatingExplain } from "./composed-sql";
+import {
+  type AgentCatalogKind,
+  AgentComposedSqlError,
+  composeCatalogRead,
+  composeEstimatingExplain,
+} from "./composed-sql";
 import type { AgentDeadlineDenyCode, AgentRunDeadline } from "./deadline";
 import { AGENT_EXECUTION_POLICY, AGENT_EXECUTION_PROFILE, AGENT_MINIMUM_CALL_MS } from "./execution-policy";
 import type { AgentRepairDenyCode, AgentRepairLedger } from "./repair-ledger";
@@ -161,6 +166,12 @@ export interface AgentOperationRequest {
 // ============================================================================
 
 const catalogSelectorSchema = z.strictObject({
+  /**
+   * Which inventory to read. Absent means the column inventory, which is what a
+   * bare catalog inspection has always meant — so a model that never sends this
+   * field gets exactly the behaviour it got before the field existed.
+   */
+  kind: z.enum(["columns", "relations", "indexes"]).optional(),
   schema: z.string().optional(),
   table: z.string().optional(),
 });
@@ -201,7 +212,7 @@ export const AGENT_TOOL_DEFINITIONS: Readonly<Record<AgentToolName, AgentToolDef
   inspect_schema: {
     name: "inspect_schema",
     description:
-      "Read the database's own catalog for tables and columns, optionally narrowed to one schema or table. The statement is composed by the server; you supply only the selector. On a large database pass a schema selector: the result is subject to the same row budget as any read and is refused, not truncated, if it overflows.",
+      "Read the database's own catalog, optionally narrowed to one schema or table. Pass kind to choose the inventory: columns (the default: tables and their columns), relations (foreign keys) or indexes. The statement is composed by the server; you supply only the selector. On a large database pass a schema or table selector: the result is subject to the same row budget as any read and is refused, not truncated, if it overflows.",
     inputSchema: catalogSelectorSchema,
     operationId: "sql.query.read",
   },
@@ -678,12 +689,24 @@ export async function executeAgentOperation(
 // ============================================================================
 
 /** Trimmed, but a blank stays blank so the composer refuses it rather than ignoring it. */
-function normalizeSelector(input: { readonly schema?: string; readonly table?: string }) {
+function normalizeSelector(input: {
+  readonly kind?: AgentCatalogKind;
+  readonly schema?: string;
+  readonly table?: string;
+}) {
   return {
+    ...(input.kind === undefined ? {} : { kind: input.kind }),
     ...(input.schema === undefined ? {} : { schema: input.schema.trim() }),
     ...(input.table === undefined ? {} : { table: input.table.trim() }),
   };
 }
+
+/** What each inventory is called in the untrusted-content header the model reads. */
+const CATALOG_LABELS: Readonly<Record<AgentCatalogKind, string>> = Object.freeze({
+  columns: "schema inventory",
+  relations: "foreign-key inventory",
+  indexes: "index inventory",
+});
 
 /**
  * The schema name to DECLARE as the policy target, given what the composer accepted.
@@ -739,7 +762,7 @@ function composedSqlOutcome(error: unknown): AgentToolOutcome {
  */
 export async function inspectSchemaTool(
   context: AgentToolContext,
-  input: { readonly schema?: string; readonly table?: string },
+  input: { readonly kind?: AgentCatalogKind; readonly schema?: string; readonly table?: string },
 ): Promise<AgentToolOutcome> {
   const parsed = parseToolInput(catalogSelectorSchema, input);
   if (!parsed.ok) return unavailable("INVALID_TOOL_INPUT");
@@ -753,7 +776,7 @@ export async function inspectSchemaTool(
   return executeAgentOperation(context, {
     operationId: "sql.query.read",
     sql,
-    label: "schema inventory",
+    label: CATALOG_LABELS[selector.kind ?? "columns"],
     // Declared, so a scope carrying a schema allowlist bounds which schema may be
     // inspected. A raw read cannot declare its schema, which is why an allowlist
     // denies one — `docs/BACKLOG.md` B3 records that consequence and the two ways to

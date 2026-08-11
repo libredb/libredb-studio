@@ -146,6 +146,110 @@ describe("composeCatalogRead — SQLite", () => {
   });
 });
 
+describe("composeCatalogRead — the relation and index inventories (#329 T8)", () => {
+  test("PostgreSQL reads foreign keys from the constraint views, both sides of each edge", () => {
+    const sql = composeCatalogRead("postgres", { kind: "relations" });
+
+    expect(guardAccepts(sql)).toBe(true);
+    expect(sql).toContain("information_schema.table_constraints");
+    expect(sql).toContain("'FOREIGN KEY'");
+    for (const projected of ["column_name", "referenced_table", "referenced_column"]) {
+      expect(sql).toContain(projected);
+    }
+  });
+
+  test("PostgreSQL reads indexes from pg_index, carrying uniqueness and primary-key membership", () => {
+    const sql = composeCatalogRead("postgres", { kind: "indexes" });
+
+    expect(guardAccepts(sql)).toBe(true);
+    expect(sql).toContain("pg_index");
+    for (const projected of ["index_name", "is_unique", "is_primary", "column_name"]) {
+      expect(sql).toContain(projected);
+    }
+  });
+
+  test("both PostgreSQL inventories narrow on the same selectors as the column one", () => {
+    for (const kind of ["relations", "indexes"] as const) {
+      const sql = composeCatalogRead("postgres", { kind, schema: "sales", table: "orders" });
+
+      expect(sql, kind).toContain("'sales'");
+      expect(sql, kind).toContain("'orders'");
+      expect(guardAccepts(sql), kind).toBe(true);
+    }
+  });
+
+  test("SQLite's relations live in the table DDL, so the relation read IS the object read", () => {
+    expect(composeCatalogRead("sqlite", { kind: "relations" })).toBe(composeCatalogRead("sqlite", { kind: "columns" }));
+  });
+
+  test("SQLite reads index DDL from sqlite_master, skipping the implicit indexes that carry none", () => {
+    const sql = composeCatalogRead("sqlite", { kind: "indexes" });
+
+    expect(guardAccepts(sql)).toBe(true);
+    expect(sql).toContain("'index'");
+    expect(sql).toContain("sql IS NOT NULL");
+  });
+
+  /**
+   * On a live engine, because an implicit index is the case a textual assertion
+   * cannot pin: SQLite creates one for every UNIQUE constraint, gives it a NULL
+   * `sql`, and a composition that returned it would put an index into the
+   * inventory that no parser can describe.
+   */
+  test("the SQLite index read returns declared indexes and no implicit one, on a live engine", () => {
+    const database = new Database(":memory:");
+    try {
+      database.run("CREATE TABLE orders (id INTEGER PRIMARY KEY, code TEXT UNIQUE, total REAL)");
+      database.run("CREATE INDEX orders_total_idx ON orders (total)");
+
+      const implicit = database.prepare("SELECT name, sql FROM sqlite_master WHERE type = 'index'").all() as {
+        name: string;
+        sql: string | null;
+      }[];
+      // The engine made one for the UNIQUE column, not this test.
+      expect(implicit.some((row) => row.sql === null)).toBe(true);
+
+      const rows = database.prepare(composeCatalogRead("sqlite", { kind: "indexes" })).all() as { name: string }[];
+
+      expect(rows.map((row) => row.name)).toEqual(["orders_total_idx"]);
+    } finally {
+      database.close();
+    }
+  });
+
+  test("every kind on every served dialect is a statement the guard admits", () => {
+    for (const dialect of ["postgres", "sqlite"] as const) {
+      for (const kind of ["columns", "relations", "indexes"] as const) {
+        const sql = composeCatalogRead(dialect, { kind });
+        expect(agentReadSqlInput.safeParse({ sql }).success, `${dialect}/${kind}`).toBe(true);
+      }
+    }
+  });
+
+  test("an unserved dialect is refused for every kind, never composed on a guess", () => {
+    for (const kind of ["columns", "relations", "indexes"] as const) {
+      expect(() => composeCatalogRead("mysql", { kind }), kind).toThrow(AgentComposedSqlError);
+    }
+  });
+
+  test("a hostile selector is quoted on the relation and index reads too", () => {
+    for (const kind of ["relations", "indexes"] as const) {
+      const sql = composeCatalogRead("postgres", { kind, table: "orders'; DROP TABLE users --" });
+
+      expect(inspectAgentStatement(sql), kind).toBeNull();
+      expect(sql, kind).toContain("''");
+    }
+    expect(() => composeCatalogRead("sqlite", { kind: "indexes", table: "a\\" })).toThrow(AgentComposedSqlError);
+  });
+
+  test("SQLite refuses a schema selector that is not its only schema, on every kind", () => {
+    for (const kind of ["columns", "relations", "indexes"] as const) {
+      expect(() => composeCatalogRead("sqlite", { kind, schema: "sales" }), kind).toThrow(AgentComposedSqlError);
+      expect(guardAccepts(composeCatalogRead("sqlite", { kind, schema: "MAIN" })), kind).toBe(true);
+    }
+  });
+});
+
 describe("composeCatalogRead — a hostile selector becomes a literal, never statement text", () => {
   test("a quote in a selector cannot close the literal", () => {
     const sql = composeCatalogRead("postgres", { table: "orders'; DROP TABLE users --" });

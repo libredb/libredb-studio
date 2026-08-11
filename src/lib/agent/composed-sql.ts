@@ -74,7 +74,22 @@ export class AgentComposedSqlError extends Error {
  */
 export const MAX_CATALOG_SELECTOR_LENGTH = 128;
 
+/**
+ * Which inventory a catalog read asks for.
+ *
+ * Three kinds rather than one wide statement, because the engines do not agree on
+ * how many reads the inventory takes and a single composed monster would have to be
+ * verified per dialect anyway. Each kind is one bounded read (`sql.query.read`)
+ * under the same descriptor, so the split costs statements out of the run's budget
+ * and buys nothing in privilege — which is exactly the trade the row cap forces:
+ * one flat projection per kind stays diagnosable when it overflows, where a nested
+ * aggregate would come back as one unreadable row-per-table blob.
+ */
+export type AgentCatalogKind = "columns" | "relations" | "indexes";
+
 export interface AgentCatalogSelector {
+  /** Defaults to the column inventory, which is what a bare `inspect_schema` means. */
+  readonly kind?: AgentCatalogKind;
   readonly schema?: string;
   readonly table?: string;
 }
@@ -144,18 +159,107 @@ function composePostgresCatalog(selector: AgentCatalogSelector): string {
   );
 }
 
-function composeSqliteCatalog(selector: AgentCatalogSelector): string {
-  if (selector.schema !== undefined) {
-    const schema = assertSelector(selector.schema, "schema");
-    if (schema.toLowerCase() !== SQLITE_ONLY_SCHEMA) {
-      throw new AgentComposedSqlError(
-        `SQLite serves one schema on the agent path ("${SQLITE_ONLY_SCHEMA}"), so "${schema}" cannot be selected`,
-        "SELECTOR_UNSUPPORTED_BY_DIALECT",
-      );
-    }
-    // `main` needs no clause: sqlite_master IS main's catalog, so filtering on it
-    // would be a no-op dressed up as a narrowing.
+/**
+ * The foreign-key inventory.
+ *
+ * The joins follow `providers/sql/postgres.ts` (`CTE_FK_INFO`), which runs against
+ * live servers, rather than being re-derived: the pairing of `table_schema` for the
+ * key-column side and `constraint_schema` for the referenced side is subtle enough
+ * that a second, plausible-looking version of it would be a statement nobody has
+ * verified. The projection is flat — one row per referencing column — because the
+ * row cap refuses rather than truncates, and a flat overflow is diagnosable where a
+ * nested aggregate's is not.
+ *
+ * ONE deliberate departure from that source, found by review: `tc.table_name =
+ * kcu.table_name` is added to the first join. A PostgreSQL constraint name is unique
+ * per TABLE, not per schema, so two tables in one schema may both carry
+ * `fk_customer` — and without the extra predicate each one's referencing column is
+ * attributed to the other as well. Narrowing a join cannot lose a row that belonged
+ * there, and the alternative (a wrong edge in the inventory) is a false fact in a
+ * prompt.
+ *
+ * Be precise about what that predicate does and does not close: it fixes the
+ * REFERENCING side only. `constraint_column_usage` exposes no referencing-table
+ * column, so two same-named constraints in one schema still cross-match on the
+ * referenced side, and one table can gain an edge pointing at the other's parent.
+ * Both that collision and the composite-key pairing this projection cannot express
+ * are `docs/BACKLOG.md` B8, and both need the same `pg_constraint` rewrite.
+ */
+function composePostgresRelations(selector: AgentCatalogSelector): string {
+  return (
+    "SELECT tc.table_schema, tc.table_name, kcu.column_name, " +
+    "ccu.table_schema AS referenced_schema, ccu.table_name AS referenced_table, ccu.column_name AS referenced_column " +
+    "FROM information_schema.table_constraints tc " +
+    "JOIN information_schema.key_column_usage kcu " +
+    "ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema " +
+    "AND tc.table_name = kcu.table_name " +
+    "JOIN information_schema.constraint_column_usage ccu " +
+    "ON ccu.constraint_name = tc.constraint_name AND ccu.constraint_schema = tc.constraint_schema " +
+    "WHERE tc.constraint_type = 'FOREIGN KEY' " +
+    "AND tc.table_schema NOT IN ('pg_catalog', 'information_schema')" +
+    equalsClause("tc.table_schema", selector.schema, "schema", "postgres") +
+    equalsClause("tc.table_name", selector.table, "table", "postgres") +
+    " ORDER BY tc.table_schema, tc.table_name, kcu.column_name"
+  );
+}
+
+/**
+ * The index inventory, one row per indexed column.
+ *
+ * `indisprimary` rides along because it is the only place on this path that says
+ * which columns are the primary key: `information_schema.columns` does not carry
+ * it, and asking for it separately would be a fourth read out of a twenty-statement
+ * budget. The column order is the INDEX's own (`array_position` over `indkey`), not
+ * the table's, which is what makes a composite index readable — the same expression
+ * the provider's live-verified `CTE_INDEX_INFO` orders by.
+ *
+ * TWO KNOWN LIMITATIONS, both recorded in `docs/BACKLOG.md` B7 and both about what
+ * the inventory SAYS rather than about what may run:
+ *
+ *  - an expression index (`CREATE INDEX … ON t (lower(name))`) has no `pg_attribute`
+ *    row for its expression, so the join drops it and the index is absent from the
+ *    inventory rather than present without its columns;
+ *  - `indkey` carries a covering index's `INCLUDE` columns after its key columns
+ *    (PostgreSQL 11+, where `indnkeyatts` is what separates them), so those appear
+ *    here as if they were key columns. Left as it is rather than sliced by
+ *    `indnkeyatts`: that column does not exist on older servers, and this milestone
+ *    verifies no PostgreSQL composition against a live engine.
+ */
+function composePostgresIndexes(selector: AgentCatalogSelector): string {
+  return (
+    "SELECT n.nspname AS table_schema, t.relname AS table_name, i.relname AS index_name, " +
+    "ix.indisunique AS is_unique, ix.indisprimary AS is_primary, a.attname AS column_name " +
+    "FROM pg_index ix " +
+    "JOIN pg_class t ON t.oid = ix.indrelid " +
+    "JOIN pg_class i ON i.oid = ix.indexrelid " +
+    "JOIN pg_namespace n ON n.oid = t.relnamespace " +
+    "JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY(ix.indkey) " +
+    "WHERE n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')" +
+    equalsClause("n.nspname", selector.schema, "schema", "postgres") +
+    equalsClause("t.relname", selector.table, "table", "postgres") +
+    " ORDER BY n.nspname, t.relname, i.relname, array_position(ix.indkey, a.attnum)"
+  );
+}
+
+/**
+ * SQLite serves one schema, and a selector naming another is refused rather than
+ * quietly read as `main`.
+ */
+function assertSqliteSchema(selector: AgentCatalogSelector): void {
+  if (selector.schema === undefined) return;
+  const schema = assertSelector(selector.schema, "schema");
+  if (schema.toLowerCase() !== SQLITE_ONLY_SCHEMA) {
+    throw new AgentComposedSqlError(
+      `SQLite serves one schema on the agent path ("${SQLITE_ONLY_SCHEMA}"), so "${schema}" cannot be selected`,
+      "SELECTOR_UNSUPPORTED_BY_DIALECT",
+    );
   }
+  // `main` needs no clause: sqlite_master IS main's catalog, so filtering on it
+  // would be a no-op dressed up as a narrowing.
+}
+
+function composeSqliteCatalog(selector: AgentCatalogSelector): string {
+  assertSqliteSchema(selector);
   return (
     "SELECT name, type, sql FROM sqlite_master " +
     // The escape character is `@` rather than a backslash on purpose: `'\'` is the
@@ -166,9 +270,40 @@ function composeSqliteCatalog(selector: AgentCatalogSelector): string {
   );
 }
 
-const CATALOG_COMPOSERS: Partial<Record<DatabaseType, (selector: AgentCatalogSelector) => string>> = {
-  postgres: composePostgresCatalog,
-  sqlite: composeSqliteCatalog,
+/**
+ * SQLite's index inventory.
+ *
+ * `sql IS NOT NULL` is what excludes the indexes SQLite creates for a `UNIQUE` or
+ * `PRIMARY KEY` constraint: they carry no DDL text at all, so an inventory that
+ * kept them would list an index nothing can describe. Their columns are not lost —
+ * the constraint that created them is in the table's own DDL, which the object read
+ * returns. The `sqlite_` name filter stays as a second line for the same objects.
+ *
+ * The selector narrows on `tbl_name` (the indexed TABLE), not on `name`: a caller
+ * asking about a table wants that table's indexes, and nobody knows an index's name
+ * before reading the inventory.
+ */
+function composeSqliteIndexes(selector: AgentCatalogSelector): string {
+  assertSqliteSchema(selector);
+  return (
+    "SELECT name, tbl_name, sql FROM sqlite_master " +
+    "WHERE type = 'index' AND sql IS NOT NULL AND name NOT LIKE 'sqlite@_%' ESCAPE '@'" +
+    equalsClause("tbl_name", selector.table, "table", "sqlite") +
+    " ORDER BY tbl_name, name"
+  );
+}
+
+/**
+ * Per dialect, per kind. SQLite's relation read IS its object read: foreign keys
+ * are declared inside `CREATE TABLE` and the only structured alternative
+ * (`pragma_foreign_key_list`) is refused by the guard, so the same statement serves
+ * both and the DDL text is parsed for the edges.
+ */
+const CATALOG_COMPOSERS: Partial<
+  Record<DatabaseType, Readonly<Record<AgentCatalogKind, (selector: AgentCatalogSelector) => string>>>
+> = {
+  postgres: { columns: composePostgresCatalog, relations: composePostgresRelations, indexes: composePostgresIndexes },
+  sqlite: { columns: composeSqliteCatalog, relations: composeSqliteCatalog, indexes: composeSqliteIndexes },
 };
 
 /**
@@ -207,7 +342,7 @@ export function composeCatalogRead(dialect: DatabaseType, selector: AgentCatalog
     );
   }
   // Non-null: the key was just proven to be an own property of the map.
-  return CATALOG_COMPOSERS[dialect]!(selector);
+  return CATALOG_COMPOSERS[dialect]![selector.kind ?? "columns"](selector);
 }
 
 /**

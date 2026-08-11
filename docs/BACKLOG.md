@@ -859,8 +859,13 @@ narrows the tool set to the tools that happen to declare that dimension:
   which is what the tool declares. The selector-less full inventory declares nothing and is denied
   (verified: `createTargetScope("c", { schemas: ["public"] })` plus `inspectSchemaTool(ctx, {})`
   answers `TARGET_OUT_OF_SCOPE`), and that is the natural first call — the one T8's run-start snapshot
-  will make. Every `run_read_query` and `inspect_plan` call is denied outright, because a raw
-  statement cannot declare which schema it will touch without parsing it.
+  DOES make: `captureContextSnapshot` (`src/lib/agent/context-snapshot.ts`) asks for each catalog kind
+  with no selector, so under a schema allowlist every run's context capture is refused and the run
+  proceeds with no snapshot at all. It fails closed and the model is told to inspect the schema
+  itself, but a run scoped to one schema never gets an inventory. Narrowing the capture to the scope's
+  own single-entry allowlist is the obvious repair once a caller builds such a scope. Every
+  `run_read_query` and `inspect_plan` call is denied outright, because a raw statement cannot declare
+  which schema it will touch without parsing it.
 - A `catalog` allowlist denies EVERY call in the layer: no tool declares that dimension at all.
 
 Nothing is wired to build such a scope yet (`createTargetScope` has no production caller at this
@@ -977,3 +982,58 @@ holds every settled step, so a drive could fold the run's own history into the c
 instead of starting from zero. Done when the ceilings a drive enforces are derived from the run's
 ledger rather than from the drive's own construction, with a test that resumes a run twice and shows
 the second drive inheriting the first's spend.
+
+### B7. A PostgreSQL expression index is absent from the agent's schema inventory
+
+The composed index read (`composePostgresIndexes`, `src/lib/agent/composed-sql.ts`) joins `pg_index`
+to `pg_attribute` on `a.attnum = ANY(ix.indkey)` to name each indexed column. An expression index
+(`CREATE INDEX … ON t (lower(name))`) stores a zero in `indkey` for its expression and keeps the
+expression in `pg_index.indexprs`, so the join matches nothing and the index does not appear in the
+run's context snapshot at all. A partly-expression index (`(status, lower(name))`) is worse in one
+respect: it appears, carrying only its plain columns, so a reader could take it for an index on
+`status` alone.
+
+Consequences are bounded and reporting-only: nothing about enforcement depends on the inventory, and
+the model can still ask for a plan (`inspect_plan`), which is what actually says whether an index is
+used. The cost is a model reasoning about "there is no index on that column" when there is one. The
+SQLite side does not have this gap — `parseSqliteIndexDdl` keeps an expression's written form, because
+the DDL text carries it (`src/lib/agent/sqlite-ddl.ts`).
+
+Fixing it means projecting `pg_get_indexdef(ix.indexrelid)` (or `pg_get_expr(ix.indexprs, ix.indrelid)`)
+alongside the column join and parsing the emitted definition, which is a second per-dialect parser
+against text whose stability this repository has not verified — deliberately not done inside the task
+that found it. Done when an expression index appears in the inventory with its expression, asserted
+against a live PostgreSQL rather than a fixture, since the projection is the part that cannot be
+checked without an engine (see A5).
+
+### B8. The composed foreign-key read cannot pair a composite key's columns, and its referenced side still collides on constraint names
+
+`composePostgresRelations` (`src/lib/agent/composed-sql.ts`) joins
+`information_schema.key_column_usage` (one row per REFERENCING column) to
+`information_schema.constraint_column_usage` (one row per REFERENCED column) on the constraint alone.
+Neither view exposes an ordinal that pairs the two sides, so a foreign key over two or more columns
+comes back as the cross-product of its sides: `FOREIGN KEY (x, y) REFERENCES parents (a, b)` yields
+four rows, and `buildPostgresTables` turns them into four edges, of which two are wrong
+(`x -> parents.b`, `y -> parents.a`). Single-column keys — the overwhelming majority — are exact.
+
+The consequence is confined to what a run is TOLD: the packed context can show a relation that does
+not exist, so a model could join on the wrong column and get a statement that is refused or returns
+nothing. Nothing about enforcement depends on it. The SQLite side does not have this gap: the DDL
+text pairs the two lists positionally and `sqlite-ddl.ts` reads them that way, which is the
+declaration's own meaning.
+
+A second, independent defect lives in the same joins and needs the same fix. A PostgreSQL constraint
+name is unique per TABLE, so two tables in one schema may both carry `fk_customer`. The referencing
+side is narrowed by `tc.table_name = kcu.table_name`, but `constraint_column_usage` exposes no
+referencing-table column at all, so the referenced side cannot be narrowed the same way: table `a`
+still gains an edge pointing at table `b`'s parent. Same consequence as above — a relation in the
+prompt that does not exist — and the same blast radius, since nothing about enforcement reads the
+inventory.
+
+A correct projection means leaving `information_schema` for `pg_constraint`, unnesting `conkey` and
+`confkey` `WITH ORDINALITY` and joining on the ordinal — which closes both defects at once, because
+`pg_constraint` rows carry `conrelid` and are identified by oid rather than by name. It is a statement
+that has to be verified against a live server before it can be trusted, which this milestone cannot do
+(see A5). Done when a composite foreign key appears in the inventory with each column paired to the one
+it actually references, and two same-named constraints in one schema produce only their own edges,
+both asserted against a live PostgreSQL.
