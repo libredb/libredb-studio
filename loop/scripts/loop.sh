@@ -102,7 +102,14 @@ classify() {
   fi
 
   if [[ "$code" -ne 0 ]]; then
-    if grep -qiE "unable to connect to api|api error: 5[0-9][0-9]|overloaded|request timed out|fetch failed|request rejected \(429\)|temporarily limiting requests|econnreset|etimedout|econnrefused" "$log"; then
+    # "unable to verify organization membership" is a 403, but it is the
+    # verification call failing, not a verdict: a genuinely revoked org has its
+    # own wording in the fatal list above ("organization has been disabled").
+    # Observed 2026-08-11 on agent-m2 iteration 2 - it killed the runner
+    # outright and the loop sat dead for an hour, while a plain `claude -p`
+    # probe authenticated fine minutes later. Retrying costs at most
+    # MAX_TRANSIENT attempts; treating it as fatal costs the rest of the night.
+    if grep -qiE "unable to connect to api|api error: 5[0-9][0-9]|overloaded|request timed out|fetch failed|request rejected \(429\)|temporarily limiting requests|econnreset|etimedout|econnrefused|unable to verify organization membership" "$log"; then
       echo transient; return
     fi
     echo fatal; return
