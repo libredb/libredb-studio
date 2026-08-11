@@ -784,15 +784,32 @@ Probed while raising the Node baseline (#326): `tsc --noEmit` under **typescript
 Go port) reports **zero errors** on this repository and finishes in **1.8s against 7.7s** for the
 6.0.3 JavaScript compiler - a 4x wall-clock improvement on the `typecheck` gate.
 
-It cannot be adopted yet, for one reason that is not about our code:
+It cannot be adopted yet, and the blocker is upstream of typescript-eslint rather than in it.
+**TypeScript 7 ships no in-process compiler API at all.** Measured against the published packages:
 
-- `typescript-eslint@8.67.0` (the newest release) declares `peerDependencies.typescript:
-  ">=4.8.4 <6.1.0"`. The repo's type-aware ESLint layer guards `src/app/api` and `src/lib/db`
-  against floating promises, so losing it is not an option.
-- TypeScript 7 also stops shipping the classic in-process compiler API: the package's `main` is
-  `./lib/version.cjs` and everything else sits behind `unstable/*` subpaths. Every tool that does
-  `require("typescript")` for program construction - typescript-eslint, `eslint-config-next`, tsup's
-  declaration build - needs its own port before the swap is possible.
+```
+typescript@7.0.2               -> require("typescript") exports: version, versionMajorMinor
+typescript@7.1.0-dev.20260810.1 -> require("typescript") exports: version, versionMajorMinor
+```
 
-Done when typescript-eslint publishes a release whose peer range admits 7.x, at which point this is
-a one-line dependency bump plus a re-run of the gates: the compiler side is already proven green.
+`ts.createProgram` and `ts.Extension` are `undefined`. Everything that builds a program in-process -
+typescript-eslint, `eslint-config-next`, tsup's declaration build - has nothing to call. The repo's
+type-aware ESLint layer guards `src/app/api` and `src/lib/db` against floating promises, so dropping
+it to move the compiler is not a trade worth making.
+
+typescript-eslint's own tracking issue is
+[#10940](https://github.com/typescript-eslint/typescript-eslint/issues/10940) ("Use TS 7 (tsgo /
+typescript-go) for type information"), open and labelled **blocked by external API**; a maintainer
+put it as "there is nothing we can do about this until TS 7 provides an API". Note that
+[#12518](https://github.com/typescript-eslint/typescript-eslint/issues/12518) reads as *not planned*
+in the GitHub UI - that is how a close-as-duplicate renders, not a statement of intent.
+
+An interim option exists if the 4x typecheck gain is wanted before then: Microsoft documents running
+[6.0 and 7.0 side by side](https://devblogs.microsoft.com/typescript/announcing-typescript-7-0/#running-side-by-side-with-typescript-6.0)
+- keep `typescript@6` as the peer typescript-eslint resolves, add `typescript-7` as an npm alias, and
+point a second script at it. The cost is two compilers in the lockfile and a second source of truth
+about what type-checks; today that divergence is zero, since 7.0.2 already reports no errors here.
+
+Done when TypeScript exposes an API 7.x tooling can build on and typescript-eslint's peer range
+follows, at which point this is a one-line dependency bump plus a re-run of the gates: the compiler
+side is already proven green.
