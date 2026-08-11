@@ -847,3 +847,77 @@ ratified package, which that test's allowed-ignore set names explicitly.
 Done when the chat surface gains an Anthropic provider under its own conventions and the registry
 gains the matching adapter in the same change - the `Record<LLMProviderType, AgentProviderAdapter>`
 will not compile until it does.
+
+### B3. A scope allowlist on a target dimension denies every tool that cannot declare it
+
+`withinAllowlist` (`src/lib/db/operations/policy.ts`) refuses a call that does not DECLARE a dimension
+the scope constrains, which is the right direction - an undeclared target cannot be screened, so it
+fails closed. The consequence for the agent tool layer is that a scope carrying an allowlist silently
+narrows the tool set to the tools that happen to declare that dimension:
+
+- A `schema` allowlist admits only a NARROWED `inspect_schema` call — one that was given a selector,
+  which is what the tool declares. The selector-less full inventory declares nothing and is denied
+  (verified: `createTargetScope("c", { schemas: ["public"] })` plus `inspectSchemaTool(ctx, {})`
+  answers `TARGET_OUT_OF_SCOPE`), and that is the natural first call — the one T8's run-start snapshot
+  will make. Every `run_read_query` and `inspect_plan` call is denied outright, because a raw
+  statement cannot declare which schema it will touch without parsing it.
+- A `catalog` allowlist denies EVERY call in the layer: no tool declares that dimension at all.
+
+Nothing is wired to build such a scope yet (`createTargetScope` has no production caller at this
+commit), so this is a property of the layer rather than a live defect, and the tool layer records it
+at the `inspect_schema` target declaration. It matters because the failure looks like a policy bug
+rather than a scoping choice: the model gets `TARGET_OUT_OF_SCOPE` with advice to ask for an in-scope
+target, and for a raw read there is no way to comply.
+
+Two honest resolutions when a caller first needs scoping, and the choice is a product one: give
+`run_read_query` an optional declared-schema argument and require it when the scope constrains that
+dimension, or let the run service refuse to start a run whose scope constrains a dimension its tool
+set cannot declare - which is louder and needs no per-tool argument.
+
+Done when a scope with a schema or catalog allowlist produces a coherent outcome for every tool the
+mode offers, with a test per dimension.
+
+### B4. `mapDatabaseError` discards the text that distinguishes a timeout cancel from an operator cancel
+
+`mapDatabaseError` matches `canceling statement` before its timeout branch and returns
+`new QueryCancelledError("Query was cancelled", provider, query)` (`src/lib/db/errors.ts`), replacing
+the engine's own wording. PostgreSQL says `canceling statement due to statement timeout` for a
+`statement_timeout` and `canceling statement due to user request` for `pg_cancel_backend`, so after
+this mapping **no** consumer can tell the two apart — the discriminator is gone, not merely
+unexamined.
+
+That is why the agent tool layer classifies a cancel as a repairable statement failure
+(`src/lib/agent/tools.ts`): the reachable case on the agent path is the timeout this layer itself
+installs via `SET LOCAL statement_timeout`, and narrowing the read is the repair that helps. The cost
+is stated there — an operator cancel arriving mid-statement is also offered a repair, so a run
+cancellation has to be enforced by the run loop's own persisted state between tool calls rather than by
+expecting the driver's cancel to propagate.
+
+The fix is in shared code and has editor-visible consequences, which is why it is not in #329:
+reordering the timeout check ahead of the cancellation check, or preserving the original message on
+`QueryCancelledError`, changes what the query panel shows when a statement is cancelled versus times
+out. The reordering is the substantive one and needs the editor's cancel/timeout UX re-checked
+(`src/lib/db/providers/sql/postgres.ts` sets `queryTimeout` on the pool as well, so both paths exist
+today).
+
+The same mapper has a wider imprecision worth fixing in the same pass, because the agent layer's
+repairable-versus-environment split inherits it: the classification is **substring** matching on the
+engine's message, so an identifier can decide the class. Verified against the live mapper:
+
+- `no such table: pooled_items` matches `pool` and returns `PoolExhaustedError`, so a plainly
+  repairable missing relation is treated as an environment fault and ends an agent run.
+- `Connection terminated unexpectedly` matches nothing and falls through to the base `DatabaseError`,
+  so a dead socket is offered to a model as a statement it could rewrite (bounded at three attempts).
+- `relation "user_passwords" does not exist` matches `password` and returns `AuthenticationError` —
+  harmless on the agent path today only because a query-phase `AuthenticationError` is repairable
+  there, which is a coincidence rather than a design.
+
+Neither direction is a boundary failure: nothing runs that policy did not allow, and the agent's
+statement and repair budgets still bound the waste. What is wrong is the diagnosis, and it is wrong
+before any consumer sees the error, so no consumer can correct it.
+
+Done when a statement timeout and a user cancellation are distinguishable by type or by preserved
+message, with the editor's own consumers updated and the agent layer's cancel classification
+revisited against the new signal; and when classification no longer depends on a substring that a
+table or column name can satisfy (driver error codes — PostgreSQL `SQLSTATE`, SQLite `errcode` — are
+the signal that does not collide, and each provider already has access to its own).

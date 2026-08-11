@@ -88,8 +88,14 @@ export type AuditedExecutionResult<T> =
  * validity from the deny code) keeps this correct even if a future stage is
  * inserted ahead of the actor stage, and keeps the role/mode vocabulary in one
  * module.
+ *
+ * Exported because the agent tool layer (#329) audits one refusal this module never
+ * sees — a run that stops on its own wall-clock deadline, decided before the
+ * pipeline is reached — and the actor label is a format operators FILTER on. Two
+ * implementations of it would be free to drift, which is the one thing a log format
+ * may not do.
  */
-function actorLabel(actor: ExecutionActor): string {
+export function actorLabel(actor: ExecutionActor): string {
   return isValidActor(actor) ? `${actor.mode}:${actor.role}` : UNKNOWN_ACTOR;
 }
 

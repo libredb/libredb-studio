@@ -543,6 +543,42 @@ result is then refused, rather than being returned as if it had been within budg
 drivers are synchronous, such a statement also blocks the runtime while it runs — the same property
 as the normal SQLite query path ([§3.4](#34-no-transactions-api-no-cancellation-no-pool)).
 
+### 12.4 What drives this profile (#329)
+
+#328 built the profile and nothing called it. The agent tool layer
+([`src/lib/agent/tools.ts`](../../src/lib/agent/tools.ts)) is the code written to drive it — see
+[postgres.md §12.4](./postgres.md#124-what-drives-this-profile-329) for how the provider is acquired
+and why nothing calls it yet at this commit.
+
+**The catalog read goes through `sqlite_master`, and the guard is why.** The obvious way to read a
+column list here is `SELECT … FROM pragma_table_info('t')`, and the operations layer refuses it:
+`statement-guard.ts` rejects any word starting `PRAGMA_`, because SQLite exposes pragmas as
+table-valued functions and some of them SET (`pragma_query_only(0)` was found while reviewing this
+very profile). So `inspect_schema` composes
+`SELECT name, type, sql FROM sqlite_master WHERE type IN ('table', 'view') …`
+([composed-sql.ts](../../src/lib/agent/composed-sql.ts)), whose projection is therefore each object's
+own DDL text — a column list is there to be read out of a `CREATE TABLE` statement, rather than
+arriving as rows. PostgreSQL gets a structured column inventory from `information_schema` instead.
+(Which side actually parses that DDL is not settled here; no consumer exists at this commit.)
+The asymmetry is a real consequence of the guard's allowlist, not an oversight,
+and it is not worked around: a tool that reached `pragma_table_info` outside the operations layer
+would be exactly the bypass this milestone forbids. The internal `sqlite_%` objects are filtered with
+`NOT LIKE 'sqlite@_%' ESCAPE '@'` — the escape character is `@` rather than a backslash because the
+dialect-less span reader cannot settle `'\'`.
+
+A `schema` selector is accepted only as `main`, and any other name is refused rather than silently
+ignored — the composer raises `SELECTOR_UNSUPPORTED_BY_DIALECT`, which the tool reports to the model as
+`INVALID_TOOL_INPUT` carrying that code as its detail. What makes `main` the right answer is the
+statement, not a boundary claim: the composed read names `sqlite_master` unqualified, which IS `main`'s
+own catalog whatever else is attached. The input-stage `ATTACH` denial is defense in depth on top of
+that and is explicitly **not** a containment boundary — an `ATTACH` of an existing file still succeeds
+on a read-only handle, which the known-limitations record states in full.
+
+**The run deadline clamps the timeout but still cannot preempt.** The tool layer clamps
+`statementTimeoutMs` down to the run's remaining wall clock before handing it over, which bounds what
+is REPORTED, not what runs — the limitation above is unchanged, and anything that displays a budget
+has to say so rather than imply preemption.
+
 ---
 
 ## 13. Usage examples
