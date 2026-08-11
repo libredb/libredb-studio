@@ -12,8 +12,10 @@ import * as path from "path";
  *     workflow runtime as a production dependency would push its whole tree
  *     onto every npm consumer for a capability Phase 1 does not expose there.
  *  2. Only the ratified packages are installed, at exactly the ratified
- *     versions. Vendor model-provider packages are refused outright — the model
- *     bridges are first-party, so a new one appearing here means an iteration
+ *     versions. The owner ratified three first-party model providers on
+ *     2026-08-11 (they resolve onto the protocol packages the pinned `ai`
+ *     release already pulls, adding no new transitive tree); every other model
+ *     provider is still refused, because one appearing here means an iteration
  *     made a supply-chain choice it was not authorised to make.
  */
 
@@ -36,15 +38,33 @@ const RATIFIED_RUNTIME: Readonly<Record<string, string>> = {
   "@workflow/world-postgres": "4.3.3",
 };
 
+/**
+ * Exact versions of the three model providers the owner ratified separately, on
+ * 2026-08-11, after planning had already run. They sit on the same
+ * `@ai-sdk/provider` + `@ai-sdk/provider-utils` pair the pinned `ai` release
+ * resolves, which is the evidence the decision was taken on.
+ */
+const RATIFIED_MODEL_PROVIDERS: Readonly<Record<string, string>> = {
+  "@ai-sdk/openai": "4.0.37",
+  "@ai-sdk/google": "4.0.40",
+  "@ai-sdk/anthropic": "4.0.37",
+};
+
 /** Every field npm installs on a consumer of the published package. */
 const PUBLISHED_FIELDS: (keyof PackageManifest)[] = ["dependencies", "optionalDependencies", "peerDependencies"];
 
 /**
  * AI-SDK packages that may legitimately be declared: the protocol/utility
- * packages the ratified `ai` release already resolves transitively. Anything
- * else under the scope is a vendor model provider.
+ * packages the ratified `ai` release already resolves transitively, plus the
+ * three ratified model providers. Anything else under the scope is an
+ * unratified vendor model provider.
  */
-const ALLOWED_AI_SDK_PACKAGES = new Set(["@ai-sdk/provider", "@ai-sdk/provider-utils", "@ai-sdk/gateway"]);
+const ALLOWED_AI_SDK_PACKAGES = new Set([
+  "@ai-sdk/provider",
+  "@ai-sdk/provider-utils",
+  "@ai-sdk/gateway",
+  ...Object.keys(RATIFIED_MODEL_PROVIDERS),
+]);
 
 /**
  * Vendor model-provider packages outside the `@ai-sdk` scope. Not exhaustive by
@@ -73,11 +93,14 @@ function allDeclaredNames(): string[] {
   ];
 }
 
+/** Every package this milestone installs; none of them may reach a consumer. */
+const RATIFIED_NAMES = [...Object.keys(RATIFIED_RUNTIME), ...Object.keys(RATIFIED_MODEL_PROVIDERS)];
+
 describe("agent runtime stays out of the published dependency set", () => {
   for (const field of PUBLISHED_FIELDS) {
     test(`${field} declares none of the agent runtime packages`, () => {
       const declared = Object.keys(declaredIn(field));
-      for (const name of Object.keys(RATIFIED_RUNTIME)) {
+      for (const name of RATIFIED_NAMES) {
         expect(declared).not.toContain(name);
       }
     });
@@ -92,22 +115,33 @@ describe("agent runtime stays out of the published dependency set", () => {
 });
 
 describe("agent runtime is installed at the ratified versions", () => {
-  test.each(Object.entries(RATIFIED_RUNTIME))("declares %s at exactly %s", (name, version) => {
+  const pins = [...Object.entries(RATIFIED_RUNTIME), ...Object.entries(RATIFIED_MODEL_PROVIDERS)];
+
+  test.each(pins)("declares %s at exactly %s", (name, version) => {
     expect(declaredIn("devDependencies")[name]).toBe(version);
   });
 });
 
 describe("the knip ignore list stays bounded", () => {
   /**
-   * knip fails the gate on a declared-but-unused dependency, and the ratified
-   * runtime is installed before any source file imports it, so the four names
-   * are ignored there. Two of them are expected to leave that list once the run
-   * loop imports them; `@workflow/world-postgres` is expected to stay, because
-   * the runtime resolves it by module specifier from `WORKFLOW_TARGET_WORLD`
-   * and no static import of it will ever exist. This test is what stops the
-   * list from quietly becoming a place where unused dependencies hide.
+   * knip fails the gate on a declared-but-unused dependency, and each ratified
+   * package is installed before a source file imports it, so it is ignored
+   * there until it is wired in. The list shrinks as the milestone lands:
+   * `ai`, `@ai-sdk/openai` and `@ai-sdk/google` left it in T4 when the model
+   * adapter began importing them, and `@ai-sdk/anthropic` leaves it in T5.
+   * `@workflow/world-postgres` is expected to stay, because the runtime
+   * resolves it by module specifier from `WORKFLOW_TARGET_WORLD` and no static
+   * import of it will ever exist. Naming the survivors rather than the whole
+   * ratified set is what stops a wired-in package from quietly returning to the
+   * list, which would hide it from the unused-dependency check for good.
    */
-  const ALLOWED_IGNORED_DEPENDENCIES = new Set(["tailwindcss", ...Object.keys(RATIFIED_RUNTIME)]);
+  const ALLOWED_IGNORED_DEPENDENCIES = new Set([
+    "tailwindcss",
+    "workflow",
+    "@workflow/world-local",
+    "@workflow/world-postgres",
+    "@ai-sdk/anthropic",
+  ]);
 
   test("ignores no dependency beyond tailwindcss and the ratified runtime", () => {
     const knip: { ignoreDependencies?: string[] } = JSON.parse(

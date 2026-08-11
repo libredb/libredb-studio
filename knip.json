@@ -15,10 +15,10 @@
   ],
   "ignoreDependencies": [
     "tailwindcss",
-    "ai",
     "workflow",
     "@workflow/world-local",
-    "@workflow/world-postgres"
+    "@workflow/world-postgres",
+    "@ai-sdk/anthropic"
   ],
   "ignoreBinaries": [
     "genhtml",

@@ -203,6 +203,9 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@ai-sdk/anthropic": "4.0.37",
+    "@ai-sdk/google": "4.0.40",
+    "@ai-sdk/openai": "4.0.37",
     "@arethetypeswrong/cli": "^0.18.5",
     "@biomejs/biome": "^2.5.7",
     "@playwright/test": "^1.62.1",

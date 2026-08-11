@@ -26,7 +26,7 @@ FAIL=0
 # Count the `run_group` CALLS below when adding one (not the definition) - this is the
 # number the final summary reports, and it had already drifted by one before Group 0e
 # was added.
-TOTAL_GROUPS=23
+TOTAL_GROUPS=24
 EXTRA_BUN_ARGS=("$@")
 GROUP_INDEX=0
 COVERAGE_MODE=0
@@ -109,6 +109,14 @@ run_group "Group 0d: Monaco loader wiring" --nocov \
 # test sharing that process cannot observe what the real predicate answers).
 run_group "Group 0e: Query safety gate (standalone path)" \
   tests/isolated/query-safety-gate-standalone.test.ts
+
+# Group 0f: The agent model adapter against the REAL LLM error classes
+# (isolated — every tests/api/ai/*.test.ts replaces @/lib/llm/types with stub
+# error classes whose constructors take a message only, and mock.module is
+# process-wide, so a test sharing that process sees the mapper's provider tag
+# dropped even though the class identity still matches).
+run_group "Group 0f: Agent model adapter" \
+  tests/isolated/agent-model-adapter.test.ts
 
 # Group 1: Studio (isolated — mocks almost every child component)
 run_group "Group 1/6: Studio" \
