@@ -3,7 +3,7 @@ import "../helpers/mock-sonner";
 import { mockRouterPush } from "../helpers/mock-navigation";
 
 import { describe, test, expect, afterEach, beforeEach, mock } from "bun:test";
-import { render, cleanup, act, fireEvent } from "@testing-library/react";
+import { render, cleanup, act, fireEvent, waitFor } from "@testing-library/react";
 import React from "react";
 import { setupMonacoMock, setupRechartssMock, setupXYFlowMock, setupFramerMotionMock } from "../helpers/mock-monaco";
 
@@ -26,6 +26,8 @@ let capturedSchemaExplorerProps: Record<string, unknown> = {};
 let capturedConnectionsListProps: Record<string, unknown> = {};
 let capturedQueryEditorProps: Record<string, unknown> = {};
 let capturedMobileNavProps: Record<string, unknown> = {};
+let capturedAgentRailProps: Record<string, unknown> = {};
+let originalFetch: typeof globalThis.fetch;
 
 // ---- Trackable mock functions (shared across mocks + assertions) ----
 
@@ -399,6 +401,20 @@ mock.module("@/components/SaveQueryModal", () => ({
   },
 }));
 
+// The agent rail (#329 T10a). Mocked like every other child so this file tests the
+// SHELL's decisions — whether the rail exists at all, and what connection it is
+// handed — while the rail's own behaviour is covered in
+// tests/components/agent/AgentRail.test.tsx. The capability hook is deliberately NOT
+// mocked: "the flag is off" has to be proven through the real discovery path.
+mock.module("@/components/agent/AgentRail", () => ({
+  AgentRail: (props: Record<string, unknown>) => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const React = require("react");
+    capturedAgentRailProps = props;
+    return React.createElement("div", { "data-testid": "agent-rail" }, "AgentRail");
+  },
+}));
+
 mock.module("@/components/ui/resizable", () => {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const React = require("react");
@@ -463,6 +479,7 @@ describe("Studio", () => {
     capturedConnectionsListProps = {};
     capturedQueryEditorProps = {};
     capturedMobileNavProps = {};
+    capturedAgentRailProps = {};
 
     // Reset overrides
     connMgrOverride = {};
@@ -510,12 +527,14 @@ describe("Studio", () => {
     mockRouterPush.mockClear();
 
     // URL mocks (may not exist in happy-dom)
+    originalFetch = globalThis.fetch;
     globalThis.URL.createObjectURL = mockCreateObjectURL as unknown as typeof URL.createObjectURL;
     globalThis.URL.revokeObjectURL = mockRevokeObjectURL as unknown as typeof URL.revokeObjectURL;
   });
 
   afterEach(() => {
     cleanup();
+    globalThis.fetch = originalFetch;
   });
 
   // =========================================================================
@@ -1319,5 +1338,99 @@ describe("Studio", () => {
     const fn = capturedQueryEditorProps.onExplain as () => void;
     act(() => fn());
     expect(mockExecuteQuery).toHaveBeenCalledWith(undefined, undefined, true);
+  });
+
+  // =========================================================================
+  // Agent rail (#329 T10a)
+  // =========================================================================
+
+  /**
+   * The gate is the whole point of this group: with the runtime off — which is the
+   * default, and what every existing deployment is — the shell must contain no agent
+   * surface and must ask the agent routes for nothing. The capability hook is real
+   * here; only the server's answer is stubbed.
+   */
+  function mockAgentConfig(enabled: boolean) {
+    const fetchMock = mock(async (input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      if (url.includes("/api/agent/config")) {
+        return new Response(JSON.stringify({ enabled }), { status: 200 });
+      }
+      return new Response(JSON.stringify({}), { status: 200 });
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    return fetchMock;
+  }
+
+  const managedConn = { ...pgConn, id: "seed:sales", name: "Sales", managed: true, seedId: "sales" };
+
+  test("with the agent runtime off there is no rail and no agent run is asked for", async () => {
+    const fetchMock = mockAgentConfig(false);
+    const { queryByTestId } = render(<Studio />);
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalled();
+    });
+
+    expect(queryByTestId("agent-rail")).toBeNull();
+    // Every agent URL, not just today's run routes: a leak to a route added later
+    // would otherwise pass this test vacuously. The discovery probe is the one
+    // agent request a disabled server is allowed to receive.
+    const requested = fetchMock.mock.calls.map(([input]) => String(input));
+    expect(requested.filter((url) => url.includes("/api/agent/") && !url.includes("/api/agent/config"))).toEqual([]);
+    expect(capturedMobileNavProps.onOpenAgent).toBeUndefined();
+  });
+
+  test("with the agent runtime on the rail renders in the shell", async () => {
+    mockAgentConfig(true);
+    const { findByTestId } = render(<Studio />);
+
+    expect(await findByTestId("agent-rail")).toBeTruthy();
+  });
+
+  test("the rail is handed the active connection as the id a resumed run can re-resolve", async () => {
+    mockAgentConfig(true);
+    connMgrOverride = { activeConnection: managedConn, connections: [managedConn] };
+    const { findByTestId } = render(<Studio />);
+    await findByTestId("agent-rail");
+
+    expect(capturedAgentRailProps.connectionId).toBe("seed:sales");
+    expect(capturedAgentRailProps.connectionName).toBe("Sales");
+  });
+
+  // A connection that exists only in this browser cannot be rebuilt by the process
+  // that resumes a run, so the rail is told there is no id rather than being handed
+  // one the server would refuse.
+  test("a browser-only connection reaches the rail as unresolvable", async () => {
+    mockAgentConfig(true);
+    connMgrOverride = { activeConnection: pgConn, connections: [pgConn] };
+    const { findByTestId } = render(<Studio />);
+    await findByTestId("agent-rail");
+
+    expect(capturedAgentRailProps.connectionId).toBeNull();
+    expect(capturedAgentRailProps.connectionName).toBe("TestPG");
+  });
+
+  test("with no connection selected the rail is told so", async () => {
+    mockAgentConfig(true);
+    connMgrOverride = { activeConnection: null, connections: [] };
+    const { findByTestId } = render(<Studio />);
+    await findByTestId("agent-rail");
+
+    expect(capturedAgentRailProps.connectionId).toBeNull();
+    expect(capturedAgentRailProps.connectionName).toBeNull();
+  });
+
+  test("below md the mobile nav opens the rail as a sheet", async () => {
+    mockAgentConfig(true);
+    const { findByTestId } = render(<Studio />);
+    await findByTestId("agent-rail");
+
+    expect(capturedAgentRailProps.sheetOpen).toBe(false);
+    act(() => (capturedMobileNavProps.onOpenAgent as () => void)());
+    expect(capturedAgentRailProps.sheetOpen).toBe(true);
+
+    act(() => (capturedAgentRailProps.onSheetOpenChange as (open: boolean) => void)(false));
+    expect(capturedAgentRailProps.sheetOpen).toBe(false);
   });
 });

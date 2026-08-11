@@ -189,6 +189,8 @@ const ALL_ROUTES = discoverRoutes(API_ROOT_DIR);
  */
 const ROUTES_WITHOUT_A_PROVIDER: Record<string, string> = {
   "admin/audit": "reads/writes the in-process audit ring buffer only; no database or LLM provider",
+  "agent/config":
+    "answers whether the agent runtime is enabled, from process.env alone; no database or LLM provider (GET, no POST export). It still requires a session — a bare getSession() like connections/managed, because metering a visibility probe out of the ai bucket would spend a run's budget on rendering a panel — and tests/api/agent/config.test.ts proves an unauthenticated caller learns nothing about the flag",
   "agent/drive":
     "reaches a provider, but is the durable transport's callback and can have no user session: it verifies a server-minted single-purpose credential and its 401 body differs from guardRoute's on purpose (tests/api/agent/drive.test.ts)",
   "agent/runs/[runId]":

@@ -27,4 +27,30 @@ describe("MobileNav", () => {
     fireEvent.click(queryByText("DB")!);
     expect(onTabChange).toHaveBeenCalledTimes(1);
   });
+
+  /**
+   * The agent control (#329 T10a) is how the rail is reached below `md`, where its
+   * panel is display:none. It is absent unless the caller passes a handler, which is
+   * how "the flag is off" stays "there is no agent surface" rather than "there is a
+   * control that does nothing". It is not a tab: it opens a sheet over whatever tab
+   * the user is on, so it never becomes `activeTab`.
+   */
+  test("offers no agent control unless one is wired", () => {
+    const { queryByTestId } = render(<MobileNav activeTab="editor" onTabChange={mock(() => {})} />);
+
+    expect(queryByTestId("mobile-nav-agent")).toBeNull();
+  });
+
+  test("opens the agent rail without changing the active tab", () => {
+    const onOpenAgent = mock(() => {});
+    const onTabChange = mock(() => {});
+    const { getByTestId } = render(
+      <MobileNav activeTab="editor" onTabChange={onTabChange} onOpenAgent={onOpenAgent} />,
+    );
+
+    fireEvent.click(getByTestId("mobile-nav-agent"));
+
+    expect(onOpenAgent).toHaveBeenCalledTimes(1);
+    expect(onTabChange).not.toHaveBeenCalled();
+  });
 });
