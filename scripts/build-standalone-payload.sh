@@ -155,12 +155,28 @@ fi
 # Probe the native binding with an actual Database construction (a bare require
 # does not dlopen it). better-sqlite3 v13 is N-API, so this no longer guards an
 # ABI mismatch between the installing runtime and `node` - that class of failure
-# is gone. What it still catches is a platform with no prebuilt binary in the
-# package, where a source build is the answer.
+# is gone. What it still catches is a tree with no loadable prebuild for this
+# platform: an incomplete install, or a target the package does not cover.
+#
+# There is deliberately no automatic rebuild here. Under v12 the fallback was
+# `npm rebuild better-sqlite3`, which worked because the package declared
+# `install: prebuild-install || node-gyp rebuild`. v13 declares no install
+# lifecycle and sets `gypfile: false`, so npm queues no node-gyp command and the
+# same call now reports "rebuilt dependencies successfully" while building
+# nothing - a silent no-op that would hide this failure behind a bare Node stack
+# trace on the next line. Automating a real source build instead would put
+# python3 and a C++ toolchain on the macOS and Windows release runners to
+# recover a case that cannot arise on a complete install: v13 prebuilds every
+# target this script accepts (linux/darwin x64+arm64, win32-x64). So: fail with
+# the diagnosis and hand over the one-off command.
 if ! node -e "require('./node_modules/better-sqlite3')(':memory:').close()" 2>/dev/null; then
-  echo "==> better-sqlite3 has no usable prebuild under $(node --version) - building from source"
-  npm rebuild better-sqlite3 --build-from-source
-  node -e "require('./node_modules/better-sqlite3')(':memory:').close()"
+  TARGET="$(node -p 'process.platform')-$(node -p 'process.arch')"
+  echo "better-sqlite3 has no loadable prebuild for ${TARGET} under $(node --version)." >&2
+  echo "Since v13 the package ships an N-API prebuild for every target this script accepts," >&2
+  echo "so this normally means an incomplete node_modules - reinstall with 'bun install --frozen-lockfile'." >&2
+  echo "On a target the package genuinely does not cover, build the binding once by hand:" >&2
+  echo "  npm exec node-gyp -- rebuild --directory node_modules/better-sqlite3" >&2
+  exit 1
 fi
 
 rm -rf "${PAYLOAD_DIR:?}/node_modules/better-sqlite3"
