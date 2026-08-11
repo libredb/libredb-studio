@@ -1,7 +1,8 @@
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import { generateText, streamText, stepCountIs, tool, LoadAPIKeyError } from "ai";
 import { z } from "zod";
-import { type AgentFetch, createAgentModel, mapAgentModelError } from "@/lib/agent/model-adapter";
+import { createAgentModel, mapAgentModelError } from "@/lib/agent/model-adapter";
+import type { AgentFetch } from "@/lib/agent/provider-registry";
 import {
   type LLMConfig,
   LLMAuthError,

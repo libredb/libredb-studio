@@ -128,7 +128,10 @@ describe("the knip ignore list stays bounded", () => {
    * package is installed before a source file imports it, so it is ignored
    * there until it is wired in. The list shrinks as the milestone lands:
    * `ai`, `@ai-sdk/openai` and `@ai-sdk/google` left it in T4 when the model
-   * adapter began importing them, and `@ai-sdk/anthropic` leaves it in T5.
+   * adapter began importing them. `@ai-sdk/anthropic` is still here because T5
+   * deferred the Anthropic provider KIND rather than shipping it half-built: the
+   * settings surface's `LLMProviderType` has no `anthropic` member, so adding one
+   * would also owe the AI Assistant a chat provider (`docs/BACKLOG.md` B2).
    * `@workflow/world-postgres` is expected to stay, because the runtime
    * resolves it by module specifier from `WORKFLOW_TARGET_WORLD` and no static
    * import of it will ever exist. Naming the survivors rather than the whole

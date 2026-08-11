@@ -820,3 +820,30 @@ directly by having `walkConnection` iterate a registry instead of three separate
 lists. That registry has to carry each map's nesting location (root, `ssl`, `sshTunnel`), so it is a
 change to a security-critical encrypt/decrypt path with its own test obligations, which is why it
 was not folded into the agent milestone that surfaced it.
+
+### B2. The Anthropic provider kind is ratified and installed, but not offered
+
+`@ai-sdk/anthropic@4.0.37` is an owner-ratified dependency and is installed, and the agent's provider
+registry (`src/lib/agent/provider-registry.ts`) could serve it in a few lines. What blocks it is not
+the agent at all: the registry is keyed on `LLMProviderType`, the settings surface's own union
+(`src/lib/llm/types.ts`), and that union is what `LLM_PROVIDER` resolves against
+(`src/lib/llm/utils/config.ts`). Adding `anthropic` there makes `LLM_PROVIDER=anthropic` a
+selectable setting for the whole application, and `src/lib/llm/factory.ts` would then have to build a
+chat provider for it or throw - so the AI Assistant and the Natural Language Query panel would be
+broken for exactly the users who configured it.
+
+Serving it properly therefore means a `src/lib/llm/providers/anthropic.ts` that speaks Anthropic's
+Messages streaming protocol: `createSSEParser`'s `extractContent` in
+`src/lib/llm/utils/streaming.ts` understands the OpenAI delta shape only, and Anthropic requires
+`max_tokens` on every request while `LLMStreamOptions.maxTokens` is optional, which needs a default
+nobody has chosen. That is a chat-surface feature with its own conventions, tests and release note,
+not a line in the agent registry - and the ratified package cannot be used for it either, since
+`src/lib/llm` is reachable from the published package while the AI SDK is deliberately not
+(`tests/unit/agent-dependency-boundary.test.ts`).
+
+Until then `@ai-sdk/anthropic` stays in `knip.json`'s `ignoreDependencies` as an installed-but-unwired
+ratified package, which that test's allowed-ignore set names explicitly.
+
+Done when the chat surface gains an Anthropic provider under its own conventions and the registry
+gains the matching adapter in the same change - the `Record<LLMProviderType, AgentProviderAdapter>`
+will not compile until it does.
