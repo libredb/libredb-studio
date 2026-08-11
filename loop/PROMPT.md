@@ -185,3 +185,13 @@ A human removing the label is the only way the task becomes pickable again.
   Never close/reopen/delete/assign issues, never touch non-loop labels, milestones, PRs,
   releases, workflows, or `gh api` writes. (Defense-in-depth blocks also exist at the runner
   level via `LOOP_DISALLOWED_TOOLS`; do not route around them.)
+- 999k. NEVER background work you are waiting on. The gate and the mandatory `loop-reviewer`
+  pass are BLOCKING steps: run them in the foreground and read their result in the same turn.
+  Never dispatch them as a background task, and never end your turn while a task whose result
+  you need is still pending — you run under `claude -p`, where there is no next turn to receive
+  the notification in. The harness waits out a ceiling and then kills the process, so the whole
+  iteration's work is discarded uncommitted and, because the kill lands before you write
+  anything, `.loop/PROGRESS.md` records nothing and the next iteration cannot even tell the
+  attempt happened. (This is not hypothetical: it cost this milestone three iterations.) If a
+  step is genuinely too slow to finish inside the iteration timeout, that is a 999d blocker to
+  record — not something to await in the background.
