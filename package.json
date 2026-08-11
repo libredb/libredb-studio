@@ -95,6 +95,10 @@
     "oracledb",
     "ssh2"
   ],
+  "//overrides": "Transitive dependencies held above what their parent's range would otherwise resolve to. lodash: recharts asks for ^4.17.21 and CVE-2026-4800 (arbitrary code execution via untrusted input in template imports) is fixed in 4.18.0. The fix is inside the parent's range, so this only forces resolution forward - remove the entry once recharts raises its own floor. Nothing in this repository imports lodash directly.",
+  "overrides": {
+    "lodash": "^4.18.1"
+  },
   "scripts": {
     "dev": "node scripts/copy-monaco.mjs && next dev",
     "build": "node scripts/copy-monaco.mjs && next build",
