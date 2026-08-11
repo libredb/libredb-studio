@@ -17,8 +17,11 @@
  * limit can still overrun it by up to one statement timeout. That is the useful
  * bound at this layer (it limits load on the database), and a real wall-clock
  * deadline needs a clock this tracker deliberately does not have — see the
- * determinism note below. Bounding an agent run's wall clock belongs to the run
- * loop that M2 introduces; tracked in docs/BACKLOG.md.
+ * determinism note below. Bounding an agent run's wall clock is what
+ * `src/lib/agent/deadline.ts` is for: one monotonic deadline per run that
+ * refuses a call which no longer fits and clamps the statement timeout down to
+ * whatever is left of the run. The M2 run loop is what wires it in front of this
+ * layer (#329); at this commit the mechanism exists and nothing calls it yet.
  *
  * `src/lib/api/rate-limit.ts` was evaluated for reuse and deliberately not
  * used: its counters are fixed-window and monotonic (no decrement, so

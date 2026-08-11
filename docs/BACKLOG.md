@@ -724,25 +724,6 @@ Done when out-of-scope reads are refused by something that does not read SQL - a
 set generated for the agent role, an allowlisted directory for SQLite targets, or an authorizer both
 adapters expose.
 
-### A4. No wall-clock deadline bounds an agent run
-
-`maxTotalRunMs` bounds the DATABASE time a run consumes: the execution layer reports each completed
-call's elapsed time and the tracker sums them. Nothing bounds the run's wall clock. Time between
-calls is not counted, so a run that spends minutes in model latency or waiting on a caller stays
-inside its budget indefinitely; parallel calls each contribute their own duration, so the sum can
-exceed real elapsed time; and a call admitted just under the limit can still overrun it by up to one
-statement timeout.
-
-This is deliberate at this layer. `ExecutionBudgetTracker` has no clock so that budget accounting
-stays deterministic under test, and database time is the bound that actually protects the database.
-The missing control is a run-level one: a runaway agent is bounded by how long it may run, not by
-how much database time it used.
-
-Done when the run loop owns a monotonic deadline per run, refuses to admit a call that cannot finish
-inside the remaining time, and clamps each effective statement timeout to what is left. That belongs
-with the WorkflowAgent run loop in M2 (#329), which is the first component that owns a run's
-lifetime.
-
 ### A5. The PostgreSQL profile's regression tests model the server rather than run one
 
 `tests/integration/db/postgres-provider.test.ts` proves the read-only profile against a stateful
