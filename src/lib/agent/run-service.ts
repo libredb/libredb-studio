@@ -19,8 +19,11 @@
  *     a new step; what it may not do is repeat this one. The qualifier is real and
  *     not modesty: the check is read-then-append with no compare-and-append
  *     fencing, so TWO loops driving one run concurrently would both read "not
- *     invoked" and both execute. Single ownership of a running run is the
- *     workflow's to guarantee (T7b), and `docs/BACKLOG.md` B5 records it.
+ *     invoked" and both execute. Nothing in this repository enforces single
+ *     ownership of a running run — the durable backend's queue is what would, and
+ *     `docs/BACKLOG.md` B5 records both the gap and what would lift it. The
+ *     milestone's criterion is about a RESTART, where the dead process is gone by
+ *     construction, and that case this does cover.
  *  3. **Cancellation is enforced here, not by a driver.** `cancel` records a
  *     request; the run's own loop honours it at its next step checkpoint and ends
  *     the run, releasing its budget and its artifacts together. Nothing relies on
@@ -48,11 +51,32 @@ import type { AgentOperationId, AgentToolName } from "./tools";
 import type {
   AgentArtifactReference,
   AgentRunActor,
+  AgentRunEvent,
   AgentRunMode,
   AgentRunRecord,
   AgentRunTerminalStatus,
   AgentToolRefusal,
 } from "./types";
+
+/**
+ * The events a run TELLS, as opposed to the ones that happen to it. Everything
+ * outside this set is written by the lifecycle methods below, which is what keeps
+ * the write-ahead ordering in one place.
+ */
+export type AgentRunNarrativeEvent = Extract<
+  AgentRunEvent,
+  { kind: "context-captured" | "statement-drafted" | "report-composed" }
+>;
+
+/** Distributes over the union, so each variant loses `atMs` rather than the union collapsing. */
+type WithoutTimestamp<T> = T extends unknown ? Omit<T, "atMs"> : never;
+
+/**
+ * A narrative entry as a CALLER states it: everything but the timestamp, which
+ * the service stamps from its own clock. A caller that supplied one could date a
+ * run's history from a different clock than the one every other entry uses.
+ */
+export type AgentRunNarrative = WithoutTimestamp<AgentRunNarrativeEvent>;
 
 /**
  * The run-scoped resources a run holds in THIS process: its budget accounting and
@@ -122,7 +146,9 @@ export type AgentRunServiceReason =
   | "RUN_NOT_RESUMABLE"
   | "RUN_NOT_STARTABLE"
   | "RUN_NOT_RUNNING"
-  | "RUN_HAS_LIVE_EXECUTION";
+  | "RUN_HAS_LIVE_EXECUTION"
+  /** The caller's target scope is not the connection the run was opened for. */
+  | "RUN_CONNECTION_MISMATCH";
 
 export class AgentRunServiceError extends Error {
   readonly reasonCode: AgentRunServiceReason;
@@ -181,6 +207,29 @@ export class AgentRunService {
     return (await this.readOrThrow(runId)).record;
   }
 
+  /**
+   * Records something the run NARRATED — the schema it captured, a statement it
+   * drafted, the report it composed. Never something that happened to a tool.
+   *
+   * The parameter type is the whole access control: `tool-invoked`,
+   * `tool-completed` and `tool-refused` belong to `runStep`, which is what orders
+   * them against the effect they describe, and `run-started`/`run-finished` belong
+   * to the lifecycle methods. Admitting them here would give a caller a second way
+   * to write the entries the durability argument rests on, so the type refuses at
+   * compile time rather than a check refusing at run time.
+   *
+   * A narrative entry may only be added to a RUNNING run, for the same reason a
+   * step may: a terminal run's ledger is closed, and an append after `close`
+   * resolves while `read` never returns it (`run-store.ts`).
+   */
+  async recordEvent(runId: string, narrative: AgentRunNarrative): Promise<void> {
+    const view = await this.readOrThrow(runId);
+    if (view.record.status !== "running") {
+      throw new AgentRunServiceError("RUN_NOT_RUNNING", `agent run "${runId}" is ${view.record.status}, not running`);
+    }
+    await this.store.appendEvent(runId, { ...narrative, atMs: this.clock() } as AgentRunNarrativeEvent);
+  }
+
   /** The run as it stands, or `null` when there is no such run. */
   async status(runId: string): Promise<AgentRunStatusReport | null> {
     const view = await this.store.read(runId);
@@ -198,11 +247,13 @@ export class AgentRunService {
    *
    * The gap that leaves, stated rather than implied: a run whose loop DIED while
    * running keeps a pending request and is not ended by anything this service
-   * does. Recovery is the durable backend's — the local world re-enqueues
-   * pending/running runs when the world starts, so a resumed loop reaches a
-   * checkpoint and honours the request. That is a capability, not yet a wiring:
-   * nothing at this commit creates a workflow run or starts the world, so it
-   * becomes real (and provable) when T7b enqueues the run.
+   * does. What closes it is the next drive — `runInvestigation` reads the request at
+   * its own checkpoint and ends the run before asking the model anything, which is
+   * asserted in `tests/isolated/agent-investigation.test.ts`. What still has to
+   * arrange for a drive to happen at all is the durable backend (the local world
+   * re-enqueues pending/running runs when the world starts) plus the route that
+   * starts it; no module here creates a workflow run or starts a world, so that half
+   * belongs to T9.
    */
   async cancel(runId: string, by: AgentRunActor): Promise<AgentRunStatusReport> {
     const view = await this.readOrThrow(runId);

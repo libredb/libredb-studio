@@ -954,3 +954,26 @@ Done when either the run ledger can append conditionally on the stream's tail in
 would make both races impossible at the storage layer), or the single-ownership guarantee the runtime
 provides is asserted by a test rather than assumed by prose — whichever the durable backend can
 actually support.
+
+### B6. Every agent cost ceiling is per-drive, so N resumes cost up to N times one drive's budget
+
+The three things that bound what a run may spend — `ExecutionBudgetTracker` (`maxStatementsPerRun`,
+`maxTotalRunMs`), `AgentRepairLedger` and `AgentRunDeadline` — are all constructed by the process that
+drives a run and live only in its memory. `runInvestigation` (`src/lib/agent/investigation.ts`) takes
+them as injected resources, so a run resumed after a process death is handed a fresh set and starts
+each ceiling again. A run that dies and resumes ten times may therefore perform ten times
+`maxStatementsPerRun` statements and spend ten times `AGENT_RUN_DEADLINE_MS` of wall clock, even though
+each individual drive stayed honestly inside its bounds.
+
+Nothing currently claims otherwise — `AGENT_MAX_MODEL_TURNS`'s docblock in
+`src/lib/agent/execution-policy.ts` states the per-drive scope explicitly rather than implying a
+per-run one, which is why this is a recorded limitation and not a defect. It matters for two later
+tasks: T10b's budget meter must not present a per-drive figure as a run total, and any retry policy
+that resumes automatically would multiply the ceiling without a user ever asking for it.
+
+The data needed to fix it is already persisted: `AgentRunRecord` carries `createdAtMs`, and the ledger
+holds every settled step, so a drive could fold the run's own history into the ceilings it starts with
+(a deadline measured from `createdAtMs`, a statement count folded from `tool-completed` entries)
+instead of starting from zero. Done when the ceilings a drive enforces are derived from the run's
+ledger rather than from the drive's own construction, with a test that resumes a run twice and shows
+the second drive inheriting the first's spend.

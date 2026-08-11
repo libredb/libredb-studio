@@ -114,12 +114,13 @@ run_group "Group 0e: Query safety gate (standalone path)" \
 # (isolated — every tests/api/ai/*.test.ts replaces @/lib/llm/types with stub
 # error classes whose constructors take a message only, and mock.module is
 # process-wide, so a test sharing that process sees the mapper's provider tag
-# dropped even though the class identity still matches). The three files share one
+# dropped even though the class identity still matches). The four files share one
 # process: none of them mocks a module, so they only need isolating from those.
 run_group "Group 0f: Agent model layer" \
   tests/isolated/agent-model-adapter.test.ts \
   tests/isolated/agent-provider-registry.test.ts \
-  tests/isolated/agent-capability-probe.test.ts
+  tests/isolated/agent-capability-probe.test.ts \
+  tests/isolated/agent-investigation.test.ts
 
 # Group 1: Studio (isolated — mocks almost every child component)
 run_group "Group 1/6: Studio" \

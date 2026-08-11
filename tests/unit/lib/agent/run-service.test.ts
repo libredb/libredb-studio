@@ -169,6 +169,69 @@ describe("AgentRunService — starting and reporting a run", () => {
   });
 });
 
+// ─── narrated entries ───────────────────────────────────────────────────────
+
+/**
+ * `recordEvent` is what the run loop uses to say what it DECIDED, as opposed to
+ * what happened to a tool. The investigation suite drives it end to end; these
+ * pin the method's own contract, which is where a later reader would look for it.
+ */
+describe("AgentRunService — recording what a run narrated", () => {
+  test("a narrative entry lands in the ledger, stamped from the injected clock", async () => {
+    const clock = fakeClock();
+    const h = harness(clock.read);
+    const { runId } = await h.service.start(START_INPUT);
+    await h.service.markRunning(runId);
+
+    clock.set(1_700_000_123_000);
+    await h.service.recordEvent(runId, { kind: "context-captured", fingerprint: "fp_1", tableCount: 3 });
+
+    const view = await h.store.read(runId);
+    expect(view?.record.events.at(-1)).toEqual({
+      kind: "context-captured",
+      fingerprint: "fp_1",
+      tableCount: 3,
+      // The caller supplies no timestamp, so a run's history cannot be dated from
+      // a clock other than the one every other entry uses.
+      atMs: 1_700_000_123_000,
+    });
+  });
+
+  test("refuses a run the loop has not picked up yet, and writes nothing", async () => {
+    const h = harness();
+    const { runId } = await h.service.start(START_INPUT);
+
+    const error = await captureServiceError(() =>
+      h.service.recordEvent(runId, { kind: "report-composed", claims: [] }),
+    );
+
+    expect(error.reasonCode).toBe("RUN_NOT_RUNNING");
+    expect((await h.store.read(runId))?.record.events).toEqual([]);
+  });
+
+  test("refuses a run that has already ended", async () => {
+    const h = harness();
+    const { runId } = await h.service.start(START_INPUT);
+    await h.service.markRunning(runId);
+    await h.service.finish(runId, "succeeded");
+
+    const error = await captureServiceError(() =>
+      h.service.recordEvent(runId, { kind: "statement-drafted", stepId: "s1", sql: "SELECT 1", rationale: "why" }),
+    );
+
+    expect(error.reasonCode).toBe("RUN_NOT_RUNNING");
+  });
+
+  test("refuses a run that does not exist", async () => {
+    const h = harness();
+    const error = await captureServiceError(() =>
+      h.service.recordEvent("arun_ff", { kind: "context-captured", fingerprint: "fp_1", tableCount: 0 }),
+    );
+
+    expect(error.reasonCode).toBe("RUN_NOT_FOUND");
+  });
+});
+
 describe("AgentRunService — finishing a run", () => {
   test("a finished run is terminal and releases its budget and its artifacts together", async () => {
     const h = harness();

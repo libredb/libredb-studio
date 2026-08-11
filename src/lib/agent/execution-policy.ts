@@ -98,3 +98,24 @@ export const AGENT_MINIMUM_CALL_MS = 250;
  * the statement budget, not this counter.
  */
 export const AGENT_MAX_REPAIR_ATTEMPTS = 3;
+
+/**
+ * How many times ONE DRIVE of the run loop may ask the model for its next move.
+ *
+ * A backstop, not the primary bound: the statement budget above, the repair ledger
+ * and `AGENT_RUN_DEADLINE_MS` are what govern the cost of a drive, and each of them
+ * ends it for a reason a user can read. This one exists for the case none of them
+ * catches — a model that keeps producing tool calls the loop refuses without ever
+ * reaching the database, which spends no statements and no repair attempts. Set
+ * well above the number of turns a real investigation takes, so hitting it is
+ * evidence of a loop rather than of an ambitious question.
+ *
+ * **Every one of those ceilings is per-DRIVE, not per-run.** The budget tracker, the
+ * repair ledger and the deadline all live in the process that drives a run, so a run
+ * resumed after a process death starts each of them again: N resumes cost up to N
+ * times a single drive's ceiling. Nothing here is a lie about a run's total cost
+ * because nothing here claims to bound one — bounding a run ACROSS resumes needs a
+ * ceiling folded from its own ledger (the record carries `createdAtMs`, so the data
+ * exists), and that is recorded in `docs/BACKLOG.md` rather than implied here.
+ */
+export const AGENT_MAX_MODEL_TURNS = 16;
