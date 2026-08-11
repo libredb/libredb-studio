@@ -40,7 +40,7 @@ never carries loop bookkeeping. Runbook and current status: [`HANDOFF.md.templat
 | [`PROMPT-TRIAGE.md`](./PROMPT-TRIAGE.md) / [`PROMPT-PLANNING.md`](./PROMPT-PLANNING.md) / [`PROMPT.md`](./PROMPT.md) | The three mode prompts fed to fresh-context iterations | Agent behavior (the only instruction source) |
 | `PROGRESS.md.template` · `TRIAGE.md.template` · `ACCEPTANCE.md.template` · `IMPLEMENTATION_PLAN.md.template` · `HANDOFF.md.template` | Pristine seeds for the live working files (`{{MILESTONE}}`/`{{SENTINEL}}` placeholders) | The starting content of each live file |
 | `config/loop.env.example` | Runner-config seed (sentinel, mode, tool blocks, limits) | Default runner behavior |
-| `scripts/` | `loop.sh` (iteration engine) · `pipeline.sh` (stage sequencing) · `new-milestone.sh` (seed/reset) · `gate.sh` (mechanical gate) · `functional-smoke.sh` (product gate) | Deterministic mechanics |
+| `scripts/` | `loop.sh` (iteration engine) · `pipeline.sh` (stage sequencing) · `new-milestone.sh` (seed/reset) · `gate.sh` (mechanical gate) · `functional-smoke.sh` (product gate) · `trace.py` (live iteration trace, see below) | Deterministic mechanics |
 
 **Live working state — `.loop/` (gitignored, seeded from the templates by `new-milestone.sh`):**
 
@@ -53,7 +53,41 @@ never carries loop bookkeeping. Runbook and current status: [`HANDOFF.md.templat
 | `.loop/HANDOFF.md` | Cross-session orientation + operator runbook | Nothing (orientation only) |
 | `.loop/config/loop.env` | Live runner configuration (rotated per milestone) | Runner behavior |
 | `.loop/archive/<milestone>/` | Frozen history rotated out by `new-milestone.sh` | Past milestones |
-| `.loop/COMPLETE` · `.loop/logs/` | Completion marker + per-iteration logs | Completion signal / run trace |
+| `.loop/COMPLETE` · `.loop/logs/` | Completion marker + per-iteration logs (`iteration-N.log`, written only when the iteration exits) and `trace.log` (live, from `trace.py`) | Completion signal / run trace |
+
+## Watching a running iteration
+
+`claude -p` buffers its output: nothing lands in `.loop/logs/iteration-N.log` until the process
+exits, so for up to `LOOP_ITERATION_TIMEOUT` (2.5h here) a healthy iteration and a wedged one look
+exactly the same. `trace.py` closes that gap — Claude Code writes each session's event stream to
+`~/.claude/projects/<slug>/<uuid>.jsonl` as it happens, and the script follows that, printing one
+short line per tool call and result:
+
+```bash
+nohup python3 loop/scripts/trace.py --log >/dev/null 2>&1 &   # start once per run
+tail -f .loop/logs/trace.log                                   # then just watch
+```
+
+```
+21:07:04 TOOL Bash      timeout 3000 ./loop/scripts/gate.sh 2>&1 | tail -30
+21:07:26   ->           [30 lines] 247:30 warning '_dropped' is assigned a value but never used…
+21:07:33 SAY            Lint clean (0 errors, 80 warnings = baseline). Typecheck caught a real type error…
+```
+
+Each iteration opens a new session and therefore a new transcript; the script detects the switch and
+follows the next one, so it can be left running overnight. It identifies the loop's transcript by
+matching the iteration prompt on line 1, so an operator's own interactive session in the same
+repository never appears. Output goes to stdout, and to `.loop/logs/trace.log` with `--log`.
+
+**Why it reads a transcript rather than the agent's stdout.** The obvious alternative — running the
+agent with `--output-format stream-json` and piping it into a formatter — is unsafe here: `loop.sh`
+redirects the agent to a *file* rather than through a pipe on purpose, because a pipe stays open
+while any surviving child of a killed agent holds it, wedging the runner long after `timeout(1)`
+fired. Reading the transcript leaves the runner's IO untouched, needs no restart, and works on an
+iteration that is already in flight.
+
+Note that this is observation only. The authoritative record of what an iteration *decided* is still
+its `.loop/PROGRESS.md` entry and its commit; a trace line is not evidence that work was verified.
 
 ## The two gates every milestone must pass
 
