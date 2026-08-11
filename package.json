@@ -216,6 +216,9 @@
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.4",
     "@types/ssh2": "^1.15.5",
+    "@workflow/world-local": "4.2.4",
+    "@workflow/world-postgres": "4.3.3",
+    "ai": "7.0.59",
     "eslint": "^9.39.5",
     "eslint-config-next": "^16.3.0",
     "happy-dom": "^20.11.2",
@@ -224,6 +227,7 @@
     "tailwindcss": "^4.3.3",
     "tsup": "^8.5.1",
     "typescript": "^6.0.3",
-    "typescript-eslint": "^8.67.0"
+    "typescript-eslint": "^8.67.0",
+    "workflow": "4.8.1"
   }
 }

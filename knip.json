@@ -14,7 +14,11 @@
     "scripts/*.mjs"
   ],
   "ignoreDependencies": [
-    "tailwindcss"
+    "tailwindcss",
+    "ai",
+    "workflow",
+    "@workflow/world-local",
+    "@workflow/world-postgres"
   ],
   "ignoreBinaries": [
     "genhtml",
