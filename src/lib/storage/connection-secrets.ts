@@ -62,6 +62,35 @@ export const SSH_TUNNEL_FIELDS: Record<keyof SSHTunnelConfig, FieldClass> = {
   passphrase: "secret",
 };
 
+/**
+ * Every classification map in this module, in one place, so a consumer that needs "which fields
+ * does this product classify as credentials" imports one name instead of restating three.
+ * (src/lib/agent/state-guard.ts derives its credential-key set from it.)
+ *
+ * Note what this is NOT: unlike the maps above, it carries no compile-time guarantee. The maps
+ * fail `bun run typecheck` when a field goes unclassified; nothing makes a FOURTH map appear in
+ * this array. Adding one is a manual step, and the direction that loses coverage silently is
+ * ADDING a map without registering it - the storage layer would encrypt the new field while a
+ * consumer deriving from this array never learns it exists. So the check that covers this lives in
+ * tests/unit/lib/agent/state-guard.test.ts and is reflective, not a pinned list of names: it walks
+ * this module's own exports and fails when one of them is a classification map this array omits.
+ *
+ * That check sees EXPORTED maps only. A fourth map kept module-private and wired straight into
+ * `walkConnection` is invisible to it, and would be sealed here while a consumer persisted it in
+ * the clear. Export any new classification map (all three above are) and the check covers it;
+ * recorded in docs/BACKLOG.md so the gap is tracked rather than only described.
+ *
+ * Deliberately NOT consumed by this module's own encrypt/decrypt walk. The three maps are not
+ * interchangeable there - each applies at a different level of a connection (root, `ssl`,
+ * `sshTunnel`), which a flat array cannot express - so making `walkConnection` iterate it would
+ * mean encoding those locations too, i.e. redesigning the walk rather than deduplicating a list.
+ */
+export const SECRET_FIELD_MAPS: readonly Record<string, FieldClass>[] = [
+  CONNECTION_FIELDS,
+  SSL_FIELDS,
+  SSH_TUNNEL_FIELDS,
+];
+
 /** Derived, never written out twice: a second hand-maintained list is a second thing that drifts. */
 function secretsOf(map: Record<string, FieldClass>): string[] {
   return Object.keys(map).filter((key) => map[key] === "secret");

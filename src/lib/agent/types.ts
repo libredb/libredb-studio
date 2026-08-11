@@ -1,0 +1,205 @@
+/**
+ * Durable domain contracts for one agent run (#329, epic #325).
+ *
+ * These are the PRODUCT's types, not the runtime's: a run, the semantic events
+ * it emits, the schema snapshot it reasons over, and the two kinds of pointer
+ * that let a report cite something without carrying it. The workflow SDK's
+ * message, tool-call and stream shapes are deliberately NOT re-modeled here —
+ * they are the transport, they change with the pinned version, and a durable
+ * record that embedded them would have to migrate every time it moved.
+ *
+ * Everything in this file is inert by construction: identifiers, enumerated
+ * strings, numbers, plain records and arrays of the same. No `Date`, no `Map`,
+ * no provider handle, no result set. That is what makes a run resumable — the
+ * whole record is JSON, so the state a restarted process reads back is exactly
+ * the state the previous one wrote (`state-guard.ts` enforces the same rule at
+ * runtime for the open-ended fields, and the contract fixtures in
+ * `tests/unit/lib/agent/types.test.ts` assert the round trip).
+ *
+ * Three shapes carry a decision rather than just data:
+ *
+ *  - `AgentToolRefusal` is a closed union whose POLICY variant declares no field
+ *    a consumer can READ engine text from: `refusal.message` does not compile
+ *    unless the code has already narrowed to the database-error variant. That is
+ *    the structural half of "a policy denial is never fed back to the model as if
+ *    it were bad SQL", and the deny code comes from `PolicyDenyCode` itself, so
+ *    the two vocabularies cannot drift. The bound is on reads, not on the runtime
+ *    object: excess-property checking only fires on a fresh literal, so a widened
+ *    object assigned through a variable still carries its extra field at runtime.
+ *    Anything that serializes a refusal into a prompt must therefore project the
+ *    fields it wants rather than spreading the whole value.
+ *  - `AgentReportClaim.evidence` is a non-empty tuple type, so a claim with
+ *    nothing backing it is inexpressible rather than merely discouraged.
+ *  - `AgentRunActor` records a session and a role, and no execution mode. The
+ *    policy layer owns its own mode vocabulary (`policy.ts`) and the server
+ *    supplies it when a tool call reaches the pipeline; a persisted run may
+ *    never be the thing that names its own privilege.
+ *
+ * A run's event log is the record's only history: artifacts and evidence are
+ * reachable THROUGH the events that produced them rather than duplicated into
+ * parallel lists, because two lists of the same facts are two things a resumed
+ * run could disagree with itself about.
+ */
+
+import type { Role } from "@/lib/auth";
+import type { PolicyDenyCode } from "@/lib/db/operations/policy";
+import type { TableSchema } from "@/lib/types";
+
+/**
+ * Which surface a run drives. Planning is toolless: it must perform zero database
+ * operations, which is why it is NOT one of the policy layer's execution modes and
+ * never reaches the pipeline.
+ *
+ * Stated as the obligation it is, not as something already enforced — the tool
+ * layer that has to select an empty set for this mode does not exist at this
+ * commit. It is the requirement that layer will be tested against.
+ */
+export type AgentRunMode = "planning" | "agent";
+
+/** A run that has stopped, and why. Terminal states are never re-entered. */
+export type AgentRunTerminalStatus = "succeeded" | "failed" | "cancelled";
+
+export type AgentRunStatus = "queued" | "running" | AgentRunTerminalStatus;
+
+/**
+ * Who started the run, persisted at start and the sole authority for authorizing
+ * every later tool call — never the callback that woke the run up, never the
+ * request body.
+ */
+export interface AgentRunActor {
+  readonly sessionId: string;
+  readonly role: Role;
+}
+
+/** Shape of a result, never the result: what a summary may say about rows. */
+export interface AgentResultSummary {
+  readonly rowCount: number;
+  readonly columnNames: readonly string[];
+  readonly elapsedMs: number;
+}
+
+/**
+ * A pointer to a result the run produced. The rows themselves stay in the
+ * run-scoped artifact store (`src/lib/db/operations/artifacts.ts`, process
+ * memory, released with the run); `correlationId` is the same audit join key the
+ * execution layer minted, so a reference is also how an operator finds the audit
+ * line for the statement that produced it.
+ */
+export interface AgentArtifactReference {
+  readonly correlationId: string;
+  readonly runId: string;
+  /** Registry-resolved operation id, never a caller-supplied string. */
+  readonly operationId: string;
+  readonly summary: AgentResultSummary;
+}
+
+/**
+ * What backs one claim in a report. Two sources and no third: something the run
+ * actually ran, or the schema it captured. A claim that can cite neither is a
+ * claim the run invented.
+ */
+export type AgentEvidenceReference =
+  | { readonly source: "artifact"; readonly correlationId: string; readonly locator?: string }
+  | { readonly source: "context-snapshot"; readonly fingerprint: string; readonly locator?: string };
+
+export interface AgentReportClaim {
+  readonly claim: string;
+  /** Non-empty by type: at least one reference, or the claim cannot be built. */
+  readonly evidence: readonly [AgentEvidenceReference, ...AgentEvidenceReference[]];
+}
+
+/**
+ * The schema inventory a run reasons over, plus the fingerprint that decides
+ * whether a refresh has to read anything at all.
+ *
+ * `tables` reuses the shipped `TableSchema` shape rather than introducing a
+ * second schema vocabulary: the providers already produce it, the UI already
+ * renders it, and it is serializable as it stands.
+ */
+export interface AgentContextSnapshot {
+  readonly connectionId: string;
+  /** Stable across two identical inventories; changes when the inventory does. */
+  readonly fingerprint: string;
+  readonly capturedAtMs: number;
+  readonly tables: readonly TableSchema[];
+}
+
+/**
+ * Why a tool call produced no result. The three variants are distinct in TYPE,
+ * not merely in a string field, so the run loop cannot hand a policy denial to
+ * the model as if the statement were malformed.
+ *
+ * `message` exists only on the database-error variant. It is the engine's own
+ * text — untrusted input, exactly like public issue text — and any prompt it
+ * re-enters has to label and quote it. `statementFingerprint` is what a resumed
+ * run reads to know it has already failed on that exact statement.
+ */
+export type AgentToolRefusal =
+  | { readonly class: "policy-denied"; readonly reasonCode: PolicyDenyCode }
+  | { readonly class: "approval-required"; readonly operationId: string }
+  | { readonly class: "database-error"; readonly statementFingerprint: string; readonly message: string };
+
+interface AgentRunEventBase {
+  /** Epoch milliseconds. A number, not a Date: a Date does not round-trip. */
+  readonly atMs: number;
+}
+
+/**
+ * The semantic events one run emits, in the vocabulary a user reads in the rail
+ * and a resumed run replays. Deliberately coarse: one entry per thing that
+ * HAPPENED, not per token or per SDK stream chunk.
+ *
+ * `stepId` ties a draft, its invocation and its outcome together. It is what
+ * makes replay idempotent — a resumed run that finds a settled step re-derives
+ * its result instead of performing the call again.
+ *
+ * Consumers name a single variant with `Extract<AgentRunEvent, { kind: "..." }>`,
+ * the way `execution.ts` names one policy decision.
+ */
+export type AgentRunEvent =
+  | (AgentRunEventBase & { readonly kind: "run-started"; readonly mode: AgentRunMode })
+  | (AgentRunEventBase & {
+      readonly kind: "context-captured";
+      readonly fingerprint: string;
+      readonly tableCount: number;
+    })
+  | (AgentRunEventBase & {
+      readonly kind: "statement-drafted";
+      readonly stepId: string;
+      readonly sql: string;
+      readonly rationale: string;
+    })
+  | (AgentRunEventBase & {
+      readonly kind: "tool-invoked";
+      readonly stepId: string;
+      readonly tool: string;
+      /** Present only for a tool that reaches the canonical operation layer. */
+      readonly operationId?: string;
+    })
+  | (AgentRunEventBase & {
+      readonly kind: "tool-completed";
+      readonly stepId: string;
+      readonly artifact: AgentArtifactReference;
+    })
+  | (AgentRunEventBase & { readonly kind: "tool-refused"; readonly stepId: string; readonly refusal: AgentToolRefusal })
+  | (AgentRunEventBase & { readonly kind: "report-composed"; readonly claims: readonly AgentReportClaim[] })
+  | (AgentRunEventBase & { readonly kind: "run-finished"; readonly status: AgentRunTerminalStatus });
+
+/**
+ * One run, whole. Everything a restarted process needs to continue, and nothing
+ * a restarted process could not read: no client, no credential, no result set.
+ */
+export interface AgentRunRecord {
+  readonly runId: string;
+  readonly mode: AgentRunMode;
+  readonly status: AgentRunStatus;
+  readonly actor: AgentRunActor;
+  /** The single connection this run may reach; the server builds the scope from it. */
+  readonly connectionId: string;
+  /** The user's own question, in their words. */
+  readonly objective: string;
+  readonly createdAtMs: number;
+  readonly updatedAtMs: number;
+  /** The run's ledger, in order. The only history there is. */
+  readonly events: readonly AgentRunEvent[];
+}

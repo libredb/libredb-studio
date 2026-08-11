@@ -813,3 +813,29 @@ about what type-checks; today that divergence is zero, since 7.0.2 already repor
 Done when TypeScript exposes an API 7.x tooling can build on and typescript-eslint's peer range
 follows, at which point this is a one-line dependency bump plus a re-run of the gates: the compiler
 side is already proven green.
+
+## Agent M2 deferrals (#329)
+
+### B1. A module-private credential map would be invisible to the agent state guard
+
+`src/lib/agent/state-guard.ts` derives its credential key names from `SECRET_FIELD_MAPS` in
+`src/lib/storage/connection-secrets.ts`, so a field promoted to `secret` in one of the three
+classification maps is covered without an edit. The aggregate itself is a hand-maintained array with
+no type-level guarantee - each individual map fails `bun run typecheck` when a field goes
+unclassified, but nothing makes a fourth MAP appear in the array.
+
+The direction that loses coverage silently is adding a map, not removing one: the storage layer
+would seal the new field while the guard happily persisted it. `tests/unit/lib/agent/state-guard.test.ts`
+closes that by reflection - it walks the storage module's exports, recognises a classification map
+structurally, and fails when one is not registered. Verified to fire by temporarily exporting a
+fourth map.
+
+What remains is narrower: the check sees **exported** maps only. A map kept module-private and wired
+straight into `walkConnection` is invisible to it. All three existing maps are exported for
+consumers, so this is a convention rather than an enforced rule.
+
+Done when a new classification map cannot be added without the guard learning about it - most
+directly by having `walkConnection` iterate a registry instead of three separately derived key
+lists. That registry has to carry each map's nesting location (root, `ssl`, `sshTunnel`), so it is a
+change to a security-critical encrypt/decrypt path with its own test obligations, which is why it
+was not folded into the agent milestone that surfaced it.
