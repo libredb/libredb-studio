@@ -189,6 +189,22 @@ done
 # smaller). The release tarball keeps them; only this bundle is pruned.
 rm -rf "$STAGE_PAYLOAD"/node_modules/@img/*musl*
 
+# better-sqlite3 13 is N-API and ships a prebuild for EVERY platform in the one
+# package (darwin/win32 binaries plus Linux ELFs for the other arch and for
+# musl), where v12 shipped a single binding compiled for the build host. That
+# reintroduces the failure above from a second direction: prebuilds/
+# linuxmusl-x64.node needs libc.musl-x86_64.so.1, which is not resolvable in a
+# glibc AppDir. Keep only the one this bundle can actually load.
+BETTER_SQLITE3_PREBUILDS="$STAGE_PAYLOAD/node_modules/better-sqlite3/prebuilds"
+if [ -d "$BETTER_SQLITE3_PREBUILDS" ]; then
+  find "$BETTER_SQLITE3_PREBUILDS" -maxdepth 1 -type f -name '*.node' \
+    ! -name "linux-${ARCH}.node" -delete
+  if [ ! -f "$BETTER_SQLITE3_PREBUILDS/linux-${ARCH}.node" ]; then
+    echo "better-sqlite3 ships no linux-${ARCH} prebuild - the bundle would have no SQLite storage" >&2
+    exit 1
+  fi
+fi
+
 # Turbopack resolves the externalized database drivers (pg, mysql2, mongodb,
 # ssh2, better-sqlite3) through hashed SYMLINKS under .next/node_modules, and
 # Tauri's resource copy silently drops symlinks: the directory is simply absent
