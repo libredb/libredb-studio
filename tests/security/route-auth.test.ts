@@ -178,9 +178,23 @@ const ALL_ROUTES = discoverRoutes(API_ROOT_DIR);
  * does not require it to call guardRoute. Every entry needs a reason: an unexplained addition
  * here is exactly the hand-maintained-inventory drift this enumeration exists to prevent, and
  * the sanity check below fails if a key does not match a route that actually exists.
+ *
+ * One entry (`agent/drive`) is NOT in that category and says so in its own reason: it does reach
+ * a provider, and it is exempt from THIS enumeration only because the enumeration probes with a
+ * POST carrying no credential and asserts guardRoute's exact 401 body. That route cannot have a
+ * user session by construction - it is the durable transport's callback - so it authenticates
+ * with a server-minted single-purpose credential instead, and the same "no credential, no work"
+ * property is proven against it in tests/api/agent/drive.test.ts. An exemption whose reason is a
+ * different verified control is the only kind allowed here; "it has no auth" never is.
  */
 const ROUTES_WITHOUT_A_PROVIDER: Record<string, string> = {
   "admin/audit": "reads/writes the in-process audit ring buffer only; no database or LLM provider",
+  "agent/drive":
+    "reaches a provider, but is the durable transport's callback and can have no user session: it verifies a server-minted single-purpose credential and its 401 body differs from guardRoute's on purpose (tests/api/agent/drive.test.ts)",
+  "agent/runs/[runId]":
+    "reads and cancels one run's own durable ledger; no database or LLM provider (GET/DELETE, no POST export). Its session check is guardRoute, through src/lib/api/agent-run-access.ts",
+  "agent/runs/[runId]/stream":
+    "follows one run's own durable ledger; no database or LLM provider (GET, no POST export). Same guardRoute path as above",
   "auth/login": "authenticates the credential itself; a session cannot be required before one exists",
   "auth/logout": "clears the session cookie unconditionally; touches no provider either way",
   "auth/me": "reads the caller's own session claims only (GET, no POST export)",

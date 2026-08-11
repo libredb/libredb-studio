@@ -1,0 +1,355 @@
+/**
+ * The agent run routes (#329 T9): start, status, cancel and the run's timeline.
+ *
+ * What these pin, beyond the ordinary shape checks: a session verified in the
+ * handler rather than trusted from the middleware, a run that is invisible to every
+ * session but its own, and a surface that does not exist at all while the runtime
+ * flag is off.
+ */
+
+import { describe, test, expect, mock, beforeEach } from "bun:test";
+import { createMockRequest, parseResponseJSON } from "../../helpers/mock-next";
+import { AGENT_ENABLED_ENV } from "@/lib/agent/config";
+import { AgentRunServiceError } from "@/lib/agent/run-service";
+import { clearRateLimitState } from "@/lib/api/rate-limit";
+import * as realAuth from "@/lib/auth";
+import * as realSeed from "@/lib/seed/resolve-connection";
+
+const { SeedConnectionError } = realSeed;
+
+// ─── Session ────────────────────────────────────────────────────────────────
+
+const mockGetSession = mock(
+  async (): Promise<{ role: string; username: string } | null> => ({ role: "user", username: "ada" }),
+);
+
+// ─── The connection the run is opened against ───────────────────────────────
+
+const mockResolveConnection = mock(async (body: { connectionId?: string }) => ({
+  id: body.connectionId ?? "seed:sales",
+  name: "Sales",
+  type: "postgres",
+}));
+
+// ─── The runtime: service and drive ─────────────────────────────────────────
+
+interface FakeRun {
+  runId: string;
+  mode: string;
+  status: string;
+  actor: { sessionId: string; role: string };
+  connectionId: string;
+  objective: string;
+  events: unknown[];
+}
+
+function fakeRun(overrides: Partial<FakeRun> = {}): FakeRun {
+  return {
+    runId: "arun_1",
+    mode: "agent",
+    status: "queued",
+    actor: { sessionId: "ada", role: "user" },
+    connectionId: "seed:sales",
+    objective: "why is checkout slow",
+    events: [],
+    ...overrides,
+  };
+}
+
+let runs: Map<string, FakeRun>;
+
+const mockStart = mock(
+  async (input: { mode: string; actor: FakeRun["actor"]; connectionId: string; objective: string }) => {
+    const record = fakeRun({ ...input, runId: "arun_new" });
+    runs.set(record.runId, record);
+    return record;
+  },
+);
+
+const mockStatus = mock(async (runId: string) => {
+  const record = runs.get(runId);
+  return record === undefined ? null : { record, cancellationRequested: false };
+});
+
+const mockCancel = mock(async (runId: string) => {
+  const record = runs.get(runId);
+  return { record, cancellationRequested: true };
+});
+
+const mockStream = mock(
+  async () =>
+    new ReadableStream({
+      start(controller) {
+        controller.enqueue({ kind: "event", event: { kind: "run-started", atMs: 1, mode: "agent" } });
+        controller.close();
+      },
+    }),
+);
+
+const mockDriveAgentRun = mock(async () => ({ runId: "arun_new", status: "succeeded" }));
+
+/**
+ * Re-applied in `beforeEach` as well as at import time: `mock.module` replaces a
+ * module process-wide, and `tests/api/agent/drive.test.ts` mocks the same runtime
+ * module in the same process under `bun run test`. Re-registering makes the file
+ * that is currently running own the module, whatever order the runner loaded them in.
+ */
+function installMocks(): void {
+  // Spread over the real modules rather than listing their exports: a partial
+  // replacement stays installed for the rest of the process and breaks the next
+  // file that imports an export this one forgot.
+  mock.module("@/lib/auth", () => ({ ...realAuth, getSession: mockGetSession }));
+  mock.module("@/lib/seed/resolve-connection", () => ({ ...realSeed, resolveConnection: mockResolveConnection }));
+  mock.module("@/lib/agent/runtime", () => ({
+    getAgentRunService: mock(async () => ({
+      start: mockStart,
+      status: mockStatus,
+      cancel: mockCancel,
+      stream: mockStream,
+    })),
+    driveAgentRun: mockDriveAgentRun,
+  }));
+}
+
+installMocks();
+
+const { POST } = await import("@/app/api/agent/runs/route");
+const { GET, DELETE } = await import("@/app/api/agent/runs/[runId]/route");
+const { GET: STREAM } = await import("@/app/api/agent/runs/[runId]/stream/route");
+
+function params(runId: string): { params: Promise<{ runId: string }> } {
+  return { params: Promise.resolve({ runId }) };
+}
+
+function startRequest(body: unknown): Request {
+  return createMockRequest("/api/agent/runs", { method: "POST", body });
+}
+
+const VALID_BODY = { mode: "agent", objective: "why is checkout slow", connectionId: "seed:sales" };
+
+beforeEach(() => {
+  installMocks();
+  clearRateLimitState();
+  runs = new Map([["arun_1", fakeRun()]]);
+  mockGetSession.mockResolvedValue({ role: "user", username: "ada" });
+  process.env[AGENT_ENABLED_ENV] = "true";
+  mockDriveAgentRun.mockClear();
+  mockStart.mockClear();
+  mockResolveConnection.mockClear();
+});
+
+describe("POST /api/agent/runs", () => {
+  test("opens a run for the session's own actor and reports it queued", async () => {
+    const res = await POST(startRequest(VALID_BODY));
+    const body = await parseResponseJSON<{ runId: string; status: string; mode: string }>(res);
+
+    expect(res.status).toBe(202);
+    expect(body).toEqual({ runId: "arun_new", status: "queued", mode: "agent" });
+    expect(mockStart).toHaveBeenCalledWith({
+      mode: "agent",
+      actor: { sessionId: "ada", role: "user" },
+      connectionId: "seed:sales",
+      objective: "why is checkout slow",
+    });
+  });
+
+  test("the run is driven without the caller waiting for it", async () => {
+    await POST(startRequest(VALID_BODY));
+
+    expect(mockDriveAgentRun).toHaveBeenCalledWith("arun_new");
+  });
+
+  test("a drive that fails does not fail the request that started it", async () => {
+    mockDriveAgentRun.mockRejectedValueOnce(new Error("model unreachable"));
+
+    const res = await POST(startRequest(VALID_BODY));
+
+    expect(res.status).toBe(202);
+  });
+
+  test("an unauthenticated caller is refused before anything is opened", async () => {
+    mockGetSession.mockResolvedValue(null);
+
+    const res = await POST(startRequest(VALID_BODY));
+
+    expect(res.status).toBe(401);
+    expect(mockStart).not.toHaveBeenCalled();
+  });
+
+  test("the surface does not exist while the runtime flag is off", async () => {
+    delete process.env[AGENT_ENABLED_ENV];
+
+    const res = await POST(startRequest(VALID_BODY));
+
+    expect(res.status).toBe(404);
+    expect(mockStart).not.toHaveBeenCalled();
+  });
+
+  test("an unknown mode is refused", async () => {
+    const res = await POST(startRequest({ ...VALID_BODY, mode: "autonomous" }));
+
+    expect(res.status).toBe(400);
+    expect(mockStart).not.toHaveBeenCalled();
+  });
+
+  test("planning mode is accepted", async () => {
+    const res = await POST(startRequest({ ...VALID_BODY, mode: "planning" }));
+
+    expect(res.status).toBe(202);
+  });
+
+  test("a blank objective is refused", async () => {
+    const res = await POST(startRequest({ ...VALID_BODY, objective: "   " }));
+
+    expect(res.status).toBe(400);
+  });
+
+  test("an objective longer than the bound is refused", async () => {
+    const res = await POST(startRequest({ ...VALID_BODY, objective: "a".repeat(4001) }));
+
+    expect(res.status).toBe(400);
+  });
+
+  test("a connection supplied inline is refused rather than used", async () => {
+    // A run records a connection ID and no credential, so a drive re-resolves the
+    // connection on the server. One that only the browser knows could never be
+    // rebuilt by the process that resumes the run.
+    const res = await POST(
+      startRequest({
+        mode: "agent",
+        objective: "why is checkout slow",
+        connection: { id: "local-1", type: "postgres" },
+      }),
+    );
+
+    expect(res.status).toBe(400);
+    expect(mockResolveConnection).not.toHaveBeenCalled();
+    expect(mockStart).not.toHaveBeenCalled();
+  });
+
+  test("a missing connectionId is refused", async () => {
+    const res = await POST(startRequest({ mode: "agent", objective: "why is checkout slow" }));
+
+    expect(res.status).toBe(400);
+    expect(mockStart).not.toHaveBeenCalled();
+  });
+
+  test("a connection the session may not reach refuses the run", async () => {
+    mockResolveConnection.mockRejectedValueOnce(new SeedConnectionError("Access denied", 403));
+
+    const res = await POST(startRequest(VALID_BODY));
+
+    expect(res.status).toBe(403);
+    expect(mockStart).not.toHaveBeenCalled();
+  });
+
+  test("a body that is not JSON is refused", async () => {
+    const res = await POST(
+      new Request("http://localhost:3000/api/agent/runs", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{",
+      }),
+    );
+
+    expect(res.status).toBe(400);
+  });
+});
+
+describe("GET /api/agent/runs/[runId]", () => {
+  test("reports the run to the session that opened it", async () => {
+    const res = await GET(createMockRequest("/api/agent/runs/arun_1"), params("arun_1"));
+    const body = await parseResponseJSON<{ record: FakeRun; cancellationRequested: boolean }>(res);
+
+    expect(res.status).toBe(200);
+    expect(body.record.runId).toBe("arun_1");
+    expect(body.cancellationRequested).toBe(false);
+  });
+
+  test("another session cannot read the run, and is not told it exists", async () => {
+    mockGetSession.mockResolvedValue({ role: "user", username: "grace" });
+
+    const res = await GET(createMockRequest("/api/agent/runs/arun_1"), params("arun_1"));
+
+    expect(res.status).toBe(404);
+  });
+
+  test("an admin is not exempt: the run's own actor is the authority", async () => {
+    mockGetSession.mockResolvedValue({ role: "admin", username: "root" });
+
+    const res = await GET(createMockRequest("/api/agent/runs/arun_1"), params("arun_1"));
+
+    expect(res.status).toBe(404);
+  });
+
+  test("a run that does not exist is a 404", async () => {
+    const res = await GET(createMockRequest("/api/agent/runs/arun_9"), params("arun_9"));
+
+    expect(res.status).toBe(404);
+  });
+
+  test("an unauthenticated caller is refused", async () => {
+    mockGetSession.mockResolvedValue(null);
+
+    const res = await GET(createMockRequest("/api/agent/runs/arun_1"), params("arun_1"));
+
+    expect(res.status).toBe(401);
+  });
+
+  test("the surface does not exist while the runtime flag is off", async () => {
+    delete process.env[AGENT_ENABLED_ENV];
+
+    const res = await GET(createMockRequest("/api/agent/runs/arun_1"), params("arun_1"));
+
+    expect(res.status).toBe(404);
+  });
+});
+
+describe("DELETE /api/agent/runs/[runId]", () => {
+  test("the session that opened the run can stop it", async () => {
+    const res = await DELETE(createMockRequest("/api/agent/runs/arun_1", { method: "DELETE" }), params("arun_1"));
+    const body = await parseResponseJSON<{ cancellationRequested: boolean }>(res);
+
+    expect(res.status).toBe(200);
+    expect(body.cancellationRequested).toBe(true);
+    expect(mockCancel).toHaveBeenCalledWith("arun_1", { sessionId: "ada", role: "user" });
+  });
+
+  test("a run the service refuses to stop reports the refusal rather than a bare 500", async () => {
+    // The one this really guards: a run with a statement still in flight cannot be
+    // ended, and the service says so with a typed error instead of half-ending it.
+    mockCancel.mockRejectedValueOnce(new AgentRunServiceError("RUN_HAS_LIVE_EXECUTION", "1 execution in flight"));
+
+    const res = await DELETE(createMockRequest("/api/agent/runs/arun_1", { method: "DELETE" }), params("arun_1"));
+
+    expect(res.status).toBeGreaterThanOrEqual(500);
+  });
+
+  test("another session cannot cancel the run", async () => {
+    mockGetSession.mockResolvedValue({ role: "admin", username: "root" });
+    mockCancel.mockClear();
+
+    const res = await DELETE(createMockRequest("/api/agent/runs/arun_1", { method: "DELETE" }), params("arun_1"));
+
+    expect(res.status).toBe(404);
+    expect(mockCancel).not.toHaveBeenCalled();
+  });
+});
+
+describe("GET /api/agent/runs/[runId]/stream", () => {
+  test("streams the run's timeline as newline-delimited entries", async () => {
+    const res = await STREAM(createMockRequest("/api/agent/runs/arun_1/stream"), params("arun_1"));
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("application/x-ndjson");
+    expect(await res.text()).toBe('{"kind":"event","event":{"kind":"run-started","atMs":1,"mode":"agent"}}\n');
+  });
+
+  test("another session cannot follow the run", async () => {
+    mockGetSession.mockResolvedValue({ role: "user", username: "grace" });
+
+    const res = await STREAM(createMockRequest("/api/agent/runs/arun_1/stream"), params("arun_1"));
+
+    expect(res.status).toBe(404);
+  });
+});

@@ -64,8 +64,13 @@ import type { AgentRunActor, AgentRunEvent, AgentRunMode, AgentRunRecord, AgentR
 /** Stream-name prefix, so one world may carry ledgers next to other streams. */
 const AGENT_LEDGER_STREAM_PREFIX = "agent-ledger-";
 
-/** Ids are `[A-Za-z0-9_]` and bounded: no `-` (see the module docblock), no `.` (the backend refuses it). */
-const RUN_ID_PATTERN = /^[A-Za-z0-9_]{1,64}$/;
+/**
+ * Ids are `[A-Za-z0-9_]` and bounded: no `-` (see the module docblock), no `.` (the
+ * backend refuses it). Exported because it is a property of the LEDGER — a run id
+ * becomes a stream name — so the drive token verifies against this one definition
+ * rather than against a second copy that could drift from it.
+ */
+export const AGENT_RUN_ID_PATTERN = /^[A-Za-z0-9_]{1,64}$/;
 
 const EVENT_KINDS: ReadonlySet<string> = new Set<AgentRunEvent["kind"]>([
   "run-started",
@@ -178,7 +183,7 @@ const invalidRunIdMessage = (raw: string): string =>
   `agent run id "${raw}" is not usable as a ledger name: expected 1-64 characters of [A-Za-z0-9_]`;
 
 function assertRunId(runId: string): string {
-  if (typeof runId !== "string" || !RUN_ID_PATTERN.test(runId)) {
+  if (typeof runId !== "string" || !AGENT_RUN_ID_PATTERN.test(runId)) {
     throw new AgentRunStoreError("INVALID_RUN_ID", invalidRunIdMessage(String(runId)));
   }
   return runId;

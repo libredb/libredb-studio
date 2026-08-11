@@ -28,7 +28,7 @@ Two consequences worth stating before the table:
 |---|---|---|---|---|
 | 0.1 | LLM output never becomes an HTML string; the renderer builds React elements | Implemented | [`src/components/DatabaseDocs.tsx`](../src/components/DatabaseDocs.tsx), [`src/components/AIAutopilotPanel.tsx`](../src/components/AIAutopilotPanel.tsx) | [`tests/security/xss-sinks.test.tsx`](../tests/security/xss-sinks.test.tsx) |
 | 0.2 | No remote origin can be fetched through the image optimizer | Implemented | [`next.config.ts`](../next.config.ts) | [`tests/security/image-proxy.test.ts`](../tests/security/image-proxy.test.ts) |
-| 0.3 | Every route that reaches a database or an LLM verifies the session in its own handler | Implemented | [`src/lib/api/require-session.ts`](../src/lib/api/require-session.ts) | [`tests/security/route-auth.test.ts`](../tests/security/route-auth.test.ts) |
+| 0.3 | Every route that reaches a database or an LLM verifies its caller in its own handler — a user session, or for the one machine callback a server-minted single-purpose credential | Implemented | [`src/lib/api/require-session.ts`](../src/lib/api/require-session.ts), [`src/lib/agent/drive-token.ts`](../src/lib/agent/drive-token.ts) | [`tests/security/route-auth.test.ts`](../tests/security/route-auth.test.ts), [`tests/api/agent/drive.test.ts`](../tests/api/agent/drive.test.ts) |
 | 0.4 | The security policy states only what the code does | Implemented | [`SECURITY.md`](../SECURITY.md) | [`tests/unit/security-check.test.ts`](../tests/unit/security-check.test.ts) |
 | 0.5 | A published reporting channel with a stated response time | Implemented | [`SECURITY.md`](../SECURITY.md) | [`tests/security/vulnerability-disclosure.test.ts`](../tests/security/vulnerability-disclosure.test.ts) |
 | 1.1 | Every response carries CSP, HSTS, X-Content-Type-Options, X-Frame-Options, Referrer-Policy and Permissions-Policy | Implemented | [`src/lib/security/headers.ts`](../src/lib/security/headers.ts), [`src/lib/security/config.ts`](../src/lib/security/config.ts), [`src/proxy.ts`](../src/proxy.ts) | [`tests/security/headers.test.ts`](../tests/security/headers.test.ts), [`tests/security/header-delivery.test.ts`](../tests/security/header-delivery.test.ts), [`e2e/security-headers.spec.ts`](../e2e/security-headers.spec.ts) |
@@ -42,13 +42,24 @@ Two consequences worth stating before the table:
 | 3.1 | Credentials are encrypted at rest in the server-side store | Implemented | [`src/lib/storage/encryption.ts`](../src/lib/storage/encryption.ts), [`src/lib/storage/connection-secrets.ts`](../src/lib/storage/connection-secrets.ts), [`src/lib/storage/encrypting-provider.ts`](../src/lib/storage/encrypting-provider.ts), [`src/lib/storage/factory.ts`](../src/lib/storage/factory.ts) | [`tests/security/credential-at-rest.test.ts`](../tests/security/credential-at-rest.test.ts), [`tests/isolated/factory-singleton.test.ts`](../tests/isolated/factory-singleton.test.ts), [`tests/integration/storage/sqlite-credential-encryption.test.ts`](../tests/integration/storage/sqlite-credential-encryption.test.ts) |
 | 3.2 | Every authoritative (server-generated) audit event is emitted as one structured JSON line on stdout | Implemented | [`src/lib/audit.ts`](../src/lib/audit.ts) | [`tests/security/audit-redaction.test.ts`](../tests/security/audit-redaction.test.ts), [`tests/security/audit-type-safety.test.ts`](../tests/security/audit-type-safety.test.ts) |
 | 3.3 | This page is checked against the repository on every build | Implemented | [`scripts/security-check.mjs`](../scripts/security-check.mjs) | [`tests/unit/security-check.test.ts`](../tests/unit/security-check.test.ts) |
-| 3.4 | A statement submitted on the agent execution path cannot write, change schema, reach another database, load code, or run the executing form of EXPLAIN | Partial | [`src/lib/db/operations/policy.ts`](../src/lib/db/operations/policy.ts), [`src/lib/db/operations/statement-guard.ts`](../src/lib/db/operations/statement-guard.ts), [`src/lib/agent/composed-sql.ts`](../src/lib/agent/composed-sql.ts), [`src/lib/agent/tools.ts`](../src/lib/agent/tools.ts), [`src/lib/db/providers/sql/postgres.ts`](../src/lib/db/providers/sql/postgres.ts), [`src/lib/db/providers/sql/sqlite.ts`](../src/lib/db/providers/sql/sqlite.ts) | [`tests/security/agent-statement-boundary.test.ts`](../tests/security/agent-statement-boundary.test.ts), [`tests/unit/lib/agent/composed-sql.test.ts`](../tests/unit/lib/agent/composed-sql.test.ts), [`tests/unit/lib/agent/tools.test.ts`](../tests/unit/lib/agent/tools.test.ts), [`tests/integration/db/postgres-provider.test.ts`](../tests/integration/db/postgres-provider.test.ts), [`tests/integration/db/sqlite-provider.test.ts`](../tests/integration/db/sqlite-provider.test.ts) |
-| 3.5 | Every agent-path operation — allowed, denied, or held for approval — is audited under one correlation id, and its result is released with the run | Partial | [`src/lib/db/operations/execution.ts`](../src/lib/db/operations/execution.ts), [`src/lib/db/operations/artifacts.ts`](../src/lib/db/operations/artifacts.ts), [`src/lib/agent/tools.ts`](../src/lib/agent/tools.ts), [`src/lib/audit.ts`](../src/lib/audit.ts) | [`tests/security/agent-execution-audit.test.ts`](../tests/security/agent-execution-audit.test.ts), [`tests/security/agent-tool-layer-audit.test.ts`](../tests/security/agent-tool-layer-audit.test.ts), [`tests/unit/db/operations/execution.test.ts`](../tests/unit/db/operations/execution.test.ts), [`tests/unit/db/operations/artifacts.test.ts`](../tests/unit/db/operations/artifacts.test.ts), [`tests/api/db/query.test.ts`](../tests/api/db/query.test.ts) |
+| 3.4 | A statement submitted on the agent execution path cannot write, change schema, reach another database, load code, or run the executing form of EXPLAIN | Partial | [`src/lib/db/operations/policy.ts`](../src/lib/db/operations/policy.ts), [`src/lib/db/operations/statement-guard.ts`](../src/lib/db/operations/statement-guard.ts), [`src/lib/agent/composed-sql.ts`](../src/lib/agent/composed-sql.ts), [`src/lib/agent/tools.ts`](../src/lib/agent/tools.ts), [`src/lib/db/providers/sql/postgres.ts`](../src/lib/db/providers/sql/postgres.ts), [`src/lib/db/providers/sql/sqlite.ts`](../src/lib/db/providers/sql/sqlite.ts), [`src/app/api/agent/runs/route.ts`](../src/app/api/agent/runs/route.ts), [`src/lib/agent/runtime.ts`](../src/lib/agent/runtime.ts) | [`tests/security/agent-statement-boundary.test.ts`](../tests/security/agent-statement-boundary.test.ts), [`tests/unit/lib/agent/composed-sql.test.ts`](../tests/unit/lib/agent/composed-sql.test.ts), [`tests/unit/lib/agent/tools.test.ts`](../tests/unit/lib/agent/tools.test.ts), [`tests/api/agent/runs.test.ts`](../tests/api/agent/runs.test.ts), [`tests/integration/db/postgres-provider.test.ts`](../tests/integration/db/postgres-provider.test.ts), [`tests/integration/db/sqlite-provider.test.ts`](../tests/integration/db/sqlite-provider.test.ts) |
+| 3.5 | Every agent-path operation — allowed, denied, or held for approval — is audited under one correlation id, and its result is released with the run | Partial | [`src/lib/db/operations/execution.ts`](../src/lib/db/operations/execution.ts), [`src/lib/db/operations/artifacts.ts`](../src/lib/db/operations/artifacts.ts), [`src/lib/agent/tools.ts`](../src/lib/agent/tools.ts), [`src/lib/audit.ts`](../src/lib/audit.ts), [`src/lib/api/agent-run-access.ts`](../src/lib/api/agent-run-access.ts), [`src/app/api/agent/drive/route.ts`](../src/app/api/agent/drive/route.ts) | [`tests/security/agent-execution-audit.test.ts`](../tests/security/agent-execution-audit.test.ts), [`tests/security/agent-tool-layer-audit.test.ts`](../tests/security/agent-tool-layer-audit.test.ts), [`tests/unit/db/operations/execution.test.ts`](../tests/unit/db/operations/execution.test.ts), [`tests/unit/db/operations/artifacts.test.ts`](../tests/unit/db/operations/artifacts.test.ts), [`tests/api/agent/drive.test.ts`](../tests/api/agent/drive.test.ts), [`tests/api/db/query.test.ts`](../tests/api/db/query.test.ts) |
 
 ## Notes on individual rows
 
 **0.1.** The fix removed the HTML-string path rather than escaping its input, so a future edit to the
 markdown rules cannot reintroduce the sink. Fixed in 0.10.0; earlier releases are affected.
+
+**0.3.** Exactly one route verifies something other than a user session, and it is named here rather
+than left to the test file: `POST /api/agent/drive`, the callback that asks this server to pick an
+agent run up again. It can have no session by construction — its caller is the durable transport,
+not a person — so it verifies a credential this server minted instead: single-purpose, valid for a
+minute, naming one run, signed with a key derived from `JWT_SECRET` rather than with `JWT_SECRET`
+itself, so it is not a session and cannot become one. It grants nothing beyond continuing that run:
+what the run may read is decided by the actor recorded in the run's own ledger, never by the
+credential and never by the request body. `src/proxy.ts`'s public-path list is unchanged — the
+middleware admits this one path only when the credential verifies, and the handler verifies it
+again.
 
 **1.1.** The Content-Security-Policy permits inline scripts, because the application is statically
 prerendered and its hydration scripts are inline and nonce-less. What the policy contains is
@@ -82,11 +93,13 @@ would let an admin session forge an indistinguishable log line.
 exactly one statement, run by a role verified at open to hold neither superuser nor any
 server-file/program privilege (a read-only transaction does not stop `COPY … TO PROGRAM`); and a
 separate SQLite read-only open with `PRAGMA query_only` re-asserted before every statement. Reading
-the SQL is defense in depth only, never the boundary. **Partial** for two reasons: out-of-scope
-READS have no database-native control on either provider (only the declared-target allowlist, the
-statement guard, and whatever the role's grants bound — see
-[`docs/BACKLOG.md`](./BACKLOG.md) A3), and no route or agent runtime reaches this layer yet, so it
-governs nothing in a shipped release until the agent surface lands.
+the SQL is defense in depth only, never the boundary. A route now reaches this layer: an agent run
+is opened at `POST /api/agent/runs` by a verified session, and every statement it sends passes
+through the operation pipeline above, on a provider acquired for the run's read-only execution
+profile rather than from the shared writable cache. Still **Partial**, for the one reason that
+survives: out-of-scope READS have no database-native control on either provider — only the
+declared-target allowlist, the statement guard, and whatever the role's grants bound (see
+[`docs/BACKLOG.md`](./BACKLOG.md) A3).
 
 **3.5.** Each execution emits a decision event and, once allowed, an execution-outcome event
 sharing one server-generated correlation id; a denial emits the decision event alone with a typed
@@ -100,8 +113,12 @@ result is written at rest. One outcome carries no correlation id, because no exe
 the agent tool layer refuses a call that no longer fits the run's wall-clock deadline BEFORE the
 execution glue is reached, and records that with its own two `agent_*` reasons
 (`agent_run_deadline_exceeded`, `agent_insufficient_time_remaining`) so a run that stopped on its own
-deadline is not silent. **Partial** for the same two reasons as 3.4: no route reaches this layer
-yet, and the in-app ring buffer is per-process — the stdout line remains the authoritative record.
+deadline is not silent. The routes that make this reachable are session-verified in their own
+handlers, and a run is authorized against the actor persisted in its own ledger — not against the
+caller of the moment, so a drive that continues a run minutes later cannot widen what it may audit or
+read (that resume path exists and authenticates, but nothing calls it yet — see
+[`docs/BACKLOG.md`](./BACKLOG.md) B9). Still **Partial**, for the one reason that survives: the in-app
+ring buffer is per-process — the stdout line remains the authoritative record.
 
 ## Known limits
 

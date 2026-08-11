@@ -1037,3 +1037,39 @@ that has to be verified against a live server before it can be trusted, which th
 (see A5). Done when a composite foreign key appears in the inventory with each column paired to the one
 it actually references, and two same-named constraints in one schema produce only their own edges,
 both asserted against a live PostgreSQL.
+
+### B9. Nothing enqueues an agent drive, so an interrupted run is resumable but never resumed
+
+Opened by #329 T9. `POST /api/agent/drive` exists, authenticates a server-minted single-purpose
+credential and resumes the run it names, and `src/lib/agent/runtime.ts` re-derives everything that
+run needs from its own ledger — so a resume WORKS. What does not exist is anything that asks for
+one. A run is driven exactly once, in the process that opened it (`src/app/api/agent/runs/route.ts`),
+and if that process dies mid-run the run stays `running` in the ledger with nobody to pick it up:
+`mintAgentDriveToken` has no production caller, and the workflow runtime is used only as the
+ledger's durable substrate — there is no `"use workflow"` function and no queue producer, so the
+backend's own re-enqueue-on-start never sees an agent run.
+
+Adopting the SDK's Next.js integration is what would supply the producer, and it was refused
+deliberately rather than overlooked. Its documented setup asks for `/.well-known/workflow/*` to be
+excluded from the proxy matcher (`node_modules/workflow/docs/getting-started/next.mdx`), and it warns
+that a proxy running on that path detaches the request body — so the callback could not merely
+authenticate its way through the middleware either. Worse than the requested edit: **this matcher
+already excludes it**, because the dot rule (`.*\..*`) skips every path containing a dot and
+`.well-known` contains one (A2 above records the same consequence). So that route would sit outside
+`src/proxy.ts` entirely, unauthenticated, the moment it existed — with no matcher edit to review. The
+pinned decision for exactly this case (P4) says driving in-process without a loopback hop is strictly
+better, which is what the start route does; the drive path this task added is one the matcher DOES
+route, guarded by a credential rather than by a path rule, and `tests/api/proxy.test.ts` pins both
+halves of that.
+
+Two things have to land together whenever a producer arrives, and neither is safe to add alone:
+
+- **A sweep that finds runs left `running`** and drives each one — at boot, or on a timer — with the
+  same credential the callback already verifies.
+- **Single-flight per run.** Today no two drives of one run can overlap, because there is only ever
+  one. A producer removes that accident, and the ledger is explicitly read-then-append with no
+  fencing (B5), so two drives would both read "not invoked" for the same step and both perform it —
+  the duplicate execution the milestone's durability criterion forbids.
+
+Done when a run whose process died is picked up without a person asking, no step is performed twice
+while that happens, and B6's per-drive cost ceilings are accounted for across the resumes it causes.

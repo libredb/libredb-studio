@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { jwtVerify } from "jose";
+import { AGENT_DRIVE_HEADER, AGENT_DRIVE_PATH, verifyAgentDriveToken } from "@/lib/agent/drive-token";
 import { clientAddress } from "@/lib/api/client-address";
 import { checkOrigin } from "@/lib/api/origin-check";
 import { consumeRateLimit } from "@/lib/api/rate-limit";
@@ -91,6 +92,18 @@ export async function proxy(request: NextRequest) {
       }
     }
     // No token, allow access to login page
+    return withSecurityHeaders(NextResponse.next());
+  }
+
+  // The agent runtime's drive callback (#329). It is deliberately NOT on the public list
+  // below: an exemption is path-shaped, so anything that can reach the port would get in.
+  // The caller presents a single-purpose, short-lived credential instead, minted by this
+  // server, naming one run and granting nothing else - so this branch can only ever ADMIT
+  // a request that already proved it holds one, never widen what an unauthenticated caller
+  // may reach. Without one the request falls through to the ordinary session handling
+  // below, and the route re-verifies the credential itself: middleware is an optimisation,
+  // not the authorization boundary (see src/lib/api/require-session.ts).
+  if (pathname === AGENT_DRIVE_PATH && (await verifyAgentDriveToken(request.headers.get(AGENT_DRIVE_HEADER)))) {
     return withSecurityHeaders(NextResponse.next());
   }
 

@@ -26,7 +26,7 @@ FAIL=0
 # Count the `run_group` CALLS below when adding one (not the definition) - this is the
 # number the final summary reports, and it had already drifted by one before Group 0e
 # was added.
-TOTAL_GROUPS=24
+TOTAL_GROUPS=25
 EXTRA_BUN_ARGS=("$@")
 GROUP_INDEX=0
 COVERAGE_MODE=0
@@ -121,6 +121,13 @@ run_group "Group 0f: Agent model layer" \
   tests/isolated/agent-provider-registry.test.ts \
   tests/isolated/agent-capability-probe.test.ts \
   tests/isolated/agent-investigation.test.ts
+
+# Group 0g: The agent's composition root. Its own group, NOT part of 0f: it mocks
+# @/lib/db, @/lib/agent/investigation and @/lib/seed/resolve-connection, and
+# mock.module is process-wide, so sharing 0f's process would hand the loop suite
+# above a stubbed investigation module.
+run_group "Group 0g: Agent runtime composition" \
+  tests/isolated/agent-runtime.test.ts
 
 # Group 1: Studio (isolated — mocks almost every child component)
 run_group "Group 1/6: Studio" \
