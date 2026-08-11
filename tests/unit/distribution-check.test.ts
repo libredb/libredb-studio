@@ -44,6 +44,7 @@ const HELM_ROW = `  - id: helm
     status: live
     category: kubernetes-operators
     platforms: [kubernetes]
+    runtime: channel_supplied
     tier: 1
     kind: helm-chart
     update:
@@ -63,6 +64,7 @@ const NONE_ROW = `  - id: npm
     status: live
     category: registries-releases
     platforms: [linux, macos, windows]
+    runtime: user_supplied
     tier: 0
     kind: package-registry
     update:
@@ -78,6 +80,7 @@ const PROBE_ROW = `  - id: docker-ghcr
     status: live
     category: containers
     platforms: [container]
+    runtime: channel_supplied
     tier: 0
     kind: container-image
     update:
@@ -166,6 +169,25 @@ describe("parseChannels", () => {
   test("accepts a multi-valued platforms list", () => {
     const row = HELM_ROW.replace("platforms: [kubernetes]", "platforms: [macos, linux]");
     expect(parseChannels(channelsYaml(row))[0].platforms).toEqual(["macos", "linux"]);
+  });
+
+  // Who owns the Node runtime decides whether raising engines.node is a
+  // breaking change for a channel's users or an invisible build detail
+  // (issue #326). Required rather than defaulted, for the same reason
+  // update.ci_enabled is: a new channel must state it, never omit it.
+  test("throws when runtime is missing", () => {
+    const bad = HELM_ROW.replace("    runtime: channel_supplied\n", "");
+    expect(() => parseChannels(channelsYaml(bad))).toThrow(/runtime must be one of/);
+  });
+
+  test("throws on an unknown runtime owner", () => {
+    const bad = HELM_ROW.replace("runtime: channel_supplied", "runtime: somebody_elses_problem");
+    expect(() => parseChannels(channelsYaml(bad))).toThrow(/runtime must be one of/);
+  });
+
+  test("accepts both runtime owners", () => {
+    expect(parseChannels(channelsYaml(HELM_ROW))[0].runtime).toBe("channel_supplied");
+    expect(parseChannels(channelsYaml(NONE_ROW))[0].runtime).toBe("user_supplied");
   });
 
   test("throws when a local_file channel has no files", () => {
@@ -601,6 +623,7 @@ function switchableRow(id: string, enabled: boolean): string {
     status: live
     category: package-managers
     platforms: [linux]
+    runtime: channel_supplied
     tier: 1
     kind: package-manager
     update:
@@ -700,6 +723,7 @@ describe("CLI (subprocess against temp fixtures)", () => {
     status: live
     category: paas-catalogs
     platforms: [cloud]
+    runtime: channel_supplied
     tier: 2
     kind: paas-template
     update:
@@ -834,6 +858,7 @@ describe("CLI (remote pins against a local server)", () => {
     status: live
     category: paas-catalogs
     platforms: [cloud]
+    runtime: channel_supplied
     tier: 3
     kind: paas-template
     update:
@@ -938,6 +963,7 @@ describe("CLI (probes against a local registry/store/catalog)", () => {
     status: live
     category: containers
     platforms: [container]
+    runtime: channel_supplied
     tier: 0
     kind: container-image
     update:
@@ -1007,6 +1033,7 @@ describe("CLI (probes against a local registry/store/catalog)", () => {
     status: live
     category: containers
     platforms: [container]
+    runtime: channel_supplied
     tier: 0
     kind: container-image
     update:
@@ -1030,6 +1057,7 @@ describe("CLI (probes against a local registry/store/catalog)", () => {
     status: live
     category: package-managers
     platforms: [linux]
+    runtime: channel_supplied
     tier: 1
     kind: package-manager
     update:
@@ -1091,6 +1119,7 @@ describe("CLI (probes against a local registry/store/catalog)", () => {
     status: live
     category: package-managers
     platforms: [windows]
+    runtime: channel_supplied
     tier: 4
     kind: package-manager
     update:
@@ -1136,6 +1165,7 @@ const MATRIX_FIXTURE = `channels:
     status: live
     category: registries-releases
     platforms: [linux, macos, windows]
+    runtime: channel_supplied
     tier: 0
     kind: package-registry
     update:
@@ -1152,6 +1182,7 @@ const MATRIX_FIXTURE = `channels:
     status: pending
     category: package-managers
     platforms: [windows]
+    runtime: channel_supplied
     tier: 4
     kind: package-manager
     update:
@@ -1166,6 +1197,7 @@ const MATRIX_FIXTURE = `channels:
     status: deprecated
     category: package-managers
     platforms: [linux]
+    runtime: channel_supplied
     tier: 4
     kind: package-manager
     update:
@@ -1311,6 +1343,7 @@ const MATRIX_TIEBREAK_FIXTURE = `channels:
     status: deprecated
     category: containers
     platforms: [container]
+    runtime: channel_supplied
     kind: container-image
     update:
       method: upstream_pr
@@ -1323,6 +1356,7 @@ const MATRIX_TIEBREAK_FIXTURE = `channels:
     status: live
     category: containers
     platforms: [container]
+    runtime: channel_supplied
     kind: container-image
     update:
       method: ci_publish
@@ -1335,6 +1369,7 @@ const MATRIX_TIEBREAK_FIXTURE = `channels:
     status: pending
     category: containers
     platforms: [container]
+    runtime: channel_supplied
     kind: container-image
     update:
       method: ci_publish
@@ -1347,6 +1382,7 @@ const MATRIX_TIEBREAK_FIXTURE = `channels:
     status: live
     category: os-desktop
     platforms: [linux]
+    runtime: channel_supplied
     kind: os-package
     update:
       method: manual_ui
@@ -1359,6 +1395,7 @@ const MATRIX_TIEBREAK_FIXTURE = `channels:
     status: live
     category: os-desktop
     platforms: [linux]
+    runtime: channel_supplied
     kind: os-package
     update:
       method: manual_ui

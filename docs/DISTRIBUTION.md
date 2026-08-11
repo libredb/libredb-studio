@@ -436,10 +436,13 @@ libredb-studio
 brew services start libredb-studio
 ```
 
-- The formula depends on Homebrew's `node@24` — the payload's native SQLite storage binding
-  (better-sqlite3) is built against the Node 24 ABI in release CI, so the floating `node`
-  formula (a newer major) cannot load it — and installs the standalone payload into the keg's
-  `libexec`; `libredb-studio` on your PATH runs it.
+- The formula depends on Homebrew's `node@24` — the reference runtime the payload is built and
+  smoke-tested on — and installs the standalone payload into the keg's `libexec`;
+  `libredb-studio` on your PATH runs it. The pin used to be a hard requirement, because the
+  bundled better-sqlite3 binding was compiled per Node ABI and a newer major could not load it.
+  Since better-sqlite3 13 that is no longer true (N-API prebuilds, see the [npx](#npx) support
+  table), so the pin is now conservatism rather than necessity: it keeps Homebrew users on the
+  major CI actually exercises instead of whichever one the floating `node` formula points at.
 - `brew services start libredb-studio` runs the server on port 3000 with server-side SQLite
   storage (it sets `STORAGE_PROVIDER=sqlite`) under `$(brew --prefix)/var/libredb-studio/` —
   the data dir where generated credentials are persisted. The service does not capture stdout,
@@ -1200,6 +1203,20 @@ validated separately rather than collapsed into one.
 in [`docs/CHANNELS.md`](CHANNELS.md): `linux`, `macos`, `windows`, `container`, `kubernetes`,
 `cloud`. They are independent of both tier (who publishes) and category (which business
 bucket). A channel may list several; the matrix always renders them in that canonical order.
+
+**Runtime ownership** (`runtime` on every channel) records who provides the Node.js the server
+runs on, which is the axis that decides whether raising `engines.node` is a breaking change for a
+channel's users or an invisible build detail (issue #326):
+
+| Value | Meaning | Channels |
+|---|---|---|
+| `user_supplied` | The user's own `node` executes the payload, so the floor is theirs to meet. A release that raises it is user-visible here and nowhere else. | `npm`, `github-release` |
+| `channel_supplied` | The channel provides the runtime — bundled inside the artefact (container image, snap, deb/rpm, Windows zip, Flatpak, the Tauri sidecar), inherited from an image a template deploys, or installed as a declared package dependency (Homebrew's `node@24`). Raising the floor is transparent. | the other 25 |
+
+It is deliberately not derived from `kind`: `os-package` covers deb/rpm, which ship a private Node
+(`packaging/linux/fetch-node.sh` installs `bin/node` into the payload), while `package-registry`
+covers npm, which does not. Issue #326 assumed deb/rpm were user-supplied; the packaging scripts
+say otherwise, which is exactly why this is a stated field rather than an inference.
 
 **SLAs** (`update.sla`) state how quickly a channel is expected to follow a release:
 `every_release` (bumped as part of releasing), `minor_plus` (bumped for minor releases and

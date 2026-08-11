@@ -12,12 +12,13 @@ RUN apt-get update && apt-get install -y python3 make g++ --no-install-recommend
 COPY package.json bun.lock ./
 RUN bun install --frozen-lockfile
 
-# Build with Node.js to avoid Bun/QEMU segfaults on ARM64
-# trixie-slim: must stay on the same libc FAMILY as the oven/bun deps stage
-# (both Debian/glibc). better-sqlite3 v13 resolves prebuilds/linux-x64.node vs
-# prebuilds/linuxmusl-x64.node at require time, so a glibc-installed
-# node_modules copied onto an Alpine/musl runner would pick a binary it cannot
-# load. The ABI no longer matters (N-API), only the libc.
+# Build with Node.js to avoid Bun/QEMU segfaults on ARM64.
+# trixie-slim keeps the toolchain consistent with the oven/bun deps stage, but
+# it is no longer load-bearing for the native module: better-sqlite3 v13 ships
+# every prebuild inside the package and picks one in the RUNNING process
+# (lib/binding.js reads process.platform/arch and detects musl via
+# process.report), so neither the ABI nor the libc of the installing stage
+# constrains the stage that requires it.
 FROM node:24.16.0-trixie-slim AS builder
 WORKDIR /usr/src/app
 COPY --from=deps /usr/src/app/node_modules ./node_modules

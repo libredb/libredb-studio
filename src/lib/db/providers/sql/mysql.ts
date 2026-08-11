@@ -31,10 +31,15 @@ import { formatBytes } from "../../utils/pool-manager";
  * mysql2 3.23 narrowed `execute`'s values parameter from `any` to a concrete
  * `ExecuteValues` union that excludes `undefined`. The provider interface every
  * driver implements passes `unknown[]` - it cannot be narrowed here without
- * narrowing it for MongoDB and Redis too - and mysql2 still escapes and
- * validates each value at runtime exactly as before (an `undefined` element has
- * always been sent as NULL). So this is a boundary cast to satisfy the new
- * typings, not a change in what reaches the server.
+ * narrowing it for MongoDB and Redis too - so the array is cast at this one
+ * boundary.
+ *
+ * The cast changes nothing about what reaches the server: mysql2 validates
+ * every bind value itself and REJECTS `undefined` outright ("Bind parameters
+ * must not contain undefined. To pass SQL NULL specify JS null", thrown from
+ * lib/base/connection.js). It is not coerced to NULL, before or after this
+ * change - callers wanting SQL NULL must pass `null`. The new typing states
+ * that rule; this cast keeps the runtime rule as the thing that enforces it.
  *
  * Derived from the method signature rather than importing `ExecuteValues` by
  * name, so a future rename in mysql2 surfaces as a type error here instead of

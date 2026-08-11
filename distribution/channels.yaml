@@ -23,6 +23,20 @@
 #   platforms                 REQUIRED, non-empty list. Rendered and counted in
 #                             this canonical order in docs/CHANNELS.md:
 #                             linux | macos | windows | container | kubernetes | cloud
+#   runtime                   REQUIRED. Who provides the Node.js the server runs
+#                             on, which is what decides whether raising
+#                             `engines.node` is a breaking change for this
+#                             channel's users (issue #326):
+#                             user_supplied    - the user's own `node` executes
+#                               the payload, so the floor is theirs to meet.
+#                             channel_supplied - the channel provides it:
+#                               bundled in the artefact (image, snap, deb/rpm,
+#                               Windows zip, Flatpak, Tauri sidecar), inherited
+#                               from an image a template deploys, or installed as
+#                               a declared dependency (Homebrew node@24).
+#                             Not derivable from `kind`: deb/rpm are os-package
+#                             and bundle a private Node, npm is package-registry
+#                             and does not.
 #   short_name                optional; the display name docs/CHANNELS.md uses when
 #                             `name` is too long to scan. Falls back to `name`.
 #   update.method             ci_publish | commit | upstream_pr | manual_ui
@@ -63,6 +77,7 @@ channels:
     status: live
     category: registries-releases
     platforms: [linux, macos, windows]
+    runtime: user_supplied
     tier: 0
     kind: release-assets
     update:
@@ -83,6 +98,7 @@ channels:
     status: live
     category: containers
     platforms: [container]
+    runtime: channel_supplied
     tier: 0
     kind: container-image
     update:
@@ -105,6 +121,7 @@ channels:
     status: live
     category: containers
     platforms: [container]
+    runtime: channel_supplied
     tier: 0
     kind: container-image
     update:
@@ -127,6 +144,7 @@ channels:
     status: live
     category: registries-releases
     platforms: [linux, macos, windows]
+    runtime: user_supplied
     tier: 0
     kind: package-registry
     update:
@@ -150,6 +168,7 @@ channels:
     status: live
     category: kubernetes-operators
     platforms: [kubernetes]
+    runtime: channel_supplied
     tier: 1
     kind: helm-chart
     update:
@@ -173,6 +192,7 @@ channels:
     status: live
     category: package-managers
     platforms: [macos, linux]
+    runtime: channel_supplied
     tier: 1
     kind: package-manager
     update:
@@ -195,6 +215,7 @@ channels:
     status: live
     category: package-managers
     platforms: [linux]
+    runtime: channel_supplied
     tier: 1
     kind: package-manager
     update:
@@ -222,6 +243,7 @@ channels:
     status: live
     category: os-desktop
     platforms: [linux]
+    runtime: channel_supplied
     tier: 1
     kind: os-package
     update:
@@ -242,6 +264,7 @@ channels:
     status: live
     category: os-desktop
     platforms: [linux]
+    runtime: channel_supplied
     tier: 1
     kind: release-assets
     update:
@@ -268,6 +291,7 @@ channels:
     status: live
     category: paas-catalogs
     platforms: [cloud]
+    runtime: channel_supplied
     tier: 2
     kind: paas-template
     update:
@@ -293,6 +317,7 @@ channels:
     status: live
     category: deploy-recipes
     platforms: [cloud]
+    runtime: channel_supplied
     tier: 2
     kind: deploy-button
     update:
@@ -311,6 +336,7 @@ channels:
     status: live
     category: deploy-recipes
     platforms: [cloud]
+    runtime: channel_supplied
     tier: 2
     kind: paas-template
     update:
@@ -334,6 +360,7 @@ channels:
     status: live
     category: deploy-recipes
     platforms: [cloud]
+    runtime: channel_supplied
     tier: 2
     kind: paas-template
     update:
@@ -352,6 +379,7 @@ channels:
     status: live
     category: paas-catalogs
     platforms: [container]
+    runtime: channel_supplied
     tier: 2
     kind: one-click-template
     update:
@@ -382,6 +410,7 @@ channels:
     status: live
     category: paas-catalogs
     platforms: [cloud]
+    runtime: channel_supplied
     tier: 3
     kind: one-click-template
     update:
@@ -409,6 +438,7 @@ channels:
     status: live
     category: paas-catalogs
     platforms: [cloud]
+    runtime: channel_supplied
     tier: 3
     kind: paas-template
     update:
@@ -431,6 +461,7 @@ channels:
     status: live
     category: paas-catalogs
     platforms: [cloud]
+    runtime: channel_supplied
     tier: 3
     kind: one-click-template
     update:
@@ -451,6 +482,7 @@ channels:
     status: live
     category: paas-catalogs
     platforms: [cloud]
+    runtime: channel_supplied
     tier: 3
     kind: paas-template
     update:
@@ -472,6 +504,7 @@ channels:
     status: live
     category: paas-catalogs
     platforms: [cloud]
+    runtime: channel_supplied
     tier: 3
     kind: one-click-template
     update:
@@ -502,6 +535,7 @@ channels:
     status: pending
     category: kubernetes-operators
     platforms: [kubernetes]
+    runtime: channel_supplied
     tier: 3
     kind: operator-catalog
     update:
@@ -526,6 +560,7 @@ channels:
     status: pending
     category: kubernetes-operators
     platforms: [kubernetes]
+    runtime: channel_supplied
     tier: 4
     kind: partner-catalog
     update:
@@ -545,6 +580,7 @@ channels:
     status: pending
     category: cloud-marketplaces
     platforms: [cloud]
+    runtime: channel_supplied
     tier: 4
     kind: curated-catalog
     update:
@@ -561,6 +597,7 @@ channels:
     status: live
     category: cloud-marketplaces
     platforms: [cloud]
+    runtime: channel_supplied
     tier: 4
     kind: marketplace
     update:
@@ -580,6 +617,7 @@ channels:
     status: live
     category: package-managers
     platforms: [windows]
+    runtime: channel_supplied
     tier: 4
     kind: package-manager
     update:
@@ -611,6 +649,7 @@ channels:
     status: pending
     category: package-managers
     platforms: [windows]
+    runtime: channel_supplied
     tier: 4
     kind: package-manager
     update:
@@ -636,6 +675,7 @@ channels:
     status: deprecated
     category: package-managers
     platforms: [linux]
+    runtime: channel_supplied
     tier: 4
     kind: package-manager
     update:
@@ -666,6 +706,7 @@ channels:
     status: live
     category: package-managers
     platforms: [linux]
+    runtime: channel_supplied
     tier: 4
     kind: package-manager
     update:

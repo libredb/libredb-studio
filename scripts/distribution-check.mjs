@@ -88,6 +88,26 @@ export const CHANNEL_KINDS = [
  */
 export const PLATFORMS = ["linux", "macos", "windows", "container", "kubernetes", "cloud"];
 
+/**
+ * Who provides the Node.js runtime the server actually runs on (issue #326).
+ * This is what decides whether raising `engines.node` is a breaking change a
+ * channel's users must act on, or an invisible detail of how we build:
+ *
+ *   user_supplied     the user's own `node` executes the payload, so the floor
+ *                     is theirs to meet. Exactly two channels: the npm package
+ *                     (`npx @libredb/studio`) and the standalone tarballs.
+ *   channel_supplied  the channel provides the runtime - bundled inside the
+ *                     artefact (container image, snap, deb/rpm, Windows zip,
+ *                     Flatpak, the Tauri sidecar), inherited from an image a
+ *                     template deploys, or installed as a declared package
+ *                     dependency (Homebrew's node@24). Raising the floor is
+ *                     transparent to these users.
+ *
+ * Not derivable from `kind`: `os-package` covers deb/rpm, which bundle a
+ * private Node, while `package-registry` covers npm, which does not.
+ */
+export const RUNTIME_OWNERS = ["user_supplied", "channel_supplied"];
+
 export const PLATFORM_LABELS = {
   linux: "Linux",
   macos: "macOS",
@@ -378,6 +398,9 @@ export function parseChannels(yamlText) {
       if (!PLATFORMS.includes(platform)) {
         throw new Error(`${CHANNELS_YAML}: ${id}: platforms entries must be one of ${PLATFORMS.join("|")}`);
       }
+    }
+    if (!RUNTIME_OWNERS.includes(channel.runtime)) {
+      throw new Error(`${CHANNELS_YAML}: ${id}: runtime must be one of ${RUNTIME_OWNERS.join("|")}`);
     }
     if (!channel.update || !METHODS.includes(channel.update.method)) {
       throw new Error(`${CHANNELS_YAML}: ${id}: update.method must be one of ${METHODS.join("|")}`);

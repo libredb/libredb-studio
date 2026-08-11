@@ -14,16 +14,18 @@ import { DEFAULT_STORAGE_SQLITE_PATH } from "@/lib/data-dir";
 let Database: any;
 
 /**
- * better-sqlite3 ships a native binding compiled against the Node 24 ABI
- * (release CI / Docker build). Loading it under an older Node fails with an
- * ABI mismatch that reads like an installation bug - translate it into an
- * actionable message instead.
+ * better-sqlite3 has shipped N-API prebuilds since v13, so its binding is no
+ * longer tied to the ABI of the Node that installed it and this guard should
+ * not fire through a normal install. It stays for the cases that still can:
+ * a pinned older better-sqlite3 (v12 and earlier compiled per Node ABI), or a
+ * node_modules assembled from mixed installs. Either way the raw failure reads
+ * like an installation bug - translate it into an actionable message.
  *
  * Only the NODE_MODULE_VERSION text (emitted by Node's module-register
  * check) is treated as an ABI mismatch. A bare ERR_DLOPEN_FAILED is NOT
  * enough: missing shared libraries, a libc mismatch, or a corrupted file
  * also surface as ERR_DLOPEN_FAILED - on any Node version - and must keep
- * their original error rather than a misleading "requires Node 24" claim.
+ * their original error rather than a misleading ABI claim.
  */
 function isNodeAbiMismatch(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);

@@ -765,8 +765,8 @@ extending the functional-smoke container rather than adding a service to every C
 
 ### A6. Druid's hand-written bigint serializer predates the Node 24 floor
 
-`src/lib/db/providers/sql/druid.ts` splices the parameters array into the query envelope by hand so
-a `bigint` literal reaches Druid unquoted. The reason recorded in `docs/providers/druid.md` was that
+`src/lib/db/providers/sql/druid/http-transport.ts` splices the parameters array into the query
+envelope by hand so a `bigint` literal reaches Druid unquoted. The reason recorded in `docs/providers/druid.md` was that
 `JSON.rawJSON` (ES2025 JSON source text, V8 12.4 / Node 22.2) could not be depended on while
 `engines.node` was `">=20.9.0"`.
 
