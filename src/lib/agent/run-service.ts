@@ -1,0 +1,361 @@
+/**
+ * The run service: what starts, reports, cancels, resumes and streams one agent
+ * run (#329, epic #325). It is the only thing that decides a run's lifecycle, and
+ * it decides it from the run's own durable ledger (`run-store.ts`) rather than
+ * from anything a request body, a callback or an in-memory flag says.
+ *
+ * Three rules carry the milestone's durability criterion, and each is asserted
+ * rather than described:
+ *
+ *  1. **A tool invocation is in the ledger before its effect.** `runStep` writes
+ *     `tool-invoked` and waits for that write, then performs the effect. A reader
+ *     — including a restarted process — therefore always sees the intent no later
+ *     than the effect, never the other way around.
+ *  2. **A step is performed at most once by one run loop.** A step id that already
+ *     settled is replayed from the ledger; a step id whose invocation is recorded
+ *     with no outcome is reported `indeterminate` and is NOT retried. That second
+ *     case is the process-death window, and re-running it is precisely the
+ *     duplicate execution the milestone forbids. What the run loop may do is draft
+ *     a new step; what it may not do is repeat this one. The qualifier is real and
+ *     not modesty: the check is read-then-append with no compare-and-append
+ *     fencing, so TWO loops driving one run concurrently would both read "not
+ *     invoked" and both execute. Single ownership of a running run is the
+ *     workflow's to guarantee (T7b), and `docs/BACKLOG.md` B5 records it.
+ *  3. **Cancellation is enforced here, not by a driver.** `cancel` records a
+ *     request; the run's own loop honours it at its next step checkpoint and ends
+ *     the run, releasing its budget and its artifacts together. Nothing relies on
+ *     a cancel propagating out of a database driver — after the tool layer's own
+ *     commit it does not (recorded in `.loop/PROGRESS.md` for T6).
+ *
+ * Cost, stated because it is a real trade: every operation folds the run's whole
+ * ledger before acting, and the record returned after an append is re-read rather
+ * than patched in memory. Both are deliberate — one fold implementation means the
+ * service and a resumed process cannot disagree about a run's status, and agent
+ * runs are tens of entries, not millions.
+ *
+ * What is NOT here, on purpose: no workflow enqueue (T7b owns the workflow that
+ * drives these steps), no authorization (the persisted actor is the authority and
+ * T9's routes are what check a caller against it), and no tool execution — the
+ * effect is a callback, so this module reaches no database and no model.
+ */
+
+import { releaseExecutionRun } from "@/lib/db/operations/execution";
+import type { ExecutionArtifactStore } from "@/lib/db/operations/artifacts";
+import type { ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
+import type { QueryResult } from "@/lib/types";
+import type { AgentLedgerEntry, AgentRunLedgerView, AgentRunStore, AgentSettledStepEvent } from "./run-store";
+import type { AgentOperationId, AgentToolName } from "./tools";
+import type {
+  AgentArtifactReference,
+  AgentRunActor,
+  AgentRunMode,
+  AgentRunRecord,
+  AgentRunTerminalStatus,
+  AgentToolRefusal,
+} from "./types";
+
+/**
+ * The run-scoped resources a run holds in THIS process: its budget accounting and
+ * its artifact store. Both are keyed by run id and are released together when the
+ * run ends (`releaseExecutionRun`), so neither outlives the other.
+ */
+export interface AgentRunResources {
+  readonly tracker: ExecutionBudgetTracker;
+  readonly artifacts: ExecutionArtifactStore<QueryResult>;
+}
+
+export interface AgentRunStartInput {
+  readonly mode: AgentRunMode;
+  readonly actor: AgentRunActor;
+  readonly connectionId: string;
+  readonly objective: string;
+  readonly runId?: string;
+}
+
+/** What a caller may know about a run: the record, plus whether a stop is pending. */
+export interface AgentRunStatusReport {
+  readonly record: AgentRunRecord;
+  readonly cancellationRequested: boolean;
+}
+
+export interface AgentRunResumeReport {
+  readonly record: AgentRunRecord;
+  /** Steps whose result the ledger already holds; replay them, do not re-run them. */
+  readonly settledStepIds: readonly string[];
+  /** Steps invoked without a recorded outcome. Their result is unknown and unknowable. */
+  readonly indeterminateStepIds: readonly string[];
+  readonly cancellationRequested: boolean;
+}
+
+/** One step of a run: the model asked for a tool, and this is which. */
+export interface AgentRunInvocation {
+  readonly stepId: string;
+  readonly tool: AgentToolName;
+  /** Present when the tool reaches the canonical operation layer. */
+  readonly operationId?: AgentOperationId;
+}
+
+/**
+ * How a step ended, in the vocabulary the ledger records.
+ *
+ * `not-attempted` is the run loop's own outcome — a spent deadline, a repair
+ * ledger refusing a statement it has already failed on, a toolless mode. Nothing
+ * was asked of the database, so there is no policy answer and no engine error to
+ * record, and T2's event union has no variant for it: this task does not widen
+ * that union to invent one. The step therefore stays unsettled in the ledger,
+ * which is why it may not be retried under the same step id.
+ */
+export type AgentRunStepSettlement =
+  | { readonly kind: "completed"; readonly artifact: AgentArtifactReference }
+  | { readonly kind: "refused"; readonly refusal: AgentToolRefusal }
+  | { readonly kind: "not-attempted" };
+
+export type AgentRunStepResult =
+  | { readonly kind: "performed"; readonly settlement: AgentRunStepSettlement }
+  | { readonly kind: "replayed"; readonly event: AgentSettledStepEvent }
+  | { readonly kind: "indeterminate"; readonly stepId: string }
+  | { readonly kind: "cancelled" };
+
+export type AgentRunServiceReason =
+  | "RUN_NOT_FOUND"
+  | "RUN_ALREADY_TERMINAL"
+  | "RUN_NOT_RESUMABLE"
+  | "RUN_NOT_STARTABLE"
+  | "RUN_NOT_RUNNING"
+  | "RUN_HAS_LIVE_EXECUTION";
+
+export class AgentRunServiceError extends Error {
+  readonly reasonCode: AgentRunServiceReason;
+
+  constructor(reasonCode: AgentRunServiceReason, message: string) {
+    super(message);
+    this.name = "AgentRunServiceError";
+    this.reasonCode = reasonCode;
+    Object.setPrototypeOf(this, AgentRunServiceError.prototype);
+  }
+}
+
+function report(view: AgentRunLedgerView): AgentRunStatusReport {
+  return { record: view.record, cancellationRequested: view.cancellationRequestedAtMs !== null };
+}
+
+export class AgentRunService {
+  private readonly store: AgentRunStore;
+  private readonly resources: AgentRunResources;
+  private readonly clock: () => number;
+
+  constructor(options: {
+    readonly store: AgentRunStore;
+    readonly resources: AgentRunResources;
+    readonly clock?: () => number;
+  }) {
+    this.store = options.store;
+    this.resources = options.resources;
+    this.clock = options.clock ?? Date.now;
+  }
+
+  /**
+   * Opens a run in the durable ledger, queued. Starting the workflow that drives
+   * it is T7b's; a run that nothing picks up stays queued and is cancellable.
+   */
+  async start(input: AgentRunStartInput): Promise<AgentRunRecord> {
+    return this.store.openRun(input);
+  }
+
+  /**
+   * Marks a queued run as running. The mode recorded is the run's own, never a
+   * caller's.
+   *
+   * Deliberately NOT idempotent: a second call refuses rather than doing nothing,
+   * because two `run-started` entries would mean two loops believed they owned the
+   * run. A resumed run needs no call at all — its ledger already reads `running` —
+   * so a handler that replays this on resume should read the status first rather
+   * than treat the refusal as an error.
+   */
+  async markRunning(runId: string): Promise<AgentRunRecord> {
+    const view = await this.readOrThrow(runId);
+    if (view.record.status !== "queued") {
+      throw new AgentRunServiceError("RUN_NOT_STARTABLE", `agent run "${runId}" is already ${view.record.status}`);
+    }
+    await this.store.appendEvent(runId, { kind: "run-started", atMs: this.clock(), mode: view.record.mode });
+    return (await this.readOrThrow(runId)).record;
+  }
+
+  /** The run as it stands, or `null` when there is no such run. */
+  async status(runId: string): Promise<AgentRunStatusReport | null> {
+    const view = await this.store.read(runId);
+    return view === null ? null : report(view);
+  }
+
+  /**
+   * Asks for a run to stop.
+   *
+   * A run no loop has picked up is ended here and now: there is no checkpoint to
+   * wait for, and leaving it queued with a pending request would be a cancel that
+   * never lands. A running run gets the request recorded — its own loop is what
+   * ends it, at the next step, which is the only place where the run's resources
+   * can be released with nothing in flight.
+   *
+   * The gap that leaves, stated rather than implied: a run whose loop DIED while
+   * running keeps a pending request and is not ended by anything this service
+   * does. Recovery is the durable backend's — the local world re-enqueues
+   * pending/running runs when the world starts, so a resumed loop reaches a
+   * checkpoint and honours the request. That is a capability, not yet a wiring:
+   * nothing at this commit creates a workflow run or starts the world, so it
+   * becomes real (and provable) when T7b enqueues the run.
+   */
+  async cancel(runId: string, by: AgentRunActor): Promise<AgentRunStatusReport> {
+    const view = await this.readOrThrow(runId);
+    if (view.terminal) return report(view);
+    if (view.record.status === "queued") return report(await this.finalize(runId, "cancelled"));
+    await this.store.requestCancellation(runId, by);
+    return report(await this.readOrThrow(runId));
+  }
+
+  /**
+   * Ends a run and releases its budget and artifacts together.
+   *
+   * A pending cancellation does not override the status the caller reports: if the
+   * loop reached the end before it reached a checkpoint, the work did succeed, and
+   * the ledger records what happened rather than what was asked for. The request
+   * stays visible in the status report instead of being rewritten into the outcome.
+   */
+  async finish(runId: string, status: AgentRunTerminalStatus): Promise<AgentRunRecord> {
+    const view = await this.readOrThrow(runId);
+    if (view.terminal) {
+      throw new AgentRunServiceError("RUN_ALREADY_TERMINAL", `agent run "${runId}" already ${view.record.status}`);
+    }
+    return (await this.finalize(runId, status)).record;
+  }
+
+  /**
+   * What a process taking over a run needs to know: what the ledger already
+   * settled, and which steps are beyond re-deriving. A resumed run re-derives
+   * from this; it does not repeat work.
+   */
+  async resume(runId: string): Promise<AgentRunResumeReport> {
+    const view = await this.readOrThrow(runId);
+    if (view.terminal) {
+      throw new AgentRunServiceError("RUN_NOT_RESUMABLE", `agent run "${runId}" already ${view.record.status}`);
+    }
+    return {
+      record: view.record,
+      settledStepIds: [...view.settledSteps.keys()],
+      indeterminateStepIds: view.unsettledStepIds,
+      cancellationRequested: view.cancellationRequestedAtMs !== null,
+    };
+  }
+
+  /** The run's timeline, replayed and then followed live. */
+  async stream(runId: string, options?: { readonly startIndex?: number }): Promise<ReadableStream<AgentLedgerEntry>> {
+    await this.readOrThrow(runId);
+    return this.store.stream(runId, options);
+  }
+
+  /**
+   * Performs one step of a run, with the ledger written ahead of the effect.
+   *
+   * The order is the contract: checkpoint, then the durable invocation, then the
+   * effect, then the outcome. `execute` is what reaches the tool layer; this
+   * module never touches a database itself. An `execute` that throws leaves the
+   * invocation recorded and the step unsettled — the honest record of "it was
+   * asked for and we do not know what happened".
+   */
+  async runStep(
+    runId: string,
+    invocation: AgentRunInvocation,
+    execute: () => Promise<AgentRunStepSettlement>,
+  ): Promise<AgentRunStepResult> {
+    const view = await this.readOrThrow(runId);
+    if (view.terminal) {
+      throw new AgentRunServiceError("RUN_ALREADY_TERMINAL", `agent run "${runId}" already ${view.record.status}`);
+    }
+    // A step may only run on a run that is RUNNING. Without this, "a queued run
+    // has nothing in flight" would be an assumption, and `cancel` ends a queued
+    // run on the spot precisely because it believes that.
+    if (view.record.status !== "running") {
+      throw new AgentRunServiceError("RUN_NOT_RUNNING", `agent run "${runId}" is ${view.record.status}, not running`);
+    }
+    if (view.cancellationRequestedAtMs !== null) {
+      await this.finalize(runId, "cancelled");
+      return { kind: "cancelled" };
+    }
+    const settled = view.settledSteps.get(invocation.stepId);
+    if (settled !== undefined) return { kind: "replayed", event: settled };
+    if (view.unsettledStepIds.includes(invocation.stepId)) {
+      return { kind: "indeterminate", stepId: invocation.stepId };
+    }
+
+    await this.store.appendEvent(runId, {
+      kind: "tool-invoked",
+      atMs: this.clock(),
+      stepId: invocation.stepId,
+      tool: invocation.tool,
+      ...(invocation.operationId === undefined ? {} : { operationId: invocation.operationId }),
+    });
+
+    const settlement = await execute();
+    const outcome = this.settlementEvent(invocation.stepId, settlement);
+    if (outcome !== null) await this.store.appendEvent(runId, outcome);
+    return { kind: "performed", settlement };
+  }
+
+  private settlementEvent(stepId: string, settlement: AgentRunStepSettlement): AgentSettledStepEvent | null {
+    const atMs = this.clock();
+    if (settlement.kind === "completed") {
+      return { kind: "tool-completed", atMs, stepId, artifact: settlement.artifact };
+    }
+    if (settlement.kind === "refused") {
+      return { kind: "tool-refused", atMs, stepId, refusal: settlement.refusal };
+    }
+    return null;
+  }
+
+  /**
+   * Ends a run: nothing in flight, then the ledger entry, then the resources, then
+   * the stream.
+   *
+   * The live-execution check has to come FIRST, and the reason is a state that is
+   * otherwise unrecoverable. `ExecutionBudgetTracker.endRun` refuses while an
+   * execution is live — correctly, since dropping live usage would reset the
+   * concurrency and total-run budgets mid-flight — but it refuses AFTER this
+   * method has already written `run-finished`. A run would then be terminal on
+   * disk with its budget and artifacts still held, `finish` and `cancel` would
+   * both refuse it as already ended, and its stream would never close, so every
+   * live reader of its timeline would hang. Checking first means the refusal
+   * persists nothing and the run stays finishable once the statement lands.
+   *
+   * The check's strength is exactly the single-writer premise and no more: it
+   * reads process-local accounting before an `await`, so an execution starting
+   * during that append, or one live on another replica, is invisible to it. Both
+   * need a second writer on one run, which `docs/BACKLOG.md` B5 puts outside this
+   * layer's contract; within one loop the reading is reliable, because
+   * `execution.ts` pairs `beginExecution`/`endExecution` on the throwing path too,
+   * so nothing is in flight while the loop sits at a checkpoint.
+   *
+   * Closing the stream sits in a `finally` for the same reason: whatever else
+   * fails, a run whose ending is recorded must not leave readers waiting forever.
+   */
+  private async finalize(runId: string, status: AgentRunTerminalStatus): Promise<AgentRunLedgerView> {
+    const live = this.resources.tracker.usage(runId).activeExecutions;
+    if (live > 0) {
+      throw new AgentRunServiceError(
+        "RUN_HAS_LIVE_EXECUTION",
+        `agent run "${runId}" still has ${live} execution(s) in flight and cannot be ended`,
+      );
+    }
+    await this.store.appendEvent(runId, { kind: "run-finished", atMs: this.clock(), status });
+    try {
+      releaseExecutionRun({ runId, tracker: this.resources.tracker, artifacts: this.resources.artifacts });
+    } finally {
+      await this.store.close(runId);
+    }
+    return this.readOrThrow(runId);
+  }
+
+  private async readOrThrow(runId: string): Promise<AgentRunLedgerView> {
+    const view = await this.store.read(runId);
+    if (view === null) throw new AgentRunServiceError("RUN_NOT_FOUND", `agent run "${runId}" does not exist`);
+    return view;
+  }
+}

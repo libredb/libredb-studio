@@ -921,3 +921,36 @@ message, with the editor's own consumers updated and the agent layer's cancel cl
 revisited against the new signal; and when classification no longer depends on a substring that a
 table or column name can satisfy (driver error codes — PostgreSQL `SQLSTATE`, SQLite `errcode` — are
 the signal that does not collide, and each provider already has access to its own).
+
+### B5. The agent run ledger assumes one writer per run, and cannot enforce it
+
+`src/lib/agent/run-store.ts` and `src/lib/agent/run-service.ts` are append-only over the durable
+world's stream primitives, which offer no compare-and-append: a writer cannot say "append this only
+if the stream is still at index N". Every operation is therefore read-then-append, and two
+consequences follow that a single-writer run never meets and a second writer would:
+
+- **Two concurrent opens on one caller-supplied run id write two headers.** The fold refuses a ledger
+  with a second header (`MALFORMED_LEDGER`), permanently, for every later read — so the race does not
+  resolve in one side's favour, it bricks the run. Nothing minted internally can collide (the id is a
+  UUIDv4, so 122 random bits), so reaching this needs a caller that supplies its own id, which is
+  exactly what the workflow-run-id path does.
+- **Two loops driving one running run would both perform the same step.** `runStep` reads the ledger,
+  sees the step neither settled nor invoked, and appends its invocation; two readers of the same state
+  both pass that check. The write-ahead ordering makes a step at-most-once *per loop*, not
+  *per run* — the milestone's "no tool execution performed twice" criterion is about a restart, where
+  the dead process is gone by construction, and that case is genuinely covered.
+
+Not defended in code because every available defence is worse than the constraint: a lock file is
+single-instance only (which the Postgres backend exists to escape), and a lease in the ledger is a
+distributed-lock design with its own expiry semantics. The honest boundary is that single ownership of
+a running workflow belongs to the layer above rather than being re-implemented below it — and how
+strong that guarantee is depends on which backend is configured, which is the part worth stating
+plainly. On the zero-config local world it holds by construction: the queue awaits each delivery
+before attempting the next, so retries are sequential. On the opt-in Postgres backend a
+visibility-timeout redelivery can overlap a handler that is still alive, and that is precisely where
+the second bullet above would bite.
+
+Done when either the run ledger can append conditionally on the stream's tail index (which is what
+would make both races impossible at the storage layer), or the single-ownership guarantee the runtime
+provides is asserted by a test rather than assumed by prose — whichever the durable backend can
+actually support.

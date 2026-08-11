@@ -128,7 +128,10 @@ describe("the knip ignore list stays bounded", () => {
    * package is installed before a source file imports it, so it is ignored
    * there until it is wired in. The list shrinks as the milestone lands:
    * `ai`, `@ai-sdk/openai` and `@ai-sdk/google` left it in T4 when the model
-   * adapter began importing them. `@ai-sdk/anthropic` is still here because T5
+   * adapter began importing them; `workflow` and `@workflow/world-local` left it
+   * in T7a, when the run ledger began resolving its durable backend through
+   * `workflow/runtime` and the ledger suites began exercising the local world.
+   * `@ai-sdk/anthropic` is still here because T5
    * deferred the Anthropic provider KIND rather than shipping it half-built: the
    * settings surface's `LLMProviderType` has no `anthropic` member, so adding one
    * would also owe the AI Assistant a chat provider (`docs/BACKLOG.md` B2).
@@ -138,13 +141,7 @@ describe("the knip ignore list stays bounded", () => {
    * ratified set is what stops a wired-in package from quietly returning to the
    * list, which would hide it from the unused-dependency check for good.
    */
-  const ALLOWED_IGNORED_DEPENDENCIES = new Set([
-    "tailwindcss",
-    "workflow",
-    "@workflow/world-local",
-    "@workflow/world-postgres",
-    "@ai-sdk/anthropic",
-  ]);
+  const ALLOWED_IGNORED_DEPENDENCIES = new Set(["tailwindcss", "@workflow/world-postgres", "@ai-sdk/anthropic"]);
 
   test("ignores no dependency beyond tailwindcss and the ratified runtime", () => {
     const knip: { ignoreDependencies?: string[] } = JSON.parse(

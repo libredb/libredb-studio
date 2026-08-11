@@ -15,8 +15,6 @@
   ],
   "ignoreDependencies": [
     "tailwindcss",
-    "workflow",
-    "@workflow/world-local",
     "@workflow/world-postgres",
     "@ai-sdk/anthropic"
   ],
