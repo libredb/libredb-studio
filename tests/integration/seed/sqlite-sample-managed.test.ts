@@ -47,6 +47,37 @@ describe("getManagedConnections: sqlite embedded sample", () => {
     expect(sample?.managed).toBe(false);
   });
 
+  /*
+    Order is the default connection. `useConnectionManager` selects the first merged
+    connection when no active id is persisted, so whichever sample leads is what a
+    brand-new user lands on — and the agent runtime targets PostgreSQL and SQLite,
+    not the LibreDB engine, which has no database-native read-only execution profile.
+    Leading with LibreDB put every zero-config user on the one connection the agent
+    can never run against, and it took a real run to notice.
+
+    An operator's own seed config still leads: those are appended before either
+    sample, so this only decides which of the two built-ins comes first.
+  */
+  test("leads the built-in samples, so a first run lands on an engine the agent supports", async () => {
+    const sqliteFile = useTempSamplePath();
+    await seedSqliteSampleFile(sqliteFile);
+
+    const libredbDir = fs.mkdtempSync(path.join(os.tmpdir(), "libredb-sample-order-"));
+    tmpDirs.push(libredbDir);
+    const libredbFile = path.join(libredbDir, "sample.libredb");
+    process.env.LIBREDB_EMBEDDED_SAMPLE_PATH = libredbFile;
+    const { seedSampleFile, SAMPLE_SEED_ID } = await import("@/lib/seed/libredb-sample");
+    await seedSampleFile(libredbFile);
+
+    try {
+      const seedIds = (await getManagedConnections(["user"])).map((c) => c.seedId);
+      expect(seedIds).toContain(SAMPLE_SEED_ID);
+      expect(seedIds.indexOf(SQLITE_SAMPLE_SEED_ID)).toBeLessThan(seedIds.indexOf(SAMPLE_SEED_ID));
+    } finally {
+      delete process.env.LIBREDB_EMBEDDED_SAMPLE_PATH;
+    }
+  });
+
   test("omits the sample while the file does not exist", async () => {
     useTempSamplePath(); // path set, file never seeded
     const conns = await getManagedConnections(["user"]);
