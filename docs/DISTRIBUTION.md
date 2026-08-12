@@ -990,7 +990,7 @@ All channels have now had their first live run (the Snap publish completed its f
    login. The `npx Engine Smoke` workflow (`npx-engine-smoke.yml`) runs automatically after a
    successful NPM Publish: it waits for the registry to serve the released version, then runs
    **bare** `npx @libredb/studio` on Node 24/26 and asserts each resolves exactly that release,
-   and on Node 20.9/22 asserts the engines floor pins them to an older but still *runnable*
+   and on Node 22 asserts the engines floor pins it to an older but still *runnable*
    release (the #130 regression class - npm's picker avoids engine-incompatible versions for bare
    specs and never says so). Check that it went green; dispatch it manually to re-run. Then run
    the `npm deprecate` step below so the pin stops being silent.

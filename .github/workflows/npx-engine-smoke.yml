@@ -5,12 +5,12 @@
 # bin-less version.
 #
 # Since the floor moved to Node 24 (#326) this workflow covers two outcomes,
-# not one. On 24/26 bare npx must resolve the release just published; on
-# 20.9/22 the picker silently pins users to the last <24 release, and the
-# assertion is that the pin lands on something that still BOOTS. Note the
-# pinning is silent by design - `npm` prints no notice when the floor excludes
-# a newer version, which is why the release runbook deprecates the pinned
-# version with a pointer instead.
+# not one. On 24/26 bare npx must resolve the release just published; on 22 the
+# picker silently pins users to the last <24 release, and the assertion is that
+# the pin lands on something that still BOOTS. Note the pinning is silent by
+# design - `npm` prints no notice when the floor excludes a newer version, which
+# is why the release runbook deprecates the pinned version with a pointer
+# instead.
 #
 # Runs automatically after a successful "NPM Publish" (the expected version is
 # the release tag - workflow_run.head_branch - which the release guards pin to
@@ -53,9 +53,15 @@ jobs:
           # acceptable while it lands on a RUNNABLE release; issue #130 was
           # exactly this mechanism dropping users onto an ancient bin-less one.
           # This leg keeps that guarantee under test.
+          #
+          # 22 is the whole below-floor tier now. A 20.9 leg used to sit beside
+          # it and started failing after releases; it was asserting a promise
+          # this project does not make - 20.9 is two majors under the floor and
+          # is not a supported runtime, so a red leg there reported an unmet
+          # guarantee rather than a regression. The property it shared with this
+          # one - that the floor is honoured and the pin still boots - is fully
+          # covered here, so nothing is lost by dropping it.
           - node-version: "22"
-            expect: pinned
-          - node-version: "20.9"
             expect: pinned
     steps:
       - name: Setup Node ${{ matrix.node-version }}
@@ -121,7 +127,16 @@ jobs:
           WORK=$(mktemp -d)
           cd "$WORK"
           echo "==> node $(node --version), bare: npx -y @libredb/studio"
-          npx -y @libredb/studio --port 3105 --host 127.0.0.1 > npx.log 2>&1 &
+          # S6505 (npx installs on demand and runs lifecycle scripts) is accepted
+          # here deliberately: that invocation IS the subject of this workflow.
+          # Issue #130 was npm's picker resolving a bin-less release for exactly
+          # this command, and it is the command the install instructions give
+          # users, so replacing it would test something nobody runs. The package
+          # is this repository's own, published minutes earlier by this same
+          # release chain. `--ignore-scripts` is not the mitigation either - the
+          # published dependency tree carries native modules (better-sqlite3,
+          # oracledb) whose install steps a real user does run.
+          npx -y @libredb/studio --port 3105 --host 127.0.0.1 > npx.log 2>&1 & # NOSONAR
           for _ in $(seq 1 150); do
             curl -sf -o /dev/null http://127.0.0.1:3105/api/db/health && break
             sleep 2
