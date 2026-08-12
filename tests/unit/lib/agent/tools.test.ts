@@ -1569,3 +1569,90 @@ describe("recommendChangeTool — a change the run proposes and does not make", 
     ).toThrow(/does not belong to this run/);
   });
 });
+
+describe("the two optimization tools refuse what would make their record untrue", () => {
+  // All three found by review on #344.
+  const planEvents: readonly AgentRunEvent[] = [
+    { kind: "statement-drafted", atMs: 1, stepId: "s1", sql: "SELECT * FROM orders", rationale: "slow" },
+    {
+      kind: "tool-completed",
+      atMs: 2,
+      stepId: "s1",
+      artifact: {
+        correlationId: "corr-1",
+        runId: "run-1",
+        operationId: "sql.explain.estimate",
+        summary: { rowCount: 1, columnNames: ["QUERY PLAN"], elapsedMs: 1 },
+      },
+    },
+  ];
+  const planRun = { runId: "run-1", events: planEvents } as Pick<AgentRunRecord, "runId" | "events">;
+
+  const withPlan = (): Harness => {
+    const h = harness();
+    h.artifacts.put(
+      {
+        correlationId: "corr-1",
+        runId: "run-1",
+        operationId: "sql.explain.estimate",
+        createdAtMs: 1_000,
+        value: queryResult({ rows: [{ "QUERY PLAN": [{ Plan: { "Node Type": "Seq Scan" } }] }] }),
+      },
+      1_000,
+    );
+    return h;
+  };
+
+  test("one plan cited twice is not a before and an after", () => {
+    // Otherwise `{before: id, after: id}` records a valid comparison and the goal
+    // verifier marks the run answered, on one inspected plan.
+    const h = withPlan();
+
+    const outcome = comparePlansTool(h.context, planRun, { before: "corr-1", after: "corr-1" });
+
+    if (outcome.kind !== "unavailable") throw new Error("expected unavailable");
+    expect(outcome.reasonCode).toBe("IDENTICAL_PLANS");
+  });
+
+  const recEvents: readonly AgentRunEvent[] = [
+    {
+      kind: "tool-completed",
+      atMs: 1,
+      stepId: "s1",
+      artifact: {
+        correlationId: "corr-1",
+        runId: "run-1",
+        operationId: "sql.query.read",
+        summary: { rowCount: 1, columnNames: ["id"], elapsedMs: 1 },
+      },
+    },
+  ];
+  const recRun = { runId: "run-1", events: recEvents } as Pick<AgentRunRecord, "runId" | "events">;
+  const evidence = [{ source: "artifact", correlationId: "corr-1" }];
+
+  const recommend = (change: string, statement: string) =>
+    recommendChangeTool(harness().context, recRun, { change, statement, rationale: "because", evidence });
+
+  test.each([
+    ["index", "DROP TABLE orders"],
+    ["index", "SELECT id FROM orders"],
+    ["index", "CREATE INDEX ix ON orders (a); DROP TABLE orders"],
+    ["rewrite", "DROP TABLE orders"],
+    ["rewrite", "SELECT 1; DROP TABLE orders"],
+  ])("a %s card carrying %s is refused, because the card would assert something untrue", (change, statement) => {
+    // The headline is the app's own words. "Index recommended" over a DROP is the
+    // app saying something false, and the statement is offered to the user's editor.
+    const outcome = recommend(change, statement);
+
+    if (outcome.kind !== "unavailable") throw new Error("expected unavailable");
+    expect(outcome.reasonCode).toBe("RECOMMENDATION_SHAPE_MISMATCH");
+  });
+
+  test.each([
+    ["index", "CREATE INDEX orders_a_idx ON orders (a)"],
+    ["index", "CREATE UNIQUE INDEX orders_a_idx ON orders (a)"],
+    ["rewrite", "SELECT id FROM orders WHERE a = 1"],
+  ])("a %s card carrying %s is recorded", (change, statement) => {
+    expect(recommend(change, statement).kind).toBe("recommended");
+  });
+});

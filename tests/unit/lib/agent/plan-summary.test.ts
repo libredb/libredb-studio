@@ -143,3 +143,35 @@ describe("an engine with no verified reading", () => {
     expect(summarisePlan(undefined, [{ anything: 1 }])).toEqual({ access: "unknown" });
   });
 });
+
+describe("SQLite's stable distinction is SEARCH versus SCAN, not the word INDEX", () => {
+  // Found by review on #344. SQLite reports several indexed seeks that never say
+  // "USING INDEX": a rowid lookup, a WITHOUT ROWID primary key, and the transient
+  // index it builds itself. Reading only "USING [COVERING] INDEX" filed every one of
+  // them as `unknown` — which is the summary saying it could not tell, about a plan
+  // that had told it plainly.
+  const step = (detail: string) => [{ id: 2, parent: 0, notused: 0, detail }];
+
+  test.each([
+    "SEARCH employee USING INTEGER PRIMARY KEY (rowid=?)",
+    "SEARCH t USING AUTOMATIC COVERING INDEX (a=?)",
+    "SEARCH t USING PRIMARY KEY (id=?)",
+    "SEARCH t USING INDEX ix (a=?)",
+    "SEARCH t USING COVERING INDEX ix (a=?)",
+  ])("%s is an indexed access", (detail) => {
+    expect(summarisePlan("sqlite-queryplan", step(detail)).access).toBe("index");
+  });
+
+  test("SCAN is still the only thing that reads a table whole", () => {
+    expect(summarisePlan("sqlite-queryplan", step("SCAN employee")).access).toBe("full-scan");
+  });
+
+  test("a SEARCH beside a SCAN is still mixed", () => {
+    expect(
+      summarisePlan("sqlite-queryplan", [
+        { id: 2, parent: 0, notused: 0, detail: "SCAN employee" },
+        { id: 4, parent: 0, notused: 0, detail: "SEARCH dept USING INTEGER PRIMARY KEY (rowid=?)" },
+      ]).access,
+    ).toBe("mixed");
+  });
+});

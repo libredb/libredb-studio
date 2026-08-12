@@ -241,6 +241,25 @@ function describePriorProgress(record: AgentRunRecord): string | null {
       lines.push(describeSettled(event, tools.get(event.stepId) ?? "a tool"));
     } else if (event.kind === "report-composed") {
       lines.push(`A report of ${event.claims.length} claim(s) was composed.`);
+    } else if (event.kind === "plan-comparison") {
+      /*
+        Found by review on #344. Both of these are durable and NON-terminal, so a
+        drive can die after appending one — and a resumed run that was not told
+        would compare the same two plans again. Worse, after the artifact store has
+        released them it would be refused with `PLAN_RESULT_RELEASED` and be sent
+        looking for a mistake it had not made: the comparison it wanted is already
+        on its own ledger.
+
+        The statements are quoted rather than the plans: the plans carry table and
+        index names, which are untrusted input, and the summary is structural.
+      */
+      lines.push(
+        `Two plans were already compared: ${event.before.sql} reaches its rows by ${event.before.summary.access}, and ${event.after.sql} by ${event.after.summary.access}. That comparison is recorded and must not be made again.`,
+      );
+    } else if (event.kind === "recommendation") {
+      lines.push(
+        `A ${event.change} was already recommended and is recorded: ${event.statement}. Do not propose it a second time.`,
+      );
     }
   }
 

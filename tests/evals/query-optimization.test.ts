@@ -208,3 +208,31 @@ describe("the tools belong to the workflow, not to the model", () => {
     expect(drive.kinds).not.toContain("plan-comparison");
   });
 });
+
+describe("a drive that dies after recording a comparison does not make it twice", () => {
+  // Found by review on #344: both new events are durable and non-terminal, so a
+  // resumed run that is not told about them re-derives them — and after the artifact
+  // store has released the plans it is refused instead, sent after a mistake it did
+  // not make.
+  test("the resumed run is told what it already compared and already recommended", async () => {
+    const run = await open("postgres");
+
+    await expect(
+      run.drive([
+        callsTool("inspect_plan", { sql: SLOW }, "call_plan_before"),
+        callsTool("inspect_plan", { sql: FAST }, "call_plan_after"),
+        comparesPlans(),
+        recommends(),
+      ]),
+    ).rejects.toThrow(/died before turn/);
+
+    const resumed = await run.drive([reportOn("The listing reads the whole table.")]);
+
+    const firstTurn = resumed.transcripts[0] ?? "";
+    expect(firstTurn).toContain("Two plans were already compared");
+    expect(firstTurn).toContain("must not be made again");
+    expect(firstTurn).toContain("was already recommended");
+    // And the run still answers: the comparison it needs is on its own ledger.
+    expect(resumed.verdict).toEqual({ outcome: "answered", verifier: "agent-query-optimization.1", unmet: [] });
+  });
+});

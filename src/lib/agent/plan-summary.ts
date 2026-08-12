@@ -121,7 +121,19 @@ function summarisePostgres(rows: readonly Record<string, unknown>[]): AgentPlanS
  * `USE TEMP B-TREE FOR ORDER BY`. There is no cost and no row estimate anywhere in
  * it, which is why this returns neither.
  */
-const SQLITE_INDEX_STEP = /\bUSING (COVERING )?INDEX\b/;
+/**
+ * `SEARCH` versus `SCAN` is the distinction, and matching on the word `INDEX` was
+ * the wrong one — found by review on #344.
+ *
+ * SQLite reports several indexed seeks that never say "USING INDEX": a rowid lookup
+ * (`SEARCH t USING INTEGER PRIMARY KEY`), a WITHOUT ROWID table's key
+ * (`USING PRIMARY KEY`), and the transient index it builds for itself
+ * (`USING AUTOMATIC COVERING INDEX`). Reading only `USING [COVERING] INDEX` filed
+ * every one of them as `unknown` — the summary saying it could not tell, about a
+ * plan that had said so plainly. `SEARCH` means a subset of rows was sought;
+ * `SCAN` means a table was read whole. That is the engine's own vocabulary.
+ */
+const SQLITE_INDEX_STEP = /^SEARCH\b/;
 const SQLITE_SCAN_STEP = /^SCAN\b/;
 
 function summariseSqlite(rows: readonly Record<string, unknown>[]): AgentPlanSummary {

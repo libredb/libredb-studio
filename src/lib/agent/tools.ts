@@ -54,6 +54,7 @@ import { ConnectionError, DatabaseConfigError, DatabaseError, PoolExhaustedError
 import type { ExecutionArtifactStore } from "@/lib/db/operations/artifacts";
 import type { ExecutionBudget, ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
 import { actorLabel, executeAuditedOperation } from "@/lib/db/operations/execution";
+import { inspectAgentStatement } from "@/lib/db/operations/statement-guard";
 import type { ExecutionActor, ExecutionPolicy, PolicyDenyCode, TargetScope } from "@/lib/db/operations/policy";
 import type { OperationRegistry } from "@/lib/db/operations/registry";
 import type { DatabaseProvider, ProviderCapabilities } from "@/lib/db/types";
@@ -154,6 +155,10 @@ export type AgentToolUnavailableCode =
   | "UNVERIFIABLE_EVIDENCE"
   /** A cited plan is not an estimating plan THIS run produced. */
   | "UNVERIFIABLE_PLAN"
+  /** One plan cited as both sides: a before and an after have to be two plans. */
+  | "IDENTICAL_PLANS"
+  /** The statement does not match the card it is offered under. */
+  | "RECOMMENDATION_SHAPE_MISMATCH"
   /** The plan was this run's, and its rows are no longer held to be read. */
   | "PLAN_RESULT_RELEASED"
   | AgentDeadlineDenyCode
@@ -374,6 +379,10 @@ const UNAVAILABLE_TEXT: Readonly<Record<AgentToolUnavailableCode, string>> = Obj
     "At least one evidence reference does not match anything this run produced. Cite an artifact this run actually read, or the schema snapshot it captured.",
   UNVERIFIABLE_PLAN:
     "At least one of those references is not an estimated plan this run produced. Inspect the plan of each statement first, then compare the two artifacts those inspections returned.",
+  IDENTICAL_PLANS:
+    "Both sides of that comparison name the same plan, so there is no before and no after. Inspect the plan of your rewrite as well, then compare the two.",
+  RECOMMENDATION_SHAPE_MISMATCH:
+    "That statement is not the kind of change the card claims. An index recommendation must be one CREATE INDEX statement; a rewrite must be one bounded read.",
   PLAN_RESULT_RELEASED:
     "That plan was this run's, but its rows are no longer held and cannot be read again. Inspect the plan once more if the comparison still matters.",
   RUN_DEADLINE_EXCEEDED:
@@ -1003,6 +1012,11 @@ export function comparePlansTool(
 
   const parsed = parseToolInput(planComparisonSchema, input);
   if (!parsed.ok) return unavailable("INVALID_TOOL_INPUT");
+  // One plan cited as both sides is not a before and an after. Without this, a
+  // comparison of a plan with itself records a valid `plan-comparison` and the goal
+  // verifier marks the run answered on a single inspected plan — which defeats the
+  // requirement the artifact exists to carry. Found by review on #344.
+  if (parsed.value.before === parsed.value.after) return unavailable("IDENTICAL_PLANS");
 
   const plans = estimatedPlansOf(run.events);
   const before = readPlanSide(context, plans, parsed.value.before);
@@ -1040,6 +1054,9 @@ export function recommendChangeTool(
 
   const parsed = parseToolInput(recommendationSchema, input);
   if (!parsed.ok) return unavailable("INVALID_TOOL_INPUT");
+  if (!matchesCard(parsed.value.change, parsed.value.statement)) {
+    return unavailable("RECOMMENDATION_SHAPE_MISMATCH");
+  }
   if (!parsed.value.evidence.every((reference) => verifiedAgainst(run.events, reference))) {
     return unavailable("UNVERIFIABLE_EVIDENCE");
   }
@@ -1056,6 +1073,28 @@ export function recommendChangeTool(
     },
     modelText: `Recommendation recorded: one ${parsed.value.change}, offered to the user and not executed. It is theirs to apply.`,
   };
+}
+
+const CREATE_INDEX_STATEMENT = /^\s*CREATE\s+(UNIQUE\s+)?INDEX\b/i;
+
+/**
+ * Does the statement match the card it is offered under? Found by review on #344.
+ *
+ * The headline the rail renders — "Index recommended" — is the APP's own words, and
+ * it has to be true. Without this, a model could file a `DROP TABLE` under an index
+ * card, and the rail would assert the app's claim over it and offer the statement to
+ * the user's editor. Nothing here executes anything, so this is not a security
+ * boundary; it is the app refusing to say something it cannot support.
+ *
+ * The structural checks are the SHARED guard's rather than a second parser: one
+ * determinate statement, no second statement after a terminator. `NON_READ_STATEMENT`
+ * is the only violation an index card may carry, because a `CREATE INDEX` is by
+ * definition not a read.
+ */
+function matchesCard(change: "index" | "rewrite", statement: string): boolean {
+  const violation = inspectAgentStatement(statement);
+  if (change === "rewrite") return violation === null;
+  return (violation === null || violation === "NON_READ_STATEMENT") && CREATE_INDEX_STATEMENT.test(statement);
 }
 
 /** Does this reference name something the run actually produced? */
