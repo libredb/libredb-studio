@@ -1383,3 +1383,29 @@ Done when the run-start route validates the descriptor the browser believed it w
 a fingerprint sent with the request and compared server-side, refusing with a distinct reason when it
 has moved — rather than the client's snapshot being the only check. Until then `docs/AGENT.md` says
 the comparison is against the last fetch, not against the live descriptor.
+
+### B24. A run that answers nothing is still `succeeded`, and the vocabulary to say otherwise belongs to M3
+
+`AgentRunTerminalStatus` is `succeeded | failed | cancelled`. Nothing in it can say "this run
+finished, and did not answer". So an agent run that inspects the schema, executes its reads and then
+stops without calling `compose_report` ends `succeeded` — which is what nine live runs on 2026-08-12
+did, none of them producing a report.
+
+The user-facing half of this is closed. A run now records its `stopReason` and its closing prose, so
+the rail states plainly that "the model stopped without composing a cited report" and shows what the
+model actually said. What remains is the status word, and deliberately so:
+
+- **`failed` would be wrong for planning mode.** That mode has no tools and can never produce
+  evidence; a planning run that returned a good plan did exactly what the mode is for.
+- **Changing ledger semantics twice is the expensive kind of change.** Every past run is re-read
+  under the new meaning, so it is worth doing once, with the right vocabulary.
+- **The rule is not knowable yet.** M3 asks for goal verifiers *per template*, which implies the
+  answer differs by workflow type rather than being one predicate over every run.
+
+This is a hand-off, not a deferral: **#330 already owns it.** Its acceptance criteria name
+`needs_input` — a status this codebase does not have — and its policy unit gates require "citation
+present for every final finding". The verifier that decides whether a run answered is M3's work, and
+the vocabulary extension arrives with it.
+
+Done when a run that ends without a cited report says so in its STATUS as well as its timeline,
+under whatever term M3 ratifies, and every earlier ending still folds to the same meaning it had.
