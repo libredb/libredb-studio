@@ -182,7 +182,7 @@ describe("the connections a default deployment ships", () => {
   });
 
   test("both built-in samples can start a run", () => {
-    expect(builders.length).toBe(2);
+    expect(builders).toHaveLength(2);
 
     for (const { seedId, build } of builders) {
       const served = JSON.parse(JSON.stringify(build())) as ManagedConnectionPayload;

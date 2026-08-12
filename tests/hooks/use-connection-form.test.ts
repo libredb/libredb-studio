@@ -24,11 +24,17 @@ mock.module("@/lib/db-ui-config", () => ({
     defaultPort: DEFAULT_PORTS[type] ?? "5432",
     // Mirrors the real config: the URI-addressed providers offer the toggle.
     showConnectionStringToggle: type === "mongodb" || type === "couchbase",
-    connectionFields: ["host", "port", "user", "password", "database"],
+    // Mirrors the real config: the file-addressed engines take a path and nothing
+    // else. A mock that gave every type the full network field set would hide what
+    // the editor does to a SQLite or LibreDB connection, which is exactly where it
+    // went wrong.
+    connectionFields:
+      type === "sqlite" || type === "libredb" ? ["database"] : ["host", "port", "user", "password", "database"],
   }),
 }));
 
 import { useConnectionForm } from "@/hooks/use-connection-form";
+import { resolveAgentRunConnectionId } from "@/hooks/use-connection-payload";
 import type { DatabaseConnection, DatabaseType } from "@/lib/types";
 
 // =============================================================================
@@ -187,6 +193,155 @@ describe("useConnectionForm", () => {
     expect(result.current.testResult).not.toBeNull();
     expect(result.current.testResult!.success).toBe(false);
     expect(result.current.testResult!.message).toBe("Connection refused");
+  });
+
+  /*
+    An edit must not silently drop what this form does not show.
+
+    The editor rebuilds the connection from its own fields, so anything it has no
+    input for used to vanish on save. Three of those matter, and none of them
+    announced itself: `seedId`/`managed` are a seed copy's provenance, and losing
+    them made the connection stop matching its seed — the merge on the next load
+    then re-created the seed copy over the top, discarding the user's edit
+    entirely, and the agent rail refused a connection it had accepted a moment
+    before. `agentUser`/`agentPassword` are the least-privilege execution profile
+    (#328), so dropping them silently downgrades an agent run to the connection's
+    main credentials. `group` is just lost.
+  */
+  test("editing a connection preserves the fields the form does not manage", async () => {
+    mockGlobalFetch({
+      "/api/db/test-connection": { ok: true, json: { success: true, latency: 10 } },
+    });
+
+    const seedCopy: DatabaseConnection = {
+      id: "seed:sample",
+      seedId: "sample",
+      managed: false,
+      group: "samples",
+      agentUser: "agent_ro",
+      agentPassword: "agent_pw",
+      name: "Sample",
+      type: "postgres",
+      host: "db.example.com",
+      port: 5432,
+      user: "pgadmin",
+      password: "pgpass",
+      database: "mydb",
+      createdAt: new Date(0),
+    };
+
+    const onConnect = mock(() => {});
+    const { result } = renderHook(() => useConnectionForm({ ...defaultProps, editConnection: seedCopy, onConnect }));
+
+    // A presentation-only edit: the one the rail promises stays startable.
+    act(() => {
+      result.current.setName("My Sample");
+    });
+
+    await act(async () => {
+      await result.current.handleConnect();
+    });
+
+    const saved = (onConnect.mock.calls as unknown[][])[0][0] as DatabaseConnection;
+    expect(saved.name).toBe("My Sample");
+    expect(saved.seedId).toBe("sample");
+    expect(saved.managed).toBe(false);
+    expect(saved.group).toBe("samples");
+    expect(saved.agentUser).toBe("agent_ro");
+    expect(saved.agentPassword).toBe("agent_pw");
+
+    // The two sides, joined across the path a user actually takes. The rail promises
+    // that a presentation-only edit stays startable; asserting the preserved fields
+    // alone would not have caught this, because the earlier eligibility tests built
+    // their "edited" copy by hand rather than through the editor that produces it.
+    const served = { ...seedCopy, createdAt: seedCopy.createdAt.toISOString() };
+    expect(resolveAgentRunConnectionId(saved, [served])).toBe("seed:sample");
+  });
+
+  /*
+    A file-addressed engine takes a path and nothing else, and the editor shows it
+    nothing else — but it used to write `host: "localhost"`, an empty user and
+    password, and a `port` parsed from an empty string anyway. Harmless-looking, and
+    it is what actually broke the two connections a default deployment ships: the
+    seed descriptor has no host, so a copy the editor had touched no longer matched
+    it, and a rename made the rail refuse the sample it had just accepted.
+
+    Both built-in samples are file-addressed, so this is the case that matters, and
+    the earlier eligibility tests used a postgres connection whose fields survive the
+    round trip unchanged — which is why they passed while the real thing did not.
+  */
+  test("editing a file-addressed connection does not invent transport fields it never showed", async () => {
+    mockGlobalFetch({
+      "/api/db/test-connection": { ok: true, json: { success: true, latency: 10 } },
+    });
+
+    const sqliteSeed: DatabaseConnection = {
+      id: "seed:sqlite-embedded-sample",
+      seedId: "sqlite-embedded-sample",
+      managed: false,
+      name: "Sample (Employees)",
+      type: "sqlite",
+      database: "data/sample-employees.db",
+      createdAt: new Date(0),
+    };
+
+    const onConnect = mock(() => {});
+    const { result } = renderHook(() => useConnectionForm({ ...defaultProps, editConnection: sqliteSeed, onConnect }));
+
+    act(() => {
+      result.current.setName("My Employees");
+    });
+
+    await act(async () => {
+      await result.current.handleConnect();
+    });
+
+    const saved = (onConnect.mock.calls as unknown[][])[0][0] as DatabaseConnection;
+    expect(saved.name).toBe("My Employees");
+    expect(saved.database).toBe("data/sample-employees.db");
+    expect(saved.host).toBeUndefined();
+    expect(saved.port).toBeUndefined();
+    expect(saved.user).toBeUndefined();
+    expect(saved.password).toBeUndefined();
+
+    const served = { ...sqliteSeed, createdAt: sqliteSeed.createdAt.toISOString() };
+    expect(resolveAgentRunConnectionId(saved, [served])).toBe("seed:sqlite-embedded-sample");
+  });
+
+  // Preserving must not resurrect what the user turned OFF: the form owns TLS and
+  // the tunnel, so clearing them has to survive the save.
+  test("editing a connection does not resurrect transport settings the user disabled", async () => {
+    mockGlobalFetch({
+      "/api/db/test-connection": { ok: true, json: { success: true, latency: 10 } },
+    });
+
+    const secured: DatabaseConnection = {
+      id: "edit-2",
+      name: "Secured",
+      type: "postgres",
+      host: "db.example.com",
+      port: 5432,
+      database: "mydb",
+      createdAt: new Date(0),
+      ssl: { mode: "require", rejectUnauthorized: true },
+      sshTunnel: { enabled: true, host: "bastion", port: 22, username: "ops", authMethod: "password" },
+    };
+
+    const onConnect = mock(() => {});
+    const { result } = renderHook(() => useConnectionForm({ ...defaultProps, editConnection: secured, onConnect }));
+
+    act(() => {
+      result.current.setSSLMode("disable");
+      result.current.setSSHEnabled(false);
+    });
+
+    await act(async () => {
+      await result.current.handleConnect();
+    });
+
+    const saved = (onConnect.mock.calls as unknown[][])[0][0] as DatabaseConnection;
+    expect(saved.ssl).toBeUndefined();
+    expect(saved.sshTunnel).toBeUndefined();
   });
 
   // ── handleConnect calls onConnect on successful test ───────────────────────

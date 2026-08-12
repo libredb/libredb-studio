@@ -94,9 +94,11 @@ Which connections qualify is decided in the browser before a run is opened, by
 - an **admin-managed** seed connection — the server's copy is authoritative and the UI is read-only,
   so `seed:<id>` means the same database on every resume;
 - the **editable copy of a seed** — what a zero-config deployment ships — but only while the copy
-  still matches the descriptor the server serves. Every field deciding which database is reached and
-  as whom is compared, the optional agent credentials included; presentation-only edits (name,
-  colour, group, environment) do not disqualify it;
+  still matches the descriptor the browser last fetched from the server. Every field deciding which
+  database is reached and as whom is compared, the optional agent credentials included;
+  presentation-only edits (name, colour, group, environment) do not disqualify it. Note what that
+  sentence does *not* say: the comparison is against a snapshot, so an operator who repoints a seed
+  server-side is not seen until the browser fetches again (`docs/BACKLOG.md` B23);
 - nothing else. A connection the user typed in reaches the rail as unresolvable, and so does a seed
   copy edited to point elsewhere; the rail says so rather than opening a run.
 
@@ -438,6 +440,8 @@ declared-target allowlist, the statement guard and the role's own grants are the
   kind, in the chat surface as much as in the agent.
 - **B21** — the published package's `BottomPanel` carries the agent-provenance branch as dormant
   markup.
+- **B23** — seed eligibility is decided against the browser's last descriptor fetch, so a seed
+  repointed server-side mid-session is not seen until the next fetch.
 
 ## Related documentation
 

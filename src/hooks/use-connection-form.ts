@@ -13,6 +13,68 @@ import {
 import { getDBConfig } from "@/lib/db-ui-config";
 import { parseConnectionString } from "@/lib/connection-string-parser";
 
+/**
+ * Whether this editor OWNS a connection field or merely carries it.
+ *
+ * `buildConnection` rebuilds the whole connection from form state, so every field
+ * without an input here used to disappear on save — silently, because a rebuilt
+ * object looks complete. Three of them had consequences nobody would connect to a
+ * rename: `seedId`/`managed` are a seed copy's provenance, and losing them made the
+ * connection stop matching its seed, so the next load re-created the seed copy over
+ * the top and discarded the edit entirely; `agentUser`/`agentPassword` are the
+ * least-privilege execution profile (#328), so losing them downgrades an agent run to
+ * the connection's main credentials without saying so.
+ *
+ * A `Record<keyof DatabaseConnection, ...>` rather than a list of names to copy, for
+ * the reason `connection-secrets.ts` gives about credentials: the failure mode of a
+ * list is silence, and silence is exactly how this bug survived. A field added to
+ * `DatabaseConnection` now fails `bun run typecheck` until someone decides whether the
+ * editor owns it.
+ *
+ * `edited` is not "always written" — the form omits a value it has none for, which is
+ * how turning TLS or the tunnel off actually clears them. It means the FORM decides.
+ */
+type FieldOwnership = "edited" | "preserved";
+
+const FIELD_OWNERSHIP: Record<keyof DatabaseConnection, FieldOwnership> = {
+  id: "edited",
+  name: "edited",
+  type: "edited",
+  host: "edited",
+  port: "edited",
+  user: "edited",
+  password: "edited",
+  database: "edited",
+  connectionString: "edited",
+  createdAt: "edited",
+  color: "edited",
+  environment: "edited",
+  ssl: "edited",
+  sshTunnel: "edited",
+  serviceName: "edited",
+  instanceName: "edited",
+  group: "preserved",
+  managed: "preserved",
+  seedId: "preserved",
+  agentUser: "preserved",
+  agentPassword: "preserved",
+};
+
+const PRESERVED_KEYS = (Object.keys(FIELD_OWNERSHIP) as (keyof DatabaseConnection)[]).filter(
+  (key) => FIELD_OWNERSHIP[key] === "preserved",
+);
+
+/** What survives an edit untouched. Empty for a new connection, which has no past. */
+function preservedFields(source: DatabaseConnection | null | undefined): Partial<DatabaseConnection> {
+  if (!source) return {};
+  const carried: Record<string, unknown> = {};
+  for (const key of PRESERVED_KEYS) {
+    const value = source[key];
+    if (value !== undefined) carried[key] = value;
+  }
+  return carried as Partial<DatabaseConnection>;
+}
+
 interface UseConnectionFormProps {
   isOpen: boolean;
   onClose: () => void;
@@ -156,15 +218,28 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
         }
       : undefined;
 
+    /*
+      Write only the addressing fields this engine actually takes — the same list the
+      modal renders inputs from. A file-addressed engine (SQLite, LibreDB) takes a
+      path and nothing else, yet this used to write `host: "localhost"`, an empty user
+      and password, and a port parsed out of an empty string. That looks harmless and
+      is not: a seed descriptor carries none of them, so a copy the editor had touched
+      stopped matching its seed, which discarded the user's edit on the next load and
+      made the agent rail refuse a connection it had just accepted.
+    */
+    const addressedFields = new Set<string>(getDBConfig(type).connectionFields);
+
     return {
+      // First, so a form-owned field always wins; nothing below is preserved.
+      ...preservedFields(editConnection),
       id: editConnection?.id || Math.random().toString(36).substr(2, 9),
       name: name || `${type}-connection`,
       type,
-      host,
-      port: parseInt(port),
-      user,
-      password,
-      database,
+      ...(addressedFields.has("host") ? { host } : {}),
+      ...(addressedFields.has("port") ? { port: parseInt(port) } : {}),
+      ...(addressedFields.has("user") ? { user } : {}),
+      ...(addressedFields.has("password") ? { password } : {}),
+      ...(addressedFields.has("database") ? { database } : {}),
       createdAt: editConnection?.createdAt || new Date(),
       environment,
       color: ENVIRONMENT_COLORS[environment],
