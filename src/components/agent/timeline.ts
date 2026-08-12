@@ -207,6 +207,7 @@ const STOP_SENTENCES = {
   "model-stopped": "The model stopped without composing a cited report.",
   cancelled: "Stopped because it was cancelled.",
   "deadline-exceeded": "The run reached its time limit before it finished.",
+  "model-timeout": "The model did not answer in time. Starting the run again is reasonable.",
   "turn-limit": "The run reached its step limit before it finished. What it had gathered is above.",
 } as const satisfies Record<AgentRunStopReason, string | null>;
 

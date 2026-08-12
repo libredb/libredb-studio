@@ -82,6 +82,23 @@ export const AGENT_EXECUTION_POLICY: ExecutionPolicy = Object.freeze({
 export const AGENT_RUN_DEADLINE_MS = 300_000;
 
 /**
+ * The longest ONE model call may take before the loop stops waiting for it.
+ *
+ * The run deadline used to be the only bound on a single request, and a measured run
+ * showed what that costs: an unanswered call ended a run at exactly 300.0s with a
+ * two-event ledger, having spent a budget meant to cover a whole investigation — and
+ * a user watched it do so with no feedback. Turns on this workload land in seconds,
+ * so a ceiling this far above them is only ever reached by a call that is not coming
+ * back.
+ *
+ * It bounds ONE call, never the run: the deadline is still the authority the loop
+ * reads between turns, and whichever is smaller applies. A run with less time left
+ * than this gets the run's own reason, because "this request never returned" and
+ * "this run used its time" are different things to tell a user.
+ */
+export const AGENT_MODEL_TURN_TIMEOUT_MS = 90_000;
+
+/**
  * The least time a single call could plausibly need. Below this, the deadline
  * refuses to start the call rather than beginning one it cannot finish. Kept well
  * under `statementTimeoutMs`, which `AgentRunDeadline.admit` requires: a minimum

@@ -53,10 +53,9 @@ export function resolveAllCredentials(connections: SeedConnection[]): SeedConnec
     try {
       results.push(resolveConnectionCredentials(conn));
     } catch (err) {
-      logger.error("Seed connection skipped due to credential resolution failure", {
+      logger.error("Seed connection skipped due to credential resolution failure", err, {
         route: "seed/credential-resolver",
         connectionId: conn.id,
-        error: (err as Error).message,
       });
     }
   }

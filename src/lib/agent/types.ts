@@ -116,6 +116,8 @@ export type AgentRunStopReason =
   | "cancelled"
   /** The wall-clock budget ran out. */
   | "deadline-exceeded"
+  /** One model call did not return within its own ceiling. Retrying is reasonable. */
+  | "model-timeout"
   /** The model-turn ceiling was reached with work still in flight. */
   | "turn-limit";
 

@@ -46,7 +46,7 @@
 import { createHash } from "node:crypto";
 import { type ModelMessage, type ToolSet, streamText, tool } from "ai";
 import { captureContextSnapshot, packContextForTask, reusableSnapshot } from "./context-snapshot";
-import { AGENT_MAX_MODEL_TURNS } from "./execution-policy";
+import { AGENT_MAX_MODEL_TURNS, AGENT_MODEL_TURN_TIMEOUT_MS } from "./execution-policy";
 import { type AgentModel, mapAgentModelError } from "./model-adapter";
 import {
   type AgentRunInvocation,
@@ -78,6 +78,8 @@ export interface AgentInvestigationOptions {
   readonly resources: AgentToolResources;
   /** Backstop on model turns; defaults to `AGENT_MAX_MODEL_TURNS`. */
   readonly maxTurns?: number;
+  /** Ceiling on ONE model call; defaults to `AGENT_MODEL_TURN_TIMEOUT_MS`. */
+  readonly turnTimeoutMs?: number;
 }
 
 /**
@@ -464,6 +466,7 @@ export async function runInvestigation(
 ): Promise<AgentInvestigationResult> {
   const { service, model, resources } = options;
   const maxTurns = options.maxTurns ?? AGENT_MAX_MODEL_TURNS;
+  const turnTimeoutMs = options.turnTimeoutMs ?? AGENT_MODEL_TURN_TIMEOUT_MS;
 
   // Refuses a run that has ended, and tells us what the previous process left
   // behind. A queued run is one nothing has driven yet; a running one is a resume.
@@ -577,9 +580,12 @@ export async function runInvestigation(
     // cancelled or already out of time ends without reading a catalog first.
     if (!contextEstablished) await establishContext();
     turns += 1;
-    const turn = await takeTurn(model, instructions, messages, tools, remainingMs);
+    // Whichever bound is smaller applies, and which one it was decides what the user
+    // is told: a call that never returned is not a run that used its time.
+    const turnBudgetMs = Math.min(remainingMs, turnTimeoutMs);
+    const turn = await takeTurn(model, instructions, messages, tools, turnBudgetMs);
     text = turn.text;
-    if (turn.aborted) return conclude("failed", "deadline-exceeded");
+    if (turn.aborted) return conclude("failed", turnBudgetMs < remainingMs ? "model-timeout" : "deadline-exceeded");
     if (turn.toolCalls.length === 0) return conclude("succeeded", "model-stopped");
 
     messages.push(...turn.assistantMessages);

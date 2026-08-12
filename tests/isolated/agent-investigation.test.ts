@@ -176,6 +176,20 @@ interface Turn {
 }
 
 /**
+ * A call that never answers, and ends the only way a real one can: when the transport
+ * is aborted.
+ *
+ * A promise that simply never settles would be an unfaithful double — a real `fetch`
+ * rejects when its signal fires, and a fixture that ignores the signal tests a
+ * transport nobody ships. It also hangs the test rather than failing it, which reads
+ * as "the ceiling does not work" whatever the code does.
+ */
+const unansweredCall = (turn: Turn): Promise<Response> =>
+  new Promise((_resolve, reject) => {
+    turn.signal?.addEventListener("abort", () => reject(new DOMException("The operation was aborted", "AbortError")));
+  });
+
+/**
  * A model whose every turn is a function of what it was actually sent.
  *
  * A turn may answer asynchronously: the cancellation test needs one that records a
@@ -966,6 +980,60 @@ describe("the run loop is bounded", () => {
     expect(result.status).toBe("failed");
     expect(result.stopReason).toBe("turn-limit");
     expect(result.turns).toBe(2);
+  });
+
+  /*
+    A model call that never answers used to cost the whole run.
+
+    Measured, not assumed: one planning run on 2026-08-12 ended at 300.0s — exactly
+    `AGENT_RUN_DEADLINE_MS` — with a two-event ledger. The deadline did its job
+    perfectly; the problem is that it was the ONLY bound on a single call, so one
+    unanswered request spent a five-minute budget that was meant to cover a whole
+    investigation, and the user watched a spinner for all of it.
+
+    A turn ceiling makes the failure cheap and, more importantly, nameable: the run
+    ends `model-timeout` rather than `deadline-exceeded`, because "this one request
+    never came back" and "this run used its time" are different things to be told.
+  */
+  test("one unanswered model call ends the turn, not the whole run budget", async () => {
+    const b = boot(freshDataDir());
+    const run = await startRun(b, "planning");
+    // Never resolves: only the turn ceiling can end this.
+    const script = scriptedModel(unansweredCall);
+
+    const started = Date.now();
+    const result = await runInvestigation(run.runId, {
+      service: b.service,
+      model: await modelOver(script.fetch),
+      resources: b.resources,
+      turnTimeoutMs: 200,
+    });
+
+    expect(result.status).toBe("failed");
+    expect(result.stopReason).toBe("model-timeout");
+    // The run deadline is five minutes; this cost a fifth of a second.
+    expect(Date.now() - started).toBeLessThan(AGENT_RUN_DEADLINE_MS);
+
+    const finished = (await eventsOf(b.store, run.runId)).find((event) => event.kind === "run-finished");
+    expect(finished).toMatchObject({ status: "failed", stopReason: "model-timeout" });
+  });
+
+  test("a run that runs out of time is still reported as out of time, not as a slow call", async () => {
+    // The turn ceiling must not relabel the run deadline: when less time remains than
+    // a turn is allowed, the shorter bound is the run's own, and the reason follows it.
+    const b = boot(freshDataDir(), { spentMs: AGENT_RUN_DEADLINE_MS - 100 });
+    const run = await startRun(b, "planning");
+    const script = scriptedModel(unansweredCall);
+
+    const result = await runInvestigation(run.runId, {
+      service: b.service,
+      model: await modelOver(script.fetch),
+      resources: b.resources,
+      turnTimeoutMs: 60_000,
+    });
+
+    expect(result.status).toBe("failed");
+    expect(result.stopReason).toBe("deadline-exceeded");
   });
 
   test("a spent deadline ends the run without asking the model anything", async () => {

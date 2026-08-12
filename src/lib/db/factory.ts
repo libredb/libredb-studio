@@ -559,7 +559,7 @@ export function registerShutdownHandlers(): void {
       await clearProviderCache();
       logger.info("[DB] All database connections closed gracefully");
     } catch (error) {
-      logger.error("[DB] Error during graceful shutdown", { error: String(error) });
+      logger.error("[DB] Error during graceful shutdown", error, { route: "db/factory" });
     }
     process.exit(0);
   };

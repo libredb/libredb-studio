@@ -225,8 +225,17 @@ agent's privileges.
 | `maxResultRows` / `maxResultBytes` | 200 / 256 KiB | Compared after the driver has materialised the rows, so an oversized read is refused but still paid for at the database. |
 | `maxConcurrentExecutions` | 1 | The loop is sequential; a run cannot fan out. |
 | Run deadline | 300 s | **Wall clock**, including model latency. |
+| One model call | 90 s | Whichever of this and the run's remaining time is smaller applies. |
 | Repair attempts | 3 | Statements that failed **at the database**. |
 | Model turns per drive | 16 | A backstop for a loop that never reaches the database. |
+
+**The per-call ceiling exists because the run deadline used to be the only bound on a single
+request.** A measured run ended at exactly 300.0 s with a two-event ledger: one call never answered
+and spent a budget meant to cover a whole investigation, while the rail showed nothing moving for
+five minutes. Turns on this workload land in seconds, so a call that reaches 90 s is not coming back.
+The two bounds stay distinct in what they report — `model-timeout` says a request never returned and
+starting again is reasonable; `deadline-exceeded` says the run used its time — and when less than the
+ceiling remains, the run's own reason is the one given.
 
 **The run deadline** is a monotonic per-run clock with an injected time source, and it answers two
 questions before every call: may this call start (`INSUFFICIENT_TIME_REMAINING` if its minimum

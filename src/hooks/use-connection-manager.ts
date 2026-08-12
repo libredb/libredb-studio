@@ -77,9 +77,8 @@ export function useConnectionManager(storageReady = false) {
         );
       } catch (error) {
         // Foreign keys / indexes are non-essential for browsing — log and move on.
-        logger.error("Failed to load schema relations (FK/indexes); table list unaffected", {
+        logger.error("Failed to load schema relations (FK/indexes); table list unaffected", error, {
           route: "use-connection-manager",
-          error: error instanceof Error ? error.message : String(error),
         });
       }
     },

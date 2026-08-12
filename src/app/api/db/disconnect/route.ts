@@ -22,7 +22,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ success: true });
   } catch (error) {
-    logger.error("[DB] Error disconnecting provider", { error: String(error) });
+    logger.error("[DB] Error disconnecting provider", error, { route: "POST /api/db/disconnect" });
     return NextResponse.json({ success: false, error: "Failed to disconnect" }, { status: 500 });
   }
 }
