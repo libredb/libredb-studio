@@ -28,7 +28,7 @@
 
 import { createDatabaseProvider } from "@/lib/db";
 import { acquireExecutionProfileProvider } from "@/lib/db/factory";
-import { ExecutionArtifactStore } from "@/lib/db/operations/artifacts";
+import { type ExecutionArtifact, ExecutionArtifactStore } from "@/lib/db/operations/artifacts";
 import { ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
 import { createCanonicalOperationRegistry } from "@/lib/db/operations/descriptors";
 import { createTargetScope } from "@/lib/db/operations/policy";
@@ -66,6 +66,20 @@ function runResources(): { tracker: ExecutionBudgetTracker; artifacts: Execution
     }),
   };
   return processResources;
+}
+
+/**
+ * One result this process still holds, or undefined (#329 T11).
+ *
+ * Undefined covers three states that are one answer to a caller: released with its
+ * run, expired by the TTL, or produced by a process that is not this one. All three
+ * mean the same thing — the rows are not here — and none of them is an error, which
+ * is why the route that surfaces this reports it as its own outcome rather than as a
+ * failure. `runId` is on the returned artifact so the caller can check the result it
+ * gets back belongs to the run it asked about; this store is process-wide.
+ */
+export function readAgentArtifact(correlationId: string, nowMs: number): ExecutionArtifact<QueryResult> | undefined {
+  return runResources().artifacts.get(correlationId, nowMs);
 }
 
 /**

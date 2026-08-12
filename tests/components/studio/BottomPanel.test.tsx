@@ -10,18 +10,26 @@ setupRechartssMock();
 
 // ---- Mock all child components rendered by BottomPanel ----
 
+// Captured rather than merely rendered: the agent-hydration tests assert WHICH
+// result the grid was handed, which a bare marker element cannot show.
+let capturedResultsGridProps: Record<string, unknown> = {};
+
 mock.module("@/components/ResultsGrid", () => ({
-  ResultsGrid: () => {
+  ResultsGrid: (props: Record<string, unknown>) => {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const React = require("react");
+    capturedResultsGridProps = props;
     return React.createElement("div", { "data-testid": "resultsgrid" }, "ResultsGrid");
   },
 }));
 
+let capturedVisualExplainProps: Record<string, unknown> = {};
+
 mock.module("@/components/VisualExplain", () => ({
-  VisualExplain: ({ onLoadQuery }: Record<string, unknown>) => {
+  VisualExplain: ({ onLoadQuery, ...rest }: Record<string, unknown>) => {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const React = require("react");
+    capturedVisualExplainProps = { onLoadQuery, ...rest };
     return React.createElement(
       "div",
       { "data-testid": "visualexplain" },
@@ -622,5 +630,142 @@ describe("BottomPanel", () => {
 
     expect(onLoadQuery).toHaveBeenCalledWith("SELECT 5");
     expect(onSetMode).toHaveBeenCalledWith("results");
+  });
+
+  /**
+   * Agent artifact hydration (#329 T11).
+   *
+   * A run's result is an ordinary result, so it is rendered by the surfaces that
+   * already render results — with a badge saying where it came from, and without the
+   * affordances that would write it back. The tab's own result is never replaced;
+   * dismissing the artifact leaves it exactly as it was.
+   */
+  describe("agent artifact hydration", () => {
+    const TAB_RESULT = { rows: [{ id: 1 }], fields: ["id"], rowCount: 1, executionTime: 10 };
+    const ARTIFACT_RESULT = {
+      rows: [
+        { id: 7, total: 70 },
+        { id: 8, total: 80 },
+      ],
+      fields: ["id", "total"],
+      rowCount: 2,
+      executionTime: 4,
+    };
+
+    function hydratedProps(overrides: Record<string, unknown> = {}) {
+      return createDefaultProps({
+        mode: "results",
+        currentTab: {
+          id: "tab-1",
+          name: "Q",
+          query: "SELECT 1",
+          result: TAB_RESULT,
+          isExecuting: false,
+          type: "sql" as const,
+        },
+        agentArtifact: {
+          runId: "arun_1",
+          correlationId: "corr_9",
+          operationId: "sql.query.read",
+          surface: "results",
+          result: ARTIFACT_RESULT,
+          explainPlan: null,
+        },
+        onDismissAgentArtifact: mock(() => {}),
+        ...overrides,
+      });
+    }
+
+    test("the grid renders the run's rows behind a badge naming the run it came from", () => {
+      const props = hydratedProps();
+      const { getByTestId } = render(<BottomPanel {...(props as React.ComponentProps<typeof BottomPanel>)} />);
+
+      const badge = getByTestId("agent-provenance");
+      expect(badge.textContent).toContain("arun_1");
+      expect(badge.textContent).toContain("sql.query.read");
+      // The audit correlation id, so what is on screen can be joined to the audit
+      // line for the statement that produced it.
+      expect(badge.textContent).toContain("corr_9");
+      expect(getByTestId("resultsgrid")).toBeTruthy();
+      expect(capturedResultsGridProps.result).toEqual(ARTIFACT_RESULT);
+    });
+
+    test("a hydrated result is read-only: nothing offers to edit it or export it as the tab's own", () => {
+      const props = hydratedProps({ editingEnabled: true });
+      const { queryByText } = render(<BottomPanel {...(props as React.ComponentProps<typeof BottomPanel>)} />);
+
+      expect(capturedResultsGridProps.editingEnabled).toBe(false);
+      expect(capturedResultsGridProps.onLoadMore).toBeUndefined();
+      expect(queryByText("Export")).toBeNull();
+    });
+
+    test("dismissing it is a user action, and the tab's own result is what returns", () => {
+      const onDismissAgentArtifact = mock(() => {});
+      const props = hydratedProps({ onDismissAgentArtifact });
+      const { getByTestId, rerender } = render(
+        <BottomPanel {...(props as React.ComponentProps<typeof BottomPanel>)} />,
+      );
+
+      fireEvent.click(getByTestId("agent-provenance-dismiss"));
+      expect(onDismissAgentArtifact).toHaveBeenCalled();
+
+      const cleared = hydratedProps({ agentArtifact: null });
+      rerender(<BottomPanel {...(cleared as React.ComponentProps<typeof BottomPanel>)} />);
+      expect(capturedResultsGridProps.result).toEqual(TAB_RESULT);
+    });
+
+    test("a plan artifact hydrates the explain view rather than the grid", () => {
+      const props = hydratedProps({
+        mode: "explain",
+        metadata: { capabilities: { explainFormat: "postgres-json", supportsExplain: true } },
+        agentArtifact: {
+          runId: "arun_1",
+          correlationId: "corr_plan",
+          operationId: "sql.explain.estimate",
+          surface: "explain",
+          result: ARTIFACT_RESULT,
+          explainPlan: { format: "postgres-json", raw: [{ Plan: { "Node Type": "Seq Scan" } }] },
+        },
+      });
+      const { getByTestId } = render(<BottomPanel {...(props as React.ComponentProps<typeof BottomPanel>)} />);
+
+      expect(getByTestId("agent-provenance").textContent).toContain("sql.explain.estimate");
+      expect(capturedVisualExplainProps.plan).toEqual({
+        kind: "postgres-json",
+        plan: [{ Plan: { "Node Type": "Seq Scan" } }],
+      });
+      // The plan came from the run, so the editor's statement is NOT sent with it:
+      // the explain view's AI analysis posts query + plan together, and pairing them
+      // would attribute a run's plan to a statement that never produced it.
+      expect(capturedVisualExplainProps.query).toBeUndefined();
+    });
+
+    test("a hydrated grid leaves the explain view's own statement alone", () => {
+      const props = hydratedProps({
+        mode: "explain",
+        metadata: { capabilities: { explainFormat: "postgres-json", supportsExplain: true } },
+      });
+      render(<BottomPanel {...(props as React.ComponentProps<typeof BottomPanel>)} />);
+
+      expect(capturedVisualExplainProps.query).toBe("SELECT 1");
+    });
+
+    test("a hydrated result reaches only the surface it was hydrated into", () => {
+      // Chart hydration is deferred (`docs/BACKLOG.md`), so the charts view keeps
+      // showing the tab's own result rather than silently charting the run's.
+      const props = hydratedProps({ mode: "charts" });
+      const { queryByTestId } = render(<BottomPanel {...(props as React.ComponentProps<typeof BottomPanel>)} />);
+
+      expect(queryByTestId("agent-provenance")).toBeNull();
+      expect(queryByTestId("datacharts")).toBeTruthy();
+    });
+
+    test("without an artifact nothing about the panel changes", () => {
+      const props = hydratedProps({ agentArtifact: null });
+      const { queryByTestId } = render(<BottomPanel {...(props as React.ComponentProps<typeof BottomPanel>)} />);
+
+      expect(queryByTestId("agent-provenance")).toBeNull();
+      expect(capturedResultsGridProps.result).toEqual(TAB_RESULT);
+    });
   });
 });

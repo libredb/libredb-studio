@@ -108,6 +108,9 @@ function installMocks(): void {
       stream: mockStream,
     })),
     driveAgentRun: mockDriveAgentRun,
+    // Listed although this file's routes never call it: the replacement is
+    // process-wide, and `tests/api/agent/artifacts.test.ts` imports a route that does.
+    readAgentArtifact: mock(() => undefined),
   }));
 }
 

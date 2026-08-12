@@ -796,6 +796,135 @@ describe("AgentRail", () => {
     });
   });
 
+  /**
+   * Hydration affordances (#329 T11). The rail hands identifiers to its host and
+   * renders nothing of the result itself: the bottom panel already owns the grid and
+   * the explain view, and a second one inside the rail would be a second thing to
+   * keep correct. Both controls are strictly user-driven, and neither exists when the
+   * host cannot honour it.
+   */
+  describe("hydration affordances", () => {
+    async function runWith(props: Record<string, unknown>) {
+      const view = render(<AgentRail {...DEFAULT_PROPS} {...props} />);
+      fireEvent.change(view.getByTestId("agent-objective"), { target: { value: "why is checkout slow" } });
+      await act(async () => {
+        fireEvent.click(view.getByTestId("agent-start"));
+      });
+      return view;
+    }
+
+    test("a stored result offers to be shown, and shows nothing until the user asks", async () => {
+      mockAgentFetch([OPENED_LINE, STARTED_LINE, COMPLETED_LINE]);
+      const onShowArtifact = mock(() => {});
+      const { findAllByTestId } = await runWith({ onShowArtifact });
+
+      const controls = await findAllByTestId("agent-show-result");
+      expect(controls).toHaveLength(1);
+      expect(onShowArtifact).not.toHaveBeenCalled();
+
+      fireEvent.click(controls[0]);
+      expect(onShowArtifact).toHaveBeenCalledWith({ runId: "arun_1", correlationId: "corr_9" });
+    });
+
+    test("a drafted statement offers to be applied, and applies nothing until the user asks", async () => {
+      mockAgentFetch([OPENED_LINE, STARTED_LINE, DRAFTED_LINE]);
+      const onApplyStatement = mock(() => {});
+      const { findAllByTestId } = await runWith({ onApplyStatement });
+
+      const controls = await findAllByTestId("agent-apply-statement");
+      expect(controls).toHaveLength(1);
+      expect(onApplyStatement).not.toHaveBeenCalled();
+
+      fireEvent.click(controls[0]);
+      expect(onApplyStatement).toHaveBeenCalledWith("SELECT count(*) FROM orders");
+    });
+
+    test("a host that offers neither gets no controls, rather than disabled ones", async () => {
+      mockAgentFetch([OPENED_LINE, STARTED_LINE, DRAFTED_LINE, COMPLETED_LINE]);
+      const { findAllByTestId, queryAllByTestId } = await runWith({});
+
+      await findAllByTestId("agent-timeline-item");
+      expect(queryAllByTestId("agent-show-result")).toHaveLength(0);
+      expect(queryAllByTestId("agent-apply-statement")).toHaveLength(0);
+    });
+
+    test("a resolved citation carries both affordances; an unresolved one carries neither", async () => {
+      mockAgentFetch([OPENED_LINE, STARTED_LINE, DRAFTED_LINE, COMPLETED_LINE, REPORT_LINE]);
+      const onShowArtifact = mock(() => {});
+      const onApplyStatement = mock(() => {});
+      const { findAllByTestId, getByTestId } = await runWith({ onShowArtifact, onApplyStatement });
+
+      const citations = await findAllByTestId("agent-report-citation");
+      expect(citations).toHaveLength(1);
+
+      fireEvent.click(getByTestId("agent-citation-show-result"));
+      expect(onShowArtifact).toHaveBeenCalledWith({ runId: "arun_1", correlationId: "corr_9" });
+
+      fireEvent.click(getByTestId("agent-citation-apply-statement"));
+      expect(onApplyStatement).toHaveBeenCalledWith("SELECT count(*) FROM orders");
+    });
+
+    /*
+      The bound is real and is stated where a user reads the citations rather than
+      only when a click fails: results live in process memory and are released when
+      the run ends (`docs/BACKLOG.md` B15), so a report read after its run finished
+      cites rows the server no longer holds.
+    */
+    test("the report says that stored rows outlive nothing, next to the controls that ask for them", async () => {
+      mockAgentFetch([OPENED_LINE, STARTED_LINE, COMPLETED_LINE, REPORT_LINE, FINISHED_LINE]);
+      const { findByTestId } = await runWith({ onShowArtifact: mock(() => {}) });
+
+      const note = await findByTestId("agent-report-retention");
+      expect(note.textContent).toContain("released when the run ends");
+    });
+
+    /*
+      The milestone's own rule (T10b): a control the service cannot honour is not
+      rendered. A finished run's results are released with it, so every "Show result"
+      on it would answer 410 — the affordance goes away when the capability does, and
+      the note is what says why. Applying a statement is unaffected: the ledger holds
+      it, so it works for as long as the timeline does.
+    */
+    test("a finished run offers no result to show, because its rows were released with it", async () => {
+      mockAgentFetch([OPENED_LINE, STARTED_LINE, DRAFTED_LINE, COMPLETED_LINE, REPORT_LINE, FINISHED_LINE]);
+      const onShowArtifact = mock(() => {});
+      const onApplyStatement = mock(() => {});
+      const { findAllByTestId, queryAllByTestId } = await runWith({ onShowArtifact, onApplyStatement });
+
+      await findAllByTestId("agent-report-citation");
+      expect(queryAllByTestId("agent-show-result")).toHaveLength(0);
+      expect(queryAllByTestId("agent-citation-show-result")).toHaveLength(0);
+      expect(queryAllByTestId("agent-apply-statement")).toHaveLength(1);
+    });
+
+    test("one callback without the other renders only the control it can honour", async () => {
+      mockAgentFetch([OPENED_LINE, STARTED_LINE, DRAFTED_LINE, COMPLETED_LINE, REPORT_LINE]);
+      const { findAllByTestId, queryAllByTestId } = await runWith({ onShowArtifact: mock(() => {}) });
+
+      await findAllByTestId("agent-report-citation");
+      expect(queryAllByTestId("agent-citation-show-result")).toHaveLength(1);
+      expect(queryAllByTestId("agent-citation-apply-statement")).toHaveLength(0);
+      expect(queryAllByTestId("agent-apply-statement")).toHaveLength(0);
+    });
+
+    test("with no way to show a result, the retention note is not shown either", async () => {
+      mockAgentFetch([OPENED_LINE, STARTED_LINE, COMPLETED_LINE, REPORT_LINE, FINISHED_LINE]);
+      const { findByTestId, queryByTestId } = await runWith({});
+
+      await findByTestId("agent-report");
+      expect(queryByTestId("agent-report-retention")).toBeNull();
+    });
+
+    test("a citation this timeline cannot resolve offers nothing to show", async () => {
+      mockAgentFetch([OPENED_LINE, STARTED_LINE, REPORT_LINE]);
+      const onShowArtifact = mock(() => {});
+      const { findAllByTestId, queryByTestId } = await runWith({ onShowArtifact });
+
+      await findAllByTestId("agent-report-citation");
+      expect(queryByTestId("agent-citation-show-result")).toBeNull();
+    });
+  });
+
   test("the sheet closes through the caller that opened it", async () => {
     const onSheetOpenChange = mock(() => {});
     media.setMatches(true);

@@ -4,6 +4,7 @@ import React, { useMemo } from "react";
 import type { DatabaseConnection, QueryTab, TableSchema, QueryResult } from "@/lib/types";
 import type { ProviderMetadata } from "@/hooks/use-provider-metadata";
 import type { MaskingConfig } from "@/lib/data-masking";
+import type { AgentArtifactHydration } from "@/components/agent/hydration";
 import type { CellChange } from "@/components/ResultsGrid";
 import { ResultsGrid } from "@/components/ResultsGrid";
 import { NL2SQLPanel } from "@/components/NL2SQLPanel";
@@ -29,6 +30,7 @@ import {
   LayoutGrid,
   Sparkles,
   Terminal,
+  X,
   Zap,
 } from "lucide-react";
 import {
@@ -131,6 +133,13 @@ interface BottomPanelProps {
   onLoadMore: (() => void) | undefined;
   isLoadingMore: boolean | undefined;
   onExportResults: (format: "csv" | "json" | "sql-insert" | "sql-ddl") => void;
+  /**
+   * A result an agent run stored, shown in the surface that already renders that
+   * kind of result (#329 T11). Optional so every other caller — the embedded shell
+   * included — is unchanged, and null whenever nothing is hydrated.
+   */
+  agentArtifact?: AgentArtifactHydration | null;
+  onDismissAgentArtifact?: () => void;
 }
 
 export function BottomPanel({
@@ -159,8 +168,32 @@ export function BottomPanel({
   onLoadMore,
   isLoadingMore,
   onExportResults,
+  agentArtifact = null,
+  onDismissAgentArtifact,
 }: BottomPanelProps) {
   const explainInput = useMemo(() => resolveExplainPlan(currentTab.explainPlan), [currentTab.explainPlan]);
+
+  /*
+    An agent artifact is shown in ONE surface — the one its operation produced — and
+    the tab's own state is never overwritten to do it. So the grid and the explain
+    view each ask whether this artifact is theirs, every other view keeps showing the
+    tab's own result (chart hydration is deferred; see `docs/BACKLOG.md`), and
+    dismissing the artifact restores the tab with nothing to undo.
+
+    While one is shown the view is read-only: inline editing writes rows back through
+    the tab's connection and pagination continues the tab's own query, so neither
+    means anything for a stored result. Export is absent for the same reason — it
+    exports the tab's result, which is not what the user is looking at.
+  */
+  const hydratedResult = agentArtifact?.surface === "results" ? agentArtifact.result : null;
+  const hydratedPlan = useMemo(
+    () => (agentArtifact?.surface === "explain" ? resolveExplainPlan(agentArtifact.explainPlan) : null),
+    [agentArtifact],
+  );
+  const hydratedHere =
+    agentArtifact !== null &&
+    ((mode === "results" && hydratedResult !== null) || (mode === "explain" && hydratedPlan !== null));
+  const displayedResult = hydratedResult ?? currentTab.result;
 
   const tabs: { key: BottomPanelMode; label: string; icon: React.ReactNode; activeClass: string }[] = [
     {
@@ -255,39 +288,69 @@ export function BottomPanel({
           ))}
         </div>
 
-        {currentTab.result && mode === "results" && (
+        {displayedResult && mode === "results" && (
           <div className="flex items-center gap-1">
             <span className="text-xs font-mono text-zinc-500 mr-2">
-              {currentTab.result.rowCount} rows • {currentTab.result.executionTime}ms
+              {displayedResult.rowCount} rows • {displayedResult.executionTime}ms
             </span>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-7 text-xs font-medium text-zinc-500 hover:text-white gap-2"
-                >
-                  <Download strokeWidth={1.5} className="w-3 h-3" /> Export
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="bg-[#0d0d0d] border-white/10 text-zinc-300">
-                <DropdownMenuItem onClick={() => onExportResults("csv")} className="text-xs cursor-pointer">
-                  Export as CSV
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => onExportResults("json")} className="text-xs cursor-pointer">
-                  Export as JSON
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => onExportResults("sql-insert")} className="text-xs cursor-pointer">
-                  Export as SQL INSERT
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => onExportResults("sql-ddl")} className="text-xs cursor-pointer">
-                  Export as DDL (CREATE TABLE)
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
+            {!hydratedHere && (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 text-xs font-medium text-zinc-500 hover:text-white gap-2"
+                  >
+                    <Download strokeWidth={1.5} className="w-3 h-3" /> Export
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="bg-[#0d0d0d] border-white/10 text-zinc-300">
+                  <DropdownMenuItem onClick={() => onExportResults("csv")} className="text-xs cursor-pointer">
+                    Export as CSV
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => onExportResults("json")} className="text-xs cursor-pointer">
+                    Export as JSON
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => onExportResults("sql-insert")} className="text-xs cursor-pointer">
+                    Export as SQL INSERT
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => onExportResults("sql-ddl")} className="text-xs cursor-pointer">
+                    Export as DDL (CREATE TABLE)
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
           </div>
         )}
       </div>
+
+      {/*
+        Provenance, stated where the rows are read rather than only in the rail: these
+        rows were produced by a run, not by the statement in the editor above them.
+      */}
+      {hydratedHere && agentArtifact !== null && (
+        <div
+          data-testid="agent-provenance"
+          className="flex items-center justify-between gap-2 px-3 py-1 border-b border-blue-500/20 bg-blue-500/5"
+        >
+          <span className="text-xs text-blue-300/90">
+            Stored by agent run <span className="font-mono text-[0.625rem]">{agentArtifact.runId}</span> via{" "}
+            <span className="font-mono text-[0.625rem]">{agentArtifact.operationId}</span>{" "}
+            {/* The audit correlation id: what joins these rows to the audit line for
+                the statement that produced them. */}
+            <span className="font-mono text-[0.625rem] text-zinc-500">{agentArtifact.correlationId}</span> — read-only
+          </span>
+          <button
+            type="button"
+            data-testid="agent-provenance-dismiss"
+            onClick={onDismissAgentArtifact}
+            className="p-1 rounded text-zinc-400 hover:bg-white/5 hover:text-zinc-200 transition-colors"
+            aria-label="Dismiss the agent result"
+          >
+            <X strokeWidth={1.5} className="w-3 h-3" />
+          </button>
+        </div>
+      )}
 
       <div className="flex-1 overflow-hidden relative">
         {mode === "nl2sql" ? (
@@ -349,8 +412,15 @@ export function BottomPanel({
           <ChartDashboardLazy result={currentTab.result} />
         ) : mode === "explain" ? (
           <VisualExplain
-            plan={explainInput}
-            query={currentTab.query}
+            plan={hydratedPlan ?? explainInput}
+            /*
+              A run's plan travels without the editor's statement. The AI analysis in
+              this view posts the query and the plan together, so pairing a hydrated
+              plan with whatever happens to be in the editor would ask for an
+              explanation of a statement that never produced it; with no query the view
+              says so itself instead.
+            */
+            query={hydratedPlan === null ? currentTab.query : undefined}
             schemaContext={schemaContext}
             databaseType={activeConnection?.type}
             onLoadQuery={(q) => {
@@ -358,16 +428,16 @@ export function BottomPanel({
               onSetMode("results");
             }}
           />
-        ) : currentTab.result ? (
+        ) : displayedResult ? (
           <ResultsGrid
-            result={currentTab.result}
-            onLoadMore={onLoadMore}
+            result={displayedResult}
+            onLoadMore={hydratedHere ? undefined : onLoadMore}
             isLoadingMore={isLoadingMore}
             maskingEnabled={maskingEnabled}
             onToggleMasking={onToggleMasking}
             userRole={userRole}
             maskingConfig={maskingConfig}
-            editingEnabled={editingEnabled}
+            editingEnabled={hydratedHere ? false : editingEnabled}
             pendingChanges={pendingChanges}
             onCellChange={onCellChange}
             onApplyChanges={onApplyChanges}

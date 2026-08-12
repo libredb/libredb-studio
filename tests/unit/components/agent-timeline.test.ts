@@ -683,4 +683,85 @@ describe("foldLedgerEntries — the report and its citations", () => {
     expect(view.report?.claims).toHaveLength(1);
     expect(view.report?.claims[0].quoted).toBe("second");
   });
+
+  /*
+   * The hydration affordances (#329 T11). What a citation may OFFER is decided here,
+   * from the ledger, so the rail renders a control only where the run recorded
+   * something to hydrate from — never a button that would ask for an artifact this
+   * timeline never saw.
+   */
+  test("a resolved artifact citation names the artifact a result can be fetched by", () => {
+    const view = foldLedgerEntries([
+      DRAFTED,
+      COMPLETED,
+      reportOf([{ claim: "checkout is slow", evidence: [{ source: "artifact", correlationId: "corr_9" }] }]),
+    ]);
+
+    const [citation] = view.report?.claims[0].citations ?? [];
+    expect(citation.artifactId).toBe("corr_9");
+  });
+
+  test("a citation this timeline cannot resolve offers nothing to fetch", () => {
+    const view = foldLedgerEntries([
+      reportOf([{ claim: "checkout is slow", evidence: [{ source: "artifact", correlationId: "corr_missing" }] }]),
+    ]);
+
+    const [citation] = view.report?.claims[0].citations ?? [];
+    expect(citation.resolved).toBe(false);
+    expect(citation.artifactId).toBeUndefined();
+  });
+
+  test("a schema citation offers nothing to fetch: a snapshot is not an artifact", () => {
+    const view = foldLedgerEntries([
+      CAPTURED,
+      reportOf([{ claim: "orders is wide", evidence: [{ source: "context-snapshot", fingerprint: "fingerprint_9" }] }]),
+    ]);
+
+    const [citation] = view.report?.claims[0].citations ?? [];
+    expect(citation.resolved).toBe(true);
+    expect(citation.artifactId).toBeUndefined();
+  });
+});
+
+describe("foldLedgerEntries — what a timeline item offers to hydrate", () => {
+  test("a completed tool names its artifact, so its rows can be asked for", () => {
+    const view = foldLedgerEntries([
+      event({
+        kind: "event",
+        event: {
+          kind: "tool-completed",
+          atMs: 7,
+          stepId: "s1",
+          artifact: {
+            correlationId: "corr_9",
+            runId: "arun_1",
+            operationId: "sql.query.read",
+            summary: { rowCount: 3, columnNames: ["id"], elapsedMs: 12 },
+          },
+        },
+      }),
+    ]);
+
+    expect(view.items[0].artifactId).toBe("corr_9");
+    expect(view.items[0].applySql).toBeUndefined();
+  });
+
+  test("a drafted statement offers the statement itself, which is what the editor takes", () => {
+    const view = foldLedgerEntries([
+      event({
+        kind: "event",
+        event: { kind: "statement-drafted", atMs: 6, stepId: "s1", sql: "SELECT 1", rationale: "why" },
+      }),
+    ]);
+
+    expect(view.items[0].applySql).toBe("SELECT 1");
+    expect(view.items[0].artifactId).toBeUndefined();
+  });
+
+  test("an entry that produced neither offers neither", () => {
+    const view = foldLedgerEntries([OPENED]);
+
+    expect(view.items[0].applySql).toBeUndefined();
+    expect(view.items[0].artifactId).toBeUndefined();
+  });
 });

@@ -49,6 +49,18 @@ export interface AgentTimelineItem {
   readonly detail?: string;
   /** Verbatim content from the model, the engine or the user. Rendered quoted. */
   readonly quoted?: string;
+  /**
+   * The statement this entry drafted, when it drafted one (#329 T11). Present is
+   * what makes the rail offer to apply it to the editor; a user action is still what
+   * applies it.
+   */
+  readonly applySql?: string;
+  /**
+   * The artifact this entry produced, when it produced one. Its rows are fetched
+   * from the run's own artifact route and hydrated into the bottom panel — the rail
+   * itself renders no grid.
+   */
+  readonly artifactId?: string;
 }
 
 /**
@@ -80,6 +92,13 @@ export interface AgentEvidenceCitation {
   readonly quoted?: string;
   /** Verbatim: where in the evidence the model says the claim is. */
   readonly locator?: string;
+  /**
+   * The artifact whose rows this citation can be shown from (#329 T11). Set only on
+   * a RESOLVED artifact citation: a reference this timeline holds no entry for is
+   * also one whose rows there is no point asking the server for, and a snapshot is
+   * not an artifact at all.
+   */
+  readonly artifactId?: string;
 }
 
 export interface AgentReportClaimView {
@@ -169,7 +188,13 @@ function describeEvent(event: AgentRunEvent): Omit<AgentTimelineItem, "id" | "at
         detail: `${event.tableCount} ${event.tableCount === 1 ? "table" : "tables"}, fingerprint ${event.fingerprint.slice(0, 8)}`,
       };
     case "statement-drafted":
-      return { tone: "neutral", headline: "Statement drafted", detail: event.rationale, quoted: event.sql };
+      return {
+        tone: "neutral",
+        headline: "Statement drafted",
+        detail: event.rationale,
+        quoted: event.sql,
+        applySql: event.sql,
+      };
     case "tool-invoked":
       return {
         tone: "neutral",
@@ -181,6 +206,7 @@ function describeEvent(event: AgentRunEvent): Omit<AgentTimelineItem, "id" | "at
         tone: "progress",
         headline: "Result stored",
         detail: `${event.artifact.summary.rowCount} ${event.artifact.summary.rowCount === 1 ? "row" : "rows"}, ${event.artifact.summary.columnNames.length} ${event.artifact.summary.columnNames.length === 1 ? "column" : "columns"}, ${event.artifact.summary.elapsedMs} ms (${event.artifact.correlationId})`,
+        artifactId: event.artifact.correlationId,
       };
     case "tool-refused":
       return { tone: "refused", ...describeRefusal(event.refusal) };
@@ -249,6 +275,7 @@ function citationOf(reference: AgentEvidenceReference, id: string, index: Ledger
       label,
       detail: `${artifact.rowCount} ${artifact.rowCount === 1 ? "row" : "rows"} via ${artifact.operationId}`,
       resolved: true,
+      artifactId: reference.correlationId,
       ...(sql === undefined ? {} : { quoted: sql }),
       ...locator,
     };

@@ -16,6 +16,7 @@ import os from "node:os";
 import path from "node:path";
 import { createLocalWorld } from "@workflow/world-local";
 import { AGENT_ENABLED_ENV } from "@/lib/agent/config";
+import { AGENT_RUN_DEADLINE_MS } from "@/lib/agent/execution-policy";
 import * as realRunStore from "@/lib/agent/run-store";
 import { AgentRunServiceError } from "@/lib/agent/run-service";
 import { acquireExecutionProfileProvider } from "@/lib/db/factory";
@@ -56,7 +57,7 @@ mock.module("@/lib/db", () => ({ createDatabaseProvider: async () => ({ getCapab
 mock.module("@/lib/agent/model-adapter", () => ({ createAgentModel: mockCreateAgentModel }));
 mock.module("@/lib/agent/investigation", () => ({ runInvestigation: mockRunInvestigation }));
 
-const { driveAgentRun, getAgentRunService } = await import("@/lib/agent/runtime");
+const { driveAgentRun, getAgentRunService, readAgentArtifact } = await import("@/lib/agent/runtime");
 
 const ACTOR = { sessionId: "ada", role: "user" } as const;
 
@@ -145,5 +146,45 @@ describe("driveAgentRun", () => {
 
     expect(investigationCalls[1].resources.tracker).toBe(investigationCalls[0].resources.tracker);
     expect(investigationCalls[1].resources.artifacts).toBe(investigationCalls[0].resources.artifacts);
+  });
+});
+
+/**
+ * Reading a stored result back (#329 T11).
+ *
+ * The property that matters is identity: the route that serves an artifact's rows has
+ * to read the SAME process-wide store the run wrote them into, or it would answer
+ * "released" for results that are sitting in memory. So the store is taken from what
+ * a real drive was handed rather than constructed here.
+ */
+describe("readAgentArtifact", () => {
+  const RESULT = { rows: [{ id: 1 }], fields: ["id"], rowCount: 1, executionTime: 4 };
+
+  test("reads back what the run loop stored, and answers undefined once it has expired", async () => {
+    await openRun("arun_artifact");
+    await driveAgentRun("arun_artifact");
+    const { artifacts } = investigationCalls[0].resources;
+
+    artifacts.put(
+      {
+        correlationId: "corr_read",
+        runId: "arun_artifact",
+        operationId: "sql.query.read",
+        createdAtMs: 1_000,
+        value: RESULT,
+      },
+      1_000,
+    );
+
+    const held = readAgentArtifact("corr_read", 1_500);
+    expect(held?.runId).toBe("arun_artifact");
+    expect(held?.value).toEqual(RESULT);
+
+    // The TTL is the store's, not this module's: past it the same id is simply gone.
+    expect(readAgentArtifact("corr_read", 1_000 + AGENT_RUN_DEADLINE_MS * 4)).toBeUndefined();
+  });
+
+  test("an id nothing ever stored is undefined rather than an error", () => {
+    expect(readAgentArtifact("corr_never", 1_000)).toBeUndefined();
   });
 });

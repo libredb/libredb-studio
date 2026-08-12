@@ -33,6 +33,10 @@ function installMocks(): void {
   mock.module("@/lib/agent/runtime", () => ({
     driveAgentRun: mockDriveAgentRun,
     getAgentRunService: mock(async () => ({})),
+    // Unused here, and listed anyway: `mock.module` replaces the module for the whole
+    // process, so an export this file forgets is an export the NEXT file's route
+    // cannot import (`tests/api/agent/artifacts.test.ts` reaches for exactly this one).
+    readAgentArtifact: mock(() => undefined),
   }));
 }
 

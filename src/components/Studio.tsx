@@ -27,6 +27,7 @@ import { DatabaseConnection, SavedQuery } from "@/lib/types";
 import { quoteLiteral } from "@/lib/sql/values";
 import { buildConnectionPayload } from "@/hooks/use-connection-payload";
 import { useAgentCapability } from "@/hooks/use-agent-capability";
+import { useAgentArtifact } from "@/components/agent/use-agent-artifact";
 import { useToast } from "@/hooks/use-toast";
 import { useProviderMetadata } from "@/hooks/use-provider-metadata";
 import { useAuth } from "@/hooks/use-auth";
@@ -171,6 +172,34 @@ export default function Studio() {
   // rather than for the operator's container. Off (and absent) until it answers.
   const agentEnabled = useAgentCapability();
   const [isAgentSheetOpen, setIsAgentSheetOpen] = useState(false);
+
+  // Artifact hydration (#329 T11). The rail cites what a run stored; showing it puts
+  // the rows into the bottom panel that already renders rows, and applying a drafted
+  // statement puts it into the editor that already holds statements. There is no
+  // second grid and no second editor, and neither happens without a user action.
+  const agentArtifact = useAgentArtifact({
+    explainFormat: metadata?.capabilities.explainFormat,
+    onShown: (surface) => queryExec.setBottomPanelMode(surface),
+    onError: (message) => toast({ title: "The agent result could not be shown", description: message }),
+  });
+
+  /*
+    A hydrated artifact is a view of what a RUN produced, so the user's own work takes
+    the panel back: a new result on this tab, a new plan on it, or a different tab
+    altogether ends the view.
+
+    Keyed on the identity of what a run PRODUCES rather than on the calls that produce
+    it, because the paths that execute a statement — the toolbar, the command palette,
+    an import, a generated statement — are many and wrapping them one at a time would
+    miss one. Both outputs are watched because they are written separately: an explain
+    run stores a plan and deliberately leaves `result` untouched
+    (`use-query-execution.ts`), so a tab whose result is still null would otherwise
+    keep showing the run's plan after the user asked for their own.
+  */
+  const agentArtifactDismiss = agentArtifact.dismiss;
+  useEffect(() => {
+    agentArtifactDismiss();
+  }, [tabMgr.activeTabId, tabMgr.currentTab.result, tabMgr.currentTab.explainPlan, agentArtifactDismiss]);
 
   // A run persists a connection ID and no credential, so the process that resumes it
   // re-resolves the connection server-side. Only a managed connection has an id that
@@ -553,6 +582,8 @@ export default function Studio() {
                         }
                         isLoadingMore={tabMgr.currentTab.isLoadingMore}
                         onExportResults={exportResults}
+                        agentArtifact={agentArtifact.artifact}
+                        onDismissAgentArtifact={agentArtifact.dismiss}
                       />
                     </ResizablePanel>
                   </ResizablePanelGroup>
@@ -586,6 +617,8 @@ export default function Studio() {
                 connectionName={conn.activeConnection?.name ?? null}
                 sheetOpen={isAgentSheetOpen}
                 onSheetOpenChange={setIsAgentSheetOpen}
+                onApplyStatement={(sql) => tabMgr.updateCurrentTab({ query: sql })}
+                onShowArtifact={agentArtifact.show}
               />
             </ResizablePanel>
           </>

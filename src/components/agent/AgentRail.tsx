@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useRef, useState } from "react";
-import { Bot, Loader2, Play, Square } from "lucide-react";
+import { Bot, Loader2, PencilLine, Play, Square, TableProperties } from "lucide-react";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { AGENT_EXECUTION_POLICY, AGENT_MAX_MODEL_TURNS, AGENT_RUN_DEADLINE_MS } from "@/lib/agent/execution-policy";
@@ -43,6 +43,17 @@ export interface AgentRailProps {
   /** Below `md` only: whether the sheet presentation is open. */
   readonly sheetOpen?: boolean;
   readonly onSheetOpenChange?: (open: boolean) => void;
+  /**
+   * Puts a statement the run drafted into the host's editor (#329 T11). Absent when
+   * the host has no editor to put it in, and the control is then not rendered.
+   */
+  readonly onApplyStatement?: (sql: string) => void;
+  /**
+   * Asks the host to show a result the run stored. The rail hands over identifiers
+   * and nothing else: the rows are fetched and rendered by the surface that already
+   * renders rows, so this component instantiates no grid of its own.
+   */
+  readonly onShowArtifact?: (reference: { readonly runId: string; readonly correlationId: string }) => void;
 }
 
 /** Mirrors `MAX_OBJECTIVE_LENGTH` in the start route, which refuses anything longer. */
@@ -78,7 +89,69 @@ function readGauge(gauge: AgentBudgetGauge): string {
  */
 const gaugeFraction = (gauge: AgentBudgetGauge): number => Math.min(100, (gauge.used / gauge.limit) * 100);
 
-export function AgentRail({ connectionId, connectionName, sheetOpen = false, onSheetOpenChange }: AgentRailProps) {
+/**
+ * What one entry lets a user do with what the run produced (#329 T11).
+ *
+ * Rendered only where the ledger recorded something to act on AND the host can act
+ * on it — the same rule the stop control follows in T10b, so nothing here is a
+ * disabled button standing in for a capability this build does not have. Both are
+ * explicit user actions: the rail never applies a statement or opens a result on its
+ * own, because a statement the model drafted is untrusted content and putting it into
+ * the editor is the user's decision.
+ */
+function HydrationControls({
+  sql,
+  artifactId,
+  testIdPrefix,
+  onApply,
+  onShow,
+}: {
+  readonly sql: string | undefined;
+  readonly artifactId: string | undefined;
+  readonly testIdPrefix: string;
+  readonly onApply: ((sql: string) => void) | undefined;
+  readonly onShow: ((correlationId: string) => void) | undefined;
+}) {
+  const canApply = sql !== undefined && onApply !== undefined;
+  const canShow = artifactId !== undefined && onShow !== undefined;
+  if (!canApply && !canShow) return null;
+
+  return (
+    <div className="mt-1 flex items-center gap-1">
+      {sql !== undefined && onApply !== undefined && (
+        <button
+          type="button"
+          data-testid={`${testIdPrefix}apply-statement`}
+          onClick={() => onApply(sql)}
+          className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[0.625rem] text-zinc-400 hover:bg-white/5 hover:text-zinc-200 transition-colors"
+        >
+          <PencilLine strokeWidth={1.5} className="w-3 h-3" />
+          Apply to editor
+        </button>
+      )}
+      {artifactId !== undefined && onShow !== undefined && (
+        <button
+          type="button"
+          data-testid={`${testIdPrefix}show-result`}
+          onClick={() => onShow(artifactId)}
+          className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[0.625rem] text-zinc-400 hover:bg-white/5 hover:text-zinc-200 transition-colors"
+        >
+          <TableProperties strokeWidth={1.5} className="w-3 h-3" />
+          Show result
+        </button>
+      )}
+    </div>
+  );
+}
+
+export function AgentRail({
+  connectionId,
+  connectionName,
+  sheetOpen = false,
+  onSheetOpenChange,
+  onApplyStatement,
+  onShowArtifact,
+}: AgentRailProps) {
   const [mode, setMode] = useState<AgentRunMode>("planning");
   const [objective, setObjective] = useState("");
   const run = useAgentRun();
@@ -126,6 +199,24 @@ export function AgentRail({ connectionId, connectionName, sheetOpen = false, onS
   */
   const canStop =
     run.runId !== null && LIVE_STATUSES.has(run.timeline.status) && !run.timeline.stopRequested && !run.isStopping;
+
+  /*
+    An artifact is named by a correlation id, and the route that serves its rows is
+    scoped to the run that recorded it — so the run id is bound here rather than
+    threaded through every item.
+
+    It is offered only while the run is LIVE, and that is the same rule the stop
+    control follows rather than a caution: a run's stored rows live in this process
+    and are released the moment the run ends (`releaseExecutionRun`), so on a finished
+    run every one of these controls could only answer "no longer held". The note in
+    the report section is what explains the absence; applying a drafted statement is
+    unaffected, because the ledger keeps the statement for as long as the timeline.
+  */
+  const activeRunId = run.runId;
+  const showArtifact =
+    onShowArtifact === undefined || activeRunId === null || !LIVE_STATUSES.has(run.timeline.status)
+      ? undefined
+      : (correlationId: string) => onShowArtifact({ runId: activeRunId, correlationId });
 
   const content = (
     <div className="flex flex-col h-full min-h-0 bg-[#0a0a0a] text-zinc-100">
@@ -295,6 +386,15 @@ export function AgentRail({ connectionId, connectionName, sheetOpen = false, onS
                   {item.quoted}
                 </pre>
               )}
+              <div className="ml-3.5">
+                <HydrationControls
+                  sql={item.applySql}
+                  artifactId={item.artifactId}
+                  testIdPrefix="agent-"
+                  onApply={onApplyStatement}
+                  onShow={showArtifact}
+                />
+              </div>
             </li>
           ))}
         </ol>
@@ -310,6 +410,19 @@ export function AgentRail({ connectionId, connectionName, sheetOpen = false, onS
         {run.timeline.report !== null && (
           <section data-testid="agent-report" className="border-t border-white/5 p-2 space-y-2">
             <h2 className="px-1 text-xs font-medium text-zinc-300">Report</h2>
+            {/*
+              Said where the controls would be, and deliberately keyed on the HOST's
+              ability to show a result rather than on this run's — so it is present
+              exactly when it explains something: while the run is live it states the
+              bound in advance, and once the run has ended it says why the controls
+              that were there are gone (`docs/BACKLOG.md` B15).
+            */}
+            {onShowArtifact !== undefined && (
+              <p data-testid="agent-report-retention" className="px-1 text-[0.625rem] text-zinc-600">
+                A run&apos;s stored rows are released when the run ends, so a result can be shown only while its run is
+                still going.
+              </p>
+            )}
             {run.timeline.report.claims.map((claim) => (
               <div key={claim.id} data-testid="agent-report-claim" className="rounded p-2 hover:bg-white/5">
                 <pre className="overflow-x-auto rounded bg-black/40 p-1.5 font-mono text-[0.625rem] text-zinc-300 whitespace-pre-wrap">
@@ -330,6 +443,13 @@ export function AgentRail({ connectionId, connectionName, sheetOpen = false, onS
                           {citation.quoted}
                         </pre>
                       )}
+                      <HydrationControls
+                        sql={citation.quoted}
+                        artifactId={citation.artifactId}
+                        testIdPrefix="agent-citation-"
+                        onApply={onApplyStatement}
+                        onShow={showArtifact}
+                      />
                     </li>
                   ))}
                 </ul>

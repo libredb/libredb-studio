@@ -1154,3 +1154,40 @@ tracker is process-local and `releaseExecutionRun` drops a run's accounting when
 finished run would report zero — which is why the ledger fold was chosen and its gap recorded rather
 than papered over. Done when a run that has captured its schema shows the catalog reads it paid for,
 with a test that fails on the current under-count.
+
+### B14. An agent artifact hydrates the grid and the explain view, but not the chart or export surfaces
+
+Deferred by #329 T11, which is the task's own recorded narrowing rather than something discovered
+afterwards. A hydrated artifact reaches the two surfaces its operations produce — the results grid for
+`sql.query.read`, the explain view for `sql.explain.estimate` — and the charts, pivot and dashboard
+views keep rendering the tab's own result while one is shown. Charting a run's rows is a real want and
+a bigger change than it looks: `DataCharts` and `PivotTable` are configured against the columns of the
+result they were opened on, so hydrating them means deciding what happens to a chart configuration
+when the underlying result is replaced and then taken away again.
+
+Export is absent for a different reason, and it is a gap rather than a decision that closes anything:
+`exportResults` in `src/components/Studio.tsx` serializes `currentTab.result`, so offering the Export
+menu over a hydrated view would export the tab's rows while the user is looking at the run's. The
+menu is therefore hidden while an artifact is shown. Done when either surface can take an explicitly
+hydrated result — with the provenance badge still naming the run, since an exported file that came
+from an agent run and is indistinguishable from one the user ran is the thing to avoid.
+
+### B15. A run's stored results are gone once the run ends, so a report's citations can outlive its rows
+
+Surfaced by #329 T11 rather than introduced by it: `ExecutionArtifactStore` holds results in process
+memory and `releaseExecutionRun` drops everything a run produced at `finish` or `cancel`
+(`src/lib/agent/run-service.ts`), which is the M1 decision that agent results never rest on disk.
+The consequence the artifact route makes visible is that the report — composed as the run's last step
+— is usually read AFTER the run has ended, so "Show result" on its citations answers `410` with
+`reason: "released"` rather than rows, and the same is true for any run driven by a different replica.
+
+The route says which of the two happened instead of reporting a missing artifact, and the rail offers
+"Show result" only while the run is live — the milestone's own rule that a control the service cannot
+honour is not rendered — with the report section stating the bound in words, so a user who saw the
+control during the run knows why it is gone afterwards. The consequence to know: the show affordance
+on report CITATIONS is mostly dormant, because a report is composed as the run's last step; what is
+reachable in practice is showing a result from a live run's timeline. Closing it properly means deciding
+where agent results may rest — encryption, retention and tenancy are exactly the questions #328
+declined to answer — so it is a product decision, not an implementation gap. Done when a finished
+run's cited rows are readable for a stated retention window, or when the surface states the window it
+has instead of offering a control that usually cannot be honoured.
