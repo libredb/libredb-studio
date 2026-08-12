@@ -98,10 +98,12 @@ is what every run written before the field was.
 
 Two properties are worth stating, because both are easy to assume the other way round:
 
-- **Mode decides before the workflow does.** Planning is toolless whatever the run is for, so a
-  workflow type is never a way to give a toolless run a tool, and never a way to hold it to a bar
-  that requires evidence. The rail therefore shows the workflow control only in agent mode — a
-  control the service cannot honour is not rendered at all.
+- **Mode decides before the workflow does, and the two are still independent.** Planning is toolless
+  whatever the run is for, so a workflow type is never a way to give a toolless run a tool, and never
+  a way to hold it to a bar requiring evidence. It does still decide what the run is ABOUT: the
+  system prompt states the workflow's objective in **both** modes and its tool rules only where there
+  are tools, so a planning run of a query optimization — "how would you make this faster?" — is an
+  ordinary thing to ask for. The rail offers the workflow control in both modes for the same reason.
 - **The field is required on the record and optional on the ledger header.** The fold always
   produces a workflow type, so every reader has one and none has to know which generation of writer
   produced its run. A header without one folds to `investigation`, and that is a READING rather than

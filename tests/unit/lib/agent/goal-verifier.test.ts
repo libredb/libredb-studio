@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { AGENT_PLANNING_VERIFIER, AGENT_WORKFLOW_VERIFIERS, verifyRunGoal } from "@/lib/agent/goal-verifier";
+import { AGENT_PLANNING_VERIFIER, AGENT_WORKFLOW_GOALS, verifyRunGoal } from "@/lib/agent/goal-verifier";
 import type {
   AgentArtifactReference,
   AgentRunEvent,
@@ -294,7 +294,7 @@ describe("a query-optimization run is judged by its own artifact as well as the 
 
 describe("the verifier registry", () => {
   test("names one rule per workflow type, so a new workflow cannot inherit another one's bar", () => {
-    expect(Object.keys(AGENT_WORKFLOW_VERIFIERS).sort()).toEqual([
+    expect(Object.keys(AGENT_WORKFLOW_GOALS).sort()).toEqual([
       "database-assessment",
       "investigation",
       "query-optimization",
@@ -302,10 +302,20 @@ describe("the verifier registry", () => {
   });
 
   test("every workflow identifies the rule that judged it, so a reader knows what the verdict measured", () => {
-    for (const [workflowType, verifierId] of Object.entries(AGENT_WORKFLOW_VERIFIERS)) {
+    for (const [workflowType, goal] of Object.entries(AGENT_WORKFLOW_GOALS)) {
       expect(verifyRunGoal(run("agent", "succeeded", [], workflowType as AgentRunWorkflowType)).verifier).toBe(
-        verifierId,
+        goal.verifier,
       );
+    }
+  });
+
+  test("the id and the rule are ONE entry, so a verdict cannot name a bar that was not applied", () => {
+    // Found by review on #343: as two separate records, changing an id without
+    // changing its rule typechecked. A versioned id whose meaning can drift silently
+    // is worse than no id at all.
+    for (const goal of Object.values(AGENT_WORKFLOW_GOALS)) {
+      expect(typeof goal.verifier).toBe("string");
+      expect(typeof goal.verify).toBe("function");
     }
   });
 
@@ -313,7 +323,7 @@ describe("the verifier registry", () => {
     // Mode decides before the workflow does, for the same reason it does in
     // `selectAgentTools`: a toolless run can never be held to a bar that requires
     // evidence, so a workflow type must not be a way to impose one on it.
-    for (const workflowType of Object.keys(AGENT_WORKFLOW_VERIFIERS) as AgentRunWorkflowType[]) {
+    for (const workflowType of Object.keys(AGENT_WORKFLOW_GOALS) as AgentRunWorkflowType[]) {
       const verdict = verifyRunGoal(run("planning", "succeeded", [closing], workflowType));
       expect(verdict).toEqual({ outcome: "answered", verifier: AGENT_PLANNING_VERIFIER, unmet: [] });
     }
@@ -322,7 +332,7 @@ describe("the verifier registry", () => {
   test("the baseline is the same for all three today, and every workflow must still meet it", () => {
     // Composing claims that rest on something the run read is what EVERY workflow
     // has to do; the templates add to it rather than replacing it (#330 T3).
-    for (const workflowType of Object.keys(AGENT_WORKFLOW_VERIFIERS) as AgentRunWorkflowType[]) {
+    for (const workflowType of Object.keys(AGENT_WORKFLOW_GOALS) as AgentRunWorkflowType[]) {
       expect(verifyRunGoal(run("agent", "succeeded", [contextCaptured, closing], workflowType)).unmet).toEqual([
         "no-report",
       ]);

@@ -73,11 +73,13 @@ const MODE_LABELS: Readonly<Record<AgentRunMode, string>> = {
 };
 
 /**
- * What the run is FOR, as opposed to how it executes.
+ * What the run is FOR, as opposed to how it executes. Offered in BOTH modes.
  *
- * Shown only in agent mode, and that is the rail's own rule rather than a layout
- * choice: planning is toolless by contract, so a workflow type changes nothing about
- * a planning run, and a control the service cannot honour is not rendered at all.
+ * It was agent-only until review pointed out that this made the rail unable to open
+ * a planning run of a query optimization — "how would you make this faster?" — which
+ * the epic's independent axes exist to allow. Toollessness decides which TOOLS a run
+ * is offered, not what the run is about; the server frames the objective by workflow
+ * in either mode.
  */
 const WORKFLOW_LABELS: Readonly<Record<AgentRunWorkflowType, string>> = {
   investigation: "Investigate",
@@ -194,14 +196,10 @@ export function AgentRail({
 
   const handleStart = () => {
     if (connectionId === null || !canStart) return;
-    // The workflow is sent only for the mode it can mean anything in, so a planning
-    // run opens as what the server would have opened it as anyway.
-    void run.start({
-      mode,
-      ...(mode === "agent" ? { workflowType } : {}),
-      objective: objective.trim(),
-      connectionId,
-    });
+    // Both axes, always. They are independent (#325): a planning run of a query
+    // optimization is an ordinary thing to ask for, and sending the workflow only in
+    // agent mode made the rail unable to express one.
+    void run.start({ mode, workflowType, objective: objective.trim(), connectionId });
   };
 
   /*
@@ -274,30 +272,31 @@ export function AgentRail({
       </div>
 
       {/*
-        The second axis, and only where it means something. Planning is toolless, so
-        a workflow type changes nothing about a planning run — rendering the choice
-        there would offer a control the service cannot honour.
+        The second axis, in both modes. It was agent-only until review pointed out
+        that this made the rail unable to open a planning run of a query
+        optimization — a perfectly ordinary request, and one the epic's independent
+        axes exist to allow. Toollessness decides which TOOLS a run gets, not what
+        the run is about, and the server states the objective's framing in either
+        mode (`WORKFLOW_OBJECTIVES`).
       */}
-      {mode === "agent" && (
-        <div className="flex items-center gap-1 px-3 py-1.5 border-b border-white/5 shrink-0">
-          {(Object.keys(WORKFLOW_LABELS) as AgentRunWorkflowType[]).map((candidate) => (
-            <button
-              key={candidate}
-              type="button"
-              data-testid={`agent-workflow-${candidate}`}
-              aria-label={`${WORKFLOW_LABELS[candidate]} workflow`}
-              aria-pressed={workflowType === candidate}
-              onClick={() => setWorkflowType(candidate)}
-              className={cn(
-                "px-2 py-0.5 rounded text-xs font-normal transition-colors",
-                workflowType === candidate ? "bg-blue-500/15 text-blue-300" : "text-zinc-500 hover:bg-white/5",
-              )}
-            >
-              {WORKFLOW_LABELS[candidate]}
-            </button>
-          ))}
-        </div>
-      )}
+      <div className="flex items-center gap-1 px-3 py-1.5 border-b border-white/5 shrink-0">
+        {(Object.keys(WORKFLOW_LABELS) as AgentRunWorkflowType[]).map((candidate) => (
+          <button
+            key={candidate}
+            type="button"
+            data-testid={`agent-workflow-${candidate}`}
+            aria-label={`${WORKFLOW_LABELS[candidate]} workflow`}
+            aria-pressed={workflowType === candidate}
+            onClick={() => setWorkflowType(candidate)}
+            className={cn(
+              "px-2 py-0.5 rounded text-xs font-normal transition-colors",
+              workflowType === candidate ? "bg-blue-500/15 text-blue-300" : "text-zinc-500 hover:bg-white/5",
+            )}
+          >
+            {WORKFLOW_LABELS[candidate]}
+          </button>
+        ))}
+      </div>
 
       <div className="p-3 border-b border-white/5 shrink-0">
         <label htmlFor="agent-objective" className="text-xs text-zinc-500">

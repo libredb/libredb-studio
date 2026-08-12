@@ -166,21 +166,44 @@ const PLANNING_RULES = [
  * by the statement guard before the database — because the obvious route to an
  * index inventory is closed and nothing had said which one is open.
  */
-const WORKFLOW_RULES: Readonly<Record<AgentRunWorkflowType, string>> = Object.freeze({
-  investigation: "Investigate the objective and report what the evidence supports.",
+/** What the run is FOR. Said in BOTH modes — a plan for an optimization is still about one. */
+const WORKFLOW_OBJECTIVES: Readonly<Record<AgentRunWorkflowType, string>> = Object.freeze({
+  investigation: "Your objective is a question about this database. Answer it from what you establish.",
+  "query-optimization":
+    "Your objective is a statement that is too slow. What matters is HOW the engine reaches its rows, and what change would make it reach them differently.",
+  "database-assessment":
+    "Your objective is the state of this database itself: where its data is incomplete, inconsistent or surprising.",
+} satisfies Record<AgentRunWorkflowType, string>);
+
+/**
+ * How to pursue the objective WITH THE TOOLS. Agent mode only, which is the whole
+ * reason this is a second record rather than one.
+ */
+const WORKFLOW_TOOL_RULES: Readonly<Record<AgentRunWorkflowType, string>> = Object.freeze({
+  investigation: "Report what the evidence supports, and nothing further.",
   "query-optimization": [
-    "Your objective is a statement that is too slow. Establish HOW the engine reaches its rows, then propose a change.",
     'Read the existing indexes with inspect_schema and kind="indexes" — a multi-statement PRAGMA or SHOW is refused before the database.',
-    "Inspect the plan of the current statement, then of your rewrite, and call compare_plans with the two artifact ids.",
+    "Inspect the plan of the current statement, then of your rewrite, and call compare_plans with the two artifact ids. They must name two different plans.",
     "Every plan you can obtain is an ESTIMATE: nothing is executed, and there are no timings. Say so rather than implying a measurement.",
     "Propose changes with recommend_change. They are offered to the user and never applied by this run.",
   ].join(" "),
-  "database-assessment": "Assess the database and report what the evidence supports.",
+  "database-assessment": "Report what the evidence supports, and nothing further.",
 } satisfies Record<AgentRunWorkflowType, string>);
 
+/**
+ * What the run is FOR is said in both modes; how to pursue it with tools is said
+ * only where there are tools.
+ *
+ * The split was found by review. A planning run of a query optimization is an
+ * ordinary thing to ask for — "how would you make this faster?" — and the epic pins
+ * mode and workflow as INDEPENDENT axes. Folding the workflow into the agent branch
+ * left a planning run unable to be about anything in particular, which contradicts
+ * the axis argument this repository had just written down. Toollessness bears on
+ * which TOOLS a run is offered, not on what the run is about.
+ */
 function systemPrompt(record: AgentRunRecord): string {
-  const mode = record.mode === "agent" ? `${AGENT_RULES} ${WORKFLOW_RULES[record.workflowType]}` : PLANNING_RULES;
-  return `You are the LibreDB Studio database investigator. ${mode} ${SHARED_RULES}`;
+  const rules = record.mode === "agent" ? `${AGENT_RULES} ${WORKFLOW_TOOL_RULES[record.workflowType]}` : PLANNING_RULES;
+  return `You are the LibreDB Studio database investigator. ${rules} ${WORKFLOW_OBJECTIVES[record.workflowType]} ${SHARED_RULES}`;
 }
 
 // ============================================================================
