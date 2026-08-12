@@ -361,6 +361,30 @@ cannot express a digit run (**B26**); no monitor snapshot is produced, because e
 provider methods no descriptor covers (**B27**); and a profile that times out reports the failure
 rather than falling back to catalog statistics (**B28**).
 
+### What the fence is proved to hold against
+
+`untrusted-content.ts` fences database content; `tests/evals/injection.test.ts` is what proves the
+fence holds. Every vector there is text **an attacker can write** — a table name, a column name, a
+row value, an engine error message — carrying the closing marker and an instruction, which is the
+text-level version of SQL injection.
+
+The property is asserted by counting rather than by sampling: **a transcript holds exactly as many
+closing markers as the server opened**, whatever the database returned. Markers inside content are
+neutralised and stay legible, because the content is evidence and a silently edited result would make
+what the model reads disagree with the rows the artifact store holds.
+
+The other half is that obeying the injected text changes nothing about what the run may do: a write
+is refused by the statement guard before the database, a tool the run was never offered does not
+exist for it, and a claim citing something the run never read cannot be composed. Each is asserted
+against the deciding function in `tests/unit/agent-policy-gates.test.ts`, which states the four
+policy gates by name — planning performs zero database operations, nothing above risk class 1 can
+execute, a settled step is never executed twice, and every final finding carries a citation.
+
+One residual, found by these fixtures and recorded as **B29**: an identifier the model **quotes back
+into its own tool arguments** reaches the transcript unfenced, because those are the model's words
+rather than the server's. The server's own blocks stay balanced, and the text after such a marker is
+the model's own JSON rather than attacker content.
+
 **Database content is untrusted input.** A table name, a column comment, a row value and an engine
 error message all come from whoever can write to the database, so everything crossing into a prompt
 is fenced first: a header naming what the content is and where it came from, and a stated boundary

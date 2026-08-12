@@ -188,6 +188,13 @@ export interface EvalRunOptions {
   /** What the scripted engine answers a MODEL statement with. Catalog reads are served by the preset. */
   readonly answer?: (sql: string) => Promise<QueryResult>;
   /**
+   * Replaces the preset's catalog answers, so a fixture can put HOSTILE identifiers
+   * into the inventory a run captures. Returning `null` for a statement falls back
+   * to the preset, which is how a fixture makes one inventory hostile and leaves the
+   * rest ordinary.
+   */
+  readonly catalogAnswer?: (sql: string) => QueryResult | null;
+  /**
    * Fails the provider acquisition — a reach that dies BEFORE the statement is
    * sent, so it propagates rather than settling. Called once per acquisition and
    * may return nothing, which is how a fixture lets the drive's context capture
@@ -267,7 +274,7 @@ export async function openEvalRun(options: EvalRunOptions = {}): Promise<EvalRun
     const { store, service, tracker, artifacts } = boot();
     const queryReadOnly = async (sql: string): Promise<QueryResult> => {
       statements.push(sql);
-      return engine.catalogAnswer(sql) ?? (await answer(sql));
+      return options.catalogAnswer?.(sql) ?? engine.catalogAnswer(sql) ?? (await answer(sql));
     };
     const provider = { queryReadOnly } as unknown as DatabaseProvider;
 

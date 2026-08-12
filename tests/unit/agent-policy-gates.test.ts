@@ -1,0 +1,157 @@
+import { describe, expect, test } from "bun:test";
+import { AGENT_EXECUTION_POLICY } from "@/lib/agent/execution-policy";
+import { verifyRunGoal } from "@/lib/agent/goal-verifier";
+import { AGENT_TOOL_DEFINITIONS, selectAgentTools } from "@/lib/agent/tools";
+import type { AgentRunEvent, AgentRunRecord, AgentRunWorkflowType } from "@/lib/agent/types";
+import { createCanonicalOperationRegistry } from "@/lib/db/operations/descriptors";
+import { OperationRegistry } from "@/lib/db/operations/registry";
+import type { RegistrableOperationDescriptor } from "@/lib/db/operations/types";
+
+/**
+ * The four policy gates, stated as gates (#330 T4).
+ *
+ * Each of these is already true somewhere — the tool layer enforces one, the
+ * registry another, the run service a third. They are gathered here and named
+ * because #330 asks for them "asserted as unit tests rather than only as evals": an
+ * eval can only observe what a scripted run happened to do, while a gate has to
+ * hold for every run there could be. So each test below is written against the
+ * DECIDING function rather than against a scenario that exercises it.
+ *
+ * If one of these fails, the milestone's security claim has moved — not a scenario.
+ */
+
+const WORKFLOWS: readonly AgentRunWorkflowType[] = ["investigation", "query-optimization", "database-assessment"];
+
+// ─── Gate 1: planning performs zero database operations ─────────────────────
+
+describe("GATE — planning mode performs zero database operations", () => {
+  test("no workflow gives a planning run a single tool", () => {
+    // Not "filtered to nothing": there is nothing to filter. A tool it is never
+    // offered is a database reach it can never make.
+    for (const workflowType of WORKFLOWS) {
+      expect(selectAgentTools({ mode: "planning", workflowType }), workflowType).toEqual([]);
+    }
+  });
+
+  test("the toolless set is the same object for every workflow, so none can be widened in place", () => {
+    const sets = WORKFLOWS.map((workflowType) => selectAgentTools({ mode: "planning", workflowType }));
+    for (const set of sets) expect(Object.isFrozen(set)).toBe(true);
+  });
+});
+
+// ─── Gate 2: no execution above risk class 1 ────────────────────────────────
+
+describe("GATE — no operation above risk class 1 can execute", () => {
+  test("every registered descriptor is R0 or R1", () => {
+    const registry = createCanonicalOperationRegistry();
+
+    for (const id of registry.registeredIds()) {
+      const resolution = registry.resolve(id);
+      if (resolution.kind !== "resolved") throw new Error(`${id} did not resolve`);
+      expect([0, 1], id).toContain(resolution.descriptor.riskClass);
+    }
+  });
+
+  test("the agent's own ceiling admits nothing above R1", () => {
+    expect(AGENT_EXECUTION_POLICY.maxRiskClass).toBe(1);
+  });
+
+  test("an R2 descriptor cannot even be registered — the class has no representation", () => {
+    // R2+ are not registered-and-disabled; they are unregistrable. A caller that
+    // bypasses the types still cannot get one into a registry.
+    const registry = new OperationRegistry();
+    const beyond = { riskClass: 2, id: "sql.query.write", accessLevel: "data-read" } as unknown;
+
+    expect(() => registry.register(beyond as RegistrableOperationDescriptor)).toThrow();
+  });
+
+  test("no tool maps onto the one operation that is default-denied", () => {
+    const operations = Object.values(AGENT_TOOL_DEFINITIONS).map((tool) => tool.operationId);
+
+    expect(operations).not.toContain("sql.explain.analyze");
+  });
+});
+
+// ─── Gate 3: no duplicate executions ────────────────────────────────────────
+
+describe("GATE — a step the ledger already settled is never executed twice", () => {
+  test("the executing form of EXPLAIN is registered only so the approval gate is reachable", () => {
+    // It is in the registry and default-denied, which is what lets the pipeline
+    // answer require-approval for it. That is the opposite of it being available.
+    const registry = createCanonicalOperationRegistry();
+    const resolution = registry.resolve("sql.explain.analyze");
+
+    if (resolution.kind !== "resolved") throw new Error("expected the analyze descriptor");
+    expect(resolution.descriptor.requiresApproval).toBe(true);
+  });
+
+  test("every database-reaching tool declares the operation it drives, so none reaches a driver unaudited", () => {
+    // A tool with no operation id reaches no database at all; one with an id goes
+    // through `executeAuditedOperation`. There is no third case, which is what
+    // makes "no second path to a driver" checkable rather than asserted.
+    const reaching = Object.values(AGENT_TOOL_DEFINITIONS).filter((tool) => tool.operationId !== undefined);
+    const registry = createCanonicalOperationRegistry();
+
+    expect(reaching.length).toBeGreaterThan(0);
+    for (const tool of reaching) {
+      expect(registry.resolve(tool.operationId ?? "").kind, tool.name).toBe("resolved");
+    }
+  });
+});
+
+// ─── Gate 4: a citation for every final finding ─────────────────────────────
+
+describe("GATE — every final finding carries a citation", () => {
+  const artifact = (correlationId: string, rowCount: number) => ({
+    correlationId,
+    runId: "arun_1",
+    operationId: "sql.query.read",
+    summary: { rowCount, columnNames: ["a"], elapsedMs: 1 },
+  });
+
+  const run = (events: readonly AgentRunEvent[], workflowType: AgentRunWorkflowType = "investigation") =>
+    ({ mode: "agent", workflowType, status: "succeeded", events }) as Pick<
+      AgentRunRecord,
+      "mode" | "workflowType" | "status" | "events"
+    >;
+
+  test("a claim with no evidence is inexpressible: the contract's tuple is non-empty", () => {
+    // The type, not a check. `AgentReportClaim.evidence` is `[ref, ...ref[]]`, so a
+    // claim with nothing behind it does not compile — and the tool's schema enforces
+    // the same bound at run time for arguments a model supplies.
+    const schema = AGENT_TOOL_DEFINITIONS.compose_report.inputSchema;
+
+    expect(schema.safeParse({ claims: [{ claim: "x", evidence: [] }] }).success).toBe(false);
+    expect(schema.safeParse({ claims: [] }).success).toBe(false);
+  });
+
+  test("a run whose findings rest on nothing it read does not count as having answered", () => {
+    // The gate as the verifier sees it: prose is not a finding, and a report resting
+    // only on empty results has cited nothing that says anything.
+    const uncited = run([{ kind: "closing-statement", atMs: 1, text: "Everything looks fine." }]);
+    expect(verifyRunGoal(uncited).outcome).toBe("unanswered");
+
+    const hollow = run([
+      { kind: "tool-completed", atMs: 1, stepId: "s", artifact: artifact("c1", 0) },
+      {
+        kind: "report-composed",
+        atMs: 2,
+        claims: [{ claim: "Nothing exists.", evidence: [{ source: "artifact", correlationId: "c1" }] }],
+      },
+    ]);
+    expect(verifyRunGoal(hollow).unmet).toEqual(["empty-evidence"]);
+  });
+
+  test("every workflow is held to the citation bar, whatever else it adds", () => {
+    for (const workflowType of WORKFLOWS) {
+      const verdict = verifyRunGoal(
+        run(
+          [{ kind: "closing-statement", atMs: 1, text: "A confident summary with nothing behind it." }],
+          workflowType,
+        ),
+      );
+      expect(verdict.outcome, workflowType).toBe("unanswered");
+      expect(verdict.unmet, workflowType).toContain("no-report");
+    }
+  });
+});

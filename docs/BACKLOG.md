@@ -1456,3 +1456,25 @@ second composition path per dialect whose numbers are estimates the planner main
 built from it would have to say which of its figures were measured and which were the engine's own
 estimate. Done when that distinction is carried in `AgentTableProfile` and the fallback is composed
 per dialect.
+
+### B29. An attacker-supplied identifier the model quotes back reaches a transcript unfenced
+
+Found by the injection fixtures in `tests/evals/injection.test.ts` (#330 T4), which is what those
+fixtures are for.
+
+Every block the SERVER writes is fenced and its markers neutralised, and the suite asserts that
+property directly by counting: a transcript holds exactly as many closing markers as the server
+opened. The path this does not cover is the model's own message. An attacker who can name a table can
+put the closing marker in that name; the model reads it correctly fenced, and then copies the
+identifier into its own tool ARGUMENTS — which are the model's words, not the server's. The
+transcript sent back on the next turn therefore carries an unfenced marker.
+
+Two things bound it, and both are asserted rather than assumed. The server's own blocks stay
+balanced, so nothing the server said can be re-attributed; and the text following the marker in that
+message is the model's own JSON, not attacker-controlled content.
+
+Fixing it means rewriting the messages the provider itself returned (`response.messages`), which is
+the transcript that provider will accept back — the same reason `investigation.ts` filters those
+messages to the assistant turn rather than rebuilding them. Done when a tool call's arguments are
+neutralised on the way into the transcript without desynchronising the `tool_call_id` pairing the
+endpoint validates.
