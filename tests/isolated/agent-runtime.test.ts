@@ -95,7 +95,7 @@ describe("getAgentRunService", () => {
 
 describe("driveAgentRun", () => {
   test("refuses a run that does not exist", async () => {
-    expect(driveAgentRun("arun_nosuchrun")).rejects.toThrow(AgentRunServiceError);
+    await expect(driveAgentRun("arun_nosuchrun")).rejects.toThrow(AgentRunServiceError);
   });
 
   test("resolves the connection as the run's persisted actor, not as the caller", async () => {
