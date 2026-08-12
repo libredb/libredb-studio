@@ -184,6 +184,11 @@ const TERMINAL_TONES = {
  */
 const FAILURE_SENTENCES = {
   "model-unavailable": "The model provider is not configured or could not be reached.",
+  // Says what to do, because for this one there is something to do and it is not
+  // opening the settings: the provider answered, and asked for less traffic.
+  "model-rate-limited": "The model provider is limiting this key's requests. Waiting a minute usually clears it.",
+  "model-unauthorized": "The model provider rejected the configured credentials.",
+  "engine-unsupported": "The agent cannot run on this database engine: it offers no read-only execution profile.",
   "connection-unresolvable": "This run's database connection no longer resolves on the server.",
   internal: "The server could not carry this run. The reason is in the server log.",
 } as const satisfies Record<AgentRunFailureReason, string>;

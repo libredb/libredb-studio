@@ -32,7 +32,8 @@ import { type ExecutionArtifact, ExecutionArtifactStore } from "@/lib/db/operati
 import { ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
 import { createCanonicalOperationRegistry } from "@/lib/db/operations/descriptors";
 import { createTargetScope } from "@/lib/db/operations/policy";
-import { LLMError } from "@/lib/llm/types";
+import { LLMAuthError, LLMError, LLMRateLimitError } from "@/lib/llm/types";
+import { ExecutionProfileError } from "@/lib/db/errors";
 import { logger } from "@/lib/logger";
 import { resolveConnection, SeedConnectionError } from "@/lib/seed/resolve-connection";
 import type { QueryResult } from "@/lib/types";
@@ -191,10 +192,24 @@ function classifyDriveFailure(error: unknown): AgentRunFailureReason {
   // bundle. The SDK's errors are the ones that arrive in duplicate.
   if (error instanceof SeedConnectionError) return "connection-unresolvable";
 
-  // Every LLM failure reads as one label because the user's next move is the same
-  // for all of them — look at the model settings. A rate limit and a refused key
-  // differ to an operator, who has the logged message, not to the person deciding
-  // whether to start another run.
+  // An engine with no read-only profile is not a server fault, and calling it
+  // `internal` sent a user to a log that could only tell them what their own
+  // connection already says. Checked before the generic classes below because it is
+  // the specific thing that happened.
+  if (error instanceof ExecutionProfileError) return "engine-unsupported";
+
+  /*
+    These were one label until 2026-08-12, on the reasoning that the user's next move
+    is the same for all of them — look at the model settings. A live run falsified it.
+    A Gemini free-tier quota (15 requests a minute) was exhausted by testing, and the
+    rail told the user the provider "is not configured or could not be reached" about a
+    provider that was configured and had answered seconds earlier. For a quota the next
+    move is to wait a minute; for a refused key it is to fix the key; only the rest send
+    anyone to the settings. The subclasses are checked before `LLMError` itself, which
+    all of them extend.
+  */
+  if (error instanceof LLMRateLimitError) return "model-rate-limited";
+  if (error instanceof LLMAuthError) return "model-unauthorized";
   if (error instanceof LLMError) return "model-unavailable";
 
   // Everything else, deliberately unnamed: a provider that could not be built and a

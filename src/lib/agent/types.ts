@@ -76,8 +76,22 @@ export type AgentRunStatus = "queued" | "running" | AgentRunTerminalStatus;
  * specific label would be a claim the classifier cannot support.
  */
 export type AgentRunFailureReason =
-  /** No usable model: unconfigured, refused credentials, or unreachable. */
+  /** No usable model: unconfigured, or the provider could not be reached. */
   | "model-unavailable"
+  /**
+   * The provider is there and answering, and is refusing on volume. The only model
+   * failure that fixes itself, and the one worth telling apart from the rest: a
+   * misconfiguration needs an operator, a quota needs a minute.
+   */
+  | "model-rate-limited"
+  /** The provider rejected the credentials. An operator fixes this; retrying does not. */
+  | "model-unauthorized"
+  /**
+   * The connection's engine has no database-native read-only execution profile, so
+   * this run could never have been permitted on it. A property of the connection the
+   * user chose, not a fault of the server — which is why it is not `internal`.
+   */
+  | "engine-unsupported"
   /** The run's persisted connection no longer resolves on the server. */
   | "connection-unresolvable"
   /** Anything else. Deliberately unspecific; the log carries the detail. */

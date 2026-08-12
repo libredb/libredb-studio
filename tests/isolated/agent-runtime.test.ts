@@ -19,7 +19,8 @@ import { AGENT_ENABLED_ENV } from "@/lib/agent/config";
 import { AGENT_RUN_DEADLINE_MS } from "@/lib/agent/execution-policy";
 import * as realRunStore from "@/lib/agent/run-store";
 import { AgentRunServiceError } from "@/lib/agent/run-service";
-import { LLMConfigError } from "@/lib/llm/types";
+import { LLMAuthError, LLMConfigError, LLMRateLimitError } from "@/lib/llm/types";
+import { ExecutionProfileError } from "@/lib/db/errors";
 import { SeedConnectionError } from "@/lib/seed/resolve-connection";
 import { acquireExecutionProfileProvider } from "@/lib/db/factory";
 import type { AgentToolResources } from "@/lib/agent/investigation";
@@ -194,6 +195,65 @@ describe("a drive that fails before the loop", () => {
     expect(await finishedEvent("arun_modelgone")).toMatchObject({
       status: "failed",
       reason: "model-unavailable",
+    });
+  });
+
+  /*
+    The three model failures a user can tell apart, and must.
+
+    Collapsing them into "model-unavailable" is what a real run produced on
+    2026-08-12: a Gemini free-tier quota of 15 requests per minute was exhausted by
+    testing, and the rail reported that the provider "is not configured or could not
+    be reached" — of a provider that was configured and had answered a second
+    earlier. A quota is the one model failure that fixes itself, and it was the one
+    described as a misconfiguration.
+  */
+  test("records a rate limit as itself, not as an unreachable provider", async () => {
+    await openRun("arun_ratelimited");
+    mockCreateAgentModel.mockImplementationOnce(async () => {
+      throw new LLMRateLimitError("You exceeded your current quota. Please retry in 54.6s.", "gemini");
+    });
+
+    await expect(driveAgentRun("arun_ratelimited")).rejects.toThrow(LLMRateLimitError);
+
+    expect(await finishedEvent("arun_ratelimited")).toMatchObject({
+      status: "failed",
+      reason: "model-rate-limited",
+    });
+  });
+
+  test("records refused model credentials as itself", async () => {
+    await openRun("arun_badkey");
+    mockCreateAgentModel.mockImplementationOnce(async () => {
+      throw new LLMAuthError("API key not valid", "gemini");
+    });
+
+    await expect(driveAgentRun("arun_badkey")).rejects.toThrow(LLMAuthError);
+
+    expect(await finishedEvent("arun_badkey")).toMatchObject({
+      status: "failed",
+      reason: "model-unauthorized",
+    });
+  });
+
+  test("records an engine the agent cannot execute on read-only", async () => {
+    // The default connection of a zero-config deployment is the LibreDB sample,
+    // which has no database-native read-only profile. Reported as "internal", that
+    // is a server fault the user should report; reported as itself, it is a
+    // connection they should switch away from.
+    await openRun("arun_noprofile");
+    mockResolveConnection.mockImplementationOnce(async () => {
+      throw new ExecutionProfileError(
+        'Provider type "libredb" has no database-native read-only execution profile',
+        "PROFILE_UNSUPPORTED_BY_PROVIDER",
+      );
+    });
+
+    await expect(driveAgentRun("arun_noprofile")).rejects.toThrow(ExecutionProfileError);
+
+    expect(await finishedEvent("arun_noprofile")).toMatchObject({
+      status: "failed",
+      reason: "engine-unsupported",
     });
   });
 

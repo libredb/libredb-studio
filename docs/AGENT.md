@@ -148,8 +148,25 @@ an empty timeline, its cause readable only in the server log, and with no drive 
 nothing would come back to it.
 
 A drive that fails anywhere now records `run-finished` with status `failed` and a **classified
-reason**: `model-unavailable`, `connection-unresolvable`, or `internal`. Three properties are
-deliberate:
+reason**:
+
+| Reason | What happened | What the user does next |
+| --- | --- | --- |
+| `model-unavailable` | No usable model: unconfigured, or the provider could not be reached | Check the `LLM_*` settings |
+| `model-rate-limited` | The provider answered, and refused on volume | Wait — this one clears itself |
+| `model-unauthorized` | The provider rejected the credentials | Fix the key; retrying will not help |
+| `engine-unsupported` | The connection's engine has no database-native read-only profile | Investigate a different connection |
+| `connection-unresolvable` | The run's persisted connection no longer resolves server-side | Restore the seed, or start on another connection |
+| `internal` | Anything else | Read the server log |
+
+The split is finer than it first was, and the correction is worth recording: the model failures were
+one label on the reasoning that every one of them sends a user to the same settings screen. A live
+run disproved it. A free-tier quota was exhausted and the rail reported that the provider "is not
+configured or could not be reached" — of a provider that was configured and had answered seconds
+earlier. A quota is the only model failure that fixes itself, and it was the one described as a
+misconfiguration.
+
+Three properties are deliberate:
 
 - **The reason is chosen from the error's type, never from its message.** That text is written by a
   model provider, a driver or a connection resolver, and none of them promise to keep a credential,
