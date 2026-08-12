@@ -63,6 +63,7 @@ import {
   comparePlansTool,
   composeReportTool,
   inspectPlanTool,
+  profileTableTool,
   recommendChangeTool,
   inspectSchemaTool,
   runReadQueryTool,
@@ -121,8 +122,16 @@ export interface AgentInvestigationResult {
  */
 type DatabaseToolName = Exclude<AgentToolName, LedgerOnlyToolName>;
 
-/** Tools that record what the run already established and reach nothing. */
-type LedgerOnlyToolName = "compose_report" | "compare_plans" | "recommend_change";
+/**
+ * Tools `handleCall` dispatches itself rather than through `runStep`.
+ *
+ * Three of them reach nothing at all. `profile_table` DOES reach a database, and is
+ * here for a different reason: its statement is composed from the run's own
+ * inventory, so there is no model-supplied argument for a step id to be derived
+ * from. Its repeat protection is the repair ledger's statement fingerprint, which
+ * refuses the identical composed profile a second time.
+ */
+type LedgerOnlyToolName = "compose_report" | "compare_plans" | "recommend_change" | "profile_table";
 
 // ============================================================================
 // Prompting
@@ -187,7 +196,11 @@ const WORKFLOW_TOOL_RULES: Readonly<Record<AgentRunWorkflowType, string>> = Obje
     "Every plan you can obtain is an ESTIMATE: nothing is executed, and there are no timings. Say so rather than implying a measurement.",
     "Propose changes with recommend_change. They are offered to the user and never applied by this run.",
   ].join(" "),
-  "database-assessment": "Report what the evidence supports, and nothing further.",
+  "database-assessment": [
+    "Profile the tables that matter with profile_table, deepening only where a shallower profile left a question: basic counts rows and missing values, distribution adds distinct counts, pattern tests for personal-data shapes.",
+    "Only COUNTS come back. No value is read out of any column, so do not claim what a column contains — claim what its counts show.",
+    "Grade what you find against completeness, uniqueness, consistency and validity, and say which of the four each finding speaks to.",
+  ].join(" "),
 } satisfies Record<AgentRunWorkflowType, string>);
 
 /**
@@ -278,6 +291,20 @@ function describePriorProgress(record: AgentRunRecord): string | null {
       */
       lines.push(
         `Two plans were already compared: ${event.before.sql} reaches its rows by ${event.before.summary.access}, and ${event.after.sql} by ${event.after.summary.access}. That comparison is recorded and must not be made again.`,
+      );
+    } else if (event.kind === "table-profiled") {
+      // Same reasoning as the two below: durable, non-terminal, and a resumed run
+      // that was not told would spend a statement re-reading what it already has.
+      const summary =
+        event.profile.findings.length === 0
+          ? "nothing stood out"
+          : event.profile.findings.map((finding) => `${finding.column}: ${finding.code}`).join(", ");
+      // The artifact id is named for the same reason it is named when the profile is
+      // first returned: without it a resumed run knows it profiled the table and
+      // cannot cite the profile, so its own workflow's bar becomes unreachable
+      // after any interruption.
+      lines.push(
+        `Table ${event.profile.table} was already profiled at ${event.profile.depth} depth (${event.profile.rowCount} row(s)), artifact ${event.artifact.correlationId}: ${summary}. That profile is recorded; deepen it only if it left a question.`,
       );
     } else if (event.kind === "recommendation") {
       lines.push(
@@ -729,6 +756,10 @@ async function handleCall(input: {
   if (call.toolName === "compose_report") return composeReport(service, context, call.input);
   if (call.toolName === "compare_plans") return comparePlans(service, context, call.input);
   if (call.toolName === "recommend_change") return recommendChange(service, context, call.input);
+  // Profiling DOES reach a database, but its statement is composed from the run's
+  // own inventory rather than from the model's arguments, so its step identity is
+  // the table and depth it names. Handled here, where the run record is in hand.
+  if (call.toolName === "profile_table") return profileTable(service, context, call);
 
   const name = call.toolName as DatabaseToolName;
   const stepId = deriveStepId(name, call.input);
@@ -793,6 +824,38 @@ async function handleCall(input: {
  * started, and the artifacts a claim may cite are exactly the entries that were
  * added while the loop was running.
  */
+/**
+ * One table profiled, recorded and NOT terminal.
+ *
+ * Unlike the other two handled here, this one reaches the database — through
+ * `executeAgentOperation` like every other reach, and therefore through the run's
+ * deadline, its repair ledger, its budgets and the audit trail. What it does NOT go
+ * through is `runStep`: the tool composes its own statement from the inventory, so
+ * there is no model-supplied argument for a step id to be derived from, and the
+ * repair ledger's statement fingerprint already refuses the same profile twice.
+ *
+ * The honest consequence, stated rather than glossed: a drive that dies between the
+ * database reach and this append loses the profile and a resumed run re-reads it.
+ * That costs a statement out of twenty; it cannot double-count anything, because
+ * the profile changes no state.
+ */
+async function profileTable(
+  service: AgentRunService,
+  context: AgentToolContext,
+  call: { readonly input: unknown },
+): Promise<CallResult> {
+  const { record } = await service.resume(context.runId);
+  const outcome = await profileTableTool(context, record, call.input);
+  if (outcome.kind !== "profiled") return { kind: "answered", text: outcome.modelText };
+
+  await service.recordEvent(context.runId, {
+    kind: "table-profiled",
+    artifact: outcome.artifact,
+    profile: outcome.profile,
+  });
+  return { kind: "answered", text: outcome.modelText };
+}
+
 /**
  * The before/after plan comparison, recorded and NOT terminal.
  *

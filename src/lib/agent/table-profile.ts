@@ -1,0 +1,363 @@
+/**
+ * Bounded per-table profiling: the SQL the server composes for it, and the
+ * findings it derives from what comes back (#330 T3).
+ *
+ * **The profile records counts, never values.** That is the rule the whole module
+ * is built around, and it is what makes profiling a table of personal data
+ * acceptable at all: every statistic is an aggregate — how many rows, how many are
+ * present, how many are distinct, how many match a shape — so no name, address or
+ * account number is ever written to the ledger, shown to the model, or rendered in
+ * the rail. A `min`/`max` of a text column would return an actual value, which is
+ * why neither is here even though both are conventional in a profiler.
+ *
+ * Three further decisions:
+ *
+ *  - **The model names a table; the server chooses the columns.** They come from the
+ *    run's own captured inventory, so a profile cannot be aimed at a column the run
+ *    never established exists, and the statement is composed rather than supplied —
+ *    the same rule `inspect_schema` follows.
+ *  - **The findings are derived from the numbers, not asserted by the model.** Every
+ *    one is a mechanical predicate over counts with a stated threshold. A model may
+ *    interpret them; it cannot invent them.
+ *  - **`suspected_pii` is a suspicion, and says so.** At any depth it is read from
+ *    the column NAME, and at `pattern` depth from the RATIO of values matching a
+ *    shape — computed inside the database by a `count(CASE WHEN …)`, so the values
+ *    that matched never leave it. Neither test establishes that a column holds
+ *    personal data; both establish that it is worth a human looking.
+ */
+
+import { quoteIdentifier } from "@/lib/sql/identifier";
+import type { ColumnSchema, DatabaseType, TableSchema } from "@/lib/types";
+import { AgentComposedSqlError, MAX_CATALOG_SELECTOR_LENGTH } from "./composed-sql";
+
+/**
+ * How deeply one profile reads. Each level is the one before it plus more, so a
+ * deepening re-reads what it already had — which is the cost of asking the engine
+ * once rather than keeping a partial profile in flight across statements.
+ */
+export type AgentProfileDepth = "basic" | "distribution" | "pattern";
+
+/**
+ * Columns one profile may cover.
+ *
+ * Bounded because the composed statement grows with it: at `pattern` depth each
+ * column contributes four aggregates, so an unbounded table would compose a
+ * statement whose cost nobody chose. A wider table is profiled in more than one
+ * call, which the statement budget accounts for honestly.
+ */
+export const MAX_PROFILE_COLUMNS = 16;
+
+/** Below this many present values, a ratio says more about the sample than the data. */
+export const MIN_ROWS_FOR_RATIO_FINDINGS = 20;
+
+/** At or above this share of missing values, a column is worth reporting as sparse. */
+export const HIGH_NULL_RATIO = 0.5;
+
+/** At or below this share of distinct values, a column carries very few of them. */
+const LOW_CARDINALITY_RATIO = 0.01;
+
+/** At or above this share of shape matches, the shape is the column's norm rather than an accident. */
+const PII_SHAPE_RATIO = 0.5;
+
+/**
+ * Column names that name personal data in the languages this project is written
+ * and used in. A suspicion drawn from a NAME, which is why the finding says
+ * "suspected" — a column called `email` may hold anything, and one called `col_7`
+ * may hold every address in the country.
+ */
+const PII_NAME_WORDS: readonly string[] = Object.freeze([
+  "email",
+  "mail",
+  "phone",
+  "tel",
+  "mobile",
+  "gsm",
+  "ssn",
+  "tckn",
+  "national_id",
+  "passport",
+  "iban",
+  "card",
+  "birth",
+  "dob",
+  "address",
+  "adres",
+  "postcode",
+  "zip",
+]);
+
+/** Declared types this module is willing to apply a text shape test to. */
+const TEXTUAL_TYPE = /char|text|string|clob|varying/i;
+
+/**
+ * The one shape tested inside the database, so no matching value ever leaves it:
+ * something, an `@`, something, a `.`, something.
+ *
+ * ONE shape, because `LIKE` is the only pattern operator both engines spell the
+ * same way and `_` in it means "any character" rather than "any digit". A test for
+ * a run of digits — a phone number, a national id — needs `~` on PostgreSQL and
+ * `GLOB` on SQLite, so it is a dialect-specific predicate rather than a wider
+ * pattern here, and it is deferred (`docs/BACKLOG.md` B26) instead of being
+ * approximated by a length test that would match almost any text.
+ */
+const EMAIL_SHAPE = "%_@_%._%";
+
+export type AgentProfileFindingCode =
+  /** At least `HIGH_NULL_RATIO` of the rows have no value in this column. */
+  | "high_null"
+  /** Every present value is the same one. */
+  | "constant"
+  /** Very few distinct values across many rows. */
+  | "low_cardinality"
+  /** A foreign-key column that no index in the captured inventory leads on. */
+  | "fk_unindexed"
+  /** The column's name, or the shape of its values, suggests personal data. */
+  | "suspected_pii";
+
+export interface AgentProfileFinding {
+  readonly code: AgentProfileFindingCode;
+  readonly column: string;
+  /**
+   * The app's own words, carrying the numbers the finding was derived from.
+   * Deliberately no engine text and no value — see the module docblock.
+   */
+  readonly detail: string;
+}
+
+/** What one column's aggregates came back as. Counts only. */
+export interface AgentColumnProfile {
+  readonly column: string;
+  /** Rows where the column is not null. */
+  readonly present: number;
+  /** Distinct present values, at `distribution` depth and deeper. */
+  readonly distinct?: number;
+  /** Rows whose value matches a personal-data shape, at `pattern` depth. */
+  readonly shaped?: number;
+}
+
+export interface AgentTableProfile {
+  readonly table: string;
+  readonly depth: AgentProfileDepth;
+  readonly rowCount: number;
+  readonly columns: readonly AgentColumnProfile[];
+  readonly findings: readonly AgentProfileFinding[];
+}
+
+// ─── composition ────────────────────────────────────────────────────────────
+
+/** Aliases are generated, never taken from a column name: a name is untrusted text. */
+const alias = (prefix: string, index: number): string => `${prefix}_${index}`;
+
+function assertProfileTable(value: string): string {
+  const trimmed = typeof value === "string" ? value.trim() : "";
+  if (trimmed.length === 0 || trimmed.length > MAX_CATALOG_SELECTOR_LENGTH) {
+    throw new AgentComposedSqlError("a profile needs one table name of a usable length", "INVALID_SELECTOR");
+  }
+  return trimmed;
+}
+
+/** The qualified target, quoted per dialect. Both engines here quote with `"`. */
+function quoteTarget(dialect: DatabaseType, schema: string | undefined, table: string): string {
+  const quotedTable = quoteIdentifier(assertProfileTable(table), dialect);
+  if (schema === undefined) return quotedTable;
+  return `${quoteIdentifier(assertProfileTable(schema), dialect)}.${quotedTable}`;
+}
+
+const isTextual = (column: ColumnSchema): boolean => TEXTUAL_TYPE.test(column.type);
+
+/**
+ * One statement covering the whole table, rather than one per statistic.
+ *
+ * The run's statement budget is 20, and a per-statistic composition would spend it
+ * on a single table. Everything here is an aggregate over one scan, which is also
+ * the shape an engine can plan best.
+ *
+ * `LIKE` is applied only to columns whose DECLARED type reads as textual: comparing
+ * an integer column to a string pattern is an error on PostgreSQL, and casting
+ * every column to text to avoid that would turn a bounded read into a full
+ * conversion of the table.
+ */
+export function composeTableProfile(
+  dialect: DatabaseType,
+  selector: { readonly schema?: string; readonly table: string; readonly depth: AgentProfileDepth },
+  columns: readonly ColumnSchema[],
+): string {
+  if (dialect !== "postgres" && dialect !== "sqlite") {
+    throw new AgentComposedSqlError(
+      `no verified profile composition for provider type "${dialect}"`,
+      "UNSUPPORTED_DIALECT",
+    );
+  }
+  if (columns.length === 0) {
+    throw new AgentComposedSqlError("that table has no columns to profile", "INVALID_SELECTOR");
+  }
+
+  const parts = ["count(*) AS row_count"];
+  columns.forEach((column, index) => {
+    const quoted = quoteIdentifier(column.name, dialect);
+    parts.push(`count(${quoted}) AS ${alias("present", index)}`);
+    if (selector.depth !== "basic") parts.push(`count(DISTINCT ${quoted}) AS ${alias("distinct", index)}`);
+    if (selector.depth === "pattern" && isTextual(column)) {
+      // Counted inside the database: the rows that matched are never returned.
+      parts.push(`count(CASE WHEN ${quoted} LIKE '${EMAIL_SHAPE}' THEN 1 END) AS ${alias("shaped", index)}`);
+    }
+  });
+
+  return `SELECT ${parts.join(", ")} FROM ${quoteTarget(dialect, selector.schema, selector.table)}`;
+}
+
+// ─── reading the result back ────────────────────────────────────────────────
+
+const count = (row: Record<string, unknown>, key: string): number | undefined => {
+  const value = row[key];
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  // `count()` comes back as a bigint on some drivers and as a numeric string on
+  // node-postgres, which returns int8 as text to avoid losing precision.
+  if (typeof value === "bigint") return Number(value);
+  if (typeof value === "string" && /^\d+$/.test(value)) return Number(value);
+  return undefined;
+};
+
+/**
+ * Turns the one aggregate row into a profile. A statistic the engine did not
+ * report is ABSENT rather than zero: zero present values is a finding, and "the
+ * engine said nothing" is not.
+ */
+export function readTableProfile(
+  table: string,
+  depth: AgentProfileDepth,
+  columns: readonly ColumnSchema[],
+  rows: readonly Record<string, unknown>[],
+): AgentTableProfile | null {
+  const row = rows[0];
+  if (row === undefined) return null;
+  const rowCount = count(row, "row_count");
+  if (rowCount === undefined) return null;
+
+  const profiled: AgentColumnProfile[] = columns.map((column, index) => {
+    const distinct = count(row, alias("distinct", index));
+    const shaped = count(row, alias("shaped", index));
+    return {
+      column: column.name,
+      present: count(row, alias("present", index)) ?? 0,
+      ...(distinct === undefined ? {} : { distinct }),
+      ...(shaped === undefined ? {} : { shaped }),
+    };
+  });
+
+  return { table, depth, rowCount, columns: profiled, findings: deriveFindings(rowCount, columns, profiled) };
+}
+
+const ratio = (part: number, whole: number): string => `${Math.round((part / whole) * 100)}%`;
+
+function namesPersonalData(column: string): boolean {
+  const lowered = column.toLowerCase();
+  return PII_NAME_WORDS.some((word) => lowered.includes(word));
+}
+
+/**
+ * Every finding, as a mechanical predicate over counts.
+ *
+ * Order is stable and by column, so two profiles of the same table produce the same
+ * list — a finding set that reordered between runs would read as having changed.
+ */
+function deriveFindings(
+  rowCount: number,
+  columns: readonly ColumnSchema[],
+  profiles: readonly AgentColumnProfile[],
+): readonly AgentProfileFinding[] {
+  const findings: AgentProfileFinding[] = [];
+
+  profiles.forEach((profile, index) => {
+    const declared = columns[index];
+    const missing = rowCount - profile.present;
+
+    if (rowCount >= MIN_ROWS_FOR_RATIO_FINDINGS && missing / rowCount >= HIGH_NULL_RATIO) {
+      findings.push({
+        code: "high_null",
+        column: profile.column,
+        detail: `${ratio(missing, rowCount)} of ${rowCount} rows have no value here.`,
+      });
+    }
+
+    if (profile.distinct === 1 && profile.present > 1) {
+      findings.push({
+        code: "constant",
+        column: profile.column,
+        detail: `All ${profile.present} present values are the same one.`,
+      });
+    } else if (
+      profile.distinct !== undefined &&
+      profile.distinct > 1 &&
+      profile.present >= MIN_ROWS_FOR_RATIO_FINDINGS &&
+      profile.distinct / profile.present <= LOW_CARDINALITY_RATIO
+    ) {
+      findings.push({
+        code: "low_cardinality",
+        column: profile.column,
+        detail: `${profile.distinct} distinct values across ${profile.present} rows.`,
+      });
+    }
+
+    const shapedEnough =
+      profile.shaped !== undefined &&
+      profile.present >= MIN_ROWS_FOR_RATIO_FINDINGS &&
+      profile.shaped / profile.present >= PII_SHAPE_RATIO;
+    if (declared !== undefined && (namesPersonalData(profile.column) || shapedEnough)) {
+      findings.push({
+        code: "suspected_pii",
+        column: profile.column,
+        detail: shapedEnough
+          ? `${ratio(profile.shaped ?? 0, profile.present)} of the values are shaped like an email address. No value was read out of the database to establish this.`
+          : "The column's name suggests personal data. Its values were not inspected to establish this.",
+      });
+    }
+  });
+
+  return findings;
+}
+
+// ─── the one finding that comes from the inventory rather than the numbers ───
+
+/**
+ * Foreign-key columns that no index in the CAPTURED INVENTORY leads on.
+ *
+ * Stated that precisely because the inventory has two known blind spots, and a
+ * finding worded as "this foreign key is unindexed" would overstate both:
+ *
+ *  - **SQLite hides constraint-created indexes.** The catalog read takes indexes
+ *    from `CREATE INDEX` text, and the indexes SQLite builds for `UNIQUE` and
+ *    `PRIMARY KEY` carry no DDL at all — so a foreign key covered by a `UNIQUE`
+ *    constraint is invisible here and would be reported. `docs/BACKLOG.md` B25.
+ *  - **PostgreSQL expression indexes are absent** and a partly-expression index
+ *    appears carrying only its plain columns (`docs/BACKLOG.md` B7).
+ *
+ * Composite foreign keys are SKIPPED rather than guessed at: PostgreSQL's catalog
+ * read returns them as the cross product of both sides (B8), so their columns
+ * cannot be regrouped into the key they belong to, and a covering test over the
+ * wrong grouping would be an answer about a key that does not exist.
+ */
+export function findUnindexedForeignKeys(table: TableSchema): readonly AgentProfileFinding[] {
+  const keys = table.foreignKeys ?? [];
+  // More than one edge from a table is where a composite key becomes
+  // indistinguishable from several single-column ones on PostgreSQL.
+  const byTarget = new Map<string, number>();
+  for (const key of keys) byTarget.set(key.referencedTable, (byTarget.get(key.referencedTable) ?? 0) + 1);
+
+  const leading = new Set(table.indexes.map((index) => index.columns[0]).filter((name) => name !== undefined));
+  const primary = new Set(table.columns.filter((column) => column.isPrimary).map((column) => column.name));
+
+  const findings: AgentProfileFinding[] = [];
+  const seen = new Set<string>();
+  for (const key of keys) {
+    if ((byTarget.get(key.referencedTable) ?? 0) > 1) continue;
+    if (seen.has(key.columnName) || leading.has(key.columnName) || primary.has(key.columnName)) continue;
+    seen.add(key.columnName);
+    findings.push({
+      code: "fk_unindexed",
+      column: key.columnName,
+      detail: "No index in the captured inventory leads on this foreign-key column.",
+    });
+  }
+  return findings;
+}

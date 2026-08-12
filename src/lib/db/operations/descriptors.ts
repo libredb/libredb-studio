@@ -1,8 +1,12 @@
 /**
- * Canonical Phase 1 operation descriptors (#328, epic #325).
+ * Canonical Phase 1 operation descriptors (#328, epic #325; extended by #330 T3).
  *
- * Exactly three operations exist: bounded read, plan inspection, plan
- * execution. Plan inspection and plan execution are DISTINCT descriptors whose
+ * Four operations exist: bounded read, plan inspection, plan execution and table
+ * profiling. The set was pinned at THREE by epic #325 and reopened by #330 T3,
+ * which is why the fourth carries that reversal in its own comment rather than
+ * arriving as though the number had never been a decision.
+ *
+ * Plan inspection and plan execution are DISTINCT descriptors whose
  * ids are derived from the explain seam's modes (`ExplainMode`,
  * src/lib/explain) — renaming a mode breaks these ids at compile time — and
  * the executing variant is default-denied because EXPLAIN ANALYZE runs the
@@ -78,10 +82,45 @@ export const sqlExplainAnalyzeDescriptor: RegistrableOperationDescriptor = {
   },
 };
 
+/**
+ * Per-table profiling: a bounded read whose aggregates the server composes.
+ *
+ * A FOURTH descriptor, and that is a reversal of a product decision rather than an
+ * oversight being corrected. Epic #325 pinned the canonical set at three, and
+ * `docs/BACKLOG.md` B17 recorded profiling as deferred because of it; #330 T3
+ * instructs that profiling reach the database "as new descriptors in
+ * `descriptors.ts` at R0/R1", which is the owner reopening that decision.
+ *
+ * Why it is not simply `sql.query.read`, which it structurally resembles: a profile
+ * aggregates over a whole table by design, and it is the one agent read aimed at
+ * columns a deployment may consider personal. Its own id is what lets an operator
+ * see profiling in the audit stream, and deny it, without also denying every read
+ * the agent makes. The statement is still bounded by the same guard — this widens
+ * what can be NAMED, never what can be run.
+ */
+export const sqlTableProfileDescriptor: RegistrableOperationDescriptor = {
+  id: "sql.table.profile",
+  riskClass: 1,
+  accessLevel: "data-read",
+  requiredCapabilities: [],
+  resourceCost: "heavy",
+  supportsDryRun: false,
+  requiresApproval: false,
+  // The same input contract as any bounded read: the composed aggregate has to
+  // satisfy the statement guard exactly as a model-drafted read does.
+  inputSchema: agentReadSqlInput,
+  verification: {
+    reviewedBy: "issue #330 T3 (epic #325 product decision, reversing docs/BACKLOG.md B17)",
+    boundary: BOUNDED_READ_BOUNDARY,
+    verifiedOn: "2026-08-12",
+  },
+};
+
 export function createCanonicalOperationRegistry(): OperationRegistry {
   const registry = new OperationRegistry();
   registry.register(sqlQueryReadDescriptor);
   registry.register(sqlExplainEstimateDescriptor);
   registry.register(sqlExplainAnalyzeDescriptor);
+  registry.register(sqlTableProfileDescriptor);
   return registry;
 }

@@ -1005,3 +1005,45 @@ describe("a recommendation reads as a proposal, never as something that happened
     expect(view.items[1]?.quoted).toBe(ddl);
   });
 });
+
+describe("a table profile reads as counts and findings, never as values", () => {
+  const profiled = (findings: readonly { code: string; column: string; detail: string }[]): AgentLedgerEntry =>
+    event({
+      kind: "event",
+      event: {
+        kind: "table-profiled",
+        atMs: 7,
+        artifact: {
+          correlationId: "corr-1",
+          runId: "run-1",
+          operationId: "sql.table.profile",
+          summary: { rowCount: 1, columnNames: ["row_count"], elapsedMs: 9 },
+        },
+        profile: {
+          table: "public.customers",
+          depth: "pattern",
+          rowCount: 4120,
+          columns: [{ column: "email", present: 4118, distinct: 4100, shaped: 4090 }],
+          findings,
+        },
+      },
+    } as AgentLedgerEntry & { kind: "event" });
+
+  test("names the table, the depth and every finding", () => {
+    const view = foldLedgerEntries([
+      OPENED,
+      profiled([{ code: "suspected_pii", column: "email", detail: "99% look like an email address." }]),
+    ]);
+
+    expect(view.items[1]?.headline).toBe("Profiled public.customers");
+    expect(view.items[1]?.detail).toContain("4120 row(s) at pattern depth");
+    expect(view.items[1]?.detail).toContain("email: suspected_pii");
+  });
+
+  test("a profile that crossed no threshold says so rather than listing nothing", () => {
+    const view = foldLedgerEntries([OPENED, profiled([])]);
+
+    expect(view.items[1]?.detail).toContain("Nothing stood out");
+    expect(view.items[1]?.detail).toContain("1 column(s)");
+  });
+});

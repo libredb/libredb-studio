@@ -1,0 +1,284 @@
+import { describe, expect, test } from "bun:test";
+import {
+  HIGH_NULL_RATIO,
+  MIN_ROWS_FOR_RATIO_FINDINGS,
+  composeTableProfile,
+  findUnindexedForeignKeys,
+  readTableProfile,
+} from "@/lib/agent/table-profile";
+import { inspectAgentStatement } from "@/lib/db/operations/statement-guard";
+import type { ColumnSchema, TableSchema } from "@/lib/types";
+
+/**
+ * Bounded per-table profiling (#330 T3).
+ *
+ * The invariant the whole module exists to hold is asserted first and repeatedly:
+ * **a profile records counts, never values.** Every composed aggregate is a
+ * `count(...)`, and no test here can produce a statement that would return a name,
+ * an address or an account number — which is what makes profiling a table of
+ * personal data acceptable at all.
+ */
+
+const column = (name: string, type = "text"): ColumnSchema => ({ name, type, nullable: true, isPrimary: false });
+
+const COLUMNS: ColumnSchema[] = [column("id", "integer"), column("email", "character varying"), column("status")];
+
+describe("the composed statement", () => {
+  test.each(["postgres", "sqlite"] as const)(
+    "%s: passes the same statement guard a model-drafted read does",
+    (dialect) => {
+      for (const depth of ["basic", "distribution", "pattern"] as const) {
+        const sql = composeTableProfile(dialect, { table: "employee", depth }, COLUMNS);
+        expect(inspectAgentStatement(sql), `${dialect}/${depth}`).toBeNull();
+      }
+    },
+  );
+
+  test("every projected expression is a count, so no value can come back", () => {
+    const sql = composeTableProfile("postgres", { table: "employee", depth: "pattern" }, COLUMNS);
+    const projection = sql.slice("SELECT ".length, sql.indexOf(" FROM "));
+
+    for (const part of projection.split(", ")) expect(part.startsWith("count("), part).toBe(true);
+    // The conventional profiler statistics that WOULD return a value.
+    expect(sql).not.toContain("min(");
+    expect(sql).not.toContain("max(");
+  });
+
+  test("deepening adds aggregates rather than replacing them", () => {
+    const basic = composeTableProfile("postgres", { table: "t", depth: "basic" }, COLUMNS);
+    const distribution = composeTableProfile("postgres", { table: "t", depth: "distribution" }, COLUMNS);
+    const pattern = composeTableProfile("postgres", { table: "t", depth: "pattern" }, COLUMNS);
+
+    expect(basic).not.toContain("DISTINCT");
+    expect(distribution).toContain("count(DISTINCT");
+    expect(distribution).not.toContain("LIKE");
+    expect(pattern).toContain("LIKE");
+  });
+
+  test("the shape test is applied only to columns whose declared type is textual", () => {
+    // Comparing an integer column to a string pattern is an error on PostgreSQL,
+    // and casting every column to text would turn a bounded read into a full
+    // conversion of the table.
+    const sql = composeTableProfile("postgres", { table: "t", depth: "pattern" }, COLUMNS);
+
+    expect(sql).toContain('count(CASE WHEN "email" LIKE');
+    expect(sql).not.toContain('count(CASE WHEN "id" LIKE');
+  });
+
+  test("an identifier carrying the closing quote is escaped, not interpolated", () => {
+    const sql = composeTableProfile("postgres", { table: 'we"ird', depth: "basic" }, [column('c"1')]);
+
+    expect(sql).toContain('"we""ird"');
+    expect(sql).toContain('"c""1"');
+    expect(inspectAgentStatement(sql)).toBeNull();
+  });
+
+  test("a schema is qualified when given and omitted when not", () => {
+    expect(composeTableProfile("postgres", { schema: "public", table: "t", depth: "basic" }, COLUMNS)).toContain(
+      'FROM "public"."t"',
+    );
+    expect(composeTableProfile("sqlite", { table: "t", depth: "basic" }, COLUMNS)).toContain('FROM "t"');
+  });
+
+  test("an unverified dialect and an empty column list are refused rather than composed", () => {
+    expect(() => composeTableProfile("mysql", { table: "t", depth: "basic" }, COLUMNS)).toThrow(/no verified profile/);
+    expect(() => composeTableProfile("postgres", { table: "t", depth: "basic" }, [])).toThrow(/no columns/);
+    expect(() => composeTableProfile("postgres", { table: "  ", depth: "basic" }, COLUMNS)).toThrow(/usable length/);
+  });
+});
+
+describe("reading the aggregate row back", () => {
+  const row = (values: Record<string, unknown>) => [values];
+
+  test("a driver's bigint and node-postgres's numeric string both read as counts", () => {
+    // `count()` comes back as a bigint on some drivers, and node-postgres returns
+    // int8 as text to avoid losing precision.
+    const profile = readTableProfile("t", "basic", [column("a")], row({ row_count: "40", present_0: BigInt(40) }));
+
+    expect(profile?.rowCount).toBe(40);
+    expect(profile?.columns[0]?.present).toBe(40);
+  });
+
+  test("a statistic the engine did not report is absent, never zero", () => {
+    const profile = readTableProfile("t", "basic", [column("a")], row({ row_count: 10, present_0: 10 }));
+
+    expect(profile?.columns[0]?.distinct).toBeUndefined();
+    expect(profile?.columns[0]?.shaped).toBeUndefined();
+  });
+
+  test("a result with no row, or no row count, is unreadable rather than a profile of nothing", () => {
+    expect(readTableProfile("t", "basic", [column("a")], [])).toBeNull();
+    expect(readTableProfile("t", "basic", [column("a")], row({ present_0: 3 }))).toBeNull();
+  });
+});
+
+describe("the findings, derived from the numbers", () => {
+  const codes = (profile: ReturnType<typeof readTableProfile>) => profile?.findings.map((f) => f.code) ?? [];
+
+  test("a mostly empty column is high_null, with the ratio in the app's own words", () => {
+    const rows = MIN_ROWS_FOR_RATIO_FINDINGS * 5;
+    const profile = readTableProfile(
+      "t",
+      "basic",
+      [column("note")],
+      [{ row_count: rows, present_0: Math.floor(rows * (1 - HIGH_NULL_RATIO)) - 1 }],
+    );
+
+    expect(codes(profile)).toContain("high_null");
+    expect(profile?.findings[0]?.detail).toMatch(/% of \d+ rows have no value/);
+  });
+
+  test("a sparse column in a tiny table is not reported, because the ratio would say more about the sample", () => {
+    const profile = readTableProfile("t", "basic", [column("note")], [{ row_count: 4, present_0: 0 }]);
+
+    expect(codes(profile)).toEqual([]);
+  });
+
+  test("one distinct value across many rows is constant, not low cardinality", () => {
+    const profile = readTableProfile(
+      "t",
+      "distribution",
+      [column("flag")],
+      [{ row_count: 500, present_0: 500, distinct_0: 1 }],
+    );
+
+    expect(codes(profile)).toEqual(["constant"]);
+  });
+
+  test("a handful of values across many rows is low_cardinality", () => {
+    const profile = readTableProfile(
+      "t",
+      "distribution",
+      [column("status")],
+      [{ row_count: 5000, present_0: 5000, distinct_0: 3 }],
+    );
+
+    expect(codes(profile)).toEqual(["low_cardinality"]);
+  });
+
+  test("a column named like personal data is suspected, and the finding says its values were not read", () => {
+    const profile = readTableProfile("t", "basic", [column("email_address")], [{ row_count: 10, present_0: 10 }]);
+
+    expect(codes(profile)).toEqual(["suspected_pii"]);
+    expect(profile?.findings[0]?.detail).toContain("values were not inspected");
+  });
+
+  test("a column whose values are mostly email-shaped is suspected even when its name says nothing", () => {
+    const profile = readTableProfile(
+      "t",
+      "pattern",
+      [column("col_7")],
+      [{ row_count: 100, present_0: 100, distinct_0: 100, shaped_0: 99 }],
+    );
+
+    expect(codes(profile)).toEqual(["suspected_pii"]);
+    // Still no value: the ratio was computed inside the database.
+    expect(profile?.findings[0]?.detail).toContain("No value was read out of the database");
+  });
+
+  test("a column with a few incidental matches is not suspected", () => {
+    const profile = readTableProfile(
+      "t",
+      "pattern",
+      [column("col_7")],
+      [{ row_count: 100, present_0: 100, distinct_0: 100, shaped_0: 2 }],
+    );
+
+    expect(codes(profile)).toEqual([]);
+  });
+
+  test("no finding carries a value, only counts and the app's own words", () => {
+    const profile = readTableProfile(
+      "t",
+      "pattern",
+      [column("email")],
+      [{ row_count: 100, present_0: 40, distinct_0: 2, shaped_0: 40 }],
+    );
+
+    for (const finding of profile?.findings ?? []) {
+      expect(finding.detail).not.toContain("@");
+    }
+  });
+});
+
+describe("foreign keys with no covering index", () => {
+  const table = (overrides: Partial<TableSchema>): TableSchema => ({
+    name: "orders",
+    columns: [column("id", "integer"), column("customer_id", "integer")],
+    indexes: [],
+    ...overrides,
+  });
+
+  test("an uncovered foreign key is reported, in words that say what was actually checked", () => {
+    const findings = findUnindexedForeignKeys(
+      table({ foreignKeys: [{ columnName: "customer_id", referencedTable: "customers", referencedColumn: "id" }] }),
+    );
+
+    expect(findings.map((f) => f.code)).toEqual(["fk_unindexed"]);
+    // Not "this foreign key is unindexed": the inventory has known blind spots.
+    expect(findings[0]?.detail).toContain("in the captured inventory");
+  });
+
+  test("an index LEADING on the column covers it; one that merely mentions it does not", () => {
+    const covered = findUnindexedForeignKeys(
+      table({
+        indexes: [{ name: "ix", columns: ["customer_id", "created_at"], unique: false }],
+        foreignKeys: [{ columnName: "customer_id", referencedTable: "customers", referencedColumn: "id" }],
+      }),
+    );
+    const trailing = findUnindexedForeignKeys(
+      table({
+        indexes: [{ name: "ix", columns: ["created_at", "customer_id"], unique: false }],
+        foreignKeys: [{ columnName: "customer_id", referencedTable: "customers", referencedColumn: "id" }],
+      }),
+    );
+
+    expect(covered).toEqual([]);
+    expect(trailing.map((f) => f.code)).toEqual(["fk_unindexed"]);
+  });
+
+  test("a primary-key column is covered without an index row of its own", () => {
+    const findings = findUnindexedForeignKeys(
+      table({
+        columns: [{ name: "customer_id", type: "integer", nullable: false, isPrimary: true }],
+        foreignKeys: [{ columnName: "customer_id", referencedTable: "customers", referencedColumn: "id" }],
+      }),
+    );
+
+    expect(findings).toEqual([]);
+  });
+
+  test("a composite key is SKIPPED rather than guessed at", () => {
+    // PostgreSQL's catalog read returns a composite foreign key as the cross
+    // product of both sides (docs/BACKLOG.md B8), so its columns cannot be
+    // regrouped into the key they belong to — and a covering test over the wrong
+    // grouping would be an answer about a key that does not exist.
+    const findings = findUnindexedForeignKeys(
+      table({
+        foreignKeys: [
+          { columnName: "a", referencedTable: "parents", referencedColumn: "x" },
+          { columnName: "b", referencedTable: "parents", referencedColumn: "y" },
+        ],
+      }),
+    );
+
+    expect(findings).toEqual([]);
+  });
+
+  test("a table with no foreign keys at all reports nothing", () => {
+    expect(findUnindexedForeignKeys(table({}))).toEqual([]);
+  });
+
+  test("the same column named twice is reported once", () => {
+    const findings = findUnindexedForeignKeys(
+      table({
+        foreignKeys: [
+          { columnName: "customer_id", referencedTable: "customers", referencedColumn: "id" },
+          { columnName: "customer_id", referencedTable: "buyers", referencedColumn: "id" },
+        ],
+      }),
+    );
+
+    expect(findings).toHaveLength(1);
+  });
+});

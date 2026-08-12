@@ -90,6 +90,7 @@ export type AgentRunNarrativeEvent = Extract<
       // ALREADY established, which is exactly what a narrative entry is.
       | "plan-comparison"
       | "recommendation"
+      | "table-profiled"
       | "closing-statement";
   }
 >;

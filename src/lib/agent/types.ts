@@ -45,6 +45,7 @@ import type { Role } from "@/lib/auth";
 import type { PolicyDenyCode } from "@/lib/db/operations/policy";
 import type { TableSchema } from "@/lib/types";
 import type { AgentPlanSummary } from "./plan-summary";
+import type { AgentTableProfile } from "./table-profile";
 
 /**
  * Which surface a run drives. Planning is toolless: it must perform zero database
@@ -353,6 +354,31 @@ export type AgentRunEvent =
       readonly statement: string;
       readonly rationale: string;
       readonly evidence: readonly [AgentEvidenceReference, ...AgentEvidenceReference[]];
+    })
+  | (AgentRunEventBase & {
+      /**
+       * One table profiled, as COUNTS and the findings derived from them.
+       *
+       * The database-assessment template's own artifact. Nothing here is a value
+       * read out of a column — `table-profile.ts` states why, and it is the reason
+       * profiling a table of personal data is acceptable at all: the run records
+       * how many, never which.
+       *
+       * The findings are the SERVER's, derived from the numbers by predicates with
+       * stated thresholds. A model may interpret them; it cannot invent one.
+       */
+      readonly kind: "table-profiled";
+      /**
+       * The read that produced the counts, so a report can CITE the profile.
+       *
+       * Present because its absence was a defect: profiling does not settle a step,
+       * so it writes no `tool-completed`, and a claim about a profile was therefore
+       * uncitable — which made the assessment template's own goal verifier, which
+       * requires both a profile and a cited report, impossible to satisfy. Found by
+       * the scenario suite before any model met it.
+       */
+      readonly artifact: AgentArtifactReference;
+      readonly profile: AgentTableProfile;
     })
   | (AgentRunEventBase & {
       readonly kind: "run-finished";

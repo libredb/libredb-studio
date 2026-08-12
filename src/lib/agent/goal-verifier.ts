@@ -46,7 +46,11 @@ import type { AgentReportClaim, AgentRunEvent, AgentRunMode, AgentRunRecord, Age
  * rule that changes its mind is a new id rather than the same one meaning
  * something else.
  */
-export type AgentGoalVerifierId = "agent-planning.1" | "agent-investigation.1" | "agent-query-optimization.1";
+export type AgentGoalVerifierId =
+  | "agent-planning.1"
+  | "agent-investigation.1"
+  | "agent-query-optimization.1"
+  | "agent-database-assessment.1";
 
 /**
  * What a run was required to produce and did not. Deliberately a closed union of
@@ -69,6 +73,14 @@ export type AgentGoalShortfall =
    * of its own opinion, and that is precisely what this workflow exists not to do.
    */
   | "no-plan-comparison"
+  /**
+   * A database-assessment run never profiled a table.
+   *
+   * The template's own artifact. An assessment composed from the schema alone is a
+   * description of the shape of the database, not of the state of its data — which
+   * is what the workflow is for.
+   */
+  | "no-table-profile"
   /**
    * The run was stopped before it could conclude. Substituted for the missing
    * output rather than reported alongside it: a user's stop is not a defect of the
@@ -185,6 +197,21 @@ function verifyQueryOptimizationGoal(run: VerifiableAgentRun): readonly AgentGoa
 }
 
 /**
+ * The assessment bar: the investigation baseline, and then a table actually
+ * profiled.
+ *
+ * Composed the same way the optimization rule is, and the baseline dominates for
+ * the same reason. An assessment written from the schema alone describes the SHAPE
+ * of a database; this workflow is about the STATE of its data, and only a profile
+ * establishes that.
+ */
+function verifyDatabaseAssessmentGoal(run: VerifiableAgentRun): readonly AgentGoalShortfall[] {
+  const baseline = verifyInvestigationGoal(run);
+  if (baseline.length > 0) return baseline;
+  return run.events.some((event) => event.kind === "table-profiled") ? [] : ["no-table-profile"];
+}
+
+/**
  * Workflow type → the rule an agent run of it is judged by, AND the id that names
  * that rule — ONE entry, so the two cannot drift.
  *
@@ -197,7 +224,7 @@ function verifyQueryOptimizationGoal(run: VerifiableAgentRun): readonly AgentGoa
 export const AGENT_WORKFLOW_GOALS: Readonly<Record<AgentRunWorkflowType, AgentWorkflowGoal>> = Object.freeze({
   investigation: { verifier: "agent-investigation.1", verify: verifyInvestigationGoal },
   "query-optimization": { verifier: "agent-query-optimization.1", verify: verifyQueryOptimizationGoal },
-  "database-assessment": { verifier: "agent-investigation.1", verify: verifyInvestigationGoal },
+  "database-assessment": { verifier: "agent-database-assessment.1", verify: verifyDatabaseAssessmentGoal },
 } satisfies Record<AgentRunWorkflowType, AgentWorkflowGoal>);
 
 const PLANNING_GOAL: AgentWorkflowGoal = { verifier: AGENT_PLANNING_VERIFIER, verify: verifyPlanningGoal };

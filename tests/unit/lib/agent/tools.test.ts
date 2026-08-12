@@ -10,6 +10,7 @@ import {
   executeAgentOperation,
   inspectPlanTool,
   inspectSchemaTool,
+  profileTableTool,
   recommendChangeTool,
   runReadQueryTool,
   selectAgentTools,
@@ -192,7 +193,7 @@ describe("selectAgentTools — the server decides, from the persisted mode and w
     }
   });
 
-  test("query optimization is the only workflow offered the plan-comparison tools", () => {
+  test("each template is offered its own tools, and no other workflow gets them", () => {
     // The axis made load-bearing: an investigation that calls `compare_plans` is
     // told there is no such tool, because for that run there is not.
     expect(selectAgentTools(persisted("agent", "query-optimization")).map((tool) => tool.name)).toEqual([
@@ -203,11 +204,23 @@ describe("selectAgentTools — the server decides, from the persisted mode and w
       "compare_plans",
       "recommend_change",
     ]);
-    for (const workflowType of ["investigation", "database-assessment"] as const) {
-      const names = selectAgentTools(persisted("agent", workflowType)).map((tool) => tool.name);
-      expect(names, workflowType).not.toContain("compare_plans");
-      expect(names, workflowType).not.toContain("recommend_change");
+    expect(selectAgentTools(persisted("agent", "database-assessment")).map((tool) => tool.name)).toEqual([
+      "inspect_schema",
+      "run_read_query",
+      "inspect_plan",
+      "compose_report",
+      "profile_table",
+    ]);
+    const investigation = selectAgentTools(persisted("agent", "investigation")).map((tool) => tool.name);
+    for (const template of ["compare_plans", "recommend_change", "profile_table"]) {
+      expect(investigation).not.toContain(template);
     }
+    expect(selectAgentTools(persisted("agent", "query-optimization")).map((t) => t.name)).not.toContain(
+      "profile_table",
+    );
+    expect(selectAgentTools(persisted("agent", "database-assessment")).map((t) => t.name)).not.toContain(
+      "compare_plans",
+    );
   });
 
   test("neither of the optimization tools reaches a database", () => {
@@ -241,6 +254,7 @@ describe("selectAgentTools — the server decides, from the persisted mode and w
       "sql.explain.estimate",
       "sql.query.read",
       "sql.query.read",
+      "sql.table.profile",
       undefined,
       undefined,
       undefined,
@@ -1654,5 +1668,64 @@ describe("the two optimization tools refuse what would make their record untrue"
     ["rewrite", "SELECT id FROM orders WHERE a = 1"],
   ])("a %s card carrying %s is recorded", (change, statement) => {
     expect(recommend(change, statement).kind).toBe("recommended");
+  });
+});
+
+describe("profileTableTool — the model names a table, the server decides the rest", () => {
+  const snapshot = {
+    connectionId: "conn-1",
+    fingerprint: "ctx_1",
+    capturedAtMs: 1,
+    tables: [
+      {
+        name: "public.orders",
+        columns: [{ name: "id", type: "integer", nullable: false, isPrimary: true }],
+        indexes: [],
+      },
+    ],
+  };
+  const events: readonly AgentRunEvent[] = [
+    { kind: "context-captured", atMs: 1, fingerprint: "ctx_1", tableCount: 1, snapshot },
+  ];
+  const run = { runId: "run-1", events } as Pick<AgentRunRecord, "runId" | "events">;
+
+  test("planning mode has no tools at all", async () => {
+    const h = harness({ mode: "planning" });
+
+    const outcome = await profileTableTool(h.context, run, { table: "orders" });
+
+    if (outcome.kind !== "unavailable") throw new Error("expected unavailable");
+    expect(outcome.reasonCode).toBe("MODE_HAS_NO_TOOLS");
+    expect(h.acquireProvider).not.toHaveBeenCalled();
+  });
+
+  test("another run's record is a wiring fault, and is loud", async () => {
+    const h = harness();
+
+    await expect(profileTableTool(h.context, { runId: "run-other", events }, { table: "orders" })).rejects.toThrow(
+      /does not belong to this run/,
+    );
+  });
+
+  test("a table the run never inventoried is refused before any database reach", async () => {
+    const h = harness();
+
+    const outcome = await profileTableTool(h.context, run, { table: "secrets" });
+
+    if (outcome.kind !== "unavailable") throw new Error("expected unavailable");
+    expect(outcome.reasonCode).toBe("TABLE_NOT_INVENTORIED");
+    expect(h.acquireProvider).not.toHaveBeenCalled();
+  });
+
+  test("an engine with no verified profile composition is refused, not composed on a guess", async () => {
+    // Phase 1 verified PostgreSQL and SQLite. Composing for a third engine would be
+    // a statement nobody checked against that engine's grammar.
+    const h = harness({ connection: { ...connection, type: "mysql" } });
+
+    const outcome = await profileTableTool(h.context, run, { table: "orders" });
+
+    if (outcome.kind !== "unavailable") throw new Error("expected unavailable");
+    expect(outcome.reasonCode).toBe("INVALID_TOOL_INPUT");
+    expect(h.acquireProvider).not.toHaveBeenCalled();
   });
 });

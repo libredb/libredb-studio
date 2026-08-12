@@ -362,6 +362,19 @@ function describeEvent(event: AgentRunEvent): Omit<AgentTimelineItem, "id" | "at
         // else. Nothing in this runtime executes it.
         applySql: event.statement,
       };
+    case "table-profiled":
+      return {
+        tone: "progress",
+        headline: `Profiled ${event.profile.table}`,
+        // Counts and the app's own words for what they mean. No value from the
+        // column is here, because none was read — see `table-profile.ts`.
+        detail:
+          event.profile.findings.length === 0
+            ? `${event.profile.rowCount} row(s), ${event.profile.columns.length} column(s) at ${event.profile.depth} depth. Nothing stood out.`
+            : `${event.profile.rowCount} row(s) at ${event.profile.depth} depth. ${event.profile.findings
+                .map((finding) => `${finding.column}: ${finding.code} — ${finding.detail}`)
+                .join(" ")}`,
+      };
     case "closing-statement":
       return {
         // Content the run produced, so it reads like the report entry rather than

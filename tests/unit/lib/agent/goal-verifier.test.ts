@@ -277,18 +277,28 @@ describe("a query-optimization run is judged by its own artifact as well as the 
     expect(verdict.unmet).toEqual(["empty-evidence"]);
   });
 
-  test("the other two workflows are not held to the optimization bar", () => {
-    for (const workflowType of ["investigation", "database-assessment"] as const) {
-      const verdict = verifyRunGoal(
-        run(
-          "agent",
-          "succeeded",
-          [contextCaptured, completed(CORRELATION.full, 8), reportCiting(ARTIFACT(CORRELATION.full))],
-          workflowType,
-        ),
-      );
-      expect(verdict.outcome, workflowType).toBe("answered");
-    }
+  test("an investigation is not held to the optimization bar", () => {
+    const verdict = verifyRunGoal(
+      run(
+        "agent",
+        "succeeded",
+        [contextCaptured, completed(CORRELATION.full, 8), reportCiting(ARTIFACT(CORRELATION.full))],
+        "investigation",
+      ),
+    );
+
+    expect(verdict.outcome).toBe("answered");
+  });
+
+  test("each template is held to its OWN bar, and not to the other's", () => {
+    // The same ledger, judged three ways: the artifact a workflow requires is the
+    // only thing separating these verdicts.
+    const events = [contextCaptured, completed(CORRELATION.full, 8), reportCiting(ARTIFACT(CORRELATION.full))];
+
+    expect(verifyRunGoal(run("agent", "succeeded", events, "query-optimization")).unmet).toEqual([
+      "no-plan-comparison",
+    ]);
+    expect(verifyRunGoal(run("agent", "succeeded", events, "database-assessment")).unmet).toEqual(["no-table-profile"]);
   });
 });
 

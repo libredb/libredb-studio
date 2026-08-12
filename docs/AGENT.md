@@ -296,6 +296,52 @@ Its goal verifier is `agent-query-optimization.1`: the investigation baseline, *
 comparison on the ledger. The baseline dominates, so a run that never reported is told that rather
 than that it skipped a comparison.
 
+### The database-assessment template
+
+A run opened as `database-assessment` is offered one further tool, `profile_table`, and no other
+workflow is.
+
+**A profile records counts, never values.** That is the rule the whole feature is built around, and
+it is what makes profiling a table of personal data acceptable at all: every statistic is an
+aggregate — how many rows, how many present, how many distinct, how many match a shape — so no name,
+address or account number is written to the ledger, shown to the model, or rendered in the rail. A
+`min`/`max` of a text column would return an actual value, which is why neither is composed even
+though both are conventional in a profiler.
+
+| Depth | Adds |
+| --- | --- |
+| `basic` | Row count, and how many rows have a value in each column |
+| `distribution` | Distinct counts |
+| `pattern` | A shape test for personal data, counted with `count(CASE WHEN … LIKE …)` **inside** the database, so no matching value leaves it |
+
+The model names a **table**, never columns and never SQL. The columns come from the run's own
+captured inventory, so a profile cannot be aimed at something the run never established exists, and
+an unqualified name is resolved against a qualified inventory only when exactly one table matches —
+two schemas holding the same table name is precisely when a guess would profile the wrong one.
+
+The findings are the **server's**, each a mechanical predicate over counts with a stated threshold:
+`high_null`, `constant`, `low_cardinality`, `suspected_pii`, plus `fk_unindexed` derived from the
+inventory rather than the numbers. A model may interpret them; it cannot invent one.
+
+`suspected_pii` is a suspicion and says so — read from the column's **name**, and at `pattern` depth
+from the **ratio** of values matching a shape. Neither establishes that a column holds personal data;
+both establish that it is worth a human looking.
+
+Its goal verifier is `agent-database-assessment.1`: the investigation baseline, **and** a table
+actually profiled. An assessment written from the schema alone describes the shape of a database;
+this workflow is about the state of its data.
+
+**Profiling reaches the database through a fourth operation descriptor** (`sql.table.profile`, R1),
+and that is a reversal of a product decision rather than an oversight: epic #325 pinned the canonical
+set at three and #330 T3 reopened it. Its own id is what lets an operator see profiling in the audit
+stream, and deny it, without denying every read the agent makes.
+
+Four honest limits, each with a backlog entry: SQLite hides constraint-created indexes so
+`fk_unindexed` can fire on a covered key (**B25**); only an email shape is tested, because `LIKE`
+cannot express a digit run (**B26**); no monitor snapshot is produced, because engine health reaches
+provider methods no descriptor covers (**B27**); and a profile that times out reports the failure
+rather than falling back to catalog statistics (**B28**).
+
 **Database content is untrusted input.** A table name, a column comment, a row value and an engine
 error message all come from whoever can write to the database, so everything crossing into a prompt
 is fenced first: a header naming what the content is and where it came from, and a stated boundary
@@ -405,8 +451,9 @@ build until somebody decides what "answered" means for it.
 | Mode | Rule (`agent-planning.1` / `agent-investigation.1`) | Unmet when it fails |
 | --- | --- | --- |
 | `planning` | The run left non-empty closing prose. That mode is toolless and can never cite evidence, so judging it by the investigation rule would fail every planning run that did its job. | `no-plan` |
-| `agent` (investigation, database-assessment) | The run composed at least one claim, **and** the claims do not rest entirely on empty results. | `no-report`, `empty-evidence` |
+| `agent` (investigation) | The run composed at least one claim, **and** the claims do not rest entirely on empty results. | `no-report`, `empty-evidence` |
 | `agent` (query-optimization) | The baseline above, **and** a plan comparison on the ledger. `agent-query-optimization.1`. | the above, plus `no-plan-comparison` |
+| `agent` (database-assessment) | The baseline above, **and** a table profiled. `agent-database-assessment.1`. | the above, plus `no-table-profile` |
 
 A run stopped by its user reports `cancelled` instead of the missing output: a stop is not
 a defect of the run, and counting it as one would make every cancellation read as a model
@@ -598,6 +645,7 @@ src/lib/agent/
 ├── provider-registry.ts  # provider kind → adapter (total over the settings surface's union)
 ├── goal-verifier.ts      # did this run ANSWER? a pure fold over the ledger, per workflow
 ├── plan-summary.ts       # how an engine reaches its rows, read from an ESTIMATING plan
+├── table-profile.ts      # composed per-table aggregates, and the findings derived from them
 ├── capability-probe.ts   # tool calling / structured output / streaming, established positively
 ├── drive-token.ts        # the single-purpose credential the resume seam verifies
 └── untrusted-content.ts  # the prompt-side fence for database content

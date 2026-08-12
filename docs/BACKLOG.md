@@ -1271,7 +1271,15 @@ asserting it (`tests/unit/packaging-payload-prune.test.ts` pins what the payload
 nearest existing home for such an assertion), and when `docs/AGENT.md`'s deployment section loses the
 caveat that points here.
 
-### B17. Table profiling and monitoring tools are deferred, so the agent's tool set is four
+### B17. Monitoring tools are deferred; profiling landed with #330 T3
+
+**Half of this entry is done and the other half is unchanged.** #330 T3 instructed that profiling
+reach the database "as new descriptors in `descriptors.ts` at R0/R1", which reopened the
+three-descriptor product decision this entry rested on: `sql.table.profile` is registered, and
+`profile_table` is offered to the `database-assessment` workflow. What follows is the original
+reasoning, kept because the monitoring half still stands on it.
+
+
 
 Recorded as #329's own narrowing (planning decision P1), not as something discovered later. The
 canonical operation set is exactly three descriptors (`src/lib/db/operations/descriptors.ts`), and the
@@ -1390,3 +1398,61 @@ the vocabulary extension arrives with it.
 
 Done when a run that ends without a cited report says so in its STATUS as well as its timeline,
 under whatever term M3 ratifies, and every earlier ending still folds to the same meaning it had.
+
+### B25. SQLite hides constraint-created indexes, so `fk_unindexed` can fire on a covered key
+
+`composeSqliteIndexes` reads the index inventory from `CREATE INDEX` text (`sql IS NOT NULL`), and
+the indexes SQLite creates for a `UNIQUE` or `PRIMARY KEY` constraint carry no DDL at all. They are
+therefore absent from the captured inventory, and a foreign-key column covered by a `UNIQUE`
+constraint looks uncovered to `findUnindexedForeignKeys` (`src/lib/agent/table-profile.ts`).
+
+The finding is worded to survive this — "no index **in the captured inventory** leads on this
+foreign-key column", not "this foreign key is unindexed" — and the primary key is read from the
+column inventory rather than the index one, so a PK-covered key is already correct. What remains
+wrong is the `UNIQUE` case, which reports a covering index that exists.
+
+Done when the SQLite capture surfaces constraint-created indexes — the information is in the table's
+own stored DDL, which `parseSqliteTableDdl` already reads for columns and foreign keys and could read
+for `UNIQUE` clauses too — or when the finding is suppressed on SQLite for columns a `UNIQUE`
+constraint covers. Related: B7 (PostgreSQL expression indexes are absent) and B8 (a composite foreign
+key comes back as the cross product of its sides, which is why composite keys are skipped entirely).
+
+### B26. A profile can test for an email shape and not for a digit run
+
+`table-profile.ts` tests one value shape inside the database, `LIKE '%_@_%._%'`, and derives
+`suspected_pii` from the ratio of matches. A run of digits — a phone number, a national id, a card
+number — is the other shape worth suspecting, and `LIKE` cannot express it: `_` means "any
+character", so a length test would match almost any text. PostgreSQL spells it `~ '[0-9]{9}'` and
+SQLite spells it `GLOB '*[0-9][0-9][0-9]…*'`.
+
+An earlier draft of this module shipped `LIKE '%_________%'` as a "nine digits" test, which would
+have produced a `suspected_pii` finding for essentially every text column. It was removed before it
+landed rather than approximated.
+
+Done when the shape tests are per-dialect predicates rather than one shared `LIKE`, with the digit
+run among them and each verified against that engine's own grammar.
+
+### B27. A database assessment reports no monitor snapshot
+
+#330 T3 lists a monitor snapshot among the assessment template's outputs. It is not built, for the
+reason B17 gives: engine health reaches `getMetrics`, slow-query listings and session listings, which
+are provider methods no operation descriptor covers. A profiling descriptor could be added because a
+profile is a composed SQL statement; a metrics read is not, so it needs a descriptor shape for
+non-SQL reads — with its own verification marker, its own provider triad and its own security-matrix
+row — which is a product decision rather than a subtask.
+
+Done when that shape exists and the assessment template reports engine health beside its table
+profiles.
+
+### B28. A profile that times out reports nothing rather than falling back to catalog statistics
+
+#330 T3 asks for "a timeout fallback to catalog stats". A profile that exceeds
+`statementTimeoutMs` currently surfaces as a repairable database error, so the model may narrow the
+profile or move on — but nothing reads `pg_stats` / `sqlite_stat1` for the approximate answer the
+engine already holds.
+
+The gap is honest rather than silent (the run is told the statement failed), and the fallback is a
+second composition path per dialect whose numbers are estimates the planner maintains, so a profile
+built from it would have to say which of its figures were measured and which were the engine's own
+estimate. Done when that distinction is carried in `AgentTableProfile` and the fallback is composed
+per dialect.

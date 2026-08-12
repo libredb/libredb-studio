@@ -70,8 +70,17 @@ import { AGENT_EXECUTION_POLICY, AGENT_EXECUTION_PROFILE, AGENT_MINIMUM_CALL_MS 
 import type { AgentRepairDenyCode, AgentRepairLedger } from "./repair-ledger";
 import { fingerprintStatement } from "./repair-ledger";
 import { summarisePlan } from "./plan-summary";
+import {
+  MAX_PROFILE_COLUMNS,
+  type AgentProfileFinding,
+  type AgentTableProfile,
+  composeTableProfile,
+  findUnindexedForeignKeys,
+  readTableProfile,
+} from "./table-profile";
 import type {
   AgentArtifactReference,
+  AgentContextSnapshot,
   AgentEvidenceReference,
   AgentPlanSide,
   AgentReportClaim,
@@ -90,6 +99,8 @@ export type AgentToolName =
   | "run_read_query"
   | "inspect_plan"
   | "compose_report"
+  /** Database assessment only: bounded per-table profiling, counts only. */
+  | "profile_table"
   /** Query optimization only: two estimated plans of the same question. */
   | "compare_plans"
   /** Query optimization only: a change the user may apply. Never executed here. */
@@ -102,7 +113,12 @@ export type AgentToolName =
  * its descriptor is default-denied, so the pipeline can only ever answer
  * require-approval for it.
  */
-export type AgentOperationId = "sql.query.read" | "sql.explain.estimate" | "sql.explain.analyze";
+export type AgentOperationId =
+  | "sql.query.read"
+  | "sql.explain.estimate"
+  | "sql.explain.analyze"
+  /** Bounded per-table profiling; #330 T3 reopened the three-descriptor decision. */
+  | "sql.table.profile";
 
 export interface AgentToolDefinition {
   readonly name: AgentToolName;
@@ -155,6 +171,10 @@ export type AgentToolUnavailableCode =
   | "UNVERIFIABLE_EVIDENCE"
   /** A cited plan is not an estimating plan THIS run produced. */
   | "UNVERIFIABLE_PLAN"
+  /** The named table is not in the inventory this run captured. */
+  | "TABLE_NOT_INVENTORIED"
+  /** The profile ran, and its aggregate row could not be read back. */
+  | "PROFILE_UNREADABLE"
   /** One plan cited as both sides: a before and an after have to be two plans. */
   | "IDENTICAL_PLANS"
   /** The statement does not match the card it is offered under. */
@@ -166,6 +186,16 @@ export type AgentToolUnavailableCode =
 
 export type AgentToolOutcome =
   | { readonly kind: "completed"; readonly artifact: AgentArtifactReference; readonly modelText: string }
+  | { readonly kind: "refused"; readonly refusal: AgentToolRefusal; readonly modelText: string }
+  | { readonly kind: "unavailable"; readonly reasonCode: AgentToolUnavailableCode; readonly modelText: string };
+
+export type AgentTableProfileOutcome =
+  | {
+      readonly kind: "profiled";
+      readonly artifact: AgentArtifactReference;
+      readonly profile: AgentTableProfile;
+      readonly modelText: string;
+    }
   | { readonly kind: "refused"; readonly refusal: AgentToolRefusal; readonly modelText: string }
   | { readonly kind: "unavailable"; readonly reasonCode: AgentToolUnavailableCode; readonly modelText: string };
 
@@ -254,6 +284,17 @@ const reportSchema = z.strictObject({
  * label would let a comparison attribute a plan to a statement that never produced
  * it — the exact mislabelling a before/after claim rests on not doing.
  */
+/**
+ * A profile names a TABLE, never columns and never SQL. The columns come from the
+ * run's own captured inventory, so a profile cannot be aimed at something the run
+ * never established exists — the same rule `compare_plans` follows about plans.
+ */
+const profileSelectorSchema = z.strictObject({
+  schema: z.string().optional(),
+  table: z.string().min(1),
+  depth: z.enum(["basic", "distribution", "pattern"]).optional(),
+});
+
 const planComparisonSchema = z.strictObject({
   before: z.string().min(1),
   after: z.string().min(1),
@@ -287,6 +328,13 @@ export const AGENT_TOOL_DEFINITIONS: Readonly<Record<AgentToolName, AgentToolDef
       "Ask the engine for the ESTIMATED plan of one read-only statement. The plan is described, never executed, so no timings are produced.",
     inputSchema: planStatementSchema,
     operationId: "sql.explain.estimate",
+  },
+  profile_table: {
+    name: "profile_table",
+    description:
+      "Profile one table the run has already inventoried. The server chooses the columns from the captured schema and composes the aggregates; you supply only the table and how deep to go. Depth basic counts rows and missing values, distribution adds distinct counts, pattern adds a shape test for personal data. Only COUNTS are returned — no value is ever read out of a column.",
+    inputSchema: profileSelectorSchema,
+    operationId: "sql.table.profile",
   },
   compare_plans: {
     name: "compare_plans",
@@ -343,10 +391,16 @@ const QUERY_OPTIMIZATION_TOOLS: readonly AgentToolDefinition[] = Object.freeze([
   AGENT_TOOL_DEFINITIONS.recommend_change,
 ]);
 
+/** The assessment template's own tool, on top of the read-class four. */
+const DATABASE_ASSESSMENT_TOOLS: readonly AgentToolDefinition[] = Object.freeze([
+  ...AGENT_MODE_TOOLS,
+  AGENT_TOOL_DEFINITIONS.profile_table,
+]);
+
 const WORKFLOW_TOOLS: Readonly<Record<AgentRunWorkflowType, readonly AgentToolDefinition[]>> = Object.freeze({
   investigation: AGENT_MODE_TOOLS,
   "query-optimization": QUERY_OPTIMIZATION_TOOLS,
-  "database-assessment": AGENT_MODE_TOOLS,
+  "database-assessment": DATABASE_ASSESSMENT_TOOLS,
 } satisfies Record<AgentRunWorkflowType, readonly AgentToolDefinition[]>);
 
 /**
@@ -379,6 +433,10 @@ const UNAVAILABLE_TEXT: Readonly<Record<AgentToolUnavailableCode, string>> = Obj
     "At least one evidence reference does not match anything this run produced. Cite an artifact this run actually read, or the schema snapshot it captured.",
   UNVERIFIABLE_PLAN:
     "At least one of those references is not an estimated plan this run produced. Inspect the plan of each statement first, then compare the two artifacts those inspections returned.",
+  TABLE_NOT_INVENTORIED:
+    "That table is not in the schema inventory this run captured. Call inspect_schema for it first, then profile it by the name the inventory uses.",
+  PROFILE_UNREADABLE:
+    "The profile ran but its result could not be read as counts. Try a shallower depth, or profile a different table.",
   IDENTICAL_PLANS:
     "Both sides of that comparison name the same plan, so there is no before and no after. Inspect the plan of your rewrite as well, then compare the two.",
   RECOMMENDATION_SHAPE_MISMATCH:
@@ -997,6 +1055,123 @@ function readPlanSide(
 }
 
 /**
+ * The findings, in the server's own words.
+ *
+ * A column NAME is untrusted database content, so it is fenced rather than spliced
+ * into a sentence the model would read as the server speaking. The finding codes
+ * and the counts are this repository's own.
+ */
+function describeFindings(findings: readonly AgentProfileFinding[]): string {
+  if (findings.length === 0) return "Nothing crossed a finding threshold.";
+  return fenceUntrustedContent(
+    findings.map((finding) => `${finding.column}: ${finding.code} — ${finding.detail}`).join("\n"),
+    { label: `${findings.length} profile finding(s)`, operationId: "sql.table.profile", reference: "server-derived" },
+  );
+}
+
+/**
+ * The table the run already inventoried, found by the name the model gave.
+ *
+ * Matched against the snapshot's own naming, which differs by engine: PostgreSQL
+ * qualifies as `schema.table`, SQLite does not. A model that names either form of
+ * a table it has seen is answered; one that names a table the run never captured
+ * is refused rather than sent to the database on a guess.
+ */
+function inventoriedTable(snapshot: AgentContextSnapshot, schema: string | undefined, table: string) {
+  const qualified = schema === undefined ? table : `${schema}.${table}`;
+  const exact = snapshot.tables.find((candidate) => candidate.name === qualified || candidate.name === table);
+  if (exact !== undefined) return exact;
+  if (schema !== undefined) return undefined;
+
+  // An unqualified name against a qualified inventory. PostgreSQL's capture names
+  // tables `schema.table` and SQLite's does not, so a model that has read either
+  // inventory may reasonably name a table without its schema. Resolved only when
+  // exactly ONE table ends that way: two schemas holding the same table name is
+  // precisely when a guess would profile the wrong one.
+  const suffix = `.${table}`;
+  const matches = snapshot.tables.filter((candidate) => candidate.name.endsWith(suffix));
+  return matches.length === 1 ? matches[0] : undefined;
+}
+
+/**
+ * The most recent inventory this run captured, read off its own ledger.
+ *
+ * The LAST one, because a run may capture more than once and the newest is the one
+ * its later statements were drafted against.
+ */
+function capturedSnapshot(events: readonly AgentRunEvent[]): AgentContextSnapshot | null {
+  let snapshot: AgentContextSnapshot | null = null;
+  for (const event of events) {
+    if (event.kind === "context-captured" && event.snapshot !== undefined) snapshot = event.snapshot;
+  }
+  return snapshot;
+}
+
+/**
+ * Bounded per-table profiling.
+ *
+ * The one tool here whose statement is composed from the RUN'S OWN inventory rather
+ * than from the model's arguments: the model names a table and a depth, and the
+ * server decides which columns that means and what to count. Everything the profile
+ * records is a count — `table-profile.ts` says why, and it is what makes profiling a
+ * table of personal data acceptable at all.
+ */
+export async function profileTableTool(
+  context: AgentToolContext,
+  run: Pick<AgentRunRecord, "runId" | "events">,
+  input: unknown,
+): Promise<AgentTableProfileOutcome> {
+  if (context.mode !== "agent") return unavailable("MODE_HAS_NO_TOOLS");
+  if (run.runId !== context.runId) {
+    throw new Error("agent tool layer: the profile's run record does not belong to this run");
+  }
+
+  const parsed = parseToolInput(profileSelectorSchema, input);
+  if (!parsed.ok) return unavailable("INVALID_TOOL_INPUT");
+
+  const snapshot = capturedSnapshot(run.events);
+  const table = snapshot === null ? undefined : inventoriedTable(snapshot, parsed.value.schema, parsed.value.table);
+  if (table === undefined) return unavailable("TABLE_NOT_INVENTORIED");
+
+  const depth = parsed.value.depth ?? "basic";
+  // Bounded here rather than in the composer: a wider table is profiled in more
+  // than one call, and the statement budget accounts for that honestly.
+  const columns = table.columns.slice(0, MAX_PROFILE_COLUMNS);
+  let sql: string;
+  try {
+    sql = composeTableProfile(context.connection.type, { ...parsed.value, depth }, columns);
+  } catch (error) {
+    return composedSqlOutcome(error) as AgentTableProfileOutcome;
+  }
+
+  const outcome = await executeAgentOperation(context, {
+    operationId: "sql.table.profile",
+    sql,
+    label: `profile of ${table.name}`,
+    ...(parsed.value.schema === undefined ? {} : { target: { schema: parsed.value.schema } }),
+  });
+  if (outcome.kind !== "completed") return outcome;
+
+  const stored = context.artifacts.get(outcome.artifact.correlationId, (context.clock ?? Date.now)());
+  const profile = stored === undefined ? null : readTableProfile(table.name, depth, columns, stored.value.rows);
+  if (profile === null) return unavailable("PROFILE_UNREADABLE");
+
+  // The inventory-derived finding rides along, so one profile is one complete
+  // statement about the table rather than two half-statements.
+  const findings = [...profile.findings, ...findUnindexedForeignKeys(table)];
+  return {
+    kind: "profiled",
+    artifact: outcome.artifact,
+    profile: { ...profile, findings },
+    // The correlation id is named because a report has to be able to CITE this:
+    // without it the assessment template could profile a table and then be unable
+    // to compose a cited claim about it, which its own goal verifier requires.
+    // Found by the scenario suite before any model saw it.
+    modelText: `Profiled ${table.name}: ${profile.rowCount} row(s), ${columns.length} column(s) at ${depth} depth, ${findings.length} finding(s), artifact ${outcome.artifact.correlationId}. Only counts were read; no value was returned from any column. ${describeFindings(findings)}`,
+  };
+}
+
+/**
  * The before/after comparison. Reaches no database: both plans were already read,
  * and this is the server stating what it sees in them.
  */
@@ -1101,7 +1276,11 @@ function matchesCard(change: "index" | "rewrite", statement: string): boolean {
 function verifiedAgainst(events: readonly AgentRunEvent[], reference: AgentEvidenceReference): boolean {
   for (const event of events) {
     if (reference.source === "artifact") {
-      if (event.kind === "tool-completed" && event.artifact.correlationId === reference.correlationId) return true;
+      // Both events that carry an artifact this run produced. A profile settles no
+      // step, so it writes no `tool-completed`; omitting it here made a profile
+      // uncitable and its own workflow's bar unreachable.
+      const artifact = event.kind === "tool-completed" || event.kind === "table-profiled" ? event.artifact : null;
+      if (artifact !== null && artifact.correlationId === reference.correlationId) return true;
     } else if (event.kind === "context-captured" && event.fingerprint === reference.fingerprint) return true;
   }
   return false;

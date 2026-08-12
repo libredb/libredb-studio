@@ -4,14 +4,43 @@ import {
   sqlExplainAnalyzeDescriptor,
   sqlExplainEstimateDescriptor,
   sqlQueryReadDescriptor,
+  sqlTableProfileDescriptor,
 } from "@/lib/db/operations/descriptors";
 
-const canonicalDescriptors = [sqlQueryReadDescriptor, sqlExplainEstimateDescriptor, sqlExplainAnalyzeDescriptor];
+const canonicalDescriptors = [
+  sqlQueryReadDescriptor,
+  sqlExplainEstimateDescriptor,
+  sqlExplainAnalyzeDescriptor,
+  sqlTableProfileDescriptor,
+];
 
 describe("canonical operation registry", () => {
-  test("registers exactly the three canonical descriptors — no write, DDL, or admin operation exists", () => {
+  test("registers exactly the four canonical descriptors — no write, DDL, or admin operation exists", () => {
+    // Four since #330 T3, which reopened a decision epic #325 had pinned at three.
+    // The assertion is exact-array equality on purpose: it is the one place a
+    // descriptor can be added without somebody noticing.
     const registry = createCanonicalOperationRegistry();
-    expect(registry.registeredIds()).toEqual(["sql.explain.analyze", "sql.explain.estimate", "sql.query.read"]);
+    expect(registry.registeredIds()).toEqual([
+      "sql.explain.analyze",
+      "sql.explain.estimate",
+      "sql.query.read",
+      "sql.table.profile",
+    ]);
+  });
+
+  test("profiling is a bounded DATA read that needs no approval, and is separately auditable", () => {
+    expect(sqlTableProfileDescriptor).toMatchObject({
+      id: "sql.table.profile",
+      riskClass: 1,
+      accessLevel: "data-read",
+      requiresApproval: false,
+      resourceCost: "heavy",
+      supportsDryRun: false,
+    });
+    // R1 is registrable only with a substantive verification marker naming a
+    // database-native boundary; the registry refuses a blank one.
+    expect(sqlTableProfileDescriptor.verification?.boundary).toContain("READ ONLY");
+    expect(sqlTableProfileDescriptor.verification?.reviewedBy).toContain("#330");
   });
 
   test("resolves every canonical id to its descriptor", () => {

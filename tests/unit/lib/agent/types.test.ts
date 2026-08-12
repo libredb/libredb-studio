@@ -124,6 +124,28 @@ const EVENTS: Record<AgentRunEvent["kind"], AgentRunEvent> = {
     rationale: "The filtered column has no index, so the plan reads the table whole.",
     evidence: [ARTIFACT_EVIDENCE],
   },
+  // The database-assessment template's own artifact: counts, and the findings the
+  // SERVER derived from them. Not one value out of any profiled column.
+  "table-profiled": {
+    kind: "table-profiled",
+    atMs: 8,
+    // The read that produced the counts, so a claim about the profile can cite it.
+    artifact: { ...ARTIFACT, operationId: "sql.table.profile" },
+    profile: {
+      table: "public.customers",
+      depth: "pattern",
+      rowCount: 4120,
+      columns: [{ column: "email", present: 4118, distinct: 4100, shaped: 4090 }],
+      findings: [
+        {
+          code: "suspected_pii",
+          column: "email",
+          detail:
+            "99% of the values are shaped like an email address. No value was read out of the database to establish this.",
+        },
+      ],
+    },
+  },
   // The uncited counterpart: what the model said when it did not compose a report.
   // A planning run's whole output is one of these, and it round-trips as plainly as
   // the rest — prose is already the most inert thing a ledger can hold.
