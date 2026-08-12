@@ -37,10 +37,23 @@ export interface AgentRunFollower {
   readonly runId: string | null;
   /** A start is in flight, or its ledger is still open. */
   readonly isBusy: boolean;
+  /**
+   * A stop has been asked for and the server has not refused it. Distinct from
+   * the ledger's own `stopRequested`: this covers the window before the request
+   * has been recorded, and it is cleared again if the ask fails, so a refused stop
+   * leaves the user able to ask once more.
+   */
+  readonly isStopping: boolean;
   readonly timeline: AgentRunTimeline;
   /** The app's own words about why the last attempt did not continue. */
   readonly error: string | null;
   readonly start: (input: AgentRunStartInput) => Promise<void>;
+  /**
+   * Asks the run to stop. It is an ASK: the run's own loop ends it at its next
+   * checkpoint (T7a), so nothing here reports the run as stopped — the ledger
+   * does that, through the entry the request writes.
+   */
+  readonly cancel: () => Promise<void>;
 }
 
 interface StartResponse {
@@ -56,6 +69,7 @@ export function useAgentRun(): AgentRunFollower {
   const [runId, setRunId] = useState<string | null>(null);
   const [entries, setEntries] = useState<readonly AgentLedgerEntry[]>([]);
   const [isBusy, setIsBusy] = useState(false);
+  const [isStopping, setIsStopping] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
@@ -111,6 +125,7 @@ export function useAgentRun(): AgentRunFollower {
       abortRef.current = controller;
 
       setIsBusy(true);
+      setIsStopping(false);
       setError(null);
       setEntries([]);
       setRunId(null);
@@ -153,5 +168,35 @@ export function useAgentRun(): AgentRunFollower {
     [follow],
   );
 
-  return { runId, isBusy, timeline: foldLedgerEntries(entries), error, start };
+  const cancel = useCallback(async (): Promise<void> => {
+    if (runId === null) return;
+
+    setIsStopping(true);
+    setError(null);
+    try {
+      // Carried on the same signal as the stream it belongs to, so a rail that
+      // goes away does not leave a request behind. It does NOT abort that
+      // controller: aborting is how this component stops following a run, and a
+      // stop request is the opposite — the run is expected to keep reporting until
+      // its loop reaches a checkpoint.
+      const res = await fetch(`/api/agent/runs/${encodeURIComponent(runId)}`, {
+        method: "DELETE",
+        signal: abortRef.current?.signal,
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as StartResponse;
+        throw new Error(typeof body.error === "string" ? body.error : `The run could not be stopped (${res.status})`);
+      }
+      // Nothing is set on success. The request wrote a ledger entry, and the
+      // stream is what delivers it — so what the rail shows is what the durable
+      // record says rather than what this call hoped for.
+    } catch (cancelError) {
+      if (abortRef.current?.signal.aborted !== true) {
+        setError(messageFor(cancelError));
+        setIsStopping(false);
+      }
+    }
+  }, [runId]);
+
+  return { runId, isBusy, isStopping, timeline: foldLedgerEntries(entries), error, start, cancel };
 }

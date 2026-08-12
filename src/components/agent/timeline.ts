@@ -1,5 +1,12 @@
+import { AGENT_EXECUTION_POLICY, AGENT_MAX_REPAIR_ATTEMPTS } from "@/lib/agent/execution-policy";
 import type { AgentLedgerEntry } from "@/lib/agent/run-store";
-import type { AgentRunEvent, AgentRunStatus, AgentToolRefusal } from "@/lib/agent/types";
+import type {
+  AgentEvidenceReference,
+  AgentReportClaim,
+  AgentRunEvent,
+  AgentRunStatus,
+  AgentToolRefusal,
+} from "@/lib/agent/types";
 
 /**
  * One run's ledger, turned into the timeline a user reads (#329 T10a).
@@ -21,6 +28,12 @@ import type { AgentRunEvent, AgentRunStatus, AgentToolRefusal } from "@/lib/agen
  *    there is no engine text to show because the refusal type carries none (T2).
  *    A database error is the only variant with a message, and that message is
  *    `quoted`, not narrated.
+ *
+ * The one VALUE import from the runtime modules is `execution-policy.ts`, and it
+ * is deliberate (#329 T10b): it is frozen constants with no runtime imports of its
+ * own, and the budget meter's ceilings have to be the numbers the server actually
+ * enforces rather than a second copy that can drift from them. Nothing else here
+ * imports a value from `src/lib/agent`.
  */
 
 export type AgentTimelineTone = "neutral" | "progress" | "refused" | "done";
@@ -38,19 +51,62 @@ export interface AgentTimelineItem {
   readonly quoted?: string;
 }
 
+/**
+ * One bound the server enforces, and what the run's ledger says it has spent.
+ *
+ * `limit` comes from `execution-policy.ts` itself, and `used` is counted from the
+ * durable entries the enforcement layer produced — never from a client-side
+ * estimate of what a call "probably" cost.
+ */
+export interface AgentBudgetGauge {
+  readonly id: "statements" | "database-time" | "repairs";
+  /** The app's own words. */
+  readonly label: string;
+  readonly used: number;
+  readonly limit: number;
+  readonly unit: "count" | "ms";
+}
+
+/** What one claim in a report rests on, resolved out of the run's own ledger. */
+export interface AgentEvidenceCitation {
+  readonly id: string;
+  /** The app's own words: which artifact or which capture. */
+  readonly label: string;
+  /** The app's own words about what the ledger holds for it. */
+  readonly detail: string;
+  /** False when this timeline holds no entry the reference names. */
+  readonly resolved: boolean;
+  /** Verbatim: the statement that produced the cited artifact, when there is one. */
+  readonly quoted?: string;
+  /** Verbatim: where in the evidence the model says the claim is. */
+  readonly locator?: string;
+}
+
+export interface AgentReportClaimView {
+  readonly id: string;
+  /** The model's own words. Rendered as quoted content, never as the app speaking. */
+  readonly quoted: string;
+  readonly citations: readonly AgentEvidenceCitation[];
+}
+
+export interface AgentRunReport {
+  readonly claims: readonly AgentReportClaimView[];
+}
+
 export interface AgentRunTimeline {
   readonly items: readonly AgentTimelineItem[];
   /** Folded from the ledger, never from what a request once returned. */
   readonly status: AgentRunStatus;
+  /**
+   * A stop has been asked for and the run has not reached its checkpoint yet.
+   * Read by the rail's stop control, which is why it exists at all (#329 T10b) —
+   * T10a left it out precisely because nothing read it then.
+   */
+  readonly stopRequested: boolean;
+  readonly budget: readonly AgentBudgetGauge[];
+  /** The run's composed report, or null while it has composed none. */
+  readonly report: AgentRunReport | null;
 }
-
-/*
- * A "stop requested" flag is deliberately NOT folded here. It would have no reader:
- * nothing in this task asks a run to stop, and this repository's standing position
- * (`src/workspace/types.ts:62-78`) is that a declared-but-unread field is the state
- * to avoid. The cancellation entry still becomes a timeline item, so the user sees
- * it; T10b's cancel control is what will need the flag, and adds it with its reader.
- */
 
 const LEDGER_KINDS: ReadonlySet<string> = new Set<AgentLedgerEntry["kind"]>([
   "run-opened",
@@ -163,23 +219,157 @@ function describeEntry(entry: AgentLedgerEntry): Omit<AgentTimelineItem, "id"> {
 }
 
 /**
+ * What the ledger holds about one artifact, so a citation can be resolved to the
+ * read that produced it — and, when the run drafted one, to its statement.
+ */
+interface CitedArtifact {
+  readonly operationId: string;
+  readonly rowCount: number;
+  readonly stepId: string;
+}
+
+interface LedgerIndex {
+  readonly artifacts: ReadonlyMap<string, CitedArtifact>;
+  /** step id → the statement the model drafted for it. */
+  readonly statements: ReadonlyMap<string, string>;
+  /** snapshot fingerprint → how many tables it covered. */
+  readonly captures: ReadonlyMap<string, number>;
+}
+
+function citationOf(reference: AgentEvidenceReference, id: string, index: LedgerIndex): AgentEvidenceCitation {
+  const locator = reference.locator === undefined ? {} : { locator: reference.locator };
+
+  if (reference.source === "artifact") {
+    const artifact = index.artifacts.get(reference.correlationId);
+    const label = `Artifact ${reference.correlationId}`;
+    if (artifact === undefined) return { id, label, detail: UNRESOLVED_DETAIL, resolved: false, ...locator };
+    const sql = index.statements.get(artifact.stepId);
+    return {
+      id,
+      label,
+      detail: `${artifact.rowCount} ${artifact.rowCount === 1 ? "row" : "rows"} via ${artifact.operationId}`,
+      resolved: true,
+      ...(sql === undefined ? {} : { quoted: sql }),
+      ...locator,
+    };
+  }
+
+  const tableCount = index.captures.get(reference.fingerprint);
+  const label = `Schema snapshot ${reference.fingerprint.slice(0, 8)}`;
+  if (tableCount === undefined) return { id, label, detail: UNRESOLVED_DETAIL, resolved: false, ...locator };
+  return {
+    id,
+    label,
+    detail: `${tableCount} ${tableCount === 1 ? "table" : "tables"}`,
+    resolved: true,
+    ...locator,
+  };
+}
+
+/*
+ * The server verified every reference against the run's own log before recording
+ * the report (`composeReportTool` refuses a claim it cannot verify), so a citation
+ * that does not resolve HERE means this timeline is missing the entry — a line the
+ * reader skipped, or a stream joined after it. Saying that is honest; rendering the
+ * reference as if the rail had checked it would not be.
+ */
+const UNRESOLVED_DETAIL = "not in the part of this run's timeline the rail has read";
+
+function reportOf(claims: readonly AgentReportClaim[], index: LedgerIndex): AgentRunReport {
+  return {
+    claims: claims.map((claim, claimIndex) => ({
+      id: `claim-${claimIndex}`,
+      quoted: claim.claim,
+      citations: claim.evidence.map((reference, evidenceIndex) =>
+        citationOf(reference, `claim-${claimIndex}-evidence-${evidenceIndex}`, index),
+      ),
+    })),
+  };
+}
+
+/**
  * Folds a ledger into what the rail renders. The status comes from the ledger and
  * nowhere else — the same rule the routes follow, so a run reported here says the
  * same thing as a run reported to the process that resumes it.
+ *
+ * The budget is counted the same way, and the counting rules are the enforcement
+ * layer's rather than this file's inventions:
+ *
+ *  - A statement is charged once per execution the pipeline ALLOWED and invoked.
+ *    `execution.ts` charges `statements: 1` on the success path and on the failure
+ *    path alike, so a completed read and an engine error each cost one. Note that
+ *    this is wider than "reached the database": `tools.ts` acquires the provider
+ *    inside the allowed callback on purpose, so an acquisition failure is accounted
+ *    as a spent statement although nothing ran — and it settles no step, so this
+ *    fold cannot see it either (`docs/BACKLOG.md` B13).
+ *  - A policy denial and an approval requirement charge nothing at all:
+ *    `execution.ts` returns before `tracker.beginExecution` on any non-allow, and
+ *    `AgentRepairLedger` consumes a repair attempt only for a database error.
+ *  - Database time is the elapsed time completed reads reported. A statement that
+ *    failed has none in the ledger, so none is invented for it — the caveat the
+ *    rail shows beside the meter is what says so.
+ *
+ * Every figure this produces is therefore a FLOOR on what the run has spent, and
+ * the rail says so rather than presenting it as exact. The ledger is narrower than
+ * the tracker in four known ways, all recorded: a failed statement's duration is
+ * absent (`docs/BACKLOG.md` B12), and B13 holds the other three — the run's schema
+ * capture reaches `executeAuditedOperation` through `captureContextSnapshot` rather
+ * than through the run loop's `runStep`, so its two-to-three catalog reads are
+ * charged without writing a `tool-completed` entry; an acquisition failure is
+ * charged a statement and settles no step; and a completed read reports the
+ * engine's own elapsed time while the tracker charges the span around the whole
+ * call. The list is what is KNOWN, not a proof that nothing else is missing.
  */
 export function foldLedgerEntries(entries: readonly AgentLedgerEntry[]): AgentRunTimeline {
   const items: AgentTimelineItem[] = [];
   let status: AgentRunStatus = "queued";
+  let stopRequested = false;
+  let statements = 0;
+  let databaseMs = 0;
+  let repairs = 0;
+  let claims: readonly AgentReportClaim[] | null = null;
+
+  const artifacts = new Map<string, CitedArtifact>();
+  const statementsByStep = new Map<string, string>();
+  const captures = new Map<string, number>();
 
   entries.forEach((entry, index) => {
+    if (entry.kind === "cancellation-requested") stopRequested = true;
     if (entry.kind === "event") {
-      if (entry.event.kind === "run-started") status = "running";
-      if (entry.event.kind === "run-finished") status = entry.event.status;
+      const { event } = entry;
+      if (event.kind === "run-started") status = "running";
+      else if (event.kind === "run-finished") status = event.status;
+      else if (event.kind === "context-captured") captures.set(event.fingerprint, event.tableCount);
+      else if (event.kind === "statement-drafted") statementsByStep.set(event.stepId, event.sql);
+      else if (event.kind === "report-composed") claims = event.claims;
+      else if (event.kind === "tool-completed") {
+        statements += 1;
+        databaseMs += event.artifact.summary.elapsedMs;
+        artifacts.set(event.artifact.correlationId, {
+          operationId: event.artifact.operationId,
+          rowCount: event.artifact.summary.rowCount,
+          stepId: event.stepId,
+        });
+      } else if (event.kind === "tool-refused" && event.refusal.class === "database-error") {
+        statements += 1;
+        repairs += 1;
+      }
     }
     // Indexed, because two entries can legitimately be identical in content and
     // timestamp (a resumed run replaying a step), and React needs distinct keys.
     items.push({ id: `entry-${index}`, ...describeEntry(entry) });
   });
 
-  return { items, status };
+  const budgets = AGENT_EXECUTION_POLICY.budgets;
+  return {
+    items,
+    status,
+    stopRequested,
+    budget: [
+      { id: "statements", label: "Statements", used: statements, limit: budgets.maxStatementsPerRun, unit: "count" },
+      { id: "database-time", label: "Database time", used: databaseMs, limit: budgets.maxTotalRunMs, unit: "ms" },
+      { id: "repairs", label: "Repair attempts", used: repairs, limit: AGENT_MAX_REPAIR_ATTEMPTS, unit: "count" },
+    ],
+    report: claims === null ? null : reportOf(claims, { artifacts, statements: statementsByStep, captures }),
+  };
 }

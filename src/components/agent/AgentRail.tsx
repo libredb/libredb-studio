@@ -1,12 +1,13 @@
 "use client";
 
 import React, { useEffect, useRef, useState } from "react";
-import { Bot, Loader2, Play } from "lucide-react";
+import { Bot, Loader2, Play, Square } from "lucide-react";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { useIsMobile } from "@/hooks/use-mobile";
-import type { AgentRunMode } from "@/lib/agent/types";
+import { AGENT_EXECUTION_POLICY, AGENT_MAX_MODEL_TURNS, AGENT_RUN_DEADLINE_MS } from "@/lib/agent/execution-policy";
+import type { AgentRunMode, AgentRunStatus } from "@/lib/agent/types";
 import { cn } from "@/lib/utils";
-import type { AgentTimelineTone } from "./timeline";
+import type { AgentBudgetGauge, AgentTimelineTone } from "./timeline";
 import { useAgentRun } from "./use-agent-run";
 
 /**
@@ -59,6 +60,24 @@ const MODE_LABELS: Readonly<Record<AgentRunMode, string>> = {
   agent: "Agent",
 };
 
+/** A run that is over cannot be asked for anything, so nothing is offered for it. */
+const LIVE_STATUSES: ReadonlySet<AgentRunStatus> = new Set<AgentRunStatus>(["queued", "running"]);
+
+const seconds = (ms: number): string => (ms / 1000).toFixed(1);
+
+/** The meter's own reading of one gauge, in the unit that gauge is bounded in. */
+function readGauge(gauge: AgentBudgetGauge): string {
+  if (gauge.unit === "ms") return `${seconds(gauge.used)} / ${seconds(gauge.limit)} s`;
+  return `${gauge.used} / ${gauge.limit}`;
+}
+
+/**
+ * What the run has left of that gauge, as a proportion. Clamped rather than
+ * trusted: a bound can be overrun by up to one statement (`budgets.ts` says so),
+ * and a bar past its own track would read as a larger allowance than exists.
+ */
+const gaugeFraction = (gauge: AgentBudgetGauge): number => Math.min(100, (gauge.used / gauge.limit) * 100);
+
 export function AgentRail({ connectionId, connectionName, sheetOpen = false, onSheetOpenChange }: AgentRailProps) {
   const [mode, setMode] = useState<AgentRunMode>("planning");
   const [objective, setObjective] = useState("");
@@ -89,6 +108,24 @@ export function AgentRail({ connectionId, connectionName, sheetOpen = false, onS
     if (connectionId === null || !canStart) return;
     void run.start({ mode, objective: objective.trim(), connectionId });
   };
+
+  /*
+    Stopping is the only control offered, and the two that are absent are absent
+    because the service cannot honour them rather than because they are unfinished:
+
+      - There is no PAUSE anywhere in `AgentRunService`. A run holds a database
+        connection and a budget while it is running, and "hold all of that
+        indefinitely" is not a capability this milestone built.
+      - RESUME exists (`POST /api/agent/drive`) but is authenticated by a
+        server-minted, single-purpose credential a browser never holds — it is the
+        seam for a machine producer (`docs/BACKLOG.md` B9), not a user control.
+
+    Neither is rendered even as a disabled button: a disabled control reads as a
+    capability that happens to be unavailable right now, which would be a claim
+    about this build that is not true.
+  */
+  const canStop =
+    run.runId !== null && LIVE_STATUSES.has(run.timeline.status) && !run.timeline.stopRequested && !run.isStopping;
 
   const content = (
     <div className="flex flex-col h-full min-h-0 bg-[#0a0a0a] text-zinc-100">
@@ -155,20 +192,33 @@ export function AgentRail({ connectionId, connectionName, sheetOpen = false, onS
               {run.timeline.status}
             </span>
           )}
-          <button
-            type="button"
-            data-testid="agent-start"
-            disabled={!canStart}
-            onClick={handleStart}
-            className="flex items-center gap-1 px-2 py-1 rounded text-xs bg-blue-500/15 text-blue-300 hover:bg-blue-500/25 disabled:opacity-40 disabled:hover:bg-blue-500/15 transition-colors"
-          >
-            {run.isBusy ? (
-              <Loader2 strokeWidth={1.5} className="w-3 h-3 animate-spin" />
-            ) : (
-              <Play strokeWidth={1.5} className="w-3 h-3" />
+          <div className="flex items-center gap-1">
+            {canStop && (
+              <button
+                type="button"
+                data-testid="agent-stop"
+                onClick={() => void run.cancel()}
+                className="flex items-center gap-1 px-2 py-1 rounded text-xs bg-amber-500/15 text-amber-300 hover:bg-amber-500/25 transition-colors"
+              >
+                <Square strokeWidth={1.5} className="w-3 h-3" />
+                Stop
+              </button>
             )}
-            Start
-          </button>
+            <button
+              type="button"
+              data-testid="agent-start"
+              disabled={!canStart}
+              onClick={handleStart}
+              className="flex items-center gap-1 px-2 py-1 rounded text-xs bg-blue-500/15 text-blue-300 hover:bg-blue-500/25 disabled:opacity-40 disabled:hover:bg-blue-500/15 transition-colors"
+            >
+              {run.isBusy ? (
+                <Loader2 strokeWidth={1.5} className="w-3 h-3 animate-spin" />
+              ) : (
+                <Play strokeWidth={1.5} className="w-3 h-3" />
+              )}
+              Start
+            </button>
+          </div>
         </div>
 
         {run.error !== null && (
@@ -178,32 +228,116 @@ export function AgentRail({ connectionId, connectionName, sheetOpen = false, onS
         )}
       </div>
 
-      <ol data-testid="agent-timeline" aria-live="polite" className="flex-1 min-h-0 overflow-auto p-2 space-y-1">
-        {run.timeline.items.length === 0 && (
-          <li data-testid="agent-timeline-empty" className="p-2 text-xs text-zinc-600">
-            No activity yet. A run's steps appear here as they are recorded.
-          </li>
-        )}
-        {run.timeline.items.map((item) => (
-          <li key={item.id} data-testid="agent-timeline-item" className="rounded p-2 hover:bg-white/5">
-            <div className="flex items-center gap-2">
-              <span className={cn("w-1.5 h-1.5 rounded-full shrink-0", TONE_CLASSES[item.tone])} />
-              <span className="text-xs text-zinc-300">{item.headline}</span>
+      {/*
+        The meter reports what the server ENFORCES, and reads every consumption off
+        the run's own ledger. Three bounds can be measured that way; the rest are
+        stated as the ceilings they are, because nothing durable records their
+        consumption — the wall-clock deadline and the model-turn count live in the
+        process driving the run, and this build enforces no token budget at all, so
+        no token figure is shown rather than one that means nothing.
+
+        Every measured figure is a FLOOR on the spend, not the spend: the ledger is
+        narrower than the tracker in three known ways (`docs/BACKLOG.md` B12, B13),
+        and the caveat below names all three rather than leaving a user to read the
+        gauges as exact.
+      */}
+      <div data-testid="agent-budget" className="px-3 py-2 border-b border-white/5 shrink-0 space-y-1.5">
+        {run.timeline.budget.map((gauge) => (
+          <div key={gauge.id} data-testid={`agent-budget-${gauge.id}`}>
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-xs text-zinc-500">{gauge.label}</span>
+              <span className="font-mono text-[0.625rem] text-zinc-400">{readGauge(gauge)}</span>
             </div>
-            {item.detail !== undefined && <p className="mt-0.5 pl-3.5 text-xs text-zinc-500">{item.detail}</p>}
-            {/*
+            <div className="mt-1 h-0.5 rounded-full bg-white/5">
+              <div
+                data-testid={`agent-budget-${gauge.id}-bar`}
+                className="h-full rounded-full bg-blue-400/60"
+                style={{ width: `${gaugeFraction(gauge)}%` }}
+              />
+            </div>
+          </div>
+        ))}
+        <p data-testid="agent-budget-limits" className="pt-0.5 text-[0.625rem] text-zinc-600">
+          Each statement gets {seconds(AGENT_EXECUTION_POLICY.budgets.statementTimeoutMs)} s, each drive{" "}
+          {(AGENT_RUN_DEADLINE_MS / 60_000).toFixed(1)} min and at most {AGENT_MAX_MODEL_TURNS} model turns.
+        </p>
+        <p data-testid="agent-budget-caveats" className="text-[0.625rem] text-zinc-600">
+          Every ceiling is per drive, so a run resumed after a restart starts each of them again and these totals can
+          read past a single drive's ceiling. What is counted comes from the run's ledger, which records less than the
+          server charges: the schema capture's catalog reads are not itemized, a statement that failed at the database
+          records no duration, and a completed read reports the engine's own elapsed time rather than the span the
+          budget was charged. So a spend shown here is a floor, never a ceiling. On SQLite a statement over its timeout
+          is refused once it returns, not interrupted while it runs.
+        </p>
+      </div>
+
+      <div className="flex-1 min-h-0 overflow-auto">
+        <ol data-testid="agent-timeline" aria-live="polite" className="p-2 space-y-1">
+          {run.timeline.items.length === 0 && (
+            <li data-testid="agent-timeline-empty" className="p-2 text-xs text-zinc-600">
+              No activity yet. A run's steps appear here as they are recorded.
+            </li>
+          )}
+          {run.timeline.items.map((item) => (
+            <li key={item.id} data-testid="agent-timeline-item" className="rounded p-2 hover:bg-white/5">
+              <div className="flex items-center gap-2">
+                <span className={cn("w-1.5 h-1.5 rounded-full shrink-0", TONE_CLASSES[item.tone])} />
+                <span className="text-xs text-zinc-300">{item.headline}</span>
+              </div>
+              {item.detail !== undefined && <p className="mt-0.5 pl-3.5 text-xs text-zinc-500">{item.detail}</p>}
+              {/*
               Verbatim content from the model, the engine or the user, kept in its own
               block rather than folded into a sentence: it is untrusted input, and the
               user should be able to see where the app stops speaking.
             */}
-            {item.quoted !== undefined && (
-              <pre className="mt-1 ml-3.5 overflow-x-auto rounded bg-black/40 p-1.5 font-mono text-[0.625rem] text-zinc-400 whitespace-pre-wrap">
-                {item.quoted}
-              </pre>
-            )}
-          </li>
-        ))}
-      </ol>
+              {item.quoted !== undefined && (
+                <pre className="mt-1 ml-3.5 overflow-x-auto rounded bg-black/40 p-1.5 font-mono text-[0.625rem] text-zinc-400 whitespace-pre-wrap">
+                  {item.quoted}
+                </pre>
+              )}
+            </li>
+          ))}
+        </ol>
+
+        {/*
+          The run's conclusion, and the one place a user can check it: every claim
+          is the model's own prose — quoted, never narrated as the app speaking —
+          and every citation names something this run's ledger holds. The server
+          already refused a claim it could not verify (`composeReportTool`), so a
+          citation that does not resolve here is a gap in what this rail has read,
+          and says so rather than looking checked.
+        */}
+        {run.timeline.report !== null && (
+          <section data-testid="agent-report" className="border-t border-white/5 p-2 space-y-2">
+            <h2 className="px-1 text-xs font-medium text-zinc-300">Report</h2>
+            {run.timeline.report.claims.map((claim) => (
+              <div key={claim.id} data-testid="agent-report-claim" className="rounded p-2 hover:bg-white/5">
+                <pre className="overflow-x-auto rounded bg-black/40 p-1.5 font-mono text-[0.625rem] text-zinc-300 whitespace-pre-wrap">
+                  {claim.quoted}
+                </pre>
+                <ul className="mt-1 space-y-1">
+                  {claim.citations.map((citation) => (
+                    <li key={citation.id} data-testid="agent-report-citation" className="pl-1.5 text-xs">
+                      <span className={citation.resolved ? "text-zinc-400" : "text-amber-400/80"}>
+                        {citation.label}
+                      </span>
+                      <span className="ml-1 text-zinc-600">{citation.detail}</span>
+                      {citation.locator !== undefined && (
+                        <span className="ml-1 font-mono text-[0.625rem] text-zinc-500">{citation.locator}</span>
+                      )}
+                      {citation.quoted !== undefined && (
+                        <pre className="mt-0.5 overflow-x-auto rounded bg-black/40 p-1.5 font-mono text-[0.625rem] text-zinc-400 whitespace-pre-wrap">
+                          {citation.quoted}
+                        </pre>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+          </section>
+        )}
+      </div>
     </div>
   );
 

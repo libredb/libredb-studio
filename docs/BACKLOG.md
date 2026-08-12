@@ -1073,3 +1073,84 @@ Two things have to land together whenever a producer arrives, and neither is saf
 
 Done when a run whose process died is picked up without a person asking, no step is performed twice
 while that happens, and B6's per-drive cost ceilings are accounted for across the resumes it causes.
+
+### B10. No token budget is enforced, so the rail's budget meter reports none
+
+Opened by #329 T10b. The task's bar names tokens among the figures the meter should report, and the
+meter deliberately does not show one: nothing in this repository bounds an agent run's token spend.
+`AGENT_EXECUTION_POLICY`'s budgets are statement-shaped (`src/lib/agent/execution-policy.ts`),
+`AGENT_MAX_MODEL_TURNS` bounds model TURNS rather than their size, and the run loop never reads the
+SDK's `usage` at all (`src/lib/agent/investigation.ts` consumes `fullStream` parts and the assistant
+messages, nothing else). A token figure would therefore be a number the server does not enforce,
+shown next to four that it does — which is the one thing that bar forbids, so the meter states the
+turn ceiling instead and says nothing about tokens.
+
+Closing it is two changes that have to land together: reading `usage` off each turn and recording it
+in the run's ledger (a new field on `run-finished`, or a new event kind — T2's union is closed, so
+this is a deliberate widening rather than an addition anyone can make in passing), and a ceiling in
+`execution-policy.ts` that the loop actually refuses on. Done when a run that exceeds a configured
+token budget ends with a reason a user can read, and the meter shows the same number the loop
+enforced.
+
+### B11. The rail can stop a run but cannot pause or resume one
+
+Opened by #329 T10b. `AgentRunService` has no pause: a run holds a provider and a budget while it is
+running, and nothing in this milestone can put those down and pick them up again. Resuming exists
+(`POST /api/agent/drive`, `driveAgentRun`) but is authenticated by a server-minted single-purpose
+credential a browser never holds — it is the seam a machine producer will use (B9), not a user
+control. The rail therefore offers stop and nothing else, and it does not render a disabled pause or
+resume, because a disabled control reads as a capability that is merely unavailable right now.
+
+Resume becomes offerable the moment B9's producer exists — a user-visible "pick this run up" is then
+just asking for a delivery. Pause is the larger one: it needs a run state between running and
+terminal that releases the run's resources without ending it, and a resumed run would have to
+re-acquire them, which is exactly the path B6 already complicates. Done when either control exists in
+the service with its own ledger record, and the rail renders it because the service can honour it.
+
+### B12. A statement that failed at the database records no duration, so the meter's database time counts completed reads only
+
+Opened by #329 T10b. `ExecutionBudgetTracker` charges `maxTotalRunMs` from every execution's elapsed
+time, on the failure path as well as the success one (`execution.ts` calls `endExecution` with
+`statements: 1` in both). The durable ledger is narrower: `tool-completed` carries the artifact's
+`summary.elapsedMs`, while `tool-refused` carries an `AgentToolRefusal`, whose database-error variant
+records a fingerprint and the engine's message and no duration at all (`src/lib/agent/types.ts`). The
+rail folds its meter from the ledger, so its database-time figure is the sum over completed reads and
+sits BELOW what the tracker enforced whenever a statement failed.
+
+The rail says so beside the meter rather than quietly rounding — under-reporting the time a bound has
+already spent is the direction that misleads. Fixing it means recording the elapsed time of a failed
+execution somewhere durable; the natural place is the refusal itself, which is a T2 contract change
+and therefore deliberate rather than incidental. Done when a run whose statement failed shows the same
+database time the tracker charged it, with a test that fails on the current under-count.
+
+### B13. Three spends the agent run ledger never records, so the budget meter reads low
+
+Opened by #329 T10b, found by the task's own fresh-context review rather than by writing the meter.
+
+The largest is the schema capture. `captureContextSnapshot` (`src/lib/agent/context-snapshot.ts`)
+calls `inspectSchemaTool` directly, once per catalog kind — three reads on PostgreSQL, two on SQLite
+(`CATALOG_PLANS`) — and each one goes through `executeAuditedOperation` and is charged `statements: 1`
+plus its elapsed time against exactly the budget the meter displays. What it does NOT go through is
+the run loop's `runStep`, which is the only writer of `tool-completed`; the capture records one summary
+`context-captured` entry instead. On an agent-mode drive with no reusable snapshot in its ledger — the
+case `establishContext` actually reads a catalog in, since a planning run captures nothing and a
+resumed run reuses what it recorded — a ledger-folded meter therefore reads "0 / 20 statements" at the
+moment two or three are already spent, before the model's first turn, and a capture that FAILS records
+no entry at all while still having paid for its reads.
+
+Two smaller mismatches belong with it. An acquisition failure is accounted as one executed statement
+although nothing ran — `tools.ts` acquires the provider inside the allowed callback deliberately, so
+that a denied call never opens a pool — and it propagates out of the tool, leaving the step with a
+`tool-invoked` entry and no settlement, so the fold cannot see it. And a `tool-completed` entry carries
+the provider's own `summary.elapsedMs`, while `maxTotalRunMs` is charged the span the execution layer
+measured around the whole call (`execution.ts`), which also covers that acquisition. All three gaps run
+in the same direction — the meter under-reports — which is why the rail states its figures as a floor
+rather than as the spend, and why the caveat it shows is a list of what is known rather than a proof
+that the list is complete.
+
+Either half closes the same way: give the capture path a durable per-read record, or read the meter
+from the tracker's own accounting instead of from the ledger. The second is not a drop-in — the
+tracker is process-local and `releaseExecutionRun` drops a run's accounting when it ends, so a
+finished run would report zero — which is why the ledger fold was chosen and its gap recorded rather
+than papered over. Done when a run that has captured its schema shows the catalog reads it paid for,
+with a test that fails on the current under-count.

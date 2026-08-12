@@ -55,6 +55,69 @@ const OPENED_LINE = `${JSON.stringify({
 
 const STARTED_LINE = `${JSON.stringify({ kind: "event", event: { kind: "run-started", atMs: 1_001, mode: "planning" } })}\n`;
 
+const COMPLETED_LINE = `${JSON.stringify({
+  kind: "event",
+  event: {
+    kind: "tool-completed",
+    atMs: 1_002,
+    stepId: "s1",
+    artifact: {
+      correlationId: "corr_9",
+      runId: "arun_1",
+      operationId: "sql.query.read",
+      summary: { rowCount: 3, columnNames: ["id", "total"], elapsedMs: 1_500 },
+    },
+  },
+})}\n`;
+
+/** A drive whose database time already exceeds the per-drive ceiling (`docs/BACKLOG.md` B6). */
+const OVERSPENT_LINE = `${JSON.stringify({
+  kind: "event",
+  event: {
+    kind: "tool-completed",
+    atMs: 1_002,
+    stepId: "s9",
+    artifact: {
+      correlationId: "corr_over",
+      runId: "arun_1",
+      operationId: "sql.query.read",
+      summary: { rowCount: 1, columnNames: ["id"], elapsedMs: 90_000 },
+    },
+  },
+})}\n`;
+
+const DRAFTED_LINE = `${JSON.stringify({
+  kind: "event",
+  event: {
+    kind: "statement-drafted",
+    atMs: 1_002,
+    stepId: "s1",
+    sql: "SELECT count(*) FROM orders",
+    rationale: "count the orders",
+  },
+})}\n`;
+
+const REPORT_LINE = `${JSON.stringify({
+  kind: "event",
+  event: {
+    kind: "report-composed",
+    atMs: 1_003,
+    claims: [
+      {
+        claim: "checkout is slow because orders is scanned",
+        evidence: [{ source: "artifact", correlationId: "corr_9", locator: "row 2, total" }],
+      },
+    ],
+  },
+})}\n`;
+
+const CANCELLED_LINE = `${JSON.stringify({ kind: "cancellation-requested", atMs: 1_004, bySessionId: "ada" })}\n`;
+
+const FINISHED_LINE = `${JSON.stringify({
+  kind: "event",
+  event: { kind: "run-finished", atMs: 1_005, status: "succeeded" },
+})}\n`;
+
 const DEFAULT_PROPS = {
   connectionId: "seed:sales",
   connectionName: "Sales",
@@ -462,6 +525,275 @@ describe("AgentRail", () => {
     expect(queryByTestId("agent-rail-sheet")).toBeNull();
     rerender(<AgentRail {...DEFAULT_PROPS} sheetOpen={false} onSheetOpenChange={onSheetOpenChange} />);
     expect(queryByTestId("agent-rail-panel")).toBeTruthy();
+  });
+
+  /**
+   * The stop control (#329 T10b).
+   *
+   * Stopping is an ASK, not an outcome — the run's own loop ends it at its next
+   * checkpoint (T7a) — so what these pin is that the ask reaches the service and
+   * that the rail then reports what the ledger says, never what the click hoped.
+   */
+  describe("controls", () => {
+    async function startRun(lines: readonly string[], props = DEFAULT_PROPS) {
+      const fetchMock = mockAgentFetch(lines);
+      const view = render(<AgentRail {...props} />);
+      fireEvent.change(view.getByTestId("agent-objective"), { target: { value: "why is checkout slow" } });
+      await act(async () => {
+        fireEvent.click(view.getByTestId("agent-start"));
+      });
+      return { ...view, fetchMock };
+    }
+
+    test("there is nothing to stop before a run exists", () => {
+      const { queryByTestId } = render(<AgentRail {...DEFAULT_PROPS} />);
+
+      expect(queryByTestId("agent-stop")).toBeNull();
+    });
+
+    test("a live run can be asked to stop, and the ask reaches the service", async () => {
+      const { findByTestId, fetchMock } = await startRun([OPENED_LINE, STARTED_LINE]);
+
+      await act(async () => {
+        fireEvent.click(await findByTestId("agent-stop"));
+      });
+
+      const [url, init] = fetchMock.mock.calls[2];
+      expect(url).toBe("/api/agent/runs/arun_1");
+      expect(init?.method).toBe("DELETE");
+    });
+
+    /**
+     * An ask the server accepted is not asked again, even before its ledger entry
+     * has arrived — and nothing here reports the run as stopped. That is the
+     * contract: the run's own loop ends it at its next checkpoint, so what the rail
+     * shows next comes from the ledger.
+     */
+    test("an accepted stop is not repeated while its ledger entry is still on the way", async () => {
+      const { findByTestId, queryByTestId, fetchMock } = await startRun([OPENED_LINE, STARTED_LINE]);
+
+      await act(async () => {
+        fireEvent.click(await findByTestId("agent-stop"));
+      });
+
+      expect(queryByTestId("agent-stop")).toBeNull();
+      expect(queryByTestId("agent-error")).toBeNull();
+      // The status still says what the ledger says, not what the ask hoped for.
+      expect((await findByTestId("agent-run-status")).textContent).toBe("running");
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+    });
+
+    test("a run whose stop the ledger already records is not asked twice", async () => {
+      const { queryByTestId, findAllByTestId } = await startRun([OPENED_LINE, STARTED_LINE, CANCELLED_LINE]);
+
+      await findAllByTestId("agent-timeline-item");
+      expect(queryByTestId("agent-stop")).toBeNull();
+    });
+
+    test("a run that has ended cannot be stopped", async () => {
+      const { queryByTestId, findAllByTestId } = await startRun([OPENED_LINE, STARTED_LINE, FINISHED_LINE]);
+
+      await findAllByTestId("agent-timeline-item");
+      expect(queryByTestId("agent-stop")).toBeNull();
+    });
+
+    test("a stop the server refuses is reported, and the ask can be made again", async () => {
+      mockAgentFetch([OPENED_LINE, STARTED_LINE]);
+      const streamed = globalThis.fetch;
+      const { getByTestId, findByTestId } = render(<AgentRail {...DEFAULT_PROPS} />);
+      fireEvent.change(getByTestId("agent-objective"), { target: { value: "why is checkout slow" } });
+      await act(async () => {
+        fireEvent.click(getByTestId("agent-start"));
+      });
+
+      globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+        if (init?.method === "DELETE") return jsonResponse({ error: "agent run is already succeeded" }, 409);
+        return streamed(input, init);
+      }) as unknown as typeof fetch;
+      await act(async () => {
+        fireEvent.click(await findByTestId("agent-stop"));
+      });
+
+      expect((await findByTestId("agent-error")).textContent).toContain("already succeeded");
+      // Not swallowed into a permanent "stopping" state: the ask failed, so the
+      // control comes back rather than leaving the user with a run they cannot stop.
+      expect(await findByTestId("agent-stop")).toBeTruthy();
+    });
+
+    test("a stop that never reaches the server reports that", async () => {
+      mockAgentFetch([OPENED_LINE, STARTED_LINE]);
+      const streamed = globalThis.fetch;
+      const { getByTestId, findByTestId } = render(<AgentRail {...DEFAULT_PROPS} />);
+      fireEvent.change(getByTestId("agent-objective"), { target: { value: "why is checkout slow" } });
+      await act(async () => {
+        fireEvent.click(getByTestId("agent-start"));
+      });
+
+      globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+        if (init?.method === "DELETE") throw new Error("network down");
+        return streamed(input, init);
+      }) as unknown as typeof fetch;
+      await act(async () => {
+        fireEvent.click(await findByTestId("agent-stop"));
+      });
+
+      expect((await findByTestId("agent-error")).textContent).toContain("network down");
+    });
+
+    /**
+     * Pausing and resuming are not offered, and that is the bar rather than an
+     * omission: `AgentRunService` has no pause at all, and the resume path
+     * (`POST /api/agent/drive`) is authenticated by a server-minted machine
+     * credential a browser never holds. A control the service cannot honour is not
+     * rendered — not even disabled, which would read as a capability that is merely
+     * unavailable right now.
+     */
+    test("no pause or resume control is offered, because the service can honour neither", async () => {
+      const { queryByTestId, findAllByTestId } = await startRun([OPENED_LINE, STARTED_LINE]);
+
+      await findAllByTestId("agent-timeline-item");
+      expect(queryByTestId("agent-pause")).toBeNull();
+      expect(queryByTestId("agent-resume")).toBeNull();
+    });
+  });
+
+  /**
+   * The budget meter (#329 T10b): every figure is one the server enforces, and
+   * every consumption is read off the run's durable ledger.
+   */
+  describe("budget meter", () => {
+    test("an untouched meter shows the ceilings this server enforces", () => {
+      const { getByTestId } = render(<AgentRail {...DEFAULT_PROPS} />);
+
+      expect(getByTestId("agent-budget-statements").textContent).toContain("0 / 20");
+      expect(getByTestId("agent-budget-database-time").textContent).toContain("0.0 / 60.0 s");
+      expect(getByTestId("agent-budget-repairs").textContent).toContain("0 / 3");
+    });
+
+    test("a run's consumption comes from its ledger", async () => {
+      mockAgentFetch([OPENED_LINE, STARTED_LINE, COMPLETED_LINE]);
+      const { getByTestId, findByText } = render(<AgentRail {...DEFAULT_PROPS} />);
+      fireEvent.change(getByTestId("agent-objective"), { target: { value: "why is checkout slow" } });
+      await act(async () => {
+        fireEvent.click(getByTestId("agent-start"));
+      });
+
+      await findByText("1 / 20");
+      expect(getByTestId("agent-budget-database-time").textContent).toContain("1.5 / 60.0 s");
+    });
+
+    /**
+     * `docs/BACKLOG.md` A1: SQLite has no interrupt, so its statement timeout is
+     * checked after the statement returns. A meter that showed a timeout without
+     * saying so would imply a preemption the runtime cannot perform.
+     */
+    test("the meter says plainly that a SQLite statement is reported rather than interrupted", () => {
+      const { getByTestId } = render(<AgentRail {...DEFAULT_PROPS} />);
+
+      const caveats = getByTestId("agent-budget-caveats").textContent ?? "";
+      expect(caveats).toContain("SQLite");
+      expect(caveats).toContain("not interrupted");
+    });
+
+    /**
+     * A ceiling is per drive while the ledger spans every drive, so a resumed run
+     * can fold to more than one drive's allowance. The numeral says what the run
+     * actually spent — hiding that would be the misleading direction — while the
+     * bar is clamped, because a bar past its own track reads as a larger allowance
+     * than exists.
+     */
+    test("a run past a per-drive ceiling shows the real figure and a bar that does not overflow", async () => {
+      mockAgentFetch([OPENED_LINE, STARTED_LINE, OVERSPENT_LINE]);
+      const { getByTestId, findByText } = render(<AgentRail {...DEFAULT_PROPS} />);
+      fireEvent.change(getByTestId("agent-objective"), { target: { value: "why is checkout slow" } });
+      await act(async () => {
+        fireEvent.click(getByTestId("agent-start"));
+      });
+
+      await findByText("90.0 / 60.0 s");
+      expect((getByTestId("agent-budget-database-time-bar") as HTMLElement).style.width).toBe("100%");
+    });
+
+    /**
+     * The ledger records less than the tracker charges, in three known ways
+     * (`docs/BACKLOG.md` B12 and B13) — the largest being that the run's schema
+     * capture reaches `executeAuditedOperation` without going through `runStep`, so
+     * its two-to-three catalog reads are paid for and never itemized. A meter that
+     * did not say so would read as exact while sitting two statements low from the
+     * first turn.
+     */
+    test("the meter says its figures are a floor, and names what the ledger leaves out", () => {
+      const { getByTestId } = render(<AgentRail {...DEFAULT_PROPS} />);
+
+      const caveats = getByTestId("agent-budget-caveats").textContent ?? "";
+      expect(caveats).toContain("schema capture's catalog reads are not itemized");
+      expect(caveats).toContain("records no duration");
+      expect(caveats).toContain("a floor, never a ceiling");
+    });
+
+    // Every ceiling is per drive (`docs/BACKLOG.md` B6), so a resumed run starts
+    // each of them again. A meter that read as a per-run total would understate
+    // what a run can cost.
+    test("the meter states the limits it cannot measure, and that they are per drive", () => {
+      const { getByTestId } = render(<AgentRail {...DEFAULT_PROPS} />);
+
+      const limits = getByTestId("agent-budget-limits").textContent ?? "";
+      expect(limits).toContain("10.0 s");
+      expect(limits).toContain("5.0 min");
+      expect(limits).toContain("16");
+      expect(getByTestId("agent-budget-caveats").textContent).toContain("per drive");
+    });
+  });
+
+  /**
+   * Evidence citations (#329 T10b). The server refuses a claim whose evidence does
+   * not match something the run produced; the rail's job is to show the user what
+   * each claim rests on, and to keep the model's own words visibly the model's.
+   */
+  describe("evidence citations", () => {
+    test("a composed report renders its claims quoted, with what backs each of them", async () => {
+      mockAgentFetch([OPENED_LINE, STARTED_LINE, DRAFTED_LINE, COMPLETED_LINE, REPORT_LINE]);
+      const { getByTestId, findAllByTestId } = render(<AgentRail {...DEFAULT_PROPS} />);
+      fireEvent.change(getByTestId("agent-objective"), { target: { value: "why is checkout slow" } });
+      await act(async () => {
+        fireEvent.click(getByTestId("agent-start"));
+      });
+
+      const claims = await findAllByTestId("agent-report-claim");
+      expect(claims).toHaveLength(1);
+      expect(claims[0].textContent).toContain("checkout is slow because orders is scanned");
+
+      const citations = getByTestId("agent-report").querySelectorAll('[data-testid="agent-report-citation"]');
+      expect(citations).toHaveLength(1);
+      expect(citations[0].textContent).toContain("Artifact corr_9");
+      expect(citations[0].textContent).toContain("3 rows via sql.query.read");
+      // The model's own pointer into that evidence, carried through as its words.
+      expect(citations[0].textContent).toContain("row 2, total");
+      // And the statement the artifact came from, quoted rather than narrated.
+      expect(citations[0].querySelector("pre")?.textContent).toBe("SELECT count(*) FROM orders");
+    });
+
+    test("a run with no report renders no report section", () => {
+      const { queryByTestId } = render(<AgentRail {...DEFAULT_PROPS} />);
+
+      expect(queryByTestId("agent-report")).toBeNull();
+    });
+
+    // The rail joined the stream after the read it cites, or skipped the line that
+    // carried it. The server had already verified the reference, so the honest
+    // rendering says what THIS timeline is missing rather than looking checked.
+    test("a citation whose entry this timeline never saw is shown as unresolved, not as checked", async () => {
+      mockAgentFetch([OPENED_LINE, STARTED_LINE, REPORT_LINE]);
+      const { getByTestId, findAllByTestId } = render(<AgentRail {...DEFAULT_PROPS} />);
+      fireEvent.change(getByTestId("agent-objective"), { target: { value: "why is checkout slow" } });
+      await act(async () => {
+        fireEvent.click(getByTestId("agent-start"));
+      });
+
+      const [citation] = await findAllByTestId("agent-report-citation");
+      expect(citation.textContent).toContain("not in the part of this run's timeline the rail has read");
+      expect(citation.querySelector("pre")).toBeNull();
+    });
   });
 
   test("the sheet closes through the caller that opened it", async () => {

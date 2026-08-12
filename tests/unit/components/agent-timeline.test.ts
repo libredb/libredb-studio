@@ -15,6 +15,7 @@
 
 import { describe, test, expect } from "bun:test";
 import { foldLedgerEntries, parseLedgerLine } from "@/components/agent/timeline";
+import { AGENT_EXECUTION_POLICY, AGENT_MAX_REPAIR_ATTEMPTS } from "@/lib/agent/execution-policy";
 import type { AgentLedgerEntry } from "@/lib/agent/run-store";
 
 const OPENED: AgentLedgerEntry = {
@@ -318,5 +319,368 @@ describe("foldLedgerEntries", () => {
     ]);
 
     expect(new Set(view.items.map((item) => item.id)).size).toBe(2);
+  });
+});
+
+/**
+ * The stop flag (#329 T10b). T10a deliberately did NOT fold one, because nothing
+ * asked a run to stop and this repository's standing position is that a
+ * declared-but-unread field is the state to avoid. T10b's stop control is its
+ * reader, so the flag arrives with it.
+ */
+describe("foldLedgerEntries — a pending stop", () => {
+  test("a run nobody has asked to stop reports none", () => {
+    expect(foldLedgerEntries([OPENED]).stopRequested).toBe(false);
+  });
+
+  test("a stop request is visible to the controls, not only in the timeline", () => {
+    const view = foldLedgerEntries([
+      OPENED,
+      event({ kind: "event", event: { kind: "run-started", atMs: 2, mode: "agent" } }),
+      { kind: "cancellation-requested", atMs: 13, bySessionId: "ada" },
+    ]);
+
+    expect(view.stopRequested).toBe(true);
+    // Still running: the request is an ask, and the run's own loop is what ends it.
+    expect(view.status).toBe("running");
+  });
+});
+
+/**
+ * The budget meter (#329 T10b).
+ *
+ * Every figure here is one the SERVER enforces, and every consumption is read off
+ * the run's own durable ledger rather than estimated in the browser:
+ *
+ *  - A statement is charged once per execution the pipeline ALLOWED and invoked
+ *    (`execution.ts` charges `statements: 1` on the success and the failure path
+ *    alike), so a completed read and an engine error each cost one.
+ *  - A policy denial and an approval requirement cost NOTHING: `execution.ts`
+ *    returns before `tracker.beginExecution` on any non-allow, and
+ *    `AgentRepairLedger.recordFailure` consumes an attempt only for a
+ *    `database-error`. A meter that charged them would be describing a bound
+ *    nobody enforces.
+ */
+describe("foldLedgerEntries — the budget meter", () => {
+  const gauge = (view: ReturnType<typeof foldLedgerEntries>, id: string) => {
+    const found = view.budget.find((candidate) => candidate.id === id);
+    if (found === undefined) throw new Error(`no gauge "${id}"`);
+    return found;
+  };
+
+  const completed = (stepId: string, correlationId: string, elapsedMs: number): AgentLedgerEntry =>
+    event({
+      kind: "event",
+      event: {
+        kind: "tool-completed",
+        atMs: 7,
+        stepId,
+        artifact: {
+          correlationId,
+          runId: "arun_1",
+          operationId: "sql.query.read",
+          summary: { rowCount: 3, columnNames: ["id"], elapsedMs },
+        },
+      },
+    });
+
+  test("the ceilings are the constants the server enforces, not a second copy", () => {
+    const view = foldLedgerEntries([]);
+
+    expect(gauge(view, "statements").limit).toBe(AGENT_EXECUTION_POLICY.budgets.maxStatementsPerRun);
+    expect(gauge(view, "database-time").limit).toBe(AGENT_EXECUTION_POLICY.budgets.maxTotalRunMs);
+    expect(gauge(view, "repairs").limit).toBe(AGENT_MAX_REPAIR_ATTEMPTS);
+  });
+
+  test("a run that has done nothing has consumed nothing", () => {
+    const view = foldLedgerEntries([OPENED]);
+
+    expect(view.budget.map((entry) => entry.used)).toEqual([0, 0, 0]);
+  });
+
+  test("a completed read costs one statement and the database time it reported", () => {
+    const view = foldLedgerEntries([completed("s1", "corr_1", 12), completed("s2", "corr_2", 30)]);
+
+    expect(gauge(view, "statements").used).toBe(2);
+    expect(gauge(view, "database-time").used).toBe(42);
+    expect(gauge(view, "repairs").used).toBe(0);
+  });
+
+  test("a statement that failed at the database costs a statement and a repair attempt", () => {
+    const view = foldLedgerEntries([
+      event({
+        kind: "event",
+        event: {
+          kind: "tool-refused",
+          atMs: 8,
+          stepId: "s1",
+          refusal: { class: "database-error", statementFingerprint: "fp1", message: 'relation "custmers"' },
+        },
+      }),
+    ]);
+
+    expect(gauge(view, "statements").used).toBe(1);
+    expect(gauge(view, "repairs").used).toBe(1);
+    // The ledger records no duration for a statement that failed, so the meter
+    // does not invent one — the caveat beside it is what says so.
+    expect(gauge(view, "database-time").used).toBe(0);
+  });
+
+  test("a policy denial and an approval requirement cost nothing, because nothing ran", () => {
+    const view = foldLedgerEntries([
+      event({
+        kind: "event",
+        event: {
+          kind: "tool-refused",
+          atMs: 8,
+          stepId: "s1",
+          refusal: { class: "policy-denied", reasonCode: "ROLE_FORBIDDEN" },
+        },
+      }),
+      event({
+        kind: "event",
+        event: {
+          kind: "tool-refused",
+          atMs: 9,
+          stepId: "s2",
+          refusal: { class: "approval-required", operationId: "sql.plan.execute" },
+        },
+      }),
+    ]);
+
+    expect(view.budget.map((entry) => entry.used)).toEqual([0, 0, 0]);
+  });
+
+  /**
+   * An invocation is written BEFORE its effect (T7a), so a step with no outcome is
+   * a run interrupted between the two — or a call that failed while acquiring its
+   * provider, which `tools.ts` accounts as a spent statement even though nothing
+   * ran. The fold charges neither, because the ledger cannot tell them apart and a
+   * meter that guessed would be the one figure here that is not an enforced value.
+   * The second case is a known under-count, recorded as `docs/BACKLOG.md` B13.
+   */
+  /**
+   * A ceiling is per drive (`docs/BACKLOG.md` B6) while the ledger spans every
+   * drive, so a resumed run legitimately folds to more than one drive's allowance.
+   * The fold does NOT clamp it: clamping would hide that a run has cost more than
+   * its ceiling suggests, which is the direction that misleads. The rail's caveat
+   * is what says so, and this pins the behaviour that caveat describes.
+   */
+  test("a run resumed past a per-drive ceiling folds to what it actually spent", () => {
+    const failed = (stepId: string): AgentLedgerEntry =>
+      event({
+        kind: "event",
+        event: {
+          kind: "tool-refused",
+          atMs: 8,
+          stepId,
+          refusal: { class: "database-error", statementFingerprint: stepId, message: "boom" },
+        },
+      });
+    const view = foldLedgerEntries([failed("s1"), failed("s2"), failed("s3"), failed("s4")]);
+
+    expect(gauge(view, "repairs").used).toBeGreaterThan(AGENT_MAX_REPAIR_ATTEMPTS);
+  });
+
+  test("an invocation with no recorded outcome is charged to nothing", () => {
+    const view = foldLedgerEntries([
+      event({
+        kind: "event",
+        event: { kind: "tool-invoked", atMs: 6, stepId: "s1", tool: "run_read_query", operationId: "sql.query.read" },
+      }),
+    ]);
+
+    expect(view.budget.map((entry) => entry.used)).toEqual([0, 0, 0]);
+  });
+});
+
+/**
+ * Evidence citations (#329 T10b).
+ *
+ * `composeReportTool` already refuses a claim whose evidence does not match
+ * something the run produced, so what the rail adds is the other half: showing the
+ * user WHAT each claim rests on, resolved out of the same ledger. The claim itself
+ * is the model's prose and is carried as quoted content, never as the app speaking.
+ */
+describe("foldLedgerEntries — the report and its citations", () => {
+  const CAPTURED: AgentLedgerEntry = event({
+    kind: "event",
+    event: { kind: "context-captured", atMs: 3, fingerprint: "fingerprint_9", tableCount: 8 },
+  });
+
+  const COMPLETED: AgentLedgerEntry = event({
+    kind: "event",
+    event: {
+      kind: "tool-completed",
+      atMs: 7,
+      stepId: "s1",
+      artifact: {
+        correlationId: "corr_9",
+        runId: "arun_1",
+        operationId: "sql.query.read",
+        summary: { rowCount: 3, columnNames: ["id", "total"], elapsedMs: 12 },
+      },
+    },
+  });
+
+  const DRAFTED: AgentLedgerEntry = event({
+    kind: "event",
+    event: { kind: "statement-drafted", atMs: 6, stepId: "s1", sql: "SELECT 1", rationale: "count the orders" },
+  });
+
+  const reportOf = (claims: readonly { claim: string; evidence: readonly unknown[] }[]): AgentLedgerEntry =>
+    event({
+      kind: "event",
+      event: { kind: "report-composed", atMs: 11, claims: claims as never },
+    });
+
+  test("a run that composed no report has none", () => {
+    expect(foldLedgerEntries([OPENED, COMPLETED]).report).toBeNull();
+  });
+
+  test("a claim is carried as the model's own words, quoted rather than narrated", () => {
+    const view = foldLedgerEntries([
+      COMPLETED,
+      reportOf([{ claim: "checkout is slow", evidence: [{ source: "artifact", correlationId: "corr_9" }] }]),
+    ]);
+
+    expect(view.report?.claims).toHaveLength(1);
+    expect(view.report?.claims[0].quoted).toBe("checkout is slow");
+  });
+
+  test("an artifact citation resolves to the read that produced it, and to its statement", () => {
+    const view = foldLedgerEntries([
+      DRAFTED,
+      COMPLETED,
+      reportOf([{ claim: "checkout is slow", evidence: [{ source: "artifact", correlationId: "corr_9" }] }]),
+    ]);
+
+    const [citation] = view.report?.claims[0].citations ?? [];
+    expect(citation.resolved).toBe(true);
+    expect(citation.label).toBe("Artifact corr_9");
+    expect(citation.detail).toBe("3 rows via sql.query.read");
+    expect(citation.quoted).toBe("SELECT 1");
+  });
+
+  test("an artifact read without a drafted statement cites the read alone", () => {
+    const view = foldLedgerEntries([
+      COMPLETED,
+      reportOf([{ claim: "checkout is slow", evidence: [{ source: "artifact", correlationId: "corr_9" }] }]),
+    ]);
+
+    const [citation] = view.report?.claims[0].citations ?? [];
+    expect(citation.resolved).toBe(true);
+    expect(citation.quoted).toBeUndefined();
+  });
+
+  test("a schema citation resolves to the capture it names", () => {
+    const view = foldLedgerEntries([
+      CAPTURED,
+      reportOf([
+        {
+          claim: "orders has no index on placed_at",
+          evidence: [{ source: "context-snapshot", fingerprint: "fingerprint_9" }],
+        },
+      ]),
+    ]);
+
+    const [citation] = view.report?.claims[0].citations ?? [];
+    expect(citation.resolved).toBe(true);
+    expect(citation.label).toBe("Schema snapshot fingerpr");
+    expect(citation.detail).toBe("8 tables");
+  });
+
+  test("one row and one table are not pluralized", () => {
+    const view = foldLedgerEntries([
+      event({
+        kind: "event",
+        event: { kind: "context-captured", atMs: 3, fingerprint: "solo", tableCount: 1 },
+      }),
+      event({
+        kind: "event",
+        event: {
+          kind: "tool-completed",
+          atMs: 7,
+          stepId: "s2",
+          artifact: {
+            correlationId: "corr_1",
+            runId: "arun_1",
+            operationId: "sql.query.read",
+            summary: { rowCount: 1, columnNames: ["id"], elapsedMs: 4 },
+          },
+        },
+      }),
+      reportOf([
+        {
+          claim: "one of each",
+          evidence: [
+            { source: "artifact", correlationId: "corr_1" },
+            { source: "context-snapshot", fingerprint: "solo" },
+          ],
+        },
+      ]),
+    ]);
+
+    const citations = view.report?.claims[0].citations ?? [];
+    expect(citations[0].detail).toBe("1 row via sql.query.read");
+    expect(citations[1].detail).toBe("1 table");
+  });
+
+  // The server verified every reference against the run's log before recording the
+  // report, so an unresolved citation means this TIMELINE is missing the entry —
+  // a line the reader skipped, or a stream joined late. Saying so beats rendering a
+  // reference as if the rail had checked it.
+  test("a citation this timeline cannot resolve says so rather than inventing a source", () => {
+    const view = foldLedgerEntries([
+      reportOf([{ claim: "checkout is slow", evidence: [{ source: "artifact", correlationId: "corr_absent" }] }]),
+      reportOf([{ claim: "still slow", evidence: [{ source: "context-snapshot", fingerprint: "absent" }] }]),
+    ]);
+
+    const first = view.report?.claims[0].citations[0];
+    expect(first?.resolved).toBe(false);
+    expect(first?.detail).toBe("not in the part of this run's timeline the rail has read");
+    expect(first?.quoted).toBeUndefined();
+  });
+
+  test("a locator the model supplied is carried through as its own untrusted text", () => {
+    const view = foldLedgerEntries([
+      COMPLETED,
+      reportOf([
+        {
+          claim: "checkout is slow",
+          evidence: [{ source: "artifact", correlationId: "corr_9", locator: "row 2, total" }],
+        },
+      ]),
+    ]);
+
+    expect(view.report?.claims[0].citations[0].locator).toBe("row 2, total");
+  });
+
+  test("every claim and citation is keyed uniquely, even when two claims are identical", () => {
+    const evidence = [{ source: "artifact", correlationId: "corr_9" }];
+    const view = foldLedgerEntries([
+      COMPLETED,
+      reportOf([
+        { claim: "checkout is slow", evidence },
+        { claim: "checkout is slow", evidence },
+      ]),
+    ]);
+
+    const claims = view.report?.claims ?? [];
+    expect(new Set(claims.map((claim) => claim.id)).size).toBe(2);
+    expect(new Set(claims.flatMap((claim) => claim.citations.map((citation) => citation.id))).size).toBe(2);
+  });
+
+  // A run that composed twice (a resumed run may — `composeReport` says so) shows
+  // the LAST report: it is the one the run ended on.
+  test("a second report replaces the first", () => {
+    const view = foldLedgerEntries([
+      COMPLETED,
+      reportOf([{ claim: "first", evidence: [{ source: "artifact", correlationId: "corr_9" }] }]),
+      reportOf([{ claim: "second", evidence: [{ source: "artifact", correlationId: "corr_9" }] }]),
+    ]);
+
+    expect(view.report?.claims).toHaveLength(1);
+    expect(view.report?.claims[0].quoted).toBe("second");
   });
 });
