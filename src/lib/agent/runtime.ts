@@ -32,7 +32,9 @@ import { type ExecutionArtifact, ExecutionArtifactStore } from "@/lib/db/operati
 import { ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
 import { createCanonicalOperationRegistry } from "@/lib/db/operations/descriptors";
 import { createTargetScope } from "@/lib/db/operations/policy";
-import { resolveConnection } from "@/lib/seed/resolve-connection";
+import { LLMError } from "@/lib/llm/types";
+import { logger } from "@/lib/logger";
+import { resolveConnection, SeedConnectionError } from "@/lib/seed/resolve-connection";
 import type { QueryResult } from "@/lib/types";
 import { AgentRunDeadline } from "./deadline";
 import { AGENT_RUN_DEADLINE_MS } from "./execution-policy";
@@ -41,6 +43,7 @@ import { createAgentModel } from "./model-adapter";
 import { AgentRepairLedger } from "./repair-ledger";
 import { AgentRunService, AgentRunServiceError } from "./run-service";
 import { AgentRunStore, resolveAgentLedgerWorld } from "./run-store";
+import type { AgentRunFailureReason } from "./types";
 
 /**
  * How long a run's results stay readable, and how many it may hold at once. Sized
@@ -111,32 +114,91 @@ export async function driveAgentRun(runId: string): Promise<AgentInvestigationRe
   const service = await getAgentRunService();
   const report = await service.status(runId);
   if (report === null) {
+    // Deliberately outside the recording below: a run that does not exist has no
+    // ledger to record a failure on, and creating one would manufacture the very
+    // record whose absence is being reported.
     throw new AgentRunServiceError("RUN_NOT_FOUND", `agent run "${runId}" does not exist`);
   }
 
-  const { actor, connectionId } = report.record;
-  // The persisted actor is the sole authority: the role that decides which managed
-  // connections are visible is the one recorded when the run was opened.
-  const connection = await resolveConnection({ connectionId }, { role: actor.role, username: actor.sessionId });
+  try {
+    const { actor, connectionId } = report.record;
+    // The persisted actor is the sole authority: the role that decides which managed
+    // connections are visible is the one recorded when the run was opened.
+    const connection = await resolveConnection({ connectionId }, { role: actor.role, username: actor.sessionId });
 
-  // Capabilities are type-driven and read without connecting, the way
-  // /api/db/provider-meta reads them. The live, read-only provider a statement
-  // actually runs on is acquired per call through the execution-profile seam.
-  const capabilities = (await createDatabaseProvider(connection)).getCapabilities();
+    // Capabilities are type-driven and read without connecting, the way
+    // /api/db/provider-meta reads them. The live, read-only provider a statement
+    // actually runs on is acquired per call through the execution-profile seam.
+    const capabilities = (await createDatabaseProvider(connection)).getCapabilities();
 
-  return runInvestigation(runId, {
-    service,
-    model: await createAgentModel(),
-    resources: {
-      connection,
-      capabilities,
-      registry: createCanonicalOperationRegistry(),
-      scope: createTargetScope(connectionId),
-      tracker: runResources().tracker,
-      artifacts: runResources().artifacts,
-      deadline: new AgentRunDeadline(AGENT_RUN_DEADLINE_MS),
-      repairs: new AgentRepairLedger(),
-      acquireProvider: acquireExecutionProfileProvider,
-    },
-  });
+    return await runInvestigation(runId, {
+      service,
+      model: await createAgentModel(),
+      resources: {
+        connection,
+        capabilities,
+        registry: createCanonicalOperationRegistry(),
+        scope: createTargetScope(connectionId),
+        tracker: runResources().tracker,
+        artifacts: runResources().artifacts,
+        deadline: new AgentRunDeadline(AGENT_RUN_DEADLINE_MS),
+        repairs: new AgentRepairLedger(),
+        acquireProvider: acquireExecutionProfileProvider,
+      },
+    });
+  } catch (error) {
+    await recordDriveFailure(service, runId, error);
+    throw error;
+  }
+}
+
+/**
+ * Writes the ending a dead drive owes the run, without ever replacing the reason
+ * the caller needs to see.
+ *
+ * `runInvestigation` ends a run it entered, so this covers the window before and
+ * around it: resolving the connection, reading capabilities, building the model.
+ * A throw there used to unwind past the ledger completely, leaving a run at
+ * `queued` with an empty timeline whose reason existed only in the server log —
+ * and with no drive producer yet (`docs/BACKLOG.md` B9), nothing would return to it.
+ *
+ * Every failure of the recording itself is swallowed, on purpose. The run may have
+ * ended between the throw and this call, or have an execution still in flight; both
+ * make `finish` throw, and neither is what the caller asked about. Losing the
+ * original error to a bookkeeping error would trade a diagnosable failure for a
+ * confusing one.
+ */
+async function recordDriveFailure(service: AgentRunService, runId: string, error: unknown): Promise<void> {
+  const reason = classifyDriveFailure(error);
+  try {
+    await service.finish(runId, "failed", reason);
+  } catch (recordingError) {
+    logger.error("Agent run failed and its ending could not be recorded", recordingError, { runId, reason });
+  }
+}
+
+/**
+ * Chooses the label a user sees from the error's TYPE.
+ *
+ * Never from its message: that text comes from a model provider, a driver or a
+ * connection resolver, and none of them promise to keep a key, a host name or an
+ * internal path out of it. The message goes to the log; only the label crosses to
+ * the browser.
+ */
+function classifyDriveFailure(error: unknown): AgentRunFailureReason {
+  // `instanceof` rather than the marker checks `mapAgentModelError` needs: both of
+  // these are this repository's own classes, so there is one copy of each in the
+  // bundle. The SDK's errors are the ones that arrive in duplicate.
+  if (error instanceof SeedConnectionError) return "connection-unresolvable";
+
+  // Every LLM failure reads as one label because the user's next move is the same
+  // for all of them — look at the model settings. A rate limit and a refused key
+  // differ to an operator, who has the logged message, not to the person deciding
+  // whether to start another run.
+  if (error instanceof LLMError) return "model-unavailable";
+
+  // Everything else, deliberately unnamed: a provider that could not be built and a
+  // programming error are both "this server could not carry the run", and guessing
+  // between them would put a claim on the rail that this function cannot support.
+  return "internal";
 }

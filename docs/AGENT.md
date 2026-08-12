@@ -120,6 +120,32 @@ Two honest qualifiers: the ledger check is read-then-append with no compare-and-
 two loops driving one run concurrently would both execute (B5); and nothing currently *asks* for a
 resume, so an interrupted run is resumable but is not resumed on its own (B9).
 
+### A drive that dies before the loop
+
+`runInvestigation` ends a run it entered, so every stop reason the loop owns is already on the
+ledger. Everything *before* it is not part of the loop: the run's connection is resolved, its
+capabilities are read and its model is built first, and a failure there — an unconfigured model
+provider is the common one — used to unwind past the ledger entirely. The run stayed `queued` with
+an empty timeline, its cause readable only in the server log, and with no drive producer (B9)
+nothing would come back to it.
+
+A drive that fails anywhere now records `run-finished` with status `failed` and a **classified
+reason**: `model-unavailable`, `connection-unresolvable`, or `internal`. Three properties are
+deliberate:
+
+- **The reason is chosen from the error's type, never from its message.** That text is written by a
+  model provider, a driver or a connection resolver, and none of them promise to keep a credential,
+  a host name or an internal path out of it. The message stays in the server log; only the label
+  crosses to the browser, where the rail renders one sentence this repository wrote for it.
+- **`internal` is the honest default.** An unrecognised failure is not dressed up as a specific one.
+- **A run that does not exist is not given a ledger.** A drive asked for an unknown run still
+  refuses without writing anything, because recording a failure would manufacture the very record
+  whose absence it is reporting.
+
+Recording the ending is best effort and never replaces the error the caller sees: if the run ended
+between the throw and the recording, or still has an execution in flight, `finish` itself throws —
+that is logged, and the original failure is what propagates.
+
 ## The tool set
 
 Four tools, and `agent` mode receives exactly these. Three of them reach the database, each through

@@ -54,6 +54,7 @@ import type {
   AgentRunEvent,
   AgentRunMode,
   AgentRunRecord,
+  AgentRunFailureReason,
   AgentRunTerminalStatus,
   AgentToolRefusal,
 } from "./types";
@@ -271,12 +272,12 @@ export class AgentRunService {
    * the ledger records what happened rather than what was asked for. The request
    * stays visible in the status report instead of being rewritten into the outcome.
    */
-  async finish(runId: string, status: AgentRunTerminalStatus): Promise<AgentRunRecord> {
+  async finish(runId: string, status: AgentRunTerminalStatus, reason?: AgentRunFailureReason): Promise<AgentRunRecord> {
     const view = await this.readOrThrow(runId);
     if (view.terminal) {
       throw new AgentRunServiceError("RUN_ALREADY_TERMINAL", `agent run "${runId}" already ${view.record.status}`);
     }
-    return (await this.finalize(runId, status)).record;
+    return (await this.finalize(runId, status, reason)).record;
   }
 
   /**
@@ -387,7 +388,11 @@ export class AgentRunService {
    * Closing the stream sits in a `finally` for the same reason: whatever else
    * fails, a run whose ending is recorded must not leave readers waiting forever.
    */
-  private async finalize(runId: string, status: AgentRunTerminalStatus): Promise<AgentRunLedgerView> {
+  private async finalize(
+    runId: string,
+    status: AgentRunTerminalStatus,
+    reason?: AgentRunFailureReason,
+  ): Promise<AgentRunLedgerView> {
     const live = this.resources.tracker.usage(runId).activeExecutions;
     if (live > 0) {
       throw new AgentRunServiceError(
@@ -395,7 +400,15 @@ export class AgentRunService {
         `agent run "${runId}" still has ${live} execution(s) in flight and cannot be ended`,
       );
     }
-    await this.store.appendEvent(runId, { kind: "run-finished", atMs: this.clock(), status });
+    // Spread rather than `reason` outright: an ending that has no reason writes the
+    // entry it always wrote, so a ledger from before this field and one after it are
+    // the same bytes for the same event.
+    await this.store.appendEvent(runId, {
+      kind: "run-finished",
+      atMs: this.clock(),
+      status,
+      ...(reason === undefined ? {} : { reason }),
+    });
     try {
       releaseExecutionRun({ runId, tracker: this.resources.tracker, artifacts: this.resources.artifacts });
     } finally {

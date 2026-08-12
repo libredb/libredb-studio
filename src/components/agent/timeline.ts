@@ -4,6 +4,7 @@ import type {
   AgentEvidenceReference,
   AgentReportClaim,
   AgentRunEvent,
+  AgentRunFailureReason,
   AgentRunStatus,
   AgentToolRefusal,
 } from "@/lib/agent/types";
@@ -122,6 +123,13 @@ export interface AgentRunTimeline {
    * T10a left it out precisely because nothing read it then.
    */
   readonly stopRequested: boolean;
+  /**
+   * Why the run failed, when the server classified a cause; null otherwise.
+   *
+   * Folded alongside `status` rather than derived from the last item, so the rail
+   * can say why a run ended without walking the timeline it renders.
+   */
+  readonly failureReason: AgentRunFailureReason | null;
   readonly budget: readonly AgentBudgetGauge[];
   /** The run's composed report, or null while it has composed none. */
   readonly report: AgentRunReport | null;
@@ -163,6 +171,31 @@ const TERMINAL_TONES = {
   failed: "refused",
   cancelled: "refused",
 } as const satisfies Record<string, AgentTimelineTone>;
+
+/**
+ * The app's own words for each reason the server may record.
+ *
+ * A total map rather than a lookup with a fallback: a reason added to
+ * `AgentRunFailureReason` and not given a sentence here fails to compile, which is
+ * the only way this stays in step with a union that lives on the server. The
+ * failure's own message is deliberately absent — it is written by a model provider
+ * or a driver, and the server keeps it in the log for exactly that reason.
+ */
+const FAILURE_SENTENCES = {
+  "model-unavailable": "The model provider is not configured or could not be reached.",
+  "connection-unresolvable": "This run's database connection no longer resolves on the server.",
+  internal: "The server could not carry this run. The reason is in the server log.",
+} as const satisfies Record<AgentRunFailureReason, string>;
+
+/**
+ * The sentence for a reason, for a surface that shows it outside the timeline.
+ *
+ * Exported so the rail's status line and the timeline entry cannot drift into two
+ * wordings of the same failure.
+ */
+export function describeFailureReason(reason: AgentRunFailureReason): string {
+  return FAILURE_SENTENCES[reason];
+}
 
 function describeRefusal(refusal: AgentToolRefusal): Omit<AgentTimelineItem, "id" | "atMs" | "tone"> {
   // Narrowed by class, which is what makes the engine's text unreachable on the two
@@ -217,7 +250,13 @@ function describeEvent(event: AgentRunEvent): Omit<AgentTimelineItem, "id" | "at
         detail: `${event.claims.length} ${event.claims.length === 1 ? "claim" : "claims"}, each citing evidence`,
       };
     default:
-      return { tone: TERMINAL_TONES[event.status], headline: `Run ${event.status}` };
+      return {
+        tone: TERMINAL_TONES[event.status],
+        headline: `Run ${event.status}`,
+        // Absent unless the ledger recorded one. A sentence supplied by default
+        // would be this component inventing a cause for every ending that had none.
+        ...(event.reason === undefined ? {} : { detail: FAILURE_SENTENCES[event.reason] }),
+      };
   }
 }
 
@@ -351,6 +390,7 @@ export function foldLedgerEntries(entries: readonly AgentLedgerEntry[]): AgentRu
   const items: AgentTimelineItem[] = [];
   let status: AgentRunStatus = "queued";
   let stopRequested = false;
+  let failureReason: AgentRunFailureReason | null = null;
   let statements = 0;
   let databaseMs = 0;
   let repairs = 0;
@@ -365,8 +405,10 @@ export function foldLedgerEntries(entries: readonly AgentLedgerEntry[]): AgentRu
     if (entry.kind === "event") {
       const { event } = entry;
       if (event.kind === "run-started") status = "running";
-      else if (event.kind === "run-finished") status = event.status;
-      else if (event.kind === "context-captured") captures.set(event.fingerprint, event.tableCount);
+      else if (event.kind === "run-finished") {
+        status = event.status;
+        failureReason = event.reason ?? null;
+      } else if (event.kind === "context-captured") captures.set(event.fingerprint, event.tableCount);
       else if (event.kind === "statement-drafted") statementsByStep.set(event.stepId, event.sql);
       else if (event.kind === "report-composed") claims = event.claims;
       else if (event.kind === "tool-completed") {
@@ -392,6 +434,7 @@ export function foldLedgerEntries(entries: readonly AgentLedgerEntry[]): AgentRu
     items,
     status,
     stopRequested,
+    failureReason,
     budget: [
       { id: "statements", label: "Statements", used: statements, limit: budgets.maxStatementsPerRun, unit: "count" },
       { id: "database-time", label: "Database time", used: databaseMs, limit: budgets.maxTotalRunMs, unit: "ms" },

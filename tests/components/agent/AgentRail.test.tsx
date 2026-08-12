@@ -462,6 +462,48 @@ describe("AgentRail", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  /**
+   * The case a user actually hits: an operator enables the runtime and starts a run
+   * before configuring a model. The drive dies before the loop, and what the rail
+   * used to show was a run sitting at `queued` forever with the reason visible only
+   * in the server log (`docs/BACKLOG.md` B9 means nothing comes back to it either).
+   */
+  test("a run that failed before it started says why, in the app's own words", async () => {
+    const failedLine = `${JSON.stringify({
+      kind: "event",
+      event: { kind: "run-finished", atMs: 1_002, status: "failed", reason: "model-unavailable" },
+    })}\n`;
+    mockAgentFetch([OPENED_LINE, failedLine]);
+    const { getByTestId, findByTestId } = render(<AgentRail {...DEFAULT_PROPS} />);
+
+    fireEvent.change(getByTestId("agent-objective"), { target: { value: "why is checkout slow" } });
+    await act(async () => {
+      fireEvent.click(getByTestId("agent-start"));
+    });
+
+    expect((await findByTestId("agent-run-status")).textContent).toBe("failed");
+    expect((await findByTestId("agent-failure-reason")).textContent).toBe(
+      "The model provider is not configured or could not be reached.",
+    );
+  });
+
+  test("an ending the server gave no reason for claims none", async () => {
+    const failedLine = `${JSON.stringify({
+      kind: "event",
+      event: { kind: "run-finished", atMs: 1_002, status: "failed" },
+    })}\n`;
+    mockAgentFetch([OPENED_LINE, failedLine]);
+    const { getByTestId, findByTestId, queryByTestId } = render(<AgentRail {...DEFAULT_PROPS} />);
+
+    fireEvent.change(getByTestId("agent-objective"), { target: { value: "why is checkout slow" } });
+    await act(async () => {
+      fireEvent.click(getByTestId("agent-start"));
+    });
+
+    expect((await findByTestId("agent-run-status")).textContent).toBe("failed");
+    expect(queryByTestId("agent-failure-reason")).toBeNull();
+  });
+
   test("a run reports the status its ledger folds to", async () => {
     mockAgentFetch([OPENED_LINE, STARTED_LINE]);
     const { getByTestId, findByTestId } = render(<AgentRail {...DEFAULT_PROPS} />);

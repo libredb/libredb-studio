@@ -104,6 +104,33 @@ describe("foldLedgerEntries", () => {
     expect(finished.items.at(-1)?.tone).toBe("refused");
   });
 
+  test("a run that failed before it could start carries why, in the entry's own words", () => {
+    // The reason is the difference between a rail that says "failed" and one a user
+    // can act on: an unconfigured model provider and a transient fault look
+    // identical without it, and only one of them is worth fixing before retrying.
+    const view = foldLedgerEntries([
+      OPENED,
+      event({ kind: "event", event: { kind: "run-finished", atMs: 9, status: "failed", reason: "model-unavailable" } }),
+    ]);
+
+    expect(view.status).toBe("failed");
+    expect(view.failureReason).toBe("model-unavailable");
+    expect(view.items.at(-1)?.detail).toBe("The model provider is not configured or could not be reached.");
+  });
+
+  test("an ending with no reason claims none", () => {
+    // Most endings need none: succeeded, cancelled, and a loop that stopped on its
+    // own terms are fully described by the status. A default sentence here would
+    // invent a cause for runs that had one recorded nowhere.
+    const view = foldLedgerEntries([
+      OPENED,
+      event({ kind: "event", event: { kind: "run-finished", atMs: 9, status: "failed" } }),
+    ]);
+
+    expect(view.failureReason).toBeNull();
+    expect(view.items.at(-1)?.detail).toBeUndefined();
+  });
+
   test("a run that succeeded says so", () => {
     const view = foldLedgerEntries([
       event({ kind: "event", event: { kind: "run-finished", atMs: 9, status: "succeeded" } }),

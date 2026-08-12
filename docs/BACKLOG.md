@@ -1064,6 +1064,12 @@ and if that process dies mid-run the run stays `running` in the ledger with nobo
 ledger's durable substrate — there is no `"use workflow"` function and no queue producer, so the
 backend's own re-enqueue-on-start never sees an agent run.
 
+Distinct from a drive that *fails*, which is now recorded: a throw anywhere in `driveAgentRun` ends
+the run as `failed` with a classified reason (`docs/AGENT.md`, "A drive that dies before the loop"),
+so an unconfigured model no longer leaves a run at `queued` forever. This entry is the case where the
+process is GONE — nothing threw, nothing can record, and the run stays `running` until something asks
+for it. Recording a failure cannot close that; only a producer can.
+
 Adopting the SDK's Next.js integration is what would supply the producer, and it was refused
 deliberately rather than overlooked. Its documented setup asks for `/.well-known/workflow/*` to be
 excluded from the proxy matcher (`node_modules/workflow/docs/getting-started/next.mdx`), and it warns

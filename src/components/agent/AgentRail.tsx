@@ -7,7 +7,7 @@ import { useIsMobile } from "@/hooks/use-mobile";
 import { AGENT_EXECUTION_POLICY, AGENT_MAX_MODEL_TURNS, AGENT_RUN_DEADLINE_MS } from "@/lib/agent/execution-policy";
 import type { AgentRunMode, AgentRunStatus } from "@/lib/agent/types";
 import { cn } from "@/lib/utils";
-import type { AgentBudgetGauge, AgentTimelineTone } from "./timeline";
+import { type AgentBudgetGauge, type AgentTimelineTone, describeFailureReason } from "./timeline";
 import { useAgentRun } from "./use-agent-run";
 
 /**
@@ -270,6 +270,18 @@ export function AgentRail({
           <p data-testid="agent-unresolvable-connection" className="mt-2 text-xs text-amber-400/80">
             {connectionName ?? "This connection"} is defined in this browser only. A run has to re-resolve its
             connection on the server after a restart, so it can investigate managed connections only.
+          </p>
+        )}
+
+        {/*
+          Next to the status rather than only in the timeline: the timeline scrolls
+          and this is the one line that tells a user whether to fix something before
+          starting another run. The words come from the same map the timeline entry
+          uses, so the two can never disagree.
+        */}
+        {run.timeline.failureReason !== null && (
+          <p data-testid="agent-failure-reason" className="mt-2 text-[0.625rem] text-rose-300">
+            {describeFailureReason(run.timeline.failureReason)}
           </p>
         )}
 

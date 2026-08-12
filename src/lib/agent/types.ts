@@ -62,6 +62,28 @@ export type AgentRunTerminalStatus = "succeeded" | "failed" | "cancelled";
 export type AgentRunStatus = "queued" | "running" | AgentRunTerminalStatus;
 
 /**
+ * Why a drive could not carry a run, in terms a user can act on.
+ *
+ * A closed union rather than the error's own message, and that is the point: the
+ * text of a failure is written by a model provider, a driver or a connection
+ * resolver, and none of them promise to keep a credential, a host name or an
+ * internal path out of it. What reaches the rail is one of these labels, chosen
+ * from the error's TYPE; the message stays in the server log where the operator
+ * who can act on it already looks.
+ *
+ * `internal` is the honest default. A reason is added here only when a user could
+ * do something different knowing it — collapsing an unrecognised failure into a
+ * specific label would be a claim the classifier cannot support.
+ */
+export type AgentRunFailureReason =
+  /** No usable model: unconfigured, refused credentials, or unreachable. */
+  | "model-unavailable"
+  /** The run's persisted connection no longer resolves on the server. */
+  | "connection-unresolvable"
+  /** Anything else. Deliberately unspecific; the log carries the detail. */
+  | "internal";
+
+/**
  * Who started the run, persisted at start and the sole authority for authorizing
  * every later tool call — never the callback that woke the run up, never the
  * request body.
@@ -198,7 +220,20 @@ export type AgentRunEvent =
     })
   | (AgentRunEventBase & { readonly kind: "tool-refused"; readonly stepId: string; readonly refusal: AgentToolRefusal })
   | (AgentRunEventBase & { readonly kind: "report-composed"; readonly claims: readonly AgentReportClaim[] })
-  | (AgentRunEventBase & { readonly kind: "run-finished"; readonly status: AgentRunTerminalStatus });
+  | (AgentRunEventBase & {
+      readonly kind: "run-finished";
+      readonly status: AgentRunTerminalStatus;
+      /**
+       * Why, for a run that failed before it could do its own work.
+       *
+       * Optional because most endings do not need one: a run that succeeded, one a
+       * user cancelled, and one the loop ended on its own terms are all fully
+       * described by `status`. It is set when a drive died before or outside the
+       * loop — the case that used to leave a run sitting at `queued` with the
+       * reason visible only in the server log.
+       */
+      readonly reason?: AgentRunFailureReason;
+    });
 
 /**
  * One run, whole. Everything a restarted process needs to continue, and nothing
