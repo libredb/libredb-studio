@@ -166,6 +166,23 @@ function quoteTarget(dialect: DatabaseType, schema: string | undefined, table: s
 const isTextual = (column: ColumnSchema): boolean => TEXTUAL_TYPE.test(column.type);
 
 /**
+ * Declared types with no equality operator, so `count(DISTINCT …)` refuses them.
+ *
+ * PostgreSQL answers `could not identify an equality operator for type json` — and
+ * because one unsupported column aborts the WHOLE aggregate, a single `json` column
+ * would have failed distribution and pattern profiling for the entire table. Found
+ * by review on #345.
+ *
+ * An exclusion rather than an allowlist of comparable types, deliberately: the
+ * comparable set is open (every domain, every enum, every extension type), so an
+ * allowlist would refuse to count things it simply had not heard of. This list is
+ * the closed set that genuinely has no default equality.
+ */
+const INCOMPARABLE_TYPE = /\b(jsonb?|xml|point|line|lseg|box|path|polygon|circle)\b/i;
+
+const isComparable = (column: ColumnSchema): boolean => !INCOMPARABLE_TYPE.test(column.type);
+
+/**
  * One statement covering the whole table, rather than one per statistic.
  *
  * The run's statement budget is 20, and a per-statistic composition would spend it
@@ -196,7 +213,11 @@ export function composeTableProfile(
   columns.forEach((column, index) => {
     const quoted = quoteIdentifier(column.name, dialect);
     parts.push(`count(${quoted}) AS ${alias("present", index)}`);
-    if (selector.depth !== "basic") parts.push(`count(DISTINCT ${quoted}) AS ${alias("distinct", index)}`);
+    // A type with no equality operator is skipped rather than counted: its absence
+    // reads as "the engine did not report this", which is exactly true.
+    if (selector.depth !== "basic" && isComparable(column)) {
+      parts.push(`count(DISTINCT ${quoted}) AS ${alias("distinct", index)}`);
+    }
     if (selector.depth === "pattern" && isTextual(column)) {
       // Counted inside the database: the rows that matched are never returned.
       parts.push(`count(CASE WHEN ${quoted} LIKE '${EMAIL_SHAPE}' THEN 1 END) AS ${alias("shaped", index)}`);

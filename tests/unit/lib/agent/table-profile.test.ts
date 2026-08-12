@@ -282,3 +282,39 @@ describe("foreign keys with no covering index", () => {
     expect(findings).toHaveLength(1);
   });
 });
+
+describe("types with no equality operator", () => {
+  // Found by review on #345. PostgreSQL answers `could not identify an equality
+  // operator for type json`, and one unsupported column aborts the WHOLE aggregate —
+  // so a single json column would have failed distribution and pattern profiling for
+  // every other column in the table.
+  test.each(["json", "jsonb", "xml", "point", "polygon"])("%s gets no distinct count", (type) => {
+    const sql = composeTableProfile("postgres", { table: "t", depth: "distribution" }, [
+      column("payload", type),
+      column("name", "text"),
+    ]);
+
+    expect(sql).not.toContain('count(DISTINCT "payload")');
+    // And the comparable column beside it is still counted.
+    expect(sql).toContain('count(DISTINCT "name")');
+  });
+
+  test("a skipped distinct count reads as absent rather than zero", () => {
+    // Which is exactly true: the engine was never asked.
+    const profile = readTableProfile(
+      "t",
+      "distribution",
+      [column("payload", "jsonb")],
+      [{ row_count: 10, present_0: 10 }],
+    );
+
+    expect(profile?.columns[0]?.distinct).toBeUndefined();
+    expect(profile?.findings).toEqual([]);
+  });
+
+  test("presence is still counted for a type nothing can compare", () => {
+    const sql = composeTableProfile("postgres", { table: "t", depth: "distribution" }, [column("payload", "json")]);
+
+    expect(sql).toContain('count("payload")');
+  });
+});

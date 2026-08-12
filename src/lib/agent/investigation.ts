@@ -63,6 +63,7 @@ import {
   comparePlansTool,
   composeReportTool,
   inspectPlanTool,
+  planTableProfile,
   profileTableTool,
   recommendChangeTool,
   inspectSchemaTool,
@@ -123,13 +124,18 @@ export interface AgentInvestigationResult {
 type DatabaseToolName = Exclude<AgentToolName, LedgerOnlyToolName>;
 
 /**
- * Tools `handleCall` dispatches itself rather than through `runStep`.
+ * Tools `handleCall` dispatches itself rather than through `invokeDatabaseTool`.
  *
- * Three of them reach nothing at all. `profile_table` DOES reach a database, and is
- * here for a different reason: its statement is composed from the run's own
- * inventory, so there is no model-supplied argument for a step id to be derived
- * from. Its repeat protection is the repair ledger's statement fingerprint, which
- * refuses the identical composed profile a second time.
+ * Three of them reach nothing at all. `profile_table` DOES reach a database and DOES
+ * go through `service.runStep` — it is here only because its statement is composed
+ * from the run's own inventory, so its step id has to be derived from the RESOLVED
+ * target rather than from the model's arguments.
+ *
+ * An earlier version routed it around `runStep` entirely, on a claim that turned out
+ * to be false: the repair ledger records only statements that FAILED, so a
+ * successful profile could be repeated without limit, and a cancellation requested
+ * after the model's turn could not stop the read. Found by review on #345. Both
+ * properties come back from settling the step like every other database reach.
  */
 type LedgerOnlyToolName = "compose_report" | "compare_plans" | "recommend_change" | "profile_table";
 
@@ -303,8 +309,19 @@ function describePriorProgress(record: AgentRunRecord): string | null {
       // first returned: without it a resumed run knows it profiled the table and
       // cannot cite the profile, so its own workflow's bar becomes unreachable
       // after any interruption.
+      // The table and column names are DATABASE CONTENT, so they are fenced rather
+      // than narrated in the server's voice. Found by review on #345: the initial
+      // profile fences them and the resume summary did not, which reintroduced the
+      // injection surface after any interruption.
       lines.push(
-        `Table ${event.profile.table} was already profiled at ${event.profile.depth} depth (${event.profile.rowCount} row(s)), artifact ${event.artifact.correlationId}: ${summary}. That profile is recorded; deepen it only if it left a question.`,
+        `A table was already profiled at ${event.profile.depth} depth (${event.profile.rowCount} row(s)), artifact ${event.artifact.correlationId}. That profile is recorded; deepen it only if it left a question.\n${fenceUntrustedContent(
+          `table: ${event.profile.table}\n${summary}`,
+          {
+            label: "profile already taken",
+            operationId: "sql.table.profile",
+            reference: event.artifact.correlationId,
+          },
+        )}`,
       );
     } else if (event.kind === "recommendation") {
       lines.push(
@@ -759,7 +776,7 @@ async function handleCall(input: {
   // Profiling DOES reach a database, but its statement is composed from the run's
   // own inventory rather than from the model's arguments, so its step identity is
   // the table and depth it names. Handled here, where the run record is in hand.
-  if (call.toolName === "profile_table") return profileTable(service, context, call);
+  if (call.toolName === "profile_table") return profileTable(service, context, call, known, notAttempted);
 
   const name = call.toolName as DatabaseToolName;
   const stepId = deriveStepId(name, call.input);
@@ -843,17 +860,64 @@ async function profileTable(
   service: AgentRunService,
   context: AgentToolContext,
   call: { readonly input: unknown },
+  known: Set<string>,
+  notAttempted: Set<string>,
 ): Promise<CallResult> {
   const { record } = await service.resume(context.runId);
-  const outcome = await profileTableTool(context, record, call.input);
-  if (outcome.kind !== "profiled") return { kind: "answered", text: outcome.modelText };
+  // Resolution and composition first, and they reach nothing: the step's identity
+  // has to come from what the profile RESOLVED to, so that two requests naming the
+  // same table settle as one step rather than executing twice.
+  const planned = planTableProfile(context, record, call.input);
+  if (planned.kind !== "planned") return { kind: "answered", text: planned.modelText };
 
-  await service.recordEvent(context.runId, {
-    kind: "table-profiled",
-    artifact: outcome.artifact,
-    profile: outcome.profile,
+  const { plan } = planned;
+  const stepId = deriveStepId("profile_table", {
+    ...(plan.target.schema === undefined ? {} : { schema: plan.target.schema }),
+    table: plan.target.table,
+    depth: plan.depth,
+    from: plan.from,
   });
-  return { kind: "answered", text: outcome.modelText };
+  known.add(stepId);
+
+  let modelText = "";
+  const result = await service.runStep(
+    record.runId,
+    { stepId, tool: "profile_table", operationId: "sql.table.profile" },
+    async () => {
+      const outcome = await profileTableTool(context, plan);
+      modelText = outcome.modelText;
+      if (outcome.kind !== "profiled") {
+        if (outcome.kind === "refused") return { kind: "refused", refusal: outcome.refusal };
+        notAttempted.add(stepId);
+        return { kind: "not-attempted" };
+      }
+      // Written inside the settled step, so a reader never sees a profile whose
+      // read was not also recorded.
+      await service.recordEvent(record.runId, {
+        kind: "table-profiled",
+        artifact: outcome.artifact,
+        profile: outcome.profile,
+      });
+      return { kind: "completed", artifact: outcome.artifact };
+    },
+  );
+
+  if (result.kind === "cancelled") return { kind: "cancelled" };
+  if (result.kind === "performed") return { kind: "answered", text: modelText };
+  if (result.kind === "replayed") {
+    // The profile is already on this run's ledger; re-reading the table would spend
+    // a statement to learn what the run already knows.
+    return {
+      kind: "answered",
+      text: `That exact profile was already taken in this run. ${describeSettled(result.event, "profile_table")}`,
+    };
+  }
+  return {
+    kind: "answered",
+    text: notAttempted.has(result.stepId)
+      ? refusedBeforeDatabaseText(result.stepId, "profile_table")
+      : indeterminateText(result.stepId, "profile_table"),
+  };
 }
 
 /**

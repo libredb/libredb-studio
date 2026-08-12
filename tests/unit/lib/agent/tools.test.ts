@@ -10,6 +10,7 @@ import {
   executeAgentOperation,
   inspectPlanTool,
   inspectSchemaTool,
+  planTableProfile,
   profileTableTool,
   recommendChangeTool,
   runReadQueryTool,
@@ -1689,43 +1690,96 @@ describe("profileTableTool — the model names a table, the server decides the r
   ];
   const run = { runId: "run-1", events } as Pick<AgentRunRecord, "runId" | "events">;
 
-  test("planning mode has no tools at all", async () => {
-    const h = harness({ mode: "planning" });
+  const plan = (h: Harness, input: unknown) => planTableProfile(h.context, run, input);
 
-    const outcome = await profileTableTool(h.context, run, { table: "orders" });
+  test("planning mode has no tools at all", () => {
+    const outcome = plan(harness({ mode: "planning" }), { table: "orders" });
 
     if (outcome.kind !== "unavailable") throw new Error("expected unavailable");
     expect(outcome.reasonCode).toBe("MODE_HAS_NO_TOOLS");
-    expect(h.acquireProvider).not.toHaveBeenCalled();
   });
 
-  test("another run's record is a wiring fault, and is loud", async () => {
+  test("another run's record is a wiring fault, and is loud", () => {
     const h = harness();
 
-    await expect(profileTableTool(h.context, { runId: "run-other", events }, { table: "orders" })).rejects.toThrow(
+    expect(() => planTableProfile(h.context, { runId: "run-other", events }, { table: "orders" })).toThrow(
       /does not belong to this run/,
     );
   });
 
-  test("a table the run never inventoried is refused before any database reach", async () => {
-    const h = harness();
-
-    const outcome = await profileTableTool(h.context, run, { table: "secrets" });
+  test("a table the run never inventoried is refused before any database reach", () => {
+    const outcome = plan(harness(), { table: "secrets" });
 
     if (outcome.kind !== "unavailable") throw new Error("expected unavailable");
     expect(outcome.reasonCode).toBe("TABLE_NOT_INVENTORIED");
-    expect(h.acquireProvider).not.toHaveBeenCalled();
   });
 
-  test("an engine with no verified profile composition is refused, not composed on a guess", async () => {
-    // Phase 1 verified PostgreSQL and SQLite. Composing for a third engine would be
-    // a statement nobody checked against that engine's grammar.
-    const h = harness({ connection: { ...connection, type: "mysql" } });
+  test("a named schema is part of the answer, never ignored", () => {
+    // Found by review on #345: matching a BARE inventory entry while a schema was
+    // named accepted {schema: "other", table: "orders"} against an unqualified
+    // `orders`, and then targeted `other.orders` — a table never inventoried.
+    const outcome = plan(harness(), { schema: "other", table: "orders" });
 
-    const outcome = await profileTableTool(h.context, run, { table: "orders" });
+    if (outcome.kind !== "unavailable") throw new Error("expected unavailable");
+    expect(outcome.reasonCode).toBe("TABLE_NOT_INVENTORIED");
+  });
+
+  test("the composed statement targets what was RESOLVED, not what was asked for", () => {
+    // An unqualified name resolving to a qualified entry composed `FROM "orders"`,
+    // leaving search_path to decide which relation was read while the ledger said
+    // the qualified one had been profiled. Found by review on #345.
+    const outcome = plan(harness(), { table: "orders" });
+
+    if (outcome.kind !== "planned") throw new Error("expected a plan");
+    expect(outcome.plan.sql).toContain('FROM "public"."orders"');
+    expect(outcome.plan.target.schema).toBe("public");
+  });
+
+  test("an engine with no verified profile composition is refused, not composed on a guess", () => {
+    const outcome = plan(harness({ connection: { ...connection, type: "mysql" } }), { table: "orders" });
 
     if (outcome.kind !== "unavailable") throw new Error("expected unavailable");
     expect(outcome.reasonCode).toBe("INVALID_TOOL_INPUT");
-    expect(h.acquireProvider).not.toHaveBeenCalled();
+  });
+
+  test("a column offset past the end of the table is refused rather than profiling nothing", () => {
+    const outcome = plan(harness(), { table: "orders", fromColumn: 99 });
+
+    if (outcome.kind !== "unavailable") throw new Error("expected unavailable");
+    expect(outcome.reasonCode).toBe("NO_COLUMNS_AT_OFFSET");
+  });
+
+  test("a batch reports what it did NOT cover, so nothing silently claims the whole table", () => {
+    // Without a continuation, columns past the bound could never be assessed while
+    // the run still counted as having profiled the table. Found by review on #345.
+    const wide = {
+      ...snapshot,
+      tables: [
+        {
+          name: "public.wide",
+          columns: Array.from({ length: 20 }, (_, index) => ({
+            name: `c${index}`,
+            type: "text",
+            nullable: true,
+            isPrimary: false,
+          })),
+          indexes: [],
+        },
+      ],
+    };
+    const wideRun = {
+      runId: "run-1",
+      events: [{ kind: "context-captured", atMs: 1, fingerprint: "ctx_1", tableCount: 1, snapshot: wide }],
+    } as Pick<AgentRunRecord, "runId" | "events">;
+
+    const first = planTableProfile(harness().context, wideRun, { table: "wide" });
+    if (first.kind !== "planned") throw new Error("expected a plan");
+    expect(first.plan.columns).toHaveLength(16);
+    expect(first.plan.remaining).toBe(4);
+
+    const second = planTableProfile(harness().context, wideRun, { table: "wide", fromColumn: 16 });
+    if (second.kind !== "planned") throw new Error("expected a plan");
+    expect(second.plan.columns).toHaveLength(4);
+    expect(second.plan.remaining).toBe(0);
   });
 });

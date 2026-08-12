@@ -317,7 +317,26 @@ though both are conventional in a profiler.
 The model names a **table**, never columns and never SQL. The columns come from the run's own
 captured inventory, so a profile cannot be aimed at something the run never established exists, and
 an unqualified name is resolved against a qualified inventory only when exactly one table matches —
-two schemas holding the same table name is precisely when a guess would profile the wrong one.
+two schemas holding the same table name is precisely when a guess would profile the wrong one. **The
+composed statement targets what was RESOLVED**, not the model's spelling: composing from the
+spelling left PostgreSQL's `search_path` to decide which relation was read while the ledger said a
+qualified one had been profiled.
+
+A profile **settles a step**, like every other database reach: its invocation is on the ledger before
+its effect, so it inherits the cancellation checkpoint, the replay of an identical call, and the
+indeterminate-step rule. That matters more than it looks — three separate consumers read
+`tool-completed` and nothing else (a report's citation check, the artifact route's authorization, and
+the rail's budget meter), so a profile that settled no step would be citable in a report whose "Show
+result" answered 404, on a meter reading zero.
+
+One profile covers a bounded number of columns, and says how many it did **not** cover. A wider table
+is profiled in further calls with `fromColumn`; without that, columns past the bound could never be
+assessed while the run still counted as having profiled the table.
+
+A column whose declared type has no equality operator — `json`, `jsonb`, `xml`, the geometric
+types — gets no distinct count. One such column would otherwise abort the whole aggregate
+(`could not identify an equality operator for type json`) and take every other column's statistics
+with it.
 
 The findings are the **server's**, each a mechanical predicate over counts with a stated threshold:
 `high_null`, `constant`, `low_cardinality`, `suspected_pii`, plus `fk_unindexed` derived from the

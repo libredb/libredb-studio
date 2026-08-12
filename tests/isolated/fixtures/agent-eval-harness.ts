@@ -187,6 +187,14 @@ export interface EvalRunOptions {
   readonly actor?: AgentRunActor;
   /** What the scripted engine answers a MODEL statement with. Catalog reads are served by the preset. */
   readonly answer?: (sql: string) => Promise<QueryResult>;
+  /**
+   * Fails the provider acquisition — a reach that dies BEFORE the statement is
+   * sent, so it propagates rather than settling. Called once per acquisition and
+   * may return nothing, which is how a fixture lets the drive's context capture
+   * succeed and takes the pool away afterwards. This is the only way to leave a
+   * step invoked with no outcome, which is the process-death window itself.
+   */
+  readonly acquireFails?: () => Error | undefined;
 }
 
 export interface EvalDriveOptions {
@@ -285,7 +293,11 @@ export async function openEvalRun(options: EvalRunOptions = {}): Promise<EvalRun
       artifacts,
       deadline: new AgentRunDeadline(AGENT_RUN_DEADLINE_MS, clock),
       repairs: new AgentRepairLedger(),
-      acquireProvider: async () => provider,
+      acquireProvider: async () => {
+        const failure = options.acquireFails?.();
+        if (failure) throw failure;
+        return provider;
+      },
     };
 
     const outcome = await runInvestigation(record.runId, {

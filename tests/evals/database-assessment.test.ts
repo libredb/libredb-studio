@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { type EvalEngine, type EvalRun, openEvalRun } from "../isolated/fixtures/agent-eval-harness";
 import { type Turn, answersProse, callsTool, reportOn } from "../isolated/fixtures/agent-scripted-model";
 import { chatToolCallStream } from "../isolated/fixtures/agent-transport";
+import { ConnectionError, QueryError } from "@/lib/db/errors";
 
 /**
  * The `database-assessment` template, driven end to end on both reference engines
@@ -66,10 +67,16 @@ describe("the assessment arc, on both reference engines", () => {
 
       const drive = await run.drive(assessmentArc("engineering"));
 
+      // The profile settles a STEP like every other database reach: its invocation
+      // is on the ledger before its effect, and its outcome after. Routing it around
+      // `runStep` cost the run its cancellation checkpoint and its duplicate
+      // protection — found by review on #345.
       expect(drive.kinds).toEqual([
         "run-started",
         "context-captured",
+        "tool-invoked",
         "table-profiled",
+        "tool-completed",
         "report-composed",
         "run-finished",
       ]);
@@ -104,6 +111,44 @@ describe("the assessment arc, on both reference engines", () => {
       for (const finding of profiled.profile.findings) expect(finding.detail).not.toContain("@");
     });
   }
+});
+
+describe("a profile's artifact is an artifact like any other", () => {
+  test("it settles a step, so it is citable, fetchable and charged to the budget", async () => {
+    // Three consumers read `tool-completed` and nothing else: `composeReportTool`'s
+    // citation check, the artifact route's authorization, and the rail's budget
+    // fold. A profile that emitted no settlement would be citable in a report whose
+    // "Show result" always answered 404, on a meter reading zero. Settling the step
+    // is what makes all three correct at once — found by review on #345.
+    const run = await open("postgres");
+
+    const drive = await run.drive(assessmentArc("engineering"));
+
+    const profiled = drive.events.find((event) => event.kind === "table-profiled");
+    const settled = drive.events.find((event) => event.kind === "tool-completed");
+    if (profiled?.kind !== "table-profiled" || settled?.kind !== "tool-completed") {
+      throw new Error("expected both a profile and its settlement");
+    }
+    expect(settled.artifact.correlationId).toBe(profiled.artifact.correlationId);
+    expect(settled.artifact.operationId).toBe("sql.table.profile");
+  });
+
+  test("the same profile asked for twice is replayed, not re-read", async () => {
+    // The claim an earlier version made and could not keep: the repair ledger
+    // records only FAILED statements, so nothing stopped a successful profile from
+    // running again. The step's identity does.
+    const run = await open("postgres");
+
+    const drive = await run.drive([
+      profiles("engineering", "pattern"),
+      profiles("engineering", "pattern"),
+      reportOn("The engineering table has a sparse column."),
+    ]);
+
+    expect(drive.modelStatements.filter((sql) => sql.includes("count("))).toHaveLength(1);
+    expect(drive.kinds.filter((kind) => kind === "table-profiled")).toHaveLength(1);
+    expect(drive.transcripts[2]).toContain("That exact profile was already taken in this run");
+  });
 });
 
 describe("a profile can only be aimed at a table the run has inventoried", () => {
@@ -168,5 +213,79 @@ describe("a drive that dies after profiling does not profile again", () => {
     expect(resumed.transcripts[0] ?? "").toContain("was already profiled");
     expect(resumed.statements).toEqual([]);
     expect(resumed.verdict.outcome).toBe("answered");
+  });
+});
+
+describe("a profile that does not settle cleanly", () => {
+  test("a statement that fails at the database is refused, and the run may go on", async () => {
+    const run = await openEvalRun({
+      engine: "postgres",
+      workflowType: "database-assessment",
+      objective: "Where is this database's data incomplete?",
+      answer: async (sql) => {
+        if (sql.includes("count(")) throw new QueryError('relation "engineering" does not exist');
+        return { rows: [{ x: 1 }], fields: ["x"], rowCount: 1, executionTime: 2 };
+      },
+    });
+    runs.push(run);
+
+    const drive = await run.drive([profiles("engineering"), answersProse("That table is gone.")]);
+
+    expect(drive.kinds).toContain("tool-refused");
+    expect(drive.kinds).not.toContain("table-profiled");
+    // The engine's own words, fenced.
+    expect(drive.transcripts[1]).toContain("BEGIN UNTRUSTED DATABASE CONTENT");
+  });
+
+  test("a result that does not read back as counts settles nothing, and asking again is told nothing ran", async () => {
+    // The step settles nothing, so by ledger shape alone it is indistinguishable
+    // from a mid-flight death. It is not the same thing to a model — nothing was
+    // recorded, but the read DID happen — so asking again must be told that this
+    // exact call will not be sent again, not that its outcome is unknowable.
+    const run = await openEvalRun({
+      engine: "postgres",
+      workflowType: "database-assessment",
+      objective: "Where is this database's data incomplete?",
+      // Counts came back under names the profile cannot read.
+      answer: async () => ({ rows: [{ total: 5 }], fields: ["total"], rowCount: 1, executionTime: 3 }),
+    });
+    runs.push(run);
+
+    const drive = await run.drive([
+      profiles("engineering"),
+      profiles("engineering"),
+      answersProse("I cannot read it."),
+    ]);
+
+    expect(drive.kinds).not.toContain("table-profiled");
+    expect(drive.transcripts[1]).toContain("could not be read as counts");
+    expect(drive.transcripts[2]).toContain("refused before the database was reached");
+  });
+
+  test("a profile interrupted before its outcome was recorded is never repeated", async () => {
+    // The process-death window: the invocation is durable, the outcome is not, and
+    // whether the read reached the database is unknowable. Re-running it would be
+    // the duplicate execution the write-ahead ordering exists to prevent.
+    let reaches = 0;
+    const run = await openEvalRun({
+      engine: "postgres",
+      workflowType: "database-assessment",
+      objective: "Where is this database's data incomplete?",
+      // The three catalog reads succeed; the profile's acquisition does not.
+      acquireFails: () => (++reaches > 3 ? new ConnectionError("the pool went away") : undefined),
+    });
+    runs.push(run);
+
+    await expect(run.drive([profiles("engineering")])).rejects.toThrow(/pool went away/);
+    expect((await run.events()).map((event) => event.kind)).toEqual([
+      "run-started",
+      "context-captured",
+      "tool-invoked",
+    ]);
+
+    const resumed = await run.drive([profiles("engineering"), answersProse("I cannot know.")]);
+
+    expect(resumed.transcripts[1]).toContain("outcome was never recorded");
+    expect(resumed.kinds).not.toContain("table-profiled");
   });
 });
