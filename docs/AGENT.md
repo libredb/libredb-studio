@@ -293,7 +293,24 @@ A **capability probe** exists to establish, positively, that a configured model 
 the schema its tool arguments are declared against, and streams. It reports only what it observed on
 the wire — there is no capability table keyed on model names, because for `ollama` and `custom` kinds
 the model is whatever the operator is serving — and a failure that says nothing about the model (a
-bad key, a quota, a 5xx) reaches no verdict at all. It is not yet wired into the start path (B18).
+bad key, a quota, a 5xx) reaches no verdict at all.
+
+**The start path consults it before opening an agent run** (`capability-gate.ts`), and four decisions
+shape what that costs:
+
+- **Planning runs are not probed.** That mode is toolless by contract, so tool calling is not among
+  the capabilities it needs.
+- **Only an established incapability refuses**, with `422` and the probe's own sentence. Everything
+  the probe merely failed on starts as before, so the start path gained no new way to fail — and since
+  a drive now reports `model-rate-limited`, `model-unauthorized` or `model-unavailable`, those runs
+  say what happened rather than sitting at `queued`.
+- **Positive verdicts are cached for the life of the process; refusals are not.** A model that called
+  a tool keeps calling tools, so that round trip is paid once. A refusal is re-probed because an
+  operator can fix the server without changing the model id — an `ollama` endpoint serving something
+  else under the same name — and re-probing costs a round trip only to someone whose runs are already
+  failing.
+- **The cache key is the model's identity**, so a configuration change misses it by construction:
+  there is no invalidation hook to forget and no TTL to tune.
 
 ## HTTP surface
 
@@ -308,7 +325,7 @@ that *is* its answer, and the drive route verifies a machine credential instead 
 | Route | Purpose |
 | --- | --- |
 | `GET /api/agent/config` | Whether this server runs agents. Session-verified; answers the flag only, never the backend or the model. |
-| `POST /api/agent/runs` | Opens a run (mode, objective, `connectionId`) and returns `202` with the run id. An inline connection in the body is refused. |
+| `POST /api/agent/runs` | Opens a run (mode, objective, `connectionId`) and returns `202` with the run id. An inline connection in the body is refused. An agent run whose model was established as unable to call tools is refused `422` before any run is opened. |
 | `GET /api/agent/runs/{runId}` | The run record, folded from its ledger. |
 | `DELETE /api/agent/runs/{runId}` | Requests a stop. Cancellation is enforced by the run loop's own persisted state, not by a driver cancel propagating — so this is "asked to stop", not "has stopped". |
 | `GET /api/agent/runs/{runId}/stream` | The ledger as NDJSON, one entry per line. |
@@ -476,8 +493,6 @@ declared-target allowlist, the statement guard and the role's own grants are the
 - **B16** — the opt-in `@workflow/world-postgres` backend is not present in the standalone payload,
   so it cannot load in the container image or the npx payload.
 - **B17** — table profiling and monitoring tools are deferred; the M2 tool set is the four above.
-- **B18** — nothing calls the capability probe, so a model that cannot call tools is discovered at its
-  first tool call rather than refused at start.
 - **B19** — the agent endpoints are described here but are absent from
   [`docs/API_DOCS.md`](./API_DOCS.md).
 - **B20** — a Gemini deployment behind a proxy is not configurable: `LLM_API_URL` is unread for that

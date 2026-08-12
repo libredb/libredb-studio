@@ -136,6 +136,13 @@ run_group "Group 0g: Agent runtime composition" \
 run_group "Group 0h: Agent end-to-end investigation" \
   tests/isolated/agent-investigation-e2e.test.ts
 
+# Group 0i: The start path's model gate. Its own group, NOT part of 0f: it mocks
+# @/lib/agent/capability-probe and @/lib/agent/model-adapter, and mock.module is
+# process-wide — 0f contains the suites for both of those modules, so sharing its
+# process would hand them the stubs written for this one.
+run_group "Group 0i: Agent capability gate" \
+  tests/isolated/agent-capability-gate.test.ts
+
 # Group 1: Studio (isolated — mocks almost every child component)
 run_group "Group 1/6: Studio" \
   tests/components/Studio.test.tsx

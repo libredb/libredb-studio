@@ -1293,25 +1293,6 @@ tool is added to the read-class set. Done, for monitoring, only after a decision
 operation set grows a fourth descriptor for non-SQL metadata reads — which drags the verification
 marker, the provider triad and the security matrix with it, and is a human product call.
 
-### B18. Nothing calls the capability probe, so an incapable model is discovered at its first tool call
-
-`probeAgentModel` (`src/lib/agent/capability-probe.ts`) establishes positively that a configured model
-calls tools, honours the schema its tool arguments are declared against, and streams — and it has no
-caller in `src/`. The consequence is not a security gap (a model that cannot call tools simply does
-nothing) but a diagnosis gap: instead of a typed refusal at start pointing the user at the chat and
-NL2SQL surfaces that do work, the run opens, spends a drive, and ends with a model that answered in
-prose.
-
-It was left unwired for a real reason rather than by omission: a mandatory live probe on every run
-start adds a model round trip and a failure mode to the start path, and whether to pay that (per
-start, per configuration change, or cached with what invalidation) is a product decision T9's bar did
-not carry. There is a second, narrower limit worth stating in the same place: for the `ollama` and
-`custom` kinds the probe can only report what it observed on the wire, because the model is whatever
-the operator is serving — so "not established" there means "not observed", never "not supported".
-
-Done when the start path refuses a model whose capabilities were established as absent, with the
-refusal surfaced in the rail, and with the caching decision recorded rather than implied.
-
 ### B19. The agent endpoints are absent from docs/API_DOCS.md
 
 `docs/API_DOCS.md` documents every other route family (auth, database, AI, storage, connections,

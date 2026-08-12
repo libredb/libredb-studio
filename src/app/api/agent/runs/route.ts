@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { admitAgentModel } from "@/lib/agent/capability-gate";
 import { isAgentRuntimeEnabled } from "@/lib/agent/config";
 import { driveAgentRun, getAgentRunService } from "@/lib/agent/runtime";
 import type { AgentRunMode } from "@/lib/agent/types";
@@ -75,6 +76,21 @@ export async function POST(req: Request) {
     }
 
     const connection = await resolveConnection({ connectionId }, guard.session);
+
+    /*
+      Before a run exists, not after one has failed. A model that cannot call tools
+      would otherwise open a run, spend a drive and end having answered in prose — the
+      diagnosis gap `docs/BACKLOG.md` B18 describes. The gate refuses only what the
+      probe positively ESTABLISHED, so nothing that merely went wrong (a quota, a bad
+      key, an unreachable endpoint) reaches here as a refusal; those still start, and
+      the drive reports them in its own vocabulary. 422 rather than 400: the request is
+      well-formed, and it is the server's configuration that cannot honour it.
+    */
+    const gate = await admitAgentModel(mode as AgentRunMode);
+    if (gate.kind === "refused") {
+      return NextResponse.json({ error: gate.refusal.message, missing: gate.refusal.missing }, { status: 422 });
+    }
+
     const service = await getAgentRunService();
     const record = await service.start({
       mode: mode as AgentRunMode,
