@@ -15,6 +15,7 @@ import { clearRateLimitState } from "@/lib/api/rate-limit";
 import * as realAuth from "@/lib/auth";
 import * as realSeed from "@/lib/seed/resolve-connection";
 import * as realGate from "@/lib/agent/capability-gate";
+import { AgentRunStoreError } from "@/lib/agent/run-store";
 
 const { SeedConnectionError } = realSeed;
 
@@ -327,6 +328,33 @@ describe("GET /api/agent/runs/[runId]", () => {
     const res = await GET(createMockRequest("/api/agent/runs/arun_9"), params("arun_9"));
 
     expect(res.status).toBe(404);
+  });
+
+  /*
+    A run id the LEDGER cannot name is a run that cannot exist, so it answers like one.
+
+    Found by asking the running server for `../../etc/passwd`: the store's id guard
+    refused it before touching the filesystem — which is the guard working — but the
+    error reached no HTTP mapping and fell through as a bodyless 500. A malformed id is
+    the caller's mistake, and this module's own rule is that "no such run", "not yours"
+    and "runtime off" answer identically; teaching a caller the id grammar through a
+    different status would undo that.
+  */
+  test("a run id the ledger cannot name answers exactly like a run that does not exist", async () => {
+    // Once: a persistent replacement would outlive this test, because `mock.module`
+    // installs it for the whole process.
+    mockStatus.mockImplementationOnce(async (runId: string) => {
+      throw new AgentRunStoreError(
+        "INVALID_RUN_ID",
+        `agent run id "${runId}" is not usable as a ledger name: expected 1-64 characters of [A-Za-z0-9_]`,
+      );
+    });
+
+    const res = await GET(createMockRequest("/api/agent/runs/arun-with-hyphens"), params("arun-with-hyphens"));
+    const body = await parseResponseJSON<{ error: string }>(res);
+
+    expect(res.status).toBe(404);
+    expect(body.error).toBe("No such agent run");
   });
 
   test("an unauthenticated caller is refused", async () => {

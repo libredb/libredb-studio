@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { isAgentRuntimeEnabled } from "@/lib/agent/config";
 import type { AgentRunService, AgentRunStatusReport } from "@/lib/agent/run-service";
+import { AgentRunStoreError } from "@/lib/agent/run-store";
 import { getAgentRunService } from "@/lib/agent/runtime";
 import { guardRoute } from "@/lib/api/require-session";
 import type { UserPayload } from "@/lib/auth";
@@ -45,7 +46,26 @@ export async function accessAgentRun(opts: {
   if (!isAgentRuntimeEnabled()) return { response: notFound() };
 
   const service = await getAgentRunService();
-  const report = await service.status(opts.runId);
+
+  /*
+    A run id the LEDGER cannot name joins the same bucket. The store refuses one before
+    it touches anything (`AGENT_RUN_ID_PATTERN` — a run id becomes a stream name), which
+    is the guard doing its job; what was missing is that the refusal had no HTTP
+    meaning, so asking for `../../etc/passwd` produced a bodyless 500 instead of an
+    answer. It cannot exist, so it answers like a run that does not — the same reason a
+    run belonging to somebody else does. Only THAT reason is caught: a malformed ledger
+    or a backend that is genuinely broken must still surface as a server error.
+  */
+  let report: AgentRunStatusReport | null;
+  try {
+    report = await service.status(opts.runId);
+  } catch (error) {
+    if (error instanceof AgentRunStoreError && error.reasonCode === "INVALID_RUN_ID") {
+      return { response: notFound() };
+    }
+    throw error;
+  }
+
   if (report === null || report.record.actor.sessionId !== guard.session.username) {
     return { response: notFound() };
   }
