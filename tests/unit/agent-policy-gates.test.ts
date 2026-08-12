@@ -1,4 +1,13 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { createLocalWorld } from "@workflow/world-local";
+import { AgentRunService } from "@/lib/agent/run-service";
+import { AgentRunStore } from "@/lib/agent/run-store";
+import { ExecutionArtifactStore } from "@/lib/db/operations/artifacts";
+import { ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
+import type { QueryResult } from "@/lib/types";
 import { AGENT_EXECUTION_POLICY } from "@/lib/agent/execution-policy";
 import { verifyRunGoal } from "@/lib/agent/goal-verifier";
 import { AGENT_TOOL_DEFINITIONS, selectAgentTools } from "@/lib/agent/tools";
@@ -19,6 +28,11 @@ import type { RegistrableOperationDescriptor } from "@/lib/db/operations/types";
  *
  * If one of these fails, the milestone's security claim has moved — not a scenario.
  */
+
+const dataDirs: string[] = [];
+afterAll(() => {
+  for (const dir of dataDirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
+});
 
 const WORKFLOWS: readonly AgentRunWorkflowType[] = ["investigation", "query-optimization", "database-assessment"];
 
@@ -75,9 +89,96 @@ describe("GATE — no operation above risk class 1 can execute", () => {
 // ─── Gate 3: no duplicate executions ────────────────────────────────────────
 
 describe("GATE — a step the ledger already settled is never executed twice", () => {
+  /*
+    Written against `runStep` itself, and it had to be rewritten to be: an earlier
+    version of this block asserted that every tool with an operation id resolves in
+    the registry, which is a true statement about a DIFFERENT property. A regression
+    that re-executed settled steps would have left it green. Found by review on #346.
+
+    The instrument is the callback: it is what reaches a database, so counting its
+    invocations is the gate, and nothing else here is.
+  */
+  const harness = () => {
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-policy-gate-"));
+    dataDirs.push(dataDir);
+    const store = new AgentRunStore({ world: createLocalWorld({ dataDir, recoverActiveRuns: false }) });
+    const tracker = new ExecutionBudgetTracker();
+    const artifacts = new ExecutionArtifactStore<QueryResult>({ ttlMs: 60_000, maxArtifacts: 8 });
+    return { store, service: new AgentRunService({ store, resources: { tracker, artifacts } }) };
+  };
+
+  const INVOCATION = { stepId: "step_fixed", tool: "run_read_query", operationId: "sql.query.read" } as const;
+
+  const settlement = (correlationId: string) =>
+    ({
+      kind: "completed",
+      artifact: {
+        correlationId,
+        runId: "arun_1",
+        operationId: "sql.query.read",
+        summary: { rowCount: 1, columnNames: ["a"], elapsedMs: 1 },
+      },
+    }) as const;
+
+  test("the second call with the same step id replays the ledger and does NOT reach the callback", async () => {
+    const { service } = harness();
+    const { runId } = await service.start({
+      mode: "agent",
+      actor: { sessionId: "s", role: "admin" },
+      connectionId: "conn_1",
+      objective: "why",
+    });
+    await service.markRunning(runId);
+
+    let reached = 0;
+    const perform = async () => {
+      reached += 1;
+      return settlement(`corr_${reached}`);
+    };
+
+    const first = await service.runStep(runId, INVOCATION, perform);
+    const second = await service.runStep(runId, INVOCATION, perform);
+
+    expect(first.kind).toBe("performed");
+    expect(second.kind).toBe("replayed");
+    // The whole gate, in one number.
+    expect(reached).toBe(1);
+    if (second.kind === "replayed" && second.event.kind === "tool-completed") {
+      expect(second.event.artifact.correlationId).toBe("corr_1");
+    }
+  });
+
+  test("a step invoked with no recorded outcome is reported indeterminate, not retried", async () => {
+    // The process-death window. Whether it reached the database is unknowable, so
+    // re-running it would be exactly the duplicate execution this gate forbids.
+    const { store, service } = harness();
+    const { runId } = await service.start({
+      mode: "agent",
+      actor: { sessionId: "s", role: "admin" },
+      connectionId: "conn_1",
+      objective: "why",
+    });
+    await service.markRunning(runId);
+    await store.appendEvent(runId, {
+      kind: "tool-invoked",
+      atMs: 1,
+      stepId: INVOCATION.stepId,
+      tool: "run_read_query",
+    });
+
+    let reached = 0;
+    const result = await service.runStep(runId, INVOCATION, async () => {
+      reached += 1;
+      return settlement("corr_x");
+    });
+
+    expect(result.kind).toBe("indeterminate");
+    expect(reached).toBe(0);
+  });
+
   test("the executing form of EXPLAIN is registered only so the approval gate is reachable", () => {
-    // It is in the registry and default-denied, which is what lets the pipeline
-    // answer require-approval for it. That is the opposite of it being available.
+    // In the registry and default-denied, which is what lets the pipeline answer
+    // require-approval for it. That is the opposite of it being available.
     const registry = createCanonicalOperationRegistry();
     const resolution = registry.resolve("sql.explain.analyze");
 
@@ -85,12 +186,9 @@ describe("GATE — a step the ledger already settled is never executed twice", (
     expect(resolution.descriptor.requiresApproval).toBe(true);
   });
 
-  test("every database-reaching tool declares the operation it drives, so none reaches a driver unaudited", () => {
-    // A tool with no operation id reaches no database at all; one with an id goes
-    // through `executeAuditedOperation`. There is no third case, which is what
-    // makes "no second path to a driver" checkable rather than asserted.
-    const reaching = Object.values(AGENT_TOOL_DEFINITIONS).filter((tool) => tool.operationId !== undefined);
+  test("every operation a tool drives is one the registry knows, so none reaches a driver unaudited", () => {
     const registry = createCanonicalOperationRegistry();
+    const reaching = Object.values(AGENT_TOOL_DEFINITIONS).filter((tool) => tool.operationId !== undefined);
 
     expect(reaching.length).toBeGreaterThan(0);
     for (const tool of reaching) {

@@ -380,10 +380,17 @@ against the deciding function in `tests/unit/agent-policy-gates.test.ts`, which 
 policy gates by name — planning performs zero database operations, nothing above risk class 1 can
 execute, a settled step is never executed twice, and every final finding carries a citation.
 
-One residual, found by these fixtures and recorded as **B29**: an identifier the model **quotes back
-into its own tool arguments** reaches the transcript unfenced, because those are the model's words
-rather than the server's. The server's own blocks stay balanced, and the text after such a marker is
-the model's own JSON rather than attacker content.
+**One open risk, found by these fixtures and recorded as B29.** An identifier the model quotes back
+into its own tool arguments reaches the transcript **unfenced**, because an assistant message is the
+model's words rather than the server's — and an attacker who can name a table controls the whole
+identifier, so they control the marker *and* arbitrary text after it. This is an open injection path,
+not a bounded one; the surrounding JSON does not make that suffix safe.
+
+What is true, and is a different claim: **the server never hands the model the raw marker.** Every
+server-authored path neutralises it first, so a model reading a hostile inventory sees the defanged
+spelling and has nothing to copy. For the raw marker to reach an assistant message the model has to
+reconstruct it. Both halves are asserted — that the fenced inventory carries no raw marker, and that
+the transport does not prevent one if the model produces it anyway.
 
 **Database content is untrusted input.** A table name, a column comment, a row value and an engine
 error message all come from whoever can write to the database, so everything crossing into a prompt
