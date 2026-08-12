@@ -26,7 +26,7 @@ FAIL=0
 # Count the `run_group` CALLS below when adding one (not the definition) - this is the
 # number the final summary reports, and it had already drifted by one before Group 0e
 # was added.
-TOTAL_GROUPS=25
+TOTAL_GROUPS=26
 EXTRA_BUN_ARGS=("$@")
 GROUP_INDEX=0
 COVERAGE_MODE=0
@@ -128,6 +128,13 @@ run_group "Group 0f: Agent model layer" \
 # above a stubbed investigation module.
 run_group "Group 0g: Agent runtime composition" \
   tests/isolated/agent-runtime.test.ts
+
+# Group 0h: The agent's end-to-end investigation against real engines. Its own
+# group, NOT part of 0f: it mocks `pg` (the PostgreSQL suite's engine-fixture
+# technique) and mock.module is process-wide, so sharing a process would hand every
+# other file in it a pg module that answers only this fixture's statements.
+run_group "Group 0h: Agent end-to-end investigation" \
+  tests/isolated/agent-investigation-e2e.test.ts
 
 # Group 1: Studio (isolated — mocks almost every child component)
 run_group "Group 1/6: Studio" \
