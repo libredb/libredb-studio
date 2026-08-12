@@ -81,7 +81,17 @@ export interface AgentRunEnding {
  */
 export type AgentRunNarrativeEvent = Extract<
   AgentRunEvent,
-  { kind: "context-captured" | "statement-drafted" | "report-composed" | "closing-statement" }
+  {
+    kind:
+      | "context-captured"
+      | "statement-drafted"
+      | "report-composed"
+      // Both reach no database and settle no step: they record what the run has
+      // ALREADY established, which is exactly what a narrative entry is.
+      | "plan-comparison"
+      | "recommendation"
+      | "closing-statement";
+  }
 >;
 
 /** Distributes over the union, so each variant loses `atMs` rather than the union collapsing. */

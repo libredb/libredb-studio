@@ -60,13 +60,21 @@ import {
   type AgentToolContext,
   type AgentToolName,
   type AgentToolOutcome,
+  comparePlansTool,
   composeReportTool,
   inspectPlanTool,
+  recommendChangeTool,
   inspectSchemaTool,
   runReadQueryTool,
   selectAgentTools,
 } from "./tools";
-import type { AgentRunEvent, AgentRunRecord, AgentRunStopReason, AgentRunTerminalStatus } from "./types";
+import type {
+  AgentRunEvent,
+  AgentRunRecord,
+  AgentRunStopReason,
+  AgentRunTerminalStatus,
+  AgentRunWorkflowType,
+} from "./types";
 import { UNTRUSTED_CONTENT_BEGIN, UNTRUSTED_CONTENT_END, fenceUntrustedContent } from "./untrusted-content";
 
 /** Everything a tool call needs EXCEPT what the run's own record decides. */
@@ -103,8 +111,18 @@ export interface AgentInvestigationResult {
   readonly text: string;
 }
 
-/** The three tools that reach the database. `compose_report` is handled apart. */
-type DatabaseToolName = Exclude<AgentToolName, "compose_report">;
+/**
+ * The tools that reach the database. The ledger-only ones are handled apart.
+ *
+ * Exclusion rather than enumeration, and that matters: `invokeDatabaseTool`'s
+ * dispatch ends in a fall-through to `inspect_plan`, so a new tool name that is not
+ * excluded here compiles and is silently routed to the wrong tool with a mis-cast
+ * argument list. Adding a tool means deciding, here, which side it is on.
+ */
+type DatabaseToolName = Exclude<AgentToolName, LedgerOnlyToolName>;
+
+/** Tools that record what the run already established and reach nothing. */
+type LedgerOnlyToolName = "compose_report" | "compare_plans" | "recommend_change";
 
 // ============================================================================
 // Prompting
@@ -134,8 +152,34 @@ const PLANNING_RULES = [
   "Answer with a plan in prose: what you would inspect, in what order, and what each step would establish.",
 ].join(" ");
 
+/**
+ * What each workflow is FOR, said to the model (#330 T3).
+ *
+ * A total record, so a workflow added to the contract stops this file compiling
+ * until someone decides what to ask of it. Appended to `AGENT_RULES` and never to
+ * `PLANNING_RULES`: planning is toolless, and telling it to call tools would be
+ * asking for something the mode cannot do.
+ *
+ * The optimization block names `inspect_schema`'s index selector explicitly, and
+ * that is not padding. A live run on 2026-08-12 reached for
+ * `PRAGMA index_list('a'); PRAGMA index_list('b')` — multi-statement text, refused
+ * by the statement guard before the database — because the obvious route to an
+ * index inventory is closed and nothing had said which one is open.
+ */
+const WORKFLOW_RULES: Readonly<Record<AgentRunWorkflowType, string>> = Object.freeze({
+  investigation: "Investigate the objective and report what the evidence supports.",
+  "query-optimization": [
+    "Your objective is a statement that is too slow. Establish HOW the engine reaches its rows, then propose a change.",
+    'Read the existing indexes with inspect_schema and kind="indexes" — a multi-statement PRAGMA or SHOW is refused before the database.',
+    "Inspect the plan of the current statement, then of your rewrite, and call compare_plans with the two artifact ids.",
+    "Every plan you can obtain is an ESTIMATE: nothing is executed, and there are no timings. Say so rather than implying a measurement.",
+    "Propose changes with recommend_change. They are offered to the user and never applied by this run.",
+  ].join(" "),
+  "database-assessment": "Assess the database and report what the evidence supports.",
+} satisfies Record<AgentRunWorkflowType, string>);
+
 function systemPrompt(record: AgentRunRecord): string {
-  const mode = record.mode === "agent" ? AGENT_RULES : PLANNING_RULES;
+  const mode = record.mode === "agent" ? `${AGENT_RULES} ${WORKFLOW_RULES[record.workflowType]}` : PLANNING_RULES;
   return `You are the LibreDB Studio database investigator. ${mode} ${SHARED_RULES}`;
 }
 
@@ -638,7 +682,11 @@ async function handleCall(input: {
     return { kind: "answered", text: unknownToolText(call.toolName) };
   }
 
+  // The ledger-only tools, before any step identity is derived: they settle no step
+  // because they perform no effect, so there is nothing to write ahead of.
   if (call.toolName === "compose_report") return composeReport(service, context, call.input);
+  if (call.toolName === "compare_plans") return comparePlans(service, context, call.input);
+  if (call.toolName === "recommend_change") return recommendChange(service, context, call.input);
 
   const name = call.toolName as DatabaseToolName;
   const stepId = deriveStepId(name, call.input);
@@ -703,6 +751,43 @@ async function handleCall(input: {
  * started, and the artifacts a claim may cite are exactly the entries that were
  * added while the loop was running.
  */
+/**
+ * The before/after plan comparison, recorded and NOT terminal.
+ *
+ * A comparison is a finding, not a conclusion: the run goes on to cite it. That is
+ * the difference from `compose_report`, which is the one tool whose success ends the
+ * loop — and it is why this returns `answered` rather than `reported`.
+ *
+ * The record is re-read for the same reason the report re-reads it: the artifacts a
+ * comparison may cite are exactly the entries added while the loop was running.
+ */
+async function comparePlans(service: AgentRunService, context: AgentToolContext, input: unknown): Promise<CallResult> {
+  const { record } = await service.resume(context.runId);
+  const outcome = comparePlansTool(context, record, input);
+  if (outcome.kind === "unavailable") return { kind: "answered", text: outcome.modelText };
+
+  await service.recordEvent(context.runId, {
+    kind: "plan-comparison",
+    before: outcome.before,
+    after: outcome.after,
+  });
+  return { kind: "answered", text: outcome.modelText };
+}
+
+/** A proposed change, recorded and offered to the user. Nothing here executes it. */
+async function recommendChange(
+  service: AgentRunService,
+  context: AgentToolContext,
+  input: unknown,
+): Promise<CallResult> {
+  const { record } = await service.resume(context.runId);
+  const outcome = recommendChangeTool(context, record, input);
+  if (outcome.kind === "unavailable") return { kind: "answered", text: outcome.modelText };
+
+  await service.recordEvent(context.runId, { kind: "recommendation", ...outcome.recommendation });
+  return { kind: "answered", text: outcome.modelText };
+}
+
 async function composeReport(service: AgentRunService, context: AgentToolContext, input: unknown): Promise<CallResult> {
   // `resume` rather than `status`: it is the read that REFUSES a run which has
   // ended or vanished, so the report is verified against a live run's own log

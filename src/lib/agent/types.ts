@@ -44,6 +44,7 @@
 import type { Role } from "@/lib/auth";
 import type { PolicyDenyCode } from "@/lib/db/operations/policy";
 import type { TableSchema } from "@/lib/types";
+import type { AgentPlanSummary } from "./plan-summary";
 
 /**
  * Which surface a run drives. Planning is toolless: it must perform zero database
@@ -188,6 +189,24 @@ export type AgentEvidenceReference =
   | { readonly source: "artifact"; readonly correlationId: string; readonly locator?: string }
   | { readonly source: "context-snapshot"; readonly fingerprint: string; readonly locator?: string };
 
+/**
+ * One side of a before/after plan comparison (#330 T3).
+ *
+ * `summary` is derived on the SERVER from the artifact the run actually produced,
+ * never supplied by the model: a comparison the model describes about its own work
+ * is a claim, and this has to be a fact. It carries no engine text for the reason
+ * `plan-summary.ts` states — a plan names tables and indexes, and those names are
+ * untrusted input. What names the objects is `sql`, which the model wrote and
+ * therefore already knows.
+ */
+export interface AgentPlanSide {
+  /** The `sql.explain.estimate` artifact this side was read from. */
+  readonly correlationId: string;
+  /** The statement that was explained. */
+  readonly sql: string;
+  readonly summary: AgentPlanSummary;
+}
+
 export interface AgentReportClaim {
   readonly claim: string;
   /** Non-empty by type: at least one reference, or the claim cannot be built. */
@@ -300,6 +319,40 @@ export type AgentRunEvent =
        */
       readonly kind: "closing-statement";
       readonly text: string;
+    })
+  | (AgentRunEventBase & {
+      /**
+       * Two estimated plans of the same question, and what changed between them.
+       *
+       * The query-optimization template's own artifact, and the thing its goal
+       * verifier requires: a run that recommends a rewrite without having compared
+       * the plans has recommended it on the strength of its own opinion.
+       *
+       * Both sides cite an artifact THIS run produced under `sql.explain.estimate`,
+       * checked against the ledger the way a report's citations are, so a comparison
+       * of two plans the run never asked for is inexpressible.
+       */
+      readonly kind: "plan-comparison";
+      readonly before: AgentPlanSide;
+      readonly after: AgentPlanSide;
+    })
+  | (AgentRunEventBase & {
+      /**
+       * A change the run proposes and DOES NOT make.
+       *
+       * `statement` is DDL or SQL that is never executed by anything in this
+       * runtime — no tool maps onto a write, and this event reaches no database at
+       * all. It exists so the rail can offer it to the user, who owns the decision;
+       * "apply to editor" hands them the statement, and nothing else happens.
+       *
+       * `evidence` is non-empty by type for the same reason a claim's is: a
+       * recommendation nothing backs is a recommendation the run invented.
+       */
+      readonly kind: "recommendation";
+      readonly change: "index" | "rewrite";
+      readonly statement: string;
+      readonly rationale: string;
+      readonly evidence: readonly [AgentEvidenceReference, ...AgentEvidenceReference[]];
     })
   | (AgentRunEventBase & {
       readonly kind: "run-finished";

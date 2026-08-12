@@ -1,4 +1,5 @@
 import { AGENT_EXECUTION_POLICY, AGENT_MAX_REPAIR_ATTEMPTS } from "@/lib/agent/execution-policy";
+import type { AgentPlanAccess, AgentPlanSummary } from "@/lib/agent/plan-summary";
 import type { AgentLedgerEntry } from "@/lib/agent/run-store";
 import type {
   AgentEvidenceReference,
@@ -195,6 +196,40 @@ const FAILURE_SENTENCES = {
 } as const satisfies Record<AgentRunFailureReason, string>;
 
 /**
+ * The honesty a plan comparison owes its reader, written by the app rather than
+ * left to the model to remember.
+ *
+ * Every plan the agent can obtain is an ESTIMATE. The executing form of EXPLAIN is
+ * default-denied because it runs the statement, and no tool reaches it — so a
+ * comparison that read as a measurement would be describing something this runtime
+ * is not permitted to do.
+ */
+const PLAN_ESTIMATE_CAVEAT =
+  "Estimates only: these plans were described, not executed. EXPLAIN ANALYZE is policy-denied because it would run the statement.";
+
+/** Said on every recommendation, because the run does not make the change. */
+const NOT_APPLIED_CAVEAT = "Not applied: nothing here runs this statement.";
+
+/** How an engine reaches the rows, in words. Total, so a new access kind cannot render blank. */
+const ACCESS_WORDS: Readonly<Record<AgentPlanAccess, string>> = {
+  "full-scan": "a full scan",
+  index: "an index",
+  mixed: "a mix of index and full scan",
+  unknown: "an access path this reading could not interpret",
+};
+
+/** One side of a comparison, with the engine's own estimate when it reported one. */
+function describeAccess(summary: AgentPlanSummary): string {
+  const estimates = [
+    summary.estimatedRows === undefined ? null : `${summary.estimatedRows} row(s)`,
+    summary.estimatedCost === undefined ? null : `cost ${summary.estimatedCost}`,
+  ].filter((part) => part !== null);
+  return estimates.length === 0
+    ? ACCESS_WORDS[summary.access]
+    : `${ACCESS_WORDS[summary.access]} (${estimates.join(", ")})`;
+}
+
+/**
  * What a run is FOR, in words rather than in the contract's identifiers. Total over
  * the union, so a workflow type added to the contract cannot reach a user as a raw
  * kebab-case token.
@@ -302,6 +337,30 @@ function describeEvent(event: AgentRunEvent): Omit<AgentTimelineItem, "id" | "at
         tone: "progress",
         headline: "Report composed",
         detail: `${event.claims.length} ${event.claims.length === 1 ? "claim" : "claims"}, each citing evidence`,
+      };
+    case "plan-comparison":
+      return {
+        tone: "progress",
+        headline: "Plans compared",
+        // The server's own reading of two plans the run asked for, plus the sentence
+        // a reader is owed about what those plans are: nothing here was executed, and
+        // the executing form of EXPLAIN is default-denied precisely because it would
+        // have been. Stated by the app rather than left to the model to remember.
+        detail: `${describeAccess(event.before.summary)} to ${describeAccess(event.after.summary)}. ${PLAN_ESTIMATE_CAVEAT}`,
+        // The proposed statement, so the user can take it — the model's own SQL,
+        // which is why it is quoted rather than narrated.
+        quoted: event.after.sql,
+        applySql: event.after.sql,
+      };
+    case "recommendation":
+      return {
+        tone: "progress",
+        headline: event.change === "index" ? "Index recommended" : "Rewrite recommended",
+        detail: `${event.rationale} ${NOT_APPLIED_CAVEAT}`,
+        quoted: event.statement,
+        // The whole affordance: the statement is handed to the editor and to nobody
+        // else. Nothing in this runtime executes it.
+        applySql: event.statement,
       };
     case "closing-statement":
       return {

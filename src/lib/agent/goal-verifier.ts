@@ -46,7 +46,7 @@ import type { AgentReportClaim, AgentRunEvent, AgentRunMode, AgentRunRecord, Age
  * rule that changes its mind is a new id rather than the same one meaning
  * something else.
  */
-export type AgentGoalVerifierId = "agent-planning.1" | "agent-investigation.1";
+export type AgentGoalVerifierId = "agent-planning.1" | "agent-investigation.1" | "agent-query-optimization.1";
 
 /**
  * What a run was required to produce and did not. Deliberately a closed union of
@@ -61,6 +61,14 @@ export type AgentGoalShortfall =
   | "empty-evidence"
   /** A planning run left no prose at all — the mute run of #341 F1. */
   | "no-plan"
+  /**
+   * A query-optimization run never compared two plans.
+   *
+   * The template's own artifact. A run that recommends a rewrite without having
+   * looked at what the engine does differently has recommended it on the strength
+   * of its own opinion, and that is precisely what this workflow exists not to do.
+   */
+  | "no-plan-comparison"
   /**
    * The run was stopped before it could conclude. Substituted for the missing
    * output rather than reported alongside it: a user's stop is not a defect of the
@@ -96,7 +104,7 @@ export const AGENT_PLANNING_VERIFIER: AgentGoalVerifierId = "agent-planning.1";
  */
 export const AGENT_WORKFLOW_VERIFIERS: Readonly<Record<AgentRunWorkflowType, AgentGoalVerifierId>> = Object.freeze({
   investigation: "agent-investigation.1",
-  "query-optimization": "agent-investigation.1",
+  "query-optimization": "agent-query-optimization.1",
   "database-assessment": "agent-investigation.1",
 } satisfies Record<AgentRunWorkflowType, AgentGoalVerifierId>);
 
@@ -167,9 +175,24 @@ type GoalRule = (run: VerifiableAgentRun) => readonly AgentGoalShortfall[];
  * two halves of one decision, and the half that drifted would be the one a reader
  * could not interpret.
  */
+/**
+ * The optimization bar: everything an investigation must meet, and then its own
+ * artifact.
+ *
+ * Composed rather than replaced. A run that answered nothing has not become
+ * acceptable by comparing two plans, so the baseline is checked first and its
+ * shortfall dominates — reporting `no-plan-comparison` about a run that never
+ * composed a report at all would name the smaller of two problems.
+ */
+function verifyQueryOptimizationGoal(run: VerifiableAgentRun): readonly AgentGoalShortfall[] {
+  const baseline = verifyInvestigationGoal(run);
+  if (baseline.length > 0) return baseline;
+  return run.events.some((event) => event.kind === "plan-comparison") ? [] : ["no-plan-comparison"];
+}
+
 const WORKFLOW_GOAL_RULES: Readonly<Record<AgentRunWorkflowType, GoalRule>> = Object.freeze({
   investigation: verifyInvestigationGoal,
-  "query-optimization": verifyInvestigationGoal,
+  "query-optimization": verifyQueryOptimizationGoal,
   "database-assessment": verifyInvestigationGoal,
 } satisfies Record<AgentRunWorkflowType, GoalRule>);
 

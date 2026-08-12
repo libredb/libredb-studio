@@ -68,11 +68,14 @@ import type { AgentDeadlineDenyCode, AgentRunDeadline } from "./deadline";
 import { AGENT_EXECUTION_POLICY, AGENT_EXECUTION_PROFILE, AGENT_MINIMUM_CALL_MS } from "./execution-policy";
 import type { AgentRepairDenyCode, AgentRepairLedger } from "./repair-ledger";
 import { fingerprintStatement } from "./repair-ledger";
+import { summarisePlan } from "./plan-summary";
 import type {
   AgentArtifactReference,
   AgentEvidenceReference,
+  AgentPlanSide,
   AgentReportClaim,
   AgentRunActor,
+  AgentRunEvent,
   AgentRunMode,
   AgentRunRecord,
   AgentRunWorkflowType,
@@ -81,7 +84,15 @@ import type {
 import { fenceUntrustedContent } from "./untrusted-content";
 
 /** The tools an agent-mode run may be offered. Nothing else is a tool. */
-export type AgentToolName = "inspect_schema" | "run_read_query" | "inspect_plan" | "compose_report";
+export type AgentToolName =
+  | "inspect_schema"
+  | "run_read_query"
+  | "inspect_plan"
+  | "compose_report"
+  /** Query optimization only: two estimated plans of the same question. */
+  | "compare_plans"
+  /** Query optimization only: a change the user may apply. Never executed here. */
+  | "recommend_change";
 
 /**
  * The canonical operations a tool may drive. `sql.explain.analyze` is a member so
@@ -141,12 +152,32 @@ export type AgentToolUnavailableCode =
   | "MODE_HAS_NO_TOOLS"
   | "INVALID_TOOL_INPUT"
   | "UNVERIFIABLE_EVIDENCE"
+  /** A cited plan is not an estimating plan THIS run produced. */
+  | "UNVERIFIABLE_PLAN"
+  /** The plan was this run's, and its rows are no longer held to be read. */
+  | "PLAN_RESULT_RELEASED"
   | AgentDeadlineDenyCode
   | AgentRepairDenyCode;
 
 export type AgentToolOutcome =
   | { readonly kind: "completed"; readonly artifact: AgentArtifactReference; readonly modelText: string }
   | { readonly kind: "refused"; readonly refusal: AgentToolRefusal; readonly modelText: string }
+  | { readonly kind: "unavailable"; readonly reasonCode: AgentToolUnavailableCode; readonly modelText: string };
+
+export type AgentPlanComparisonOutcome =
+  | {
+      readonly kind: "compared";
+      readonly before: AgentPlanSide;
+      readonly after: AgentPlanSide;
+      readonly modelText: string;
+    }
+  | { readonly kind: "unavailable"; readonly reasonCode: AgentToolUnavailableCode; readonly modelText: string };
+
+/** Everything a `recommendation` event carries except when it happened. */
+export type AgentRecommendation = Omit<Extract<AgentRunEvent, { kind: "recommendation" }>, "kind" | "atMs">;
+
+export type AgentRecommendationOutcome =
+  | { readonly kind: "recommended"; readonly recommendation: AgentRecommendation; readonly modelText: string }
   | { readonly kind: "unavailable"; readonly reasonCode: AgentToolUnavailableCode; readonly modelText: string };
 
 export type AgentReportOutcome =
@@ -210,6 +241,26 @@ const reportSchema = z.strictObject({
   claims: z.array(z.strictObject({ claim: z.string().min(1), evidence: z.array(evidenceSchema).min(1) })).min(1),
 });
 
+/**
+ * A plan comparison names two artifacts and NOTHING else.
+ *
+ * Deliberately no statement text: the ledger already records which statement each
+ * plan inspection explained, so the server joins them itself. A model-supplied
+ * label would let a comparison attribute a plan to a statement that never produced
+ * it — the exact mislabelling a before/after claim rests on not doing.
+ */
+const planComparisonSchema = z.strictObject({
+  before: z.string().min(1),
+  after: z.string().min(1),
+});
+
+const recommendationSchema = z.strictObject({
+  change: z.enum(["index", "rewrite"]),
+  statement: z.string().min(1),
+  rationale: z.string().min(1),
+  evidence: z.array(evidenceSchema).min(1),
+});
+
 export const AGENT_TOOL_DEFINITIONS: Readonly<Record<AgentToolName, AgentToolDefinition>> = Object.freeze({
   inspect_schema: {
     name: "inspect_schema",
@@ -231,6 +282,18 @@ export const AGENT_TOOL_DEFINITIONS: Readonly<Record<AgentToolName, AgentToolDef
       "Ask the engine for the ESTIMATED plan of one read-only statement. The plan is described, never executed, so no timings are produced.",
     inputSchema: planStatementSchema,
     operationId: "sql.explain.estimate",
+  },
+  compare_plans: {
+    name: "compare_plans",
+    description:
+      "Record a before/after comparison of two ESTIMATED plans this run already inspected. Pass the artifact ids of two inspect_plan results; the server reads both plans itself and states how each reaches its rows. Nothing is executed, and no timings exist — the executing form of EXPLAIN is refused by policy.",
+    inputSchema: planComparisonSchema,
+  },
+  recommend_change: {
+    name: "recommend_change",
+    description:
+      "Propose one index or one rewrite for the user to apply themselves. The statement is never executed by this run; it is offered to the user's editor. Every recommendation must cite evidence this run produced.",
+    inputSchema: recommendationSchema,
   },
   compose_report: {
     name: "compose_report",
@@ -262,9 +325,22 @@ const NO_TOOLS: readonly AgentToolDefinition[] = Object.freeze([]);
  * a tool set may be decided, so widening one workflow later cannot become a second
  * decision about where that decision lives.
  */
+/**
+ * The optimization template's own two, on top of the read-class four.
+ *
+ * Offered to ONE workflow rather than added to `AGENT_MODE_TOOLS`, which is what
+ * makes the axis load-bearing: an investigation that calls `compare_plans` is told
+ * there is no such tool, because for that run there is not.
+ */
+const QUERY_OPTIMIZATION_TOOLS: readonly AgentToolDefinition[] = Object.freeze([
+  ...AGENT_MODE_TOOLS,
+  AGENT_TOOL_DEFINITIONS.compare_plans,
+  AGENT_TOOL_DEFINITIONS.recommend_change,
+]);
+
 const WORKFLOW_TOOLS: Readonly<Record<AgentRunWorkflowType, readonly AgentToolDefinition[]>> = Object.freeze({
   investigation: AGENT_MODE_TOOLS,
-  "query-optimization": AGENT_MODE_TOOLS,
+  "query-optimization": QUERY_OPTIMIZATION_TOOLS,
   "database-assessment": AGENT_MODE_TOOLS,
 } satisfies Record<AgentRunWorkflowType, readonly AgentToolDefinition[]>);
 
@@ -296,6 +372,10 @@ const UNAVAILABLE_TEXT: Readonly<Record<AgentToolUnavailableCode, string>> = Obj
     "The arguments could not be turned into a statement this layer will run. Correct them and call the tool again.",
   UNVERIFIABLE_EVIDENCE:
     "At least one evidence reference does not match anything this run produced. Cite an artifact this run actually read, or the schema snapshot it captured.",
+  UNVERIFIABLE_PLAN:
+    "At least one of those references is not an estimated plan this run produced. Inspect the plan of each statement first, then compare the two artifacts those inspections returned.",
+  PLAN_RESULT_RELEASED:
+    "That plan was this run's, but its rows are no longer held and cannot be read again. Inspect the plan once more if the comparison still matters.",
   RUN_DEADLINE_EXCEEDED:
     "The run has spent its whole time budget. Stop calling tools and finish with what has already been established.",
   INSUFFICIENT_TIME_REMAINING:
@@ -858,6 +938,136 @@ export async function inspectPlanTool(
  * anything if its citations are the run's, and the model is the one thing here that
  * can invent a correlation id.
  */
+/**
+ * A run's own estimating plans, joined to the statements that produced them.
+ *
+ * Both halves come from the ledger: `tool-completed` says which artifact a step
+ * produced and under which operation, and `statement-drafted` says what that step
+ * asked. Nothing here is supplied by the model, which is the point — a comparison
+ * whose sides the model labelled could attribute a plan to a statement that never
+ * produced it, and the whole before/after claim rests on that not happening.
+ */
+function estimatedPlansOf(events: readonly AgentRunEvent[]): ReadonlyMap<string, { stepId: string; sql: string }> {
+  const sqlByStep = new Map<string, string>();
+  for (const event of events) {
+    if (event.kind === "statement-drafted") sqlByStep.set(event.stepId, event.sql);
+  }
+  const plans = new Map<string, { stepId: string; sql: string }>();
+  for (const event of events) {
+    if (event.kind !== "tool-completed" || event.artifact.operationId !== "sql.explain.estimate") continue;
+    const sql = sqlByStep.get(event.stepId);
+    if (sql !== undefined) plans.set(event.artifact.correlationId, { stepId: event.stepId, sql });
+  }
+  return plans;
+}
+
+/**
+ * Reads one side of a comparison: the run's own plan, summarised by the server.
+ *
+ * Two refusals and they mean different things. A correlation id that is not an
+ * estimating plan of this run is `UNVERIFIABLE_PLAN` — the model cited something
+ * else. One that IS this run's but whose rows are gone is `PLAN_RESULT_RELEASED`:
+ * the citation was honest and the evidence has simply expired, which is a different
+ * thing to tell a model, and telling it the first would send it looking for a
+ * mistake it did not make.
+ */
+function readPlanSide(
+  context: AgentToolContext,
+  plans: ReadonlyMap<string, { stepId: string; sql: string }>,
+  correlationId: string,
+): AgentPlanSide | AgentToolUnavailableCode {
+  const plan = plans.get(correlationId);
+  if (plan === undefined) return "UNVERIFIABLE_PLAN";
+  const stored = context.artifacts.get(correlationId, (context.clock ?? Date.now)());
+  if (stored === undefined) return "PLAN_RESULT_RELEASED";
+  return {
+    correlationId,
+    sql: plan.sql,
+    summary: summarisePlan(context.capabilities.explainFormat, stored.value.rows),
+  };
+}
+
+/**
+ * The before/after comparison. Reaches no database: both plans were already read,
+ * and this is the server stating what it sees in them.
+ */
+export function comparePlansTool(
+  context: AgentToolContext,
+  run: Pick<AgentRunRecord, "runId" | "events">,
+  input: unknown,
+): AgentPlanComparisonOutcome {
+  if (context.mode !== "agent") return unavailable("MODE_HAS_NO_TOOLS");
+  if (run.runId !== context.runId) {
+    throw new Error("agent tool layer: the comparison's run record does not belong to this run");
+  }
+
+  const parsed = parseToolInput(planComparisonSchema, input);
+  if (!parsed.ok) return unavailable("INVALID_TOOL_INPUT");
+
+  const plans = estimatedPlansOf(run.events);
+  const before = readPlanSide(context, plans, parsed.value.before);
+  if (typeof before === "string") return unavailable(before);
+  const after = readPlanSide(context, plans, parsed.value.after);
+  if (typeof after === "string") return unavailable(after);
+
+  return {
+    kind: "compared",
+    before,
+    after,
+    // The server's own reading, in the server's own words. The plans themselves are
+    // not echoed: they carry table and index names, which are untrusted input.
+    modelText: `Plans compared: the first reaches its rows by ${before.summary.access}, the second by ${after.summary.access}. Both are estimates — nothing was executed.`,
+  };
+}
+
+/**
+ * A change the run proposes and does not make.
+ *
+ * Its evidence is checked against the run's own ledger exactly as a report claim's
+ * is, and for the same reason: a recommendation nothing backs is one the model
+ * invented. The statement itself is never executed by anything here — this tool
+ * reaches no database, and no tool in this layer maps onto a write.
+ */
+export function recommendChangeTool(
+  context: AgentToolContext,
+  run: Pick<AgentRunRecord, "runId" | "events">,
+  input: unknown,
+): AgentRecommendationOutcome {
+  if (context.mode !== "agent") return unavailable("MODE_HAS_NO_TOOLS");
+  if (run.runId !== context.runId) {
+    throw new Error("agent tool layer: the recommendation's run record does not belong to this run");
+  }
+
+  const parsed = parseToolInput(recommendationSchema, input);
+  if (!parsed.ok) return unavailable("INVALID_TOOL_INPUT");
+  if (!parsed.value.evidence.every((reference) => verifiedAgainst(run.events, reference))) {
+    return unavailable("UNVERIFIABLE_EVIDENCE");
+  }
+
+  return {
+    kind: "recommended",
+    recommendation: {
+      change: parsed.value.change,
+      statement: parsed.value.statement,
+      rationale: parsed.value.rationale,
+      // Carried by the schema's `.min(1)`, which the type system cannot see; an
+      // unreachable emptiness guard would be a line no test could cover.
+      evidence: parsed.value.evidence as [AgentEvidenceReference, ...AgentEvidenceReference[]],
+    },
+    modelText: `Recommendation recorded: one ${parsed.value.change}, offered to the user and not executed. It is theirs to apply.`,
+  };
+}
+
+/** Does this reference name something the run actually produced? */
+function verifiedAgainst(events: readonly AgentRunEvent[], reference: AgentEvidenceReference): boolean {
+  for (const event of events) {
+    if (reference.source === "artifact") {
+      if (event.kind === "tool-completed" && event.artifact.correlationId === reference.correlationId) return true;
+    } else if (event.kind === "context-captured" && event.fingerprint === reference.fingerprint) return true;
+  }
+  return false;
+}
+
 export function composeReportTool(
   context: AgentToolContext,
   run: Pick<AgentRunRecord, "runId" | "events">,
@@ -881,21 +1091,14 @@ export function composeReportTool(
   const parsed = parseToolInput(reportSchema, input);
   if (!parsed.ok) return unavailable("INVALID_TOOL_INPUT");
 
-  const artifactIds = new Set<string>();
-  const fingerprints = new Set<string>();
-  for (const event of run.events) {
-    if (event.kind === "tool-completed") artifactIds.add(event.artifact.correlationId);
-    else if (event.kind === "context-captured") fingerprints.add(event.fingerprint);
-  }
-
-  const verified = (reference: AgentEvidenceReference): boolean =>
-    reference.source === "artifact"
-      ? artifactIds.has(reference.correlationId)
-      : fingerprints.has(reference.fingerprint);
-
   const claims: AgentReportClaim[] = [];
   for (const claim of parsed.value.claims) {
-    if (!claim.evidence.every(verified)) return unavailable("UNVERIFIABLE_EVIDENCE");
+    // One implementation of "does this citation name something the run produced",
+    // shared with `recommend_change`: two would be two things to keep equal, and the
+    // one that drifted would be the one letting an uncited claim through.
+    if (!claim.evidence.every((reference) => verifiedAgainst(run.events, reference))) {
+      return unavailable("UNVERIFIABLE_EVIDENCE");
+    }
     claims.push({
       claim: claim.claim,
       // The tuple cast is carried by the schema's `.min(1)`, which the type system

@@ -894,3 +894,114 @@ describe("foldLedgerEntries — what a timeline item offers to hydrate", () => {
     expect(view.items[0].artifactId).toBeUndefined();
   });
 });
+
+// ─── the query-optimization template's entries (#330 T3) ────────────────────
+
+describe("a plan comparison reads as a comparison, and says what those plans are", () => {
+  const comparison = (
+    before: { access: string; estimatedRows?: number; estimatedCost?: number },
+    after: { access: string; estimatedRows?: number; estimatedCost?: number },
+  ): AgentLedgerEntry =>
+    event({
+      kind: "event",
+      event: {
+        kind: "plan-comparison",
+        atMs: 5,
+        before: { correlationId: "corr-1", sql: "SELECT * FROM orders", summary: before },
+        after: { correlationId: "corr-2", sql: "SELECT id FROM orders", summary: after },
+      },
+    } as AgentLedgerEntry & { kind: "event" });
+
+  test("names both access paths and carries the engine's estimates when it reported them", () => {
+    const view = foldLedgerEntries([
+      OPENED,
+      comparison(
+        { access: "full-scan", estimatedRows: 1000, estimatedCost: 210.5 },
+        { access: "index", estimatedRows: 3, estimatedCost: 8.3 },
+      ),
+    ]);
+
+    const item = view.items[1];
+    expect(item?.headline).toBe("Plans compared");
+    expect(item?.detail).toContain("a full scan (1000 row(s), cost 210.5)");
+    expect(item?.detail).toContain("an index (3 row(s), cost 8.3)");
+  });
+
+  test("states that the plans were estimated and never executed, in the app's own words", () => {
+    // The honesty #330 asks for, said by the app rather than left to the model to
+    // remember: the executing form of EXPLAIN is policy-denied precisely because it
+    // would have run the statement.
+    const view = foldLedgerEntries([OPENED, comparison({ access: "full-scan" }, { access: "index" })]);
+
+    expect(view.items[1]?.detail).toContain("Estimates only");
+    expect(view.items[1]?.detail).toContain("EXPLAIN ANALYZE is policy-denied");
+  });
+
+  test("an engine that reports no estimates gets no parenthetical, rather than a zero", () => {
+    const view = foldLedgerEntries([OPENED, comparison({ access: "full-scan" }, { access: "index" })]);
+
+    expect(view.items[1]?.detail).toContain("a full scan to an index");
+    expect(view.items[1]?.detail).not.toContain("(");
+  });
+
+  test("offers the improved statement to the editor, and quotes it rather than narrating it", () => {
+    const view = foldLedgerEntries([OPENED, comparison({ access: "full-scan" }, { access: "index" })]);
+
+    expect(view.items[1]?.applySql).toBe("SELECT id FROM orders");
+    expect(view.items[1]?.quoted).toBe("SELECT id FROM orders");
+  });
+
+  test("every access path has words, so none renders blank", () => {
+    for (const [access, words] of [
+      ["full-scan", "a full scan"],
+      ["index", "an index"],
+      ["mixed", "a mix of index and full scan"],
+      ["unknown", "an access path this reading could not interpret"],
+    ] as const) {
+      const view = foldLedgerEntries([OPENED, comparison({ access }, { access })]);
+      expect(view.items[1]?.detail, access).toContain(words);
+    }
+  });
+
+  test("a row estimate without a cost reports only what the engine gave", () => {
+    const view = foldLedgerEntries([OPENED, comparison({ access: "index", estimatedRows: 4 }, { access: "index" })]);
+
+    expect(view.items[1]?.detail).toContain("an index (4 row(s))");
+  });
+});
+
+describe("a recommendation reads as a proposal, never as something that happened", () => {
+  const recommendation = (change: "index" | "rewrite", statement: string): AgentLedgerEntry =>
+    event({
+      kind: "event",
+      event: {
+        kind: "recommendation",
+        atMs: 6,
+        change,
+        statement,
+        rationale: "The filtered column has no index.",
+        evidence: [{ source: "artifact", correlationId: "corr-1" }],
+      },
+    } as AgentLedgerEntry & { kind: "event" });
+
+  test("an index recommendation is named as one, and says it was not applied", () => {
+    const view = foldLedgerEntries([OPENED, recommendation("index", "CREATE INDEX ix ON orders (customer_id)")]);
+
+    expect(view.items[1]?.headline).toBe("Index recommended");
+    expect(view.items[1]?.detail).toContain("Not applied");
+  });
+
+  test("a rewrite recommendation is named as one", () => {
+    const view = foldLedgerEntries([OPENED, recommendation("rewrite", "SELECT id FROM orders")]);
+
+    expect(view.items[1]?.headline).toBe("Rewrite recommended");
+  });
+
+  test("the statement is offered to the editor and quoted, which is the whole affordance", () => {
+    const ddl = "CREATE INDEX ix ON orders (customer_id)";
+    const view = foldLedgerEntries([OPENED, recommendation("index", ddl)]);
+
+    expect(view.items[1]?.applySql).toBe(ddl);
+    expect(view.items[1]?.quoted).toBe(ddl);
+  });
+});

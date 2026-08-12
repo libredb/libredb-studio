@@ -97,6 +97,33 @@ const EVENTS: Record<AgentRunEvent["kind"], AgentRunEvent> = {
   "tool-refused": { kind: "tool-refused", atMs: 5, stepId: "step-1", refusal: DATABASE_ERROR },
   "tool-completed": { kind: "tool-completed", atMs: 6, stepId: "step-2", artifact: ARTIFACT },
   "report-composed": { kind: "report-composed", atMs: 7, claims: [CLAIM] },
+  // The query-optimization template's own artifact. Both sides cite an estimating
+  // plan the run produced, and each summary is the SERVER's structural reading of
+  // it — no engine text, so nothing untrusted is carried in a durable record.
+  "plan-comparison": {
+    kind: "plan-comparison",
+    atMs: 6,
+    before: {
+      correlationId: ARTIFACT.correlationId,
+      sql: "SELECT * FROM orders WHERE customer_id = 42",
+      summary: { access: "full-scan", estimatedRows: 1000, estimatedCost: 210.5 },
+    },
+    after: {
+      correlationId: "4f2c9a10-0000-4000-8000-000000000002",
+      sql: "SELECT id, total FROM orders WHERE customer_id = 42",
+      summary: { access: "index", estimatedRows: 3, estimatedCost: 8.3 },
+    },
+  },
+  // A change the run proposes and does not make. `statement` is DDL that nothing in
+  // this runtime executes; it exists so the user can take it.
+  recommendation: {
+    kind: "recommendation",
+    atMs: 7,
+    change: "index",
+    statement: "CREATE INDEX orders_customer_id_idx ON orders (customer_id)",
+    rationale: "The filtered column has no index, so the plan reads the table whole.",
+    evidence: [ARTIFACT_EVIDENCE],
+  },
   // The uncited counterpart: what the model said when it did not compose a report.
   // A planning run's whole output is one of these, and it round-trips as plainly as
   // the rest — prose is already the most inert thing a ledger can hold.

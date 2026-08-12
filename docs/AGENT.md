@@ -110,10 +110,9 @@ Two properties are worth stating, because both are easy to assume the other way 
   ledger — a run driven in a browser on 2026-08-12, copied out of `.workflow-data` verbatim — rather
   than against a hand-written approximation of one.
 
-The three workflows share one tool set and one goal rule today, and that is the honest state rather
-than a placeholder: composing claims that rest on something the run actually read is the baseline
-**every** workflow has to meet, and the tools and requirements that distinguish the two templates
-arrive with the templates themselves (#330 T3).
+Composing claims that rest on something the run actually read is the baseline **every** workflow has
+to meet. A template adds to that baseline rather than replacing it — see
+[The query-optimization template](#the-query-optimization-template).
 
 A run's **actor** — the session and role that opened it — is written into the run's own record at
 start, and every later authorization decision reads it from there. Not from the request that resumes
@@ -257,6 +256,44 @@ Two consequences worth stating:
   because it runs the statement; the tool exposed to a model is the estimating variant, and nothing
   in the run loop may convert a require-approval outcome into an allow.
 
+### The query-optimization template
+
+A run opened as `query-optimization` is offered **two further tools**, and no other workflow is. An
+investigation that calls one is told there is no such tool, because for that run there is not.
+
+| Tool | What it does | Reaches |
+| --- | --- | --- |
+| `compare_plans` | Records a before/after comparison of two estimated plans the run already inspected. The model supplies **only two artifact ids**. | Nothing |
+| `recommend_change` | Records one index or rewrite for the user to apply. | Nothing |
+
+Three properties carry the template:
+
+- **The model points; the server reads.** `compare_plans` takes two correlation ids and nothing
+  else. Which statement each plan belongs to comes from the ledger — `tool-completed` says which
+  artifact a step produced, `statement-drafted` says what that step asked — so a comparison cannot
+  attribute a plan to a statement that never produced it. The summary is derived from the stored
+  plan by `plan-summary.ts`, not described by the model about its own work.
+- **The summary carries no engine text.** A plan names tables and indexes, and those names are
+  written by whoever can write to the database. What is recorded is structural — how the engine
+  reaches the rows (`full-scan` / `index` / `mixed` / `unknown`) plus the estimates the engine
+  reported. **SQLite reports no cost and no row estimate at all, so the summary carries none;** a
+  zero would read as "free" and a guess would read as a measurement.
+- **Everything is an estimate, and the rail says so rather than the model.** `EXPLAIN ANALYZE`
+  executes the statement, so it is default-denied and no tool reaches it. The comparison entry
+  therefore renders a sentence this repository wrote — *"Estimates only: these plans were described,
+  not executed"* — instead of depending on a model remembering to mention it.
+
+A recommendation is **never executed**. It reaches no database, no tool in this layer maps onto a
+write, and the rail offers the statement to the editor on an explicit user action. The two refusals
+`compare_plans` can produce are deliberately distinct: `UNVERIFIABLE_PLAN` means the model cited
+something that is not an estimating plan of this run, while `PLAN_RESULT_RELEASED` means the citation
+was honest and the rows have expired — telling a model the first when the second happened would send
+it looking for a mistake it did not make.
+
+Its goal verifier is `agent-query-optimization.1`: the investigation baseline, **and** a plan
+comparison on the ledger. The baseline dominates, so a run that never reported is told that rather
+than that it skipped a comparison.
+
 **Database content is untrusted input.** A table name, a column comment, a row value and an engine
 error message all come from whoever can write to the database, so everything crossing into a prompt
 is fenced first: a header naming what the content is and where it came from, and a stated boundary
@@ -366,7 +403,8 @@ build until somebody decides what "answered" means for it.
 | Mode | Rule (`agent-planning.1` / `agent-investigation.1`) | Unmet when it fails |
 | --- | --- | --- |
 | `planning` | The run left non-empty closing prose. That mode is toolless and can never cite evidence, so judging it by the investigation rule would fail every planning run that did its job. | `no-plan` |
-| `agent` | The run composed at least one claim, **and** the claims do not rest entirely on empty results. | `no-report`, `empty-evidence` |
+| `agent` (investigation, database-assessment) | The run composed at least one claim, **and** the claims do not rest entirely on empty results. | `no-report`, `empty-evidence` |
+| `agent` (query-optimization) | The baseline above, **and** a plan comparison on the ledger. `agent-query-optimization.1`. | the above, plus `no-plan-comparison` |
 
 A run stopped by its user reports `cancelled` instead of the missing output: a stop is not
 a defect of the run, and counting it as one would make every cancellation read as a model
@@ -556,7 +594,8 @@ src/lib/agent/
 ├── context-snapshot.ts   # the schema snapshot and task-aware packing
 ├── model-adapter.ts      # resolved LLM config → an SDK model; SDK errors → our error classes
 ├── provider-registry.ts  # provider kind → adapter (total over the settings surface's union)
-├── goal-verifier.ts      # did this run ANSWER? a pure fold over the ledger, per mode
+├── goal-verifier.ts      # did this run ANSWER? a pure fold over the ledger, per workflow
+├── plan-summary.ts       # how an engine reaches its rows, read from an ESTIMATING plan
 ├── capability-probe.ts   # tool calling / structured output / streaming, established positively
 ├── drive-token.ts        # the single-purpose credential the resume seam verifies
 └── untrusted-content.ts  # the prompt-side fence for database content
