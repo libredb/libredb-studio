@@ -326,6 +326,21 @@ dismissed with this reasoning recorded on it. Re-check on each Tauri upgrade —
 every provider doc, so the fix is a convention change (anchor on symbol names, not line numbers) as
 much as a correction.
 
+### X2. Two chart README `--set` recipes render a YAML boolean where Kubernetes needs a string
+
+`charts/libredb-studio/README.md`'s Content-Security-Policy escape hatch sets `CSP_REPORT_ONLY` with
+`--set extraEnv[0].value="true"` (twice: the single-variable example and the two-variable one). The
+shell strips the quotes and Helm type-coerces the bare word, so the manifest renders
+`value: true` — an unquoted YAML boolean, while `core/v1.EnvVar.value` is a string, and the API server
+rejects it (`invalid type for io.k8s.api.core.v1.EnvVar.value: got "bool", expected "string"`).
+Reproduced with `helm template` on 2026-08-12. `--set-string` is the fix, one word per line.
+
+Found while documenting the agent runtime in #329 T13, whose own new recipe uses `--set-string` for
+exactly this reason. Left for a separate change rather than folded in, because it is a different
+feature's documentation and the same PR's chart version bump is already spoken for. Done when both
+lines use `--set-string` — and ideally when the README's `--set` bracket arguments are single-quoted,
+since unquoted `extraEnv[0]` is a glob pattern in zsh.
+
 ---
 
 ## Security Phase 1 deferrals
@@ -1191,3 +1206,119 @@ where agent results may rest — encryption, retention and tenancy are exactly t
 declined to answer — so it is a product decision, not an implementation gap. Done when a finished
 run's cited rows are readable for a stated retention window, or when the surface states the window it
 has instead of offering a control that usually cannot be honoured.
+
+### B16. The opt-in multi-replica backend cannot load in the container image or the npx payload
+
+Found while landing #329 T1 and carried forward deliberately, because the milestone's own commit that
+found it could not validate a fix (nothing built a world yet).
+
+`@workflow/core/dist/runtime/world.js` resolves any world other than its two built-ins with
+`require(targetWorld)` off a `createRequire` rooted at `process.cwd()`. The specifier is a variable,
+so Next's output-file-tracing cannot see it: `@workflow/world-postgres` is **absent from
+`.next/standalone`**, and therefore from the container image and the standalone tarball the npx
+launcher downloads. `WORKFLOW_TARGET_WORLD=@workflow/world-postgres` passes this repository's own
+allowlist (`src/lib/agent/config.ts`) and then fails inside the runtime at the moment a world is
+built — so the documented path to running agents on more than one replica does not work in the
+artifacts most operators deploy. A `bun dev` checkout and a plain `node_modules` install are
+unaffected, which is exactly why it can go unnoticed.
+
+Scoped by measurement rather than by inference, so the entry is not read as more than it is: a
+`DOCKER_BUILD=true bun run build` on 2026-08-12 leaves `.next/standalone/node_modules/@workflow`
+holding `world-local` and `utils`, and the rest of the runtime (`workflow`, `@workflow/core`, `ai`,
+`@ai-sdk/*`) compiled INTO the server chunks — which is why the default `local` backend does work in
+the image. Only the world reached through a variable specifier is missing.
+
+The repository already has the remedy pattern for this shape of dynamic specifier: the explicit
+copies in `Dockerfile` and `scripts/build-standalone-payload.sh`, both of which already hand-copy
+modules that tracing cannot see. Done when the Postgres world is present in both payloads with a test
+asserting it (`tests/unit/packaging-payload-prune.test.ts` pins what the payload must keep and is the
+nearest existing home for such an assertion), and when `docs/AGENT.md`'s deployment section loses the
+caveat that points here.
+
+### B17. Table profiling and monitoring tools are deferred, so the agent's tool set is four
+
+Recorded as #329's own narrowing (planning decision P1), not as something discovered later. The
+canonical operation set is exactly three descriptors (`src/lib/db/operations/descriptors.ts`), and the
+parent epic pinned that number as a product decision, so a tool has to fit one of them or it does not
+exist. The M2 tool set is therefore schema inspection, a bounded read, an estimating plan inspection
+and report composition.
+
+The two that were left out sit on opposite sides of that line. **Table profiling** (row counts, null
+ratios, cardinality, value distributions) fits: it is a bounded read whose SQL the server composes
+per dialect, exactly like the catalog read. What it multiplies is scope — each statistic is a
+dialect-specific composition with its own cost, and a profile that silently scans a large table is
+its own hazard. **Monitoring** does not fit at all: it reaches `getMetrics`, slow-query listings and
+session listings, which are provider methods no descriptor covers, so wiring it would be a database
+reach outside `src/lib/db/operations/` — a defect by this milestone's constraint rather than a
+shortcut.
+
+Done, for profiling, when the composed statements exist per dialect with their own cost bound and the
+tool is added to the read-class set. Done, for monitoring, only after a decision about whether the
+operation set grows a fourth descriptor for non-SQL metadata reads — which drags the verification
+marker, the provider triad and the security matrix with it, and is a human product call.
+
+### B18. Nothing calls the capability probe, so an incapable model is discovered at its first tool call
+
+`probeAgentModel` (`src/lib/agent/capability-probe.ts`) establishes positively that a configured model
+calls tools, honours the schema its tool arguments are declared against, and streams — and it has no
+caller in `src/`. The consequence is not a security gap (a model that cannot call tools simply does
+nothing) but a diagnosis gap: instead of a typed refusal at start pointing the user at the chat and
+NL2SQL surfaces that do work, the run opens, spends a drive, and ends with a model that answered in
+prose.
+
+It was left unwired for a real reason rather than by omission: a mandatory live probe on every run
+start adds a model round trip and a failure mode to the start path, and whether to pay that (per
+start, per configuration change, or cached with what invalidation) is a product decision T9's bar did
+not carry. There is a second, narrower limit worth stating in the same place: for the `ollama` and
+`custom` kinds the probe can only report what it observed on the wire, because the model is whatever
+the operator is serving — so "not established" there means "not observed", never "not supported".
+
+Done when the start path refuses a model whose capabilities were established as absent, with the
+refusal surfaced in the rail, and with the caching decision recorded rather than implied.
+
+### B19. The agent endpoints are absent from docs/API_DOCS.md
+
+`docs/API_DOCS.md` documents every other route family (auth, database, AI, storage, connections,
+admin) request-by-request, and contains no mention of `/api/agent/*`. The behaviour document
+`docs/AGENT.md` describes the six paths and what each one refuses, which is why this is a
+completeness gap rather than an undocumented surface, but a reader who goes to the API reference for
+the request and response shapes will not find them and has no pointer telling them where to look.
+
+Nothing enforces that file's route list — no test compares it against `src/app/api/` — so the omission
+is invisible to the gates. Done when the agent family is documented there in the same shape as the
+others (or reduced to a pointer at `docs/AGENT.md` in the same place a reader looks), and ideally when
+a test derives the documented families from the route tree so the next family cannot be forgotten.
+
+### B20. A Gemini deployment behind a proxy is not configurable, on either surface
+
+`resolveApiUrl` (`src/lib/llm/utils/config.ts`) returns `LLM_API_URL` for every provider kind, so the
+resolved configuration carries it — and both Gemini consumers ignore it. The chat provider constructs
+`new GoogleGenerativeAI(apiKey)` (`src/lib/llm/providers/gemini.ts`), which has no base-URL option at
+all, and the agent's adapter deliberately passes no `baseURL` (`src/lib/agent/provider-registry.ts`)
+because leaving it undefined is what keeps the SDK's own environment fallback unreachable. So an
+operator who must reach Gemini through an egress proxy or a regional endpoint can set the variable,
+see no error, and be routed to Google directly.
+
+This is pre-existing behaviour that the agent inherited rather than introduced, and it is recorded
+here because #329 T4 is where it was noticed. Fixing it means threading `config.apiUrl` into both
+consumers and deciding what an explicitly-set `LLM_API_URL` means for a provider whose SDK has no
+base-URL seam — a settings-surface change with the chat surface's own conventions and tests, not an
+agent change. Done when a proxied Gemini endpoint is reachable from the configuration the user already
+entered, or when the settings surface says plainly that the variable does not apply to that kind.
+
+### B21. The published package carries the agent-provenance branch as dormant markup
+
+`BottomPanel` is shared by both shells, and #329 T11 added its agent-provenance branch — an optional
+`agentArtifact` prop, the provenance badge and its test ids. `bun run build:lib` therefore emits that
+markup inside `dist/workspace.mjs`.
+
+It is inert, and the package boundary that matters is intact: the prop is optional, the embedded shell
+never passes it, no entry point exports `BottomPanel` (asserted through a transitive `export … from`
+closure in `tests/unit/agent-package-boundary.test.ts`), and the package gains no agent module, no
+agent type and none of the runtime packages — which is what the boundary tests pin. What remains is
+dead bytes in a consumer's bundle and a small honesty cost: a reader grepping the published output
+finds strings suggesting an agent capability that the embedded shell cannot reach.
+
+Done when the provenance branch lives in a standalone-only component and `BottomPanel` takes it as
+children, or when Phase 4's surface unification decides the embedded shell gets an agent surface after
+all — at which point this stops being dormant rather than being removed.

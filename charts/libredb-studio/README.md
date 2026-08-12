@@ -40,7 +40,7 @@ helm install libredb libredb/libredb-studio \
 
 ```bash
 helm install libredb oci://ghcr.io/libredb/charts/libredb-studio \
-  --version 0.1.32 \
+  --version 0.1.33 \
   --set secrets.jwtSecret=$(openssl rand -base64 32) \
   --set secrets.adminPassword=MyAdmin123
 ```
@@ -149,6 +149,72 @@ helm install libredb libredb/libredb-studio \
   --set secrets.jwtSecret=$(openssl rand -base64 32) \
   --set secrets.adminPassword=MyAdmin123
 ```
+
+## Agent Runtime (off by default)
+
+Studio can run a read-only investigation agent over a connected database. It is **off unless you turn
+it on**, it reuses the AI configuration above (there is no second place to enter a key), and it has no
+dedicated values fields, so its variables are passed through `extraEnv`:
+
+```bash
+helm install libredb libredb/libredb-studio \
+  --set config.llmProvider=gemini \
+  --set secrets.llmApiKey=your-key \
+  --set 'extraEnv[0].name=LIBREDB_AGENT_ENABLED' \
+  --set-string 'extraEnv[0].value=true' \
+  --set 'extraEnv[1].name=WORKFLOW_LOCAL_DATA_DIR' \
+  --set 'extraEnv[1].value=/app/data/workflow' \
+  --set secrets.jwtSecret=$(openssl rand -base64 32) \
+  --set secrets.adminPassword=MyAdmin123
+```
+
+`--set-string` on the flag is not decoration: plain `--set …value=true` renders an unquoted YAML
+`true`, and `EnvVar.value` is a string, so the API server rejects the manifest. The brackets are
+single-quoted because some shells (zsh) glob them.
+
+**`WORKFLOW_LOCAL_DATA_DIR` is not optional in this chart.** Run state lives in an append-only ledger,
+and with `WORKFLOW_TARGET_WORLD` unset that ledger is a directory on local disk — by default
+`.workflow-data`, resolved against the container's working directory `/app`. This chart runs with
+`securityContext.readOnlyRootFilesystem: true`, so only `/app/data`, `/app/.next/cache` and `/tmp` are
+writable: without the override above the very first ledger write fails and no run can start. Point it
+inside `/app/data` and enable `persistence` (`persistence.enabled=true`) if you also want a run to
+survive a pod restart — an `emptyDir` loses the ledger with the pod.
+
+**That backend is single-instance.** It takes file locks, which is correct for the default
+`replicaCount: 1` and a misconfiguration for anything above it.
+
+Running agents on more than one replica requires the opt-in PostgreSQL backend, pointed at **its own**
+database rather than one of the databases you connect Studio to:
+
+```yaml
+# values.yaml — extraEnv is rendered verbatim, so valueFrom works for the URL.
+# Assumes secrets.jwtSecret (or secrets.existingSecret) is set: the chart refuses
+# to render above one replica under zero-config bootstrap, per the note above.
+replicaCount: 3
+extraEnv:
+  - name: LIBREDB_AGENT_ENABLED
+    value: "true"
+  - name: WORKFLOW_TARGET_WORLD
+    value: "@workflow/world-postgres"
+  - name: WORKFLOW_POSTGRES_URL
+    valueFrom:
+      secretKeyRef:
+        name: libredb-workflow
+        key: postgres-url
+```
+
+`WORKFLOW_LOCAL_DATA_DIR` is irrelevant here — the PostgreSQL backend keeps nothing on disk — and
+`WORKFLOW_POSTGRES_URL` must be set: left unset, the backend falls back to a development default
+(`postgres://world:world@localhost:5432/world`) rather than refusing.
+
+Two caveats, stated because they decide whether this is usable for you. `WORKFLOW_TARGET_WORLD`
+accepts only `local` and `@workflow/world-postgres`; any other value is refused when a run is opened
+rather than defaulted, because the workflow runtime would otherwise treat it as a module to load. (The
+pod itself starts either way — the value is validated where a backend is actually built, not at boot.)
+And the PostgreSQL backend is **not reachable in the published container image yet** — see `B16` in
+the project's `docs/BACKLOG.md` — so multi-replica agent runs are not deployable from this chart today.
+
+Full behaviour, the tool set and the honest limitations are in the project's `docs/AGENT.md`.
 
 ## Production Setup (Ingress + HA)
 

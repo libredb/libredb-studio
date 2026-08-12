@@ -16,6 +16,12 @@ global:
       adaptSecurityContext: auto
 
 # -- Number of replicas. Note: SQLite storage mode only supports 1 replica.
+# The agent runtime (off by default) carries a second single-instance
+# constraint: its zero-config durable backend keeps run state on local disk
+# behind file locks, so running agents on more than one replica requires
+# WORKFLOW_TARGET_WORLD=@workflow/world-postgres. Enabling the agent here also
+# needs WORKFLOW_LOCAL_DATA_DIR pointed inside /app/data, because the root
+# filesystem is read-only. See "Agent Runtime" in the chart README.
 replicaCount: 1
 
 image:

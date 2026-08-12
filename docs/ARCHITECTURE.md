@@ -198,6 +198,12 @@ Failures in the bootstrap and seeding steps are logged and swallowed — boot ne
 
 The SQLite **DB provider** is runtime-adaptive: it loads `bun:sqlite` under Bun and `node:sqlite` under plain Node (npx / brew / deb installs run `node server.js`). `LIBREDB_SQLITE_DRIVER=bun|node` forces a driver (used by tests). This is distinct from the **storage layer**, whose SQLite backend uses `better-sqlite3`.
 
+### 4.9. Agent Runtime (`src/lib/agent/`, default off)
+
+An opt-in read-only investigation agent: a model drafts SQL against a connected database, repairs statements that fail, and composes a report whose claims cite the results they came from. Three boundaries define it. It is **off** unless `LIBREDB_AGENT_ENABLED` says otherwise, so no rail renders and no run can be opened (the discovery probe still answers, with `{"enabled": false}` — that is how the rail learns to stay absent); it is **standalone-only**, so the `@libredb/studio` package gains no agent module, agent type or runtime dependency (asserted by a package-boundary test); and every database reach goes through the same `src/lib/db/operations/` pipeline as the rest of the app, under a read-only execution profile with the agent's own frozen policy — there is no second path to a driver. A run is an append-only ledger on a durable backend (`WORKFLOW_TARGET_WORLD`: zero-config single-instance `local`, or the opt-in Postgres world for multiple replicas), and it re-derives its state from that ledger, so a resumed run never repeats a tool execution. Model configuration is the existing `src/lib/llm` settings surface — there is no second place to enter a key.
+
+Full behaviour, the tool set, what bounds a run, the HTTP surface and the honest limitations: [`docs/AGENT.md`](AGENT.md).
+
 ## 5. Directory Structure
 
 ```
@@ -209,6 +215,7 @@ src/
 │   │   ├── db/             # Query, schema, health, maintenance, transactions
 │   │   ├── storage/        # Storage sync API (config, CRUD, migrate)
 │   │   ├── connections/    # managed/ — built-in (seeded) connections listing
+│   │   ├── agent/          # Agent runs, stream, artifacts, drive (404 unless enabled — §4.9)
 │   │   └── admin/          # Fleet health, audit
 │   ├── admin/              # Admin dashboard (RBAC protected) — layout.tsx renders the
 │   │   │                   #   shell; one route per section, each independently
@@ -226,6 +233,7 @@ src/
 │   ├── QueryEditor.tsx      # Monaco SQL editor wrapper
 │   ├── ResultsGrid.tsx      # Virtualized data grid
 │   ├── SchemaDiagram.tsx    # React Flow ERD viewer
+│   ├── agent/               # AgentRail + timeline/hydration folds (standalone only — §4.9)
 │   ├── sidebar/             # ConnectionsList, ConnectionItem
 │   ├── studio/              # StudioTabBar, QueryToolbar, BottomPanel
 │   ├── results-grid/        # ResultCard, RowDetailSheet, StatsBar
@@ -245,6 +253,7 @@ src/
     │   │   └── embedded/    # libredb (built-in embedded provider for the sample connection)
     │   ├── factory.ts       # Provider factory
     │   └── types.ts         # Database types
+    ├── agent/               # Agent runtime: run ledger, workflow, tools, policy (docs/AGENT.md)
     ├── llm/                 # LLM provider module
     ├── editor/              # Monaco completions (SQL + MongoDB)
     ├── schema-diff/         # Diff engine + migration SQL generator

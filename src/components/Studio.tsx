@@ -599,11 +599,16 @@ export default function Studio() {
           presentations: this panel above `md`, and a sheet below it, where the panel
           is display:none and the mobile nav is what opens the rail.
 
-          The import above is static, so with the flag off the rail's own three
-          modules are still in the standalone bundle; what does NOT reach a browser
-          is any agent RUNTIME module (the rail's imports from `src/lib/agent` are
-          type-only, and types erase), and no agent request is made beyond the
-          discovery probe. This repository lazy-imports libraries but no COMPONENT
+          The imports above are static, so with the flag off the rail's modules and the
+          two hydration modules beside them are still in the standalone bundle — as is
+          `execution-policy.ts`,
+          which the rail and the timeline import as VALUES for the budget meter's
+          ceilings. What does NOT reach a browser is any agent RUNTIME module (the
+          ledger, the run service, the tool layer, the model adapter — those are
+          server-only and the rail imports nothing from them but types), and no agent
+          request is made beyond the discovery probe. `docs/AGENT.md` states the same
+          boundary for a reader who never opens this file.
+          This repository lazy-imports libraries but no COMPONENT
           (neither `next/dynamic` nor `React.lazy` appears under `src/`), and the
           package boundary — the one that matters for what ships to platform — is
           pinned separately in T12.

@@ -2,7 +2,7 @@ apiVersion: v2
 name: libredb-studio
 description: Web-based SQL IDE for cloud-native teams supporting PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, and Redis
 type: application
-version: 0.1.32
+version: 0.1.33
 appVersion: "0.11.0"
 kubeVersion: ">=1.26.0-0"
 home: https://github.com/libredb/libredb-studio
@@ -43,11 +43,9 @@ annotations:
     - name: Source
       url: https://github.com/libredb/libredb-studio
   artifacthub.io/changes: |
-    - "Runtime baseline raised to Node 24 LTS. This is a breaking change for the npm package and the standalone tarballs only. The container image this chart deploys already ran Node 24, so a Helm upgrade needs no action and no values change"
-    - "Node 26 is now fully supported, server-side SQLite storage included. better-sqlite3 moved to its N-API line, so one prebuilt binary stays valid across Node majors instead of being pinned to the ABI that built it"
-    - "Security: lodash advanced to 4.18.1, clearing CVE-2026-4800 (arbitrary code execution via untrusted input in template imports). It enters the bundle only through recharts and no Studio code path reaches the affected template import, but the version an image scanner reports now carries the fix"
-    - "Dependency refresh across roughly fifty packages inside their existing ranges, including React, the Radix set, pg, mysql2, mongodb, openid-client and zod"
-    - "Track app release 0.11.0 (appVersion bump; default image tag follows)"
+    - "Documentation only. No default, template or image change, so an upgrade from 0.1.32 alters nothing a cluster runs"
+    - "Documented the optional agent runtime: it is off unless LIBREDB_AGENT_ENABLED is set, it reuses the existing AI configuration, and both of its variables are passed through extraEnv"
+    - "Documented the single-instance constraint the agent runtime adds. Its zero-config durable backend keeps run state on local disk behind file locks, so running agents above replicaCount 1 requires WORKFLOW_TARGET_WORLD set to the opt-in PostgreSQL backend, which is not yet reachable in the published image"
 dependencies:
   - name: postgresql
     version: "16.x.x"
