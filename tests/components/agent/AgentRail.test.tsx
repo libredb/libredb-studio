@@ -252,7 +252,14 @@ describe("AgentRail", () => {
     fireEvent.change(getByTestId("agent-objective"), { target: { value: "why is checkout slow" } });
 
     expect((getByTestId("agent-start") as HTMLButtonElement).disabled).toBe(true);
-    expect(getByTestId("agent-unresolvable-connection").textContent).toContain("Local scratch");
+    const caveat = getByTestId("agent-unresolvable-connection").textContent ?? "";
+    expect(caveat).toContain("Local scratch");
+    // The reason has to hold for an EDITED copy of a seed too, not only for a
+    // connection the server has never heard of: the seed exists on the server, it is
+    // the local settings that do not. So the caveat may not
+    // claim the agent reaches managed connections only — it does not.
+    expect(caveat).toContain("this browser");
+    expect(caveat).not.toContain("managed connections only");
     expect(fetchMock).not.toHaveBeenCalled();
   });
 

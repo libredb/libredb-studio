@@ -5,10 +5,7 @@ import type { DatabaseConnection, TableSchema, TableRelations } from "@/lib/type
 import { useToast } from "@/hooks/use-toast";
 import { storage } from "@/lib/storage";
 import { logger } from "@/lib/logger";
-import { buildConnectionPayload } from "./use-connection-payload";
-
-/** Managed connections as serialized by GET /api/connections/managed. */
-type ManagedConnectionPayload = Omit<DatabaseConnection, "createdAt"> & { createdAt: string; seedId?: string };
+import { buildConnectionPayload, type ManagedConnectionPayload } from "./use-connection-payload";
 
 /** Pending-seed poll: 1s ticks, give up after 30. NEXT_PUBLIC_MANAGED_POLL_MS
  * shortens the tick in source builds and tests only — NEXT_PUBLIC_ values are
@@ -18,6 +15,14 @@ const MANAGED_POLL_MAX_ATTEMPTS = 30;
 export function useConnectionManager(storageReady = false) {
   const [connections, setConnections] = useState<DatabaseConnection[]>([]);
   const [activeConnection, setActiveConnection] = useState<DatabaseConnection | null>(null);
+  /**
+   * The server's own seed descriptors, kept alongside the merged list rather than
+   * folded into it. The merge deliberately prefers an existing editable copy over the
+   * server's version, so afterwards there is no way to tell a copy that still matches
+   * its seed from one the user has since pointed elsewhere — and that is exactly the
+   * question a run has to answer before it may persist a bare `seed:<id>`.
+   */
+  const [servedSeeds, setServedSeeds] = useState<ManagedConnectionPayload[]>([]);
   const [schema, setSchema] = useState<TableSchema[]>([]);
   const [isLoadingSchema, setIsLoadingSchema] = useState(false);
   const [connectionPulse, setConnectionPulse] = useState<"healthy" | "degraded" | "error" | null>(null);
@@ -151,6 +156,7 @@ export function useConnectionManager(storageReady = false) {
         connections?: ManagedConnectionPayload[];
         pendingSeeds?: string[];
       };
+      if (!cancelled) setServedSeeds(managedConns ?? []);
       return {
         merged: managedConns && managedConns.length > 0 ? mergeManagedConnections(managedConns) : null,
         pendingSeeds: pendingSeeds ?? [],
@@ -282,6 +288,7 @@ export function useConnectionManager(storageReady = false) {
   return {
     connections,
     setConnections,
+    servedSeeds,
     activeConnection,
     setActiveConnection,
     schema,

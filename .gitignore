@@ -120,6 +120,9 @@ data/
 data-e2e-offline/
 # Local Docker test volumes and any stray embedded-db files
 .docker-data*/
+# The agent runtime's durable ledger: with WORKFLOW_LOCAL_DATA_DIR unset it resolves
+# against the working directory, so running an agent locally writes run ledgers here.
+.workflow-data/
 *.libredb
 
 docs/superpowers/

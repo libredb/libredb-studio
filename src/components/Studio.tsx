@@ -25,7 +25,7 @@ import {
 import { AgentRail } from "@/components/agent/AgentRail";
 import { DatabaseConnection, SavedQuery } from "@/lib/types";
 import { quoteLiteral } from "@/lib/sql/values";
-import { buildConnectionPayload } from "@/hooks/use-connection-payload";
+import { resolveAgentRunConnectionId } from "@/hooks/use-connection-payload";
 import { useAgentCapability } from "@/hooks/use-agent-capability";
 import { useAgentArtifact } from "@/components/agent/use-agent-artifact";
 import { useToast } from "@/hooks/use-toast";
@@ -202,14 +202,12 @@ export default function Studio() {
   }, [tabMgr.activeTabId, tabMgr.currentTab.result, tabMgr.currentTab.explainPlan, agentArtifactDismiss]);
 
   // A run persists a connection ID and no credential, so the process that resumes it
-  // re-resolves the connection server-side. Only a managed connection has an id that
-  // survives that, which is why a browser-only one reaches the rail as null: the rail
-  // says why instead of posting a request the route can only refuse.
-  const agentConnectionPayload = conn.activeConnection === null ? null : buildConnectionPayload(conn.activeConnection);
+  // re-resolves the connection server-side. Only a connection the server can rebuild
+  // to the SAME database has an id that survives that, which is why anything else
+  // reaches the rail as null: the rail says why instead of posting a request the route
+  // could only refuse — or, worse, accept while meaning a different database.
   const agentConnectionId =
-    agentConnectionPayload !== null && "connectionId" in agentConnectionPayload
-      ? agentConnectionPayload.connectionId
-      : null;
+    conn.activeConnection === null ? null : resolveAgentRunConnectionId(conn.activeConnection, conn.servedSeeds);
 
   // Data Masking
   const [maskingConfig, setMaskingConfig] = useState<MaskingConfig>(() => loadMaskingConfig());

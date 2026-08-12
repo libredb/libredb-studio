@@ -1328,33 +1328,3 @@ finds strings suggesting an agent capability that the embedded shell cannot reac
 Done when the provenance branch lives in a standalone-only component and `BottomPanel` takes it as
 children, or when Phase 4's surface unification decides the embedded shell gets an agent surface after
 all — at which point this stops being dormant rather than being removed.
-
-### B22. Seed connections are classified browser-only, so the rail cannot start a run out of the box
-
-`buildConnectionPayload` (`src/hooks/use-connection-payload.ts`) returns a server-resolvable
-`{ connectionId }` only when a connection carries BOTH `managed` and `seedId`. The two connections a
-zero-config deployment ships — `seed:libredb-embedded-sample` and `seed:sqlite-embedded-sample` — are
-written with `seedId` set and **`managed: false`**, so they fall to the `{ connection }` branch.
-`Studio.tsx` therefore passes `connectionId={null}` to the rail, which renders its browser-only
-caveat and disables Start.
-
-The caveat is factually wrong for these two. `POST /api/agent/runs` with
-`{"connectionId":"seed:sqlite-embedded-sample"}` resolves server-side and drives the run — verified in
-a container against the 0.11.0 image with `LIBREDB_AGENT_ENABLED=true`, reaching the model adapter.
-So the id the rail refuses to send is one the route accepts.
-
-The practical effect is the whole surface: a default deployment has only these two connections, so
-enabling the runtime yields a rail that can never start anything. Confirmed against a **cleared**
-`localStorage`, so it is the seed writer's own output rather than stale browser state. Neither the six
-gates nor the component tests can see it — the tests supply `connectionId` directly, and no test
-asserts what the seed writer produces against what `buildConnectionPayload` requires.
-
-Two readings, and they need different fixes. If `managed` is meant to track "the server can resolve
-this", the seed writer is wrong and should set it, or `buildConnectionPayload` should treat `seedId`
-alone as sufficient. If `managed` means "an operator declared this connection" and seeds are
-deliberately outside agent scope, the code is right and the rail's caveat is the thing that misleads —
-it should say seeds are out of scope rather than claiming the connection is browser-only.
-
-Done when a default deployment can either start a run on a seed connection, or explains accurately why
-it cannot — and when a test pins the seed writer's output against the payload builder's requirement,
-so the two cannot drift apart again.

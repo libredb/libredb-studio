@@ -96,6 +96,7 @@ mock.module("@/hooks/use-auth", () => ({
 mock.module("@/hooks/use-connection-manager", () => ({
   useConnectionManager: mock(() => ({
     connections: [],
+    servedSeeds: [],
     activeConnection: null,
     schema: [],
     tableNames: [],
@@ -1409,6 +1410,38 @@ describe("Studio", () => {
 
     expect(capturedAgentRailProps.connectionId).toBeNull();
     expect(capturedAgentRailProps.connectionName).toBe("TestPG");
+  });
+
+  // The two connections a default deployment ships are editable seed copies, so this
+  // is the path that decides whether the rail can start anything at all out of the
+  // box.
+  const servedSeed = {
+    ...pgConn,
+    id: "seed:sample",
+    name: "Sample",
+    managed: false,
+    seedId: "sample",
+    createdAt: "1970-01-01T00:00:00.000Z",
+  };
+  const seedCopy = { ...servedSeed, createdAt: new Date(0) };
+
+  test("an untouched copy of an editable seed reaches the rail as startable", async () => {
+    mockAgentConfig(true);
+    connMgrOverride = { activeConnection: seedCopy, connections: [seedCopy], servedSeeds: [servedSeed] };
+    const { findByTestId } = render(<Studio />);
+    await findByTestId("agent-rail");
+
+    expect(capturedAgentRailProps.connectionId).toBe("seed:sample");
+  });
+
+  test("a seed copy edited to reach another database reaches the rail as unresolvable", async () => {
+    mockAgentConfig(true);
+    const edited = { ...seedCopy, database: "somewhere-else" };
+    connMgrOverride = { activeConnection: edited, connections: [edited], servedSeeds: [servedSeed] };
+    const { findByTestId } = render(<Studio />);
+    await findByTestId("agent-rail");
+
+    expect(capturedAgentRailProps.connectionId).toBeNull();
   });
 
   test("with no connection selected the rail is told so", async () => {

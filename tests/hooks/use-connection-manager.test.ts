@@ -656,6 +656,40 @@ describe("useConnectionManager", () => {
     expect(result.current.activeConnection!.id).toBe("plain-1");
   });
 
+  // The rail needs the server's own descriptors, not just the merged list: an
+  // editable seed copy is startable by id exactly while it still matches the
+  // descriptor it came from, and the merged list has already lost that side.
+  test("exposes the seed descriptors the server served, unmerged", async () => {
+    const served = makeManagedConnection({ id: "seed-new-srv", managed: false, seedId: "seed-new" });
+    mockGlobalFetch({
+      "/api/connections/managed": { ok: true, json: { connections: [served] } },
+      "/api/db/health": { ok: true, json: { status: "healthy" } },
+    });
+
+    const { result } = renderHook(() => useConnectionManager(true));
+
+    await waitFor(() => {
+      expect(result.current.servedSeeds).toHaveLength(1);
+    });
+    expect(result.current.servedSeeds[0]!.seedId).toBe("seed-new");
+    // The server's copy, not the user's: the merged entry is the one that may drift.
+    expect(result.current.servedSeeds[0]!.createdAt).toBe(served.createdAt);
+  });
+
+  test("serves no descriptors when the managed endpoint is unavailable", async () => {
+    mockGlobalFetch({
+      "/api/connections/managed": { ok: false, json: { error: "nope" } },
+      "/api/db/health": { ok: true, json: { status: "healthy" } },
+    });
+
+    const { result } = renderHook(() => useConnectionManager(true));
+
+    await waitFor(() => {
+      expect(result.current.connections).toEqual([]);
+    });
+    expect(result.current.servedSeeds).toEqual([]);
+  });
+
   test("managed merge falls back to the first merged connection when no active ID is persisted", async () => {
     mockGlobalFetch({
       "/api/connections/managed": {

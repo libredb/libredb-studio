@@ -88,6 +88,22 @@ the run, and not from the drive credential. That is why an agent run requires a 
 connection: a connection that exists only in a browser cannot be rebuilt by a process resuming
 somebody else's run, and no credential is ever persisted (only the connection id).
 
+Which connections qualify is decided in the browser before a run is opened, by
+`resolveAgentRunConnectionId` (`src/hooks/use-connection-payload.ts`):
+
+- an **admin-managed** seed connection — the server's copy is authoritative and the UI is read-only,
+  so `seed:<id>` means the same database on every resume;
+- the **editable copy of a seed** — what a zero-config deployment ships — but only while the copy
+  still matches the descriptor the server serves. Every field deciding which database is reached and
+  as whom is compared, the optional agent credentials included; presentation-only edits (name,
+  colour, group, environment) do not disqualify it;
+- nothing else. A connection the user typed in reaches the rail as unresolvable, and so does a seed
+  copy edited to point elsewhere; the rail says so rather than opening a run.
+
+The middle case is why this is a comparison and not a bare "has a seed id". The server resolves
+`seed:<id>` to its OWN descriptor, so a run started on a copy the user had since pointed at another
+database would investigate the seed and report on it as though it were the one on screen.
+
 A run emits a closed set of **semantic events**, and they are the whole of what the UI renders:
 `run-started`, `context-captured`, `statement-drafted`, `tool-invoked`, `tool-completed`,
 `tool-refused`, `report-composed`, `run-finished`.
@@ -416,8 +432,6 @@ declared-target allowlist, the statement guard and the role's own grants are the
   kind, in the chat surface as much as in the agent.
 - **B21** — the published package's `BottomPanel` carries the agent-provenance branch as dormant
   markup.
-- **B22** — a zero-config deployment's seed connections are classified browser-only, so the rail
-  disables Start on the only connections it has, while the route resolves those same ids server-side.
 
 ## Related documentation
 

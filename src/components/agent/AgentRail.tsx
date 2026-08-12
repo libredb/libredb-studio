@@ -24,11 +24,12 @@ import { useAgentRun } from "./use-agent-run";
  *  - **Planning is the mode a run opens in.** It is the toolless one, and what a
  *    mode may actually do is decided server-side from the run's persisted mode
  *    (T6) — this surface only chooses what to ask for.
- *  - **A connection this browser invented cannot be investigated.** A run persists a
- *    connection id and no credential, so a process resuming it re-resolves the
- *    connection server-side; one that exists only in localStorage could never be
- *    rebuilt. The rail says so instead of posting a request that can only be
- *    refused.
+ *  - **A connection the server could not rebuild cannot be investigated.** A run
+ *    persists a connection id and no credential, so a process resuming it re-resolves
+ *    the connection server-side; settings living only in this browser could never be
+ *    rebuilt there. Which connections qualify is decided before the rail sees them
+ *    (`resolveAgentRunConnectionId`); the rail says so instead of posting a request
+ *    that can only be refused.
  *
  * One instance serves both presentations. Above `md` it renders in the panel Studio
  * gives it; below `md` that panel is `display:none` and the same content is hosted
@@ -268,8 +269,9 @@ export function AgentRail({
 
         {connectionId === null && (
           <p data-testid="agent-unresolvable-connection" className="mt-2 text-xs text-amber-400/80">
-            {connectionName ?? "This connection"} is defined in this browser only. A run has to re-resolve its
-            connection on the server after a restart, so it can investigate managed connections only.
+            {connectionName ?? "This connection"} cannot be rebuilt on the server: its settings live in this browser. A
+            run re-resolves its connection there after a restart, so it can only investigate a connection the server
+            holds too.
           </p>
         )}
 
