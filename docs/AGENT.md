@@ -326,6 +326,12 @@ default) cannot create it at all, and an `emptyDir` deployment loses every ledge
 Kubernetes, point it inside the mounted volume (`WORKFLOW_LOCAL_DATA_DIR=/app/data/workflow`) and
 enable persistence if runs should survive a restart.
 
+Plain Docker fails differently, and more quietly: `/app` is writable in the image, so nothing errors —
+the ledger simply sits in the container's writable layer and goes with the container, surviving a
+restart and disappearing on the next recreation or image upgrade. `docker-compose.yml` therefore sets
+the variable even though the runtime is off by default, because the setting has to be right *before*
+anyone turns the runtime on, not after they have lost a run to it.
+
 The Helm chart says the same next to `replicaCount` and in
 [`charts/libredb-studio/README.md`](../charts/libredb-studio/README.md), which carries the working
 recipe; the agent has no dedicated values fields, so its variables are passed through `extraEnv`. Note

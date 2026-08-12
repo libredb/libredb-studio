@@ -13,6 +13,13 @@ services:
       - STORAGE_PROVIDER=${STORAGE_PROVIDER:-local}
       - STORAGE_SQLITE_PATH=${STORAGE_SQLITE_PATH:-/app/data/libredb-storage.db}
       - STORAGE_POSTGRES_URL=${STORAGE_POSTGRES_URL}
+      # Set even though the agent runtime is off by default (LIBREDB_AGENT_ENABLED),
+      # because the failure it prevents is silent: with this unset the local durable
+      # backend resolves ".workflow-data" against the working directory, i.e.
+      # /app/.workflow-data, which is writable but is NOT the mounted volume below.
+      # Runs would survive a restart and disappear on the next `docker compose up`
+      # that recreates the container. Keep it inside /app/data. See docs/AGENT.md.
+      - WORKFLOW_LOCAL_DATA_DIR=${WORKFLOW_LOCAL_DATA_DIR:-/app/data/workflow}
     # Uncomment to enable pre-configured database connections:
     # volumes:
     #   - ./seed-connections.yaml:/app/config/seed-connections.yaml:ro

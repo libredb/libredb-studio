@@ -38,6 +38,15 @@ data-e2e-offline
 loop
 .claude
 
+# Local runtime state. None of it is an input to `next build`, and the builder
+# stage copies the whole context, so a developer's checkout would otherwise put
+# its own sample databases, generated bootstrap credentials and agent run
+# ledgers into a layer of a locally built image. The runner stage creates its
+# own empty `data`, and the agent's ledger dir is steered by
+# WORKFLOW_LOCAL_DATA_DIR.
+data
+.workflow-data
+
 # Environment files
 .env
 .env*.local

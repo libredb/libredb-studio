@@ -75,6 +75,21 @@ services:
       # LLM_API_URL: ${LLM_API_URL}                # ollama/custom only, e.g. http://host:11434/v1
 
       # -----------------------------------------------------------------------
+      # AGENT RUNTIME (optional, OFF unless you turn it on) — standalone only.
+      # Reuses the LLM_* settings above; there is no second place for an API key.
+      # -----------------------------------------------------------------------
+      # LIBREDB_AGENT_ENABLED: ${LIBREDB_AGENT_ENABLED:-false}
+      # Durable backend for run state. "local" (default) keeps it on disk behind
+      # file locks — SINGLE INSTANCE ONLY. More than one replica needs
+      # "@workflow/world-postgres" plus WORKFLOW_POSTGRES_URL.
+      # WORKFLOW_TARGET_WORLD: ${WORKFLOW_TARGET_WORLD:-local}
+      # Where the "local" backend writes. Leave this unset and it resolves
+      # ".workflow-data" against the working directory — /app/.workflow-data,
+      # which is writable but is NOT the volume below, so runs vanish when the
+      # container is recreated. Uncomment the data volume with it.
+      # WORKFLOW_LOCAL_DATA_DIR: ${WORKFLOW_LOCAL_DATA_DIR:-/app/data/workflow}
+
+      # -----------------------------------------------------------------------
       # SEED CONNECTIONS (optional) — pre-configure databases on boot.
       # Uncomment the seed volume mount below, then provide seed-connections.yaml.
       # Credentials referenced in that file via ${VAR} are read from this .env.
