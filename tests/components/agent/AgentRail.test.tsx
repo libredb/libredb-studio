@@ -956,6 +956,35 @@ describe("AgentRail", () => {
       expect(queryAllByTestId("agent-apply-statement")).toHaveLength(0);
     });
 
+    /*
+      The note used to live inside the report section, which meant it appeared only
+      for runs that composed one — and the runs that most need it compose nothing.
+      Observed on 2026-08-12: a cancelled run showed six "Result stored" entries, no
+      "Show result" control on any of them, and no sentence anywhere saying why. A
+      user who watched the controls disappear was left to guess.
+
+      The bound is a property of the RUN's stored rows, not of its report, so the note
+      belongs wherever those rows are listed.
+    */
+    test("a run that ended without a report still says why its results cannot be shown", async () => {
+      mockAgentFetch([OPENED_LINE, STARTED_LINE, COMPLETED_LINE, CANCELLED_LINE, FINISHED_LINE]);
+      const { findByTestId, queryByTestId } = await runWith({ onShowArtifact: mock(() => {}) });
+
+      const note = await findByTestId("agent-report-retention");
+      expect(note.textContent).toContain("released when the run ends");
+      // No report was composed, which is exactly the case that had no explanation.
+      expect(queryByTestId("agent-report")).toBeNull();
+    });
+
+    test("a run that stored nothing says nothing about retention", async () => {
+      // Nothing was held, so there is no absence to explain.
+      mockAgentFetch([OPENED_LINE, STARTED_LINE, FINISHED_LINE]);
+      const { findByTestId, queryByTestId } = await runWith({ onShowArtifact: mock(() => {}) });
+
+      await findByTestId("agent-run-status");
+      expect(queryByTestId("agent-report-retention")).toBeNull();
+    });
+
     test("with no way to show a result, the retention note is not shown either", async () => {
       mockAgentFetch([OPENED_LINE, STARTED_LINE, COMPLETED_LINE, REPORT_LINE, FINISHED_LINE]);
       const { findByTestId, queryByTestId } = await runWith({});

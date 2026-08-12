@@ -414,6 +414,26 @@ export function AgentRail({
         </ol>
 
         {/*
+          Said where the results are listed, and keyed on this run having stored any
+          plus the HOST's ability to show one — so it appears exactly when it explains
+          something: while the run is live it states the bound in advance, and once the
+          run has ended it says why the controls that were there are gone
+          (`docs/BACKLOG.md` B15).
+
+          It used to live inside the report section, which meant only a run that
+          composed a report ever explained itself. The runs that most need the sentence
+          compose nothing: a cancelled run observed on 2026-08-12 listed six stored
+          results, offered no control on any of them, and said nothing about why. The
+          bound belongs to the run's rows, not to its report.
+        */}
+        {onShowArtifact !== undefined && run.timeline.items.some((item) => item.artifactId !== undefined) && (
+          <p data-testid="agent-report-retention" className="px-3 pb-2 text-[0.625rem] text-zinc-600">
+            A run&apos;s stored rows are released when the run ends, so a result can be shown only while its run is
+            still going.
+          </p>
+        )}
+
+        {/*
           The run's conclusion, and the one place a user can check it: every claim
           is the model's own prose — quoted, never narrated as the app speaking —
           and every citation names something this run's ledger holds. The server
@@ -424,19 +444,6 @@ export function AgentRail({
         {run.timeline.report !== null && (
           <section data-testid="agent-report" className="border-t border-white/5 p-2 space-y-2">
             <h2 className="px-1 text-xs font-medium text-zinc-300">Report</h2>
-            {/*
-              Said where the controls would be, and deliberately keyed on the HOST's
-              ability to show a result rather than on this run's — so it is present
-              exactly when it explains something: while the run is live it states the
-              bound in advance, and once the run has ended it says why the controls
-              that were there are gone (`docs/BACKLOG.md` B15).
-            */}
-            {onShowArtifact !== undefined && (
-              <p data-testid="agent-report-retention" className="px-1 text-[0.625rem] text-zinc-600">
-                A run&apos;s stored rows are released when the run ends, so a result can be shown only while its run is
-                still going.
-              </p>
-            )}
             {run.timeline.report.claims.map((claim) => (
               <div key={claim.id} data-testid="agent-report-claim" className="rounded p-2 hover:bg-white/5">
                 <pre className="overflow-x-auto rounded bg-black/40 p-1.5 font-mono text-[0.625rem] text-zinc-300 whitespace-pre-wrap">
