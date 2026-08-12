@@ -52,6 +52,22 @@ export interface WorkspaceQueryResult {
 
 // === Feature flags ===
 
+/**
+ * There is deliberately no `agent` flag here (#329).
+ *
+ * The agent runtime is standalone-only in Phase 1: it is gated by a server-side
+ * setting the standalone shell discovers at runtime, and no embedded code path
+ * reaches it. A capability declared here would therefore be set by a host and
+ * never read — which is precisely the state the deprecated `inlineEditing` note
+ * below records this repository as avoiding (#288). It is also not a gap a host
+ * can close by asking: nothing in `StudioWorkspace` renders an agent surface,
+ * and `tests/unit/agent-package-boundary.test.ts` pins that no agent module is
+ * even reachable from the published entry points.
+ *
+ * When the embedded shell does grow one, the flag arrives in the same change as
+ * the code that reads it — additive and optional, like every field here, because
+ * this interface is implemented outside this repository.
+ */
 export interface WorkspaceFeatures {
   ai?: boolean;
   charts?: boolean;

@@ -711,6 +711,59 @@ describe("StudioWorkspace", () => {
     expect(capturedBottomPanelProps.isNL2SQLOpen).toBe(false);
   });
 
+  // =========================================================================
+  // The agent boundary (#329 T12)
+  // =========================================================================
+
+  /**
+   * Phase 1's agent runtime is standalone-only, so the embedded shell has no
+   * surface to gate: there is no agent capability flag, which is why "with any
+   * feature combination" is exhaustive here rather than a sample. Every flag on
+   * and every flag off are both rendered anyway, because the claim being pinned
+   * is about the shell, not about the flags it happens to read today.
+   */
+  const ALL_FEATURES_ON: typeof ALL_FEATURES_OFF = Object.fromEntries(
+    Object.keys(ALL_FEATURES_OFF).map((name) => [name, true]),
+  ) as typeof ALL_FEATURES_OFF;
+
+  test("no feature combination gives the embedded shell an agent surface", () => {
+    // The server is made to answer "the agent runtime is on" for anything asked,
+    // so a passing test means the embedded shell asked nothing rather than that
+    // it asked and was refused.
+    const requested: string[] = [];
+    const fetchMock = mock(async (input: RequestInfo | URL) => {
+      requested.push(typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url);
+      return new Response(JSON.stringify({ enabled: true }), { status: 200 });
+    });
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    try {
+      for (const features of [undefined, ALL_FEATURES_OFF, ALL_FEATURES_ON]) {
+        capturedBottomPanelProps = {};
+        const { baseElement, unmount } = renderWorkspace(features === undefined ? {} : { features });
+
+        // Prefix-matched, not a list of today's ids: a surface added later would
+        // otherwise satisfy this test by being named something new.
+        expect(baseElement.querySelectorAll('[data-testid^="agent"]')).toHaveLength(0);
+        // The bottom panel is where a standalone run's artifact is hydrated
+        // (#329 T11). The embedded shell never hands it one, so the panel's
+        // provenance branch is unreachable there. The panel is a module mock in
+        // this file, so the capture is cleared and then proved fresh — otherwise
+        // a combination that stopped rendering it at all would satisfy the
+        // `agentArtifact` assertion with nothing captured.
+        expect(capturedBottomPanelProps.onSetMode).toBeDefined();
+        expect(capturedBottomPanelProps.agentArtifact).toBeUndefined();
+
+        unmount();
+      }
+
+      expect(requested.filter((url) => url.includes("/api/agent"))).toEqual([]);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   test("features.ai enables the NL2SQL open state round-trip", () => {
     renderWorkspace({ features: { ai: true } });
     expect(capturedBottomPanelProps.isNL2SQLOpen).toBe(false);
