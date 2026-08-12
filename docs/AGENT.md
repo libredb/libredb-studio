@@ -71,7 +71,13 @@ an ambient key cannot authenticate a run against a provider nobody configured.
 
 ## What a run is
 
-A run is opened with a **mode**, an **objective** and a **connection id**:
+A run is opened with a **mode**, a **workflow type**, an **objective** and a **connection
+id**. Mode and workflow type are two independent axes and are deliberately never merged into
+one field: a planning run of a query optimization and an agent run of one differ in what they
+may **do**, not in what they are **for**, and a single field would have to enumerate the
+product of the two (#325).
+
+The mode is HOW a run executes:
 
 - **`planning`** — the model reasons about the objective and produces a plan. Its tool set is
   **empty**, so a planning run performs zero database operations. This is decided on the server from
@@ -82,6 +88,32 @@ A run is opened with a **mode**, an **objective** and a **connection id**:
 The mode is fixed when the run is opened. A later request cannot widen a planning run, and the
 tool-selection function is re-checked at the execution seam, so a caller holding a tool context
 still cannot execute a tool the selector would never have offered.
+
+The **workflow type** is WHAT the run is for — `investigation` (the default),
+`query-optimization` or `database-assessment` — and it is fixed at start for the same reason and by
+the same mechanism. Both `selectAgentTools` and `verifyRunGoal` are functions of the run's own
+persisted value, so there is no parameter through which a workflow could arrive twice, and no other
+route accepts one. It is **optional in the request body**: omitting it opens an investigation, which
+is what every run written before the field was.
+
+Two properties are worth stating, because both are easy to assume the other way round:
+
+- **Mode decides before the workflow does.** Planning is toolless whatever the run is for, so a
+  workflow type is never a way to give a toolless run a tool, and never a way to hold it to a bar
+  that requires evidence. The rail therefore shows the workflow control only in agent mode — a
+  control the service cannot honour is not rendered at all.
+- **The field is required on the record and optional on the ledger header.** The fold always
+  produces a workflow type, so every reader has one and none has to know which generation of writer
+  produced its run. A header without one folds to `investigation`, and that is a READING rather than
+  a fallback: an investigation is the only thing this runtime could do when those ledgers were
+  written. `tests/unit/lib/agent/ledger-compatibility.test.ts` asserts it against a REAL pre-change
+  ledger — a run driven in a browser on 2026-08-12, copied out of `.workflow-data` verbatim — rather
+  than against a hand-written approximation of one.
+
+The three workflows share one tool set and one goal rule today, and that is the honest state rather
+than a placeholder: composing claims that rest on something the run actually read is the baseline
+**every** workflow has to meet, and the tools and requirements that distinguish the two templates
+arrive with the templates themselves (#330 T3).
 
 A run's **actor** — the session and role that opened it — is written into the run's own record at
 start, and every later authorization decision reads it from there. Not from the request that resumes
@@ -327,6 +359,10 @@ said a run has to answer, so nothing looked.
 the other half: a **pure fold over the ledger** that returns an outcome, the id of the rule
 that produced it, and what the run was required to produce and did not.
 
+The rule is chosen by the run's mode first and its workflow type second, from total records —
+`AGENT_WORKFLOW_VERIFIERS` names one rule per workflow, so a workflow added to the contract stops the
+build until somebody decides what "answered" means for it.
+
 | Mode | Rule (`agent-planning.1` / `agent-investigation.1`) | Unmet when it fails |
 | --- | --- | --- |
 | `planning` | The run left non-empty closing prose. That mode is toolless and can never cite evidence, so judging it by the investigation rule would fail every planning run that did its job. | `no-plan` |
@@ -400,7 +436,7 @@ that *is* its answer, and the drive route verifies a machine credential instead 
 | Route | Purpose |
 | --- | --- |
 | `GET /api/agent/config` | Whether this server runs agents. Session-verified; answers the flag only, never the backend or the model. |
-| `POST /api/agent/runs` | Opens a run (mode, objective, `connectionId`) and returns `202` with the run id. An inline connection in the body is refused. An agent run whose model was established as unable to call tools is refused `422` before any run is opened. |
+| `POST /api/agent/runs` | Opens a run (mode, optional `workflowType`, objective, `connectionId`) and returns `202` with the run id and the PERSISTED mode and workflow type. An unrecognised `workflowType` is refused rather than defaulted. An inline connection in the body is refused. An agent run whose model was established as unable to call tools is refused `422` before any run is opened. |
 | `GET /api/agent/runs/{runId}` | The run record, folded from its ledger. |
 | `DELETE /api/agent/runs/{runId}` | Requests a stop. Cancellation is enforced by the run loop's own persisted state, not by a driver cancel propagating — so this is "asked to stop", not "has stopped". |
 | `GET /api/agent/runs/{runId}/stream` | The ledger as NDJSON, one entry per line. |

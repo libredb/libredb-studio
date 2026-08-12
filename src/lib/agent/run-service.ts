@@ -59,6 +59,7 @@ import type {
   AgentRunFailureReason,
   AgentRunStopReason,
   AgentRunTerminalStatus,
+  AgentRunWorkflowType,
   AgentToolRefusal,
 } from "./types";
 
@@ -105,6 +106,8 @@ export interface AgentRunResources {
 
 export interface AgentRunStartInput {
   readonly mode: AgentRunMode;
+  /** What the run is FOR. Defaults to `DEFAULT_AGENT_WORKFLOW_TYPE`. */
+  readonly workflowType?: AgentRunWorkflowType;
   readonly actor: AgentRunActor;
   readonly connectionId: string;
   readonly objective: string;

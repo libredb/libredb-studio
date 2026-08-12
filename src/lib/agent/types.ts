@@ -56,6 +56,32 @@ import type { TableSchema } from "@/lib/types";
  */
 export type AgentRunMode = "planning" | "agent";
 
+/**
+ * WHAT a run is for, which is a different axis from HOW it executes (#325, #330 T2).
+ *
+ * The epic pins three independent axes — `executionMode`, `workflowType`,
+ * `connectionScope` — and they are deliberately never merged into one `mode` field.
+ * Merging them was the obvious economy and it is the wrong one: a planning run of a
+ * query optimization and an agent run of one differ in what they may DO, not in what
+ * they are FOR, and a single field would have to enumerate the product of the two.
+ *
+ * Like `mode`, this is decided when the run opens and read from the run's own record
+ * thereafter. `selectAgentTools` and `verifyRunGoal` are both functions of it, so a
+ * later request cannot widen a run after it opens — not because a filter rejects one,
+ * but because there is no parameter through which a workflow could arrive twice.
+ */
+export type AgentRunWorkflowType = "investigation" | "query-optimization" | "database-assessment";
+
+/**
+ * What a run is for when nothing said.
+ *
+ * Also what a ledger written before the field folds to, and that is a READING rather
+ * than a fallback: an investigation is the only thing this runtime could do when
+ * those ledgers were written, so answering anything else would be inventing a fact
+ * about a run nobody can go back and ask.
+ */
+export const DEFAULT_AGENT_WORKFLOW_TYPE: AgentRunWorkflowType = "investigation";
+
 /** A run that has stopped, and why. Terminal states are never re-entered. */
 export type AgentRunTerminalStatus = "succeeded" | "failed" | "cancelled";
 
@@ -303,6 +329,13 @@ export type AgentRunEvent =
 export interface AgentRunRecord {
   readonly runId: string;
   readonly mode: AgentRunMode;
+  /**
+   * Required HERE and optional on the ledger header, which is the whole
+   * compatibility story in one sentence: the fold always produces a workflow type,
+   * and an older header simply does not carry one. Every reader therefore has a
+   * value, and no reader has to know which generation of writer produced its run.
+   */
+  readonly workflowType: AgentRunWorkflowType;
   readonly status: AgentRunStatus;
   readonly actor: AgentRunActor;
   /** The single connection this run may reach; the server builds the scope from it. */

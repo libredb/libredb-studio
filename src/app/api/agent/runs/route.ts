@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { admitAgentModel } from "@/lib/agent/capability-gate";
 import { isAgentRuntimeEnabled } from "@/lib/agent/config";
 import { driveAgentRun, getAgentRunService } from "@/lib/agent/runtime";
-import type { AgentRunMode } from "@/lib/agent/types";
+import type { AgentRunMode, AgentRunWorkflowType } from "@/lib/agent/types";
 import { createErrorResponse } from "@/lib/api/errors";
 import { guardRoute } from "@/lib/api/require-session";
 import { logger } from "@/lib/logger";
@@ -26,6 +26,12 @@ import { resolveConnection } from "@/lib/seed/resolve-connection";
  *    connection on the server; one that only a browser knows cannot be rebuilt.
  *  - The mode is fixed at start. Tool selection is a server-side function of the
  *    run's PERSISTED mode, so a later request cannot widen a planning run.
+ *  - **The workflow type is fixed at start too, and for the same reason.** It is
+ *    what the run is FOR, and both the tool set and the goal verifier read it off
+ *    the run's own record. It is optional in the body — omitting it opens an
+ *    investigation, which is what every run before the field was — and there is no
+ *    other route that accepts it, so a run cannot change what it is for after it
+ *    has been opened.
  */
 
 const ROUTE = "POST /api/agent/runs";
@@ -34,6 +40,12 @@ const ROUTE = "POST /api/agent/runs";
 const MAX_OBJECTIVE_LENGTH = 4000;
 
 const MODES: ReadonlySet<string> = new Set<AgentRunMode>(["planning", "agent"]);
+
+const WORKFLOW_TYPES: ReadonlySet<string> = new Set<AgentRunWorkflowType>([
+  "investigation",
+  "query-optimization",
+  "database-assessment",
+]);
 
 function badRequest(message: string): NextResponse {
   return NextResponse.json({ error: message }, { status: 400 });
@@ -58,9 +70,16 @@ export async function POST(req: Request) {
       return badRequest("Request body must be JSON");
     }
 
-    const { mode, objective, connectionId } = body;
+    const { mode, workflowType, objective, connectionId } = body;
     if (typeof mode !== "string" || !MODES.has(mode)) {
       return badRequest('mode must be "planning" or "agent"');
+    }
+    // Absent is allowed and means an investigation. An unrecognised one is REFUSED
+    // rather than defaulted: a caller who names a workflow this server does not
+    // serve has asked for something it will not get, and silently running a
+    // different one is how a user reads a report about work nobody requested.
+    if (workflowType !== undefined && (typeof workflowType !== "string" || !WORKFLOW_TYPES.has(workflowType))) {
+      return badRequest(`workflowType must be one of ${[...WORKFLOW_TYPES].join(", ")}`);
     }
     if (typeof objective !== "string" || objective.trim().length === 0) {
       return badRequest("objective must be a non-empty string");
@@ -94,6 +113,10 @@ export async function POST(req: Request) {
     const service = await getAgentRunService();
     const record = await service.start({
       mode: mode as AgentRunMode,
+      // Spread rather than passed as `undefined`, so a body that named no workflow
+      // reaches the store exactly as one written before the field did, and the
+      // store's own default is the single place the answer is decided.
+      ...(workflowType === undefined ? {} : { workflowType: workflowType as AgentRunWorkflowType }),
       actor: { sessionId: guard.session.username, role: guard.session.role },
       connectionId: connection.id,
       objective,
@@ -110,7 +133,12 @@ export async function POST(req: Request) {
       logger.error("Agent run drive ended in failure", error, { route: "api/agent/runs", runId: record.runId });
     });
 
-    return NextResponse.json({ runId: record.runId, status: record.status, mode: record.mode }, { status: 202 });
+    // The PERSISTED values are echoed, never the request's: a caller that omitted a
+    // workflow type learns which one its run actually opened as.
+    return NextResponse.json(
+      { runId: record.runId, status: record.status, mode: record.mode, workflowType: record.workflowType },
+      { status: 202 },
+    );
   } catch (error) {
     return createErrorResponse(error, { route: "api/agent/runs" });
   }

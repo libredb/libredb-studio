@@ -7,6 +7,7 @@ import type {
   AgentRunFailureReason,
   AgentRunStatus,
   AgentRunStopReason,
+  AgentRunWorkflowType,
   AgentToolRefusal,
 } from "@/lib/agent/types";
 
@@ -194,6 +195,17 @@ const FAILURE_SENTENCES = {
 } as const satisfies Record<AgentRunFailureReason, string>;
 
 /**
+ * What a run is FOR, in words rather than in the contract's identifiers. Total over
+ * the union, so a workflow type added to the contract cannot reach a user as a raw
+ * kebab-case token.
+ */
+const WORKFLOW_WORDS: Readonly<Record<AgentRunWorkflowType, string>> = {
+  investigation: "an investigation",
+  "query-optimization": "query optimization",
+  "database-assessment": "a database assessment",
+};
+
+/**
  * How the loop ended, said plainly. Total over the union, so a stop reason added to
  * the durable contract cannot reach a user as an unlabelled ending.
  *
@@ -318,7 +330,13 @@ function describeEntry(entry: AgentLedgerEntry): Omit<AgentTimelineItem, "id"> {
       return {
         atMs: entry.atMs,
         tone: "neutral",
-        headline: `Run opened in ${entry.mode} mode`,
+        // The workflow is named only when the header carries one. A ledger written
+        // before the field says exactly what it always said, rather than being
+        // narrated as an investigation it never declared itself to be.
+        headline:
+          entry.workflowType === undefined
+            ? `Run opened in ${entry.mode} mode`
+            : `Run opened in ${entry.mode} mode for ${WORKFLOW_WORDS[entry.workflowType]}`,
         quoted: entry.objective,
       };
     case "event":

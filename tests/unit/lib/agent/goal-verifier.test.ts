@@ -1,6 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { AGENT_GOAL_VERIFIERS, verifyRunGoal } from "@/lib/agent/goal-verifier";
-import type { AgentArtifactReference, AgentRunEvent, AgentRunMode, AgentRunRecord } from "@/lib/agent/types";
+import { AGENT_PLANNING_VERIFIER, AGENT_WORKFLOW_VERIFIERS, verifyRunGoal } from "@/lib/agent/goal-verifier";
+import type {
+  AgentArtifactReference,
+  AgentRunEvent,
+  AgentRunMode,
+  AgentRunRecord,
+  AgentRunWorkflowType,
+} from "@/lib/agent/types";
 
 /**
  * The goal verifier (#330 T1): the thing that can see a run which finished
@@ -76,8 +82,9 @@ function run(
   mode: AgentRunMode,
   status: AgentRunRecord["status"],
   events: readonly AgentRunEvent[],
-): Pick<AgentRunRecord, "mode" | "status" | "events"> {
-  return { mode, status, events };
+  workflowType: AgentRunWorkflowType = "investigation",
+): Pick<AgentRunRecord, "mode" | "workflowType" | "status" | "events"> {
+  return { mode, workflowType, status, events };
 }
 
 const ARTIFACT = (id: string) => ({ source: "artifact" as const, id });
@@ -214,13 +221,39 @@ describe("a planning run is judged by what planning mode can produce", () => {
 });
 
 describe("the verifier registry", () => {
-  test("names one rule per run mode, so a new mode cannot inherit another mode's bar", () => {
-    expect(Object.keys(AGENT_GOAL_VERIFIERS).sort()).toEqual(["agent", "planning"]);
+  test("names one rule per workflow type, so a new workflow cannot inherit another one's bar", () => {
+    expect(Object.keys(AGENT_WORKFLOW_VERIFIERS).sort()).toEqual([
+      "database-assessment",
+      "investigation",
+      "query-optimization",
+    ]);
   });
 
-  test("every rule identifies itself in its own verdict, so a reader knows what judged the run", () => {
-    for (const [mode, verifierId] of Object.entries(AGENT_GOAL_VERIFIERS)) {
-      expect(verifyRunGoal(run(mode as AgentRunMode, "succeeded", [])).verifier).toBe(verifierId);
+  test("every workflow identifies the rule that judged it, so a reader knows what the verdict measured", () => {
+    for (const [workflowType, verifierId] of Object.entries(AGENT_WORKFLOW_VERIFIERS)) {
+      expect(verifyRunGoal(run("agent", "succeeded", [], workflowType as AgentRunWorkflowType)).verifier).toBe(
+        verifierId,
+      );
+    }
+  });
+
+  test("planning is judged by its own rule whatever the run is FOR", () => {
+    // Mode decides before the workflow does, for the same reason it does in
+    // `selectAgentTools`: a toolless run can never be held to a bar that requires
+    // evidence, so a workflow type must not be a way to impose one on it.
+    for (const workflowType of Object.keys(AGENT_WORKFLOW_VERIFIERS) as AgentRunWorkflowType[]) {
+      const verdict = verifyRunGoal(run("planning", "succeeded", [closing], workflowType));
+      expect(verdict).toEqual({ outcome: "answered", verifier: AGENT_PLANNING_VERIFIER, unmet: [] });
+    }
+  });
+
+  test("the baseline is the same for all three today, and every workflow must still meet it", () => {
+    // Composing claims that rest on something the run read is what EVERY workflow
+    // has to do; the templates add to it rather than replacing it (#330 T3).
+    for (const workflowType of Object.keys(AGENT_WORKFLOW_VERIFIERS) as AgentRunWorkflowType[]) {
+      expect(verifyRunGoal(run("agent", "succeeded", [contextCaptured, closing], workflowType)).unmet).toEqual([
+        "no-report",
+      ]);
     }
   });
 });

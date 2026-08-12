@@ -49,6 +49,7 @@ import type {
   AgentRunEvent,
   AgentRunMode,
   AgentRunStopReason,
+  AgentRunWorkflowType,
   AgentRunTerminalStatus,
 } from "@/lib/agent/types";
 import { ExecutionArtifactStore } from "@/lib/db/operations/artifacts";
@@ -180,6 +181,8 @@ export interface EvalDrive {
 export interface EvalRunOptions {
   readonly engine?: EvalEngine;
   readonly mode?: AgentRunMode;
+  /** What the run is FOR. Defaults to an investigation, as the store does. */
+  readonly workflowType?: AgentRunWorkflowType;
   readonly objective?: string;
   readonly actor?: AgentRunActor;
   /** What the scripted engine answers a MODEL statement with. Catalog reads are served by the preset. */
@@ -238,7 +241,13 @@ export async function openEvalRun(options: EvalRunOptions = {}): Promise<EvalRun
   };
 
   const opened = boot();
-  const record = await opened.service.start({ mode, actor, connectionId: engine.connection.id, objective });
+  const record = await opened.service.start({
+    mode,
+    ...(options.workflowType === undefined ? {} : { workflowType: options.workflowType }),
+    actor,
+    connectionId: engine.connection.id,
+    objective,
+  });
 
   /** One drive, whatever model is driving it. */
   const driveWith = async (

@@ -59,7 +59,15 @@
 import { randomUUID } from "node:crypto";
 import { getAgentRuntimeConfig } from "./config";
 import { assertPersistableState } from "./state-guard";
-import type { AgentRunActor, AgentRunEvent, AgentRunMode, AgentRunRecord, AgentRunStatus } from "./types";
+import {
+  type AgentRunActor,
+  type AgentRunEvent,
+  type AgentRunMode,
+  type AgentRunRecord,
+  type AgentRunStatus,
+  type AgentRunWorkflowType,
+  DEFAULT_AGENT_WORKFLOW_TYPE,
+} from "./types";
 
 /** Stream-name prefix, so one world may carry ledgers next to other streams. */
 const AGENT_LEDGER_STREAM_PREFIX = "agent-ledger-";
@@ -109,6 +117,13 @@ export type AgentLedgerEntry =
       readonly atMs: number;
       readonly runId: string;
       readonly mode: AgentRunMode;
+      /**
+       * Optional, and only on the READ side: `openRun` always writes one. A header
+       * written before this field existed folds to
+       * `DEFAULT_AGENT_WORKFLOW_TYPE`, which `tests/unit/lib/agent/ledger-compatibility.test.ts`
+       * asserts against a real pre-change ledger rather than a hand-written one.
+       */
+      readonly workflowType?: AgentRunWorkflowType;
       readonly actor: AgentRunActor;
       readonly connectionId: string;
       readonly objective: string;
@@ -178,6 +193,8 @@ export interface AgentLedgerWorld {
 
 export interface AgentRunOpenInput {
   readonly mode: AgentRunMode;
+  /** Defaults to `DEFAULT_AGENT_WORKFLOW_TYPE`; see `AgentRunWorkflowType`. */
+  readonly workflowType?: AgentRunWorkflowType;
   readonly actor: AgentRunActor;
   readonly connectionId: string;
   readonly objective: string;
@@ -282,6 +299,7 @@ function foldLedger(runId: string, entries: readonly AgentLedgerEntry[]): AgentR
     record: {
       runId,
       mode: header.mode,
+      workflowType: header.workflowType ?? DEFAULT_AGENT_WORKFLOW_TYPE,
       status,
       actor: header.actor,
       connectionId: header.connectionId,
@@ -320,6 +338,10 @@ export class AgentRunStore {
       atMs: this.clock(),
       runId,
       mode: input.mode,
+      // Written unconditionally, unlike the optional fields on `run-finished`: every
+      // run HAS a workflow type, so there is no "ending that has neither" case whose
+      // bytes an omission would keep identical. The compatibility is on the read side.
+      workflowType: input.workflowType ?? DEFAULT_AGENT_WORKFLOW_TYPE,
       actor: input.actor,
       connectionId: input.connectionId,
       objective: input.objective,

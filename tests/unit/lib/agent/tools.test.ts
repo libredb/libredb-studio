@@ -13,7 +13,7 @@ import {
   selectAgentTools,
 } from "@/lib/agent/tools";
 import { UNTRUSTED_CONTENT_BEGIN, UNTRUSTED_CONTENT_END } from "@/lib/agent/untrusted-content";
-import type { AgentRunEvent, AgentRunRecord } from "@/lib/agent/types";
+import type { AgentRunEvent, AgentRunRecord, AgentRunWorkflowType } from "@/lib/agent/types";
 import { ExecutionArtifactStore } from "@/lib/db/operations/artifacts";
 import { ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
 import { createCanonicalOperationRegistry } from "@/lib/db/operations/descriptors";
@@ -144,23 +144,56 @@ afterEach(() => {
   consoleSpy.mockRestore();
 });
 
-describe("selectAgentTools — the server decides, from the persisted mode", () => {
+const WORKFLOW_TYPES = ["investigation", "query-optimization", "database-assessment"] as const;
+
+/** A run record narrowed to what tool selection is allowed to read. */
+const persisted = (
+  mode: AgentRunRecord["mode"],
+  workflowType: AgentRunWorkflowType = "investigation",
+): Pick<AgentRunRecord, "mode" | "workflowType"> => ({ mode, workflowType });
+
+describe("selectAgentTools — the server decides, from the persisted mode and workflow type", () => {
   test("planning mode yields a genuinely empty tool set", () => {
-    expect(selectAgentTools({ mode: "planning" })).toEqual([]);
+    expect(selectAgentTools(persisted("planning"))).toEqual([]);
+  });
+
+  test("planning stays toolless whatever the run is FOR", () => {
+    // A workflow type must never be a way to give a toolless mode a tool.
+    for (const workflowType of WORKFLOW_TYPES) {
+      expect(selectAgentTools(persisted("planning", workflowType)), workflowType).toEqual([]);
+    }
   });
 
   test("agent mode yields the four read-class tools and nothing else", () => {
-    const names = selectAgentTools({ mode: "agent" }).map((tool) => tool.name);
+    const names = selectAgentTools(persisted("agent")).map((tool) => tool.name);
 
     expect([...names].sort()).toEqual(["compose_report", "inspect_plan", "inspect_schema", "run_read_query"]);
   });
 
-  test("a client-supplied tool list is ignored, not merged", () => {
-    // The shape a hostile request body would take: the run record carries the
-    // mode, and anything else travelling beside it has no effect at all.
-    const hostile = { mode: "planning", tools: ["run_read_query"], allowedTools: ["sql.explain.analyze"] };
+  test("every workflow type resolves to a tool set, so none can fall through to undefined", () => {
+    // The three agree today (#330 T2): the tools that would distinguish them arrive
+    // with the templates. What is asserted here is that the mapping is TOTAL — a
+    // workflow with no entry would hand the run loop `undefined` and take its tools
+    // away entirely.
+    for (const workflowType of WORKFLOW_TYPES) {
+      expect(
+        selectAgentTools(persisted("agent", workflowType)).map((tool) => tool.name),
+        workflowType,
+      ).toEqual(["inspect_schema", "run_read_query", "inspect_plan", "compose_report"]);
+    }
+  });
 
-    expect(selectAgentTools(hostile as unknown as Pick<AgentRunRecord, "mode">)).toEqual([]);
+  test("a client-supplied tool list is ignored, not merged", () => {
+    // The shape a hostile request body would take: the run record carries the mode
+    // and the workflow type, and anything else travelling beside them has no effect.
+    const hostile = {
+      mode: "planning",
+      workflowType: "investigation",
+      tools: ["run_read_query"],
+      allowedTools: ["sql.explain.analyze"],
+    };
+
+    expect(selectAgentTools(hostile as unknown as Pick<AgentRunRecord, "mode" | "workflowType">)).toEqual([]);
   });
 
   test("no tool maps onto the approval-gated plan-execution operation", () => {
@@ -173,11 +206,11 @@ describe("selectAgentTools — the server decides, from the persisted mode", () 
   });
 
   test("the returned set is frozen, so a caller cannot push a tool into it", () => {
-    expect(Object.isFrozen(selectAgentTools({ mode: "agent" }))).toBe(true);
+    expect(Object.isFrozen(selectAgentTools(persisted("agent")))).toBe(true);
   });
 
   test("every definition declares a description and an input schema", () => {
-    for (const tool of selectAgentTools({ mode: "agent" })) {
+    for (const tool of selectAgentTools(persisted("agent"))) {
       expect(tool.description.length).toBeGreaterThan(20);
       expect(tool.inputSchema.safeParse(undefined).success, tool.name).toBe(false);
     }

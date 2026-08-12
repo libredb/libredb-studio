@@ -238,10 +238,67 @@ describe("AgentRail", () => {
     expect(startUrl).toBe("/api/agent/runs");
     expect(JSON.parse(String(startInit?.body))).toEqual({
       mode: "agent",
+      workflowType: "investigation",
       objective: "why is checkout slow",
       connectionId: "seed:sales",
     });
     expect(fetchMock.mock.calls[1][0]).toBe("/api/agent/runs/arun_1/stream");
+  });
+
+  test("the workflow control appears only in agent mode, because planning has no tools to shape", () => {
+    const { getByTestId, queryByTestId } = render(<AgentRail {...DEFAULT_PROPS} />);
+
+    // A control the service cannot honour is not rendered at all: a workflow type
+    // changes nothing about a toolless run.
+    expect(queryByTestId("agent-workflow-investigation")).toBeNull();
+
+    fireEvent.click(getByTestId("agent-mode-agent"));
+    expect(getByTestId("agent-workflow-investigation").getAttribute("aria-pressed")).toBe("true");
+    expect(getByTestId("agent-workflow-query-optimization").getAttribute("aria-pressed")).toBe("false");
+    expect(getByTestId("agent-workflow-database-assessment").getAttribute("aria-pressed")).toBe("false");
+
+    fireEvent.click(getByTestId("agent-mode-planning"));
+    expect(queryByTestId("agent-workflow-investigation")).toBeNull();
+  });
+
+  test("the chosen workflow is what the start request asks for", async () => {
+    const fetchMock = mockAgentFetch([OPENED_LINE, STARTED_LINE]);
+    const { getByTestId } = render(<AgentRail {...DEFAULT_PROPS} />);
+
+    fireEvent.click(getByTestId("agent-mode-agent"));
+    fireEvent.click(getByTestId("agent-workflow-query-optimization"));
+    fireEvent.change(getByTestId("agent-objective"), { target: { value: "why is checkout slow" } });
+    await act(async () => {
+      fireEvent.click(getByTestId("agent-start"));
+    });
+
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toEqual({
+      mode: "agent",
+      workflowType: "query-optimization",
+      objective: "why is checkout slow",
+      connectionId: "seed:sales",
+    });
+  });
+
+  test("a planning run asks for no workflow at all, rather than one the mode cannot honour", async () => {
+    const fetchMock = mockAgentFetch([OPENED_LINE, STARTED_LINE]);
+    const { getByTestId } = render(<AgentRail {...DEFAULT_PROPS} />);
+
+    // Chosen while in agent mode, then abandoned by switching back: the request must
+    // carry the mode's truth, not the control's last state.
+    fireEvent.click(getByTestId("agent-mode-agent"));
+    fireEvent.click(getByTestId("agent-workflow-database-assessment"));
+    fireEvent.click(getByTestId("agent-mode-planning"));
+    fireEvent.change(getByTestId("agent-objective"), { target: { value: "why is checkout slow" } });
+    await act(async () => {
+      fireEvent.click(getByTestId("agent-start"));
+    });
+
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toEqual({
+      mode: "planning",
+      objective: "why is checkout slow",
+      connectionId: "seed:sales",
+    });
   });
 
   test("a connection the server cannot resolve is refused here, with the reason", () => {

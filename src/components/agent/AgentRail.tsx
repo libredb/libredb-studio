@@ -5,7 +5,7 @@ import { Bot, Loader2, PencilLine, Play, Square, TableProperties } from "lucide-
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { AGENT_EXECUTION_POLICY, AGENT_MAX_MODEL_TURNS, AGENT_RUN_DEADLINE_MS } from "@/lib/agent/execution-policy";
-import type { AgentRunMode, AgentRunStatus } from "@/lib/agent/types";
+import type { AgentRunMode, AgentRunStatus, AgentRunWorkflowType } from "@/lib/agent/types";
 import { cn } from "@/lib/utils";
 import { type AgentBudgetGauge, type AgentTimelineTone, describeFailureReason } from "./timeline";
 import { useAgentRun } from "./use-agent-run";
@@ -70,6 +70,19 @@ const TONE_CLASSES: Readonly<Record<AgentTimelineTone, string>> = {
 const MODE_LABELS: Readonly<Record<AgentRunMode, string>> = {
   planning: "Plan",
   agent: "Agent",
+};
+
+/**
+ * What the run is FOR, as opposed to how it executes.
+ *
+ * Shown only in agent mode, and that is the rail's own rule rather than a layout
+ * choice: planning is toolless by contract, so a workflow type changes nothing about
+ * a planning run, and a control the service cannot honour is not rendered at all.
+ */
+const WORKFLOW_LABELS: Readonly<Record<AgentRunWorkflowType, string>> = {
+  investigation: "Investigate",
+  "query-optimization": "Optimize",
+  "database-assessment": "Assess",
 };
 
 /** A run that is over cannot be asked for anything, so nothing is offered for it. */
@@ -154,6 +167,7 @@ export function AgentRail({
   onShowArtifact,
 }: AgentRailProps) {
   const [mode, setMode] = useState<AgentRunMode>("planning");
+  const [workflowType, setWorkflowType] = useState<AgentRunWorkflowType>("investigation");
   const [objective, setObjective] = useState("");
   const run = useAgentRun();
 
@@ -180,7 +194,14 @@ export function AgentRail({
 
   const handleStart = () => {
     if (connectionId === null || !canStart) return;
-    void run.start({ mode, objective: objective.trim(), connectionId });
+    // The workflow is sent only for the mode it can mean anything in, so a planning
+    // run opens as what the server would have opened it as anyway.
+    void run.start({
+      mode,
+      ...(mode === "agent" ? { workflowType } : {}),
+      objective: objective.trim(),
+      connectionId,
+    });
   };
 
   /*
@@ -251,6 +272,32 @@ export function AgentRail({
           ))}
         </div>
       </div>
+
+      {/*
+        The second axis, and only where it means something. Planning is toolless, so
+        a workflow type changes nothing about a planning run — rendering the choice
+        there would offer a control the service cannot honour.
+      */}
+      {mode === "agent" && (
+        <div className="flex items-center gap-1 px-3 py-1.5 border-b border-white/5 shrink-0">
+          {(Object.keys(WORKFLOW_LABELS) as AgentRunWorkflowType[]).map((candidate) => (
+            <button
+              key={candidate}
+              type="button"
+              data-testid={`agent-workflow-${candidate}`}
+              aria-label={`${WORKFLOW_LABELS[candidate]} workflow`}
+              aria-pressed={workflowType === candidate}
+              onClick={() => setWorkflowType(candidate)}
+              className={cn(
+                "px-2 py-0.5 rounded text-xs font-normal transition-colors",
+                workflowType === candidate ? "bg-blue-500/15 text-blue-300" : "text-zinc-500 hover:bg-white/5",
+              )}
+            >
+              {WORKFLOW_LABELS[candidate]}
+            </button>
+          ))}
+        </div>
+      )}
 
       <div className="p-3 border-b border-white/5 shrink-0">
         <label htmlFor="agent-objective" className="text-xs text-zinc-500">

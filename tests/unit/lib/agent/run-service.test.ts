@@ -151,6 +151,26 @@ describe("AgentRunService — starting and reporting a run", () => {
     expect(record.events[0]).toMatchObject({ kind: "run-started", mode: "planning" });
   });
 
+  test("a run opened without a workflow type is an investigation, decided in one place", async () => {
+    const h = harness();
+    const { runId } = await h.service.start(START_INPUT);
+
+    // The default lives in the store, so a caller that says nothing and a ledger
+    // written before the field existed reach the same answer by the same route.
+    expect((await h.service.status(runId))?.record.workflowType).toBe("investigation");
+  });
+
+  test("the workflow type a run was opened with is the one it keeps", async () => {
+    const h = harness();
+    const { runId } = await h.service.start({ ...START_INPUT, workflowType: "database-assessment" });
+
+    const record = (await h.service.status(runId))?.record;
+
+    expect(record?.workflowType).toBe("database-assessment");
+    // And it survives a restart, because it is on the ledger rather than in memory.
+    expect((await h.reader().read(runId))?.record.workflowType).toBe("database-assessment");
+  });
+
   test("reports nothing for a run that does not exist", async () => {
     const h = harness();
     expect(await h.service.status("arun_00000000000000000000000000000000")).toBeNull();

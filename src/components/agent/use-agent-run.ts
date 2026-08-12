@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { AgentLedgerEntry } from "@/lib/agent/run-store";
-import type { AgentRunMode } from "@/lib/agent/types";
+import type { AgentRunMode, AgentRunWorkflowType } from "@/lib/agent/types";
 import { foldLedgerEntries, parseLedgerLine, type AgentRunTimeline } from "./timeline";
 
 /**
@@ -28,6 +28,12 @@ import { foldLedgerEntries, parseLedgerLine, type AgentRunTimeline } from "./tim
 
 export interface AgentRunStartInput {
   readonly mode: AgentRunMode;
+  /**
+   * What the run is FOR. Optional here as it is in the route: omitting it opens an
+   * investigation. The server decides from the value it PERSISTS, so this is a
+   * request rather than a setting — nothing the browser sends later can change it.
+   */
+  readonly workflowType?: AgentRunWorkflowType;
   readonly objective: string;
   readonly connectionId: string;
 }

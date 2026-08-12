@@ -83,9 +83,28 @@ describe("foldLedgerEntries", () => {
 
     expect(view.status).toBe("queued");
     expect(view.items).toHaveLength(1);
+    // A header written before `workflowType` existed says exactly what it always
+    // said, rather than being narrated as an investigation it never declared.
     expect(view.items[0].headline).toBe("Run opened in agent mode");
     expect(view.items[0].quoted).toBe("why is checkout slow");
     expect(view.items[0].atMs).toBe(1_000);
+  });
+
+  test("a header that declares what the run is FOR says so, in words rather than in identifiers", () => {
+    const view = foldLedgerEntries([{ ...OPENED, workflowType: "query-optimization" }]);
+
+    expect(view.items[0].headline).toBe("Run opened in agent mode for query optimization");
+  });
+
+  test("every workflow type has words a reader can read", () => {
+    for (const [workflowType, words] of [
+      ["investigation", "an investigation"],
+      ["query-optimization", "query optimization"],
+      ["database-assessment", "a database assessment"],
+    ] as const) {
+      const view = foldLedgerEntries([{ ...OPENED, workflowType }]);
+      expect(view.items[0].headline, workflowType).toBe(`Run opened in agent mode for ${words}`);
+    }
   });
 
   test("a started run is running, and a finished one carries its terminal status", () => {

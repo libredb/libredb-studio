@@ -10,8 +10,9 @@
  *
  * Four properties are load-bearing, and each is asserted rather than asserted-in-prose:
  *
- * 1. **Tool selection is a server-side function of the run's persisted mode.**
- *    `selectAgentTools` reads nothing but `mode`. Planning yields an EMPTY set, and
+ * 1. **Tool selection is a server-side function of the run's persisted mode and
+ *    workflow type.** `selectAgentTools` reads nothing else. Planning yields an EMPTY set whatever
+ *    the run is for, and
  *    a client-supplied tool list has no way in — not because it is filtered, but
  *    because there is no parameter for it. The same rule is enforced a second time
  *    at the execution seam (`executeAgentOperation` refuses any mode but `agent`
@@ -74,6 +75,7 @@ import type {
   AgentRunActor,
   AgentRunMode,
   AgentRunRecord,
+  AgentRunWorkflowType,
   AgentToolRefusal,
 } from "./types";
 import { fenceUntrustedContent } from "./untrusted-content";
@@ -249,15 +251,38 @@ const AGENT_MODE_TOOLS: readonly AgentToolDefinition[] = Object.freeze([
 const NO_TOOLS: readonly AgentToolDefinition[] = Object.freeze([]);
 
 /**
- * The tools this run may use, decided from its persisted mode and nothing else.
+ * Workflow type → the tools that workflow may use (#330 T2).
  *
- * The parameter is the run record (narrowed to the one field that matters) rather
- * than a bare mode string, so the value can only have come from persisted state.
- * There is no parameter through which a request body could contribute a tool, which
- * is what "a client-supplied tool list is ignored, not merged" means here.
+ * A total record, so a workflow type added to the contract stops this file compiling
+ * until somebody decides what it may do. All three name the same set today, and that
+ * is the honest state rather than a placeholder: M3's two templates are about what
+ * the model is ASKED to produce and how the run is JUDGED, and the tools that would
+ * distinguish them — bounded per-table profiling, a monitor snapshot — arrive with
+ * the templates themselves (#330 T3). What exists now is the seam, in the one place
+ * a tool set may be decided, so widening one workflow later cannot become a second
+ * decision about where that decision lives.
  */
-export function selectAgentTools(run: Pick<AgentRunRecord, "mode">): readonly AgentToolDefinition[] {
-  return run.mode === "agent" ? AGENT_MODE_TOOLS : NO_TOOLS;
+const WORKFLOW_TOOLS: Readonly<Record<AgentRunWorkflowType, readonly AgentToolDefinition[]>> = Object.freeze({
+  investigation: AGENT_MODE_TOOLS,
+  "query-optimization": AGENT_MODE_TOOLS,
+  "database-assessment": AGENT_MODE_TOOLS,
+} satisfies Record<AgentRunWorkflowType, readonly AgentToolDefinition[]>);
+
+/**
+ * The tools this run may use, decided from its persisted mode and workflow type and
+ * nothing else.
+ *
+ * The parameter is the run record (narrowed to the two fields that matter) rather
+ * than bare strings, so the values can only have come from persisted state. There is
+ * no parameter through which a request body could contribute a tool, which is what
+ * "a client-supplied tool list is ignored, not merged" means here.
+ *
+ * Mode is checked FIRST and the workflow cannot override it: planning is toolless by
+ * contract whatever it is for, so a workflow type is never a way to give a planning
+ * run a tool.
+ */
+export function selectAgentTools(run: Pick<AgentRunRecord, "mode" | "workflowType">): readonly AgentToolDefinition[] {
+  return run.mode === "agent" ? WORKFLOW_TOOLS[run.workflowType] : NO_TOOLS;
 }
 
 // ============================================================================

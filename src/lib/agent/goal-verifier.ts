@@ -38,7 +38,7 @@
  * claims RESTED on, which is a fact about the run.
  */
 
-import type { AgentReportClaim, AgentRunEvent, AgentRunMode, AgentRunRecord } from "./types";
+import type { AgentReportClaim, AgentRunEvent, AgentRunMode, AgentRunRecord, AgentRunWorkflowType } from "./types";
 
 /**
  * Which rule judged a run. Versioned in the value, like the execution policy: a
@@ -76,17 +76,32 @@ export interface AgentGoalVerdict {
   readonly unmet: readonly AgentGoalShortfall[];
 }
 
+/** The rule for the mode that has no tools and therefore no evidence to cite. */
+export const AGENT_PLANNING_VERIFIER: AgentGoalVerifierId = "agent-planning.1";
+
 /**
- * Mode → the rule that judges it. A total record, so adding a mode fails the
- * typecheck here until someone decides what "answered" means for it.
+ * Workflow type → the rule that judges an AGENT run of it (#330 T2).
+ *
+ * A total record, so a workflow type added to the contract stops this file compiling
+ * until somebody decides what "answered" means for it.
+ *
+ * All three name `agent-investigation.1` today, and that is a claim rather than a
+ * placeholder: composing claims that rest on something the run actually read is the
+ * BASELINE every workflow has to meet, whatever else it is asked for. M3's templates
+ * ADD requirements to it — a before/after plan artifact for query optimization, a
+ * graded profile for a database assessment — and each of those arrives as its own
+ * versioned id with its own rule (#330 T3). Naming those ids here before their rules
+ * exist would make a verdict say it was measured against a bar that was not yet
+ * being applied, which is the one thing a versioned id must never do.
  */
-export const AGENT_GOAL_VERIFIERS: Readonly<Record<AgentRunMode, AgentGoalVerifierId>> = Object.freeze({
-  planning: "agent-planning.1",
-  agent: "agent-investigation.1",
-} satisfies Record<AgentRunMode, AgentGoalVerifierId>);
+export const AGENT_WORKFLOW_VERIFIERS: Readonly<Record<AgentRunWorkflowType, AgentGoalVerifierId>> = Object.freeze({
+  investigation: "agent-investigation.1",
+  "query-optimization": "agent-investigation.1",
+  "database-assessment": "agent-investigation.1",
+} satisfies Record<AgentRunWorkflowType, AgentGoalVerifierId>);
 
 /** Everything the verdict is a function of, and nothing else. */
-export type VerifiableAgentRun = Pick<AgentRunRecord, "mode" | "status" | "events">;
+export type VerifiableAgentRun = Pick<AgentRunRecord, "mode" | "workflowType" | "status" | "events">;
 
 /**
  * Every claim the run composed, across every report entry it wrote.
@@ -144,11 +159,33 @@ function verifyInvestigationGoal(run: VerifiableAgentRun): readonly AgentGoalSho
   return restsOnlyOnEmptyResults(claims, run.events) ? ["empty-evidence"] : [];
 }
 
-const GOAL_RULES: Readonly<Record<AgentRunMode, (run: VerifiableAgentRun) => readonly AgentGoalShortfall[]>> =
-  Object.freeze({
-    planning: verifyPlanningGoal,
-    agent: verifyInvestigationGoal,
-  } satisfies Record<AgentRunMode, (run: VerifiableAgentRun) => readonly AgentGoalShortfall[]>);
+type GoalRule = (run: VerifiableAgentRun) => readonly AgentGoalShortfall[];
+
+/**
+ * Workflow type → the rule an agent run of it is judged by. Kept in step with
+ * `AGENT_WORKFLOW_VERIFIERS` by construction: a rule and the id that names it are
+ * two halves of one decision, and the half that drifted would be the one a reader
+ * could not interpret.
+ */
+const WORKFLOW_GOAL_RULES: Readonly<Record<AgentRunWorkflowType, GoalRule>> = Object.freeze({
+  investigation: verifyInvestigationGoal,
+  "query-optimization": verifyInvestigationGoal,
+  "database-assessment": verifyInvestigationGoal,
+} satisfies Record<AgentRunWorkflowType, GoalRule>);
+
+const GOAL_RULES: Readonly<Record<AgentRunMode, (run: VerifiableAgentRun) => GoalRule>> = Object.freeze({
+  planning: () => verifyPlanningGoal,
+  agent: (run) => WORKFLOW_GOAL_RULES[run.workflowType],
+} satisfies Record<AgentRunMode, (run: VerifiableAgentRun) => GoalRule>);
+
+/**
+ * Which rule judged this run. Mode decides first and the workflow cannot override
+ * it, for the same reason it cannot in `selectAgentTools`: planning has no tools
+ * whatever it is for, so it can never be held to a bar that requires evidence.
+ */
+function verifierFor(run: VerifiableAgentRun): AgentGoalVerifierId {
+  return run.mode === "planning" ? AGENT_PLANNING_VERIFIER : AGENT_WORKFLOW_VERIFIERS[run.workflowType];
+}
 
 /**
  * Did this run meet the goal its mode was opened for?
@@ -159,6 +196,6 @@ const GOAL_RULES: Readonly<Record<AgentRunMode, (run: VerifiableAgentRun) => rea
  * own record could not support.
  */
 export function verifyRunGoal(run: VerifiableAgentRun): AgentGoalVerdict {
-  const unmet = GOAL_RULES[run.mode](run);
-  return { outcome: unmet.length === 0 ? "answered" : "unanswered", verifier: AGENT_GOAL_VERIFIERS[run.mode], unmet };
+  const unmet = GOAL_RULES[run.mode](run)(run);
+  return { outcome: unmet.length === 0 ? "answered" : "unanswered", verifier: verifierFor(run), unmet };
 }

@@ -40,6 +40,7 @@ const mockResolveConnection = mock(async (body: { connectionId?: string }) => ({
 interface FakeRun {
   runId: string;
   mode: string;
+  workflowType: string;
   status: string;
   actor: { sessionId: string; role: string };
   connectionId: string;
@@ -51,6 +52,9 @@ function fakeRun(overrides: Partial<FakeRun> = {}): FakeRun {
   return {
     runId: "arun_1",
     mode: "agent",
+    // The store's default, so a body naming no workflow still produces a record
+    // carrying one — which is what the route echoes back.
+    workflowType: "investigation",
     status: "queued",
     actor: { sessionId: "ada", role: "user" },
     connectionId: "seed:sales",
@@ -63,7 +67,13 @@ function fakeRun(overrides: Partial<FakeRun> = {}): FakeRun {
 let runs: Map<string, FakeRun>;
 
 const mockStart = mock(
-  async (input: { mode: string; actor: FakeRun["actor"]; connectionId: string; objective: string }) => {
+  async (input: {
+    mode: string;
+    workflowType?: string;
+    actor: FakeRun["actor"];
+    connectionId: string;
+    objective: string;
+  }) => {
     const record = fakeRun({ ...input, runId: "arun_new" });
     runs.set(record.runId, record);
     return record;
@@ -183,16 +193,56 @@ describe("POST /api/agent/runs", () => {
 
   test("opens a run for the session's own actor and reports it queued", async () => {
     const res = await POST(startRequest(VALID_BODY));
-    const body = await parseResponseJSON<{ runId: string; status: string; mode: string }>(res);
+    const body = await parseResponseJSON<{ runId: string; status: string; mode: string; workflowType: string }>(res);
 
     expect(res.status).toBe(202);
-    expect(body).toEqual({ runId: "arun_new", status: "queued", mode: "agent" });
+    expect(body).toEqual({ runId: "arun_new", status: "queued", mode: "agent", workflowType: "investigation" });
+    // No `workflowType` reaches the service when the body named none: the store's
+    // own default is the single place that answer is decided.
     expect(mockStart).toHaveBeenCalledWith({
       mode: "agent",
       actor: { sessionId: "ada", role: "user" },
       connectionId: "seed:sales",
       objective: "why is checkout slow",
     });
+  });
+
+  test("a named workflow type is persisted, and the response echoes what was PERSISTED", async () => {
+    const res = await POST(startRequest({ ...VALID_BODY, workflowType: "query-optimization" }));
+    const body = await parseResponseJSON<{ workflowType: string }>(res);
+
+    expect(res.status).toBe(202);
+    expect(body.workflowType).toBe("query-optimization");
+    expect(mockStart).toHaveBeenCalledWith({
+      mode: "agent",
+      workflowType: "query-optimization",
+      actor: { sessionId: "ada", role: "user" },
+      connectionId: "seed:sales",
+      objective: "why is checkout slow",
+    });
+  });
+
+  test("every workflow type this server serves is accepted", async () => {
+    for (const workflowType of ["investigation", "query-optimization", "database-assessment"]) {
+      const res = await POST(startRequest({ ...VALID_BODY, workflowType }));
+      expect(res.status, workflowType).toBe(202);
+    }
+  });
+
+  test("an unknown workflow type is refused rather than defaulted", async () => {
+    // Silently running a different workflow is how a user reads a report about work
+    // nobody asked for.
+    const res = await POST(startRequest({ ...VALID_BODY, workflowType: "schema-migration" }));
+
+    expect(res.status).toBe(400);
+    expect(mockStart).not.toHaveBeenCalled();
+  });
+
+  test("a non-string workflow type is refused", async () => {
+    const res = await POST(startRequest({ ...VALID_BODY, workflowType: 7 }));
+
+    expect(res.status).toBe(400);
+    expect(mockStart).not.toHaveBeenCalled();
   });
 
   test("the run is driven without the caller waiting for it", async () => {
