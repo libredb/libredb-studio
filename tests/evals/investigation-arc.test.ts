@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { type EvalEngine, type EvalRun, openEvalRun } from "../isolated/fixtures/agent-eval-harness";
 import { answersProse, callsTool, reportOn } from "../isolated/fixtures/agent-scripted-model";
+import { chatToolCallStream } from "../isolated/fixtures/agent-transport";
 
 /**
  * The canonical investigation, on both Phase 1 engines (#330 T1).
@@ -112,5 +113,82 @@ describe("a planning run is judged by what planning mode can produce", () => {
 
     expect(drive.kinds).toEqual(["run-started", "run-finished"]);
     expect(drive.verdict.unmet).toEqual(["no-plan"]);
+  });
+});
+
+describe("the verdict is on the ledger, where a user reads it (B24)", () => {
+  test("a run that answered records its verdict beside its status, not instead of it", async () => {
+    const run = await open("postgres");
+
+    const drive = await run.drive([
+      callsTool("run_read_query", { sql: COUNT_BY_DEPARTMENT, rationale: "one query" }),
+      reportOn("Engineering has the most employees."),
+    ]);
+
+    const finished = drive.events.at(-1);
+    if (finished?.kind !== "run-finished") throw new Error("expected an ending");
+    expect(finished.status).toBe("succeeded");
+    expect(finished.goalVerdict).toEqual({ outcome: "answered", verifier: "agent-investigation.1" });
+    // `unmet` is omitted when the run answered, so the two halves cannot disagree.
+    expect(finished.goalVerdict?.unmet).toBeUndefined();
+  });
+
+  test("a run that stopped without reporting says so on the ledger, while its status stays succeeded", async () => {
+    // The #341 shape: the status word alone has been observed saying the wrong thing.
+    const run = await open("postgres");
+
+    const drive = await run.drive([
+      callsTool("run_read_query", { sql: COUNT_BY_DEPARTMENT, rationale: "one query" }),
+      answersProse("Engineering has the most employees."),
+    ]);
+
+    const finished = drive.events.at(-1);
+    if (finished?.kind !== "run-finished") throw new Error("expected an ending");
+    expect(finished.status).toBe("succeeded");
+    expect(finished.goalVerdict).toEqual({
+      outcome: "unanswered",
+      verifier: "agent-investigation.1",
+      unmet: ["no-report"],
+    });
+  });
+
+  test("a cancelled run records the cancellation as its shortfall, not a missing report", async () => {
+    const run = await open("postgres");
+    const stopsThenAsks = async (): Promise<Response> => {
+      await run.requestCancellation();
+      return chatToolCallStream("run_read_query", JSON.stringify({ sql: COUNT_BY_DEPARTMENT }), "call_1");
+    };
+
+    const drive = await run.drive([stopsThenAsks]);
+
+    const finished = drive.events.at(-1);
+    if (finished?.kind !== "run-finished") throw new Error("expected an ending");
+    expect(finished.status).toBe("cancelled");
+    expect(finished.goalVerdict?.unmet).toEqual(["cancelled"]);
+  });
+});
+
+describe("the schema's relations reach the model as their own fenced block", () => {
+  test("a run is shown the relation graph beside the inventory", async () => {
+    const run = await open("sqlite");
+
+    const drive = await run.drive([answersProse("Noted.")]);
+
+    const transcript = drive.transcripts[0] ?? "";
+    expect(transcript).toContain("schema relations");
+    // The sample declares no foreign keys, and the block says so rather than
+    // showing an empty list a reader could mistake for "the run did not look".
+    expect(transcript).toContain("no table in this inventory declares a foreign key");
+  });
+
+  test("the block is fenced, so identifiers in it are untrusted content like any other", async () => {
+    const run = await open("postgres");
+
+    const drive = await run.drive([answersProse("Noted.")]);
+
+    const transcript = drive.transcripts[0] ?? "";
+    const opened = transcript.indexOf("schema relations");
+    expect(opened).toBeGreaterThan(-1);
+    expect(transcript.slice(opened)).toContain("BEGIN UNTRUSTED DATABASE CONTENT");
   });
 });

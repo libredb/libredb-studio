@@ -100,3 +100,20 @@ describe("the fixture is the real thing", () => {
 process.on("exit", () => {
   for (const dir of dataDirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
 });
+
+describe("a ledger written before goalVerdict existed", () => {
+  test("still folds, and its ending still reads as the ending it always was", async () => {
+    // B24's field is additive for the same reason `workflowType` was: an older
+    // ending carries no verdict, and its ABSENCE means exactly what is true of it —
+    // no verifier ran. Adding a fourth STATUS instead would have split `succeeded`
+    // by ledger generation, with nothing in a record like this one to say which
+    // meaning applied.
+    const view = await foldFixture();
+
+    const finished = view?.record.events.at(-1);
+    if (finished?.kind !== "run-finished") throw new Error("expected an ending");
+    expect(finished.goalVerdict).toBeUndefined();
+    expect(finished.status).toBe("failed");
+    expect(finished.reason).toBe("model-rate-limited");
+  });
+});

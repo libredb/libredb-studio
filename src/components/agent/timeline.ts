@@ -1,4 +1,5 @@
 import { AGENT_EXECUTION_POLICY, AGENT_MAX_REPAIR_ATTEMPTS } from "@/lib/agent/execution-policy";
+import type { AgentGoalShortfall } from "@/lib/agent/goal-verifier";
 import type { AgentPlanAccess, AgentPlanSummary } from "@/lib/agent/plan-summary";
 import type { AgentLedgerEntry } from "@/lib/agent/run-store";
 import type {
@@ -269,12 +270,45 @@ const STOP_SENTENCES = {
 function describeEnding(
   reason: AgentRunFailureReason | undefined,
   stopReason: AgentRunStopReason | undefined,
+  verdict: AgentGoalVerdictRecord | undefined,
 ): { detail?: string } {
   if (reason !== undefined) return { detail: FAILURE_SENTENCES[reason] };
+  // What the run was missing, when a verifier said. More specific than the stop
+  // reason: "the model stopped" says how the loop ended, and this says what the run
+  // did not produce — which is the thing a user can act on.
+  const shortfall = verdict?.unmet?.map((code) => SHORTFALL_SENTENCES[code]).join(" ");
+  if (shortfall !== undefined && shortfall.length > 0) return { detail: shortfall };
   if (stopReason === undefined) return {};
   const sentence = STOP_SENTENCES[stopReason];
   return sentence === null ? {} : { detail: sentence };
 }
+
+/** The verdict as the ledger carries it. Optional everywhere, like the fields beside it. */
+type AgentGoalVerdictRecord = NonNullable<Extract<AgentRunEvent, { kind: "run-finished" }>["goalVerdict"]>;
+
+/**
+ * What a run's own goal says about it, in the app's words.
+ *
+ * Not the status word: a run can end `succeeded` having answered nothing, and
+ * `failed` having answered nothing, and only this tells the two apart from a run
+ * that did answer.
+ */
+const answeredHeadline = (verdict: AgentGoalVerdictRecord): string =>
+  verdict.outcome === "answered" ? "Run answered" : "Run did not answer";
+
+/**
+ * What each shortfall means, in the app's own words. Total over the union, so a
+ * shortfall added to the contract cannot reach a user as a raw code.
+ */
+const SHORTFALL_SENTENCES: Readonly<Record<AgentGoalShortfall, string>> = {
+  "no-report": "The run finished without composing a cited report, so nothing it found was written down.",
+  "empty-evidence": "Every result the report cited came back empty, so the answer rests on nothing.",
+  "no-plan": "The run produced no plan at all.",
+  "no-plan-comparison":
+    "No before-and-after plan comparison was recorded, which is what a query optimization rests on.",
+  "no-table-profile": "No table was profiled, so the state of the data was never established.",
+  cancelled: "The run was stopped before it could finish.",
+};
 
 /**
  * The sentence for a reason, for a surface that shows it outside the timeline.
@@ -386,12 +420,18 @@ function describeEvent(event: AgentRunEvent): Omit<AgentTimelineItem, "id" | "at
     default:
       return {
         tone: TERMINAL_TONES[event.status],
-        headline: `Run ${event.status}`,
+        // The headline answers the question a user actually has. `succeeded` and
+        // `answered` are different facts (B24) and the status word alone has been
+        // observed saying the wrong one: a run that stopped without reporting ends
+        // `succeeded`, and one that ran out of turns ends `failed`, while both
+        // answered nothing. An older ledger carries no verdict and keeps the status
+        // it always had.
+        headline: event.goalVerdict === undefined ? `Run ${event.status}` : answeredHeadline(event.goalVerdict),
         // Absent unless the ledger recorded one. A sentence supplied by default
         // would be this component inventing a cause for every ending that had none.
         // `reason` wins when both are present: a drive that died outside the loop is
         // a more specific account of the ending than the loop's own exit.
-        ...describeEnding(event.reason, event.stopReason),
+        ...describeEnding(event.reason, event.stopReason, event.goalVerdict),
       };
   }
 }

@@ -1047,3 +1047,108 @@ describe("a table profile reads as counts and findings, never as values", () => 
     expect(view.items[1]?.detail).toContain("1 column(s)");
   });
 });
+
+describe("an ending says whether the run ANSWERED, not only how it stopped (B24)", () => {
+  const finished = (
+    status: "succeeded" | "failed" | "cancelled",
+    goalVerdict?: { outcome: "answered" | "unanswered"; verifier: string; unmet?: string[] },
+    stopReason?: string,
+  ): AgentLedgerEntry =>
+    event({
+      kind: "event",
+      event: { kind: "run-finished", atMs: 9, status, stopReason, goalVerdict },
+    } as AgentLedgerEntry & { kind: "event" });
+
+  test("a run that answered says so, whatever word its status carries", () => {
+    const view = foldLedgerEntries([
+      OPENED,
+      finished("succeeded", { outcome: "answered", verifier: "agent-investigation.1" }, "report-composed"),
+    ]);
+
+    expect(view.items[1]?.headline).toBe("Run answered");
+  });
+
+  test("the two live shapes that made this necessary read the same way", () => {
+    // Observed on 2026-08-13: one run ended `succeeded` (the model stopped) and one
+    // ended `failed` (the turn ceiling), and both answered nothing. The status word
+    // told them apart; nothing told them apart from a run that answered.
+    const stopped = foldLedgerEntries([
+      OPENED,
+      finished(
+        "succeeded",
+        { outcome: "unanswered", verifier: "agent-investigation.1", unmet: ["no-report"] },
+        "model-stopped",
+      ),
+    ]);
+    const exhausted = foldLedgerEntries([
+      OPENED,
+      finished(
+        "failed",
+        { outcome: "unanswered", verifier: "agent-query-optimization.1", unmet: ["no-report"] },
+        "turn-limit",
+      ),
+    ]);
+
+    expect(stopped.items[1]?.headline).toBe("Run did not answer");
+    expect(exhausted.items[1]?.headline).toBe("Run did not answer");
+    // And the STATUS is still its own fact, unchanged.
+    expect(stopped.status).toBe("succeeded");
+    expect(exhausted.status).toBe("failed");
+  });
+
+  test("what was missing is said in the app's own words, more specific than the stop reason", () => {
+    const view = foldLedgerEntries([
+      OPENED,
+      finished(
+        "succeeded",
+        { outcome: "unanswered", verifier: "agent-query-optimization.1", unmet: ["no-plan-comparison"] },
+        "report-composed",
+      ),
+    ]);
+
+    expect(view.items[1]?.detail).toContain("before-and-after plan comparison");
+  });
+
+  test("every shortfall has words, so none reaches a user as a raw code", () => {
+    for (const code of [
+      "no-report",
+      "empty-evidence",
+      "no-plan",
+      "no-plan-comparison",
+      "no-table-profile",
+      "cancelled",
+    ]) {
+      const view = foldLedgerEntries([
+        OPENED,
+        finished("failed", { outcome: "unanswered", verifier: "agent-investigation.1", unmet: [code] }),
+      ]);
+      expect(view.items[1]?.detail, code).toBeTruthy();
+      expect(view.items[1]?.detail, code).not.toContain(code);
+    }
+  });
+
+  test("a drive that died outside the loop still reports its reason, which is more specific", () => {
+    const view = foldLedgerEntries([
+      OPENED,
+      event({
+        kind: "event",
+        event: {
+          kind: "run-finished",
+          atMs: 9,
+          status: "failed",
+          reason: "model-rate-limited",
+          goalVerdict: { outcome: "unanswered", verifier: "agent-investigation.1", unmet: ["no-report"] },
+        },
+      } as AgentLedgerEntry & { kind: "event" }),
+    ]);
+
+    expect(view.items[1]?.detail).toContain("limiting this key's requests");
+  });
+
+  test("an older ending, with no verdict, reads exactly as it always did", () => {
+    const view = foldLedgerEntries([OPENED, finished("succeeded", undefined, "model-stopped")]);
+
+    expect(view.items[1]?.headline).toBe("Run succeeded");
+    expect(view.items[1]?.detail).toContain("stopped without composing a cited report");
+  });
+});

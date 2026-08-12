@@ -44,6 +44,7 @@
 import type { Role } from "@/lib/auth";
 import type { PolicyDenyCode } from "@/lib/db/operations/policy";
 import type { TableSchema } from "@/lib/types";
+import type { AgentGoalShortfall, AgentGoalVerifierId } from "./goal-verifier";
 import type { AgentPlanSummary } from "./plan-summary";
 import type { AgentTableProfile } from "./table-profile";
 
@@ -393,6 +394,31 @@ export type AgentRunEvent =
        * reason visible only in the server log.
        */
       readonly reason?: AgentRunFailureReason;
+      /**
+       * Whether the run met the goal its workflow was opened for (`docs/BACKLOG.md`
+       * B24, ratified 2026-08-13).
+       *
+       * A field beside the status rather than a fourth status word, and the reason is
+       * an observation rather than a preference: the two axes are genuinely
+       * independent. A run can end `succeeded` having answered nothing (the model
+       * stopped), `failed` having answered nothing (the turn ceiling), or `failed`
+       * with no verdict meaningful at all (the drive died before the loop, so the run
+       * never got to try). One word cannot carry both how a run ended and whether it
+       * answered — both of the first two were observed on live runs on 2026-08-13.
+       *
+       * Optional, like `reason` and `stopReason` before it, and for the same reason:
+       * a ledger written before this field folds unchanged, and its ABSENCE means
+       * exactly what is true of it — no verifier ran. Adding a fourth status instead
+       * would have split `succeeded` by ledger generation, with nothing in an older
+       * record to say which meaning applied.
+       *
+       * `unmet` is omitted when the run answered, so the two halves cannot disagree.
+       */
+      readonly goalVerdict?: {
+        readonly outcome: "answered" | "unanswered";
+        readonly verifier: AgentGoalVerifierId;
+        readonly unmet?: readonly AgentGoalShortfall[];
+      };
       /**
        * How the loop itself ended, when the loop is what ended it. Absent on a run
        * the drive failed out of — those carry `reason` instead, and the two are

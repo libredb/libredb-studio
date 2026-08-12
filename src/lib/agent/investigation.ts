@@ -46,6 +46,7 @@
 import { createHash } from "node:crypto";
 import { type ModelMessage, type ToolSet, streamText, tool } from "ai";
 import { captureContextSnapshot, packContextForTask, reusableSnapshot } from "./context-snapshot";
+import { erDetailForWorkflow, renderErDiagram } from "./er-diagram";
 import { AGENT_MAX_MODEL_TURNS, AGENT_MODEL_TURN_TIMEOUT_MS } from "./execution-policy";
 import { type AgentModel, mapAgentModelError } from "./model-adapter";
 import {
@@ -71,6 +72,7 @@ import {
   selectAgentTools,
 } from "./tools";
 import type {
+  AgentContextSnapshot,
   AgentRunEvent,
   AgentRunRecord,
   AgentRunStopReason,
@@ -228,6 +230,31 @@ function systemPrompt(record: AgentRunRecord): string {
 // ============================================================================
 // Reading the ledger back
 // ============================================================================
+
+/**
+ * The schema's relations, as its own fenced block beside the inventory.
+ *
+ * Separate rather than folded into the inventory, for a reason the packing code
+ * makes concrete: `packContextForTask` grows table by table until the FENCED whole
+ * reaches its bound, so anything appended afterwards would silently overrun it. A
+ * second block is bounded on its own terms.
+ *
+ * Fenced like everything else derived from a database, and quoted WITHIN the fence
+ * as well — `er-diagram.ts` says why: the fence marks where the server stopped
+ * talking, and only the quoting stops a table named `orders -> secrets` from
+ * reading as a relation nobody has.
+ *
+ * Both call sites get it, the freshly captured snapshot and the one a resumed run
+ * reuses. A resumed run that lost the relations would reason about joins it could
+ * no longer see.
+ */
+function packRelations(snapshot: AgentContextSnapshot, workflowType: AgentRunWorkflowType): string {
+  return fenceUntrustedContent(renderErDiagram(snapshot, erDetailForWorkflow(workflowType)), {
+    label: "schema relations",
+    operationId: "agent/context-snapshot",
+    reference: snapshot.fingerprint,
+  });
+}
 
 /** Step id → the tool that was invoked under it, so an outcome can name its tool. */
 function toolsByStep(events: readonly AgentRunEvent[]): ReadonlyMap<string, string> {
@@ -665,6 +692,7 @@ export async function runInvestigation(
     const recorded = reusableSnapshot(record.events, record.connectionId);
     if (recorded !== null) {
       messages.push({ role: "user", content: packContextForTask(recorded, record.objective) });
+      messages.push({ role: "user", content: packRelations(recorded, record.workflowType) });
       return;
     }
 
@@ -681,6 +709,7 @@ export async function runInvestigation(
       snapshot,
     });
     messages.push({ role: "user", content: packContextForTask(snapshot, record.objective) });
+    messages.push({ role: "user", content: packRelations(snapshot, record.workflowType) });
   };
 
   let turns = 0;

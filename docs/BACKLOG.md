@@ -1373,31 +1373,32 @@ a fingerprint sent with the request and compared server-side, refusing with a di
 has moved — rather than the client's snapshot being the only check. Until then `docs/AGENT.md` says
 the comparison is against the last fetch, not against the live descriptor.
 
-### B24. A run that answers nothing is still `succeeded`, and the vocabulary to say otherwise belongs to M3
+### B24. RESOLVED 2026-08-13 — the verdict is a field beside the status, not a fourth status word
 
-`AgentRunTerminalStatus` is `succeeded | failed | cancelled`. Nothing in it can say "this run
-finished, and did not answer". So an agent run that inspects the schema, executes its reads and then
-stops without calling `compose_report` ends `succeeded` — which is what nine live runs on 2026-08-12
-did, none of them producing a report.
+`AgentRunTerminalStatus` is unchanged: `succeeded | failed | cancelled`. What was added is
+`goalVerdict` on the `run-finished` event — additive and optional, exactly as `reason` and
+`stopReason` were before it.
 
-The user-facing half of this is closed. A run now records its `stopReason` and its closing prose, so
-the rail states plainly that "the model stopped without composing a cited report" and shows what the
-model actually said. What remains is the status word, and deliberately so:
+The deciding evidence was two live runs on 2026-08-13. One ended `succeeded` because the model
+stopped talking; one ended `failed` because it hit the turn ceiling; **both answered nothing**. A
+third shape exists and matters: a drive that dies before the loop ends `failed` with no verdict
+meaningful at all, because the run never got to try. Status and verdict are therefore independent
+axes, and one word cannot carry both.
 
-- **`failed` would be wrong for planning mode.** That mode has no tools and can never produce
-  evidence; a planning run that returned a good plan did exactly what the mode is for.
-- **Changing ledger semantics twice is the expensive kind of change.** Every past run is re-read
-  under the new meaning, so it is worth doing once, with the right vocabulary.
-- **The rule is not knowable yet.** M3 asks for goal verifiers *per template*, which implies the
-  answer differs by workflow type rather than being one predicate over every run.
+`needs_input` was rejected as the term. It names a capability this runtime does not have: a terminal
+run accepts no further ledger entries, nothing enqueues a drive (B9), and there is no
+resume-with-input path — so the word would promise a continuation nobody can offer. The rail says
+"Run answered" or "Run did not answer", and names the shortfall.
 
-This is a hand-off, not a deferral: **#330 already owns it.** Its acceptance criteria name
-`needs_input` — a status this codebase does not have — and its policy unit gates require "citation
-present for every final finding". The verifier that decides whether a run answered is M3's work, and
-the vocabulary extension arrives with it.
+Adding a fourth status would also have split `succeeded` by ledger generation, with nothing in an
+older record to say which meaning applied. The optional field has the opposite property: its absence
+means precisely what is true of it — no verifier ran — which
+`tests/unit/lib/agent/ledger-compatibility.test.ts` asserts against a real pre-change ledger.
 
-Done when a run that ends without a cited report says so in its STATUS as well as its timeline,
-under whatever term M3 ratifies, and every earlier ending still folds to the same meaning it had.
+The original reasoning, kept because it is what the decision was measured against: the concern was
+that changing ledger semantics twice is the expensive kind of change, that `failed` would be wrong
+for planning mode, and that the rule was not knowable until goal verifiers existed per template. All
+three held, and all three are why the answer is a field rather than a word.
 
 ### B25. SQLite hides constraint-created indexes, so `fk_unindexed` can fire on a covered key
 
