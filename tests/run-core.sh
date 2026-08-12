@@ -31,7 +31,14 @@ for arg in "$@"; do
 done
 
 # Deterministic, sorted list of every core test file.
-mapfile -t FILES < <(find tests/unit tests/api tests/integration tests/hooks tests/security \
+#
+# `tests/evals` is here rather than in run-components.sh because it needs exactly
+# what this script already gives: one process per file. The eval suites drive the
+# real agent run loop over the real ratified provider package, so they must not
+# share a process with `tests/api/ai/*.test.ts`, which replaces `@/lib/llm/types`
+# process-wide with stub error classes. Per-file isolation makes that structural
+# instead of something a group comment has to remember.
+mapfile -t FILES < <(find tests/unit tests/api tests/integration tests/hooks tests/security tests/evals \
   -type f \( -name '*.test.ts' -o -name '*.test.tsx' \) | sort)
 
 if [ "${#FILES[@]}" -eq 0 ]; then

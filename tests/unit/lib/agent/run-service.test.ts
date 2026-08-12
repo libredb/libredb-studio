@@ -6,6 +6,7 @@ import { createLocalWorld } from "@workflow/world-local";
 import { AgentRunService, AgentRunServiceError } from "@/lib/agent/run-service";
 import type { AgentRunStepSettlement } from "@/lib/agent/run-service";
 import { AgentRunStore } from "@/lib/agent/run-store";
+import { logger } from "@/lib/logger";
 import type { AgentRunActor } from "@/lib/agent/types";
 import { ExecutionArtifactStore } from "@/lib/db/operations/artifacts";
 import { ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
@@ -248,6 +249,63 @@ describe("AgentRunService — finishing a run", () => {
     expect(h.tracker.usage(runId)).toEqual({ activeExecutions: 0, executedStatements: 0, totalElapsedMs: 0 });
     expect(h.artifacts.get("corr_1", 1_000)).toBeUndefined();
     expect(h.artifacts.size).toBe(0);
+  });
+
+  test("says in the server log whether the run answered, not only that it ended", async () => {
+    // #330 T1. Nine live runs (#341) ended with every gate green and nothing said;
+    // the operator's first instrument is the server log, and until this line the log
+    // could tell you a run had FINISHED but not whether it had ANSWERED. Reported
+    // rather than persisted: the status vocabulary is B24's, and the owner's.
+    // Spied on the logger OBJECT, not on `console.info`: `tests/api/db/disconnect.test.ts`
+    // replaces `@/lib/logger` process-wide, and `bun run test` puts it in this process.
+    // Spying the export works whether the module is the real one or that stub.
+    const info = spyOn(logger, "info").mockImplementation(() => {});
+    try {
+      const h = harness();
+      const { runId } = await h.service.start(START_INPUT);
+      await h.service.markRunning(runId);
+
+      await h.service.finish(runId, "succeeded", { stopReason: "model-stopped" });
+
+      const line = info.mock.calls.map((call) => String(call[0])).join("\n");
+      expect(line).toContain("unanswered");
+      expect(line).toContain("agent-investigation.1");
+      expect(line).toContain("no-report");
+    } finally {
+      info.mockRestore();
+    }
+  });
+
+  test("a run that composed a cited report is logged as answered", async () => {
+    const info = spyOn(logger, "info").mockImplementation(() => {});
+    try {
+      const h = harness();
+      const { runId } = await h.service.start(START_INPUT);
+      await h.service.markRunning(runId);
+      // Through the store: `recordEvent` takes only the narrative kinds, because a
+      // settlement is `runStep`'s to write.
+      await h.store.appendEvent(runId, {
+        kind: "tool-completed",
+        atMs: 1,
+        stepId: "step_1",
+        artifact: {
+          correlationId: "corr_1",
+          runId,
+          operationId: "sql.query.read",
+          summary: { rowCount: 4, columnNames: ["department"], elapsedMs: 3 },
+        },
+      });
+      await h.service.recordEvent(runId, {
+        kind: "report-composed",
+        claims: [{ claim: "Engineering is largest.", evidence: [{ source: "artifact", correlationId: "corr_1" }] }],
+      });
+
+      await h.service.finish(runId, "succeeded", { stopReason: "report-composed" });
+
+      expect(info.mock.calls.map((call) => String(call[0])).join("\n")).toContain("answered");
+    } finally {
+      info.mockRestore();
+    }
   });
 
   test("refuses to finish a run that has already finished", async () => {

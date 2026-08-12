@@ -43,6 +43,8 @@
  */
 
 import { releaseExecutionRun } from "@/lib/db/operations/execution";
+import { logger } from "@/lib/logger";
+import { verifyRunGoal } from "./goal-verifier";
 import type { ExecutionArtifactStore } from "@/lib/db/operations/artifacts";
 import type { ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
 import type { QueryResult } from "@/lib/types";
@@ -430,7 +432,29 @@ export class AgentRunService {
     } finally {
       await this.store.close(runId);
     }
-    return this.readOrThrow(runId);
+    const view = await this.readOrThrow(runId);
+
+    /*
+      Whether the run ANSWERED, said where an operator actually looks.
+
+      Here rather than in the run loop because every terminal path goes through this
+      method — the loop's own `conclude`, and the cancellation checkpoint inside
+      `runStep` that ends a run without returning to it. A log line at either of
+      those two sites would have covered one ending and quietly missed the other.
+
+      Reported, not persisted: writing the verdict into the ledger means spending the
+      terminal-status vocabulary, and that is the owner's decision (`docs/BACKLOG.md`
+      B24). The read costs nothing extra — this view was already being folded to
+      return.
+    */
+    const verdict = verifyRunGoal(view.record);
+    logger.info(
+      verdict.outcome === "answered"
+        ? `agent run ${runId} answered (${verdict.verifier})`
+        : `agent run ${runId} unanswered (${verdict.verifier}: ${verdict.unmet.join(", ")})`,
+      { runId, status, ...(stopReason === undefined ? {} : { stopReason }) },
+    );
+    return view;
   }
 
   private async readOrThrow(runId: string): Promise<AgentRunLedgerView> {

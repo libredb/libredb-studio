@@ -34,6 +34,7 @@ everything the runtime does **not** do yet is listed under
 - [The tool set](#the-tool-set)
 - [What bounds a run](#what-bounds-a-run)
 - [The model side](#the-model-side)
+- [Whether the run answered](#whether-the-run-answered)
 - [HTTP surface](#http-surface)
 - [The surface in the app](#the-surface-in-the-app)
 - [Deployment](#deployment)
@@ -122,7 +123,8 @@ behind, which is exactly when it is worth seeing. It is written only when the pr
 from *answered* — a run that stopped because the model composed a cited report and one that stopped
 because the model had nothing more to say are both `succeeded`, and only this says which. The rail
 reads it and states the difference. What it still cannot do is put that difference in the STATUS
-itself; the vocabulary for that arrives with M3's goal verifiers (`docs/BACKLOG.md` B24).
+itself. [Whether the run answered](#whether-the-run-answered) is the field that now says so;
+the STATUS word is still open (`docs/BACKLOG.md` B24).
 
 `stopReason` sits beside `reason`, which says why a drive died before or outside the loop. They
 answer different questions and are mutually exclusive in practice; when both are present, `reason`
@@ -312,6 +314,79 @@ shape what that costs:
 - **The cache key is the model's identity**, so a configuration change misses it by construction:
   there is no invalidation hook to forget and no TTL to tune.
 
+## Whether the run answered
+
+Everything above describes a run that *ran*. Whether it **answered** is a different
+question, and for one milestone nothing asked it: on 2026-08-12 nine consecutive runs
+against a real model produced zero reports (#341) while every gate this repository owns
+stayed green — the unit suites passed, line coverage was 100%, and the rail rendered a
+timeline for each one. Nothing was broken. The code ran correctly, and no requirement
+said a run has to answer, so nothing looked.
+
+`stopReason` closed half of it. `verifyRunGoal` (`src/lib/agent/goal-verifier.ts`) closes
+the other half: a **pure fold over the ledger** that returns an outcome, the id of the rule
+that produced it, and what the run was required to produce and did not.
+
+| Mode | Rule (`agent-planning.1` / `agent-investigation.1`) | Unmet when it fails |
+| --- | --- | --- |
+| `planning` | The run left non-empty closing prose. That mode is toolless and can never cite evidence, so judging it by the investigation rule would fail every planning run that did its job. | `no-plan` |
+| `agent` | The run composed at least one claim, **and** the claims do not rest entirely on empty results. | `no-report`, `empty-evidence` |
+
+A run stopped by its user reports `cancelled` instead of the missing output: a stop is not
+a defect of the run, and counting it as one would make every cancellation read as a model
+that would not answer.
+
+**The second rule is the one that needed building.** A run that reports `0 rows` as its
+finding carries a valid `report-composed` entry, citations that verify against its own
+ledger, and `stopReason: report-composed` — it is identical to a run that answered in
+every field this ledger had. That equality is asserted directly in
+`tests/evals/strategy-defects.test.ts`, so if the two ever start to differ somewhere else,
+a test says so.
+
+Two honest limits, both deliberate:
+
+- **`empty-evidence` is mechanical, and has to be.** Whether a model "stated uncertainty"
+  about an empty result is a judgement about prose, and a verifier that read the model's
+  own words to decide whether the model answered would be grading the answer with the
+  answer. What is checked is what the claims **rested on**, which is a fact about the run.
+  A citation the ledger cannot resolve is skipped rather than assumed empty.
+- **The verdict is reported, not persisted.** Every run ending logs it —
+  `agent run arun_… unanswered (agent-investigation.1: no-report)` — from
+  `AgentRunService.finalize`, which is where it belongs because every terminal path goes
+  through it, including the cancellation checkpoint that ends a run without returning to
+  the loop. It is deliberately NOT written into the ledger: recording it means spending
+  the terminal-status vocabulary, and that is the owner's call rather than the
+  implementer's (`docs/BACKLOG.md` B24). Where it is recorded is one call site.
+
+### The eval harness
+
+`tests/evals/` is where model behaviour is exercised, because a requirement about model
+behaviour can only be enforced by something that exercises model behaviour.
+
+- **The model is the real ratified provider package over a scripted `fetch`**
+  (`tests/isolated/fixtures/agent-scripted-model.ts`), shared with
+  `tests/isolated/agent-investigation.test.ts` rather than duplicated. A stubbed model
+  proves the loop calls what it calls; it cannot prove the transcript the loop builds is
+  one an SDK will actually send — which is exactly what a resumed run rebuilds.
+- **Scenarios assert against ledgers, not prose.** The one earlier test that touched this
+  asserted the model's text was returned to the *caller*: a correct test of the wrong
+  thing, because a user reads the ledger.
+- **A "restart" is a genuinely second set of in-memory objects** over the same durable
+  directory, so a resumed run can only know what the previous one wrote down.
+- **The database is scripted**, on both reference engines. These scenarios measure model
+  strategy; a real engine would make the same scenario answer differently on two machines.
+  `tests/isolated/agent-investigation-e2e.test.ts` is where real engines are driven.
+
+The defect corpus in `tests/evals/strategy-defects.test.ts` is every strategy failure #341
+observed, and each one was made to fail before it was made to pass — a harness that cannot
+fail on a known defect is not measuring anything.
+
+**Real-model evals are a scheduled or manual job, never PR CI**
+(`.github/workflows/agent-eval.yml`, `bun run agent:eval`). Their verdict is not a function
+of the code under review, a fork PR cannot see the credential, and the reference model's
+free tier is 15 requests per minute — a morning of manual testing exhausted it. A rate
+limit is reported as a rate limit rather than counted as a failed case.
+
 ## HTTP surface
 
 Six paths under `src/app/api/agent/`, seven handlers. Each verifies authorization in its own handler
@@ -445,6 +520,7 @@ src/lib/agent/
 ├── context-snapshot.ts   # the schema snapshot and task-aware packing
 ├── model-adapter.ts      # resolved LLM config → an SDK model; SDK errors → our error classes
 ├── provider-registry.ts  # provider kind → adapter (total over the settings surface's union)
+├── goal-verifier.ts      # did this run ANSWER? a pure fold over the ledger, per mode
 ├── capability-probe.ts   # tool calling / structured output / streaming, established positively
 ├── drive-token.ts        # the single-purpose credential the resume seam verifies
 └── untrusted-content.ts  # the prompt-side fence for database content
@@ -501,8 +577,9 @@ declared-target allowlist, the statement guard and the role's own grants are the
   markup.
 - **B23** — seed eligibility is decided against the browser's last descriptor fetch, so a seed
   repointed server-side mid-session is not seen until the next fetch.
-- **B24** — a run that ends without a cited report is still `succeeded`; the timeline says so, the
-  status cannot, and the vocabulary that would (`needs_input`) arrives with M3's goal verifiers.
+- **B24** — a run that ends without a cited report is still `succeeded`. The verifier that SEES it
+  now exists ([above](#whether-the-run-answered)) and its verdict is reported; what remains is the
+  STATUS word, which is the owner's decision rather than the implementer's.
 
 ## Related documentation
 

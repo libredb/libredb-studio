@@ -22,12 +22,16 @@ import type { DatabaseProvider, ProviderCapabilities } from "@/lib/db/types";
 import { LLMAuthError } from "@/lib/llm/types";
 import type { DatabaseConnection, QueryResult } from "@/lib/types";
 import {
-  chatNeverAnswers,
-  chatTextStream,
-  chatToolCallStream,
-  endpointError,
-  type FetchDouble,
-} from "./fixtures/agent-transport";
+  type Turn,
+  answersProse,
+  callsTool,
+  correlationIdIn,
+  modelOver,
+  reportOn,
+  scriptedModel,
+  unansweredCall,
+} from "./fixtures/agent-scripted-model";
+import { chatNeverAnswers, chatToolCallStream, endpointError } from "./fixtures/agent-transport";
 
 /**
  * The investigation workflow (#329 T7b): the loop that turns one objective into a
@@ -161,105 +165,6 @@ function boot(dataDir: string, options: BootOptions = {}): Boot {
     acquireProvider,
   };
 }
-
-// ─── the scripted model ─────────────────────────────────────────────────────
-
-interface Turn {
-  readonly body: Record<string, unknown>;
-  readonly transcript: string;
-  /**
-   * The signal the SDK handed the transport. Present so a fixture can end a
-   * response the way a real `fetch` does; verified against the installed package,
-   * which forwards its `abortSignal` here rather than only watching it itself.
-   */
-  readonly signal: AbortSignal | null | undefined;
-}
-
-/**
- * A call that never answers, and ends the only way a real one can: when the transport
- * is aborted.
- *
- * A promise that simply never settles would be an unfaithful double — a real `fetch`
- * rejects when its signal fires, and a fixture that ignores the signal tests a
- * transport nobody ships. It also hangs the test rather than failing it, which reads
- * as "the ceiling does not work" whatever the code does.
- */
-const unansweredCall = (turn: Turn): Promise<Response> =>
-  new Promise((_resolve, reject) => {
-    turn.signal?.addEventListener("abort", () => reject(new DOMException("The operation was aborted", "AbortError")));
-  });
-
-/**
- * A model whose every turn is a function of what it was actually sent.
- *
- * A turn may answer asynchronously: the cancellation test needs one that records a
- * stop request while the model is "thinking", which is the only way to reach the
- * loop's checkpoint from outside it.
- */
-function scriptedModel(...turns: readonly ((turn: Turn) => Response | Promise<Response>)[]): {
-  fetch: FetchDouble;
-  turns: Turn[];
-} {
-  const seen: Turn[] = [];
-  const fetchImpl: FetchDouble = async (input, init) => {
-    const body = typeof init?.body === "string" ? (JSON.parse(init.body) as Record<string, unknown>) : {};
-    const turn: Turn = { body, transcript: JSON.stringify(body.messages ?? []), signal: init?.signal };
-    seen.push(turn);
-    const next = turns[seen.length - 1];
-    // Running out of scripted turns IS the simulated process death: the driving
-    // process stops answering, exactly as it would if it had been killed.
-    if (!next) throw new TypeError(`the driving process died before turn ${seen.length}`);
-    return next(turn);
-  };
-  return { fetch: fetchImpl, turns: seen };
-}
-
-async function modelOver(fetchImpl: FetchDouble): Promise<AgentModel> {
-  const config = {
-    provider: "openai",
-    apiKey: "sk-test",
-    model: "gpt-4o-mini",
-    apiUrl: "https://api.openai.com/v1",
-  } as const;
-  return {
-    provider: "openai",
-    modelId: config.model,
-    model: await resolveAgentProviderAdapter("openai").createModel(config, fetchImpl),
-  };
-}
-
-const callsTool =
-  (name: string, input: unknown, callId = "call_1") =>
-  (): Response =>
-    chatToolCallStream(name, JSON.stringify(input), callId);
-
-const answersProse =
-  (...deltas: string[]) =>
-  (): Response =>
-    chatTextStream(...deltas);
-
-/**
- * The correlation id of a read this run performed, taken from the transcript the
- * way a model would have to take it: `executeAuditedOperation` mints a plain UUID,
- * and it reaches the transcript either in a fenced result's header or in the
- * prior-progress summary a resumed run is given.
- */
-function correlationIdIn(transcript: string): string {
-  const match = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/.exec(transcript);
-  if (!match) throw new Error(`no artifact reference in the transcript: ${transcript.slice(0, 400)}`);
-  return match[0];
-}
-
-const reportOn =
-  (claim = "The orders report scans the whole table.") =>
-  (turn: Turn): Response =>
-    chatToolCallStream(
-      "compose_report",
-      JSON.stringify({
-        claims: [{ claim, evidence: [{ source: "artifact", correlationId: correlationIdIn(turn.transcript) }] }],
-      }),
-      "call_report",
-    );
 
 // ─── ledger helpers ─────────────────────────────────────────────────────────
 
