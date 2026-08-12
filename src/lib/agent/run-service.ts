@@ -55,9 +55,21 @@ import type {
   AgentRunMode,
   AgentRunRecord,
   AgentRunFailureReason,
+  AgentRunStopReason,
   AgentRunTerminalStatus,
   AgentToolRefusal,
 } from "./types";
+
+/**
+ * How a run ended, as the two independent things it can be: `reason` says why a drive
+ * died before or outside the loop, `stopReason` says how the loop itself ended. An
+ * options bag rather than two positional optionals, because `finish(id, s, undefined,
+ * x)` is exactly the call site that eventually passes one in the other's place.
+ */
+export interface AgentRunEnding {
+  readonly reason?: AgentRunFailureReason;
+  readonly stopReason?: AgentRunStopReason;
+}
 
 /**
  * The events a run TELLS, as opposed to the ones that happen to it. Everything
@@ -66,7 +78,7 @@ import type {
  */
 export type AgentRunNarrativeEvent = Extract<
   AgentRunEvent,
-  { kind: "context-captured" | "statement-drafted" | "report-composed" }
+  { kind: "context-captured" | "statement-drafted" | "report-composed" | "closing-statement" }
 >;
 
 /** Distributes over the union, so each variant loses `atMs` rather than the union collapsing. */
@@ -259,7 +271,9 @@ export class AgentRunService {
   async cancel(runId: string, by: AgentRunActor): Promise<AgentRunStatusReport> {
     const view = await this.readOrThrow(runId);
     if (view.terminal) return report(view);
-    if (view.record.status === "queued") return report(await this.finalize(runId, "cancelled"));
+    if (view.record.status === "queued") {
+      return report(await this.finalize(runId, "cancelled", { stopReason: "cancelled" }));
+    }
     await this.store.requestCancellation(runId, by);
     return report(await this.readOrThrow(runId));
   }
@@ -272,12 +286,12 @@ export class AgentRunService {
    * the ledger records what happened rather than what was asked for. The request
    * stays visible in the status report instead of being rewritten into the outcome.
    */
-  async finish(runId: string, status: AgentRunTerminalStatus, reason?: AgentRunFailureReason): Promise<AgentRunRecord> {
+  async finish(runId: string, status: AgentRunTerminalStatus, ending: AgentRunEnding = {}): Promise<AgentRunRecord> {
     const view = await this.readOrThrow(runId);
     if (view.terminal) {
       throw new AgentRunServiceError("RUN_ALREADY_TERMINAL", `agent run "${runId}" already ${view.record.status}`);
     }
-    return (await this.finalize(runId, status, reason)).record;
+    return (await this.finalize(runId, status, ending)).record;
   }
 
   /**
@@ -329,7 +343,7 @@ export class AgentRunService {
       throw new AgentRunServiceError("RUN_NOT_RUNNING", `agent run "${runId}" is ${view.record.status}, not running`);
     }
     if (view.cancellationRequestedAtMs !== null) {
-      await this.finalize(runId, "cancelled");
+      await this.finalize(runId, "cancelled", { stopReason: "cancelled" });
       return { kind: "cancelled" };
     }
     const settled = view.settledSteps.get(invocation.stepId);
@@ -391,8 +405,9 @@ export class AgentRunService {
   private async finalize(
     runId: string,
     status: AgentRunTerminalStatus,
-    reason?: AgentRunFailureReason,
+    ending: AgentRunEnding,
   ): Promise<AgentRunLedgerView> {
+    const { reason, stopReason } = ending;
     const live = this.resources.tracker.usage(runId).activeExecutions;
     if (live > 0) {
       throw new AgentRunServiceError(
@@ -400,14 +415,15 @@ export class AgentRunService {
         `agent run "${runId}" still has ${live} execution(s) in flight and cannot be ended`,
       );
     }
-    // Spread rather than `reason` outright: an ending that has no reason writes the
-    // entry it always wrote, so a ledger from before this field and one after it are
-    // the same bytes for the same event.
+    // Spread rather than the fields outright: an ending that has neither writes the
+    // entry it always wrote, so a ledger from before these fields and one after them
+    // are the same bytes for the same event.
     await this.store.appendEvent(runId, {
       kind: "run-finished",
       atMs: this.clock(),
       status,
       ...(reason === undefined ? {} : { reason }),
+      ...(stopReason === undefined ? {} : { stopReason }),
     });
     try {
       releaseExecutionRun({ runId, tracker: this.resources.tracker, artifacts: this.resources.artifacts });

@@ -72,16 +72,29 @@ const AGENT_LEDGER_STREAM_PREFIX = "agent-ledger-";
  */
 export const AGENT_RUN_ID_PATTERN = /^[A-Za-z0-9_]{1,64}$/;
 
-const EVENT_KINDS: ReadonlySet<string> = new Set<AgentRunEvent["kind"]>([
-  "run-started",
-  "context-captured",
-  "statement-drafted",
-  "tool-invoked",
-  "tool-completed",
-  "tool-refused",
-  "report-composed",
-  "run-finished",
-]);
+/**
+ * Which event kinds a ledger line may carry.
+ *
+ * Derived from a total record rather than written as an array, because the failure
+ * mode of the array was demonstrated: adding `closing-statement` to `AgentRunEvent`
+ * left this list behind, and the first run to write one made its own ledger
+ * unreadable — the validator rejected an event the writer had just appended. An array
+ * of the union's own type does not catch that; only exhaustiveness does. Add a kind to
+ * the contract now and `bun run typecheck` fails here until it is admitted.
+ */
+const EVENT_KINDS: ReadonlySet<string> = new Set(
+  Object.keys({
+    "run-started": true,
+    "context-captured": true,
+    "statement-drafted": true,
+    "tool-invoked": true,
+    "tool-completed": true,
+    "tool-refused": true,
+    "report-composed": true,
+    "closing-statement": true,
+    "run-finished": true,
+  } satisfies Record<AgentRunEvent["kind"], true>),
+);
 
 /**
  * What a ledger line can be. The header is written once; `event` carries one of

@@ -339,6 +339,8 @@ describe("a fresh run drives the investigation arc", () => {
       "tool-invoked",
       "tool-completed",
       "report-composed",
+      // No closing statement: this model reports and says nothing after it, and an
+      // empty entry would record that it spoke.
       "run-finished",
     ]);
     expect(b.queryReadOnly).toHaveBeenCalledTimes(CONTEXT_READS + 1);
@@ -423,6 +425,9 @@ describe("a fresh run drives the investigation arc", () => {
       "statement-drafted",
       "tool-invoked",
       "tool-completed",
+      // This run ends on prose rather than a report, and that prose is now the only
+      // thing it leaves behind — which is exactly the case that used to vanish.
+      "closing-statement",
       "run-finished",
     ]);
     const draft = events.find((event) => event.kind === "statement-drafted");
@@ -570,6 +575,62 @@ describe("planning mode performs zero database operations", () => {
     expect(result.status).toBe("succeeded");
     expect(result.stopReason).toBe("model-stopped");
     expect(result.text).toBe("First look at the index.");
+  });
+
+  /*
+    The prose was already RETURNED to the caller, and the test above asserts exactly
+    that — which is how a planning run could pass its tests while producing nothing a
+    user ever sees. A run's ledger is the only thing that outlives the drive, so a
+    plan the ledger does not carry is a plan that was discarded. Nine live runs on
+    2026-08-12 produced zero visible output for this reason.
+  */
+  test("the plan reaches the ledger, not just the caller", async () => {
+    const b = boot(freshDataDir());
+    const run = await startRun(b, "planning");
+    const script = scriptedModel(answersProse("Start with ", "the salary index."));
+
+    const result = await runInvestigation(run.runId, {
+      service: b.service,
+      model: await modelOver(script.fetch),
+      resources: b.resources,
+    });
+
+    const events = await eventsOf(b.store, run.runId);
+    const closing = events.find((event) => event.kind === "closing-statement");
+    expect(closing).toBeDefined();
+    expect(closing).toMatchObject({ text: "Start with the salary index." });
+    // The record a resumed reader folds says the same thing the drive returned.
+    expect(closing && "text" in closing ? closing.text : null).toBe(result.text);
+  });
+
+  test("the ledger records how the loop ended, not only that it did", async () => {
+    const b = boot(freshDataDir());
+    const run = await startRun(b, "planning");
+    const script = scriptedModel(answersProse("a plan"));
+
+    await runInvestigation(run.runId, {
+      service: b.service,
+      model: await modelOver(script.fetch),
+      resources: b.resources,
+    });
+
+    const finished = (await eventsOf(b.store, run.runId)).find((event) => event.kind === "run-finished");
+    expect(finished).toMatchObject({ status: "succeeded", stopReason: "model-stopped" });
+  });
+
+  test("a run that says nothing writes no empty closing statement", async () => {
+    const b = boot(freshDataDir());
+    const run = await startRun(b, "planning");
+    const script = scriptedModel(answersProse(""));
+
+    await runInvestigation(run.runId, {
+      service: b.service,
+      model: await modelOver(script.fetch),
+      resources: b.resources,
+    });
+
+    const events = await eventsOf(b.store, run.runId);
+    expect(events.some((event) => event.kind === "closing-statement")).toBe(false);
   });
 
   test("a planning run still has a cancellation checkpoint between turns", async () => {

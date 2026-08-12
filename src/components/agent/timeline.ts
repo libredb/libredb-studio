@@ -6,6 +6,7 @@ import type {
   AgentRunEvent,
   AgentRunFailureReason,
   AgentRunStatus,
+  AgentRunStopReason,
   AgentToolRefusal,
 } from "@/lib/agent/types";
 
@@ -188,6 +189,41 @@ const FAILURE_SENTENCES = {
 } as const satisfies Record<AgentRunFailureReason, string>;
 
 /**
+ * How the loop ended, said plainly. Total over the union, so a stop reason added to
+ * the durable contract cannot reach a user as an unlabelled ending.
+ *
+ * `report-composed` has no sentence: the report itself is already in the timeline
+ * above, and a line repeating that it exists would be noise. The rest are all cases
+ * where the run stopped WITHOUT answering, which is precisely what a reader cannot
+ * otherwise tell from `succeeded` or `failed` alone.
+ */
+const STOP_SENTENCES = {
+  "report-composed": null,
+  "model-stopped": "The model stopped without composing a cited report.",
+  cancelled: "Stopped because it was cancelled.",
+  "deadline-exceeded": "The run reached its time limit before it finished.",
+  "turn-limit": "The run reached its step limit before it finished. What it had gathered is above.",
+} as const satisfies Record<AgentRunStopReason, string | null>;
+
+/**
+ * The one sentence an ending gets, from at most one of its two accounts.
+ *
+ * `reason` wins: it means the drive died before or outside the loop, which is a more
+ * specific thing to have happened than any way the loop can exit. Neither present is
+ * the normal case for a ledger written before these fields existed, and it yields no
+ * detail rather than an invented one.
+ */
+function describeEnding(
+  reason: AgentRunFailureReason | undefined,
+  stopReason: AgentRunStopReason | undefined,
+): { detail?: string } {
+  if (reason !== undefined) return { detail: FAILURE_SENTENCES[reason] };
+  if (stopReason === undefined) return {};
+  const sentence = STOP_SENTENCES[stopReason];
+  return sentence === null ? {} : { detail: sentence };
+}
+
+/**
  * The sentence for a reason, for a surface that shows it outside the timeline.
  *
  * Exported so the rail's status line and the timeline entry cannot drift into two
@@ -249,13 +285,23 @@ function describeEvent(event: AgentRunEvent): Omit<AgentTimelineItem, "id" | "at
         headline: "Report composed",
         detail: `${event.claims.length} ${event.claims.length === 1 ? "claim" : "claims"}, each citing evidence`,
       };
+    case "closing-statement":
+      return {
+        // Content the run produced, so it reads like the report entry rather than
+        // like an ending — but under its own name, because it cites nothing.
+        tone: "progress",
+        headline: "Closing statement",
+        detail: event.text,
+      };
     default:
       return {
         tone: TERMINAL_TONES[event.status],
         headline: `Run ${event.status}`,
         // Absent unless the ledger recorded one. A sentence supplied by default
         // would be this component inventing a cause for every ending that had none.
-        ...(event.reason === undefined ? {} : { detail: FAILURE_SENTENCES[event.reason] }),
+        // `reason` wins when both are present: a drive that died outside the loop is
+        // a more specific account of the ending than the loop's own exit.
+        ...describeEnding(event.reason, event.stopReason),
       };
   }
 }

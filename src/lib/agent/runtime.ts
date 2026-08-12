@@ -171,7 +171,7 @@ export async function driveAgentRun(runId: string): Promise<AgentInvestigationRe
 async function recordDriveFailure(service: AgentRunService, runId: string, error: unknown): Promise<void> {
   const reason = classifyDriveFailure(error);
   try {
-    await service.finish(runId, "failed", reason);
+    await service.finish(runId, "failed", { reason });
   } catch (recordingError) {
     logger.error("Agent run failed and its ending could not be recorded", recordingError, { runId, reason });
   }

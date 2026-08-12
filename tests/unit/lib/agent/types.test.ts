@@ -97,6 +97,10 @@ const EVENTS: Record<AgentRunEvent["kind"], AgentRunEvent> = {
   "tool-refused": { kind: "tool-refused", atMs: 5, stepId: "step-1", refusal: DATABASE_ERROR },
   "tool-completed": { kind: "tool-completed", atMs: 6, stepId: "step-2", artifact: ARTIFACT },
   "report-composed": { kind: "report-composed", atMs: 7, claims: [CLAIM] },
+  // The uncited counterpart: what the model said when it did not compose a report.
+  // A planning run's whole output is one of these, and it round-trips as plainly as
+  // the rest — prose is already the most inert thing a ledger can hold.
+  "closing-statement": { kind: "closing-statement", atMs: 8, text: "Start with the salary index." },
   "run-finished": { kind: "run-finished", atMs: 8, status: "succeeded" },
 };
 

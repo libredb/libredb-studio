@@ -66,7 +66,7 @@ import {
   runReadQueryTool,
   selectAgentTools,
 } from "./tools";
-import type { AgentRunEvent, AgentRunRecord, AgentRunTerminalStatus } from "./types";
+import type { AgentRunEvent, AgentRunRecord, AgentRunStopReason, AgentRunTerminalStatus } from "./types";
 import { UNTRUSTED_CONTENT_BEGIN, UNTRUSTED_CONTENT_END, fenceUntrustedContent } from "./untrusted-content";
 
 /** Everything a tool call needs EXCEPT what the run's own record decides. */
@@ -83,13 +83,13 @@ export interface AgentInvestigationOptions {
 /**
  * Why the loop stopped. Every one of these ends the run; a failure the loop does
  * not own has no member here, because it leaves the run running instead.
+ *
+ * The durable contract owns the vocabulary (`AgentRunStopReason` in `types.ts`) and
+ * this is an alias of it, not a copy: the value is written into the ledger, so two
+ * unions would be two things to keep equal, and the one that drifted would be the one
+ * a resumed reader could not interpret.
  */
-export type AgentInvestigationStopReason =
-  | "report-composed"
-  | "model-stopped"
-  | "cancelled"
-  | "deadline-exceeded"
-  | "turn-limit";
+export type AgentInvestigationStopReason = AgentRunStopReason;
 
 export interface AgentInvestigationResult {
   readonly runId: string;
@@ -553,11 +553,21 @@ export async function runInvestigation(
   let turns = 0;
   let text = "";
 
+  /*
+    Every terminal path goes through here, which is why the ledger writes belong here
+    and not at each exit: an exit added later cannot forget them.
+
+    The closing prose is written BEFORE the ending, in the same order a reader folds
+    them — a run whose last entry is `run-finished` is finished, and nothing arrives
+    after it. It is skipped when empty rather than written blank, because an empty
+    entry would record that the model spoke.
+  */
   const conclude = async (
     status: AgentRunTerminalStatus,
-    stopReason: AgentInvestigationStopReason,
+    stopReason: AgentRunStopReason,
   ): Promise<AgentInvestigationResult> => {
-    await service.finish(runId, status);
+    if (text.length > 0) await service.recordEvent(runId, { kind: "closing-statement", text });
+    await service.finish(runId, status, { stopReason });
     return { runId, status, stopReason, turns, text };
   };
 

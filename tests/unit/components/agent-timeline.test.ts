@@ -118,6 +118,89 @@ describe("foldLedgerEntries", () => {
     expect(view.items.at(-1)?.detail).toBe("The model provider is not configured or could not be reached.");
   });
 
+  /*
+    The prose a run ends on used to be returned to the caller and dropped. These pin
+    the two halves of showing it: the entry that carries the words, and the ending
+    that says the run stopped without a cited report — which is the difference
+    between "succeeded" and "answered".
+  */
+  test("the model's closing prose becomes an entry of its own", () => {
+    const view = foldLedgerEntries([
+      OPENED,
+      event({
+        kind: "event",
+        event: { kind: "closing-statement", atMs: 8, text: "Start with the salary index." },
+      }),
+      event({
+        kind: "event",
+        event: { kind: "run-finished", atMs: 9, status: "succeeded", stopReason: "model-stopped" },
+      }),
+    ]);
+
+    const closing = view.items.at(-2);
+    expect(closing?.headline).toBe("Closing statement");
+    expect(closing?.detail).toBe("Start with the salary index.");
+    expect(closing?.tone).toBe("progress");
+    expect(view.items.at(-1)?.detail).toBe("The model stopped without composing a cited report.");
+  });
+
+  test("a run that ran out of steps says so, and keeps what it gathered", () => {
+    const view = foldLedgerEntries([
+      OPENED,
+      event({ kind: "event", event: { kind: "run-finished", atMs: 9, status: "failed", stopReason: "turn-limit" } }),
+    ]);
+
+    expect(view.items.at(-1)?.detail).toBe(
+      "The run reached its step limit before it finished. What it had gathered is above.",
+    );
+  });
+
+  test("a deadline and a cancellation each get their own account", () => {
+    const ended = (stopReason: "deadline-exceeded" | "cancelled") =>
+      foldLedgerEntries([
+        OPENED,
+        event({ kind: "event", event: { kind: "run-finished", atMs: 9, status: "failed", stopReason } }),
+      ]).items.at(-1)?.detail;
+
+    expect(ended("deadline-exceeded")).toBe("The run reached its time limit before it finished.");
+    expect(ended("cancelled")).toBe("Stopped because it was cancelled.");
+  });
+
+  test("a run that composed a report does not also announce that it stopped", () => {
+    // The report is already in the timeline above; a line saying a report exists
+    // would be the entry repeating its neighbour.
+    const view = foldLedgerEntries([
+      OPENED,
+      event({
+        kind: "event",
+        event: { kind: "run-finished", atMs: 9, status: "succeeded", stopReason: "report-composed" },
+      }),
+    ]);
+
+    expect(view.items.at(-1)?.detail).toBeUndefined();
+  });
+
+  test("a drive that died outside the loop is described by that, not by the loop's exit", () => {
+    // Both can be present on a ledger written by a drive that failed after the loop
+    // had already recorded how it stopped. The drive failure is the more specific
+    // account of what happened, so it is the one a user reads.
+    const view = foldLedgerEntries([
+      OPENED,
+      event({
+        kind: "event",
+        event: {
+          kind: "run-finished",
+          atMs: 9,
+          status: "failed",
+          reason: "model-unavailable",
+          stopReason: "model-stopped",
+        },
+      }),
+    ]);
+
+    expect(view.items.at(-1)?.detail).toBe("The model provider is not configured or could not be reached.");
+  });
+
   test("an ending with no reason claims none", () => {
     // Most endings need none: succeeded, cancelled, and a loop that stopped on its
     // own terms are fully described by the status. A default sentence here would
