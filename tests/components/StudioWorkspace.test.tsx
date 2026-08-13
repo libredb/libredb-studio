@@ -87,7 +87,6 @@ mock.module("@/workspace/hooks/use-connection-adapter", () => ({
     isLoadingSchema: false,
     connectionPulse: null,
     fetchSchema: mockFetchSchema,
-    tableNames: ["users"],
     schemaContext: JSON.stringify([usersTable]),
     ...connAdapterOverride,
   })),
@@ -467,7 +466,7 @@ describe("StudioWorkspace", () => {
   });
 
   test("clears schema when there is no active connection", () => {
-    connAdapterOverride = { activeConnection: null, connections: [], schema: [], tableNames: [], schemaContext: "[]" };
+    connAdapterOverride = { activeConnection: null, connections: [], schema: [], schemaContext: "[]" };
     renderWorkspace({ connections: [] });
     expect(mockFetchSchema).not.toHaveBeenCalled();
     expect(mockSetSchema).toHaveBeenCalledWith([]);
@@ -800,7 +799,6 @@ describe("StudioWorkspace", () => {
   test("editor language defaults to sql", () => {
     renderWorkspace();
     expect(capturedQueryEditorProps.language).toBe("sql");
-    expect(capturedQueryEditorProps.tables).toEqual(["users"]);
   });
 
   test("editor language is libredb for libredb tabs", () => {

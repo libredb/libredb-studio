@@ -382,8 +382,6 @@ export function StudioWorkspace({
                                   ? "json"
                                   : "sql"
                             }
-                            tables={conn.tableNames}
-                            databaseType={conn.activeConnection?.type}
                             schemaContext={conn.schemaContext}
                             capabilities={undefined}
                           />

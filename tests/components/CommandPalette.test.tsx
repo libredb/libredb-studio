@@ -113,7 +113,7 @@ function createDefaultProps(overrides: Partial<Parameters<typeof CommandPalette>
     onShowDiagram: mock(() => {}),
     onFormatQuery: mock(() => {}),
     onSaveQuery: mock(() => {}),
-    onToggleAI: mock(() => {}),
+    onAskAgent: mock(() => {}),
     onLogout: mock(() => {}),
     ...overrides,
   };
@@ -384,18 +384,39 @@ describe("CommandPalette", () => {
     fireEvent.click(saveItem!);
   });
 
-  test("AI Assistant action callback fires via runAction", () => {
-    const onToggleAI = mock(() => {});
-    const props = createDefaultProps({ onToggleAI });
+  /**
+   * The item names the agent because the in-editor assistant it used to open no
+   * longer exists (#331 T3), and names the QUERY because the ask is about the
+   * statement the editor holds — `MobileNav`'s "Agent" control opens the rail and
+   * asks nothing (review of #331 T3). It sits where it sat, in the same group,
+   * reachable the same way.
+   */
+  test("Ask the agent action callback fires via runAction", () => {
+    const onAskAgent = mock(() => {});
+    const props = createDefaultProps({ onAskAgent });
     const { getByText } = render(<CommandPalette {...props} />);
 
     // Open dialog
     fireEvent.keyDown(document, { key: "k", metaKey: true });
 
-    // Click AI Assistant item
-    const aiItem = getByText("AI Assistant").closest('[role="option"]');
-    expect(aiItem).not.toBeNull();
-    fireEvent.click(aiItem!);
+    const agentItem = getByText("Ask the agent about this query").closest('[role="option"]');
+    expect(agentItem).not.toBeNull();
+    fireEvent.click(agentItem!);
+  });
+
+  /**
+   * The agent runtime is off by default, and a palette entry that could only do
+   * nothing is the "control that can only error" this shell avoids elsewhere.
+   */
+  test("no agent item is offered when the shell wires no agent", () => {
+    const props = createDefaultProps({ onAskAgent: undefined });
+    const { queryByText } = render(<CommandPalette {...props} />);
+
+    fireEvent.keyDown(document, { key: "k", metaKey: true });
+
+    expect(queryByText("Ask the agent about this query")).toBeNull();
+    // The rest of the group is untouched by the absence.
+    expect(queryByText("Run Query")).not.toBeNull();
   });
 
   test("Logout action callback fires via runAction", () => {

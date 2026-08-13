@@ -314,24 +314,6 @@ describe("useConnectionManager", () => {
     expect(orders.foreignKeys!.length).toBe(1);
   });
 
-  // ── tableNames derived value ──────────────────────────────────────────────
-
-  test("tableNames returns array of table name strings", async () => {
-    const schemaData = makeSchema();
-
-    mockGlobalFetch({
-      "/api/db/schema": { ok: true, json: schemaData },
-    });
-
-    const { result } = renderHook(() => useConnectionManager(true));
-
-    await act(async () => {
-      await result.current.fetchSchema(makeConnection());
-    });
-
-    expect(result.current.tableNames).toEqual(["users", "orders"]);
-  });
-
   // ── schemaContext derived value ────────────────────────────────────────────
 
   test("schemaContext is JSON string of schema", async () => {

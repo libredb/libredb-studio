@@ -467,11 +467,12 @@ function readColumn(row: DruidRow): OwnedColumn | null {
       // which `__time` is not - live-verified on the fixture datasource, 50 rows
       // carry 30 distinct `__time` values. Nothing in a Druid datasource is unique.
       //
-      // Claiming otherwise is not cosmetic, because three places state it as fact:
-      // `sql-completions.ts` appends "(PK)" in autocomplete, `use-ai-chat.ts` puts
-      // ", PK" in the schema context the model reasons from, and
-      // `schema-diff/diff-engine.ts` reports "Primary key changed" - so two Druid
-      // datasources that differ only in this would diff as a key change. A
+      // Claiming otherwise is not cosmetic, because the field is stated as fact
+      // wherever it is read: `sql-completions.ts` appends "(PK)" in autocomplete,
+      // `agent/context-snapshot.ts` and `DatabaseDocs.tsx` put " PK" into the schema
+      // context a model reasons from, and `schema-diff/diff-engine.ts` reports
+      // "Primary key changed" - so two Druid datasources that differ only in this
+      // would diff as a key change. A
       // partition/time-key concept distinct from a primary key is what this would
       // need, and `ColumnSchema` has no such field.
       isPrimary: false,

@@ -1084,8 +1084,8 @@ function EmptyState() {
     },
     {
       icon: Sparkles,
-      label: "AI Queries",
-      description: "Natural language to SQL with multi-model AI support",
+      label: "AI Assistance",
+      description: "Plan explanations, safety checks and schema docs, on your own model",
     },
     {
       icon: Activity,

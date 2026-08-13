@@ -26,7 +26,7 @@ FAIL=0
 # Count the `run_group` CALLS below when adding one (not the definition) - this is the
 # number the final summary reports, and it had already drifted by one before Group 0e
 # was added.
-TOTAL_GROUPS=26
+TOTAL_GROUPS=27
 EXTRA_BUN_ARGS=("$@")
 GROUP_INDEX=0
 COVERAGE_MODE=0
@@ -146,6 +146,12 @@ run_group "Group 0i: Agent capability gate" \
 # Group 1: Studio (isolated — mocks almost every child component)
 run_group "Group 1/6: Studio" \
   tests/components/Studio.test.tsx
+
+# Group 1b: the palette-item-to-rail path (isolated — it must see the REAL
+# use-agent-prefill, use-tab-manager and CommandPalette, all three of which Group 1
+# replaces with mock.module stubs, and mock.module is process-wide).
+run_group "Group 1b/6: Studio agent ask" \
+  tests/components/studio-agent-ask.test.tsx
 
 # Group 2: Sidebar (isolated — mocks ConnectionsList, SchemaExplorer)
 run_group "Group 2/6: Sidebar" \

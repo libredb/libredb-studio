@@ -69,7 +69,7 @@ describe("StudioMobileHeader", () => {
     cleanup();
   });
 
-  const mockToggleAi = mock(() => {});
+  const mockOnAskAgent = mock(() => {});
   const mockOnExplain = mock(() => {});
   const mockOnBeginTransaction = mock(() => {});
   const mockOnCommitTransaction = mock(() => {});
@@ -89,7 +89,6 @@ describe("StudioMobileHeader", () => {
     currentQuery: "SELECT 1",
     queryEditorRef: {
       current: {
-        toggleAi: mockToggleAi,
         format: mock(() => {}),
         getValue: mock(() => "SELECT 1"),
         getSelectedText: mock(() => ""),
@@ -114,10 +113,11 @@ describe("StudioMobileHeader", () => {
     onTogglePlayground: mockOnTogglePlayground,
     onToggleEditing: mockOnToggleEditing,
     onImport: mockOnImport,
+    onAskAgent: mockOnAskAgent,
   };
 
   beforeEach(() => {
-    mockToggleAi.mockClear();
+    mockOnAskAgent.mockClear();
     mockOnExplain.mockClear();
     mockOnBeginTransaction.mockClear();
     mockOnCommitTransaction.mockClear();
@@ -157,12 +157,34 @@ describe("StudioMobileHeader", () => {
   // Callbacks & Badges
   // =========================================================================
 
-  test("AI button click calls queryEditorRef.current.toggleAi()", () => {
+  /**
+   * The button that opened the in-editor chat now asks the shell to ask the agent
+   * about the statement (#331 T3). What it asks ABOUT is the shell's decision, not
+   * this header's: the header holds no statement of its own worth asking with.
+   *
+   * It is named for the ask rather than for the rail because `MobileNav` already
+   * renders an "Agent" control on this same tab that opens the rail and asks
+   * nothing (review of #331 T3) — two identical labels, two different actions.
+   */
+  test("the ask-about-this-query button asks the shell to make the ask", () => {
     const { queryByText } = render(<StudioMobileHeader {...defaults} />);
-    const aiBtn = queryByText("AI");
-    expect(aiBtn).not.toBeNull();
-    fireEvent.click(aiBtn!.closest("button")!);
-    expect(mockToggleAi).toHaveBeenCalledTimes(1);
+    const agentBtn = queryByText("Ask about this query");
+    expect(agentBtn).not.toBeNull();
+    fireEvent.click(agentBtn!.closest("button")!);
+    expect(mockOnAskAgent).toHaveBeenCalledTimes(1);
+  });
+
+  /** Nothing on this row may read as `MobileNav`'s rail control does. */
+  test("the button does not borrow the nav control's name", () => {
+    const { queryByText } = render(<StudioMobileHeader {...defaults} />);
+    expect(queryByText("Agent")).toBeNull();
+  });
+
+  test("no agent button while the shell wires no agent", () => {
+    const { queryByText } = render(<StudioMobileHeader {...defaults} onAskAgent={undefined} />);
+    expect(queryByText("Ask about this query")).toBeNull();
+    // The row it lives in is still there.
+    expect(queryByText("RUN")).not.toBeNull();
   });
 
   test("Explain Plan click calls onExplain when provided", () => {

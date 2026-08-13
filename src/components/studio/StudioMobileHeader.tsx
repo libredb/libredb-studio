@@ -7,6 +7,7 @@ import { useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
 import {
   AlignLeft,
+  Bot,
   ChevronDown,
   Copy,
   Database,
@@ -20,7 +21,6 @@ import {
   Plus,
   Save,
   Settings,
-  Sparkles,
   Square,
   Trash2,
   Upload,
@@ -64,6 +64,15 @@ interface StudioMobileHeaderProps {
   onToggleEditing?: () => void;
   onImport: () => void;
   onExplain?: () => void;
+  /**
+   * Asks the agent about what the editor is holding (#331 T3). It replaced a button
+   * that toggled the in-editor AI chat through `queryEditorRef`; the chat is gone,
+   * and WHAT to ask about is the shell's decision rather than this header's.
+   *
+   * Omitted while the agent runtime is off — the same rule `onToggleEditing` above
+   * follows, and the control is then not rendered at all.
+   */
+  onAskAgent?: () => void;
 }
 
 export function StudioMobileHeader({
@@ -93,6 +102,7 @@ export function StudioMobileHeader({
   onToggleEditing,
   onImport,
   onExplain,
+  onAskAgent,
 }: StudioMobileHeaderProps) {
   const router = useRouter();
 
@@ -207,16 +217,29 @@ export function StudioMobileHeader({
       {/* Row 2: Actions + RUN (only show when on editor tab) */}
       {activeMobileTab === "editor" && (
         <div className="h-10 flex items-center justify-between px-3 border-t border-white/5 bg-[#080808]">
-          <div className="flex items-center gap-1">
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-7 px-2 gap-1 text-xs font-medium text-zinc-500 hover:text-blue-400"
-              onClick={() => queryEditorRef.current?.toggleAi()}
-            >
-              <Sparkles strokeWidth={1.5} className="w-3 h-3" />
-              AI
-            </Button>
+          <div className="flex items-center gap-1 min-w-0">
+            {/*
+              Says what it DOES, not what it opens (review of #331 T3). Labelling it
+              "Agent" put a second control with that name and that icon on the editor
+              tab, beside `MobileNav`'s — which opens the rail and asks nothing — and
+              the two were told apart by nothing a user can see. This one carries the
+              editor's statement in with it, so it names the statement.
+
+              `shrink` overrides the Button base's `shrink-0` so the longer label
+              gives way to RUN instead of pushing it off a narrow screen; the label
+              then truncates, which needs `min-w-0` on both the row and the span.
+            */}
+            {onAskAgent && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 px-2 gap-1 text-xs font-medium text-zinc-500 hover:text-blue-400 shrink min-w-0"
+                onClick={onAskAgent}
+              >
+                <Bot strokeWidth={1.5} className="w-3 h-3" />
+                <span className="truncate min-w-0">Ask about this query</span>
+              </Button>
+            )}
 
             <DropdownMenu>
               <DropdownMenuTrigger asChild>

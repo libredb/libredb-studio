@@ -984,9 +984,10 @@ $ SELECT COUNT(*) AS total, COUNT(DISTINCT __time) AS distinct_times FROM libred
 {"total":50,"distinct_times":30}
 ```
 
-Nothing in a Druid datasource is unique, and `isPrimary` is not a hint — three consumers state it as
-fact. `sql-completions.ts` appends `(PK)` in autocomplete, `use-ai-chat.ts` puts `, PK` into the
-schema context the model reasons from, and `schema-diff/diff-engine.ts` reports
+Nothing in a Druid datasource is unique, and `isPrimary` is not a hint — it is stated as fact
+wherever it is read. `sql-completions.ts` appends `(PK)` in autocomplete,
+`agent/context-snapshot.ts` and `DatabaseDocs.tsx` put ` PK` into the schema context a model reasons
+from, and `schema-diff/diff-engine.ts` reports
 `Primary key changed` — so two datasources differing only in this would diff as a key change. What
 `__time` actually is would need a partition/time-key concept distinct from a primary key, and
 `ColumnSchema` has no such field. It stays identifiable the honest way: by name, and by being the one

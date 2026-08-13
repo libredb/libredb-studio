@@ -2,6 +2,16 @@
 
 This document details the analysis of Monaco Editor performance issues in LibreDB Studio and the implemented solutions.
 
+> **Status: historical record.** It describes one optimization pass and the code as that
+> pass left it, and it is kept for the rationale — why the editor is semi-uncontrolled,
+> why completion items are pre-computed, why the PostgreSQL schema fetch is one CTE. It
+> is not a description of today's editor: the source is. Where a passage below describes
+> code that has since been **deleted**, it says so inline rather than being quietly
+> updated, because a rationale is worth nothing once it no longer says what it was
+> reasoning about. Everything not marked that way still matches the code.
+>
+> The current interfaces live in [`src/components/QueryEditor.tsx`](../../src/components/QueryEditor.tsx).
+
 ## Identified Issues
 
 ### 1. Parent State Update on Every Keystroke (CRITICAL)
@@ -31,7 +41,12 @@ const handleEditorBlur = () => {
 };
 ```
 
-### 2. AI Streaming onChange Loop (CRITICAL)
+### 2. AI Streaming onChange Loop (CRITICAL) — REMOVED
+
+> **The code below no longer exists.** The in-editor AI chat and its streaming loop
+> lived in `src/hooks/use-ai-chat.ts`, deleted with the panel in #331 T3; the agent rail
+> replaced it and streams nothing into the editor. The entry below records why the loop
+> was buffered, for the next feature that streams into a Monaco instance.
 
 **Problem:** During AI streaming, parent state was updated on every chunk.
 
@@ -80,6 +95,12 @@ schemaContext={JSON.stringify(schema)}
 const tableNames = useMemo(() => schema.map(s => s.name), [schema]);
 const schemaContext = useMemo(() => JSON.stringify(schema), [schema]);
 ```
+
+> **Half of this is gone.** `QueryEditorProps.tables` and the `tableNames` memo that fed
+> it (`use-connection-manager.ts`, `use-connection-adapter.ts`) were removed in #331 T3:
+> the completion provider builds its table items by parsing `schemaContext`, and
+> `tables` only fed the AI panel's "Context: N tables" badge, which went with the panel.
+> The `schemaContext` memo is the surviving half and still works exactly as shown.
 
 ### 4. Monaco Editor Options Inline Object (HIGH)
 
@@ -252,7 +273,7 @@ const flashHighlight = (range) => {
 | setState calls (100 character input) | ~100 | ~2-3 |
 | Completion trigger time (1000 tables) | ~200ms | ~20ms |
 | Schema fetch time (100 tables) | ~5s (401 queries) | ~500ms (1 query) |
-| AI streaming render | 10-20/sec | 1-2/sec |
+| AI streaming render (removed, see issue 2) | 10-20/sec | 1-2/sec |
 
 ## File Changes
 
@@ -266,6 +287,12 @@ const flashHighlight = (range) => {
 
 ## API Changes
 
+The additions this pass made, minus the members that have since been deleted: the ref's
+`toggleAi` and `QueryEditorProps.tables` went with the in-editor AI chat in #331 T3. What
+either interface holds TODAY is in
+[`src/components/QueryEditor.tsx`](../../src/components/QueryEditor.tsx) — read it there
+rather than here.
+
 ### QueryEditorRef
 
 ```typescript
@@ -276,7 +303,6 @@ interface QueryEditorRef {
   setValue: (value: string) => void;  // NEW
   focus: () => void;
   format: () => void;
-  toggleAi: () => void;
 }
 ```
 
@@ -303,7 +329,8 @@ interface QueryHistoryProps {
 ## Testing Recommendations
 
 1. **Typing performance:** No lag when rapidly typing 100+ characters
-2. **AI streaming:** UI should not freeze during streaming
+2. **AI streaming:** UI should not freeze during streaming _(no longer applicable — the
+   streaming panel was removed, see issue 2)_
 3. **Tab switching:** Query should be preserved when switching tabs
 4. **Schema fetch:** Should complete under 1 second for large databases
 5. **Completion:** Should open instantly with 1000+ tables/columns

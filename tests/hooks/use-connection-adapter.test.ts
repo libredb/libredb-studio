@@ -114,9 +114,6 @@ describe("useConnectionAdapter", () => {
     // Verify schema was set
     expect(result.current.schema).toEqual(schemaData);
 
-    // Verify tableNames derived value
-    expect(result.current.tableNames).toEqual(["users", "orders"]);
-
     // Verify schemaContext derived value
     expect(result.current.schemaContext).toBe(JSON.stringify(schemaData));
 

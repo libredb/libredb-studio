@@ -52,7 +52,6 @@ export function useConnectionAdapter({ connections: externalConnections, onSchem
     [onSchemaFetch],
   );
 
-  const tableNames = useMemo(() => schema.map((s) => s.name), [schema]);
   const schemaContext = useMemo(() => JSON.stringify(schema), [schema]);
 
   return {
@@ -65,7 +64,6 @@ export function useConnectionAdapter({ connections: externalConnections, onSchem
     isLoadingSchema,
     connectionPulse: null as "healthy" | "degraded" | "error" | null,
     fetchSchema,
-    tableNames,
     schemaContext,
   };
 }

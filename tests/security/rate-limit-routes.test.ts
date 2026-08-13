@@ -183,7 +183,7 @@ describe("an unauthenticated probe", () => {
  * Enumerated from disk, not from a hardcoded list of route names: the threat is a route that
  * reaches a provider without one of the three controls (session, rate limit, audit), and a
  * hardcoded list only ever proves the routes someone remembered to add to it are covered. A
- * fifth AI route added later without wiring guardRoute is caught here automatically, the same
+ * fourth AI route added later without wiring guardRoute is caught here automatically, the same
  * way tests/security/route-auth.test.ts's whole-tree enumeration already catches one that skips
  * the session check - both use the same discoverRoutes() helper, so they cannot drift apart.
  */
@@ -195,12 +195,12 @@ describe("every AI route enforces the shared budget", () => {
   /*
     Two failures at once, and a floor catches only the first. A directory-listing bug that
     silently found zero routes would make the loop below run no assertions at all - a vacuous
-    pass. And a floor cannot notice a route that came BACK: `>= 4` is satisfied by five, so a
-    reinstated nl2sql or autopilot route would leave the removal gate green (#331 T2). The
-    exact set is what asserts both. Found by review on #349.
+    pass. And a floor cannot notice a route that came BACK: `>= 3` is satisfied by four, so a
+    reinstated nl2sql, autopilot or chat route would leave the removal gate green (#331 T2, T3).
+    The exact set is what asserts both. Found by review on #349.
   */
   test("the filesystem enumeration finds exactly today's AI routes", () => {
-    expect(AI_ROUTES.map(([routeKey]) => routeKey)).toEqual(["chat", "describe-schema", "explain", "query-safety"]);
+    expect(AI_ROUTES.map(([routeKey]) => routeKey)).toEqual(["describe-schema", "explain", "query-safety"]);
   });
 
   test("each discovered route is rejected once the shared ai bucket is already spent", async () => {

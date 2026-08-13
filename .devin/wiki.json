@@ -83,7 +83,7 @@
     },
     {
       "title": "AI-Powered Features",
-      "purpose": "Document all AI API endpoints and their corresponding frontend surfaces. Cover: AI Chat (src/app/api/ai/chat/), SQL Explain (src/app/api/ai/explain/ + src/components/VisualExplain.tsx), Query Safety analysis (src/app/api/ai/query-safety/ + src/components/QuerySafetyDialog.tsx), and Schema description (src/app/api/ai/describe-schema/).",
+      "purpose": "Document all AI API endpoints and their corresponding frontend surfaces. Cover: SQL Explain (src/app/api/ai/explain/ + src/components/VisualExplain.tsx), Query Safety analysis (src/app/api/ai/query-safety/ + src/components/QuerySafetyDialog.tsx), and Schema description (src/app/api/ai/describe-schema/).",
       "parent": "AI & LLM System"
     },
     {
@@ -93,7 +93,7 @@
     },
     {
       "title": "API Layer",
-      "purpose": "Document the REST API architecture in src/app/api/. Cover all endpoint groups: auth (login, logout, me, OIDC), database operations (query, multi-query, schema, health, test-connection, transaction, maintenance, pool-stats, provider-meta, schema-snapshot, cancel, monitoring, profile), AI endpoints (chat, explain, query-safety, describe-schema), admin endpoints (fleet-health, audit). Explain request/response patterns, error handling, and authentication requirements.",
+      "purpose": "Document the REST API architecture in src/app/api/. Cover all endpoint groups: auth (login, logout, me, OIDC), database operations (query, multi-query, schema, health, test-connection, transaction, maintenance, pool-stats, provider-meta, schema-snapshot, cancel, monitoring, profile), AI endpoints (explain, query-safety, describe-schema), admin endpoints (fleet-health, audit). Explain request/response patterns, error handling, and authentication requirements.",
       "parent": "Architecture Overview"
     },
     {
@@ -130,7 +130,7 @@
     },
     {
       "title": "Custom React Hooks",
-      "purpose": "Document all custom hooks in src/hooks/: use-auth (authentication state), use-ai-chat (AI chat interaction), use-connection-manager (connection CRUD), use-connection-form (form state), use-inline-editing (cell editing), use-mobile (responsive detection), use-monitoring-data (real-time metrics), use-provider-metadata (database capabilities), use-query-execution (query runner), use-tab-manager (workspace tabs), use-toast (notifications), and use-transaction-control (BEGIN/COMMIT/ROLLBACK).",
+      "purpose": "Document all custom hooks in src/hooks/: use-auth (authentication state), use-connection-manager (connection CRUD), use-connection-form (form state), use-inline-editing (cell editing), use-mobile (responsive detection), use-monitoring-data (real-time metrics), use-provider-metadata (database capabilities), use-query-execution (query runner), use-tab-manager (workspace tabs), use-toast (notifications), and use-transaction-control (BEGIN/COMMIT/ROLLBACK).",
       "parent": "Architecture Overview"
     },
     {

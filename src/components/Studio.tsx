@@ -26,6 +26,7 @@ import { AgentRail } from "@/components/agent/AgentRail";
 import { DatabaseConnection, SavedQuery } from "@/lib/types";
 import { quoteLiteral } from "@/lib/sql/values";
 import { resolveAgentRunConnectionId } from "@/hooks/use-connection-payload";
+import { isMobileViewport } from "@/hooks/use-mobile";
 import { useAgentCapability } from "@/hooks/use-agent-capability";
 import { useAgentArtifact } from "@/components/agent/use-agent-artifact";
 import { useAgentPrefill } from "@/components/agent/use-agent-prefill";
@@ -218,6 +219,45 @@ export default function Studio() {
   // could only refuse — or, worse, accept while meaning a different database.
   const agentConnectionId =
     conn.activeConnection === null ? null : resolveAgentRunConnectionId(conn.activeConnection, conn.servedSeeds);
+
+  /*
+    What the two standalone AI entry points do now (#331 T3). The in-editor chat is
+    gone; the command palette's item and the mobile header's button open the RAIL on
+    the statement the editor is holding. Both go through this one handler, because a
+    decision made at each caller is a decision made twice.
+
+    The workflow is INVESTIGATION, not query-optimization, and that is deliberate.
+    The control being replaced was a general assistant, not an optimizer, so choosing
+    the optimizer would commit the user to a goal they never asked for: that
+    workflow's verifier requires a plan COMPARISON (`src/lib/agent/goal-verifier.ts`,
+    the no-plan-comparison shortfall), and a run that perfectly explained what the
+    statement does would still be recorded as "did not answer". The workflow control
+    is one click away in the rail, and investigation is the general one.
+
+    The objective is the statement and nothing composed around it. Writing prose like
+    "why is this slow?" on the user's behalf would put words in a box that is theirs
+    and stays editable. It is read from the tab this shell already owns rather than
+    from the editor handle: `QueryEditor`'s `onContentChange` writes every keystroke
+    into that tab through `updateTabById` (see the mount below), and `use-tab-manager`
+    derives `currentTab` from the tabs it writes to — so the tab is current, and
+    `getEditorValue` was the AI hook's private callback rather than a second source of
+    truth. The seam bounds the length; nothing here has to.
+
+    An empty editor mints no ask. An objective saying nothing would still be recorded
+    as APPLIED by the rail, so it would clear a standing offer and overwrite nothing
+    to no purpose. The entry point still opens the rail — which below `md` means
+    opening the sheet here, since the seam only opens it when it has an ask to apply,
+    and above `md` means nothing at all: the rail is already the panel, and arming the
+    sheet flag there would pop a sheet open the first time the window narrows.
+  */
+  const askAgentAboutStatement = () => {
+    const statement = tabMgr.currentTab.query.trim();
+    if (statement.length === 0) {
+      if (isMobileViewport()) setIsAgentSheetOpen(true);
+      return;
+    }
+    agentPrefill.requestPrefill("investigation", statement);
+  };
 
   // Data Masking
   const [maskingConfig, setMaskingConfig] = useState<MaskingConfig>(() => loadMaskingConfig());
@@ -413,6 +453,9 @@ export default function Studio() {
                   ? () => queryExec.executeQuery(undefined, undefined, true)
                   : undefined
               }
+              // Absent while the runtime is off, so the header carries no control
+              // that would open a rail that does not exist.
+              onAskAgent={agentEnabled ? askAgentAboutStatement : undefined}
             />
 
             <StudioDesktopHeader
@@ -542,8 +585,6 @@ export default function Studio() {
                                   ? "json"
                                   : "sql"
                             }
-                            tables={conn.tableNames}
-                            databaseType={conn.activeConnection?.type}
                             schemaContext={conn.schemaContext}
                             capabilities={metadata?.capabilities}
                           />
@@ -762,7 +803,7 @@ export default function Studio() {
         onShowDiagram={() => setShowDiagram(true)}
         onFormatQuery={() => queryEditorRef.current?.format()}
         onSaveQuery={() => setIsSaveQueryModalOpen(true)}
-        onToggleAI={() => queryEditorRef.current?.toggleAi()}
+        onAskAgent={agentEnabled ? askAgentAboutStatement : undefined}
         onLogout={handleLogout}
       />
 

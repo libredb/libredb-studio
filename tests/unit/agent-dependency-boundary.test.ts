@@ -134,7 +134,7 @@ describe("the knip ignore list stays bounded", () => {
    * `@ai-sdk/anthropic` is still here because T5
    * deferred the Anthropic provider KIND rather than shipping it half-built: the
    * settings surface's `LLMProviderType` has no `anthropic` member, so adding one
-   * would also owe the AI Assistant a chat provider (`docs/BACKLOG.md` B2).
+   * would also owe `src/lib/llm/factory.ts` a chat provider (`docs/BACKLOG.md` B2).
    * `@workflow/world-postgres` is expected to stay, because the runtime
    * resolves it by module specifier from `WORKFLOW_TARGET_WORLD` and no static
    * import of it will ever exist. Naming the survivors rather than the whole

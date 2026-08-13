@@ -86,7 +86,6 @@ export function useConnectionManager(storageReady = false) {
   );
 
   // Memoized derived values
-  const tableNames = useMemo(() => schema.map((s) => s.name), [schema]);
   const schemaContext = useMemo(() => JSON.stringify(schema), [schema]);
 
   // Initialize connections once storage sync is ready
@@ -295,7 +294,6 @@ export function useConnectionManager(storageReady = false) {
     isLoadingSchema,
     connectionPulse,
     fetchSchema,
-    tableNames,
     schemaContext,
   };
 }

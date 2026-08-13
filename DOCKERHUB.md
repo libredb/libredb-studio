@@ -104,7 +104,7 @@ A ready-to-use, fully-commented compose file is in the repo: [`docker-compose.ex
 - **Professional SQL IDE** — Monaco editor (VS Code engine), schema-aware autocomplete, multi-tab workspace, Visual EXPLAIN.
 - **Interactive ER diagrams** — real FK edges, cardinality, auto-layout (ELK.js), PNG/SVG export.
 - **Schema diff & migration** — compare snapshots/connections and auto-generate migration SQL.
-- **Multi-model AI copilot** — natural language to SQL, query safety analysis, EXPLAIN-in-plain-English. Gemini / OpenAI / Ollama / custom.
+- **Multi-model AI copilot** — query safety analysis, EXPLAIN-in-plain-English, AI-generated schema docs. Gemini / OpenAI / Ollama / custom.
 - **Pro data grid** — virtualized millions of rows, inline editing, per-column filters, pivot table, CSV/JSON export.
 - **Data visualization** — 8 chart types with aggregation and saved-chart dashboards.
 - **Data privacy & masking** — automatic sensitive-column detection, RBAC-enforced masking, export protection.

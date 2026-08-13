@@ -20,7 +20,7 @@ import {
   Gauge,
   Layers,
   LogOut,
-  Sparkles,
+  Bot,
   AlignLeft,
   Save,
 } from "lucide-react";
@@ -43,7 +43,15 @@ interface CommandPaletteProps {
   onShowDiagram: () => void;
   onFormatQuery: () => void;
   onSaveQuery: () => void;
-  onToggleAI: () => void;
+  /**
+   * Asks the agent about what the editor is holding (#331 T3). It replaced
+   * `onToggleAI`, which opened an in-editor chat that no longer exists.
+   *
+   * Optional, and the item is not rendered without it: the agent runtime is off by
+   * default, and an action that could only do nothing is the kind of control this
+   * shell declines to offer elsewhere too (`MobileNav.onOpenAgent`).
+   */
+  onAskAgent?: () => void;
   onLogout: () => void;
 }
 
@@ -62,7 +70,7 @@ export function CommandPalette({
   onShowDiagram,
   onFormatQuery,
   onSaveQuery,
-  onToggleAI,
+  onAskAgent,
   onLogout,
 }: CommandPaletteProps) {
   const [open, setOpen] = useState(false);
@@ -117,10 +125,17 @@ export function CommandPalette({
             <Save strokeWidth={1.5} className="w-3.5 h-3.5 text-zinc-400" />
             <span>Save Current Query</span>
           </CommandItem>
-          <CommandItem onSelect={() => runAction(onToggleAI)}>
-            <Sparkles strokeWidth={1.5} className="w-3.5 h-3.5 text-purple-400" />
-            <span>AI Assistant</span>
-          </CommandItem>
+          {onAskAgent && (
+            /*
+              Named for the ask, not for the surface: `MobileNav` has a control
+              called "Agent" that opens the rail and asks nothing, and this one
+              carries the editor's statement in with it (review of #331 T3).
+            */
+            <CommandItem onSelect={() => runAction(onAskAgent)}>
+              <Bot strokeWidth={1.5} className="w-3.5 h-3.5 text-blue-400" />
+              <span>Ask the agent about this query</span>
+            </CommandItem>
+          )}
           <CommandItem onSelect={() => runAction(onAddConnection)}>
             <Plus strokeWidth={1.5} className="w-3.5 h-3.5 text-emerald-400" />
             <span>New Connection</span>

@@ -80,13 +80,13 @@ LibreDB Studio goes the other way. It deploys next to the data: a container, a H
 
 Ten engines share one interface — PostgreSQL, MySQL, Oracle, SQL Server, SQLite, MongoDB, Redis, Couchbase, ClickHouse and Druid — with the same explorer, ER diagrams, schema diff and monitoring across all of them.
 
-And nothing is held back. Single sign-on, ER diagrams, the AI assistant and the NoSQL engines all ship in the MIT build. MIT is not generosity here, it is a requirement of the architecture: you cannot place a per-seat licensed, feature-gated tool into every environment you own.
+And nothing is held back. Single sign-on, ER diagrams, the AI features and the NoSQL engines all ship in the MIT build. MIT is not generosity here, it is a requirement of the architecture: you cannot place a per-seat licensed, feature-gated tool into every environment you own.
 
 ### Why LibreDB Studio?
 - **Deploys next to the data**: container, Helm chart, OpenShift operator, one-click PaaS template, or embedded via npm.
 - **Ten engines, one interface**: PostgreSQL, MySQL, Oracle, SQL Server, SQLite, MongoDB, Redis, Couchbase, ClickHouse, Druid.
 - **Runs where you are**: browser, phone, Windows, Linux desktop.
-- **AI with your own model**: natural language to SQL against Gemini, OpenAI, or a local LLM.
+- **AI with your own model**: EXPLAIN in plain English, query-safety checks and schema docs against Gemini, OpenAI, or a local LLM.
 - **Nothing behind a wall**: RBAC, OIDC single sign-on, query audit trail and ER diagrams all ship under MIT.
 
 <p align="center">
@@ -118,7 +118,6 @@ And nothing is held back. Single sign-on, ER diagrams, the AI assistant and the 
 
 ### Multi-Model AI Copilot
 - **Universal LLM Support**: Defaults to Gemini 2.5 Flash, but ready for OpenAI, Claude, or **Local LLMs** (Ollama/LM Studio).
-- **Natural Language to SQL**: Generate complex queries from natural language with schema-aware context.
 - **Query Safety Analysis**: AI-powered pre-execution risk assessment for destructive queries (DELETE, DROP, TRUNCATE).
 - **AI Query Explainer**: EXPLAIN plans translated into plain language with optimization suggestions.
 - **Schema Awareness**: AI understands your specific database structure for pinpoint accuracy.
@@ -437,7 +436,7 @@ bun run test:coverage
 | **Unit** | `tests/unit/` | `bun:test` | ~1,609 | Pure functions: SQL parser, connection strings, data masking, query limiter, schema diff, error classes, DB icons, showcase queries |
 | **API** | `tests/api/` | `bun:test` | ~279 | Route handlers: auth, query, transaction, maintenance, AI endpoints, middleware |
 | **Integration** | `tests/integration/` | `bun:test` | ~346 | Database providers: PG, MySQL, SQLite, MongoDB, Couchbase, Redis, Oracle, MSSQL, ClickHouse, Druid|
-| **Hooks** | `tests/hooks/` | `bun:test` | ~251 | React hooks: auth, connections, tabs, query execution, transactions, inline editing, AI chat, monitoring |
+| **Hooks** | `tests/hooks/` | `bun:test` | ~251 | React hooks: auth, connections, tabs, query execution, transactions, inline editing, monitoring |
 | **Components** | `tests/components/` | `bun:test` + happy-dom | ~570 | UI components: Studio, Sidebar, QueryEditor, ResultsGrid, Admin Dashboard, Charts, ERD |
 | **E2E** | `e2e/` | Playwright | ~32 | Full browser flows: login, connections, query execution, tabs, export, admin |
 
@@ -753,7 +752,7 @@ extraEnvFrom:
 - [x] **Phase 4**: Multi-Database Support (PostgreSQL, MySQL, SQLite, MongoDB, Redis).
 - [x] **Phase 5**: Interactive ER Diagrams (Visual Schema Graph).
 - [x] **Phase 6**: Enterprise Foundation (Connection Testing, SSL/TLS, SSH Tunnel, Transaction Control, Query Cancellation).
-- [x] **Phase 7**: AI Intelligence (Natural Language to SQL, Query Safety Analysis, Multi-Turn Chat).
+- [x] **Phase 7**: AI Intelligence (Query Safety Analysis, AI Query Explainer, AI-generated schema descriptions).
 - [x] **Phase 8**: Analyst & Developer Tools (Data Profiler, Code Generator, Test Data Generator, Pivot Table, Column Filtering, Database Docs).
 - [x] **Phase 9**: Display Masking — Preview (column-name pattern matching, configurable rules, RBAC UI controls, client-side export/clipboard masking).
 - [x] **Phase 10**: Advanced ERD (Real FK Edges, ELK.js Auto-Layout, MiniMap, PNG/SVG Export, Compact Mode, Table Search).

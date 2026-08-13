@@ -164,7 +164,7 @@ Edit the `features` array and hero text in `login-form.tsx`:
 ```tsx
 const features = [
   { icon: Globe, title: '7+ Database Engines', desc: 'PostgreSQL, MySQL, ...' },
-  { icon: Zap, title: 'AI-Native Queries', desc: 'Natural language to SQL...' },
+  { icon: Zap, title: 'AI-Assisted SQL', desc: 'Plan explanations, safety checks...' },
   // ...
 ];
 ```

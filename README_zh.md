@@ -104,10 +104,9 @@ PostgreSQL · MySQL · Oracle · SQL Server · SQLite · MongoDB · Redis · Cou
   <img src="public/screenshots/erd-diagram.png" alt="ER 图" width="100%" />
 </p>
 
-### AI 助手（可选，用你自己的模型）
+### AI 功能（可选，用你自己的模型）
 
 - **不绑定厂商**：默认 Gemini 2.5 Flash，同样支持 OpenAI、Claude，或 **本地模型**（Ollama / LM Studio）。
-- **自然语言转 SQL**：用自然语言生成复杂查询，带 schema 上下文。
 - **查询安全分析**：执行前对 DELETE、DROP、TRUNCATE 这类破坏性语句做风险评估。
 - **执行计划翻译**：把 EXPLAIN 翻成人话，并给出优化建议。
 
@@ -171,7 +170,7 @@ Studio 同时以 npm 包形式发布，可以直接嵌进你的应用。如果�
 
 Studio 是 MIT，因为它必须能去任何地方。付费的是 libredb-platform，它卖的是“别人替你运维”：托管、多租户、计费和支持，而不是某个被挪到付费墙后面的功能。
 
-**没有任何能力为了制造升级理由而被移到这条线的另一边。** 单点登录、RBAC、查询审计、ER 图、AI 助手、全部 NoSQL 引擎，都在 MIT 构建里。
+**没有任何能力为了制造升级理由而被移到这条线的另一边。** 单点登录、RBAC、查询审计、ER 图、AI 功能、全部 NoSQL 引擎，都在 MIT 构建里。
 
 ## 测试与质量
 

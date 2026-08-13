@@ -211,7 +211,7 @@ src/
 ├── app/                    # Next.js App Router
 │   ├── api/
 │   │   ├── auth/           # Login/logout/me + OIDC (PKCE, callback)
-│   │   ├── ai/             # chat, explain, query-safety, describe-schema
+│   │   ├── ai/             # explain, query-safety, describe-schema
 │   │   ├── db/             # Query, schema, health, maintenance, transactions
 │   │   ├── storage/        # Storage sync API (config, CRUD, migrate)
 │   │   ├── connections/    # managed/ — built-in (seeded) connections listing

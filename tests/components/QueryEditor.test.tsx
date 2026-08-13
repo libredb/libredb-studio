@@ -18,7 +18,6 @@ let mockCursorOffset = 0;
 let mockGetModelReturn: (() => unknown) | null = null;
 let mockDeltaDecorations = mock((..._a: unknown[]) => ["deco-1"]);
 let mockUpdateOptions = mock((..._a: unknown[]) => {});
-let capturedAiChatDeps: Record<string, unknown> | null = null;
 
 // ── Mock Monaco Editor with React.createElement (not plain objects) ─────────
 mock.module("@monaco-editor/react", () => ({
@@ -151,56 +150,10 @@ mock.module("@monaco-editor/react", () => ({
   useMonaco: mock(() => mockUseMonacoReturn),
 }));
 
-// ── Mock framer-motion ──────────────────────────────────────────────────────
-mock.module("framer-motion", () => {
-  const passthrough = ({ children, ...props }: Record<string, unknown>) =>
-    React.createElement("div", props, children as React.ReactNode);
-
-  return {
-    motion: new Proxy(
-      {},
-      {
-        get: () => passthrough,
-      },
-    ),
-    AnimatePresence: ({ children }: { children: React.ReactNode }) => children,
-    useAnimation: () => ({ start: mock(() => {}), stop: mock(() => {}) }),
-    useInView: () => true,
-  };
-});
-
-// ── Mock use-ai-chat hook ───────────────────────────────────────────────────
-const mockSetShowAi = mock(() => {});
-const mockSetAiPrompt = mock(() => {});
-const mockSetAiError = mock(() => {});
-const mockSetAiConversationHistory = mock(() => {});
-const mockHandleAiSubmit = mock(async () => {});
-let mockShowAi = false;
-let mockIsAiLoading = false;
-let mockAiError: string | null = null;
-let mockAiConversationHistory: Array<Record<string, string>> = [];
 let mockClipboardWriteText = mock((data: string) => {
   void data;
   return Promise.resolve();
 });
-
-mock.module("@/hooks/use-ai-chat", () => ({
-  useAiChat: mock((deps: Record<string, unknown>) => {
-    capturedAiChatDeps = deps;
-    return {
-      showAi: mockShowAi,
-      setShowAi: mockSetShowAi,
-      aiPrompt: "",
-      setAiPrompt: mockSetAiPrompt,
-      isAiLoading: mockIsAiLoading,
-      aiError: mockAiError,
-      setAiError: mockSetAiError,
-      aiConversationHistory: mockAiConversationHistory,
-      setAiConversationHistory: mockSetAiConversationHistory,
-      handleAiSubmit: mockHandleAiSubmit,
-    };
-  }),
-}));
 
 // ── Mock sql-formatter ──────────────────────────────────────────────────────
 mock.module("sql-formatter", () => ({
@@ -259,8 +212,6 @@ function createDefaultProps(overrides: Partial<Parameters<typeof QueryEditor>[0]
     value: "SELECT * FROM users",
     onChange: mock(() => {}),
     language: "sql" as const,
-    tables: ["users", "orders", "products"],
-    databaseType: "postgres",
     schemaContext: JSON.stringify([
       {
         name: "users",
@@ -297,20 +248,10 @@ describe("QueryEditor", () => {
     mockSelectionReturn = null;
     mockSelectedText = "";
     mockUseMonacoReturn = null;
-    mockIsAiLoading = false;
-    mockShowAi = false;
-    mockSetShowAi.mockClear();
-    mockSetAiPrompt.mockClear();
-    mockHandleAiSubmit.mockClear();
-    mockSetAiError.mockClear();
-    mockSetAiConversationHistory.mockClear();
-    mockAiError = null;
-    mockAiConversationHistory = [];
     mockCursorOffset = 0;
     mockGetModelReturn = null;
     mockDeltaDecorations = mock((..._a: unknown[]) => ["deco-1"]);
     mockUpdateOptions = mock((..._a: unknown[]) => {});
-    capturedAiChatDeps = null;
     mockClipboardWriteText = mock((data: string) => {
       void data;
       return Promise.resolve();
@@ -396,17 +337,6 @@ describe("QueryEditor", () => {
     expect(queryByText("Lines")).not.toBeNull();
   });
 
-  test("AI toggle button renders", () => {
-    const { queryByText } = render(React.createElement(QueryEditor, createDefaultProps()));
-    expect(queryByText("AI")).not.toBeNull();
-  });
-
-  test("keyboard shortcut hint renders", () => {
-    const { container } = render(React.createElement(QueryEditor, createDefaultProps()));
-    expect(container.textContent).toContain("⌘+Enter");
-  });
-
-  // -----------------------------------------------------------------------
   // EXPLAIN button
   // -----------------------------------------------------------------------
 
@@ -679,124 +609,6 @@ describe("QueryEditor", () => {
     rerender(React.createElement(QueryEditor, { ...props, value: "SELECT 2" }));
     const updatedEditor = queryByTestId("mock-monaco-editor") as HTMLTextAreaElement;
     expect(updatedEditor.value).toBe("SELECT 2");
-  });
-
-  // -----------------------------------------------------------------------
-  // AI panel
-  // -----------------------------------------------------------------------
-
-  test("AI ASSISTANT toggle calls setShowAi", () => {
-    const { queryByText } = render(React.createElement(QueryEditor, createDefaultProps()));
-    fireEvent.click(queryByText("AI")!);
-    expect(mockSetShowAi).toHaveBeenCalled();
-  });
-
-  test("AI panel shows input and Generate button when showAi is true", () => {
-    mockShowAi = true;
-    const { queryByPlaceholderText, queryByText } = render(React.createElement(QueryEditor, createDefaultProps()));
-    expect(queryByPlaceholderText(/Describe the data you need/)).not.toBeNull();
-    expect(queryByText("Generate")).not.toBeNull();
-  });
-
-  test("AI panel hidden when showAi is false", () => {
-    mockShowAi = false;
-    const { queryByPlaceholderText } = render(React.createElement(QueryEditor, createDefaultProps()));
-    expect(queryByPlaceholderText(/Describe the data you need/)).toBeNull();
-  });
-
-  test("AI panel shows Expert DBA Mode header", () => {
-    mockShowAi = true;
-    const { queryByText } = render(React.createElement(QueryEditor, createDefaultProps()));
-    expect(queryByText("Expert DBA Mode")).not.toBeNull();
-  });
-
-  test("AI panel shows table context count", () => {
-    mockShowAi = true;
-    const { queryByText } = render(React.createElement(QueryEditor, createDefaultProps({ tables: ["a", "b", "c"] })));
-    expect(queryByText("Context: 3 tables")).not.toBeNull();
-  });
-
-  test("AI panel X dismiss button calls setShowAi(false)", () => {
-    mockShowAi = true;
-    const { container } = render(React.createElement(QueryEditor, createDefaultProps()));
-    // Find the dismiss button (the X button that isn't the error X)
-    const buttons = container.querySelectorAll('button[type="button"]');
-    // The dismiss button is the one next to the Generate button
-    const dismissBtn = Array.from(buttons as NodeListOf<HTMLButtonElement>).find((btn) => {
-      const svg = btn.querySelector(".lucide-x");
-      return svg !== null;
-    });
-    expect(dismissBtn).not.toBeNull();
-    fireEvent.click(dismissBtn!);
-    expect(mockSetShowAi).toHaveBeenCalledWith(false);
-  });
-
-  test("AI error panel renders when aiError exists", () => {
-    mockShowAi = true;
-    mockAiError = "AI request failed";
-    const { queryByText } = render(React.createElement(QueryEditor, createDefaultProps()));
-    expect(queryByText("AI Error")).not.toBeNull();
-    expect(queryByText("AI request failed")).not.toBeNull();
-  });
-
-  test("AI error dismiss button clears error", () => {
-    mockShowAi = true;
-    mockAiError = "Some error";
-    const { container } = render(React.createElement(QueryEditor, createDefaultProps()));
-    // Find the error dismiss button (inside the error panel)
-    const errorPanel = container.querySelector(".bg-red-500\\/10");
-    expect(errorPanel).not.toBeNull();
-    const dismissBtn = errorPanel!.querySelector("button");
-    expect(dismissBtn).not.toBeNull();
-    fireEvent.click(dismissBtn!);
-    expect(mockSetAiError).toHaveBeenCalledWith(null);
-  });
-
-  test("AI conversation history summary when history exists", () => {
-    mockShowAi = true;
-    mockAiConversationHistory = [
-      { role: "user", content: "hello" },
-      { role: "assistant", content: "world" },
-    ];
-    const { queryByText } = render(React.createElement(QueryEditor, createDefaultProps()));
-    expect(queryByText("1 turns - Clear")).not.toBeNull();
-  });
-
-  test("AI clear conversation button calls setAiConversationHistory", () => {
-    mockShowAi = true;
-    mockAiConversationHistory = [
-      { role: "user", content: "hello" },
-      { role: "assistant", content: "world" },
-    ];
-    const { queryByText } = render(React.createElement(QueryEditor, createDefaultProps()));
-    const clearBtn = queryByText("1 turns - Clear");
-    expect(clearBtn).not.toBeNull();
-    fireEvent.click(clearBtn!);
-    expect(mockSetAiConversationHistory).toHaveBeenCalledWith([]);
-  });
-
-  test("AI conversation history hidden when empty", () => {
-    mockShowAi = true;
-    mockAiConversationHistory = [];
-    const { queryByText } = render(React.createElement(QueryEditor, createDefaultProps()));
-    expect(queryByText(/turns - Clear/)).toBeNull();
-  });
-
-  test("AI Generate button is disabled when prompt is empty", () => {
-    mockShowAi = true;
-    const { container } = render(React.createElement(QueryEditor, createDefaultProps()));
-    const submitBtn = container.querySelector('button[type="submit"]') as HTMLButtonElement;
-    expect(submitBtn).not.toBeNull();
-    expect(submitBtn.disabled).toBe(true);
-  });
-
-  test("AI form submit calls handleAiSubmit", () => {
-    mockShowAi = true;
-    const { container } = render(React.createElement(QueryEditor, createDefaultProps()));
-    const form = container.querySelector("form");
-    expect(form).not.toBeNull();
-    fireEvent.submit(form!);
-    expect(mockHandleAiSubmit).toHaveBeenCalled();
   });
 
   // -----------------------------------------------------------------------
@@ -1291,25 +1103,6 @@ describe("QueryEditor", () => {
   });
 
   // -----------------------------------------------------------------------
-  // AI loading state
-  // -----------------------------------------------------------------------
-
-  test("AI panel shows Thinking text when loading", () => {
-    mockShowAi = true;
-    mockIsAiLoading = true;
-    const { queryByText } = render(React.createElement(QueryEditor, createDefaultProps()));
-    expect(queryByText("Thinking...")).not.toBeNull();
-  });
-
-  test("AI panel shows Generate text when not loading", () => {
-    mockShowAi = true;
-    mockIsAiLoading = false;
-    const { queryByText } = render(React.createElement(QueryEditor, createDefaultProps()));
-    expect(queryByText("Generate")).not.toBeNull();
-    expect(queryByText("Thinking...")).toBeNull();
-  });
-
-  // -----------------------------------------------------------------------
   // onExplain callback from context menu action
   // -----------------------------------------------------------------------
 
@@ -1686,23 +1479,6 @@ describe("QueryEditor", () => {
   });
 
   // -----------------------------------------------------------------------
-  // setEditorValueForAi callback
-  // -----------------------------------------------------------------------
-
-  test("setEditorValueForAi callback updates editor value", () => {
-    const { queryByTestId } = render(React.createElement(QueryEditor, createDefaultProps({ value: "SELECT old" })));
-
-    expect(capturedAiChatDeps).not.toBeNull();
-    const setEditorValue = capturedAiChatDeps!.setEditorValue as (val: string) => void;
-    act(() => {
-      setEditorValue("AI generated SQL");
-    });
-
-    const editor = queryByTestId("mock-monaco-editor") as HTMLTextAreaElement;
-    expect(editor.value).toBe("AI generated SQL");
-  });
-
-  // -----------------------------------------------------------------------
   // Console.error cleanup on unmount
   // -----------------------------------------------------------------------
 
@@ -1749,15 +1525,6 @@ describe("QueryEditor", () => {
   // -----------------------------------------------------------------------
   // Additional edge cases
   // -----------------------------------------------------------------------
-
-  test("ref toggleAi() calls setShowAi", () => {
-    const editorRef = React.createRef<import("@/components/QueryEditor").QueryEditorRef>();
-    render(React.createElement(QueryEditor, { ...createDefaultProps(), ref: editorRef }));
-    act(() => {
-      editorRef.current?.toggleAi();
-    });
-    expect(mockSetShowAi).toHaveBeenCalled();
-  });
 
   test("LINES toggle calls updateOptions with correct line numbers setting", () => {
     const { queryByText } = render(React.createElement(QueryEditor, createDefaultProps()));
@@ -1968,17 +1735,6 @@ describe("QueryEditor", () => {
     const editorRef = React.createRef<import("@/components/QueryEditor").QueryEditorRef>();
     render(React.createElement(QueryEditor, { ...createDefaultProps(), ref: editorRef }));
     expect(editorRef.current?.getSelectedText()).toBe("");
-  });
-
-  // -----------------------------------------------------------------------
-  // Branch coverage: getEditorValue callback (line 326)
-  // -----------------------------------------------------------------------
-
-  test("getEditorValue callback returns current editor value", () => {
-    render(React.createElement(QueryEditor, createDefaultProps({ value: "SELECT test_val" })));
-    expect(capturedAiChatDeps).not.toBeNull();
-    const getEditorValue = capturedAiChatDeps!.getEditorValue as () => string;
-    expect(getEditorValue()).toBe("SELECT test_val");
   });
 
   // -----------------------------------------------------------------------

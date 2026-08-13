@@ -530,7 +530,7 @@ If it appears in routes, components, or utilities — you're doing it wrong. Use
 | Create Table | If `supportsCreateTable: true`, verify the + button appears |
 | Inline row edit | If `supportsInlineRowEdit: true`, verify the EDIT toggle appears and one edited row runs one statement the engine accepts |
 | Maintenance | Open Database Maintenance, verify correct operations show |
-| AI Assistant | Open AI in QueryEditor, ask a question, verify correct syntax |
+| AI Explain | If `supportsExplain: true`, open Visual EXPLAIN and verify the AI explanation streams |
 | Labels | Check all UI text uses your labels (entity names, actions, etc.) |
 | Schema refresh | Run a write query, verify schema reloads if it matches `schemaRefreshPattern` |
 

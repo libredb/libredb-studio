@@ -31,7 +31,7 @@ LibreDB Studio provides a RESTful API for database management operations. The AP
 
 - **JWT Authentication** - Secure token-based authentication stored in HTTP-only cookies
 - **Multi-Database Support** - PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, Couchbase, ClickHouse, Apache Druid, Redis
-- **AI-Powered Queries** - Natural language to SQL with streaming responses
+- **AI-Powered Insights** - EXPLAIN explanations, query-safety analysis and schema docs, streamed
 - **Real-time Health Monitoring** - Database metrics and performance insights
 
 ### Request Format
@@ -697,81 +697,9 @@ A `druid` connection fails the second check whatever the `type` is, with `{ "err
 
 ### AI API
 
-#### POST /api/ai/chat
-
-Generate SQL queries using AI with streaming response.
-
-**Authentication:** Required
-
-**Request:**
-```json
-{
-  "prompt": "Show me all users who signed up in the last 30 days",
-  "databaseType": "postgres",
-  "schemaContext": "Table: users (id, email, name, created_at, status)"
-}
-```
-
-**Parameters:**
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `prompt` | string | Yes | Natural language query or question |
-| `databaseType` | string | No | Database type for syntax (default: postgres) |
-| `schemaContext` | string | No | Schema info for context-aware queries |
-| `queryLanguage` | string | No | `"sql"` (default) or `"json"` (MongoDB MQL) |
-| `conversationHistory` | array | No | Prior `{role, content}` messages for multi-turn context |
-
-**Response (200 OK - Streaming):**
-
-Returns `text/plain` with chunked transfer encoding. The response streams the generated SQL:
-
-```sql
-SELECT id, email, name, created_at
-FROM users
-WHERE created_at >= NOW() - INTERVAL '30 days'
-ORDER BY created_at DESC;
-```
-
-**Response (401 Unauthorized):**
-```json
-{
-  "error": "Invalid API key. Please check your configuration."
-}
-```
-
-**Response (429 Too Many Requests):**
-```json
-{
-  "error": "AI usage limit reached. Please try again later or check your billing status."
-}
-```
-
-**Response (400 Bad Request):**
-```json
-{
-  "error": "The prompt was blocked by safety filters."
-}
-```
-
-**LLM Configuration:**
-
-Configure AI provider via environment variables:
-
-```env
-LLM_PROVIDER=gemini          # gemini, openai, ollama, custom
-LLM_API_KEY=your-api-key
-LLM_MODEL=gemini-2.5-flash   # Model name
-LLM_API_URL=http://localhost:11434/v1  # For ollama/custom
-```
-
-> The `401`/`429`/`400` responses above are surfaced from the configured **LLM provider** (bad API key, quota, safety filter), not from session auth — session auth is already enforced by the middleware before the handler runs.
-
----
-
-#### Other AI endpoints
-
-All AI endpoints are `POST`, auth-required (via middleware), and stream `text/plain`. They share the optional `schemaContext` and `databaseType` fields; the table lists each one's primary input and purpose.
+All AI endpoints are `POST`, auth-required (via middleware), and stream `text/plain` with chunked
+transfer encoding. They share the optional `schemaContext` and `databaseType` fields; the table lists
+each one's primary input and purpose.
 
 | Endpoint | Key input | Purpose |
 |----------|-----------|---------|
@@ -779,7 +707,35 @@ All AI endpoints are `POST`, auth-required (via middleware), and stream `text/pl
 | `POST /api/ai/query-safety` | `query` | Pre-execution risk analysis; streams a JSON verdict (`riskLevel`, `warnings[]`, `recommendation`) |
 | `POST /api/ai/describe-schema` | `schemaContext` (+ optional `mode`: `"table"`\|`"database"`) | Auto-generate schema documentation |
 
-Each of the three validates its key field and returns a `400` with an `error` string if it's missing. The exact strings differ: `explain` and `query-safety` return `"Query is required"`, `describe-schema` returns `"Schema context required"` — treat the status code, not the message text, as the contract.
+Each of the three validates its key field and returns a `400` with an `error` string if it's missing.
+The exact strings differ: `explain` and `query-safety` return `"Query is required"`,
+`describe-schema` returns `"Schema context required"` — treat the status code, not the message text,
+as the contract.
+
+**Provider-surfaced errors**
+
+These come from the configured **LLM provider** (bad API key, quota, safety filter), not from session
+auth — session auth is already enforced by the middleware before the handler runs.
+
+```json
+// 401 Unauthorized
+{ "error": "Invalid API key. Please check your configuration." }
+// 429 Too Many Requests
+{ "error": "AI usage limit reached. Please try again later or check your billing status." }
+// 400 Bad Request
+{ "error": "The prompt was blocked by safety filters." }
+```
+
+**LLM Configuration:**
+
+Configure the AI provider via environment variables:
+
+```env
+LLM_PROVIDER=gemini          # gemini, openai, ollama, custom
+LLM_API_KEY=your-api-key
+LLM_MODEL=gemini-2.5-flash   # Model name
+LLM_API_URL=http://localhost:11434/v1  # For ollama/custom
+```
 
 ---
 
@@ -1057,7 +1013,7 @@ single number written here has gone stale every time it was updated:
 
 | Bucket | Applies to | Default |
 |--------|-----------|---------|
-| `ai` | The 4 `/api/ai/*` routes, plus every `/api/agent/*` route except `GET /api/agent/config`: starting a run, driving one, reading one, cancelling one, streaming one, and fetching an artifact | 20 requests / 60 seconds |
+| `ai` | The `/api/ai/*` routes, plus every `/api/agent/*` route except `GET /api/agent/config`: starting a run, driving one, reading one, cancelling one, streaming one, and fetching an artifact | 20 requests / 60 seconds |
 | `query` | Every database-reaching `/api/db/*` route plus `/api/admin/fleet-health`, together | 120 requests / 60 seconds |
 
 Routing the same workload through a different endpoint does not multiply the budget - the bucket is
@@ -1158,13 +1114,14 @@ curl -X POST http://localhost:3000/api/db/schema \
   }'
 ```
 
-#### AI Query Generation
+#### AI Explanation of a Plan
 ```bash
-curl -X POST http://localhost:3000/api/ai/chat \
+curl -X POST http://localhost:3000/api/ai/explain \
   -H "Content-Type: application/json" \
   -b cookies.txt \
   -d '{
-    "prompt": "Count users by country",
+    "query": "SELECT country, count(*) FROM users GROUP BY country",
+    "explainPlan": "HashAggregate ... Seq Scan on users",
     "databaseType": "postgres",
     "schemaContext": "users(id, name, country, created_at)"
   }'
@@ -1232,14 +1189,15 @@ async function executeQuery(sql: string) {
   return response.json();
 }
 
-// Stream AI response
-async function streamAIQuery(prompt: string) {
-  const response = await fetch('/api/ai/chat', {
+// Stream an AI explanation of a plan
+async function streamAIExplanation(query: string, explainPlan: string) {
+  const response = await fetch('/api/ai/explain', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     credentials: 'include',
     body: JSON.stringify({
-      prompt,
+      query,
+      explainPlan,
       databaseType: 'postgres',
       schemaContext: 'users(id, name, email)'
     })

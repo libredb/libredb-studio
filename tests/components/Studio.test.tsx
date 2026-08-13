@@ -28,6 +28,7 @@ let capturedQueryEditorProps: Record<string, unknown> = {};
 let capturedMobileNavProps: Record<string, unknown> = {};
 let capturedAgentRailProps: Record<string, unknown> = {};
 let originalFetch: typeof globalThis.fetch;
+let originalMatchMedia: typeof window.matchMedia;
 
 // ---- Trackable mock functions (shared across mocks + assertions) ----
 
@@ -99,7 +100,6 @@ mock.module("@/hooks/use-connection-manager", () => ({
     servedSeeds: [],
     activeConnection: null,
     schema: [],
-    tableNames: [],
     schemaContext: "[]",
     isLoadingSchema: false,
     connectionPulse: "none",
@@ -435,8 +435,14 @@ const PREFILL_SENTINEL = {
   objective: "why is checkout slow",
 } as const;
 
+/**
+ * Hoisted out of the factory (#331 T3) so what a shortcut ASKS FOR is observable.
+ * Left inside, every render minted a fresh mock and the calls were unreachable.
+ */
+const mockRequestPrefill = mock((_workflowType: string, _objective: string) => {});
+
 mock.module("@/components/agent/use-agent-prefill", () => ({
-  useAgentPrefill: () => ({ request: PREFILL_SENTINEL, requestPrefill: mock(() => {}) }),
+  useAgentPrefill: () => ({ request: PREFILL_SENTINEL, requestPrefill: mockRequestPrefill }),
 }));
 
 mock.module("@/components/ui/resizable", () => {
@@ -549,9 +555,11 @@ describe("Studio", () => {
     mockCreateObjectURL.mockClear();
     mockRevokeObjectURL.mockClear();
     mockRouterPush.mockClear();
+    mockRequestPrefill.mockClear();
 
     // URL mocks (may not exist in happy-dom)
     originalFetch = globalThis.fetch;
+    originalMatchMedia = window.matchMedia;
     globalThis.URL.createObjectURL = mockCreateObjectURL as unknown as typeof URL.createObjectURL;
     globalThis.URL.revokeObjectURL = mockRevokeObjectURL as unknown as typeof URL.revokeObjectURL;
   });
@@ -559,6 +567,7 @@ describe("Studio", () => {
   afterEach(() => {
     cleanup();
     globalThis.fetch = originalFetch;
+    window.matchMedia = originalMatchMedia;
   });
 
   // =========================================================================
@@ -1187,17 +1196,6 @@ describe("Studio", () => {
     expect(mockExecuteQuery).toHaveBeenCalledWith(undefined, undefined, true);
   });
 
-  // --- CommandPalette onToggleAI ---
-  test("CommandPalette onToggleAI is wired", () => {
-    render(<Studio />);
-    const fn = capturedCommandPaletteProps.onToggleAI as () => void;
-    // The callback calls queryEditorRef.current?.toggleAi() — since the mock
-    // QueryEditor attaches a DOM element to the ref (not a QueryEditorRef),
-    // we just verify the callback is properly wired.
-    expect(fn).toBeDefined();
-    expect(typeof fn).toBe("function");
-  });
-
   // --- Connection-change effect: setTabs updater ---
   test("connection-change effect retypes existing tabs via setTabs updater", () => {
     connMgrOverride = { activeConnection: pgConn };
@@ -1501,6 +1499,146 @@ describe("Studio", () => {
     await findByTestId("agent-rail");
 
     expect(capturedAgentRailProps.prefill).toBe(PREFILL_SENTINEL);
+  });
+
+  // =========================================================================
+  // The two standalone AI entry points, rewired to the rail (#331 T3)
+  // =========================================================================
+
+  /**
+   * The in-editor chat is gone, and the command palette item and mobile header
+   * button that opened it now open the RAIL on the statement the editor holds.
+   *
+   * The statement is read from the tab the shell owns rather than from the editor
+   * handle, and that tab is keystroke-current: "QueryEditor onContentChange updates
+   * the owning tab by id" above pins the write, and `use-tab-manager` derives
+   * `currentTab` from the tabs that write lands in.
+   *
+   * The breakpoint is driven through `window.matchMedia` rather than by mocking
+   * `@/hooks/use-mobile`, because `isMobileViewport` reads the platform directly and
+   * a module mock here would be process-wide.
+   */
+  function setViewportMobile(matches: boolean) {
+    window.matchMedia = ((query: string) => ({
+      matches,
+      media: query,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    })) as unknown as typeof window.matchMedia;
+  }
+
+  async function renderWithAgent(query: string) {
+    mockAgentConfig(true);
+    tabMgrOverride = {
+      currentTab: { id: "tab-1", name: "Query 1", query, result: null, isExecuting: false, type: "sql" },
+    };
+    const view = render(<Studio />);
+    await view.findByTestId("agent-rail");
+    return view;
+  }
+
+  test("the palette's agent shortcut asks the rail about the statement the editor holds", async () => {
+    await renderWithAgent("SELECT * FROM checkout");
+
+    act(() => (capturedCommandPaletteProps.onAskAgent as () => void)());
+
+    expect(mockRequestPrefill).toHaveBeenCalledTimes(1);
+    expect(mockRequestPrefill.mock.calls[0]).toEqual(["investigation", "SELECT * FROM checkout"]);
+  });
+
+  /**
+   * Investigation and NOT query-optimization, deliberately: the control being
+   * replaced was a general assistant, and the optimizer's verifier requires a plan
+   * comparison (`src/lib/agent/goal-verifier.ts`), so a run that perfectly explained
+   * what the statement does would be recorded as not having answered.
+   */
+  test("the ask names the general workflow, not the optimizer", async () => {
+    await renderWithAgent("SELECT 1");
+
+    act(() => (capturedCommandPaletteProps.onAskAgent as () => void)());
+
+    expect(mockRequestPrefill.mock.calls[0][0]).toBe("investigation");
+  });
+
+  test("the mobile header's agent shortcut makes the same ask", async () => {
+    await renderWithAgent("SELECT * FROM checkout");
+
+    act(() => (capturedMobileHeaderProps.onAskAgent as () => void)());
+
+    expect(mockRequestPrefill.mock.calls[0]).toEqual(["investigation", "SELECT * FROM checkout"]);
+  });
+
+  /** Nothing is composed on the user's behalf — the objective is the statement. */
+  test("the ask carries the statement and no prose invented around it", async () => {
+    await renderWithAgent("  SELECT 1  ");
+
+    act(() => (capturedMobileHeaderProps.onAskAgent as () => void)());
+
+    expect(mockRequestPrefill.mock.calls[0][1]).toBe("SELECT 1");
+  });
+
+  test("an empty editor mints no ask", async () => {
+    await renderWithAgent("   \n  ");
+
+    act(() => (capturedCommandPaletteProps.onAskAgent as () => void)());
+    act(() => (capturedMobileHeaderProps.onAskAgent as () => void)());
+
+    expect(mockRequestPrefill).toHaveBeenCalledTimes(0);
+  });
+
+  test("below md an empty editor still opens the sheet", async () => {
+    setViewportMobile(true);
+    await renderWithAgent("");
+
+    expect(capturedAgentRailProps.sheetOpen).toBe(false);
+    act(() => (capturedCommandPaletteProps.onAskAgent as () => void)());
+
+    expect(capturedAgentRailProps.sheetOpen).toBe(true);
+  });
+
+  test("below md the mobile header's shortcut opens the sheet too", async () => {
+    setViewportMobile(true);
+    await renderWithAgent("");
+
+    act(() => (capturedMobileHeaderProps.onAskAgent as () => void)());
+
+    expect(capturedAgentRailProps.sheetOpen).toBe(true);
+  });
+
+  /**
+   * Above `md` the rail IS the panel, so there is nothing to open — and setting the
+   * flag anyway would arm a sheet that pops open the first time the window narrows,
+   * the R1 defect `AgentRail`'s prefill comment records.
+   */
+  test("above md an empty editor opens no sheet", async () => {
+    setViewportMobile(false);
+    await renderWithAgent("");
+
+    act(() => (capturedCommandPaletteProps.onAskAgent as () => void)());
+
+    expect(capturedAgentRailProps.sheetOpen).toBe(false);
+  });
+
+  /** With an ask to apply, opening the sheet is the seam's job, not the shell's. */
+  test("an ask leaves the sheet to the seam that applies it", async () => {
+    setViewportMobile(true);
+    await renderWithAgent("SELECT 1");
+
+    act(() => (capturedMobileHeaderProps.onAskAgent as () => void)());
+
+    expect(mockRequestPrefill).toHaveBeenCalledTimes(1);
+    expect(capturedAgentRailProps.sheetOpen).toBe(false);
+  });
+
+  test("with the agent runtime off neither shortcut is offered", async () => {
+    const fetchMock = mockAgentConfig(false);
+    render(<Studio />);
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalled();
+    });
+
+    expect(capturedCommandPaletteProps.onAskAgent).toBeUndefined();
+    expect(capturedMobileHeaderProps.onAskAgent).toBeUndefined();
   });
 
   // =========================================================================

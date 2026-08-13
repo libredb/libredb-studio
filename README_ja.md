@@ -104,10 +104,9 @@ PostgreSQL · MySQL · Oracle · SQL Server · SQLite · MongoDB · Redis · Cou
   <img src="public/screenshots/erd-diagram.png" alt="ER図" width="100%" />
 </p>
 
-### AIアシスタント（任意・自分のモデルで）
+### AI機能（任意・自分のモデルで）
 
 - **ベンダー非依存**：既定はGemini 2.5 Flash。OpenAI、Claude、**ローカルLLM**（Ollama / LM Studio）にも対応。
-- **自然言語からSQL**：スキーマを踏まえた文脈で、自然言語から複雑なクエリを生成。
 - **クエリ安全性分析**：DELETE、DROP、TRUNCATEなど破壊的な操作を実行前に評価。
 - **実行計画の解説**：EXPLAINを平易な言葉に翻訳し、改善案を提示。
 
@@ -171,7 +170,7 @@ Studioはnpmパッケージとしても配布されているので、自分の�
 
 StudioがMITなのは、あらゆる場所に置ける必要があるからです。有料なのはlibredb-platformで、そこで売っているのは「運用の代行」、つまりホスティング、テナント管理、課金、サポートであって、有料の壁の向こうに移された機能ではありません。
 
-**アップグレードの理由を作るために線の向こう側へ移された機能は、1つもありません。** SSO、RBAC、クエリ監査ログ、ER図、AIアシスタント、NoSQLエンジン群、すべてMITビルドに入っています。
+**アップグレードの理由を作るために線の向こう側へ移された機能は、1つもありません。** SSO、RBAC、クエリ監査ログ、ER図、AI機能、NoSQLエンジン群、すべてMITビルドに入っています。
 
 ## テストと品質
 

@@ -29,12 +29,10 @@
 *   **Detailed Metrics:** Graphical representation of database scan types, join operations, costs, and execution times.
 *   **Multi-DB Support:** PostgreSQL and MySQL JSON plans, SQLite `EXPLAIN QUERY PLAN`, Couchbase SQL++ plan trees, ClickHouse JSON plan trees, and Apache Druid native-query plan trees. Providers without a real analyze mode hide the toggle instead of degrading to an estimate. A plan also shows only the numbers its planner actually reports: Druid emits no cost and no row estimate, so its nodes carry structure and no metrics rather than invented ones.
 
-### 5. AI Query Assistant (Multi-Provider LLM)
-*   **Natural Language to SQL:** Convert natural language requests into high-precision SQL code.
+### 5. AI Query Assistance (Multi-Provider LLM)
 *   **AI SQL Explanation:** One-click "AI Explain" button to translate complex SQL logic into plain English for easier debugging and onboarding.
-*   **Schema-Aware Generation:** AI automatically understands your tables and columns for accurate query generation.
-*   **Interactive UI:** Floating in-editor AI command bar ("Expert DBA Mode"), toggled from the editor toolbar.
-*   **Streaming Responses:** Real-time SQL generation streamed token-by-token from the configured model.
+*   **Schema-Aware Context:** The schema of the connected database is sent as context, so an explanation or a description names your own tables and columns.
+*   **Streaming Responses:** Answers are streamed token-by-token from the configured model.
 *   **Flexible LLM Support:** Choose Gemini (default `gemini-2.5-flash`), OpenAI, Ollama, or a custom provider via environment configuration.
 *   **AI Intelligence Suite:** Query Safety checks and AI-generated schema descriptions.
 
@@ -83,7 +81,7 @@
 
 ### 10. AI Reliability & Error Management
 *   **Intelligent Error Handling:** Comprehensive English error messages for API quotas, rate limits, and service availability issues.
-*   **Modern Alert UI:** Dedicated error notification system within the AI panel for immediate developer feedback.
+*   **In-Place Error Alerts:** An AI feature that fails says so where it was invoked — the Query Safety dialog and the schema-documentation panel each render the failure inline instead of leaving a spinner or an empty result. (The in-editor AI panel that used to hold these alerts was removed; the alerts were not.)
 *   **Graceful Degradation:** Robust backend logic to handle API timeouts and authentication failures without crashing the UI.
 
 ### 11. DevOps & Enterprise Deployment

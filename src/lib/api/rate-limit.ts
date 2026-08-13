@@ -103,7 +103,7 @@ const BUCKETS: Record<RateLimitBucket, BucketSpec> = {
   // rotating between them cannot multiply the budget. Stated as a RULE rather than a count,
   // because every count written here has been wrong: a route can join this bucket three ways
   // and each is invisible to a grep for the others. Directly, through
-  // guardRoute({ bucket: "ai" }) - the four /api/ai/* routes and POST /api/agent/runs.
+  // guardRoute({ bucket: "ai" }) - the /api/ai/* routes and POST /api/agent/runs.
   // Indirectly, through accessAgentRun, which passes the same bucket for all FOUR per-run
   // handlers: reading a run, cancelling one, streaming one, and fetching an artifact - note
   // that those four live in three route modules, so counting modules under-counts handlers.

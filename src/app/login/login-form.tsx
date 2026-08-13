@@ -60,7 +60,11 @@ function LoginFormInner({ authProvider }: { authProvider: string }) {
 
   const features = [
     { icon: Globe, title: "7+ Database Engines", desc: "PostgreSQL, MySQL, MongoDB, Oracle, SQL Server" },
-    { icon: Zap, title: "AI-Native Queries", desc: "Natural language to SQL with multi-model LLM support" },
+    {
+      icon: Zap,
+      title: "AI-Assisted SQL",
+      desc: "Plan explanations, safety checks and schema docs, on your own model",
+    },
     { icon: Shield, title: "Zero Install", desc: "Browser-based — deploy anywhere with Docker in seconds" },
     { icon: Layers, title: "Real-Time Monitoring", desc: "Live metrics, schema explorer, and visual ERD diagrams" },
   ];
