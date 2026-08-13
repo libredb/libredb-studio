@@ -86,7 +86,7 @@ And nothing is held back. Single sign-on, ER diagrams, the AI assistant and the 
 - **Deploys next to the data**: container, Helm chart, OpenShift operator, one-click PaaS template, or embedded via npm.
 - **Ten engines, one interface**: PostgreSQL, MySQL, Oracle, SQL Server, SQLite, MongoDB, Redis, Couchbase, ClickHouse, Druid.
 - **Runs where you are**: browser, phone, Windows, Linux desktop.
-- **AI with your own model**: NL2SQL against Gemini, OpenAI, or a local LLM.
+- **AI with your own model**: natural language to SQL against Gemini, OpenAI, or a local LLM.
 - **Nothing behind a wall**: RBAC, OIDC single sign-on, query audit trail and ER diagrams all ship under MIT.
 
 <p align="center">
@@ -118,17 +118,11 @@ And nothing is held back. Single sign-on, ER diagrams, the AI assistant and the 
 
 ### Multi-Model AI Copilot
 - **Universal LLM Support**: Defaults to Gemini 2.5 Flash, but ready for OpenAI, Claude, or **Local LLMs** (Ollama/LM Studio).
-- **NL2SQL**: Generate complex queries from natural language with schema-aware context.
+- **Natural Language to SQL**: Generate complex queries from natural language with schema-aware context.
 - **Query Safety Analysis**: AI-powered pre-execution risk assessment for destructive queries (DELETE, DROP, TRUNCATE).
 - **AI Query Explainer**: EXPLAIN plans translated into plain language with optimization suggestions.
-- **AI Query Autopilot**: Automated slow query analysis with actionable index and rewrite recommendations.
 - **Schema Awareness**: AI understands your specific database structure for pinpoint accuracy.
 - **Plug & Play**: Works out of the box with zero complex configuration.
-
-<p align="center">
-  <img src="public/screenshots/nl2sql.png" alt="NL2SQL - Natural Language to SQL" width="100%" />
-  <br/><em>Ask questions in plain English and get executable SQL queries instantly.</em>
-</p>
 
 ### Pro Data Management
 - **Universal Data Grid**: Virtualized rendering (TanStack) for millions of rows.
@@ -759,7 +753,7 @@ extraEnvFrom:
 - [x] **Phase 4**: Multi-Database Support (PostgreSQL, MySQL, SQLite, MongoDB, Redis).
 - [x] **Phase 5**: Interactive ER Diagrams (Visual Schema Graph).
 - [x] **Phase 6**: Enterprise Foundation (Connection Testing, SSL/TLS, SSH Tunnel, Transaction Control, Query Cancellation).
-- [x] **Phase 7**: AI Intelligence (NL2SQL, Query Safety Analysis, AI Index Advisor, Multi-Turn Chat, Query Autopilot).
+- [x] **Phase 7**: AI Intelligence (Natural Language to SQL, Query Safety Analysis, Multi-Turn Chat).
 - [x] **Phase 8**: Analyst & Developer Tools (Data Profiler, Code Generator, Test Data Generator, Pivot Table, Column Filtering, Database Docs).
 - [x] **Phase 9**: Display Masking — Preview (column-name pattern matching, configurable rules, RBAC UI controls, client-side export/clipboard masking).
 - [x] **Phase 10**: Advanced ERD (Real FK Edges, ELK.js Auto-Layout, MiniMap, PNG/SVG Export, Compact Mode, Table Search).

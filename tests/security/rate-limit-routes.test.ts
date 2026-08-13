@@ -28,14 +28,22 @@ const mockCreateLLMProvider = mock(async () => ({ stream: async () => new Readab
 
 mock.module("@/lib/llm", () => ({ createLLMProvider: mockCreateLLMProvider }));
 
-const { POST: nl2sql } = await import("@/app/api/ai/nl2sql/route");
+// The driver was /api/ai/nl2sql until #331 T2 deleted it with the panel it served. Any route on
+// the shared `ai` bucket proves the same property, so it is now explain — the budget is metered
+// per user, not per route, which is exactly what the rotation test below asserts.
 const { POST: explain } = await import("@/app/api/ai/explain/route");
+const { POST: describeSchema } = await import("@/app/api/ai/describe-schema/route");
 
 function aiRequest(): Request {
-  return new Request("http://localhost:3000/api/ai/nl2sql", {
+  return new Request("http://localhost:3000/api/ai/explain", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ question: "how many employees", schemaContext: "", databaseType: "sqlite" }),
+    body: JSON.stringify({
+      query: "SELECT 1",
+      explainPlan: "Seq Scan on employees",
+      schemaContext: "",
+      databaseType: "sqlite",
+    }),
   });
 }
 
@@ -59,9 +67,9 @@ describe("the AI budget", () => {
     const spy = spyOn(console, "log").mockImplementation(() => {});
     try {
       for (let i = 0; i < 3; i += 1) {
-        expect((await nl2sql(aiRequest() as never)).status).toBe(200);
+        expect((await explain(aiRequest() as never)).status).toBe(200);
       }
-      const rejected = await nl2sql(aiRequest() as never);
+      const rejected = await explain(aiRequest() as never);
 
       expect(rejected.status).toBe(429);
       expect(rejected.headers.get("retry-after")).toBeTruthy();
@@ -75,11 +83,11 @@ describe("the AI budget", () => {
     const spy = spyOn(console, "log").mockImplementation(() => {});
     try {
       for (let i = 0; i < 3; i += 1) {
-        await nl2sql(aiRequest() as never);
+        await explain(aiRequest() as never);
       }
       mockCreateLLMProvider.mockClear();
 
-      await nl2sql(aiRequest() as never);
+      await explain(aiRequest() as never);
 
       expect(mockCreateLLMProvider).toHaveBeenCalledTimes(0);
     } finally {
@@ -90,15 +98,15 @@ describe("the AI budget", () => {
   test("is shared across routes, so rotating endpoints does not multiply it", async () => {
     const spy = spyOn(console, "log").mockImplementation(() => {});
     try {
-      await nl2sql(aiRequest() as never);
-      await nl2sql(aiRequest() as never);
-      await nl2sql(aiRequest() as never);
+      await explain(aiRequest() as never);
+      await explain(aiRequest() as never);
+      await explain(aiRequest() as never);
 
-      const rotated = await explain(
-        new Request("http://localhost:3000/api/ai/explain", {
+      const rotated = await describeSchema(
+        new Request("http://localhost:3000/api/ai/describe-schema", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ sql: "SELECT 1", databaseType: "sqlite" }),
+          body: JSON.stringify({ schemaContext: "employees(id, name)", databaseType: "sqlite" }),
         }) as never,
       );
 
@@ -112,12 +120,12 @@ describe("the AI budget", () => {
     const spy = spyOn(console, "log").mockImplementation(() => {});
     try {
       for (let i = 0; i < 4; i += 1) {
-        await nl2sql(aiRequest() as never);
+        await explain(aiRequest() as never);
       }
 
       mockGetSession.mockImplementation(async () => ({ role: "user", username: "other@libredb.org" }));
 
-      expect((await nl2sql(aiRequest() as never)).status).toBe(200);
+      expect((await explain(aiRequest() as never)).status).toBe(200);
     } finally {
       spy.mockRestore();
     }
@@ -127,7 +135,7 @@ describe("the AI budget", () => {
     const spy = spyOn(console, "log").mockImplementation(() => {});
     try {
       for (let i = 0; i < 8; i += 1) {
-        await nl2sql(aiRequest() as never);
+        await explain(aiRequest() as never);
       }
 
       const trips = spy.mock.calls
@@ -136,7 +144,7 @@ describe("the AI budget", () => {
 
       expect(trips).toHaveLength(1);
       expect(trips[0].actor).toBe("u@libredb.org");
-      expect(trips[0].route).toBe("POST /api/ai/nl2sql");
+      expect(trips[0].route).toBe("POST /api/ai/explain");
     } finally {
       spy.mockRestore();
     }
@@ -150,7 +158,7 @@ describe("an unauthenticated probe", () => {
     const spy = spyOn(console, "log").mockImplementation(() => {});
     try {
       for (let i = 0; i < 10; i += 1) {
-        expect((await nl2sql(aiRequest() as never)).status).toBe(401);
+        expect((await explain(aiRequest() as never)).status).toBe(401);
       }
 
       const denials = spy.mock.calls
@@ -175,7 +183,7 @@ describe("an unauthenticated probe", () => {
  * Enumerated from disk, not from a hardcoded list of route names: the threat is a route that
  * reaches a provider without one of the three controls (session, rate limit, audit), and a
  * hardcoded list only ever proves the routes someone remembered to add to it are covered. A
- * tenth AI route added later without wiring guardRoute is caught here automatically, the same
+ * fifth AI route added later without wiring guardRoute is caught here automatically, the same
  * way tests/security/route-auth.test.ts's whole-tree enumeration already catches one that skips
  * the session check - both use the same discoverRoutes() helper, so they cannot drift apart.
  */
@@ -186,15 +194,15 @@ const AI_ROUTES = discoverRoutes(AI_ROUTES_DIR);
 describe("every AI route enforces the shared budget", () => {
   // A directory-listing bug that silently finds zero routes would make the loop below run no
   // assertions at all - a vacuous pass. This is what keeps that possibility from going unnoticed.
-  test("the filesystem enumeration finds at least today's eight AI routes", () => {
-    expect(AI_ROUTES.length).toBeGreaterThanOrEqual(8);
+  test("the filesystem enumeration finds at least today's four AI routes", () => {
+    expect(AI_ROUTES.length).toBeGreaterThanOrEqual(4);
   });
 
   test("each discovered route is rejected once the shared ai bucket is already spent", async () => {
     const spy = spyOn(console, "log").mockImplementation(() => {});
     try {
       for (let i = 0; i < 3; i += 1) {
-        await nl2sql(aiRequest() as never);
+        await explain(aiRequest() as never);
       }
 
       for (const [name, load] of AI_ROUTES) {

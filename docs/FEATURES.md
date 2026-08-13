@@ -33,10 +33,10 @@
 *   **Natural Language to SQL:** Convert natural language requests into high-precision SQL code.
 *   **AI SQL Explanation:** One-click "AI Explain" button to translate complex SQL logic into plain English for easier debugging and onboarding.
 *   **Schema-Aware Generation:** AI automatically understands your tables and columns for accurate query generation.
-*   **Interactive UI:** Floating in-editor AI command bar ("Expert DBA Mode"), toggled from the editor toolbar, plus a dedicated NL2SQL conversation panel in the results workspace.
+*   **Interactive UI:** Floating in-editor AI command bar ("Expert DBA Mode"), toggled from the editor toolbar.
 *   **Streaming Responses:** Real-time SQL generation streamed token-by-token from the configured model.
 *   **Flexible LLM Support:** Choose Gemini (default `gemini-2.5-flash`), OpenAI, Ollama, or a custom provider via environment configuration.
-*   **AI Intelligence Suite:** Index Advisor (recommends indexes from slow-query patterns), Query Impact Analysis, Query Safety checks, and AI-generated schema descriptions.
+*   **AI Intelligence Suite:** Query Safety checks and AI-generated schema descriptions.
 
 ### 6. Multi-Database Engine Support
 *   **Strategy Pattern Architecture:** Modular, extensible database provider system with clear separation by database category.
@@ -46,11 +46,11 @@
     *   **SQLite:** File-based database support via the runtime's built-in driver — `bun:sqlite` under Bun, `node:sqlite` under Node (the storage layer uses `better-sqlite3`).
     *   **Oracle:** Full support with connection pooling (`oracledb`); introspection/monitoring via the `ALL_*`/`DBA_*` data-dictionary views.
     *   **SQL Server:** Full support with connection pooling (`mssql`); monitoring via DMVs (`sys.dm_*`).
-    *   **ClickHouse:** Full support with **no driver dependency** — SQL over the documented HTTP interface, so the SQL editor, limiter and NL2SQL all apply. Column types read verbatim from `system.columns`, JSON EXPLAIN plan trees, and `OPTIMIZE TABLE` / table-statistics / query-kill maintenance.
-    *   **Apache Druid:** Read-only support with **no driver dependency** — SQL over `POST /druid/v2/sql` on the Router (8888) or the Broker (8082), so the SQL editor, limiter and NL2SQL all apply. Datasources and column types from `INFORMATION_SCHEMA`, native-query EXPLAIN plan trees, and monitoring from `sys.segments` / `sys.servers` / `sys.tasks`. Read-only is the engine, not the integration: Druid SQL has no `UPDATE`, no `DELETE` and no `CREATE TABLE`, and no maintenance operation is reachable from SQL, so those controls are reported as unsupported instead of failing when used.
+    *   **ClickHouse:** Full support with **no driver dependency** — SQL over the documented HTTP interface, so the SQL editor and limiter both apply. Column types read verbatim from `system.columns`, JSON EXPLAIN plan trees, and `OPTIMIZE TABLE` / table-statistics / query-kill maintenance.
+    *   **Apache Druid:** Read-only support with **no driver dependency** — SQL over `POST /druid/v2/sql` on the Router (8888) or the Broker (8082), so the SQL editor and limiter both apply. Datasources and column types from `INFORMATION_SCHEMA`, native-query EXPLAIN plan trees, and monitoring from `sys.segments` / `sys.servers` / `sys.tasks`. Read-only is the engine, not the integration: Druid SQL has no `UPDATE`, no `DELETE` and no `CREATE TABLE`, and no maintenance operation is reachable from SQL, so those controls are reported as unsupported instead of failing when used.
 *   **Document Databases:**
     *   **MongoDB:** Full support with official driver, JSON-based MQL queries, automatic schema inference, and aggregation pipelines.
-    *   **Couchbase:** Full support with **no driver dependency** — SQL++ over the documented Query and management REST APIs, so the SQL editor, limiter and NL2SQL all apply. Buckets/scopes/collections flattened into the schema explorer, `INFER`-based column inference, visual EXPLAIN plans, and read-your-writes query consistency by default.
+    *   **Couchbase:** Full support with **no driver dependency** — SQL++ over the documented Query and management REST APIs, so the SQL editor and limiter both apply. Buckets/scopes/collections flattened into the schema explorer, `INFER`-based column inference, visual EXPLAIN plans, and read-your-writes query consistency by default.
 *   **Key-Value Stores:**
     *   **Redis:** Full support via the official `ioredis` driver — plain-command and JSON query styles, prefix-grouped key "schema" through a non-blocking `SCAN`, and `INFO`/`SLOWLOG`/`CLIENT LIST`-derived health and metrics.
 *   **Embedded Stores:**

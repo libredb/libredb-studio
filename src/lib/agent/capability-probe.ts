@@ -6,7 +6,8 @@
  * stream. A model that cannot do those is not a slower agent — it is a run that
  * would stall, or worse, one that answers in prose the run loop then treats as a
  * plan. So the run service asks this module first, and a model that fails is
- * refused with a message that points the user at the surfaces that DO work.
+ * refused with a message naming the capabilities the probe could not establish
+ * and the one action that answers them: configure a different model.
  *
  * The probe establishes capabilities POSITIVELY. There is no capability table
  * keyed on model names: for the `ollama` and `custom` kinds the model is whatever
@@ -21,11 +22,11 @@
  *  - **A failure that says nothing about the model reaches no verdict.** A bad
  *    key, a quota, an unpaid account, a wrong model id, a 5xx, a dropped socket
  *    and an abort all THROW (in this repository's `LLMError` vocabulary) rather
- *    than returning a refusal — each of them breaks the AI Assistant identically,
- *    so a refusal pointing the user there would be a dead end. Only a completed
- *    answer that fell short, or one of the `REQUEST_REFUSED_STATUSES` below,
- *    produces a verdict. Same discipline as the deadline's two deny codes:
- *    separate causes get separate vocabularies.
+ *    than returning a refusal — none of them is evidence about the MODEL, and a
+ *    refusal here says "configure a different model", which is the one change that
+ *    would not have helped. Only a completed answer that fell short, or one of the
+ *    `REQUEST_REFUSED_STATUSES` below, produces a verdict. Same discipline as the
+ *    deadline's two deny codes: separate causes get separate vocabularies.
  *  - **One round trip, no retries.** A preflight that costs several calls is a
  *    preflight users turn off. `maxRetries: 0`; a transient failure surfaces as
  *    inconclusive and it is the caller's call whether to start the run later.
@@ -86,7 +87,7 @@ export interface AgentCapabilityRefusal {
    */
   readonly missing: readonly AgentModelCapability[];
   readonly detail?: string;
-  /** User-facing, and points at the features that work without tool calling. */
+  /** User-facing: what could not be established, and that another model is the way forward. */
   readonly message: string;
 }
 
@@ -139,13 +140,22 @@ const DETAIL_LIMIT = 200;
 // probe's observation of what the model did. A single "the endpoint reported"
 // prefix over both would hand a model's invented tool name — attacker-controlled
 // text — the authority of the server.
+//
+// The message names the shortfall and ONE action, and no other surface (#331 T2).
+// It used to send the user to the NL2SQL panel and the AI Assistant as toolless
+// alternatives. That is the wrong advice independently of which of those surfaces
+// still ships: the user asked for an agent run, and a toolless surface cannot
+// answer that question - it has no way to reach the database at all. A refusal
+// that redirects to a surface which cannot do the refused thing turns one clear
+// failure into a second, slower one. What remains is the true half: the probe
+// could not establish these capabilities, and a different model is the way forward.
 const refusalMessage = (
   provider: LLMProviderType,
   modelId: string,
   missing: readonly AgentModelCapability[],
   detail?: string,
 ): string =>
-  `The model "${modelId}" (${provider}) cannot drive an agent run: the capability probe could not establish ${missing.map((capability) => CAPABILITY_LABELS[capability]).join(", ")}. ${detail ? `${detail} ` : ""}Use the AI Assistant and Natural Language Query features instead, which need no tool calling, or configure a model that supports tool calling.`;
+  `The model "${modelId}" (${provider}) cannot drive an agent run: the capability probe could not establish ${missing.map((capability) => CAPABILITY_LABELS[capability]).join(", ")}. ${detail ? `${detail} ` : ""}Configure a different model and start the run again.`;
 
 const unknownToolDetail = (toolName: string): string =>
   `The model called a tool that was not offered: "${clip(toolName)}".`;
@@ -276,10 +286,10 @@ type ProbeFailureVerdict =
  *
  * Every other status is about the reach rather than the model: 401/403 a
  * credential, 429 a quota, 402 an unpaid account, 404 a wrong model id or base
- * URL, 405/408 a wrong endpoint or a timeout, 5xx an outage. Each of those breaks
- * the AI Assistant in exactly the same way, so answering them with a refusal that
- * says "use the AI Assistant instead" would send the user down a dead end. They
- * get no verdict.
+ * URL, 405/408 a wrong endpoint or a timeout, 5xx an outage. Every one of those
+ * would answer the same way for any other model behind the same configuration, so
+ * answering them with a refusal that says "configure a different model" would send
+ * the user to change the one thing that is not at fault. They get no verdict.
  */
 const REQUEST_REFUSED_STATUSES: readonly number[] = [400, 422];
 

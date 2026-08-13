@@ -26,7 +26,7 @@ import { logger } from "@/lib/logger";
 export type GuardResult = { response: NextResponse } | { session: UserPayload };
 
 export async function guardRoute(opts: {
-  /** "POST /api/ai/nl2sql" - recorded verbatim in the audit trail. */
+  /** "POST /api/ai/explain" - recorded verbatim in the audit trail. */
   route: string;
   bucket: "ai" | "query";
   request: Request;

@@ -7,8 +7,6 @@ import type { MaskingConfig } from "@/lib/data-masking";
 import type { AgentArtifactHydration } from "@/components/agent/hydration";
 import type { CellChange } from "@/components/ResultsGrid";
 import { ResultsGrid } from "@/components/ResultsGrid";
-import { NL2SQLPanel } from "@/components/NL2SQLPanel";
-import { AIAutopilotPanel } from "@/components/AIAutopilotPanel";
 import { PivotTable } from "@/components/PivotTable";
 import { DatabaseDocs } from "@/components/DatabaseDocs";
 import { VisualExplain } from "@/components/VisualExplain";
@@ -28,7 +26,6 @@ import {
   GitCompare,
   LayoutDashboard,
   LayoutGrid,
-  Sparkles,
   Terminal,
   X,
   Zap,
@@ -48,8 +45,6 @@ export type BottomPanelMode =
   | "history"
   | "saved"
   | "charts"
-  | "nl2sql"
-  | "autopilot"
   | "pivot"
   | "docs"
   | "schemadiff"
@@ -114,8 +109,6 @@ interface BottomPanelProps {
   metadata: ProviderMetadata | null;
   historyKey: number;
   savedKey: number;
-  isNL2SQLOpen: boolean;
-  onSetIsNL2SQLOpen: (open: boolean) => void;
   // Masking
   maskingEnabled: boolean;
   onToggleMasking: (() => void) | undefined;
@@ -128,7 +121,6 @@ interface BottomPanelProps {
   onApplyChanges: () => void;
   onDiscardChanges: () => void;
   // Actions
-  onExecuteQuery: (query: string) => void;
   onLoadQuery: (query: string) => void;
   onLoadMore: (() => void) | undefined;
   isLoadingMore: boolean | undefined;
@@ -152,8 +144,6 @@ export function BottomPanel({
   metadata,
   historyKey,
   savedKey,
-  isNL2SQLOpen,
-  onSetIsNL2SQLOpen,
   maskingEnabled,
   onToggleMasking,
   userRole,
@@ -163,7 +153,6 @@ export function BottomPanel({
   onCellChange,
   onApplyChanges,
   onDiscardChanges,
-  onExecuteQuery,
   onLoadQuery,
   onLoadMore,
   isLoadingMore,
@@ -227,18 +216,6 @@ export function BottomPanel({
       activeClass: "text-cyan-400 border-cyan-500 bg-white/5",
     },
     {
-      key: "nl2sql",
-      label: "NL2SQL",
-      icon: <Sparkles strokeWidth={1.5} className="w-3 h-3" />,
-      activeClass: "text-violet-400 border-violet-500 bg-white/5",
-    },
-    {
-      key: "autopilot",
-      label: "Autopilot",
-      icon: <Zap strokeWidth={1.5} className="w-3 h-3" />,
-      activeClass: "text-cyan-400 border-cyan-500 bg-white/5",
-    },
-    {
       key: "pivot",
       label: "Pivot",
       icon: <Columns3 strokeWidth={1.5} className="w-3 h-3" />,
@@ -274,10 +251,7 @@ export function BottomPanel({
             <button
               key={tab.key}
               data-testid={tab.key === "explain" ? "bottom-panel-tab-explain" : undefined}
-              onClick={() => {
-                onSetMode(tab.key);
-                if (tab.key === "nl2sql") onSetIsNL2SQLOpen(true);
-              }}
+              onClick={() => onSetMode(tab.key)}
               className={cn(
                 "h-full px-3 text-xs font-medium transition-all border-b-2 flex items-center gap-2",
                 mode === tab.key ? tab.activeClass : "text-zinc-500 border-transparent hover:text-zinc-300",
@@ -353,29 +327,7 @@ export function BottomPanel({
       )}
 
       <div className="flex-1 overflow-hidden relative">
-        {mode === "nl2sql" ? (
-          <NL2SQLPanel
-            isOpen={isNL2SQLOpen}
-            onClose={() => {
-              onSetIsNL2SQLOpen(false);
-              onSetMode("results");
-            }}
-            onExecuteQuery={onExecuteQuery}
-            onLoadQuery={(q) => {
-              onLoadQuery(q);
-              onSetMode("results");
-            }}
-            schemaContext={schemaContext}
-            databaseType={activeConnection?.type}
-            queryLanguage={metadata?.capabilities.queryLanguage}
-          />
-        ) : mode === "autopilot" ? (
-          <AIAutopilotPanel
-            connection={activeConnection}
-            schemaContext={schemaContext}
-            onExecuteQuery={onExecuteQuery}
-          />
-        ) : mode === "pivot" ? (
+        {mode === "pivot" ? (
           <PivotTable
             result={currentTab.result}
             onLoadQuery={(q) => {

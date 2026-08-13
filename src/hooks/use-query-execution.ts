@@ -78,17 +78,7 @@ export function useQueryExecution({
   } | null>(null);
   const [historyKey, setHistoryKey] = useState(0);
   const [bottomPanelMode, setBottomPanelMode] = useState<
-    | "results"
-    | "explain"
-    | "history"
-    | "saved"
-    | "charts"
-    | "nl2sql"
-    | "autopilot"
-    | "pivot"
-    | "docs"
-    | "schemadiff"
-    | "dashboard"
+    "results" | "explain" | "history" | "saved" | "charts" | "pivot" | "docs" | "schemadiff" | "dashboard"
   >("results");
 
   // Capability honesty: if the active provider has no explainFormat (e.g. the

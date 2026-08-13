@@ -107,16 +107,11 @@ PostgreSQL · MySQL · Oracle · SQL Server · SQLite · MongoDB · Redis · Cou
 ### AIアシスタント（任意・自分のモデルで）
 
 - **ベンダー非依存**：既定はGemini 2.5 Flash。OpenAI、Claude、**ローカルLLM**（Ollama / LM Studio）にも対応。
-- **NL2SQL**：スキーマを踏まえた文脈で、自然言語から複雑なクエリを生成。
+- **自然言語からSQL**：スキーマを踏まえた文脈で、自然言語から複雑なクエリを生成。
 - **クエリ安全性分析**：DELETE、DROP、TRUNCATEなど破壊的な操作を実行前に評価。
 - **実行計画の解説**：EXPLAINを平易な言葉に翻訳し、改善案を提示。
-- **スロークエリのAutopilot**：スロークエリを分析し、インデックスや書き換えを具体的に提案。
 
 **キーを設定しなければ、AIは一切呼び出されません。** 既定では何もネットワークの外に出ません。
-
-<p align="center">
-  <img src="public/screenshots/nl2sql.png" alt="NL2SQL" width="100%" />
-</p>
 
 ### データ操作
 

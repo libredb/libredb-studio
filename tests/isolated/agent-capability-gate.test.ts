@@ -56,7 +56,7 @@ const REFUSAL = {
     modelId: "gemini-3.5-flash-lite",
     capabilities: { toolCalling: false, structuredOutput: false, streaming: true },
     missing: ["toolCalling" as const],
-    message: "This model does not call tools. Use the AI Assistant or Natural Language Query instead.",
+    message: "This model does not call tools. Configure a different model and start the run again.",
   },
 };
 

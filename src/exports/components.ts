@@ -8,7 +8,6 @@ export { DataCharts } from "../components/DataCharts";
 export { CodeGenerator } from "../components/CodeGenerator";
 export { TestDataGenerator } from "../components/TestDataGenerator";
 export { VisualExplain } from "../components/VisualExplain";
-export { NL2SQLPanel } from "../components/NL2SQLPanel";
 export { DataProfiler } from "../components/DataProfiler";
 export { QuerySafetyDialog } from "../components/QuerySafetyDialog";
 export { ConnectionModal } from "../components/ConnectionModal";

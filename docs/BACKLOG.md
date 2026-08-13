@@ -396,10 +396,9 @@ not.
 
 ### H2. A 429 should produce a Retry-After-aware toast
 
-`src/hooks/use-query-execution.ts:277` and `src/components/NL2SQLPanel.tsx:126` already read
-`.error` from any non-ok body, so a rate-limited request shows its message today. What they do not
-do is read the `Retry-After` header and tell the user how long to wait. Done when the toast names
-the wait.
+`src/hooks/use-query-execution.ts:267-269` already reads `.error` from any non-ok body, so a
+rate-limited request shows its message today. What it does not do is read the `Retry-After` header
+and tell the user how long to wait. Done when the toast names the wait.
 
 ### H3. Audit events do not record a user agent
 
@@ -874,8 +873,8 @@ the agent at all: the registry is keyed on `LLMProviderType`, the settings surfa
 (`src/lib/llm/types.ts`), and that union is what `LLM_PROVIDER` resolves against
 (`src/lib/llm/utils/config.ts`). Adding `anthropic` there makes `LLM_PROVIDER=anthropic` a
 selectable setting for the whole application, and `src/lib/llm/factory.ts` would then have to build a
-chat provider for it or throw - so the AI Assistant and the Natural Language Query panel would be
-broken for exactly the users who configured it.
+chat provider for it or throw - so every surface that resolves a provider through the factory would
+be broken for exactly the users who configured it.
 
 Serving it properly therefore means a `src/lib/llm/providers/anthropic.ts` that speaks Anthropic's
 Messages streaming protocol: `createSSEParser`'s `extractContent` in

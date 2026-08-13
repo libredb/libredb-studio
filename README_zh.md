@@ -107,16 +107,11 @@ PostgreSQL · MySQL · Oracle · SQL Server · SQLite · MongoDB · Redis · Cou
 ### AI 助手（可选，用你自己的模型）
 
 - **不绑定厂商**：默认 Gemini 2.5 Flash，同样支持 OpenAI、Claude，或 **本地模型**（Ollama / LM Studio）。
-- **NL2SQL**：用自然语言生成复杂查询，带 schema 上下文。
+- **自然语言转 SQL**：用自然语言生成复杂查询，带 schema 上下文。
 - **查询安全分析**：执行前对 DELETE、DROP、TRUNCATE 这类破坏性语句做风险评估。
 - **执行计划翻译**：把 EXPLAIN 翻成人话，并给出优化建议。
-- **慢查询 Autopilot**：自动分析慢查询，给出可落地的索引和改写建议。
 
 **不配置密钥，AI 就不会发起任何调用**，默认不会有任何数据离开你的网络。
-
-<p align="center">
-  <img src="public/screenshots/nl2sql.png" alt="NL2SQL" width="100%" />
-</p>
 
 ### 数据处理
 

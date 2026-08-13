@@ -17,7 +17,7 @@
       "author": "Maintainer"
     },
     {
-      "content": "The frontend architecture centers around the Studio component (src/components/Studio.tsx) as the main application shell. Key sub-systems include: Monaco-based QueryEditor, virtualized ResultsGrid (TanStack Table + react-virtual), SchemaExplorer with tree view, SchemaDiff with migration SQL generation, SchemaDiagram with xyflow/React Flow, real-time MonitoringDashboard with Recharts, and AI-powered panels (NL2SQL, AIAutopilot, QuerySafety).",
+      "content": "The frontend architecture centers around the Studio component (src/components/Studio.tsx) as the main application shell. Key sub-systems include: Monaco-based QueryEditor, virtualized ResultsGrid (TanStack Table + react-virtual), SchemaExplorer with tree view, SchemaDiff with migration SQL generation, SchemaDiagram with xyflow/React Flow, real-time MonitoringDashboard with Recharts, and AI-powered surfaces (QuerySafetyDialog, VisualExplain).",
       "author": "Maintainer"
     },
     {
@@ -83,7 +83,7 @@
     },
     {
       "title": "AI-Powered Features",
-      "purpose": "Document all AI API endpoints and their corresponding frontend panels. Cover: AI Chat (src/app/api/ai/chat/), Natural Language to SQL (src/app/api/ai/nl2sql/ + src/components/NL2SQLPanel.tsx), SQL Explain (src/app/api/ai/explain/ + src/components/VisualExplain.tsx), Query Safety analysis (src/app/api/ai/query-safety/ + src/components/QuerySafetyDialog.tsx), AI Autopilot (src/app/api/ai/autopilot/ + src/components/AIAutopilotPanel.tsx), Impact analysis (src/app/api/ai/impact/), Schema description (src/app/api/ai/describe-schema/), and Index advisor (src/app/api/ai/index-advisor/).",
+      "purpose": "Document all AI API endpoints and their corresponding frontend surfaces. Cover: AI Chat (src/app/api/ai/chat/), SQL Explain (src/app/api/ai/explain/ + src/components/VisualExplain.tsx), Query Safety analysis (src/app/api/ai/query-safety/ + src/components/QuerySafetyDialog.tsx), and Schema description (src/app/api/ai/describe-schema/).",
       "parent": "AI & LLM System"
     },
     {
@@ -93,7 +93,7 @@
     },
     {
       "title": "API Layer",
-      "purpose": "Document the REST API architecture in src/app/api/. Cover all endpoint groups: auth (login, logout, me, OIDC), database operations (query, multi-query, schema, health, test-connection, transaction, maintenance, pool-stats, provider-meta, schema-snapshot, cancel, monitoring, profile), AI endpoints (chat, nl2sql, explain, query-safety, impact, autopilot, describe-schema, index-advisor), admin endpoints (fleet-health, audit). Explain request/response patterns, error handling, and authentication requirements.",
+      "purpose": "Document the REST API architecture in src/app/api/. Cover all endpoint groups: auth (login, logout, me, OIDC), database operations (query, multi-query, schema, health, test-connection, transaction, maintenance, pool-stats, provider-meta, schema-snapshot, cancel, monitoring, profile), AI endpoints (chat, explain, query-safety, describe-schema), admin endpoints (fleet-health, audit). Explain request/response patterns, error handling, and authentication requirements.",
       "parent": "Architecture Overview"
     },
     {
@@ -193,7 +193,7 @@
     },
     {
       "title": "Glossary",
-      "purpose": "Define the project-specific terms, abbreviations, and domain concepts a new contributor needs to read the rest of the wiki. Define at least: Provider (a Strategy-Pattern adapter for a database or LLM); type-id (a provider's canonical identifier, e.g. mssql not sqlserver); the SQLBaseProvider vs BaseDatabaseProvider split; tri-sync (the invariant that code, docs, and tests for a provider stay in lockstep in the same PR); Storage Layer (where user data such as connections and history persists - distinct from the databases the user queries); the embedding layer / @libredb/studio package (src/workspace + src/exports, built via build:lib); standalone vs embedded run modes; RBAC and the src/proxy.ts middleware; write-through cache (localStorage serves reads, mutations are pushed to the server debounced); OIDC/PKCE auth; NL2SQL and the AI Autopilot/Query Safety features. Keep each definition to one or two sentences and link to the relevant wiki page."
+      "purpose": "Define the project-specific terms, abbreviations, and domain concepts a new contributor needs to read the rest of the wiki. Define at least: Provider (a Strategy-Pattern adapter for a database or LLM); type-id (a provider's canonical identifier, e.g. mssql not sqlserver); the SQLBaseProvider vs BaseDatabaseProvider split; tri-sync (the invariant that code, docs, and tests for a provider stay in lockstep in the same PR); Storage Layer (where user data such as connections and history persists - distinct from the databases the user queries); the embedding layer / @libredb/studio package (src/workspace + src/exports, built via build:lib); standalone vs embedded run modes; RBAC and the src/proxy.ts middleware; write-through cache (localStorage serves reads, mutations are pushed to the server debounced); OIDC/PKCE auth; the Query Safety and Schema Description AI features. Keep each definition to one or two sentences and link to the relevant wiki page."
     }
   ]
 }

@@ -162,7 +162,6 @@ export default function Studio() {
   const [savedKey, setSavedKey] = useState(0);
   const [activeMobileTab, setActiveMobileTab] = useState<"database" | "schema" | "editor">("editor");
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
-  const [isNL2SQLOpen, setIsNL2SQLOpen] = useState(false);
   const [profilerTable, setProfilerTable] = useState<string | null>(null);
   const [codeGenTable, setCodeGenTable] = useState<string | null>(null);
   const [testDataTable, setTestDataTable] = useState<string | null>(null);
@@ -563,8 +562,6 @@ export default function Studio() {
                         metadata={metadata}
                         historyKey={queryExec.historyKey}
                         savedKey={savedKey}
-                        isNL2SQLOpen={isNL2SQLOpen}
-                        onSetIsNL2SQLOpen={setIsNL2SQLOpen}
                         maskingEnabled={effectiveMasking}
                         onToggleMasking={
                           userCanToggle
@@ -584,7 +581,6 @@ export default function Studio() {
                         onCellChange={editing.handleCellChange}
                         onApplyChanges={editing.handleApplyChanges}
                         onDiscardChanges={editing.handleDiscardChanges}
-                        onExecuteQuery={(q) => queryExec.executeQuery(q)}
                         onLoadQuery={(q) => tabMgr.updateCurrentTab({ query: q })}
                         onLoadMore={
                           tabMgr.currentTab.result?.pagination?.hasMore ? queryExec.handleLoadMore : undefined

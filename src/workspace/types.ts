@@ -67,9 +67,21 @@ export interface WorkspaceQueryResult {
  * When the embedded shell does grow one, the flag arrives in the same change as
  * the code that reads it — additive and optional, like every field here, because
  * this interface is implemented outside this repository.
+ *
+ * There is also no `ai` flag any more (#331 T2). It gated exactly one thing — the
+ * NL2SQL panel's open state at the two `StudioWorkspace` call sites — and that
+ * panel is gone, so the field would have been read nowhere at all. That is a
+ * different case from the `inlineEditing` note below, which is kept: inlineEditing
+ * describes a capability that still exists in the standalone shell and is expected
+ * to become real in the embedded one (#279), so a host that sets it is describing
+ * something coherent. `ai` would have described a surface this package no longer
+ * contains — a published flag that gates nothing, which is worse than absent
+ * because a host cannot tell by reading it. Removing it is a breaking change for
+ * any consumer of the published `@libredb/studio` package that sets the flag, and
+ * this docblock is where that change is recorded; libredb-platform was checked on
+ * 2026-08-13 and never set it.
  */
 export interface WorkspaceFeatures {
-  ai?: boolean;
   charts?: boolean;
   codeGenerator?: boolean;
   testDataGenerator?: boolean;
@@ -98,7 +110,6 @@ export interface WorkspaceFeatures {
 }
 
 export const DEFAULT_WORKSPACE_FEATURES: Required<WorkspaceFeatures> = {
-  ai: false,
   charts: true,
   codeGenerator: true,
   testDataGenerator: true,

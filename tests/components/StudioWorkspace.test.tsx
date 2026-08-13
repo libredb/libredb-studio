@@ -315,7 +315,6 @@ function renderWorkspace(props: Partial<StudioWorkspaceProps> = {}) {
 }
 
 const ALL_FEATURES_OFF = {
-  ai: false,
   charts: false,
   codeGenerator: false,
   testDataGenerator: false,
@@ -700,15 +699,11 @@ describe("StudioWorkspace", () => {
     expect(capturedSidebarProps.onProfileTable).toBeUndefined();
     expect(capturedSidebarProps.onGenerateCode).toBeUndefined();
     expect(capturedSidebarProps.onGenerateTestData).toBeUndefined();
-    expect(capturedBottomPanelProps.isNL2SQLOpen).toBe(false);
     // Import and save become noops
     act(() => (capturedQueryToolbarProps.onImport as () => void)());
     expect(queryByTestId("dataimportmodal")).toBeNull();
     act(() => (capturedQueryToolbarProps.onSaveQuery as () => void)());
     expect(queryByTestId("savequerymodal")).toBeNull();
-    // NL2SQL setter is a noop
-    act(() => (capturedBottomPanelProps.onSetIsNL2SQLOpen as (v: boolean) => void)(true));
-    expect(capturedBottomPanelProps.isNL2SQLOpen).toBe(false);
   });
 
   // =========================================================================
@@ -762,13 +757,6 @@ describe("StudioWorkspace", () => {
     } finally {
       globalThis.fetch = originalFetch;
     }
-  });
-
-  test("features.ai enables the NL2SQL open state round-trip", () => {
-    renderWorkspace({ features: { ai: true } });
-    expect(capturedBottomPanelProps.isNL2SQLOpen).toBe(false);
-    act(() => (capturedBottomPanelProps.onSetIsNL2SQLOpen as (v: boolean) => void)(true));
-    expect(capturedBottomPanelProps.isNL2SQLOpen).toBe(true);
   });
 
   // =========================================================================
@@ -831,10 +819,8 @@ describe("StudioWorkspace", () => {
   // BottomPanel callbacks
   // =========================================================================
 
-  test("bottom panel onExecuteQuery and onLoadQuery delegate", () => {
+  test("bottom panel onLoadQuery delegates", () => {
     renderWorkspace();
-    act(() => (capturedBottomPanelProps.onExecuteQuery as (q: string) => void)("SELECT 5"));
-    expect(mockExecuteQuery).toHaveBeenCalledWith("SELECT 5");
     act(() => (capturedBottomPanelProps.onLoadQuery as (q: string) => void)("SELECT 6"));
     expect(mockUpdateCurrentTab).toHaveBeenCalledWith({ query: "SELECT 6" });
     expect(capturedBottomPanelProps.onSetMode).toBe(mockSetBottomPanelMode);

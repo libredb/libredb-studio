@@ -392,10 +392,15 @@ describe("the embedded workspace declares no agent capability", () => {
    * read — the state the deprecated `inlineEditing` note records this repository
    * as avoiding (#288). Pinned as an exact key set so adding one goes red here and
    * sends the reader to that note.
+   *
+   * Nine since #331 T2: `ai` gated the NL2SQL panel's open state and nothing else,
+   * so deleting the panel left the flag reading nowhere. It was removed rather than
+   * deprecated — the same note in `types.ts` says why it is not the `inlineEditing`
+   * case — which is a breaking change for any consumer of the published package that
+   * sets the flag.
    */
-  test("the published feature flags are exactly the ten that exist today", () => {
+  test("the published feature flags are exactly the nine that exist today", () => {
     expect(Object.keys(DEFAULT_WORKSPACE_FEATURES).sort()).toEqual([
-      "ai",
       "charts",
       "codeGenerator",
       "connectionManagement",

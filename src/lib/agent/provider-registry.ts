@@ -43,7 +43,7 @@
  * settings surface has no `anthropic` kind, and adding one is a change to
  * `src/lib/llm`'s own union, factory, validation and providers — a chat-surface
  * feature in its own right, since `LLM_PROVIDER=anthropic` would then have to work
- * for the AI Assistant too, not only for a run. Deferred deliberately rather than
+ * for every surface that resolves a provider, not only for a run. Deferred rather than
  * half-built; the reasoning and what closing it takes are in `docs/BACKLOG.md` B2.
  */
 

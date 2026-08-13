@@ -177,7 +177,7 @@ describe("POST /api/agent/runs", () => {
         modelId: "some-model",
         capabilities: { toolCalling: false, structuredOutput: false, streaming: true },
         missing: ["toolCalling"],
-        message: "This model does not call tools. Use the AI Assistant or Natural Language Query instead.",
+        message: "This model does not call tools. Configure a different model and start the run again.",
       },
     }));
 

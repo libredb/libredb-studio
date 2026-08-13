@@ -221,19 +221,22 @@ describe("routes that reach a provider require a session", () => {
 
   // A directory-listing bug that silently finds zero routes would make every test below
   // vacuously pass (a `for` loop over an empty array runs no assertions). This is the guard
-  // that keeps the guard honest: today there are at least 25 provider-reaching routes (8 AI +
-  // 16 db/ + admin/fleet-health), and the enumeration must find at least that many, or this
-  // test suite is no longer proving what it claims to prove.
-  test("the filesystem enumeration finds at least today's 25 provider-reaching routes", () => {
-    expect(PROVIDER_ROUTES.length).toBeGreaterThanOrEqual(25);
+  // that keeps the guard honest: today there are 22 provider-reaching routes (16 db/ + 4 AI +
+  // admin/fleet-health + agent/runs), and the enumeration must find at least that many, or
+  // this test suite is no longer proving what it claims to prove.
+  test("the filesystem enumeration finds at least today's 22 provider-reaching routes", () => {
+    expect(PROVIDER_ROUTES.length).toBeGreaterThanOrEqual(22);
   });
 
   // A recursion bug that only ever looked one level deep would still pass the check above by
   // over-counting somewhere else; this independently confirms the AI routes specifically -
   // exactly one directory level under src/app/api/ai/ - are still found by the same walk that
   // also has to reach three levels deep for db/schema/list and db/schema/relations.
-  test("the same walk finds at least today's eight AI routes", () => {
-    expect(ALL_ROUTES.filter(([key]) => key.startsWith("ai/")).length).toBeGreaterThanOrEqual(8);
+  //
+  // Four since #331 T2 removed nl2sql, autopilot, impact and index-advisor with the panels they
+  // served: chat, describe-schema, explain, query-safety.
+  test("the same walk finds at least today's four AI routes", () => {
+    expect(ALL_ROUTES.filter(([key]) => key.startsWith("ai/")).length).toBeGreaterThanOrEqual(4);
   });
 
   // A typo'd or stale allowlist key silently exempts fewer routes than intended (or a route

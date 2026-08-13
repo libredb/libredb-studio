@@ -30,7 +30,7 @@
 Couchbase is a distributed document database whose query language, **SQL++**, is a real SQL dialect.
 That makes it an easier fit for this codebase than MongoDB was: the provider declares
 `queryLanguage: "sql"` and inherits Monaco SQL highlighting, the shared query limiter, the `"sql"`
-tab type, NL2SQL, and saved queries with no additional code.
+tab type and saved queries with no additional code.
 
 The two things that *are* Couchbase-shaped, and which every design decision below flows from:
 

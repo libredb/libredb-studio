@@ -171,7 +171,6 @@ export function StudioWorkspace({
   const [isSaveQueryModalOpen, setIsSaveQueryModalOpen] = useState(false);
   const [savedKey, setSavedKey] = useState(0);
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
-  const [isNL2SQLOpen, setIsNL2SQLOpen] = useState(false);
   const [profilerTable, setProfilerTable] = useState<string | null>(null);
   const [codeGenTable, setCodeGenTable] = useState<string | null>(null);
   const [testDataTable, setTestDataTable] = useState<string | null>(null);
@@ -403,8 +402,6 @@ export function StudioWorkspace({
                         metadata={null}
                         historyKey={queryExec.historyKey}
                         savedKey={savedKey}
-                        isNL2SQLOpen={features.ai ? isNL2SQLOpen : false}
-                        onSetIsNL2SQLOpen={features.ai ? setIsNL2SQLOpen : noop}
                         maskingEnabled={false}
                         onToggleMasking={undefined}
                         userRole={currentUser?.role}
@@ -414,7 +411,6 @@ export function StudioWorkspace({
                         onCellChange={noop as never}
                         onApplyChanges={noop}
                         onDiscardChanges={noop}
-                        onExecuteQuery={(q) => queryExec.executeQuery(q)}
                         onLoadQuery={(q) => tabMgr.updateCurrentTab({ query: q })}
                         onLoadMore={
                           tabMgr.currentTab.result?.pagination?.hasMore ? queryExec.handleLoadMore : undefined

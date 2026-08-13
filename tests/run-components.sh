@@ -199,11 +199,9 @@ run_group "Group 11/12: Smoke tests" \
   tests/components/agent/AgentRail.test.tsx \
   tests/components/admin/MonitoringEmbed.test.tsx \
   tests/components/VisualExplain.test.tsx \
-  tests/components/AIAutopilotPanel.test.tsx \
   tests/components/DatabaseDocs.test.tsx \
   tests/components/SnapshotTimeline.test.tsx \
   tests/components/PivotTable.test.tsx \
-  tests/components/NL2SQLPanel.test.tsx \
   tests/components/CodeGenerator.test.tsx \
   tests/components/TestDataGenerator.test.tsx \
   tests/components/CreateTableModal.test.tsx \

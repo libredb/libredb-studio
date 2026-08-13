@@ -99,7 +99,18 @@ const BUCKETS: Record<RateLimitBucket, BucketSpec> = {
     maxDefault: 20,
     windowDefault: 300,
   },
-  // Shared across all eight AI routes: rotating routes must not multiply the budget.
+  // Shared by every route that reaches an LLM provider or touches an agent run, so that
+  // rotating between them cannot multiply the budget. Deliberately stated as a RULE and not as
+  // a count: the count has been written wrong four times, because a route can spend this bucket
+  // two ways and each way is invisible to a grep for the other. Most spend it through
+  // guardRoute({ bucket: "ai" }) - the four /api/ai/* routes, POST /api/agent/runs, and the
+  // three agent read routes that go through accessAgentRun - while POST /api/agent/drive calls
+  // consumeRateLimit("ai", ...) directly and carries no bucket literal at all. Both greps
+  // together are the derivation; either one alone under-counts.
+  //
+  // A slot is not a unit of cost. One spent on POST /api/agent/runs starts a run that then makes
+  // many model calls of its own, so this bounds how often LLM work is STARTED, never how much it
+  // spends.
   ai: { maxVar: "RATE_LIMIT_AI_MAX", windowVar: "RATE_LIMIT_AI_WINDOW_SEC", maxDefault: 20, windowDefault: 60 },
   // Shared across every db/ route that reaches a provider - query, multi-query, transaction,
   // disconnect, cancel, health, maintenance, monitoring, pool-stats, profile, provider-meta,

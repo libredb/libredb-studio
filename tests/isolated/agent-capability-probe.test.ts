@@ -145,15 +145,29 @@ describe("a model that cannot demonstrate a capability is refused", () => {
     expect(requests).toHaveLength(1);
   });
 
-  test("the refusal names the model, the provider and the features that do work", async () => {
+  test("the refusal names the model, the provider and the one action that answers it", async () => {
     const { result } = await probe(OPENAI_CONFIG, chatTextStream("no tools here"));
 
     const refusal = refusalOf(result);
     expect(refusal.provider).toBe("openai");
     expect(refusal.modelId).toBe("gpt-4o-mini");
     expect(refusal.message).toContain("gpt-4o-mini");
-    expect(refusal.message).toContain("AI Assistant");
-    expect(refusal.message).toContain("Natural Language Query");
+    expect(refusal.message).toContain("Configure a different model");
+  });
+
+  test("the refusal advertises no other AI surface", async () => {
+    // The message used to send the user to the NL2SQL panel and the AI Assistant.
+    // Neither can answer what was asked (#331 T2): an agent run needs tools, and a
+    // toolless surface cannot reach the database, so the most user-visible refusal
+    // in the product is the worst place to name one. Pinned by name so a future
+    // edit cannot reintroduce one without this going red.
+    const { result } = await probe(OPENAI_CONFIG, chatTextStream("no tools here"));
+
+    const { message } = refusalOf(result);
+    expect(message).not.toContain("AI Assistant");
+    expect(message).not.toContain("Natural Language Query");
+    expect(message).not.toContain("NL2SQL");
+    expect(message).not.toContain("Autopilot");
   });
 
   test("the message names what was not established, in words rather than field names", async () => {
@@ -325,8 +339,8 @@ describe("a failure that is not about the model is inconclusive, never a refusal
 
   for (const { status, message, why } of NOT_ABOUT_THE_MODEL) {
     test(`HTTP ${status} (${why}) throws rather than blaming the model's capabilities`, async () => {
-      // Each of these breaks the AI Assistant identically, so a refusal telling
-      // the user to go and use the AI Assistant would be a dead end.
+      // None of these says anything about the model, so a refusal telling the user
+      // to configure a different one would send them to change what is not at fault.
       const error = await probeFailure(OPENAI_CONFIG, recordingFetch(endpointError(status, message)).fetch);
 
       expect(error).toBeInstanceOf(LLMStreamError);

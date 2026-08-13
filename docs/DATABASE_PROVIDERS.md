@@ -233,7 +233,7 @@ examples live in their prime docs:
 - **Redis** (plain command or `{command, args}`): [providers/redis.md](./providers/redis.md).
 
 Couchbase is deliberately **not** in that list: SQL++ is a SQL dialect, so a Couchbase connection
-takes ordinary SQL in the `sql` field and inherits the SQL editor, the shared limiter, and NL2SQL.
+takes ordinary SQL in the `sql` field and inherits the SQL editor and the shared limiter.
 Its keyspaces are backtick-quoted three-part paths (`` `bucket`.`scope`.`collection` ``) — see
 [providers/couchbase.md](./providers/couchbase.md).
 

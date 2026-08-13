@@ -1037,13 +1037,6 @@ describe("Studio", () => {
     expect(mockUpdateCurrentTab).toHaveBeenCalledWith({ query: "SELECT * FROM products" });
   });
 
-  test("BottomPanel onExecuteQuery delegates to executeQuery", () => {
-    render(<Studio />);
-    const fn = capturedBottomPanelProps.onExecuteQuery as (q: string) => void;
-    act(() => fn("SELECT 1"));
-    expect(mockExecuteQuery).toHaveBeenCalledWith("SELECT 1");
-  });
-
   // --- QuerySafetyDialog ---
   test("QuerySafetyDialog onProceed calls forceExecuteQuery", () => {
     queryExecOverride = { safetyCheckQuery: "DROP TABLE users" };

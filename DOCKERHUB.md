@@ -104,17 +104,12 @@ A ready-to-use, fully-commented compose file is in the repo: [`docker-compose.ex
 - **Professional SQL IDE** — Monaco editor (VS Code engine), schema-aware autocomplete, multi-tab workspace, Visual EXPLAIN.
 - **Interactive ER diagrams** — real FK edges, cardinality, auto-layout (ELK.js), PNG/SVG export.
 - **Schema diff & migration** — compare snapshots/connections and auto-generate migration SQL.
-- **Multi-model AI copilot** — NL2SQL, query safety analysis, EXPLAIN-in-plain-English, slow-query autopilot. Gemini / OpenAI / Ollama / custom.
+- **Multi-model AI copilot** — natural language to SQL, query safety analysis, EXPLAIN-in-plain-English. Gemini / OpenAI / Ollama / custom.
 - **Pro data grid** — virtualized millions of rows, inline editing, per-column filters, pivot table, CSV/JSON export.
 - **Data visualization** — 8 chart types with aggregation and saved-chart dashboards.
 - **Data privacy & masking** — automatic sensitive-column detection, RBAC-enforced masking, export protection.
 - **Auth & SSO** — local email/password or OIDC (Auth0, Keycloak, Okta, Azure AD, Zitadel) with PKCE and role mapping.
 - **DBA toolkit (admin)** — live monitoring dashboard, threshold alerts, one-click VACUUM/ANALYZE/REINDEX, full audit trail.
-
-<p align="center">
-  <img src="https://raw.githubusercontent.com/libredb/libredb-studio/main/public/screenshots/nl2sql.png" alt="NL2SQL - Natural Language to SQL" width="100%" />
-  <br/><em>Ask in plain English, get executable SQL — schema-aware.</em>
-</p>
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/libredb/libredb-studio/main/public/screenshots/erd-diagram.png" alt="Interactive ER Diagram" width="100%" />

@@ -7,7 +7,7 @@ export type RouteModule = Record<string, ((req: never) => Promise<Response>) | u
  * Recursively finds every route.ts under `rootDir`, returning [routeKey, loader] pairs sorted
  * for stable test output. `routeKey` is the path from `rootDir` down to the route's own
  * directory, joined with "/" (e.g. "db/schema/list" for `<rootDir>/db/schema/list/route.ts`,
- * or "nl2sql" for `<rootDir>/nl2sql/route.ts` when `rootDir` is already `src/app/api/ai`).
+ * or "explain" for `<rootDir>/explain/route.ts` when `rootDir` is already `src/app/api/ai`).
  *
  * The import specifier returned by each loader is a filesystem path computed at test-run time,
  * never the "@/" alias used elsewhere: bun resolves "@/" only when the specifier is a literal

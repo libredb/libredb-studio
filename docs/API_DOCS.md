@@ -775,15 +775,11 @@ All AI endpoints are `POST`, auth-required (via middleware), and stream `text/pl
 
 | Endpoint | Key input | Purpose |
 |----------|-----------|---------|
-| `POST /api/ai/nl2sql` | `question` (+ optional `queryLanguage`, `conversationHistory`) | Natural language → SQL/MongoDB query (multi-turn) |
 | `POST /api/ai/explain` | `query` (+ optional `explainPlan`) | Explain an EXPLAIN plan and suggest optimizations |
 | `POST /api/ai/query-safety` | `query` | Pre-execution risk analysis; streams a JSON verdict (`riskLevel`, `warnings[]`, `recommendation`) |
-| `POST /api/ai/impact` | `query` (a DDL statement) | Predict the impact of a schema change before running it |
-| `POST /api/ai/index-advisor` | `slowQueries` / `indexStats` / `tableStats` *(all optional)* | Recommend missing/unused/duplicate indexes |
-| `POST /api/ai/autopilot` | performance metrics — `slowQueries`, `indexStats`, `tableStats`, `performanceMetrics`, `overview` *(all optional)* | Full performance-optimization report |
 | `POST /api/ai/describe-schema` | `schemaContext` (+ optional `mode`: `"table"`\|`"database"`) | Auto-generate schema documentation |
 
-`nl2sql`, `explain`, `query-safety`, `impact`, and `describe-schema` validate their key field and return `400 { "error": "… is required" }` if it's missing. `index-advisor` and `autopilot` accept fully partial payloads (no required field) — they degrade to a best-effort analysis from whatever is provided.
+Each of the three validates its key field and returns a `400` with an `error` string if it's missing. The exact strings differ: `explain` and `query-safety` return `"Query is required"`, `describe-schema` returns `"Schema context required"` — treat the status code, not the message text, as the contract.
 
 ---
 
@@ -1054,13 +1050,14 @@ spend the per-account budget, since that key comes from a body there was nothing
 
 ### Every session-guarded route
 
-Every route that reaches a database or an LLM provider - the 8 AI endpoints, the database-reaching
-routes under `/api/db/`, and `POST /api/admin/fleet-health` (25 routes today) - shares one of two
-rate-limit buckets, keyed on the signed-in session, not the client address:
+Every route that reaches a database or an LLM provider shares one of two rate-limit buckets, keyed
+on the signed-in session, not the client address. The families rather than a total, because a route
+can join a bucket two ways — through its session guard, or by spending the bucket directly — and a
+single number written here has gone stale every time it was updated:
 
 | Bucket | Applies to | Default |
 |--------|-----------|---------|
-| `ai` | All 8 `/api/ai/*` routes together | 20 requests / 60 seconds |
+| `ai` | The 4 `/api/ai/*` routes, plus every `/api/agent/*` route: starting a run, driving one, and the three that read one back | 20 requests / 60 seconds |
 | `query` | Every database-reaching `/api/db/*` route plus `/api/admin/fleet-health`, together | 120 requests / 60 seconds |
 
 Routing the same workload through a different endpoint does not multiply the budget - the bucket is

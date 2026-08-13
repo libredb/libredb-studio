@@ -17,8 +17,10 @@ import { logger } from "@/lib/logger";
  *
  * A boolean, and deliberately not a `{ enabled, isResolved }` pair: nothing renders
  * differently between "not asked yet" and "answered no", so a resolved flag would be
- * a declared-but-unread field — the state `src/workspace/types.ts:62-78` records this
- * repository as avoiding.
+ * a declared-but-unread field — the state `WorkspaceFeatures.inlineEditing` in
+ * `src/workspace/types.ts` is deprecated for being in. Cited by symbol rather than by
+ * line: this reference has drifted twice, both times because an unrelated edit moved
+ * the docblock it points at.
  */
 export function useAgentCapability(): boolean {
   const [enabled, setEnabled] = useState(false);

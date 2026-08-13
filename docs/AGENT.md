@@ -63,8 +63,8 @@ sets it and `WORKFLOW_TARGET_WORLD` is absent, the runtime would silently pick t
 hosted backend, so the agent refuses to start until the backend is stated explicitly.
 
 **Model configuration is the existing one.** The agent resolves its model through `src/lib/llm`'s
-own resolution (`LLM_PROVIDER`, `LLM_MODEL`, `LLM_API_KEY`, `LLM_API_URL`) — the same keys the AI
-Assistant and the Natural Language Query panel use. There is deliberately no second settings surface
+own resolution (`LLM_PROVIDER`, `LLM_MODEL`, `LLM_API_KEY`, `LLM_API_URL`) — the same keys every
+other AI surface in Studio uses. There is deliberately no second settings surface
 and no agent-specific provider variable, and the provider packages' own ambient fallbacks
 (`OPENAI_API_KEY`, `GOOGLE_GENERATIVE_AI_API_KEY`, `OPENAI_BASE_URL`) are explicitly neutralised so
 an ambient key cannot authenticate a run against a provider nobody configured.

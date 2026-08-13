@@ -26,7 +26,7 @@ Two consequences worth stating before the table:
 
 | ID | Control | Status | Enforced in | Verified by |
 |---|---|---|---|---|
-| 0.1 | LLM output never becomes an HTML string; the renderer builds React elements | Implemented | [`src/components/DatabaseDocs.tsx`](../src/components/DatabaseDocs.tsx), [`src/components/AIAutopilotPanel.tsx`](../src/components/AIAutopilotPanel.tsx) | [`tests/security/xss-sinks.test.tsx`](../tests/security/xss-sinks.test.tsx) |
+| 0.1 | LLM output never becomes an HTML string; the renderer builds React elements | Implemented | [`src/components/DatabaseDocs.tsx`](../src/components/DatabaseDocs.tsx) | [`tests/security/xss-sinks.test.tsx`](../tests/security/xss-sinks.test.tsx) |
 | 0.2 | No remote origin can be fetched through the image optimizer | Implemented | [`next.config.ts`](../next.config.ts) | [`tests/security/image-proxy.test.ts`](../tests/security/image-proxy.test.ts) |
 | 0.3 | Every route that reaches a database or an LLM verifies its caller in its own handler — a user session, or for the one machine callback a server-minted single-purpose credential | Implemented | [`src/lib/api/require-session.ts`](../src/lib/api/require-session.ts), [`src/lib/agent/drive-token.ts`](../src/lib/agent/drive-token.ts) | [`tests/security/route-auth.test.ts`](../tests/security/route-auth.test.ts), [`tests/api/agent/drive.test.ts`](../tests/api/agent/drive.test.ts) |
 | 0.4 | The security policy states only what the code does | Implemented | [`SECURITY.md`](../SECURITY.md) | [`tests/unit/security-check.test.ts`](../tests/unit/security-check.test.ts) |
