@@ -26,7 +26,7 @@ FAIL=0
 # Count the `run_group` CALLS below when adding one (not the definition) - this is the
 # number the final summary reports, and it had already drifted by one before Group 0e
 # was added.
-TOTAL_GROUPS=27
+TOTAL_GROUPS=28
 EXTRA_BUN_ARGS=("$@")
 GROUP_INDEX=0
 COVERAGE_MODE=0

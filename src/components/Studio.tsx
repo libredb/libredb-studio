@@ -250,6 +250,15 @@ export default function Studio() {
     and above `md` means nothing at all: the rail is already the panel, and arming the
     sheet flag there would pop a sheet open the first time the window narrows.
   */
+  /*
+    The statement is passed as the user wrote it, minus the whitespace around it. That
+    trim is not a liberty taken with their text: the rail sends `objective.trim()` when
+    Start is pressed, so anything this kept would be dropped a moment later anyway, and
+    keeping it would only spend the seam's length budget on blanks. What is deliberately
+    NOT done is composing anything around the statement — no "Why is this query slow?"
+    written on the user's behalf. Raised in review on #351, where "verbatim" read as a
+    promise this makes about bytes rather than about authorship.
+  */
   const askAgentAboutStatement = () => {
     const statement = tabMgr.currentTab.query.trim();
     if (statement.length === 0) {
