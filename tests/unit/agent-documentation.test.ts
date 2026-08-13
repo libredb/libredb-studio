@@ -119,6 +119,43 @@ describe("the milestone's deferral record is complete in both directions", () =>
   });
 });
 
+describe("the container image carries the ledger default a plain `docker run` cannot pass", () => {
+  /**
+   * The ratified T5 proposal says a plain `docker run` must carry the same ledger
+   * default `docker-compose.yml` sets. Compose can express it in a file the operator
+   * already edits; a bare `docker run -p 3000:3000 ghcr.io/...` cannot, and with no
+   * default in the image the SDK resolves `.workflow-data` against the working
+   * directory — `/app`, the container's writable layer, which survives a restart and
+   * is discarded on the next recreate or image upgrade. The image is the only place
+   * that reaches every one of those runs, so the default lives there.
+   */
+  const DOCKERFILE = read("Dockerfile");
+  const COMPOSE = read("docker-compose.yml");
+  const LEDGER_PATH = "/app/data/workflow";
+
+  test("the runtime stage sets WORKFLOW_LOCAL_DATA_DIR inside the data volume", () => {
+    const runner = DOCKERFILE.split(/^FROM .* AS runner$/m)[1] ?? "";
+    expect(runner).toContain(`ENV WORKFLOW_LOCAL_DATA_DIR=${LEDGER_PATH}`);
+  });
+
+  test("the image default is the path compose and the operator documentation already name", () => {
+    // Three files stating three paths would put the ledger somewhere no volume is
+    // mounted for two of them.
+    expect(COMPOSE).toContain(`WORKFLOW_LOCAL_DATA_DIR=\${WORKFLOW_LOCAL_DATA_DIR:-${LEDGER_PATH}}`);
+    expect(ENV_EXAMPLE).toContain(`WORKFLOW_LOCAL_DATA_DIR=${LEDGER_PATH}`);
+    expect(AGENT_DOC).toContain(LEDGER_PATH);
+  });
+
+  test("the default sits under the directory the entrypoint makes writable for the app user", () => {
+    // The runtime stage never issues `USER`: the container starts as root, the
+    // entrypoint chowns the data directory and drops to `nextjs` with gosu. A ledger
+    // default outside that directory would be unwritable under a mounted volume.
+    const entrypoint = read("docker-entrypoint.sh");
+    expect(entrypoint).toContain("/app/data");
+    expect(LEDGER_PATH.startsWith("/app/data/")).toBe(true);
+  });
+});
+
 describe("the chart says the zero-config durable backend is single-instance", () => {
   test("the replicaCount comment names the variable that lifts the constraint", () => {
     const comment =

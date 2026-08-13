@@ -50,6 +50,18 @@ ENV NEXT_TELEMETRY_DISABLED=1
 # V8 heap limit to prevent OOM on 512MB instances
 ENV NODE_OPTIONS="--max-old-space-size=384"
 
+# Where the agent's durable ledger lives, and half of what decides whether the
+# agent is available at all (docs/AGENT.md). The workflow SDK's own default is
+# ".workflow-data" resolved against the working directory — /app here, the
+# container's writable layer: writable, so nothing fails loudly, and discarded on
+# the next recreate or image upgrade. docker-compose.yml sets this; a plain
+# `docker run` cannot be given a default from outside the image, so it is set
+# here for every way this image is started. It sits under /app/data, the
+# directory the entrypoint chowns to the app user and the one operators mount a
+# volume on — without that volume the run history still dies with the container,
+# which is the documented trade, not a silent one.
+ENV WORKFLOW_LOCAL_DATA_DIR=/app/data/workflow
+
 COPY --from=builder /usr/src/app/public ./public
 
 # Set the correct permission for prerender cache and storage

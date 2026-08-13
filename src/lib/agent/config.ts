@@ -21,7 +21,10 @@ import { resolveConfig, validateConfig } from "@/lib/llm/utils/config";
  *    rather than by reading its variables here. There is no second place to enter
  *    a key, so there must be no second reader of one either.
  *  - **The durable ledger has a writable path.** That one needs I/O, so it is not
- *    answered here — see `resolveAgentAvailability` below.
+ *    answered here — see `resolveAgentAvailability` below. It is checked for the
+ *    `local` backend and deliberately NOT for `postgres`, where the only possible
+ *    check is a connection attempt per page load; that carve-out is reported as
+ *    one (`ledgerVerified`) rather than left to read as verified (B31).
  *
  * `LIBREDB_AGENT_ENABLED` survives as the **explicit off-switch**: its default is
  * now *auto*, and a negative value is the documented, supported way to have AI
@@ -141,9 +144,15 @@ export type AgentUnavailableReason =
  * Whether the agent can run here, and if not, which condition failed. The detail
  * is the underlying message rather than a restatement of it, so the operator
  * reads what the check actually said.
+ *
+ * A green answer carries `ledgerVerified`, because the two backends are green for
+ * different reasons and only one of them was tested. `true` means the ledger's own
+ * writable-path check ran and passed; `false` means this answer is a **carve-out**
+ * — the durable backend was accepted without being contacted (B31). Nothing is
+ * allowed to report availability without saying which of the two it is.
  */
 export type AgentAvailability =
-  | { readonly available: true }
+  | { readonly available: true; readonly ledgerVerified: boolean }
   | { readonly available: false; readonly reason: AgentUnavailableReason; readonly detail: string };
 
 // Affirmative/negative vocabulary copied from the AUTH_BOOTSTRAP convention in
@@ -158,8 +167,12 @@ const ACCEPTED_TARGETS = Object.keys(SANCTIONED_WORLD_TARGETS).join(", ");
 const unrecognizedFlagMessage = (raw: string): string =>
   `LibreDB Studio: unrecognized ${AGENT_ENABLED_ENV} value "${raw}"; it is ignored and the agent's availability is derived from the AI configuration (use "false" to switch the agent off)`;
 
+// States only what this branch checked. It fires before the model configuration is
+// read at all, so a server with the flag off and no key set was once told "even
+// though a model is configured" — an assertion about something nobody looked at,
+// pointing the reader at an LLM_API_KEY they never set.
 const operatorDisabledMessage = (): string =>
-  `${AGENT_ENABLED_ENV} is set to a negative value, so this server runs no agent even though a model is configured`;
+  `${AGENT_ENABLED_ENV} is set to a negative value, so this server runs no agent whatever else is configured`;
 
 const ledgerUnwritableMessage = (directory: string, cause: string): string =>
   `the agent's durable ledger cannot be written at "${directory}" (${cause}); point ${AGENT_LOCAL_DATA_DIR_ENV} at a writable directory`;
@@ -207,7 +220,9 @@ function availabilityWithoutIO(): AgentAvailability {
     return { available: false, reason: "NO_MODEL_CONFIGURED", detail: describeCause(error) };
   }
 
-  return { available: true };
+  // `ledgerVerified: false` is the literal truth of this half: it asked nothing of
+  // any ledger. `resolveAgentAvailability` replaces this answer with one that did.
+  return { available: true, ledgerVerified: false };
 }
 
 /**
@@ -275,22 +290,31 @@ async function runLedgerProbe(directory: string): Promise<AgentAvailability> {
     await unlink(probeFile).catch((error: NodeJS.ErrnoException) => {
       if (error.code !== "ENOENT") throw error;
     });
-    return { available: true };
+    return { available: true, ledgerVerified: true };
   } catch (error) {
     const detail = ledgerUnwritableMessage(directory, describeCause(error));
     return { available: false, reason: "LEDGER_UNAVAILABLE", detail };
   }
 }
 
-/** The last probe's answer, held just long enough to bound what a caller can cost. */
-let ledgerProbeMemo: { readonly directory: string; readonly expiresAt: number; readonly result: AgentAvailability } = {
-  directory: "",
-  expiresAt: 0,
-  result: { available: true },
+/**
+ * The current probe for a directory: the promise while it runs, and the same
+ * promise as the memoised answer once it has. Holding the PROMISE rather than the
+ * resolved value is what makes the bound below true of concurrent callers and not
+ * only of sequential ones.
+ */
+type LedgerProbeMemo = {
+  readonly directory: string;
+  readonly expiresAt: number;
+  readonly answer: Promise<AgentAvailability>;
 };
 
+/** The last probe, held just long enough to bound what a caller can cost. */
+let ledgerProbeMemo: LedgerProbeMemo | null = null;
+
 /**
- * The probe, with its answer reused for `LEDGER_PROBE_TTL_MS`.
+ * The probe, shared while it is in flight and its answer reused for
+ * `LEDGER_PROBE_TTL_MS` afterwards.
  *
  * The route that reaches this requires a session but deliberately sits outside the
  * `ai` rate-limit bucket — metering a visibility probe there would spend a run's
@@ -301,17 +325,39 @@ let ledgerProbeMemo: { readonly directory: string; readonly expiresAt: number; r
  * interval is short enough that an operator who fixes a permission sees the rail
  * appear without a restart.
  *
- * The memo is keyed by directory, so a re-pointed `WORKFLOW_LOCAL_DATA_DIR` is
- * never answered from the previous one's result. It stores the resolved answer
- * rather than the in-flight promise: concurrent probes are exactly the case the
- * per-call filename above exists for, and de-duplicating them would hide it.
+ * **The in-flight promise is shared, and that is what makes "once per interval"
+ * true.** A memo written only after the probe resolved bounded nothing against a
+ * burst: every request that arrived during the gap found no memo and ran its own
+ * write and unlink. The earlier reason for not sharing — that de-duplicating
+ * concurrent probes would hide the race the per-call filename exists for — expired
+ * when that race was fixed rather than only tested: the filename varies per call and
+ * cleanup tolerates `ENOENT`, so nothing about the protection depends on two callers
+ * of THIS function overlapping. Two probes still reach one directory concurrently
+ * from a second process on a shared volume, from a re-pointed variable, and in the
+ * test that drives exactly that against a real filesystem.
+ *
+ * The memo is keyed by directory, so a re-pointed `WORKFLOW_LOCAL_DATA_DIR` is never
+ * answered from the previous one's result. The TTL is stamped when the probe
+ * RESOLVES, so a slow probe is never evicted while it is still in flight, and the
+ * interval measures how stale an answer may be rather than how long one took.
  */
 async function probeLedgerDirectory(directory: string): Promise<AgentAvailability> {
-  const now = Date.now();
-  if (ledgerProbeMemo.directory === directory && ledgerProbeMemo.expiresAt > now) return ledgerProbeMemo.result;
+  const memo = ledgerProbeMemo;
+  if (memo?.directory === directory && memo.expiresAt > Date.now()) return memo.answer;
 
-  const result = await runLedgerProbe(directory);
-  ledgerProbeMemo = { directory, expiresAt: now + LEDGER_PROBE_TTL_MS, result };
+  // Published before the first await returns to the event loop, so every caller that
+  // arrives while this runs joins it instead of starting a second one. `Infinity`
+  // holds it un-evictable until it resolves.
+  const answer = runLedgerProbe(directory);
+  ledgerProbeMemo = { directory, expiresAt: Number.POSITIVE_INFINITY, answer };
+
+  const result = await answer;
+  // Only if nothing else claimed the slot meanwhile: a probe of ANOTHER directory
+  // that started while this one ran owns the memo now, and stamping this answer over
+  // it would leave that one un-evictable at `Infinity` forever.
+  if (ledgerProbeMemo?.answer === answer) {
+    ledgerProbeMemo = { directory, expiresAt: Date.now() + LEDGER_PROBE_TTL_MS, answer };
+  }
   return result;
 }
 
@@ -339,11 +385,15 @@ export async function resolveAgentAvailability(): Promise<AgentAvailability> {
     return { available: false, reason: reasonCode, detail: message };
   }
 
-  // The postgres world's ledger is a database, and the only way to test it is to
-  // open a connection. This runs on every page load of a logged-in user, so it
-  // reports the backend as available and lets the connection fail where a world
-  // is actually built, with the database's own error.
-  if (backend === "postgres") return { available: true };
+  // **The documented carve-out (B31).** The postgres world's ledger is a database,
+  // and the only way to test it is to open a connection — on every page load of a
+  // logged-in user, from a route outside the rate-limit bucket. So this backend is
+  // accepted WITHOUT being contacted, and the answer says so rather than reading like
+  // the probed one: with an unreachable WORKFLOW_POSTGRES_URL the rail appears and
+  // the first Start fails, which is the outcome deriving availability exists to
+  // prevent, surviving here in a narrower case. A real readiness check is a separate
+  // piece of work; what is NOT acceptable is leaving this reading as verified.
+  if (backend === "postgres") return { available: true, ledgerVerified: false };
 
   return probeLedgerDirectory(resolveAgentLedgerDirectory());
 }

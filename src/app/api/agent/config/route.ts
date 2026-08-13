@@ -36,9 +36,24 @@ import { getSession } from "@/lib/auth";
  * nothing when the answer is no, so it reads only `enabled`. The pair is what turns
  * `curl /api/agent/config` into a diagnosis instead of a shrug — which is the
  * requirement the ratified T5 proposal states, that the surface says which condition
- * is missing rather than offering a Start that must fail. Neither field carries a
- * secret: the model detail is `@/lib/llm`'s own configuration message, which names
- * variables and never values.
+ * is missing rather than offering a Start that must fail.
+ *
+ * **`reason` is for every session; `detail` is for an admin one.** The reason codes
+ * name an operator action and no path, which is what makes them the field to filter
+ * on and safe to hand anybody. The details are the underlying messages, and
+ * `LEDGER_UNAVAILABLE`'s carries an absolute server filesystem path plus the OS
+ * error string — server topology an ordinary user has no use for, since the rail
+ * renders nothing either way. It is withheld as a whole rather than per reason: a
+ * rule that has to be re-audited every time a reason is added is a rule that
+ * eventually leaks the next detail somebody writes. Non-admin sessions get one
+ * stable sentence naming who can see the rest.
+ *
+ * **`ledgerVerified` says which kind of yes this is.** `true` means the ledger's own
+ * writable-path check ran and passed. `false` means the durable backend was accepted
+ * without being contacted — the documented Postgres carve-out (B31), where the only
+ * possible check is a connection attempt per page load. Without it, `{"enabled":
+ * true}` would read as verified for a deployment whose `WORKFLOW_POSTGRES_URL` points
+ * nowhere.
  *
  * The session is verified here with `getSession` rather than through `guardRoute`,
  * and **that rationale had to be rewritten in T5, because the handler it described no
@@ -59,6 +74,9 @@ import { getSession } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
+/** What a session that cannot act on the diagnosis is told instead of it. */
+const WITHHELD_DETAIL = "the agent is unavailable on this server; an administrator can see why";
+
 export async function GET() {
   const session = await getSession();
   if (!session) {
@@ -67,8 +85,9 @@ export async function GET() {
 
   const availability = await resolveAgentAvailability();
   if (availability.available) {
-    return NextResponse.json({ enabled: true });
+    return NextResponse.json({ enabled: true, ledgerVerified: availability.ledgerVerified });
   }
 
-  return NextResponse.json({ enabled: false, reason: availability.reason, detail: availability.detail });
+  const detail = session.role === "admin" ? availability.detail : WITHHELD_DETAIL;
+  return NextResponse.json({ enabled: false, reason: availability.reason, detail });
 }

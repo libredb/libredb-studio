@@ -89,10 +89,9 @@ services:
       # WORKFLOW_TARGET_WORLD: ${WORKFLOW_TARGET_WORLD:-local}
       # Where the "local" backend writes, and the second half of the availability
       # answer above: if it cannot be created and written, the agent reports
-      # itself absent. Leave this unset and it resolves ".workflow-data" against
-      # the working directory — /app/.workflow-data, which is writable but is NOT
-      # the volume below, so runs vanish when the container is recreated.
-      # Uncomment the data volume with it.
+      # itself absent. The image already defaults this to /app/data/workflow, so
+      # uncomment it only to put the ledger elsewhere — and mount the data volume
+      # below either way, or runs vanish when the container is recreated.
       # WORKFLOW_LOCAL_DATA_DIR: ${WORKFLOW_LOCAL_DATA_DIR:-/app/data/workflow}
 
       # -----------------------------------------------------------------------

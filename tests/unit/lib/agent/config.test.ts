@@ -168,7 +168,7 @@ describe("resolveAgentAvailability", () => {
     const dataDir = freshLedgerDir();
     process.env.WORKFLOW_LOCAL_DATA_DIR = dataDir;
 
-    expect(await resolveAgentAvailability()).toEqual({ available: true });
+    expect(await resolveAgentAvailability()).toEqual({ available: true, ledgerVerified: true });
   });
 
   test("creates the ledger directory the way the world would, so a green answer means its own check passes", async () => {
@@ -176,7 +176,7 @@ describe("resolveAgentAvailability", () => {
     const dataDir = path.join(freshLedgerDir(), "nested", "workflow");
     process.env.WORKFLOW_LOCAL_DATA_DIR = dataDir;
 
-    expect(await resolveAgentAvailability()).toEqual({ available: true });
+    expect(await resolveAgentAvailability()).toEqual({ available: true, ledgerVerified: true });
     expect(fs.existsSync(dataDir)).toBe(true);
     // The write probe cleans up after itself: a leftover file would end up in the
     // ledger directory the runtime lists.
@@ -195,6 +195,24 @@ describe("resolveAgentAvailability", () => {
     expect(String((availability as { detail: string }).detail)).toContain(AGENT_ENABLED_ENV);
     // The ledger was never probed: the operator said no, so nothing else is asked.
     expect(fs.existsSync(process.env.WORKFLOW_LOCAL_DATA_DIR)).toBe(false);
+  });
+
+  test("says the same true thing about the off-switch whether or not a model is configured", async () => {
+    // The detail is the operator's whole diagnosis, and on a server with the flag
+    // off and no key set it used to assert "even though a model is configured" —
+    // a second fact this branch never checks, which sends the reader to look at an
+    // LLM_API_KEY they never set. One message, true in both states.
+    process.env[AGENT_ENABLED_ENV] = "false";
+    const withoutModel = await resolveAgentAvailability();
+
+    configureModel();
+    const withModel = await resolveAgentAvailability();
+
+    expect(withoutModel).toMatchObject({ available: false, reason: "OPERATOR_DISABLED" });
+    const detail = String((withoutModel as { detail: string }).detail);
+    expect(detail).toContain(AGENT_ENABLED_ENV);
+    expect(detail).not.toMatch(/model is configured/i);
+    expect(detail).toBe(String((withModel as { detail: string }).detail));
   });
 
   test("names the missing model, and creates no ledger directory for a deployment that has no AI at all", async () => {
@@ -253,13 +271,20 @@ describe("resolveAgentAvailability", () => {
     expect(fs.existsSync(dataDir)).toBe(false);
   });
 
-  test("does not touch the filesystem for the postgres backend, whose ledger is a database", async () => {
+  test("says the postgres ledger was NOT verified, rather than reporting it as a checked one (B31)", async () => {
+    // The only way to test a database ledger is to open a connection, and this
+    // answers on every page load of a logged-in user, so the connection is left to
+    // where a world is actually built. What must not happen is this answer READING
+    // like the local one: with an unreachable WORKFLOW_POSTGRES_URL the rail appears
+    // and the first Start fails, which is the outcome deriving availability exists
+    // to prevent. The carve-out is therefore stated in the answer itself, not only
+    // in a comment.
     configureModel();
     process.env[AGENT_WORLD_TARGET_ENV] = "@workflow/world-postgres";
     const dataDir = path.join(freshLedgerDir(), "never-created");
     process.env.WORKFLOW_LOCAL_DATA_DIR = dataDir;
 
-    expect(await resolveAgentAvailability()).toEqual({ available: true });
+    expect(await resolveAgentAvailability()).toEqual({ available: true, ledgerVerified: false });
     expect(fs.existsSync(dataDir)).toBe(false);
   });
 });
@@ -267,19 +292,24 @@ describe("resolveAgentAvailability", () => {
 // ─── two probes at once ─────────────────────────────────────────────────────
 
 describe("resolveAgentAvailability under concurrency", () => {
-  test("two interleaved probes both stay available, and neither removes the other's file", async () => {
+  test("two probes that reach the same directory at once both stay available, and neither removes the other's file", async () => {
     configureModel();
     const dataDir = freshLedgerDir();
-    process.env.WORKFLOW_LOCAL_DATA_DIR = dataDir;
+    // The two probes reach ONE physical directory under two different names, which
+    // is what keeps this a genuine filesystem race now that concurrent callers
+    // naming the same directory share a single in-flight probe. The same collision
+    // arrives from a second server process on a shared volume, and from an operator
+    // re-pointing WORKFLOW_LOCAL_DATA_DIR while a probe is in flight — neither of
+    // which the memo can de-duplicate.
+    const alias = path.join(freshLedgerDir(), "alias");
+    fs.symlinkSync(dataDir, alias);
 
     // Hold both probes at the point where each has written its file and neither has
-    // removed it — the interleaving a single server process hits when two logged-in
-    // page loads ask GET /api/agent/config at the same time. A probe filename that
-    // is constant for the process lifetime cannot survive it: both write the SAME
-    // path, the first cleanup removes it, and the second meets ENOENT and reports
-    // LEDGER_UNAVAILABLE on a perfectly writable ledger. `use-agent-capability`
-    // probes once on mount with no retry, so that browser has no rail for the whole
-    // page session.
+    // removed it. A probe filename that is constant for the process lifetime cannot
+    // survive that interleaving: both write the SAME path, the first cleanup removes
+    // it, and the second meets ENOENT and reports LEDGER_UNAVAILABLE on a perfectly
+    // writable ledger. `use-agent-capability` probes once on mount with no retry, so
+    // that browser has no rail for the whole page session.
     let written = 0;
     let releaseBoth: () => void = () => {};
     const bothWrote = new Promise<void>((resolve) => {
@@ -293,10 +323,19 @@ describe("resolveAgentAvailability under concurrency", () => {
     });
 
     try {
-      const answers = await Promise.all([resolveAgentAvailability(), resolveAgentAvailability()]);
+      // The variable is read synchronously when each call starts, so switching it
+      // between the two starts is what puts both in flight against one directory.
+      process.env.WORKFLOW_LOCAL_DATA_DIR = dataDir;
+      const first = resolveAgentAvailability();
+      process.env.WORKFLOW_LOCAL_DATA_DIR = alias;
+      const second = resolveAgentAvailability();
+      const answers = await Promise.all([first, second]);
 
-      expect(answers).toEqual([{ available: true }, { available: true }]);
-      const probeFiles = writeSpy.mock.calls.map((call) => String(call[0]));
+      expect(answers).toEqual([
+        { available: true, ledgerVerified: true },
+        { available: true, ledgerVerified: true },
+      ]);
+      const probeFiles = writeSpy.mock.calls.map((call) => path.basename(String(call[0])));
       expect(new Set(probeFiles).size).toBe(2);
     } finally {
       writeSpy.mockRestore();
@@ -316,7 +355,7 @@ describe("resolveAgentAvailability under concurrency", () => {
     });
 
     try {
-      expect(await resolveAgentAvailability()).toEqual({ available: true });
+      expect(await resolveAgentAvailability()).toEqual({ available: true, ledgerVerified: true });
     } finally {
       unlinkSpy.mockRestore();
     }
@@ -352,9 +391,38 @@ describe("the ledger probe's cost", () => {
     const writeSpy = spyOn(fsPromises, "writeFile");
 
     try {
-      expect(await resolveAgentAvailability()).toEqual({ available: true });
-      expect(await resolveAgentAvailability()).toEqual({ available: true });
-      expect(await resolveAgentAvailability()).toEqual({ available: true });
+      expect(await resolveAgentAvailability()).toEqual({ available: true, ledgerVerified: true });
+      expect(await resolveAgentAvailability()).toEqual({ available: true, ledgerVerified: true });
+      expect(await resolveAgentAvailability()).toEqual({ available: true, ledgerVerified: true });
+      expect(writeSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      writeSpy.mockRestore();
+    }
+  });
+
+  test("a burst that arrives while the first probe is still in flight writes once, not once per request", async () => {
+    // The bound the comment claimed and the code did not keep: the memo was written
+    // only after the probe RESOLVED, so every request that arrived during that gap
+    // performed its own mkdir + write + unlink. On a route deliberately outside the
+    // `ai` rate-limit bucket, that is a filesystem write per authenticated request
+    // for as long as a caller keeps them in flight.
+    configureModel();
+    process.env.WORKFLOW_LOCAL_DATA_DIR = freshLedgerDir();
+    let release: () => void = () => {};
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const writeSpy = spyOn(fsPromises, "writeFile").mockImplementation(async (file) => {
+      fs.writeFileSync(file as string, "");
+      await held;
+    });
+
+    try {
+      const burst = Promise.all(Array.from({ length: 8 }, () => resolveAgentAvailability()));
+      release();
+      const answers = await burst;
+
+      expect(answers.every((answer) => answer.available)).toBe(true);
       expect(writeSpy).toHaveBeenCalledTimes(1);
     } finally {
       writeSpy.mockRestore();
@@ -382,7 +450,7 @@ describe("the ledger probe's cost", () => {
   test("never answers one directory from another directory's memo", async () => {
     configureModel();
     process.env.WORKFLOW_LOCAL_DATA_DIR = freshLedgerDir();
-    expect(await resolveAgentAvailability()).toEqual({ available: true });
+    expect(await resolveAgentAvailability()).toEqual({ available: true, ledgerVerified: true });
 
     const blocker = path.join(freshLedgerDir(), "not-a-directory");
     fs.writeFileSync(blocker, "");

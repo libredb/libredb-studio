@@ -15,13 +15,15 @@ services:
       - STORAGE_POSTGRES_URL=${STORAGE_POSTGRES_URL}
       # The agent's run history, and half of what decides whether the agent exists
       # at all: it appears once LLM_API_KEY above is set AND this path is writable
-      # (docs/AGENT.md). With this unset the local durable backend resolves
-      # ".workflow-data" against the working directory, i.e. /app/.workflow-data,
-      # which is writable but is NOT the mounted volume below - so nothing would
-      # fail loudly; runs would survive a restart and disappear on the next
-      # `docker compose up` that recreates the container. Keep it inside /app/data.
-      # A plain `docker run` needs the same: -e WORKFLOW_LOCAL_DATA_DIR=/app/data/workflow
-      # plus a volume on /app/data, or the run history dies with the container.
+      # (docs/AGENT.md). The image already defaults this to the same path, so this
+      # line is an explicit restatement plus the override hook - without either,
+      # the workflow SDK would resolve ".workflow-data" against the working
+      # directory, i.e. /app/.workflow-data, which is writable but is NOT the
+      # mounted volume below: nothing would fail loudly, and runs would disappear
+      # on the next `docker compose up` that recreates the container. Keep it
+      # inside /app/data. A plain `docker run` inherits the image default and
+      # needs only a volume on /app/data, or the run history dies with the
+      # container.
       - WORKFLOW_LOCAL_DATA_DIR=${WORKFLOW_LOCAL_DATA_DIR:-/app/data/workflow}
       # Uncomment to keep the AI configuration above and have no agent. Unset means
       # derive: with a key configured, the agent appears.

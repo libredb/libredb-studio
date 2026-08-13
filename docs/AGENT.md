@@ -54,9 +54,13 @@ request time, and `GET /api/agent/config` reports which one is missing:
 1. **A model is configured** — `validateConfig(resolveConfig())` from `src/lib/llm` does not throw.
    With the defaults that reduces to `LLM_API_KEY` being set.
 2. **The durable ledger has a writable path** — for the `local` backend, the directory
-   `WORKFLOW_LOCAL_DATA_DIR` names can be created and written; for the Postgres backend this is not
-   checked here, because the only way to check it is to open a connection (see
-   [HTTP surface](#http-surface)).
+   `WORKFLOW_LOCAL_DATA_DIR` names can be created and written. **For the Postgres backend this
+   condition is not checked at all** (B31): the only way to check it is to open a connection, and
+   this answers on every page load, so the probe accepts the backend on the strength of the variable
+   alone. That is a carve-out, and it is reported as one — the probe's answer carries
+   `ledgerVerified: false` there, so nobody reads `{"enabled": true}` as "a database was reached".
+   With an unreachable `WORKFLOW_POSTGRES_URL` the rail still appears and the first Start still
+   fails (see [HTTP surface](#http-surface)).
 
 The owner ratified this in
 [#331](https://github.com/libredb/libredb-studio/issues/331#issuecomment-5277689616), and the reason
@@ -77,7 +81,7 @@ run by asking `GET /api/agent/config`, the same way it discovers the storage mod
 | --- | --- | --- |
 | `LIBREDB_AGENT_ENABLED` | unset (derive) | The explicit **off**-switch. `false`/`off`/`0` mean no agent even with AI configured — the supported way to keep the AI configuration and decline the agent. `true`/`on`/`1` are still accepted and mean the default; they cannot conjure a model, because an override that renders a rail whose Start must fail is the outcome deriving exists to prevent. An unrecognized value warns and is ignored. |
 | `WORKFLOW_TARGET_WORLD` | unset (`local`) | Durable backend for run state. Exactly two values are accepted: `local` (zero-config, on-disk, **single instance**) and `@workflow/world-postgres` (opt-in, multi-replica, needs `WORKFLOW_POSTGRES_URL`). Anything else is **refused**, not defaulted. |
-| `WORKFLOW_LOCAL_DATA_DIR` | unset (`.workflow-data`, relative to the working directory) | Where the `local` backend keeps run state, and therefore the second condition above. See [Deployment](#deployment) — the default is wrong in a container and wrong under `npx`, and both ship with it set for them. |
+| `WORKFLOW_LOCAL_DATA_DIR` | unset — but the packaged artifacts set it: `/app/data/workflow` in the container image, `~/.libredb-studio/workflow-data` under `npx`. The SDK's own fallback, which those replace, is `.workflow-data` relative to the working directory. | Where the `local` backend keeps run state, and therefore the second condition above. See [Deployment](#deployment) — the SDK's fallback is wrong in a container and wrong under `npx`, so neither artifact leaves it in force. |
 
 The refusal is not pedantry. The workflow runtime reads that variable itself and treats any value
 other than its own keywords as a **module specifier to `require()`**, so the allowlist in
@@ -661,7 +665,7 @@ rendered, and the first Start is where the operator meets it (B30).
 
 | Route | Purpose |
 | --- | --- |
-| `GET /api/agent/config` | Whether this server runs agents, and if not, which condition failed: `{"enabled": true}` or `{"enabled": false, "reason": …, "detail": "…"}`. The reason is one code per operator action — `OPERATOR_DISABLED`, `NO_MODEL_CONFIGURED`, `LEDGER_UNAVAILABLE`, `UNSANCTIONED_WORLD_TARGET`, `IMPLICIT_HOSTED_WORLD`. The last two are backend refusals and keep their own codes deliberately: neither is a disk problem, and `IMPLICIT_HOSTED_WORLD` fires before anything is asked of a filesystem at all. Session-verified. `enabled` is a literal boolean because the rail compares `=== true`; `reason` and `detail` are for the operator with `curl`, since the rail renders nothing when the answer is no. Never 500s, and never names a key's value. The ledger half of the answer is memoised for a few seconds — the route sits outside the `ai` rate-limit bucket on purpose, so the memo is what stops an authenticated caller turning a page-load probe into a write per request. |
+| `GET /api/agent/config` | Whether this server runs agents, and if not, which condition failed: `{"enabled": true, "ledgerVerified": …}` or `{"enabled": false, "reason": …, "detail": "…"}`. The reason is one code per operator action — `OPERATOR_DISABLED`, `NO_MODEL_CONFIGURED`, `LEDGER_UNAVAILABLE`, `UNSANCTIONED_WORLD_TARGET`, `IMPLICIT_HOSTED_WORLD`. The last two are backend refusals and keep their own codes deliberately: neither is a disk problem, and `IMPLICIT_HOSTED_WORLD` fires before anything is asked of a filesystem at all. `ledgerVerified` distinguishes the two kinds of yes: `true` after the writable-path probe passed, `false` for the Postgres carve-out, where the backend is accepted without being contacted (B31). Session-verified. `enabled` is a literal boolean because the rail compares `=== true`. `reason` goes to every session — it names an operator action and no path — while `detail` goes to **admin sessions only**, because `LEDGER_UNAVAILABLE`'s detail carries an absolute server path and an OS error string; every other session gets one stable sentence instead, and loses nothing, since the rail renders nothing when the answer is no. Never 500s, and never names a key's value. The ledger half of the answer is memoised for a few seconds, in-flight promise included — the route sits outside the `ai` rate-limit bucket on purpose, so the memo is what stops an authenticated caller turning a page-load probe into a write per request, including a burst that arrives while one probe is still running. |
 | `POST /api/agent/runs` | Opens a run (mode, optional `workflowType`, objective, `connectionId`) and returns `202` with the run id and the PERSISTED mode and workflow type. An unrecognised `workflowType` is refused rather than defaulted. An inline connection in the body is refused. An agent run whose model was established as unable to call tools is refused `422` before any run is opened. |
 | `GET /api/agent/runs/{runId}` | The run record, folded from its ledger. |
 | `DELETE /api/agent/runs/{runId}` | Requests a stop. Cancellation is enforced by the run loop's own persisted state, not by a driver cancel propagating — so this is "asked to stop", not "has stopped". |
@@ -718,29 +722,40 @@ and takes file locks, so more than one replica pointed at it is a misconfigurati
 on more than one replica requires `WORKFLOW_TARGET_WORLD=@workflow/world-postgres` and its own
 PostgreSQL database — its own, not one of the databases you connect Studio to. Set
 `WORKFLOW_POSTGRES_URL` when you do: unset, that backend falls back to a development default
-(`postgres://world:world@localhost:5432/world`) rather than refusing.
+(`postgres://world:world@localhost:5432/world`) rather than refusing. **Check that URL yourself**: the
+availability probe does not, and cannot cheaply (B31), so an unreachable one leaves the rail rendered
+and the first Start failing — the one place this feature's central promise does not hold.
 
-**Where run state lands matters, because it is not the app's data directory by default — and since
-T5 it also decides whether the agent exists at all.** The local backend's directory is
-`WORKFLOW_LOCAL_DATA_DIR`, and with that unset it is `.workflow-data` resolved against the process's
-working directory — `/app` in the container image, which is *not* the `/app/data` volume. Two
-consequences: a container that cannot write there reports the agent absent with
-`reason: "LEDGER_UNAVAILABLE"`, and an `emptyDir` deployment loses every ledger with the pod. So on
-Kubernetes, point it inside the mounted volume (`WORKFLOW_LOCAL_DATA_DIR=/app/data/workflow`) and
-enable persistence if runs should survive a restart.
+**Where run state lands matters, because it decides whether the agent exists at all — so the image
+sets it rather than leaving it to the SDK.** The local backend's directory is
+`WORKFLOW_LOCAL_DATA_DIR`, and the SDK's own default is `.workflow-data` resolved against the
+process's working directory — `/app` in the container image, which is *not* the `/app/data` volume.
+That default is wrong in every container, and an operator starting a container cannot supply a
+default from outside it, so the runtime stage of the [`Dockerfile`](../Dockerfile) ships
+`WORKFLOW_LOCAL_DATA_DIR=/app/data/workflow`: inside the directory the entrypoint chowns to the app
+user, and inside the one an operator mounts a volume on. `docker-compose.yml` sets the same path
+explicitly, which is now a restatement rather than the only source of it, and either can be
+overridden per deployment.
+
+What the image default does **not** do is make run state durable. `/app/data` with no volume on it is
+still the container's writable layer, and an `emptyDir` is still lost with the pod: mount a volume, or
+enable `persistence`, if runs should survive a recreate.
 
 A correction to what this document used to say, checked on `main` on 2026-08-13 by rendering the chart:
 `readOnlyRootFilesystem: true` does **not** prevent the local backend from working. `/app/data` is
 mounted on every render — an `emptyDir` by default, the PVC when `persistence.enabled` — so the
-backend can write there today. What is missing is a **default pointing at it**: the chart writes agent
-environment only through `extraEnv`, so a default `helm install` leaves `WORKFLOW_LOCAL_DATA_DIR`
-unset and the agent honestly reports itself absent. An `agent` values block that sets it is a separate
-chart change (a packaged chart edit forces a manual `Chart.yaml` version bump and an operator mirror),
-tracked on [#331](https://github.com/libredb/libredb-studio/issues/331); until it lands, the recipe in
-[`charts/libredb-studio/README.md`](../charts/libredb-studio/README.md) is what an operator needs, and
-the chart README's `--set-string` trap applies. Note also that the opt-in Postgres backend is not
-reachable in the container image or the npx payload today (B16), so multi-replica agent runs need that
-fixed first.
+backend can write there. Before the image default landed, what was missing was a **default pointing at
+it**: the chart writes agent environment only through `extraEnv`, so a default `helm install` left
+`WORKFLOW_LOCAL_DATA_DIR` unset and the agent honestly reported itself absent. Since the image carries
+the default, a default `helm install` inherits it (verified by rendering: the chart sets no
+`WORKFLOW_*` variable of its own, so nothing overrides the image), and the agent appears as soon as a
+model is configured — with an ephemeral ledger until `persistence.enabled`. An `agent` values block
+that makes the path explicit in the chart is still a separate chart change (a packaged chart edit
+forces a manual `Chart.yaml` version bump and an operator mirror), tracked on
+[#331](https://github.com/libredb/libredb-studio/issues/331); the recipe in
+[`charts/libredb-studio/README.md`](../charts/libredb-studio/README.md) still works and its
+`--set-string` trap still applies. Note also that the opt-in Postgres backend is not reachable in the
+container image or the npx payload today (B16), so multi-replica agent runs need that fixed first.
 
 > **Read the chart's own documentation with this correction in hand: it still states the pre-T5
 > default, and this PR deliberately did not change it.** Six packaged files say the agent is off
@@ -760,12 +775,14 @@ fixed first.
 > `agent` values block described above. Until it merges, this document is the authority on what the
 > flag means, and the chart README is the authority on how to set it.
 
-Plain Docker fails differently, and more quietly: `/app` is writable in the image, so nothing errors —
-the ledger simply sits in the container's writable layer and goes with the container, surviving a
-restart and disappearing on the next recreation or image upgrade. `docker-compose.yml` therefore sets
-the variable, and a plain `docker run` should carry `-e WORKFLOW_LOCAL_DATA_DIR=/app/data/workflow`
-together with a volume on `/app/data`. **Without a mounted volume the run history dies with the
-container** — the agent still works, and its ledger is still lost.
+Plain Docker used to fail quietly, and that is what the image default fixes: `/app` is writable in the
+image, so nothing errored — the ledger simply sat in the container's writable layer and went with the
+container, surviving a restart and disappearing on the next recreation or image upgrade. A bare
+`docker run` carries no environment file to correct that, so the image now names `/app/data/workflow`
+itself and a plain run needs only `-v libredb-data:/app/data`. **Without that volume the run history
+still dies with the container** — the agent works, its ledger is written, and it is lost on the next
+recreate. Passing `-e WORKFLOW_LOCAL_DATA_DIR=…` still overrides the default and is how you put the
+ledger somewhere else.
 
 `npx @libredb/studio` needs none of this. The launcher defaults the variable to
 `~/.libredb-studio/workflow-data` (`resolveLedgerDir` in `bin/lib/launcher-utils.mjs`), beside the
@@ -880,6 +897,12 @@ declared-target allowlist, the statement guard and the role's own grants are the
   repointed server-side mid-session is not seen until the next fetch.
 - **B29** — an identifier the model quotes back into its own tool arguments reaches the transcript
   unfenced; an open injection path, bounded only by the server never handing it the raw marker.
+- **B30** — a green ledger probe promises `ensureDataDir` will pass, not that the world will build: a
+  corrupt or incompatible `version.txt` throws a step later, after the rail has rendered.
+- **B31** — the Postgres durable backend is reported available without being contacted, so an
+  unreachable `WORKFLOW_POSTGRES_URL` still renders a rail whose first Start fails. Reported as a
+  carve-out (`ledgerVerified: false`) rather than fixed; a real check is a connection attempt per page
+  load.
 
 ## Related documentation
 

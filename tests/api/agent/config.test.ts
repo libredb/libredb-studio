@@ -84,6 +84,16 @@ function configureModel(): void {
   process.env.LLM_API_KEY = "test-key";
 }
 
+/**
+ * The session that is allowed to read `detail`. The underlying messages name an
+ * absolute server path and an OS error string when the ledger is the problem, and
+ * the person who acts on that is the operator — so the diagnosis is admin-only and
+ * `reason`, which names no path, is what every session keeps.
+ */
+function asAdmin(): void {
+  mockGetSession.mockResolvedValue({ role: "admin", username: "root" });
+}
+
 describe("GET /api/agent/config", () => {
   test("reports the runtime as enabled when a model is configured and the ledger is writable", async () => {
     configureModel();
@@ -91,10 +101,25 @@ describe("GET /api/agent/config", () => {
     const res = await GET();
 
     expect(res.status).toBe(200);
-    expect(await parseResponseJSON<{ enabled: boolean }>(res)).toEqual({ enabled: true });
+    expect(await parseResponseJSON<Record<string, unknown>>(res)).toEqual({ enabled: true, ledgerVerified: true });
+  });
+
+  test("says a postgres ledger was not verified here, instead of letting it read as a checked one (B31)", async () => {
+    // The rail still renders — this is a carve-out, not a new refusal — but the
+    // answer states that the durable backend was never contacted, so an operator
+    // reading `curl /api/agent/config` is not told a database was reached when the
+    // only thing checked was the value of a variable.
+    configureModel();
+    process.env[AGENT_WORLD_TARGET_ENV] = "@workflow/world-postgres";
+
+    const body = await parseResponseJSON<Record<string, unknown>>(await GET());
+
+    expect(body).toEqual({ enabled: true, ledgerVerified: false });
   });
 
   test("reports it disabled and names the missing model, so the operator is told why", async () => {
+    asAdmin();
+
     const res = await GET();
     const body = await parseResponseJSON<Record<string, unknown>>(res);
 
@@ -105,6 +130,7 @@ describe("GET /api/agent/config", () => {
   });
 
   test("reports the operator's own off-switch as itself", async () => {
+    asAdmin();
     configureModel();
     process.env[AGENT_ENABLED_ENV] = "false";
 
@@ -116,6 +142,7 @@ describe("GET /api/agent/config", () => {
   });
 
   test("reports an unwritable ledger rather than an agent that cannot record a run", async () => {
+    asAdmin();
     configureModel();
     const blocker = path.join(ledgerDir, "not-a-directory");
     fs.writeFileSync(blocker, "");
@@ -125,6 +152,43 @@ describe("GET /api/agent/config", () => {
 
     expect(body.enabled).toBe(false);
     expect(body.reason).toBe("LEDGER_UNAVAILABLE");
+    // The path is what an operator needs, and it is the operator who gets it.
+    expect(String(body.detail)).toContain(blocker);
+  });
+
+  test("does not hand an ordinary session the server path and OS error the ledger detail carries", async () => {
+    // The rail renders nothing when the answer is no, so a non-admin session loses
+    // nothing by not being told WHERE on the server disk the ledger was refused.
+    // `reason` is the field an operator filters on and it names no path, so that one
+    // is kept for everybody.
+    configureModel();
+    const blocker = path.join(ledgerDir, "not-a-directory");
+    fs.writeFileSync(blocker, "");
+    process.env.WORKFLOW_LOCAL_DATA_DIR = path.join(blocker, "workflow");
+
+    const body = await parseResponseJSON<Record<string, unknown>>(await GET());
+
+    expect(body.enabled).toBe(false);
+    expect(body.reason).toBe("LEDGER_UNAVAILABLE");
+    const detail = String(body.detail ?? "");
+    expect(detail).not.toContain(blocker);
+    expect(detail).not.toContain(ledgerDir);
+    expect(detail).not.toMatch(/ENOTDIR|EACCES|EPERM|ENOENT/);
+  });
+
+  test("gives every non-admin refusal the same stable message, so the reason is the only thing that varies", async () => {
+    // One message for all reasons rather than a per-reason allowlist: a rule that
+    // has to be re-audited each time a reason is added is a rule that eventually
+    // leaks the next detail somebody writes.
+    const withoutModel = await parseResponseJSON<Record<string, unknown>>(await GET());
+    configureModel();
+    process.env[AGENT_ENABLED_ENV] = "false";
+    const switchedOff = await parseResponseJSON<Record<string, unknown>>(await GET());
+
+    expect(withoutModel.reason).toBe("NO_MODEL_CONFIGURED");
+    expect(switchedOff.reason).toBe("OPERATOR_DISABLED");
+    expect(String(withoutModel.detail)).toBe(String(switchedOff.detail));
+    expect(String(withoutModel.detail)).not.toContain("LLM_API_KEY");
   });
 
   test("keeps `enabled` a literal boolean, which is the only field the rail reads", async () => {
@@ -165,6 +229,7 @@ describe("GET /api/agent/config", () => {
    * ledger would send an operator to the disk instead.
    */
   test("an unsanctioned durable backend is reported under its own code, not as a ledger fault", async () => {
+    asAdmin();
     configureModel();
     process.env[AGENT_WORLD_TARGET_ENV] = "@workflow/world-turso";
 

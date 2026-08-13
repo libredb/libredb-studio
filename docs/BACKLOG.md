@@ -1519,3 +1519,32 @@ Done when the probe can answer for the version file without writing one: either 
 check that does not initialise (worth an issue there), or the probe reads an EXISTING `version.txt`
 itself and reports a `LEDGER_INCOMPATIBLE` reason distinct from `LEDGER_UNAVAILABLE`, leaving the
 absent-file case to the world.
+
+### B31. The Postgres durable backend is reported available without being contacted
+
+Raised in review of #331 T5.
+
+`resolveAgentAvailability` derives the agent's visibility from two conditions, and the second one —
+the durable ledger has a usable home — is only ever *tested* for the `local` backend, where testing it
+is a `mkdir` and a file write. With `WORKFLOW_TARGET_WORLD=@workflow/world-postgres` the ledger is a
+database, and the check ends at "the variable names a sanctioned backend". `WORKFLOW_POSTGRES_URL` is
+neither read nor reached, and unset it does not even refuse: the world falls back to a development
+default (`postgres://world:world@localhost:5432/world`).
+
+So a multi-replica deployment pointed at an unreachable, misspelled or unset Postgres URL gets a rail
+that renders, a Start that is offered, and a failure at the moment a world is built — the exact
+outcome deriving availability exists to prevent, surviving in the one backend an operator opts into
+deliberately.
+
+It is a **documented carve-out rather than a silent one**. `AgentAvailability`'s green branch carries
+`ledgerVerified`, `GET /api/agent/config` returns it, and this backend answers `false` — so no reader
+of the code, the API or [`AGENT.md`](AGENT.md) is told a database was reached when only a variable was
+read. What is *not* claimed is that the rail is therefore correct: it still appears.
+
+Not fixed here because the fix is a different piece of work with its own cost: the only real readiness
+check is a connection attempt, and this route answers on every page load of a logged-in user, from
+outside the `ai` rate-limit bucket. Done when the Postgres backend's readiness is established by a
+bounded, cached connection attempt under its own reason code — `LEDGER_UNREACHABLE`, distinct from
+`LEDGER_UNAVAILABLE`, which names a directory — with a timeout short enough for a page load and a memo
+long enough that a page-load probe cannot become a connection per request. B16 gates any of this being
+testable in a shipped artifact: the Postgres world is not in the container image or the npx payload.
