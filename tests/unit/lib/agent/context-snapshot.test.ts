@@ -463,6 +463,30 @@ describe("packContextForTask", () => {
     expect(packed).toContain("omitted");
   });
 
+  /*
+    A preface is the server's own voice ahead of the fence — the sentence telling the
+    model how to cite the inventory cannot live INSIDE a region the model is told to
+    treat as data (#350). Passed here rather than concatenated by the caller because
+    the bound is this function's to keep: text prepended outside it would overrun the
+    bound the docblock above states, silently and by exactly its own length.
+  */
+  test("a preface is inside the bound, not added to it", () => {
+    const preface = `Cite that inventory in a claim as ${"x".repeat(300)}.`;
+    const packed = packContextForTask(wideSnapshot(200, 40), "Why is the orders report slow?", { preface });
+
+    expect(packed.startsWith(`${preface}\n`)).toBe(true);
+    expect(packed.length).toBeLessThanOrEqual(AGENT_CONTEXT_PACK_MAX_CHARS);
+  });
+
+  test("a preface stays outside the fenced region", () => {
+    const preface = 'Cite that inventory as {"source":"context-snapshot","fingerprint":"ctx_0"}.';
+    const packed = packContextForTask(wideSnapshot(0, 0), "anything", { preface });
+
+    // Before the fence opens, so nothing tells the model to read it as data.
+    expect(packed).toContain(preface);
+    expect(packed.indexOf(preface)).toBeLessThan(packed.indexOf(UNTRUSTED_CONTENT_BEGIN));
+  });
+
   test("selects the tables the task is about, most relevant first", () => {
     const snapshot: AgentContextSnapshot = {
       ...wideSnapshot(40, 4),

@@ -275,6 +275,46 @@ const evidenceSchema = z.discriminatedUnion("source", [
   }),
 ]);
 
+/**
+ * ONE citation, rendered as the object the schema above accepts (#350).
+ *
+ * A function rather than a pair of string constants, because the same two calls
+ * produce both things that have to agree: the EXAMPLE a description shows, with a
+ * placeholder where the id goes, and the CONCRETE citation a completed step hands
+ * over with the id filled in. A model that copies what it was shown is producing
+ * what the parser was going to accept, because the same code wrote both.
+ *
+ * `satisfies AgentEvidenceReference` is what ties them to the durable contract, and
+ * `tests/unit/lib/agent/tools.test.ts` closes the loop from the other side: it lifts
+ * every literal object out of each description and parses it through that tool's own
+ * `inputSchema`, so a description offering a shape the schema refuses fails there
+ * rather than in a run.
+ *
+ * Why it exists at all: the evidence contract is a two-arm discriminated union, and
+ * two live runs (#350) inferred it wrong from the serialized JSON schema alone — the
+ * ledger records the model asking itself whether an evidence item is "an array of
+ * table row objects or strings?" and spending a database round trip on the question.
+ * Nothing it was TOLD named `source`, `correlationId` or `fingerprint`.
+ */
+const citeArtifact = (correlationId: string): string =>
+  JSON.stringify({ source: "artifact", correlationId } satisfies AgentEvidenceReference);
+
+export const citeSnapshot = (fingerprint: string): string =>
+  JSON.stringify({ source: "context-snapshot", fingerprint } satisfies AgentEvidenceReference);
+
+/**
+ * The evidence contract in one sentence, said identically wherever it is said.
+ *
+ * Exported because `investigation.ts` states it too — in the run's opening rules —
+ * and two wordings of the same contract would be two things to keep equal, with the
+ * one that drifted being the one a model followed into a refusal.
+ */
+export const AGENT_EVIDENCE_CONTRACT = [
+  `Each evidence item is ONE object: ${citeArtifact("<the artifact id a completed step reported>")} for a result this run read,`,
+  `or ${citeSnapshot("<the fingerprint of the schema snapshot this run captured>")} for that inventory.`,
+  'Add "locator" only to point at a part of it.',
+].join(" ");
+
 const reportSchema = z.strictObject({
   claims: z.array(z.strictObject({ claim: z.string().min(1), evidence: z.array(evidenceSchema).min(1) })).min(1),
 });
@@ -349,14 +389,12 @@ export const AGENT_TOOL_DEFINITIONS: Readonly<Record<AgentToolName, AgentToolDef
   },
   recommend_change: {
     name: "recommend_change",
-    description:
-      "Propose one index or one rewrite for the user to apply themselves. The statement is never executed by this run; it is offered to the user's editor. Every recommendation must cite evidence this run produced.",
+    description: `Propose one index or one rewrite for the user to apply themselves. The statement is never executed by this run; it is offered to the user's editor. Every recommendation must cite evidence this run produced. ${AGENT_EVIDENCE_CONTRACT}`,
     inputSchema: recommendationSchema,
   },
   compose_report: {
     name: "compose_report",
-    description:
-      "Compose the run's findings. Every claim must cite at least one artifact this run read or the schema snapshot it captured; an uncited claim is refused.",
+    description: `Compose the run's findings and finish. Every claim must cite at least one artifact this run read or the schema snapshot it captured; an uncited claim is refused. ${AGENT_EVIDENCE_CONTRACT}`,
     inputSchema: reportSchema,
   },
 } satisfies Record<AgentToolName, AgentToolDefinition>);
@@ -432,10 +470,13 @@ export function selectAgentTools(run: Pick<AgentRunRecord, "mode" | "workflowTyp
 const UNAVAILABLE_TEXT: Readonly<Record<AgentToolUnavailableCode, string>> = Object.freeze({
   MODE_HAS_NO_TOOLS:
     "This run is in planning mode, which has no tools at all. Produce a plan in prose; no database call is possible from here.",
+  // Said by every tool, including the two that reach no database and compose no SQL,
+  // so it may not promise a statement (#350). `recommend_change` and `compose_report`
+  // shared a sentence written for the SQL-composing tools, and a model that got an
+  // evidence object wrong was answered with a sentence about statements.
   INVALID_TOOL_INPUT:
-    "The arguments could not be turned into a statement this layer will run. Correct them and call the tool again.",
-  UNVERIFIABLE_EVIDENCE:
-    "At least one evidence reference does not match anything this run produced. Cite an artifact this run actually read, or the schema snapshot it captured.",
+    "The arguments did not match the shape this tool declares, so nothing was done. Correct them and call the tool again.",
+  UNVERIFIABLE_EVIDENCE: `At least one evidence reference does not match anything this run produced. Cite an artifact this run actually read, or the schema snapshot it captured. ${AGENT_EVIDENCE_CONTRACT}`,
   UNVERIFIABLE_PLAN:
     "At least one of those references is not an estimated plan this run produced. Inspect the plan of each statement first, then compare the two artifacts those inspections returned.",
   TABLE_NOT_INVENTORIED:
@@ -545,6 +586,28 @@ function unavailable(
 ): AgentToolOutcome & { kind: "unavailable" } {
   const base = UNAVAILABLE_TEXT[reasonCode];
   return { kind: "unavailable", reasonCode, modelText: detail === undefined ? base : `${base} (${detail})` };
+}
+
+/**
+ * The bad-input refusal the two evidence-bearing tools give, with the contract in it.
+ *
+ * `INVALID_TOOL_INPUT` is shared by every tool, and a selector this layer could not
+ * read has nothing to do with citing — so the contract is added HERE, at the two call
+ * sites where the arguments that failed to parse carried evidence, rather than to the
+ * shared sentence.
+ *
+ * Why a refusal restates something the description already said (#350): a description
+ * is read by a model that is not yet confused, and a refusal is read by one that
+ * demonstrably is. It got the shape wrong, and this reply is the next thing it reads.
+ * `UNVERIFIABLE_EVIDENCE` carries the contract in `UNAVAILABLE_TEXT` itself, because
+ * only these same two tools can produce it.
+ */
+function invalidEvidenceInput(): AgentToolOutcome & { kind: "unavailable" } {
+  return {
+    kind: "unavailable",
+    reasonCode: "INVALID_TOOL_INPUT",
+    modelText: `${UNAVAILABLE_TEXT.INVALID_TOOL_INPUT} ${AGENT_EVIDENCE_CONTRACT}`,
+  };
 }
 
 /**
@@ -855,13 +918,23 @@ export async function executeAgentOperation(
   return {
     kind: "completed",
     artifact,
-    modelText: fenceUntrustedContent(renderRows(result.rows), {
+    // The handover sentence comes FIRST, in the server's own voice, before the
+    // fence (#350). This is the moment the id changes hands, and it is where the
+    // model needs the form: the live runs that failed were HOLDING the correlation
+    // id and still never produced the object, so naming an id is demonstrably not
+    // the same as saying how to cite it. The id is a server-minted UUID, so nothing
+    // untrusted is spliced into this sentence.
+    modelText: `${handoverText(artifact.correlationId)}\n${fenceUntrustedContent(renderRows(result.rows), {
       label: `${request.label ?? "result"}, ${result.rowCount} row(s)`,
       operationId: artifact.operationId,
       reference: artifact.correlationId,
-    }),
+    })}`,
   };
 }
+
+/** What a completed reach says about the artifact it just produced. */
+export const handoverText = (correlationId: string): string =>
+  `Stored as artifact ${correlationId}. To use it in a claim, cite it as ${citeArtifact(correlationId)}.`;
 
 // ============================================================================
 // The four tools
@@ -1254,7 +1327,7 @@ export async function profileTableTool(
     // into a sentence the model reads as the server speaking. Found by review on
     // #345: an identifier is exactly as untrusted as a row value.
     modelText: [
-      `Profiled a table: ${profile.rowCount} row(s), columns ${plan.from + 1}-${plan.from + columns.length} at ${depth} depth, ${findings.length} finding(s), artifact ${outcome.artifact.correlationId}.`,
+      `Profiled a table: ${profile.rowCount} row(s), columns ${plan.from + 1}-${plan.from + columns.length} at ${depth} depth, ${findings.length} finding(s). ${handoverText(outcome.artifact.correlationId)}`,
       plan.remaining === 0
         ? "Every column of that table is covered."
         : `${plan.remaining} further column(s) are NOT covered by this profile; call profile_table again with fromColumn=${plan.from + columns.length} to reach them.`,
@@ -1326,7 +1399,7 @@ export function recommendChangeTool(
   }
 
   const parsed = parseToolInput(recommendationSchema, input);
-  if (!parsed.ok) return unavailable("INVALID_TOOL_INPUT");
+  if (!parsed.ok) return invalidEvidenceInput();
   if (!matchesCard(parsed.value.change, parsed.value.statement)) {
     return unavailable("RECOMMENDATION_SHAPE_MISMATCH");
   }
@@ -1405,7 +1478,7 @@ export function composeReportTool(
   }
 
   const parsed = parseToolInput(reportSchema, input);
-  if (!parsed.ok) return unavailable("INVALID_TOOL_INPUT");
+  if (!parsed.ok) return invalidEvidenceInput();
 
   const claims: AgentReportClaim[] = [];
   for (const claim of parsed.value.claims) {

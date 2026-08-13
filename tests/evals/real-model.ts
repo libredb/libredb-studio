@@ -23,7 +23,7 @@
 
 import { createAgentModel } from "@/lib/agent/model-adapter";
 import { LLMRateLimitError } from "@/lib/llm/types";
-import { type EvalEngine, type EvalRun, openEvalRun } from "../isolated/fixtures/agent-eval-harness";
+import { DEPARTMENTS, type EvalEngine, type EvalRun, openEvalRun } from "../isolated/fixtures/agent-eval-harness";
 import type { EvalDrive } from "../isolated/fixtures/agent-eval-harness";
 
 interface RealModelCase {
@@ -53,7 +53,63 @@ const HEADCOUNTS = [
   { department: "support", headcount: 17 },
 ];
 
+/** A count per department table, so a statement that names some gets those. */
+const COUNTS: Readonly<Record<string, number>> = {
+  engineering: 41,
+  sales: 22,
+  support: 17,
+  finance: 12,
+  legal: 5,
+  people: 9,
+  marketing: 14,
+  research: 31,
+};
+
+/**
+ * A scripted engine whose answers AGREE with the inventory the run captured.
+ *
+ * The three cases below hand back the same three rows whatever they are asked,
+ * against an inventory of eight department tables of `(id, name)`. A scripted model
+ * never notices — it does not read the inventory — but a real one does, and #350's
+ * measurement showed what that costs: the model counts the eight tables, is answered
+ * about three departments it did not ask about, disbelieves the result, and probes
+ * to the turn ceiling. The run never gets as far as composing anything, so those
+ * cases cannot measure a REPORT at all, whatever the report contract says. Left as
+ * they are on purpose — they are #341's observed corpus, and re-shaping them is its
+ * own change with its own evidence to produce — but a case that needs the run to
+ * reach the end needs an engine that lets it.
+ */
+const countsFor = async (sql: string) => {
+  const named = DEPARTMENTS.filter((table) => new RegExp(`\\b${table}\\b`, "i").test(sql));
+  const tables = named.length > 0 ? named : DEPARTMENTS;
+  const counted = tables
+    .map((table) => ({ department: table, headcount: COUNTS[table] ?? 0 }))
+    .sort((left, right) => right.headcount - left.headcount);
+  return rows(counted, ["department", "headcount"]);
+};
+
 const CASES: readonly RealModelCase[] = [
+  {
+    /*
+      #350's scenario, and the one case here that measures the REPORT.
+
+      The other cases end wherever the model chooses to stop; this one is scored on
+      whether the run WROTE DOWN what it found. That is the thing #350 is about: the
+      live runs that motivated it read the answer, held the artifact id, and composed
+      nothing, spending their remaining turns on statements with nothing to learn in
+      them (`SELECT 1 as x;`, `SELECT sqlite_version();`) while working out how to
+      cite what they already had. `claims` in the table below is the column that
+      shows it — a run can be `succeeded` with zero.
+
+      This case is a MEASUREMENT harness, not evidence by itself: what a given model
+      does with it belongs in the run that measured it, not in this comment.
+    */
+    name: "cited-report",
+    engine: "sqlite",
+    objective: "Which department has the most employees?",
+    expectation: "composes a report citing an artifact it read, rather than re-reading to the turn ceiling",
+    answer: countsFor,
+  },
   {
     name: "one-query-answer",
     engine: "postgres",
@@ -93,6 +149,8 @@ interface CaseOutcome {
   readonly stopReason: string;
   readonly turns: number;
   readonly statements: number;
+  /** Claims the run wrote down, each carrying a citation the server verified. */
+  readonly claims: number;
   readonly note: string;
 }
 
@@ -104,6 +162,12 @@ function summarise(name: string, drive: EvalDrive, expectation: string): CaseOut
     stopReason: drive.stopReason,
     turns: drive.turns,
     statements: drive.modelStatements.length,
+    // Reported alongside the verdict because #350 is about this number being zero:
+    // a run can read seven times, hold the answer, and write down none of it.
+    claims: drive.events.reduce(
+      (total, event) => (event.kind === "report-composed" ? total + event.claims.length : total),
+      0,
+    ),
     note: expectation,
   };
 }
@@ -131,6 +195,7 @@ async function runCase(testCase: RealModelCase): Promise<CaseOutcome> {
       stopReason: "-",
       turns: 0,
       statements: 0,
+      claims: 0,
       note: error instanceof Error ? error.message : String(error),
     };
   } finally {
@@ -156,11 +221,11 @@ async function main(): Promise<void> {
   }
 
   const lines = [
-    "| case | verdict | status | stop reason | turns | statements | what a good run does |",
-    "| --- | --- | --- | --- | --- | --- | --- |",
+    "| case | verdict | status | stop reason | turns | statements | claims | what a good run does |",
+    "| --- | --- | --- | --- | --- | --- | --- | --- |",
     ...outcomes.map(
       (outcome) =>
-        `| ${outcome.name} | ${outcome.verdict} | ${outcome.status} | ${outcome.stopReason} | ${outcome.turns} | ${outcome.statements} | ${outcome.note} |`,
+        `| ${outcome.name} | ${outcome.verdict} | ${outcome.status} | ${outcome.stopReason} | ${outcome.turns} | ${outcome.statements} | ${outcome.claims} | ${outcome.note} |`,
     ),
   ];
   console.log(lines.join("\n"));

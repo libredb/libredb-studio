@@ -453,13 +453,20 @@ function renderTable(table: TableSchema): string {
  * Table and column names are DATABASE CONTENT and are therefore fenced as untrusted
  * input, exactly like rows: a column comment or a table name is writable by whoever
  * can write to the database.
+ *
+ * A `preface` is the SERVER's own sentence, placed ahead of the fence — a caller that
+ * needs to say something about the inventory (how to cite it, say) cannot say it
+ * inside a region the model is told to treat as data. It is a parameter rather than
+ * something a caller concatenates because the bound is this function's to keep:
+ * anything prepended outside would overrun it silently, by exactly its own length.
  */
 export function packContextForTask(
   snapshot: AgentContextSnapshot,
   objective: string,
-  options: { readonly maxChars?: number } = {},
+  options: { readonly maxChars?: number; readonly preface?: string } = {},
 ): string {
-  const maxChars = options.maxChars ?? AGENT_CONTEXT_PACK_MAX_CHARS;
+  const lead = options.preface === undefined ? "" : `${options.preface}\n`;
+  const maxChars = (options.maxChars ?? AGENT_CONTEXT_PACK_MAX_CHARS) - lead.length;
   const source = {
     label: "schema inventory",
     operationId: "agent/context-snapshot",
@@ -471,7 +478,7 @@ export function packContextForTask(
   // schema" would take it for the schema as it is now.
   const header = `Schema inventory for this run — fingerprint ${snapshot.fingerprint}, ${snapshot.tables.length} table(s) read at epoch ${snapshot.capturedAtMs}ms and not re-read since, most task-relevant first.`;
   if (snapshot.tables.length === 0) {
-    return fenceUntrustedContent(`${header}\nThis database reported no tables.`, source);
+    return `${lead}${fenceUntrustedContent(`${header}\nThis database reported no tables.`, source)}`;
   }
 
   const terms = taskTerms(objective);
@@ -494,5 +501,5 @@ export function packContextForTask(
     shown += 1;
   }
 
-  return fenceUntrustedContent(close(body, ranked.length - shown), source);
+  return `${lead}${fenceUntrustedContent(close(body, ranked.length - shown), source)}`;
 }

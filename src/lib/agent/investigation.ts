@@ -57,12 +57,15 @@ import {
 } from "./run-service";
 import type { AgentSettledStepEvent } from "./run-store";
 import {
+  AGENT_EVIDENCE_CONTRACT,
   AGENT_TOOL_DEFINITIONS,
   type AgentToolContext,
   type AgentToolName,
   type AgentToolOutcome,
+  citeSnapshot,
   comparePlansTool,
   composeReportTool,
+  handoverText,
   inspectPlanTool,
   planTableProfile,
   profileTableTool,
@@ -156,12 +159,24 @@ const SHARED_RULES = [
   "Never claim anything you have not established in this run.",
 ].join(" ");
 
+/**
+ * The rules an agent-mode run is opened with.
+ *
+ * The closing rule states the evidence contract in `tools.ts`'s own words rather
+ * than in a second wording of it (#350). Saying only "every claim must cite" is
+ * exactly what these rules used to say, and two live runs on 2026-08-12 show what it
+ * cost: the model reached `compose_report` knowing it had to, could not work out what
+ * an evidence item looked like, and spent five of seven turns guessing — one of them
+ * a `SELECT 1` sent to the database purely to keep thinking — while holding the
+ * correlation id it needed. The example object costs one line.
+ */
 const AGENT_RULES = [
   "You investigate a database read-only, through the tools you were given.",
   "Every statement you send is bounded and read-only; writes and DDL are refused before the database is reached.",
   "If a statement fails, draft a DIFFERENT one: the same statement is refused rather than retried, and your repair attempts are limited.",
   "A refusal that names a policy decision is a boundary, not a defect in your SQL. Rewording will not change it.",
   "Finish by calling compose_report. Every claim must cite an artifact this run read or the schema snapshot it captured.",
+  AGENT_EVIDENCE_CONTRACT,
 ].join(" ");
 
 const PLANNING_RULES = [
@@ -232,6 +247,28 @@ function systemPrompt(record: AgentRunRecord): string {
 // ============================================================================
 
 /**
+ * What a captured snapshot says about itself, in the server's own voice (#350).
+ *
+ * The inventory reaches the model FENCED, and a fence is a region the model is told
+ * to treat as data and never as instruction — so the sentence telling it how to cite
+ * the inventory cannot live inside one. It goes immediately before it instead, which
+ * is also where the fence's own header already speaks. The fingerprint is a
+ * server-computed `ctx_…` digest, so nothing untrusted is spliced in.
+ */
+const snapshotHandoverText = (fingerprint: string): string =>
+  `Cite that inventory in a claim as ${citeSnapshot(fingerprint)}.`;
+
+/**
+ * The packed inventory, with the sentence that says how to cite it in front of it.
+ *
+ * Handed to `packContextForTask` as its preface rather than concatenated here, so the
+ * sentence is INSIDE the bound that function keeps rather than added on top of it.
+ */
+function packSnapshotMessage(snapshot: AgentContextSnapshot, objective: string): string {
+  return packContextForTask(snapshot, objective, { preface: snapshotHandoverText(snapshot.fingerprint) });
+}
+
+/**
  * The schema's relations, as its own fenced block beside the inventory.
  *
  * Separate rather than folded into the inventory, for a reason the packing code
@@ -269,7 +306,10 @@ function toolsByStep(events: readonly AgentRunEvent[]): ReadonlyMap<string, stri
 function describeSettled(event: AgentSettledStepEvent, toolName: string): string {
   if (event.kind === "tool-completed") {
     const { correlationId, operationId, summary } = event.artifact;
-    return `Step ${event.stepId} (${toolName}) completed: operation ${operationId}, artifact ${correlationId}, ${summary.rowCount} row(s). The rows themselves are not delivered again — cite the artifact, or draft a different statement if you need to see them.`;
+    // The citation form, not merely the id (#350): a resumed run is told about work
+    // whose rows it will never see again, so this text IS its only route to citing
+    // that step, and "cite the artifact" left the how unsaid exactly as the rules did.
+    return `Step ${event.stepId} (${toolName}) completed: operation ${operationId}, ${summary.rowCount} row(s). ${handoverText(correlationId)} The rows themselves are not delivered again — cite it, or draft a different statement if you need to see them.`;
   }
 
   const { refusal } = event;
@@ -303,7 +343,9 @@ function describePriorProgress(record: AgentRunRecord): string | null {
 
   for (const event of record.events) {
     if (event.kind === "context-captured") {
-      lines.push(`A schema snapshot was captured: fingerprint ${event.fingerprint}, ${event.tableCount} table(s).`);
+      lines.push(
+        `A schema snapshot was captured: ${event.tableCount} table(s). ${snapshotHandoverText(event.fingerprint)}`,
+      );
     } else if (event.kind === "statement-drafted") {
       lines.push(`Step ${event.stepId}: you drafted ${event.sql} (${event.rationale}).`);
     } else if (event.kind === "tool-completed" || event.kind === "tool-refused") {
@@ -691,7 +733,7 @@ export async function runInvestigation(
 
     const recorded = reusableSnapshot(record.events, record.connectionId);
     if (recorded !== null) {
-      messages.push({ role: "user", content: packContextForTask(recorded, record.objective) });
+      messages.push({ role: "user", content: packSnapshotMessage(recorded, record.objective) });
       messages.push({ role: "user", content: packRelations(recorded, record.workflowType) });
       return;
     }
@@ -708,7 +750,7 @@ export async function runInvestigation(
       tableCount: snapshot.tables.length,
       snapshot,
     });
-    messages.push({ role: "user", content: packContextForTask(snapshot, record.objective) });
+    messages.push({ role: "user", content: packSnapshotMessage(snapshot, record.objective) });
     messages.push({ role: "user", content: packRelations(snapshot, record.workflowType) });
   };
 

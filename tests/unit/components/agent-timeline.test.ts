@@ -1152,3 +1152,153 @@ describe("an ending says whether the run ANSWERED, not only how it stopped (B24)
     expect(view.items[1]?.detail).toContain("stopped without composing a cited report");
   });
 });
+
+/*
+  #350's second finding, and the reason it survived every existing assertion: the
+  headline and the sentence under it were each pinned alone, and the defect is only
+  visible in the PAIR. A planning run that ended exactly as planning runs are meant
+  to ended `model-stopped`, and the rail rendered "Run answered" with "The model
+  stopped without composing a cited report." directly beneath it — a verdict and a
+  shortfall about the same run, in the same breath, one of them false.
+
+  Every test here therefore reads BOTH fields of one ending. Asserting either half
+  on its own is what let the contradiction through the first time.
+*/
+describe("the verdict and the sentence beneath it are read as one pair (#350)", () => {
+  const openedIn = (mode: "agent" | "planning"): AgentLedgerEntry => ({ ...OPENED, mode });
+
+  const stoppedAnswering = (verifier: string): AgentLedgerEntry =>
+    event({
+      kind: "event",
+      event: {
+        kind: "run-finished",
+        atMs: 9,
+        status: "succeeded",
+        stopReason: "model-stopped",
+        goalVerdict: { outcome: "answered", verifier },
+      },
+    } as AgentLedgerEntry & { kind: "event" });
+
+  test("a planning run that answered is not also told it composed no report", () => {
+    // Planning is TOOLLESS by contract: `compose_report` does not exist in that
+    // mode, so stopping without one is how a good planning run ends.
+    const view = foldLedgerEntries([openedIn("planning"), stoppedAnswering("agent-planning.1")]);
+    const ending = view.items[1];
+
+    expect(ending?.headline).toBe("Run answered");
+    expect(ending?.detail ?? "").not.toContain("without composing a cited report");
+    // And it is not merely silent: the pair still says what happened.
+    expect(ending?.detail).toContain("plan");
+  });
+
+  test("an agent run that answered nothing still reads as the shortfall it is", () => {
+    const view = foldLedgerEntries([
+      openedIn("agent"),
+      event({
+        kind: "event",
+        event: {
+          kind: "run-finished",
+          atMs: 9,
+          status: "succeeded",
+          stopReason: "model-stopped",
+          goalVerdict: { outcome: "unanswered", verifier: "agent-investigation.1", unmet: ["no-report"] },
+        },
+      } as AgentLedgerEntry & { kind: "event" }),
+    ]);
+    const ending = view.items[1];
+
+    expect(ending?.headline).toBe("Run did not answer");
+    expect(ending?.detail).toContain("without composing a cited report");
+  });
+
+  test("a planning run that fell short says what it lacked, not how the loop exited", () => {
+    const view = foldLedgerEntries([
+      openedIn("planning"),
+      event({
+        kind: "event",
+        event: {
+          kind: "run-finished",
+          atMs: 9,
+          status: "succeeded",
+          stopReason: "model-stopped",
+          goalVerdict: { outcome: "unanswered", verifier: "agent-planning.1", unmet: ["no-plan"] },
+        },
+      } as AgentLedgerEntry & { kind: "event" }),
+    ]);
+    const ending = view.items[1];
+
+    expect(ending?.headline).toBe("Run did not answer");
+    expect(ending?.detail).toContain("no plan at all");
+  });
+
+  test("a planning run's other endings are still the failures they were", () => {
+    const view = foldLedgerEntries([
+      openedIn("planning"),
+      event({
+        kind: "event",
+        event: { kind: "run-finished", atMs: 9, status: "failed", stopReason: "deadline-exceeded" },
+      } as AgentLedgerEntry & { kind: "event" }),
+    ]);
+
+    expect(view.items[1]?.detail).toContain("time limit");
+  });
+
+  test("a ledger whose header the rail never read keeps the agent-mode reading", () => {
+    // A stream joined after the header — the fold has no mode to go on, and the
+    // agent wording is what this component has always shown.
+    const view = foldLedgerEntries([stoppedAnswering("agent-investigation.1")]);
+
+    expect(view.items[0]?.detail).toContain("without composing a cited report");
+  });
+
+  test("the mode is taken from a run-started event when that is all there is", () => {
+    const view = foldLedgerEntries([
+      event({ kind: "event", event: { kind: "run-started", atMs: 2, mode: "planning" } } as AgentLedgerEntry & {
+        kind: "event";
+      }),
+      stoppedAnswering("agent-planning.1"),
+    ]);
+
+    expect(view.items[1]?.detail ?? "").not.toContain("without composing a cited report");
+  });
+
+  /*
+    Keying the sentence on the mode made a two-level lookup out of a one-level one,
+    and the second index is the one that throws. `parseLedgerLine` validates the
+    entry KIND and deliberately nothing else — its own docblock says a newer server
+    may write things this bundle has never heard of, and that is not a reason to
+    tear down a timeline a user is already reading. A mode is exactly such a thing:
+    it arrives off parsed JSON, so `AgentRunMode` describes what this bundle knows,
+    not what the line contains.
+
+    The rail must therefore degrade for an unknown mode the way it already degrades
+    for an unknown stop reason — no sentence, everything else intact — rather than
+    blanking the run.
+  */
+  test("a mode this bundle has never heard of does not tear down the timeline", () => {
+    const line = JSON.stringify({ ...OPENED, mode: "supervised" });
+    const parsed = parseLedgerLine(line);
+    if (parsed === null) throw new Error("the header itself must still parse: its kind is one this bundle knows");
+
+    const view = foldLedgerEntries([parsed, stoppedAnswering("agent-supervised.1")]);
+
+    // The run is still readable, and the ending still carries its verdict.
+    expect(view.items).toHaveLength(2);
+    expect(view.items[1]?.headline).toBe("Run answered");
+    // No invented sentence: unknown mode degrades exactly like an unknown stop
+    // reason, which yields no detail rather than another mode's wording.
+    expect(view.items[1]?.detail).toBeUndefined();
+  });
+
+  test("an unknown stop reason still degrades to no sentence, in a mode this bundle knows", () => {
+    const view = foldLedgerEntries([
+      openedIn("agent"),
+      event({
+        kind: "event",
+        event: { kind: "run-finished", atMs: 9, status: "succeeded", stopReason: "abandoned-by-operator" },
+      } as unknown as AgentLedgerEntry & { kind: "event" }),
+    ]);
+
+    expect(view.items[1]?.detail).toBeUndefined();
+  });
+});

@@ -163,6 +163,13 @@ rather than instead of it (B24).
 answer different questions and are mutually exclusive in practice; when both are present, `reason`
 is the one a user reads, because a dead drive is the more specific account of an ending.
 
+**What a `stopReason` MEANS depends on the mode**, and `model-stopped` is where the two part company.
+In agent mode it is a shortfall: the model had a report tool and did not use it. In planning mode it
+is the successful ending — planning is toolless, `compose_report` does not exist there, and stopping
+once the plan is written is the only way a good planning run can end. The rail therefore words that
+one ending per mode (#350); every other ending is a shortfall in either mode, because a planning run
+that ran out of time produced no plan either.
+
 ## Durability and resume
 
 A run has **no mutable row anywhere**. It *is* an append-only ledger on the durable backend, and the
@@ -246,6 +253,19 @@ never the shared writable connection cache.
 | `run_read_query` | `sql.query.read` | The statement (a bounded read). |
 | `inspect_plan` | `sql.explain.estimate` | The statement to explain. The *estimating* form only. |
 | `compose_report` | — | Claims and the evidence references backing them. Reaches no database. |
+
+**An evidence reference is one object, and the model is told which** — in the tool description, in
+the rules the run is opened with, and again each time an id changes hands:
+`{"source":"artifact","correlationId":"…"}` for a result the run read, or
+`{"source":"context-snapshot","fingerprint":"…"}` for the inventory it captured. Saying only that a
+claim must cite is not enough: live runs reached the point of reporting knowing they had to cite,
+holding the correlation id they needed, and spent their remaining turns guessing at the shape — one
+run's ledger records the model asking itself whether an evidence item is "an array of table row
+objects or strings?" and sending a statement with nothing to learn in it while it worked that out
+(#350). The same words are also what a REFUSAL says: a model that got the shape wrong is the one that
+most needs to be shown it. A server-composed citation is never a suggestion the model has to decode —
+`composeReportTool` verifies every reference against the run's own event log and refuses a claim it
+cannot resolve.
 
 Two consequences worth stating:
 

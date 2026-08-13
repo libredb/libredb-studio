@@ -120,11 +120,25 @@ export function correlationIdIn(transcript: string): string {
   return match[0];
 }
 
-/** Every correlation id in the transcript, oldest first. */
+/**
+ * Every DISTINCT correlation id in the transcript, oldest first.
+ *
+ * Deduplicated here rather than at each call site (#350). One artifact now reaches
+ * the model three times in one handover — in the fence header, in "Stored as
+ * artifact …", and inside the citation object — so occurrences stopped being ids the
+ * moment the handover text was added, and a caller that destructures `[before,
+ * after]` would silently get one artifact twice. Both call sites already wanted a
+ * set and wrapped this in `new Set`; making that the function's contract removes the
+ * trap rather than leaving it for the next caller to step in.
+ */
 export function correlationIdsIn(transcript: string): string[] {
-  return [...transcript.matchAll(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g)].map(
-    (match) => match[0],
-  );
+  return [
+    ...new Set(
+      [...transcript.matchAll(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g)].map(
+        (match) => match[0],
+      ),
+    ),
+  ];
 }
 
 /** A report citing the FIRST result this run produced. */
@@ -139,11 +153,52 @@ export const reportOn =
       "call_report",
     );
 
+/**
+ * The prompt as prose: every message's text, in order.
+ *
+ * `turn.transcript` is the messages JSON-encoded, so a JSON object embedded in a
+ * message's text appears there escaped and cannot be lifted back out. This is what
+ * the MODEL reads.
+ */
+export function promptText(turn: Turn): string {
+  const messages = (turn.body.messages ?? []) as { content?: unknown }[];
+  return messages.map((message) => (typeof message.content === "string" ? message.content : "")).join("\n");
+}
+
+/**
+ * Every evidence object the SERVER offered in this prompt, lifted verbatim (#350).
+ *
+ * The regex matches canonical JSON with no spaces, which is what `JSON.stringify`
+ * produces in `tools.ts` — deliberately coupled, so a citation the server renders
+ * some other way stops being found here rather than being silently tolerated.
+ */
+export function offeredCitationsIn(turn: Turn): unknown[] {
+  return [...promptText(turn).matchAll(/\{"source":"[a-z-]+","[A-Za-z]+":"[^"]*"\}/g)]
+    .map((match) => JSON.parse(match[0]) as { correlationId?: string; fingerprint?: string })
+    .filter((citation) => !(citation.correlationId ?? citation.fingerprint ?? "").startsWith("<"));
+}
+
+/**
+ * A report that cites ONLY what the prompt offered, copied exactly as offered.
+ *
+ * The regression guard for #350: it asks nothing of the model's understanding, only
+ * that the object the server put in front of it is one the server will then accept.
+ * If the description, the rules, the handover text and `evidenceSchema` ever drift
+ * apart, this fixture composes a report the tool refuses.
+ */
+export const reportCitingWhatWasOffered =
+  (claim: string): ScriptedTurn =>
+  (turn: Turn): Response => {
+    const evidence = offeredCitationsIn(turn);
+    if (evidence.length === 0) throw new Error(`the prompt offered no citation: ${promptText(turn).slice(0, 600)}`);
+    return chatToolCallStream("compose_report", JSON.stringify({ claims: [{ claim, evidence }] }), "call_report");
+  };
+
 /** A report citing EVERY result this run produced, which is what an empty-evidence fixture needs. */
 export const reportOnAll =
   (claim: string): ScriptedTurn =>
   (turn: Turn): Response => {
-    const ids = [...new Set(correlationIdsIn(turn.transcript))];
+    const ids = correlationIdsIn(turn.transcript);
     if (ids.length === 0) throw new Error(`no artifact reference in the transcript: ${turn.transcript.slice(0, 400)}`);
     return chatToolCallStream(
       "compose_report",

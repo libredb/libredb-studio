@@ -7,6 +7,7 @@ import type {
   AgentReportClaim,
   AgentRunEvent,
   AgentRunFailureReason,
+  AgentRunMode,
   AgentRunStatus,
   AgentRunStopReason,
   AgentRunWorkflowType,
@@ -246,11 +247,24 @@ const WORKFLOW_WORDS: Readonly<Record<AgentRunWorkflowType, string>> = {
  * the durable contract cannot reach a user as an unlabelled ending.
  *
  * `report-composed` has no sentence: the report itself is already in the timeline
- * above, and a line repeating that it exists would be noise. The rest are all cases
- * where the run stopped WITHOUT answering, which is precisely what a reader cannot
- * otherwise tell from `succeeded` or `failed` alone.
+ * above, and a line repeating that it exists would be noise.
+ *
+ * **What an ending MEANS depends on the mode**, which is why this is keyed on it
+ * (#350). The wording below was written for agent mode, where a run that stops with
+ * no report has fallen short. In planning mode the same exit is the SUCCESSFUL one:
+ * planning is toolless by contract, `compose_report` does not exist there, and
+ * stopping once the plan is written is exactly how a good planning run ends. A live
+ * planning run on 2026-08-12 was recorded `answered` by its own verifier and the
+ * rail rendered "Run answered" above "The model stopped without composing a cited
+ * report." — a headline and a sentence about the same run that contradicted each
+ * other. The earlier docblock here asserted the assumption that broke ("the rest are
+ * all cases where the run stopped WITHOUT answering"); it held for one mode and was
+ * stated for both.
+ *
+ * Only `model-stopped` differs. Every other ending is a shortfall in either mode: a
+ * planning run that ran out of time or was cancelled produced no plan either.
  */
-const STOP_SENTENCES = {
+const AGENT_STOP_SENTENCES = {
   "report-composed": null,
   "model-stopped": "The model stopped without composing a cited report.",
   cancelled: "Stopped because it was cancelled.",
@@ -259,6 +273,14 @@ const STOP_SENTENCES = {
   "turn-limit": "The run reached its step limit before it finished. What it had gathered is above.",
 } as const satisfies Record<AgentRunStopReason, string | null>;
 
+const STOP_SENTENCES: Readonly<Record<AgentRunMode, Record<AgentRunStopReason, string | null>>> = {
+  agent: AGENT_STOP_SENTENCES,
+  planning: {
+    ...AGENT_STOP_SENTENCES,
+    "model-stopped": "The model finished its plan and stopped. Planning mode has no tools, so it composed no report.",
+  },
+};
+
 /**
  * The one sentence an ending gets, from at most one of its two accounts.
  *
@@ -266,11 +288,15 @@ const STOP_SENTENCES = {
  * specific thing to have happened than any way the loop can exit. Neither present is
  * the normal case for a ledger written before these fields existed, and it yields no
  * detail rather than an invented one.
+ *
+ * The verdict's shortfall still wins over the stop reason in BOTH modes, so a
+ * planning run that produced no plan is told that rather than told it stopped.
  */
 function describeEnding(
   reason: AgentRunFailureReason | undefined,
   stopReason: AgentRunStopReason | undefined,
   verdict: AgentGoalVerdictRecord | undefined,
+  mode: AgentRunMode,
 ): { detail?: string } {
   if (reason !== undefined) return { detail: FAILURE_SENTENCES[reason] };
   // What the run was missing, when a verifier said. More specific than the stop
@@ -279,8 +305,14 @@ function describeEnding(
   const shortfall = verdict?.unmet?.map((code) => SHORTFALL_SENTENCES[code]).join(" ");
   if (shortfall !== undefined && shortfall.length > 0) return { detail: shortfall };
   if (stopReason === undefined) return {};
-  const sentence = STOP_SENTENCES[stopReason];
-  return sentence === null ? {} : { detail: sentence };
+  // BOTH indexes are optional, and for the same reason. `parseLedgerLine` checks the
+  // entry kind and deliberately nothing else, so a mode and a stop reason alike are
+  // whatever a possibly-newer server wrote — the unions describe what this bundle
+  // knows, not what the line holds. An unrecognised value in either position yields
+  // no sentence, which is a run read without a line under it rather than a rail torn
+  // down mid-read.
+  const sentence = STOP_SENTENCES[mode]?.[stopReason];
+  return sentence === null || sentence === undefined ? {} : { detail: sentence };
 }
 
 /** The verdict as the ledger carries it. Optional everywhere, like the fields beside it. */
@@ -333,7 +365,7 @@ function describeRefusal(refusal: AgentToolRefusal): Omit<AgentTimelineItem, "id
   }
 }
 
-function describeEvent(event: AgentRunEvent): Omit<AgentTimelineItem, "id" | "atMs"> {
+function describeEvent(event: AgentRunEvent, mode: AgentRunMode): Omit<AgentTimelineItem, "id" | "atMs"> {
   switch (event.kind) {
     case "run-started":
       return { tone: "neutral", headline: `Run started in ${event.mode} mode` };
@@ -431,12 +463,12 @@ function describeEvent(event: AgentRunEvent): Omit<AgentTimelineItem, "id" | "at
         // would be this component inventing a cause for every ending that had none.
         // `reason` wins when both are present: a drive that died outside the loop is
         // a more specific account of the ending than the loop's own exit.
-        ...describeEnding(event.reason, event.stopReason, event.goalVerdict),
+        ...describeEnding(event.reason, event.stopReason, event.goalVerdict, mode),
       };
   }
 }
 
-function describeEntry(entry: AgentLedgerEntry): Omit<AgentTimelineItem, "id"> {
+function describeEntry(entry: AgentLedgerEntry, mode: AgentRunMode): Omit<AgentTimelineItem, "id"> {
   switch (entry.kind) {
     case "run-opened":
       return {
@@ -452,7 +484,7 @@ function describeEntry(entry: AgentLedgerEntry): Omit<AgentTimelineItem, "id"> {
         quoted: entry.objective,
       };
     case "event":
-      return { atMs: entry.event.atMs, ...describeEvent(entry.event) };
+      return { atMs: entry.event.atMs, ...describeEvent(entry.event, mode) };
     default:
       return {
         atMs: entry.atMs,
@@ -582,12 +614,28 @@ export function foldLedgerEntries(entries: readonly AgentLedgerEntry[]): AgentRu
   const statementsByStep = new Map<string, string>();
   const captures = new Map<string, number>();
 
+  /*
+    What an ending MEANS depends on this (#350), so it is folded like the status is
+    and read from whichever of the two entries carries it — the header a run is
+    opened with, or the `run-started` event, since a stream can be joined after the
+    header has gone past.
+
+    `agent` is the default rather than an absence, and deliberately so: a fold that
+    never saw either has always shown the agent wording, and this must not change
+    what such a ledger reads as. The default is only reachable for a ledger whose
+    beginning the rail does not hold.
+  */
+  let mode: AgentRunMode = "agent";
+
   entries.forEach((entry, index) => {
     if (entry.kind === "cancellation-requested") stopRequested = true;
+    if (entry.kind === "run-opened") mode = entry.mode;
     if (entry.kind === "event") {
       const { event } = entry;
-      if (event.kind === "run-started") status = "running";
-      else if (event.kind === "run-finished") {
+      if (event.kind === "run-started") {
+        status = "running";
+        mode = event.mode;
+      } else if (event.kind === "run-finished") {
         status = event.status;
         failureReason = event.reason ?? null;
       } else if (event.kind === "context-captured") captures.set(event.fingerprint, event.tableCount);
@@ -608,7 +656,7 @@ export function foldLedgerEntries(entries: readonly AgentLedgerEntry[]): AgentRu
     }
     // Indexed, because two entries can legitimately be identical in content and
     // timestamp (a resumed run replaying a step), and React needs distinct keys.
-    items.push({ id: `entry-${index}`, ...describeEntry(entry) });
+    items.push({ id: `entry-${index}`, ...describeEntry(entry, mode) });
   });
 
   const budgets = AGENT_EXECUTION_POLICY.budgets;

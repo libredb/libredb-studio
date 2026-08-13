@@ -65,7 +65,7 @@ async function open(engine: EvalEngine): Promise<EvalRun> {
 const comparesPlans =
   () =>
   (turn: Turn): Response => {
-    const [before, after] = [...new Set(correlationIdsIn(turn.transcript))];
+    const [before, after] = correlationIdsIn(turn.transcript);
     if (before === undefined || after === undefined) {
       throw new Error(
         `expected two plan artifacts in the transcript, got ${JSON.stringify(correlationIdsIn(turn.transcript))}`,

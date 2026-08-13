@@ -256,7 +256,12 @@ describe("a hostile table name in a profile", () => {
 
     expect(drive.kinds).not.toContain("table-profiled");
     expect(drive.modelStatements).toEqual([]);
-    expect(drive.transcripts[1]).toContain("could not be turned into a statement");
+    // The refusal is the shared bad-input one carrying the COMPOSER's reason code,
+    // which is what "this never became a statement" looks like from the model's side.
+    // The sentence itself no longer promises a statement, because `compose_report`
+    // and `recommend_change` say it too and run none (#350).
+    expect(drive.transcripts[1]).toContain("did not match the shape this tool declares");
+    expect(drive.transcripts[1]).toContain("INVALID_SELECTOR");
   });
 });
 

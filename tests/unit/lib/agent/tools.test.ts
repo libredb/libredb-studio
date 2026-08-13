@@ -283,6 +283,162 @@ describe("selectAgentTools — the server decides, from the persisted mode and w
   });
 });
 
+/*
+  #350: two live runs called `run_read_query` seven times and `compose_report`
+  zero times, and the ledger's rationales say why — "evidence (array of table row
+  objects or strings? …)". Both places the model is told about citing said a claim
+  must cite; neither said what a citation IS. So the contract is asserted here as
+  the model reads it: the description carries the object, and the object it carries
+  is one the schema beside it accepts.
+*/
+describe("a tool that demands a citation says what a citation IS (#350)", () => {
+  /** Every literal evidence object the description offers, as the model would lift it. */
+  const offeredObjects = (description: string): unknown[] =>
+    [...description.matchAll(/\{"source":"[a-z-]+","[A-Za-z]+":"[^"]*"\}/g)].map((match) => JSON.parse(match[0]));
+
+  for (const name of ["compose_report", "recommend_change"] as const) {
+    test(`${name} shows both arms of the evidence contract`, () => {
+      const objects = offeredObjects(AGENT_TOOL_DEFINITIONS[name].description);
+
+      expect(objects.map((object) => (object as { source: string }).source).sort()).toEqual([
+        "artifact",
+        "context-snapshot",
+      ]);
+    });
+
+    test(`${name} accepts the very objects its own description offers`, () => {
+      // The point of asserting through the SCHEMA rather than on the prose: a
+      // description that showed a shape the parser refuses would be worse than one
+      // that showed nothing, and only this fails when the two drift apart.
+      for (const evidence of offeredObjects(AGENT_TOOL_DEFINITIONS[name].description)) {
+        const input =
+          name === "compose_report"
+            ? { claims: [{ claim: "a claim", evidence: [evidence] }] }
+            : { change: "index", statement: "CREATE INDEX i ON t (c)", rationale: "why", evidence: [evidence] };
+
+        expect(AGENT_TOOL_DEFINITIONS[name].inputSchema.safeParse(input).success, JSON.stringify(evidence)).toBe(true);
+      }
+    });
+  }
+
+  test("a completed read hands over a citation the report tool will accept", async () => {
+    // The moment the id changes hands. The live run was HOLDING the correlation id
+    // it needed and still never produced the object, so naming the id is not enough:
+    // the text has to carry the form.
+    const h = harness();
+
+    const outcome = await runReadQueryTool(h.context, { sql: "SELECT id FROM orders" });
+    if (outcome.kind !== "completed") throw new Error(`expected a completed read, got ${outcome.kind}`);
+
+    const offered = offeredObjects(outcome.modelText);
+    expect(offered).toEqual([{ source: "artifact", correlationId: outcome.artifact.correlationId }]);
+
+    // And it verifies against the run's own ledger, which is the check that
+    // actually refuses a report.
+    const events: AgentRunEvent[] = [{ kind: "tool-completed", atMs: 1, stepId: "step_1", artifact: outcome.artifact }];
+    const report = composeReportTool(
+      h.context,
+      { runId: h.context.runId, events },
+      {
+        claims: [{ claim: "orders has rows", evidence: offered }],
+      },
+    );
+
+    expect(report.kind).toBe("composed");
+  });
+
+  /*
+    The two readings that matter most, and the two the contract skipped.
+
+    A description and a set of opening rules are read by a model that is not yet
+    confused. A REFUSAL is read by one that already is — it got the shape wrong, and
+    the answer it gets back is its best chance to get it right. `INVALID_TOOL_INPUT`
+    said "could not be turned into a statement this layer will run", which is written
+    for a tool that composes SQL and is simply untrue of `compose_report`, and
+    `UNVERIFIABLE_EVIDENCE` named the two SOURCES without ever showing the object.
+  */
+  describe("a refusal restates the contract, because that is who reads it", () => {
+    const bothArms = (text: string): string[] =>
+      offeredObjects(text)
+        .map((object) => (object as { source: string }).source)
+        .sort();
+
+    const artifactEvent: AgentRunEvent = {
+      kind: "tool-completed",
+      atMs: 1,
+      stepId: "step_1",
+      artifact: {
+        correlationId: "corr-real",
+        operationId: "sql.query.read",
+        connectionId: "conn-1",
+        createdAtMs: 1,
+        summary: { rowCount: 1, columns: ["id"], truncated: false },
+      },
+    } as unknown as AgentRunEvent;
+
+    test("compose_report tells a wrong-shaped citation what the shape is", () => {
+      const h = harness();
+
+      // Evidence as bare strings: the exact guess the live ledger recorded the
+      // model making ("array of table row objects or strings?").
+      const outcome = composeReportTool(
+        h.context,
+        { runId: h.context.runId, events: [artifactEvent] },
+        { claims: [{ claim: "Engineering is largest.", evidence: ["corr-real"] }] },
+      );
+
+      if (outcome.kind !== "unavailable") throw new Error(`expected unavailable, got ${outcome.kind}`);
+      expect(outcome.reasonCode).toBe("INVALID_TOOL_INPUT");
+      expect(bothArms(outcome.modelText)).toEqual(["artifact", "context-snapshot"]);
+    });
+
+    test("recommend_change tells a wrong-shaped citation what the shape is", () => {
+      const h = harness();
+
+      const outcome = recommendChangeTool(
+        h.context,
+        { runId: h.context.runId, events: [artifactEvent] },
+        {
+          change: "index",
+          statement: "CREATE INDEX i ON orders (id)",
+          rationale: "the read scans",
+          evidence: ["corr-real"],
+        },
+      );
+
+      if (outcome.kind !== "unavailable") throw new Error(`expected unavailable, got ${outcome.kind}`);
+      expect(outcome.reasonCode).toBe("INVALID_TOOL_INPUT");
+      expect(bothArms(outcome.modelText)).toEqual(["artifact", "context-snapshot"]);
+    });
+
+    test("a citation that resolves to nothing is shown the object, not only the sources", () => {
+      const h = harness();
+
+      const outcome = composeReportTool(
+        h.context,
+        { runId: h.context.runId, events: [artifactEvent] },
+        { claims: [{ claim: "Invented", evidence: [{ source: "artifact", correlationId: "corr-invented" }] }] },
+      );
+
+      if (outcome.kind !== "unavailable") throw new Error(`expected unavailable, got ${outcome.kind}`);
+      expect(outcome.reasonCode).toBe("UNVERIFIABLE_EVIDENCE");
+      expect(bothArms(outcome.modelText)).toEqual(["artifact", "context-snapshot"]);
+    });
+
+    test("the bad-input refusal no longer promises a statement to a tool that runs none", () => {
+      // `compose_report` and `recommend_change` reach no database and compose no SQL,
+      // and they share this code with the tools that do. The shared sentence has to
+      // be true of all of them.
+      const h = harness();
+
+      const outcome = composeReportTool(h.context, { runId: h.context.runId, events: [] }, { claims: [] });
+
+      if (outcome.kind !== "unavailable") throw new Error(`expected unavailable, got ${outcome.kind}`);
+      expect(outcome.modelText).not.toContain("statement this layer will run");
+    });
+  });
+});
+
 describe("runReadQueryTool — the allowed path", () => {
   test("reaches the database once, through the agent read-only profile", async () => {
     const h = harness();

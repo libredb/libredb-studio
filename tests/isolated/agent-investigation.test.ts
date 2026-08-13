@@ -27,6 +27,7 @@ import {
   callsTool,
   correlationIdIn,
   modelOver,
+  promptText,
   reportOn,
   scriptedModel,
   unansweredCall,
@@ -471,6 +472,141 @@ describe("a fresh run drives the investigation arc", () => {
     expect(messages.filter((message) => message.role === "user").map((message) => message.content)).toContain(
       OBJECTIVE,
     );
+  });
+});
+
+/*
+  #350. Both places that told the model to cite said only that a claim must cite.
+  Neither said what a citation IS, and two live runs spent five of seven turns
+  guessing at it — one of them sending `SELECT 1` purely to keep thinking — while
+  holding the correlation id they needed.
+
+  These assertions are about the PROMPT, which is unusual here and is the point: a
+  scripted model already knows the contract and can never be confused by it, so no
+  behavioural test in this suite can see this defect. What CAN be pinned mechanically
+  is that the shape appears in each of the three places a model looks — the rules it
+  is opened with, the moment an id changes hands, and the summary a resumed run is
+  given — and that what appears there is the shape the parser accepts.
+*/
+describe("the model is told what a citation IS, not only that it must cite (#350)", () => {
+  /** Every literal evidence object in a prompt, as the model would lift one out. */
+  const offeredObjects = (text: string): { source: string; correlationId?: string; fingerprint?: string }[] =>
+    [...text.matchAll(/\{"source":"[a-z-]+","[A-Za-z]+":"[^"]*"\}/g)].map((match) => JSON.parse(match[0]));
+
+  /** The rules the run was opened with, on their own — not the messages beside them. */
+  const rulesOf = (turn: Turn): string => {
+    const messages = (turn.body.messages ?? []) as { role?: string; content?: unknown }[];
+    const system = messages.find((message) => message.role === "system");
+    return typeof system?.content === "string" ? system.content : "";
+  };
+
+  test("the run's rules carry both arms of the evidence contract", async () => {
+    const b = boot(freshDataDir());
+    const run = await startRun(b);
+    const script = scriptedModel(answersProse("ok"));
+
+    await runInvestigation(run.runId, {
+      service: b.service,
+      model: await modelOver(script.fetch),
+      resources: b.resources,
+    });
+
+    expect(
+      offeredObjects(rulesOf(script.turns[0] as Turn))
+        .map((object) => object.source)
+        .sort(),
+    ).toEqual(["artifact", "context-snapshot"]);
+  });
+
+  test("the snapshot's own fingerprint is offered as a citation when it is captured", async () => {
+    const b = boot(freshDataDir());
+    const run = await startRun(b);
+    const script = scriptedModel(answersProse("ok"));
+
+    await runInvestigation(run.runId, {
+      service: b.service,
+      model: await modelOver(script.fetch),
+      resources: b.resources,
+    });
+
+    const captured = (await eventsOf(b.store, run.runId)).find((event) => event.kind === "context-captured");
+    if (captured?.kind !== "context-captured") throw new Error("this drive captured no snapshot");
+    // Not the placeholder from the rules: the run's OWN fingerprint, ready to copy.
+    expect(offeredObjects(promptText(script.turns[0] as Turn))).toContainEqual({
+      source: "context-snapshot",
+      fingerprint: captured.fingerprint,
+    });
+  });
+
+  test("a completed read offers its own id in the shape a claim takes", async () => {
+    const b = boot(freshDataDir());
+    const run = await startRun(b);
+    const script = scriptedModel(
+      callsTool("run_read_query", { sql: "SELECT id FROM orders", rationale: "size it" }),
+      answersProse("done"),
+    );
+
+    await runInvestigation(run.runId, {
+      service: b.service,
+      model: await modelOver(script.fetch),
+      resources: b.resources,
+    });
+
+    const completed = (await eventsOf(b.store, run.runId)).find((event) => event.kind === "tool-completed");
+    if (completed?.kind !== "tool-completed") throw new Error("this drive completed no tool call");
+    // The SECOND turn is where the tool's answer reached the model.
+    expect(offeredObjects(promptText(script.turns[1] as Turn))).toContainEqual({
+      source: "artifact",
+      correlationId: completed.artifact.correlationId,
+    });
+  });
+
+  test("a resumed run is offered the same shapes for what it already established", async () => {
+    const dataDir = freshDataDir();
+    const first = boot(dataDir);
+    const run = await startRun(first);
+    // One completed read, then the driving process stops answering.
+    const died = scriptedModel(callsTool("run_read_query", { sql: "SELECT id FROM orders", rationale: "size it" }));
+    await expect(
+      runInvestigation(run.runId, {
+        service: first.service,
+        model: await modelOver(died.fetch),
+        resources: first.resources,
+      }),
+    ).rejects.toThrow();
+
+    const second = boot(dataDir);
+    const resumed = scriptedModel(answersProse("ok"));
+    await runInvestigation(run.runId, {
+      service: second.service,
+      model: await modelOver(resumed.fetch),
+      resources: second.resources,
+    });
+
+    const events = await eventsOf(second.store, run.runId);
+    const completed = events.find((event) => event.kind === "tool-completed");
+    const captured = events.find((event) => event.kind === "context-captured");
+    if (completed?.kind !== "tool-completed" || captured?.kind !== "context-captured") {
+      throw new Error("the resumed run has no prior progress to be told about");
+    }
+
+    const offered = offeredObjects(promptText(resumed.turns[0] as Turn));
+    expect(offered).toContainEqual({ source: "artifact", correlationId: completed.artifact.correlationId });
+    expect(offered).toContainEqual({ source: "context-snapshot", fingerprint: captured.fingerprint });
+  });
+
+  test("planning mode is not told to cite anything, because it has nothing to cite", async () => {
+    const b = boot(freshDataDir());
+    const run = await startRun(b, "planning");
+    const script = scriptedModel(answersProse("a plan"));
+
+    await runInvestigation(run.runId, {
+      service: b.service,
+      model: await modelOver(script.fetch),
+      resources: b.resources,
+    });
+
+    expect(offeredObjects(promptText(script.turns[0] as Turn))).toEqual([]);
   });
 });
 
