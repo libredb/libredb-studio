@@ -192,10 +192,15 @@ const AI_ROUTES_DIR = join(import.meta.dir, "..", "..", "src", "app", "api", "ai
 const AI_ROUTES = discoverRoutes(AI_ROUTES_DIR);
 
 describe("every AI route enforces the shared budget", () => {
-  // A directory-listing bug that silently finds zero routes would make the loop below run no
-  // assertions at all - a vacuous pass. This is what keeps that possibility from going unnoticed.
-  test("the filesystem enumeration finds at least today's four AI routes", () => {
-    expect(AI_ROUTES.length).toBeGreaterThanOrEqual(4);
+  /*
+    Two failures at once, and a floor catches only the first. A directory-listing bug that
+    silently found zero routes would make the loop below run no assertions at all - a vacuous
+    pass. And a floor cannot notice a route that came BACK: `>= 4` is satisfied by five, so a
+    reinstated nl2sql or autopilot route would leave the removal gate green (#331 T2). The
+    exact set is what asserts both. Found by review on #349.
+  */
+  test("the filesystem enumeration finds exactly today's AI routes", () => {
+    expect(AI_ROUTES.map(([routeKey]) => routeKey)).toEqual(["chat", "describe-schema", "explain", "query-safety"]);
   });
 
   test("each discovered route is rejected once the shared ai bucket is already spent", async () => {

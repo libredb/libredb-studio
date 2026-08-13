@@ -1057,7 +1057,7 @@ single number written here has gone stale every time it was updated:
 
 | Bucket | Applies to | Default |
 |--------|-----------|---------|
-| `ai` | The 4 `/api/ai/*` routes, plus every `/api/agent/*` route: starting a run, driving one, and the three that read one back | 20 requests / 60 seconds |
+| `ai` | The 4 `/api/ai/*` routes, plus every `/api/agent/*` route except `GET /api/agent/config`: starting a run, driving one, reading one, cancelling one, streaming one, and fetching an artifact | 20 requests / 60 seconds |
 | `query` | Every database-reaching `/api/db/*` route plus `/api/admin/fleet-health`, together | 120 requests / 60 seconds |
 
 Routing the same workload through a different endpoint does not multiply the budget - the bucket is

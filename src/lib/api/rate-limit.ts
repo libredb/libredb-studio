@@ -100,13 +100,20 @@ const BUCKETS: Record<RateLimitBucket, BucketSpec> = {
     windowDefault: 300,
   },
   // Shared by every route that reaches an LLM provider or touches an agent run, so that
-  // rotating between them cannot multiply the budget. Deliberately stated as a RULE and not as
-  // a count: the count has been written wrong four times, because a route can spend this bucket
-  // two ways and each way is invisible to a grep for the other. Most spend it through
-  // guardRoute({ bucket: "ai" }) - the four /api/ai/* routes, POST /api/agent/runs, and the
-  // three agent read routes that go through accessAgentRun - while POST /api/agent/drive calls
-  // consumeRateLimit("ai", ...) directly and carries no bucket literal at all. Both greps
-  // together are the derivation; either one alone under-counts.
+  // rotating between them cannot multiply the budget. Stated as a RULE rather than a count,
+  // because every count written here has been wrong: a route can join this bucket three ways
+  // and each is invisible to a grep for the others. Directly, through
+  // guardRoute({ bucket: "ai" }) - the four /api/ai/* routes and POST /api/agent/runs.
+  // Indirectly, through accessAgentRun, which passes the same bucket for all FOUR per-run
+  // handlers: reading a run, cancelling one, streaming one, and fetching an artifact - note
+  // that those four live in three route modules, so counting modules under-counts handlers.
+  // And by calling consumeRateLimit("ai", ...) with no bucket literal at all, which is what
+  // POST /api/agent/drive does.
+  //
+  // The one exception is GET /api/agent/config, which verifies its session with getSession
+  // instead of guardRoute and is charged nothing: it reaches no provider, and a surface that
+  // must ask whether the agent exists before rendering cannot be rate-limited by the same
+  // budget as the work itself.
   //
   // A slot is not a unit of cost. One spent on POST /api/agent/runs starts a run that then makes
   // many model calls of its own, so this bounds how often LLM work is STARTED, never how much it

@@ -154,8 +154,14 @@ const refusalMessage = (
   modelId: string,
   missing: readonly AgentModelCapability[],
   detail?: string,
-): string =>
-  `The model "${modelId}" (${provider}) cannot drive an agent run: the capability probe could not establish ${missing.map((capability) => CAPABILITY_LABELS[capability]).join(", ")}. ${detail ? `${detail} ` : ""}Configure a different model and start the run again.`;
+): string => {
+  const shortfall = missing.map((capability) => CAPABILITY_LABELS[capability]).join(", ");
+  // Its own statement rather than a template inside the template below: a nested one
+  // reads as part of the sentence while being a separate expression, which is why the
+  // rule against them exists.
+  const detailClause = detail ? `${detail} ` : "";
+  return `The model "${modelId}" (${provider}) cannot drive an agent run: the capability probe could not establish ${shortfall}. ${detailClause}Configure a different model and start the run again.`;
+};
 
 const unknownToolDetail = (toolName: string): string =>
   `The model called a tool that was not offered: "${clip(toolName)}".`;
