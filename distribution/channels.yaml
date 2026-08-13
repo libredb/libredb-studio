@@ -529,6 +529,131 @@ channels:
         Deploys SQLite on a 1 GiB PVC by default, with KubeBlocks-managed PostgreSQL as an opt-in
         storage backend, and ships AUTH_BOOTSTRAP=off so the deployment starts in strict mode.
 
+  - id: truenas-scale
+    name: TrueNAS SCALE community apps catalog
+    short_name: TrueNAS SCALE apps
+    status: pending
+    category: paas-catalogs
+    platforms: [container]
+    runtime: channel_supplied
+    tier: 3
+    kind: one-click-template
+    update:
+      method: upstream_pr
+      sla: on_demand
+    links:
+      tracking_issue: https://github.com/libredb/libredb-studio/issues/278
+      first_pr: https://github.com/truenas/apps/pull/5501
+      upstream_repo: https://github.com/truenas/apps
+      docs: docs/DISTRIBUTION.md
+    pin:
+      strategy: none
+      note: PR truenas/apps#5501 is open (fork yusuf-gundogdu/apps, branch add-libredb-studio), so nothing
+        is listed yet. On merge, flip to live and add a remote_file pin on
+        https://raw.githubusercontent.com/truenas/apps/master/ix-dev/community/libredb-studio/ix_values.yaml
+        with extract 'ghcr\.io/libredb/libredb-studio\s+tag:\s*(\d+\.\d+\.\d+)' - the container_utils_image
+        tag is a different repository and must not be matched. The user installs on their own TrueNAS box,
+        so the platform is container, not cloud.
+
+  - id: casaos
+    name: CasaOS App Store
+    status: pending
+    category: paas-catalogs
+    platforms: [container]
+    runtime: channel_supplied
+    tier: 3
+    kind: one-click-template
+    update:
+      method: upstream_pr
+      sla: on_demand
+    links:
+      tracking_issue: https://github.com/libredb/libredb-studio/issues/277
+      first_pr: https://github.com/IceWhaleTech/CasaOS-AppStore/pull/992
+      upstream_repo: https://github.com/IceWhaleTech/CasaOS-AppStore
+      docs: docs/DISTRIBUTION.md
+    pin:
+      strategy: none
+      note: PR IceWhaleTech/CasaOS-AppStore#992 is open, so nothing is listed yet. On merge, flip to live
+        and add a remote_file pin on
+        https://raw.githubusercontent.com/IceWhaleTech/CasaOS-AppStore/main/Apps/LibreDBStudio/docker-compose.yml
+        with extract 'libredb-studio:(\d+\.\d+\.\d+)'. Installs a Docker container on the user's own device,
+        so the platform is container.
+
+  - id: umbrel
+    name: Umbrel App Store
+    status: pending
+    category: paas-catalogs
+    platforms: [container]
+    runtime: channel_supplied
+    tier: 3
+    kind: one-click-template
+    update:
+      method: upstream_pr
+      sla: on_demand
+    links:
+      tracking_issue: https://github.com/libredb/libredb-studio/issues/214
+      first_pr: https://github.com/getumbrel/umbrel-apps/pull/5847
+      upstream_repo: https://github.com/getumbrel/umbrel-apps
+      docs: docs/DISTRIBUTION.md
+    pin:
+      strategy: none
+      note: PR getumbrel/umbrel-apps#5847 is open, so nothing is listed yet. On merge, flip to live and add
+        a remote_file pin on
+        https://raw.githubusercontent.com/getumbrel/umbrel-apps/master/libredb-studio/docker-compose.yml
+        with extract 'libredb-studio:(\d+\.\d+\.\d+)' - the image is digest-pinned (tag@sha256) and the
+        regex captures the semver and stops before the @. umbrelOS installs on the user's own device, so
+        the platform is container.
+
+  - id: easypanel
+    name: Easypanel template catalog
+    status: pending
+    category: paas-catalogs
+    platforms: [cloud]
+    runtime: channel_supplied
+    tier: 3
+    kind: paas-template
+    update:
+      method: upstream_pr
+      sla: on_demand
+    links:
+      tracking_issue: https://github.com/libredb/libredb-studio/issues/212
+      first_pr: https://github.com/easypanel-io/templates/pull/1446
+      catalog: https://easypanel.io/templates
+      upstream_repo: https://github.com/easypanel-io/templates
+      docs: docs/DISTRIBUTION.md
+    pin:
+      strategy: none
+      note: PR easypanel-io/templates#1446 is open, so nothing is listed yet. On merge, flip to live and add
+        a remote_file pin on
+        https://raw.githubusercontent.com/easypanel-io/templates/main/templates/libredb-studio/meta.yaml
+        with extract 'libredb-studio:(\d+\.\d+\.\d+)' - the version lives in meta.yaml's
+        appServiceImage.default, not index.ts (which parameterises the image). Same PaaS-template shape as
+        dokploy, so the platform is cloud.
+
+  - id: portainer
+    name: Portainer app templates
+    status: pending
+    category: paas-catalogs
+    platforms: [container]
+    runtime: channel_supplied
+    tier: 3
+    kind: one-click-template
+    update:
+      method: upstream_pr
+      sla: on_demand
+    links:
+      tracking_issue: https://github.com/libredb/libredb-studio/issues/213
+      first_pr: https://github.com/portainer/templates/pull/262
+      upstream_repo: https://github.com/portainer/templates
+      docs: docs/DISTRIBUTION.md
+    pin:
+      strategy: none
+      note: PR portainer/templates#262 is open against the v3 branch (Portainer's current template format,
+        NOT master), so nothing is listed yet. On merge, flip to live and add a remote_file pin on
+        https://raw.githubusercontent.com/portainer/templates/v3/templates.json with extract
+        'libredb-studio:(\d+\.\d+\.\d+)'; both the pin URL and any bump PR must target v3. Deploys a
+        container to the user's Docker host, so the platform is container.
+
   - id: operatorhub-community
     name: OperatorHub / OpenShift community operator catalogs
     short_name: OperatorHub / OpenShift
@@ -543,7 +668,7 @@ channels:
       sla: every_release
     links:
       tracking_issue: https://github.com/libredb/libredb-studio/issues/152
-      first_pr: https://github.com/libredb/libredb-studio/pull/156
+      first_pr: https://github.com/redhat-openshift-ecosystem/community-operators-prod/pull/10497
       upstream_repo: https://github.com/redhat-openshift-ecosystem/community-operators-prod
       docs: docs/DISTRIBUTION.md
     pin:
@@ -551,7 +676,7 @@ channels:
       files:
         - operator/bundle/manifests/libredb-studio-operator.clusterserviceversion.yaml
       extract: 'libredb-studio-operator:(\d+\.\d+\.\d+)'
-      note: Catalog submissions (k8s-operatorhub + community-operators-prod) start after the operator PR lands; the committed bundle is the source for both, with community-operators-prod contributed in FBC mode (fbc.enabled plus per-OCP-version catalog_mapping in ci.yaml). FBC releases in two upstream PRs - bundle first, then the rendered catalogs - and that second PR is only bot-created when the bundle directory ships a release-config.yaml, so every release must include one.
+      note: The OpenShift console catalog is live at 0.9.59 (community-operators-prod#10497 merged 2026-07-27, FBC catalogs in community-operators-prod#10581); the OperatorHub.io listing (k8s-operatorhub/community-operators#8794) is still in review, so this channel stays pending until both are listed. Catalog submissions (k8s-operatorhub + community-operators-prod) start after the operator PR lands; the committed bundle is the source for both, with community-operators-prod contributed in FBC mode (fbc.enabled plus per-OCP-version catalog_mapping in ci.yaml). FBC releases in two upstream PRs - bundle first, then the rendered catalogs - and that second PR is only bot-created when the bundle directory ships a release-config.yaml, so every release must include one.
 
   # ---- Tier 4: partner and curated catalogs (not self-serve) --------------
 
