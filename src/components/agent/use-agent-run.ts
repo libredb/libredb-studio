@@ -80,6 +80,7 @@ interface StartResponse {
   readonly runId?: unknown;
   readonly error?: unknown;
   readonly missing?: unknown;
+  readonly disproved?: unknown;
 }
 
 /**
@@ -94,6 +95,17 @@ export interface AgentModelRefusal {
   readonly message: string;
   /** Empty when the server named a shortfall this build has no words for; never invented. */
   readonly missing: readonly AgentModelCapability[];
+  /**
+   * The subset of `missing` the probe WATCHED fail, as against what it never got to see.
+   *
+   * The two are not interchangeable outside the run that was refused. An endpoint that
+   * refused the tool request establishes nothing about streaming; one that answered a
+   * streamed request with a buffered body establishes that it does not stream, and a
+   * toolless run over it would produce silence. Both arrive as `missing: [..."streaming"]`,
+   * so a surface offering the user another mode reads this field, never `missing`
+   * (#331 T4 review, `capability-probe.ts`).
+   */
+  readonly disproved: readonly AgentModelCapability[];
   /**
    * The mode the refused start asked for, and the only mode this verdict is about.
    *
@@ -127,7 +139,8 @@ class ModelRefusedError extends Error {
   }
 }
 
-function readMissingCapabilities(value: unknown): readonly AgentModelCapability[] {
+/** Names this build has words for, and nothing else: an unknown one is dropped, never shown. */
+function readCapabilities(value: unknown): readonly AgentModelCapability[] {
   return Array.isArray(value) ? value.filter(isAgentModelCapability) : [];
 }
 
@@ -223,7 +236,8 @@ export function useAgentRun(): AgentRunFollower {
           if (res.status === CAPABILITY_REFUSED_STATUS) {
             throw new ModelRefusedError({
               message: said,
-              missing: readMissingCapabilities(body.missing),
+              missing: readCapabilities(body.missing),
+              disproved: readCapabilities(body.disproved),
               mode: input.mode,
             });
           }

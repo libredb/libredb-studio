@@ -177,6 +177,7 @@ describe("POST /api/agent/runs", () => {
         modelId: "some-model",
         capabilities: { toolCalling: false, structuredOutput: false, streaming: true },
         missing: ["toolCalling"],
+        disproved: ["toolCalling"],
         message: "This model does not call tools. Configure a different model and start the run again.",
       },
     }));
@@ -189,6 +190,36 @@ describe("POST /api/agent/runs", () => {
     expect(body.missing).toEqual(["toolCalling"]);
     expect(mockStart).not.toHaveBeenCalled();
     expect(mockDriveAgentRun).not.toHaveBeenCalled();
+  });
+
+  /*
+    What the probe WATCHED fail travels too, because `missing` alone cannot answer the
+    question the rail asks of it. An endpoint that refused the tool request establishes
+    nothing about streaming; one that answered a streamed request with a buffered body
+    establishes that it does not stream, and a toolless run over the same endpoint would
+    produce silence. Both arrive here as `missing: [… "streaming"]`, so the browser
+    would have to guess which — and a browser that guesses wrong offers a mode that
+    cannot answer (#331 T4 review).
+  */
+  test("the refusal carries what was DISPROVED, not only what was unestablished", async () => {
+    mockAdmitAgentModel.mockImplementation(async () => ({
+      kind: "refused",
+      refusal: {
+        provider: "ollama",
+        modelId: "gemma3:270m",
+        capabilities: { toolCalling: false, structuredOutput: false, streaming: false },
+        missing: ["toolCalling", "structuredOutput", "streaming"],
+        disproved: ["streaming"],
+        message: "This endpoint ignored stream:true.",
+      },
+    }));
+
+    const body = await parseResponseJSON<{ missing: string[]; disproved: string[] }>(
+      await POST(startRequest(VALID_BODY)),
+    );
+
+    expect(body.missing).toEqual(["toolCalling", "structuredOutput", "streaming"]);
+    expect(body.disproved).toEqual(["streaming"]);
   });
 
   test("opens a run for the session's own actor and reports it queued", async () => {

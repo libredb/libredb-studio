@@ -116,6 +116,35 @@ function readGauge(gauge: AgentBudgetGauge): string {
 const gaugeFraction = (gauge: AgentBudgetGauge): number => Math.min(100, (gauge.used / gauge.limit) * 100);
 
 /**
+ * What a user whose model was refused can still do — in three registers, because a
+ * refusal supports three different true statements (#331 T4 review).
+ *
+ * Each line is written out in full rather than composed from clauses: this is the copy a
+ * user reads at the moment the product told them no, and a sentence assembled from
+ * fragments is the kind that ends up claiming something no branch intended.
+ *
+ *  - Plan mode is on the table. Said as an invitation, never as a guarantee: the probe
+ *    only ever sends a request WITH tools, so no refusal it can reach establishes that a
+ *    toolless one would be served. "Still works with this model" was the claim before,
+ *    and it was one the probe could not keep.
+ *  - The endpoint was watched failing to stream. Then plan mode is not on the table —
+ *    it reads the same `streamText().fullStream` — and saying so is more use than an
+ *    offer that would end in a `succeeded` run with nothing in it.
+ *  - Neither: a verdict raised for plan mode itself, which only a server that probes
+ *    planning could produce. Pointing that user at the mode they are in says nothing, so
+ *    the line is what remains true.
+ */
+function refusalActionText(planModeOffered: boolean, streamingDisproved: boolean): string {
+  if (planModeOffered) {
+    return "Plan mode needs no tools, so it may still work with this model: it reasons about your question and drafts an approach without reading the database. Try it, or configure a different model — one that passes the probe — for a run that reads the database.";
+  }
+  if (streamingDisproved) {
+    return "This endpoint answered without streaming, and plan mode reads the same stream, so it would produce nothing here either. A different model, or an endpoint that streams, is what gets an answer.";
+  }
+  return "A different model, one that passes the probe, is what gets a run that reads the database.";
+}
+
+/**
  * What one entry lets a user do with what the run produced (#329 T11).
  *
  * Rendered only where the ledger recorded something to act on AND the host can act
@@ -318,6 +347,30 @@ export function AgentRail({
   const modelRefusal = run.refusal !== null && run.refusal.mode === mode ? run.refusal : null;
 
   /*
+    Whether plan mode is still worth offering with this model (#331 T4 review).
+
+    The offer used to hang on nothing at all, and read as a guarantee: "plan mode still
+    works with this model". It does not always. A planning turn consumes the same
+    `streamText().fullStream` an agent turn does (`investigation.ts`), and an endpoint
+    that answers a streamed request with one buffered body yields no incremental part at
+    all — driven through the real run loop on 2026-08-13, such a planning run ends
+    `succeeded` with empty text and writes no closing statement. Offering it would be
+    the rail sending a user from one failure into a quieter one.
+
+    `missing` cannot tell those apart: it names streaming in that case AND in the case
+    where the endpoint refused the tool request before a stream could exist — the live
+    `gemma3:270m` refusal, whose model then completed a planning run. `disproved` is the
+    half that can, so the offer hangs on it: withdrawn only where the probe WATCHED the
+    endpoint fail to stream, and left standing where streaming was merely never seen.
+
+    It is still an invitation and not a promise, and the copy says so, because the probe
+    always sends tools: no refusal it can reach establishes that a TOOLLESS request
+    would be served.
+  */
+  const streamingDisproved = modelRefusal !== null && modelRefusal.disproved.includes("streaming");
+  const planModeOffered = modelRefusal !== null && modelRefusal.mode !== "planning" && !streamingDisproved;
+
+  /*
     An artifact is named by a correlation id, and the route that serves its rows is
     scoped to the run that recorded it — so the run id is bound here rather than
     threaded through every item.
@@ -504,17 +557,22 @@ export function AgentRail({
           T3 removed both of those surfaces, so that decision is void — but the earlier
           reading of this state, that nothing toolless survived them, was FALSE, and the
           rail said so to users. The toolless surface that survived is this rail's own
-          planning mode: `admitAgentModel` admits it without probing, so it works with
-          exactly the model just refused, one click away, in this panel. Driven live on
-          2026-08-13 — an `ollama` endpoint serving `gemma3:270m` refused the agent start
-          below, and the same model then ran a planning run to `succeeded`.
+          planning mode, one click away, in this panel. Driven live on 2026-08-13 — an
+          `ollama` endpoint serving `gemma3:270m` refused the agent start below, and the
+          same model then ran a planning run to `succeeded`.
+
+          That `admitAgentModel` admits planning without probing is why the mode is
+          REACHABLE with a refused model; it is not evidence that it WORKS with one. The
+          gate skips the probe because planning needs no tools, which answers nothing
+          about whether this endpoint would serve a toolless request — see
+          `planModeOffered` above for the one observation that settles it the other way.
 
           So the state says what is true instead. An AGENT run is what this model cannot
-          drive, and why; plan mode still works and is offered; a different model is what
-          buys a run that reads the database. The offer only SELECTS the mode — the user
-          decides whether to ask anything of it, the same rule T1's shortcut follows, and
-          for the same reason: a click that spent model budget would be a different
-          feature.
+          drive, and why; plan mode is offered where nothing the probe saw rules it out;
+          a different model is what buys a run that reads the database. The offer only
+          SELECTS the mode — the user decides whether to ask anything of it, the same
+          rule T1's shortcut follows, and for the same reason: a click that spent model
+          budget would be a different feature.
 
           Three registers, on purpose. The verdict is a heading; the shortfall is the
           structured `missing` rendered AS structure, one item per capability, so it can
@@ -523,6 +581,10 @@ export function AgentRail({
           report do name the same capabilities — driven live on 2026-08-13, that reads as
           a summary above its detail, and the alternative is a browser that either parses
           the server's sentence apart or renders `missing` decoratively.
+
+          The small print is `text-zinc-400` rather than `text-zinc-500`, which computes
+          to 3.98:1 on this panel's `#0a0a0a` under the alert's own tint — short of WCAG
+          AA at a size the large-text allowance does not cover (#100, #331 T4 review).
         */}
         {modelRefusal !== null && (
           <div
@@ -533,7 +595,7 @@ export function AgentRail({
             <p className="text-xs text-red-300">This model cannot drive an agent run.</p>
             {modelRefusal.missing.length > 0 && (
               <div data-testid="agent-model-refusal-missing" className="flex flex-wrap items-center gap-1">
-                <span className="text-[0.625rem] text-zinc-500">The probe could not establish:</span>
+                <span className="text-[0.625rem] text-zinc-400">The probe could not establish:</span>
                 {modelRefusal.missing.map((capability) => (
                   <span key={capability} className="px-1 py-0.5 rounded bg-red-500/10 text-[0.625rem] text-red-200/90">
                     {describeAgentCapability(capability)}
@@ -544,17 +606,15 @@ export function AgentRail({
             <p data-testid="agent-model-refusal-report" className="text-[0.625rem] text-zinc-400">
               {modelRefusal.message}
             </p>
-            <p data-testid="agent-model-refusal-action" className="text-[0.625rem] text-zinc-500">
-              Plan mode needs no tools, so it still works with this model: it reasons about your question and drafts an
-              approach without reading the database. A different model, one that passes the probe, is what gets a run
-              that reads it.
+            <p data-testid="agent-model-refusal-action" className="text-[0.625rem] text-zinc-400">
+              {refusalActionText(planModeOffered, streamingDisproved)}
             </p>
             {/*
-              Offered only where it means something. A verdict raised FOR planning could
-              only come from a server that probes it, and pointing such a user at the
-              mode they are already in would be the offer saying nothing.
+              Offered only where it means something: not to a user already in plan mode,
+              and not over an endpoint the probe watched fail to stream, which is the one
+              observation that also rules the offered mode out.
             */}
-            {modelRefusal.mode !== "planning" && (
+            {planModeOffered && (
               <button
                 type="button"
                 data-testid="agent-model-refusal-use-planning"

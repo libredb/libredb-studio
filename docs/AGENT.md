@@ -517,15 +517,26 @@ shape what that costs:
 
 ### What a refused model looks like in the app
 
-The `422` carries the probe's sentence as `error` and the shortfall as `missing` — the identifiers
-`toolCalling`, `structuredOutput`, `streaming`. The rail reads the STATUS, not the words, to tell this
-apart from every other refused start, and renders a state of its own rather than the generic error
-line: what the probe could not establish, in this build's own labels; the server's sentence, which is
-the only place the model's name and the endpoint's own words appear; and what still works. A name this
-build has no label for is dropped rather than shown, because our field names are not the user's
-vocabulary — the labels live in `capability-labels.ts` so the sentence the server writes and the list
-the browser renders cannot drift apart, and so the rail can name a capability without importing the
-AI SDK into the page.
+The `422` carries the probe's sentence as `error`, the shortfall as `missing`, and what the probe
+watched fail as `disproved` — all in the identifiers `toolCalling`, `structuredOutput`, `streaming`.
+The rail reads the STATUS, not the words, to tell this apart from every other refused start, and
+renders a state of its own rather than the generic error line: what the probe could not establish, in
+this build's own labels; the server's sentence, which is the only place the model's name and the
+endpoint's own words appear; and what is still worth trying. A name this build has no label for is
+dropped rather than shown, because our field names are not the user's vocabulary — the labels live in
+`capability-labels.ts` so the sentence the server writes and the list the browser renders cannot drift
+apart, and so the rail can name a capability without importing the AI SDK into the page.
+
+**`missing` and `disproved` are not the same fact.** `missing` is what this run needed and did not
+get, which is all a refusal needs; `disproved` is the half the probe actually observed failing. They
+come apart most sharply on streaming. An endpoint that refuses the tool request answers with a status
+before any stream exists, so streaming is *unobserved* — on 2026-08-13 an `ollama` endpoint serving
+`gemma3:270m` refused exactly that way and the same model then drove a planning run to `succeeded`. An
+endpoint that ignores `stream: true` and returns one buffered body has been *watched* not streaming:
+the SDK's SSE parser finds no frames in it, nothing the model did is readable, and a planning run over
+it — driven through the real run loop — ends `succeeded` with empty text and writes no closing
+statement. Both produce `missing: ["toolCalling", "structuredOutput", "streaming"]`. Only `disproved`
+separates the model that can still plan from the endpoint that will answer nothing at all.
 
 **A verdict is about one mode**, and the rail shows it only over that mode. The gate admits planning
 on its first line, so a refusal is a statement about the agent run that was asked for and about
@@ -537,20 +548,35 @@ being assumed.
 "falls back explicitly to chat/NL2SQL"; T2 removed NL2SQL and T3 removed the in-editor chat, so
 neither destination exists. What that reading missed — and what the rail wrongly told users for the
 length of one review cycle, as "There is nothing toolless to fall back to" — is that a toolless
-surface DID survive T2 and T3: this rail's own planning mode. It is never probed, so it runs on
-exactly the model that was just refused, and it is one click away in the same panel.
+surface DID survive T2 and T3: this rail's own planning mode. It is never probed, so it is REACHABLE
+with exactly the model that was just refused, one click away in the same panel — which is not the same
+as it working, and the next paragraph is about the difference.
 
-So the state is not a dead end and no longer claims to be. It says the model cannot drive an AGENT
-run and which capabilities the probe could not establish; that plan mode needs no tools and still
-works, offering a control that SELECTS that mode and starts nothing; and that a different model is
-what buys a run that reads the database. Offering is honest and deciding is not — the same rule
-T1's shortcut follows, for the same reason: a click that spent model budget would be a different
-feature. What plan mode cannot do is left plainly stated rather than implied, because a toolless run
-reaches no database and a user pointed at it deserves to know that before they ask.
+So the state is not a dead end and no longer claims to be. It says the model cannot drive an AGENT run
+and which capabilities the probe could not establish; that plan mode needs no tools and **may** still
+work, offering a control that SELECTS that mode and starts nothing; and that a different model is what
+buys a run that reads the database. Offering is honest and deciding is not — the same rule T1's
+shortcut follows, for the same reason: a click that spent model budget would be a different feature.
+What plan mode cannot do is left plainly stated rather than implied, because a toolless run reaches no
+database and a user pointed at it deserves to know that before they ask.
 
-The offer is not an argument from the code: on 2026-08-13 an `ollama` endpoint serving `gemma3:270m`
+**The offer is an invitation, not a guarantee, and it is withdrawn where the probe contradicts it.**
+Admission without probing is not proof of compatibility: the gate skips planning because planning
+needs no tools, which says nothing about whether this endpoint would serve a toolless request. So the
+copy says "may still work" and asks the user to try it — and where `disproved` names `streaming`, the
+offer is not made at all. A planning turn consumes the same `streamText().fullStream` an agent turn
+does (`investigation.ts`), so an endpoint watched answering without a stream would produce a run that
+reports `succeeded` and contains nothing; pointing a refused user at that is a second, quieter
+failure. The state says so instead, and names an endpoint that streams alongside a different model as
+the way out. The alternative — teaching the loop to read a buffered body — was rejected: the SDK
+discards it before the loop sees anything, so tolerating it means a second, non-streaming path through
+the run loop for the sake of an endpoint that ignores the protocol it was asked to speak.
+
+None of this is an argument from the code. On 2026-08-13 an `ollama` endpoint serving `gemma3:270m`
 refused an agent start with exactly that `422`, and the same model then ran a planning run to
-`succeeded` in the same rail, on the same connection and the same objective, one click later.
+`succeeded` in the same rail, on the same connection and the same objective, one click later; and a
+planning run driven over an endpoint that answers a streamed request with one buffered body produced
+the empty `succeeded` run described above.
 
 ## Whether the run answered
 

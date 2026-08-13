@@ -431,10 +431,15 @@ describe("AgentRail", () => {
    * The false statement this state used to make. It read "There is nothing toolless to
    * fall back to", which the capability gate contradicts on its second line: planning
    * mode is never probed and never refused, so the same model drives a plan today.
+   *
+   * The offer is an invitation rather than a promise, and that is not hedging: the
+   * probe always sends tools, so a refusal that establishes nothing about a TOOLLESS
+   * request cannot establish that one would work either. What it can do is not
+   * contradict it — see the two tests below for the case where it does.
    */
-  test("the refusal names plan mode as the way this model still works", async () => {
+  test("the refusal offers plan mode where nothing the probe saw rules it out", async () => {
     globalThis.fetch = mock(async () =>
-      jsonResponse({ error: "no", missing: ["toolCalling"] }, 422),
+      jsonResponse({ error: "no", missing: ["toolCalling"], disproved: ["toolCalling"] }, 422),
     ) as unknown as typeof fetch;
     const { getByTestId, findByTestId } = render(<AgentRail {...DEFAULT_PROPS} />);
 
@@ -444,14 +449,104 @@ describe("AgentRail", () => {
       fireEvent.click(getByTestId("agent-start"));
     });
 
-    const action = (await findByTestId("agent-model-refusal-action")).textContent ?? "";
+    expect(await findByTestId("agent-model-refusal-use-planning")).toBeTruthy();
+    const action = getByTestId("agent-model-refusal-action").textContent ?? "";
     expect(action).toContain("Plan mode");
     expect(action).toContain("no tools");
+    // Offered, not guaranteed: the probe never sent a toolless request.
+    expect(action).toMatch(/\btry\b|\bmay\b/i);
     // The claim that was false. It cannot come back in any of its wordings.
     expect(action).not.toContain("nothing toolless");
     expect(action).not.toContain("nothing to fall back to");
     // And a different model is still what buys a run that reads the database.
     expect(action).toContain("different model");
+  });
+
+  /**
+   * The distinction this state turns on (#331 T4 review).
+   *
+   * `missing` names what the probe could not ESTABLISH, and "streaming" lands there for
+   * two opposite reasons. Here the endpoint refused the tool request outright — the
+   * live `gemma3:270m` case of 2026-08-13 — so no stream ever existed to observe, and
+   * the same model then drove a planning run to `succeeded`. Nothing was disproved, so
+   * the offer stands even though `missing` names streaming.
+   */
+  test("streaming merely unobserved does not withdraw the offer", async () => {
+    globalThis.fetch = mock(async () =>
+      jsonResponse({ error: "no", missing: ["toolCalling", "structuredOutput", "streaming"], disproved: [] }, 422),
+    ) as unknown as typeof fetch;
+    const { getByTestId, findByTestId } = render(<AgentRail {...DEFAULT_PROPS} />);
+
+    fireEvent.click(getByTestId("agent-mode-agent"));
+    fireEvent.change(getByTestId("agent-objective"), { target: { value: "why is checkout slow" } });
+    await act(async () => {
+      fireEvent.click(getByTestId("agent-start"));
+    });
+
+    expect((await findByTestId("agent-model-refusal-missing")).textContent).toContain("streaming");
+    expect(getByTestId("agent-model-refusal-use-planning")).toBeTruthy();
+  });
+
+  /**
+   * The other reason, and the one that made the old copy a false promise. An endpoint
+   * that answered the probe with one buffered body was WATCHED failing to stream, and
+   * plan mode consumes the same `streamText().fullStream` an agent run does
+   * (`investigation.ts`). Driven through the real run loop on 2026-08-13: a planning
+   * run over such an endpoint ends `succeeded` with empty text and writes no closing
+   * statement — the user gets a run that claims to have worked and says nothing.
+   *
+   * So the rail does not offer it. Pinned on the DISPROOF rather than on `missing`,
+   * which is identical in this case and in the one above.
+   */
+  test("an endpoint watched failing to stream is not offered a mode that reads the same stream", async () => {
+    globalThis.fetch = mock(async () =>
+      jsonResponse(
+        { error: "no", missing: ["toolCalling", "structuredOutput", "streaming"], disproved: ["streaming"] },
+        422,
+      ),
+    ) as unknown as typeof fetch;
+    const { getByTestId, findByTestId, queryByTestId } = render(<AgentRail {...DEFAULT_PROPS} />);
+
+    fireEvent.click(getByTestId("agent-mode-agent"));
+    fireEvent.change(getByTestId("agent-objective"), { target: { value: "why is checkout slow" } });
+    await act(async () => {
+      fireEvent.click(getByTestId("agent-start"));
+    });
+
+    expect(await findByTestId("agent-model-refusal")).toBeTruthy();
+    expect(queryByTestId("agent-model-refusal-use-planning")).toBeNull();
+
+    const action = getByTestId("agent-model-refusal-action").textContent ?? "";
+    // The promise that cannot be kept here, in any of its wordings.
+    expect(action).not.toContain("still work");
+    expect(action).not.toContain("Try");
+    // What is true instead: the endpoint did not stream, and that is what plan mode
+    // would read too.
+    expect(action).toContain("streaming");
+    expect(action).toContain("different model");
+  });
+
+  /**
+   * Small print is print (#100). `text-zinc-500` on this rail's `#0a0a0a`, under the
+   * alert's own `bg-red-500/5`, computes to 3.98:1 against WCAG AA's 4.5:1 — measured
+   * from the installed Tailwind 4 palette, not estimated — and this text is 10px, so
+   * the large-text allowance does not apply. `text-zinc-400` is 7.33:1.
+   */
+  test("the refusal's small print is not written in a colour that fails AA", async () => {
+    globalThis.fetch = mock(async () =>
+      jsonResponse({ error: "no", missing: ["toolCalling"], disproved: ["toolCalling"] }, 422),
+    ) as unknown as typeof fetch;
+    const { getByTestId, findByTestId } = render(<AgentRail {...DEFAULT_PROPS} />);
+
+    fireEvent.click(getByTestId("agent-mode-agent"));
+    fireEvent.change(getByTestId("agent-objective"), { target: { value: "why is checkout slow" } });
+    await act(async () => {
+      fireEvent.click(getByTestId("agent-start"));
+    });
+
+    const missing = await findByTestId("agent-model-refusal-missing");
+    expect(missing.querySelector("span")?.className).not.toContain("text-zinc-500");
+    expect(getByTestId("agent-model-refusal-action").className).not.toContain("text-zinc-500");
   });
 
   /**

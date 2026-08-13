@@ -112,7 +112,14 @@ export async function POST(req: Request) {
     */
     const gate = await admitAgentModel(mode as AgentRunMode);
     if (gate.kind === "refused") {
-      return NextResponse.json({ error: gate.refusal.message, missing: gate.refusal.missing }, { status: 422 });
+      // `disproved` travels beside `missing` because they answer different questions.
+      // `missing` is what this run needed and did not get; `disproved` is what the
+      // probe watched fail, which is the only half that says anything about what ELSE
+      // the same model could be asked to do (#331 T4 review).
+      return NextResponse.json(
+        { error: gate.refusal.message, missing: gate.refusal.missing, disproved: gate.refusal.disproved },
+        { status: 422 },
+      );
     }
 
     const service = await getAgentRunService();
