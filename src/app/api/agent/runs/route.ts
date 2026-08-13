@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { admitAgentModel } from "@/lib/agent/capability-gate";
 import { isAgentRuntimeEnabled } from "@/lib/agent/config";
+import { AGENT_MAX_OBJECTIVE_LENGTH } from "@/lib/agent/execution-policy";
 import { driveAgentRun, getAgentRunService } from "@/lib/agent/runtime";
 import type { AgentRunMode, AgentRunWorkflowType } from "@/lib/agent/types";
 import { createErrorResponse } from "@/lib/api/errors";
@@ -36,8 +37,12 @@ import { resolveConnection } from "@/lib/seed/resolve-connection";
 
 const ROUTE = "POST /api/agent/runs";
 
-/** Bounded because it is written to the ledger and into every prompt the run makes. */
-const MAX_OBJECTIVE_LENGTH = 4000;
+/**
+ * Bounded because it is written to the ledger and into every prompt the run makes.
+ * Imported rather than written here: the rail bounds the same value, and the two used
+ * to be separate constants kept in step by a comment (see the constant's docblock).
+ */
+const MAX_OBJECTIVE_LENGTH = AGENT_MAX_OBJECTIVE_LENGTH;
 
 const MODES: ReadonlySet<string> = new Set<AgentRunMode>(["planning", "agent"]);
 

@@ -4,7 +4,12 @@ import React, { useEffect, useRef, useState } from "react";
 import { Bot, Loader2, PencilLine, Play, Square, TableProperties } from "lucide-react";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { isMobileViewport, useIsMobile } from "@/hooks/use-mobile";
-import { AGENT_EXECUTION_POLICY, AGENT_MAX_MODEL_TURNS, AGENT_RUN_DEADLINE_MS } from "@/lib/agent/execution-policy";
+import {
+  AGENT_EXECUTION_POLICY,
+  AGENT_MAX_MODEL_TURNS,
+  AGENT_MAX_OBJECTIVE_LENGTH,
+  AGENT_RUN_DEADLINE_MS,
+} from "@/lib/agent/execution-policy";
 import type { AgentRunMode, AgentRunStatus, AgentRunWorkflowType } from "@/lib/agent/types";
 import { cn } from "@/lib/utils";
 import { type AgentBudgetGauge, type AgentTimelineTone, describeFailureReason } from "./timeline";
@@ -63,9 +68,6 @@ export interface AgentRailProps {
    */
   readonly onShowArtifact?: (reference: { readonly runId: string; readonly correlationId: string }) => void;
 }
-
-/** Mirrors `MAX_OBJECTIVE_LENGTH` in the start route, which refuses anything longer. */
-const MAX_OBJECTIVE_LENGTH = 4000;
 
 const TONE_CLASSES: Readonly<Record<AgentTimelineTone, string>> = {
   neutral: "bg-zinc-600",
@@ -384,7 +386,7 @@ export function AgentRail({
           data-testid="agent-objective"
           value={objective}
           onChange={(e) => setObjective(e.target.value)}
-          maxLength={MAX_OBJECTIVE_LENGTH}
+          maxLength={AGENT_MAX_OBJECTIVE_LENGTH}
           rows={3}
           className="mt-1 w-full resize-none rounded bg-black/40 border border-white/10 px-2 py-1.5 text-xs text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:border-blue-500/40"
           placeholder="Why is checkout slow?"

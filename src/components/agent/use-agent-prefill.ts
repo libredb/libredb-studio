@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useState } from "react";
+import { AGENT_MAX_OBJECTIVE_LENGTH } from "@/lib/agent/execution-policy";
 import type { AgentRunWorkflowType } from "@/lib/agent/types";
 
 /**
@@ -40,7 +41,13 @@ export interface AgentPrefillRequest {
   readonly id: number;
   /** What the run is FOR. A visible control the user can still change. */
   readonly workflowType: AgentRunWorkflowType;
-  /** What to ask, which the rail may only OFFER if the user is already typing. */
+  /**
+   * What to ask, which the rail may only OFFER if the user is already typing.
+   *
+   * Never longer than `AGENT_MAX_OBJECTIVE_LENGTH`: an ask is built from something the
+   * shell already has — an editor's statement, a panel's question — and none of those
+   * is bounded the way the objective box is.
+   */
   readonly objective: string;
 }
 
@@ -59,7 +66,18 @@ export function useAgentPrefill(): AgentPrefillHolder {
     each of those callers and re-run that effect.
   */
   const requestPrefill = useCallback((workflowType: AgentRunWorkflowType, objective: string) => {
-    setRequest((previous) => ({ id: (previous?.id ?? 0) + 1, workflowType, objective }));
+    /*
+      Clamped HERE, where an ask is minted, rather than at each place the rail writes
+      one into the box. The rail writes it in two: the applied branch and the offer's
+      Replace control, and a bound enforced at both is a bound that can be enforced at
+      one of them. Found by review on #348: the box's own `maxLength` binds typing and
+      nothing else, so a shortcut could put the rail into a state its UI forbids and
+      the start route then refuses — a Start that fails for a reason the user was
+      never shown. Truncating keeps the shortcut working and leaves the result in an
+      editable box the user reads before pressing anything.
+    */
+    const bounded = objective.slice(0, AGENT_MAX_OBJECTIVE_LENGTH);
+    setRequest((previous) => ({ id: (previous?.id ?? 0) + 1, workflowType, objective: bounded }));
   }, []);
 
   return { request, requestPrefill };

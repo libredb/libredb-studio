@@ -136,3 +136,22 @@ export const AGENT_MAX_REPAIR_ATTEMPTS = 3;
  * exists), and that is recorded in `docs/BACKLOG.md` rather than implied here.
  */
 export const AGENT_MAX_MODEL_TURNS = 16;
+
+/**
+ * The longest objective a run may be started on.
+ *
+ * Here rather than at either end of the wire, because it used to be written twice —
+ * once in the start route and once in the rail, kept in step by a COMMENT saying one
+ * mirrored the other. That held only while the box a user types into was the sole way
+ * an objective could be set. #331 T1 added a second way, a shortcut that fills the
+ * rail programmatically, and review found what two constants and a comment cannot
+ * catch: a prefill longer than this bypassed the textarea's `maxLength`, so the rail
+ * accepted a state its own UI forbids and the route then refused the run the user
+ * pressed Start on. The statement an editor shortcut prefills is exactly the kind of
+ * text that reaches this length.
+ *
+ * One constant, imported by both, so the two cannot disagree at all. The bound is the
+ * SERVER's — the route refuses anything longer whatever a client believes — and the
+ * client's job is to never construct what the server will refuse.
+ */
+export const AGENT_MAX_OBJECTIVE_LENGTH = 4000;

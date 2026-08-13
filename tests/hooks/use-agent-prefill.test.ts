@@ -6,6 +6,7 @@ import { describe, test, expect } from "bun:test";
 import { act, renderHook } from "@testing-library/react";
 
 import { useAgentPrefill } from "@/components/agent/use-agent-prefill";
+import { AGENT_MAX_OBJECTIVE_LENGTH } from "@/lib/agent/execution-policy";
 
 /**
  * The shell's half of the prefill seam (#331 T1): who owns an ask, and what an ask is.
@@ -62,6 +63,31 @@ describe("useAgentPrefill", () => {
     });
 
     expect(result.current.request?.id).toBe(2);
+  });
+
+  test("an ask longer than a run may carry is cut to what the route accepts", () => {
+    // Review on #348: the objective box bounds TYPING through `maxLength`, and a
+    // shortcut does not type. An editor statement is the ask T3 builds, and one longer
+    // than this is ordinary — unclamped it reached a Start the start route then
+    // refused, so the click failed for a reason the user was never shown.
+    const { result } = renderHook(() => useAgentPrefill());
+
+    act(() => {
+      result.current.requestPrefill("query-optimization", "s".repeat(AGENT_MAX_OBJECTIVE_LENGTH + 500));
+    });
+
+    expect(result.current.request?.objective.length).toBe(AGENT_MAX_OBJECTIVE_LENGTH);
+  });
+
+  test("an ask the route would accept is left exactly as it was asked", () => {
+    const { result } = renderHook(() => useAgentPrefill());
+    const asked = "s".repeat(AGENT_MAX_OBJECTIVE_LENGTH);
+
+    act(() => {
+      result.current.requestPrefill("investigation", asked);
+    });
+
+    expect(result.current.request?.objective).toBe(asked);
   });
 
   test("the requester keeps its identity across renders", () => {
