@@ -7,7 +7,8 @@
  * flag is off.
  */
 
-import { describe, test, expect, mock, beforeEach } from "bun:test";
+import { describe, test, expect, mock, beforeEach, afterEach } from "bun:test";
+import { configureAgentModel, restoreAgentModel } from "../../helpers/agent-model-env";
 import { createMockRequest, parseResponseJSON } from "../../helpers/mock-next";
 import { AGENT_ENABLED_ENV } from "@/lib/agent/config";
 import { AgentRunServiceError } from "@/lib/agent/run-service";
@@ -152,12 +153,20 @@ beforeEach(() => {
   clearRateLimitState();
   runs = new Map([["arun_1", fakeRun()]]);
   mockGetSession.mockResolvedValue({ role: "user", username: "ada" });
-  process.env[AGENT_ENABLED_ENV] = "true";
+  // A configured model is what makes the surface exist since #331 T5; the flag
+  // is only the off-switch, so it is deleted here and set to a negative value by
+  // the two tests that assert the surface is absent.
+  delete process.env[AGENT_ENABLED_ENV];
+  configureAgentModel();
   mockDriveAgentRun.mockClear();
   mockAdmitAgentModel.mockClear();
   mockAdmitAgentModel.mockImplementation(async () => ({ kind: "allowed" }));
   mockStart.mockClear();
   mockResolveConnection.mockClear();
+});
+
+afterEach(() => {
+  restoreAgentModel();
 });
 
 describe("POST /api/agent/runs", () => {
@@ -268,8 +277,19 @@ describe("POST /api/agent/runs", () => {
     expect(mockStart).not.toHaveBeenCalled();
   });
 
-  test("the surface does not exist while the runtime flag is off", async () => {
-    delete process.env[AGENT_ENABLED_ENV];
+  test("the surface does not exist once the operator switches the agent off", async () => {
+    process.env[AGENT_ENABLED_ENV] = "false";
+
+    const res = await POST(startRequest(VALID_BODY));
+
+    expect(res.status).toBe(404);
+    expect(mockStart).not.toHaveBeenCalled();
+  });
+
+  test("the surface does not exist when no model is configured at all", async () => {
+    // The other half of the derived answer (#331 T5). A server with the AI
+    // configuration removed has no agent to route to, and says so the same way.
+    for (const key of ["LLM_PROVIDER", "LLM_API_KEY", "LLM_MODEL", "LLM_API_URL"]) delete process.env[key];
 
     const res = await POST(startRequest(VALID_BODY));
 
@@ -415,8 +435,8 @@ describe("GET /api/agent/runs/[runId]", () => {
     expect(res.status).toBe(401);
   });
 
-  test("the surface does not exist while the runtime flag is off", async () => {
-    delete process.env[AGENT_ENABLED_ENV];
+  test("the surface does not exist once the operator switches the agent off", async () => {
+    process.env[AGENT_ENABLED_ENV] = "false";
 
     const res = await GET(createMockRequest("/api/agent/runs/arun_1"), params("arun_1"));
 

@@ -577,12 +577,23 @@ describe("AgentRunStore — the world seam", () => {
 
 // ─── binding to the backend T1 selected ─────────────────────────────────────
 
+// The LLM keys are in this list because #331 T5 derives availability from them:
+// `resolveAgentLedgerWorld` builds a world only when the agent is available, and
+// `bun` loads a checkout's `.env`, so leaving them alone would make this suite
+// answer one way locally and the other in CI.
 const WORLD_ENV_KEYS = [
   AGENT_ENABLED_ENV,
   AGENT_WORLD_TARGET_ENV,
   "WORKFLOW_LOCAL_DATA_DIR",
   "VERCEL_DEPLOYMENT_ID",
+  "LLM_PROVIDER",
+  "LLM_API_KEY",
+  "LLM_MODEL",
+  "LLM_API_URL",
 ] as const;
+
+/** The model configuration that makes the runtime available. */
+const MODEL_ENV = { LLM_PROVIDER: "gemini", LLM_API_KEY: "test-key" };
 
 /**
  * Restores both the environment and the SDK's process-global world cache. The
@@ -612,22 +623,22 @@ async function withWorldEnv(env: Record<string, string | undefined>, body: () =>
 }
 
 describe("resolveAgentLedgerWorld", () => {
-  test("refuses while the runtime is disabled — the default", async () => {
+  test("refuses when no model is configured, so an AI-less server builds no world", async () => {
     await withWorldEnv({}, async () => {
       const error = await captureStoreError(() => resolveAgentLedgerWorld());
       expect(error.reasonCode).toBe("RUNTIME_DISABLED");
     });
   });
 
-  test.each(["off", "false"])("refuses while the flag reads %p", async (flag) => {
-    await withWorldEnv({ [AGENT_ENABLED_ENV]: flag }, async () => {
+  test.each(["off", "false"])("refuses while the off-switch reads %p", async (flag) => {
+    await withWorldEnv({ ...MODEL_ENV, [AGENT_ENABLED_ENV]: flag }, async () => {
       expect((await captureStoreError(() => resolveAgentLedgerWorld())).reasonCode).toBe("RUNTIME_DISABLED");
     });
   });
 
   test("builds the zero-config local backend and a run written through it reads back", async () => {
     const dataDir = freshDataDir();
-    await withWorldEnv({ [AGENT_ENABLED_ENV]: "true", WORKFLOW_LOCAL_DATA_DIR: dataDir }, async () => {
+    await withWorldEnv({ ...MODEL_ENV, WORKFLOW_LOCAL_DATA_DIR: dataDir }, async () => {
       const world = await resolveAgentLedgerWorld();
       const store = new AgentRunStore({ world });
 
@@ -641,7 +652,7 @@ describe("resolveAgentLedgerWorld", () => {
   });
 
   test("refuses an unsanctioned backend before any world is built", async () => {
-    await withWorldEnv({ [AGENT_ENABLED_ENV]: "true", [AGENT_WORLD_TARGET_ENV]: "@evil/world" }, async () => {
+    await withWorldEnv({ ...MODEL_ENV, [AGENT_WORLD_TARGET_ENV]: "@evil/world" }, async () => {
       await expect(resolveAgentLedgerWorld()).rejects.toBeInstanceOf(AgentConfigError);
     });
   });

@@ -25,7 +25,9 @@ PASS=0
 FAIL=0
 # Count the `run_group` CALLS below when adding one (not the definition) - this is the
 # number the final summary reports, and it had already drifted by one before Group 0e
-# was added.
+# was added. Verify with `grep -c '^run_group ' tests/run-components.sh`, which is how
+# the third drift was caught (#331 T5): 26 was declared while 27 calls existed, so the
+# green summary line reported a group count no run had.
 TOTAL_GROUPS=28
 EXTRA_BUN_ARGS=("$@")
 GROUP_INDEX=0

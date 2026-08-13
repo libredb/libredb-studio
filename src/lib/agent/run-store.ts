@@ -459,8 +459,9 @@ export class AgentRunStore {
  * `WORKFLOW_TARGET_WORLD`, reached through the SDK's own resolution so the
  * ledger, the queue and the workflow runtime all share one instance.
  *
- * Refuses while the runtime is disabled — the default. Nothing may build a world
- * off a flag that is off, and the import is dynamic (mirroring
+ * Refuses while the runtime is unavailable — no model configured, or the operator
+ * switched it off. Nothing may build a world for a server that has no agent, and
+ * the import is dynamic (mirroring
  * `src/lib/llm/factory.ts` and `model-adapter.ts`) so the runtime stays out of
  * the static module graph of anything that merely imports this file.
  */

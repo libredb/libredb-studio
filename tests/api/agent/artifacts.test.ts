@@ -13,7 +13,8 @@
  *    reading a report deserves to know which of the two happened.
  */
 
-import { describe, test, expect, mock, beforeEach } from "bun:test";
+import { describe, test, expect, mock, beforeEach, afterEach } from "bun:test";
+import { configureAgentModel, restoreAgentModel } from "../../helpers/agent-model-env";
 import { createMockRequest, parseResponseJSON } from "../../helpers/mock-next";
 import { AGENT_ENABLED_ENV } from "@/lib/agent/config";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
@@ -94,7 +95,14 @@ beforeEach(() => {
   held = new Map([["corr_9", { ...READ_ARTIFACT, value: RESULT }]]);
   mockGetSession.mockResolvedValue({ role: "user", username: "ada" });
   mockReadAgentArtifact.mockClear();
-  process.env[AGENT_ENABLED_ENV] = "true";
+  // A configured model is what makes the surface exist since #331 T5; the flag is
+  // only the off-switch, so the absence test below sets it to a negative value.
+  delete process.env[AGENT_ENABLED_ENV];
+  configureAgentModel();
+});
+
+afterEach(() => {
+  restoreAgentModel();
 });
 
 describe("GET /api/agent/runs/[runId]/artifacts/[correlationId]", () => {
@@ -185,8 +193,8 @@ describe("GET /api/agent/runs/[runId]/artifacts/[correlationId]", () => {
     expect(res.status).toBe(401);
   });
 
-  test("the surface does not exist while the runtime flag is off", async () => {
-    delete process.env[AGENT_ENABLED_ENV];
+  test("the surface does not exist once the operator switches the agent off", async () => {
+    process.env[AGENT_ENABLED_ENV] = "false";
 
     const res = await GET(request(), params("arun_1", "corr_9"));
 

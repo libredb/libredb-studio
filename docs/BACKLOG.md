@@ -1491,3 +1491,31 @@ the transcript that provider will accept back — the same reason `investigation
 messages to the assistant turn rather than rebuilding them. Done when a tool call's arguments are
 neutralised on the way into the transcript without desynchronising the `tool_call_id` pairing the
 endpoint validates.
+
+### B30. A green ledger probe does not promise the world will build: `version.txt` is checked later
+
+Found while reviewing #331 T5, by reading what the probe actually mirrors.
+
+`GET /api/agent/config` decides the rail's visibility partly on a writable-path probe, and that probe
+runs `@workflow/world-local`'s `ensureDataDir` steps: create the directory, check it is readable,
+write a probe file, remove it. The world does not call `ensureDataDir`. It calls `initDataDir`, which
+calls `ensureDataDir` **and then** reads `version.txt` from an existing ledger and parses it — first
+`parseVersionFile`, which throws on content with no `@`, then `parseVersion`, which throws on anything
+that is not `major.minor.patch`. Neither is reached by the probe.
+
+So an existing ledger directory whose `version.txt` is truncated, present-but-empty, or written by an
+incompatible release answers **green** — the directory is writable, which is all the probe asked. The
+rail renders, the operator clicks Start, and the run fails when the world is built. That is precisely
+the failure T5 exists to prevent, surviving in a narrower case.
+
+T5 narrowed the promise rather than widening the probe: the docblock on `runLedgerProbe` and the HTTP
+surface section of [`AGENT.md`](AGENT.md) now say that green means `ensureDataDir` will pass, not that
+`initDataDir` will. Widening was rejected here on two grounds. Parsing another package's on-disk
+format in our own probe duplicates a contract that is upstream's to change. And the honest alternative
+— calling upstream's `initDataDir` — writes `version.txt` as a side effect, which turns a read-only
+visibility probe into something that initialises the ledger on every page load of a logged-in user.
+
+Done when the probe can answer for the version file without writing one: either upstream exposes a
+check that does not initialise (worth an issue there), or the probe reads an EXISTING `version.txt`
+itself and reports a `LEDGER_INCOMPATIBLE` reason distinct from `LEDGER_UNAVAILABLE`, leaving the
+absent-file case to the world.

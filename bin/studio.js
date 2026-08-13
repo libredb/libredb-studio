@@ -34,6 +34,7 @@ import {
   PROVENANCE_SIGNER_WORKFLOW,
   releaseDownloadUrl,
   resolveCacheDir,
+  resolveLedgerDir,
   sha256File,
 } from "./lib/launcher-utils.mjs";
 
@@ -73,7 +74,12 @@ The server binds to 127.0.0.1 by default; exposing it on the network is an
 explicit opt-in (--host or HOSTNAME). All environment variables are forwarded
 to the server (PORT, HOSTNAME, JWT_SECRET, ADMIN_PASSWORD, STORAGE_PROVIDER,
 STORAGE_SQLITE_PATH, ...). When JWT_SECRET or ADMIN_PASSWORD are not set, the
-server generates them on first run and prints the admin credentials once.`;
+server generates them on first run and prints the admin credentials once.
+
+The AI agent appears once LLM_API_KEY (and the other LLM_* settings) are set;
+its run history is kept in ~/.libredb-studio/workflow-data unless
+WORKFLOW_LOCAL_DATA_DIR says otherwise. Set LIBREDB_AGENT_ENABLED=false to
+configure AI and have no agent.`;
 
 /** @param {string} message @returns {never} */
 function fail(message) {
@@ -289,6 +295,13 @@ function startServer(payloadDir, port, host) {
   if (host !== null) env.HOSTNAME = host;
   if (!env.HOSTNAME) env.HOSTNAME = "127.0.0.1";
   if (!env.NODE_ENV) env.NODE_ENV = "production";
+  // The agent's run history (#331 T5). The server is spawned with cwd set to the
+  // payload directory, so the workflow SDK's cwd-relative default would put the
+  // ledger inside a cache that re-extraction does not preserve — and the agent
+  // would report itself unavailable the moment that cache is read-only. A
+  // per-user directory keeps one history across folders and upgrades; an operator
+  // who sets the variable keeps whatever they set.
+  if (!env.WORKFLOW_LOCAL_DATA_DIR) env.WORKFLOW_LOCAL_DATA_DIR = resolveLedgerDir(os.homedir());
   // Log-line contract: npx-engine-smoke.yml parses the resolved version from
   // "Starting LibreDB Studio <version> " - keep the prefix stable.
   console.log(`Starting LibreDB Studio ${pkg.version} on http://${env.HOSTNAME}:${env.PORT || "3000"}`);

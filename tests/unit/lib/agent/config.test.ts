@@ -1,5 +1,7 @@
 import { describe, test, expect, beforeEach, afterEach, spyOn } from "bun:test";
 import * as fs from "fs";
+import * as fsPromises from "fs/promises";
+import * as os from "os";
 import * as path from "path";
 import {
   AGENT_ENABLED_ENV,
@@ -7,13 +9,46 @@ import {
   AgentConfigError,
   getAgentRuntimeConfig,
   isAgentRuntimeEnabled,
+  LEDGER_PROBE_TTL_MS,
+  resolveAgentAvailability,
   resolveAgentDurableBackend,
+  resolveAgentLedgerDirectory,
   SANCTIONED_WORLD_TARGETS,
 } from "@/lib/agent/config";
 
-const ENV_KEYS = [AGENT_ENABLED_ENV, AGENT_WORLD_TARGET_ENV, "VERCEL_DEPLOYMENT_ID"] as const;
+/**
+ * The LLM keys are in this list because availability is DERIVED from them since
+ * #331 T5, and because `bun` loads a checkout's `.env` into `process.env`: a
+ * developer machine with a real `LLM_API_KEY` would otherwise answer differently
+ * from CI, which has none. Deleting them makes both machines start from "no model
+ * configured" and say so.
+ */
+const ENV_KEYS = [
+  AGENT_ENABLED_ENV,
+  AGENT_WORLD_TARGET_ENV,
+  "VERCEL_DEPLOYMENT_ID",
+  "WORKFLOW_LOCAL_DATA_DIR",
+  "LLM_PROVIDER",
+  "LLM_API_KEY",
+  "LLM_MODEL",
+  "LLM_API_URL",
+] as const;
 
 let originalEnv: Record<string, string | undefined>;
+const scratchDirs: string[] = [];
+
+/** A model configuration that validates without reaching anything. */
+function configureModel(): void {
+  process.env.LLM_PROVIDER = "gemini";
+  process.env.LLM_API_KEY = "test-key";
+}
+
+/** A fresh, writable directory for the ledger probe to land in. */
+function freshLedgerDir(): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "libredb-agent-ledger-"));
+  scratchDirs.push(dir);
+  return dir;
+}
 
 beforeEach(() => {
   originalEnv = {};
@@ -28,6 +63,9 @@ afterEach(() => {
     if (originalEnv[key] === undefined) delete process.env[key];
     else process.env[key] = originalEnv[key];
   }
+  while (scratchDirs.length > 0) {
+    fs.rmSync(scratchDirs.pop() as string, { recursive: true, force: true });
+  }
 });
 
 function captureRefusal(fn: () => unknown): AgentConfigError {
@@ -40,38 +78,57 @@ function captureRefusal(fn: () => unknown): AgentConfigError {
   throw new Error("expected the configuration to be refused");
 }
 
-// ─── the enable flag ────────────────────────────────────────────────────────
+// ─── the derived answer, without I/O ────────────────────────────────────────
 
 describe("isAgentRuntimeEnabled", () => {
-  test("is off when the variable is absent — the agent rail ships default off", () => {
+  test("is on with a model configured and no flag set — the deliberate act of configuring a model is the opt-in", () => {
+    configureModel();
+    expect(isAgentRuntimeEnabled()).toBe(true);
+  });
+
+  test("is off with no model configured at all, so no surface appears where the first Start must fail", () => {
     expect(isAgentRuntimeEnabled()).toBe(false);
   });
 
-  test("is off when the variable is empty or whitespace only", () => {
-    process.env[AGENT_ENABLED_ENV] = "";
-    expect(isAgentRuntimeEnabled()).toBe(false);
-    process.env[AGENT_ENABLED_ENV] = "   ";
-    expect(isAgentRuntimeEnabled()).toBe(false);
-  });
+  test.each(["false", "FALSE", "off", "OFF", "0", " 0 "])(
+    "is off for the negative value %p even with a model configured — the documented off-switch",
+    (value) => {
+      configureModel();
+      process.env[AGENT_ENABLED_ENV] = value;
+      expect(isAgentRuntimeEnabled()).toBe(false);
+    },
+  );
 
   test.each(["true", "TRUE", "True", " true ", "on", "ON", "1"])(
-    "is on for the affirmative value %p, case-insensitively and trimmed",
+    "accepts the affirmative value %p unchanged, case-insensitively and trimmed",
     (value) => {
+      configureModel();
       process.env[AGENT_ENABLED_ENV] = value;
       expect(isAgentRuntimeEnabled()).toBe(true);
     },
   );
 
-  test.each(["false", "FALSE", "off", "OFF", "0", " 0 "])("is off for the negative value %p", (value) => {
-    process.env[AGENT_ENABLED_ENV] = value;
+  test("an affirmative value cannot conjure a model, so it does not turn on a rail that cannot work", () => {
+    process.env[AGENT_ENABLED_ENV] = "true";
     expect(isAgentRuntimeEnabled()).toBe(false);
   });
 
-  test("an unrecognised value stays off and warns, so a typo never silently enables the agent", () => {
+  test.each(["", "   "])("treats the empty value %p as absent", (value) => {
+    configureModel();
+    process.env[AGENT_ENABLED_ENV] = value;
+    expect(isAgentRuntimeEnabled()).toBe(true);
+  });
+
+  test("an unrecognised value is ignored and warns, so a typo neither enables nor silently removes the AI", () => {
+    // The pre-T5 rule was "a typo never silently enables it". Now that the default
+    // is derived, the same rule points the other way: a typo must not be the thing
+    // that takes the product's only AI surface away either. Both are satisfied by
+    // landing on the default, which is what an unset variable does.
     const warn = spyOn(console, "warn").mockImplementation(() => {});
     try {
+      configureModel();
       process.env[AGENT_ENABLED_ENV] = "yes-please";
-      expect(isAgentRuntimeEnabled()).toBe(false);
+      expect(isAgentRuntimeEnabled()).toBe(true);
       expect(warn).toHaveBeenCalledTimes(1);
       const message = String(warn.mock.calls[0]?.[0]);
       expect(message).toContain(AGENT_ENABLED_ENV);
@@ -84,6 +141,7 @@ describe("isAgentRuntimeEnabled", () => {
   test("a recognised value does not warn", () => {
     const warn = spyOn(console, "warn").mockImplementation(() => {});
     try {
+      configureModel();
       process.env[AGENT_ENABLED_ENV] = "true";
       expect(isAgentRuntimeEnabled()).toBe(true);
       expect(warn).not.toHaveBeenCalled();
@@ -91,6 +149,265 @@ describe("isAgentRuntimeEnabled", () => {
       warn.mockRestore();
     }
   });
+
+  test("an Ollama provider with no key counts as configured, which is a network-free check's blind spot", () => {
+    // `validateConfig` requires no key for ollama and defaults the URL to
+    // localhost, so this answers "available" for a server that may not be
+    // running. Pinned rather than fixed: the alternative is a network call on a
+    // visibility probe, and the model is reached where a run actually starts.
+    process.env.LLM_PROVIDER = "ollama";
+    expect(isAgentRuntimeEnabled()).toBe(true);
+  });
+});
+
+// ─── the composed answer, including the ledger ──────────────────────────────
+
+describe("resolveAgentAvailability", () => {
+  test("is available when a model is configured and the ledger path can be written", async () => {
+    configureModel();
+    const dataDir = freshLedgerDir();
+    process.env.WORKFLOW_LOCAL_DATA_DIR = dataDir;
+
+    expect(await resolveAgentAvailability()).toEqual({ available: true });
+  });
+
+  test("creates the ledger directory the way the world would, so a green answer means its own check passes", async () => {
+    configureModel();
+    const dataDir = path.join(freshLedgerDir(), "nested", "workflow");
+    process.env.WORKFLOW_LOCAL_DATA_DIR = dataDir;
+
+    expect(await resolveAgentAvailability()).toEqual({ available: true });
+    expect(fs.existsSync(dataDir)).toBe(true);
+    // The write probe cleans up after itself: a leftover file would end up in the
+    // ledger directory the runtime lists.
+    expect(fs.readdirSync(dataDir)).toEqual([]);
+  });
+
+  test("names the operator's off-switch when the flag is negative, rather than blaming the model or the disk", async () => {
+    configureModel();
+    process.env[AGENT_ENABLED_ENV] = "false";
+    process.env.WORKFLOW_LOCAL_DATA_DIR = path.join(freshLedgerDir(), "unreachable");
+
+    const availability = await resolveAgentAvailability();
+
+    expect(availability.available).toBe(false);
+    expect(availability).toMatchObject({ reason: "OPERATOR_DISABLED" });
+    expect(String((availability as { detail: string }).detail)).toContain(AGENT_ENABLED_ENV);
+    // The ledger was never probed: the operator said no, so nothing else is asked.
+    expect(fs.existsSync(process.env.WORKFLOW_LOCAL_DATA_DIR)).toBe(false);
+  });
+
+  test("names the missing model, and creates no ledger directory for a deployment that has no AI at all", async () => {
+    const dataDir = path.join(freshLedgerDir(), "workflow");
+    process.env.WORKFLOW_LOCAL_DATA_DIR = dataDir;
+
+    const availability = await resolveAgentAvailability();
+
+    expect(availability).toMatchObject({ available: false, reason: "NO_MODEL_CONFIGURED" });
+    expect(String((availability as { detail: string }).detail)).toContain("LLM_API_KEY");
+    expect(fs.existsSync(dataDir)).toBe(false);
+  });
+
+  test("names the ledger when its directory cannot be created, instead of offering a Start that must fail", async () => {
+    configureModel();
+    const blocker = path.join(freshLedgerDir(), "not-a-directory");
+    fs.writeFileSync(blocker, "");
+    process.env.WORKFLOW_LOCAL_DATA_DIR = path.join(blocker, "workflow");
+
+    const availability = await resolveAgentAvailability();
+
+    expect(availability).toMatchObject({ available: false, reason: "LEDGER_UNAVAILABLE" });
+    expect(String((availability as { detail: string }).detail)).toContain("WORKFLOW_LOCAL_DATA_DIR");
+  });
+
+  test("reports an unsanctioned world target as itself rather than throwing out of the probe", async () => {
+    // The route this feeds must not answer 500 on a misconfiguration: a 500 is
+    // indistinguishable from "this server runs no agents", which is the state the
+    // operator would be trying to diagnose.
+    configureModel();
+    process.env[AGENT_WORLD_TARGET_ENV] = "@workflow/world-turso";
+
+    const availability = await resolveAgentAvailability();
+
+    // The backend selector's own code, NOT LEDGER_UNAVAILABLE: the operator action
+    // is fixing a variable, and a reason code that named the ledger would send them
+    // to the disk instead.
+    expect(availability).toMatchObject({ available: false, reason: "UNSANCTIONED_WORLD_TARGET" });
+    expect(String((availability as { detail: string }).detail)).toContain(AGENT_WORLD_TARGET_ENV);
+  });
+
+  test("reports the implicit hosted world as a topology refusal, not as an unwritable ledger", async () => {
+    // `VERCEL_DEPLOYMENT_ID` with no explicit target is a deployment-topology
+    // refusal: nothing was asked of the filesystem, and nothing about the ledger is
+    // known. Sharing LEDGER_UNAVAILABLE would make the one field an operator filters
+    // on report a disk problem for a platform problem.
+    configureModel();
+    process.env.VERCEL_DEPLOYMENT_ID = "dpl_example";
+    const dataDir = path.join(freshLedgerDir(), "never-created");
+    process.env.WORKFLOW_LOCAL_DATA_DIR = dataDir;
+
+    const availability = await resolveAgentAvailability();
+
+    expect(availability).toMatchObject({ available: false, reason: "IMPLICIT_HOSTED_WORLD" });
+    expect(String((availability as { detail: string }).detail)).toContain(AGENT_WORLD_TARGET_ENV);
+    expect(fs.existsSync(dataDir)).toBe(false);
+  });
+
+  test("does not touch the filesystem for the postgres backend, whose ledger is a database", async () => {
+    configureModel();
+    process.env[AGENT_WORLD_TARGET_ENV] = "@workflow/world-postgres";
+    const dataDir = path.join(freshLedgerDir(), "never-created");
+    process.env.WORKFLOW_LOCAL_DATA_DIR = dataDir;
+
+    expect(await resolveAgentAvailability()).toEqual({ available: true });
+    expect(fs.existsSync(dataDir)).toBe(false);
+  });
+});
+
+// ─── two probes at once ─────────────────────────────────────────────────────
+
+describe("resolveAgentAvailability under concurrency", () => {
+  test("two interleaved probes both stay available, and neither removes the other's file", async () => {
+    configureModel();
+    const dataDir = freshLedgerDir();
+    process.env.WORKFLOW_LOCAL_DATA_DIR = dataDir;
+
+    // Hold both probes at the point where each has written its file and neither has
+    // removed it — the interleaving a single server process hits when two logged-in
+    // page loads ask GET /api/agent/config at the same time. A probe filename that
+    // is constant for the process lifetime cannot survive it: both write the SAME
+    // path, the first cleanup removes it, and the second meets ENOENT and reports
+    // LEDGER_UNAVAILABLE on a perfectly writable ledger. `use-agent-capability`
+    // probes once on mount with no retry, so that browser has no rail for the whole
+    // page session.
+    let written = 0;
+    let releaseBoth: () => void = () => {};
+    const bothWrote = new Promise<void>((resolve) => {
+      releaseBoth = resolve;
+    });
+    const writeSpy = spyOn(fsPromises, "writeFile").mockImplementation(async (file) => {
+      fs.writeFileSync(file as string, "");
+      written += 1;
+      if (written === 2) releaseBoth();
+      await bothWrote;
+    });
+
+    try {
+      const answers = await Promise.all([resolveAgentAvailability(), resolveAgentAvailability()]);
+
+      expect(answers).toEqual([{ available: true }, { available: true }]);
+      const probeFiles = writeSpy.mock.calls.map((call) => String(call[0]));
+      expect(new Set(probeFiles).size).toBe(2);
+    } finally {
+      writeSpy.mockRestore();
+    }
+
+    expect(fs.readdirSync(dataDir)).toEqual([]);
+  });
+
+  test("an ENOENT while removing the probe file is not a ledger fault", async () => {
+    // Upstream's own `ensureDataDir` swallows exactly this, and names the reason: a
+    // concurrent actor may already have removed the file. The write succeeded, which
+    // is the question the probe asked.
+    configureModel();
+    process.env.WORKFLOW_LOCAL_DATA_DIR = freshLedgerDir();
+    const unlinkSpy = spyOn(fsPromises, "unlink").mockImplementation(async () => {
+      throw Object.assign(new Error("ENOENT: no such file or directory, unlink"), { code: "ENOENT" });
+    });
+
+    try {
+      expect(await resolveAgentAvailability()).toEqual({ available: true });
+    } finally {
+      unlinkSpy.mockRestore();
+    }
+  });
+
+  test("a cleanup failure that is not ENOENT is still reported, so a read-only ledger is not hidden", async () => {
+    configureModel();
+    process.env.WORKFLOW_LOCAL_DATA_DIR = freshLedgerDir();
+    const unlinkSpy = spyOn(fsPromises, "unlink").mockImplementation(async () => {
+      throw Object.assign(new Error("EPERM: operation not permitted, unlink"), { code: "EPERM" });
+    });
+
+    try {
+      const availability = await resolveAgentAvailability();
+      expect(availability).toMatchObject({ available: false, reason: "LEDGER_UNAVAILABLE" });
+      expect(String((availability as { detail: string }).detail)).toContain("EPERM");
+    } finally {
+      unlinkSpy.mockRestore();
+    }
+  });
+});
+
+// ─── what the probe costs a server ──────────────────────────────────────────
+
+describe("the ledger probe's cost", () => {
+  test("answers a repeat probe from memory, so a logged-in caller cannot drive a write per request", async () => {
+    // The route this feeds sits outside the `ai` rate-limit bucket on purpose — a
+    // metered visibility probe would spend a run's budget on rendering a panel, and
+    // a throttled one would make the rail vanish for a user who reloads. The memo is
+    // what bounds the filesystem work instead.
+    configureModel();
+    process.env.WORKFLOW_LOCAL_DATA_DIR = freshLedgerDir();
+    const writeSpy = spyOn(fsPromises, "writeFile");
+
+    try {
+      expect(await resolveAgentAvailability()).toEqual({ available: true });
+      expect(await resolveAgentAvailability()).toEqual({ available: true });
+      expect(await resolveAgentAvailability()).toEqual({ available: true });
+      expect(writeSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      writeSpy.mockRestore();
+    }
+  });
+
+  test("re-probes once the interval has passed, so a permission an operator fixed is picked up", async () => {
+    configureModel();
+    process.env.WORKFLOW_LOCAL_DATA_DIR = freshLedgerDir();
+    const start = Date.now();
+    const clock = spyOn(Date, "now").mockReturnValue(start);
+    const writeSpy = spyOn(fsPromises, "writeFile");
+
+    try {
+      await resolveAgentAvailability();
+      clock.mockReturnValue(start + LEDGER_PROBE_TTL_MS + 1);
+      await resolveAgentAvailability();
+      expect(writeSpy).toHaveBeenCalledTimes(2);
+    } finally {
+      writeSpy.mockRestore();
+      clock.mockRestore();
+    }
+  });
+
+  test("never answers one directory from another directory's memo", async () => {
+    configureModel();
+    process.env.WORKFLOW_LOCAL_DATA_DIR = freshLedgerDir();
+    expect(await resolveAgentAvailability()).toEqual({ available: true });
+
+    const blocker = path.join(freshLedgerDir(), "not-a-directory");
+    fs.writeFileSync(blocker, "");
+    process.env.WORKFLOW_LOCAL_DATA_DIR = path.join(blocker, "workflow");
+
+    expect(await resolveAgentAvailability()).toMatchObject({ available: false, reason: "LEDGER_UNAVAILABLE" });
+  });
+});
+
+// ─── where the ledger lands ─────────────────────────────────────────────────
+
+describe("resolveAgentLedgerDirectory", () => {
+  test("resolves the configured directory to an absolute path", () => {
+    const dataDir = freshLedgerDir();
+    process.env.WORKFLOW_LOCAL_DATA_DIR = dataDir;
+    expect(resolveAgentLedgerDirectory()).toBe(path.resolve(dataDir));
+  });
+
+  test.each([undefined, "", "   "])(
+    "falls back to the SDK's own default for %p, so the probe tests the directory the world would build",
+    (value) => {
+      if (value !== undefined) process.env.WORKFLOW_LOCAL_DATA_DIR = value;
+      expect(resolveAgentLedgerDirectory()).toBe(path.resolve(".workflow-data"));
+    },
+  );
 });
 
 // ─── the durable backend ────────────────────────────────────────────────────
@@ -184,32 +501,39 @@ describe("resolveAgentDurableBackend", () => {
 // ─── the composed configuration ─────────────────────────────────────────────
 
 describe("getAgentRuntimeConfig", () => {
-  test("reports disabled with no backend at all when the flag is off", () => {
+  test("reports disabled with no backend at all when the operator switched it off", () => {
+    configureModel();
+    process.env[AGENT_ENABLED_ENV] = "false";
     const config = getAgentRuntimeConfig();
     expect(config.enabled).toBe(false);
     expect(config).not.toHaveProperty("backend");
   });
 
-  test("reports the local backend when enabled with no backend configured", () => {
-    process.env[AGENT_ENABLED_ENV] = "true";
+  test("reports disabled when no model is configured, so nothing builds a world for an AI-less server", () => {
+    expect(getAgentRuntimeConfig()).toEqual({ enabled: false });
+  });
+
+  test("reports the local backend when a model is configured and no backend is", () => {
+    configureModel();
     expect(getAgentRuntimeConfig()).toEqual({ enabled: true, backend: "local" });
   });
 
   test("reports the postgres backend when the opt-in target is configured", () => {
-    process.env[AGENT_ENABLED_ENV] = "on";
+    configureModel();
     process.env[AGENT_WORLD_TARGET_ENV] = "@workflow/world-postgres";
     expect(getAgentRuntimeConfig()).toEqual({ enabled: true, backend: "postgres" });
   });
 
   test("refuses to report a configuration when enabled with an unsanctioned target", () => {
-    process.env[AGENT_ENABLED_ENV] = "true";
+    configureModel();
     process.env[AGENT_WORLD_TARGET_ENV] = "redis";
     expect(captureRefusal(() => getAgentRuntimeConfig()).reasonCode).toBe("UNSANCTIONED_WORLD_TARGET");
   });
 
   test("does not refuse over an unsanctioned target while the agent is off", () => {
-    // Nothing builds a world while the flag is off, so refusing here would take
+    // Nothing builds a world while the agent is off, so refusing here would take
     // the whole server down over a variable no code path reads.
+    process.env[AGENT_ENABLED_ENV] = "false";
     process.env[AGENT_WORLD_TARGET_ENV] = "redis";
     expect(getAgentRuntimeConfig()).toEqual({ enabled: false });
   });
@@ -228,5 +552,12 @@ describe(".env.example", () => {
     for (const target of Object.keys(SANCTIONED_WORLD_TARGETS)) {
       expect(envExample).toContain(target);
     }
+  });
+
+  test("documents the LLM_* keys as what decides whether the agent exists", () => {
+    // The variable no longer carries that decision on its own, so the file that
+    // an operator reads has to say where the decision moved to.
+    const agentSection = envExample.split("Agent Runtime")[1] ?? "";
+    expect(agentSection).toContain("LLM_API_KEY");
   });
 });

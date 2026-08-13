@@ -88,6 +88,10 @@ jobs:
           LLM_PROVIDER: ${{ vars.LLM_PROVIDER || 'gemini' }}
           LLM_MODEL: ${{ inputs.model || vars.LLM_MODEL }}
           AGENT_EVAL_CASE: ${{ inputs.case }}
-          LIBREDB_AGENT_ENABLED: "true"
+          # No LIBREDB_AGENT_ENABLED: since #331 T5 the runtime is available because
+          # a model is configured, which the step above has already established, and
+          # the ledger's default (.workflow-data under the runner's working
+          # directory) is writable here. Setting the flag would state a condition
+          # the job does not depend on.
           JWT_SECRET: test-secret-for-ci-build-only-32ch
         run: bun run agent:eval | tee "$GITHUB_STEP_SUMMARY"

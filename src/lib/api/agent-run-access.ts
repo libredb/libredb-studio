@@ -7,7 +7,7 @@ import { guardRoute } from "@/lib/api/require-session";
 import type { UserPayload } from "@/lib/auth";
 
 /**
- * The one gate every per-run route passes through (#329 T9): session, feature flag,
+ * The one gate every per-run route passes through (#329 T9): session, availability,
  * existence and ownership, answered once so three routes cannot drift apart.
  *
  * Ownership is decided against the run's PERSISTED actor, which is the same

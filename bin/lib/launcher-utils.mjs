@@ -99,6 +99,28 @@ export function resolveCacheDir(version, homeDir) {
 }
 
 /**
+ * Per-user agent ledger directory: <home>/.libredb-studio/workflow-data
+ *
+ * The agent's run history (#331 T5). Two things this deliberately is not.
+ *
+ * It is not `cwd`-relative, which is what the workflow SDK defaults to
+ * (".workflow-data"): the payload is spawned with `cwd` set to the extracted
+ * payload directory, so the first `npx` run would create a ledger inside a cache
+ * that `preservePayloadData` does not carry across a re-extraction, and a run
+ * started from another folder would silently look somewhere else for its history.
+ *
+ * It is not versioned either, unlike `resolveCacheDir`: run history belongs to
+ * the user, not to the release they happened to start it with, and
+ * `@workflow/world-local` migrates its own data directory across its versions.
+ *
+ * @param {string} homeDir
+ * @returns {string}
+ */
+export function resolveLedgerDir(homeDir) {
+  return path.join(homeDir, ".libredb-studio", "workflow-data");
+}
+
+/**
  * Parse `sha256sum` output (the SHA256SUMS release asset): one
  * "<hex>  <name>" line per file, with an optional "*" binary marker before
  * the name. Returns a Map of file name to lowercase hex digest; malformed

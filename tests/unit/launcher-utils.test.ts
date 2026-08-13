@@ -19,6 +19,7 @@ import {
   preservePayloadData,
   releaseDownloadUrl,
   resolveCacheDir,
+  resolveLedgerDir,
   sha256File,
 } from "../../bin/lib/launcher-utils.mjs";
 
@@ -130,6 +131,27 @@ describe("releaseDownloadUrl", () => {
 describe("resolveCacheDir", () => {
   test("resolves to <home>/.libredb-studio/<version>", () => {
     expect(resolveCacheDir("0.9.41", "/home/alice")).toBe(path.join("/home/alice", ".libredb-studio", "0.9.41"));
+  });
+});
+
+describe("resolveLedgerDir", () => {
+  /**
+   * The agent's run history (#331 T5). The payload is spawned with `cwd` set to
+   * the extracted payload directory, so the workflow SDK's own default —
+   * ".workflow-data" resolved against the working directory — would put the
+   * ledger inside a cache that `preservePayloadData` does not carry across a
+   * re-extraction. Beside the cache, not inside it, for the same reason the
+   * version is left out of the path: run history belongs to the user, not to the
+   * release they happened to start.
+   */
+  test("resolves beside the payload cache, not inside a versioned one", () => {
+    expect(resolveLedgerDir("/home/alice")).toBe(path.join("/home/alice", ".libredb-studio", "workflow-data"));
+  });
+
+  test("does not depend on the working directory, which is what loses a run's history", () => {
+    // The whole point: two `npx` invocations from two folders must reach one
+    // ledger. A cwd-relative default silently gives each folder its own.
+    expect(path.isAbsolute(resolveLedgerDir("/home/alice"))).toBe(true);
   });
 });
 

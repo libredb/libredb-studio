@@ -6,9 +6,12 @@ import { logger } from "@/lib/logger";
 /**
  * Discovers whether this server runs agents (#329 T10a).
  *
- * The same shape as the storage-mode discovery in `use-storage-sync.ts`: the flag is
- * server-side only and the standalone pages are statically prerendered, so the
- * answer has to come from the running server rather than from the bundle.
+ * The same shape as the storage-mode discovery in `use-storage-sync.ts`: everything
+ * that decides the answer is server-side only and the standalone pages are statically
+ * prerendered, so the answer has to come from the running server rather than from the
+ * bundle. Since #331 T5 that answer is derived — a model configuration plus a writable
+ * ledger path — and the route reports which condition is missing, but this hook still
+ * reads only `enabled`, because the rail renders nothing either way.
  *
  * Everything that is not an explicit `enabled: true` resolves to off — a refusal, an
  * unreachable server, a body of another shape. The surface this gates starts

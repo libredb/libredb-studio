@@ -10,11 +10,12 @@
  * record, and a fake store would let that pass while the record said something else.
  */
 
-import { describe, test, expect, mock, beforeEach, afterAll } from "bun:test";
+import { describe, test, expect, mock, beforeEach, afterEach, afterAll } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createLocalWorld } from "@workflow/world-local";
+import { configureAgentModel, restoreAgentModel } from "../helpers/agent-model-env";
 import { AGENT_ENABLED_ENV } from "@/lib/agent/config";
 import { AGENT_RUN_DEADLINE_MS } from "@/lib/agent/execution-policy";
 import * as realRunStore from "@/lib/agent/run-store";
@@ -76,9 +77,18 @@ async function openRun(runId: string): Promise<void> {
 }
 
 beforeEach(() => {
-  process.env[AGENT_ENABLED_ENV] = "true";
+  // A configured model is what makes the runtime available since #331 T5; the
+  // flag only switches it off. `configureAgentModel` also clears whatever the
+  // checkout's `.env` put in `process.env`, so this suite answers the same way
+  // here and in CI.
+  delete process.env[AGENT_ENABLED_ENV];
+  configureAgentModel();
   investigationCalls = [];
   mockResolveConnection.mockClear();
+});
+
+afterEach(() => {
+  restoreAgentModel();
 });
 
 afterAll(() => {
