@@ -328,6 +328,42 @@ describe("AgentRunService — finishing a run", () => {
     }
   });
 
+  test("a run that never entered the loop is given no verdict at all", async () => {
+    // `runtime.ts`'s `recordDriveFailure` shape: the drive died resolving the
+    // connection or building the model, so the run is still `queued` and finishes
+    // without a `run-started` ever having been written. Judging that run "did not
+    // answer" would judge one that was never given the chance to. Found by review
+    // on #347.
+    const h = harness();
+    const { runId } = await h.service.start(START_INPUT);
+
+    const record = await h.service.finish(runId, "failed", { reason: "connection-unresolvable" });
+
+    expect(record.status).toBe("failed");
+    const finished = (await h.service.status(runId))?.record.events.at(-1);
+    if (finished?.kind !== "run-finished") throw new Error("expected an ending");
+    expect(finished.goalVerdict).toBeUndefined();
+    // And the reason it DOES have is untouched — the verdict's absence replaces
+    // nothing the caller needs to see.
+    expect(finished.reason).toBe("connection-unresolvable");
+  });
+
+  test("the log says a run ended before it began, rather than that it failed to answer", async () => {
+    const info = spyOn(logger, "info").mockImplementation(() => {});
+    try {
+      const h = harness();
+      const { runId } = await h.service.start(START_INPUT);
+
+      await h.service.finish(runId, "failed", { reason: "internal" });
+
+      const line = info.mock.calls.map((call) => String(call[0])).join("\n");
+      expect(line).toContain("ended before it began");
+      expect(line).not.toContain("unanswered");
+    } finally {
+      info.mockRestore();
+    }
+  });
+
   test("refuses to finish a run that has already finished", async () => {
     const h = harness();
     const { runId } = await h.service.start(START_INPUT);

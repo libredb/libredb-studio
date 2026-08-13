@@ -397,6 +397,20 @@ error message all come from whoever can write to the database, so everything cro
 is fenced first: a header naming what the content is and where it came from, and a stated boundary
 the content cannot forge. This is the same firewall the maintainer loop applies to public issue text.
 
+**A notation the server writes needs more than a fence** (`er-diagram.ts`). The relations block turns
+the inventory's foreign keys into a graph, and a fence around it says only where the server stopped
+talking — it does nothing about a table literally named `orders -> secrets`, which would produce a
+line reading as a relation nobody has. So every identifier in that notation is **quoted** and its
+delimiter doubled as SQL does it, and every control character is escaped: without that, a name
+carrying a newline became a second line, and "a relation is a line" is what the whole reading rests
+on. It is a relation list rather than Mermaid for the same reason — `||--o{` is far easier to forge
+than a quoted pair, and a diagram drawing a relation the database does not have is worse than none.
+Two further rules follow from the same principle rather than from formatting: a pairing this
+inventory cannot know is **not invented** (several edges between one pair of tables may be separate
+keys or one composite key returned as a cross product, B8, so the group is one line that names the
+columns and says the pairing is unknown), and the block is bounded in **characters**, because a
+count of edges is not a bound on a prompt.
+
 ## What bounds a run
 
 The frozen execution policy (`src/lib/agent/execution-policy.ts`, version `agent-read-only.1`) is
@@ -531,6 +545,9 @@ Two honest limits, both deliberate:
   nothing, `failed` having answered nothing, or `failed` with no verdict meaningful at all because
   the drive died before the loop. The first two were both observed on live runs. A ledger written
   before the field folds unchanged, and its absence means what is true of it: no verifier ran.
+  That third shape writes the absence **deliberately**: a run still `queued` at its ending never
+  entered the loop, and calling it "did not answer" would judge a run that was never given the
+  chance to. Its failure reason speaks alone.
 
 ### The eval harness
 

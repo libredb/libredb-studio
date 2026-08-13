@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { MAX_ER_RELATIONS, erDetailForWorkflow, renderErDiagram } from "@/lib/agent/er-diagram";
+import { MAX_ER_CHARS, erDetailForWorkflow, renderErDiagram } from "@/lib/agent/er-diagram";
 import type { AgentContextSnapshot } from "@/lib/agent/types";
 import type { TableSchema } from "@/lib/types";
 
@@ -66,6 +66,31 @@ describe("a hostile identifier cannot forge a relation", () => {
     // arrows would count the one inside the name — which is the point: it is text
     // in a quoted identifier, not notation.
     expect(relationLines(rendered)).toHaveLength(1);
+  });
+
+  test("a name carrying a LINE BREAK cannot become a second line", () => {
+    // Both reference engines permit a newline inside a quoted identifier, so doubling
+    // the quote alone left a name able to produce what read as an extra relation —
+    // defeating the "a relation is a line" reading this file's assertions rest on.
+    // Found by review on #347.
+    const hostile = table('a"\n"orders" -> "secrets', {
+      foreignKeys: [{ columnName: "x", referencedTable: "customers", referencedColumn: "id" }],
+    });
+
+    const rendered = renderErDiagram(snapshot([hostile, table("customers")]), "minimal");
+
+    expect(relationLines(rendered)).toHaveLength(1);
+    expect(rendered).toContain("\\n");
+  });
+
+  test("every other control character is escaped too, not passed through", () => {
+    const hostile = table("a\u0007b\tc\rd", {
+      foreignKeys: [{ columnName: "x", referencedTable: "customers", referencedColumn: "id" }],
+    });
+
+    const rendered = renderErDiagram(snapshot([hostile, table("customers")]), "minimal");
+
+    expect(rendered).toContain("a\\x07b\\tc\\rd");
   });
 
   test("every identifier in the output is delimited", () => {
@@ -150,21 +175,34 @@ describe("bounds and empty shapes", () => {
     expect(rendered).toContain("enforced by the application");
   });
 
-  test("a wide schema is truncated and says how much it left out", () => {
+  test("a wide schema is bounded by CHARACTERS, and says how much it left out", () => {
+    // A count of edges is not a bound on a prompt: one long identifier can amplify a
+    // single line far past a ceiling that sixty short ones would fit inside. Found by
+    // review on #347.
     const wide = snapshot([
       table("hub", {
-        foreignKeys: Array.from({ length: MAX_ER_RELATIONS + 5 }, (_, index) => ({
-          columnName: `c${index}`,
-          referencedTable: `t${index}`,
+        foreignKeys: Array.from({ length: 200 }, (_, index) => ({
+          columnName: `column_number_${index}_with_a_long_name`,
+          referencedTable: `target_table_number_${index}_with_a_long_name`,
           referencedColumn: "id",
         })),
       }),
     ]);
 
-    const rendered = renderErDiagram(wide, "minimal");
+    const rendered = renderErDiagram(wide, "medium");
 
-    expect(relationLines(rendered)).toHaveLength(MAX_ER_RELATIONS);
-    expect(rendered).toContain("5 further relation(s) omitted");
+    expect(rendered.length).toBeLessThanOrEqual(MAX_ER_CHARS);
+    expect(rendered).toMatch(/\d+ further relation\(s\) omitted/);
+  });
+
+  test("a single identifier long enough to blow the bound cannot", () => {
+    const huge = snapshot([
+      table("a", {
+        foreignKeys: [{ columnName: "x".repeat(MAX_ER_CHARS * 2), referencedTable: "b", referencedColumn: "id" }],
+      }),
+    ]);
+
+    expect(renderErDiagram(huge, "medium").length).toBeLessThanOrEqual(MAX_ER_CHARS);
   });
 
   test("the same edge arriving twice is rendered once", () => {
@@ -178,6 +216,91 @@ describe("bounds and empty shapes", () => {
     });
 
     expect(relationLines(renderErDiagram(snapshot([duplicated, table("customers")]), "minimal"))).toHaveLength(1);
+  });
+});
+
+describe("a pairing this inventory cannot know is not invented", () => {
+  /**
+   * PostgreSQL's catalog read returns a composite foreign key as the cross product
+   * of its sides (`docs/BACKLOG.md` B8): `FOREIGN KEY (x, y) REFERENCES p(a, b)`
+   * arrives as four edges, of which two are false. Rendering them as exact joins
+   * would have this block assert a relation the database does not have — the very
+   * thing the quoting exists to prevent. Found by review on #347.
+   */
+  const COMPOSITE = snapshot([
+    table("orders", {
+      foreignKeys: [
+        { columnName: "x", referencedTable: "parents", referencedColumn: "a" },
+        { columnName: "x", referencedTable: "parents", referencedColumn: "b" },
+        { columnName: "y", referencedTable: "parents", referencedColumn: "a" },
+        { columnName: "y", referencedTable: "parents", referencedColumn: "b" },
+      ],
+    }),
+    table("parents"),
+  ]);
+
+  test("the false pairings of a cross-product read are never rendered as joins", () => {
+    const rendered = renderErDiagram(COMPOSITE, "medium");
+
+    expect(relationLines(rendered)).toHaveLength(1);
+    expect(rendered).not.toContain('"x" -> "parents"."b"');
+    expect(rendered).not.toContain('"y" -> "parents"."a"');
+  });
+
+  test("the columns are still named, because they are true — only the pairing is unknown", () => {
+    const rendered = renderErDiagram(COMPOSITE, "medium");
+
+    expect(rendered).toContain('"orders" ("x", "y") -> "parents" ("a", "b")');
+    expect(rendered).toContain("cannot pair the columns");
+  });
+
+  test("at minimal, the pair reads as one relation and still says the pairing is unknown", () => {
+    const rendered = renderErDiagram(COMPOSITE, "minimal");
+
+    expect(rendered).toContain('"orders" -> "parents"  [several keys or one composite key');
+  });
+
+  test("an ambiguous group pointing outside the inventory keeps that note too", () => {
+    const rendered = renderErDiagram(
+      snapshot([
+        table("orders", {
+          foreignKeys: [
+            { columnName: "x", referencedTable: "gone", referencedColumn: "a" },
+            { columnName: "y", referencedTable: "gone", referencedColumn: "b" },
+          ],
+        }),
+      ]),
+      "medium",
+    );
+
+    expect(rendered).toContain("target not in this inventory");
+  });
+
+  test("at full, an ambiguous group still carries what leads an index", () => {
+    const rendered = renderErDiagram(COMPOSITE, "full");
+
+    expect(rendered).toContain("cannot pair the columns");
+    expect(rendered).toContain('primary key "id"');
+  });
+
+  test("two relations between DIFFERENT pairs stay two exact lines", () => {
+    // The grouping is by table pair, so it must not swallow ordinary edges.
+    const rendered = renderErDiagram(
+      snapshot([
+        table("orders", {
+          foreignKeys: [
+            { columnName: "customer_id", referencedTable: "customers", referencedColumn: "id" },
+            { columnName: "region_id", referencedTable: "regions", referencedColumn: "id" },
+          ],
+        }),
+        table("customers"),
+        table("regions"),
+      ]),
+      "medium",
+    );
+
+    expect(relationLines(rendered)).toHaveLength(2);
+    expect(rendered).not.toContain("cannot pair the columns");
   });
 });
 

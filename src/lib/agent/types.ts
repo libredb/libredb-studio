@@ -408,7 +408,10 @@ export type AgentRunEvent =
        *
        * Optional, like `reason` and `stopReason` before it, and for the same reason:
        * a ledger written before this field folds unchanged, and its ABSENCE means
-       * exactly what is true of it — no verifier ran. Adding a fourth status instead
+       * exactly what is true of it — no verifier ran. That absence is written on
+       * purpose for the third shape above: a run still `queued` at its ending never
+       * entered the loop, and calling it "did not answer" would judge a run that was
+       * never given the chance to. Adding a fourth status instead
        * would have split `succeeded` by ledger generation, with nothing in an older
        * record to say which meaning applied.
        *

@@ -441,9 +441,16 @@ export class AgentRunService {
       `run-finished` itself contributes nothing to the verdict — it is the ending, not
       part of the work — so computing it from the events before the append is not a
       simplification, it is the correct input.
+
+      A run that never entered the loop gets NO verdict. Its status is still `queued`
+      here — no `run-started` was ever appended — which is `runtime.ts`'s
+      `recordDriveFailure` path: the drive died before the run could try. Calling that
+      "did not answer" would read as a judgement on a run that was never given the
+      chance to, so the field is omitted and the failure reason speaks alone. Found by
+      review on #347.
     */
     const record = (await this.readOrThrow(runId)).record;
-    const verdict = verifyRunGoal({ ...record, status });
+    const verdict = record.status === "queued" ? null : verifyRunGoal({ ...record, status });
 
     // Spread rather than the fields outright: an ending that has neither writes the
     // entry it always wrote, so a ledger from before these fields and one after them
@@ -454,12 +461,16 @@ export class AgentRunService {
       status,
       ...(reason === undefined ? {} : { reason }),
       ...(stopReason === undefined ? {} : { stopReason }),
-      goalVerdict: {
-        outcome: verdict.outcome,
-        verifier: verdict.verifier,
-        // Omitted when the run answered, so the two halves cannot disagree.
-        ...(verdict.unmet.length === 0 ? {} : { unmet: verdict.unmet }),
-      },
+      ...(verdict === null
+        ? {}
+        : {
+            goalVerdict: {
+              outcome: verdict.outcome,
+              verifier: verdict.verifier,
+              // Omitted when the run answered, so the two halves cannot disagree.
+              ...(verdict.unmet.length === 0 ? {} : { unmet: verdict.unmet }),
+            },
+          }),
     });
     try {
       releaseExecutionRun({ runId, tracker: this.resources.tracker, artifacts: this.resources.artifacts });
@@ -477,12 +488,17 @@ export class AgentRunService {
       `runStep` that ends a run without returning to it. A log line at either of those
       two sites would have covered one ending and quietly missed the other.
     */
-    logger.info(
-      verdict.outcome === "answered"
-        ? `agent run ${runId} answered (${verdict.verifier})`
-        : `agent run ${runId} unanswered (${verdict.verifier}: ${verdict.unmet.join(", ")})`,
-      { runId, status, ...(stopReason === undefined ? {} : { stopReason }) },
-    );
+    const verdictSentence =
+      verdict === null
+        ? "ended before it began"
+        : verdict.outcome === "answered"
+          ? `answered (${verdict.verifier})`
+          : `unanswered (${verdict.verifier}: ${verdict.unmet.join(", ")})`;
+    logger.info(`agent run ${runId} ${verdictSentence}`, {
+      runId,
+      status,
+      ...(stopReason === undefined ? {} : { stopReason }),
+    });
     return view;
   }
 
