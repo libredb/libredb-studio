@@ -4,6 +4,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { Bot, Loader2, PencilLine, Play, Square, TableProperties } from "lucide-react";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { isMobileViewport, useIsMobile } from "@/hooks/use-mobile";
+import { describeAgentCapability } from "@/lib/agent/capability-labels";
 import {
   AGENT_EXECUTION_POLICY,
   AGENT_MAX_MODEL_TURNS,
@@ -300,6 +301,23 @@ export function AgentRail({
     run.runId !== null && LIVE_STATUSES.has(run.timeline.status) && !run.timeline.stopRequested && !run.isStopping;
 
   /*
+    A verdict about the model is a verdict about ONE mode (#331 T4).
+
+    `admitAgentModel` returns `allowed` for planning on its first line: the mode is
+    toolless by contract, so tool calling is not among the capabilities it needs and it
+    is never probed. A refusal is therefore only ever true of the mode it was raised
+    for, and showing it above another mode would be the rail stating something the
+    server did not — most visibly right after the user takes the way out this state
+    itself points at.
+
+    Scoped here rather than cleared in the hook: the hook reports what the server said,
+    and which of it applies to the surface's current selection is the surface's
+    question. Switching back to agent mode is not a new fact and re-asking to learn it
+    would spend a model round trip on an answer already given.
+  */
+  const modelRefusal = run.refusal !== null && run.refusal.mode === mode ? run.refusal : null;
+
+  /*
     An artifact is named by a correlation id, and the route that serves its rows is
     scoped to the run that recorded it — so the run id is bound here rather than
     threaded through every item.
@@ -476,6 +494,78 @@ export function AgentRail({
             </button>
           </div>
         </div>
+
+        {/*
+          The refused model (#331 T4). A start refused because the model was ESTABLISHED
+          as unable to drive an agent run is not the generic red line: nothing here can
+          be retried, and what has to change is not in this panel at all.
+
+          #325 ratified that such a model "falls back explicitly to chat/NL2SQL". T2 and
+          T3 removed both of those surfaces, so that decision is void — but the earlier
+          reading of this state, that nothing toolless survived them, was FALSE, and the
+          rail said so to users. The toolless surface that survived is this rail's own
+          planning mode: `admitAgentModel` admits it without probing, so it works with
+          exactly the model just refused, one click away, in this panel. Driven live on
+          2026-08-13 — an `ollama` endpoint serving `gemma3:270m` refused the agent start
+          below, and the same model then ran a planning run to `succeeded`.
+
+          So the state says what is true instead. An AGENT run is what this model cannot
+          drive, and why; plan mode still works and is offered; a different model is what
+          buys a run that reads the database. The offer only SELECTS the mode — the user
+          decides whether to ask anything of it, the same rule T1's shortcut follows, and
+          for the same reason: a click that spent model budget would be a different
+          feature.
+
+          Three registers, on purpose. The verdict is a heading; the shortfall is the
+          structured `missing` rendered AS structure, one item per capability, so it can
+          be scanned rather than read; the report is the server's prose, the only place
+          the model's name and the endpoint's own words appear. The shortfall and the
+          report do name the same capabilities — driven live on 2026-08-13, that reads as
+          a summary above its detail, and the alternative is a browser that either parses
+          the server's sentence apart or renders `missing` decoratively.
+        */}
+        {modelRefusal !== null && (
+          <div
+            role="alert"
+            data-testid="agent-model-refusal"
+            className="mt-2 p-2 rounded border border-red-500/30 bg-red-500/5 space-y-1"
+          >
+            <p className="text-xs text-red-300">This model cannot drive an agent run.</p>
+            {modelRefusal.missing.length > 0 && (
+              <div data-testid="agent-model-refusal-missing" className="flex flex-wrap items-center gap-1">
+                <span className="text-[0.625rem] text-zinc-500">The probe could not establish:</span>
+                {modelRefusal.missing.map((capability) => (
+                  <span key={capability} className="px-1 py-0.5 rounded bg-red-500/10 text-[0.625rem] text-red-200/90">
+                    {describeAgentCapability(capability)}
+                  </span>
+                ))}
+              </div>
+            )}
+            <p data-testid="agent-model-refusal-report" className="text-[0.625rem] text-zinc-400">
+              {modelRefusal.message}
+            </p>
+            <p data-testid="agent-model-refusal-action" className="text-[0.625rem] text-zinc-500">
+              Plan mode needs no tools, so it still works with this model: it reasons about your question and drafts an
+              approach without reading the database. A different model, one that passes the probe, is what gets a run
+              that reads it.
+            </p>
+            {/*
+              Offered only where it means something. A verdict raised FOR planning could
+              only come from a server that probes it, and pointing such a user at the
+              mode they are already in would be the offer saying nothing.
+            */}
+            {modelRefusal.mode !== "planning" && (
+              <button
+                type="button"
+                data-testid="agent-model-refusal-use-planning"
+                onClick={() => setMode("planning")}
+                className="px-1.5 py-0.5 rounded text-[0.625rem] text-blue-300 hover:bg-white/5 transition-colors"
+              >
+                Switch to Plan mode
+              </button>
+            )}
+          </div>
+        )}
 
         {run.error !== null && (
           <p role="alert" data-testid="agent-error" className="mt-2 text-xs text-red-400">

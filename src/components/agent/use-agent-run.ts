@@ -1,6 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { isAgentModelCapability } from "@/lib/agent/capability-labels";
+// Type-only, so nothing of the probe — or of the AI SDK it runs — reaches this bundle.
+import type { AgentModelCapability } from "@/lib/agent/capability-probe";
 import type { AgentLedgerEntry } from "@/lib/agent/run-store";
 import type { AgentRunMode, AgentRunWorkflowType } from "@/lib/agent/types";
 import { foldLedgerEntries, parseLedgerLine, type AgentRunTimeline } from "./timeline";
@@ -53,6 +56,17 @@ export interface AgentRunFollower {
   readonly timeline: AgentRunTimeline;
   /** The app's own words about why the last attempt did not continue. */
   readonly error: string | null;
+  /**
+   * The one start failure that is a verdict about the MODEL rather than about the
+   * attempt (#331 T4). Set only for the capability gate's `422`; every other refused
+   * start, and every failure of a run that did open, stays in `error` or in the
+   * ledger's own failure reason.
+   *
+   * It carries the mode it was raised for, because it is not true of every mode: the
+   * gate admits planning without probing at all. A surface offering both modes must
+   * check that field before showing this — see `AgentRail`.
+   */
+  readonly refusal: AgentModelRefusal | null;
   readonly start: (input: AgentRunStartInput) => Promise<void>;
   /**
    * Asks the run to stop. It is an ASK: the run's own loop ends it at its next
@@ -65,6 +79,56 @@ export interface AgentRunFollower {
 interface StartResponse {
   readonly runId?: unknown;
   readonly error?: unknown;
+  readonly missing?: unknown;
+}
+
+/**
+ * What the capability gate established about the configured model.
+ *
+ * `message` is the server's own sentence: it names the model and quotes what the
+ * endpoint said, neither of which crosses the wire in any other field. `missing` is the
+ * structured half, so a surface can state the shortfall in its own words instead of
+ * parsing that sentence back apart.
+ */
+export interface AgentModelRefusal {
+  readonly message: string;
+  /** Empty when the server named a shortfall this build has no words for; never invented. */
+  readonly missing: readonly AgentModelCapability[];
+  /**
+   * The mode the refused start asked for, and the only mode this verdict is about.
+   *
+   * The gate probes a model because an AGENT run needs tools; planning is toolless by
+   * contract and returns `allowed` on its first line (`capability-gate.ts`), so it is
+   * never probed and never refused. A verdict left standing over a mode it was never
+   * about would be a false statement, which is why it is recorded rather than assumed.
+   */
+  readonly mode: AgentRunMode;
+}
+
+/**
+ * The status the capability gate refuses with. 422 rather than 400 because the request
+ * was well-formed and it is the server's own configuration that cannot honour it
+ * (`src/app/api/agent/runs/route.ts`).
+ */
+const CAPABILITY_REFUSED_STATUS = 422;
+
+/**
+ * Carries the verdict out through the same exit the other start failures take, so the
+ * rule about what may be reported after an abort is written once. Its `message` is the
+ * server's sentence, which is also what `messageFor` would produce: a reader that loses
+ * the `instanceof` below degrades to the generic line rather than to nothing.
+ */
+class ModelRefusedError extends Error {
+  readonly refusal: AgentModelRefusal;
+
+  constructor(refusal: AgentModelRefusal) {
+    super(refusal.message);
+    this.refusal = refusal;
+  }
+}
+
+function readMissingCapabilities(value: unknown): readonly AgentModelCapability[] {
+  return Array.isArray(value) ? value.filter(isAgentModelCapability) : [];
 }
 
 function messageFor(error: unknown): string {
@@ -77,6 +141,7 @@ export function useAgentRun(): AgentRunFollower {
   const [isBusy, setIsBusy] = useState(false);
   const [isStopping, setIsStopping] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [refusal, setRefusal] = useState<AgentModelRefusal | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
   useEffect(
@@ -133,6 +198,9 @@ export function useAgentRun(): AgentRunFollower {
       setIsBusy(true);
       setIsStopping(false);
       setError(null);
+      // A verdict is about the model that was configured when it was reached; an
+      // operator who changed it and started again is owed the new answer, not the old one.
+      setRefusal(null);
       setEntries([]);
       setRunId(null);
 
@@ -146,7 +214,20 @@ export function useAgentRun(): AgentRunFollower {
         });
         const body = (await res.json().catch(() => ({}))) as StartResponse;
         if (!res.ok) {
-          throw new Error(typeof body.error === "string" ? body.error : `The run could not be started (${res.status})`);
+          const said = typeof body.error === "string" ? body.error : `The run could not be started (${res.status})`;
+          // The status is what makes this a verdict, not the words. Only the capability
+          // gate answers 422, and it answers it only for an incapability it POSITIVELY
+          // established: a bad key, a quota, a 5xx or a dropped socket all open a run and
+          // are reported by the drive in its own vocabulary, so nothing that merely went
+          // wrong can be read here as a statement about the model.
+          if (res.status === CAPABILITY_REFUSED_STATUS) {
+            throw new ModelRefusedError({
+              message: said,
+              missing: readMissingCapabilities(body.missing),
+              mode: input.mode,
+            });
+          }
+          throw new Error(said);
         }
         if (typeof body.runId !== "string") {
           throw new Error("The server opened a run without naming it");
@@ -154,7 +235,8 @@ export function useAgentRun(): AgentRunFollower {
         openedRunId = body.runId;
       } catch (startError) {
         if (!controller.signal.aborted) {
-          setError(messageFor(startError));
+          if (startError instanceof ModelRefusedError) setRefusal(startError.refusal);
+          else setError(messageFor(startError));
           setIsBusy(false);
         }
         return;
@@ -204,5 +286,5 @@ export function useAgentRun(): AgentRunFollower {
     }
   }, [runId]);
 
-  return { runId, isBusy, isStopping, timeline: foldLedgerEntries(entries), error, start, cancel };
+  return { runId, isBusy, isStopping, timeline: foldLedgerEntries(entries), error, refusal, start, cancel };
 }

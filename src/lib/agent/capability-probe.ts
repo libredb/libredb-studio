@@ -52,6 +52,9 @@
 import { APICallError, streamText, tool } from "ai";
 import { z } from "zod";
 import { type LLMProviderType, LLMError, LLMStreamError } from "@/lib/llm/types";
+// The labels moved out so the rail can name a missing capability without importing
+// this module — and with it the AI SDK — into the browser (#331 T4).
+import { describeAgentCapability } from "./capability-labels";
 import { type AgentModel, mapAgentModelError } from "./model-adapter";
 
 /** What one probe established. Every field is an observation, not a vendor claim. */
@@ -117,18 +120,6 @@ const PROBE_PROMPT = `Call the ${PROBE_TOOL_NAME} tool once with acknowledged se
 /** Order is the order a refusal lists them in, so the message reads the same way twice. */
 const REQUIRED_CAPABILITIES: readonly AgentModelCapability[] = ["toolCalling", "structuredOutput", "streaming"];
 
-/**
- * What each capability is called in front of a user. The field names are this
- * module's own identifiers; reading `structuredOutput` back to someone is leaking
- * our vocabulary into their error message, and "schema-valid tool arguments" is
- * also the more accurate claim — that is precisely what the probe measured.
- */
-const CAPABILITY_LABELS: Readonly<Record<AgentModelCapability, string>> = Object.freeze({
-  toolCalling: "tool calling",
-  structuredOutput: "schema-valid tool arguments",
-  streaming: "streaming",
-});
-
 /** How much untrusted text may reach a user-facing message. */
 const DETAIL_LIMIT = 200;
 
@@ -143,19 +134,26 @@ const DETAIL_LIMIT = 200;
 //
 // The message names the shortfall and ONE action, and no other surface (#331 T2).
 // It used to send the user to the NL2SQL panel and the AI Assistant as toolless
-// alternatives. That is the wrong advice independently of which of those surfaces
+// alternatives, which is the wrong advice independently of which of those surfaces
 // still ships: the user asked for an agent run, and a toolless surface cannot
 // answer that question - it has no way to reach the database at all. A refusal
-// that redirects to a surface which cannot do the refused thing turns one clear
-// failure into a second, slower one. What remains is the true half: the probe
-// could not establish these capabilities, and a different model is the way forward.
+// that answers the refused question with a surface which cannot do the refused
+// thing turns one clear failure into a second, slower one. What remains is the true
+// half: the probe could not establish these capabilities, and a different model is
+// the way forward.
+//
+// This is why the sentence names no surface even though one survives (#331 T4): the
+// rail does offer planning mode, and that is an offer of a DIFFERENT question the
+// user may choose to ask, not this question answered elsewhere. Which surfaces exist
+// is also the client's fact, not this module's - the same message is read by anything
+// that reaches the run route.
 const refusalMessage = (
   provider: LLMProviderType,
   modelId: string,
   missing: readonly AgentModelCapability[],
   detail?: string,
 ): string => {
-  const shortfall = missing.map((capability) => CAPABILITY_LABELS[capability]).join(", ");
+  const shortfall = missing.map(describeAgentCapability).join(", ");
   // Its own statement rather than a template inside the template below: a nested one
   // reads as part of the sentence while being a separate expression, which is why the
   // rule against them exists.
