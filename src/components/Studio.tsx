@@ -28,6 +28,7 @@ import { quoteLiteral } from "@/lib/sql/values";
 import { resolveAgentRunConnectionId } from "@/hooks/use-connection-payload";
 import { useAgentCapability } from "@/hooks/use-agent-capability";
 import { useAgentArtifact } from "@/components/agent/use-agent-artifact";
+import { useAgentPrefill } from "@/components/agent/use-agent-prefill";
 import { useToast } from "@/hooks/use-toast";
 import { useProviderMetadata } from "@/hooks/use-provider-metadata";
 import { useAuth } from "@/hooks/use-auth";
@@ -172,6 +173,16 @@ export default function Studio() {
   // rather than for the operator's container. Off (and absent) until it answers.
   const agentEnabled = useAgentCapability();
   const [isAgentSheetOpen, setIsAgentSheetOpen] = useState(false);
+
+  /*
+    The prefill seam (#331 T1). The shell owns the ask because a shortcut can be
+    anywhere in the shell — the command palette, the mobile header, a bottom-panel tab —
+    while the rail is ONE instance behind both of its presentations; the rail applies it
+    as a prop, the direction `isAgentSheetOpen` already runs in. T2 and T3 hand
+    `agentPrefill.requestPrefill` to those entry points; a prefill fills the rail and
+    starts nothing when they do.
+  */
+  const agentPrefill = useAgentPrefill();
 
   // Artifact hydration (#329 T11). The rail cites what a run stored; showing it puts
   // the rows into the bottom panel that already renders rows, and applying a drafted
@@ -620,6 +631,7 @@ export default function Studio() {
                 connectionName={conn.activeConnection?.name ?? null}
                 sheetOpen={isAgentSheetOpen}
                 onSheetOpenChange={setIsAgentSheetOpen}
+                prefill={agentPrefill.request}
                 onApplyStatement={(sql) => tabMgr.updateCurrentTab({ query: sql })}
                 onShowArtifact={agentArtifact.show}
               />

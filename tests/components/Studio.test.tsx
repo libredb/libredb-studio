@@ -416,6 +416,29 @@ mock.module("@/components/agent/AgentRail", () => ({
   },
 }));
 
+/**
+ * The prefill seam's shell half (#331 T1), stubbed to a value nothing else could
+ * produce.
+ *
+ * The T1 adversarial review found the wiring untested: the test below asserted only
+ * that the request starts null, which is also what a Studio that never called the hook
+ * and hard-coded `prefill={null}` would report. So the hook is replaced by one that
+ * always holds an ask, and what the rail is handed has to BE it. The hook's own
+ * behaviour — that nothing is asked for until a shortcut asks, and what an ask
+ * contains — is covered in tests/hooks/use-agent-prefill.test.ts, which runs in a
+ * different process: `mock.module` is process-wide, and Studio.test.tsx is its own
+ * isolation group (tests/run-components.sh Group 1), so no suite shares this stub.
+ */
+const PREFILL_SENTINEL = {
+  id: 7,
+  workflowType: "query-optimization",
+  objective: "why is checkout slow",
+} as const;
+
+mock.module("@/components/agent/use-agent-prefill", () => ({
+  useAgentPrefill: () => ({ request: PREFILL_SENTINEL, requestPrefill: mock(() => {}) }),
+}));
+
 mock.module("@/components/ui/resizable", () => {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const React = require("react");
@@ -1465,6 +1488,26 @@ describe("Studio", () => {
 
     act(() => (capturedAgentRailProps.onSheetOpenChange as (open: boolean) => void)(false));
     expect(capturedAgentRailProps.sheetOpen).toBe(false);
+  });
+
+  /**
+   * Who owns a prefill ask (#331 T1). The shell holds it because a shortcut can be
+   * anywhere in the shell while the rail is ONE instance behind both presentations,
+   * and the rail applies it as a prop — the direction `sheetOpen` already runs in.
+   *
+   * Asserted against the stubbed hook's sentinel rather than against null, because
+   * null is what a Studio that dropped the hook entirely would also hand over — the
+   * T1 adversarial review's point: deleting the import, the call and the prop kept
+   * the old assertion green. T2 and T3 hand `requestPrefill` to the legacy AI entry
+   * points; what this pins is that whatever the shell's holder says is what the one
+   * rail instance is given.
+   */
+  test("the shell owns the prefill request and hands it to the one rail instance", async () => {
+    mockAgentConfig(true);
+    const { findByTestId } = render(<Studio />);
+    await findByTestId("agent-rail");
+
+    expect(capturedAgentRailProps.prefill).toBe(PREFILL_SENTINEL);
   });
 
   // =========================================================================

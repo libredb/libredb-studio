@@ -3,7 +3,7 @@ import "../setup-dom";
 import { describe, test, expect, beforeEach, afterEach, mock } from "bun:test";
 import { renderHook, act, waitFor } from "@testing-library/react";
 
-import { useIsMobile } from "@/hooks/use-mobile";
+import { isMobileViewport, useIsMobile } from "@/hooks/use-mobile";
 
 // =============================================================================
 // matchMedia mock helpers
@@ -173,5 +173,75 @@ describe("useIsMobile", () => {
     const addedListener = mql.addEventListener.mock.calls[0][1];
     const removedListener = mql.removeEventListener.mock.calls[0][1];
     expect(addedListener).toBe(removedListener);
+  });
+});
+
+// =============================================================================
+// isMobileViewport Tests
+// =============================================================================
+/**
+ * The synchronous read the hook cannot give: `useIsMobile` seeds false and resolves
+ * in an effect, so a caller that has to DECIDE something at a point in time — rather
+ * than render from it — needs the platform's own answer instead of last render's.
+ */
+describe("isMobileViewport", () => {
+  let originalMatchMedia: typeof window.matchMedia;
+
+  beforeEach(() => {
+    originalMatchMedia = window.matchMedia;
+  });
+
+  afterEach(() => {
+    Object.defineProperty(window, "matchMedia", {
+      value: originalMatchMedia,
+      writable: true,
+      configurable: true,
+    });
+    Object.defineProperty(globalThis, "matchMedia", {
+      value: originalMatchMedia,
+      writable: true,
+      configurable: true,
+    });
+  });
+
+  test("answers from the media query, on the same breakpoint the hook uses", () => {
+    const { mockMatchMedia } = createMockMatchMedia(true);
+    Object.defineProperty(window, "matchMedia", {
+      value: mockMatchMedia,
+      writable: true,
+      configurable: true,
+    });
+
+    expect(isMobileViewport()).toBe(true);
+    // The same query string the hook subscribes to. It exists once in the module, so
+    // the predicate and the hook cannot answer about different breakpoints.
+    expect(mockMatchMedia).toHaveBeenCalledWith("(max-width: 767px)");
+  });
+
+  test("answers false on a viewport at or above the breakpoint", () => {
+    const { mockMatchMedia } = createMockMatchMedia(false);
+    Object.defineProperty(window, "matchMedia", {
+      value: mockMatchMedia,
+      writable: true,
+      configurable: true,
+    });
+
+    expect(isMobileViewport()).toBe(false);
+  });
+
+  /**
+   * There is no viewport on the server, and a module that renders on both sides may
+   * call this during a render that never touches a browser. It answers false rather
+   * than throwing — the same answer the hook's first render gives, so markup produced
+   * on the server and markup produced on the client's first pass agree.
+   */
+  test("answers false where there is no window at all", () => {
+    const realWindow = globalThis.window;
+    Object.defineProperty(globalThis, "window", { value: undefined, writable: true, configurable: true });
+    try {
+      expect(isMobileViewport()).toBe(false);
+    } finally {
+      Object.defineProperty(globalThis, "window", { value: realWindow, writable: true, configurable: true });
+    }
   });
 });

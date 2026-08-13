@@ -640,6 +640,312 @@ describe("AgentRail", () => {
   });
 
   /**
+   * The prefill seam (#331 T1) — the contract every shortcut T2, T3 and T4 wire goes
+   * through, which is why it is pinned here rather than at each caller.
+   *
+   * What these tests hold to, in the order the seam's decisions were made:
+   *
+   *  - **An ask carries a workflow and an objective, and nothing about the MODE.** The
+   *    epic's three axes are independent: a shortcut says what a run is FOR, and how it
+   *    executes stays whatever the user chose.
+   *  - **An ask starts nothing.** Every test here asserts the network was never
+   *    touched. One click that spent model tokens and read a database would be a
+   *    different feature from one that filled in a question.
+   *  - **An objective the user typed is never discarded.** Not overwritten, and not
+   *    dropped either — the ask waits on a line they can accept, because a shortcut
+   *    that appeared to do nothing would read as broken.
+   *  - **Both presentations, one instance.** The panel above `md` and the sheet below
+   *    it are branches of the same component, so an ask has to land in whichever one is
+   *    rendering; a seam wired into a single branch is the failure this task exists to
+   *    prevent. Including the branch `useIsMobile` has not resolved into yet: the T1
+   *    adversarial review found that an ask present in the first committed render on a
+   *    narrow viewport reached the invisible one, and the recheck then found the
+   *    workaround for that leaving a debt a later narrowing paid on a desktop. The
+   *    three tests at the end of this block hold the reading that removed both.
+   */
+  describe("prefill", () => {
+    const ASK = { id: 1, workflowType: "query-optimization", objective: "why is checkout slow" } as const;
+    const SECOND_ASK = { id: 2, workflowType: "database-assessment", objective: "what is worth fixing here" } as const;
+
+    /** A prefill fills the rail; it never runs it, so nothing here may reach the network. */
+    function refuseEveryRequest() {
+      const fetchMock = mock(async () => jsonResponse({}, 202));
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+      return fetchMock;
+    }
+
+    const objectiveValue = (element: Element | null): string => (element as HTMLTextAreaElement).value;
+
+    test("an ask selects the workflow, fills the objective and starts nothing", () => {
+      const fetchMock = refuseEveryRequest();
+      const { getByTestId, rerender } = render(<AgentRail {...DEFAULT_PROPS} />);
+
+      fireEvent.click(getByTestId("agent-mode-agent"));
+      rerender(<AgentRail {...DEFAULT_PROPS} prefill={ASK} />);
+
+      expect(getByTestId("agent-workflow-query-optimization").getAttribute("aria-pressed")).toBe("true");
+      expect(getByTestId("agent-workflow-investigation").getAttribute("aria-pressed")).toBe("false");
+      expect(objectiveValue(getByTestId("agent-objective"))).toBe(ASK.objective);
+      // The mode is the user's, and an ask carries none: merging that axis into the
+      // shortcut is what the epic's three independent axes exist to prevent.
+      expect(getByTestId("agent-mode-agent").getAttribute("aria-pressed")).toBe("true");
+      expect(getByTestId("agent-rail-panel")).toBeTruthy();
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    test("a second ask replaces an objective the user has not touched", () => {
+      const fetchMock = refuseEveryRequest();
+      const { getByTestId, queryByTestId, rerender } = render(<AgentRail {...DEFAULT_PROPS} prefill={ASK} />);
+
+      rerender(<AgentRail {...DEFAULT_PROPS} prefill={SECOND_ASK} />);
+
+      expect(objectiveValue(getByTestId("agent-objective"))).toBe(SECOND_ASK.objective);
+      expect(getByTestId("agent-workflow-database-assessment").getAttribute("aria-pressed")).toBe("true");
+      // Nothing of the user's was in the box, so there is nothing to offer.
+      expect(queryByTestId("agent-prefill-offer")).toBeNull();
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    test("the same ask twice takes effect twice", () => {
+      const fetchMock = refuseEveryRequest();
+      const { getByTestId, rerender } = render(<AgentRail {...DEFAULT_PROPS} prefill={ASK} />);
+
+      // The user emptied the box and clicked the same shortcut again. The second ask
+      // is identical in every field but its id, which is the whole reason it carries
+      // one: a request compared by value would make that click do nothing.
+      fireEvent.change(getByTestId("agent-objective"), { target: { value: "" } });
+      expect(objectiveValue(getByTestId("agent-objective"))).toBe("");
+
+      rerender(<AgentRail {...DEFAULT_PROPS} prefill={{ ...ASK, id: 2 }} />);
+
+      expect(objectiveValue(getByTestId("agent-objective"))).toBe(ASK.objective);
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    test("a box holding only whitespace is not something the user typed", () => {
+      const fetchMock = refuseEveryRequest();
+      const { getByTestId, queryByTestId, rerender } = render(<AgentRail {...DEFAULT_PROPS} />);
+
+      fireEvent.change(getByTestId("agent-objective"), { target: { value: "   \n " } });
+      rerender(<AgentRail {...DEFAULT_PROPS} prefill={ASK} />);
+
+      expect(objectiveValue(getByTestId("agent-objective"))).toBe(ASK.objective);
+      expect(queryByTestId("agent-prefill-offer")).toBeNull();
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    test("an objective the user typed survives an ask, which waits on a line they can accept", () => {
+      const fetchMock = refuseEveryRequest();
+      const { getByTestId, queryByTestId, rerender } = render(<AgentRail {...DEFAULT_PROPS} />);
+
+      fireEvent.change(getByTestId("agent-objective"), { target: { value: "which index is missing on orders" } });
+      rerender(<AgentRail {...DEFAULT_PROPS} prefill={ASK} />);
+
+      expect(objectiveValue(getByTestId("agent-objective"))).toBe("which index is missing on orders");
+      // The workflow is applied either way — it is a visible control holding nothing
+      // the user wrote, and one they can change back in a click.
+      expect(getByTestId("agent-workflow-query-optimization").getAttribute("aria-pressed")).toBe("true");
+      // And the ask is not dropped on the floor, which is what would make the
+      // shortcut look broken.
+      expect(getByTestId("agent-prefill-offer").textContent).toContain(ASK.objective);
+
+      fireEvent.click(getByTestId("agent-prefill-offer-apply"));
+
+      expect(objectiveValue(getByTestId("agent-objective"))).toBe(ASK.objective);
+      expect(queryByTestId("agent-prefill-offer")).toBeNull();
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    test("an objective replaced on the user's say-so is no longer theirs to protect", () => {
+      const fetchMock = refuseEveryRequest();
+      const { getByTestId, queryByTestId, rerender } = render(<AgentRail {...DEFAULT_PROPS} />);
+
+      fireEvent.change(getByTestId("agent-objective"), { target: { value: "which index is missing on orders" } });
+      rerender(<AgentRail {...DEFAULT_PROPS} prefill={ASK} />);
+      fireEvent.click(getByTestId("agent-prefill-offer-apply"));
+
+      rerender(<AgentRail {...DEFAULT_PROPS} prefill={SECOND_ASK} />);
+
+      // The box now holds exactly what the last ask put there, so the next one takes
+      // it without asking again.
+      expect(objectiveValue(getByTestId("agent-objective"))).toBe(SECOND_ASK.objective);
+      expect(queryByTestId("agent-prefill-offer")).toBeNull();
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    /**
+     * An offer outlives the box it was made about unless the applied branch retracts
+     * it, and the T1 adversarial review found nothing holding that: the retraction was
+     * covered only incidentally, so deleting it left every test green.
+     *
+     * The state it exists for is the one where the user answers the offer their own
+     * way — they clear the box instead of taking the suggestion. The next ask then has
+     * nothing of theirs to protect and lands in the box itself, and an offer still
+     * standing would read "Suggested: A" under an objective that already says B.
+     */
+    test("an ask taken into an emptied box retracts the offer the last one left", () => {
+      const fetchMock = refuseEveryRequest();
+      const { getByTestId, queryByTestId, rerender } = render(<AgentRail {...DEFAULT_PROPS} />);
+
+      fireEvent.change(getByTestId("agent-objective"), { target: { value: "which index is missing on orders" } });
+      rerender(<AgentRail {...DEFAULT_PROPS} prefill={ASK} />);
+      expect(getByTestId("agent-prefill-offer").textContent).toContain(ASK.objective);
+
+      // Their own answer to the offer: the box is emptied rather than replaced.
+      fireEvent.change(getByTestId("agent-objective"), { target: { value: "" } });
+      rerender(<AgentRail {...DEFAULT_PROPS} prefill={SECOND_ASK} />);
+
+      expect(objectiveValue(getByTestId("agent-objective"))).toBe(SECOND_ASK.objective);
+      expect(queryByTestId("agent-prefill-offer")).toBeNull();
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    test("below md an ask opens the sheet and fills the rail inside it", async () => {
+      const fetchMock = refuseEveryRequest();
+      const onSheetOpenChange = mock(() => {});
+      const view = render(<AgentRail {...DEFAULT_PROPS} onSheetOpenChange={onSheetOpenChange} />);
+
+      // The breakpoint is crossed explicitly: `useIsMobile` reports false on its first
+      // render and resolves in an effect, so an ask applied in the mount commit could
+      // not yet know the panel it filled is display:none.
+      await act(async () => {
+        media.setMatches(true);
+      });
+      view.rerender(<AgentRail {...DEFAULT_PROPS} onSheetOpenChange={onSheetOpenChange} prefill={ASK} />);
+
+      // The rail ASKS to be opened. The flag stays the shell's, the same way it does
+      // when the mobile nav opens the rail with nothing prefilled.
+      expect(onSheetOpenChange).toHaveBeenCalledWith(true);
+      view.rerender(<AgentRail {...DEFAULT_PROPS} sheetOpen onSheetOpenChange={onSheetOpenChange} prefill={ASK} />);
+
+      const sheet = await view.findByTestId("agent-rail-sheet");
+      expect(view.queryByTestId("agent-rail-panel")).toBeNull();
+      expect(
+        sheet.querySelector('[data-testid="agent-workflow-query-optimization"]')?.getAttribute("aria-pressed"),
+      ).toBe("true");
+      expect(objectiveValue(sheet.querySelector('[data-testid="agent-objective"]'))).toBe(ASK.objective);
+
+      // And an ask made while the SHEET is the presentation lands in the same state:
+      // one instance serves both, so a seam wired into one branch would lose this.
+      view.rerender(
+        <AgentRail {...DEFAULT_PROPS} sheetOpen onSheetOpenChange={onSheetOpenChange} prefill={SECOND_ASK} />,
+      );
+
+      const filled = view.getByTestId("agent-rail-sheet");
+      expect(
+        filled.querySelector('[data-testid="agent-workflow-database-assessment"]')?.getAttribute("aria-pressed"),
+      ).toBe("true");
+      expect(objectiveValue(filled.querySelector('[data-testid="agent-objective"]'))).toBe(SECOND_ASK.objective);
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    /**
+     * The ask that is present in the rail's FIRST committed render, on a viewport that
+     * was already narrow — which the T1 adversarial review named as a real defect this
+     * suite had no test for.
+     *
+     * `useIsMobile` seeds false and resolves in an effect, so that first commit reads
+     * as desktop no matter how narrow the window is. An ask that decided from the
+     * hook's value would ask nobody to open the sheet: it would land in the panel
+     * branch, which is `hidden md:flex`, and the user would see a shortcut that
+     * visibly did nothing. The rail asks the viewport itself instead, in an effect
+     * that runs after commit, where the platform's answer is exact.
+     *
+     * Today's wiring never produces that render — the shell starts at null and mounts
+     * the rail behind the capability probe — but T2 and T3 wire entry points that are
+     * not gated on it, so this is the case the seam has to survive rather than a
+     * hypothetical.
+     */
+    test("an ask already present in the first render on a narrow viewport still opens the sheet", async () => {
+      const fetchMock = refuseEveryRequest();
+      const onSheetOpenChange = mock(() => {});
+      // Narrow BEFORE the mount: the media query already matches, and it is
+      // `useIsMobile`'s own effect — not a resize — that makes the rail read it.
+      media.setMatches(true);
+
+      const view = render(<AgentRail {...DEFAULT_PROPS} onSheetOpenChange={onSheetOpenChange} prefill={ASK} />);
+      await act(async () => {});
+
+      expect(onSheetOpenChange).toHaveBeenCalledWith(true);
+
+      view.rerender(<AgentRail {...DEFAULT_PROPS} sheetOpen onSheetOpenChange={onSheetOpenChange} prefill={ASK} />);
+
+      const sheet = await view.findByTestId("agent-rail-sheet");
+      expect(view.queryByTestId("agent-rail-panel")).toBeNull();
+      expect(objectiveValue(sheet.querySelector('[data-testid="agent-objective"]'))).toBe(ASK.objective);
+      expect(
+        sheet.querySelector('[data-testid="agent-workflow-query-optimization"]')?.getAttribute("aria-pressed"),
+      ).toBe("true");
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    /**
+     * The other half of the same rule: an ask is served once, at the moment it is
+     * applied, and a viewport that changes afterwards is not a second serving. Without
+     * that, an ask would re-open the sheet on every later crossing back to a narrow
+     * viewport — reopening a sheet the user closed, which the reconciliation effect's
+     * crossing behaviour must not turn into.
+     */
+    test("a crossing back to a narrow viewport does not re-open the sheet an ask already opened", async () => {
+      const fetchMock = refuseEveryRequest();
+      const onSheetOpenChange = mock((_open: boolean) => {});
+      media.setMatches(true);
+
+      const view = render(<AgentRail {...DEFAULT_PROPS} onSheetOpenChange={onSheetOpenChange} prefill={ASK} />);
+      await act(async () => {});
+      view.rerender(<AgentRail {...DEFAULT_PROPS} sheetOpen onSheetOpenChange={onSheetOpenChange} prefill={ASK} />);
+      await view.findByTestId("agent-rail-sheet");
+
+      await act(async () => {
+        media.setMatches(false);
+      });
+      view.rerender(
+        <AgentRail {...DEFAULT_PROPS} sheetOpen={false} onSheetOpenChange={onSheetOpenChange} prefill={ASK} />,
+      );
+      await act(async () => {
+        media.setMatches(true);
+      });
+
+      const opens = onSheetOpenChange.mock.calls.filter(([open]) => open === true);
+      expect(opens.length).toBe(1);
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    /**
+     * The residual the T1 adversarial recheck named (R1/R2): an ask served on a
+     * GENUINE desktop must leave nothing behind for a later narrowing to act on.
+     *
+     * The rail used to record an owed open and pay it when `useIsMobile` next
+     * reported true. On a desktop that flag never changed, so the debt was never
+     * cleared — and the first narrowing of the window paid it, popping the sheet open
+     * for an ask the user had already been served in the panel minutes earlier. The
+     * viewport is read synchronously at the moment the ask is applied instead, so
+     * there is nothing owed and nothing to pay.
+     */
+    test("an ask served in the panel is not re-served as a sheet when the window later narrows", async () => {
+      const fetchMock = refuseEveryRequest();
+      const onSheetOpenChange = mock((_open: boolean) => {});
+      // A genuine desktop: the media query does not match at the mount, and the ask
+      // is applied against a viewport that really is wide.
+      const view = render(<AgentRail {...DEFAULT_PROPS} onSheetOpenChange={onSheetOpenChange} prefill={ASK} />);
+      await act(async () => {});
+
+      expect(view.getByTestId("agent-rail-panel")).toBeTruthy();
+      expect(objectiveValue(view.getByTestId("agent-objective"))).toBe(ASK.objective);
+      expect(onSheetOpenChange).not.toHaveBeenCalled();
+
+      // Later — a rotation, a split screen, a dragged window edge. The ask was served
+      // in the panel and is over; narrowing must not reopen it as a sheet.
+      await act(async () => {
+        media.setMatches(true);
+      });
+
+      expect(onSheetOpenChange.mock.calls.filter(([open]) => open === true).length).toBe(0);
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+  });
+
+  /**
    * The stop control (#329 T10b).
    *
    * Stopping is an ASK, not an outcome — the run's own loop ends it at its next

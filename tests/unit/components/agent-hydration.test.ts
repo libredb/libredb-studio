@@ -107,7 +107,14 @@ describe("hydrateAgentArtifact", () => {
  */
 describe("the agent rail's module boundary", () => {
   const AGENT_DIR = path.join(process.cwd(), "src/components/agent");
-  const RAIL_MODULES = ["AgentRail.tsx", "hydration.ts", "timeline.ts", "use-agent-artifact.ts", "use-agent-run.ts"];
+  const RAIL_MODULES = [
+    "AgentRail.tsx",
+    "hydration.ts",
+    "timeline.ts",
+    "use-agent-artifact.ts",
+    "use-agent-prefill.ts",
+    "use-agent-run.ts",
+  ];
   const FORBIDDEN = [
     "@/components/ResultsGrid",
     "@/components/QueryEditor",

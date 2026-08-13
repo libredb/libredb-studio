@@ -3,11 +3,12 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Bot, Loader2, PencilLine, Play, Square, TableProperties } from "lucide-react";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
-import { useIsMobile } from "@/hooks/use-mobile";
+import { isMobileViewport, useIsMobile } from "@/hooks/use-mobile";
 import { AGENT_EXECUTION_POLICY, AGENT_MAX_MODEL_TURNS, AGENT_RUN_DEADLINE_MS } from "@/lib/agent/execution-policy";
 import type { AgentRunMode, AgentRunStatus, AgentRunWorkflowType } from "@/lib/agent/types";
 import { cn } from "@/lib/utils";
 import { type AgentBudgetGauge, type AgentTimelineTone, describeFailureReason } from "./timeline";
+import type { AgentPrefillRequest } from "./use-agent-prefill";
 import { useAgentRun } from "./use-agent-run";
 
 /**
@@ -44,6 +45,12 @@ export interface AgentRailProps {
   /** Below `md` only: whether the sheet presentation is open. */
   readonly sheetOpen?: boolean;
   readonly onSheetOpenChange?: (open: boolean) => void;
+  /**
+   * A shortcut's ask to open this rail on a question (#331 T1). Applied once per
+   * request id, so the same ask made twice takes effect twice; it selects the workflow
+   * and fills the objective, and it never starts a run.
+   */
+  readonly prefill?: AgentPrefillRequest | null;
   /**
    * Puts a statement the run drafted into the host's editor (#329 T11). Absent when
    * the host has no editor to put it in, and the control is then not rendered.
@@ -167,10 +174,13 @@ export function AgentRail({
   onSheetOpenChange,
   onApplyStatement,
   onShowArtifact,
+  prefill = null,
 }: AgentRailProps) {
   const [mode, setMode] = useState<AgentRunMode>("planning");
   const [workflowType, setWorkflowType] = useState<AgentRunWorkflowType>("investigation");
   const [objective, setObjective] = useState("");
+  /** An ask that arrived while the user was typing, waiting for them to take it. */
+  const [offeredObjective, setOfferedObjective] = useState<string | null>(null);
   const run = useAgentRun();
 
   /*
@@ -191,6 +201,73 @@ export function AgentRail({
     if (wasMobile.current && !isMobile && sheetOpen) onSheetOpenChange?.(false);
     wasMobile.current = isMobile;
   }, [isMobile, sheetOpen, onSheetOpenChange]);
+
+  /** Which ask has been applied, and the text the last one put in the box. */
+  const appliedPrefillId = useRef<number | null>(null);
+  const prefilledObjective = useRef<string | null>(null);
+
+  /*
+    The prefill seam (#331 T1).
+
+    An ask is an EVENT the shell delivers as a prop, not a value to derive state from,
+    which is why it is applied in an effect and keyed on the request's ID: two clicks
+    on the same shortcut are two asks, and a request compared by value would make the
+    second one a prop that did not change.
+
+    Whether the sheet must be opened is decided HERE, from the viewport itself
+    (`isMobileViewport`) rather than from `useIsMobile`. This effect runs after commit
+    and only on the client, so the platform's answer is exact at the moment the ask is
+    served — while the hook seeds false and resolves in its own effect, which on a
+    narrow viewport is not a stale answer but a wrong one.
+
+    That replaced a ref recording an "owed" open, paid the next time the hook reported
+    mobile. The T1 adversarial recheck showed it carried two defects (R1, R2): on a
+    real desktop the hook's value never changed, so the debt was never discharged and
+    the first narrowing of the window opened the sheet for an ask the user had already
+    been served in the panel — the exact thing that code's comment claimed could not
+    happen — and the debt was keyed to the REQUEST rather than to the open it owed.
+    Reading the viewport directly leaves nothing to owe and nothing to pay later, so
+    both defects are gone rather than guarded.
+
+    Nothing here starts a run. That is the seam's rule rather than an omission — a
+    shortcut is worth one click, and a click that also spent model tokens and read a
+    database would be a different feature.
+  */
+  useEffect(() => {
+    if (prefill === null || appliedPrefillId.current === prefill.id) return;
+    appliedPrefillId.current = prefill.id;
+
+    // Applied either way: the workflow is a visible control holding nothing the user
+    // typed, and one click puts it back.
+    setWorkflowType(prefill.workflowType);
+
+    /*
+      An objective the user is typing is theirs. It is not overwritten — and it is not
+      dropped either, or the shortcut would look broken: the ask waits on one line the
+      user can accept. "Theirs" means text they typed, so a box that is empty, blank,
+      or still holds exactly what the last ask put there is one nobody has touched.
+    */
+    if (objective.trim().length === 0 || objective === prefilledObjective.current) {
+      setObjective(prefill.objective);
+      prefilledObjective.current = prefill.objective;
+      // An offer the PREVIOUS ask left is about a box that no longer says what it
+      // said. Left standing it reads "Suggested: A" under an objective that already
+      // says B — the state a user reaches by answering an offer with an emptied box
+      // rather than by taking it.
+      setOfferedObjective(null);
+    } else {
+      setOfferedObjective(prefill.objective);
+    }
+
+    /*
+      Below `md` the panel this rail renders into is display:none, so filling it
+      without opening the sheet would fill a surface nobody can see. The flag itself
+      stays the shell's, so this is an ask rather than a set. Above `md` there is
+      nothing to open: the rail is already the panel, the ask is already served, and
+      the crossing is left entirely to the reconciliation effect above.
+    */
+    if (isMobileViewport()) onSheetOpenChange?.(true);
+  }, [prefill, objective, onSheetOpenChange]);
 
   const canStart = connectionId !== null && objective.trim().length > 0 && !run.isBusy;
 
@@ -312,6 +389,32 @@ export function AgentRail({
           className="mt-1 w-full resize-none rounded bg-black/40 border border-white/10 px-2 py-1.5 text-xs text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:border-blue-500/40"
           placeholder="Why is checkout slow?"
         />
+
+        {/*
+          ONE line, and an OFFER rather than a change (#331 T1). The objective in the
+          box is the user's, so a shortcut may not overwrite it — but it may not quietly
+          drop what it was asked to say either, or the shortcut reads as broken. So the
+          ask waits here until the user takes it, and nothing is discarded without them
+          saying so.
+        */}
+        {offeredObjective !== null && (
+          <p data-testid="agent-prefill-offer" className="mt-2 text-[0.625rem] text-zinc-500">
+            Suggested: <span className="text-zinc-400">{offeredObjective}</span>
+            <button
+              type="button"
+              data-testid="agent-prefill-offer-apply"
+              aria-label="Replace the objective with the suggested one"
+              onClick={() => {
+                setObjective(offeredObjective);
+                prefilledObjective.current = offeredObjective;
+                setOfferedObjective(null);
+              }}
+              className="ml-1 px-1 py-0.5 rounded text-[0.625rem] text-blue-300 hover:bg-white/5 transition-colors"
+            >
+              Replace
+            </button>
+          </p>
+        )}
 
         {connectionId === null && (
           <p data-testid="agent-unresolvable-connection" className="mt-2 text-xs text-amber-400/80">
