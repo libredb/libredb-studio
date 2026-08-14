@@ -743,6 +743,95 @@ SBOM or a sibling document - a second Trivy pass over the `fetch-node.sh`
 scripts' pinned version, or a hand-maintained component entry, whichever ships
 without adding a new failure mode to the release chain.
 
+### C8. No artefact root declares that part of the distribution is not MIT
+
+`LICENSE` states the project's own MIT terms and nothing at the root of any
+packaged artefact says that not everything inside them is under those terms. Two
+kinds of obligation sit behind that.
+
+The routine kind is attribution: a scan of the installed tree (1169 distinct
+packages) puts 1136 under MIT, Apache-2.0, ISC or BSD, all of which want the
+copyright notice to travel with redistributed copies, and two carry attribution as
+their whole purpose - `caniuse-lite` is CC-BY-4.0 and the `geist` font is under
+the SIL Open Font License.
+
+The specific kind is `seed-assets/sqlite/employee.db`, which is CC BY-SA 3.0 and
+therefore genuinely share-alike, not merely attribution-required. That was handled
+deliberately - `seed-assets/sqlite/ATTRIBUTION.md` records the provenance, the
+license, the modifications made here and the fact that the file is redistributed
+under the same terms - but the file ships in the image (the runner stage copies
+`seed-assets` explicitly) and in the packaged tarballs, and nothing at the root of
+those artefacts points at that nested ATTRIBUTION.md. A reader of the image sees
+an MIT `LICENSE` and a CC BY-SA database with no note connecting them.
+
+Done when a generated `NOTICE` (or `THIRD_PARTY_LICENSES`) ships at the root of
+the image and the tarballs, names the sample database's separate terms explicitly,
+and is regenerated from the lockfile rather than hand-maintained.
+
+### C9. `elkjs` is EPL-2.0 and a direct production dependency
+
+Every other direct production dependency is permissive. `elkjs@0.11.1` is
+EPL-2.0, a file-level reciprocal license with a patent-retaliation clause, and it
+is ours by choice rather than pulled in transitively: the schema diagram's layout
+worker imports it at `src/components/schema-diagram/elk.worker.ts`. It is used
+unmodified, which is the case EPL-2.0 is comfortable with, so nothing is wrong
+today - but it means the distributed bundle is MIT-plus-EPL rather than MIT, and
+that is a question an acquirer's counsel asks rather than one they overlook.
+
+Recorded rather than acted on because the alternatives are worse: ELK is the only
+layout engine in the ecosystem that produces the layered orthogonal routing the
+ER diagram depends on. Done when either the mixed terms are stated openly
+(alongside C8, which is the natural place) or a permissive layout engine proves it
+can match the output.
+
+### C10. Only one audit finding reaches a user, and 43 drown it out
+
+`bun audit` reports 44 advisories (15 high, 23 moderate, 6 low). All but one chain
+is development-only - `minimatch`, `brace-expansion`, `flatted`, `picomatch`,
+`esbuild`, `@babel/core` and `undici` arrive through `eslint`,
+`typescript-eslint`, `knip`, `tsup`, `workflow` and `@ai-sdk/*`, none of which is
+in `dependencies` and none of which is in the image. The single chain that ships
+is `dompurify` via `monaco-editor`, which carries 18 advisories of its own, all
+XSS-family; the reachable surface is whatever markup Monaco renders in its hover
+and suggestion widgets, which in this app means database metadata.
+
+Worth recording so nobody re-derives it: `dompurify` is dual-licensed
+(MPL-2.0 OR Apache-2.0), so the copyleft half can simply not be chosen, and the
+LGPL-3.0 `@img/sharp-libvips-*` binaries never reach the runtime image - the
+runner stage copies `node_modules` selectively rather than wholesale, and nothing
+in `src/` uses `next/image`, so sharp is never exercised.
+
+Done when the audit output separates shipped advisories from tooling ones, so one
+production finding is not filed behind 43 that cannot affect a user. C6 is the
+related gap - without fixed-version data neither this nor a scanner's verdict can
+say whether the one that matters is even actionable.
+
+### C11. The FOSSA integration reports three permanent failures
+
+FOSSA was connected in August 2026 and posts three commit statuses -
+`License Compliance`, `Security Analysis`, `Dependency Quality`. Under its default
+`Standard Bundle Distribution` policy all three fail, and they fail on every
+commit rather than on a regression, because they describe the standing dependency
+tree. They are commit statuses rather than check runs, so they carry no log to
+click through, and they are not in `main`'s required-check list, so they do not
+block a merge.
+
+The exported license issues (19) are almost entirely artefacts of how they are
+counted. Fourteen are the same LGPL-3.0 `@img/sharp-libvips-*` package counted
+once per platform binary, none of which ships (see C10). Two are file-level
+detections inside the `next` bundle (MPL-2.0 and a denied CC-BY-SA-4.0) against a
+package that is itself MIT. One is `highlight.js` CC-BY-SA-4.0 at depth 4 behind
+`@arethetypeswrong/cli`, a devDependency. One is the project itself at depth 0,
+denied for CC-BY-SA-3.0, which is the deliberately-vendored sample database in C8.
+That leaves `elkjs` EPL-2.0 - C9, and the only entry that is both real and ours.
+
+The cost of leaving it is that a permanently-red status trains everyone, including
+outside contributors, to read red as normal; #362 is the case where a genuine
+red mattered and was noticed only because nothing else was red. Done when the
+policy is scoped to what is actually distributed - production dependencies only,
+with the sample database's terms allowed rather than denied - so the statuses go
+green and a future failure means something, or when the integration is removed.
+
 ---
 
 ## Security Phase 3 deferrals

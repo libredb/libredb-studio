@@ -2,11 +2,11 @@
 
 Guidance for Claude Code in this repo — conventions, rules, and gotchas only. Read the code and `docs/` for anything derivable from them.
 
-> **CRITICAL: published as the npm package `@libredb/studio` and consumed by `libredb-platform`.** UI/styling work MUST follow the platform-integration rules in [`.claude/rules/platform-integration.md`](.claude/rules/platform-integration.md) — auto-loaded when you touch components / `.tsx` / `globals.css`. Violations cause silent style/layout breakage that appears only when embedded in platform.
+> **This repo is published as the npm package `@libredb/studio`** — both a CLI (`npx @libredb/studio`) and an embeddable library surface built by `build:lib`. It is **not** embedded in `libredb-platform`: the two are separate products as of 2026-08-14, so "platform consumes this" is not a reason to keep or avoid anything. The former `.claude/rules/platform-integration.md` was deleted with that decision; other files still reference it and have not been cleaned up yet.
 
 ## Project Overview
 
-Web-based SQL IDE for cloud-native teams: PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, Redis + AI query assistance. Runs **two ways** — a standalone Next.js app AND an embedded npm package inside libredb-platform; `build:lib` (tsup) produces the package dist. Verify any UI change in both modes.
+Web-based SQL IDE for cloud-native teams: PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, Redis + AI query assistance. Runs **two ways** — a standalone Next.js app AND a published npm package (CLI plus an embeddable library surface); `build:lib` (tsup) produces the package dist. The two modes render different chrome, so a UI change verified in one is not verified in the other.
 
 ## Branching & PRs
 
@@ -48,7 +48,7 @@ bun run attw             # validate published type-resolution against the packed
 
 > **Toolchain rationale (Biome formatter, oxlint, type-aware ESLint layer, attw) lives in [`docs/TOOLCHAIN.md`](docs/TOOLCHAIN.md).** Biome is formatter-only (lineWidth 120); oxlint is the fast syntactic layer in front of ESLint; `eslint-config-next` still owns React/Next/hooks; a narrow `typescript-eslint` type-aware layer guards `src/app/api` + `src/lib/db` against floating promises; attw uses `--profile node16` (the package targets Node >=24 + modern bundlers, so node10 is ignored).
 
-> **`build:lib` after platform-facing changes:** after changing any component used by platform (workspace, providers, …), run `build:lib` — `bun run build` (Next.js) does NOT update the package dist.
+> **`build:lib` after changes to the published surface:** after changing anything reachable from `src/exports/` (workspace, providers, components, security, …), run `build:lib` — `bun run build` (Next.js) does NOT update the package dist.
 
 > **Tests — always `bun run test`, never bare `bun test`.** Component tests need isolated execution groups (`tests/run-components.sh`) to avoid `mock.module()` cross-contamination.
 
@@ -64,7 +64,7 @@ After every code change, run all six locally before claiming done — they match
 
 - **Stack:** Next.js 16 (App Router) + React 19 + TypeScript; Tailwind 4 + Shadcn/UI; Monaco editor; TanStack Table + react-virtual; `jose` JWT + `openid-client` OIDC.
 - **DB drivers:** `pg`, `mysql2`, **`bun:sqlite`/`node:sqlite`** (the DB provider, runtime-selected; `LIBREDB_SQLITE_DRIVER` overrides) / `better-sqlite3` (the storage layer), `oracledb`, `mssql`, `mongodb`, `ioredis`.
-- **Layout:** full tree + data flow in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). Key dirs: `src/lib/db` (DB providers, Strategy Pattern), `src/lib/llm` (LLM providers), `src/lib/storage` (pluggable persistence), `src/workspace` + `src/exports` (the npm-package embedding layer), `src/proxy.ts` (RBAC middleware).
+- **Layout:** full tree + data flow in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). Key dirs: `src/lib/db` (DB providers, Strategy Pattern), `src/lib/llm` (LLM providers), `src/lib/storage` (pluggable persistence), `src/workspace` + `src/exports` (the npm-package library surface), `src/proxy.ts` (RBAC middleware).
 - **Path alias:** `@/*` → `./src/*`.
 
 ### Rules & patterns
