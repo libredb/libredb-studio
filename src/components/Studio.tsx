@@ -229,10 +229,12 @@ export default function Studio() {
     The workflow is INVESTIGATION, not query-optimization, and that is deliberate.
     The control being replaced was a general assistant, not an optimizer, so choosing
     the optimizer would commit the user to a goal they never asked for: that
-    workflow's verifier requires a plan COMPARISON (`src/lib/agent/goal-verifier.ts`,
-    the no-plan-comparison shortfall), and a run that perfectly explained what the
-    statement does would still be recorded as "did not answer". The workflow control
-    is one click away in the rail, and investigation is the general one.
+    workflow's verifier requires the run to PROPOSE a change and back it with a plan
+    it read — a comparison, or an index citing the plan it diagnosed
+    (`src/lib/agent/goal-verifier.ts`) — and a run that perfectly explained what the
+    statement does proposes nothing, so it would still be recorded as "did not
+    answer". The workflow control is one click away in the rail, and investigation is
+    the general one.
 
     The objective is the statement and nothing composed around it. Writing prose like
     "why is this slow?" on the user's behalf would put words in a box that is theirs
